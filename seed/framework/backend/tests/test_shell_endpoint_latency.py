@@ -18,9 +18,20 @@ from fastapi import FastAPI, Header
 from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.domain.licensing import configure_license_gate
 from noctusai_lib.testing import MockSupabaseClient
+from noctusai_lib.testing._schema_cache import get_foreign_key_map, get_schema_map
 from noctusai_seed.routers import _create_notificacoes_router
 
-from tests.test_org_picker_router import CLIENT_A, OWNER, SLUG, _h, _make
+from tests.test_org_picker_router import CLIENT_A, HOME, OWNER, SLUG, STAFF, _h, _make
+
+HOP = 0.15
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _mock_caches_built():
+    """The mock parses the migrations (columns, foreign keys) on first use; build both up front
+    so that one-off cost never lands inside a timed request."""
+    get_schema_map()
+    get_foreign_key_map()
 
 
 class _CountingCore:
@@ -79,12 +90,30 @@ class TestMeAccessRoundTrips:
         body = resp.json()
         assert body["org_selection"]["org"]["nome"] == "Zeta Imob"
         assert body["org_selection"]["manageable_orgs"][0]["id"] == CLIENT_A
-        # noctus_users: resolve + platform-staff check; organizations: ONE name lookup (+ the
-        # staff probe's is_platform only for a staff-shaped row); org_memberships: manageable.
+        # noctus_users: resolve + the named profile; org_memberships: the named memberships. Every
+        # org name and the staff rule's is_platform ride along as embeds: NO organizations read.
         assert counting.calls["noctus_users"] == 2
-        assert counting.calls["organizations"] == 1
+        assert counting.calls["organizations"] == 0
         assert counting.calls["org_memberships"] == 1
-        assert sum(counting.calls.values()) <= 4
+        assert sum(counting.calls.values()) <= 3
+
+    def test_staff_access_names_the_home_org_without_a_lookup(self):
+        client, _store = _make()
+        counting = _swap_core(client)
+        resp = client.get("/api/me/access", headers=_h(STAFF))
+        assert resp.status_code == 200
+        block = resp.json()["org_selection"]
+        assert block["platform_role"] == "owner" and block["manage_any_org"] is True
+        assert block["home_org"] == {"id": HOME, "nome": "NoctusAI"}
+        assert counting.calls["organizations"] == 0
+
+    def test_every_read_is_issued_together_one_round_trip(self):
+        client, _store = _make()
+        counting = _swap_core(client)
+        counting._delay = HOP
+        t0 = time.monotonic()
+        assert client.get("/api/me/access", headers=_h(OWNER)).status_code == 200
+        assert time.monotonic() - t0 < 1.8 * HOP  # names after the reads = 2 hops; staff probe = 3
 
 
 def _swap_core(client) -> _CountingCore:

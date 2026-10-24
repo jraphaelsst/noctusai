@@ -872,6 +872,96 @@ def parse_default_files(paths: Iterable[Path]) -> dict[str, set[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Foreign keys (PostgREST embedded-resource resolution)
+# ---------------------------------------------------------------------------
+
+_INLINE_REFERENCES_RE = re.compile(
+    rf"\bREFERENCES\s+(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})\s*(?:\(\s*(?P<col>{_IDENT})\s*\))?",
+    re.IGNORECASE,
+)
+_TABLE_FOREIGN_KEY_RE = re.compile(
+    rf"\bFOREIGN\s+KEY\s*\(\s*(?P<local>{_IDENT})\s*\)\s*REFERENCES\s+"
+    rf"(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})\s*(?:\(\s*(?P<col>{_IDENT})\s*\))?",
+    re.IGNORECASE,
+)
+_ALTER_ADD_COLUMN_FK_RE = re.compile(
+    rf"\bADD\s+COLUMN(?:\s+IF\s+NOT\s+EXISTS)?\s+(?P<local>{_IDENT})\b",
+    re.IGNORECASE,
+)
+
+
+def _fk_target(m: re.Match) -> tuple[str, str]:
+    return _qualify(m.group("schema"), m.group("table")), (m.group("col") or "id")
+
+
+def parse_foreign_key_sql(
+    sql: str,
+    *,
+    into: dict[str, dict[str, tuple[str, str]]] | None = None,
+) -> dict[str, dict[str, tuple[str, str]]]:
+    """`{qualified_table: {local_column: (qualified_ref_table, ref_column)}}` for every
+    SINGLE-column foreign key `sql` declares (inline `REFERENCES`, a table-level
+    `FOREIGN KEY (c) REFERENCES`, `ALTER TABLE ... ADD COLUMN c ... REFERENCES` /
+    `ADD [CONSTRAINT n] FOREIGN KEY (c) REFERENCES`), applied on top of `into` in file order.
+    A composite key is left out: PostgREST embeds through it, the mock does not model it."""
+    sql_clean = _strip_block_comments(_strip_line_comments(sql))
+    fks: dict[str, dict[str, tuple[str, str]]] = {} if into is None else into
+    for stmt in _walk_statements(sql_clean):
+        upper = stmt.upper()
+        if "REFERENCES" not in upper and "DROP TABLE" not in upper:
+            continue
+        if re.search(r"\bCREATE(\s+OR\s+REPLACE)?\s+FUNCTION\b", upper):
+            continue
+        if "CREATE TABLE" in upper:
+            m = _CREATE_TABLE_HEAD_RE.search(stmt)
+            if m:
+                body = _extract_table_body(stmt, stmt.find("(", m.end() - 1))
+                if body is not None:
+                    table = fks.setdefault(_qualify(m.group("schema"), m.group("table")), {})
+                    for part in _split_top_level_commas(body):
+                        fk = _TABLE_FOREIGN_KEY_RE.search(part)
+                        if fk:
+                            table[fk.group("local")] = _fk_target(fk)
+                            continue
+                        head = _COLUMN_HEAD_RE.match(part)
+                        ref = _INLINE_REFERENCES_RE.search(part)
+                        if head and ref and not _is_constraint_line(part):
+                            table[head.group("name")] = _fk_target(ref)
+        if "DROP TABLE" in upper:
+            for m in _DROP_TABLE_RE.finditer(stmt):
+                for name in m.group("names").split(","):
+                    qm = _QUALIFIED_NAME_RE.match(name.strip())
+                    if qm:
+                        fks.pop(_qualify(qm.group("schema"), qm.group("table")), None)
+        if "ALTER TABLE" not in upper:
+            continue
+        for schema, table_name, body in _alter_table_segments(stmt):
+            for clause in _split_top_level_commas(body):
+                fk = _TABLE_FOREIGN_KEY_RE.search(clause)
+                if fk:
+                    fks.setdefault(_qualify(schema, table_name), {})[fk.group("local")] = _fk_target(fk)
+                    continue
+                col = _ALTER_ADD_COLUMN_FK_RE.search(clause)
+                ref = _INLINE_REFERENCES_RE.search(clause)
+                if col and ref and ref.start() > col.end():
+                    fks.setdefault(_qualify(schema, table_name), {})[col.group("local")] = _fk_target(ref)
+    return {t: cols for t, cols in fks.items() if cols} if into is None else fks
+
+
+def parse_foreign_key_files(paths: Iterable[Path]) -> dict[str, dict[str, tuple[str, str]]]:
+    """`parse_foreign_key_sql` over migration files in order."""
+    merged: dict[str, dict[str, tuple[str, str]]] = {}
+    for path in paths:
+        try:
+            sql = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("mock-fks: could not read %s: %s — skipping", path, exc)
+            continue
+        parse_foreign_key_sql(sql, into=merged)
+    return {t: cols for t, cols in merged.items() if cols}
+
+
+# ---------------------------------------------------------------------------
 # Function signatures (RPC named-argument validation)
 # ---------------------------------------------------------------------------
 

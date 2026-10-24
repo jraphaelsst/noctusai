@@ -16,10 +16,11 @@ import time
 import pytest
 
 from noctusai_lib.api.auth._blocking import run_parallel
-from noctusai_lib.api.auth.effective_org import resolve_effective_org
+from noctusai_lib.api.auth.effective_org import platform_staff_role, resolve_effective_org, staff_role_of
 from noctusai_lib.api.auth.org_selection import FakeOrgSelectionStore
 from noctusai_lib.domain.licensing import FakeLicenseChecker
 from noctusai_lib.testing import MockSupabaseClient
+from noctusai_lib.testing._schema_cache import get_foreign_key_map, get_schema_map
 
 ORG_A = "00000000-0000-0000-0000-00000000000a"
 ORG_B = "00000000-0000-0000-0000-00000000000b"
@@ -27,6 +28,14 @@ USER = "bbbbbbbb-0000-0000-0000-000000000001"
 SID = "11111111-1111-1111-1111-111111111111"
 SLUG = "igig"
 HOP = 0.15
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _mock_caches_built():
+    """The mock parses the migrations (columns, foreign keys) on first use; build both up front
+    so that one-off cost never lands inside a timed request."""
+    get_schema_map()
+    get_foreign_key_map()
 
 
 def _tok(sub, **claims):
@@ -132,6 +141,28 @@ class TestAPrefetchedReadFailsOnlyTheBranchThatUsesIt:
         c = MockSupabaseClient()
         c.set_table_data("noctus_users", [])
         assert _resolve(_SlowCore(c), _store(fail="memberships")) is None
+
+
+class TestStaffRuleReadsTheHomeOrgWithTheProfile:
+    def test_platform_staff_role_is_one_round_trip(self):
+        role, elapsed = _timed(lambda: platform_staff_role(_core(role="admin", platform=True), USER))
+        assert role == "owner"
+        assert elapsed < 1.8 * HOP  # serial: profile then the home org's is_platform = 2 hops
+
+    def test_staff_resolve_on_ready_product_is_one_round_trip(self):
+        core = _core(role="admin", platform=True)
+        eff, elapsed = _timed(lambda: _resolve(core, _store(), require_selection=False))
+        assert eff.is_staff and eff.org_id == ORG_A
+        assert elapsed < 1.8 * HOP
+
+    def test_admin_profile_in_a_non_platform_home_is_not_staff(self):
+        assert platform_staff_role(_core(role="admin", platform=False), USER) is None
+
+    def test_a_row_without_the_home_org_embed_is_never_staff(self):
+        row = {"org_id": ORG_A, "org_role": "owner", "role": "admin"}
+        assert staff_role_of(row) is None
+        assert staff_role_of({**row, "organizations": None}) is None
+        assert staff_role_of({**row, "organizations": {"is_platform": True}}) == "owner"
 
 
 class TestRunParallelRunsTheFirstThunkOnTheCaller:

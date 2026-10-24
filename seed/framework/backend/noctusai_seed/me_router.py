@@ -39,10 +39,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.effective_org import (
+    PROFILE_COLUMNS,
     EffectiveOrg,
     is_platform_staff,
-    platform_staff_role,
     resolve_effective_org_for_request,
+    staff_role_of,
 )
 from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.api.auth.mfa.aal import read_session_claims
@@ -91,13 +92,32 @@ def _org_names(core_client: Any, org_ids: list[str]) -> dict[str, Optional[str]]
     return {str(r["id"]): r.get("nome") for r in rows}
 
 
-def _manageable_rows(core_client: Any, user_id: Any) -> list[dict]:
-    """The caller's ACTIVE owner/admin memberships, ``[{org_id, org_role}]`` (one query)."""
-    return (
-        core_client.table("org_memberships").select("org_id, org_role")
-        .eq("user_id", str(user_id)).eq("status", "active")
-        .in_("org_role", list(MANAGER_ORG_ROLES)).execute().data or []
+def _named_profile(core_client: Any, user_id: Any) -> Optional[dict]:
+    """The caller's profile row with the home org's ``nome`` + ``is_platform`` embedded (one
+    query: the staff rule AND the home org's name, no follow-up lookup)."""
+    cols = PROFILE_COLUMNS.replace("organizations(is_platform)", "organizations(is_platform, nome)")
+    rows = (
+        core_client.table("noctus_users").select(cols)
+        .eq("id", str(user_id)).limit(1).execute().data or []
     )
+    return rows[0] if rows else None
+
+
+def _named_memberships(core_client: Any, user_id: Any) -> list[dict]:
+    """The caller's ACTIVE memberships with each org's ``nome`` embedded,
+    ``[{org_id, org_role, organizations: {nome}}]`` (one query). Names every org the picker can
+    list (eligible orgs are a subset) and the manageable ones are filtered from it."""
+    return (
+        core_client.table("org_memberships").select("org_id, org_role, organizations(nome)")
+        .eq("user_id", str(user_id)).eq("status", "active").execute().data or []
+    )
+
+
+def _embedded_names(profile: Optional[dict], memberships: list[dict]) -> dict[str, Optional[str]]:
+    """``{org_id: nome}`` from the embeds the two reads above already carry."""
+    named = [(profile.get("org_id"), profile.get("organizations"))] if profile else []
+    named += [(m.get("org_id"), m.get("organizations")) for m in memberships]
+    return {str(org): emb.get("nome") for org, emb in named if org and isinstance(emb, dict)}
 
 
 def _manageable_orgs(rows: list[dict], names: dict[str, Optional[str]]) -> list[dict]:
@@ -148,10 +168,11 @@ def create_me_router(deps) -> APIRouter:
     router = APIRouter(prefix="/api/me", tags=["me"])
 
     def _access_body(core: Any, user_id: Any, token: str) -> dict:
-        """SYNC (worker thread). Round trips: the effective-org resolve (noctus_users, then its
-        memberships / blocks / live-selection reads in parallel), the platform-staff check and the
-        manageable memberships run CONCURRENTLY with it, then ONE organizations name lookup for
-        every org the body mentions (was ~11 sequential calls)."""
+        """SYNC (worker thread). ONE round trip of wall time in the common case: the effective-org
+        resolve (its reads issued together), the named profile (staff rule + home org name) and
+        the named memberships run CONCURRENTLY, and the org names ride along as embeds. An org
+        neither read names (staff acting in a customer org) costs one lookup after them (was
+        ~11 sequential calls, then 3 serial hops)."""
 
         def _resolve():
             try:
@@ -177,11 +198,13 @@ def create_me_router(deps) -> APIRouter:
                     raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
             return run
 
-        eff, platform_role, manage_rows = run_parallel(
+        eff, profile, memberships = run_parallel(
             _resolve,
-            _guarded(lambda: platform_staff_role(core, user_id)),
-            _guarded(lambda: _manageable_rows(core, user_id)),
+            _guarded(lambda: _named_profile(core, user_id)),
+            _guarded(lambda: _named_memberships(core, user_id)),
         )
+        platform_role = staff_role_of(profile)
+        manage_rows = [m for m in memberships if m.get("org_role") in MANAGER_ORG_ROLES]
         gate = get_license_gate()
         slug = gate.product_slug if gate else None
         has_access = False
@@ -195,7 +218,11 @@ def create_me_router(deps) -> APIRouter:
         wanted = [o for o in (eff.home_org_id, eff.org_id) if o] if eff is not None else []
         wanted += [org for org, _role in (eff.eligible if eff is not None else ())]
         wanted += [str(r["org_id"]) for r in manage_rows]
-        names = _org_names(core, wanted)
+        names = _embedded_names(profile, memberships)
+        # Only an org neither read named (staff acting in a customer org) costs a lookup.
+        missing = [o for o in wanted if str(o) not in names]
+        if missing:
+            names.update(_org_names(core, missing))
         block = _selection_block(names, eff)
         block["platform_role"] = platform_role
         block["manage_any_org"] = platform_role is not None

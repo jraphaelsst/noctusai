@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 from typing import Any, Iterable, Mapping, Optional
 from uuid import NAMESPACE_OID, UUID, uuid5
 from unittest.mock import MagicMock
@@ -73,10 +74,12 @@ from postgrest.exceptions import APIError as _PostgrestAPIError
 from noctusai_lib.testing._schema_cache import (
     get_check_map,
     get_default_map,
+    get_foreign_key_map,
     get_function_map,
     get_partial_tables,
     get_schema_map,
 )
+from noctusai_lib.testing.migration_parser import _split_top_level_commas
 from noctusai_lib.testing.schema_errors import (
     MockCheckViolation,
     MockRowCheckViolation,
@@ -110,6 +113,100 @@ import copy
 # collection no real deployment would accept.
 _POSTGREST_MAX_ROWS = 1000
 _IN_FILTER_URL_BUDGET_BYTES = 8000
+
+
+# ---------------------------------------------------------------------------
+# PostgREST embedded resources (`select("a, rel(b, c)")`)
+# ---------------------------------------------------------------------------
+#
+# Real PostgREST joins `rel` through the foreign key between the two tables and returns it
+# under the `rel` key: an OBJECT (or null) when this table holds the key (many-to-one), a LIST
+# when `rel` holds a key to this table (one-to-many). Before this was modelled the mock handed
+# back the flat row with no `rel` key at all, so a read that folds a lookup into its parent
+# query (one round trip instead of two -- `KB § PATTERNS/backend/request-path-latency.md`)
+# could not be tested: the embed was simply absent. Resolution reads the migration-declared
+# foreign keys (`get_foreign_key_map`), never a hand-kept list. Left exactly as before (key
+# absent): an embed with a hint/`!inner` (`rel!fk(...)`), a relation the migrations do not
+# link, an ambiguous one (two keys -- PostgREST answers PGRST201 there), and a row that
+# already carries the key (fixtures seeding the nested shape by hand keep working).
+
+_EMBED_PART_RE = re.compile(
+    r"^\s*(?:(?P<alias>[A-Za-z_]\w*)\s*:\s*)?(?P<rel>[A-Za-z_]\w*)\s*\((?P<inner>.*)\)\s*$", re.S,
+)
+
+
+def _parse_embeds(cols_expr: Any) -> list[tuple[str, str, str]]:
+    """``[(response_key, rel_table, inner_cols)]`` for each top-level embed in a select."""
+    if not isinstance(cols_expr, str) or "(" not in cols_expr:
+        return []
+    out = []
+    for part in _split_top_level_commas(cols_expr):
+        m = _EMBED_PART_RE.match(part)
+        if m and "!" not in part:
+            out.append((m.group("alias") or m.group("rel"), m.group("rel"), m.group("inner")))
+    return out
+
+
+def _embed_link(schema: Optional[str], table: Optional[str], rel: str) -> Optional[tuple[str, str, str]]:
+    """``("one", local_col, ref_col)`` | ``("many", rel_col, local_col)`` | ``None``."""
+    if not table:
+        return None
+    fks = get_foreign_key_map()
+    here = f"{(schema or 'public').lower()}.{table.lower()}"
+    if here not in fks and not any(t.endswith("." + rel.lower()) for t in fks):
+        return None
+    out = [
+        (col, ref_col) for col, (ref, ref_col) in fks.get(here, {}).items()
+        if ref.split(".", 1)[1] == rel.lower()
+    ]
+    if out:
+        return ("one", *out[0]) if len(out) == 1 else None
+    for rel_q in {f"{(schema or 'public').lower()}.{rel.lower()}", f"public.{rel.lower()}"}:
+        back = [(col, ref_col) for col, (ref, ref_col) in fks.get(rel_q, {}).items() if ref == here]
+        if back:
+            return ("many", *back[0]) if len(back) == 1 else None
+    return None
+
+
+def _project(row: Mapping, inner: str) -> dict:
+    """The embedded row narrowed to ``inner``'s columns (``*`` / a nested embed: whole row)."""
+    if inner.strip() == "*" or "(" in inner:
+        return dict(row)
+    out = {}
+    for part in _split_top_level_commas(inner):
+        name = part.strip()
+        if not name:
+            continue
+        key, _, col = name.partition(":")
+        out[key.strip()] = row.get((col or key).strip())
+    return out
+
+
+def _with_embeds(rows: list, embeds: list, schema: Optional[str], table: Optional[str], source) -> list:
+    """``rows`` with each resolvable embed attached (copies -- the shared table list is untouched)."""
+    links = [(key, rel, inner, _embed_link(schema, table, rel)) for key, rel, inner in embeds]
+    links = [x for x in links if x[3] is not None]
+    if not links or source is None:
+        return rows
+    out = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            out.append(row)
+            continue
+        row = dict(row)
+        for key, rel, inner, (kind, a, b) in links:
+            if key in row:
+                continue
+            others = source(rel)
+            if kind == "one":
+                val = row.get(a)
+                hit = next((o for o in others if val is not None and str(o.get(b)) == str(val)), None)
+                row[key] = _project(hit, inner) if hit is not None else None
+            else:
+                val = row.get(b)
+                row[key] = [_project(o, inner) for o in others if val is not None and str(o.get(a)) == str(val)]
+        out.append(row)
+    return out
 
 
 def _in_filter_url_bytes(value: Any) -> int:
@@ -1078,7 +1175,12 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         schema: Optional[str] = None,
         table: Optional[str] = None,
         strict_unknown_tables: bool = False,
+        embeds: Optional[list] = None,
+        embed_source=None,
     ):
+        #: `select("..., rel(cols)")` embeds + the owning client's `table name -> rows` reader.
+        self._embeds = embeds or []
+        self._embed_source = embed_source
         # Preserve the original semantics: `data or []` → empty list when
         # None or empty. Note: we trust callers to pass in the shared list
         # reference so reads see writes.
@@ -1220,6 +1322,8 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         # chained afterward are already reflected in `_predicates`.
         count = len(filtered) if self._count_exact and isinstance(filtered, list) else None
         self._count = count
+        if self._embeds and isinstance(filtered, list):
+            filtered = _with_embeds(filtered, self._embeds, self._schema, self._table, self._embed_source)
         if self._single_mode:
             # `.single()`/`.maybe_single()` request the
             # `vnd.pgrst.object+json` shape, not a `Range` window — no
@@ -1414,6 +1518,9 @@ class MockRequestBuilder:
 
     #: See MockSupabaseClient.strict_single (set by the owning client).
     strict_single = False
+    #: ``table name -> rows`` reader for embedded selects (set by the owning client; ``None`` for
+    #: a builder made standalone -- embeds then stay unresolved, as before).
+    embed_source = None
 
 
     def __init__(
@@ -1545,6 +1652,8 @@ class MockRequestBuilder:
             count_exact=(count == "exact"),
             response_queue=self._response_queue,
             response_idx=self._response_idx,
+            embeds=_parse_embeds(cols),
+            embed_source=self.embed_source,
             **self._builder_kwargs(),
         )
         sel._strict_single = self.strict_single
@@ -1955,7 +2064,12 @@ class MockSupabaseClient:
             presence_manifest=self._presence_manifest,
         )
         builder.strict_single = self.strict_single
+        builder.embed_source = self._embed_rows
         return builder
+
+    def _embed_rows(self, name: str) -> list:
+        """The rows an embed of ``name`` joins against (this client's own table data)."""
+        return list(self.table(name)._data)
 
     def table(self, name):
         if name not in self._tables:

@@ -19,6 +19,7 @@ from typing import Iterable
 from noctusai_lib.testing.migration_parser import (
     parse_check_files,
     parse_default_files,
+    parse_foreign_key_files,
     parse_files,
     parse_function_files,
 )
@@ -44,6 +45,9 @@ _DEFAULTS_CACHE: dict[str, set[str]] | None = None
 #: `{qualified_function: [{params, required}, ...]}` — what an `rpc()` call is
 #: resolved against (PostgREST matches by argument NAME; PGRST202 otherwise).
 _FUNCTION_CACHE: dict[str, list[dict[str, set[str]]]] | None = None
+#: `{qualified_table: {local_column: (qualified_ref_table, ref_column)}}` — the single-column
+#: foreign keys a `select("..., rel(cols)")` embed is resolved through (PostgREST does the same).
+_FK_CACHE: dict[str, dict[str, tuple[str, str]]] | None = None
 
 
 def _discover_migration_files(repo_root: Path) -> list[Path]:
@@ -214,6 +218,18 @@ def get_default_map() -> dict[str, set[str]]:
     return _DEFAULTS_CACHE
 
 
+def get_foreign_key_map() -> dict[str, dict[str, tuple[str, str]]]:
+    """Return the cached migration-declared single-column foreign keys. Builds on first call."""
+    global _FK_CACHE
+    if _FK_CACHE is None:
+        try:
+            _FK_CACHE = parse_foreign_key_files(_discover_migration_files(_find_repo_root()))
+        except Exception as exc:  # pragma: no cover — defensive, mirrors get_schema_map
+            logger.warning("mock-fks: cache build failed (%s) — embedded selects not resolved", exc)
+            _FK_CACHE = {}
+    return _FK_CACHE
+
+
 def get_check_map() -> dict[str, list[CompiledCheck]]:
     """Return the cached `{qualified_table: [CompiledCheck]}` map of every
     migration-declared CHECK the mock enforces. Builds on first call."""
@@ -259,8 +275,9 @@ def set_functions_for_tests(
 def reset_cache() -> None:
     """Force the next get_schema_map() / get_check_map() call to rebuild.
     Used by tests that assert parsing behavior."""
-    global _CACHE, _CHECK_CACHE, _DEFAULTS_CACHE, _FUNCTION_CACHE, _PARTIAL_CACHE
+    global _CACHE, _CHECK_CACHE, _DEFAULTS_CACHE, _FUNCTION_CACHE, _PARTIAL_CACHE, _FK_CACHE
     _FUNCTION_CACHE = None
+    _FK_CACHE = None
     _CACHE = None
     _PARTIAL_CACHE = None
     _CHECK_CACHE = None

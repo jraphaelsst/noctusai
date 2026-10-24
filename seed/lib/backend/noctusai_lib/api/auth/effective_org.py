@@ -173,14 +173,27 @@ def _prefetch(fn: Callable[[], Any]) -> Callable[[], _Prefetched]:
     return lambda: _Prefetched(fn)
 
 
-def _home_is_platform(core_client: Any, org_id: Any) -> bool:
-    if not org_id:
-        return False
-    rows = (
-        _tbl(core_client, "organizations").select("is_platform")
-        .eq("id", str(org_id)).limit(1).execute().data or []
-    )
-    return bool(rows and rows[0].get("is_platform"))
+#: The profile read. The home org's ``is_platform`` rides along as a PostgREST embed (through
+#: ``noctus_users_org_id_fkey``) -- the staff rule needs it, and a separate read after the row
+#: was a second serial round trip on every staff request.
+PROFILE_COLUMNS = "org_id, org_role, role, organizations(is_platform)"
+
+
+def staff_role_of(row: Optional[dict]) -> Optional[str]:
+    """The staff rule over ONE profile row read with the home org embedded (see
+    :data:`PROFILE_COLUMNS`): ``"owner"`` | ``"admin"`` for platform staff, else ``None``. A row
+    without the embed is not staff (fail closed)."""
+    if not row:
+        return None
+    home = row.get("organizations") or {}
+    if (
+        row.get("role") == STAFF_ROLE
+        and row.get("org_role") in STAFF_ORG_ROLES
+        and bool(row.get("org_id"))
+        and bool(home.get("is_platform"))
+    ):
+        return str(row.get("org_role"))
+    return None
 
 
 def platform_staff_role(core_client: Any, user_id: Any) -> Optional[str]:
@@ -193,19 +206,10 @@ def platform_staff_role(core_client: Any, user_id: Any) -> Optional[str]:
     if user_id is None:
         return None
     rows = (
-        _tbl(core_client, "noctus_users").select("org_id, org_role, role")
+        _tbl(core_client, "noctus_users").select(PROFILE_COLUMNS)
         .eq("id", str(user_id)).limit(1).execute().data or []
     )
-    if not rows:
-        return None
-    row = rows[0]
-    if (
-        row.get("role") == STAFF_ROLE
-        and row.get("org_role") in STAFF_ORG_ROLES
-        and _home_is_platform(core_client, row.get("org_id"))
-    ):
-        return str(row.get("org_role"))
-    return None
+    return staff_role_of(rows[0] if rows else None)
 
 
 def is_platform_staff(core_client: Any, user_id: Any) -> bool:
@@ -255,7 +259,7 @@ def resolve_effective_org(
 
     def _user_rows() -> list:
         return (
-            _tbl(core_client, "noctus_users").select("org_id, org_role, role")
+            _tbl(core_client, "noctus_users").select(PROFILE_COLUMNS)
             .eq("id", str(user_id)).limit(1).execute().data or []
         )
 
@@ -294,11 +298,7 @@ def resolve_effective_org(
         if home.org_id and str(home.org_id) in blocked.get():
             return EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
         return home
-    if (
-        row.get("role") != STAFF_ROLE
-        or row.get("org_role") not in STAFF_ORG_ROLES
-        or not _home_is_platform(core_client, home.org_id)
-    ):
+    if staff_role_of(row) is None:
         return _resolve_member(
             user_id, home, product_slug=product_slug, token=token, acting_header=acting_header,
             selection_store=selection_store, license_checker=license_checker,
@@ -481,6 +481,8 @@ __all__ = [
     "EffectiveOrg",
     "is_platform_staff",
     "platform_staff_role",
+    "PROFILE_COLUMNS",
+    "staff_role_of",
     "org_selection_changed",
     "org_selection_required",
     "resolve_effective_org",
