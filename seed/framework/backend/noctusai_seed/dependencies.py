@@ -43,7 +43,7 @@ from noctusai_lib.api.auth import (
     make_resolve_platform_role,
     validate_bearer_token_via,
 )
-from noctusai_lib.api.auth._blocking import run_blocking
+from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.api.auth.token_cache import TokenCache
 from noctusai_lib.api.auth._reasons import log_auth_401
 from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
@@ -231,6 +231,23 @@ class ProductDependencies:
         if actor is not None and request is not None:
             request.state.audit_actor = actor
         return user, token
+
+    async def get_current_user_and_fetch(self, authorization: Optional[str], fetch):
+        """:meth:`get_current_user` for a READ-ONLY handler whose read needs only the user:
+        ``fetch(user)`` (sync) runs CONCURRENTLY with the license gate, in one worker hop, instead
+        of after it -- the shell endpoints the bell polls on every page save a Supabase round trip.
+        Returns ``(user, token, fetch_result)``. The gate is decided first by construction: its
+        403 / 409 / 503 is raised in preference to anything ``fetch`` did, and ``fetch``'s result
+        is discarded unless the gate passed -- nothing is returned to a caller it refuses.
+        Never for a write: a write must not start before the caller is known to be licensed."""
+        user, token = await self.get_current_user_ungated(authorization)
+        user_id = getattr(user, "id", None)
+        _eff, result = await run_blocking(
+            run_parallel,
+            lambda: enforce_license_for_user(user_id, token=token, acting_header=None),
+            lambda: fetch(user),
+        )
+        return user, token, result
 
     def get_user_role(self, user) -> str:
         """Resolve the caller's role from the TRUSTED DB — never ``user_metadata``.

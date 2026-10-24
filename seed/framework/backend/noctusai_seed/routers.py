@@ -103,7 +103,9 @@ def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRoute
 def _create_notificacoes_router(deps) -> APIRouter:
     """Shell endpoints (the bell polls them on every page): the auth dependency already runs off
     the loop, and so does each handler's single PostgREST call (``run_blocking``) -- a sync
-    ``.execute()`` inside ``async def`` would park the event loop and serialize concurrent requests."""
+    ``.execute()`` inside ``async def`` would park the event loop and serialize concurrent requests.
+    The two READS run their query alongside the license gate (``get_current_user_and_fetch``):
+    one Supabase round trip less on every page load, fleet-wide."""
     router = APIRouter(prefix="/api/notificacoes", tags=["Notificacoes"])
 
     @router.get("")
@@ -112,11 +114,10 @@ def _create_notificacoes_router(deps) -> APIRouter:
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
     ):
-        user, token = await deps.get_current_user(authorization)
         core = deps.get_core_client()
         offset = (page - 1) * page_size
 
-        def _query():
+        def _query(user):
             return (
                 core.table("notifications")
                 .select("*", count="exact")
@@ -126,16 +127,15 @@ def _create_notificacoes_router(deps) -> APIRouter:
                 .execute()
             )
 
-        result = await run_blocking(_query)
+        _user, _token, result = await deps.get_current_user_and_fetch(authorization, _query)
         items = [map_notification_to_pt(n) for n in (result.data or [])]
         return {"data": items, "total": result.count or 0, "page": page, "page_size": page_size}
 
     @router.get("/contagem")
     async def contagem(authorization: Optional[str] = Header(None)):
-        user, token = await deps.get_current_user(authorization)
         core = deps.get_core_client()
 
-        def _query():
+        def _query(user):
             return (
                 core.table("notifications")
                 .select("id", count="exact")
@@ -145,7 +145,7 @@ def _create_notificacoes_router(deps) -> APIRouter:
                 .execute()
             )
 
-        result = await run_blocking(_query)
+        _user, _token, result = await deps.get_current_user_and_fetch(authorization, _query)
         return {"nao_lidas": result.count or 0}
 
     @router.patch("/{notificacao_id}/ler")

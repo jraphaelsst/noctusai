@@ -15,7 +15,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, Header
 
-from noctusai_lib.api.auth._blocking import run_parallel
+from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.domain.licensing import configure_license_gate
 from noctusai_lib.testing import MockSupabaseClient
 from noctusai_seed.routers import _create_notificacoes_router
@@ -118,7 +118,14 @@ class TestNotificacoesOffTheLoop:
         async def get_current_user(authorization: Optional[str] = Header(None)):
             return SimpleNamespace(id="u1"), "tok"
 
-        deps = SimpleNamespace(get_core_client=lambda: core, get_current_user=get_current_user)
+        async def get_current_user_and_fetch(authorization, fetch):
+            user, token = await get_current_user(authorization)
+            return user, token, await run_blocking(fetch, user)
+
+        deps = SimpleNamespace(
+            get_core_client=lambda: core, get_current_user=get_current_user,
+            get_current_user_and_fetch=get_current_user_and_fetch,
+        )
         app = FastAPI()
         app.include_router(_create_notificacoes_router(deps))
 

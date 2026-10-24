@@ -1,13 +1,12 @@
 """Router contract: paths, statuses, envelopes, pt-BR codes, authz (staff read / admin write), masking, signature, attachments."""
 from __future__ import annotations
 
-from datetime import date
 
 import pytest
 
 from noctusai_lib.domain.contracts import ATTACHMENT_UPLOAD_MAX_BYTES, ATTACHMENT_UPLOAD_PATH_PATTERN
 from noctusai_lib.domain.contracts import signature as sig
-from noctusai_lib.domain.contracts._common import Scope
+from noctusai_lib.domain.contracts._common import Scope, today
 
 from .conftest import CFG, ORG_A, VALID_CPF, VALID_CPF_2, body, build_harness, mk_party, run
 
@@ -77,7 +76,7 @@ def test_full_lifecycle_over_http(h):
     assert am.status_code == 201 and am.json()["data"]["notice_days"] == 15
     versions = call(h, "GET", f"{P}/{c['id']}/versions", h.staff()).json()["data"]
     assert [v["kind"] for v in versions] == ["initial", "suspension", "resumption", "amendment"]
-    r = call(h, "POST", f"{P}/{c['id']}/terminate", h.admin, json={"reason": "fim", "effective_on": date.today().isoformat()})
+    r = call(h, "POST", f"{P}/{c['id']}/terminate", h.admin, json={"reason": "fim", "effective_on": today().isoformat()})
     assert r.status_code == 409 and r.json()["error"]["code"] == "aviso_previo_nao_cumprido"
     ok = call(h, "POST", f"{P}/{c['id']}/terminate", h.admin, json={"reason": "fim", "effective_on": "2099-01-01"})
     assert ok.json()["data"]["status"] == "terminated"

@@ -148,6 +148,31 @@ def acting_header_of(request: Any) -> Optional[str]:
     return headers.get(ACTING_ORG_HEADER)
 
 
+class _Prefetched:
+    """A read issued ALONGSIDE the ``noctus_users`` row instead of after it (one Supabase round
+    trip of wall time saved on every gated request). Which branch consumes it is only known once
+    the row is in, so its outcome is held: :meth:`get` returns the value or re-raises the read's
+    own error at the point of use -- a branch that needs it fails closed exactly as a serial read
+    would; a branch that does not need it is never failed by it."""
+
+    __slots__ = ("_ok", "_value")
+
+    def __init__(self, fn: Callable[[], Any]) -> None:
+        try:
+            self._ok, self._value = True, fn()
+        except Exception as exc:  # held, re-raised by get() on the branch that reads it
+            self._ok, self._value = False, exc
+
+    def get(self) -> Any:
+        if not self._ok:
+            raise self._value
+        return self._value
+
+
+def _prefetch(fn: Callable[[], Any]) -> Callable[[], _Prefetched]:
+    return lambda: _Prefetched(fn)
+
+
 def _home_is_platform(core_client: Any, org_id: Any) -> bool:
     if not org_id:
         return False
@@ -226,21 +251,47 @@ def resolve_effective_org(
     """
     if user_id is None:
         return None
-    rows = (
-        _tbl(core_client, "noctus_users").select("org_id, org_role, role")
-        .eq("id", str(user_id)).limit(1).execute().data or []
-    )
+    from noctusai_lib.domain.licensing import CORE_SLUG
+
+    def _user_rows() -> list:
+        return (
+            _tbl(core_client, "noctus_users").select("org_id, org_role, role")
+            .eq("id", str(user_id)).limit(1).execute().data or []
+        )
+
+    picker = selection_store is not None and bool(product_slug) and product_slug != CORE_SLUG
+    ready = picker and bool(token) and selection_store.product_ready(product_slug)
+    # The reads below depend only on (user_id, product_slug), never on the row: issue them WITH
+    # the row read. Every branch that runs consumes the ones it needs (revocation by recheck is
+    # unchanged -- still fresh reads on this very request, never cached).
+    session_id: Optional[str] = None
+    aal = "aal1"
+    memberships = blocked = live = None
+    if not picker:
+        rows = _user_rows()
+    elif not ready:
+        rows, blocked = run_parallel(
+            _user_rows, _prefetch(lambda: selection_store.blocked_orgs(user_id, product_slug)),
+        )
+    else:
+        session_id, aal = read_session_claims(token, user_id=user_id)
+        sid = session_id
+        rows, memberships, blocked, live = run_parallel(
+            _user_rows,
+            _prefetch(lambda: selection_store.memberships(user_id)),
+            _prefetch(lambda: selection_store.blocked_orgs(user_id, product_slug)),
+            _prefetch(lambda: selection_store.live(user_id, product_slug) if sid else None),
+        )
     if not rows:
         return None
     row = rows[0]
     home = EffectiveOrg(org_id=row.get("org_id"), org_role=row.get("org_role"), home_org_id=row.get("org_id"))
-    from noctusai_lib.domain.licensing import CORE_SLUG
 
-    if selection_store is None or not product_slug or product_slug == CORE_SLUG:
+    if not picker:
         return home
-    if not token or not selection_store.product_ready(product_slug):
+    if not ready:
         # D5: a member blocked from this product in their home org is never served it.
-        if home.org_id and str(home.org_id) in selection_store.blocked_orgs(user_id, product_slug):
+        if home.org_id and str(home.org_id) in blocked.get():
             return EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
         return home
     if (
@@ -251,10 +302,9 @@ def resolve_effective_org(
         return _resolve_member(
             user_id, home, product_slug=product_slug, token=token, acting_header=acting_header,
             selection_store=selection_store, license_checker=license_checker,
-            require_selection=require_selection,
+            require_selection=require_selection, prefetched=(memberships, blocked, live),
         )
 
-    session_id, aal = read_session_claims(token, user_id=user_id)
     mfa_ok = aal == "aal2" or not selection_store.requires_mfa(product_slug)
     staff_home = EffectiveOrg(
         org_id=home.org_id, org_role=home.org_role, home_org_id=home.org_id,
@@ -262,7 +312,7 @@ def resolve_effective_org(
     )
     eff = staff_home
     if session_id and mfa_ok:
-        sel = selection_store.live(user_id, product_slug)
+        sel = live.get()
         if (
             sel is not None
             and sel.auth_session_id == session_id
@@ -292,6 +342,7 @@ def _resolve_member(
     selection_store: Any,
     license_checker: Any,
     require_selection: bool,
+    prefetched: tuple[_Prefetched, _Prefetched, _Prefetched],
 ) -> EffectiveOrg:
     """The effective org of a NON-staff user on a picker-ready product (S2 + owner D1/D5).
 
@@ -316,7 +367,7 @@ def _resolve_member(
     if is_customer_role(home.org_role):
         # An end customer never picks an org; the license gate judges home (SQL: the member
         # branch is skipped for a customer profile and the home rule answers NULL).
-        if home.org_id and str(home.org_id) in selection_store.blocked_orgs(user_id, product_slug):
+        if home.org_id and str(home.org_id) in prefetched[1].get():
             return EffectiveOrg(org_id=None, org_role=None, home_org_id=home.org_id)
         return _pinned(home)
     session_id, _aal = read_session_claims(token, user_id=user_id)
@@ -324,13 +375,9 @@ def _resolve_member(
     def licensed(org_id: Any) -> bool:
         return license_checker is None or bool(license_checker.has_license(org_id, product_slug))
 
-    # Three independent fresh reads (revocation by recheck: still never cached) issued
-    # together -- one round trip of wall time instead of three.
-    memberships, blocked, sel = run_parallel(
-        lambda: selection_store.memberships(user_id),
-        lambda: selection_store.blocked_orgs(user_id, product_slug),
-        lambda: selection_store.live(user_id, product_slug) if session_id else None,
-    )
+    # Three independent fresh reads (revocation by recheck: still never cached), issued by
+    # resolve_effective_org together with the noctus_users row -- one round trip, not four.
+    memberships, blocked, sel = (p.get() for p in prefetched)
     active = {str(m.org_id): m for m in memberships}
     eligible = {
         org: m for org, m in active.items()

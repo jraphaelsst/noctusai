@@ -79,6 +79,10 @@ def run_parallel(*thunks: Callable[[], Any]) -> list[Any]:
     Every thunk runs to completion before returning; if any raised, the FIRST (by argument
     order) exception is re-raised unchanged -- nothing is swallowed, no thunk is left running.
     ``contextvars`` are copied into each worker.
+
+    The FIRST thunk runs on the calling thread, the rest in the pool: a thunk that itself fans
+    out (the effective-org resolve inside ``/api/me/access``) then never parks a pool worker
+    waiting on pool children, so nesting cannot starve the pool -- and it costs one hand-off less.
     """
     if len(thunks) == 1:
         return [thunks[0]()]
@@ -88,9 +92,13 @@ def run_parallel(*thunks: Callable[[], Any]) -> list[Any]:
 
     futures = [
         _PARALLEL_POOL.submit(contextvars.copy_context().run, _timed, t, time.perf_counter())
-        for t in thunks
+        for t in thunks[1:]
     ]
     outcomes: list[tuple[bool, Any]] = []
+    try:
+        outcomes.append((True, _timed(thunks[0], time.perf_counter())))
+    except Exception as exc:  # re-raised below, after every pool thunk finished
+        outcomes.append((False, exc))
     for fut in futures:
         exc = fut.exception()
         outcomes.append((exc is None, exc if exc is not None else fut.result()))
