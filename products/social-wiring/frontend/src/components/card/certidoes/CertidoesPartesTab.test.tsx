@@ -161,6 +161,24 @@ describe("CertidoesPartesTab", () => {
     expect(screen.getByTestId("parte-stale-c:cli-1-cnd_federal").textContent).toContain("Emitida há 61 dias — vencida para contrato");
   });
 
+  it("shows a failed re-emission inline while the older evidence keeps the cell (F100)", async () => {
+    const p = parte();
+    p.celulas.cnd_federal = cel({
+      ...p.celulas.cnd_federal, emissao_automatica: true,
+      ultima_tentativa: { status: "erro", erro: "A API foi pausada temporariamente", em: "2026-10-24T20:29:00Z", resultado_id: "res-2" },
+    });
+    mockGet.mockResolvedValue(resp([p]));
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    const nota = screen.getByTestId("parte-ultima-tentativa-c:cli-1-cnd_federal").textContent ?? "";
+    expect(nota).toContain("Última emissão falhou: A API foi pausada temporariamente");
+    expect(nota).toContain("evidência anterior mantida");
+    expect(screen.getByTestId("parte-reemitir-c:cli-1-cnd_federal")).toBeTruthy();
+    expect(certidaoEmAndamento(p.celulas.cnd_federal)).toBe(false);
+    expect(certidaoEmAndamento({ ...p.celulas.cnd_federal, ultima_tentativa: { status: "processando", erro: null, em: null, resultado_id: "r" } })).toBe(true);
+  });
+
   it("re-emitir hits the contract path", async () => {
     mockGet.mockResolvedValue(resp([parte()]));
     render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });

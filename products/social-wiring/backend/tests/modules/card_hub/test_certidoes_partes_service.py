@@ -207,6 +207,78 @@ class TestVencedor:
 # ─── GET montar ───────────────────────────────────────────────────────────
 
 
+class TestUltimaTentativa:
+    """F100: a failed automatic re-emission behind older valid evidence."""
+
+    VELHA = {"id": "v", "tipo": "cnd_federal", "status": "sucesso", "emitida_em": "2026-08-06",
+             "created_at": "2026-08-06T10:00", "consulta_origem": "manual", "resultado_origem": "manual"}
+
+    def _erro(self, **over):
+        return {"id": "e", "tipo": "cnd_federal", "status": "erro", "emitida_em": None,
+                "created_at": "2026-10-24T20:29", "updated_at": "2026-10-24T20:30",
+                "consulta_origem": "cpf", "erro_mensagem": "A API foi pausada", **over}
+
+    def _celula(self, resultados):
+        por_tipo, _ = svc.indexar_vencedores(resultados)
+        t = svc.ultimas_tentativas(resultados, por_tipo)
+        return svc.montar_celula("cnd_federal", por_tipo["cnd_federal"], HOJE, 30, t.get("cnd_federal"))
+
+    def test_sucesso_antigo_vence_e_a_falha_nova_aparece(self):
+        c = self._celula([self.VELHA, self._erro()])
+        assert c["resultado_id"] == "v" and c["status_processamento"] == "sucesso"
+        assert c["ultima_tentativa"] == {
+            "status": "erro", "erro": "A API foi pausada", "em": "2026-10-24T20:30", "resultado_id": "e",
+        }
+
+    def test_sucesso_novo_vence_e_nao_ha_tentativa(self):
+        novo = {**self.VELHA, "id": "n", "emitida_em": "2026-10-24", "created_at": "2026-10-24T20:29",
+                "consulta_origem": "cpf", "resultado_origem": None}
+        c = self._celula([self.VELHA, novo])
+        assert c["resultado_id"] == "n" and c["ultima_tentativa"] is None
+
+    def test_celula_manual_sem_tentativa_automatica_intocada(self):
+        assert self._celula([self.VELHA])["ultima_tentativa"] is None
+
+    def test_erro_mais_velho_que_a_evidencia_nao_conta(self):
+        assert self._celula([self.VELHA, self._erro(created_at="2026-07-01")])["ultima_tentativa"] is None
+
+    def test_tentativa_em_andamento_e_exposta_sem_erro(self):
+        c = self._celula([self.VELHA, self._erro(status="processando", erro_mensagem=None)])
+        assert c["ultima_tentativa"]["status"] == "processando" and c["ultima_tentativa"]["erro"] is None
+
+    def test_tentativa_de_consulta_manual_nao_conta(self):
+        assert self._celula([self.VELHA, self._erro(consulta_origem="manual")])["ultima_tentativa"] is None
+
+
+class TestReemitirNaoClonaCelulasNaoPedidas:
+    def test_so_o_tipo_pedido_e_criado_e_serasa_vem_do_crednet(self, monkeypatch):
+        """`reemitir` inserts ONLY the requested tipo. A `serasa` row appearing
+        on the new consulta is `aplicar_crednet_pendente` applying the CPF's
+        stored Crednet (intentional, no API call, no billing)."""
+        inseridos: list = []
+
+        class _T:
+            def __init__(self, nome): self.nome = nome
+            def insert(self, dados):
+                inseridos.append((self.nome, dados))
+                class _E:
+                    def execute(_s):
+                        class _R: data = [{"id": "c1"}] if isinstance(dados, dict) else [{"id": "r1", "tipo": d["tipo"]} for d in dados]
+                        return _R()
+                return _E()
+
+        class _C:
+            def table(self, nome): return _T(nome)
+
+        aplicado: list = []
+        monkeypatch.setattr(svc.certidoes_svc, "aplicar_crednet_pendente", lambda *a: aplicado.append(a) or True)
+        monkeypatch.setattr(svc, "_dados_consulta", lambda *a: {})
+        parte = {"cliente_id": "cli", "empresa_id": None, "parte_id": None}
+        svc._criar_consulta_automatica(_C(), ORG_ID, "u", parte, [CERTIDOES_CONFIG[0]])
+        tipos = [d["tipo"] for n, d in inseridos if isinstance(d, list) for d in d]
+        assert tipos == [CERTIDOES_CONFIG[0]["tipo"]] and len(aplicado) == 1
+
+
 class TestMontar:
     def test_resposta_tem_os_campos_exatos_do_contrato(self, scoped):
         cid, aid, [vid] = _card(scoped)
@@ -230,7 +302,7 @@ class TestMontar:
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
             "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "pode_reler", "releitura", "arquivo_nome", "origem", "emitida_em_origem",
             "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia", "opcional",
-            "aguarda_humano", "emissao_automatica",
+            "aguarda_humano", "emissao_automatica", "ultima_tentativa",
         }
 
     def test_idade_contra_assinatura_data_do_contrato_e_hoje_se_ausente(self, scoped):

@@ -60,6 +60,9 @@ const clienteBase = (clienteId: string) => `/api/clientes/${encodeURIComponent(c
 export function certidaoEmAndamento(c: CertidaoParteCelula): boolean {
   const s = c.status_processamento;
   if (s === "processando" || s === "na_fila") return true;
+  // A re-emission in flight behind older valid evidence (the winner keeps the cell).
+  const t = c.ultima_tentativa?.status;
+  if (t === "processando" || t === "na_fila" || t === "pendente") return true;
   // A live emission's re-read keeps `sucesso`; its own marker says "running".
   if (c.releitura?.em_andamento) return true;
   // An untouched manual placeholder (`aguarda_humano`) is waiting on a person.

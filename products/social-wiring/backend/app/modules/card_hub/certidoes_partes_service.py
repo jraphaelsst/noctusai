@@ -279,6 +279,51 @@ def indexar_vencedores(resultados: list[dict]) -> tuple[dict[str, dict], dict[st
     return por_tipo, por_linha
 
 
+_TENTATIVA_STATUS = ("erro", "pendente", *_LENDO)
+
+
+def ultimas_tentativas(
+    resultados: list[dict], vencedores: dict[str, dict]
+) -> dict[str, dict]:
+    """`tipo -> ultima_tentativa` — the newest AUTOMATIC attempt that is NOT the
+    cell's winning evidence and was created AFTER it (F100).
+
+    `indexar_vencedores` lets a dated certidão beat an undated failed/in-flight
+    re-emission (so a re-emission can never destroy valid evidence), which also
+    made the failure INVISIBLE: the operator clicked "Re-emitir", it errored,
+    and the cell kept showing the old PDF with no hint. This is that hint:
+    `{status, erro, em, resultado_id}`. Never replaces the winner. Manual
+    consultas, custom rows, empty cancelled placeholders and credential
+    pendências (their own `pendencia` channel) are not attempts.
+    """
+    out: dict[str, dict] = {}
+    for r in resultados:
+        tipo = r.get("tipo")
+        if (
+            r.get("linha_customizada_id") or not _emissao_automatica(tipo, r)
+            or r.get("status") not in _TENTATIVA_STATUS
+            or _cancelado_vazio(r) or e_pendencia_de_credencial(r)
+        ):
+            continue
+        ganhador = vencedores.get(tipo)
+        if ganhador is None or ganhador.get("id") == r.get("id"):
+            continue
+        if str(r.get("created_at") or "") <= str(ganhador.get("created_at") or ""):
+            continue
+        atual = out.get(tipo)
+        if atual is None or str(r.get("created_at") or "") > str(atual["_criada"]):
+            out[tipo] = {
+                "status": r["status"],
+                "erro": r.get("erro_mensagem") if r["status"] == "erro" else None,
+                "em": r.get("updated_at") or r.get("created_at"),
+                "resultado_id": r.get("id"),
+                "_criada": r.get("created_at") or "",
+            }
+    for t in out.values():
+        t.pop("_criada")
+    return out
+
+
 def _na(tipo: Optional[str]) -> dict:
     return {
         "status": "na", "texto": "N/A", "tipo": tipo,
@@ -289,7 +334,7 @@ def _na(tipo: Optional[str]) -> dict:
         "arquivo_nome": None, "origem": None, "emitida_em_origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
         "segunda_via": False, "pcen": None, "pendencia": None,
-        "aguarda_humano": False, "emissao_automatica": False,
+        "aguarda_humano": False, "emissao_automatica": False, "ultima_tentativa": None,
     }
 
 
@@ -317,7 +362,10 @@ def _emissao_automatica(tipo: Optional[str], row: dict) -> bool:
     return bool(row.get("id")) and tipo in CONFIG_BY_TIPO and row.get("consulta_origem") != "manual"
 
 
-def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: int) -> dict:
+def montar_celula(
+    tipo: Optional[str], row: Optional[dict], hoje: date, limite: int,
+    tentativa: Optional[dict] = None,
+) -> dict:
     status, texto = _status_da_celula(row)
     row = row or {}
     if row.get("status") in _LENDO and row.get("resultado"):
@@ -368,6 +416,9 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "origem": _origem_da_celula(row),
         "aguarda_humano": _aguarda_humano(row),
         "emissao_automatica": _emissao_automatica(tipo, row),
+        # A newer automatic attempt that did not win the cell (failed / in
+        # flight) — see `ultimas_tentativas`. None when the winner IS the latest.
+        "ultima_tentativa": tentativa,
         # `metadados_pdf` = the date was INFERRED from the PDF CreationDate
         # (the consulta printed no date); None = printed / registry / typed.
         "emitida_em_origem": row.get("emitida_em_origem"),
@@ -458,6 +509,7 @@ def montar_parte(
 ) -> dict:
     exigencias = exigencias or {}
     por_tipo, por_linha = indexar_vencedores(resultados)
+    tentativas = ultimas_tentativas(resultados, por_tipo)
     celulas: dict[str, dict] = {}
     totais = {**{k: 0 for k in _TOTAL_CHAVES}, "vencidas": 0, "opcionais": 0}
     for linha in linhas:
@@ -466,11 +518,16 @@ def montar_parte(
             celulas[chave] = {**_na(linha.get("tipo")), "opcional": False}
             continue
         row = por_linha.get(chave) if linha["custom"] else por_tipo.get(chave)
-        celula = montar_celula(linha.get("tipo"), row, hoje, limite)
+        celula = montar_celula(
+            linha.get("tipo"), row, hoje, limite,
+            None if linha["custom"] else tentativas.get(linha.get("tipo")),
+        )
         celula["opcional"] = _opcional(parte, linha.get("tipo"), celula["status"], exigencias)
         celulas[chave] = celula
         lendo = celula["status_processamento"] in _LENDO
-        if celula["status_processamento"] == "erro":
+        if celula["status_processamento"] == "erro" or (
+            celula["ultima_tentativa"] and celula["ultima_tentativa"]["status"] == "erro"
+        ):
             # An overlay (the cell stays counted in its color bucket): how many
             # of the party's cells FAILED, for the summary line.
             totais["erros"] += 1
@@ -1261,11 +1318,20 @@ def reemitir_com_erro(
     alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
     partes = _todas_as_partes(client, org_id, cliente_id, alvo)
     parte = _achar_parte(partes, kind, str(alvo_id))
-    por_tipo, _por_linha = indexar_vencedores(_resultados_da_parte(client, org_id, parte))
+    resultados = _resultados_da_parte(client, org_id, parte)
+    por_tipo, _por_linha = indexar_vencedores(resultados)
     falhas = [
         r for r in por_tipo.values()
         if r.get("status") == "erro" and _emissao_automatica(r.get("tipo"), r)
         and not e_pendencia_de_credencial(r)
+    ]
+    # A failed re-emission hidden behind older valid evidence (F100) is a
+    # failure to retry too — in place, on its own row.
+    por_id = {r["id"]: r for r in resultados}
+    falhas += [
+        por_id[t["resultado_id"]]
+        for t in ultimas_tentativas(resultados, por_tipo).values()
+        if t["status"] == "erro" and t["resultado_id"] in por_id
     ]
     por_consulta: dict[str, list[str]] = {}
     for r in falhas:
@@ -1412,6 +1478,7 @@ __all__ = [
     "descartar_emissao",
     "garantir_celula",
     "indexar_vencedores",
+    "ultimas_tentativas",
     "max_dias",
     "montar",
     "montar_celula",

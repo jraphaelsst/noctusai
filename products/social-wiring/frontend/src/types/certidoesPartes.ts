@@ -72,6 +72,15 @@ export interface CertidaoParteCelula {
   /** The row belongs to a live InfoSimples emission (not a manual consulta): the
    *  only cells that can be cancelled, retried or discarded from the card. */
   emissao_automatica?: boolean;
+  /** A newer automatic attempt that did NOT win the cell (older valid evidence
+   *  is kept): failed (`erro`) or still in flight. Null/absent when the winner
+   *  is the latest. Never a polling-stop signal while in flight. */
+  ultima_tentativa?: {
+    status: "erro" | "pendente" | "processando" | "na_fila";
+    erro: string | null;
+    em: string | null;
+    resultado_id: string | null;
+  } | null;
 }
 
 export type CampoEstruturado = "numero" | "emitida_em" | "validade_ate" | "resultado";

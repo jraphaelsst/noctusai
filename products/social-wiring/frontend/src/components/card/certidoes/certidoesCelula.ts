@@ -159,7 +159,10 @@ export function podeDescartarEmissao(c: CertidaoParteCelula): boolean {
 /** A FAILED automatic cell — what "Reemitir com erro" retries in place. A cell
  *  waiting on a credential (`pendencia`) is a pendência, not a failure. */
 export function podeReemitirComErro(c: CertidaoParteCelula): boolean {
-  return !!c.resultado_id && !!c.emissao_automatica && c.status_processamento === "erro" && !c.pendencia;
+  if (c.pendencia) return false;
+  // A failed re-emission hidden behind older valid evidence counts too (F100).
+  if (c.ultima_tentativa?.status === "erro") return true;
+  return !!c.resultado_id && !!c.emissao_automatica && c.status_processamento === "erro";
 }
 
 /** Valid in date, or being emitted now: "emitir todas" does NOT buy it again. */
