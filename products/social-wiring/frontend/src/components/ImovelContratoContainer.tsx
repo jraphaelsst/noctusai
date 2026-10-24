@@ -7,8 +7,10 @@
  * presentational and is rendered in tests with plain objects and no query
  * client. This file fetches; those cards render.
  *
- * It owns four reads (título phrase, ônus creditor, previous owners, the CND
- * group) and three writes. The certidão UPLOAD reuses
+ * It owns its reads (título phrase, endereço, descrição do imóvel, ônus
+ * creditor, previous owners, the CND group) and their writes — including the
+ * migration-306 manual entries (descrição typed, certidão typed with no
+ * file). The certidão UPLOAD reuses
  * `useImovelDocumentoMutations` — the CND is an ordinary `imovel_documentos`
  * row, and a second upload path to the same endpoint is how two callers drift
  * apart on validation and cache invalidation.
@@ -17,14 +19,18 @@ import ImovelCertidoesCard from "@/components/imovel/ImovelCertidoesCard";
 import ImovelContratoCard from "@/components/imovel/ImovelContratoCard";
 import {
   useAntigosProprietarios,
+  useConfirmarDescricaoImovel,
   useConfirmarDocumentoExtracao,
   useConfirmarEnderecoRegistro,
   useConfirmarOnusCredor,
   useConfirmarTitulo,
   useConfirmarUltimaTransferenciaManual,
+  useDescricaoImovel,
   useEnderecoRegistro,
   useImovelCertidoes,
   useOnusCredor,
+  useRemoverCertidaoManual,
+  useSalvarCertidaoManual,
   useTituloAquisitivo,
 } from "@/hooks/useImovelContrato";
 import {
@@ -40,12 +46,16 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
   const onusQuery = useOnusCredor(codigo);
   const antigosQuery = useAntigosProprietarios(codigo);
   const certidoesQuery = useImovelCertidoes(codigo);
+  const descricaoQuery = useDescricaoImovel(codigo);
 
   const confirmarTitulo = useConfirmarTitulo(codigo);
   const confirmarEnderecoRegistro = useConfirmarEnderecoRegistro(codigo);
   const confirmarOnus = useConfirmarOnusCredor(codigo);
   const confirmarUltimaTransferencia = useConfirmarUltimaTransferenciaManual(codigo);
   const confirmarExtracao = useConfirmarDocumentoExtracao(codigo);
+  const confirmarDescricao = useConfirmarDescricaoImovel(codigo);
+  const salvarCertidaoManual = useSalvarCertidaoManual(codigo);
+  const removerCertidaoManual = useRemoverCertidaoManual(codigo);
   const documentoMutations = useImovelDocumentoMutations(codigo);
   // Shared cache entries with the page's own cards — no extra requests.
   const dadosQuery = useImovelDados(codigo);
@@ -74,6 +84,12 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
         enderecoRegistroIsError={enderecoRegistroQuery.isError && !enderecoRegistroQuery.data}
         savingEnderecoRegistro={confirmarEnderecoRegistro.isPending}
         onConfirmarEnderecoRegistro={(texto) => confirmarEnderecoRegistro.mutate(texto)}
+        descricao={descricaoQuery.data}
+        descricaoShowSkeleton={descricaoQuery.isPending && !descricaoQuery.data}
+        descricaoIsRefreshing={descricaoQuery.isFetching && !!descricaoQuery.data}
+        descricaoIsError={descricaoQuery.isError && !descricaoQuery.data}
+        savingDescricao={confirmarDescricao.isPending}
+        onConfirmarDescricao={(texto) => confirmarDescricao.mutate(texto)}
         onus={onusQuery.data}
         onusShowSkeleton={onusQuery.isPending && !onusQuery.data}
         onusIsRefreshing={onusQuery.isFetching && !!onusQuery.data}
@@ -100,11 +116,22 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
             ? (confirmarExtracao.variables?.documentoId ?? null)
             : null
         }
+        savingManualTipo={
+          salvarCertidaoManual.isPending
+            ? (salvarCertidaoManual.variables?.tipo ?? null)
+            : removerCertidaoManual.isPending
+              ? (removerCertidaoManual.variables?.tipo ?? null)
+              : null
+        }
         errorMessage={
           documentoMutations.upload.error?.message ??
           confirmarExtracao.error?.message ??
+          salvarCertidaoManual.error?.message ??
+          removerCertidaoManual.error?.message ??
           null
         }
+        onSalvarManual={(tipo, valores) => salvarCertidaoManual.mutate({ tipo, valores })}
+        onRemoverManual={(tipo) => removerCertidaoManual.mutate({ tipo })}
         onUpload={(file, tipoDocumento) =>
           documentoMutations.upload.mutate({ file, tipoDocumento })
         }

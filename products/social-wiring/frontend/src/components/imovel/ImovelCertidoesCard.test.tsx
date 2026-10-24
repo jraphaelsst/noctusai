@@ -40,6 +40,8 @@ async function render(props: Partial<Parameters<typeof ImovelCertidoesCard>[0]> 
   const rtl = await import("@testing-library/react");
   const onUpload = vi.fn();
   const onConfirmar = vi.fn();
+  const onSalvarManual = vi.fn();
+  const onRemoverManual = vi.fn();
   const view = rtl.render(
     <ImovelCertidoesCard
       certidoes={[certidao()]}
@@ -48,13 +50,16 @@ async function render(props: Partial<Parameters<typeof ImovelCertidoesCard>[0]> 
       isError={false}
       uploading={false}
       savingDocumentoId={null}
+      savingManualTipo={null}
       onUpload={onUpload}
       onConfirmar={onConfirmar}
+      onSalvarManual={onSalvarManual}
+      onRemoverManual={onRemoverManual}
       hoje={HOJE}
       {...props}
     />,
   );
-  return { ...rtl, ...view, onUpload, onConfirmar };
+  return { ...rtl, ...view, onUpload, onConfirmar, onSalvarManual, onRemoverManual };
 }
 
 describe("ImovelCertidoesCard — the 30-day office rule", () => {
@@ -166,5 +171,86 @@ describe("ImovelCertidoesCard — review and confirm", () => {
   it("shows the skeleton only on a genuine first load", async () => {
     const { getByTestId } = await render({ certidoes: undefined, showSkeleton: true });
     expect(getByTestId("imovel-certidoes-skeleton")).toBeTruthy();
+  });
+});
+
+describe("ImovelCertidoesCard — typed with no file (migration 306)", () => {
+  it("🔴 a tipo with no document offers 'Preencher manualmente' and saves the FULL record", async () => {
+    const { getByTestId, queryByTestId, fireEvent, onSalvarManual } = await render({
+      certidoes: [],
+    });
+    expect(queryByTestId("certidao-cnd_condominio")).toBeNull();
+    fireEvent.click(getByTestId("certidao-cnd_condominio-preencher-manual"));
+
+    const salvar = getByTestId("certidao-cnd_condominio-salvar-manual") as HTMLButtonElement;
+    // An all-empty record is refused by the backend — never sent.
+    expect(salvar.disabled).toBe(true);
+    // Only the tipo's own fields are offered (condomínio: emissão + resultado).
+    expect(queryByTestId("certidao-cnd_condominio-numero")).toBeNull();
+
+    fireEvent.change(getByTestId("certidao-cnd_condominio-emitida_em"), {
+      target: { value: "2026-03-25" },
+    });
+    expect(salvar.disabled).toBe(false);
+    fireEvent.click(salvar);
+    expect(onSalvarManual).toHaveBeenCalledWith("cnd_condominio", {
+      emitida_em: "2026-03-25",
+      resultado: null,
+    });
+  });
+
+  it("cancelling a new typed entry returns to the empty state", async () => {
+    const { getByTestId, queryByTestId, fireEvent } = await render({ certidoes: [] });
+    fireEvent.click(getByTestId("certidao-matricula-preencher-manual"));
+    fireEvent.click(getByTestId("certidao-matricula-cancelar-manual"));
+    expect(queryByTestId("certidao-matricula-salvar-manual")).toBeNull();
+    expect(getByTestId("certidao-matricula-ausente")).toBeTruthy();
+  });
+
+  it("a typed reading is marked 'sem arquivo', edits through the manual route and can be removed", async () => {
+    const { getByTestId, queryByTestId, fireEvent, onSalvarManual, onConfirmar, onRemoverManual } =
+      await render({
+        certidoes: [
+          certidao({
+            tipo: "matricula",
+            documento_id: null,
+            numero: null,
+            validade_ate: null,
+            resultado: null,
+            inscricao_imobiliaria: null,
+            emitida_em: "2026-03-20",
+            confirmado: true,
+            sem_arquivo: true,
+            manual_id: "m-1",
+          }),
+        ],
+      });
+    expect(getByTestId("certidao-matricula-manual").textContent).toContain("sem arquivo");
+    expect(queryByTestId("certidao-matricula-confirmar")).toBeNull();
+    // Unchanged → nothing to save.
+    const salvar = getByTestId("certidao-matricula-salvar-manual") as HTMLButtonElement;
+    expect(salvar.disabled).toBe(true);
+
+    fireEvent.change(getByTestId("certidao-matricula-emitida_em"), {
+      target: { value: "2026-03-28" },
+    });
+    fireEvent.click(salvar);
+    expect(onSalvarManual).toHaveBeenCalledWith("matricula", { emitida_em: "2026-03-28" });
+    expect(onConfirmar).not.toHaveBeenCalled();
+
+    fireEvent.click(getByTestId("certidao-matricula-remover-manual"));
+    expect(onRemoverManual).toHaveBeenCalledWith("matricula");
+  });
+
+  it("shows the in-flight state on the typed entry being saved", async () => {
+    const { getByTestId } = await render({
+      certidoes: [
+        certidao({ tipo: "cnd_condominio", documento_id: null, sem_arquivo: true, manual_id: "m-2" }),
+      ],
+      savingManualTipo: "cnd_condominio",
+    });
+    expect((getByTestId("certidao-cnd_condominio-remover-manual") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 });

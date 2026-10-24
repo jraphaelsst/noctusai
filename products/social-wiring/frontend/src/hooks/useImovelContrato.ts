@@ -25,6 +25,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@noctusai/seed/infra";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type { AtoConfianca, AtoParte, MatriculaActor } from "@/hooks/useMatriculaEstrutura";
 import { readableError } from "@/hooks/useMatriculas";
@@ -204,6 +205,18 @@ export interface EnderecoRegistroResponse {
   confirmado: ConfirmacaoTexto | null;
 }
 
+/** `GET/PUT .../descricao-imovel` (migration 306) — the IMÓVEL: description
+ *  the contract's OBJETO clause quotes. `derivado` is the matrícula abertura's
+ *  own block; `confirmado` is what an operator typed, which WINS in the
+ *  contract and is never replaced by a later transcription. */
+export interface DescricaoImovelResponse {
+  codigo: string;
+  derivado: string | null;
+  confirmado: ConfirmacaoTexto | null;
+  efetivo: string | null;
+  origem: "manual" | "matricula" | null;
+}
+
 /** The RAW manual-override state (migration 152) — reported even when a
  *  derivation from the matrícula's acts is the EFFECTIVE source, so the
  *  property page's form can show/edit it either way. `null` = never set. */
@@ -211,6 +224,8 @@ export interface UltimaTransferenciaManual {
   data_registro: string | null;
   natureza: string | null;
   sem_registro: boolean;
+  /** Migration 306 — who sold, typed (names only). */
+  transmitentes?: string[];
   confirmado_por: MatriculaActor | null;
   confirmado_em: string | null;
 }
@@ -236,6 +251,9 @@ export interface AntigosProprietariosResponse {
    *  the confirmed título act, a scan of the extraction's other acts, or
    *  the manual override. `null` when nothing resolved it at all. */
   origem: "titulo_confirmado" | "extracao" | "manual" | null;
+  /** Migration 306 — who answered `transmitentes`: the act, or names an
+   *  operator typed (which win). `null` when nobody is known. */
+  transmitentes_origem?: "matricula" | "manual" | null;
   manual: UltimaTransferenciaManual | null;
 }
 
@@ -253,7 +271,8 @@ export const RESULTADO_LABEL: Record<string, string> = {
 /** One tipo's latest structured read (`GET /{codigo}/certidoes`). */
 export interface ImovelCertidao {
   tipo: string;
-  documento_id: string;
+  /** `null` for a certidão typed with no file (migration 306). */
+  documento_id: string | null;
   numero: string | null;
   emitida_em: string | null;
   validade_ate: string | null;
@@ -261,6 +280,15 @@ export interface ImovelCertidao {
   inscricao_imobiliaria: string | null;
   /** True once an operator confirmed the read (`origem = 'manual'`). */
   confirmado: boolean;
+  /** Migration 306 — typed with no file (`documento_id` is then `null`). */
+  sem_arquivo?: boolean;
+  manual_id?: string | null;
+}
+
+/** `GET /{codigo}/certidoes` envelope (`/api/imoveis/...` — no `data`). */
+export interface ImovelCertidoesResponse {
+  items: ImovelCertidao[];
+  total: number;
 }
 
 /**
@@ -358,6 +386,8 @@ const ONUS_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "onus-credor"] as c
 const ANTIGOS_KEY = (codigo: string) =>
   [...FAMILY_KEY(codigo), "antigos-proprietarios"] as const;
 const CERTIDOES_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "certidoes"] as const;
+const DESCRICAO_KEY = (codigo: string) =>
+  [...FAMILY_KEY(codigo), "descricao-imovel"] as const;
 
 const matriculasBase = (codigo: string) =>
   `/api/matriculas/imoveis/${encodeURIComponent(codigo)}`;
@@ -382,6 +412,17 @@ export function useEnderecoRegistro(codigo: string | null) {
     queryFn: async () => {
       const result = await api.get(`${matriculasBase(codigo as string)}/endereco-registro`);
       return result.data as EnderecoRegistroResponse;
+    },
+    enabled: !!codigo,
+  });
+}
+
+export function useDescricaoImovel(codigo: string | null) {
+  return useQuery({
+    queryKey: DESCRICAO_KEY(codigo ?? "__none__"),
+    queryFn: async () => {
+      const result = await api.get(`${matriculasBase(codigo as string)}/descricao-imovel`);
+      return result.data as DescricaoImovelResponse;
     },
     enabled: !!codigo,
   });
@@ -416,7 +457,7 @@ export function useImovelCertidoes(codigo: string | null) {
     queryKey: CERTIDOES_KEY(codigo ?? "__none__"),
     queryFn: async () => {
       // `/api/imoveis/...` answers `{items, total}` directly — no `data`.
-      const res = await api.get<{ items: ImovelCertidao[]; total: number }>(
+      const res = await api.get<ImovelCertidoesResponse>(
         `${imoveisBase(codigo as string)}/certidoes`,
       );
       return res?.items ?? [];
@@ -467,6 +508,24 @@ export function useConfirmarEnderecoRegistro(codigo: string) {
   });
 }
 
+/** `PUT .../descricao-imovel` (migration 306) — `texto: null` clears the
+ *  typed override (the matrícula's own block answers again). The PUT
+ *  re-reads and returns the whole shape, which is committed to the cache. */
+export function useConfirmarDescricaoImovel(codigo: string) {
+  return useCacheWriteMutation<DescricaoImovelResponse, string | null>({
+    mutationFn: async (texto) => {
+      const result = await api.put(`${matriculasBase(codigo)}/descricao-imovel`, { texto });
+      return result.data as DescricaoImovelResponse;
+    },
+    targets: [{ queryKey: DESCRICAO_KEY(codigo), commit: (_old, data) => data }],
+    onError: (error: Error) => {
+      toast.error("Não foi possível salvar a descrição do imóvel", {
+        description: readableError(error),
+      });
+    },
+  });
+}
+
 /** `PUT .../onus-credor` — `credor: null` clears the confirmation. */
 export function useConfirmarOnusCredor(codigo: string) {
   const qc = useQueryClient();
@@ -498,11 +557,14 @@ export function useConfirmarUltimaTransferenciaManual(codigo: string) {
       data: string | null;
       natureza: NaturezaUltimaTransferencia | null;
       semRegistro: boolean;
+      /** Migration 306 — who sold, typed. The PUT is a full replace. */
+      transmitentes?: string[];
     }): Promise<AntigosProprietariosResponse> => {
       const result = await api.put(`${matriculasBase(codigo)}/ultima-transferencia`, {
         data: input.data,
         natureza: input.natureza,
         sem_registro: input.semRegistro,
+        transmitentes: input.transmitentes ?? [],
       });
       return result.data as AntigosProprietariosResponse;
     },
@@ -545,6 +607,56 @@ export function useConfirmarDocumentoExtracao(codigo: string) {
     },
     onError: (error: Error) => {
       toast.error("Não foi possível confirmar a certidão", {
+        description: readableError(error),
+      });
+    },
+  });
+}
+
+/**
+ * `PUT .../certidoes/{tipo}/manual` (migration 306) — type a certidão's
+ * fields with NO file. A FULL replace of the typed record (send every field
+ * the tipo carries; `null` = empty). The server answers the refreshed
+ * certidões read, which is committed to the cache — the typed values are on
+ * screen after one round trip.
+ */
+export function useSalvarCertidaoManual(codigo: string) {
+  return useCacheWriteMutation<
+    ImovelCertidoesResponse,
+    { tipo: string; valores: DocumentoExtracaoPatch }
+  >({
+    mutationFn: ({ tipo, valores }) =>
+      api.put<ImovelCertidoesResponse>(
+        `${imoveisBase(codigo)}/certidoes/${encodeURIComponent(tipo)}/manual`,
+        valores,
+      ),
+    targets: [{ queryKey: CERTIDOES_KEY(codigo), commit: (_old, res) => res?.items ?? [] }],
+    onError: (error: Error) => {
+      toast.error("Não foi possível salvar a certidão", {
+        description: readableError(error),
+      });
+    },
+  });
+}
+
+/** `DELETE .../certidoes/{tipo}/manual` — drop the typed record; the newest
+ *  uploaded document of that tipo (if any) answers again. */
+export function useRemoverCertidaoManual(codigo: string) {
+  return useCacheWriteMutation<ImovelCertidoesResponse, { tipo: string }>({
+    mutationFn: ({ tipo }) =>
+      api.delete<ImovelCertidoesResponse>(
+        `${imoveisBase(codigo)}/certidoes/${encodeURIComponent(tipo)}/manual`,
+      ),
+    targets: [
+      {
+        queryKey: CERTIDOES_KEY(codigo),
+        optimistic: (old: ImovelCertidao[] | undefined, { tipo }) =>
+          old?.filter((c) => !(c.tipo === tipo && c.sem_arquivo)),
+        commit: (_old, res) => res?.items ?? [],
+      },
+    ],
+    onError: (error: Error) => {
+      toast.error("Não foi possível remover a certidão informada", {
         description: readableError(error),
       });
     },

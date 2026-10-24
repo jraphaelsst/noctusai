@@ -20,10 +20,26 @@
  * field the backend refuses turns a review screen into a 400 the operator
  * cannot act on.
  *
+ * 🔴 NEVER UPLOAD-ONLY (migration 306, owner directive 2026-10-24)
+ * -----------------------------------------------------------------
+ * Every field here can be typed with NO file: "Preencher manualmente" opens
+ * the same editor and saves a typed record (`PUT .../certidoes/{tipo}/
+ * manual`) that the contract reads exactly like an uploaded one. A typed
+ * record is marked "sem arquivo" and can be removed; an upload made later
+ * supersedes it.
+ *
  * PRESENTATIONAL: props in, callbacks out. `ImovelContratoContainer` fetches.
  */
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileCheck2, Loader2, Sparkles, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FileCheck2,
+  Loader2,
+  PencilLine,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { useRef } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -90,6 +106,12 @@ export interface ImovelCertidoesCardProps {
     tipo: string,
     patch: DocumentoExtracaoPatch,
   ) => void;
+  /** Migration 306 — the tipo whose typed record is being saved/removed. */
+  savingManualTipo: string | null;
+  /** Save a certidão typed with no file — a FULL record of the tipo's fields. */
+  onSalvarManual: (tipo: string, valores: DocumentoExtracaoPatch) => void;
+  /** Drop the typed record (the newest upload, if any, answers again). */
+  onRemoverManual: (tipo: string) => void;
   /** Test seam for the 30-day rule — defaults to now. */
   hoje?: Date;
 }
@@ -143,6 +165,39 @@ export function buildCertidaoPatch(
   return patch;
 }
 
+/**
+ * The FULL typed record for `PUT .../certidoes/{tipo}/manual` — every field
+ * the tipo carries, empty ones as `null`. `null` when every field is empty
+ * (the backend refuses an all-empty record).
+ */
+function buildCertidaoManual(
+  draft: Draft,
+  campos: readonly (keyof DocumentoExtracaoPatch)[],
+): DocumentoExtracaoPatch | null {
+  const registro: DocumentoExtracaoPatch = {};
+  for (const campo of campos) {
+    const bruto = draft[campo] ?? "";
+    registro[campo] = (campo === "resultado" && bruto === SEM_RESULTADO ? null : limpo(bruto)) as never;
+  }
+  return Object.values(registro).every((v) => v === null) ? null : registro;
+}
+
+/** An empty reading — the starting point of "Preencher manualmente". */
+function certidaoVazia(tipo: string): ImovelCertidao {
+  return {
+    tipo,
+    documento_id: null,
+    numero: null,
+    emitida_em: null,
+    validade_ate: null,
+    resultado: null,
+    inscricao_imobiliaria: null,
+    confirmado: false,
+    sem_arquivo: true,
+    manual_id: null,
+  };
+}
+
 function CertidaoEditor({
   tipo,
   label,
@@ -150,6 +205,9 @@ function CertidaoEditor({
   saving,
   hoje,
   onConfirmar,
+  onSalvarManual,
+  onRemoverManual,
+  onCancelar,
 }: {
   tipo: string;
   label: string;
@@ -157,7 +215,14 @@ function CertidaoEditor({
   saving: boolean;
   hoje: Date;
   onConfirmar: (documentoId: string, tipo: string, patch: DocumentoExtracaoPatch) => void;
+  onSalvarManual: (tipo: string, valores: DocumentoExtracaoPatch) => void;
+  onRemoverManual: (tipo: string) => void;
+  /** Only for a NEW typed entry (nothing saved yet): close the editor. */
+  onCancelar?: () => void;
 }) {
+  // A reading with no document (typed, or being typed) saves through the
+  // manual route; an uploaded one keeps the PATCH-the-document path.
+  const manual = certidao.documento_id === null;
   const campos = CAMPOS_POR_TIPO[tipo] ?? [];
   const [draft, setDraft] = useState<Draft>(() => toDraft(certidao, campos));
 
@@ -171,6 +236,7 @@ function CertidaoEditor({
 
   const patch = buildCertidaoPatch(draft, certidao, campos);
   const semAlteracoes = Object.keys(patch).length === 0;
+  const registroManual = manual ? buildCertidaoManual(draft, campos) : null;
   const dias = diasDesdeEmissao(certidao.emitida_em, hoje);
   const velha = certidaoDesatualizada(certidao.emitida_em, hoje);
 
@@ -178,7 +244,12 @@ function CertidaoEditor({
     <div className="space-y-2 rounded-md border p-2.5" data-testid={`certidao-${tipo}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">{label}</p>
-        {certidao.confirmado ? (
+        {manual ? (
+          <Badge variant="secondary" className="gap-1 text-[10px]" data-testid={`certidao-${tipo}-manual`}>
+            <PencilLine className="h-3 w-3" />
+            Informada manualmente — sem arquivo
+          </Badge>
+        ) : certidao.confirmado ? (
           <Badge variant="secondary" className="gap-1 text-[10px]" data-testid={`certidao-${tipo}-confirmada`}>
             <CheckCircle2 className="h-3 w-3" />
             Conferida
@@ -213,7 +284,9 @@ function CertidaoEditor({
       )}
       {certidao.emitida_em === null && (
         <p className="text-[11px] text-muted-foreground" data-testid={`certidao-${tipo}-sem-data`}>
-          A data de emissão não foi lida — informe-a para conferir o prazo de 30 dias.
+          {manual
+            ? "Informe a data de emissão para conferir o prazo de 30 dias."
+            : "A data de emissão não foi lida — informe-a para conferir o prazo de 30 dias."}
         </p>
       )}
 
@@ -265,23 +338,68 @@ function CertidaoEditor({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          disabled={saving}
-          onClick={() => onConfirmar(certidao.documento_id, tipo, patch)}
-          data-testid={`certidao-${tipo}-confirmar`}
-        >
-          {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-          {semAlteracoes ? "Confirmar como está" : "Salvar e confirmar"}
-        </Button>
-        <span className="text-[11px] text-muted-foreground">
-          {semAlteracoes
-            ? "Nada alterado — confirma a leitura atual."
-            : `${Object.keys(patch).length} campo(s) alterado(s).`}
-        </span>
-      </div>
+      {manual ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={saving || registroManual === null || (!!certidao.manual_id && semAlteracoes)}
+            onClick={() => registroManual && onSalvarManual(tipo, registroManual)}
+            data-testid={`certidao-${tipo}-salvar-manual`}
+          >
+            {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            Salvar
+          </Button>
+          {certidao.manual_id ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={saving}
+              onClick={() => onRemoverManual(tipo)}
+              data-testid={`certidao-${tipo}-remover-manual`}
+            >
+              Remover
+            </Button>
+          ) : (
+            onCancelar && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={saving}
+                onClick={onCancelar}
+                data-testid={`certidao-${tipo}-cancelar-manual`}
+              >
+                Cancelar
+              </Button>
+            )
+          )}
+          <span className="text-[11px] text-muted-foreground">
+            {registroManual === null
+              ? "Preencha ao menos um campo."
+              : "Sem arquivo — enviar um documento depois substitui estes dados."}
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={saving}
+            onClick={() => onConfirmar(certidao.documento_id as string, tipo, patch)}
+            data-testid={`certidao-${tipo}-confirmar`}
+          >
+            {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {semAlteracoes ? "Confirmar como está" : "Salvar e confirmar"}
+          </Button>
+          <span className="text-[11px] text-muted-foreground">
+            {semAlteracoes
+              ? "Nada alterado — confirma a leitura atual."
+              : `${Object.keys(patch).length} campo(s) alterado(s).`}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -296,8 +414,19 @@ export default function ImovelCertidoesCard({
   errorMessage,
   onUpload,
   onConfirmar,
+  savingManualTipo,
+  onSalvarManual,
+  onRemoverManual,
   hoje = new Date(),
 }: ImovelCertidoesCardProps) {
+  // Tipos whose "Preencher manualmente" editor is open with nothing saved yet.
+  const [manualAberto, setManualAberto] = useState<ReadonlySet<string>>(new Set());
+  const fecharManual = (tipo: string) =>
+    setManualAberto((atual) => {
+      const proximo = new Set(atual);
+      proximo.delete(tipo);
+      return proximo;
+    });
   // Its own input, held by a ref — never a shared `getElementById`, same
   // reason `ImovelDocumentosCard` documents: a shared input files every
   // card's upload onto whichever one rendered it.
@@ -305,6 +434,18 @@ export default function ImovelCertidoesCard({
   const [tipoUpload, setTipoUpload] = useState<string>(TIPOS_UPLOAD[0].value);
 
   const porTipo = new Map((certidoes ?? []).map((c) => [c.tipo, c]));
+
+  // Once a tipo has a reading (the typed one just saved, or an upload), its
+  // "new entry" editor is done — so removing it later shows the empty state,
+  // not a stale blank form.
+  const tiposComLeitura = (certidoes ?? []).map((c) => c.tipo).join(",");
+  useEffect(() => {
+    const presentes = new Set(tiposComLeitura.split(","));
+    setManualAberto((atual) => {
+      const proximo = new Set([...atual].filter((t) => !presentes.has(t)));
+      return proximo.size === atual.size ? atual : proximo;
+    });
+  }, [tiposComLeitura]);
 
   return (
     <Card>
@@ -383,18 +524,47 @@ export default function ImovelCertidoesCard({
         ) : (
           TIPOS_CERTIDAO.map(({ value, label }) => {
             const certidao = porTipo.get(value);
+            if (!certidao && manualAberto.has(value)) {
+              return (
+                <CertidaoEditor
+                  key={value}
+                  tipo={value}
+                  label={label}
+                  certidao={certidaoVazia(value)}
+                  saving={savingManualTipo === value}
+                  hoje={hoje}
+                  onConfirmar={onConfirmar}
+                  onSalvarManual={onSalvarManual}
+                  onRemoverManual={onRemoverManual}
+                  onCancelar={() => fecharManual(value)}
+                />
+              );
+            }
             if (!certidao) {
               return (
-                <p
+                <div
                   key={value}
-                  className="rounded-md border border-dashed p-2.5 text-xs text-muted-foreground"
+                  className="space-y-1.5 rounded-md border border-dashed p-2.5 text-xs text-muted-foreground"
                   data-testid={`certidao-${value}-ausente`}
                 >
-                  {label}: nenhum documento enviado.
-                  {value === "matricula"
-                    ? " Envie a matrícula em Documentos do imóvel."
-                    : " Envie o arquivo acima para ler número, data e resultado."}
-                </p>
+                  <p>
+                    {label}: nenhum documento enviado.
+                    {value === "matricula"
+                      ? " Envie a matrícula em Documentos do imóvel, ou informe os dados."
+                      : " Envie o arquivo acima para ler número, data e resultado, ou informe os dados."}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => setManualAberto((atual) => new Set(atual).add(value))}
+                    data-testid={`certidao-${value}-preencher-manual`}
+                  >
+                    <PencilLine className="mr-1.5 h-3 w-3" />
+                    Preencher manualmente
+                  </Button>
+                </div>
               );
             }
             return (
@@ -403,9 +573,15 @@ export default function ImovelCertidoesCard({
                 tipo={value}
                 label={label}
                 certidao={certidao}
-                saving={savingDocumentoId === certidao.documento_id}
+                saving={
+                  certidao.documento_id === null
+                    ? savingManualTipo === value
+                    : savingDocumentoId === certidao.documento_id
+                }
                 hoje={hoje}
                 onConfirmar={onConfirmar}
+                onSalvarManual={onSalvarManual}
+                onRemoverManual={onRemoverManual}
               />
             );
           })

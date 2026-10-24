@@ -93,6 +93,7 @@ async function render(props: Record<string, unknown> = {}) {
   const onConfirmarEnderecoRegistro = vi.fn();
   const onConfirmarOnusCredor = vi.fn();
   const onConfirmarUltimaTransferenciaManual = vi.fn();
+  const onConfirmarDescricao = vi.fn();
   const view = rtl.render(
     React.createElement(
       MemoryRouter,
@@ -111,6 +112,18 @@ async function render(props: Record<string, unknown> = {}) {
         enderecoRegistroIsError: false,
         savingEnderecoRegistro: false,
         onConfirmarEnderecoRegistro,
+        descricao: {
+          codigo: "AP1234",
+          derivado: "Apartamento ficticio nº 12, com 80,00 m² de área privativa.",
+          confirmado: null,
+          efetivo: "Apartamento ficticio nº 12, com 80,00 m² de área privativa.",
+          origem: "matricula",
+        },
+        descricaoShowSkeleton: false,
+        descricaoIsRefreshing: false,
+        descricaoIsError: false,
+        savingDescricao: false,
+        onConfirmarDescricao,
         onus: onus(),
         onusShowSkeleton: false,
         onusIsRefreshing: false,
@@ -133,6 +146,7 @@ async function render(props: Record<string, unknown> = {}) {
     onConfirmarEnderecoRegistro,
     onConfirmarOnusCredor,
     onConfirmarUltimaTransferenciaManual,
+    onConfirmarDescricao,
   };
 }
 
@@ -462,6 +476,7 @@ describe("ImovelContratoCard — última transferência (manual override, migrat
       data: "2023-07-11",
       natureza: null,
       semRegistro: false,
+      transmitentes: [],
     });
   });
 
@@ -479,6 +494,7 @@ describe("ImovelContratoCard — última transferência (manual override, migrat
       data: null,
       natureza: null,
       semRegistro: true,
+      transmitentes: [],
     });
   });
 
@@ -504,6 +520,7 @@ describe("ImovelContratoCard — última transferência (manual override, migrat
       data: null,
       natureza: null,
       semRegistro: false,
+      transmitentes: [],
     });
   });
 
@@ -545,5 +562,120 @@ describe("ImovelContratoCard — vinculo_legal markers", () => {
   it("no markers without a vínculo", async () => {
     const { queryByTestId } = await render();
     expect(queryByTestId("vinculo-legal-titulo_aquisitivo_texto")).toBeNull();
+  });
+});
+
+describe("ImovelContratoCard — descrição do imóvel (migration 306)", () => {
+  it("shows the matrícula's reading and confirms the typed text, which the operator can always enter", async () => {
+    const { getByTestId, fireEvent, onConfirmarDescricao } = await render();
+    expect(getByTestId("imovel-descricao-derivado").textContent).toContain("Apartamento ficticio");
+    // Not pre-filled with the reading: a reading is not a decision.
+    expect((getByTestId("imovel-descricao-texto") as HTMLTextAreaElement).value).toBe("");
+
+    fireEvent.change(getByTestId("imovel-descricao-texto"), {
+      target: { value: "  Casa ficticia nº 7, com 300,00 m² de terreno.  " },
+    });
+    fireEvent.click(getByTestId("imovel-descricao-confirmar"));
+    expect(onConfirmarDescricao).toHaveBeenCalledWith(
+      "Casa ficticia nº 7, com 300,00 m² de terreno.",
+    );
+  });
+
+  it("copies the reading into the editable field on request", async () => {
+    const { getByTestId, fireEvent } = await render();
+    fireEvent.click(getByTestId("imovel-descricao-usar-derivado"));
+    expect((getByTestId("imovel-descricao-texto") as HTMLTextAreaElement).value).toContain(
+      "Apartamento ficticio",
+    );
+  });
+
+  it("with no transcription, says so and still lets the operator type it", async () => {
+    const { getByTestId, queryByTestId } = await render({
+      descricao: { codigo: "AP1234", derivado: null, confirmado: null, efetivo: null, origem: null },
+    });
+    expect(getByTestId("imovel-descricao-sem-derivado")).toBeTruthy();
+    expect(queryByTestId("imovel-descricao-derivado")).toBeNull();
+    expect((getByTestId("imovel-descricao-confirmar") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("seeds the field from the typed override, names who confirmed it, and Limpar sends null", async () => {
+    const { getByTestId, fireEvent, onConfirmarDescricao } = await render({
+      descricao: {
+        codigo: "AP1234",
+        derivado: null,
+        confirmado: {
+          texto: "Casa ficticia nº 7.",
+          confirmado_por: { id: "u1", nome: "Ana" },
+          confirmado_em: "2026-10-24T10:00:00Z",
+        },
+        efetivo: "Casa ficticia nº 7.",
+        origem: "manual",
+      },
+    });
+    expect((getByTestId("imovel-descricao-texto") as HTMLTextAreaElement).value).toBe(
+      "Casa ficticia nº 7.",
+    );
+    expect(getByTestId("imovel-descricao-confirmado").textContent).toContain("Ana");
+    fireEvent.click(getByTestId("imovel-descricao-limpar"));
+    expect(onConfirmarDescricao).toHaveBeenCalledWith(null);
+  });
+
+  it("has loading and error states", async () => {
+    const loading = await render({ descricaoShowSkeleton: true });
+    expect(loading.getByTestId("imovel-descricao-skeleton")).toBeTruthy();
+    expect(loading.queryByTestId("imovel-descricao-texto")).toBeNull();
+    loading.unmount();
+    const erro = await render({ descricaoIsError: true });
+    expect(erro.getByTestId("imovel-descricao-erro")).toBeTruthy();
+  });
+});
+
+describe("ImovelContratoCard — vendedores typed (migration 306)", () => {
+  it("🔴 typed names alone are a valid override, sent one per line, blanks dropped", async () => {
+    const { getByTestId, fireEvent, onConfirmarUltimaTransferenciaManual } = await render({
+      antigos: antigos({ manual: null }),
+    });
+    fireEvent.change(getByTestId("imovel-ultima-transferencia-transmitentes"), {
+      target: { value: " Fulano Ficticio \n\nBeltrana Ficticia" },
+    });
+    const confirmar = getByTestId("imovel-ultima-transferencia-confirmar") as HTMLButtonElement;
+    expect(confirmar.disabled).toBe(false);
+    fireEvent.click(confirmar);
+    expect(onConfirmarUltimaTransferenciaManual).toHaveBeenCalledWith({
+      data: null,
+      natureza: null,
+      semRegistro: false,
+      transmitentes: ["Fulano Ficticio", "Beltrana Ficticia"],
+    });
+  });
+
+  it("seeds the names from the override and marks typed sellers in the list", async () => {
+    const { getByTestId } = await render({
+      antigos: antigos({
+        transmitentes: [{ nome: "Fulano Ficticio", cpf_cnpj: null }],
+        transmitentes_origem: "manual",
+        manual: {
+          data_registro: null,
+          natureza: null,
+          sem_registro: false,
+          transmitentes: ["Fulano Ficticio"],
+          confirmado_por: { id: "u1", nome: "Ana" },
+          confirmado_em: "2026-10-24T10:00:00Z",
+        },
+      }),
+    });
+    expect(
+      (getByTestId("imovel-ultima-transferencia-transmitentes") as HTMLTextAreaElement).value,
+    ).toBe("Fulano Ficticio");
+    expect(getByTestId("imovel-antigos-transmitentes-manual")).toBeTruthy();
+  });
+
+  it("checking 'não consta' clears and disables the names", async () => {
+    const { getByTestId, fireEvent } = await render({ antigos: antigos({ manual: null }) });
+    const campo = getByTestId("imovel-ultima-transferencia-transmitentes") as HTMLTextAreaElement;
+    fireEvent.change(campo, { target: { value: "Fulano Ficticio" } });
+    fireEvent.click(getByTestId("imovel-ultima-transferencia-sem-registro"));
+    expect(campo.value).toBe("");
+    expect(campo.disabled).toBe(true);
   });
 });

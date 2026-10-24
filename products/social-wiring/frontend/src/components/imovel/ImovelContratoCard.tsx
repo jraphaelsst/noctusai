@@ -1,7 +1,8 @@
 /**
- * `<ImovelContratoCard/>` — the three answers a contract needs from this
- * imóvel's matrícula (migration 115): the título aquisitivo phrase, the ônus
- * creditor, and who sold it last.
+ * `<ImovelContratoCard/>` — the answers a contract needs from this imóvel's
+ * matrícula (migration 115): the título aquisitivo phrase, the ônus creditor,
+ * who sold it last — and (migration 306) the IMÓVEL: description, which an
+ * operator can always TYPE: no field here is upload-only.
  *
  * 🔴 SUGGESTION AND CONFIRMATION ARE SHOWN SIDE BY SIDE, NEVER COLLAPSED
  * ----------------------------------------------------------------------
@@ -54,6 +55,7 @@ import {
   NATUREZA_ULTIMA_TRANSFERENCIA_LABEL,
   motivoSemSugestaoTexto,
   type AntigosProprietariosResponse,
+  type DescricaoImovelResponse,
   type EnderecoRegistroResponse,
   type NaturezaUltimaTransferencia,
   type OnusCredorResponse,
@@ -80,6 +82,14 @@ export interface ImovelContratoCardProps {
   savingEnderecoRegistro: boolean;
   onConfirmarEnderecoRegistro: (texto: string | null) => void;
 
+  /** Migration 306 — the IMÓVEL: description (derived block + typed override). */
+  descricao: DescricaoImovelResponse | undefined;
+  descricaoShowSkeleton: boolean;
+  descricaoIsRefreshing: boolean;
+  descricaoIsError: boolean;
+  savingDescricao: boolean;
+  onConfirmarDescricao: (texto: string | null) => void;
+
   onus: OnusCredorResponse | undefined;
   onusShowSkeleton: boolean;
   onusIsRefreshing: boolean;
@@ -95,7 +105,17 @@ export interface ImovelContratoCardProps {
     data: string | null;
     natureza: NaturezaUltimaTransferencia | null;
     semRegistro: boolean;
+    /** Migration 306 — who sold, typed (full replace). */
+    transmitentes: string[];
   }) => void;
+}
+
+/** One name per line → trimmed, blank lines dropped. */
+function nomesDoTexto(texto: string): string[] {
+  return texto
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
 }
 
 /** Where to go to fix a missing suggestion: the act's own extraction when we
@@ -180,6 +200,12 @@ export default function ImovelContratoCard({
   enderecoRegistroIsError,
   savingEnderecoRegistro,
   onConfirmarEnderecoRegistro,
+  descricao,
+  descricaoShowSkeleton,
+  descricaoIsRefreshing,
+  descricaoIsError,
+  savingDescricao,
+  onConfirmarDescricao,
   onus,
   onusShowSkeleton,
   onusIsRefreshing,
@@ -207,6 +233,13 @@ export default function ImovelContratoCard({
     NaturezaUltimaTransferencia | ""
   >("");
   const [semRegistroDraft, setSemRegistroDraft] = useState(false);
+  const [transmitentesDraft, setTransmitentesDraft] = useState("");
+  const [descricaoDraft, setDescricaoDraft] = useState("");
+
+  const descricaoConfirmada = descricao?.confirmado?.texto ?? "";
+  useEffect(() => {
+    setDescricaoDraft(descricaoConfirmada);
+  }, [descricaoConfirmada]);
 
   const tituloConfirmado = titulo?.confirmado?.texto ?? "";
   useEffect(() => {
@@ -224,13 +257,17 @@ export default function ImovelContratoCard({
   }, [credorConfirmado]);
 
   const manual = antigos?.manual ?? null;
+  // Serialised: a refetch returning the same names must not stomp an edit.
+  const manualTransmitentes = (manual?.transmitentes ?? []).join("\n");
   useEffect(() => {
     setUltimaTransferenciaDataDraft(manual?.data_registro ?? "");
     setUltimaTransferenciaNaturezaDraft(
       (manual?.natureza as NaturezaUltimaTransferencia) ?? "",
     );
     setSemRegistroDraft(manual?.sem_registro ?? false);
-  }, [manual?.data_registro, manual?.natureza, manual?.sem_registro]);
+    setTransmitentesDraft(manualTransmitentes);
+  }, [manual?.data_registro, manual?.natureza, manual?.sem_registro, manualTransmitentes]);
+  const transmitentesDigitados = nomesDoTexto(transmitentesDraft);
 
   return (
     <Card>
@@ -238,7 +275,10 @@ export default function ImovelContratoCard({
         <CardTitle className="flex items-center gap-2 text-base">
           <FileSignature className="h-4 w-4" />
           Para o contrato
-          {(tituloIsRefreshing || enderecoRegistroIsRefreshing || onusIsRefreshing) && (
+          {(tituloIsRefreshing ||
+            enderecoRegistroIsRefreshing ||
+            descricaoIsRefreshing ||
+            onusIsRefreshing) && (
             // Indicator only — never an early return: the content below is
             // still good to read while it refreshes.
             // KB § PATTERNS/frontend/lying-loading-state.md
@@ -433,6 +473,99 @@ export default function ImovelContratoCard({
           )}
         </section>
 
+        {/* ─── Descrição do imóvel (migration 306) ───────────────────────
+            The IMÓVEL: clause quotes the matrícula abertura's own block; an
+            operator can always TYPE it instead (no file needed), and the
+            typed text wins in the contract. Derived and typed are shown side
+            by side, never collapsed. */}
+        <section className="space-y-2 border-t pt-4" id="imovel-descricao" tabIndex={-1} data-testid="imovel-descricao">
+          <Label className="text-sm font-semibold">Descrição do imóvel</Label>
+          <VinculoLegalMarca vinculoLegal={vinculoLegal} campo="descricao_imovel_texto" />
+          <p className="text-xs text-muted-foreground">
+            O texto da cláusula IMÓVEL do contrato. Lido da matrícula quando há uma
+            transcrição; o texto digitado aqui substitui a leitura.
+          </p>
+
+          {descricaoShowSkeleton ? (
+            <div data-testid="imovel-descricao-skeleton">
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : descricaoIsError ? (
+            <p className="text-xs text-destructive" data-testid="imovel-descricao-erro">
+              Não foi possível carregar a descrição do imóvel.
+            </p>
+          ) : (
+            <>
+              {descricao?.derivado ? (
+                <div className="space-y-1 rounded bg-muted/40 p-2" data-testid="imovel-descricao-derivado">
+                  <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                    <Sparkles className="h-3 w-3 text-amber-500" />
+                    Lido da matrícula
+                  </p>
+                  <p className="whitespace-pre-wrap text-xs">{descricao.derivado}</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={savingDescricao}
+                    onClick={() => setDescricaoDraft(descricao.derivado as string)}
+                    data-testid="imovel-descricao-usar-derivado"
+                  >
+                    Usar este texto
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground" data-testid="imovel-descricao-sem-derivado">
+                  Nenhuma descrição foi lida da matrícula — digite-a abaixo.
+                </p>
+              )}
+
+              <Textarea
+                rows={4}
+                value={descricaoDraft}
+                placeholder="Ex.: Apartamento nº 12, com área privativa de 80,00 m²…"
+                disabled={savingDescricao}
+                onChange={(e) => setDescricaoDraft(e.target.value)}
+                data-testid="imovel-descricao-texto"
+              />
+              {descricao?.confirmado && (
+                <Confirmacao
+                  nome={descricao.confirmado.confirmado_por?.nome}
+                  em={descricao.confirmado.confirmado_em}
+                  testId="imovel-descricao-confirmado"
+                />
+              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={savingDescricao}
+                  onClick={() =>
+                    onConfirmarDescricao(descricaoDraft.trim() === "" ? null : descricaoDraft.trim())
+                  }
+                  data-testid="imovel-descricao-confirmar"
+                >
+                  {savingDescricao && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                  Confirmar
+                </Button>
+                {descricao?.confirmado && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={savingDescricao}
+                    onClick={() => onConfirmarDescricao(null)}
+                    data-testid="imovel-descricao-limpar"
+                  >
+                    Limpar
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+
         {/* ─── Ônus: credor ─────────────────────────────────────────────── */}
         <section className="space-y-2 border-t pt-4" id="imovel-onus-credor" tabIndex={-1} data-testid="imovel-onus-credor">
           <Label className="text-sm font-semibold">Credor do ônus</Label>
@@ -589,6 +722,11 @@ export default function ImovelContratoCard({
 
                   {antigos.transmitentes.length > 0 ? (
                     <ul className="space-y-0.5" data-testid="imovel-antigos-transmitentes">
+                      {antigos.transmitentes_origem === "manual" && (
+                        <li className="text-[11px] text-muted-foreground" data-testid="imovel-antigos-transmitentes-manual">
+                          Vendedores informados manualmente
+                        </li>
+                      )}
                       {antigos.transmitentes.map((p, i) => (
                         <li key={`${p.nome}-${i}`} className="text-xs">
                           {p.nome}
@@ -646,9 +784,20 @@ export default function ImovelContratoCard({
                   Confirmado: não consta transferência de propriedade registrada na matrícula.
                 </p>
               ) : (
-                <p className="text-xs text-muted-foreground" data-testid="imovel-antigos-vazio">
-                  Nenhuma transferência de propriedade registrada foi encontrada na matrícula.
-                </p>
+                <>
+                  <p className="text-xs text-muted-foreground" data-testid="imovel-antigos-vazio">
+                    Nenhuma transferência de propriedade registrada foi encontrada na matrícula.
+                  </p>
+                  {(antigos?.transmitentes.length ?? 0) > 0 && (
+                    <ul className="space-y-0.5" data-testid="imovel-antigos-transmitentes">
+                      {antigos?.transmitentes.map((p, i) => (
+                        <li key={`${p.nome}-${i}`} className="text-xs">
+                          {p.nome}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
               )}
 
               {/* ─── Manual override (migration 152) ─────────────────────
@@ -718,6 +867,7 @@ export default function ImovelContratoCard({
                       if (marcado) {
                         setUltimaTransferenciaDataDraft("");
                         setUltimaTransferenciaNaturezaDraft("");
+                        setTransmitentesDraft("");
                       }
                     }}
                     data-testid="imovel-ultima-transferencia-sem-registro"
@@ -728,6 +878,21 @@ export default function ImovelContratoCard({
                   >
                     Não consta transferência registrada
                   </Label>
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="imovel-ultima-transferencia-transmitentes" className="text-xs">
+                    Vendedores (transmitentes) — um nome por linha
+                  </Label>
+                  <Textarea
+                    id="imovel-ultima-transferencia-transmitentes"
+                    rows={2}
+                    value={transmitentesDraft}
+                    placeholder="Substitui os nomes lidos do ato, quando preenchido"
+                    disabled={savingUltimaTransferenciaManual || semRegistroDraft}
+                    onChange={(e) => setTransmitentesDraft(e.target.value)}
+                    data-testid="imovel-ultima-transferencia-transmitentes"
+                  />
                 </div>
 
                 {manual?.confirmado_por && (
@@ -744,7 +909,9 @@ export default function ImovelContratoCard({
                     size="sm"
                     disabled={
                       savingUltimaTransferenciaManual ||
-                      (!semRegistroDraft && !ultimaTransferenciaDataDraft)
+                      (!semRegistroDraft &&
+                        !ultimaTransferenciaDataDraft &&
+                        transmitentesDigitados.length === 0)
                     }
                     onClick={() =>
                       onConfirmarUltimaTransferenciaManual({
@@ -755,6 +922,7 @@ export default function ImovelContratoCard({
                               | NaturezaUltimaTransferencia
                               | null,
                         semRegistro: semRegistroDraft,
+                        transmitentes: semRegistroDraft ? [] : transmitentesDigitados,
                       })
                     }
                     data-testid="imovel-ultima-transferencia-confirmar"
@@ -775,6 +943,7 @@ export default function ImovelContratoCard({
                           data: null,
                           natureza: null,
                           semRegistro: false,
+                          transmitentes: [],
                         })
                       }
                       data-testid="imovel-ultima-transferencia-limpar"
