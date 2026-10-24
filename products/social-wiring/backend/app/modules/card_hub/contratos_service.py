@@ -1063,6 +1063,23 @@ def atualizar(
     return _contrato_saida(client, org_id, atualizado)
 
 
+def processo_legado_no_atendimento(client: Any, org_id: UUID, atendimento_id: Any) -> bool:
+    """Is this deal flagged "processo anterior à plataforma" (migration 151)?
+    True when ANY live contract of the atendimento carries `processo_legado`
+    — the flag is per contract, but what it records (the deal began outside
+    the platform; its certidões come from the folder) is a fact about the
+    deal. Read by every automatic, BILLED certidão emission path so a
+    historical replay never spends InfoSimples credit (F85)."""
+    rows = table_reads.paged_rows(
+        client,
+        TABLE,
+        org_id,
+        eq_filters={"atendimento_id": str(atendimento_id)},
+        refine=lambda q: q.is_("deleted_at", "null"),
+    )
+    return any(r.get("processo_legado") for r in rows)
+
+
 def definir_processo_legado(
     client: Any,
     org_id: UUID,

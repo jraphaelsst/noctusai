@@ -89,6 +89,9 @@ class SincronizarOut(BaseModel):
     ja_no_card: list[dict[str, Any]]
     emissoes: list[EmissaoOut]
     ignorado: Optional[str] = None
+    #: "processo_legado" — parties created, no billed emission requested
+    #: (the certidões of a pre-platform deal come from its folder).
+    emissao_ignorada: Optional[str] = None
 
 
 class SincronizarBody(StrictHttpModel):

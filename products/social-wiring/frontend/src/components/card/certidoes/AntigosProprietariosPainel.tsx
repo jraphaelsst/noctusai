@@ -42,6 +42,7 @@ const MOTIVO_TEXTO: Record<AntigosMotivo, string> = {
 const CODIGO_TEXTO: Record<string, string> = {
   DOCUMENTO_AUSENTE: "documento (CPF/CNPJ) ausente",
   CREDENCIAIS_AUSENTES: "credenciais de emissão ausentes",
+  PROCESSO_LEGADO: "processo anterior à plataforma — anexe as certidões da pasta do negócio",
 };
 
 const statusDe = (e: unknown): number | null =>
@@ -200,7 +201,8 @@ export function AntigosProprietariosPainel(props: {
           {problemas.map((e) => (
             <li key={e.parte_id}>
               Emissão automática não iniciada para {sincronizar.data?.criados.find((c) => c.parte_id === e.parte_id)?.nome ?? "um antigo proprietário"}
-              {e.codigo ? `: ${CODIGO_TEXTO[e.codigo] ?? e.codigo}` : ""}. Use o botão de emissão da linha.
+              {e.codigo ? `: ${CODIGO_TEXTO[e.codigo] ?? e.codigo}` : ""}.
+              {e.codigo === "PROCESSO_LEGADO" ? "" : " Use o botão de emissão da linha."}
             </li>
           ))}
         </ul>

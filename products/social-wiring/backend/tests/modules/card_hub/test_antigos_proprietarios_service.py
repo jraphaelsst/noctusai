@@ -262,3 +262,140 @@ class TestGatilhoDoPipelineDeMatricula:
             agendar=svc._agendar_processamento, check_credentials=_creds_ok,
         )
         assert len(out["nao_agendadas"]) == 1
+
+
+def _info_por_codigo(por_codigo: dict, *, exige=True):
+    """A `ler_antigos` that answers ONLY for the códigos it knows — proves
+    WHICH imóvel the service read the matrícula of."""
+    lidos: list[str] = []
+
+    def ler(_client, _org_id, codigo, **_k):
+        lidos.append(codigo)
+        transmitentes = por_codigo.get(codigo)
+        if transmitentes is None:
+            return {"transmitentes": [], "exige_certidoes": False, "origem": "nenhuma",
+                    "sem_registro": True, "ultima_transferencia": None}
+        return {
+            "transmitentes": [{"nome": n, "cpf_cnpj": d} for n, d in transmitentes],
+            "exige_certidoes": exige, "origem": "extracao", "sem_registro": False,
+            "ultima_transferencia": {"data_registro": "2023-05-10", "natureza": "compra_e_venda"},
+        }
+
+    ler.lidos = lidos
+    return ler
+
+
+def _junction(aid, codigo, *, principal=True, origem="lead"):
+    return {
+        "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid, "codigo": codigo,
+        "origem": origem, "principal": principal, "deleted_at": None,
+        "created_at": "2026-10-01T10:00:00+00:00",
+    }
+
+
+def _card_so_com_principal(scoped, codigo="LD0042"):
+    """F85's shape: the imóvel came with the lead (junction principal), the
+    Negociação tab was never filled."""
+    cid, aid = _card(scoped)
+    scoped.set_table_data("atendimento_negociacao", [])
+    scoped.set_table_data("atendimento_imoveis", [_junction(aid, codigo)])
+    return cid, aid
+
+
+class TestImovelCanonico:
+    """F85 — the antigos subtab reads the SAME imóvel the card shows."""
+
+    def test_principal_only_imovel_drives_the_header(self, scoped):
+        cid, aid = _card_so_com_principal(scoped)
+        ler = _info_por_codigo({"LD0042": [("Antigo Dono Exemplo", CPF_A)]})
+        out = svc.estado(scoped, ORG_ID, cid, atendimento_id=aid, ler_antigos=ler)
+        assert ler.lidos == ["LD0042"]
+        assert out["exigido"] is True and out["motivo"] == "transferencia_menos_de_5_anos"
+        assert [t["nome"] for t in out["transmitentes"]] == ["Antigo Dono Exemplo"]
+
+    def test_principal_only_imovel_sincronizar_creates_the_antigo(self, scoped):
+        cid, aid = _card_so_com_principal(scoped)
+        ler = _info_por_codigo({"LD0042": [("Antigo Dono Exemplo", CPF_A), ("Construtora Exemplo", CNPJ_A)]})
+        out = svc.sincronizar(scoped, ORG_ID, cid, user_id=USER, check_credentials=_creds_ok, ler_antigos=ler)
+        assert out["ignorado"] is None
+        assert [c["nome"] for c in out["criados"]][0] == "Antigo Dono Exemplo"
+        assert len(out["criados"]) == 2
+        assert [a["rotulo"] for a in partes_service.listar_antigos(scoped, ORG_ID, cid, atendimento_id=aid)] == ["ANT 1", "ANT 2"]
+
+    def test_negociacao_imovel_wins_when_present(self, scoped):
+        cid, aid = _card_so_com_principal(scoped)
+        scoped.set_table_data("atendimento_negociacao", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid, "imovel_codigo": "AP0001"},
+        ])
+        ler = _info_por_codigo({"AP0001": [("Antigo Negociado", CPF_B)], "LD0042": [("Errado", CPF_A)]})
+        out = svc.estado(scoped, ORG_ID, cid, atendimento_id=aid, ler_antigos=ler)
+        assert ler.lidos == ["AP0001"]
+        assert [t["nome"] for t in out["transmitentes"]] == ["Antigo Negociado"]
+
+    def test_no_imovel_at_all_is_still_sem_imovel(self, scoped):
+        cid, aid = _card_so_com_principal(scoped)
+        scoped.set_table_data("atendimento_imoveis", [])
+        ler = _info_por_codigo({})
+        out = svc.estado(scoped, ORG_ID, cid, atendimento_id=aid, ler_antigos=ler)
+        assert out["exigido"] is None and out["motivo"] == "sem_imovel" and ler.lidos == []
+        sync = svc.sincronizar(scoped, ORG_ID, cid, user_id=USER, check_credentials=_creds_ok, ler_antigos=ler)
+        assert sync["ignorado"] == "sem_imovel"
+
+    def test_a_removed_junction_row_is_not_the_imovel(self, scoped):
+        cid, aid = _card_so_com_principal(scoped)
+        scoped.set_table_data("atendimento_imoveis", [{**_junction(aid, "LD0042"), "deleted_at": "2026-10-02T00:00:00+00:00"}])
+        out = svc.estado(scoped, ORG_ID, cid, atendimento_id=aid, ler_antigos=_info_por_codigo({}))
+        assert out["motivo"] == "sem_imovel"
+
+    def test_pipeline_hook_reaches_a_principal_only_deal(self, scoped):
+        _cid, aid = _card_so_com_principal(scoped)
+        out = svc.sincronizar_por_imovel(
+            scoped, ORG_ID, "LD0042", user_id=USER,
+            ler_antigos=_info_por_codigo({"LD0042": [("Antigo Dono Exemplo", CPF_A)]}),
+            agendar=lambda ids, _c: [], check_credentials=_creds_ok,
+        )
+        assert [c["atendimento_id"] for c in out["cards"]] == [aid]
+        assert out["cards"][0]["criados"] == 1
+
+
+class TestProcessoLegadoNaoEmite:
+    """A pre-platform deal's certidões come from its folder: parties are
+    created, NO billed emission is requested (owner, InfoSimples spend)."""
+
+    def _legado(self, scoped, aid):
+        scoped.set_table_data("atendimento_contratos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+            "processo_legado": True, "deleted_at": None, "created_at": "2026-10-01T00:00:00+00:00",
+        }])
+
+    def test_sincronizar_creates_parties_without_emission(self, scoped):
+        cid, aid = _card_so_com_principal(scoped)
+        self._legado(scoped, aid)
+        ler = _info_por_codigo({"LD0042": [("Antigo Dono Exemplo", CPF_A)]})
+        out = svc.sincronizar(scoped, ORG_ID, cid, user_id=USER, check_credentials=_creds_ok, ler_antigos=ler)
+        assert len(out["criados"]) == 1
+        assert out["emissoes"] == [{
+            "parte_id": out["criados"][0]["parte_id"], "status": "nao_iniciada",
+            "codigo": "PROCESSO_LEGADO", "consulta_id": None,
+        }]
+        assert out["emissao_ignorada"] == "processo_legado"
+        assert scoped.table("certidao_consultas").select("*").execute().data == []
+
+    def test_manual_add_on_a_legacy_deal_bills_nothing(self, scoped):
+        cid, aid = _card(scoped)
+        self._legado(scoped, aid)
+        out = svc.adicionar_manual(
+            scoped, ORG_ID, cid, nome="Antigo Manual Exemplo", cpf=CPF_B,
+            user_id=USER, check_credentials=_creds_ok,
+        )
+        assert out["emissao"]["codigo"] == "PROCESSO_LEGADO"
+        assert scoped.table("certidao_consultas").select("*").execute().data == []
+
+    def test_a_removed_legacy_contract_no_longer_suppresses(self, scoped):
+        cid, aid = _card(scoped)
+        scoped.set_table_data("atendimento_contratos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+            "processo_legado": True, "deleted_at": "2026-10-02T00:00:00+00:00",
+        }])
+        out = _sync(scoped, cid, _info(("Antigo Dono Exemplo", CPF_A)))
+        assert out["emissoes"][0]["status"] == "solicitada" and out["emissao_ignorada"] is None

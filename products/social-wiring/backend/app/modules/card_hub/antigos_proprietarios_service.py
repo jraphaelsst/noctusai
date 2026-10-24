@@ -40,10 +40,11 @@ from noctusai_lib.primitives.exceptions import (
 
 from app.modules.card_hub import certidoes_partes_service as certidoes_partes_svc
 from app.modules.card_hub import compradores_service as comp_svc
-from app.modules.card_hub import negociacao_service
+from app.modules.card_hub import contratos_service
 from app.modules.card_hub import partes_service
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.card_hub.services import ensure_cliente, resolve_atendimento_id
+from app.modules.imovel_hub import atendimento_imoveis_service as imoveis_do_atendimento
 from app.modules.matriculas import titulo_service
 from app.services import clientes_service as clientes_svc
 from app.services import table_reads
@@ -63,6 +64,8 @@ ATENDIMENTOS = "atendimentos"
 PARTES = comp_svc.TABLE
 
 MOTIVO_MIN = 3
+#: `_emitir`'s skip code on a "processo anterior à plataforma" deal.
+CODIGO_PROCESSO_LEGADO = "PROCESSO_LEGADO"
 MOTIVO_MAX = 500
 
 
@@ -186,12 +189,15 @@ LerAntigos = Callable[..., dict]
 
 
 def _info_matricula(
-    client: Any, org_id: UUID, cliente_id: UUID, usuario_id: Optional[Any],
+    client: Any, org_id: UUID, atendimento_id: str, usuario_id: Optional[Any],
     ler: Optional[LerAntigos] = None,
 ) -> Optional[dict]:
-    """`titulo_service.antigos_proprietarios` for the card's imóvel, or `None`
-    when the deal has no imóvel yet."""
-    codigo = negociacao_service.obter(client, org_id, cliente_id).get("imovel_codigo")
+    """`titulo_service.antigos_proprietarios` for THIS atendimento's imóvel,
+    or `None` when the deal has no imóvel linked at all. The imóvel is the
+    canonical one (`atendimento_imoveis_service.imovel_canonico`: negociação,
+    else the junction's principal) — F85: reading the negociação alone said
+    "sem imóvel" for every card whose imóvel came in with the lead."""
+    codigo = imoveis_do_atendimento.imovel_canonico(client, org_id, atendimento_id)
     if not codigo:
         return None
     return (ler or titulo_service.antigos_proprietarios)(
@@ -234,7 +240,7 @@ def estado(
     names, whether an admin dispensed it. Read-only."""
     alvo = _alvo(client, org_id, cliente_id, atendimento_id)
     row = _atendimento_row(client, org_id, alvo)
-    info = _info_matricula(client, org_id, cliente_id, usuario_id, ler_antigos)
+    info = _info_matricula(client, org_id, alvo, usuario_id, ler_antigos)
     cpfs, cnpjs = _documentos_no_card(client, org_id, alvo)
     transmitentes = []
     for t in (info or {}).get("transmitentes") or []:
@@ -308,11 +314,19 @@ def _adicionar_antigo(
 
 def _emitir(
     client: Any, org_id: UUID, cliente_id: UUID, atendimento_id: str, item: dict,
-    *, user_id: Any, check_credentials: Callable[[str], list[str]],
+    *, user_id: Any, check_credentials: Callable[[str], list[str]], legado: bool = False,
 ) -> dict:
     """Request the automated certidões for one new party — the SAME function
     the tab's emission button calls. A refusal (no document yet, missing
-    credentials) is REPORTED, never swallowed."""
+    credentials) is REPORTED, never swallowed.
+
+    `legado` (the deal is a "processo anterior à plataforma", see
+    `contratos_service.processo_legado_no_atendimento`): the certidões come
+    from the deal's folder, so NO billed emission is requested — the party
+    stays, the skip is reported as `PROCESSO_LEGADO`. The row's own emission
+    button still works if the operator decides to emit."""
+    if legado:
+        return {"parte_id": item["parte_id"], "status": "nao_iniciada", "codigo": CODIGO_PROCESSO_LEGADO, "consulta_id": None}
     kind = "empresa" if item.get("empresa_id") else "pessoa"
     alvo_id = item.get("empresa_id") or item.get("cliente_id")
     try:
@@ -349,14 +363,17 @@ def sincronizar(
     schedules `processar_consulta` for every `emissoes[].consulta_id`.
     """
     alvo = _alvo(client, org_id, cliente_id, atendimento_id)
-    vazio = {"atendimento_id": alvo, "criados": [], "ja_no_card": [], "emissoes": [], "ignorado": None}
+    vazio = {
+        "atendimento_id": alvo, "criados": [], "ja_no_card": [], "emissoes": [],
+        "ignorado": None, "emissao_ignorada": None,
+    }
     if esta_dispensado(client, org_id, alvo):
         return {**vazio, "ignorado": "dispensado"}
     # Owner 2026-10-21 (migration 295): optional by default — no group, and
     # above all no billed automatic emission, unless the deal opted in.
     if not _atendimento_row(client, org_id, alvo).get("exigir_certidoes_antigos"):
         return {**vazio, "ignorado": "nao_exigido"}
-    info = _info_matricula(client, org_id, cliente_id, user_id, ler_antigos)
+    info = _info_matricula(client, org_id, alvo, user_id, ler_antigos)
     if info is None:
         return {**vazio, "ignorado": "sem_imovel"}
     if info.get("origem") not in _ORIGENS_MATRICULA:
@@ -364,6 +381,7 @@ def sincronizar(
     if not info.get("exige_certidoes"):
         return {**vazio, "ignorado": "transferencia_5_anos_ou_mais"}
 
+    legado = contratos_service.processo_legado_no_atendimento(client, org_id, alvo)
     cpfs, cnpjs = _documentos_no_card(client, org_id, alvo)
     nomes_antigos = {
         (i.get("nome") or "").strip().lower()
@@ -399,11 +417,17 @@ def sincronizar(
             cpfs.add(doc)
         criados.append({"parte_id": item["parte_id"], "nome": item["nome"], "tipo_pessoa": item["tipo_pessoa"]})
         emissoes.append(
-            _emitir(client, org_id, cliente_id, alvo, item, user_id=user_id, check_credentials=check_credentials)
+            _emitir(
+                client, org_id, cliente_id, alvo, item, user_id=user_id,
+                check_credentials=check_credentials, legado=legado,
+            )
             if doc
             else {"parte_id": item["parte_id"], "status": "nao_iniciada", "codigo": "DOCUMENTO_AUSENTE", "consulta_id": None}
         )
-    return {**vazio, "criados": criados, "ja_no_card": ja, "emissoes": emissoes}
+    return {
+        **vazio, "criados": criados, "ja_no_card": ja, "emissoes": emissoes,
+        "emissao_ignorada": "processo_legado" if legado and criados else None,
+    }
 
 
 # ─── server-side trigger (matrícula pipeline → every card of the imóvel) ──
@@ -463,11 +487,10 @@ def sincronizar_por_imovel(
         out["ignorado"] = "sem_usuario"
         logger.error("antigos: imóvel %s sem usuário para atribuir as consultas — não sincronizado", codigo)
         return out
-    negociacoes = (
-        _t(client, "atendimento_negociacao").select("atendimento_id")
-        .eq("org_id", str(org_id)).eq("imovel_codigo", codigo).execute()
-    ).data or []
-    ids = sorted({str(n["atendimento_id"]) for n in negociacoes})
+    # The SAME canonical rule the card reads with (negociação, else the
+    # junction's principal) — a deal whose imóvel came with the lead is
+    # reached too (F85).
+    ids = imoveis_do_atendimento.atendimentos_do_imovel(client, org_id, codigo)
     atendimentos = table_reads.in_batched_rows(
         client, ATENDIMENTOS, org_id, "id", ids, select="id,cliente_id,substituida_por,arquivado"
     ) if ids else []
@@ -531,7 +554,10 @@ def adicionar_manual(
         client, org_id, cliente_id, alvo, nome=nome or razao_social, documento=documento,
         origem=ORIGEM_MANUAL, user_id=user_id,
     )
-    emissao = _emitir(client, org_id, cliente_id, alvo, item, user_id=user_id, check_credentials=check_credentials)
+    emissao = _emitir(
+        client, org_id, cliente_id, alvo, item, user_id=user_id, check_credentials=check_credentials,
+        legado=contratos_service.processo_legado_no_atendimento(client, org_id, alvo),
+    )
     return {"parte": item, "emissao": emissao}
 
 

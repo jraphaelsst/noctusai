@@ -154,6 +154,48 @@ def listar(
     }
 
 
+def imovel_canonico(client: Any, org_id: UUID, atendimento_id: Any) -> Optional[str]:
+    """THE answer to "which imóvel is this deal about?" — canonical código or
+    `None` when the atendimento has no imóvel linked at all.
+
+    1. `atendimento_negociacao.imovel_codigo` when an operator stated it (it
+       is kept ∈ this junction and principal by `garantir_vinculo`);
+    2. else the junction's live principal (the lead's imóvel lands here at
+       ingest — "Imóveis do atendimento" shows it as Principal);
+    3. else the oldest live row (the invariant makes it principal anyway).
+
+    Read-only: it never copies the junction código into the negociação (see
+    `negociacao_service.definir_imovel_do_atendimento` for why that write is
+    reserved to an accepted proposta). Every reader that needs the deal's
+    imóvel (antigos proprietários' matrícula, …) goes through HERE — never a
+    third, hand-rolled pick (F85: the antigos header read the negociação
+    alone and called a card with a Principal imóvel "sem imóvel").
+    """
+    negociado = _codigo_em_negociacao(client, org_id, str(atendimento_id))
+    if negociado:
+        return negociado
+    vivas = _linhas_vivas(client, org_id, str(atendimento_id))
+    return busca_service.canonical(str(vivas[0]["codigo"])) if vivas else None
+
+
+def atendimentos_do_imovel(client: Any, org_id: UUID, codigo: str) -> list[str]:
+    """Atendimento ids whose CANONICAL imóvel (`imovel_canonico`) is `codigo`
+    — the inverse lookup, same rule, so a matrícula update reaches every deal
+    the forward read would attribute it to."""
+    canonico = busca_service.canonical(codigo)
+    candidatos: set[str] = set()
+    for r in (
+        _t(client, NEGOCIACAO_TABLE).select("atendimento_id,imovel_codigo")
+        .eq("org_id", str(org_id)).eq("imovel_codigo", canonico).execute()
+    ).data or []:
+        candidatos.add(str(r["atendimento_id"]))
+    for r in table_reads.paged_rows(
+        client, TABLE, org_id, eq_filters={"codigo": canonico}, refine=_vivas,
+    ):
+        candidatos.add(str(r["atendimento_id"]))
+    return sorted(a for a in candidatos if imovel_canonico(client, org_id, a) == canonico)
+
+
 def codigos_por_atendimento(
     client: Any, org_id: UUID, atendimento_ids: list[str]
 ) -> dict[str, list[str]]:
@@ -826,7 +868,9 @@ __all__ = [
     "ORIGENS_USUARIO",
     "TABLE",
     "adicionar",
+    "atendimentos_do_imovel",
     "codigos_por_atendimento",
+    "imovel_canonico",
     "definir_principal",
     "garantir_vinculo",
     "listar",

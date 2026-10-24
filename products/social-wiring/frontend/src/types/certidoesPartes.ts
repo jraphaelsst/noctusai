@@ -273,7 +273,7 @@ export interface AntigosEstado {
 export interface AntigosEmissao {
   parte_id: string;
   status: "solicitada" | "nao_iniciada";
-  codigo: "DOCUMENTO_AUSENTE" | "CREDENCIAIS_AUSENTES" | null;
+  codigo: "DOCUMENTO_AUSENTE" | "CREDENCIAIS_AUSENTES" | "PROCESSO_LEGADO" | null;
   consulta_id: string | null;
 }
 
@@ -283,6 +283,8 @@ export interface AntigosSincronizacao {
   ja_no_card: { nome: string; documento_mascarado: string | null }[];
   emissoes: AntigosEmissao[];
   ignorado: "dispensado" | "sem_imovel" | "matricula_nao_nomeia_antigos" | "transferencia_5_anos_ou_mais" | "nao_exigido" | null;
+  /** Parties created but no billed emission requested (pre-platform deal). */
+  emissao_ignorada?: "processo_legado" | null;
 }
 
 /** Person `{nome, cpf}` XOR company `{cnpj, razao_social?}`. */
