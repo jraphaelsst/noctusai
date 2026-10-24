@@ -147,3 +147,47 @@ def test_resumo_proveniencia_separa_extraido_de_operador():
     assert harness.resumo_proveniencia(items) == {
         "extraido_confirmado": 2, "operador": 1, "extraido_pendente": 1, "conflito": 1,
     }
+
+
+def test_favorecido_ausente_vira_lacuna_e_nao_derruba_o_render():
+    """Deal 799 — a corretagem / sinal with no favorecido (the owner has not
+    entered the bank data yet) crashed the marker render with `KeyError: None`.
+    It must render with the favorecido named by the marker instead."""
+    d = fx.variante(1)
+    assert d.intermediarios, "fixture must carry an intermediário"
+    sem = replace(
+        d,
+        intermediarios=[replace(i, favorecido_id=None) for i in d.intermediarios],
+        parcelas=[replace(p, favorecido_id=None) if p.tipo == "sinal" else p for p in d.parcelas],
+        assinatura_data=fx.ASSINATURA,
+    )
+    marcado, n = harness.dados_com_marcadores(sem)
+    assert n >= len(d.intermediarios)
+    assert all(i.favorecido_id == harness.FAVORECIDO_LACUNA_ID for i in marcado.intermediarios)
+    assert any(f.id == harness.FAVORECIDO_LACUNA_ID for f in marcado.favorecidos)
+    assert all(i.favorecido_id is None for i in sem.intermediarios)  # input untouched
+    renderizado = harness.renderizar_em_memoria(sem, com_marcadores=True)
+    assert any(comparador.MARCADOR_LACUNA in par for par in renderizado.paragrafos)
+
+
+def test_campo_opcional_nao_vira_lacuna_inventada():
+    """Deal 799 — marker mode marked fields production OMITS when empty (an
+    intermediário's representante/sede, an address complemento, the
+    pendências prazo that falls back to the office default), inventing gaps
+    and divergences the real contract never has."""
+    d = fx.variante(1)
+    it = d.intermediarios[0]
+    sem = replace(
+        d,
+        intermediarios=[replace(it, representante_nome=None, representante_cpf=None), *d.intermediarios[1:]],
+        vendedores=[replace(d.vendedores[0], endereco=replace(d.vendedores[0].endereco, complemento=None)), *d.vendedores[1:]],
+        prazo_pendencias_dias=None,
+        assinatura_data=fx.ASSINATURA,
+    )
+    marcado, _ = harness.dados_com_marcadores(sem)
+    assert marcado.intermediarios[0].representante_nome is None
+    assert marcado.vendedores[0].endereco.complemento is None
+    assert marcado.prazo_pendencias_dias is None
+    # a REQUIRED party field is still marked
+    sem_nome = replace(sem, vendedores=[replace(sem.vendedores[0], profissao=None), *sem.vendedores[1:]])
+    assert harness.dados_com_marcadores(sem_nome)[0].vendedores[0].profissao == comparador.MARCADOR_LACUNA

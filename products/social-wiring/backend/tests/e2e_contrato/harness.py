@@ -185,21 +185,41 @@ def relatorio_prontidao(client: Any, org_id: UUID, cliente_id: UUID, contrato_id
 
 # ─── in-memory render (no persistence) ─────────────────────────────────
 
-#: Printable free-text fields a not-`pronto` card may leave empty. Only these
-#: are replaced by `comparador.MARCADOR_LACUNA` — never a CODE field
-#: (estado_civil, regime_bens, genero, resultado, forma_pagamento, *_id, …),
-#: whose value the context builder looks up in a phrase table and which a
-#: marker would turn into a KeyError instead of a visible gap.
-CAMPOS_TEXTO_MARCAVEIS = frozenset(
-    {
-        "nome", "nacionalidade", "profissao", "cpf", "rg", "rg_orgao", "email",
-        "logradouro", "numero", "complemento", "bairro", "cidade", "uf", "cep",
-        "razao_social", "banco", "agencia", "conta", "pix", "cpf_cnpj", "creci",
-        "documento", "representante_nome", "representante_cpf", "representante_creci",
-        "representante_creci_regiao", "endereco_registro_texto",
-        "inscricao_municipal", "numero_registro_imoveis",
-    }
-)
+#: Printable free-text fields a not-`pronto` card may leave empty, PER record
+#: type. Only these are replaced by `comparador.MARCADOR_LACUNA` — never a
+#: CODE field (estado_civil, regime_bens, genero, resultado, forma_pagamento,
+#: *_id, …), whose value the context builder looks up in a phrase table and
+#: which a marker would turn into a KeyError instead of a visible gap.
+#:
+#: 🔴 Only fields production REQUIRES on that record (gated `faltando`, or
+#: printed unconditionally). A field production prints conditionally or
+#: resolves from a fallback — an intermediário's representante/sede, an
+#: office sede "km 22 - Bloco F" with no número/CEP, an address complemento,
+#: `endereco_registro_texto` (falls back to the matrícula) — is OMITTED by the
+#: real render when empty, so marking it invented gaps the production
+#: contract never has (deal 799: a title "X – [[LACUNA]] – [[LACUNA]]" and
+#: "nº [[LACUNA]] - CEP: [[LACUNA]]" where production prints the street).
+CAMPOS_MARCAVEIS_POR_TIPO: dict[str, frozenset[str]] = {
+    "Pessoa": frozenset({"nome", "nacionalidade", "profissao", "cpf", "rg", "rg_orgao", "email"}),
+    # A party's address is gated complete (`frases.endereco_texto`); the
+    # complemento is optional everywhere.
+    "Pessoa.Endereco": frozenset({"logradouro", "numero", "bairro", "cidade", "uf", "cep"}),
+    "Favorecido": frozenset({"nome", "cpf_cnpj"}),
+    "Intermediario": frozenset({"nome", "documento"}),
+    "Imovel": frozenset({"inscricao_municipal", "numero_registro_imoveis"}),
+    "Certidao": frozenset({"numero"}),
+    "CertidaoImovel": frozenset({"numero"}),
+    "ParteJuridica": frozenset({"razao_social"}),
+    "Empresa": frozenset({"razao_social"}),
+    "Imobiliaria": frozenset({"razao_social"}),
+    "Testemunha": frozenset({"nome"}),
+    "TitularMatricula": frozenset({"nome"}),
+}
+
+#: `*_dias` fields production resolves from a fallback when empty (never a
+#: gap): `derivacao.prazo_pendencias` falls back to the office default, then
+#: the policy's — marking it printed "999 dias" where production prints 10.
+DIAS_COM_PADRAO = frozenset({"prazo_pendencias_dias"})
 
 
 #: Required DATE fields the context builder formats unconditionally — filled
@@ -209,12 +229,16 @@ CAMPOS_DATA_MARCAVEIS = frozenset({"emitida_em", "data_casamento"})
 #: Agreement stand-in for a printed person whose gender is missing (marker mode only).
 GENERO_LACUNA = "m"
 
+#: Id of the synthetic favorecido (named by the marker) every unset/dangling
+#: favorecido reference points at in marker mode — the owner's bank data gap.
+FAVORECIDO_LACUNA_ID = "lacuna-favorecido"
+
 
 def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
     """`(copy, n_marcadores)` — a copy of `dados` a not-`pronto` card can be
     rendered from with its gaps VISIBLE instead of as silently missing words:
 
-    - every EMPTY printable text field (`CAMPOS_TEXTO_MARCAVEIS`, declared
+    - every EMPTY printable text field (`CAMPOS_MARCAVEIS_POR_TIPO`, declared
       `str`) carries `comparador.MARCADOR_LACUNA`; every empty required
       date (`CAMPOS_DATA_MARCAVEIS`) the date sentinel
       `comparador.DATA_LACUNA` (01/01/1900); every empty `*_dias` int the
@@ -239,14 +263,17 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
     valor_lacuna = Decimal(comparador.VALOR_LACUNA)
     data_lacuna = date.fromisoformat(comparador.DATA_LACUNA)
 
-    def _visita(obj: Any) -> Any:
+    def _visita(obj: Any, pai: str = "") -> Any:
         nonlocal contagem
         if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            classe = type(obj).__name__
+            chave = f"{pai}.{classe}" if classe == "Endereco" else classe
+            marcaveis = CAMPOS_MARCAVEIS_POR_TIPO.get(chave, frozenset())
             mudancas: dict[str, Any] = {}
             for f in dataclasses.fields(obj):
                 valor = getattr(obj, f.name)
                 tipo = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", str(f.type))
-                if f.name in CAMPOS_TEXTO_MARCAVEIS and valor in (None, "") and "str" in tipo:
+                if f.name in marcaveis and valor in (None, "") and "str" in tipo:
                     mudancas[f.name] = comparador.MARCADOR_LACUNA
                     contagem += 1
                     continue
@@ -261,7 +288,7 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
                     mudancas[f.name] = GENERO_LACUNA
                     contagem += 1
                     continue
-                if f.name.endswith("_dias") and valor is None and "int" in tipo:
+                if f.name.endswith("_dias") and f.name not in DIAS_COM_PADRAO and valor is None and "int" in tipo:
                     mudancas[f.name] = comparador.INTEIRO_LACUNA
                     contagem += 1
                     continue
@@ -269,15 +296,15 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
                     mudancas[f.name] = data_lacuna
                     contagem += 1
                     continue
-                novo = _visita(valor)
+                novo = _visita(valor, classe)
                 if novo is not valor:
                     mudancas[f.name] = novo
             return dataclasses.replace(obj, **mudancas) if mudancas else obj
         if isinstance(obj, list):
-            novos = [_visita(v) for v in obj]
+            novos = [_visita(v, pai) for v in obj]
             return novos if any(a is not b for a, b in zip(novos, obj)) else obj
         if isinstance(obj, tuple) and not hasattr(obj, "_fields"):
-            novos_t = tuple(_visita(v) for v in obj)
+            novos_t = tuple(_visita(v, pai) for v in obj)
             return novos_t if any(a is not b for a, b in zip(novos_t, obj)) else obj
         return obj
 
@@ -315,6 +342,55 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
             contagem += 1
         if novas != parcelas:
             estruturais["parcelas"] = novas
+    favorecidos_carregados = getattr(marcado, "favorecidos", None)
+    if favorecidos_carregados is not None:
+        # The context builder indexes a favorecido it asserts exists (an
+        # intermediário's corretagem account, a sinal tranche, a divisão
+        # share). Marker mode points every unset/dangling one at ONE
+        # synthetic favorecido named by the marker — the bank data the
+        # owner has not entered stays a visible gap, never a crash.
+        from app.modules.card_hub.contrato_gerador.dados import Favorecido
+
+        conhecidos = {f.id for f in favorecidos_carregados}
+
+        def _lacuna(fid: Any) -> bool:
+            return fid is None or fid not in conhecidos
+
+        usou = False
+        inters = []
+        for it in getattr(marcado, "intermediarios", []) or []:
+            if _lacuna(it.favorecido_id):
+                it = dataclasses.replace(it, favorecido_id=FAVORECIDO_LACUNA_ID)
+                contagem += 1
+                usou = True
+            inters.append(it)
+        fonte_parcelas = estruturais.get("parcelas", parcelas)
+        novas_p = []
+        for p in fonte_parcelas:
+            if p.divisao and any(_lacuna(q.favorecido_id) for q in p.divisao):
+                divisao = [
+                    dataclasses.replace(q, favorecido_id=FAVORECIDO_LACUNA_ID) if _lacuna(q.favorecido_id) else q
+                    for q in p.divisao
+                ]
+                contagem += sum(1 for q in p.divisao if _lacuna(q.favorecido_id))
+                p = dataclasses.replace(p, divisao=divisao)
+                usou = True
+            elif p.tipo == "sinal" and not p.divisao and _lacuna(p.favorecido_id):
+                p = dataclasses.replace(p, favorecido_id=FAVORECIDO_LACUNA_ID)
+                contagem += 1
+                usou = True
+            novas_p.append(p)
+        if usou:
+            estruturais["intermediarios"] = inters
+            estruturais["parcelas"] = novas_p
+            estruturais["favorecidos"] = [
+                *favorecidos_carregados,
+                Favorecido(
+                    id=FAVORECIDO_LACUNA_ID,
+                    nome=comparador.MARCADOR_LACUNA,
+                    cpf_cnpj=comparador.MARCADOR_LACUNA,
+                ),
+            ]
     termos = getattr(marcado, "termos", None)
     if termos is not None and termos.posse_marco == "data_fixa" and termos.posse_data is None:
         # A fixed-date posse (migration 201) the render cannot go without.
