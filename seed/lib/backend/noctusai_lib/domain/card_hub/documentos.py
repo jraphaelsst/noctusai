@@ -99,7 +99,8 @@ def _require_tipo_documento(cfg: CardHubConfig, db: Any, tipo_documento: str) ->
 
 
 def list_tipos_documento(cfg: CardHubConfig, db: Any) -> dict:
-    """The ENABLED types — the upload picker's options. A platform-wide
+    """The ENABLED types — the upload picker's options (minus the product's
+    `documentos.tipos_reservados`, which no person's upload may use). A platform-wide
     taxonomy (no `org_id`), readable like an enum."""
     rows = (
         table(db, cfg.tables.documento_tipos)
@@ -117,6 +118,7 @@ def list_tipos_documento(cfg: CardHubConfig, db: Any) -> dict:
             "identidade": bool(r.get("identidade", False)),
         }
         for r in rows
+        if r["tipo_documento"] not in cfg.documentos.tipos_reservados
     ]
     items.sort(key=lambda t: t["tipo_documento"])
     return {"items": items, "total": len(items)}

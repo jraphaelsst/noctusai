@@ -35,7 +35,11 @@ from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import timeline_service
 from app.modules.card_hub.checklist_extras_service import TIPO_DOCUMENTO
 from app.modules.card_hub.deps import BUCKET
-from app.modules.card_hub.documentos_service import ALLOWED_MIME_TYPES, MAX_UPLOAD_BYTES
+from app.modules.card_hub.documentos_service import (
+    ALLOWED_MIME_TYPES,
+    MAX_UPLOAD_BYTES,
+    TIPO_A_CLASSIFICAR,
+)
 from app.services import clientes_service as clientes_svc
 from app.services import documento_retencao, table_reads
 
@@ -120,6 +124,7 @@ CARD_HUB = CardHubConfig(
         retention_days=_retencao_dias,
         extra_insert_fields=_extracao_ao_enviar,
         extra_out_fields=_extracao_servida,
+        tipos_reservados=frozenset({TIPO_A_CLASSIFICAR}),
     ),
     checklist_extra_tipo_documento=TIPO_DOCUMENTO,
 )

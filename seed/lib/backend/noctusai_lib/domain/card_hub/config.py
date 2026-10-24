@@ -127,6 +127,11 @@ class DocumentoPolicy:
     (social-wiring: the identity-extraction state). `extra_out_fields` keys are
     appended AFTER the seed keys, so the served key order is stable.
 
+    `tipos_reservados` — catalogue types a person's upload may never file under
+    (a product's own intake holding type). The catalogue endpoint the upload
+    picker reads OMITS them, so the operator is never offered a choice the
+    server always refuses; the product's upload path enforces the same set.
+
     `storage_segment` — the second object-key segment,
     `{org_id}/{segment}/{entity_id}/{document_id}`. `None` ⇒ the entity table
     name. The FIRST segment is always the literal `org_id`: the object-RLS
@@ -142,6 +147,7 @@ class DocumentoPolicy:
     retention_days: Optional[Callable[[Any, Any, str, dict], Optional[int]]] = None
     extra_insert_fields: Optional[Callable[[str], dict]] = None
     extra_out_fields: Optional[Callable[[dict], dict]] = None
+    tipos_reservados: frozenset = frozenset()
 
 
 @dataclass(frozen=True)

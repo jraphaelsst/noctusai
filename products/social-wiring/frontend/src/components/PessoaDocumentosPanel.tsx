@@ -305,14 +305,16 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         // The operator's OWN pick from the section's own `<Select>` — see
         // `AnexosSection`'s module docblock for why the tipo no longer
         // travels as a caller-supplied default (`tipos.data?.[0] ?? "outro"`).
+        // Returns the promise: a server refusal (400) rejects, and the
+        // section shows the message + file name in-place (F78) and keeps the
+        // tipo. The toast stays as the second channel.
         onUpload={(file, tipoDocumento) =>
-          docs.upload.mutate(
-            { file, tipoDocumento },
-            {
-              onError: (e) =>
-                toast.error(erro(e, "Não foi possível enviar o anexo.")),
-            },
-          )
+          docs.upload
+            .mutateAsync({ file, tipoDocumento })
+            .catch((e: unknown) => {
+              toast.error(erro(e, "Não foi possível enviar o anexo."));
+              throw new Error(erro(e, "Não foi possível enviar o anexo."));
+            })
         }
         onOpenDocumento={(documentoId) =>
           docs.getUrl.mutate(

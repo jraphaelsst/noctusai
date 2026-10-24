@@ -100,8 +100,12 @@ export interface AnexosSectionProps {
   refreshing?: boolean;
   uploading?: boolean;
   /** `tipoDocumento` is the operator's OWN pick from this section's own
-   *  `<Select>` — never a caller-supplied default. */
-  onUpload: (file: File, tipoDocumento: string) => void;
+   *  `<Select>` — never a caller-supplied default. A caller that can learn the
+   *  outcome returns the upload's promise (`mutateAsync`): a REJECTION is shown
+   *  in this section (`anexo-upload-erro`, the error's message + the file name)
+   *  and the picked tipo is kept for a retry. A `void` return = fire-and-forget
+   *  (the tipo resets at once, as before). */
+  onUpload: (file: File, tipoDocumento: string) => void | Promise<unknown>;
   onOpenDocumento: (id: string) => void;
   onDeleteDocumento: (id: string, motivo: string) => void;
   /** Re-queues an extraction (`POST .../extrair`) — a failed read, or a
@@ -173,10 +177,21 @@ export function AnexosSection({
               );
             } else {
               setErroArquivo(null);
-              onUpload(file, tipoEscolhido);
-              // Reset — the NEXT attachment gets its own deliberate pick
-              // rather than silently reusing this one's type.
-              setTipoEscolhido("");
+              const tipoEnviado = tipoEscolhido;
+              const resetarTipo = () =>
+                // Reset — the NEXT attachment gets its own deliberate pick
+                // rather than silently reusing this one's type. Only when the
+                // upload did not fail (a refused one keeps the pick for retry).
+                setTipoEscolhido((atual) => (atual === tipoEnviado ? "" : atual));
+              const resultado = onUpload(file, tipoEnviado);
+              if (resultado && typeof (resultado as Promise<unknown>).then === "function") {
+                (resultado as Promise<unknown>).then(resetarTipo, (err: unknown) => {
+                  const motivo = err instanceof Error && err.message ? err.message : "o servidor recusou o arquivo";
+                  setErroArquivo(`"${file.name}" não foi enviado: ${motivo}`);
+                });
+              } else {
+                resetarTipo();
+              }
             }
           }
           // Cleared so re-picking the SAME file fires `change` again.

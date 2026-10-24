@@ -33,7 +33,7 @@ from app.services import documento_retencao
 
 logger = logging.getLogger(__name__)
 
-TIPO_A_CLASSIFICAR = "a_classificar"
+TIPO_A_CLASSIFICAR = docs_svc.TIPO_A_CLASSIFICAR
 ORIGEM_WHATSAPP = "whatsapp"
 
 Downloader = Callable[[str], Awaitable[bytes]]

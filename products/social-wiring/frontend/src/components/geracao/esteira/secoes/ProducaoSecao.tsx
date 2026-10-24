@@ -122,10 +122,11 @@ export function ProducaoSecao({ post }: { post: PostDetalhe }) {
           refreshing={docsQ.isFetching && !!docsQ.data}
           uploading={docMut.upload.isPending}
           onUpload={(file, tipoDocumento) =>
-            docMut.upload.mutate(
-              { file, tipoDocumento },
-              { onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível enviar o anexo.")) },
-            )
+            docMut.upload.mutateAsync({ file, tipoDocumento }).catch((e: unknown) => {
+              const msg = mensagemErroServidor(e, "Não foi possível enviar o anexo.");
+              toast.error(msg);
+              throw new Error(msg);
+            })
           }
           onOpenDocumento={abrirDocumento}
           onDeleteDocumento={(documentoId, motivo) =>

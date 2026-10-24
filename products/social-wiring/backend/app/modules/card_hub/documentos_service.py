@@ -92,6 +92,11 @@ RETENTION_SWEEP_JOB_ID = "card_hub_documento_retention_sweep"
 _format_bytes_human = seed_docs.format_bytes_human
 
 
+#: The WhatsApp intake's holding type (migration 220). ONE declaration: the
+#: config's `tipos_reservados` (picker omits it) and the upload refusal below.
+TIPO_A_CLASSIFICAR = "a_classificar"
+
+
 def list_tipos_documento(client: Any) -> dict:
     return seed_docs.list_tipos_documento(card_hub_config(), client)
 
@@ -127,7 +132,7 @@ async def upload_documento(
     `a_classificar` is the WhatsApp intake's holding type (migration 220) —
     only the intake (`permitir_a_classificar=True`) may file under it; a person
     uploading picks a real type."""
-    if tipo_documento == "a_classificar" and not permitir_a_classificar:
+    if tipo_documento == TIPO_A_CLASSIFICAR and not permitir_a_classificar:
         raise ValidationError_(
             "tipo_documento 'a_classificar' é reservado à triagem do WhatsApp",
             field="tipo_documento",

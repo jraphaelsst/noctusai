@@ -43,6 +43,7 @@ const {
   mockUploadMutate,
   checklistById,
   uploadMutateById,
+  uploadAsyncById,
   reextrairMutateById,
 } = vi.hoisted(() => ({
   mockChecklist: vi.fn(),
@@ -50,6 +51,7 @@ const {
   mockUploadMutate: vi.fn(),
   checklistById: new Map<string, unknown>(),
   uploadMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
+  uploadAsyncById: new Map<string, ReturnType<typeof vi.fn>>(),
   reextrairMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
 }));
 
@@ -63,9 +65,14 @@ vi.mock("@/hooks/useCardHub", () => ({
   useDocumentoChecklistMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useDocumentoMutations: (id: string) => {
     if (!uploadMutateById.has(id)) uploadMutateById.set(id, vi.fn());
+    if (!uploadAsyncById.has(id)) uploadAsyncById.set(id, vi.fn().mockResolvedValue({}));
     if (!reextrairMutateById.has(id)) reextrairMutateById.set(id, vi.fn());
     return {
-      upload: { mutate: uploadMutateById.get(id), isPending: false },
+      upload: {
+        mutate: uploadMutateById.get(id),
+        mutateAsync: uploadAsyncById.get(id),
+        isPending: false,
+      },
       remove: { mutate: vi.fn(), isPending: false },
       getUrl: { mutate: vi.fn(), isPending: false },
       reextrair: { mutate: reextrairMutateById.get(id), isPending: false, variables: undefined },
@@ -266,16 +273,12 @@ describe("PessoaDocumentosPanel — a party's upload posts to THAT party's clien
     const fileD = new File(["d"], "certidao-d.pdf", { type: "application/pdf" });
     await enviarAnexo("cli-parte-d", fileD);
 
-    const uploadC = uploadMutateById.get("cli-parte-c")!;
-    const uploadD = uploadMutateById.get("cli-parte-d")!;
-    expect(uploadC).toHaveBeenCalledWith(
-      { file: fileC, tipoDocumento: "certidao_casamento" },
-      expect.any(Object),
-    );
-    expect(uploadD).toHaveBeenCalledWith(
-      { file: fileD, tipoDocumento: "certidao_casamento" },
-      expect.any(Object),
-    );
+    // The generic Anexos section awaits the upload (so a refusal is shown),
+    // hence `mutateAsync`, not `mutate`.
+    const uploadC = uploadAsyncById.get("cli-parte-c")!;
+    const uploadD = uploadAsyncById.get("cli-parte-d")!;
+    expect(uploadC).toHaveBeenCalledWith({ file: fileC, tipoDocumento: "certidao_casamento" });
+    expect(uploadD).toHaveBeenCalledWith({ file: fileD, tipoDocumento: "certidao_casamento" });
     expect(uploadC).toHaveBeenCalledTimes(1);
     expect(uploadD).toHaveBeenCalledTimes(1);
   });

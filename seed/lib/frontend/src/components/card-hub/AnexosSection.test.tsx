@@ -163,6 +163,41 @@ describe("AnexosSection — the tipo picker (Gap 1: never a silent default)", ()
     expect(getByTestId("anexo-upload-erro").textContent).toContain("escolha o tipo");
   });
 
+  async function enviarComTipo(onUpload: AnexosSectionProps["onUpload"]) {
+    const view = await render(
+      baseProps({ tipos: [tipo("certidao_casamento", { descricao: "Certidão de casamento" })], onUpload }),
+    );
+    const rtl = await import("@testing-library/react");
+    await abrirTipos(view.getByTestId);
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.setup().click(await rtl.screen.findByRole("option", { name: "Certidão de casamento" }));
+    const file = new File(["%PDF-1.4"], "certidao.pdf", { type: "application/pdf" });
+    const input = view.container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file] });
+    rtl.fireEvent.change(input);
+    return { ...view, rtl };
+  }
+
+  it("🔴 a server-REFUSED upload shows the server's reason + the file name, and keeps the tipo", async () => {
+    const onUpload = vi.fn().mockRejectedValue(new Error("tipo_documento 'x' não está habilitado"));
+    const { getByTestId, rtl } = await enviarComTipo(onUpload);
+    await rtl.waitFor(() => expect(getByTestId("anexo-upload-erro")).toBeTruthy());
+    const texto = getByTestId("anexo-upload-erro").textContent ?? "";
+    expect(texto).toContain("certidao.pdf");
+    expect(texto).toContain("não está habilitado");
+    // The pick survives, so the operator can correct the file and retry.
+    expect((getByTestId("anexo-enviar-btn") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a successful upload resets the tipo (the next attachment gets its own pick)", async () => {
+    const onUpload = vi.fn().mockResolvedValue({});
+    const { getByTestId, queryByTestId, rtl } = await enviarComTipo(onUpload);
+    await rtl.waitFor(() =>
+      expect((getByTestId("anexo-enviar-btn") as HTMLButtonElement).disabled).toBe(true),
+    );
+    expect(queryByTestId("anexo-upload-erro")).toBeNull();
+  });
+
   it("the hidden file input filters by the backend's own allowed MIME types", async () => {
     const { container } = await render(baseProps());
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;

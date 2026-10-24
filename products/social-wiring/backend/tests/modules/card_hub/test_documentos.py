@@ -156,6 +156,15 @@ class TestUpload:
         assert resp.status_code == 400, resp.text
         assert "não está habilitado" in resp.json()["error"]["message"]
 
+    def test_tipos_endpoint_omits_a_classificar_reserved_for_whatsapp(self, client, scoped):
+        scoped.set_table_data(
+            "cliente_documento_tipos",
+            [documento_tipo_row("a_classificar", categoria="identidade"), documento_tipo_row("contrato")],
+        )
+        resp = client.get("/api/clientes/documentos/tipos", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        assert [t["tipo_documento"] for t in resp.json()["items"]] == ["contrato"]
+
     def test_upload_rejects_unknown_tipo_documento(self, client, scoped, fake_storage):
         cid = str(uuid4())
         scoped.set_table_data("clientes", [cliente_row(cid)])

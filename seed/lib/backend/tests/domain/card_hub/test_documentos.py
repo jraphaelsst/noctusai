@@ -277,6 +277,16 @@ class TestTiposCatalogue:
         assert [t["tipo_documento"] for t in resp.json()["items"]] == ["contrato", "proposta"]
         assert list(resp.json()["items"][0]) == ["tipo_documento", "categoria_lgpd", "descricao", "identidade"]
 
+    def test_reserved_types_are_omitted_from_the_picker_catalogue(self, hub):
+        cfg = replace(hub.cfg, documentos=replace(hub.cfg.documentos, tipos_reservados=frozenset({"triagem"})))
+        hub.seed(cfg.tables.documento_tipos, [
+            hub.documento_tipo_row("triagem"),
+            hub.documento_tipo_row("contrato"),
+        ])
+        out = docs.list_tipos_documento(cfg, hub.db)
+        assert [t["tipo_documento"] for t in out["items"]] == ["contrato"]
+        assert out["total"] == 1
+
 
 class TestRetentionSweep:
     def test_sweep_soft_deletes_past_retention_and_logs_as_system(self, hub):
