@@ -155,7 +155,13 @@ def test_build_gate_specs_product_scope(tmp_path):
     scope = GS._derive_scope(["products/erp-imobiliario/backend/app/main.py"])
     specs = GS._build_gate_specs(tmp_path, scope)
     names = sorted(s.gate for s in specs)
-    assert names == ["pytest:erp-imobiliario", "vite_build:erp-imobiliario"]
+    # backend-only diff -> pytest ONLY (frontend gates need a node_modules the diff never touched)
+    assert names == ["pytest:erp-imobiliario"]
+    fe = GS._build_gate_specs(tmp_path, GS._derive_scope(["products/erp-imobiliario/frontend/src/a.tsx"]))
+    assert sorted(s.gate for s in fe) == ["vite_build:erp-imobiliario"]
+    both = GS._build_gate_specs(tmp_path, GS._derive_scope(
+        ["products/erp-imobiliario/frontend/src/a.tsx", "products/erp-imobiliario/backend/app/x.py"]))
+    assert sorted(s.gate for s in both) == ["pytest:erp-imobiliario", "vite_build:erp-imobiliario"]
 
 
 def test_build_gate_specs_product_backend_only_no_frontend_gate(tmp_path):
@@ -374,7 +380,7 @@ def test_gate_sweep_all_green(tmp_path):
     assert result["ok"] is True
     assert result["status"] == "green"
     assert result["exit_code"] == 0
-    assert {g["gate"] for g in result["gates"]} == {"pytest:core", "vite_build:core"}
+    assert {g["gate"] for g in result["gates"]} == {"pytest:core"}
     assert all(g["ran"] and g["exit_code"] == 0 for g in result["gates"])
 
 
@@ -660,14 +666,14 @@ def test_all_failures_suspect_is_inconclusive_never_red(tmp_path):
     assert result["status"] == "inconclusive"
     entry = next(g for g in result["gates"] if g["gate"] == "vite_build:core")
     assert entry["harness_suspect"]["signature"] == "playwright_browser_missing"
-    assert {s["gate"] for s in result["harness"]["suspects"]} == {"pytest:core", "vite_build:core"}
+    assert {s["gate"] for s in result["harness"]["suspects"]} == {"vite_build:core"}
 
 
 def test_a_genuine_red_still_wins_over_a_suspect(tmp_path):
     """A known real failure stays the headline — downgrading it would hide
     a real bug behind a setup complaint."""
     _make_product(tmp_path, "core")
-    git_runner = _clean_git_runner(diff_files="products/core/backend/app/main.py\n")
+    git_runner = _clean_git_runner(diff_files="products/core/backend/app/main.py\nproducts/core/frontend/src/App.tsx\n")
 
     def fake_run(spec):
         if spec.gate == "pytest:core":

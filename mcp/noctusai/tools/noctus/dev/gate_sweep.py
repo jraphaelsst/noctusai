@@ -214,6 +214,8 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
     """Bucket every changed path into exactly one gate-family. See module
     docstring "SCOPE DERIVATION"."""
     products: set[str] = set()
+    product_frontend: set[str] = set()
+    product_other: set[str] = set()
     seed_fleet_wide = False
     seed_files: list[str] = []
     mcp_touched = False
@@ -225,6 +227,10 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
         m = _PRODUCT_RE.match(f)
         if m:
             products.add(m.group(1))
+            if f.startswith(f"products/{m.group(1)}/frontend/"):
+                product_frontend.add(m.group(1))
+            else:
+                product_other.add(m.group(1))
             continue
         if _SEED_FLEET_RE.match(f):
             seed_fleet_wide = True
@@ -244,6 +250,12 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
     )
     return {
         "products": sorted(products),
+        # Which GATE FAMILY a touched product earns (one decision, 2026-10-24):
+        # frontend files -> vite_build/vitest/e2e; anything else -> pytest. A
+        # backend-only diff must not emit frontend gates (they then need a
+        # node_modules the worktree does not have -> harness-invalid noise).
+        "product_frontend": sorted(product_frontend),
+        "product_other": sorted(product_other),
         "seed_fleet_wide": seed_fleet_wide,
         "seed_files": sorted(seed_files),
         "mcp": mcp_touched,
@@ -1306,6 +1318,32 @@ def _contract_consumer_specs(
     return extra
 
 
+def _direct_gate_wanted(kind: str, slug: str, scope: dict[str, Any]) -> bool:
+    """Does a DIRECTLY touched product earn gate family `kind`? pytest <- any
+    non-frontend file; vite_build/vitest/e2e <- a frontend file. A scope built
+    without the split keys (hand-made) keeps the old "everything" behaviour."""
+    if "product_frontend" not in scope:
+        return True
+    if kind == "pytest":
+        return slug in scope.get("product_other", [])
+    return slug in scope["product_frontend"]
+
+
+def frontend_gate_products(specs: list[GateSpec], root: Path) -> set[str]:
+    """Products that own a frontend-cwd gate in `specs` - the ONE definition of
+    "touched frontend", shared by the sweep and the env top-up."""
+    base = (root / "products").resolve()
+    out: set[str] = set()
+    for sp in specs:
+        try:
+            parts = Path(sp.cwd).resolve().relative_to(base).parts
+        except ValueError:
+            continue
+        if len(parts) >= 2 and parts[1] == "frontend":
+            out.add(parts[0])
+    return out
+
+
 def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
     py = resolve_test_python()
     specs: list[GateSpec] = []
@@ -1339,7 +1377,7 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
                 for spec in _product_gate_specs(root, slug, py, with_vitest=slug in direct):
                     kind = spec.gate.split(":", 1)[0]
                     wanted = (
-                        slug in direct
+                        (slug in direct and _direct_gate_wanted(kind, slug, scope))
                         or (kind == "pytest" and slug in plan["py_products"])
                         or (kind in ("vite_build", "e2e") and slug in plan["fe_products"])
                     )
@@ -1370,7 +1408,9 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
         if asleep_requested:
             scope["asleep_requested"] = asleep_requested
         for slug in scope["products"]:
-            specs.extend(_product_gate_specs(root, slug, py, with_vitest=True))
+            specs.extend(
+                sp for sp in _product_gate_specs(root, slug, py, with_vitest=True)
+                if _direct_gate_wanted(sp.gate.split(":", 1)[0], slug, scope))
 
     specs.extend(_contract_consumer_specs(root, scope, specs, py))
 
@@ -1684,6 +1724,7 @@ def gate_sweep(
     run_gate: Callable[[GateSpec], GateRunResult] | None = None,
     git_runner: GitRunner | None = None,
     max_workers: int | None = None,
+    prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
 ) -> dict[str, Any]:
     """Run the canonical gate set for what actually changed vs. `base_ref`;
     return a structured, measured verdict. See module docstring.
@@ -1770,6 +1811,9 @@ def gate_sweep(
     specs = _build_gate_specs(root, scope)
     scope.pop("mcp_diffs", None)  # whole module sources — never in the result
     runner = run_gate or functools.partial(_default_run_gate, timeout=timeout)
+    # Env preparation seam: handed the EXACT spec list about to run, so what is
+    # prepared and what is gated cannot disagree (2026-10-24).
+    prepared = prepare_gates(root, specs) if prepare_gates is not None else None
 
     # Measured against what `_default_run_gate` actually hands its subprocess
     # (provenance strip + .env-value scrub) — a backstop that only fires if the
@@ -1840,6 +1884,7 @@ def gate_sweep(
         "changed_files": changed_files,
         "scope": scope,
         "gates": gates,
+        "env_prepared": prepared,
         "warnings": warnings,
         "stale_tree": stale_tree,
         "allow_stale_tree": allow_stale_tree,

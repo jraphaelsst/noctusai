@@ -1412,19 +1412,6 @@ def _merged_tip_red_is_new(gate_name: str, scope: dict | None) -> bool:
     return True
 
 
-def _touched_frontend_products(runner, abs_wt_path: str, dev_ref: str) -> set[str]:
-    """Products with a frontend whose files this branch's diff (vs `dev_ref`) touches."""
-    rc, out, _err = runner(["git", "diff", "--name-only", f"{dev_ref}...HEAD"], cwd=abs_wt_path)
-    if rc != 0:
-        return set()
-    found: set[str] = set()
-    for ln in out.splitlines():
-        parts = Path(ln.strip()).parts
-        if len(parts) >= 3 and parts[0] == "products" and parts[2] == "frontend":
-            found.add(parts[1])
-    return found
-
-
 def ensure_merged_tip_frontend_env(
     primary_root: str, wt_root: str, products: set[str], fs: "FsOps | None" = None,
 ) -> dict[str, Any]:
@@ -1499,20 +1486,25 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     (`_timed_out_in_scope_gates`)."""
     from .gate_sweep import gate_sweep  # lazy import
 
-    env_wiring = None
-    try:
-        env_wiring = ensure_merged_tip_frontend_env(
-            _resolve_primary_root(primary_root), abs_wt_path,
-            _touched_frontend_products(runner or _default_run_local, abs_wt_path, dev_ref), fs)
-    except OSError as exc:  # never crash integrate; the gate then reports harness_invalid honestly
-        env_wiring = {"error": f"{type(exc).__name__}: {exc}"}
+    from .gate_sweep import frontend_gate_products  # lazy import
+
+    def _prepare(root: Path, specs: list) -> dict[str, Any]:
+        # Prepared from the SAME spec list gate_sweep is about to run, so the
+        # env top-up and the gate list cannot disagree on "touched".
+        try:
+            return ensure_merged_tip_frontend_env(
+                _resolve_primary_root(primary_root), str(root),
+                frontend_gate_products(specs, root), fs)
+        except OSError as exc:  # never crash integrate; gates then report harness_invalid honestly
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
     attempts: dict[str, dict[str, Any]] = {}
-    res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path,
+    res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, prepare_gates=_prepare,
                      run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts))
     if isinstance(res, dict):
         # per-gate attempt counts + durations/budgets, so wall-clock is visible
         res["gate_attempts"] = attempts
-        res["frontend_env"] = env_wiring
+        res["frontend_env"] = res.get("env_prepared")
     return res
 
 

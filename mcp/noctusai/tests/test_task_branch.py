@@ -3913,11 +3913,6 @@ class TestMergedTipFrontendEnv:
         assert out["skipped"] and out["skipped"][0]["product"] == "alpha"
         assert not (wt / "products/alpha/frontend/node_modules").exists()
 
-    def test_touched_products_derived_from_diff(self):
-        def run(cmd, cwd=None):
-            return 0, "products/a/frontend/src/x.tsx\nproducts/b/backend/app.py\nseed/lib/x.ts\n", ""
-        assert T._touched_frontend_products(run, "/wt", "origin/dev") == {"a"}
-
     def test_vitest_red_blocks_and_names_failing_tests(self):
         fake = TestMergedTipVerificationMechanism._fake()
 
@@ -3939,3 +3934,77 @@ class TestMergedTipFrontendEnv:
             "vitest:seed/lib/frontend", {"products": [], "seed_fleet_wide": True}) is True
         assert T._merged_tip_red_is_new(
             "vitest:other", {"products": [], "seed_fleet_wide": True}) is False
+
+
+class TestMergedTipEnvRealRepo:
+    """REAL temp git repo + real directories (no fakes): the env top-up and the
+    gate list are derived from ONE spec list, so a frontend gate that is emitted
+    is also measurable; a backend-only diff emits no frontend gate at all."""
+
+    @staticmethod
+    def _repo(tmp_path):
+        import subprocess as sp
+        primary = tmp_path / "primary"
+        wt = tmp_path / "wt"
+        fe_p = primary / "products/alpha/frontend"
+        (fe_p / "node_modules/dummy-pkg").mkdir(parents=True)
+        (fe_p / "node_modules/.package-lock.json").write_text("{}")
+        pkg = ('{"scripts": {"test": "vitest run"}, "dependencies": {'
+               '"@noctusai/lib": "file:../../../seed/lib/frontend", '
+               '"@noctusai/seed": "file:../../../seed/framework/frontend"}}')
+        (fe_p / "package.json").write_text(pkg)
+        wt.mkdir()
+        run = lambda *a: sp.run(["git", *a], cwd=wt, check=True, capture_output=True)
+        run("init", "-q", "-b", "dev")
+        run("config", "user.email", "t@t")
+        run("config", "user.name", "t")
+        (wt / "products/alpha/frontend").mkdir(parents=True)
+        (wt / "products/alpha/frontend/package.json").write_text(pkg)
+        (wt / "products/alpha/backend/tests").mkdir(parents=True)
+        (wt / "seed/lib/frontend").mkdir(parents=True)
+        (wt / "seed/framework/frontend").mkdir(parents=True)
+        (wt / "seed/lib/frontend/index.ts").write_text("")
+        run("add", "-A")
+        run("commit", "-qm", "base")
+        run("update-ref", "refs/remotes/origin/dev", "HEAD")
+        run("checkout", "-qb", "feat/x")
+        return primary, wt, run
+
+    def test_frontend_change_gates_are_measurable_after_topup(self, tmp_path):
+        from tools.noctus.dev import gate_sweep as GS
+        primary, wt, run = self._repo(tmp_path)
+        (wt / "products/alpha/frontend/src").mkdir()
+        (wt / "products/alpha/frontend/src/App.tsx").write_text("x")
+        run("add", "-A")
+        run("commit", "-qm", "fe")
+        ran = []
+
+        def fake_run(spec):
+            ran.append(spec.gate)
+            return 0, "ok", 0.1
+
+        def prepare(root, specs):
+            return T.ensure_merged_tip_frontend_env(
+                str(primary), str(root), GS.frontend_gate_products(specs, root))
+
+        res = GS.gate_sweep(base_ref="origin/dev", repo_root=str(wt), run_gate=fake_run,
+                            prepare_gates=prepare, allow_stale_tree=True)
+        assert sorted(ran) == ["vite_build:alpha", "vitest:alpha"], res["gates"]
+        assert not any(g.get("harness_invalid") for g in res["gates"]), res["gates"]
+        assert res["status"] == "green"
+        nm = wt / "products/alpha/frontend/node_modules"
+        assert (nm / ".package-lock.json").exists() and (nm / "dummy-pkg").is_symlink()
+        assert (nm / "@noctusai/lib").resolve() == (wt / "seed/lib/frontend").resolve()
+        assert (nm / "@noctusai/seed").resolve() == (wt / "seed/framework/frontend").resolve()
+
+    def test_backend_only_change_emits_no_frontend_gate(self, tmp_path):
+        from tools.noctus.dev import gate_sweep as GS
+        primary, wt, run = self._repo(tmp_path)
+        (wt / "products/alpha/backend/tests/test_a.py").write_text("def test_a(): pass\n")
+        run("add", "-A")
+        run("commit", "-qm", "be")
+        ran = []
+        GS.gate_sweep(base_ref="origin/dev", repo_root=str(wt),
+                      run_gate=lambda sp: (ran.append(sp.gate), (0, "ok", 0.1))[1],
+                      allow_stale_tree=True)
+        assert ran == ["pytest:alpha"]

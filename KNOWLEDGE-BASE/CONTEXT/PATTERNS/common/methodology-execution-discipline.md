@@ -242,6 +242,16 @@ appends `BEFORE_RETURNING_BLOCK` (full touched-product vitest/pytest +
 `--check-doc-staleness --doc-range origin/dev..HEAD`); `engineer-seed.md` §3 points
 at it (single source).
 
+**2026-10-24 (follow-up) — one definition of "touched".** The first cut topped up
+`node_modules` from the diff but gate_sweep emitted frontend gates for any touched
+product, so a backend-only diff got harness-invalid `vite_build`/`vitest`. Now a
+directly touched product earns `pytest` for non-frontend files and
+`vite_build`/`vitest`/`e2e` ONLY for `products/<slug>/frontend/` files (seed
+fan-out unchanged); `gate_sweep(prepare_gates=...)` hands the env top-up the exact
+spec list about to run (`frontend_gate_products`), so prepared == gated. Proven
+against a real temp git repo + real dirs (marker file, dummy package, `@noctusai/*`
+pointing at the merged-tip seed).
+
 **2026-10-21 — gate budgets loosened ~3x + ONE retry of a timed-out gate.** The
 2026-10-19 budgets (SW 480 s, seed/lib 360 s, mcp 300/240 s) still produced
 repeated `gate_timeout` blocks on a loaded laptop for suites that pass when run
