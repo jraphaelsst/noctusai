@@ -6496,7 +6496,7 @@ def completar_rg_pela_certidao(
         _t(client, CLIENTES_TABLE)
         .select(",".join(dict.fromkeys(["id", "cpf", campo.item_key, campo.origem,
                                         campo.documento_id, campo.confirmado_por,
-                                        campo.confirmado_em])))
+                                        campo.confirmado_em, "rg_orgao_expedidor"])))
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
         .limit(1)
@@ -6513,6 +6513,11 @@ def completar_rg_pela_certidao(
         return {"status": "rg_invalido", "aplicados": [], "conflitos": []}
 
     presente = atual.get("rg")
+    if not _vazio(presente) and not idf.rg_tem_digito_verificador_esperado(
+        atual.get("rg_orgao_expedidor")
+    ):
+        # Outside SSP/SP the RG commonly has no check digit: nothing to complete.
+        return {"status": "ja_completo", "aplicados": [], "conflitos": []}
     completa = (
         not _vazio(presente)
         and len(only_alnum(str(presente))) < len(only_alnum(rg_certidao))

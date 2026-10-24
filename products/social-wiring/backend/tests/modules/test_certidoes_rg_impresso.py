@@ -94,3 +94,31 @@ class TestRgImpresso:
             db, ORG, {"id": "c1", "cliente_id": None}, "tjsp_esaj", (TEXTO.format(cpf=CPF),),
         )["status"] == "nada"
         assert _row(db, cid)["rg"] == "30738581"
+
+
+class TestRgSoSpTemDv:
+    """F95: the check digit is an SSP/SP feature; other UFs' CNH RG is complete."""
+
+    def test_nao_sp_nao_e_completado_pela_certidao(self):
+        for orgao in ("SSP AM", "SSP/RJ", "SSP-MG"):
+            cid = str(uuid4())
+            db = _db(_cliente(cid, rg_orgao_expedidor=orgao))
+            assert _rodar(db, cid)["status"] == "ja_completo"
+            assert _row(db, cid)["rg"] == "30738581"
+
+    def test_sp_continua_sendo_completado(self):
+        for orgao in ("SSP/SP", "SSP-SP", "SSP SP"):
+            cid = str(uuid4())
+            db = _db(_cliente(cid, rg_orgao_expedidor=orgao))
+            assert _rodar(db, cid)["status"] == "completado"
+
+    def test_checklist_e_contrato_usam_o_mesmo_predicado(self):
+        from app.modules.card_hub import documento_checklist_service as svc
+
+        def faltando(orgao):
+            c = {"nome_oficial": "M", "rg": "18104746", "rg_origem": "cnh",
+                 "rg_orgao_expedidor": orgao, "cpf": CPF}
+            return "rg" in svc.campos_faltando(c, "identidade", {})
+
+        assert faltando("SSP/SP") and faltando("SSP-SP")
+        assert not faltando("SSP AM") and not faltando("SSP/RJ") and not faltando("SSP/MG")

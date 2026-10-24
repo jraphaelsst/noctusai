@@ -71,4 +71,14 @@ describe('createQueryClient — global error toast', () => {
 
     expect(toastError).toHaveBeenCalledTimes(1);
   });
+
+  it('never toasts the expected 409 org_selection_required (the org picker handles it)', async () => {
+    await runQuery('org-required', async () => {
+      throw new ApiError(409, 'Selecione a organização para continuar.', {
+        detail: { code: 'org_selection_required' },
+      });
+    });
+
+    expect(toastError).not.toHaveBeenCalled();
+  });
 });

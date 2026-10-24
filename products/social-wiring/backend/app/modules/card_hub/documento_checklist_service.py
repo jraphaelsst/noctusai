@@ -44,6 +44,7 @@ from noctusai_lib.integrations.documents.rg import mesmo_rg, only_alnum
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import rg_matricula_service as rg_matricula
 from app.services.estado_civil_canonico import estado_civil_canonico
+from app.services.identificadores import rg_tem_digito_verificador_esperado
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.services import (
     _now,
@@ -283,6 +284,8 @@ def _rg_so_da_cnh(cliente: dict, documentos: dict[str, dict]) -> bool:
     digit, so agreeing with it means the CNH's reading was complete.
     """
     if cliente.get("rg_origem") != "cnh" or _preenchido(cliente.get("rg_confirmado_em")):
+        return False
+    if not rg_tem_digito_verificador_esperado(cliente.get("rg_orgao_expedidor")):
         return False
     rg = only_alnum(str(cliente.get("rg") or "")).upper()
     cartao = documentos.get("rg") or {}

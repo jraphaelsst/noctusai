@@ -81,6 +81,16 @@ def uf_do_orgao(orgao: Any) -> Optional[str]:
     return None
 
 
+def rg_tem_digito_verificador_esperado(orgao: Any) -> bool:
+    """The check digit is an SSP/SP RG-format feature (8 digits + DV); RGs of
+    other states commonly have none, so a CNH-read RG is complete there.
+    False ONLY when the órgão names a UF other than SP; an órgão with no UF
+    stays ambiguous and keeps the ressalva. Single predicate: the checklist,
+    the contract readiness and the e-SAJ completion all read it."""
+    uf = uf_do_orgao(orgao)
+    return uf is None or uf == "SP"
+
+
 # ─── write side ─────────────────────────────────────────────────────────────
 
 

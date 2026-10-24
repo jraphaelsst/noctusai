@@ -29,6 +29,7 @@
 import { QueryClient, QueryCache } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
+import { ORG_SELECTION_REQUIRED_CODE } from './access';
 import { ApiError } from './api';
 import { autoRetryDelayMs, shouldAutoRetry } from './retry';
 
@@ -45,6 +46,11 @@ export function createQueryClient(): QueryClient {
           error.status !== null &&
           suppressed.includes(error.status)
         ) {
+          return;
+        }
+        // 409 org_selection_required is an expected state (no org pinned yet):
+        // the org picker the api layer reopens already handles it.
+        if (error instanceof ApiError && error.code === ORG_SELECTION_REQUIRED_CODE) {
           return;
         }
         toast.error('Erro ao carregar dados', { description: error.message });
