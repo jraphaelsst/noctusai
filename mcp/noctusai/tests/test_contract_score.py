@@ -218,3 +218,16 @@ def test_so_aprovados_e_com_observacoes_dao_pass(private):
         runner=_Runner({"101": {"veredito": "incompleto", "motivos": []}}),
     )
     assert incompleto["verdict"] == "fail"
+
+
+def test_proveniencia_extraido_vs_operador_separados_e_filtrados(private):
+    """F72 — extractor coverage is reported apart from operator input, per deal
+    and in total; only the closed bucket keys with int counts survive."""
+    _plantar_deal(private, "101", texto="Texto.")
+    _plantar_deal(private, "102", texto="Texto.")
+    r1 = {"veredito": "aprovado", "proveniencia": {"extraido_confirmado": 5, "operador": 2, "extraido_pendente": 1, "nome": CPF_FAKE}}
+    r2 = {"veredito": "aprovado", "proveniencia": {"extraido_confirmado": 3, "operador": 4, "conflito": 1}}
+    out = cs.contract_score(cards_path=_cards(private, ["101", "102"]), worktree_path=WORKTREE, runner=_Runner({"101": r1, "102": r2}))
+    assert out["deals"]["101"]["proveniencia"] == {"extraido_confirmado": 5, "operador": 2, "extraido_pendente": 1}
+    assert out["proveniencia_total"] == {"extraido_confirmado": 8, "operador": 6, "extraido_pendente": 1, "conflito": 1}
+    assert CPF_FAKE not in json.dumps(out)

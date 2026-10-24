@@ -388,6 +388,29 @@ def provenance(client: Any, org_id: UUID, cliente_id: UUID, contrato_id: UUID) -
     return linhagem_do_card(client, org_id, cliente_id, contrato_id)
 
 
+#: `linhagem` estado -> the scorecard's provenance bucket (F72). `confirmado`
+#: = a value whose origem is not `manual` and a human confirmed it
+#: (extracted, human-confirmed); `manual` = operator-typed (this is also where
+#: negotiation-only terms land — nothing extracts them).
+_BUCKET_PROVENIENCIA = {
+    "confirmado": "extraido_confirmado",
+    "manual": "operador",
+    "maquina_pendente": "extraido_pendente",
+    "conflito": "conflito",
+}
+
+
+def resumo_proveniencia(items: list[dict]) -> dict[str, int]:
+    """Counts of the card's contract-feeding values by provenance bucket —
+    extractor coverage measured APART from operator input. Counts only."""
+    out = {b: 0 for b in _BUCKET_PROVENIENCIA.values()}
+    for item in items:
+        bucket = _BUCKET_PROVENIENCIA.get(item.get("estado"))
+        if bucket:
+            out[bucket] += 1
+    return out
+
+
 # ─── per-gap traceability (document missing / extraction pending / manual) ─
 
 CATEGORIA_MANUAL = "manual_vazio"
@@ -555,6 +578,7 @@ def pontuar_deal(
             return {"resumo": {"veredito": "sem_contrato"}, "detalhe": {"veredito": "sem_contrato"}}
         contrato_id = UUID(resolved)
     prontidao, dados = relatorio_prontidao(client, org_id, cliente_id, contrato_id)
+    proveniencia = resumo_proveniencia(provenance(client, org_id, cliente_id, contrato_id).get("items", []))
     gaps = {
         "pronto": prontidao.pronto,
         "pode_gerar": prontidao.pode_gerar,
@@ -587,6 +611,7 @@ def pontuar_deal(
             "render_modo": modo,
             "render_erro": type(exc).__name__,
             "gaps": gaps,
+            "proveniencia": proveniencia,
         }
         return {"resumo": resumo, "detalhe": {**resumo, "gaps_campos": gaps_campos}}
     achados = lint_renderizado(renderizado)
@@ -615,6 +640,7 @@ def pontuar_deal(
         "campos_marcados": marcadores,
         "lint_achados": len(achados),
         "gaps": gaps,
+        "proveniencia": proveniencia,
     }
     detalhe = {
         **card.detalhe(),
@@ -624,6 +650,7 @@ def pontuar_deal(
         "campos_marcados": marcadores,
         "lint_codigos": sorted({a.get("codigo", "?") for a in achados}),
         "gaps": gaps,
+        "proveniencia": proveniencia,
         "gaps_campos": gaps_campos,
     }
     return {"resumo": resumo, "detalhe": detalhe}

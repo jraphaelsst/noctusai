@@ -117,12 +117,17 @@ function SemSugestao({
   motivo,
   href,
   testId,
+  mensagem,
+  acao = "Abrir a matrícula",
 }: {
   motivo: string | null;
   href: string;
   testId: string;
+  /** The server's own sentence, preferred over the generic per-motivo text. */
+  mensagem?: string | null;
+  acao?: string;
 }) {
-  const explicacao = motivoSemSugestaoTexto(motivo);
+  const explicacao = mensagem || motivoSemSugestaoTexto(motivo);
   if (!explicacao) return null;
   return (
     <div
@@ -136,7 +141,7 @@ function SemSugestao({
       </p>
       <Link to={href} className="inline-flex items-center gap-1 text-xs font-medium underline">
         <Link2 className="h-3 w-3" />
-        Abrir a matrícula
+        {acao}
       </Link>
     </div>
   );
@@ -287,6 +292,12 @@ export default function ImovelContratoCard({
                   motivo={titulo?.motivo_sem_sugestao ?? null}
                   href={linkDaMatricula(codigo, titulo?.ato?.extracao_id)}
                   testId="imovel-titulo-sem-sugestao"
+                  mensagem={titulo?.mensagem_pendencia}
+                  acao={
+                    titulo?.motivo_sem_sugestao === "matricula_removida"
+                      ? "Escolher outra matrícula"
+                      : undefined
+                  }
                 />
               )}
 

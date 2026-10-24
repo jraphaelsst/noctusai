@@ -94,6 +94,9 @@ _GAPS_CHAVES = (
     "pronto", "pode_gerar", "revisao_final_unica", "faltando", "bloqueios", "confirmacoes_pendentes",
     "conflitos_extracao", "pendentes_extracao_bloqueantes", "revisao_campos",
 )
+#: F72 — contract-feeding values by provenance bucket (extractor coverage apart
+#: from operator input). CLOSED key set; counts only.
+_PROVENIENCIA_CHAVES = ("extraido_confirmado", "operador", "extraido_pendente", "conflito")
 _CODIGO_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:")
 
 
@@ -140,6 +143,12 @@ def _so_veredito(resumo: dict[str, Any]) -> dict[str, Any]:
     gaps = resumo.get("gaps")
     if isinstance(gaps, dict):
         out["gaps"] = {k: gaps[k] for k in _GAPS_CHAVES if isinstance(gaps.get(k), (int, bool))}
+    prov = resumo.get("proveniencia")
+    if isinstance(prov, dict):
+        out["proveniencia"] = {
+            k: prov[k] for k in _PROVENIENCIA_CHAVES
+            if isinstance(prov.get(k), int) and not isinstance(prov.get(k), bool)
+        }
     return out
 
 
@@ -295,6 +304,9 @@ def contract_score(
         v = r.get("veredito", "desconhecido")
         contagem[v] = contagem.get(v, 0) + 1
     total = resultado.get("total") or {}
+    proveniencia_total = {
+        k: sum(r.get("proveniencia", {}).get(k, 0) for r in por_deal.values()) for k in _PROVENIENCIA_CHAVES
+    }
     # `aprovado` and `aprovado_com_observacoes` are both ACCEPTED: the material
     # terms match (wording/structure differences are observations only).
     aprovados = contagem.get("aprovado", 0) + contagem.get("aprovado_com_observacoes", 0)
@@ -306,6 +318,7 @@ def contract_score(
         "taxa_aprovacao": round(aprovados / len(por_deal), 4) if por_deal else None,
         "por_veredito": contagem,
         "deals": por_deal,
+        "proveniencia_total": proveniencia_total,
         "deals_skipped": pulados,
         "scorecard_path": str(score_path),
         "limiares": total.get("limiares"),

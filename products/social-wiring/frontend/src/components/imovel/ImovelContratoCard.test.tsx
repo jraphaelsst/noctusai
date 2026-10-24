@@ -196,6 +196,46 @@ describe("ImovelContratoCard — título aquisitivo", () => {
     );
   });
 
+  it("F73: a removed matrícula shows the server's pendência message and a pick-another action", async () => {
+    const mensagem = "A matrícula do título aquisitivo confirmado foi removida — escolha outra.";
+    const { getByTestId } = await render({
+      titulo: titulo({
+        ato: null,
+        sugestao: null,
+        motivo_sem_sugestao: "matricula_removida",
+        mensagem_pendencia: mensagem,
+      }),
+    });
+    const aviso = getByTestId("imovel-titulo-sem-sugestao");
+    expect(aviso.getAttribute("data-motivo")).toBe("matricula_removida");
+    expect(aviso.textContent).toContain(mensagem);
+    const link = aviso.querySelector("a") as HTMLAnchorElement;
+    expect(link.textContent).toContain("Escolher outra matrícula");
+    expect(link.getAttribute("href")).toBe("/matriculas?codigo=AP1234");
+  });
+
+  it("F73: título block has loading and error states (no pendência while loading/erroring)", async () => {
+    const carregando = await render({ titulo: undefined, tituloShowSkeleton: true });
+    expect(carregando.getByTestId("imovel-titulo-skeleton")).toBeTruthy();
+    expect(carregando.queryByTestId("imovel-titulo-sem-sugestao")).toBeNull();
+    (await import("@testing-library/react")).cleanup();
+    const erro = await render({ titulo: undefined, tituloIsError: true });
+    expect(erro.getByTestId("imovel-titulo-erro")).toBeTruthy();
+    expect(erro.queryByTestId("imovel-titulo-sem-sugestao")).toBeNull();
+  });
+
+  it("F73: the pendência message wins over the generic motivo text", async () => {
+    const { getByTestId } = await render({
+      titulo: titulo({
+        ato: null,
+        sugestao: null,
+        motivo_sem_sugestao: "matricula_removida",
+        mensagem_pendencia: "Mensagem do servidor.",
+      }),
+    });
+    expect(getByTestId("imovel-titulo-sem-sugestao").textContent).toContain("Mensagem do servidor.");
+  });
+
   it("names who confirmed the wording in force", async () => {
     const { getByTestId } = await render({
       titulo: titulo({

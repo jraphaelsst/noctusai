@@ -126,6 +126,9 @@ export interface TituloAquisitivoResponse {
   /** The rendered phrase, recomputed on every read. `null` with a reason. */
   sugestao: string | null;
   motivo_sem_sugestao: MotivoSemSugestao | null;
+  /** The backend's own pendência sentence (set for `matricula_removida`);
+   *  absent/null otherwise and on older backends. */
+  mensagem_pendencia?: string | null;
   confirmado: ConfirmacaoTexto | null;
   /** Per-fact disagreements; absent on older backends. */
   divergencias?: TituloDivergencia[];

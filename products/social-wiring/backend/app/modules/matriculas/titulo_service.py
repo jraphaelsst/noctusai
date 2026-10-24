@@ -322,14 +322,31 @@ def _divergencia_automatica(linha: dict, divergencias: list[dict]) -> bool:
     return not linha.get("titulo_aquisitivo_texto_confirmado_por")
 
 
-def _patch_confirmacao(coluna: str, valor: Optional[str], usuario_id: Optional[Any]) -> dict:
-    """An operator's PUT: the value, `manual` provenance (migration 154 — so a
-    later extraction reading a different phrase opens a conflict instead of
-    overwriting), and the confirmation. Clearing clears all of it."""
+ORIGEM_EXTRAIDO_CONFIRMADO = "matricula"
+
+
+def _mesma_frase(a: Optional[str], b: Optional[str]) -> bool:
+    """Byte-identical modulo surrounding/inner whitespace runs (the textarea
+    may re-wrap) — NOT a semantic match: any wording edit is `manual`."""
+    return bool(a and b) and " ".join(a.split()) == " ".join(b.split())
+
+
+def _patch_confirmacao(
+    coluna: str,
+    valor: Optional[str],
+    usuario_id: Optional[Any],
+    *,
+    origem: str = "manual",
+) -> dict:
+    """An operator's PUT: the value, its provenance (migration 154 — `manual`
+    so a later extraction reading a different phrase opens a conflict instead
+    of overwriting; `matricula` + a confirmation when the operator accepted
+    the machine suggestion unchanged = "extracted, human-confirmed", F72),
+    and the confirmation. Clearing clears all of it."""
     texto = (valor or "").strip() or None
     return {
         coluna: texto,
-        f"{coluna}_origem": "manual" if texto else None,
+        f"{coluna}_origem": origem if texto else None,
         f"{coluna}_confirmado_por": str(usuario_id) if texto and usuario_id else None,
         f"{coluna}_confirmado_em": now_iso() if texto else None,
     }
@@ -518,8 +535,17 @@ def confirmar_titulo(
     usuario_id: Optional[Any],
 ) -> dict:
     codigo = _codigo(codigo)
+    # F72 — provenance is decided HERE, server-side, against the CURRENT
+    # suggestion (never a client flag): unchanged => extracted+confirmed
+    # (`matricula` with `_confirmado_por`/`_em` set, so it is not pending);
+    # anything else => operator-typed (`manual`).
+    sugestao = obter_titulo(client, org_id, codigo, usuario_id=usuario_id).get("sugestao")
+    origem = ORIGEM_EXTRAIDO_CONFIRMADO if _mesma_frase(texto, sugestao) else "manual"
     dados_service.gravar_texto_contrato(
-        client, org_id, codigo, _patch_confirmacao("titulo_aquisitivo_texto", texto, usuario_id)
+        client,
+        org_id,
+        codigo,
+        _patch_confirmacao("titulo_aquisitivo_texto", texto, usuario_id, origem=origem),
     )
     return obter_titulo(client, org_id, codigo, usuario_id=usuario_id)
 

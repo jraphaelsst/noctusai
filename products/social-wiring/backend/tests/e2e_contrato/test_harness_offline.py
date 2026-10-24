@@ -135,3 +135,15 @@ def test_casamento_sem_data_renderiza_com_data_de_lacuna():
     assert all(p.data_casamento is not None for p in marcado.vendedores)
     assert n >= 1
     assert harness.renderizar_em_memoria(sem, com_marcadores=True).paragrafos
+
+
+def test_resumo_proveniencia_separa_extraido_de_operador():
+    """F72 — extractor coverage apart from operator input; negotiation-only
+    terms (no extractor) land as `manual` -> operador."""
+    items = [
+        {"estado": "confirmado"}, {"estado": "confirmado"}, {"estado": "manual"},
+        {"estado": "maquina_pendente"}, {"estado": "conflito"}, {"estado": "vazio"},
+    ]
+    assert harness.resumo_proveniencia(items) == {
+        "extraido_confirmado": 2, "operador": 1, "extraido_pendente": 1, "conflito": 1,
+    }
