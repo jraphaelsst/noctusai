@@ -1817,7 +1817,7 @@ def aplicar_campos_ao_cliente(
     if not rows:
         return {c.item_key: False for c in campos}, []
 
-    atual = rows[0]
+    atual = {**rows[0], **(sanear_proveniencia(client, org_id, cliente_id, rows[0]) or {})}
     updates: dict[str, Any] = {}
     aplicados: dict[str, bool] = {}
     conflitos: list[dict] = []
@@ -2989,7 +2989,7 @@ def aplicar_endereco_ao_cliente(
     ).data or []
     if not rows:
         return False, None
-    atual = rows[0]
+    atual = {**rows[0], **(sanear_proveniencia(client, org_id, cliente_id, rows[0]) or {})}
     # 🔴 TITULAR BINDING (owner-requested divergence study, 2026-10-05; 13 of
     # 155 e-mails + the stored-value corruption behind several more): a bill
     # whose printed holder is NOT this person (another person, a company, a
@@ -6967,6 +6967,140 @@ def descartar_sugestao(
     }
 
 
+#: Key under which `sanear_proveniencia` reports what it withheld.
+CHAVE_DOCUMENTO_REMOVIDO = "_documento_removido"
+
+
+def _grupos_de_proveniencia() -> list[tuple[str, list[str], list[str]]]:
+    """`(chave, colunas de valor, colunas de proveniência)` of EVERY
+    provenance-carrying group on `clientes` — the `CampoExtraido` fields
+    (estado civil family, rg/cpf/órgão, nome oficial, pacto, …) and the
+    `endereco` group — derived, so a new field is covered with no edit here."""
+    grupos: list[tuple[str, list[str], list[str]]] = []
+    for campo in CAMPO_POR_CHAVE.values():
+        grupos.append((
+            campo.item_key, [campo.item_key],
+            [campo.origem, campo.documento_id, campo.em,
+             campo.confirmado_por, campo.confirmado_em],
+        ))
+    grupos.append((
+        CAMPO_ENDERECO, [*ENDERECO_COLUNAS],
+        ["endereco_origem", "endereco_documento_id", "endereco_em",
+         "endereco_confirmado_por", "endereco_confirmado_em", COLUNA_BAIRRO_ORIGEM],
+    ))
+    return grupos
+
+
+def sanear_proveniencia(
+    client: Any, org_id: UUID, cliente_id: UUID, cliente: Optional[dict],
+) -> Optional[dict]:
+    """READ-TIME backstop of `reverter_aplicados_do_documento` (the delete
+    hook): the cliente row with every machine-applied value whose source
+    document is gone NOT trusted.
+
+    🔴 The delete hook only covers deletes that ran through it; a value whose
+    document was soft-deleted (`deleted_at`) or discarded
+    (`extracao_descartada_em`) before it existed, or through WhatsApp triage /
+    admin / bulk ops, kept printing (real: `estado_civil='casado'` pointing
+    at a deleted certidão). The matrícula side already does this at read time
+    (`estrutura_service.documento_removido`); this mirrors it for ONE helper
+    over EVERY provenance group (`_grupos_de_proveniencia`):
+
+    - value + its provenance are blanked in the returned COPY (nothing is
+      written): the checklist shows the item pending, the contract
+      readiness lists the field as a falta, and the next live reading
+      fills it like an empty field (`aplicar_*` run through this too);
+    - the group's key is listed in `row[CHAVE_DOCUMENTO_REMOVIDO]` so the
+      card can say "documento removido";
+    - a value a person confirmed (`_confirmado_em`) or typed (`_origem =
+      'manual'`) is the person's — never withheld;
+    - when another LIVE document of the cliente reads the same value, the
+      value is kept and its provenance moves to that document (in the copy).
+    """
+    if not cliente:
+        return cliente
+    grupos = _grupos_de_proveniencia()
+    colunas = ["id"]
+    for _chave, valores, prov in grupos:
+        colunas += [*valores, *prov]
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(",".join(dict.fromkeys(colunas)))
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return cliente
+    prov_row = rows[0]
+
+    def _doc_id(chave: str) -> Any:
+        return prov_row.get(
+            "endereco_documento_id" if chave == CAMPO_ENDERECO else f"{chave}_documento_id"
+        )
+
+    candidatos = [
+        (chave, valores, prov) for chave, valores, prov in grupos
+        if _doc_id(chave)
+        and any(not _vazio(prov_row.get(v)) for v in valores)
+    ]
+    if not candidatos:
+        return cliente
+    ids = list(dict.fromkeys(str(_doc_id(c[0])) for c in candidatos))
+    documentos = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []
+    por_id = {str(d.get("id")): d for d in documentos}
+
+    def _vivo(d: dict) -> bool:
+        return not d.get("deleted_at") and not d.get("extracao_descartada_em")
+
+    vivos = sorted(
+        (
+            d for d in documentos
+            if _vivo(d)
+            and AVISO_TIPO_DOCUMENTO_DIVERGENTE not in str(d.get("extracao_aviso") or "").split("+")
+        ),
+        key=lambda d: str(d.get("extracao_em") or ""), reverse=True,
+    )
+    saida = dict(cliente)
+    removidos: list[str] = []
+    for chave, valores, prov in candidatos:
+        fonte = por_id.get(str(_doc_id(chave)))
+        if fonte is None or _vivo(fonte):
+            continue
+        origem = prov_row.get("endereco_origem" if chave == CAMPO_ENDERECO else f"{chave}_origem")
+        confirmado = prov_row.get(
+            "endereco_confirmado_em" if chave == CAMPO_ENDERECO else f"{chave}_confirmado_em"
+        )
+        if origem == "manual" or not _vazio(confirmado):
+            continue
+        campo = CAMPO_POR_CHAVE.get(chave)
+        apoio = None
+        if campo is not None and campo.coluna_valor:
+            apoio = next(
+                (d for d in vivos if _mesmo_valor(chave, d.get(campo.coluna_valor), prov_row.get(chave))),
+                None,
+            )
+        if apoio is not None:
+            if f"{chave}_origem" in saida or f"{chave}_documento_id" in saida:
+                saida[f"{chave}_origem"] = apoio.get("tipo_documento")
+                saida[f"{chave}_documento_id"] = str(apoio["id"])
+            continue
+        for coluna in (*valores, *prov):
+            if coluna in saida:
+                saida[coluna] = None
+        removidos.append(chave)
+    if removidos:
+        saida[CHAVE_DOCUMENTO_REMOVIDO] = removidos
+    return saida
+
+
 def reverter_aplicados_do_documento(
     client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID,
 ) -> list[str]:
@@ -7190,6 +7324,8 @@ __all__ = [
     "confirmar_sugestao",
     "descartar_sugestao",
     "reverter_aplicados_do_documento",
+    "sanear_proveniencia",
+    "CHAVE_DOCUMENTO_REMOVIDO",
     "deve_extrair",
     "extrair_identidade",
     "sugestoes_pendentes",

@@ -740,7 +740,10 @@ def _cliente_row(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
         return None
     # A CNH-only RG (no check digit) completes itself from a matrícula
     # averbação when one states it — no-op unless the row rests on a CNH.
-    return rg_matricula.completar(client, org_id, cliente_id, rows[0])
+    row = rg_matricula.completar(client, org_id, cliente_id, rows[0])
+    # A machine value whose source document was removed is not trusted
+    # (`sanear_proveniencia`, the read-time backstop of the delete hook).
+    return identidade_svc.sanear_proveniencia(client, org_id, cliente_id, row)
 
 
 def cliente_para_derivacao(
@@ -926,7 +929,18 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         if key not in {i["key"] for i in ITENS}
     }
 
+    # "Documento removido": the item rests on a machine value whose source
+    # document is gone, so it reads pending (the value is withheld) and says why.
+    removidos = set((cliente or {}).get(identidade_svc.CHAVE_DOCUMENTO_REMOVIDO) or ())
+    if removidos:
+        por_chave = {i["key"]: i for i in ITENS}
+        for linha in itens:
+            definicao = por_chave[linha["key"]]
+            if removidos & {*definicao.get("campos", ()), *definicao.get("campos_todos", ()), linha["key"]}:
+                linha["documento_removido"] = True
+
     return {
+        **({"documento_removido": sorted(removidos)} if removidos else {}),
         "items": itens,
         "total": len(itens),
         "concluidos": sum(1 for i in itens if i["concluido"]),
@@ -1180,7 +1194,9 @@ def _cliente_row_qualificacao(
         .limit(1)
         .execute()
     ).data or []
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    return identidade_svc.sanear_proveniencia(client, org_id, cliente_id, rows[0])
 
 
 def _faltantes_qualificacao(cliente: dict) -> list[str]:
