@@ -378,10 +378,13 @@ class TestMesclar:
         ok = mesclar(self._original(conjuges=a), IdentityFields(nome="JOAO CARLOS PEREIRA", conjuges=c),
                      escalation_model="m")
         assert len(ok.conjuges) == 2
+        # By IDENTITY, not list equality (F96, 2026-10-24): ANA is named by
+        # both reads and stays; only the spouse the reads disagree on goes to
+        # review — never the whole list.
         ruim = mesclar(self._original(conjuges=a), IdentityFields(nome="JOAO CARLOS PEREIRA", conjuges=b),
                        escalation_model="m")
-        assert ruim.conjuges == ()
-        assert [c for c, _ in ruim.divergencias] == ["conjuges"]
+        assert [c.nome for c in ruim.conjuges] == ["ANA EXEMPLO"]
+        assert ruim.divergencias == (("conjuges", ("JOAO EXEMPLO", "JOAO EXEMPLAR")),)
 
     # ── DV anchor ───────────────────────────────────────────────────────
 
