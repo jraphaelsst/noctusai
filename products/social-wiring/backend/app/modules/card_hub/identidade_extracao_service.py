@@ -95,7 +95,9 @@ from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
+    AVISO_ESTADO_CIVIL_NAO_CORROBORADO,
     AVISO_LEITURA_COMPROMETIDA,
+    AVISO_TIPO_DOCUMENTO_DIVERGENTE,
     IdentityFields,
     TitularEsperado,
     canonical_gender,
@@ -5015,15 +5017,32 @@ async def extrair_identidade(
             or any(v is not None for v, _, _, _ in lidos.values())
         )
 
+        # 🔴 F80 (prod, 2026-10-24) — the seed read this document as the
+        # certidão kind its CONTENT names, not the one it was filed as
+        # (`AVISO_TIPO_DOCUMENTO_DIVERGENTE`): the kind-dependent rules below
+        # follow the document, and NOTHING from a misfiled document is
+        # written to the cliente unattended (`lidos_para_aplicar`) — every
+        # reading stays on the row as a suggestion while the operator
+        # re-files it.
+        codigos_aviso = set((fields.aviso or "").split("+"))
+        tipo_divergente = AVISO_TIPO_DOCUMENTO_DIVERGENTE in codigos_aviso
+        tipo_lido = (fields.tipo_provavel or tipo) if tipo_divergente else tipo
+        if AVISO_ESTADO_CIVIL_NAO_CORROBORADO in codigos_aviso:
+            # "casado" inferred from the KIND alone, with no marriage read:
+            # a suggestion for review, never applied (seed demoted it).
+            lidos["estado_civil"] = (*lidos["estado_civil"][:3], False)
+
         # F4 — a certidão de nascimento with no averbação read and no
         # marriage evidence anywhere SUGGESTS "solteiro" (see
         # `ESTADO_CIVIL_SOLTEIRO`): recorded on the document row only,
         # `pode_persistir=False` — never written to the cliente.
         if (
-            tipo == "certidao_nascimento"
+            tipo_lido == "certidao_nascimento"
             and not fields.leitura_comprometida
             and lidos["estado_civil"][0] is None
-            and not _casamento_evidenciado(client, org_id, cliente_id)
+            and not _casamento_evidenciado(
+                client, org_id, cliente_id, excluir_documento_id=documento_id
+            )
         ):
             lidos["estado_civil"] = _solteiro_inferido()
 
@@ -5161,7 +5180,7 @@ async def extrair_identidade(
         # the record is not evidence worth an admin's attention either.
         lidos_para_aplicar = (
             {chave: (valor, confianca, rotulo, False) for chave, (valor, confianca, rotulo, _pode) in lidos.items()}
-            if fields.leitura_comprometida
+            if fields.leitura_comprometida or tipo_divergente
             else lidos
         )
 
@@ -5527,25 +5546,39 @@ async def extrair_identidade(
     return {**resultado, "tentativas": doc.get("extracao_tentativas")}
 
 
-def _casamento_evidenciado(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
+def _casamento_evidenciado(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    *,
+    excluir_documento_id: Optional[UUID] = None,
+) -> bool:
     """Is there ANY evidence this person married — a spouse link, or a live
     (not deleted, not discarded) certidão de casamento on their own card or
-    their linked spouse's? `True` blocks F4's solteiro inference."""
+    their linked spouse's? `True` blocks F4's solteiro inference.
+
+    A row FILED as `certidao_casamento` whose content the seed found to be
+    another certidão kind (`AVISO_TIPO_DOCUMENTO_DIVERGENTE`, F80) is not
+    evidence of a marriage — nor is the document being read right now
+    (`excluir_documento_id`): its aviso is only written after this check."""
     conjuge = _conjuge_vinculado(client, org_id, cliente_id)
     if conjuge:
         return True
     rows = (
         _t(client, DOCUMENTOS_TABLE)
-        .select("id")
+        .select("id,extracao_aviso")
         .eq("org_id", str(org_id))
         .eq("cliente_id", str(cliente_id))
         .eq("tipo_documento", "certidao_casamento")
         .is_("deleted_at", "null")
         .is_("extracao_descartada_em", "null")
-        .limit(1)
         .execute()
     ).data or []
-    return bool(rows)
+    return any(
+        str(r.get("id")) != str(excluir_documento_id)
+        and AVISO_TIPO_DOCUMENTO_DIVERGENTE not in str(r.get("extracao_aviso") or "").split("+")
+        for r in rows
+    )
 
 
 def _solteiro_inferido() -> tuple[Any, str, Optional[str], bool]:
@@ -6705,6 +6738,86 @@ def descartar_sugestao(
     }
 
 
+def reverter_aplicados_do_documento(
+    client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID,
+) -> list[str]:
+    """Undo what a REMOVED document wrote onto the cliente by machine.
+
+    🔴 F80 (prod, 2026-10-24): a misfiled certidão wrote
+    `estado_civil='casado'` (`_origem='certidao_casamento'`); the operator's
+    natural correction — deleting the document — left it on the record, and
+    the card kept demanding a cônjuge. A value whose provenance
+    (`<campo>_documento_id`) is this document and which no person vouched
+    for (`_confirmado_em` empty, `_origem` not `manual`) goes with it: a
+    machine fill only ever filled an EMPTY field (`sobrescreve=False`), so
+    clearing it restores the record's prior state. When another LIVE
+    document of the same cliente read the same value, the value stays and
+    its provenance moves to that document instead. A human-confirmed value
+    is the human's — never touched. Returns the `item_key`s changed."""
+    campos = [c for c in CAMPOS]
+    colunas = ["id"]
+    for c in campos:
+        colunas += [c.item_key, c.origem, c.documento_id, c.em, c.confirmado_em]
+    atual_rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(",".join(dict.fromkeys(colunas)))
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not atual_rows:
+        return []
+    atual = atual_rows[0]
+    alvo = [
+        c for c in campos
+        if str(atual.get(c.documento_id) or "") == str(documento_id)
+        and not _vazio(atual.get(c.item_key))
+        and _vazio(atual.get(c.confirmado_em))
+        and atual.get(c.origem) != "manual"
+    ]
+    if not alvo:
+        return []
+    outros = [
+        d for d in (
+            _t(client, DOCUMENTOS_TABLE)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("cliente_id", str(cliente_id))
+            .is_("deleted_at", "null")
+            .is_("extracao_descartada_em", "null")
+            .execute()
+        ).data or []
+        if str(d.get("id")) != str(documento_id)
+        and AVISO_TIPO_DOCUMENTO_DIVERGENTE not in str(d.get("extracao_aviso") or "").split("+")
+    ]
+    outros.sort(key=lambda d: str(d.get("extracao_em") or ""), reverse=True)
+    updates: dict[str, Any] = {}
+    for c in alvo:
+        valor = atual.get(c.item_key)
+        apoio = next(
+            (d for d in outros if _mesmo_valor(c.item_key, d.get(c.coluna_valor), valor)),
+            None,
+        )
+        if apoio is not None:
+            updates[c.origem] = apoio.get("tipo_documento")
+            updates[c.documento_id] = str(apoio["id"])
+        else:
+            updates.update(
+                {c.item_key: None, c.origem: None, c.documento_id: None, c.em: None}
+            )
+    updates["updated_at"] = _now()
+    _t(client, CLIENTES_TABLE).update(updates).eq("org_id", str(org_id)).eq(
+        "id", str(cliente_id)
+    ).execute()
+    alterados = [c.item_key for c in alvo]
+    logger.info(
+        "documento %s removido: valores aplicados por ele revertidos no cliente %s (%s)",
+        documento_id, cliente_id, ", ".join(alterados),
+    )
+    return alterados
+
+
 # ─── The certidão's own freshness (contract F6, migration 117) ───────────
 #
 # `data_emissao` rides on the document, never on the client — see
@@ -6846,6 +6959,7 @@ __all__ = [
     "certidao_estado_civil_mais_recente",
     "confirmar_sugestao",
     "descartar_sugestao",
+    "reverter_aplicados_do_documento",
     "deve_extrair",
     "extrair_identidade",
     "sugestoes_pendentes",

@@ -49,7 +49,7 @@ from .config import (
 )
 from .documentos import register_retention_sweep
 from .gatherers import SEED_GATHERERS, Gatherer
-from .router import DocumentoUploadHook, card_hub_routers
+from .router import DocumentoDeleteHook, DocumentoUploadHook, card_hub_routers
 from .services import ensure_entity
 from .sql import card_hub_migration
 from .timeline import decode_cursor, encode_cursor, get_timeline
@@ -60,6 +60,7 @@ __all__ = [
     "CardHubContext",
     "CardHubTables",
     "DocumentoPolicy",
+    "DocumentoDeleteHook",
     "DocumentoUploadHook",
     "EntityGetter",
     "Gatherer",

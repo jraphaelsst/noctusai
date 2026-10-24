@@ -85,6 +85,7 @@ from noctusai_lib.integrations.documents.civil_status import (
     find_regime_bens,
 )
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
+from noctusai_lib.integrations.documents.real import AVISO_ESTADO_CIVIL_NAO_CORROBORADO
 from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.gender import canonical_gender, find_gender
 from noctusai_lib.integrations.documents.legibilidade import (
@@ -108,7 +109,12 @@ from noctusai_lib.integrations.documents.nacionalidade import (
     find_nacionalidade,
 )
 from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao, is_same_as_cpf
-from noctusai_lib.integrations.documents.misfile import classificar_tipo_provavel
+from noctusai_lib.integrations.documents.misfile import (
+    AVISO_TIPO_DOCUMENTO_DIVERGENTE,
+    TIPOS_CERTIDAO_CIVIL,
+    classificar_tipo_provavel,
+    tipo_civil_divergente,
+)
 from noctusai_lib.integrations.documents.ladder import (
     DocumentTextLadder,
     looks_like_pdf,
@@ -458,6 +464,10 @@ __all__ = [
     "identity_document_render_dpi_policy",
     "is_same_as_cpf",
     "classificar_tipo_provavel",
+    "AVISO_TIPO_DOCUMENTO_DIVERGENTE",
+    "AVISO_ESTADO_CIVIL_NAO_CORROBORADO",
+    "TIPOS_CERTIDAO_CIVIL",
+    "tipo_civil_divergente",
     "ler_valor",
     "looks_like_a_name",
     "looks_like_pdf",

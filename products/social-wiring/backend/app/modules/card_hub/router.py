@@ -197,6 +197,26 @@ def _card_hub_context(auth: tuple, db: Any) -> CardHubContext:
     return CardHubContext(db=db, org_id=org_id, user_id=getattr(user, "id", None))
 
 
+def _reverter_documento_removido(ctx: CardHubContext, cliente_id: UUID, documento_id: UUID) -> None:
+    """F80 — deleting a document undoes the values its extraction wrote onto
+    the cliente by machine (`identidade_svc.reverter_aplicados_do_documento`).
+    Logged, never raised: the delete itself already succeeded and is the
+    LGPD-relevant act; a failed revert must not turn it into a 500."""
+    try:
+        identidade_svc.reverter_aplicados_do_documento(
+            ctx.db, ctx.org_id, cliente_id, documento_id
+        )
+    except Exception:
+        logger.exception(
+            "documento %s removido, mas reverter os valores que ele aplicou "
+            "ao cliente %s falhou", documento_id, cliente_id,
+        )
+
+
+def _documento_delete_hook():
+    return _reverter_documento_removido
+
+
 _collection_router, _entity_router = card_hub_routers(
     CARD_HUB,
     auth_dependency=get_current_user_org,
@@ -205,6 +225,7 @@ _collection_router, _entity_router = card_hub_routers(
     get_storage=get_storage_backend,
     prefix="/api/clientes",
     tags=["card_hub"],
+    documento_delete_hook=_documento_delete_hook,
 )
 _LOCAL_OVERRIDES = frozenset({"upload_documento_route"})
 _factory_routes = {

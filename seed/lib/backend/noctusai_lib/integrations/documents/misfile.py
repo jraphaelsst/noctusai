@@ -106,4 +106,65 @@ def classificar_tipo_provavel(text: str) -> Optional[str]:
     return None
 
 
-__all__ = ["classificar_tipo_provavel"]
+#: The civil-registry certidões whose KIND decides how the estado civil is
+#: read (`real.LadderIdentityExtractor` reads a certidão de casamento's
+#: estado civil by inference from the kind itself). A mismatch between two of
+#: THESE is the one misfile this package acts on at read time — see
+#: `tipo_civil_divergente`.
+TIPOS_CERTIDAO_CIVIL: frozenset[str] = frozenset(
+    {"certidao_casamento", "certidao_nascimento"}
+)
+
+#: `IdentityFields.aviso` code — the document's own content names a different
+#: certidão kind than the one it was filed as; it was read as the kind it IS.
+AVISO_TIPO_DOCUMENTO_DIVERGENTE = "tipo_documento_divergente"
+
+_ROTULO_TIPO = {
+    "certidao_casamento": "certidão de casamento",
+    "certidao_nascimento": "certidão de nascimento",
+}
+
+
+def tipo_civil_divergente(tipo_declarado: Optional[str], text: str) -> Optional[str]:
+    """The certidão kind the TEXT itself is, when the caller declared a
+    DIFFERENT civil certidão kind — else `None`.
+
+    🔴 F80 (prod, 2026-10-24): a photographed CERTIDÃO DE NASCIMENTO filed as
+    `certidao_casamento` (the operator trusted the file name) was read with
+    the casamento rules, whose estado civil is inferred FROM THE KIND
+    ("a certidão de casamento with no averbação records a marriage") — so a
+    birth certificate yielded `casado` at `alta` and was applied. The kind
+    an inference rests on must be the document's own, not the operator's.
+
+    Scoped to `TIPOS_CERTIDAO_CIVIL` on BOTH sides: only there does the kind
+    change what a field MEANS. Every other mismatch (a CNH filed as `rg`)
+    stays a flag for the product layer (`IdentityFields.tipo_provavel`), as
+    the module docstring says. `None` from the classifier is not a claim and
+    never triggers this."""
+    declarado = (tipo_declarado or "").strip().lower()
+    if declarado not in TIPOS_CERTIDAO_CIVIL:
+        return None
+    provavel = classificar_tipo_provavel(text)
+    if provavel in TIPOS_CERTIDAO_CIVIL and provavel != declarado:
+        return provavel
+    return None
+
+
+def mensagem_tipo_divergente(tipo_declarado: str, tipo_lido: str) -> str:
+    """The operator-facing explanation for `AVISO_TIPO_DOCUMENTO_DIVERGENTE`."""
+    lido = _ROTULO_TIPO.get(tipo_lido, tipo_lido)
+    declarado = _ROTULO_TIPO.get(tipo_declarado, tipo_declarado)
+    return (
+        f"o documento parece ser uma {lido}, não {declarado.replace('certidão ', '')} "
+        f"— reenvie com o tipo certo; foi lido como {lido} e o estado civil não "
+        f"foi derivado do tipo informado"
+    )
+
+
+__all__ = [
+    "AVISO_TIPO_DOCUMENTO_DIVERGENTE",
+    "TIPOS_CERTIDAO_CIVIL",
+    "classificar_tipo_provavel",
+    "mensagem_tipo_divergente",
+    "tipo_civil_divergente",
+]

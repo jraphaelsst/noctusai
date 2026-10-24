@@ -546,6 +546,13 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
     return (valor, conf, rotulo)
 
 
+#: `estado_civil_rotulo` of the ONE reading this module infers from the
+#: document's KIND rather than from anything printed about the holder's
+#: status. A consumer (`real.LadderIdentityExtractor`) tells it apart by this
+#: label — it holds only while the marriage itself was actually read.
+ROTULO_CASADO_POR_CERTIDAO = "CERTIDAO_CASAMENTO sem averbacao de divorcio/obito"
+
+
 def find_estado_civil_certidao_casamento(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """`find_estado_civil` for a document the caller KNOWS is a certidão de
     casamento: the certidão itself records the marriage, so with no
@@ -565,7 +572,7 @@ def find_estado_civil_certidao_casamento(text: str) -> tuple[Optional[str], str,
         zona = _sem_apendice_de_detalhamento(norm[pos:])
         if any(p.search(zona) for p, _ in _AVERBACAO_EVENTOS):
             return (None, "nenhuma", None)
-    return ("casado", "alta", "CERTIDAO_CASAMENTO sem averbacao de divorcio/obito")
+    return ("casado", "alta", ROTULO_CASADO_POR_CERTIDAO)
 
 
 def _find_estado_civil_bruto(text: str) -> tuple[Optional[str], str, Optional[str]]:
@@ -1061,6 +1068,7 @@ __all__ = [
     "find_data_emissao",
     "find_estado_civil",
     "find_estado_civil_certidao_casamento",
+    "ROTULO_CASADO_POR_CERTIDAO",
     "find_regime_bens",
     "normalize",
 ]

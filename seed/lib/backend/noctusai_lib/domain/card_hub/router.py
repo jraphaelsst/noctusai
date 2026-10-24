@@ -58,6 +58,7 @@ seed's `AppException` handlers (`{"error": {"code", "message", ...}}`).
 from typing import Any, Callable, Optional
 from uuid import UUID
 
+import anyio
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -104,6 +105,18 @@ def _no_upload_hook() -> None:
     return None
 
 
+#: `(ctx, entity_id, documento_id) -> None` — what a product's delete hook
+#: dependency RETURNS, run after a successful soft delete. The product undoes
+#: whatever it DERIVED from the document (e.g. a value its extraction wrote
+#: onto the entity): removing a wrong document is the operator's natural
+#: correction, and a derived value outliving its source keeps the error.
+DocumentoDeleteHook = Callable[[CardHubContext, UUID, UUID], None]
+
+
+def _no_delete_hook() -> None:
+    return None
+
+
 def card_hub_routers(
     cfg: CardHubConfig,
     *,
@@ -114,6 +127,7 @@ def card_hub_routers(
     prefix: str = "",
     tags: Optional[list[str]] = None,
     documento_upload_hook: Optional[Callable[..., Optional[DocumentoUploadHook]]] = None,
+    documento_delete_hook: Optional[Callable[..., Optional[DocumentoDeleteHook]]] = None,
 ) -> tuple[APIRouter, APIRouter]:
     """Build `(collection_router, entity_router)` for one card hub.
 
@@ -132,6 +146,9 @@ def card_hub_routers(
             `DocumentoUploadHook` (or `None`), run after a successful
             `POST /{id}/documentos`. A dependency — not a plain callable — so
             the product's own collaborators stay DI-overridable in tests.
+        documento_delete_hook: Optional FastAPI dependency returning a
+            `DocumentoDeleteHook` (or `None`), run after a successful
+            `DELETE /{id}/documentos/{documento_id}` — same DI shape.
     """
     id_param = cfg.id_param
     route_tags = tags or ["card_hub"]
@@ -141,6 +158,7 @@ def card_hub_routers(
     MembrosBody = membros_body(cfg)
     member_key = cfg.member_source.body_key
     upload_hook_dep = documento_upload_hook or _no_upload_hook
+    delete_hook_dep = documento_delete_hook or _no_delete_hook
 
     def entity_path(suffix: str = "") -> str:
         return f"/{{{id_param}}}{suffix}"
@@ -613,11 +631,15 @@ def card_hub_routers(
         auth=Depends(auth_dependency),
         db=Depends(get_db),
         storage=Depends(get_storage),
+        delete_hook=Depends(delete_hook_dep),
     ):
         ctx = resolve_context(auth, db)
         await docs_svc.delete_documento(
             cfg, ctx.db, storage, ctx.org_id, entity_id, documento_id, motivo=motivo, usuario_id=ctx.user_id
         )
+        if delete_hook is not None:
+            # The hook does sync DB I/O — off the event loop.
+            await anyio.to_thread.run_sync(delete_hook, ctx, entity_id, documento_id)
 
     @entity_router.get(
         entity_path("/documentos/{documento_id}/acessos"), name="list_acessos_route"
@@ -643,4 +665,4 @@ def card_hub_routers(
     return collection_router, entity_router
 
 
-__all__ = ["DocumentoUploadHook", "card_hub_routers"]
+__all__ = ["DocumentoDeleteHook", "DocumentoUploadHook", "card_hub_routers"]

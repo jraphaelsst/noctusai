@@ -48,6 +48,7 @@ from noctusai_lib.integrations.documents.civil_status import (
     find_data_casamento,
     find_data_emissao,
     find_estado_civil,
+    ROTULO_CASADO_POR_CERTIDAO,
     find_estado_civil_certidao_casamento,
     find_regime_bens,
 )
@@ -65,7 +66,12 @@ from noctusai_lib.integrations.documents.legibilidade import (
     AVISO_LEITURA_COMPROMETIDA,
     avaliar_legibilidade,
 )
-from noctusai_lib.integrations.documents.misfile import classificar_tipo_provavel
+from noctusai_lib.integrations.documents.misfile import (
+    AVISO_TIPO_DOCUMENTO_DIVERGENTE,
+    classificar_tipo_provavel,
+    mensagem_tipo_divergente,
+    tipo_civil_divergente,
+)
 from noctusai_lib.integrations.documents.providers import (
     DEFAULT_DOCUMENT_PROVIDER,
     ESCALATION_OCR_MODELS,
@@ -118,6 +124,15 @@ from noctusai_lib.integrations.documents.types import (
 from noctusai_lib.primitives import identificador as _ident
 
 logger = logging.getLogger(__name__)
+
+#: `IdentityFields.aviso` code — `estado_civil='casado'` rests ONLY on the
+#: document being a certidão de casamento (`ROTULO_CASADO_POR_CERTIDAO`), yet
+#: the marriage itself was not read: fewer than two cônjuges, no data de
+#: casamento, no regime. Real (F80, prod 2026-10-24): a birth certificate
+#: filed as `certidao_casamento` read ONE person and nothing of a marriage,
+#: and still produced `casado`/`alta`. Demoted to `baixa`; a consumer must
+#: treat it as a suggestion for review, never apply it unattended.
+AVISO_ESTADO_CIVIL_NAO_CORROBORADO = "estado_civil_nao_corroborado"
 
 #: `legibilidade.avaliar_legibilidade`'s `tipo_documento` FALLBACK when a
 #: caller passes none — `classify_kind`'s classification IS already one of
@@ -343,6 +358,18 @@ class LadderIdentityExtractor:
             # because retrying it is pointless.
             return IdentityFields(kind=kind, source=source)
 
+        # 🔴 THE DOCUMENT'S OWN KIND, NOT THE OPERATOR'S (F80, 2026-10-24).
+        # A certidão de NASCIMENTO filed as `certidao_casamento` must be read
+        # as what it is: the casamento rules infer `casado` from the kind
+        # itself. Every downstream step (field authority, core-field
+        # contract, trust gate) runs on the kind the content names; the DB
+        # row's `tipo_documento` is still never touched here — the aviso
+        # tells the operator to re-file it.
+        tipo_declarado = tipo_documento
+        tipo_lido = tipo_civil_divergente(tipo_documento, text)
+        if tipo_lido is not None:
+            tipo_documento = tipo_lido
+
         fields = _marcar_avisos_leitura(
             self._ler(text, source, kind, titular, tipo_documento), leitura
         )
@@ -429,6 +456,15 @@ class LadderIdentityExtractor:
         if faltando:
             fields = releitura.marcar_campos_ausentes(
                 fields, faltando, tipo_documento=tipo_documento
+            )
+        if tipo_lido is not None:
+            fields = replace(
+                fields,
+                aviso=releitura._somar_codigo(fields.aviso, AVISO_TIPO_DOCUMENTO_DIVERGENTE),
+                aviso_mensagem=releitura._somar_mensagem(
+                    fields.aviso_mensagem,
+                    mensagem_tipo_divergente(str(tipo_declarado), tipo_lido),
+                ),
             )
         return fields
 
@@ -1105,7 +1141,29 @@ class LadderIdentityExtractor:
                 data_nascimento_rejeitada = data
                 data, data_conf, data_label = None, "nenhuma", None
 
+        # 🔴 "CASADO" BY KIND NEEDS THE MARRIAGE ITSELF READ (F80). The
+        # casamento inference (`ROTULO_CASADO_POR_CERTIDAO`) rests on the
+        # document BEING a certidão de casamento; with not even the couple
+        # (two cônjuges), the date, or the regime read, nothing on the page
+        # corroborates that — never `alta`, flagged for review.
+        estado_civil_nao_corroborado = (
+            estado_civil == "casado"
+            and estado_civil_label == ROTULO_CASADO_POR_CERTIDAO
+            and len(conjuges) < 2
+            and data_casamento is None
+            and regime_bens is None
+        )
+        if estado_civil_nao_corroborado:
+            estado_civil_conf = ExtractionConfidence.BAIXA.value
+
         avisos: list[tuple[str, str]] = []
+        if estado_civil_nao_corroborado:
+            avisos.append((
+                AVISO_ESTADO_CIVIL_NAO_CORROBORADO,
+                "estado civil 'casado' deduzido apenas do tipo certidão de "
+                "casamento, sem o casamento lido (cônjuges, data ou regime) — "
+                "sugestão para conferência, não gravada automaticamente",
+            ))
         if multiplos_titulares:
             avisos.append((
                 "titulares_multiplos",
