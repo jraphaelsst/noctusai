@@ -47,9 +47,13 @@ export function AIIndicator({
   hideIcon = false,
   enableFeedback = false,
 }: AIIndicatorProps) {
-  const { data: outputs = [], isLoading } = useAIOutputFor(refType, refId);
+  const { data: outputs = [], isLoading, isError } = useAIOutputFor(refType, refId);
 
   if (isLoading || !refId) return null;
+  // A failed read is not "no AI output": never render `emptyFallback` over an
+  // error — the indicator simply stays out of the way (it is decoration, the
+  // page owns its own error surface). KB § PATTERNS/frontend/silent-refusal.md.
+  if (isError && outputs.length === 0) return null;
   if (!outputs.length) return <>{emptyFallback}</>;
 
   const items = showAll ? outputs : outputs.slice(0, 1);

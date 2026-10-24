@@ -973,6 +973,20 @@ if [[ -n "$STAGED_MIO" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-quater-ter. Silent-refusal gate (blocking) ──
+# Keeper `check_silent_refusal` (2026-10-24, N=4: F75b F76 F78 F86): a query's empty branch reachable
+# while it is in error, or an upload whose refusal nobody sees. ts-morph AST scan; no baseline (every
+# live hit was fixed when it landed). Escape per finding: `// noc-allow: silent-refusal — why`.
+STAGED_SR=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/frontend/src/.*\.tsx?|seed/(lib|framework)/frontend/src/.*\.tsx?|mcp/noctusai/node/silent_refusal_scan\.mjs)$' || true)
+if [[ -n "$STAGED_SR" ]] && have_py; then
+    echo "[pre-commit] frontend source staged — checking for silent refusals (empty-over-error, unobserved upload refusals)..."
+    if ! "$PY" "$CLI" --check-silent-refusal --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] SILENT-REFUSAL check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Guard the empty branch with the query's error (QueryErrorState), and route uploads through useUploadDocumento + <UploadErro> (@noctusai/lib/upload-refusal). See KB § PATTERNS/frontend/silent-refusal.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies-quater-bis. Async handler / sync DB gate (blocking, ratchet) ──
 # Keeper `check_async_handler_sync_db` (2026-10-21): an `async def` route handler that calls the sync
 # supabase client directly blocks the event loop for the whole round-trip (concurrent requests serialize).

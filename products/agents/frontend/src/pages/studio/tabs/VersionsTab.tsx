@@ -162,7 +162,8 @@ function PublishDialog({
           <PromptMarkdownField id="publish-notas" value={notas} onChange={setNotas} rows={3} mono={false} semTokens />
         </div>
 
-        {gateFails && bloqueantes.length === 0 && (
+        {/* A failed compile is not "no blocking warnings" (silent-refusal). */}
+        {gateFails && !compiled.isError && bloqueantes.length === 0 && (
           <div data-testid="publish-override">
             <label htmlFor="publish-override-reason" className="mb-1 block text-xs font-medium">
               Justificativa de exceção (mínimo {OVERRIDE_REASON_MIN} caracteres — fica registrada na versão)

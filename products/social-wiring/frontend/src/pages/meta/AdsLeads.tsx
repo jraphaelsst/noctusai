@@ -52,6 +52,7 @@ import {
 import { useLiveLeads } from "@/hooks/useMetaLeadgen";
 import { AdsError, AdsLoading, AdsNotConfigured } from "./adsShared";
 import LeadgenWebhookCard from "./LeadgenWebhookCard";
+import { QueryErrorState } from "@noctusai/lib/components";
 
 function syncedLabel(iso: string | null): string {
   if (!iso) return "nunca sincronizado";
@@ -247,6 +248,8 @@ function RecordsPanel({
       <CardContent>
         {recordsQ.isPending && !recordsQ.data ? (
           <AdsLoading label="Carregando registros…" />
+        ) : recordsQ.isError && !recordsQ.data ? (
+          <QueryErrorState query={recordsQ} variant="inline" />
         ) : recordsQ.data?.gated ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
             {recordsQ.data.reason}
