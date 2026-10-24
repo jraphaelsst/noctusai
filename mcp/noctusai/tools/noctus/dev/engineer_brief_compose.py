@@ -247,7 +247,11 @@ BEFORE_RETURNING_BLOCK = (
     "2. `mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --check-doc-staleness "
     "--doc-range origin/dev..HEAD` from your worktree must be clean: update each "
     "listed doc, or add `Docs-Reviewed: <doc> - <why still accurate>` to a commit.\n"
-    "3. Commit everything; report the commands and results in your return."
+    "3. Added a `check_*` detector => run `pytest mcp/noctusai/tests/"
+    "test_compliance.py::TestCheckDetectorHasRegressionTest` (needs a "
+    "`class Test<DetectorCamel>`; the `keeper_meta` gate blocks integrate "
+    "otherwise).\n"
+    "4. Commit everything; report the commands and results in your return."
 )
 
 

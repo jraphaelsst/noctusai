@@ -556,6 +556,20 @@ added.
   `wire_env`, which must not manufacture a half-state that reads as a whole
   one (`test_plan_env_wiring_does_not_manufacture_a_partial_node_modules`).
 
+  🔴 **Baseline and merged tip share ONE harness definition; a timeout is not a
+  verdict (2026-10-24).** `task_branch integrate` re-runs red gates on a
+  detached `origin/dev` worktree to classify them pre-existing. That baseline
+  tree got no frontend env, so `vitest:<slug>` read `inconclusive` and no FE
+  red could ever be classified: the `prepare_gates` seam (`gate_sweep` AND
+  `run_gates_named`, built by `_frontend_env_preparer`) now tops up both trees
+  from the same spec list. Separately, a vitest failure whose EVERY case is
+  `Test timed out in Nms` (12 tests at 11-17 s under host load 25-30) is
+  re-run ONCE serially (`--no-file-parallelism`, failing files only): pass =>
+  green + `flaky_under_load` (load evidence), timeout again => `harness_suspect`
+  `vitest_timeout_under_load` => `inconclusive`, a real assertion failure stays
+  `red`. A gate that times out for good (`timed_out`) is `inconclusive`, not
+  `incomplete`/pass/fail.
+
   🔴 **The env is a precondition too — and its provenance must survive a
   process hop.** Gate subprocesses run on `sanitize_subprocess_env()` (CI
   runs these suites with no `.env`). On 2026-10-09 the merged-tip check

@@ -296,6 +296,8 @@ Regression tests pin behavior that **broke once and might break again**. Without
 
 **Naming.** The test class name is `Test<CamelCase-of-detector>` (e.g. `check_silent_errors` → `TestCheckSilentErrors`). The detector's case-insensitive matcher accepts both the prefixed (`TestCheckSilentErrors`) and unprefixed (`TestSilentErrors`) shapes, plus acronym-preserving forms (`TestAIFeatureCompleteness`). Any other shape requires an entry in `_DETECTOR_TEST_OVERRIDES` mapping the detector to its test target.
 
+**Pre-commit.** The same keeper also runs in `scripts/hooks/pre-commit` (§ 7b, `--check-detector-has-regression-test`) when `compliance.py` or a `mcp/noctusai/tests/test_check_*.py` is staged, so a new detector without its `Test<DetectorCamel>` bounces at commit, not at integrate (`keeper_meta`, 2026-10-24); engineer briefs carry the reminder in `BEFORE_RETURNING_BLOCK`.
+
 **CI integration.** `check_detector_has_regression_test` runs as part of `check_all_products` (i.e. `mcp/noctusai/cli.py --review` / `--validate`), which the test workflow invokes on every PR via `.github/workflows/test.yml`. A new detector merged without its regression test fails the workflow.
 
 **Worked examples** (each detector → its test class):

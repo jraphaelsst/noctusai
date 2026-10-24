@@ -184,6 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scan-migrations", action="store_true", help="Scan SQL migration files for RLS policy / FK index / trigger / search_path patterns recurring across products. 5 known shapes probed; reports which products write each shape and how many times. RLS/trigger templates are absorption candidates for `noctusai_lib.sql.<helper>`.")
     parser.add_argument("--check-outlined", action="store_true", help="Keeper: every STAGED .py/.ts/.tsx must be AST-outline-able (no SyntaxError / parse failure). Exits 1 on any un-outline-able staged file. Used by the pre-commit hook so the platform stays AST-readable + narrow-read/AST-first tooling always functional.")
     parser.add_argument("--check-claude-md-router", action="store_true", help="Keeper: CLAUDE.md router discipline — §1 rules are ONE line (rule + `→` pointer, no inlined bodies) and the whole file stays under the word budget. Exits 1 on any violation. Pre-commit gate when CLAUDE.md is staged. MCP keeper check_claude_md_router; KB § PATTERNS/claude-md-router-discipline.md.")
+    parser.add_argument("--check-detector-has-regression-test", action="store_true", help="Keeper: every check_* detector in compliance.py has a `class Test<DetectorCamel>` regression test. Exits 1 on any detector without one. Pre-commit gate when compliance.py or a mcp/noctusai/tests/test_check_*.py is staged (it used to block only at integrate). MCP keeper check_detector_has_regression_test; KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.")
     parser.add_argument("--check-memory-md-index", action="store_true", help="Keeper: MEMORY.md auto-loaded-index discipline (sibling of --check-claude-md-router) — every `- [Title](file.md)` entry stays under the per-line cap and the whole file under the KB budget. MEMORY.md is OUT-OF-REPO (Claude-Code per-project store), so this gates at `validate` + this CLI flag, NOT at git commit. Silent skip if the per-project memory dir isn't configured. MCP keeper check_memory_md_index; sibling KB § PATTERNS/claude-md-router-discipline.md.")
     parser.add_argument("--check-skill-format", action="store_true", help="Keeper: every .claude/skills/<name>/SKILL.md has valid required frontmatter (name: matching dir + non-empty description: with trigger phrases). Harness-layer authoring discipline.")
     parser.add_argument("--check-agent-format", action="store_true", help="Keeper: every .claude/agents/<name>.md has valid required frontmatter (name: matching filename + description: + EXPLICIT tools:). Omitting `tools:` inherits ~400 deferred tool names (KB § PATTERNS/dispatch-engineer-tuning.md).")
@@ -751,6 +752,18 @@ def main():
             f"\n  {BOLD}Keep CLAUDE.md pointer-only: §1 = rule + `→` pointer (one line); bodies in KB / a skill.{RESET}\n"
             f"  Per `KB § PATTERNS/claude-md-router-discipline.md`."
         )
+        sys.exit(1)
+
+    elif args.check_detector_has_regression_test:
+        from tools.noctus.dev.compliance import check_detector_has_regression_test
+        _wt = getattr(args, "worktree_path", None)
+        issues = check_detector_has_regression_test(Path(_wt) if _wt else None)
+        if not issues:
+            print(f"  {GREEN}✓ every check_* detector has a regression test.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} detector(s) without a regression test:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['issue']}")
         sys.exit(1)
 
     elif args.check_memory_md_index:

@@ -414,7 +414,7 @@ def test_gate_sweep_unrun_gate_is_incomplete_not_green(tmp_path):
     result = GS.gate_sweep(
         repo_root=str(tmp_path), git_runner=git_runner, run_gate=fake_run,
     )
-    assert result["status"] == "incomplete"
+    assert result["status"] == "inconclusive"  # a final timeout is unmeasured (2026-10-24)
     assert result["status"] != "green"
     pytest_entry = next(g for g in result["gates"] if g["gate"] == "pytest:core")
     assert pytest_entry["ran"] is False
@@ -1223,7 +1223,7 @@ def test_parallel_deadline_overrun_is_incomplete_never_green(tmp_path):
         repo_root=str(root), git_runner=_clean_git_runner(diff_files=diff),
         run_gate=boxed, max_workers=3,
     )
-    assert out["status"] == "incomplete" and out["exit_code"] == 1
+    assert out["status"] == "inconclusive" and out["exit_code"] == 1  # time-box = no verdict
     unrun = [g["gate"] for g in out["gates"] if not g["ran"]]
     assert unrun and out["scope"]["seed_fanout"]["mode"] == "scoped"
 

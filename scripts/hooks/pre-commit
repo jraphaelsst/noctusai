@@ -1282,6 +1282,21 @@ if [[ -n "$STAGED_CLAUDE_MD" ]] && have_py; then
     fi
 fi
 
+# ─── 7b. Detector regression-test meta-gate (blocking, compliance.py / test_check_* staged) ──
+# `check_detector_has_regression_test`: every check_* detector needs a
+# `class Test<DetectorCamel>`. It used to fire ONLY at integrate (keeper_meta),
+# so a new keeper shipped without its test and bounced late. Same gate, at the
+# first expensive consequence. KB § PATTERNS/compliance/testing.md.
+STAGED_DETECTOR_SRC=$(git diff --cached --name-only 2>/dev/null | grep -E '^mcp/noctusai/tools/noctus/dev/compliance\.py$|^mcp/noctusai/tests/test_check_[^/]*\.py$' || true)
+if [[ -n "$STAGED_DETECTOR_SRC" ]] && have_py; then
+    echo "[pre-commit] Detector source/test staged — checking every check_* has a regression test..."
+    if ! "$PY" "$CLI" --check-detector-has-regression-test --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] A check_* detector has no regression test. Commit aborted." >&2
+        echo "[pre-commit] Add class Test<DetectorCamel> (see test_compliance.py::TestCheckDetectorHasRegressionTest)." >&2
+        exit 1
+    fi
+fi
+
 # ─── 8. Keeper-pattern cache auto-refresh (the mirror contract) ──
 # User mandate 2026-05-26 — "the memory should always be the keeper mirror."
 # When compliance.py is modified, the local cache MUST refresh so doc-authoring

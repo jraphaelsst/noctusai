@@ -1467,6 +1467,26 @@ def ensure_merged_tip_frontend_env(
     return {"linked_count": len(linked), "skipped": skipped}
 
 
+def _frontend_env_preparer(primary_root: str | None, fs: "FsOps | None" = None):
+    """The ONE definition of the `prepare_gates` seam: top up the frontend env
+    of exactly the products owning a frontend gate in the spec list about to
+    run. Used by the merged-tip sweep AND the dev baseline run, so the two
+    trees can never be measured under different harnesses (2026-10-24: the
+    baseline had none, so every FE red was `inconclusive` and un-classifiable
+    as pre-existing)."""
+    from .gate_sweep import frontend_gate_products  # lazy import
+
+    def _prepare(root: Path, specs: list) -> dict[str, Any]:
+        try:
+            return ensure_merged_tip_frontend_env(
+                _resolve_primary_root(primary_root), str(root),
+                frontend_gate_products(specs, root), fs)
+        except OSError as exc:  # never crash integrate; gates then report harness_invalid honestly
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    return _prepare
+
+
 def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
                               timeout: int = _gate_budget.DEFAULT_OVERALL_CEILING_S,
                               runner=None, fs: "FsOps | None" = None,
@@ -1486,17 +1506,7 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     (`_timed_out_in_scope_gates`)."""
     from .gate_sweep import gate_sweep  # lazy import
 
-    from .gate_sweep import frontend_gate_products  # lazy import
-
-    def _prepare(root: Path, specs: list) -> dict[str, Any]:
-        # Prepared from the SAME spec list gate_sweep is about to run, so the
-        # env top-up and the gate list cannot disagree on "touched".
-        try:
-            return ensure_merged_tip_frontend_env(
-                _resolve_primary_root(primary_root), str(root),
-                frontend_gate_products(specs, root), fs)
-        except OSError as exc:  # never crash integrate; gates then report harness_invalid honestly
-            return {"error": f"{type(exc).__name__}: {exc}"}
+    _prepare = _frontend_env_preparer(primary_root, fs)
 
     attempts: dict[str, dict[str, Any]] = {}
     res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, prepare_gates=_prepare,
@@ -1684,7 +1694,9 @@ def _default_merged_tip_baseline(
             from .gate_sweep import run_gates_named as run_gates  # lazy import
         attempts: dict[str, dict[str, Any]] = {}
         res = run_gates(wt, list(gate_names),
-                        run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts))
+                        run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts),
+                        prepare_gates=_frontend_env_preparer(primary_root, fs))
+        out["frontend_env"] = res.get("env_prepared")
         out["gate_attempts"] = attempts
         by_name = {g["gate"]: g for g in res.get("gates", [])}
         for n in gate_names:
