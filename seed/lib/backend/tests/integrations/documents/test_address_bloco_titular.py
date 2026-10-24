@@ -151,3 +151,155 @@ class TestAnExistingGoodComprovanteIsUnchanged:
             "uf": "SP",
         }
         assert r.confianca == "baixa"
+
+
+#: F82 round 2: the SHAPE the production vision read actually returns for
+#: this bill class (line order, labels, noise) — every value invented. The
+#: holder's CEP sits under a combined `CEP/Cidade:` label; the sender's
+#: block and the utility's own "segunda via" block both print another CEP;
+#: the holder's street is printed twice, both labelled.
+CONTA_GAS_OCR_REAL = """\
+[descrição da imagem] GASEXEMPLO: virtual.gasexemplo.com.br
+
+Nota Fiscal / Conta Gás:
+Destinatário: CICRANO DE EXEMPLO
+Endereço: EST MUNICIPAL VALE DOURADO 512 APTO 33
+CEP/Cidade: 06700-100 ITAPECERICA SP
+Código de barras: -1234567890000 1234567890A000SACOB
+Tarefa: 1234
+Mês de Referência: jul/2026
+Vencimento: 29.07.2026
+
+Orientação e apoio ao Cliente:
+Gás 24h: 08000 000 000
+
+Remetente: Companhia de Gás do Exemplo
+Endereço remetente: Rua Bom Retiro, 975 - CEP 04100-200 - Vila Exemplo - São Paulo - SP
+
+Para uso do Correio
+Data: / /
+
+GASEXEMPLO (segunda via):
+Razão social: Companhia de Gás do Exemplo
+Endereço: Rua Bom Retiro, 975 - CEP 04100-200 - Vila Exemplo - São Paulo - SP
+CNPJ: 00.000.000/0006-00 - Insc. Estadual 000.000.000.000
+
+Cliente: CICRANO DE EXEMPLO
+Código do cliente: 12345678
+Endereço: EST MUNICIPAL VALE DOURADO 512 APTO 33 ITAPECERICA
+CPF/CNPJ: 000000000-00 /
+
+Vencimento: 29.07.2026
+Valor a pagar (R$): 99,79
+"""
+
+
+class TestTheRealOcrShape:
+    def test_reads_the_holders_address_off_the_real_layout(self):
+        r = find_endereco(CONTA_GAS_OCR_REAL)
+        assert r.partes() == {
+            "cep": "06700-100",
+            "logradouro": "Estrada Municipal Vale Dourado",
+            "numero": "512",
+            "complemento": "APTO 33",
+            "bairro": None,
+            "cidade": "ITAPECERICA",
+            "uf": "SP",
+        }
+        assert r.titular == "CICRANO DE EXEMPLO"
+        assert r.confianca == "alta"
+
+    def test_the_combined_cep_cidade_label_is_a_labelled_cep(self):
+        r = find_endereco(
+            "Endereço: R DAS AMOREIRAS 77\nCEP / Município: 13010-110 CAMPINAS SP\n"
+        )
+        assert (r.cep, r.cidade, r.uf) == ("13010-110", "CAMPINAS", "SP")
+
+    def test_a_one_letter_ocr_slip_in_one_of_three_copies_loses_the_vote(self):
+        texto = CONTA_GAS_OCR_REAL.replace(
+            "Endereço: EST MUNICIPAL VALE DOURADO 512 APTO 33\n",
+            "Endereço: EST MUNICIPAL VALE DORADO 512 APTO 33\n",
+        ) + "EST MUNICIPAL VALE DOURADO 512\n"
+        assert find_endereco(texto).logradouro == "Estrada Municipal Vale Dourado"
+
+
+#: The OTHER shape the same vision rung returns for this bill on a re-read
+#: (run-to-run variance): no labels at all, every holder line ending in a
+#: dangling "key: value" colon, the sender's block bare under "Remetente:".
+CONTA_GAS_OCR_DOIS_PONTOS = """\
+[descrição da imagem] NOTA FISCAL / CONTA GÁS: 
+CICRANO DE EXEMPLO: 
+EST MUNICIPAL VALE DOURADO 512 APTO 33: 
+06700-100 ITAPECERICA SP: 
+-123456789000001234567890A000SACOB: 
+Tarefa: 1234
+Vencimento: 29.07.2026
+
+Remetente: Companhia de Gás do Exemplo
+Rua Bom Retiro, 975 - CEP 04100-200 - Vila Exemplo - São Paulo - SP
+
+Companhia de Gás do Exemplo: 
+Rua Bom Retiro, 975 - CEP 04100-200 - Vila Exemplo - São Paulo - SP
+CNPJ: 00.000.0000006-00 - Insc. Estadual 000.000.000.000
+
+CICRANO DE EXEMPLO: 
+Código do cliente: 12345678
+EST MUNICIPAL VALE DOURADO 512 APTO 33 ITAPECERICA: 
+CPF/CNPJ: 000000000-00 /
+"""
+
+
+def test_the_dangling_colon_shape_reads_the_holder_too():
+    r = find_endereco(CONTA_GAS_OCR_DOIS_PONTOS)
+    assert r.partes() == {
+        "cep": "06700-100",
+        "logradouro": "Estrada Municipal Vale Dourado",
+        "numero": "512",
+        "complemento": "APTO 33",
+        "bairro": None,
+        "cidade": "ITAPECERICA",
+        "uf": "SP",
+    }
+    assert r.titular == "CICRANO DE EXEMPLO"
+
+
+def test_the_double_spaced_shape_reads_the_holder_too():
+    """A third re-read of the same bill came back with a blank line after
+    every line — no two lines of the holder's block adjacent."""
+    texto = "\n\n".join(l for l in CONTA_GAS_OCR_REAL.splitlines() if l.strip()) + "\n"
+    r = find_endereco(texto)
+    assert (r.cep, r.cidade, r.uf, r.numero) == ("06700-100", "ITAPECERICA", "SP", "512")
+    assert r.logradouro == "Estrada Municipal Vale Dourado"
+
+
+def test_a_bare_name_above_a_spelled_out_codigo_do_cliente_is_the_titular():
+    texto = (
+        "Endereço: R DAS AMOREIRAS 77\n"
+        "CEP/Cidade: 13010-110 CAMPINAS SP\n"
+        "\n"
+        "FULANA EXEMPLAR\n"
+        "Código do cliente: 12345\n"
+    )
+    assert find_endereco(texto).titular == "FULANA EXEMPLAR"
+
+
+def test_the_copys_trailing_city_is_never_the_bairro():
+    """A re-read labelled only the SECOND copy ("… 512 APTO 33 ITAPECERICA");
+    the locality came from the envelope block — the trailing token is the
+    city, never a bairro."""
+    texto = (
+        "Nota Fiscal / Conta Gás:\n"
+        "CICRANO DE EXEMPLO\n"
+        "EST MUNICIPAL VALE DOURADO 512 APTO 33\n"
+        "CEP: 06700-100 ITAPECERICA SP\n"
+        "Vencimento: 29.07.2026\n"
+        "\n"
+        "Remetente: Companhia de Gás do Exemplo\n"
+        "Rua Bom Retiro, 975 - CEP 04100-200 - Vila Exemplo - São Paulo - SP\n"
+        "\n"
+        "Cliente: CICRANO DE EXEMPLO\n"
+        "Código do cliente: 12345678\n"
+        "Endereço: EST MUNICIPAL VALE DOURADO 512 APTO 33 ITAPECERICA\n"
+    )
+    r = find_endereco(texto)
+    assert (r.cep, r.cidade, r.bairro, r.complemento) == ("06700-100", "ITAPECERICA", None, "APTO 33")

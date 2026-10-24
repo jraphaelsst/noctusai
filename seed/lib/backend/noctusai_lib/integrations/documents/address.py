@@ -351,10 +351,21 @@ def normalizar_logradouro(logradouro: Optional[str]) -> Optional[str]:
 
 
 _CEP_HIFEN_RE = re.compile(r"(?<![\d.])(\d{2})\.?(\d{3})\s?-\s?(\d{3})(?![\d-])")
-_CEP_ROTULO_RE = re.compile(r"\bCEP\b\s*[:.\-]?\s*(\d{2})\.?(\d{3})\s?-?\s?(\d{3})(?!\d)")
+#: `CEP: …`, and the combined column labels a bill prints over the CEP +
+#: city pair — `CEP/Cidade: 06710-500 COTIA SP` (F82 round 2, 2026-10-24,
+#: the real Comgás OCR: without this the holder's only CEP had no label and
+#: the read came back empty).
+_CEP_ROTULO_RE = re.compile(
+    r"\bCEP\b(?:\s*/\s*(?:CIDADE|MUNICIPIO|LOCALIDADE)(?:\s*/\s*(?:UF|ESTADO))?)?"
+    r"\s*[:.\-]?\s*(\d{2})\.?(\d{3})\s?-?\s?(\d{3})(?!\d)"
+)
 
 #: Markers that a CEP belongs to the ISSUER, not to the holder.
-_EMISSOR_RE = re.compile(r"\bCNPJ\b|INSCRICAO\s+ESTADUAL|\bI\.?\s?E\.?\s*[:.]|RAZAO\s+SOCIAL")
+#: `CPF/CNPJ:` is the CUSTOMER's document field (printed inside the holder's
+#: own block on the real Comgás OCR, F82 round 2) — never an issuer marker.
+_EMISSOR_RE = re.compile(
+    r"(?<!CPF/)(?<!CPF /)\bCNPJ\b|INSCRICAO\s+ESTADUAL|\bI\.?\s?E\.?\s*[:.]|RAZAO\s+SOCIAL"
+)
 #: 🔴 P1/883 (2026-09-25), real, measured: a Vivo bill prints its own
 #: mailing-window address ("AV. ENGENHEIRO LUIS CARLOS BERRINI, 1.376 - CEP:
 #: NNNNN-NNN - SAO PAULO - SP") on one line and its "Inscrição Estadual: ..."
@@ -389,7 +400,7 @@ _REMETENTE_ALCANCE_LINHAS = 3
 #: "Cia. de…", LTDA, S/A), its SAC / ouvidoria / agências / central de
 #: atendimento lines. A person's postal line carries none of them.
 _EMISSOR_NA_LINHA_RE = re.compile(
-    r"\b(?:COMPANHIA|CIA\.?)\s+(?:DE|DO|DA|DOS|DAS)\b|\bSAC\b|\bOUVIDORIA\b|"
+    r"\b(?:COMPANHIA|CIA\.?)\s+(?:DE|DO|DA|DOS|DAS)\b|\bSAC\b|\bOUVIDORIA\b|\bREMETENTE\b|"
     r"\bAGENCIAS?\b|\bCENTRAL\s+DE\s+ATENDIMENTO\b|\bLTDA\b|\bS/A\b"
 )
 
@@ -440,7 +451,8 @@ _TITULAR_ROTULO_SOZINHO_RE = re.compile(
 _CODIGO_CLIENTE_PREFIXO_RE = re.compile(r"^\s*\d+\s*-\s*(.+)$")
 #: Narrow ON PURPOSE — "COD.CLIENTE" only, never a bare "COD." prefix that
 #: would also swallow an unrelated "COD. BARRAS" or similar field.
-_COD_CLIENTE_RE = re.compile(r"^\s*COD\.?\s*CLIENTE\b")
+#: Also the spelled-out "CÓDIGO DO CLIENTE" (the real Comgás read, F82 round 2).
+_COD_CLIENTE_RE = re.compile(r"^\s*COD(?:IGO)?\.?\s*(?:DO\s+)?CLIENTE\b")
 #: Legal-entity suffixes that pass `looks_like_a_name`'s own structural check
 #: (letters-only, 2..8 words) because a company's own name is shaped exactly
 #: like a person's — real, measured (P2): ENEL's and a telecom issuer's own
@@ -1353,12 +1365,20 @@ def _rua_mais_lida(t: _Texto, lido: EnderecoLido, ancora: Optional[str]) -> Ende
     left as read, never guessed between."""
     if not lido.logradouro or not lido.numero:
         return lido
-    leituras: list[str] = [lido.logradouro]
+    leituras: list[str] = []
     for idx, (base, linha) in enumerate(t.linhas):
-        corpo = linha.strip()
-        if not _TIPO_RE.match(corpo) or _emissor_proximo(t, idx):
+        if _emissor_proximo(t, idx):
             continue
-        recuo = len(linha) - len(linha.lstrip())
+        rotulo = _ROTULO_LOGRADOURO_RE.match(linha)
+        if rotulo:
+            # A labelled copy ("Endereço: EST … 684 APTO 21 COTIA") — the
+            # real bill prints the holder's street twice, both labelled.
+            recuo, corpo = rotulo.end(), linha[rotulo.end():].rstrip()
+        else:
+            corpo = linha.strip()
+            if not _TIPO_RE.match(corpo):
+                continue
+            recuo = len(linha) - len(linha.lstrip())
         corte = _CEP_ROTULO_RE.search(corpo) or _CEP_HIFEN_RE.search(corpo)
         corpo = corpo[: corte.start()].rstrip(" -,") if corte else corpo
         partes = _parse_logradouro(t, base + recuo, corpo)
@@ -1369,9 +1389,10 @@ def _rua_mais_lida(t: _Texto, lido: EnderecoLido, ancora: Optional[str]) -> Ende
             and _mesma_rua(log, lido.logradouro)
         ):
             leituras.append(log)
-    if lido.rotulo != "ENDERECO":
-        # The chosen read IS one of the street lines just collected.
-        leituras = leituras[1:] or [lido.logradouro]
+    # The chosen read IS one of the lines just collected — added only when
+    # it came from a shape this scan does not walk (`_disperso`).
+    if _chave_rua(lido.logradouro) not in {_chave_rua(l) for l in leituras}:
+        leituras.append(lido.logradouro)
     contagem = Counter(_chave_rua(l) for l in leituras)
     maximo = max(contagem.values())
     vencedoras = {k for k, n in contagem.items() if n == maximo}
@@ -1384,6 +1405,11 @@ def _rua_mais_lida(t: _Texto, lido: EnderecoLido, ancora: Optional[str]) -> Ende
     if _chave_rua(escolhida) == _chave_rua(lido.logradouro):
         return lido
     return replace(lido, logradouro=escolhida)
+
+
+#: A labelled street line, label consumed — the same label set and boundary
+#: `_rotulado` opens its `logradouro` field on.
+_ROTULO_LOGRADOURO_RE = re.compile(r"^\s*" + _ROTULOS["logradouro"] + r"\s*[:\-]\s*")
 
 
 #: Street tokens kept exactly as printed when title-casing: Brasília's
@@ -1420,6 +1446,46 @@ def caixa_logradouro(logradouro: Optional[str]) -> Optional[str]:
     return " ".join(saida)
 
 
+#: A colon dangling at the end of a line, nothing after it.
+_DOIS_PONTOS_PENDURADO_RE = re.compile(r":[ \t]*$", re.MULTILINE)
+
+
+def _sem_dois_pontos_pendurados(text: str) -> str:
+    """F82 round 2 (2026-10-24, the real Comgás read): the vision rung
+    transcribes an envelope block in its own "key: value" register — every
+    line of the holder's block ends in a dangling colon ("06710-500 COTIA
+    SP: "), which broke the city/UF tail (the CEP landed in `bairro`) and
+    the street/titular reads. The colon is layout noise, never part of an
+    address; it is blanked IN PLACE (same length) so every offset into the
+    text — and every literal slice — stays valid. A label alone on its
+    line ("Remetente:") loses nothing: every label pattern here takes its
+    colon as optional or needs a value after it."""
+    return _DOIS_PONTOS_PENDURADO_RE.sub(lambda m: " " * len(m.group(0)), text)
+
+
+_LINHA_EM_BRANCO_SIMPLES_RE = re.compile(r"\n[ \t]*\n(?![ \t]*\n)")
+
+
+def _sem_espaco_duplo(text: str) -> str:
+    """F82 round 2 (2026-10-24, a third real re-read of the same bill): the
+    vision rung sometimes returns the whole page DOUBLE-SPACED — a blank
+    line after every line — so no two lines of the holder's block were ever
+    adjacent: `_mesmo_bloco` saw the CEP and the street as different blocks,
+    the issuer windows (`_emissor_proximo`) missed the CNPJ two lines away,
+    and the read came back empty. On such a page a single blank line is
+    spacing, not a block boundary: it is dropped (two or more stay one).
+    A normally-spaced page (fewer than 70% of its lines followed by a blank)
+    is returned untouched."""
+    linhas = text.split("\n")
+    cheias = [i for i, l in enumerate(linhas[:-1]) if l.strip()]
+    if len(cheias) < 6:
+        return text
+    seguidas_de_branco = sum(1 for i in cheias if not linhas[i + 1].strip())
+    if seguidas_de_branco / len(cheias) < 0.7:
+        return text
+    return _LINHA_EM_BRANCO_SIMPLES_RE.sub("\n", text)
+
+
 def find_endereco(text: str) -> EnderecoLido:
     """The holder's address off a comprovante, or an empty `EnderecoLido`.
 
@@ -1438,7 +1504,7 @@ def find_endereco(text: str) -> EnderecoLido:
     """
     if not text or not text.strip():
         return _NADA
-    t = _Texto(text)
+    t = _Texto(_sem_espaco_duplo(_sem_dois_pontos_pendurados(text)))
     rotulado = _rotulado(t)
     ancora: Optional[str] = None
     if rotulado is None:
@@ -1461,6 +1527,10 @@ def find_endereco(text: str) -> EnderecoLido:
             lido = replace(lido, titular=titular_fraco)
     lido = _rua_mais_lida(t, lido, ancora)
     bairro, complemento = separar_complemento_do_bairro(lido.bairro, lido.complemento)
+    if bairro and lido.cidade and _chave_rua(bairro) == _chave_rua(lido.cidade):
+        # "… 684 APTO 21 COTIA" — the copy's trailing token is the CITY, not
+        # a bairro (F82 round 2, a real re-read of the Comgás bill).
+        bairro = None
     return replace(
         lido,
         logradouro=caixa_logradouro(normalizar_tipo_logradouro(lido.logradouro)),
