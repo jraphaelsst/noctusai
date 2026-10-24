@@ -119,7 +119,7 @@ import type { ParteContratoPatch, ParteItem } from "@/types/partes";
 import { ParteEmpresaContratoForm, RepresentanteEmpresaSelect } from "./partes/ParteContratoCampos";
 import type { GeracaoDestino } from "./GeradorContratoSection";
 import { rolarAteAlvo } from "@/hooks/useRolarAteAlvo";
-import { SW_TIMELINE_RENDERERS } from "./Timeline";
+import { SW_TIMELINE_RENDERERS, semDeslocamentoDeFuso } from "./Timeline";
 import {
   DocumentoChecklistSection,
   progressoChecklist,
@@ -1275,7 +1275,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         timeline: {
           // SW's union adds `touch`; every SW entry is a seed entry (the
           // seed union's open `TimelineUnknownEntry` admits any kind).
-          entries: props.timelineEntries as CardHubTimelineEntry[],
+          entries: semDeslocamentoDeFuso(props.timelineEntries) as CardHubTimelineEntry[],
           loading: props.timelineLoading,
           error: props.timelineError,
           hasMore: props.timelineHasMore,

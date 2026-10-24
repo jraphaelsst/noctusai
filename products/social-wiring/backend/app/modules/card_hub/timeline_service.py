@@ -39,6 +39,7 @@ over-time state, not a bug in this module.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
@@ -67,6 +68,25 @@ _DEFAULT_LIMIT = seed_timeline.DEFAULT_LIMIT
 # `cliente`) so every body below reads exactly as it did before the lift.
 
 
+#: `origem_tabela` values whose source column is a bare DATE (no time of day).
+#: The touch row stores it as a timestamptz (midnight UTC), which any client in
+#: UTC-3 renders as the PREVIOUS day at 21:00 (F77, 2026-10-24). Serialise the
+#: date back as a date so it can never shift.
+_DATE_ONLY_ORIGENS = frozenset({"leads"})
+
+
+_UTC_MIDNIGHT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]00:00:00(?:\.0+)?(?:Z|\+00(?::?00)?)$")
+
+
+def _touch_ocorrido_em(row: dict) -> str:
+    value = str(row["ocorreu_em"])
+    # Only the date-cast signature (exactly midnight UTC) collapses to a date;
+    # a genuine timestamp from the same table keeps its time.
+    if row.get("origem_tabela") in _DATE_ONLY_ORIGENS and _UTC_MIDNIGHT_RE.match(value):
+        return value[:10]
+    return row["ocorreu_em"]
+
+
 def _gather_touches(
     cfg: CardHubConfig, client: Any, org_id: UUID, cliente_id: UUID, cliente: dict
 ) -> list[dict]:
@@ -78,7 +98,7 @@ def _gather_touches(
         {
             "id": r["id"],
             "kind": "touch",
-            "ocorrido_em": r["ocorreu_em"],
+            "ocorrido_em": _touch_ocorrido_em(r),
             "ator": None,
             "payload": {
                 "id": r["id"],

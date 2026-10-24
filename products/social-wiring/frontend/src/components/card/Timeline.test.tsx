@@ -12,7 +12,7 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
 
-import { Timeline } from "./Timeline";
+import { Timeline, semDeslocamentoDeFuso } from "./Timeline";
 
 async function render(props: React.ComponentProps<typeof Timeline>) {
   const React = (await import("react")).default;
@@ -222,5 +222,17 @@ describe("Timeline — Bug 4 (prod card 755253934): a touch entry's date never s
     const local = new Date("2026-09-23T00:00:00Z");
     const esperado = `${String(local.getDate()).padStart(2, "0")}/${String(local.getMonth() + 1).padStart(2, "0")}/${local.getFullYear()}`;
     expect(texto).toContain(esperado);
+  });
+});
+
+describe("semDeslocamentoDeFuso — F77: the card dialog feeds the seed timeline with the same date-only rewrite", () => {
+  it("a lead touch at UTC midnight becomes a bare date (UTC-3 never sees 23/10 21:00)", () => {
+    const entries = [
+      { id: "t", kind: "touch", ocorrido_em: "2026-10-24T00:00:00+00:00", ator: null, payload: {} },
+      { id: "n", kind: "nota", ocorrido_em: "2026-10-24T00:00:00+00:00", ator: null, payload: {} },
+    ] as unknown as TimelineEntry[];
+    const out = semDeslocamentoDeFuso(entries);
+    expect(out[0].ocorrido_em).toBe("2026-10-24");
+    expect(out[1].ocorrido_em).toBe("2026-10-24T00:00:00+00:00");
   });
 });

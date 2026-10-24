@@ -275,6 +275,15 @@ export interface CreateApiClientOptions {
    */
   onUnauthenticated?: () => void;
   /**
+   * F76b (2026-10-24): during a deploy the backend can answer a spurious 401
+   * for a few seconds (container booting, auth keys not warm) and the
+   * immediate refresh+retry lands in the same window. For an IDEMPOTENT
+   * request (GET/HEAD) the client waits this long and retries ONCE more with
+   * the freshest token before treating the 401 as final. Default 700ms; 0
+   * disables the wait (the extra attempt still happens).
+   */
+  transientRetryDelayMs?: number;
+  /**
    * Admin step-up. When an admin call answers `403 {code:"mfa_required"}` the
    * client opens ONE `MfaChallengeDialog` (via `<MfaChallengeHost/>`, mounted
    * by the seed AuthProviders), then RETRIES the call once on success — or
@@ -389,6 +398,7 @@ export const UPLOAD_TIMEOUT_MS = 120_000;
 
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
   const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated, onMfaVerified, onOrgSemLicenca } = options;
+  const transientRetryDelayMs = options.transientRetryDelayMs ?? 700;
 
   async function buildHeaders(token?: string | null): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
@@ -467,6 +477,18 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     return inflightRefresh;
   }
 
+  /** One delayed re-attempt of an idempotent request that 401'd (deploy window). */
+  async function delayedIdempotentRetry(url: string, init: RequestInit): Promise<Response | null> {
+    const method = (init.method ?? 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') return null;
+    if (transientRetryDelayMs > 0) await new Promise((r) => setTimeout(r, transientRetryDelayMs));
+    const token = await getAuthToken().catch(() => null);
+    const headers = { ...init.headers as Record<string, string> };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const retry = await safeFetch(url, { ...init, headers });
+    return retry.status === 401 ? null : retry;
+  }
+
   async function fetchWithAuthRetry(url: string, init: RequestInit): Promise<Response> {
     const response = await safeFetch(url, init);
     if (response.status !== 401) return response;
@@ -481,14 +503,17 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
         // let the caller see this request's 401 instead of logging out.
         // eslint-disable-next-line no-console
         console.warn('[api] session refresh unanswered; keeping the session:', err);
-        return response;
+        return (await delayedIdempotentRetry(url, init)) ?? response;
       }
       if (freshToken) {
         const retryHeaders = { ...init.headers as Record<string, string> };
         retryHeaders['Authorization'] = `Bearer ${freshToken}`;
         const retry = await safeFetch(url, { ...init, headers: retryHeaders });
         if (retry.status !== 401) return retry;
-        // refresh produced a token the server STILL rejects → session is dead.
+        // The server STILL rejects the fresh token. For an idempotent GET give
+        // a deploy window one more chance before declaring the session dead.
+        const later = await delayedIdempotentRetry(url, { ...init, headers: retryHeaders });
+        if (later) return later;
       }
     }
 

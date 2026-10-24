@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { createApiClient, parseRetryAfterSeconds, ApiError, type CreateApiClientOptions } from './api';
+import { createApiClient, parseRetryAfterSeconds, ApiError, TransientAuthError, type CreateApiClientOptions } from './api';
 
 function jsonResponse(status: number, body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -24,6 +24,7 @@ function make(opts: Partial<CreateApiClientOptions> = {}) {
   const client = createApiClient({
     getBaseUrl: () => 'http://x',
     getAuthToken: async () => 'tok',
+    transientRetryDelayMs: 0,
     onUnauthenticated,
     ...opts,
   });
@@ -94,6 +95,42 @@ describe('createApiClient — onUnauthenticated on a dead session', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401, { detail: 'Token ausente' }));
     const client = createApiClient({ getBaseUrl: () => 'http://x', getAuthToken: async () => null });
     await expect(client.get('/api/x')).rejects.toThrow('[401]');  // no throw from a missing callback
+  });
+});
+
+describe('createApiClient — F76b one delayed retry of an idempotent GET on a deploy-window 401', () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('GET recovers when the refreshed token is still 401 once, then the backend is up', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(401))
+      .mockResolvedValueOnce(jsonResponse(401))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    const { client, onUnauthenticated } = make({ onTokenExpired: async () => 'fresh' });
+    await expect(client.get('/api/x')).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(onUnauthenticated).not.toHaveBeenCalled();
+  });
+
+  it('GET retries once when the refresh is unanswered (transient) and keeps the session', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(401))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    const { client, onUnauthenticated } = make({
+      onTokenExpired: async () => { throw new TransientAuthError('down'); },
+    });
+    await expect(client.get('/api/x')).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onUnauthenticated).not.toHaveBeenCalled();
+  });
+
+  it('a POST is never replayed after the refresh retry', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401));
+    const { client } = make({ onTokenExpired: async () => 'fresh' });
+    await expect(client.post('/api/x', {})).rejects.toThrow('[401]');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

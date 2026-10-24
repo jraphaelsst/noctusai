@@ -62,7 +62,7 @@ export interface TimelineProps extends Omit<CardHubTimelineProps, "entries" | "r
  * (`@/lib/utils`) for why a UTC-midnight timestamp there renders 3h into the
  * wrong calendar day, and why the rewrite is scoped to this one kind.
  */
-function semDeslocamentoDeFuso(entries: TimelineEntry[]): TimelineEntry[] {
+export function semDeslocamentoDeFuso(entries: TimelineEntry[]): TimelineEntry[] {
   return entries.map((entry) =>
     entry.kind === "touch"
       ? { ...entry, ocorrido_em: dataOnlyFromPossibleUtcMidnight(entry.ocorrido_em) }
