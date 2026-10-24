@@ -35,18 +35,22 @@ REQUISITOS
 `requisitos` are readiness ``falta`` keys (`derivacao.Avaliacao.falta`'s
 `campo`) — the exact keys `derivacao` already emits, inventoried from it. A
 ``*`` stands for exactly ONE dotted segment (an id: a parcela, a favorecido,
-an intermediário, a permuta ativo). How readiness uses them (next slice):
-a falta key no specification GOVERNS (`governa`) is always asked — parties,
-certidões, the imóvel's registry data are about every contract; a governed
-key is asked only when a selected specification requires it (`exige`).
+an intermediário, a permuta ativo). How readiness uses them
+(`derivacao.Avaliacao.pede`, the gate every falta passes): a falta key no
+specification GOVERNS (`governa`) is always asked — parties, certidões, the
+imóvel's registry data are about every contract; a governed key is asked
+only when a selected specification requires it (`exige`). No stored
+selection = legacy mode: no scope at all.
 
 🔴 PENDING OWNER DECISION — G1. An à vista deal with NO sinal has no base for
 the multa rescisória (in the signed corpus the sinal is that base). It is
 represented as the explicit requisito `negociacao.multa_rescisoria_base` on
 ``a_vista`` (dispensed when ``sinal_saldo`` is also selected — the sinal is
 the base then). No value, rule or default is invented here: the key exists
-so the decision has a named destination (`PENDENTES_DECISAO`), and no falta
-of that key is emitted by `derivacao` yet.
+so the decision has a named destination (`PENDENTES_DECISAO`); `derivacao`
+asks it as a falta labelled "aguardando decisão do escritório"
+(`derivacao.ROTULO_PENDENTE_DECISAO`) whenever a selection requires it —
+an à vista selection without sinal is never ready until the owner decides.
 """
 from __future__ import annotations
 

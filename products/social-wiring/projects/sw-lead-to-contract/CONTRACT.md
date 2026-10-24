@@ -414,4 +414,15 @@ Action: **LINK, don't move.**
 ### 10.2 Storage + route (migration 308)
 - `atendimento_contratos.especificacoes text[] NULL` + `especificacoes_versao int NULL`; NULL = legacy mode (readiness follows the derived switches). `carregador` loads both into `DadosContrato`.
 - `PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/especificacoes` body `{especificacoes: [str]}` → `{especificacoes (catalogue order), especificacoes_versao, modelo}`. Any org member; `400` on an unknown key / missing `requer` / exclusive pair (nothing written); `404` foreign contract; `401` unauthenticated. The contract read (`GET …/contratos`) carries `especificacoes` + `especificacoes_versao`.
-- Not yet: the readiness scoping by `requisitos` and the FE selector (next slices).
+- Not yet: the FE selector (next slice).
+
+### 10.3 Readiness scoped by the selection (`derivacao.avaliar`)
+- `Avaliacao.requisitos = especificacoes.requisitos(selection)`; every `falta` passes ONE gate, `Avaliacao.pede`: a key some spec `governa`s is asked only when `exige(requisitos, key)`; an ungoverned key (parties, certidões, imóvel registry) is always asked. NULL selection = legacy mode: no gate, readiness byte-identical to before (`sugerir` is only reported — as a scope it would drop the sinal on a fgts-only deal the legacy gate asks for).
+- Selected spec, data absent → falta `especificacao.<chave>` (e.g. "Intermediação selecionada: cadastre os intermediários") for `financiamento_bancario` · `fgts` · `parcelas_diretas` · `intermediarias` · `confissao_divida` · `permuta` · `intermediacao` (`derivacao.ESPECIFICACAO_SEM_DADOS`).
+- Data present, spec not selected → bloqueio `ESPEC_CONTRADIZ_DADOS` listing each `especificacoes.conflitos` message; its governed faltas are not asked. Replaces the aviso `MODELO_DIVERGENTE` (kept in legacy mode). A stored selection the current catalogue refuses → bloqueio `ESPECIFICACOES_INVALIDAS` (readiness falls back to legacy).
+- The sinal (`negociacao.parcela_sinal`) is asked only with `sinal_saldo` (always in legacy). **G1:** `a_vista` without `sinal_saldo` → falta `negociacao.multa_rescisoria_base` "Aguardando decisão do escritório: base da multa rescisória para contrato à vista…" — never ready until the owner decides; no base is invented.
+- **G5:** the `fgts` spec makes the companies' CRF/FGTS (`certidao.fgts_regularidade`) required, same as the deal's `exigir_crf_fgts` opt-in (`derivacao.exige_crf_fgts`, also what the contract prints).
+
+### 10.4 `GET …/contratos/{id}/geracao` (+ `iniciar`'s `geracao`)
+- New fields: `especificacoes` (selection, catalogue order, or `null` = legacy) · `especificacoes_versao` · `sugeridas` (`especificacoes.sugerir(switches)` — the selector's default) · `conflitos` (`especificacoes.conflitos`, `[]` in legacy) · `modelo` (`especificacoes.modelo_de(selection)`, else `modelo_derivado`). `modelo_confere` = stored `modelo` == `modelo`.
+- `iniciar` / `gerar` set a generated contract's `modelo` to `modelo` — the selection's label when specs are selected (never overwritten by the data's derivation), `modelo_derivado` in legacy mode.
