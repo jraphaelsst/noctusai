@@ -48,6 +48,7 @@ from app.modules.card_hub import certidoes_exigencias_service as exig_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as checklist_svc
+from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import financiamento_service
 from app.modules.card_hub import negociacao_estruturada_service as estruturada_svc
 from app.modules.card_hub import negociacao_service
@@ -365,6 +366,9 @@ def _pessoa(
     # A CNH-only RG (no check digit) completes itself from the matrícula's
     # averbação — the contract must print the full number (rg_matricula_service).
     row = rg_matricula.completar(client, org_id, UUID(cliente_id), row) or row
+    # Machine values whose source document was removed are not printed
+    # (`completude` below withholds them the same way -> a falta).
+    row = identidade_svc.sanear_proveniencia(client, org_id, UUID(cliente_id), row) or row
     completude = checklist_svc.completude_contratual(client, org_id, UUID(cliente_id))
     # Migration 116 closed spec §6.1 #18. A parte's certidões stay DEAL-scoped
     # (`atendimento_parte_id`); the TITULAR has no parte row at all, and
