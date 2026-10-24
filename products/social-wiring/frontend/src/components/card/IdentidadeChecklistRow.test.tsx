@@ -315,15 +315,40 @@ describe("os dados de identidade aparecem na linha, não só os arquivos", () =>
     expect(getByTestId(`${P}-rg-valor`).textContent).toBe("—");
   });
 
-  it("lists only the fields that are filled; a missing one stays under 'Falta'", async () => {
-    const { getByTestId, queryByTestId } = await renderRow({
+  it("an empty field is still listed (—) with a pencil, so it can be typed (owner 2026-10-24)", async () => {
+    const onSaveCampo = vi.fn();
+    const { getByTestId } = await renderRow({
       item: item({ faltando: ["rg"], faltando_rotulos: ["RG"] }),
       valores: { cpf: "123.456.789-09", rg: null, rg_orgao_expedidor: "  " },
+      onSaveCampo,
     });
     expect(getByTestId(`${P}-dados-cpf`)).toBeTruthy();
-    expect(queryByTestId(`${P}-dados-rg`)).toBeNull();
-    expect(queryByTestId(`${P}-dados-rg_orgao_expedidor`)).toBeNull();
+    expect(getByTestId(`${P}-dados-rg`).textContent).toContain("—");
+    expect(getByTestId(`${P}-dados-rg_orgao_expedidor`).textContent).toContain("—");
     expect(getByTestId(`${P}-faltando-rg`)).toBeTruthy();
+    expect(getByTestId(`${P}-dados-rg-editar`)).toBeTruthy();
+  });
+
+  it("🔴 typing the RG in place saves only that field — no document needed", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const onSaveCampo = vi.fn();
+    const { getByTestId } = await renderRow({
+      item: item({ faltando: ["rg"], faltando_rotulos: ["RG"] }),
+      valores: { cpf: "123.456.789-09", rg: null },
+      onSaveCampo,
+    });
+    fireEvent.click(getByTestId(`${P}-dados-rg-editar`));
+    fireEvent.change(getByTestId(`${P}-dados-rg-input`), { target: { value: " 12.345.678-9 " } });
+    fireEvent.click(getByTestId(`${P}-dados-rg-salvar`));
+    expect(onSaveCampo).toHaveBeenCalledWith({ rg: "12.345.678-9" });
+  });
+
+  it("without a save callback the field is read-only (no pencil)", async () => {
+    const { queryByTestId } = await renderRow({
+      item: item({ faltando: ["rg"], faltando_rotulos: ["RG"] }),
+      valores: { cpf: "123.456.789-09" },
+    });
+    expect(queryByTestId(`${P}-dados-cpf-editar`)).toBeNull();
   });
 
   it("a plain document item (Serasa Crednet) never shows identity data", async () => {

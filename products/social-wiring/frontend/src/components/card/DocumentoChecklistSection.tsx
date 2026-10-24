@@ -260,6 +260,8 @@ export function DocumentoChecklistSection({
                 onReextrairDocumento={onReextrairDocumento}
                 reextraindoDocumentoId={reextraindoDocumentoId}
                 valores={valores}
+                onSaveCampo={onSaveCampo}
+                savingCampo={savingCampo}
                 testIdPrefix={testIdPrefix}
               />
             ) : (

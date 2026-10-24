@@ -39,9 +39,21 @@
  *
  * Presentational only (`card/**`): props in, callbacks out.
  */
-import { useRef } from "react";
-import { Download, ExternalLink, FileText, RotateCw, Trash2, Undo2, Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  Check,
+  Download,
+  ExternalLink,
+  FileText,
+  Pencil,
+  RotateCw,
+  Trash2,
+  Undo2,
+  Upload,
+  X,
+} from "lucide-react";
 
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { DocumentoChecklistItem, IdentidadeSlot } from "@/types/cardHub";
 
@@ -64,6 +76,11 @@ export interface IdentidadeChecklistRowProps {
   reextraindoDocumentoId?: string | null;
   /** The record's values, keyed by COLUMN — the identity data on file. */
   valores?: DadosPessoais;
+  /** Saves ONE identity field typed by the operator (owner directive
+   *  2026-10-24: "a field must not be upload-only, we can set them
+   *  manually"). Same callback `ChecklistItemRow` uses. */
+  onSaveCampo?: (patch: DadosPessoais) => void;
+  savingCampo?: boolean;
   testIdPrefix?: string;
 }
 
@@ -86,6 +103,8 @@ export function IdentidadeChecklistRow({
   onReextrairDocumento,
   reextraindoDocumentoId,
   valores,
+  onSaveCampo,
+  savingCampo,
   testIdPrefix = "documento-checklist",
 }: IdentidadeChecklistRowProps) {
   const tid = `${testIdPrefix}-${item.key}`;
@@ -98,17 +117,9 @@ export function IdentidadeChecklistRow({
   const semLeitura = faltando.filter((campo) => !comSugestao.has(campo));
   // Only an ALL-of item (the identity one — it is the item that sends
   // `faltando`) owns identity data; a plain document item (Serasa Crednet)
-  // rides this row for its upload slot alone.
-  const dadosNaFicha =
-    item.faltando !== undefined
-      ? DADOS_IDENTIDADE.map(({ campo, rotulo }) => ({
-          campo,
-          rotulo,
-          valor: valores?.[campo],
-        })).filter((d): d is { campo: keyof DadosPessoais; rotulo: string; valor: string } =>
-          typeof d.valor === "string" && d.valor.trim() !== "",
-        )
-      : [];
+  // rides this row for its upload slot alone. Every identity field is listed
+  // — empty ones too — so each one can be typed when no document carries it.
+  const dadosNaFicha = item.faltando !== undefined ? DADOS_IDENTIDADE : [];
 
   return (
     <li
@@ -158,16 +169,22 @@ export function IdentidadeChecklistRow({
       </div>
 
       {dadosNaFicha.length > 0 && (
-        <p
-          className="ml-6 flex flex-wrap gap-x-3 text-xs text-muted-foreground/90"
+        <div
+          className="ml-6 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground/90"
           data-testid={`${tid}-dados`}
         >
-          {dadosNaFicha.map(({ campo, rotulo, valor }) => (
-            <span key={campo} data-testid={`${tid}-dados-${campo}`}>
-              {rotulo}: <span className="font-medium text-foreground/90">{valor}</span>
-            </span>
+          {dadosNaFicha.map(({ campo, rotulo }) => (
+            <DadoIdentidade
+              key={campo}
+              campo={campo}
+              rotulo={rotulo}
+              valor={valores?.[campo]}
+              onSaveCampo={onSaveCampo}
+              saving={savingCampo}
+              tid={`${tid}-dados-${campo}`}
+            />
           ))}
-        </p>
+        </div>
       )}
       {item.dica && (
         <p className="ml-6 text-xs text-muted-foreground" data-testid={`${tid}-dica`}>
@@ -192,8 +209,8 @@ export function IdentidadeChecklistRow({
           {semLeitura.length > 0 && (
             <p data-testid={`${tid}-faltando-acao`}>
               Envie outro documento (RG/CPF, CNH ou CIN) que traga{" "}
-              {semLeitura.length === 1 ? "esse dado" : "esses dados"}, ou informe em
-              &ldquo;Dados pessoais&rdquo;.
+              {semLeitura.length === 1 ? "esse dado" : "esses dados"}, ou digite
+              no lápis ao lado do campo.
             </p>
           )}
         </div>
@@ -223,6 +240,91 @@ export function IdentidadeChecklistRow({
         ))}
       </ul>
     </li>
+  );
+}
+
+/** One identity datum on the row: its value (or "—") and a pencil that
+ *  types it in place — a document is a source, never the only way in. */
+function DadoIdentidade({
+  campo,
+  rotulo,
+  valor,
+  onSaveCampo,
+  saving,
+  tid,
+}: {
+  campo: keyof DadosPessoais;
+  rotulo: string;
+  valor: unknown;
+  onSaveCampo?: (patch: DadosPessoais) => void;
+  saving?: boolean;
+  tid: string;
+}) {
+  const atual = typeof valor === "string" && valor.trim() !== "" ? valor : null;
+  const [editando, setEditando] = useState(false);
+  const [rascunho, setRascunho] = useState("");
+
+  function salvar() {
+    if (!onSaveCampo) return;
+    const limpo = rascunho.trim();
+    onSaveCampo({ [campo]: limpo === "" ? null : limpo } as DadosPessoais);
+    setEditando(false);
+  }
+
+  if (editando) {
+    return (
+      <span className="flex items-center gap-1" data-testid={tid}>
+        {rotulo}:
+        <Input
+          autoFocus
+          className="h-7 w-40"
+          value={rascunho}
+          aria-label={rotulo}
+          data-testid={`${tid}-input`}
+          onChange={(e) => setRascunho(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") salvar();
+            if (e.key === "Escape") setEditando(false);
+          }}
+        />
+        <TooltipIconButton
+          label={`Salvar ${rotulo}`}
+          icon={Check}
+          testId={`${tid}-salvar`}
+          className="h-7 w-7"
+          disabled={saving}
+          onClick={salvar}
+        />
+        <TooltipIconButton
+          label="Cancelar"
+          icon={X}
+          testId={`${tid}-cancelar`}
+          className="h-7 w-7"
+          onClick={() => setEditando(false)}
+        />
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-0.5" data-testid={tid}>
+      {rotulo}:{" "}
+      <span className={cn("font-medium", atual ? "text-foreground/90" : "text-muted-foreground")}>
+        {atual ?? "—"}
+      </span>
+      {onSaveCampo && (
+        <TooltipIconButton
+          label={`Editar ${rotulo}`}
+          icon={Pencil}
+          testId={`${tid}-editar`}
+          className="h-6 w-6"
+          onClick={() => {
+            setRascunho(atual ?? "");
+            setEditando(true);
+          }}
+        />
+      )}
+    </span>
   );
 }
 
