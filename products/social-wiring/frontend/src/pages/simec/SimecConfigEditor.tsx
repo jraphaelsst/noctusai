@@ -34,6 +34,7 @@ import {
   type SimecConfig,
   type SimecLayer,
 } from "@/lib/simec";
+import { useBeforeUnloadGuard } from "@noctusai/lib/components";
 
 // ─── Item model ─────────────────────────────────────────────────────────────
 
@@ -250,6 +251,8 @@ function LayerForm({
   const save = useSaveSimecConfig();
   const sections = useMemo(() => buildSections(base, draft), [base, draft]);
   const dirty = !sameOverrides(draft, saved);
+  // "Alterações não salvas." below is the on-screen half; this guards a page leave.
+  useBeforeUnloadGuard(dirty);
   const readOnly = !canEdit;
 
   const onSave = () => {

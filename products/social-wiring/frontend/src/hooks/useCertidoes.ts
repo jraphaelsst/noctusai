@@ -26,7 +26,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { useAuthStore } from "@noctusai/seed/infra";
-import { jobPolling } from "@noctusai/lib";
+import { handOffToPolling, jobPolling } from "@noctusai/lib";
 import { copyRichText } from "@noctusai/lib/clipboard";
 
 import { api } from "@/lib/api";
@@ -312,8 +312,9 @@ export function useReprocessarConsulta() {
       await api.post(`/api/certidoes/consultas/${id}/reprocessar`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
-      queryClient.invalidateQueries({ queryKey: ["certidao-consulta"] });
+      // Re-queued scrapes: the first re-read can predate the workers — hand off (F87).
+      void handOffToPolling(queryClient, ["certidao-consultas"]);
+      void handOffToPolling(queryClient, ["certidao-consulta"]);
       toast.success("Reprocessamento iniciado!");
     },
     onError: (error: Error) => {
@@ -346,7 +347,7 @@ export function useDeleteConsulta() {
 export function useCancelarProcessamento() {
   const queryClient = useQueryClient();
 
-  return useMutation({ // noc-allow: invalidate-only — cancels every queued scrape server-side; the answer is only a count, which consultas/resultados changed is the server's
+  return useMutation({ // noc-allow: invalidate-only — cancels every queued scrape server-side; the answer is only a count, which consultas/resultados changed is the server's · noc-allow: no-job-handoff — a cancel ENDS work synchronously; nothing is queued to wait for
     mutationFn: async (consultaId: string) => {
       const result = await api.post(`/api/certidoes/consultas/${consultaId}/cancelar`);
       return result.data as { cancelados: number };
@@ -541,27 +542,6 @@ export interface CertidoesInvalidationScope {
   empresaId?: string;
 }
 
-function invalidateCertidoesScope(
-  queryClient: ReturnType<typeof useQueryClient>,
-  scope: CertidoesInvalidationScope,
-) {
-  if (scope.atendimentoParteId) {
-    queryClient.invalidateQueries({
-      queryKey: ["certidao-resultados-parte", scope.atendimentoParteId],
-    });
-  }
-  if (scope.clienteId) {
-    queryClient.invalidateQueries({
-      queryKey: ["certidao-resultados-cliente", scope.clienteId],
-    });
-  }
-  if (scope.empresaId) {
-    queryClient.invalidateQueries({
-      queryKey: ["certidao-resultados-empresa", scope.empresaId],
-    });
-  }
-}
-
 /** The resultados listing(s) a scope addresses (at most one is ever set). */
 function scopeKeys(scope: CertidoesInvalidationScope) {
   return [
@@ -658,9 +638,10 @@ export function useUploadResultadoManual(scope: CertidoesInvalidationScope = {})
       await api.upload(`/api/certidoes/resultados/${resultadoId}/upload`, formData);
     },
     onSuccess: () => {
-      invalidateCertidoesScope(queryClient, scope);
-      queryClient.invalidateQueries({ queryKey: ["certidao-consulta"] });
-      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+      // The PDF is read by a background task: hand the listings off to polling (F87).
+      for (const queryKey of [...scopeKeys(scope), ["certidao-consulta"], ["certidao-consultas"]]) {
+        void handOffToPolling(queryClient, queryKey);
+      }
       toast.success("Certidão enviada com sucesso!");
     },
     onError: (error: Error) => {

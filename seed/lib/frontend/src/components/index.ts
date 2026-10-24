@@ -15,6 +15,15 @@ export type {
 } from './ResourceManager';
 export { SideDrawer, SIDE_DRAWER_LEAVE_MESSAGE } from './SideDrawer';
 export {
+  useUnsavedChanges,
+  useBeforeUnloadGuard,
+  UnsavedChangesNotice,
+  UNSAVED_CHANGES_MESSAGE,
+  changedFields,
+  sameFieldValue,
+} from './UnsavedChanges';
+export type { UseUnsavedChangesOptions, UnsavedChanges, UnsavedChangesNoticeProps } from './UnsavedChanges';
+export {
   RetryableError,
   QueryErrorState,
   toastRetryableError,

@@ -15,7 +15,7 @@ import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
-import { jobPolling } from "@noctusai/lib";
+import { handOffToPolling, jobPolling } from "@noctusai/lib";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 
@@ -311,7 +311,7 @@ async function getAuthHeader(): Promise<Record<string, string>> {
 
 export function useFinanciamentoMutation(clienteId: string) {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation({ // noc-allow: exact-write — the only read under this key is the per-document ACCESS LOG ("acessos"), which a financiamento PATCH never changes
     mutationFn: (patch: FinanciamentoPatch) =>
       api.patch<Financiamento>(base(clienteId), patch),
     onSuccess: (data) => qc.setQueryData(KEY(clienteId), data),
@@ -391,7 +391,6 @@ export function useFinanciamentoDocumentoMutations(clienteId: string) {
  */
 export function useFinanciamentoDocumentoExtracao(clienteId: string) {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: KEY(clienteId) });
   /** The server's version of one document replaces it in the financiamento (the answer IS the document). */
   const documentoTarget = {
     queryKey: KEY(clienteId),
@@ -451,7 +450,8 @@ export function useFinanciamentoDocumentoExtracao(clienteId: string) {
             : `${r.erros} documentos não puderam ser lidos novamente — envie os arquivos de novo se o problema continuar.`,
         );
       }
-      void invalidate();
+      // The reads run server-side: hand the financiamento read off to polling (F87).
+      void handOffToPolling(qc, KEY(clienteId));
       void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "negociacao"] });
     },
     onError: (e) =>

@@ -1,0 +1,30 @@
+name: UnsavedChanges
+kind: component
+path: seed/lib/frontend/src/components/UnsavedChanges.tsx
+phase: pilot-seed
+registered_at: "2026-10-24"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Import: import { useUnsavedChanges, UnsavedChangesNotice } from '@noctusai/lib/components' (also re-exported from '@noctusai/lib')."
+  - "useUnsavedChanges(draft, saved, { fields?, guardNavigation? }) -> { dirty, changed }. saved = the persisted value in the draft's own shape (same toDraft); undefined while loading => never dirty."
+  - "Field equality: null ≡ undefined ≡ '' (an input cannot show the difference); arrays / plain objects structurally."
+  - "While dirty a beforeunload guard asks before reload / tab close. In-app close of a drawer is SideDrawer's `dirty` prop."
+  - "A selector whose chip LOOKS applied is not a draft: persist on pick (the F91 condomínio fix) and keep the rest of the card on this hook."
+  - "Pilot consumer: social-wiring inline 'Salvar' cards (ImovelCartorioCard, ImovelEnderecoCard, ImovelAvaliacaoSection, ImovelCertidoesCard, TermosNegocioSection, QualificacaoContratoForm, NegociacaoPanel, MatriculaAtoDetalhesEditor, SimecConfigEditor, CerebroEditor, CerebroPerguntas)."
+
+errors_encountered: []
+drifts_surfaced:
+  - "Before this organ five surfaces hand-rolled dirty + beforeunload (ImovelCartorioCard, CerebroEditor, CerebroPerguntas, SimecConfigEditor, DreSettingsForm) and ~10 inline Salvar cards had no indicator at all (F91)."
+alternatives_considered:
+  - "A static keeper for 'displayed value diverges from persisted state' — rejected as imprecise: draft-vs-server divergence is a runtime relation, not a syntactic one; the organ + the documented rule are the mechanism."
+  - "Autosave every field on change — rejected as a default: multi-field cards validate together (matrícula + cartório), and a half-typed number would be persisted."
+manual_validation_log: []
+integration_test_status: unit-tested (UnsavedChanges.test.tsx)
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

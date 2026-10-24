@@ -58,6 +58,7 @@ import {
 } from "@/types/qualificacaoCompletude";
 
 import { TokenCheckbox, TooltipIconButton } from "@noctusai/lib/components";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 /** The taxonomy the UI offers. The COLUMN is unconstrained TEXT on purpose
  *  (migration 068) — a CHECK would freeze a product decision into the schema —
@@ -319,6 +320,9 @@ export function DadosPessoaisForm({
   ]);
 
   const pendente = (campo: string) => pendenteConfirmacao?.includes(campo) ?? false;
+
+  // While editing, typed values are not saved until "Salvar dados": say so (F91 class).
+  const { dirty } = useUnsavedChanges(draft, aberto ? valores : undefined);
 
   function campo<K extends keyof DadosPessoais>(k: K, v: string) {
     setDraft((d) => ({ ...d, [k]: v === "" ? null : v }));
@@ -790,6 +794,7 @@ export function DadosPessoaisForm({
         </Campo>
       </div>
 
+      <UnsavedChangesNotice dirty={dirty} data-testid={`${testId}-nao-salvo`} />
       <div className="flex gap-1">
         <TooltipIconButton
           label={saving ? "Salvando…" : "Salvar dados"}

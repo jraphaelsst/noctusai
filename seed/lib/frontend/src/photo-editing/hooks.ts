@@ -39,6 +39,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listOps, useCacheWriteMutation } from '../cache-writes';
 import { pageOps } from '../organ-kit/page-ops';
+import { handOffToPolling, jobPolling } from '../job-polling';
 import type { ApiClient } from '../api';
 
 // ---------------------------------------------------------------------------
@@ -688,6 +689,8 @@ const REVISAO_KEY = (loteId: string | null | undefined) => ['edicao-fotos', 'rev
 const LOTE_KEY = (loteId: string | null | undefined) => ['edicao-fotos', 'lote', loteId] as const;
 const LOTES_KEY = ['edicao-fotos', 'lotes'] as const;
 const GUIAS_KEY = ['edicao-fotos', 'guias'] as const;
+/** Reads whose rows a queued worker job produces poll at this pace while a hand-off is pending. */
+const JOB_POLL_MS = 4000;
 const REGRAS_KEY = ['edicao-fotos', 'regras'] as const;
 const REGRA_STATUS: RegraStatus[] = ['proposta', 'aprovada', 'rejeitada'];
 
@@ -877,6 +880,8 @@ export function createEdicaoFotosHooks(api: ApiClient) {
       queryKey: [...GUIAS_KEY, page, pageSize],
       queryFn: () => api.get('/api/edicao-fotos/guias', { page, page_size: pageSize }),
       placeholderData: (prev) => prev,
+      // A queued AI rebuild (`useRegenerarGuia`) lands later: poll only while that hand-off is pending.
+      ...jobPolling<GuiasPage>(() => false, JOB_POLL_MS),
     });
     return {
       guias: query.data?.items ?? [],
@@ -941,7 +946,8 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     return useMutation({ // noc-allow: invalidate-only — a 202 that only queues the AI rebuild: the draft does not exist until the worker runs it, so there is no row to place yet
       mutationFn: () =>
         api.post<RegenerarGuiaResposta>('/api/edicao-fotos/guias/regenerar', {}),
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: GUIAS_KEY }),
+      // 202: the draft appears when the worker runs — follow the list until it changes (F87).
+      onSuccess: () => handOffToPolling(queryClient, GUIAS_KEY, { until: 'changed' }),
     });
   }
 
@@ -960,6 +966,8 @@ export function createEdicaoFotosHooks(api: ApiClient) {
       queryKey: [...REGRAS_KEY, status ?? null],
       queryFn: () => api.get('/api/edicao-fotos/regras', status ? { status } : undefined),
       placeholderData: (prev) => prev,
+      // The proposer (`useProporRegrasAgora`) runs on the worker: poll only while that hand-off is pending.
+      ...jobPolling<RegrasPage>(() => false, JOB_POLL_MS),
     });
     return {
       regras: query.data?.items ?? [],
@@ -1049,8 +1057,11 @@ export function createEdicaoFotosHooks(api: ApiClient) {
    * debounce (`PlataformaConfiguracoes.rule_proposal_debounce_seconds`).
    */
   function useProporRegrasAgora() {
+    const queryClient = useQueryClient();
     return useMutation({ // noc-allow: invalidate-only — a queued job: the proposed rules do not exist until the worker runs the proposer, so there is nothing to place yet
       mutationFn: () => api.post<ProporRegrasResposta>('/api/edicao-fotos/regras/propor-agora', {}),
+      // Follow the rules list until the proposer's rows land (F87).
+      onSuccess: () => handOffToPolling(queryClient, REGRAS_KEY, { until: 'changed' }),
     });
   }
 
@@ -1295,6 +1306,8 @@ export function createEdicaoFotosHooks(api: ApiClient) {
       queryKey: ['edicao-fotos', 'modelos'],
       queryFn: () => api.get('/api/edicao-fotos/modelos'),
       staleTime: 60 * 1000,
+      // The notes rewrite (`useGerarNotasModelos`) runs on the worker: poll only while that hand-off is pending.
+      ...jobPolling<ModeloCatalogoItem[]>(() => false, JOB_POLL_MS),
     });
     return {
       modelos: query.data ?? [],
@@ -1525,8 +1538,11 @@ export function createEdicaoFotosHooks(api: ApiClient) {
 
   /** `POST /modelos/notas/gerar` → 202: the rewrite runs on the worker (only while processing is active). */
   function useGerarNotasModelos() {
+    const queryClient = useQueryClient();
     return useMutation({ // noc-allow: invalidate-only — a 202: the notes are rewritten by the worker later, so there is nothing to place yet
       mutationFn: () => api.post<RegenerarGuiaResposta>('/api/edicao-fotos/modelos/notas/gerar', {}),
+      // Follow the model list until the rewritten notes land (F87).
+      onSuccess: () => handOffToPolling(queryClient, ['edicao-fotos', 'modelos'], { until: 'changed' }),
     });
   }
 

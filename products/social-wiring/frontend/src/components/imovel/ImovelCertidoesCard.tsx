@@ -68,6 +68,7 @@ import {
   type DocumentoExtracaoPatch,
   type ImovelCertidao,
 } from "@/hooks/useImovelContrato";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 /** Radix `SelectItem` refuses `""`, so "not read" needs a real token. */
 const SEM_RESULTADO = "__sem_resultado__";
@@ -241,6 +242,9 @@ function CertidaoEditor({
   const patch = buildCertidaoPatch(draft, certidao, campos);
   const semAlteracoes = Object.keys(patch).length === 0;
   const registroManual = manual ? buildCertidaoManual(draft, campos) : null;
+  // A typed value is not saved until Salvar / Salvar e confirmar: guard a page leave, and say so on
+  // the manual path (the read path already counts the changed fields).
+  const { dirty } = useUnsavedChanges(draft, toDraft(certidao, campos));
   const dias = diasDesdeEmissao(certidao.emitida_em, hoje);
   const velha = certidaoDesatualizada(certidao.emitida_em, hoje);
 
@@ -379,6 +383,7 @@ function CertidaoEditor({
               </Button>
             )
           )}
+          <UnsavedChangesNotice dirty={dirty} className="text-[11px] text-amber-600" data-testid={`certidao-${tipo}-nao-salvo`} />
           <span className="text-[11px] text-muted-foreground">
             {registroManual === null
               ? "Preencha ao menos um campo."

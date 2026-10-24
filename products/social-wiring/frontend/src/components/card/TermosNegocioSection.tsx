@@ -70,6 +70,7 @@ import {
   type PosseMarcoImovel,
   type TermosNegocioPut,
 } from "@/types/negociacaoEstruturada";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 interface Props {
   clienteId: string;
@@ -353,6 +354,8 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
     setDraft(toDraft(data.termos));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.termos]);
+  // The clauses are not saved until "Salvar termos": say so (F91 class).
+  const { dirty } = useUnsavedChanges(draft, toDraft(data.termos));
 
   const temPermuta = data.parcelas.some((p) => p.tipo === "permuta");
   const temConfissao = data.parcelas.some((p) => p.confissao_divida);
@@ -885,6 +888,8 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
             Corrija os campos destacados antes de salvar.
           </p>
         )}
+
+        <UnsavedChangesNotice dirty={dirty} data-testid="termos-nao-salvo" />
 
         <div className="flex justify-end">
           <Button

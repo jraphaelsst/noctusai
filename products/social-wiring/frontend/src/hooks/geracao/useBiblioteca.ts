@@ -9,6 +9,7 @@
  * write the server row into the cached reads and settle by invalidating the
  * whole `["sw","geracao"]` family.
  */
+import { handOffToPolling, jobPolling } from "@noctusai/lib";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
@@ -117,6 +118,8 @@ export function usePerfisMonitorados(q = "") {
         ),
       ),
     placeholderData: (prev) => prev,
+    // No in-progress marker on a profile: it polls only while a sync hand-off is pending.
+    ...jobPolling<PerfilMonitorado[]>(() => false, PERFIS_POLL_MS),
   });
   return {
     ...query,
@@ -177,12 +180,24 @@ export function useSolicitarPerfil() {
   });
 }
 
+export const PERFIS_POLL_MS = 4000;
+
+/** The profile's `ultima_sync_em` moved past what was cached at hand-off: the queued sync landed. */
+const syncDoPerfilAterrissou = (id: string) => (data: unknown, before: unknown) => {
+  const at = (l: unknown) => (Array.isArray(l) ? (l as PerfilMonitorado[]).find((p) => p.id === id)?.ultima_sync_em : undefined);
+  return at(data) !== at(before);
+};
+
 export function useSincronizarPerfil() {
   const qc = useQueryClient();
   return useMutation({ // noc-allow: invalidate-only — a sync trigger: the POST starts a background job and returns no row to commit
     mutationFn: async (id: string) =>
       api.post(`${BASE}/perfis/${encodeURIComponent(id)}/sincronizar`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: GERACAO_KEY }),
+    onSuccess: (_r, id) => {
+      // 202 + a queued job: follow the profile list until its sync lands (F87), then the rest.
+      void handOffToPolling(qc, [...BIB_KEY, "perfis"], { until: syncDoPerfilAterrissou(id) });
+      void qc.invalidateQueries({ queryKey: GERACAO_KEY });
+    },
   });
 }
 

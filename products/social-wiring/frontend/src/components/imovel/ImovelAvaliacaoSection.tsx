@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import type { ImovelDados, ImovelDadosPatch } from "@/hooks/useImovelDados";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 export const PADRAO_OPCOES = [
   { value: "simples", label: "Simples", help: "Acabamento econômico, materiais básicos, sem áreas de lazer." },
@@ -186,6 +187,8 @@ export default function ImovelAvaliacaoSection({ dados, categoria, loading, savi
   }, [saving]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: keyof Draft) => (v: string) => setDraft((d) => ({ ...d, [k]: v }));
+  // While editing, a typed value is not saved until "Salvar": say so (F91 class).
+  const { dirty } = useUnsavedChanges(draft, editing && dados ? toDraft(dados) : undefined);
   const showSkeleton = loading;
 
   function submit() {
@@ -327,6 +330,7 @@ export default function ImovelAvaliacaoSection({ dados, categoria, loading, savi
                 {invalid ?? error}
               </p>
             )}
+            <UnsavedChangesNotice dirty={dirty} data-testid="imovel-avaliacao-nao-salvo" />
             <div className="flex gap-2">
               <Button type="button" size="sm" onClick={submit} disabled={saving} data-testid="imovel-avaliacao-salvar">
                 {saving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}

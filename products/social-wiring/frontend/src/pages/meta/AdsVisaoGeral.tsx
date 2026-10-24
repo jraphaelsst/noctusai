@@ -335,9 +335,9 @@ export default function AdsVisaoGeral() {
             variant="outline"
             size="sm"
             onClick={() => sync.mutate("incremental")}
-            disabled={sync.isPending}
+            disabled={sync.running}
           >
-            {sync.isPending ? (
+            {sync.running ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <RefreshCw className="mr-2 h-4 w-4" />

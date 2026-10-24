@@ -7,7 +7,8 @@
  * `data` — never `isLoading`, never a bare `isFetching`.
  * → KB § PATTERNS/frontend/lying-loading-state.md
  */
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { handOffToPolling } from "@noctusai/lib";
 import { api } from "@noctusai/seed/infra";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
@@ -105,6 +106,7 @@ export interface AdicionarParteResultado {
 const partesDoCardKey = (clienteId: string) => ["sw", "clientes", clienteId, "partes"] as const;
 
 export function useAdicionarParte(clienteId: string) {
+  const qc = useQueryClient();
   return useCacheWriteMutation<AdicionarParteResultado, AdicionarParteInput>({
     mutationFn: async ({
       reemitirCertidoes,
@@ -143,6 +145,11 @@ export function useAdicionarParte(clienteId: string) {
     ],
     // The card family (compradores/vendedores lists, card summary, qualificação) lives under the seed's `["sw","cardHub"]` root.
     invalidate: [["sw", "cardHub"], ["sw", "clientes", clienteId]],
+    // The emission it may have requested runs on InfoSimples: hand the certidões grid off to
+    // polling, or its first re-read can predate the consulta rows (F87).
+    onSuccess: (r) => {
+      if (r.emissao) void handOffToPolling(qc, ["sw", "clientes", clienteId, "certidoes", "partes"]);
+    },
   });
 }
 

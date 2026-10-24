@@ -1,7 +1,7 @@
 ---
 name: noc-cache-writes
-description: Use when writing or migrating a TanStack mutation in any product or the seed — triggers "add a mutation", "create/update/delete hook", "useMutation", "invalidateQueries", "the list updates late", "shows up after a second", "optimistic update", "migrate hooks to cache writes", "fan out useCacheWriteMutation", or check_mutation_invalidate_only blocking a commit. Every write puts what it knows into the cache; never invalidate-only.
-version: 1.5.0
+description: Use when writing or migrating a TanStack mutation in any product or the seed — triggers "add a mutation", "create/update/delete hook", "useMutation", "invalidateQueries", "the list updates late", "shows up after a second", "optimistic update", "migrate hooks to cache writes", "fan out useCacheWriteMutation", "stays stale after Salvar", "never updates after starting a job", or check_mutation_invalidate_only / check_mutation_family_write / check_job_start_without_handoff blocking a commit. Every write puts what it knows into every entry it touches; a queued job hands off to polling; never invalidate-only.
+version: 1.6.0
 ---
 
 # noc-cache-writes — a write puts what it knows into the cache
@@ -21,7 +21,9 @@ An invalidate-only `useMutation` throws the server's answer away and refetches, 
 4. **Insert where the server's sort puts it** (`created_at desc` → `prepend` + `replace(old, tempId, saved, 'prepend')`), and render the cache in that order — no `.reverse()`/re-sort in the component, or the row jumps when the settle refetch lands.
 5. **New row stand-in** → `{ id: tempId, ... }` from the ctx; commit with `listOps.replace(old, tempId, saved)` (never duplicates).
 6. **Keep the caller's UX** — toasts, `form.reset`, `navigate` stay in `onSuccess`/`onError`; they run after the cache work.
-7. **Genuinely can't place it** (server regroups the whole view, a mutation with no cached read, a fire-and-forget action like "send email") → keep `useMutation`, put `// noc-allow: invalidate-only — <why>` on the `useMutation(` line. A reason is mandatory; "too hard" is not one.
+7. **Raw `useMutation` with `setQueryData(K)`?** That write is EXACT — also `invalidateQueries({ queryKey: K })` (prefix) so the reads under `K` (`[...K, "estruturada"]`) refresh, or use `useCacheWriteMutation` (its settle does). Keeper `check_mutation_family_write`.
+8. **The write QUEUES server work** (answer = job/consulta id, 202, "queued")? It cannot place the result — `handOffToPolling(qc, readKey)` (`@noctusai/lib`) instead of a bare invalidate, so the polled read keeps polling until the job ran. A result read with no in-progress marker spreads `jobPolling(() => false, POLL_MS)`. Keeper `check_job_start_without_handoff`.
+9. **Genuinely can't place it** (server regroups the whole view, a mutation with no cached read, a fire-and-forget action like "send email") → keep `useMutation`, put `// noc-allow: invalidate-only — <why>` on the `useMutation(` line. A reason is mandatory; "too hard" is not one.
 
 ## MIGRATING an existing file (the fan-out procedure)
 
@@ -30,7 +32,7 @@ An invalidate-only `useMutation` throws the server's answer away and refetches, 
 3. Rewrite per the "new mutation" rules. Preserve every side effect the old `onSuccess` had (toasts, extra invalidations → `invalidate`, callbacks).
 4. Tests: for each file you touch, at least one test asserting the cache WHILE the request is in flight (deferred promise) — see `products/orbity/frontend/src/hooks/__tests__/useCrm.test.ts` "cache writes". Existing tests that asserted `invalidateQueries` calls may need updating to the new contract, never deleting coverage.
 5. `python mcp/noctusai/cli.py --lower-mutation-invalidate-only-baseline` — re-derives the ratchet downward. On a rebase CONFLICT in `mcp/noctusai/tests/mutation_invalidate_only_baseline.json`: take either side, re-run this flag, stage. Never hand-merge it.
-6. Gates: product `tsc --noEmit`, `vitest run`, `vite build`; `--check-mutation-invalidate-only` clean.
+6. Gates: product `tsc --noEmit`, `vitest run`, `vite build`; `--check-mutation-invalidate-only` + `--check-stale-after-write` clean.
 
 - **Settle is background, never awaited.** `onSettled` fires the invalidations (`void`), it never returns them: TanStack awaits a returned promise, which would keep `isPending` true (buttons stuck on "Adicionando…") until the refetches finish. Don't write a plain `useMutation` whose `onSettled` returns `invalidateQueries`.
 

@@ -13,7 +13,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@noctusai/seed/infra";
-import { jobPolling } from "@noctusai/lib";
+import { jobPolling, handOffToPolling } from "@noctusai/lib";
 
 import { INSTAGRAM_PROVIDER, useInstagramProfile } from "@/hooks/useInstagramInsights";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
@@ -181,7 +181,8 @@ export function useEnviarArquivo() {
       form.append("file", v.file, v.file.name);
       return uploadMultipart<Envelope<unknown>>(`${BASE}/brains/${encodeURIComponent(v.id)}/imports/file`, form);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: CEREBRO_KEY }),
+    // The import runs on the server: hand the polled detail off until it has run (F87).
+    onSuccess: () => handOffToPolling(qc, CEREBRO_KEY),
   });
 }
 

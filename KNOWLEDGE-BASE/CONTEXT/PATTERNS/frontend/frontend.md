@@ -50,6 +50,8 @@ useQuery({ queryKey, queryFn, ...jobPolling((d: Lote | undefined) => !!d && emAn
 
 **What it sets.** While `isActive(data)`: `refetchInterval = intervalMs`, `refetchIntervalInBackground: true`, and `refetchOnWindowFocus: 'always'` (tab visible again ⇒ immediate refetch — browsers throttle hidden-tab timers, so the last background tick can be minutes old). While idle: no polling at all, foreground or background. `refetchIntervalInBackground` is a plain boolean in v5, so it is `true` unconditionally — inert while `refetchInterval` resolves `false`; that is what keeps idle queries off the network in a background tab by construction.
 
+**Starting the job: hand off.** `isActive(data)` only sees what the last read returned. A write that queues the job and then invalidates races the worker — the refetch can land before the job's rows exist and the poll never starts (social-wiring F87, 2026-10-24). The write calls `handOffToPolling(qc, readKey)` instead: the `jobPolling` reads under `readKey` keep polling until they have seen the job run and settle (or `graceMs`). Keeper `check_job_start_without_handoff`; depth in `mutation-cache-writes.md` § Async jobs hand off to polling.
+
 **Not for** live data with no terminal state (inbox, feed, presence) — that is a realtime stream (`inbox-chat-surface.md`), and a fixed-cadence dashboard refresh (`refetchInterval: 30_000`) stays a plain interval that rightly pauses in a hidden tab. Variable-cadence job pollers (a fast-then-slow window, a max-poll budget) do not fit the fixed-interval helper yet — extend `jobPolling` before hand-rolling a fourth.
 
 ## Hooks in dedicated files, always

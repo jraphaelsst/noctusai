@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 import type { EnderecoManualPatch, ImovelDados } from "@/hooks/useImovelDados";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 interface Props {
   dados: ImovelDados | undefined;
@@ -86,6 +87,8 @@ export default function ImovelEnderecoCard({ dados, loading, saving, onSave, mir
   ]);
 
   const set = (k: keyof Draft) => (v: string) => setDraft((d) => ({ ...d, [k]: v }));
+  // A typed address is not saved until "Salvar endereço": say so (F91 class).
+  const { dirty } = useUnsavedChanges(draft, dados ? toDraft(dados) : undefined);
 
   function submit() {
     const blank = (s: string) => (s.trim() === "" ? null : s.trim());
@@ -220,6 +223,7 @@ export default function ImovelEnderecoCard({ dados, loading, saving, onSave, mir
           </p>
         )}
 
+        <UnsavedChangesNotice dirty={dirty} data-testid="imovel-endereco-nao-salvo" />
         <Button
           type="button"
           size="sm"

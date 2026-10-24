@@ -37,6 +37,7 @@ import {
   useRenomearBrain,
   useSalvarConteudo,
 } from "@/hooks/useCerebro";
+import { useBeforeUnloadGuard } from "@noctusai/lib/components";
 
 const CEREBRO = "/media-creation/cerebro";
 
@@ -77,12 +78,7 @@ export default function CerebroEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brain?.id, brain?.content_version, brain?.content]);
 
-  useEffect(() => {
-    if (!sujo) return;
-    const guard = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", guard);
-    return () => window.removeEventListener("beforeunload", guard);
-  }, [sujo]);
+  useBeforeUnloadGuard(sujo);
 
   async function onAplicar() {
     if (!brain) return;

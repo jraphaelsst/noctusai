@@ -1202,7 +1202,7 @@ export function contagemResolverConflitos(r: ResolverConflitosAutoResposta | nul
  */
 export function useResolverConflitosAutomaticamente() {
   const qc = useQueryClient();
-  return useMutation({ // noc-allow: invalidate-only — bulk server-side resolution; the answer is only counts, which rows left the queue and what they changed is the server's
+  return useMutation({ // noc-allow: invalidate-only — bulk server-side resolution; the answer is only counts, which rows left the queue and what they changed is the server's · noc-allow: no-job-handoff — the resolution is synchronous (done when the POST answers); "queue" here is the conflicts list, not a job
     mutationFn: () =>
       api.post<ResolverConflitosAutoResposta>("/api/clientes/conflitos/resolver-automaticamente", {}),
     onSuccess: () =>

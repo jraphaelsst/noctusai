@@ -59,6 +59,7 @@ import {
 // Shared with the admin pages. Fixes `virtual_staging` → `staging_virtual`,
 // the backend literal (the old value was refused with 422 on save).
 import { TIPOS_EDICAO } from "./rotulos";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 
 export default function Configuracoes() {
@@ -77,6 +78,10 @@ export default function Configuracoes() {
   useEffect(() => {
     if (configuracoes) setDraft(configuracoes);
   }, [configuracoes]);
+  // The four edited fields are not saved until "Salvar": say so (F91 class).
+  const { dirty } = useUnsavedChanges<Partial<OrgConfiguracoes>>(draft ?? {}, draft ? configuracoes : undefined, {
+    fields: ["tipos_edicao_ativos", "modelo_editor_imagem", "velocidade_padrao", "notificacoes_ativas"],
+  });
 
   const podeEditar = fotosPermissions.dashboardScope(capacidades) !== null;
   const modeloAusente = !fotosPermissions.modeloConfigurado(capacidades);
@@ -222,6 +227,8 @@ export default function Configuracoes() {
                 onCheckedChange={(v) => setDraft({ ...draft, notificacoes_ativas: v })}
               />
             </div>
+
+            <UnsavedChangesNotice dirty={dirty} data-testid="fotos-config-nao-salvo" />
 
             <Button onClick={handleSalvar} disabled={atualizar.isPending}>
               {atualizar.isPending ? "Salvando…" : "Salvar"}
