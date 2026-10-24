@@ -429,7 +429,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--migrate-product-allow-stale-tree", action="store_true", help="With --migrate-product: bypass the stale-tree refusal — almost always wrong.")
     parser.add_argument("--migrate-product-allow-inactive", action="store_true", help="With --migrate-product: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--migrate-product-allow-stale-toolkit", action="store_true", help="With --migrate-product: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
-    parser.add_argument("--task-branch", metavar="ACTION", choices=["status", "start", "integrate", "cleanup", "sync_primary"], help="The self-branching-mode per-task git lifecycle. DRY-RUN unless --task-branch-confirm. MCP: noctus.dev.task_branch. Also an R4 fresh-subprocess target for its mutating (start/integrate/cleanup, confirm=True) actions.")
+    parser.add_argument("--task-branch", metavar="ACTION", choices=["status", "start", "integrate", "cleanup", "train", "sync_primary"], help="The self-branching-mode per-task git lifecycle. DRY-RUN unless --task-branch-confirm. MCP: noctus.dev.task_branch. Also an R4 fresh-subprocess target for its mutating (start/integrate/cleanup, confirm=True) actions.")
+    parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
+    parser.add_argument("--task-branch-train-order", default="given", choices=["given", "auto"], help="With --task-branch=train: merge order - 'given' (as listed) or 'auto' (least path-overlap first).")
     parser.add_argument("--task-branch-slug", default=None, help="With --task-branch: the feat/<slug> worktree/branch name.")
     parser.add_argument("--task-branch-confirm", action="store_true", help="With --task-branch: actually perform the git lifecycle step (a write). Without it, plan/dry-run only.")
     parser.add_argument("--task-branch-project", default=None, help="With --task-branch action=start: the branch-tree pointer's project (default: inherited from parent's pointer).")
@@ -3501,6 +3503,9 @@ def main():
             accept_unmeasured=accept_unmeasured,
             accept_unmeasured_reason=getattr(args, "task_branch_accept_unmeasured_reason", None),
             slug=getattr(args, "task_branch_slug", None),
+            slugs=([x.strip() for x in args.task_branch_slugs.split(",") if x.strip()]
+                   if getattr(args, "task_branch_slugs", None) else None),
+            order=getattr(args, "task_branch_train_order", "given"),
             confirm=bool(getattr(args, "task_branch_confirm", False)),
             wire_env=not bool(getattr(args, "task_branch_no_wire_env", False)),
             keep_worktree=bool(getattr(args, "task_branch_keep_worktree", False)),
