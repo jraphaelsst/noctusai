@@ -383,3 +383,20 @@ Action: **LINK, don't move.**
 - **Legal data follows the link.** Property-level legal data (matrícula / CRI / owners) is reconciled by `imovel_hub/vinculo_legal.py` (dup-B): `reconciliar(client, org_id, vinculo)` after a link, `limpar(client, org_id, vinculo)` BEFORE an unlink, loaded lazily. A missing module or an exception is reported in the response (`legal: {status: "erro", mensagem}`) and never undoes the link.
 - **Routes.** `GET /api/imoveis/duplicatas?status=` (declared in `routers/imoveis_router.py` before `GET /{codigo}`, which would otherwise swallow the one-segment path), `POST /duplicatas/{id}/descartar`, `POST /duplicatas/{id}/vincular` (admin), `POST /{codigo}/desvincular` (admin, either side's código).
 - **Wire.** `vincular` -> `{duplicata, vinculo: {manual_codigo, vista_codigo}, legal}`; `desvincular` -> `{vinculo, duplicata|null, legal}`. `Imovel` gains `duplicatas_pendentes: [{id, outro_codigo, score}]` and `vinculo: {manual_codigo, vista_codigo}|null`; a linked manual código renders the Vista listing's catalog data with its own código / address / referências. `ImovelResumo` items (busca, enriquecer) carry `vinculo` on both sides of a link and `vinculado_a_manual` on the Vista side, only when linked; `/busca` hides a linked manual hit and returns the Vista one instead.
+
+## §9 · Every document-read field is also typeable (owner 2026-10-24)
+
+> "a field must not be upload-only, we can set them manually." A typed value is the operator's — later re-reads never overwrite it; the contract loader reads it first.
+
+### 9.1 Imóvel (migration 306)
+- `GET /api/matriculas/imoveis/{codigo}/descricao-imovel` → `{lido, digitado}` (the matrícula abertura block read off the document, and the operator's text). `PUT …/descricao-imovel` body `{texto: str|null}` stores `imovel_dados.descricao_imovel_texto` (follows the manual↔Vista link); `carregador` prints the typed text over the derived block (main and permuta imóveis).
+- `PUT /api/imoveis/{codigo}/certidoes/{tipo}/manual` (`tipo` ∈ `cnd_iptu | cnd_condominio | matricula`) body `ImovelCertidaoManualBody` (only the fields that tipo carries: `numero`, `emitida_em`, `validade_ate`, `resultado`, `inscricao_imobiliaria`) → the document-less record in `imovel_certidoes_manuais`; `DELETE …/manual` removes it. `documentos_service.certidoes` (page and contract) takes the typed record when newer than the newest upload; a visualização never hides it. All-empty or a field the tipo lacks → `422`.
+- `PUT /api/matriculas/imoveis/{codigo}/ultima-transferencia` gains `transmitentes: [str]`; typed names win over the act's (`transmitentes_origem`), names alone are a valid override, names + "não consta" → `422`.
+
+### 9.2 Empresas (Crednet participações / Cartão CNPJ)
+- `PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/participacao/dados` body `EmpresaParticipacaoEditBody {participante_cliente_id, participacao_pct?: 0–100, desde?: date}` → the participação; `422` outside 0–100, `404` for a person not on the card. A Crednet re-read only fills empty values.
+- `POST …/empresas` ("Adicionar empresa") also sends `razao_social` and `participacao_pct`.
+- `EmpresaPatchBody` accepts `natureza_juridica`, `data_abertura`, `motivo_situacao` (same admin/conflict gate as the other company fields).
+
+### 9.3 Party identity
+- The card checklist's identity row edits `cpf`, `rg`, `rg_orgao_expedidor` in place through the existing `PATCH` of `DadosPessoais` (one field per save).
