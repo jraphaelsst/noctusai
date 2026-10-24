@@ -59,6 +59,9 @@ from noctusai_lib.integrations.documents.matricula_atos import (
     segment_matricula_atos,
 )
 
+#: "localizada na …" is the same fact as "situada na …" (condomínio
+#: aberturas, deal 874: "CASA nº 21 … localizada na Estrada Municipal do
+#: Espigão, nº 684") — both verbs open the address.
 #: Tight form: the número sits RIGHT after the street, comma-separated, in
 #: the SAME sentence — "situada na Rua X, nº 100," — high confidence both
 #: fields describe the same fact. Deliberately does NOT match "situada na
@@ -67,7 +70,7 @@ from noctusai_lib.integrations.documents.matricula_atos import (
 #: a LOTE number, not a street number, and the character class excluding
 #: commas keeps this pattern from reaching past it.
 _LOGRADOURO_COM_NUMERO = re.compile(
-    r"(?:SITUAD[OA]|SITO)\s+(?:NO|NA|EM|A)\s+([^,]+?)\s*,\s*N[ºO°]\.?\s*(" + r"\d{1,3}(?:\.\d{3})+(?![\d])|\d[\w/-]*" + r")\s*(?:,|\.|\(|$)"
+    r"(?:SITUAD[OA]|SITO|LOCALIZAD[OA])\s+(?:NO|NA|EM|A|\u00c0)\s+([^,]+?)\s*,\s*N[ºO°]\.?\s*(" + r"\d{1,3}(?:\.\d{3})+(?![\d])|\d[\w/-]*" + r")\s*(?:,|\.|\(|$)"
 )
 
 #: A street TYPE — what makes a "situado no …" phrase a street at all. Without
@@ -81,7 +84,7 @@ _TIPO_LOGRADOURO = (
 #: Loose form: the street alone, whatever follows the comma — only when what
 #: follows "situado no/na" IS a street type.
 _LOGRADOURO = re.compile(
-    r"SITUAD[OA]\s+(?:NO|NA|EM|A)\s+(" + _TIPO_LOGRADOURO + r"\s[^,.\n]+)"
+    r"(?:SITUAD[OA]|LOCALIZAD[OA])\s+(?:NO|NA|EM|A|\u00c0)\s+(" + _TIPO_LOGRADOURO + r"\s[^,.\n]+)"
 )
 
 #: An averbação that OFFICIALISES a número — "para ficar constando a

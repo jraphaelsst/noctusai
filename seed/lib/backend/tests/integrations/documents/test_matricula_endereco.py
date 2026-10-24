@@ -229,3 +229,22 @@ class TestNumeroPorAverbacaoDeConstrucao:
             "Inventada Exemplar.\n"
         )
         assert derivar_endereco(self.ABERTURA, atos).numero == "12"
+
+
+class TestLocalizadaNa:
+    """Deal 874 — a condomínio unit's abertura says "localizada na", not
+    "situada na"; the street and número must still be read (synthetic text)."""
+
+    ABERTURA = (
+        'CASA Nº "7" do Condomínio denominado "RESIDENCIAL EXEMPLO"\n'
+        "localizada na Estrada Municipal Inventada, nº 321, neste Município e\n"
+        "Comarca de Cidade Exemplo-SP, assim descrita: área privativa de 90,000 m2."
+    )
+
+    def test_localizada_na_reads_street_and_number(self):
+        e = derivar_endereco(self.ABERTURA)
+        assert (e.logradouro, e.numero) == ("Estrada Municipal Inventada", "321")
+
+    def test_localizado_a_loose_form(self):
+        e = derivar_endereco("Um terreno localizado à Rua Inventada Exemplar, conforme planta.")
+        assert e.logradouro == "Rua Inventada Exemplar"
