@@ -3549,7 +3549,7 @@ class TestDefaultMergedTipBaselineRealGit:
         r, g, run = self._repo(tmp_path)
         seen = {}
 
-        def run_gates(wt, names, run_gate=None):
+        def run_gates(wt, names, run_gate=None, prepare_gates=None):
             seen["wt"] = wt
             seen["names"] = names
             seen["head"] = g("rev-parse", "HEAD", cwd=wt).strip()
@@ -3576,7 +3576,7 @@ class TestDefaultMergedTipBaselineRealGit:
     def test_worktree_removed_even_when_run_raises(self, tmp_path):
         r, g, run = self._repo(tmp_path)
 
-        def run_gates(wt, names, run_gate=None):
+        def run_gates(wt, names, run_gate=None, prepare_gates=None):
             raise RuntimeError("boom")
 
         out = T._default_merged_tip_baseline(
@@ -3586,12 +3586,42 @@ class TestDefaultMergedTipBaselineRealGit:
         assert out["worktree_removed"] is True
         assert "_merged-tip-baseline-" not in g("worktree", "list")
 
+    def test_baseline_gets_same_frontend_env_topup_as_merged_tip(self, tmp_path):
+        """2026-10-24: the baseline tree had no node_modules, so vitest:<slug>
+        read inconclusive. The preparer handed to run_gates is the SAME one."""
+        r, g, run = self._repo(tmp_path)
+        fe = r / "products" / "social-wiring" / "frontend"
+        (fe / "node_modules" / "react").mkdir(parents=True)
+        (fe / "package.json").write_text('{"scripts":{"test":"vitest run"}}')
+        (r / ".gitignore").write_text("node_modules\n.claude/worktrees\n")
+        g("add", "-A"); g("commit", "-qm", "fe")
+        g("update-ref", "refs/remotes/origin/dev", "HEAD")
+        seen = {}
+
+        def run_gates(wt, names, run_gate=None, prepare_gates=None):
+            from tools.noctus.dev.gate_sweep import GateSpec
+            seen["env"] = prepare_gates(Path(wt), [GateSpec(
+                "vitest:social-wiring", ["npm", "test"], Path(wt) / "products/social-wiring/frontend")])
+            seen["react"] = os.path.exists(os.path.join(wt, "products/social-wiring/frontend/node_modules/react"))
+            return {"gates": [{"gate": "vitest:social-wiring", "ran": True, "exit_code": 0}],
+                    "unknown": [], "env_prepared": seen["env"]}
+
+        out = T._default_merged_tip_baseline(
+            ["vitest:social-wiring"], "origin/dev", run=run, fs=T.FsOps(),
+            primary_root=str(r), run_gates=run_gates)
+        assert out["status"] == "ok", out
+        assert seen["react"] is True and seen["env"]["linked_count"] >= 1
+        assert out["gates"]["vitest:social-wiring"]["outcome"] == "green"
+
     def test_harness_suspect_and_unran_are_inconclusive_not_red(self):
         assert T._baseline_outcome({"ran": True, "exit_code": 1,
                                     "harness_suspect": {"signature": "s"}})[0] == "inconclusive"
         assert T._baseline_outcome({"ran": False})[0] == "inconclusive"
         assert T._baseline_outcome(None)[0] == "inconclusive"
         assert T._baseline_outcome({"ran": True, "exit_code": 1})[0] == "red"
+
+
+from pathlib import Path  # noqa: E402
 
 
 # -- renumber rewrites the branch's OWN references (2026-10-09) -----------------

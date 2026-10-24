@@ -112,6 +112,8 @@ from workspace import resolve_caller_root
 from .build import _last_meaningful_line
 from .harness_signatures import HARNESS_SIGNATURES as _HARNESS_SIGNATURES
 from .harness_signatures import harness_suspect as _harness_suspect
+from .harness_signatures import read_load_per_core as _read_load_per_core
+from . import gate_budget as _gate_budget
 from .migration_replay import products_for_paths
 from .migrate_product import (
     FakeGitRunner,  # noqa: F401  (re-exported for test convenience)
@@ -1526,6 +1528,73 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
     return proc.returncode, summary, duration, combined
 
 
+# ---------------------------------------------------------------------------
+# Load-induced vitest timeouts (2026-10-24, verdict-channel integrity).
+# 12 vitest tests failed at 11-17 s each (testTimeout-shaped) while host load
+# was 25-30 from parallel agents - the machine, not the code. A failure whose
+# EVERY case is a timeout is re-run ONCE, serially, on only the failing files:
+#   passes            -> not red; `flaky_under_load` + load evidence
+#   still times out   -> `harness_suspect` (inconclusive), never red
+#   real assertion    -> stays red, with the rerun's failing tests
+# ---------------------------------------------------------------------------
+_VITEST_TIMEOUT_RE = re.compile(r"(?:Test|Hook) timed out in \d+\s*ms")
+
+
+def vitest_failures_timeout_shaped(output: str, failing: list[str]) -> bool:
+    """True iff every failing case reports a vitest timeout (>= as many timeout
+    messages as distinct failing ids) - a single assertion failure disqualifies."""
+    if not failing:
+        return False
+    return len(_VITEST_TIMEOUT_RE.findall(output or "")) >= len(failing)
+
+
+def _vitest_failing_files(failing: list[str]) -> list[str]:
+    files: list[str] = []
+    for f in failing:
+        head = f.split(" > ", 1)[0].strip()
+        if re.search(r"\.(?:test|spec)\.[cm]?[jt]sx?$", head) and head not in files:
+            files.append(head)
+    return files
+
+
+def _rerun_timeout_shaped_vitest(
+    spec: GateSpec,
+    run_gate: Callable[[GateSpec], GateRunResult],
+    entry: dict[str, Any],
+    failing: list[str],
+    load_reader: Callable[[], "tuple[float, int] | None"] = _read_load_per_core,
+) -> None:
+    """Mutate `entry` per the rerun verdict (see the section comment)."""
+    files = _vitest_failing_files(failing)
+    rerun = GateSpec(spec.gate, [*spec.argv, "--", *files, "--no-file-parallelism"],
+                     spec.cwd, spec.preconditions)
+    got = load_reader()
+    load = ({"load_1m": round(got[0], 2), "cpu_cores": got[1]} if got else {})
+    raw = run_gate(rerun)
+    code, summary, duration, out = raw if len(raw) == 4 else (*raw, raw[1])
+    first = {"failing_tests": failing, "files_rerun": files, **load}
+    if code == 0:
+        entry.update(ran=True, exit_code=0, summary=f"passed on serial rerun ({len(failing)} timeout-shaped failure(s) under load)",
+                     flaky_under_load=first)
+        entry.pop("failing_tests", None)
+        return
+    again = vitest_failing_tests(out or "")
+    if code is None or vitest_failures_timeout_shaped(out or "", again):
+        entry["harness_suspect"] = {
+            "signature": "vitest_timeout_under_load",
+            "matched_line": redact_secrets_in_text(
+                f"{len(failing)} test(s) timed out; serial rerun "
+                + ("produced no verdict" if code is None else "timed out again")),
+            "remedy": "host is saturated - re-run when load drops; a timeout is not a verdict on the code",
+            "condition": load,
+        }
+        return
+    entry["failing_tests"] = again or entry.get("failing_tests", [])
+    entry["summary"] = redact_secrets_in_text(
+        f"{len(again)} failing test(s) on serial rerun: " + "; ".join(again[:8]))[:600]
+    entry["rerun_after_timeouts"] = first
+
+
 def _run_gates(
     specs: list[GateSpec],
     run_gate: Callable[[GateSpec], GateRunResult],
@@ -1604,6 +1673,8 @@ def _run_one_gate(
         "summary": summary,
         "duration_s": round(duration, 2),
     }
+    if exit_code is None and _gate_budget.is_timeout_summary(summary):
+        entry["timed_out"] = True
     if exit_code not in (0, None):
         if spec.gate.startswith("vitest:"):
             failing = vitest_failing_tests(output or "")
@@ -1612,6 +1683,10 @@ def _run_one_gate(
                 entry["summary"] = redact_secrets_in_text(
                     f"{len(failing)} failing test(s): " + "; ".join(failing[:8])
                     + (" ..." if len(failing) > 8 else ""))[:600]
+                if vitest_failures_timeout_shaped(output or "", failing) and not _harness_suspect(output or "", exit_code):
+                    _rerun_timeout_shaped_vitest(spec, run_gate, entry, failing)
+                    if entry.get("exit_code") == 0:
+                        return entry
         suspect = _harness_suspect(output or "", exit_code)
         if suspect:
             # `matched_line` is sliced from the RAW combined stdout/
@@ -1648,6 +1723,7 @@ def run_gates_named(
     timeout: int = 300,
     run_gate: Callable[[GateSpec], GateRunResult] | None = None,
     max_workers: int | None = None,
+    prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
 ) -> dict[str, Any]:
     """Run ONLY the named gates in `repo_root` (no diff, no scope derivation)
     and return `{gates, unknown}` with the sweep's own per-gate entry shape
@@ -1657,10 +1733,13 @@ def run_gates_named(
     root = Path(repo_root)
     specs, unknown = _named_gate_specs(root, gate_names)
     runner = run_gate or functools.partial(_default_run_gate, timeout=timeout)
+    # Same seam, same moment as gate_sweep: env prep sees the EXACT spec list
+    # about to run (2026-10-24: the baseline tree had no frontend env).
+    prepared = prepare_gates(root, specs) if prepare_gates is not None else None
     env_residue = dotenv_residue(gate_subprocess_env(root), root)
     workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
     return {"gates": _run_gates(specs, runner, env_residue, max_workers=workers),
-            "unknown": unknown}
+            "unknown": unknown, "env_prepared": prepared}
 
 
 def _attach_delegation(gates: list[dict[str, Any]], tests: list[str], stand_in: str) -> None:
@@ -1705,8 +1784,8 @@ def _verdict(gates: list[dict[str, Any]]) -> str:
     failed = [g for g in gates if g["ran"] and g["exit_code"] != 0]
     if any(not g.get("harness_suspect") for g in failed):
         return "red"
-    if failed or any(g.get("harness_invalid") for g in gates):
-        return "inconclusive"
+    if failed or any(g.get("harness_invalid") or g.get("timed_out") for g in gates):
+        return "inconclusive"  # a timed-out gate produced no verdict: unmeasured, never red/green
     if any(not g["ran"] for g in gates):
         return "incomplete"
     return "green"
