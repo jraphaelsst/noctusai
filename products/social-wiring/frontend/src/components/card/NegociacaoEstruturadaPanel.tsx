@@ -118,6 +118,7 @@ import {
   ordenarPorOrdem,
 } from "@/components/card/negociacao/parcelaOrdem";
 import { mensagemErroServidor } from "@/lib/erroServidor";
+import { rotuloEspecificacao } from "@/lib/especificacoes";
 import { exibirMoeda, exibirVencimento, lerValorDigitado } from "@/lib/moedaDecimal";
 
 type NegociacaoSubtab =
@@ -131,6 +132,9 @@ interface Props {
   clienteId: string;
   /** Subtab shown first. Defaults to "parcelas". */
   defaultSubtab?: NegociacaoSubtab;
+  /** §10 — the contract specifications that scope this card
+   *  (`especificacoesDoCard`). `null`/absent = legacy: nothing is scoped. */
+  especificacoes?: string[] | null;
 }
 
 // One section per subtab — no scrolling between sections. The Radix `Tabs`
@@ -148,6 +152,43 @@ const NEGOCIACAO_SUBTABS: {
   { key: "posse", label: "Posse e permuta" },
   { key: "termos", label: "Termos do negócio" },
 ];
+
+/** §10 — subtabs that exist only for one specification. A subtab not listed
+ *  here is about every contract and always shows. */
+const SUBTAB_ESPECIFICACAO: Partial<Record<NegociacaoSubtab, string>> = {
+  intermediarios: "intermediacao",
+};
+
+type VisibilidadeSubtab = "visivel" | "oculta" | "fora";
+
+/**
+ * 🔴 NEVER HIDE DATA THAT EXISTS. A subtab whose specification is not
+ * selected hides only while it is EMPTY; with rows it stays, flagged "fora
+ * das especificações" (`fora`) so the operator sees the contradiction.
+ * Legacy (`especificacoes` null) scopes nothing.
+ */
+export function visibilidadeSubtab(
+  key: NegociacaoSubtab,
+  especificacoes: readonly string[] | null | undefined,
+  quantidade: number | undefined,
+): VisibilidadeSubtab {
+  const exige = SUBTAB_ESPECIFICACAO[key];
+  if (!exige || !especificacoes || especificacoes.includes(exige)) return "visivel";
+  return (quantidade ?? 0) > 0 ? "fora" : "oculta";
+}
+
+function ForaDasEspecificacoes({ especificacao }: { especificacao: string }) {
+  return (
+    <p
+      className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
+      data-testid="negest-fora-especificacoes"
+    >
+      Fora das especificações do contrato: "{rotuloEspecificacao(especificacao)}" não está
+      selecionada, mas há registros aqui. Selecione a especificação na aba Contratos ou remova
+      os registros.
+    </p>
+  );
+}
 
 // ─── Backend `max_length` caps, mirrored so a 422 can't be hit by typing ───
 // (`ParcelaCreateBody`/`ParcelaPatchBody`, `FavorecidoCreateBody`/
@@ -275,6 +316,7 @@ function mascarar(v: string | null | undefined): string {
 export default function NegociacaoEstruturadaPanel({
   clienteId,
   defaultSubtab = "parcelas",
+  especificacoes = null,
 }: Props) {
   const query = useNegociacaoEstruturada(clienteId);
   // The selected subtab lives ABOVE the loading/error early returns, so a
@@ -318,6 +360,14 @@ export default function NegociacaoEstruturadaPanel({
   }
 
   const data = query.data as NegociacaoEstruturada;
+  const visibilidade = Object.fromEntries(
+    NEGOCIACAO_SUBTABS.map(({ key, contar }) => [
+      key,
+      visibilidadeSubtab(key, especificacoes, contar?.(data)),
+    ]),
+  ) as Record<NegociacaoSubtab, VisibilidadeSubtab>;
+  // A subtab the selection just hid falls back to the first one.
+  const subtabAtiva: NegociacaoSubtab = visibilidade[subtab] === "oculta" ? "parcelas" : subtab;
 
   return (
     <div className="space-y-6" data-testid="negociacao-estruturada-panel">
@@ -333,23 +383,31 @@ export default function NegociacaoEstruturadaPanel({
       <CompletudeCard completude={data.completude} />
       <ValorNegociadoCard data={data} />
       <Tabs
-        value={subtab}
+        value={subtabAtiva}
         onValueChange={(v) => setSubtab(v as NegociacaoSubtab)}
       >
         <TabsList
           className="h-auto flex-wrap gap-0.5"
           data-testid="negest-subtabs"
         >
-          {NEGOCIACAO_SUBTABS.map(({ key, label, contar }) => (
-            <TabsTrigger
-              key={key}
-              value={key}
-              data-testid={`negest-subtab-${key}`}
-            >
-              {label}
-              {contar ? ` (${contar(data)})` : ""}
-            </TabsTrigger>
-          ))}
+          {NEGOCIACAO_SUBTABS.filter(({ key }) => visibilidade[key] !== "oculta").map(
+            ({ key, label, contar }) => (
+              <TabsTrigger
+                key={key}
+                value={key}
+                data-testid={`negest-subtab-${key}`}
+              >
+                {label}
+                {contar ? ` (${contar(data)})` : ""}
+                {visibilidade[key] === "fora" && (
+                  <AlertTriangle
+                    className="ml-1 h-3 w-3 text-amber-600"
+                    aria-label="fora das especificações"
+                  />
+                )}
+              </TabsTrigger>
+            ),
+          )}
         </TabsList>
         <TabsContent value="parcelas" className="mt-4">
           <ParcelasSection clienteId={clienteId} data={data} />
@@ -363,6 +421,9 @@ export default function NegociacaoEstruturadaPanel({
           />
         </TabsContent>
         <TabsContent value="intermediarios" className="mt-4">
+          {visibilidade.intermediarios === "fora" && (
+            <ForaDasEspecificacoes especificacao="intermediacao" />
+          )}
           <IntermediariosSection
             clienteId={clienteId}
             intermediarios={data.intermediarios}

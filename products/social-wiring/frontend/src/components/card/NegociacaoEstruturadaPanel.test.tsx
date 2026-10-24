@@ -223,6 +223,7 @@ async function render(
     | "intermediarios"
     | "posse"
     | "termos" = "parcelas",
+  especificacoes: string[] | null = null,
 ) {
   const { render: rtlRender } = await import("@testing-library/react");
   const { default: NegociacaoEstruturadaPanel } = await import(
@@ -232,6 +233,7 @@ async function render(
     <NegociacaoEstruturadaPanel
       clienteId="cli-1"
       defaultSubtab={defaultSubtab}
+      especificacoes={especificacoes}
     />,
   );
 }
@@ -1450,5 +1452,74 @@ describe("aba Favorecidos — seleção do cadastro (sem digitar à mão)", () =
     await render("favorecidos");
     await userEvent.setup().click(screen.getByTestId("favorecido-combobox"));
     expect(screen.getByTestId("favorecido-combobox-skeleton")).toBeTruthy();
+  });
+});
+
+describe("§10 — subtabs scoped by the contract specifications", () => {
+  const INTERMEDIARIO = {
+    id: "int-x",
+    nome: "CORRETORA X",
+    creci: null,
+    tipo: "percentual" as const,
+    valor: "5",
+    corretor_id: null,
+    favorecido_id: null,
+    pessoa_tipo: "pj" as const,
+    documento: "11222333000181",
+    email: null,
+    endereco_cep: null,
+    endereco_logradouro: null,
+    endereco_numero: null,
+    endereco_complemento: null,
+    endereco_bairro: null,
+    endereco_cidade: null,
+    endereco_uf: null,
+    representante_nome: null,
+    representante_cpf: null,
+    representante_creci: null,
+    representante_creci_regiao: null,
+    created_at: null,
+    updated_at: null,
+  };
+
+  it("legacy (no stored specifications) scopes nothing — every subtab shows", async () => {
+    const { getByTestId } = await render("parcelas", null);
+    expect(getByTestId("negest-subtab-intermediarios")).toBeTruthy();
+  });
+
+  it("hides Intermediários when intermediação is not selected AND there are no rows", async () => {
+    const { queryByTestId, getByTestId } = await render("parcelas", ["compra_venda", "a_vista"]);
+    expect(queryByTestId("negest-subtab-intermediarios")).toBeNull();
+    expect(getByTestId("negest-subtab-parcelas")).toBeTruthy();
+    expect(getByTestId("negest-subtab-posse")).toBeTruthy();
+  });
+
+  it("shows Intermediários when intermediação is selected", async () => {
+    const { getByTestId, queryByTestId } = await render("intermediarios", ["compra_venda", "intermediacao"]);
+    expect(getByTestId("negest-subtab-intermediarios")).toBeTruthy();
+    expect(queryByTestId("negest-fora-especificacoes")).toBeNull();
+  });
+
+  it("🔴 never hides data that exists — rows outside the selection show with a 'fora das especificações' note", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ intermediarios: [INTERMEDIARIO] }) }),
+    );
+    const { getByTestId } = await render("intermediarios", ["compra_venda", "a_vista"]);
+    expect(getByTestId("negest-subtab-intermediarios").textContent).toContain("(1)");
+    expect(getByTestId("negest-fora-especificacoes").textContent).toContain("Intermediação (corretagem)");
+  });
+
+  it("a hidden default subtab falls back to Parcelas", async () => {
+    const { getByTestId } = await render("intermediarios", ["compra_venda"]);
+    expect(getByTestId("negest-subtab-parcelas").getAttribute("data-state")).toBe("active");
+  });
+
+  it("visibilidadeSubtab — the rule in isolation", async () => {
+    const { visibilidadeSubtab } = await import("./NegociacaoEstruturadaPanel");
+    expect(visibilidadeSubtab("intermediarios", null, 0)).toBe("visivel");
+    expect(visibilidadeSubtab("intermediarios", ["compra_venda"], 0)).toBe("oculta");
+    expect(visibilidadeSubtab("intermediarios", ["compra_venda"], 2)).toBe("fora");
+    expect(visibilidadeSubtab("intermediarios", ["compra_venda", "intermediacao"], 0)).toBe("visivel");
+    expect(visibilidadeSubtab("parcelas", ["compra_venda"], 0)).toBe("visivel");
   });
 });

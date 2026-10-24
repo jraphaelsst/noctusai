@@ -43,6 +43,13 @@ const mockUseContratoGeracao = vi.fn();
 const mockGerarMutate = vi.fn();
 const mockRefetch = vi.fn();
 
+const { mockSalvarEspecificacoes, mockContratosData } = vi.hoisted(() => ({
+  mockSalvarEspecificacoes: {
+    current: { mutate: (() => undefined) as (...a: unknown[]) => void, isPending: false, isError: false, error: null as unknown },
+  },
+  mockContratosData: { current: [] as unknown[] },
+}));
+
 vi.mock("@/hooks/useContratos", async () => {
   const actual =
     await vi.importActual<typeof import("@/hooks/useContratos")>("@/hooks/useContratos");
@@ -57,7 +64,9 @@ vi.mock("@/hooks/useContratos", async () => {
       deleteContrato: {},
       getUrl: {},
       gerar: { mutate: mockGerarMutate, isPending: false },
+      salvarEspecificacoes: mockSalvarEspecificacoes.current,
     }),
+    useContratos: () => ({ data: mockContratosData.current, isPending: false }),
   };
 });
 
@@ -477,5 +486,36 @@ describe("GeradorContratoContainer — a reading contests the owner's correction
     const { screen, fireEvent } = await render();
     fireEvent.click(screen.getByTestId("gerador-contrato-correcao-k1-aprovar"));
     expect(mockDecidirConflitoMutate.mock.calls[0][0]).toEqual({ conflitoId: "k1", aceitar: true });
+  });
+});
+
+describe("GeradorContratoContainer — §10 especificações", () => {
+  it("wires the picker to salvarEspecificacoes with this contract's id; a refusal shows the server message", async () => {
+    const mutate = vi.fn();
+    mockContratosData.current = [{ id: "c1", status: "rascunho", especificacoes: ["compra_venda", "permuta"] }];
+    mockSalvarEspecificacoes.current = { mutate, isPending: false, isError: false, error: null };
+    const first = await render();
+    // The readiness fixture carries no `especificacoes`: the contract read is the fallback.
+    expect(first.screen.getByTestId("especificacao-permuta").getAttribute("aria-checked")).toBe("true");
+    first.fireEvent.click(first.screen.getByTestId("especificacao-intermediacao"));
+    first.fireEvent.click(first.screen.getByTestId("especificacoes-salvar"));
+    expect(mutate.mock.calls[0][0]).toEqual({
+      contratoId: "c1",
+      especificacoes: ["compra_venda", "permuta", "intermediacao"],
+    });
+    first.cleanup();
+
+    mockSalvarEspecificacoes.current = {
+      mutate,
+      isPending: false,
+      isError: true,
+      error: { body: { error: { message: "especificação 'fgts' requer 'financiamento_bancario'" } } },
+    };
+    const second = await render();
+    expect(second.screen.getByTestId("especificacoes-erro").textContent).toBe(
+      "especificação 'fgts' requer 'financiamento_bancario'",
+    );
+    mockContratosData.current = [];
+    mockSalvarEspecificacoes.current = { mutate: () => undefined, isPending: false, isError: false, error: null };
   });
 });

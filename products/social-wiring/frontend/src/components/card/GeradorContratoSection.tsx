@@ -43,6 +43,7 @@ import {
 import type { CienciaPcenResult } from "@/types/certidoesPartes";
 
 import { PcenCiencia } from "./certidoes/PcenCiencia";
+import { EspecificacoesPicker } from "./EspecificacoesPicker";
 import { ItensRevisaoLista } from "./ItensRevisaoLista";
 import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
 import { destinoDoBloqueio, destinoEfetivo } from "./destinoDoContrato";
@@ -697,6 +698,16 @@ interface Props {
   onDecidirCorrecao?: (conflitoId: string, aceitar: boolean) => void;
   /** The correction whose decision is in flight — its buttons wait. */
   decidindoCorrecaoId?: string | null;
+  /** §10 — the contract's stored specifications from the contract read
+   *  (`ContratoOut.especificacoes`), used when the readiness report does not
+   *  carry `especificacoes` yet (older backend). `null` = legacy. */
+  especificacoesContrato?: string[] | null;
+  /** §10 — store the operator's selection (the container owns the PUT).
+   *  Omitted ⇒ no picker. */
+  onSalvarEspecificacoes?: (especificacoes: string[]) => void;
+  salvandoEspecificacoes?: boolean;
+  /** The last save's refusal (a 400's own message) — `null` when none. */
+  erroEspecificacoes?: string | null;
 }
 
 export default function GeradorContratoSection({
@@ -718,6 +729,10 @@ export default function GeradorContratoSection({
   onCienciaPcen,
   onDecidirCorrecao,
   decidindoCorrecaoId,
+  especificacoesContrato,
+  onSalvarEspecificacoes,
+  salvandoEspecificacoes = false,
+  erroEspecificacoes = null,
 }: Props) {
   if (showSkeleton) {
     return (
@@ -795,6 +810,24 @@ export default function GeradorContratoSection({
           atual do contrato. Confira antes de gerar.
         </p>
       )}
+
+      {onSalvarEspecificacoes && (() => {
+        const armazenadas =
+          status.especificacoes !== undefined ? status.especificacoes : (especificacoesContrato ?? null);
+        return (
+          <EspecificacoesPicker
+            // A new stored selection (or, on a legacy contract, a new
+            // suggestion) restarts the draft from it.
+            key={armazenadas ? armazenadas.join(",") : `legado:${(status.sugeridas ?? []).join(",")}`}
+            armazenadas={armazenadas}
+            sugeridas={status.sugeridas}
+            conflitos={status.conflitos}
+            salvando={salvandoEspecificacoes}
+            erro={erroEspecificacoes}
+            onSalvar={onSalvarEspecificacoes}
+          />
+        );
+      })()}
 
       <ProntidaoListas
         faltando={status.faltando}
