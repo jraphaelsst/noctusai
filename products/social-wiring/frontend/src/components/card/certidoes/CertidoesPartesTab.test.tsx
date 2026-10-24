@@ -29,6 +29,10 @@ vi.mock("@/components/CertidoesPartePanel", () => ({
   CertidoesPartePanel: ({ nomeParte }: { nomeParte?: string }) => <div data-testid="panel-stub">{nomeParte}</div>,
 }));
 
+vi.mock("@/components/PessoaDocumentosPanel", () => ({
+  PessoaDocumentosPanel: ({ clienteId }: { clienteId: string }) => <div data-testid="pessoa-docs-stub">{clienteId}</div>,
+}));
+
 import { rolarAteAlvo } from "@/hooks/useRolarAteAlvo";
 import { alvoSubtabCertidoes, grupoDoAlvoCertidoes } from "../destinoDoContrato";
 import { certidaoEmAndamento, partesTemEmAndamento } from "@/hooks/useCertidoesPartes";
@@ -691,6 +695,17 @@ describe("subtabs by grupo + antigos proprietários", () => {
     expect(aviso.textContent).toContain("documento (CPF/CNPJ) ausente");
     expect((await screen.findByTestId("antigos-transmitentes")).textContent).toContain("***.982.247-**");
     expect(screen.getByTestId("antigos-pendentes").textContent).toContain("1 transmitente");
+  });
+
+  it("F98: each antigo PF row carries the vendedor's documents panel (Serasa Crednet slot) for ITS cliente, lazily", async () => {
+    mountAll();
+    await screen.findByTestId("parte-secao-c:cli-1");
+    trocar("antigo_proprietario");
+    await screen.findByTestId("parte-secao-c:cli-3");
+    expect(screen.queryByTestId("antigo-documentos-c:cli-1")).toBeNull();
+    expect(screen.queryByTestId("pessoa-docs-stub")).toBeNull();
+    fireEvent.click(screen.getByTestId("antigo-documentos-toggle-c:cli-3"));
+    expect((await screen.findByTestId("pessoa-docs-stub")).textContent).toBe("cli-3");
   });
 
   it("shows the not-required empty state and no remove for non-antigo rows", async () => {
