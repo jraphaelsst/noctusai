@@ -42,7 +42,7 @@ describe('core logout ordering', () => {
     render(<AuthProvider><Probe /></AuthProvider>);
     order.length = 0;
     await act(async () => { await captured.logout(); });
-    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout', 'clear']);
+    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout?scope=global', 'clear']);
   });
 
   it('still clears local state when the server call fails', async () => {
@@ -50,7 +50,7 @@ describe('core logout ordering', () => {
     render(<AuthProvider><Probe /></AuthProvider>);
     order.length = 0;
     await act(async () => { await captured.logout(); });
-    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout', 'clear']);
+    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout?scope=global', 'clear']);
   });
 
   it('endLocally (inactivity expiry) clears local state with NO server call', async () => {
@@ -69,6 +69,6 @@ describe('core logout ordering', () => {
     await act(async () => {
       await expect(captured.logout({ strict: true })).rejects.toThrow('network');
     });
-    expect(order).toEqual(['post:/api/auth/logout']);
+    expect(order).toEqual(['post:/api/auth/logout?scope=global']);
   });
 });

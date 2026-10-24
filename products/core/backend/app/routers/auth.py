@@ -400,13 +400,15 @@ async def update_profile(
 @router.post("/logout")
 async def logout(
     authorization: Optional[str] = Header(None),
-    scope: Literal["global", "local"] = Query("global"),
+    scope: Literal["global", "local"] = Query("local"),
 ):
     """Revoke the caller's GoTrue session upstream.
 
-    ``scope="global"`` (default -- the explicit "Sair" control): owner decision
+    ``scope="global"`` (sent EXPLICITLY by the "Sair" control): owner decision
     2026-10-09, logging out of core ends the user's sessions on every product and
-    every other device. ``scope="local"`` ends ONLY the session this access token
+    every other device. ``scope="local"`` (the DEFAULT since 2026-10-24: a caller that does not say
+    "Sair" -- an expiry handler, a stale bundle in a forgotten tab -- can only
+    ever end its own session, never every product's) ends ONLY the session this access token
     belongs to (core's own) -- used when core ends its session for a reason the
     user did not ask for, e.g. its inactivity timer. 🔴 2026-10-23 prod: core's
     30-min inactivity timer, ticking in a forgotten background core tab while the

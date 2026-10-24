@@ -165,7 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // every other core tab shares. See `@noctusai/lib/auth` `signOutExplicitly`.
   async function logout(opts?: { strict?: boolean }) {
     await signOutExplicitly({
-      revoke: async () => { if (isAuthenticated()) await api.post('/api/auth/logout', {}); },
+      revoke: async () => { if (isAuthenticated()) await api.post('/api/auth/logout?scope=global', {}); },
       clearLocal: clearLocalSession,
       strict: opts?.strict,
       onRevokeError: (err) => console.error('core logout: server-side revocation failed; clearing local session anyway', err),

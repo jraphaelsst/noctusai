@@ -239,7 +239,7 @@ class TestLogout:
             product_slug="p1",
         )
 
-        resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+        resp = client.post("/api/auth/logout?scope=global", headers={"Authorization": "Bearer t"})
 
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
@@ -251,7 +251,7 @@ class TestLogout:
     def test_logout_revocation_failure_is_not_ok(self, client, caplog):
         client.mock_supabase.auth.admin.sign_out = MagicMock(side_effect=RuntimeError("gotrue down"))
         with caplog.at_level("ERROR"):
-            resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+            resp = client.post("/api/auth/logout?scope=global", headers={"Authorization": "Bearer t"})
         assert resp.status_code == 502
         assert resp.json().get("ok") is not True
         assert "global sign_out failed" in caplog.text
@@ -261,7 +261,7 @@ class TestLogout:
         mock_sb.auth.admin.sign_out = MagicMock()
         mock_sb.set_rpc_data("platform_org_selection_end", 1)
 
-        resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+        resp = client.post("/api/auth/logout?scope=global", headers={"Authorization": "Bearer t"})
         assert resp.status_code == 200
         assert mock_sb.rpc_calls == [
             ("platform_org_selection_end", {"p_user_id": "test-user-123", "p_reason": "logout"})
@@ -276,7 +276,7 @@ class TestLogout:
 
         mock_sb.rpc = boom
         with caplog.at_level("ERROR"):
-            resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+            resp = client.post("/api/auth/logout?scope=global", headers={"Authorization": "Bearer t"})
         assert resp.status_code == 200
         assert "could not end org selections" in caplog.text
 
@@ -298,7 +298,17 @@ class TestLogout:
         assert resp.status_code == 200
         admin_sign_out.assert_called_once_with("test-token-valid", scope="local")
         assert mock_sb.rpc_calls == []  # product org selections untouched
+
         assert sso_module._session_cache._store != {}  # product SSO state untouched
+
+    def test_logout_without_scope_defaults_to_local(self, client):
+        """2026-10-24 prod: a stale core bundle in a forgotten tab posted /logout
+        with no scope and ended every product's session. Unspecified = local."""
+        admin_sign_out = MagicMock()
+        client.mock_supabase.auth.admin.sign_out = admin_sign_out
+        resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 200
+        admin_sign_out.assert_called_once_with("test-token-valid", scope="local")
 
     def test_logout_rejects_an_unknown_scope(self, client):
         client.mock_supabase.auth.admin.sign_out = MagicMock()
