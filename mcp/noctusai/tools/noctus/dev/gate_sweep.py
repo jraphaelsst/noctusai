@@ -416,7 +416,38 @@ def _all_product_slugs(root: Path) -> list[str]:
     )
 
 
-def _product_gate_specs(root: Path, slug: str, py: str) -> list[GateSpec]:
+def _product_vitest_spec(root: Path, slug: str) -> GateSpec | None:
+    """The product's own frontend unit suite (`npm test` -> vitest) as a gate.
+
+    It was ABSENT from the sweep until 2026-10-24: only `vite_build` and `e2e`
+    ran for a touched product, so a branch that added hooks a page harness did
+    not stub integrated green and the merged tip went red in CI
+    (ImovelDetalhes.test.tsx, 13 failures). CI enforces this suite; a local
+    sweep that omits it is the "incomplete SET" failure this tool exists for.
+    Only emitted when the product's `test` script actually runs vitest."""
+    frontend = root / "products" / slug / "frontend"
+    test_script = str((_pkg_json(frontend).get("scripts") or {}).get("test") or "")
+    if "vitest" not in test_script:
+        return None
+    return GateSpec(f"vitest:{slug}", ["npm", "test"], frontend, _node_preconditions(frontend))
+
+
+_VITEST_FAIL_RE = re.compile(r"^\s*(?:FAIL|\u00d7|\u2717)\s+(\S.*?)\s*$", re.M)
+
+
+def vitest_failing_tests(output: str, limit: int = 40) -> list[str]:
+    """Distinct failing test ids (`FAIL  file > suite > case`) from vitest output."""
+    seen: list[str] = []
+    for m in _VITEST_FAIL_RE.finditer(output or ""):
+        name = redact_secrets_in_text(m.group(1))
+        if name not in seen:
+            seen.append(name)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+def _product_gate_specs(root: Path, slug: str, py: str, with_vitest: bool = False) -> list[GateSpec]:
     specs: list[GateSpec] = []
     backend = root / "products" / slug / "backend"
     if (backend / "tests").exists():
@@ -431,6 +462,8 @@ def _product_gate_specs(root: Path, slug: str, py: str) -> list[GateSpec]:
                 _node_preconditions(frontend),
             )
         )
+        if with_vitest and (vt := _product_vitest_spec(root, slug)) is not None:
+            specs.append(vt)
         # The e2e suite CI runs. It was absent from this sweep until
         # 2026-09-20 — which is precisely why a Playwright investigation ran
         # entirely in hand-rolled shell, outside every structural protection
@@ -1303,7 +1336,7 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
             included_py: set[str] = set()
             included_fe: set[str] = set()
             for slug in active_slugs:
-                for spec in _product_gate_specs(root, slug, py):
+                for spec in _product_gate_specs(root, slug, py, with_vitest=slug in direct):
                     kind = spec.gate.split(":", 1)[0]
                     wanted = (
                         slug in direct
@@ -1337,7 +1370,7 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
         if asleep_requested:
             scope["asleep_requested"] = asleep_requested
         for slug in scope["products"]:
-            specs.extend(_product_gate_specs(root, slug, py))
+            specs.extend(_product_gate_specs(root, slug, py, with_vitest=True))
 
     specs.extend(_contract_consumer_specs(root, scope, specs, py))
 
@@ -1532,6 +1565,13 @@ def _run_one_gate(
         "duration_s": round(duration, 2),
     }
     if exit_code not in (0, None):
+        if spec.gate.startswith("vitest:"):
+            failing = vitest_failing_tests(output or "")
+            if failing:
+                entry["failing_tests"] = failing
+                entry["summary"] = redact_secrets_in_text(
+                    f"{len(failing)} failing test(s): " + "; ".join(failing[:8])
+                    + (" ..." if len(failing) > 8 else ""))[:600]
         suspect = _harness_suspect(output or "", exit_code)
         if suspect:
             # `matched_line` is sliced from the RAW combined stdout/
@@ -1555,8 +1595,8 @@ def _named_gate_specs(root: Path, gate_names: list[str]) -> tuple[list[GateSpec]
         if name in pool or ":" not in name:
             continue
         kind, key = name.split(":", 1)
-        if kind in ("pytest", "vite_build", "e2e"):
-            for sp in _product_gate_specs(root, key, py):
+        if kind in ("pytest", "vite_build", "e2e", "vitest") and "/" not in key:
+            for sp in _product_gate_specs(root, key, py, with_vitest=True):
                 pool.setdefault(sp.gate, sp)
     specs = [pool[n] for n in gate_names if n in pool]
     return specs, [n for n in gate_names if n not in pool]

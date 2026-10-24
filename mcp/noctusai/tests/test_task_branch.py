@@ -3837,3 +3837,105 @@ def test_pointer_write_survives_a_removed_cwd(tmp_path):
         assert os.getcwd() == os.path.realpath(primary)
     finally:
         os.chdir(before)
+
+
+# ── 2026-10-24: integrate measures touched-product vitest + doc-staleness fast-fail ──
+class _MbFakeGit(FakeGit):
+    """FakeGit that also answers plain `git merge-base a b` with a sha."""
+
+    def __call__(self, cmd, cwd=None):
+        if len(cmd) > 1 and cmd[1] == "merge-base" and "--is-ancestor" not in cmd:
+            self.calls.append((cmd, cwd))
+            return (0, "mb0\n", "")
+        return super().__call__(cmd, cwd)
+
+
+class TestIntegrateDocStalenessFastFail:
+    @staticmethod
+    def _fake():
+        return _MbFakeGit(
+            refs={"origin/dev": "d0", "feat/x": "b0"},
+            anc=_anc_pairs([]),
+            logs={"d0..b0": "c1 x", "b0..d0": ""},
+            head_sha="b0",
+        )
+
+    def test_stale_docs_refuse_before_rebase_with_trailer_template(self):
+        fake = self._fake()
+        seen = {}
+
+        def ds(path, rng):
+            seen["range"] = rng
+            return [{"doc": "products/x/README.md", "issue": "`products/x/README.md` documents code that changed"}]
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                            doc_staleness_check=ds)
+        assert res["status"] == "doc_staleness", res
+        assert seen["range"] == "mb0..feat/x"
+        assert "Docs-Reviewed: products/x/README.md" in res["reason"]
+        assert fake.pushes() == []
+        assert not any(len(c) > 1 and c[1] == "rebase" for c, _ in fake.calls), "must fail BEFORE the rebase"
+
+    def test_clean_docs_integrate_normally(self):
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                            doc_staleness_check=lambda p, r: [])
+        assert res["status"] == "integrated", res
+
+
+class TestMergedTipFrontendEnv:
+    def test_touched_product_node_modules_overlaid_and_seed_repointed(self, tmp_path):
+        primary, wt = tmp_path / "primary", tmp_path / "wt"
+        fe_p = primary / "products/alpha/frontend"
+        (fe_p / "node_modules/react").mkdir(parents=True)
+        (fe_p / "node_modules/.package-lock.json").write_text("{}")
+        (fe_p / "package.json").write_text(
+            '{"dependencies": {"@noctusai/lib": "file:../../../seed/lib/frontend"}}')
+        (wt / "products/alpha/frontend").mkdir(parents=True)
+        (wt / "products/alpha/frontend/package.json").write_text("{}")
+        (wt / "seed/lib/frontend").mkdir(parents=True)
+        # a PARTIAL dir (only wire_env's @noctusai links) must be topped up, not trusted
+        (wt / "products/alpha/frontend/node_modules/@noctusai").mkdir(parents=True)
+
+        out = T.ensure_merged_tip_frontend_env(str(primary), str(wt), {"alpha"})
+        nm = wt / "products/alpha/frontend/node_modules"
+        assert (nm / ".package-lock.json").exists()
+        assert (nm / "react").is_symlink()
+        assert (nm / "@noctusai/lib").resolve() == (wt / "seed/lib/frontend").resolve()
+        assert out["skipped"] == []
+
+    def test_primary_without_install_is_reported_not_faked(self, tmp_path):
+        primary, wt = tmp_path / "primary", tmp_path / "wt"
+        (primary / "products/alpha/frontend").mkdir(parents=True)
+        (wt / "products/alpha/frontend").mkdir(parents=True)
+        (wt / "products/alpha/frontend/package.json").write_text("{}")
+        out = T.ensure_merged_tip_frontend_env(str(primary), str(wt), {"alpha"})
+        assert out["skipped"] and out["skipped"][0]["product"] == "alpha"
+        assert not (wt / "products/alpha/frontend/node_modules").exists()
+
+    def test_touched_products_derived_from_diff(self):
+        def run(cmd, cwd=None):
+            return 0, "products/a/frontend/src/x.tsx\nproducts/b/backend/app.py\nseed/lib/x.ts\n", ""
+        assert T._touched_frontend_products(run, "/wt", "origin/dev") == {"a"}
+
+    def test_vitest_red_blocks_and_names_failing_tests(self):
+        fake = TestMergedTipVerificationMechanism._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "red", "gates": [
+                {"gate": "vitest:social-wiring", "ran": True, "exit_code": 1,
+                 "summary": "2 failing test(s)",
+                 "failing_tests": ["ImovelDetalhes.test.tsx > renders", "ImovelDetalhes.test.tsx > saves"]},
+            ], "scope": {"products": ["social-wiring"], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                            merged_tip_check=check)
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == []
+        assert "ImovelDetalhes.test.tsx > saves" in res["message"]
+
+    def test_vitest_seed_root_red_is_not_demoted_by_fanout(self):
+        assert T._merged_tip_red_is_new(
+            "vitest:seed/lib/frontend", {"products": [], "seed_fleet_wide": True}) is True
+        assert T._merged_tip_red_is_new(
+            "vitest:other", {"products": [], "seed_fleet_wide": True}) is False

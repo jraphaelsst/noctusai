@@ -1506,3 +1506,30 @@ def test_gate_summary_skips_toolkit_cli_decoration():
            "2026-10-10 10:00:00 | INFO     | [cli] env_bootstrap | loaded\n"
            "╔════╗\n║  NoctusAI Dev Toolkit  ║\n╚════╝\n")
     assert _last_meaningful_line(out) == "migration_replay: GREEN (1 product chain(s))"
+
+
+def test_touched_product_with_vitest_script_gets_a_vitest_gate(tmp_path):
+    _make_product(tmp_path, "alpha")
+    (tmp_path / "products/alpha/frontend/package.json").write_text(
+        '{"scripts": {"test": "vitest run"}}')
+    scope = GS._derive_scope(["products/alpha/frontend/src/App.tsx"])
+    names = sorted(s.gate for s in GS._build_gate_specs(tmp_path, scope))
+    assert "vitest:alpha" in names
+    spec = next(s for s in GS._build_gate_specs(tmp_path, scope) if s.gate == "vitest:alpha")
+    assert any(p.name == "node_modules" for p in spec.preconditions)
+
+
+def test_vitest_failing_test_names_are_extracted():
+    out = " FAIL  src/pages/ImovelDetalhes.test.tsx > ImovelDetalhes > renders\n FAIL  src/pages/ImovelDetalhes.test.tsx > ImovelDetalhes > renders\n ok\n"
+    assert GS.vitest_failing_tests(out) == ["src/pages/ImovelDetalhes.test.tsx > ImovelDetalhes > renders"]
+
+
+def test_vitest_gate_red_carries_failing_tests(tmp_path):
+    _make_product(tmp_path, "alpha")
+    (tmp_path / "products/alpha/frontend/package.json").write_text(
+        '{"scripts": {"test": "vitest run"}}')
+    spec = next(s for s in GS._build_gate_specs(
+        tmp_path, GS._derive_scope(["products/alpha/frontend/src/a.tsx"])) if s.gate == "vitest:alpha")
+    entry = GS._run_one_gate(spec, lambda sp: (1, "x", 1.0, " FAIL  a.test.tsx > boom\n"), None)
+    assert entry["failing_tests"] == ["a.test.tsx > boom"]
+    assert "boom" in entry["summary"]

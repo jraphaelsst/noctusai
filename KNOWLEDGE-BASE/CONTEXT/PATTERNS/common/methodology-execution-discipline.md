@@ -222,6 +222,26 @@ that still rides the 120s default is reported as `budget_defaulted` on the
 integrate result. MCP integrate already moves to the
 background after 120s, so the longer gates do not stall the caller.
 
+**2026-10-24 — integrate MEASURES touched-product vitest + doc-staleness fails fast.**
+Two process defects across ~14 branches: (A) a branch added hooks a page harness
+did not stub; `vitest:<slug>` was not a sweep gate at all and the product
+`vite_build` was UNMEASURED (worktrees carry no `node_modules`), so the merged tip
+went red in CI (ImovelDetalhes.test.tsx, 13 failures). (B) 5 branches bounced at
+the pre-push doc-staleness gate after the engineer had returned. Fix: (1)
+`gate_sweep` emits `vitest:<slug>` (`npm test`) for every DIRECTLY touched product
+whose `test` script is vitest (budget row `vitest:` 600s); a red lists
+`failing_tests` and integrate's blocked message names them. (2) Before the sweep,
+`task_branch.ensure_merged_tip_frontend_env` tops up (idempotently, per entry) the
+touched products' `node_modules` from the PRIMARY checkout's install and points
+`@noctusai/*` at the worktree's seed - so touched-product gates are measured, not
+UNMEASURED; a product whose primary has no install is reported in
+`merged_tip_check.frontend_env.skipped`. (3) `integrate` runs the doc-staleness
+keeper (`merge-base..branch`) BEFORE rebase/push and returns `status='doc_staleness'`
+with the exact docs + `Docs-Reviewed:` trailer template. (4) `engineer_brief_compose`
+appends `BEFORE_RETURNING_BLOCK` (full touched-product vitest/pytest +
+`--check-doc-staleness --doc-range origin/dev..HEAD`); `engineer-seed.md` §3 points
+at it (single source).
+
 **2026-10-21 — gate budgets loosened ~3x + ONE retry of a timed-out gate.** The
 2026-10-19 budgets (SW 480 s, seed/lib 360 s, mcp 300/240 s) still produced
 repeated `gate_timeout` blocks on a loaded laptop for suites that pass when run

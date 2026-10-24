@@ -79,6 +79,8 @@ GATE_BUDGETS_S: dict[str, int] = {
     "pytest:": 600,
     "e2e:": 600,
     "vite_build:": 300,
+    # product frontend unit suites (vitest:<slug>); seed roots keep "vitest:seed/".
+    "vitest:": 600,
 }
 
 # Fallback for a gate name with NO declared row. Never silent: it is reported

@@ -347,3 +347,17 @@ class TestBriefFooterContract:
         assert "TODO(architect)" in acceptance
         assert "engineer_brief_compose" not in acceptance
         assert "--compose-brief" not in acceptance
+
+
+def test_brief_carries_mandatory_before_returning_block():
+    from tools.noctus.dev.engineer_brief_compose import BEFORE_RETURNING_BLOCK, _render_brief
+    brief = _render_brief(description="d", target_files=["a.py"], agent="backend-engineer",
+                          kb_references=[], auto_improvement_context=[])
+    assert BEFORE_RETURNING_BLOCK in brief
+    assert "--check-doc-staleness --doc-range origin/dev..HEAD" in brief
+    assert "FULL suite" in brief
+
+
+def test_engineer_seed_points_at_the_single_source_block():
+    text = (Path(__file__).resolve().parents[3] / ".claude/agents/engineer-seed.md").read_text()
+    assert "BEFORE_RETURNING_BLOCK" in text

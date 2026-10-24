@@ -233,6 +233,24 @@ def _pick_agent(query_vec: list[float]) -> str:
 
 
 # ── Brief renderer ────────────────────────────────────────────────────────────
+#: SINGLE SOURCE of the pre-return checklist. Appended to every composed brief;
+#: `.claude/agents/engineer-seed.md` §3 points here rather than restating it.
+#: Born of two 2026-10-24 defects: a branch added hooks a page harness did not
+#: stub (only the tests next to the change were run -> merged tip red in CI),
+#: and 5 branches bounced at the pre-push doc-staleness gate after returning.
+BEFORE_RETURNING_BLOCK = (
+    "### Before returning (mandatory - bounces at integrate otherwise)\n"
+    "1. Run the FULL suite of every product/package you touched, not only the "
+    "files next to your change: `vitest run` (`npm test`) in each touched "
+    "`products/<slug>/frontend` and `seed/**` frontend, `pytest` in each touched "
+    "backend. A page harness that does not stub a hook you added fails only here.\n"
+    "2. `mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --check-doc-staleness "
+    "--doc-range origin/dev..HEAD` from your worktree must be clean: update each "
+    "listed doc, or add `Docs-Reviewed: <doc> - <why still accurate>` to a commit.\n"
+    "3. Commit everything; report the commands and results in your return."
+)
+
+
 def _render_brief(
     *,
     description: str,
@@ -295,6 +313,8 @@ def _render_brief(
         "**Leg 2 (return shape):** Commit your own worker branch (engineer-seed §3), "
         "never push. Return short-form per engineer-seed §4: commit SHAs, the scoped "
         "check + pass/fail, the three footer legs. The architect integrates.",
+        "",
+        BEFORE_RETURNING_BLOCK,
     ]
     return "\n".join(lines)
 

@@ -1400,7 +1400,9 @@ def _merged_tip_red_is_new(gate_name: str, scope: dict | None) -> bool:
     "new" — an unverifiable relationship must never silently un-block."""
     if not scope:
         return True
-    if gate_name.startswith(("pytest:", "vite_build:", "e2e:")):
+    if gate_name.startswith("vitest:") and "/" in gate_name:
+        return True  # a seed vitest root: directly in scope of a seed diff
+    if gate_name.startswith(("pytest:", "vite_build:", "e2e:", "vitest:")):
         slug = gate_name.split(":", 1)[1]
         if slug in (scope.get("products") or []):
             return True
@@ -1410,8 +1412,78 @@ def _merged_tip_red_is_new(gate_name: str, scope: dict | None) -> bool:
     return True
 
 
+def _touched_frontend_products(runner, abs_wt_path: str, dev_ref: str) -> set[str]:
+    """Products with a frontend whose files this branch's diff (vs `dev_ref`) touches."""
+    rc, out, _err = runner(["git", "diff", "--name-only", f"{dev_ref}...HEAD"], cwd=abs_wt_path)
+    if rc != 0:
+        return set()
+    found: set[str] = set()
+    for ln in out.splitlines():
+        parts = Path(ln.strip()).parts
+        if len(parts) >= 3 and parts[0] == "products" and parts[2] == "frontend":
+            found.add(parts[1])
+    return found
+
+
+def ensure_merged_tip_frontend_env(
+    primary_root: str, wt_root: str, products: set[str], fs: "FsOps | None" = None,
+) -> dict[str, Any]:
+    """Make the vitest/vite gates of the TOUCHED products measurable in the
+    merged-tip worktree instead of reported UNMEASURED (2026-10-24: a worktree
+    has no node_modules, so `vitest:<slug>` was harness-invalid, the integrate
+    went through, and CI went red on a page harness the branch had outgrown).
+
+    Idempotent per-entry overlay from the PRIMARY checkout's installed
+    `node_modules` - tops up a missing OR partial (only wire_env's `@noctusai`
+    links) directory, never replacing a real entry; `@noctusai/*` always points
+    at the WORKTREE's seed copy so the branch's own seed change is what is
+    tested. Seed frontends touched via `seed/` get their whole-dir link when
+    absent. Nothing here is tracked (node_modules is gitignored); a product
+    whose primary has no install is reported in `skipped` with the remedy."""
+    fs = fs or FsOps()
+    linked: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for slug in sorted(products):
+        rel_fe = f"products/{slug}/frontend"
+        src = os.path.join(primary_root, rel_fe, "node_modules")
+        dst = os.path.join(wt_root, rel_fe, "node_modules")
+        if not fs.exists(os.path.join(wt_root, rel_fe, "package.json")):
+            continue
+        if not fs.exists(src):
+            skipped.append({"product": slug, "reason": (
+                f"primary has no node_modules at {src} - run `npm ci` there")})
+            continue
+        if fs.is_symlink(dst):
+            os.unlink(dst)
+        os.makedirs(dst, exist_ok=True)
+        for entry in fs.list_dir(src):
+            if entry == "@noctusai" or _is_transient_nm_entry(entry):
+                continue
+            link = os.path.join(dst, entry)
+            if fs.exists(link):
+                continue
+            fs.symlink(os.path.join(src, entry), link)
+            linked.append(link)
+        for dep, seed_rel in _derive_product_repoints(primary_root, rel_fe, fs):
+            link = os.path.join(dst, dep)
+            target = os.path.join(wt_root, seed_rel)
+            if fs.exists(target) and not fs.exists(link):
+                os.makedirs(os.path.dirname(link), exist_ok=True)
+                fs.symlink(target, link)
+                linked.append(link)
+    for rel_pkg in _derive_seed_frontends(primary_root, fs):
+        src = os.path.join(primary_root, rel_pkg, "node_modules")
+        link = os.path.join(wt_root, rel_pkg, "node_modules")
+        if fs.exists(src) and fs.is_dir(os.path.join(wt_root, rel_pkg)) and not fs.exists(link):
+            fs.symlink(src, link)
+            linked.append(link)
+    return {"linked_count": len(linked), "skipped": skipped}
+
+
 def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
-                              timeout: int = _gate_budget.DEFAULT_OVERALL_CEILING_S) -> dict[str, Any]:
+                              timeout: int = _gate_budget.DEFAULT_OVERALL_CEILING_S,
+                              runner=None, fs: "FsOps | None" = None,
+                              primary_root: str | None = None) -> dict[str, Any]:
     """Production default for the `action='integrate'` merged-tip gate —
     the REAL, unmodified `noctus.dev.gate_sweep`, scoped to `dev_ref` (the
     ref THIS worktree just rebased onto) and run against the just-rebased
@@ -1427,12 +1499,20 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     (`_timed_out_in_scope_gates`)."""
     from .gate_sweep import gate_sweep  # lazy import
 
+    env_wiring = None
+    try:
+        env_wiring = ensure_merged_tip_frontend_env(
+            _resolve_primary_root(primary_root), abs_wt_path,
+            _touched_frontend_products(runner or _default_run_local, abs_wt_path, dev_ref), fs)
+    except OSError as exc:  # never crash integrate; the gate then reports harness_invalid honestly
+        env_wiring = {"error": f"{type(exc).__name__}: {exc}"}
     attempts: dict[str, dict[str, Any]] = {}
     res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path,
                      run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts))
     if isinstance(res, dict):
         # per-gate attempt counts + durations/budgets, so wall-clock is visible
         res["gate_attempts"] = attempts
+        res["frontend_env"] = env_wiring
     return res
 
 
@@ -1549,6 +1629,29 @@ def _baseline_outcome(entry: dict[str, Any] | None) -> tuple[str, str]:
 def _gate_product_slugs(gate_names: list[str]) -> set[str]:
     return {n.split(":", 1)[1] for n in gate_names
             if n.startswith(("pytest:", "vite_build:", "e2e:")) and "/" not in n.split(":", 1)[1]}
+
+
+def _failing_tests_note(gates: list[dict[str, Any]]) -> str:
+    """Name the failing vitest tests of red gates (the engineer's next action)."""
+    parts = [f"{g.get('gate')}: " + "; ".join(g["failing_tests"][:12])
+             for g in gates if g.get("failing_tests")]
+    return (" Failing tests - " + " | ".join(parts)) if parts else ""
+
+
+def _default_doc_staleness_check(abs_wt_path: str, rev_range: str) -> list[dict]:
+    """The SAME keeper the pre-push hook runs (`doc_staleness.check_range`)."""
+    from .doc_staleness import check_range  # lazy import
+    return check_range(Path(abs_wt_path), rev_range)
+
+
+def format_doc_staleness_block(issues: list[dict], rev_range: str) -> str:
+    """Fast-fail text: the exact docs + the trailer template, like the hook prints."""
+    docs = sorted({str(i.get("doc", "?")) for i in issues})
+    lines = [f"DOC-STALENESS - code changed under docs that were not updated ({rev_range}):"]
+    lines += [f"  - {i.get('issue', i)}" for i in issues]
+    lines.append("Update the listed docs, or amend a commit with a trailer per doc that is still accurate:")
+    lines += [f"  Docs-Reviewed: {d} - <why it is still accurate>" for d in docs]
+    return "\n".join(lines)
 
 
 def _default_merged_tip_baseline(
@@ -1990,6 +2093,7 @@ def task_branch(
     accept_unmeasured: list[str] | None = None,
     accept_unmeasured_reason: str | None = None,
     merged_tip_baseline: Callable[[list[str], str], dict[str, Any]] | None = None,
+    doc_staleness_check: Callable[[str, str], list[dict]] | None = None,
     regenerate_kb_counts_at_integrate: bool = True,
     kb_counts_regenerate: "Callable[[str], dict[str, Any]] | None" = None,
     pointer_ops: "PointerOps | None" = None,
@@ -2094,6 +2198,9 @@ def task_branch(
     merged_tip_check_fn = merged_tip_check if merged_tip_check is not None else (
         (lambda p, d: _default_merged_tip_check(p, d, timeout=merged_tip_timeout))
         if run is None else None)
+    # Doc-staleness pre-flight (same keeper as the pre-push hook) - production only.
+    doc_staleness_fn = doc_staleness_check if doc_staleness_check is not None else (
+        _default_doc_staleness_check if run is None else None)
     # Dev baseline for red merged-tip gates — same production-only rule: it
     # creates a real worktree and runs real gates, never under an injected `run`.
     merged_tip_baseline_fn = merged_tip_baseline if merged_tip_baseline is not None else (
@@ -2386,6 +2493,24 @@ def task_branch(
                 logger.debug("task_branch.integrate: attempt %d/%d — fetch + rebase",
                              attempt, max_retries)
             git("fetch", remote, "--quiet")
+            if attempt == 1 and doc_staleness_fn is not None:
+                # Fast fail BEFORE rebase/gates/push: the pre-push hook would
+                # bounce this later, after the engineer already returned.
+                _mrc, _mb, _ = git("merge-base", f"{remote}/{dev_branch}", branch, cwd=wt_path)
+                if _mrc == 0 and _mb.strip():
+                    ds_range = f"{_mb.strip()}..{branch}"
+                    try:
+                        ds_issues = doc_staleness_fn(wt_path, ds_range)
+                    except Exception as exc:  # unmeasurable is surfaced, never a silent pass
+                        ds_issues = [{"doc": "<keeper>", "issue": f"doc-staleness check errored: {exc}"}]
+                    if ds_issues:
+                        if benign_stashed:
+                            _pop_stash(runner, wt_path, benign_stashed, verbose)
+                            benign_stashed = False
+                        block = format_doc_staleness_block(ds_issues, ds_range)
+                        return {**plan, "status": "doc_staleness", "exit_code": 1,
+                                "doc_staleness": ds_issues,
+                                "reason": block, "message": block + " Not rebased, not pushed."}
             if attempt > 1:
                 # Safety net: a previous attempt's KB-count regen may have left
                 # its DERIVED docs dirty/staged; they are regenerated after this
@@ -2616,7 +2741,7 @@ def task_branch(
                             "message": (
                                 f"rebase of {branch} onto {remote}/{dev_branch} succeeded, but "
                                 f"{len(new_red_gates)} gate(s) newly fail on the merged tip. "
-                                "Not pushed." + baseline_note)}
+                                "Not pushed." + baseline_note + _failing_tests_note(new_red_gates))}
                 elif verbose:
                     logger.debug("task_branch.integrate: merged-tip check status=%s "
                                  "(pushing regardless — no NEW red found)",
