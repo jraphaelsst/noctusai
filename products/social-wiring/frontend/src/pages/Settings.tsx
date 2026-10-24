@@ -92,6 +92,7 @@ import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard
 import { ImovelConflitosPendentesOrgCard } from "@/components/imovel/ImovelConflitosCard";
 import { useImovelConflitosPendentesOrg } from "@/hooks/useImovelDados";
 import { IdentificadoresNaoConformesPanel } from "@/components/IdentificadoresNaoConformesCard";
+import { UnsavedChangesNotice, useBeforeUnloadGuard } from "@noctusai/lib/components";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -248,6 +249,8 @@ function DadosImobiliariaTab() {
   }
 
   const sujo = Object.keys(draft).length > 0;
+  // A touched field is not saved until "Salvar": guard a page leave, and say so below (F91 class).
+  useBeforeUnloadGuard(sujo);
 
   return (
     <Card>
@@ -445,6 +448,7 @@ function DadosImobiliariaTab() {
               </div>
             </div>
 
+            <UnsavedChangesNotice dirty={sujo} data-testid="imob-nao-salvo" />
             <div className="flex justify-end">
               <Button
                 onClick={submit}

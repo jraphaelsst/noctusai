@@ -41,6 +41,7 @@ import {
   useZerarRespostas,
 } from "@/hooks/useCerebroPerguntas";
 import type { Answer, BrainQuestion } from "@/types/cerebro";
+import { useBeforeUnloadGuard } from "@noctusai/lib/components";
 
 const CEREBRO = "/media-creation/cerebro";
 export const AUTOSAVE_MS = 1500;
@@ -215,12 +216,8 @@ export default function CerebroPerguntas() {
   }
 
   const ocupado = salvando.size > 0 || sujos.current.size > 0 || enviandoAudio.size > 0;
-  useEffect(() => {
-    if (!ocupado) return;
-    const guard = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", guard);
-    return () => window.removeEventListener("beforeunload", guard);
-  }, [ocupado]);
+  // Autosave writes still in flight: ask before a page leave (seed guard).
+  useBeforeUnloadGuard(ocupado);
 
   // Synthesis finished (idle) or failed while we were waiting → leave / report.
   useEffect(() => {

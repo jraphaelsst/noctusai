@@ -26,6 +26,7 @@
 import CondominioSelector from "@/components/imovel/CondominioSelector";
 import VinculoLegalMarca from "@/components/imovel/VinculoLegalMarca";
 import { useEffect, useState } from "react";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 import { Landmark, Link2, Loader2, ScrollText } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -187,21 +188,15 @@ export default function ImovelCartorioCard({
     });
   }
 
-  // Unsaved edits to the text fields: say so, and stop a silent navigation away.
-  const base = toDraft(dados);
-  const sujo = (
-    ["numero_matricula", "numero_registro_imoveis", "prefeitura_cadastro_imobiliario",
+  // Unsaved edits to the text fields: say so, and stop a silent navigation away
+  // (seed organ; the condomínio pick is persisted on pick, so it is not compared).
+  const { dirty: sujo } = useUnsavedChanges(draft, dados ? toDraft(dados) : undefined, {
+    fields: [
+      "numero_matricula", "numero_registro_imoveis", "prefeitura_cadastro_imobiliario",
       "captador_user_id", "situacao_onus", "onus_observacoes", "onus_certidao_em",
-      "empreendimento_manual"] as const
-  ).some((k) => draft[k] !== base[k]);
-  useEffect(() => {
-    if (!sujo) return;
-    const guard = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", guard);
-    return () => window.removeEventListener("beforeunload", guard);
-  }, [sujo]);
+      "empreendimento_manual",
+    ],
+  });
 
   const origem = origemLabel(dados?.numero_matricula_origem ?? null);
   const lidoAutomaticamente = dados?.numero_matricula_origem === "matricula";
@@ -454,11 +449,7 @@ export default function ImovelCartorioCard({
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {sujo && (
-          <p className="text-sm text-amber-600" data-testid="imovel-cartorio-nao-salvo">
-            Alterações não salvas — clique em Salvar.
-          </p>
-        )}
+        <UnsavedChangesNotice dirty={sujo} data-testid="imovel-cartorio-nao-salvo" />
 
         <Button onClick={submit} disabled={loading || saving} className="w-full">
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

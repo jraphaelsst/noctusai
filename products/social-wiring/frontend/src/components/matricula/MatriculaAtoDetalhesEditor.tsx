@@ -54,6 +54,7 @@ import {
   type MatriculaAtoDetalhes,
   type MatriculaAtoDetalhesPatch,
 } from "@/hooks/useMatriculaEstrutura";
+import { useUnsavedChanges } from "@noctusai/lib/components";
 
 /** Radix `SelectItem` refuses an empty string, so absence needs a token. */
 const SEM_NATUREZA = "__sem_natureza__";
@@ -353,6 +354,9 @@ export default function MatriculaAtoDetalhesEditor({
     setDraft(toDraft(detalhes));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assinatura]);
+  // Typed edits are not saved until "Salvar e confirmar": guard a page leave (the
+  // changed-field count below is the on-screen half).
+  useUnsavedChanges(draft, detalhes ? toDraft(detalhes) : undefined);
 
   // Falsy, not `=== null`: see the prop's note. An act row without the key
   // reaches this component as `undefined`, and reading `.origem` off it threw

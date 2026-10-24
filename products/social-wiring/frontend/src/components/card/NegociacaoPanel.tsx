@@ -58,6 +58,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { Negociacao, NegociacaoPatch } from "@/hooks/useNegociacao";
 import type { ImovelVisita } from "@/types/cardHub";
 import { formatBRL, formatPct } from "@/hooks/useNegociacao";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 interface Props {
   negociacao: Negociacao | undefined;
@@ -196,6 +197,8 @@ export default function NegociacaoPanel({
 
   const set = <K extends keyof Draft>(k: K) => (v: Draft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
+  // The amounts above are a local preview until "Salvar": say so (F91 class).
+  const { dirty } = useUnsavedChanges(draft, negociacao ? toDraft(negociacao) : undefined);
 
   // pt-BR "6,26" → wire "6.26"; null = not a number (inline error, no submit).
   const PCTS = ["pct_comissao", "pct_parceria", "pct_agencia", "pct_agentes", "pct_captador"] as const;
@@ -477,6 +480,8 @@ export default function NegociacaoPanel({
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
+
+          <UnsavedChangesNotice dirty={dirty} data-testid="negociacao-nao-salvo" />
 
           <Button
             onClick={submit}

@@ -30,6 +30,7 @@ import {
 } from "@/hooks/useQualificacaoContrato";
 import { exibirData } from "@/lib/moedaDecimal";
 import { ORIGEM_ROTULO } from "@/hooks/useValidacaoExtracao";
+import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 export const IDENTIDADE_TIPO_LABEL: Record<IdentidadeTipo, string> = {
   rg: "RG (brasileiro)",
@@ -105,6 +106,8 @@ export function QualificacaoContratoForm({
   useEffect(() => {
     if (!aberto) setDraft(draftDe(registro));
   }, [registro, aberto]);
+  // While the form is open, typed values are not saved until "Salvar" (F91 class).
+  const { dirty } = useUnsavedChanges(draft, aberto && registro ? draftDe(registro) : undefined);
 
   if (showSkeleton) {
     return (
@@ -247,6 +250,7 @@ export function QualificacaoContratoForm({
               </p>
             </div>
           )}
+          <UnsavedChangesNotice dirty={dirty} data-testid={`${testId}-nao-salvo`} />
           <div className="flex gap-2">
             <Button
               type="button"
