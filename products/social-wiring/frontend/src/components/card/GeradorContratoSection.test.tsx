@@ -737,3 +737,136 @@ describe("GeradorContratoSection — migration 193 (partes)", () => {
     expect(lista).not.toContain("redação de PJ");
   });
 });
+
+describe("§10 — especificações picker", () => {
+  const SALVAS = ["compra_venda", "sinal_saldo", "financiamento_bancario"];
+
+  it("is absent when the container wires no save (older surfaces)", async () => {
+    const { screen } = await render({ status: status({ especificacoes: SALVAS }) });
+    expect(screen.queryByTestId("especificacoes-picker")).toBeNull();
+  });
+
+  it("groups the catalogue by eixo with the generated labels", async () => {
+    const { screen } = await render({
+      status: status({ especificacoes: SALVAS }),
+      onSalvarEspecificacoes: vi.fn(),
+    });
+    const pagamento = screen.getByTestId("especificacoes-eixo-pagamento");
+    expect(pagamento.textContent).toContain("Pagamento");
+    expect(pagamento.textContent).toContain("Financiamento bancário");
+    expect(pagamento.textContent).toContain("Uso de FGTS");
+    expect(screen.getByTestId("especificacoes-eixo-intermediacao").textContent).toContain(
+      "Intermediação (corretagem)",
+    );
+    expect(screen.getByTestId("especificacao-financiamento_bancario").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("especificacao-permuta").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("🔴 enforces requer / exclusiva_com: disabled with the reason, never offered", async () => {
+    const { screen, fireEvent } = await render({
+      status: status({ especificacoes: ["compra_venda", "a_vista"] }),
+      onSalvarEspecificacoes: vi.fn(),
+    });
+    const fin = screen.getByTestId("especificacao-financiamento_bancario");
+    expect(fin.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByTestId("especificacao-financiamento_bancario-motivo").textContent).toBe(
+      "Incompatível com À vista (recursos próprios).",
+    );
+    expect(screen.getByTestId("especificacao-fgts-motivo").textContent).toContain("Incompatível");
+    expect(screen.getByTestId("especificacao-compra_venda").hasAttribute("disabled")).toBe(true);
+
+    // Unchecking à vista frees financiamento; FGTS then still asks for it.
+    fireEvent.click(screen.getByTestId("especificacao-a_vista"));
+    expect(screen.getByTestId("especificacao-financiamento_bancario").hasAttribute("disabled")).toBe(false);
+    expect(screen.getByTestId("especificacao-fgts-motivo").textContent).toBe("Requer Financiamento bancário.");
+    fireEvent.click(screen.getByTestId("especificacao-financiamento_bancario"));
+    fireEvent.click(screen.getByTestId("especificacao-fgts"));
+    expect(screen.getByTestId("especificacao-financiamento_bancario-motivo").textContent).toBe(
+      "Necessária para Uso de FGTS.",
+    );
+  });
+
+  it("shows sugeridas vs selecionadas when they differ, and 'Aplicar sugestão' fills the draft", async () => {
+    const onSalvarEspecificacoes = vi.fn();
+    const { screen, fireEvent } = await render({
+      status: status({
+        especificacoes: ["compra_venda", "a_vista"],
+        sugeridas: ["compra_venda", "sinal_saldo", "financiamento_bancario"],
+      }),
+      onSalvarEspecificacoes,
+    });
+    expect(screen.getByTestId("especificacoes-sugeridas").textContent).toBe(
+      "Compra e venda · Sinal + saldo · Financiamento bancário",
+    );
+    expect(screen.getByTestId("especificacoes-selecionadas").textContent).toBe(
+      "Compra e venda · À vista (recursos próprios)",
+    );
+    expect(screen.getByTestId("especificacoes-salvar").hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByTestId("especificacoes-aplicar-sugestao"));
+    expect(screen.getByTestId("especificacao-financiamento_bancario").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("especificacao-a_vista").getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByTestId("especificacoes-aplicar-sugestao")).toBeNull();
+    fireEvent.click(screen.getByTestId("especificacoes-salvar"));
+    expect(onSalvarEspecificacoes).toHaveBeenCalledWith(["compra_venda", "sinal_saldo", "financiamento_bancario"]);
+  });
+
+  it("no suggestion block when sugeridas match the stored selection", async () => {
+    const { screen } = await render({
+      status: status({ especificacoes: SALVAS, sugeridas: SALVAS }),
+      onSalvarEspecificacoes: vi.fn(),
+    });
+    expect(screen.queryByTestId("especificacoes-sugestao")).toBeNull();
+  });
+
+  it("🔴 legacy contract (null): shows the suggestion pre-filled; nothing is sent until 'Usar especificações'", async () => {
+    const onSalvarEspecificacoes = vi.fn();
+    const { screen, fireEvent } = await render({
+      status: status({ especificacoes: null, sugeridas: ["compra_venda", "permuta"] }),
+      onSalvarEspecificacoes,
+    });
+    expect(screen.getByTestId("especificacoes-legado")).toBeTruthy();
+    expect(screen.getByTestId("especificacoes-sugeridas").textContent).toBe("Compra e venda · Permuta");
+    expect(screen.getByTestId("especificacao-permuta").getAttribute("aria-checked")).toBe("true");
+    expect(onSalvarEspecificacoes).not.toHaveBeenCalled();
+    const salvar = screen.getByTestId("especificacoes-salvar");
+    expect(salvar.textContent).toContain("Usar especificações");
+    fireEvent.click(salvar);
+    expect(onSalvarEspecificacoes).toHaveBeenCalledWith(["compra_venda", "permuta"]);
+  });
+
+  it("legacy with no suggestion (older backend) falls back to the contract read, else to the base", async () => {
+    const { screen } = await render({
+      status: status(),
+      especificacoesContrato: ["compra_venda", "intermediacao"],
+      onSalvarEspecificacoes: vi.fn(),
+    });
+    expect(screen.getByTestId("especificacao-intermediacao").getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByTestId("especificacoes-legado")).toBeNull();
+  });
+
+  it("🔴 conflitos are shown prominently as bloqueios", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        especificacoes: ["compra_venda", "a_vista"],
+        conflitos: ["Especificação 'À vista (recursos próprios)' selecionada, mas os dados do negócio têm financiamento bancário."],
+      }),
+      onSalvarEspecificacoes: vi.fn(),
+    });
+    const box = screen.getByTestId("especificacoes-conflitos");
+    expect(box.getAttribute("role")).toBe("alert");
+    expect(box.textContent).toContain("impede gerar");
+    expect(screen.getAllByTestId("especificacoes-conflito")).toHaveLength(1);
+  });
+
+  it("🔴 a refused save shows the server's message inline", async () => {
+    const { screen } = await render({
+      status: status({ especificacoes: SALVAS }),
+      onSalvarEspecificacoes: vi.fn(),
+      erroEspecificacoes: "especificação 'fgts' requer 'financiamento_bancario'",
+    });
+    expect(screen.getByTestId("especificacoes-erro").textContent).toBe(
+      "especificação 'fgts' requer 'financiamento_bancario'",
+    );
+  });
+});

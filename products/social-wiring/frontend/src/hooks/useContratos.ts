@@ -212,6 +212,19 @@ export interface ContratoOut {
   processo_legado_motivo: string | null;
   /** Migration 157 — the signing gate. A pre-157 contract reads `digital`. */
   modalidade_assinatura: ModalidadeAssinatura;
+  /** Migration 308 (CONTRACT.md §10) — the operator's selected contract
+   *  specifications (catalogue order); `null` = legacy mode (the readiness
+   *  follows the data-derived switches). Absent on an older backend. */
+  especificacoes?: string[] | null;
+  /** The catalogue version the selection was made against (`null` = legacy). */
+  especificacoes_versao?: number | null;
+}
+
+/** `PUT …/contratos/{id}/especificacoes` — §10.2. */
+export interface SalvarEspecificacoesResult {
+  especificacoes: string[];
+  especificacoes_versao: number;
+  modelo: ContratoModelo;
 }
 
 export interface ContratoPatch {
@@ -373,6 +386,17 @@ export interface ContratoGeracaoStatus {
   itens_revisao?: ItemRevisaoJuridica[];
   /** Migration 291 — absent on an older backend ⇒ none. */
   correcoes_contestadas?: CorrecaoContestada[];
+  /** §10 — the stored selection (`null` = legacy mode). Absent on a backend
+   *  that predates the readiness slice: the caller falls back to the
+   *  contract's own `especificacoes` (`ContratoOut`). */
+  especificacoes?: string[] | null;
+  especificacoes_versao?: number | null;
+  /** §10 — what the deal's DATA implies (`especificacoes.sugerir`). A
+   *  suggestion only: the stored selection wins. Absent ⇒ no suggestion. */
+  sugeridas?: string[];
+  /** §10 — data that CONTRADICTS the stored selection (`especificacoes.
+   *  conflitos`): bloqueios, shown prominently. Absent ⇒ none. */
+  conflitos?: string[];
 }
 
 export interface GerarContratoInput {
@@ -894,6 +918,49 @@ export function useContratoMutations(clienteId: string) {
     targets: [contratoTarget],
   });
 
+  /**
+   * `salvarEspecificacoes` — PUT §10.2. Draws the selection at once on the
+   * contract row and every cached readiness report of this contract (any
+   * `assinatura_data` key), commits the server's answer (catalogue order,
+   * version, the implied `modelo`), and settle re-reads both: the readiness
+   * the selection scopes is server-computed. A 400 (incoherent set) rolls the
+   * draw back — nothing was written — and the caller shows the message.
+   */
+  const salvarEspecificacoes = useCacheWriteMutation<
+    SalvarEspecificacoesResult,
+    { contratoId: string; especificacoes: string[] }
+  >({
+    mutationFn: ({ contratoId, especificacoes }) =>
+      api.put<SalvarEspecificacoesResult>(
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/especificacoes`,
+        { especificacoes },
+      ),
+    targets: ({ contratoId }) => [
+      {
+        queryKey: KEY(clienteId),
+        optimistic: (old: ContratoOut[] | undefined, { especificacoes }) =>
+          listOps.patch(old, contratoId, { especificacoes }),
+        commit: (old: ContratoOut[] | undefined, saved) =>
+          listOps.patch(old, contratoId, {
+            especificacoes: saved.especificacoes,
+            especificacoes_versao: saved.especificacoes_versao,
+            modelo: saved.modelo,
+          }),
+      },
+      {
+        queryKey: GERACAO_KEY(clienteId, contratoId),
+        match: "prefix",
+        optimistic: (old: ContratoGeracaoStatus | undefined, { especificacoes }) =>
+          listOps.merge(old, { especificacoes }),
+        commit: (old: ContratoGeracaoStatus | undefined, saved) =>
+          listOps.merge(old, {
+            especificacoes: saved.especificacoes,
+            especificacoes_versao: saved.especificacoes_versao,
+          }),
+      },
+    ],
+  });
+
   const deleteVersao = useMutation({ // noc-allow: invalidate-only — removing a version re-derives versao_atual and the contract status server-side, and the response is empty
     mutationFn: ({
       contratoId,
@@ -1113,5 +1180,6 @@ export function useContratoMutations(clienteId: string) {
     cancelarAssinatura,
     processoLegado,
     marcarAssinadoFisico,
+    salvarEspecificacoes,
   };
 }

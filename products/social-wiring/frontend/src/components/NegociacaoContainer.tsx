@@ -8,6 +8,8 @@
 import { ImovelCodigoPicker } from "@/components/card/ImovelCodigoPicker";
 import NegociacaoEstruturadaPanel from "@/components/card/NegociacaoEstruturadaPanel";
 import NegociacaoPanel from "@/components/card/NegociacaoPanel";
+import { useContratos } from "@/hooks/useContratos";
+import { especificacoesDoCard } from "@/lib/especificacoes";
 import {
   useNegociacao,
   useNegociacaoMutation,
@@ -16,6 +18,9 @@ import {
 export function NegociacaoContainer({ clienteId }: { clienteId: string }) {
   const query = useNegociacao(clienteId);
   const mutation = useNegociacaoMutation(clienteId);
+  // §10 — the contracts' selected specifications scope which negociação
+  // subtabs apply (legacy contracts scope nothing).
+  const contratos = useContratos(clienteId);
 
   return (
     <>
@@ -42,7 +47,10 @@ export function NegociacaoContainer({ clienteId }: { clienteId: string }) {
           favorecidos, intermediários, posse, permuta. Self-contained — it owns
           its queries — and sits under the price/commission panel because it
           allocates the valor negociado that panel sets. */}
-      <NegociacaoEstruturadaPanel clienteId={clienteId} />
+      <NegociacaoEstruturadaPanel
+        clienteId={clienteId}
+        especificacoes={especificacoesDoCard(contratos.data)}
+      />
     </>
   );
 }

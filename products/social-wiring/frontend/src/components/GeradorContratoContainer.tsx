@@ -38,7 +38,9 @@ import {
   aguardandoRevisaoJuridica,
   useContratoGeracao,
   useContratoMutations,
+  useContratos,
 } from "@/hooks/useContratos";
+import { mensagemErroServidor } from "@/lib/erroServidor";
 import {
   CODIGO_PENDENTE_VALIDACAO,
   CODIGO_VALIDACAO_DESATUALIZADA,
@@ -89,7 +91,11 @@ export function GeradorContratoContainer({
   // measure certidão ages against the SAME date.
   const [assinaturaDigitada, setAssinaturaDigitada] = useState("");
   const query = useContratoGeracao(clienteId, contratoId, aberto, assinaturaDigitada || undefined);
-  const { gerar } = useContratoMutations(clienteId);
+  const { gerar, salvarEspecificacoes } = useContratoMutations(clienteId);
+  // §10 — the stored selection rides on the contract read too; the picker
+  // falls back to it when the readiness report predates `especificacoes`.
+  const contratos = useContratos(clienteId);
+  const contrato = contratos.data?.find((c) => c.id === contratoId);
   const ciencia = useCienciaPcen(clienteId);
   const decidirConflito = useDecidirConflitoMutation();
   const assinaturaData = assinaturaDigitada || query.data?.assinatura_referencia || hoje();
@@ -264,6 +270,19 @@ export function GeradorContratoContainer({
         onDecidirCorrecao={handleDecidirCorrecao}
         decidindoCorrecaoId={
           decidirConflito.isPending ? (decidirConflito.variables?.conflitoId ?? null) : null
+        }
+        especificacoesContrato={contrato?.especificacoes ?? null}
+        onSalvarEspecificacoes={(especificacoes) =>
+          salvarEspecificacoes.mutate(
+            { contratoId, especificacoes },
+            { onSuccess: () => toast.success("Especificações do contrato salvas.") },
+          )
+        }
+        salvandoEspecificacoes={salvarEspecificacoes.isPending}
+        erroEspecificacoes={
+          salvarEspecificacoes.isError
+            ? mensagemErroServidor(salvarEspecificacoes.error, "Não foi possível salvar as especificações.")
+            : null
         }
       />
       <ValidacaoExtracaoDialog

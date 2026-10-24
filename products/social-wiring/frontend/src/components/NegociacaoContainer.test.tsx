@@ -31,6 +31,9 @@ vi.mock("@/hooks/useFinanciamento", () => ({
   }),
   useFinanciamentoExtracaoPollingInvalidation: () => undefined,
 }));
+vi.mock("@/hooks/useContratos", () => ({
+  useContratos: () => ({ data: [], isPending: false }),
+}));
 vi.mock("@/hooks/useAgentesFinanceiros", () => ({
   useAgentesFinanceiros: () => ({ data: [], isPending: false }),
 }));

@@ -1,0 +1,100 @@
+{
+  "versao": 1,
+  "base": "compra_venda",
+  "eixos": [
+    "base",
+    "pagamento",
+    "confissao",
+    "permuta",
+    "intermediacao"
+  ],
+  "catalogo": [
+    {
+      "chave": "compra_venda",
+      "rotulo": "Compra e venda",
+      "eixo": "base",
+      "requer": [],
+      "exclusiva_com": []
+    },
+    {
+      "chave": "a_vista",
+      "rotulo": "À vista (recursos próprios)",
+      "eixo": "pagamento",
+      "requer": [],
+      "exclusiva_com": [
+        "financiamento_bancario",
+        "fgts",
+        "parcelas_diretas",
+        "confissao_divida"
+      ]
+    },
+    {
+      "chave": "sinal_saldo",
+      "rotulo": "Sinal + saldo",
+      "eixo": "pagamento",
+      "requer": [],
+      "exclusiva_com": []
+    },
+    {
+      "chave": "financiamento_bancario",
+      "rotulo": "Financiamento bancário",
+      "eixo": "pagamento",
+      "requer": [],
+      "exclusiva_com": [
+        "a_vista"
+      ]
+    },
+    {
+      "chave": "fgts",
+      "rotulo": "Uso de FGTS",
+      "eixo": "pagamento",
+      "requer": [
+        "financiamento_bancario"
+      ],
+      "exclusiva_com": [
+        "a_vista"
+      ]
+    },
+    {
+      "chave": "parcelas_diretas",
+      "rotulo": "Parcelas diretas ao vendedor",
+      "eixo": "pagamento",
+      "requer": [],
+      "exclusiva_com": [
+        "a_vista"
+      ]
+    },
+    {
+      "chave": "intermediarias",
+      "rotulo": "Parcelas intermediárias",
+      "eixo": "pagamento",
+      "requer": [],
+      "exclusiva_com": []
+    },
+    {
+      "chave": "confissao_divida",
+      "rotulo": "Confissão de dívida",
+      "eixo": "confissao",
+      "requer": [
+        "parcelas_diretas"
+      ],
+      "exclusiva_com": [
+        "a_vista"
+      ]
+    },
+    {
+      "chave": "permuta",
+      "rotulo": "Permuta",
+      "eixo": "permuta",
+      "requer": [],
+      "exclusiva_com": []
+    },
+    {
+      "chave": "intermediacao",
+      "rotulo": "Intermediação (corretagem)",
+      "eixo": "intermediacao",
+      "requer": [],
+      "exclusiva_com": []
+    }
+  ]
+}
