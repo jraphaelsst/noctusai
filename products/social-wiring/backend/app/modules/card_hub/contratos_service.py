@@ -556,6 +556,7 @@ async def criar(
         tipo_documento=TIPO_VERSAO,
         content_type=content_type,
         tamanho_bytes=len(data),
+        data=data,
     )
 
     contrato_id = uuid4()
@@ -800,6 +801,7 @@ async def _guardar_versao(
         tipo_documento=TIPO_VERSAO,
         content_type=content_type,
         tamanho_bytes=len(data),
+        data=data,
     )
 
     owner = UUID(str(contrato_id))

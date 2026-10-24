@@ -39,6 +39,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.documents.mime_sniff import ensure_extension, resolve_upload_mimetype
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.persistence.table_reads import actor, paged_rows, table
 from noctusai_lib.integrations.storage import StorageBackend
@@ -246,6 +247,8 @@ async def upload_documento(
     policy = cfg.documentos
     limite = policy.max_upload_bytes if max_bytes is None else max_bytes
 
+    content_type = resolve_upload_mimetype(content_type, data)
+    filename = ensure_extension(filename, content_type)
     if content_type not in policy.allowed_mime_types:
         raise ValidationError_(
             f"Tipo de arquivo não permitido: {content_type}. "

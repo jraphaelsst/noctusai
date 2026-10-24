@@ -47,3 +47,39 @@ class TestNoOpinion:
     def test_a_short_buffer_never_raises(self):
         assert sniff_real_mimetype(b"\xff\xd8") is None
         assert sniff_real_mimetype(b"RIFF") is None
+
+
+class TestResolveUploadMimetype:
+    """Extension-less office files (WhatsApp/Drive downloads) arrive as
+    application/octet-stream; the bytes decide."""
+
+    def test_generic_declared_resolved_from_bytes(self):
+        from noctusai_lib.integrations.documents.mime_sniff import resolve_upload_mimetype
+
+        assert resolve_upload_mimetype("application/octet-stream", b"\xff\xd8\xff\xe0\x00") == "image/jpeg"
+        assert resolve_upload_mimetype("", b"%PDF-1.7") == "application/pdf"
+        assert resolve_upload_mimetype(None, b"\x89PNG\r\n\x1a\n....") == "image/png"
+        assert resolve_upload_mimetype("application/octet-stream", b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
+
+    def test_contradicting_declaration_loses_to_bytes(self):
+        from noctusai_lib.integrations.documents.mime_sniff import resolve_upload_mimetype
+
+        assert resolve_upload_mimetype("image/jpeg", b"%PDF-1.4") == "application/pdf"
+
+    def test_declared_pdf_with_executable_bytes_is_not_a_document(self):
+        from noctusai_lib.integrations.documents.mime_sniff import resolve_upload_mimetype
+
+        assert resolve_upload_mimetype("application/pdf", b"MZ\x90\x00") == "application/octet-stream"
+
+    def test_unknown_bytes_keep_declared(self):
+        from noctusai_lib.integrations.documents.mime_sniff import resolve_upload_mimetype
+
+        assert resolve_upload_mimetype("text/plain", b"hello") == "text/plain"
+        assert resolve_upload_mimetype("application/octet-stream", b"hello") == "application/octet-stream"
+
+    def test_ensure_extension(self):
+        from noctusai_lib.integrations.documents.mime_sniff import ensure_extension
+
+        assert ensure_extension("Bruno - CNH", "application/pdf") == "Bruno - CNH.pdf"
+        assert ensure_extension("Espelho IPTU 2026", "image/jpeg") == "Espelho IPTU 2026.jpg"
+        assert ensure_extension("a.jpeg", "image/jpeg") == "a.jpeg"

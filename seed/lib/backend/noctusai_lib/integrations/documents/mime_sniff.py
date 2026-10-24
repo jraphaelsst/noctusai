@@ -59,4 +59,52 @@ def sniff_real_mimetype(content: bytes) -> Optional[str]:
     return None
 
 
-__all__ = ["sniff_real_mimetype"]
+#: Leading bytes of executables/scripts. A document upload carrying these is
+#: refused whatever it declares (declared pdf + exe bytes must not pass).
+_EXECUTABLE_MAGICS = (b"MZ", b"\x7fELF", b"#!", b"\xca\xfe\xba\xbe", b"\xcf\xfa\xed\xfe")
+
+_EXTENSION_BY_MIME = {
+    "application/pdf": ".pdf",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+}
+
+
+def resolve_upload_mimetype(declared: Optional[str], content: bytes) -> str:
+    """The mimetype an upload should be validated AND stored under.
+
+    Content wins over the declaration: a generic/missing declared type is
+    replaced by the sniffed one, and a declared type the bytes contradict is
+    replaced too (same rule as `DocumentTextLadder.to_text`). When the bytes
+    are executable/script content the result is `application/octet-stream`
+    so any document allowlist refuses it, even if a document type such as
+    `application/pdf` was declared (other declared types are kept as-is). Unrecognised bytes keep the declared type (no opinion).
+    """
+    norm = (declared or "").split(";")[0].strip().lower()
+    sniffed = sniff_real_mimetype(content)
+    if sniffed:
+        return sniffed
+    if content.startswith(_EXECUTABLE_MAGICS) and (not norm or norm in _EXTENSION_BY_MIME):
+        return "application/octet-stream"
+    return norm or "application/octet-stream"
+
+
+def ensure_extension(filename: str, mimetype: str) -> str:
+    """Give an extension-less display name the extension matching `mimetype`.
+
+    Extractors/readers may route by filename; a name with an extension is
+    left untouched.
+    """
+    ext = _EXTENSION_BY_MIME.get(mimetype)
+    name = filename or "arquivo"
+    if not ext:
+        return name
+    base = name.rsplit("/", 1)[-1]
+    if "." in base.strip("."):
+        return name
+    return f"{name}{ext}"
+
+
+__all__ = ["sniff_real_mimetype", "resolve_upload_mimetype", "ensure_extension"]

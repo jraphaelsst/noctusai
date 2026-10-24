@@ -52,6 +52,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.documents.mime_sniff import ensure_extension, resolve_upload_mimetype
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
@@ -180,6 +181,7 @@ class DocumentoStore:
         content_type: str,
         tamanho_bytes: int,
         max_bytes: Optional[int] = None,
+        data: Optional[bytes] = None,
     ) -> None:
         """Refuse an upload we will not store, naming the limit it hit.
 
@@ -189,6 +191,10 @@ class DocumentoStore:
         keeper flags exactly that, and it has already caught it once here.
         """
         limite = self.max_bytes if max_bytes is None else max_bytes
+        if data is not None:
+            # Content wins over the declaration (extension-less uploads
+            # arrive as application/octet-stream) — one seed predicate.
+            content_type = resolve_upload_mimetype(content_type, data)
         if tipo_documento not in self.tipos:
             raise ValidationError_(
                 f"tipo_documento desconhecido: {tipo_documento!r}. "
@@ -268,6 +274,8 @@ class DocumentoStore:
         upload fails, the main object is removed too — no orphan row, and no
         orphan main object either.
         """
+        content_type = resolve_upload_mimetype(content_type, data)
+        filename = ensure_extension(filename, content_type)
         self.validar(
             tipo_documento=tipo_documento,
             content_type=content_type,
