@@ -99,7 +99,9 @@ export function ClienteAttachPicker({
   const buscando = busca.isPending || busca.isFetching;
   const termoUtil = termoDebounced.trim().length >= 2;
   const resultados = busca.data?.items ?? [];
-  const buscaVazia = termoUtil && !buscando && resultados.length === 0;
+  // A failed search is an error, never "Nenhum cliente" (which invites a duplicate cadastro).
+  const buscaErro = termoUtil && busca.isError;
+  const buscaVazia = termoUtil && !buscando && !busca.isError && resultados.length === 0;
 
   function escolher(cliente: Cliente) {
     onChange({
@@ -182,6 +184,23 @@ export function ClienteAttachPicker({
 
       {!termoUtil ? (
         <p className="text-xs text-muted-foreground">Digite ao menos 2 caracteres.</p>
+      ) : buscaErro ? (
+        <div className="flex items-center gap-2" data-testid={`${testId}-erro`}>
+          <p className="text-xs text-destructive">
+            Não foi possível buscar clientes — tente de novo.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={disabled || busca.isFetching}
+            onClick={() => busca.refetch()}
+            data-testid={`${testId}-tentar-novamente`}
+          >
+            Tentar de novo
+          </Button>
+        </div>
       ) : buscaVazia ? (
         <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
           Nenhum cliente encontrado para "{termoDebounced.trim()}". Use o "+" para cadastrar.

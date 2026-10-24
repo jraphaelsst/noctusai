@@ -372,4 +372,28 @@ describe("ImovelCodigoPicker", () => {
 
     expect(screen.getByTestId("imovel-picker-opcao-ONE9001")).toBeTruthy();
   });
+
+  it("F76: a failed search renders an error + retry, never the empty state nor the create button", async () => {
+    const refetch = vi.fn();
+    mockUseImoveisBusca.mockReturnValue(
+      busca([], { data: undefined, isError: true, refetch }),
+    );
+    const { screen } = await render();
+    await digitar("ONE10251");
+    expect(screen.getByTestId("imovel-picker-erro")).toBeTruthy();
+    expect(screen.queryByTestId("imovel-picker-vazio")).toBeNull();
+    expect(screen.queryByTestId("imovel-picker-cadastrar-novo")).toBeNull();
+    const rtl = await import("@testing-library/react");
+    rtl.fireEvent.click(screen.getByTestId("imovel-picker-tentar-novamente"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("F76: a SUCCESSFUL empty search still offers the empty state + create button", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    const { screen } = await render();
+    await digitar("ONE10251");
+    expect(screen.getByTestId("imovel-picker-vazio")).toBeTruthy();
+    expect(screen.getByTestId("imovel-picker-cadastrar-novo")).toBeTruthy();
+    expect(screen.queryByTestId("imovel-picker-erro")).toBeNull();
+  });
 });

@@ -112,7 +112,12 @@ export function ImovelCodigoPicker({
   const buscando = busca.isPending || busca.isFetching;
   const termoUtil = termoDebounced.trim().length >= 2;
   const resultados = busca.data?.items ?? [];
-  const buscaVazia = termoUtil && !buscando && resultados.length === 0;
+  // 🔴 A FAILED search (502 mid-deploy, network) is NOT an empty result: it
+  // must never reach the "Nenhum imóvel" / "Cadastrar … como imóvel novo"
+  // branch, which would invite registering a duplicate of an existing
+  // property (prod F76, ONE10251). Empty + create only after a SUCCESS.
+  const buscaErro = termoUtil && busca.isError;
+  const buscaVazia = termoUtil && !buscando && !busca.isError && resultados.length === 0;
 
   // 🔴 Migration 159 — "did you mean one of these?" checked ONLY once the
   // exact search already came back empty (the moment a genuine duplicate
@@ -193,6 +198,23 @@ export function ImovelCodigoPicker({
         <p className="text-xs text-muted-foreground">
           Digite ao menos 2 caracteres.
         </p>
+      ) : buscaErro ? (
+        <div className="flex items-center gap-2" data-testid={`${testId}-erro`}>
+          <p className="text-xs text-destructive">
+            Não foi possível buscar imóveis — tente de novo.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={disabled || busca.isFetching}
+            onClick={() => busca.refetch()}
+            data-testid={`${testId}-tentar-novamente`}
+          >
+            Tentar de novo
+          </Button>
+        </div>
       ) : buscaVazia ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
