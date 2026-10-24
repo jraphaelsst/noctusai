@@ -1130,7 +1130,17 @@ _COLUNAS_QUALIFICACAO_CONTRATO: tuple[str, ...] = (
     "conjuge_cliente_id",
     "cpf", "rg", "rg_orgao_expedidor",
     *_ENDERECO_CAMPOS_OBRIGATORIOS, "endereco_bairro",
+    # The `rg_so_da_cnh` ressalva's own columns (`completude_contratual`).
+    *_RESSALVAS["rg_so_da_cnh"]["colunas"],
 )
+
+#: [Deal 799 replay, 2026-10-24] `completude_contratual`'s key for an RG that
+#: is FILLED but rests only on an unconfirmed CNH reading (no check digit) —
+#: the identidade item's own `rg_so_da_cnh` ressalva, so the contract gate
+#: and the card checklist answer with ONE predicate. Its label is the
+#: ressalva's (`ROTULO_RG_SO_DA_CNH`).
+CHAVE_RG_SO_DA_CNH = "rg_digito_verificador"
+ROTULO_RG_SO_DA_CNH: str = _RESSALVAS["rg_so_da_cnh"]["rotulo"]
 
 #: Migration 117 (contract F6). The office's Lei 6.515/77 citation depends on
 #: which side of 26/12/1977 the marriage fell — a `casado` party the
@@ -1216,6 +1226,14 @@ def completude_contratual(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     ensure_cliente(client, org_id, cliente_id)
     cliente = _cliente_row_qualificacao(client, org_id, cliente_id)
     faltando = _faltantes_qualificacao(cliente or {})
+    # The identidade item's `rg_so_da_cnh` ressalva — the SAME rule the card
+    # checklist ticks with (`campos_faltando`), so a CNH-only RG with no
+    # check digit is missing here too. Documents are read only when the RG
+    # is filled (an empty one is already `rg` above).
+    if cliente and "rg" not in faltando and "rg" in campos_faltando(
+        cliente, "identidade", _documentos_por_tipo(client, org_id, cliente_id)
+    ):
+        faltando.append(CHAVE_RG_SO_DA_CNH)
 
     conjuge_info: Optional[dict] = None
     estado_civil = _estado_civil_normalizado((cliente or {}).get("estado_civil"))
@@ -1263,6 +1281,8 @@ __all__ = [
     "ITEM_KEYS",
     "TABLE",
     "completude_contratual",
+    "CHAVE_RG_SO_DA_CNH",
+    "ROTULO_RG_SO_DA_CNH",
     "derivar",
     "listar",
     "marcar",

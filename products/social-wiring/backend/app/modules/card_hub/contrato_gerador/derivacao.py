@@ -60,6 +60,7 @@ from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.card_hub.banco_texto import banco_tem_dados_de_conta
+from app.modules.card_hub.documento_checklist_service import CHAVE_RG_SO_DA_CNH, ROTULO_RG_SO_DA_CNH
 from app.modules.card_hub.contrato_gerador import certidao_pcen, frases, profissoes
 from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
@@ -132,6 +133,9 @@ ROTULO_QUALIFICACAO = {
     "conjuge_qualificacao": "Qualificação do cônjuge",
     "genero": "Gênero",
     "data_casamento": "Data do casamento",
+    # The card checklist's `rg_so_da_cnh` ressalva, surfaced by
+    # `completude_contratual` — one rule, one label.
+    CHAVE_RG_SO_DA_CNH: ROTULO_RG_SO_DA_CNH,
 }
 
 #: The qualificação keys read off the ONE "Documento de identidade (RG/CPF,
@@ -2437,6 +2441,28 @@ def _negociacao(
                     _checar_favorecido(av, fav, rot, cpfs_vendedores)
             if not (p.forma_pagamento or "").strip():
                 av.falta(f"negociacao.parcela.{p.id}.forma_pagamento", f"Forma de pagamento da {rot}", "negociacao")
+            elif frases.forma_e_clausula(p.forma_pagamento):
+                # [Deal 799 replay] A forma typed as a clause ("pago aos
+                # intermediadores diretamente pelas COMPRADORAS"), not a
+                # means: alone it prints bare after the moment (a doubt — an
+                # aviso); where an account or a split follows it there is
+                # no grammatical wording ("pago … a ser realizada em favor
+                # de …"), so it is refused.
+                conta_a_seguir = bool(p.favorecido_id or p.divisao or p.tipo == "sinal")
+                mensagem = (
+                    f"A forma de pagamento da {rot} (\"{' '.join(p.forma_pagamento.split())}\") é uma "
+                    "frase, não um meio de pagamento (PIX, transferência, boleto…)"
+                )
+                if conta_a_seguir:
+                    av.bloqueia(
+                        "FORMA_PAGAMENTO_NAO_E_MEIO",
+                        f"{mensagem}; com favorecido/divisão não há redação possível — informe só o meio.",
+                    )
+                else:
+                    av.avisa(
+                        "FORMA_PAGAMENTO_NAO_E_MEIO",
+                        f"{mensagem}; sai como escrita, sem \"por meio de\". Confira a redação.",
+                    )
         if "financiamento" in (p.evento or "").lower() and not sw["tem_financiamento"]:
             av.bloqueia("EVENTO_CITA_FINANCIAMENTO", f"A {rot} cita financiamento, mas não há parcela de financiamento.")
         # [Q7] saldo = the open financing balance on the imóvel, paid off.
@@ -3347,6 +3373,15 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
         if not valor:
             av.falta(f"imobiliaria.{campo}", rotulo, "imobiliaria", destino_em="imobiliarias")
     _corretagem_favorecido_vs_imobiliaria(av, d)
+    if org.endereco.logradouro and _sede_incompleta(org.endereco):
+        # [Deal 799 replay] The clause prints "com sede na …" — the signed
+        # contracts carry number and CEP. A doubt (a sede may carry its
+        # number inside the logradouro: "km 22 - Bloco F"), never a block.
+        av.avisa(
+            "IMOBILIARIA_SEDE_INCOMPLETA",
+            f"O endereço da sede da imobiliária está sem {_sede_incompleta(org.endereco)} — "
+            "o contrato sai sem ele(s). Complete em Imobiliárias.",
+        )
     # [Migration 168, owner decision 2026-09-24] The registry is open-ended
     # and a contract SELECTS 2 to 5 witnesses (`contrato_testemunhas`) — the
     # carregador only ever loads the SELECTED set. Fewer than 2 is a gap, not
@@ -3521,6 +3556,49 @@ def pct_intermediarios(d: DadosContrato) -> Decimal:
     )
 
 
+def _sede_incompleta(e) -> str:
+    """"número", "CEP" or "número e CEP" — what a printed sede lacks; "" when
+    it has both. `frases.endereco_texto` omits a missing piece rather than
+    printing "nº None", so a gap here is silent in the text itself."""
+    falta = [
+        rotulo for valor, rotulo in ((e.numero, "número"), (e.cep, "CEP")) if not (valor or "").strip()
+    ]
+    return " e ".join(falta)
+
+
+_ADIANTAMENTO_LEGITIMA = re.compile(r"adiantamento\s+d[ae]\s+legitima")
+
+
+def _doacao_adiantamento_legitima(av: Avaliacao, d: DadosContrato) -> None:
+    """[Deal 799 replay] The sellers hold the imóvel by a DOAÇÃO in
+    adiantamento de legítima and a doador is not on the contract as ANUENTE:
+    the signed contract had the living doadora sign to consent. Whether a
+    doador must (or still can) anuir is a human call — an aviso naming them,
+    never an automatic addition (`doador_anuente` already words one who IS
+    added)."""
+    im = d.imovel
+    if im is None or im.titulo_natureza != "doacao":
+        return
+    textos = (im.titulo_aquisitivo_texto or "", d.matricula.texto if d.matricula else "")
+    if not any(_ADIANTAMENTO_LEGITIMA.search(fold_accents(t).lower()) for t in textos):
+        return
+    doadores = im.transmitentes_titulo or tuple(
+        TitularMatricula(nome=n) for n in im.ultima_transferencia_transmitentes
+    )
+    presentes = anuentes(d.vendedores)
+    ausentes = [
+        t.nome for t in doadores
+        if not any(confere_titular(a, (t,)) for a in presentes)
+    ]
+    if not ausentes:
+        return
+    av.avisa(
+        "DOACAO_ADIANTAMENTO_LEGITIMA_SEM_ANUENTE",
+        "Doação em adiantamento de legítima — confirme se os doadores devem anuir "
+        f"(não constam como anuentes: {', '.join(ausentes)}).",
+    )
+
+
 def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     if not sw["tem_intermediacao"]:
         return
@@ -3535,6 +3613,23 @@ def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
         # a party the header DOES qualify — needs one.
         if it.natureza == "intermediario" and not it.creci:
             av.falta(f"negociacao.intermediario.{it.id}.creci", f"CRECI de {it.nome}", "negociacao")
+        # [Deal 799 replay] An EXTERNAL intermediário the clause qualifies
+        # (the same filter `contexto` prints with): the signed contracts
+        # always name a company's representative and print its full sede.
+        # Doubts the operator should see — avisos, never blocks.
+        if it.natureza == "intermediario" and not intermediario_do_escritorio(it, d.imobiliaria):
+            if it.pessoa_tipo == "pj" and not (it.representante_nome or "").strip():
+                av.avisa(
+                    "INTERMEDIARIO_PJ_SEM_REPRESENTANTE",
+                    f"O intermediário {it.nome} é pessoa jurídica e não tem representante "
+                    "informado — os contratos assinados qualificam quem a representa.",
+                )
+            if it.endereco.logradouro and _sede_incompleta(it.endereco):
+                av.avisa(
+                    "INTERMEDIARIO_SEDE_INCOMPLETA",
+                    f"O endereço de {it.nome} está sem {_sede_incompleta(it.endereco)} — o contrato "
+                    "sai sem ele(s).",
+                )
         # The tipo decides how `valor` prints (a percentage of the price or a
         # fixed amount) — never assumed "percentual" when it is missing.
         if not it.tipo:
@@ -3732,6 +3827,7 @@ def avaliar(
         )
     )
     _partes(av, d, politica)
+    _doacao_adiantamento_legitima(av, d)
     _imovel(av, d, switches, politica, assinatura)
     _negociacao(av, d, switches, assinatura, agrupar_parcelas=True)
     _financiamento(av, d, switches)

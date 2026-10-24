@@ -27,6 +27,7 @@ from noctusai_lib.integrations.documents.nacionalidade import (
     feminino as _nacionalidade_feminina,
 )
 from noctusai_lib.primitives import identificador
+from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.card_hub.contrato_gerador.extenso import brl_por_extenso
 from app.modules.card_hub.contrato_gerador.concordancia import (
@@ -401,16 +402,25 @@ def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
     textos: list[str] = []
     for a, b in nucleos(pessoas):
         if b is None:
-            textos.append(
-                f"{texto_pessoa(a, em_nucleo=False)}, {_residente(a)} na {endereco_texto(a.endereco)}"
-            )
+            # A married party whose spouse is NOT a co-party on this side (an
+            # anuente, or not on the contract at all) is qualified alone — and
+            # still states "casado(a)": the núcleo wording that would carry it
+            # ("…, e …, casados no regime …") only exists for a PAIR. Deal
+            # 799's replay printed "FULANO, brasileiro, engenheiro" with the
+            # signed contract reading "brasileiro, casado, engenheiro".
+            texto = texto_pessoa(a, em_nucleo=False, avulso=a.estado_civil == "casado")
+            textos.append(f"{texto}, {_residente(a)} na {endereco_texto(a.endereco)}")
             continue
         mesmo_endereco = endereco_texto(a.endereco) == endereco_texto(b.endereco)
         # [198] A flag-carried união estável prints each one's legal status.
         nucleo = not _uniao_com_estado_proprio(a, b)
+        # A couple agrees like any group: feminine plural only when BOTH are
+        # women ("casadas", "domiciliadas"), masculine plural otherwise.
+        so_mulheres = _g(a, "m", "f") == "f" and _g(b, "m", "f") == "f"
         if mesmo_endereco:
             ta, tb = texto_pessoa(a, em_nucleo=nucleo), texto_pessoa(b, em_nucleo=nucleo)
-            sufixo = f", residentes e domiciliados na {endereco_texto(a.endereco)}"
+            domiciliados = "domiciliadas" if so_mulheres else "domiciliados"
+            sufixo = f", residentes e {domiciliados} na {endereco_texto(a.endereco)}"
         else:
             ta = f"{texto_pessoa(a, em_nucleo=nucleo)}, {_residente(a)} na {endereco_texto(a.endereco)}"
             tb = f"{texto_pessoa(b, em_nucleo=nucleo)}, {_residente(b)} na {endereco_texto(b.endereco)}"
@@ -423,7 +433,8 @@ def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
             # unknown regime is refused, never printed as its raw enum.
             regime = REGIME_EXTENSO[a.regime_bens or ""]
             pacto = pacto_frase(pacto_do_casal(a, b))
-            textos.append(f"{ta}, e {tb}, casados no regime da {regime}{lei}{pacto}{sufixo}")
+            casados = "casadas" if so_mulheres else "casados"
+            textos.append(f"{ta}, e {tb}, {casados} no regime da {regime}{lei}{pacto}{sufixo}")
     return ", e ".join(textos)
 
 
@@ -638,6 +649,53 @@ def _forma(forma: Optional[str]) -> str:
     return " ".join(palavras)
 
 
+#: [Deal 799 replay, 2026-10-24] `forma_pagamento` is unbounded text since
+#: 2026-10-03, and "por meio de {forma}" assumes it names a MEANS ("PIX",
+#: "transferência bancária", "recursos de consórcio"). Typed as a CLAUSE —
+#: "pago aos intermediadores diretamente pelas COMPRADORAS" — it printed
+#: "por meio de pago aos intermediadores…". These lead words (accent-folded,
+#: lower case) are what a means never starts with: a participle/verb ("pago",
+#: "será", "deverá", "quitado"), a relative ("cujo", "que") or an adverb/
+#: reference ("diretamente", "conforme", "na forma"). Such a forma is NOT a
+#: means: printed bare after the moment, never after "por meio de" (aviso
+#: `FORMA_PAGAMENTO_NAO_E_MEIO`), and refused where an account must follow it
+#: (`derivacao._negociacao`).
+_FORMA_CLAUSULA_INICIOS = frozenset({
+    "pago", "paga", "pagos", "pagas", "pagar", "pagara", "pagarao", "pagando",
+    "sera", "serao", "deve", "devem", "devera", "deverao", "devido", "devida",
+    "quitado", "quitada", "quitados", "quitadas", "depositado", "depositada",
+    "repassado", "repassada", "realizado", "realizada", "efetuado", "efetuada",
+    "feito", "feita", "cujo", "cuja", "cujos", "cujas", "que", "diretamente",
+    "conforme", "na", "no", "nos", "nas",
+})
+
+#: A forma that already carries its own preposition ("via PIX", "mediante
+#: boleto", "através de transferência") is a means, printed as typed — never
+#: behind a second "por meio de" ("por meio de via PIX").
+_FORMA_PREPOSICIONADA = ("via ", "mediante ", "atraves ", "por meio ", "por ")
+
+
+def _forma_normalizada(forma: Optional[str]) -> str:
+    return fold_accents(" ".join((forma or "").split()).lower())
+
+
+def forma_e_clausula(forma: Optional[str]) -> bool:
+    """Does `forma_pagamento` read as a CLAUSE rather than a means? See
+    `_FORMA_CLAUSULA_INICIOS`."""
+    palavras = _forma_normalizada(forma).split(" ")
+    return bool(palavras[0]) and palavras[0] in _FORMA_CLAUSULA_INICIOS
+
+
+def por_meio_de(forma: Optional[str]) -> str:
+    """"por meio de <forma>" — or the forma alone when it is already
+    prepositioned ("mediante boleto") or is a clause (`forma_e_clausula`)."""
+    texto = _forma(forma)
+    folded = _forma_normalizada(forma) + " "
+    if forma_e_clausula(forma) or folded.startswith(_FORMA_PREPOSICIONADA):
+        return texto
+    return f"por meio de {texto}"
+
+
 def banco_texto(fav: Favorecido) -> str:
     texto = ""
     if fav.conta:
@@ -698,9 +756,9 @@ def _frase_favorecido(
     vendedor_favorecido: Optional[Pessoa],
 ) -> str:
     if repetido:
-        return f"por meio de {_forma(forma_pagamento)} na mesma conta corrente anteriormente informada"
+        return f"{por_meio_de(forma_pagamento)} na mesma conta corrente anteriormente informada"
     return (
-        f"por meio de {_forma(forma_pagamento)} a ser realizada "
+        f"{por_meio_de(forma_pagamento)} a ser realizada "
         f"{_em_favor_de(favorecido, vendedor_favorecido)}"
     )
 
@@ -773,7 +831,7 @@ def texto_parcela(
 
     if divisao_ref is not None:
         frases.append(
-            f"por meio de {_forma(p.forma_pagamento)} nas mesmas contas correntes e proporções "
+            f"{por_meio_de(p.forma_pagamento)} nas mesmas contas correntes e proporções "
             f"informadas na Parcela {divisao_ref}"
         )
     elif favorecido is not None and not dividida:
@@ -787,14 +845,16 @@ def texto_parcela(
         # [P5 F8] A parcela with no favorecido (aviso `PARCELA_SEM_FAVORECIDO`):
         # the forma alone, no account — corpus 783 "por meio de recursos de
         # consórcio imobiliário".
-        frases.append(f"por meio de {_forma(p.forma_pagamento)}")
+        # A clause-shaped forma ("pago aos intermediadores diretamente …")
+        # prints bare — `por_meio_de` never puts "por meio de" before it.
+        frases.append(por_meio_de(p.forma_pagamento))
     if juros_am is not None:
         frases.append(f"acrescidos de {pct_simples(juros_am)} de juros a.m., calculados pro rata die")
     if p.tipo == "sinal":
         frases.append(_quitacao_sinal(V, C, varias_contas=dividida or divisao_ref is not None))
     cabeca = " " + negrito(_CABECA_SINAL) if p.tipo == "sinal" else ""
     if dividida:
-        frases.append(f"por meio de {_forma(p.forma_pagamento)} a ser realizada da seguinte forma")
+        frases.append(f"{por_meio_de(p.forma_pagamento)} a ser realizada da seguinte forma")
         return f"{cabeca} " + ", ".join(frases) + ":"
     return f"{cabeca} " + ", ".join(frases) + "."
 
