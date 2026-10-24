@@ -1557,6 +1557,10 @@ def obter_selecao(
         "formatacao": [],
         "descricao_imovel": None,
         "permutas": [],
+        #: True when the saved selection's extraction belongs to a REMOVED
+        #: documento (`documento_removido`): the quote is withheld (never fed
+        #: to the generator) and the readiness gate blocks with a message.
+        "extracao_removida": False,
         "selecionado_por": None,
         "selecionado_em": None,
     }
@@ -1575,13 +1579,20 @@ def obter_selecao(
         return saida
 
     objeto = [r for r in todas if _papel(r) == PAPEL_OBJETO]
-    if objeto:
+    if objeto and _selecao_removida(client, org_id, objeto):
+        saida["extracao_removida"] = True
+    elif objeto:
         saida.update(_citacao(client, org_id, contrato_id, objeto, usuario_id))
     grupos: dict[str, list[dict]] = {}
     for row in todas:
         if _papel(row) == PAPEL_PERMUTA:
             grupos.setdefault(str(row["permuta_ativo_id"]), []).append(row)
     for permuta_ativo_id, rows in grupos.items():
+        if _selecao_removida(client, org_id, rows):
+            saida["permutas"].append(
+                {"permuta_ativo_id": permuta_ativo_id, "extracao_removida": True, "atos": [], "texto": ""}
+            )
+            continue
         saida["permutas"].append(
             {
                 "permuta_ativo_id": permuta_ativo_id,
@@ -1593,6 +1604,23 @@ def obter_selecao(
     saida["selecionado_por"] = table_reads.actor(resolved, todas[0].get("selecionado_por"))
     saida["selecionado_em"] = todas[0].get("created_at")
     return saida
+
+
+def _selecao_removida(client: Any, org_id: UUID, rows: list[dict]) -> bool:
+    """Is the extraction a saved selection group quotes from a removed
+    documento? (The group shares one extraction.)"""
+    extracao_id = rows[0].get("extracao_id")
+    if not extracao_id:
+        return False
+    rows_ext = (
+        _t(client, EXTRACOES_TABLE)
+        .select("imovel_documento_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(extracao_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows_ext) and documento_removido(client, org_id, rows_ext[0])
 
 
 def _descricao_imovel_bloco(

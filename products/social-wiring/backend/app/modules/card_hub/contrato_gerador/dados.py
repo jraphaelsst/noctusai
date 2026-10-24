@@ -480,6 +480,9 @@ class Matricula:
     codigo: Optional[str] = None
     texto: str = ""
     num_atos: int = 0
+    #: The saved selection's extraction belongs to a removed documento: the
+    #: quote is empty and `derivacao` blocks (`MATRICULA_REMOVIDA`).
+    extracao_removida: bool = False
     #: Bold/underline offsets into `texto` — already re-based by
     #: `obter_selecao` from the extraction's document-level `formatacao`
     #: onto this selection's own concatenated text (contract §5). Empty
@@ -559,6 +562,7 @@ class PermutaImovel:
     cartorio: Optional[str] = None
     #: How many acts this imóvel's quote is built from — 0 = no quote selected.
     num_atos: int = 0
+    extracao_removida: bool = False
     #: 🔴 [endereco-portaria-vs-imovel, migration 139] Same field, same rule
     #: as `Imovel.endereco_registro_texto` — the operator-confirmed short
     #: address the permuta posse clause prints. `None` is `faltando`.

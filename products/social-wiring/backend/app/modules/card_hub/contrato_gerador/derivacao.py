@@ -2048,7 +2048,12 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             "imovel",
         )
 
-    if d.matricula.num_atos == 0 or not d.matricula.texto.strip():
+    if d.matricula.extracao_removida:
+        av.bloqueia(
+            "MATRICULA_REMOVIDA",
+            "A matrícula escolhida para o contrato foi removida — escolha outra.",
+        )
+    elif d.matricula.num_atos == 0 or not d.matricula.texto.strip():
         av.falta("matricula.atos", "Atos da matrícula selecionados para o contrato", "matricula")
     elif d.matricula.codigo != im.codigo:
         av.bloqueia(
@@ -2787,7 +2792,12 @@ def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
         )
     for imovel in d.permuta_imoveis:
         alvo = f"negociacao.permuta.{imovel.permuta_ativo_id}"
-        if imovel.num_atos == 0 or not (imovel.descricao_matricula or "").strip():
+        if imovel.extracao_removida:
+            av.bloqueia(
+                "MATRICULA_REMOVIDA",
+                "A matrícula escolhida para o imóvel de permuta foi removida — escolha outra.",
+            )
+        elif imovel.num_atos == 0 or not (imovel.descricao_matricula or "").strip():
             av.falta(
                 f"matricula.permuta.{imovel.permuta_ativo_id}.atos",
                 "Atos da matrícula do imóvel dado em permuta selecionados para o contrato",

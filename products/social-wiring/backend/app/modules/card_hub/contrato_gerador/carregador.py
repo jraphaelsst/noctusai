@@ -650,6 +650,7 @@ def _permuta_imoveis(
                 matricula_numero=imovel_dados.get("numero_matricula"),
                 cartorio=imovel_dados.get("numero_registro_imoveis"),
                 num_atos=len(citacao.get("atos") or []),
+                extracao_removida=bool(citacao.get("extracao_removida")),
                 # Migration 139 — same operator-confirmed OVERRIDE as
                 # `Imovel.endereco_registro_texto`. Only reachable when this
                 # ativo IS a catalog imóvel (`codigo` set, same guard the
@@ -930,6 +931,7 @@ def carregar(
             codigo=selecao.get("codigo"),
             texto=selecao.get("texto") or "",
             num_atos=len(selecao.get("atos") or []),
+            extracao_removida=bool(selecao.get("extracao_removida")),
             formatacao=ranges_from_json(selecao.get("formatacao")),
             # Migration 136 — `None` (no `descricao_imovel` block for this
             # extraction) reads as `None` through both fields; `contexto.py`
