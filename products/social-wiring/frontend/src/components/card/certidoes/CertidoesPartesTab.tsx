@@ -35,6 +35,8 @@ import { mensagemDoErro } from "../mensagemDoErro";
 import { textoDaRecusa, useUploadDocumento } from "@noctusai/lib/upload-refusal";
 import { AntigosProprietariosPainel } from "./AntigosProprietariosPainel";
 import { podeReler } from "./certidoesCelula";
+import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ResultadoEditForm } from "@/components/ResultadoEditForm";
 import { ParteSecao } from "./ParteSecao";
 
@@ -292,6 +294,21 @@ export function CertidoesPartesTab(props: {
                 onRemover={setRemovendo}
                 onCienciaPcen={(resultadoId, acao) => ciencia.mutateAsync({ resultadoId, acao })}
               />
+                  {/* F98: an antigo is a `clientes` row like a vendedor — the SAME
+                      documents panel (Serasa Crednet slot, RG/CPF, CNH, CIN) so a
+                      Crednet read creates his participações and his companies
+                      reach the "ANT EMP" rows below. Mounted only while open. */}
+                  {t.grupo === "antigo_proprietario" && parte.kind === "pessoa" && parte.cliente_id && (
+                    <Collapsible className="rounded border px-3 py-1" data-testid={`antigo-documentos-${parte.chave}`}>
+                      <CollapsibleTrigger className="w-full py-1 text-left text-xs font-medium"
+                        data-testid={`antigo-documentos-toggle-${parte.chave}`}>
+                        Documentos e Serasa Crednet de {parte.nome}
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-2 pb-2">
+                        <PessoaDocumentosPanel clienteId={parte.cliente_id} />
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
                 </div>
               ))
             );
