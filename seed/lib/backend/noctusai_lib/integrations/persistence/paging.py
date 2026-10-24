@@ -51,7 +51,7 @@ Usage::
     ))
 
 Consumers: ``products/social-wiring/backend`` (``leads`` query pager,
-Meta + Grupo OLX backfills). Any new offset-paged read should compose
+Meta + Grupo OLX backfills), ``products/orbity/backend`` (the CRM funil board). Any new offset-paged read should compose
 this rather than hand-rolling the loop — see
 ``KB § PATTERNS/backend/postgrest-row-cap.md § Layer 2``.
 """

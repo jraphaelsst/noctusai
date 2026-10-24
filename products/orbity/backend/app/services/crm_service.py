@@ -21,6 +21,9 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from noctusai_lib.api.auth._blocking import run_parallel
+from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
 from app.services.lead_scoring import compute_score
 
 logger = logging.getLogger(__name__)
@@ -416,32 +419,44 @@ class CRMService:
     # Funil (kanban)
     # ------------------------------------------------------------------
 
+    def _funil_leads(self) -> list[dict[str, Any]]:
+        """Every live lead of the org, oldest first (``id`` breaks created_at ties so the pages
+        never overlap or skip)."""
+        try:
+            return list(iter_paged_rows(
+                lambda start, end: (
+                    self._t("leads")
+                    .select("id, name, email, phone, company, source, stage_id, temperature, "
+                            "qualification_score, value, owner_id, next_contact, tags, "
+                            "custom_fields, created_at, updated_at")
+                    .eq("org_id", self._org_id)
+                    .is_("deleted_at", "null")
+                    .order("created_at", desc=False)
+                    .order("id", desc=False)
+                    .range(start, end)
+                    .execute()
+                    .data
+                ),
+                label=f"crm funil leads org_id={self._org_id}",
+            ))
+        except Exception:
+            logger.exception("crm.get_funil: leads fetch failed org=%s", self._org_id)
+            raise
+
     def get_funil(self) -> list[dict[str, Any]]:
         """Return leads grouped by stage for kanban view.
 
         Each column: {stage, leads, count, total_value}
         Sorted by stage.position ascending.
+
+        The stages and the leads depend only on the org, so both reads are issued together (one
+        round trip of wall time, not two). The leads are read PAGED: PostgREST caps a response
+        at 1000 rows with no signal, which silently cut the board of a larger org
+        (``KB § PATTERNS/backend/postgrest-row-cap.md``).
         """
-        stages = self.list_stages()
+        stages, all_leads = run_parallel(self.list_stages, self._funil_leads)
         if not stages:
             return []
-
-        try:
-            leads_res = (
-                self._t("leads")
-                .select("id, name, email, phone, company, source, stage_id, temperature, "
-                        "qualification_score, value, owner_id, next_contact, tags, "
-                        "custom_fields, created_at, updated_at")
-                .eq("org_id", self._org_id)
-                .is_("deleted_at", "null")
-                .order("created_at", desc=False)
-                .execute()
-            )
-        except Exception:
-            logger.exception("crm.get_funil: leads fetch failed org=%s", self._org_id)
-            raise
-
-        all_leads = leads_res.data or []
 
         # Index by stage_id for O(n) grouping
         by_stage: dict[str, list[dict[str, Any]]] = {s["id"]: [] for s in stages}

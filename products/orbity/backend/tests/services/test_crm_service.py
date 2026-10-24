@@ -177,6 +177,41 @@ class TestFunil:
         _db, svc = _svc([])
         assert svc.get_funil() == []
 
+    def test_board_of_a_large_org_is_never_cut_at_the_row_cap(self):
+        """PostgREST answers at most 1000 rows per request; the board pages past it."""
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("lead_stages", [_stage("s-1", "Novo", 0)])
+        leads = [_lead(f"l-{i:05d}", "s-1", value=1.0) for i in range(2500)]
+        db.set_table_data("leads", leads)
+        (column,) = CRMService(db, org_id=ORG).get_funil()
+        assert column["count"] == 2500 and column["total_value"] == 2500.0
+
+    def test_stages_and_leads_are_one_round_trip(self):
+        import time
+
+        hop = 0.15
+
+        class _Slow:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def table(self, name):
+                time.sleep(hop)
+                return self._inner.table(name)
+
+            def __getattr__(self, item):
+                return getattr(self._inner, item)
+
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("lead_stages", [_stage("s-1", "Novo", 0)])
+        db.set_table_data("leads", [_lead("l-1", "s-1")])
+        svc = CRMService(_Slow(db), org_id=ORG)
+        svc.get_funil()  # warm the mock's migration caches outside the timing
+        t0 = time.monotonic()
+        (column,) = svc.get_funil()
+        assert column["count"] == 1
+        assert time.monotonic() - t0 < 1.8 * hop  # serial: stages then leads = 2 hops
+
 
 # ---------------------------------------------------------------------------
 # Default stage seeding (self-serve forward path — see
