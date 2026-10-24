@@ -52,6 +52,7 @@ from noctusai_lib.integrations.documents.matricula_atos import normalized_with_o
 from noctusai_lib.integrations.documents.nacionalidade import canonico as canonico_nacionalidade
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
 from noctusai_lib.integrations.documents.name import (
+    MAX_WORDS,
     find_name_conflitos,
     looks_like_a_name,
     nomes_compativeis,
@@ -122,6 +123,12 @@ class ConjugeLido:
     #: Set by the extractor (never by this module) when the caller's
     #: `TitularEsperado` hint selected this spouse.
     titular: bool = False
+    #: This spouse's (current) name is ALSO printed in the certidão's header
+    #: "Nomes:" list — read in two independent places of the same
+    #: transcription (`_ler_bloco_crc`). `releitura` accepts such a spouse
+    #: even when only ONE of two transcriptions produced it (the other read
+    #: was partial), never a spouse without it.
+    confirmado_cabecalho: bool = False
 
 
     @property
@@ -985,6 +992,379 @@ def _ler_rotulada(text: str) -> tuple[ConjugeLido, ...]:
     return tuple(out)
 
 
+# ─── The CRC national-model qualification block (F96, prod, 2026-10-24) ────
+#
+# 🔴 THE LAYOUT — real, a perfectly legible office photo of a national-model
+# certidão de casamento (CRC/CNJ standard): a header "Nomes: <A> / <B>"
+# (the CURRENT names) and "Matrícula", then ONE block
+#
+#   "Nomes completos, datas e locais de nascimento, nacionalidade e filiações
+#    dos cônjuges: <A>, nacionalidade brasileira, nascido em <cidade>, Estado
+#    do <UF>, a <data por extenso>, filho de <pai> e <mãe> -- <B solteira>,
+#    nacionalidade brasileira, nascida em ..., filha de ... --"
+#
+# then "Regime de bens", and "Nome que cada um dos cônjuges passou a utilizar:
+# O contraente permanecerá a usar o nome de <A>. A contraente passará a adotar
+# o nome de <B casada>." Both spouses' qualifications run together in ONE
+# paragraph separated by "--", and a photo transcription wraps lines anywhere
+# — mid-name included ("-- LUCIANA MARTINS\nSOUZA, nacionalidade"). Every
+# line-oriented reader above either declined it or (the `NOMES` label
+# collector) read one name, the next line's tail, or the couple's own
+# celebration date as a spouse's birth date. The defect it produced: the
+# primary read named "A + LUCIANA" (a name cut at a line break), the re-read
+# named only "A", the agreement gate found the two lists unequal and dropped
+# BOTH spouses — no spouse auto-link on a document that states everything.
+#
+# This reader parses the block as PROSE, never line by line: whitespace
+# (line breaks included) is collapsed first, so a name is never cut at a
+# wrap. A spouse's clause is located by its own grammar — a name-run that
+# ends at a comma followed by a qualification word (`nacionalidade`,
+# `brasileiro(a)`, `nascido(a)`, `natural de`) — so it works with the "--"
+# separator, a period, a blank line, or one clause per line alike. Exactly
+# two clauses, or `()`.
+#
+# The CURRENT name (what a contract signs against) comes from the adoption
+# clause — "passará a adotar / usar / assinar o nome de X", "permanecerá a
+# usar o nome de X" (deal 799 printed "usar", F96 "adotar") — attributed by
+# PRENOME first (a bride's married name keeps her first name), then by the
+# clause's own article ("O"/"A contraente"), then by position. When no
+# adoption clause states it, the header "Nomes:" line whose prenome matches
+# is the current name. A spouse whose final name is ALSO printed in that
+# header was read in two independent places of the same document:
+# `confirmado_cabecalho=True`, the evidence `releitura` accepts for a spouse
+# only one of two transcriptions produced.
+
+#: Opens the qualification block — "Nomes completos[ de solteiro], datas e
+#: locais de nascimento, nacionalidade e filiações dos cônjuges", any of the
+#: field lists cartórios print between "NOMES COMPLETOS" and "CONJUGES".
+_CRC_BLOCO_RE = re.compile(
+    r"\bNOMES?\s+COMPLETOS?\b[A-Z,\s]{0,200}?\bD[OA]S\s+CONJUGES\b\s*(?:\([^)]{0,60}\))?\s*[:\-]?\s*"
+)
+#: What closes the block — the couple's own facts start here.
+_CRC_FIM_BLOCO_RE = re.compile(
+    r"\b(?:DATA\s+D[AOE]\s+(?:REGISTRO\s+D[OA]\s+|CELEBRACAO\s+D[OA]\s+)?CASAMENTO|"
+    r"REGIME\s+DE\s+BENS|NOMES?\s+QUE\s+(?:CADA|O|A)\b|ANOTACO|AVERBACO|OBSERVACO|"
+    r"MATRICULA\b)"
+)
+#: The comma + qualification word that closes a spouse's name.
+_CRC_QUALIFICACAO_RE = re.compile(
+    r",\s*(?:DE\s+)?(?:NACIONALIDADE\b|BRASILEIR[OA]\b|ESTRANGEIR[OA]\b|NASCID[OA]\b|"
+    r"NATURAL\s+D[EOA]\b)"
+)
+#: A character that can never be inside a person's name — the backward
+#: name-run stops at it ("... e de MARIA PEREIRA -- LUCIANA", ".", ":", ...).
+_CRC_NAO_NOME_RE = re.compile(r"[^A-Z' ]")
+#: "nascido(a) em <cidade>" — the CRC model's place of birth.
+_CRC_NASCIDO_EM_RE = re.compile(r"\bNASCID[OA]\s+(?:EM|NA\s+CIDADE\s+DE|NO\s+MUNICIPIO\s+DE)\s+")
+#: The header "Nomes:" (also "Nome(s) atual(is) dos cônjuges"), never the
+#: block opener "Nomes completos ...".
+_CRC_CABECALHO_RE = re.compile(
+    r"(?m)^[ \t]*(?:NOMES|NOMES?\s+(?:ATUA(?:L|IS)\s+)?DOS\s+CONJUGES)[ \t]*(?::|$)"
+)
+#: The adoption clause. The subject is either "O/A contraente" (any of its
+#: spellings) or the spouse's own name ("FULANO, passará a usar o nome de X").
+_CRC_ADOCAO_RE = re.compile(
+    r"\b(?:(?P<art>[OA])\s+(?:CONTRA(?:ENTE|TANTE|TENTE|IENTE)|NUBENTE|CONJUGE)\s*,?\s*)?"
+    r"(?:PASSOU|PASSARA|PASSA|PERMANECE|PERMANECERA|PERMANECEU|CONTINUA|CONTINUARA|CONTINUOU)"
+    r"\s+A\s+(?:USAR|ADOTAR|UTILIZAR|ASSINAR)(?:-SE)?\s+O\s+(?P<mesmo>MESMO\s+)?NOME\b"
+    r"(?:\s+D[EO])?\s*[:\-]?\s*"
+)
+_CRC_SUJEITO_SEGUINTE_RE = re.compile(r"\b[OA]\s+(?:CONTRA(?:ENTE|TANTE|TENTE|IENTE)|NUBENTE)\b")
+
+
+def _prenome(nome: Optional[str]) -> str:
+    palavras = strip_accents_upper(nome or "").split()
+    return palavras[0] if palavras else ""
+
+
+def _colapsado(trecho: str) -> str:
+    return " ".join(trecho.split())
+
+
+def _crc_nome_antes(corpo: str, fim: int, prenomes: tuple[str, ...]) -> Optional[tuple[int, str]]:
+    """The spouse's name that ends at `fim` (a qualification comma), as
+    `(start, name)` — or `None`. `corpo` is the collapsed block body.
+
+    The name-run reaches back to the first non-name character; it is a
+    spouse's clause only when that character is a CLAUSE separator (block
+    start, "--", ".", ";", ":") — a run that stops at a plain comma is the
+    tail of some other phrase ("..., filho de JOSE PEREIRA, brasileiro").
+    When the transcription lost the separator (the run swallowed the previous
+    clause's tail, or stops at a comma), a header prenome inside the run is
+    where the name starts; with no such anchor, nothing."""
+    inicio = fim
+    while inicio > 0 and not _CRC_NAO_NOME_RE.match(corpo[inicio - 1]):
+        inicio -= 1
+    antes = corpo[:inicio].rstrip()
+    forte = not antes or antes[-1] in "-.;:\u2013\u2014"
+    palavras = corpo[inicio:fim].split()
+    if not forte or len(palavras) > MAX_WORDS:
+        ancora = next(
+            (k for k in range(len(palavras) - 1, -1, -1) if palavras[k] in prenomes), None
+        )
+        if ancora is None:
+            return None
+        palavras = palavras[ancora:]
+    while palavras and palavras[0] in _PARTICULAS_NOME:
+        palavras = palavras[1:]
+    nome = " ".join(palavras)
+    if not nome or not looks_like_a_name(nome):
+        return None
+    return (corpo.rfind(nome, inicio, fim), nome)
+
+
+def _crc_cabecalho(norm: str, ate: int) -> list[tuple[str, str]]:
+    """Every reading of the header "Nomes:" pair printed BEFORE the
+    qualification block — names one per line (or "A / B", "A e B" on one).
+
+    A CPF row (or its label) between names closes a name, so a name the
+    transcription wrapped onto two lines is re-joined within its group. With
+    no CPF rows to delimit them, a wrapped header has more than two lines;
+    every split into two contiguous names is returned and the caller keeps
+    the one whose prenomes match the qualification block. `[]` when the
+    header is absent or cannot hold two names."""
+    m = None
+    for achado in _CRC_CABECALHO_RE.finditer(norm, 0, ate):
+        m = achado
+    if m is None:
+        return []
+    grupos: list[list[str]] = [[]]
+    for bruta in norm[m.end() : ate].split("\n"):
+        linha = bruta.strip(" :\t-–—.|*")
+        if not linha or linha in ("E", "COM"):
+            continue
+        if _MATRICULA_LABEL_RE.match(linha) or _CRC_BLOCO_RE.match(linha):
+            break
+        if _CPF_RE.search(linha) or re.match(r"^(?:NUMERO\s+DO\s+)?CPF\b", linha):
+            if grupos[-1]:
+                grupos.append([])
+            continue
+        if " / " in linha:
+            partes = [p.strip() for p in linha.split(" / ") if p.strip()]
+        else:
+            par = None if looks_like_a_name(linha) else nomes_em_par(linha)
+            partes = list(par) if par else [linha]
+        if any(_CRC_NAO_NOME_RE.search(p) for p in partes):
+            break
+        if len(partes) > 1:
+            # Two names on ONE line are two complete names.
+            if grupos[-1]:
+                grupos.append([])
+            grupos[-1:] = [[p] for p in partes] + [[]]
+        else:
+            grupos[-1].append(linha)
+        if sum(len(g) for g in grupos) > 4:
+            return []
+    grupos = [g for g in grupos if g]
+    if len(grupos) == 2 and any(len(g) > 1 for g in grupos):
+        # CPF rows delimited the two names; a group's lines are ONE name.
+        nomes = (" ".join(grupos[0]), " ".join(grupos[1]))
+        return [nomes] if all(looks_like_a_name(n) for n in nomes) else []
+    linhas = [l for g in grupos for l in g]
+    return [
+        (" ".join(linhas[:k]), " ".join(linhas[k:]))
+        for k in range(1, len(linhas))
+        if looks_like_a_name(" ".join(linhas[:k])) and looks_like_a_name(" ".join(linhas[k:]))
+    ]
+
+
+def _crc_valor_adocao(norm: str, fim: int) -> Optional[str]:
+    """The adopted name after an adoption verb — up to the sentence end, the
+    NEXT spouse's adoption subject, or a blank line; line breaks INSIDE the
+    name are joined (never cut)."""
+    teto = min(len(norm), fim + 160)
+    cortes = [teto]
+    for padrao in (r"[.,;]", r"\n\s*\n", r"\(", r"\bE\s+[OA]\s+CONTRA"):
+        m = re.compile(padrao).search(norm, fim, teto)
+        if m:
+            cortes.append(m.start())
+    m = _CRC_SUJEITO_SEGUINTE_RE.search(norm, fim, teto)
+    if m:
+        cortes.append(m.start())
+    bruto = _colapsado(norm[fim : min(cortes)]).strip(_SEPARADORES_LOCAIS)
+    bruto = _sem_particula_inicial(bruto) if bruto else bruto
+    return bruto if bruto and looks_like_a_name(bruto) else None
+
+
+def _crc_adocoes(norm: str, desde: int) -> list[tuple[Optional[str], Optional[str], Optional[str]]]:
+    """Every adoption clause after the block: `(artigo O|A|None, sujeito
+    nomeado|None, nome adotado|None-quando-"o mesmo nome")`."""
+    out: list[tuple[Optional[str], Optional[str], Optional[str]]] = []
+    for m in _CRC_ADOCAO_RE.finditer(norm, desde):
+        sujeito = None
+        if m.group("art") is None:
+            # "FULANO DE TAL, passará a usar o nome de ..." — the subject is
+            # the name-run right before the verb on the same line.
+            inicio_linha = norm.rfind("\n", 0, m.start()) + 1
+            antes = norm[inicio_linha : m.start()].strip(" ,:")
+            sujeito = antes if antes and looks_like_a_name(antes) else None
+            if sujeito is None:
+                continue
+        adotado = None if m.group("mesmo") else _crc_valor_adocao(norm, m.end())
+        out.append((m.group("art"), sujeito, adotado))
+    return out
+
+
+def _crc_dados(seg_orig: str, seg_norm: str) -> dict:
+    """One spouse's per-person facts off their OWN clause."""
+    from noctusai_lib.integrations.documents.civil_status import _iter_datas
+    from noctusai_lib.integrations.documents.civil_status import normalize as _cs_normalize
+    from noctusai_lib.integrations.documents.filiacao import _naturalidade_do_valor
+
+    dados: dict = {}
+    datas = sorted(_iter_datas(_cs_normalize(seg_orig)), key=lambda p: p[0])
+    distintas = {d for _, d in datas}
+    if len(distintas) == 1:
+        # "nascido(a) ... a <data>" inside THIS spouse's own clause: the
+        # clause is the label. Two DIFFERENT dates in one clause is a layout
+        # this reader cannot attribute — nothing, never a guess.
+        dados.update(data_nascimento=datas[0][1], data_nascimento_confianca="media")
+    nac, nac_conf, _ = find_nacionalidade(seg_orig)
+    if nac is None:
+        nac, nac_conf = _nacionalidade_da_qualificacao(seg_orig)
+    if nac:
+        dados.update(nacionalidade=nac, nacionalidade_confianca=_no_maximo_media(nac_conf))
+    prof, prof_conf, _ = find_profissao(seg_orig)
+    if prof:
+        dados.update(profissao=prof, profissao_confianca=_no_maximo_media(prof_conf))
+    gen, gen_conf = _genero(seg_norm)
+    dados.update(genero=gen, genero_confianca=gen_conf)
+    for chave, (valor, conf) in ler_trecho(seg_orig).items():
+        dados[chave] = valor
+        dados[f"{chave}_confianca"] = conf
+    if "naturalidade" not in dados:
+        norm_seg, origem_seg = normalized_with_offsets(seg_orig)
+        m = _CRC_NASCIDO_EM_RE.search(norm_seg)
+        if m:
+            nat = _naturalidade_do_valor(norm_seg, seg_orig, origem_seg, m.end())
+            if nat:
+                dados.update(naturalidade=_colapsado(nat), naturalidade_confianca="media")
+    return dados
+
+
+def _ler_bloco_crc(text: str) -> tuple[ConjugeLido, ...]:
+    """Both spouses of the CRC national-model "Nomes completos ... dos
+    cônjuges" prose block — see the section header above. `()` unless the
+    block holds exactly two name-shaped clauses."""
+    norm, origem = normalized_with_offsets(text)
+    m = _CRC_BLOCO_RE.search(norm)
+    if m is None:
+        return ()
+    fim_m = _CRC_FIM_BLOCO_RE.search(norm, m.end())
+    fim_bloco = fim_m.start() if fim_m else min(len(norm), m.end() + 2 * _SEGMENTO_MAX)
+    # Collapsed body + a map back to `norm` offsets, so each clause can be
+    # sliced out of the ORIGINAL text for the sibling finders.
+    corpo_chars: list[str] = []
+    corpo_pos: list[int] = []
+    anterior_espaco = True
+    for i in range(m.end(), fim_bloco):
+        c = norm[i]
+        if c.isspace():
+            if anterior_espaco:
+                continue
+            c = " "
+            anterior_espaco = True
+        else:
+            anterior_espaco = False
+        corpo_chars.append(c)
+        corpo_pos.append(i)
+    corpo = "".join(corpo_chars)
+    leituras_cabecalho = _crc_cabecalho(norm, m.start())
+    prenomes = tuple(dict.fromkeys(_prenome(n) for par in leituras_cabecalho for n in par))
+
+    clausulas: list[tuple[int, str]] = []  # (corpo offset of the name, name)
+    for q in _CRC_QUALIFICACAO_RE.finditer(corpo):
+        achado = _crc_nome_antes(corpo, q.start(), prenomes)
+        if achado is None:
+            continue
+        if clausulas and achado[0] < clausulas[-1][0] + len(clausulas[-1][1]):
+            continue
+        clausulas.append(achado)
+    if len(clausulas) != 2:
+        return ()
+
+    # The header reading whose prenomes match the block's two clauses (a
+    # wrapped header may split more than one way).
+    alvo = {_prenome(n) for _, n in clausulas}
+    casam = [par for par in leituras_cabecalho if {_prenome(n) for n in par} == alvo]
+    cabecalho: tuple[str, ...] = casam[0] if len(casam) == 1 else ()
+
+    lidos: list[ConjugeLido] = []
+    for k, (ini, nome) in enumerate(clausulas):
+        fim_seg = clausulas[k + 1][0] if k == 0 else len(corpo)
+        a = corpo_pos[ini + len(nome)] if ini + len(nome) < len(corpo_pos) else fim_bloco
+        b = corpo_pos[fim_seg - 1] + 1 if fim_seg > 0 else fim_bloco
+        # The clause separator ("--") is not part of the clause: a parent's
+        # name must end at the clause's own end, not run into the dashes.
+        # Collapsed: a line wrap inside "filha de PAULO SOUZA\ne de ANA ..." is
+        # not a clause end for the sibling finders.
+        seg_orig = _colapsado(text[origem[a] : origem[b - 1] + 1] if b > a else "").rstrip(
+            " -\u2013\u2014"
+        )
+        dados = _crc_dados(seg_orig, _colapsado(norm[a:b])) if seg_orig else {}
+        lidos.append(ConjugeLido(nome=nome, **dados))
+
+    # The CURRENT names: adoption clause first, header second.
+    atuais: list[Optional[str]] = [None, None]
+    sem_mudanca = [False, False]
+    for artigo, sujeito, adotado in _crc_adocoes(norm, fim_bloco):
+        idx: Optional[int] = None
+        if sujeito is not None:
+            casados = [i for i, c in enumerate(lidos) if nomes_compativeis(sujeito, c.nome)]
+            idx = casados[0] if len(casados) == 1 else None
+        if idx is None and adotado:
+            mesmos = [i for i, c in enumerate(lidos) if _prenome(c.nome) == _prenome(adotado)]
+            idx = mesmos[0] if len(mesmos) == 1 else None
+        if idx is None and artigo is not None:
+            genero = MASCULINO if artigo == "O" else FEMININO
+            por_genero = [i for i, c in enumerate(lidos) if c.genero == genero]
+            if len(por_genero) == 1:
+                idx = por_genero[0]
+            elif not any(c.genero for c in lidos):
+                idx = 0 if artigo == "O" else 1
+        if idx is None or atuais[idx] is not None or sem_mudanca[idx]:
+            continue
+        if adotado is None:
+            sem_mudanca[idx] = True
+        else:
+            atuais[idx] = adotado
+    for i, c in enumerate(lidos):
+        if atuais[i] is None and not sem_mudanca[i] and cabecalho:
+            mesmos = [h for h in cabecalho if _prenome(h) == _prenome(c.nome)]
+            if len(mesmos) == 1:
+                atuais[i] = mesmos[0]
+
+    chaves_cab = {strip_accents_upper(h) for h in cabecalho}
+    out: list[ConjugeLido] = []
+    for i, c in enumerate(lidos):
+        atual = atuais[i]
+        if atual and strip_accents_upper(atual) != strip_accents_upper(c.nome):
+            c = replace(c, nome=atual, nome_anterior=c.nome)
+        out.append(replace(c, confirmado_cabecalho=strip_accents_upper(c.nome) in chaves_cab))
+
+    # CPFs: the header lists each name with its CPF ("NOMES: X / CPF: ..."),
+    # the same adjacency `_ler_rotulada` reads — tried on the current names,
+    # then on the names as the qualification block printed them.
+    cpfs = [
+        (mc.start(), format_cpf(mc.group(1)))
+        for mc in _CPF_RE.finditer(norm)
+        if is_valid(mc.group(1)) and not _e_valor_de_matricula(norm, mc.start())
+    ]
+    if cpfs:
+        for par in (
+            (out[0].nome, out[1].nome),
+            (out[0].nome_anterior or out[0].nome, out[1].nome_anterior or out[1].nome),
+        ):
+            achados = _cpfs_por_adjacencia(norm, par, cpfs)
+            if any(achados):
+                out = [
+                    replace(c, cpf=cpf, cpf_confianca="alta") if cpf and not c.cpf else c
+                    for c, cpf in zip(out, achados)
+                ]
+                break
+    return tuple(out)
+
+
 # ─── The ANCHORED fallback (P2 corpus, 2026-09-29) ─────────────────────────
 #
 # The three readers above all depend on the SAME transcription run surfacing
@@ -1381,7 +1761,9 @@ def _find_conjuges_bruto(
     text: str, *, esperados: tuple[str, ...] = ()
 ) -> tuple[ConjugeLido, ...]:
     esperados = tuple(e for e in esperados if _nome_de_pessoa_plausivel(e))
-    for leitor in (_ler_bloco_estruturado, _ler_narrativa_matrimonio, _ler_rotulada):
+    for leitor in (
+        _ler_bloco_estruturado, _ler_bloco_crc, _ler_narrativa_matrimonio, _ler_rotulada
+    ):
         lido = leitor(text or "")
         if not lido:
             continue

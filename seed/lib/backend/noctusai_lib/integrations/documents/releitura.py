@@ -32,8 +32,9 @@ RG-loses, implausible-name-loses) were whack-a-mole. The rule is now:
 
 1. CRITICAL fields (`CAMPOS_CRITICOS`: nome, cpf, rg(+órgão), rne, data_
    nascimento, estado_civil, regime_bens, data_casamento; the spouses'
-   names; the certidão matrícula) are emitted only when TWO independent
-   transcriptions agree after normalisation. The escalated re-read therefore
+   names — matched per PERSON by identity, never as one list, see
+   `_decidir_conjuges`; the certidão matrícula) are emitted only when TWO
+   independent transcriptions agree after normalisation. The escalated re-read therefore
    ALWAYS runs for such documents (`deve_escalar`).
 2. A CPF / certidão matrícula whose check digit verifies may stand alone.
 3. On disagreement (or a reading only one read produced): NO value; every
@@ -78,7 +79,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from noctusai_lib.integrations.documents.legibilidade import AVISO_LEITURA_COMPROMETIDA
-from noctusai_lib.integrations.documents.name import chave_nome
+from noctusai_lib.integrations.documents.name import chave_nome, nomes_compativeis
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.documents.types import (
     CAMPOS,
@@ -488,6 +489,167 @@ def _texto_conjuges(leitura: IdentityFields) -> str:
     return " / ".join(c.nome for c in leitura.conjuges if c.nome)
 
 
+# ─── Spouses: agreement by IDENTITY, never by string equality ─────────────
+#
+# 🔴 F96 (prod, 2026-10-24): a legible certidão's primary read named "A +
+# LUCIANA" (the second name cut at a line break), the re-read named only "A";
+# the gate compared the two NAME SETS for equality, found them unequal, and
+# dropped BOTH spouses — including "A", on which the two reads AGREED. A
+# list is not a field: each spouse is a person, matched across reads by who
+# they are (normalised name, incl. the maiden/married forms either read
+# printed, plus the birth date when both reads have one), and only what
+# genuinely conflicts goes to review.
+
+#: Per-person facts compared between two reads of the SAME spouse; a
+#: difference is a conflict for review, never resolved by picking a side.
+_CAMPOS_CONJUGE_CONFLITO: tuple[str, ...] = ("cpf", "data_nascimento")
+#: Per-person facts a matched spouse may take from the other read when its
+#: own read left them empty (the person is corroborated; the gap is not a
+#: disagreement).
+_CAMPOS_CONJUGE_LACUNA: tuple[str, ...] = (
+    "nome_anterior", "cpf", "data_nascimento", "nacionalidade", "profissao",
+    "genero", "rg", "rg_orgao", "nome_mae", "nome_pai", "naturalidade",
+)
+
+
+def _nomes_do_conjuge(c: Any) -> list[str]:
+    return [n for n in (c.nome, c.nome_anterior) if n]
+
+
+def _mesma_pessoa(a: Any, b: Any) -> bool:
+    """Do two reads' spouse entries name the SAME person?
+
+    Equal normalised name (current or maiden form, on either side) -> yes.
+    Otherwise the same prenome AND word-containment (`nomes_compativeis` — a
+    fuller transcription of the same name), unless both reads carry a birth
+    date and the dates differ. A one-word fragment ("LUCIANA") is never an
+    identity — `nomes_compativeis` needs two significant words."""
+    na, nb = _nomes_do_conjuge(a), _nomes_do_conjuge(b)
+    if any(chave_nome(x) == chave_nome(y) for x in na for y in nb):
+        return True
+    compat = any(
+        chave_nome(x).split()[:1] == chave_nome(y).split()[:1] and nomes_compativeis(x, y)
+        for x in na for y in nb
+    )
+    if not compat:
+        return False
+    return not (a.data_nascimento and b.data_nascimento and a.data_nascimento != b.data_nascimento)
+
+
+def _parear_conjuges(
+    xs: tuple[Any, ...], ys: tuple[Any, ...]
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+    """One-to-one matching `(pares, sobra_x, sobra_y)` — exact-name pairs
+    first, then the looser identity rule, each spouse used once."""
+    pares: list[tuple[int, int]] = []
+    usados_y: set[int] = set()
+    for exato in (True, False):
+        for i, x in enumerate(xs):
+            if any(i == p for p, _ in pares):
+                continue
+            for j, y in enumerate(ys):
+                if j in usados_y:
+                    continue
+                igual = any(
+                    chave_nome(a) == chave_nome(b)
+                    for a in _nomes_do_conjuge(x) for b in _nomes_do_conjuge(y)
+                )
+                if (igual if exato else _mesma_pessoa(x, y)):
+                    pares.append((i, j))
+                    usados_y.add(j)
+                    break
+    feitos_x = {i for i, _ in pares}
+    return (
+        sorted(pares),
+        [i for i in range(len(xs)) if i not in feitos_x],
+        [j for j in range(len(ys)) if j not in usados_y],
+    )
+
+
+def conjuges_concordam(a: IdentityFields, b: IdentityFields) -> bool:
+    """Do two reads name the SAME spouses (identity, not string equality)?"""
+    if not a.conjuges or not b.conjuges or len(a.conjuges) != len(b.conjuges):
+        return False
+    _, sobra_a, sobra_b = _parear_conjuges(a.conjuges, b.conjuges)
+    return not sobra_a and not sobra_b
+
+
+def _fundir_conjuge(x: Any, y: Any) -> tuple[Any, list[str]]:
+    """One corroborated spouse out of two reads of them: the fuller name
+    (word-containment already established it is the same name), gaps filled
+    from the other read, and any per-person fact the two reads state
+    DIFFERENTLY emptied — returned as `"campo: a ≠ b"` for review."""
+    base, outro = (x, y)
+    if len(chave_nome(y.nome)) > len(chave_nome(x.nome)) and not x.nome_anterior:
+        base, outro = (y, x)
+    upd: dict[str, Any] = {}
+    conflitos: list[str] = []
+    for campo in _CAMPOS_CONJUGE_CONFLITO:
+        va, vb = getattr(base, campo), getattr(outro, campo)
+        if va and vb and not _mesmo_valor(campo, va, vb):
+            upd[campo] = None
+            upd[f"{campo}_confianca"] = "nenhuma"
+            conflitos.append(f"{campo} {_como_texto(va)} ≠ {_como_texto(vb)}")
+    for campo in _CAMPOS_CONJUGE_LACUNA:
+        if campo in upd or getattr(base, campo):
+            continue
+        valor = getattr(outro, campo)
+        if not valor:
+            continue
+        upd[campo] = valor
+        conf = f"{campo}_confianca"
+        if hasattr(outro, conf):
+            upd[conf] = getattr(outro, conf)
+        if campo == "genero":
+            upd["genero_derivado"] = outro.genero_derivado
+    if outro.confirmado_cabecalho and not base.confirmado_cabecalho:
+        upd["confirmado_cabecalho"] = True
+    return (replace(base, **upd) if upd else base), conflitos
+
+
+def _decidir_conjuges(
+    validas: list[IdentityFields],
+) -> tuple[Optional[tuple[Any, ...]], list[str]]:
+    """`(conjuges_estabelecidos | None, leituras_para_revisao)`.
+
+    Over the best-matching pair of VALID reads: every spouse both reads name
+    (by identity) is established, merged (`_fundir_conjuge`); a spouse only
+    ONE read names is kept when that read itself printed them twice — the
+    certidão's header "Nomes:" list AND the qualification block
+    (`ConjugeLido.confirmado_cabecalho`) — else withheld for review; a
+    per-person fact the reads state differently is emptied for review.
+    `None` when no spouse is corroborated at all (fewer than two valid reads
+    naming spouses, or no spouse in common)."""
+    com = [l for l in validas if l.conjuges]
+    melhor: Optional[tuple[int, IdentityFields, IdentityFields, Any]] = None
+    for i in range(len(com)):
+        for j in range(i + 1, len(com)):
+            x, y = com[i], com[j]
+            # The read naming more spouses leads (its order is kept).
+            if len(y.conjuges) > len(x.conjuges):
+                x, y = y, x
+            pareio = _parear_conjuges(x.conjuges, y.conjuges)
+            if pareio[0] and (melhor is None or len(pareio[0]) > melhor[0]):
+                melhor = (len(pareio[0]), x, y, pareio)
+    if melhor is None:
+        return None, []
+    _, x, y, (pares, sobra_x, sobra_y) = melhor
+    revisao: list[str] = []
+    out: list[Any] = []
+    casados = dict(pares)
+    for i, cx in enumerate(x.conjuges):
+        if i in casados:
+            fundido, conflitos = _fundir_conjuge(cx, y.conjuges[casados[i]])
+            out.append(fundido)
+            revisao += [f"{fundido.nome}: {c}" for c in conflitos]
+        elif cx.confirmado_cabecalho and len(x.conjuges) <= 2:
+            out.append(cx)
+        else:
+            revisao.append(cx.nome)
+    revisao += [y.conjuges[j].nome for j in sobra_y]
+    return tuple(out), revisao
+
+
 def _portao(leituras: list[IdentityFields], *, modelo: Optional[str]) -> IdentityFields:
     """The agreement gate over every read of ONE document (the cheap read
     first). Pure; see `mesclar`."""
@@ -520,19 +682,16 @@ def _portao(leituras: list[IdentityFields], *, modelo: Optional[str]) -> Identit
             updates.update(_limpar(campo))
             divergentes.append((campo, tuple(outros)))
 
-    # Spouses: the names must agree between two valid reads.
+    # Spouses: matched by IDENTITY between two valid reads (`_decidir_conjuges`).
     if any(l.conjuges for l in leituras):
-        grupos: list[list[IdentityFields]] = []
-        for l in (v for v in validas if v.conjuges):
-            for g in grupos:
-                if _chaves_conjuges(g[0]) == _chaves_conjuges(l):
-                    g.append(l)
-                    break
+        conjuges_ok, revisao = _decidir_conjuges(validas)
+        if conjuges_ok is not None:
+            updates["conjuges"] = conjuges_ok
+            if revisao:
+                anotar("conjuges", revisao)
+                divergentes.append(("conjuges", tuple(revisao)))
             else:
-                grupos.append([l])
-        concordes = [g for g in grupos if len(g) >= 2]
-        if concordes:
-            updates["conjuges"] = max(concordes, key=len)[0].conjuges
+                estabelecidos.append("conjuges")
         else:
             updates["conjuges"] = ()
             textos = [

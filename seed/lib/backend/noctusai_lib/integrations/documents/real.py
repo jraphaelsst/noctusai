@@ -1389,7 +1389,7 @@ def _resumo(
         acordo: Optional[bool] = None
         if lida_fallback is not None and tem(primaria) and tem(lida_fallback):
             if campo == "conjuges":
-                acordo = releitura._chaves_conjuges(primaria) == releitura._chaves_conjuges(lida_fallback)
+                acordo = releitura.conjuges_concordam(primaria, lida_fallback)
             else:
                 acordo = releitura._mesmo_valor(
                     campo, getattr(primaria, campo), getattr(lida_fallback, campo)
