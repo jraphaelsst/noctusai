@@ -10,7 +10,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { ErrorBoundary, ConfirmProvider, createAuthProvider, SSOCallback, env } from "@noctusai/lib";
+import { ErrorBoundary, ConfirmProvider, createAuthProvider, useAuthReconnecting, SSOCallback, env } from "@noctusai/lib";
 import { createQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
@@ -270,9 +270,23 @@ export function createProductApp(config: ProductAppConfig) {
   function AppContent() {
     const { user, isInitialized } = useAuth();
     const location = useLocation();
+    const reconnecting = useAuthReconnecting();
 
     if (!isInitialized) {
-      return <PageSkeleton />;
+      return (
+        <>
+          {reconnecting && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="fixed top-0 inset-x-0 z-50 bg-amber-100 text-amber-900 text-sm text-center py-1"
+            >
+              Reconectando…
+            </div>
+          )}
+          <PageSkeleton />
+        </>
+      );
     }
 
     if (!user) {

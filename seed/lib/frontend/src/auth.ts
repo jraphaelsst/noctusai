@@ -28,6 +28,7 @@ import type { User } from '@supabase/supabase-js';
 import { env } from './env';
 import { dropProductCookieSession, goTrueSessionId, verifySessionWithServer } from './identity';
 import { isTransientHttpStatus, refreshWithBackoff, type RefreshAttempt, type RefreshWithBackoffOptions } from './api';
+import { autoRetryDelayMs } from './retry';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -66,6 +67,94 @@ export function useAuthReady(): boolean {
     };
   }, []);
   return ready;
+}
+
+// ---------------------------------------------------------------------------
+// Boot "reconnecting" signal + the ONE boot verdict (F74, prod 2026-10-24)
+// ---------------------------------------------------------------------------
+//
+// A page load that lands in the few seconds of a container swap / tunnel
+// restart (502 / 530 / network error) must NEVER be read as "not signed in":
+// that sent a logged-in tab to the public Landing although the stored session
+// was intact and GoTrue had logged nothing. Boot has exactly three outcomes:
+//   `user`      -- a session was restored
+//   `none`      -- the auth server ANSWERED that there is no session (-> login)
+//   `transient` -- it could not be asked (-> stay on the skeleton, show
+//                  "Reconectando...", retry paced by the canonical schedule)
+// `transient` never reaches `setUser(null)` / `setInitialized()`.
+export type BootVerdict<U> = { kind: 'user'; user: U } | { kind: 'none' } | { kind: 'transient' };
+
+let _authReconnecting = false;
+const _reconnectingListeners = new Set<(r: boolean) => void>();
+
+function setAuthReconnecting(value: boolean): void {
+  if (_authReconnecting === value) return;
+  _authReconnecting = value;
+  _reconnectingListeners.forEach((fn) => fn(value));
+}
+
+/** True while boot could not reach the auth server and is retrying (show "Reconectando..."). */
+export function useAuthReconnecting(): boolean {
+  const [reconnecting, setReconnecting] = useState(_authReconnecting);
+  useEffect(() => {
+    setReconnecting(_authReconnecting);
+    _reconnectingListeners.add(setReconnecting);
+    return () => {
+      _reconnectingListeners.delete(setReconnecting);
+    };
+  }, []);
+  return reconnecting;
+}
+
+/**
+ * Run a boot restore until it yields a DEFINITIVE verdict. A `transient` result
+ * is retried forever on the canonical schedule (1s, 3s, 9s, then every 9s) --
+ * boot cannot conclude "signed out" from an unanswered question.
+ */
+async function resolveBootVerdict<U>(
+  attempt: () => Promise<BootVerdict<U>>,
+  isDisposed: () => boolean,
+): Promise<BootVerdict<U> | null> {
+  for (let i = 0; ; i++) {
+    let verdict: BootVerdict<U>;
+    try {
+      verdict = await attempt();
+    } catch {
+      verdict = { kind: 'transient' };
+    }
+    if (isDisposed()) return null;
+    if (verdict.kind !== 'transient') {
+      setAuthReconnecting(false);
+      return verdict;
+    }
+    setAuthReconnecting(true);
+    await new Promise((r) => setTimeout(r, autoRetryDelayMs(i)));
+    if (isDisposed()) return null;
+  }
+}
+
+/** Classify ONE supabase `getSession()` result at boot. */
+export function classifyBootSession(res: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data?: { session?: any } | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  error?: any;
+}): BootVerdict<User> {
+  const session = res?.data?.session;
+  if (session) return { kind: 'user', user: session.user ?? null };
+  const error = res?.error;
+  if (!error) return { kind: 'none' };
+  const status: number | undefined = typeof error.status === 'number' ? error.status : undefined;
+  // supabase-js returns `session: null` + AuthRetryableFetchError when the
+  // refresh of an expired access token could not reach GoTrue: not a verdict.
+  if (error.name === 'AuthRetryableFetchError' || isTransientHttpStatus(status)) return { kind: 'transient' };
+  return { kind: 'none' };
+}
+
+/** Classify the cookie-session `GET /api/auth/me` boot answer. */
+export function classifyBootMeStatus(status: number): 'ok' | 'none' | 'transient' {
+  if (status >= 200 && status < 300) return 'ok';
+  return isTransientHttpStatus(status) ? 'transient' : 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -327,11 +416,16 @@ export function useSupabaseAuthInit(
       if (!disposed) setUser(null);
     };
 
-    supabase.auth.getSession().then(({ data: { session } }: { data: { session: any } }) => {
-      setUser(session?.user ?? null);
+    void resolveBootVerdict<User>(
+      async () => classifyBootSession(await supabase.auth.getSession()),
+      () => disposed,
+    ).then((verdict) => {
+      if (!verdict) return;
+      const user = verdict.kind === 'user' ? verdict.user : null;
+      setUser(user);
       setInitialized?.();
       markAuthReady();
-      if (session) void verify();
+      if (verdict.kind === 'user') void verify();
     });
 
     const {
@@ -446,34 +540,33 @@ export function useSessionAuthInit(
     }
 
     let cancelled = false;
-    fetch('/api/auth/me', {
-      method: 'GET',
-      credentials: 'include',
-      headers: { Accept: 'application/json' },
-    })
-      .then(async (res) => {
-        if (cancelled) return;
-        if (res.ok) {
-          const data: SessionAuthData = await res.json();
-          setUser(data.user);
-        } else {
-          // 401 (auth required) is the expected "no session" path; any
-          // other error also collapses to "no user" so the UI renders
-          // the Landing/Login flow rather than spinning forever.
-          setUser(null);
+    void resolveBootVerdict<SessionUser>(
+      async () => {
+        try {
+          const res = await fetch('/api/auth/me', {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Accept: 'application/json' },
+          });
+          const kind = classifyBootMeStatus(res.status);
+          if (kind === 'ok') {
+            const data: SessionAuthData = await res.json();
+            return { kind: 'user', user: data.user };
+          }
+          // 401/403 is the expected "no session" path; 5xx/52x/408/429 is the
+          // edge or backend mid-swap -- transient, never "signed out".
+          return { kind };
+        } catch {
+          return { kind: 'transient' }; // no response (network drop / timeout)
         }
-      })
-      .catch(() => {
-        // Network failure: treat as "no session" so the boot completes.
-        // The user can retry login; data hooks gating on `useAuthReady`
-        // stop deferring.
-        if (!cancelled) setUser(null);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setInitialized?.();
-        markAuthReady();
-      });
+      },
+      () => cancelled,
+    ).then((verdict) => {
+      if (!verdict) return;
+      setUser(verdict.kind === 'user' ? verdict.user : null);
+      setInitialized?.();
+      markAuthReady();
+    });
 
     return () => {
       cancelled = true;

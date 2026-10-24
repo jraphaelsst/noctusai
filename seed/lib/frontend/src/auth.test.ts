@@ -76,15 +76,17 @@ describe('useSessionAuthInit', () => {
     expect(setInitialized).toHaveBeenCalledTimes(1);
   });
 
-  it('network failure → setUser(null) + still resolves init/ready (no spinner forever)', async () => {
+  it('network failure → NOT signed out (F74): stays booting, retries, then restores', async () => {
     fetchSpy.mockRejectedValueOnce(new TypeError('network down'));
+    fetchSpy.mockResolvedValueOnce(makeResponse(200, fakePayload));
     const setUser = vi.fn();
     const setInitialized = vi.fn();
 
     renderHook(() => useSessionAuthInit(setUser, setInitialized));
 
-    await waitFor(() => expect(setInitialized).toHaveBeenCalled());
-    expect(setUser).toHaveBeenCalledWith(null);
+    await waitFor(() => expect(setUser).toHaveBeenCalledWith(fakeUser), { timeout: 3000 });
+    expect(setUser).not.toHaveBeenCalledWith(null);
+    expect(setInitialized).toHaveBeenCalledTimes(1);
   });
 
   it('setInitialized is optional — boot completes without it', async () => {

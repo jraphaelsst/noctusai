@@ -34,7 +34,7 @@ export { hasOrgVisitMarker, getOrgVisitOrg, markOrgVisit, clearOrgVisitMarker, b
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth
-export { useSupabaseAuthInit, useAuthReady, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler, IDENTITY_CHECK_THROTTLE_MS } from './auth';
+export { useSupabaseAuthInit, useAuthReady, useAuthReconnecting, classifyBootSession, classifyBootMeStatus, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler, IDENTITY_CHECK_THROTTLE_MS } from './auth';
 export { clearLocalIdentity, dropProductCookieSession, isAuthRejection, verifySessionWithServer } from './identity';
 
 // SSO
