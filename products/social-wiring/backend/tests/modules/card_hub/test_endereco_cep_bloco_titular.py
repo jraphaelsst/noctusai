@@ -174,3 +174,66 @@ class TestLerNovamente:
             documento_id=UUID(did), cep_lookup=_ceps(),
         )
         assert _cliente(scoped, cid)["endereco_cidade"] == "São Paulo"
+
+
+class TestARereadThatNoLongerSupportsTheAddressWithdrawsIt:
+    """F82 round 2 (prod): the fixed reader's "Ler novamente" read nothing,
+    and the wrong address a pre-fix read of THAT document applied stood."""
+
+    def _aplicado_por(self, scoped, did: str, **extra) -> str:
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep=CEP_REMETENTE, endereco_logradouro="Estrada Municipal Vale Dourado",
+            endereco_numero="512", endereco_bairro="Vila Exemplo", endereco_bairro_origem="cep",
+            endereco_cidade="São Paulo", endereco_uf="SP",
+            endereco_origem="comprovante_endereco", endereco_documento_id=did, **extra,
+        )])
+        return cid
+
+    @pytest.mark.asyncio
+    async def test_a_reread_with_no_address_clears_the_group_it_applied(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        cid = self._aplicado_por(scoped, did)
+        await _extrair(scoped, storage, cid, did, _comprovante(None), cep_lookup=_ceps())
+        row = _cliente(scoped, cid)
+        for p in ("cep", "logradouro", "numero", "bairro", "cidade", "uf"):
+            assert row.get(f"endereco_{p}") is None
+        assert row.get("endereco_documento_id") is None
+        assert row.get("endereco_bairro_origem") is None
+
+    @pytest.mark.asyncio
+    async def test_a_held_back_reread_clears_it_too(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        cid = self._aplicado_por(scoped, did)
+        await _extrair(
+            scoped, storage, cid, did,
+            _comprovante(_leitura(cep=CEP_REMETENTE, cidade="Vila Exemplo - São Paulo")),
+            cep_lookup=_ceps(),
+        )
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_group_is_never_withdrawn(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        cid = self._aplicado_por(
+            scoped, did, endereco_confirmado_por=str(uuid4()),
+            endereco_confirmado_em="2026-10-20T00:00:00+00:00",
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante(None), cep_lookup=_ceps())
+        assert _cliente(scoped, cid)["endereco_cep"] == CEP_REMETENTE
+
+    @pytest.mark.asyncio
+    async def test_another_documents_group_is_never_withdrawn(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        cid = self._aplicado_por(scoped, str(uuid4()))
+        await _extrair(scoped, storage, cid, did, _comprovante(None), cep_lookup=_ceps())
+        assert _cliente(scoped, cid)["endereco_cep"] == CEP_REMETENTE

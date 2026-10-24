@@ -2920,6 +2920,69 @@ def _preencher_so_bairro(
     return True
 
 
+def limpar_endereco_sem_suporte(
+    client: Any,
+    org_id: UUID,
+    documento_id: UUID,
+    *,
+    escritos: frozenset[str] | set[str] = frozenset(),
+) -> list[str]:
+    """Withdraw the address document `documento_id` itself machine-applied
+    when its CURRENT reading no longer supports it. Returns the cliente ids
+    cleared.
+
+    🔴 F82 round 2 (2026-10-24, prod): a pre-fix read of a gas bill applied
+    the utility's own CEP/city to the party; the fixed reader's "Ler
+    novamente" of that same bill read nothing — and a re-read that yields
+    nothing used to revert nothing, so the wrong address stood, attributed
+    to a document that no longer says it. Every record whose group came from
+    this document (`endereco_documento_id`) and was not written in this
+    pass is cleared — the checklist then asks for the address again. The
+    caller invokes this only when the current reading has no address at all,
+    or one it held back (another holder, a contradicting CEP). Never touches
+    a group a human typed (`endereco_origem='manual'`) or confirmed.
+    """
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(",".join([
+            "id", "endereco_origem", "endereco_confirmado_em", "endereco_documento_id",
+            *ENDERECO_COLUNAS,
+        ]))
+        .eq("org_id", str(org_id))
+        .eq("endereco_documento_id", str(documento_id))
+        .execute()
+    ).data or []
+    limpos: list[str] = []
+    for row in rows:
+        if str(row.get("endereco_documento_id") or "") != str(documento_id):
+            continue
+        if str(row["id"]) in escritos:
+            continue
+        if row.get("endereco_origem") == "manual" or not _vazio(row.get("endereco_confirmado_em")):
+            continue
+        agora = _now()
+        updates: dict[str, Any] = {c: None for c in ENDERECO_COLUNAS}
+        updates.update({
+            COLUNA_BAIRRO_ORIGEM: None,
+            "endereco_origem": None,
+            "endereco_documento_id": None,
+            "endereco_em": None,
+            "endereco_confirmado_por": None,
+            "endereco_confirmado_em": None,
+            "updated_at": agora,
+        })
+        _t(client, CLIENTES_TABLE).update(updates).eq("org_id", str(org_id)).eq(
+            "id", str(row["id"])
+        ).execute()
+        limpos.append(str(row["id"]))
+        logger.warning(
+            "endereco do cliente %s RETIRADO: a releitura do documento %s não "
+            "sustenta mais o endereço que ele mesmo aplicou",
+            row["id"], documento_id,
+        )
+    return limpos
+
+
 def aplicar_endereco_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -5400,6 +5463,8 @@ async def extrair_identidade(
             except Exception:  # noqa: BLE001 — never fail an identity read on a re-link
                 logger.exception("revincular matrícula qualificações falhou para %s", cliente_id)
 
+        escritos_endereco: set[str] = set()
+        endereco_retido = False
         if endereco is not None:
             # Same leitura_comprometida gate as every field above — the
             # address group is written/conflicted as one unit
@@ -5472,6 +5537,11 @@ async def extrair_identidade(
                         "confira o documento e digite o número.",
                     )
                 aplicados[CAMPO_ENDERECO] = aplicado_end
+                endereco_retido = bool(
+                    {AVISO_CEP_DIVERGE, AVISO_TITULAR_NAO_CONFERE} & set(avisos_endereco)
+                )
+                if aplicado_end:
+                    escritos_endereco.add(str(alvo_id))
                 if conflito_end is not None:
                     conflitos.append(conflito_end)
 
@@ -5483,15 +5553,30 @@ async def extrair_identidade(
                 if aplicado_end:
                     conjuge_id = _conjuge_vinculado(client, org_id, alvo_id)
                     if conjuge_id is not None:
-                        _, conflito_conjuge_end = aplicar_endereco_ao_cliente(
+                        aplicado_conjuge, conflito_conjuge_end = aplicar_endereco_ao_cliente(
                             client, org_id, UUID(conjuge_id), tipo, partes_endereco,
                             titular_documento=None,
                             confianca=endereco.confianca,
                             documento_id=documento_id,
                             cep_lookup=cep_lookup,
                         )
+                        if aplicado_conjuge:
+                            escritos_endereco.add(str(conjuge_id))
                         if conflito_conjuge_end is not None:
                             conflitos.append(conflito_conjuge_end)
+        if (
+            so_endereco
+            and not fields.error
+            and not fields.leitura_comprometida
+            and (endereco is None or endereco_retido)
+        ):
+            # 🔴 F82 round 2: what THIS document put on a record must still be
+            # what the current reader reads off it — a reading with no
+            # address, or one held back (another holder / a contradicting
+            # CEP), withdraws it.
+            limpar_endereco_sem_suporte(
+                client, org_id, documento_id, escritos=escritos_endereco
+            )
 
         # 🔴 BOTH SPOUSES (migration 153). The spouse the card belongs to was
         # applied above (the extractor's `titular` hint selected them and carried
