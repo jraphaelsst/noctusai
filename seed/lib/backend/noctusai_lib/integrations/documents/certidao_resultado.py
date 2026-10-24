@@ -37,7 +37,9 @@ from __future__ import annotations
 import re
 from typing import Callable, Optional
 
+from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.matricula import normalize
+from noctusai_lib.integrations.documents.rg import find_rg
 
 NEGATIVA = "negativa"
 POSITIVA = "positiva"
@@ -201,3 +203,29 @@ def ler_resultado_certidao(tipo: str, texto: Optional[str]) -> Optional[str]:
     if leitor is None or not texto or not texto.strip():
         return None
     return leitor(normalize(texto))
+
+
+#: Certidão tipos whose text PRINTS the searched person's RG beside the CPF
+#: (the TJSP e-SAJ "Certidão de Distribuição Cível": `RG: 30.738.581-4`
+#: `CPF: ...`). Unlike a CNH, that RG carries its check digit.
+TIPOS_COM_RG_IMPRESSO = frozenset({"tjsp_esaj"})
+
+
+def ler_identificacao_impressa(
+    tipo: str, texto: Optional[str]
+) -> Optional[tuple[str, str]]:
+    """`(rg, cpf)` as printed on the certidão, or `None`.
+
+    Reuses the identity readers (`rg.find_rg`, `cpf.find_cpf`) - no second RG
+    regex. Only a LABELLED reading of both (`alta`) counts: a certidão that
+    prints one of them loosely is not evidence about whose RG it is. The RG
+    comes back verbatim as printed; the caller decides whether it belongs to
+    a given party (CPF match) and whether it completes a stored RG.
+    """
+    if tipo not in TIPOS_COM_RG_IMPRESSO or not texto or not texto.strip():
+        return None
+    rg, rg_conf, _ = find_rg(texto)
+    cpf, cpf_conf, _ = find_cpf(texto)
+    if not rg or not cpf or rg_conf != "alta" or cpf_conf != "alta":
+        return None
+    return rg, cpf

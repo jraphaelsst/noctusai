@@ -6457,6 +6457,118 @@ def _doc_leitura_comprometida(doc: dict) -> bool:
     return bool(aviso) and AVISO_LEITURA_COMPROMETIDA in str(aviso).split("+")
 
 
+REGRA_RG_COMPLETADO_PELA_CERTIDAO = "rg_completado_pela_certidao"
+
+
+def completar_rg_pela_certidao(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    rg_certidao: str,
+    cpf_certidao: str,
+    *,
+    origem: str = "certidao",
+    rotulo: Optional[str] = None,
+    fonte_id: Optional[UUID] = None,
+) -> dict:
+    """Offer the RG a certidao PRINTS (with its check digit) to a party.
+
+    A CNH omits the RG's check digit, so an RG read only off a CNH sits on the
+    record DV-less and the checklist flags it ("RG com digito verificador").
+    A TJSP e-SAJ certidao prints the full RG beside the CPF. Through the one
+    write chokepoint's own rules - never a silent write, never over a human:
+
+    - **CPF on the certidao != the party's CPF (or party has none)** -> ignored
+      (`cpf_divergente`): the certidao is not evidence about this person.
+    - **Party's RG empty / DIFFERENT from the certidao's** -> handed to
+      `aplicar_campos_ao_cliente` unchanged: fill-empty machine-pending, or the
+      existing conflict / automatic-resolution mechanism on disagreement.
+    - **Party's RG is the SAME number minus the check digit** and nobody
+      typed/confirmed it -> completed with the printed, check-digit-VALID RG,
+      machine-pending (`confirmado_por` NULL, so the contract gate still shows
+      it as "leitura aguardando confirmacao"), provenance = the certidao, the
+      completion audited as a `resolvido_automatico` decision. A manual or
+      confirmed value is never touched (`protegido`).
+    - Already the full RG -> nothing (`ja_completo`).
+    """
+    campo = CAMPO_POR_CHAVE["rg"]
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(",".join(dict.fromkeys(["id", "cpf", campo.item_key, campo.origem,
+                                        campo.documento_id, campo.confirmado_por,
+                                        campo.confirmado_em])))
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return {"status": "sem_cliente", "aplicados": [], "conflitos": []}
+    atual = rows[0]
+    cpf_parte = only_digits(str(atual.get("cpf") or ""))
+    if not cpf_parte or cpf_parte != only_digits(str(cpf_certidao or "")):
+        return {"status": "cpf_divergente", "aplicados": [], "conflitos": []}
+    if not idf.para_gravar("rg", rg_certidao).canonico:
+        # Not a check-digit-valid RG of its type: not worth offering.
+        return {"status": "rg_invalido", "aplicados": [], "conflitos": []}
+
+    presente = atual.get("rg")
+    completa = (
+        not _vazio(presente)
+        and len(only_alnum(str(presente))) < len(only_alnum(rg_certidao))
+        and idf.iguais("rg", presente, rg_certidao)
+    )
+    if not completa:
+        aplicados, conflitos = aplicar_campos_ao_cliente(
+            client, org_id, cliente_id, origem,
+            {"rg": (rg_certidao, "alta", rotulo, True)},
+            campos=(campo,), documento_id=None,
+            fonte_tabela="certidao_resultados" if fonte_id else None, fonte_id=fonte_id,
+        )
+        return {
+            "status": "aplicado" if aplicados.get("rg") else ("conflito" if conflitos else "nada"),
+            "aplicados": [k for k, ok in aplicados.items() if ok],
+            "conflitos": conflitos,
+        }
+    if _valor_humano(atual, campo) or not _vazio(atual.get(campo.confirmado_em)):
+        return {"status": "protegido", "aplicados": [], "conflitos": []}
+
+    now = _now()
+    valor = idf.para_gravar("rg", rg_certidao).valor or rg_certidao
+    _t(client, CLIENTES_TABLE).update(
+        {
+            campo.item_key: valor,
+            campo.origem: origem,
+            campo.documento_id: None,
+            campo.em: now,
+            campo.confirmado_por: None,
+            campo.confirmado_em: None,
+            "updated_at": now,
+        }
+    ).eq("org_id", str(org_id)).eq("id", str(cliente_id)).execute()
+    campo_conflitos.registrar_decisao_automatica(
+        client, campo_conflitos.CLIENTE, org_id, cliente_id, campo.item_key,
+        valor_anterior=presente,
+        origem_anterior=atual.get(campo.origem),
+        valor_proposto=valor,
+        origem_proposto=origem,
+        confianca_proposta="alta",
+        fonte_tabela="certidao_resultados" if fonte_id else None,
+        fonte_id=fonte_id,
+        decisao=divergencia_resolucao.Decisao(
+            vencedor="proposto",
+            regra=REGRA_RG_COMPLETADO_PELA_CERTIDAO,
+            motivo=(
+                f"{origem} imprime o mesmo RG com o digito verificador que "
+                f"{atual.get(campo.origem) or 'a leitura anterior'} omitiu."
+            ),
+            requer_humano=False,
+        ),
+        evidencia_ids=[fonte_id] if fonte_id else [],
+    )
+    return {"status": "completado", "aplicados": ["rg"], "conflitos": []}
+
+
 def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """Per checklist-item, the newest extracted value still awaiting a decision.
 
@@ -7069,6 +7181,7 @@ __all__ = [
     "TIPOS_EXTRAIVEIS",
     "CampoExtraido",
     "certidao_estado_civil_mais_recente",
+    "completar_rg_pela_certidao",
     "confirmar_sugestao",
     "descartar_sugestao",
     "reverter_aplicados_do_documento",

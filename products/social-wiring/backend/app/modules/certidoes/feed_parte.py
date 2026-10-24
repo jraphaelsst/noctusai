@@ -46,6 +46,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.documents.certidao_resultado import ler_identificacao_impressa
 from noctusai_lib.integrations.documents.cpf import find_cpf, only_digits
 from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
@@ -374,8 +375,45 @@ def alimentar_documento_impresso(
     return out
 
 
+def alimentar_rg_da_certidao(
+    db: Any, org_id: Any, consulta: Optional[dict], tipo: Optional[str],
+    paginas_texto: Any, *, resultado_id: Optional[str] = None,
+) -> dict:
+    """Offer the RG a certidão PRINTS (TJSP e-SAJ: `RG: 30.738.581-4` beside
+    the CPF) to the party it is linked to - completing the check digit a CNH
+    omitted, or opening the usual conflict when the number differs. The rules
+    (CPF must match, never over a manual/confirmed value) live in
+    `identidade_extracao_service.completar_rg_pela_certidao`.
+
+    Runs on every text the certidão pipeline reads (live emission, manual
+    upload, and "Ler novamente" - so already-uploaded certidões backfill).
+    Never raises."""
+    vazio = {"status": "nada", "aplicados": [], "conflitos": []}
+    try:
+        cliente_id = (consulta or {}).get("cliente_id")
+        if not cliente_id or not paginas_texto:
+            return vazio
+        lido = ler_identificacao_impressa(tipo or "", "\n".join(paginas_texto))
+        if not lido:
+            return vazio
+        from app.modules.card_hub import identidade_extracao_service as identidade_svc
+
+        return identidade_svc.completar_rg_pela_certidao(
+            db, UUID(str(org_id)), UUID(str(cliente_id)), lido[0], lido[1],
+            origem=ORIGEM, rotulo="Certidão TJSP e-SAJ",
+            fonte_id=UUID(str(resultado_id)) if resultado_id else None,
+        )
+    except Exception as exc:  # noqa: BLE001 - the certidão already succeeded
+        logger.error(
+            "certidão %s (consulta %s): falha ao oferecer o RG impresso: %s",
+            tipo, (consulta or {}).get("id"), exc, exc_info=True,
+        )
+        return {**vazio, "status": "falha"}
+
+
 __all__ = [
     "alimentar_documento_impresso",
+    "alimentar_rg_da_certidao",
     "CAMPOS_PF",
     "CAMPOS_PJ",
     "ORIGEM",

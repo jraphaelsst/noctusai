@@ -109,3 +109,26 @@ def test_every_registry_tipo_with_a_fixed_sentence_has_a_reader():
         "cnd_federal", "cnd_fazenda_sp", "divida_ativa_sp", "cnd_trabalhista_tst", "trf3", "trf3_sp",
         "trt2_digital", "trt2_fisico", "tjsp_esaj", "tjsp_eproc", "cenprot",
     }
+
+
+# --- identificação impressa (RG + CPF) -------------------------------------
+from noctusai_lib.integrations.documents.certidao_resultado import ler_identificacao_impressa  # noqa: E402
+
+_ESAJ = (
+    "TRIBUNAL DE JUSTIÇA DO ESTADO DE SÃO PAULO SISTEMA E-SAJ "
+    "CERTIDÃO DE DISTRIBUIÇÃO CÍVEL\nNome: MARIA TESTE\nRG: 30.738.581-4\nCPF: 111.444.777-35\n"
+)
+
+
+class TestIdentificacaoImpressa:
+    def test_esaj_devolve_rg_com_dv_e_cpf(self):
+        assert ler_identificacao_impressa("tjsp_esaj", _ESAJ) == ("30.738.581-4", "111.444.777-35")
+
+    def test_tipo_sem_rg_impresso_ou_sem_texto(self):
+        assert ler_identificacao_impressa("cnd_federal", _ESAJ) is None
+        assert ler_identificacao_impressa("tjsp_esaj", "") is None
+        assert ler_identificacao_impressa("tjsp_esaj", None) is None
+
+    def test_sem_rotulo_rg_ou_cpf_nao_conta(self):
+        assert ler_identificacao_impressa("tjsp_esaj", "SISTEMA E-SAJ CPF: 111.444.777-35") is None
+        assert ler_identificacao_impressa("tjsp_esaj", "SISTEMA E-SAJ RG: 30.738.581-4") is None

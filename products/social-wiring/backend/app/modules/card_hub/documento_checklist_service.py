@@ -303,7 +303,7 @@ _RESSALVAS: dict[str, dict[str, Any]] = {
         "pendente": _rg_so_da_cnh,
         "rotulo": (
             "RG com dígito verificador (lido só da CNH, que costuma omiti-lo — "
-            "confirme o número ou envie o RG/CPF)"
+            "confirme o número, envie o RG/CPF ou uma certidão e-SAJ do TJSP, que imprime o RG completo)"
         ),
     },
 }

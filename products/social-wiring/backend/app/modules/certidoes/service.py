@@ -53,7 +53,10 @@ from noctusai_lib.integrations.documents.abnt import (
     render_abnt_pdf,
     render_word_html,
 )
-from noctusai_lib.integrations.documents.certidao_resultado import ler_resultado_certidao
+from noctusai_lib.integrations.documents.certidao_resultado import (
+    TIPOS_COM_RG_IMPRESSO,
+    ler_resultado_certidao,
+)
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.formatting import (
     FormatRange,
@@ -2231,6 +2234,10 @@ async def _process_single_certidao(
             db, org_id, consulta, config["tipo"], result["raw_response"],
             resultado_id=resultado_id,
         )
+        feed_parte.alimentar_rg_da_certidao(
+            db, org_id, consulta, config["tipo"], extracted_doc.paginas_texto,
+            resultado_id=resultado_id,
+        )
         _atualizar_status_consulta(consulta_id, org_id, db)
         return
 
@@ -2272,6 +2279,10 @@ async def _process_single_certidao(
     # to the party's profile (fill-empty / conflict-on-disagree). Never raises.
     feed_parte.alimentar_parte(
         db, org_id, consulta, config["tipo"], result["raw_response"],
+        resultado_id=resultado_id,
+    )
+    feed_parte.alimentar_rg_da_certidao(
+        db, org_id, consulta, config["tipo"], extracted_doc.paginas_texto,
         resultado_id=resultado_id,
     )
     _atualizar_status_consulta(consulta_id, org_id, db)
@@ -3122,6 +3133,30 @@ async def _aplicar_leitura_cenprot(
         logger.warning("Certidão %s (resultado %s): %s", nome_display, resultado_id, aviso)
 
 
+def _oferecer_rg_impresso(
+    db, org_id: Optional[str], consulta_id: str, tipo: Optional[str],
+    paginas_texto: Sequence[str], resultado_id: str,
+) -> None:
+    """Offer the RG a certidão prints to its party (`feed_parte.alimentar_rg_
+    da_certidao`) from a path that has the consulta only by id. Never raises."""
+    if not org_id or tipo not in TIPOS_COM_RG_IMPRESSO or not paginas_texto:
+        return
+    try:
+        rows = (
+            db.table(CONSULTAS).select("id, cliente_id").eq("id", consulta_id).execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão (resultado %s): consulta ilegível ao oferecer o RG impresso: %s",
+            resultado_id, exc, exc_info=True,
+        )
+        return
+    feed_parte.alimentar_rg_da_certidao(
+        db, org_id, rows[0] if rows else None, tipo, paginas_texto,
+        resultado_id=resultado_id,
+    )
+
+
 async def process_manual_extraction(
     pdf_bytes: bytes,
     resultado_id: str,
@@ -3336,6 +3371,7 @@ async def process_manual_extraction(
     try:
         db.table(RESULTADOS).update(persist_data).eq("id", resultado_id).execute()
         _atualizar_status_consulta(consulta_id, org_id, db)
+        _oferecer_rg_impresso(db, org_id, consulta_id, tipo, paginas_texto, resultado_id)
     except Exception as exc:  # noqa: BLE001 - background job must not die
         logger.error(
             "Certidão %s (resultado %s): falha ao persistir resultado da "
@@ -3916,6 +3952,7 @@ async def _reler_emissao(
             nome_display, resultado_id, exc, exc_info=True,
         )
         return {}
+    _oferecer_rg_impresso(db, org_id, consulta_id, tipo, paginas_texto, resultado_id)
     if extracted.erro:
         logger.warning(
             "Certidão %s (resultado %s): releitura sem leitura completa (%s)",
