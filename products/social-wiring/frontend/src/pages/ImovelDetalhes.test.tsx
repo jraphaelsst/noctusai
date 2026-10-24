@@ -117,6 +117,11 @@ vi.mock("@/hooks/useImovelContrato", async (importOriginal) => {
     useConfirmarOnusCredor: mutation,
     useConfirmarUltimaTransferenciaManual: mutation,
     useConfirmarDocumentoExtracao: mutation,
+    // §9 manual-entry hooks (descrição do imóvel, document-less CNDs).
+    useDescricaoImovel: query,
+    useConfirmarDescricaoImovel: mutation,
+    useSalvarCertidaoManual: mutation,
+    useRemoverCertidaoManual: mutation,
   };
 });
 
