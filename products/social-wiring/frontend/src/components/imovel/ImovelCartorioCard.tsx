@@ -187,6 +187,22 @@ export default function ImovelCartorioCard({
     });
   }
 
+  // Unsaved edits to the text fields: say so, and stop a silent navigation away.
+  const base = toDraft(dados);
+  const sujo = (
+    ["numero_matricula", "numero_registro_imoveis", "prefeitura_cadastro_imobiliario",
+      "captador_user_id", "situacao_onus", "onus_observacoes", "onus_certidao_em",
+      "empreendimento_manual"] as const
+  ).some((k) => draft[k] !== base[k]);
+  useEffect(() => {
+    if (!sujo) return;
+    const guard = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [sujo]);
+
   const origem = origemLabel(dados?.numero_matricula_origem ?? null);
   const lidoAutomaticamente = dados?.numero_matricula_origem === "matricula";
 
@@ -267,9 +283,16 @@ export default function ImovelCartorioCard({
         <CondominioSelector
           id={ALVO_CONDOMINIO}
           value={{ condominio: draft.condominio, casaDeRua: draft.casa_de_rua }}
-          onChange={(v) =>
-            setDraft((d) => ({ ...d, condominio: v.condominio, casa_de_rua: v.casaDeRua }))
-          }
+          onChange={(v) => {
+            setDraft((d) => ({ ...d, condominio: v.condominio, casa_de_rua: v.casaDeRua }));
+            // F91: persist the link on pick — a chip that only lives in the
+            // draft looks applied, then a reload drops it. The patch is
+            // partial (absent = leave alone), so the other fields stay draft.
+            onSave({
+              condominio_id: v.casaDeRua ? null : (v.condominio?.id ?? null),
+              casa_de_rua: v.casaDeRua,
+            });
+          }}
           disabled={loading || saving}
           legadoEmCondominio={dados?.em_condominio_legado}
         />
@@ -431,6 +454,11 @@ export default function ImovelCartorioCard({
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {sujo && (
+          <p className="text-sm text-amber-600" data-testid="imovel-cartorio-nao-salvo">
+            Alterações não salvas — clique em Salvar.
+          </p>
+        )}
 
         <Button onClick={submit} disabled={loading || saving} className="w-full">
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

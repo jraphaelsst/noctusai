@@ -70,6 +70,36 @@ export function partesTemEmAndamento(data: CertidoesPartesResponse | undefined):
   return data.partes.some((p) => Object.values(p.celulas).some(certidaoEmAndamento));
 }
 
+/** Emission just requested for a cliente: the consulta rows may not exist yet
+ *  (async InfoSimples job), so the first re-reads can still show NO cell in
+ *  flight. Keep polling through this window; it ends as soon as a cell was seen
+ *  in flight and has settled again, or at the deadline. */
+export const EMISSAO_GRACE_MS = 90_000;
+const emissaoSolicitada = new Map<string, { ate: number; viuAndamento: boolean }>();
+
+export function marcarEmissaoSolicitada(clienteId: string, agora = Date.now()) {
+  emissaoSolicitada.set(clienteId, { ate: agora + EMISSAO_GRACE_MS, viuAndamento: false });
+}
+
+export function emissaoAguardandoAssentar(
+  clienteId: string,
+  data: CertidoesPartesResponse | undefined,
+  agora = Date.now(),
+): boolean {
+  const g = emissaoSolicitada.get(clienteId);
+  const andamento = partesTemEmAndamento(data);
+  if (!g) return andamento;
+  if (andamento) {
+    g.viuAndamento = true;
+    return true;
+  }
+  if (g.viuAndamento || agora >= g.ate) {
+    emissaoSolicitada.delete(clienteId);
+    return false;
+  }
+  return true;
+}
+
 export function useCertidoesPartes(clienteId: string | null, atendimentoId?: string | null) {
   return useQuery({
     queryKey: certidoesPartesKey(clienteId ?? "__none__", atendimentoId),
@@ -80,7 +110,10 @@ export function useCertidoesPartes(clienteId: string | null, atendimentoId?: str
     enabled: !!clienteId,
     // Keep the previous party list mounted while the key changes / refetches.
     placeholderData: (prev) => prev,
-    ...jobPolling(partesTemEmAndamento, POLL_MS),
+    ...jobPolling<CertidoesPartesResponse>(
+      (d) => emissaoAguardandoAssentar(clienteId ?? "__none__", d),
+      POLL_MS,
+    ),
   });
 }
 
@@ -110,6 +143,7 @@ export function useSolicitarEmissao(clienteId: string, atendimentoId?: string | 
             : `${r.ignoradas.length} certidões já válidas ou em emissão não foram compradas de novo.`,
         );
       }
+      marcarEmissaoSolicitada(clienteId);
       void invalidate();
     },
     onError: (e) => toast.error("Erro ao solicitar emissão", { description: erroMsg(e) }),

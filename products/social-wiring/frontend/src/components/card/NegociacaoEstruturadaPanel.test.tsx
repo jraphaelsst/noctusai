@@ -717,6 +717,18 @@ describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)",
     expect((document.getElementById("int-cep") as HTMLInputElement).value).toBe("");
   });
 
+  it("F89: 'Novo intermediário' shows representante fields once a CNPJ is typed (Pessoa automática)", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(query({ data: aggregate({ intermediarios: [] }) }));
+    const { getByTestId, queryByTestId } = await render("intermediarios");
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(getByTestId("negest-intermediario-novo"));
+    expect(queryByTestId("int-representante")).toBeNull();
+    fireEvent.change(document.getElementById("int-documento") as HTMLInputElement, {
+      target: { value: "12345678000199" },
+    });
+    expect(queryByTestId("int-representante")).toBeTruthy();
+  });
+
   it("🔴 editar DOIS logo após editar UM mostra os valores de DOIS, não de UM", async () => {
     mockUseNegociacaoEstruturada.mockReturnValue(
       query({ data: aggregate({ intermediarios: [UM, DOIS] }) }),

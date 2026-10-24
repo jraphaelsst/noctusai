@@ -258,6 +258,26 @@ describe("ImovelCartorioCard — condomínio (migration 300)", () => {
     );
   });
 
+  it("F91: picking a condomínio persists the link at once (partial patch), without Salvar", async () => {
+    mockBusca.mockReturnValue({ data: [VILA], isPending: false, isFetching: false, isError: false });
+    const onSave = vi.fn();
+    const { screen, fireEvent } = await render(undefined, { onSave });
+    fireEvent.change(screen.getByTestId("imovel-condominio-busca"), { target: { value: "vila" } });
+    fireEvent.click(screen.getByTestId("imovel-condominio-item-c-1"));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith({ condominio_id: "c-1", casa_de_rua: false });
+  });
+
+  it("F91: editing a text field shows the unsaved state until Salvar", async () => {
+    semResultados();
+    const { screen, fireEvent } = await render();
+    expect(screen.queryByTestId("imovel-cartorio-nao-salvo")).toBeNull();
+    fireEvent.change(document.getElementById("numero-matricula") as HTMLInputElement, {
+      target: { value: "999" },
+    });
+    expect(screen.getByTestId("imovel-cartorio-nao-salvo")).toBeTruthy();
+  });
+
   it("checking 'Casa de rua' detaches and saves casa_de_rua=true", async () => {
     semResultados();
     const onSave = vi.fn();

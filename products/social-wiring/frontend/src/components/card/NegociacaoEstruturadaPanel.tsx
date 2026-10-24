@@ -1457,7 +1457,11 @@ function IntermediarioFormDialog({
     onSubmit(payload);
   }
 
-  const ehPj = draft.pessoaTipo === "pj";
+  // F89: with Pessoa on "Automático" a typed 14-digit CNPJ is PJ too (the
+  // backend infers it), so the representante fields must show on create.
+  const ehPj =
+    draft.pessoaTipo === "pj" ||
+    (draft.pessoaTipo === "" && limparDocumento(draft.documento).length === 14);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

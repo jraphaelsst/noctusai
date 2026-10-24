@@ -205,6 +205,12 @@ export function useNegociacaoMutation(clienteId: string) {
       // seeding beats invalidating: the numbers on screen are the ones the
       // server just calculated, not a second read that could disagree.
       qc.setQueryData(NEGOCIACAO_KEY(clienteId), data);
+      // F88: the Completude/estruturada aggregate derives valor negociado from
+      // this same row but the PATCH does not return it — refresh it, or the
+      // panel keeps "Valor negociado não informado" after Salvar.
+      void qc.invalidateQueries({
+        queryKey: ["sw", "clientes", clienteId, "negociacao", "estruturada"],
+      });
       // Bug 2 (prod card 755253934) — Salvar changes `imovel_codigo`/deal
       // terms that "Qualificação para contrato" and geração-readiness read
       // alongside negociação itself; without this they kept the
