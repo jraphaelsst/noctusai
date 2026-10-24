@@ -26,6 +26,12 @@ email-validator>=2.0.0  # test_scaffold_overlay runs a scaffolded product backen
 # output uses the same formatter as backend products. Path is relative to
 # this requirements.txt; resolves to <repo>/seed/lib/backend.
 -e ../../seed/lib/backend
+# The seed FRAMEWORK too: toolkit tools import `noctusai_seed` (verify_db_guards derives the
+# organ guard probes from `noctusai_seed.organs`). Without it the toolkit venv could do only
+# part of the job, and the result depended on WHICH python launched the CLI: `./venv/bin/python`
+# passed, a bare `python` (self-exec'd into this venv) reported every product "blocked
+# (unverified)" (2026-10-24). After `-e ../../seed/lib/backend` so `noctusai-lib` resolves locally.
+-e ../../seed/framework/backend
 
 # Note: pyproject.toml (mcp/noctusai/pyproject.toml) is the canonical package
 # manifest. This file mirrors the runtime deps for the existing -e install

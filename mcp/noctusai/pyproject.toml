@@ -66,7 +66,8 @@ markers = [
 ]
 
 # requirements.txt is kept in lockstep for back-compat with the existing
-# `-e ../../seed/lib/backend` editable install of `noctusai_lib`. The
+# `-e ../../seed/lib/backend` (+ `-e ../../seed/framework/backend`) editable installs of
+# `noctusai_lib` / `noctusai_seed`. The
 # editable install of seed-lib lives there, NOT here, because pyproject
 # editable installs from a sibling path are clunky and the existing
 # requirements.txt entry already handles it cleanly.
