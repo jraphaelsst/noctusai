@@ -115,6 +115,19 @@ finding.
 - Template-era differences (e.g. a Feb-2026 contract with a generic "documents the sellers will
   deliver" list instead of itemised certidões) are observations, not generator defects.
 
+### 4.0 · The per-spec view (pattern extraction, not data audit)
+
+A replay of a closed deal is the canonical example of a **contract spec combination**; the score
+tells us whether the tool builds *that kind* of contract right. Put `especificacoes_esperadas: [..]`
+on the card (inline `cards` or `p3/cards.json`). Per deal: `especificacoes` (selected, else legacy
+suggested) · `sugeridas` · `especificacoes_ok` (sugeridas == esperadas) · `scope_leak` (readiness
+faltas the catalogue governs but the specs do not require — must be 0 once readiness is spec-scoped;
+absent under legacy readiness). Read `por_especificacoes` first: one row per combination
+(`compra_venda+sinal_saldo+…`: deals, aprovados, scope_leak, sugeridas_divergentes), weakest first —
+that is the contract kind to fix. `diferencas_por_origem` splits allowlist differences into
+`referencia` (the signed contract is wrong; mark the entry `"origem": "referencia"`) and `ferramenta`
+(the template differs; default) — never fix the tool toward a reference error.
+
 ### 4.1 · The gap-marker render (a NOT-`pronto` card) — gated inputs and their stand-ins
 
 A not-`pronto` card is scored from `harness.dados_com_marcadores` (every gap is a visible marker, never

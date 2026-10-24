@@ -231,3 +231,34 @@ def test_proveniencia_extraido_vs_operador_separados_e_filtrados(private):
     assert out["deals"]["101"]["proveniencia"] == {"extraido_confirmado": 5, "operador": 2, "extraido_pendente": 1}
     assert out["proveniencia_total"] == {"extraido_confirmado": 8, "operador": 6, "extraido_pendente": 1, "conflito": 1}
     assert CPF_FAKE not in json.dumps(out)
+
+
+def test_visao_por_especificacoes_agrega_e_filtra(private):
+    """Per-spec view: grouped by combination, weakest first; legacy readiness
+    (no specs) groups as `legado`; value-shaped spec entries never leave."""
+    for n in ("101", "102", "103"):
+        _plantar_deal(private, n, texto="Texto.")
+    combo = ["compra_venda", "sinal_saldo", "financiamento_bancario"]
+    r1 = {"veredito": "reprovado", "especificacoes": combo + [CPF_FAKE, "FULANO"], "sugeridas": combo,
+          "especificacoes_ok": True, "scope_leak": 2, "diferencas_referencia": 1, "diferencas_ferramenta": 3}
+    r2 = {"veredito": "aprovado", "especificacoes": combo, "sugeridas": ["compra_venda"],
+          "especificacoes_ok": False, "scope_leak": 1}
+    r3 = {"veredito": "aprovado"}
+    cards = [
+        {"numero": "101", "cliente_id": "x", "especificacoes_esperadas": combo},
+        {"numero": "102", "cliente_id": "y"},
+        {"numero": "103", "cliente_id": "z"},
+    ]
+    runner = _Runner({"101": r1, "102": r2, "103": r3})
+    out = cs.contract_score(cards=cards, answer_keys_dir=str(private / "answer-keys"), worktree_path=WORKTREE, runner=runner)
+    assert runner.chamadas[0]["pedido"]["deals"][0]["especificacoes_esperadas"] == combo
+    assert "especificacoes_esperadas" not in runner.chamadas[0]["pedido"]["deals"][1]
+    chave = "compra_venda+sinal_saldo+financiamento_bancario"
+    assert out["por_especificacoes"][chave] == {"deals": 2, "aprovados": 1, "scope_leak": 3, "sugeridas_divergentes": 1}
+    assert out["por_especificacoes"][cs.LEGADO]["deals"] == 1
+    assert list(out["por_especificacoes"])[0] == chave  # weakest first
+    assert out["scope_leak_total"] == 3
+    assert out["diferencas_por_origem"] == {"referencia": 1, "ferramenta": 3}
+    assert out["deals"]["101"]["especificacoes"] == combo
+    assert "scope_leak" not in out["deals"]["103"]
+    assert CPF_FAKE not in json.dumps(out) and "FULANO" not in json.dumps(out)

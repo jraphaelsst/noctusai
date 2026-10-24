@@ -39,6 +39,19 @@ WHAT IT DOES
    field is re-filtered through `_so_veredito`, so no name/CPF/value can leave
    even if the harness ever printed one.
 
+SPEC VIEW (2026-10-24, owner: replays of closed deals are PATTERN EXTRACTION —
+each reference deal is the canonical example of a contract spec combination;
+the score says whether the tool builds that KIND of contract right, not
+whether old data was right). A card may carry `especificacoes_esperadas`
+(`[str]`). Per deal: `especificacoes` (selected, else legacy-suggested),
+`sugeridas`, `especificacoes_ok` (sugeridas == esperadas, only when given),
+`scope_leak` (faltas the catalogue governs but the specs do not require; 0
+once readiness is spec-scoped; absent under legacy readiness). Aggregates:
+`por_especificacoes` (per combination: deals/aprovados/scope_leak/
+sugeridas_divergentes, weakest first), `scope_leak_total`,
+`diferencas_por_origem` (allowlist differences by `origem`: `referencia` =
+the signed contract is wrong, `ferramenta` = the template differs).
+
 The private request file (it carries the reference paragraphs) is written
 0600 under the private root and deleted in a `finally`.
 """
@@ -78,6 +91,8 @@ _CHAVES_NUMERICAS = (
     # two-layer verdict (2026-10-06): MATERIAL failures vs OBSERVATIONS
     "clausulas_faltando_opcionais", "secoes_material_sem_correspondencia", "obs_numeros", "obs_datas",
     "certidoes_partes_lacuna",
+    # spec view (2026-10-24): readiness faltas outside the selected specs; allowlist differences by WHO is wrong
+    "scope_leak", "diferencas_referencia", "diferencas_ferramenta",
 )
 #: dict-of-counts fields (key → int): material checks beyond tokens, and the
 #: material number divergences by token KIND (cpf/rg/valor/…). Keys are codes.
@@ -108,6 +123,16 @@ def _codigo(valor: Any) -> Optional[str]:
     return valor
 
 
+def _chave_spec(valor: Any) -> Optional[str]:
+    """A specification KEY of the catalogue (`sinal_saldo`) — lowercase snake only."""
+    if isinstance(valor, str) and 0 < len(valor) <= 40 and set(valor) <= _SPEC_OK:
+        return valor
+    return None
+
+
+_SPEC_OK = frozenset("abcdefghijklmnopqrstuvwxyz_")
+
+
 def _so_veredito(resumo: dict[str, Any]) -> dict[str, Any]:
     """Whitelist re-filter of one deal's harness summary: known keys only,
     numbers/bools/codes only."""
@@ -133,6 +158,11 @@ def _so_veredito(resumo: dict[str, Any]) -> dict[str, Any]:
                 c: v for c, v in ((_codigo(kk), vv) for kk, vv in d.items())
                 if c and isinstance(v, int) and not isinstance(v, bool) and _CHAVE_CONTAGEM_OK[k](c)
             }
+    for k in ("especificacoes", "sugeridas"):
+        if isinstance(resumo.get(k), list):
+            out[k] = [c for c in (_chave_spec(v) for v in resumo[k]) if c]
+    if isinstance(resumo.get("especificacoes_ok"), bool):
+        out["especificacoes_ok"] = resumo["especificacoes_ok"]
     cats = resumo.get("categorias")
     if isinstance(cats, dict):
         out["categorias"] = {
@@ -197,6 +227,27 @@ def _carregar_cards(cards_path: Optional[str], cards: Optional[list[dict[str, An
     return {str(k): dict(v) for k, v in dados.items()}
 
 
+LEGADO = "legado"
+
+
+def agregar_por_especificacoes(por_deal: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Deals grouped by spec combination (`a+b+c`; `legado` when the readiness
+    reports none) → `{deals, aprovados, scope_leak, sugeridas_divergentes}`.
+    Counts only — which kind of contract is weakest."""
+    grupos: dict[str, dict[str, Any]] = {}
+    for r in por_deal.values():
+        specs = r.get("especificacoes")
+        chave = "+".join(specs) if specs else LEGADO
+        g = grupos.setdefault(chave, {"deals": 0, "aprovados": 0, "scope_leak": 0, "sugeridas_divergentes": 0})
+        g["deals"] += 1
+        if r.get("veredito") in ("aprovado", "aprovado_com_observacoes"):
+            g["aprovados"] += 1
+        g["scope_leak"] += r.get("scope_leak", 0)
+        if r.get("especificacoes_ok") is False:
+            g["sugeridas_divergentes"] += 1
+    return dict(sorted(grupos.items(), key=lambda kv: (kv[1]["aprovados"] / kv[1]["deals"], kv[0])))
+
+
 def _escrever_privado(caminho: Path, payload: Any) -> None:
     caminho.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(caminho.parent, 0o700)
@@ -257,6 +308,11 @@ def contract_score(
                 "cliente_id": card["cliente_id"],
                 "contrato_id": card.get("contrato_id"),
                 "ref_paragrafos": paragrafos,
+                **(
+                    {"especificacoes_esperadas": [str(x) for x in card["especificacoes_esperadas"]]}
+                    if isinstance(card.get("especificacoes_esperadas"), list)
+                    else {}
+                ),
             }
         )
     if not deals:
@@ -319,6 +375,12 @@ def contract_score(
         "por_veredito": contagem,
         "deals": por_deal,
         "proveniencia_total": proveniencia_total,
+        "por_especificacoes": agregar_por_especificacoes(por_deal),
+        "scope_leak_total": sum(r.get("scope_leak", 0) for r in por_deal.values()),
+        "diferencas_por_origem": {
+            "referencia": sum(r.get("diferencas_referencia", 0) for r in por_deal.values()),
+            "ferramenta": sum(r.get("diferencas_ferramenta", 0) for r in por_deal.values()),
+        },
         "deals_skipped": pulados,
         "scorecard_path": str(score_path),
         "limiares": total.get("limiares"),
@@ -353,6 +415,8 @@ def register(server) -> None:
             "verdict-level numbers (aprovado/aprovado_com_observacoes/reprovado/"
             "incompleto per deal — only MATERIAL terms fail a deal; wording and "
             "structure are observations — "
+            "plus per-spec-combination view `por_especificacoes`, `scope_leak`, "
+            "and reference-vs-tool differences; cards accept `especificacoes_esperadas` — "
             "counts, ratios, reason codes) — never a value. `numeros` filters "
             "deals; `limiares` overrides thresholds. Pass worktree_path from "
             "inside a git worktree."

@@ -374,6 +374,7 @@ class Limiares:
 # ─── allowlist ──────────────────────────────────────────────────────────
 
 CATEGORIAS_ALLOWLIST = ("redacao", "numero", "clausula_faltando", "clausula_extra")
+ORIGENS_ALLOWLIST = ("ferramenta", "referencia")
 _CAMPOS_OBRIGATORIOS = ("id", "categoria", "motivo", "aprovado_pelo_dono")
 
 
@@ -403,6 +404,10 @@ class EntradaAllowlist:
     padrao_ref: Optional[str] = None
     padrao_gerado: Optional[str] = None
     secao: Optional[str] = None
+    #: WHO is wrong when this difference exists: `ferramenta` (default — the
+    #: template deliberately differs) or `referencia` (the signed contract
+    #: itself has the error). The verdict reports the two apart.
+    origem: str = "ferramenta"
 
     def aplica_a_secao(self, chave: str) -> bool:
         return self.secao is None or re.search(self.secao, chave) is not None
@@ -423,6 +428,8 @@ def validar_allowlist(entradas: list[dict[str, Any]]) -> list[EntradaAllowlist]:
             raise ValueError(f"allowlist: entrada {bruto.get('id')!r} sem {faltam}")
         if bruto["categoria"] not in CATEGORIAS_ALLOWLIST:
             raise ValueError(f"allowlist: categoria inválida {bruto['categoria']!r} em {bruto['id']!r}")
+        if bruto.get("origem", "ferramenta") not in ORIGENS_ALLOWLIST:
+            raise ValueError(f"allowlist: origem inválida {bruto.get('origem')!r} em {bruto['id']!r}")
         if bruto["id"] in ids:
             raise ValueError(f"allowlist: id duplicado {bruto['id']!r}")
         ids.add(bruto["id"])
@@ -453,6 +460,7 @@ def validar_allowlist(entradas: list[dict[str, Any]]) -> list[EntradaAllowlist]:
                 padrao_ref=bruto.get("padrao_ref"),
                 padrao_gerado=bruto.get("padrao_gerado"),
                 secao=bruto.get("secao"),
+                origem=bruto.get("origem", "ferramenta"),
             )
         )
     return saida

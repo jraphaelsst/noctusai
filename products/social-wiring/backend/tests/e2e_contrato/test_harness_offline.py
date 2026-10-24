@@ -191,3 +191,61 @@ def test_campo_opcional_nao_vira_lacuna_inventada():
     # a REQUIRED party field is still marked
     sem_nome = replace(sem, vendedores=[replace(sem.vendedores[0], profissao=None), *sem.vendedores[1:]])
     assert harness.dados_com_marcadores(sem_nome)[0].vendedores[0].profissao == comparador.MARCADOR_LACUNA
+
+
+# ─── per-spec view + allowlist origin (pure; no database) ───────────────
+
+
+def _prontidao(**kw):
+    return harness.Prontidao(contrato_id="c", pronto=True, modelo_derivado="m", modelo_confere=True, pode_gerar=True, **kw)
+
+
+def test_resumo_especificacoes_scope_leak_e_ok():
+    from app.modules.card_hub.contrato_gerador import especificacoes as esp
+
+    faltando = [
+        {"campo": "negociacao.parcela_sinal"},  # governed by sinal_saldo
+        {"campo": "financiamento.situacao"},  # governed by financiamento_bancario
+        {"campo": "partes.vendedores"},  # required by compra_venda
+        {"campo": "campo.nao_governado"},  # ungoverned → always asked
+    ]
+    p = _prontidao(faltando=faltando, especificacoes=["compra_venda", "a_vista"], sugeridas=["compra_venda", "a_vista"])
+    out = harness.resumo_especificacoes(
+        p, ["a_vista", "compra_venda"], governa=esp.governa, exige=esp.exige, requisitos=esp.requisitos
+    )
+    assert out["scope_leak"] == 2
+    assert out["especificacoes_ok"] is True
+    assert out["especificacoes"] == ["compra_venda", "a_vista"]
+    errado = harness.resumo_especificacoes(
+        p, ["compra_venda"], governa=esp.governa, exige=esp.exige, requisitos=esp.requisitos
+    )
+    assert errado["especificacoes_ok"] is False
+
+
+def test_resumo_especificacoes_legado_nao_mede_scope_leak():
+    from app.modules.card_hub.contrato_gerador import especificacoes as esp
+
+    out = harness.resumo_especificacoes(
+        _prontidao(), ["compra_venda"], governa=esp.governa, exige=esp.exige, requisitos=esp.requisitos
+    )
+    assert out == {}
+
+
+def test_resumo_especificacoes_usa_sugeridas_quando_nada_selecionado():
+    from app.modules.card_hub.contrato_gerador import especificacoes as esp
+
+    p = _prontidao(sugeridas=["compra_venda"], faltando=[{"campo": "negociacao.parcela_sinal"}])
+    out = harness.resumo_especificacoes(p, None, governa=esp.governa, exige=esp.exige, requisitos=esp.requisitos)
+    assert out["especificacoes"] == ["compra_venda"] and out["scope_leak"] == 1
+    assert "especificacoes_ok" not in out
+
+
+def test_origem_da_allowlist_separa_referencia_de_ferramenta():
+    base = {"categoria": "redacao", "motivo": "m", "aprovado_pelo_dono": True, "padrao_ref": "x"}
+    lista = comparador.validar_allowlist(
+        [{**base, "id": "a", "origem": "referencia"}, {**base, "id": "b"}]
+    )
+    assert [e.origem for e in lista] == ["referencia", "ferramenta"]
+    assert harness._origem_allowlist(lista, {"a": 2, "b": 3}) == {"diferencas_referencia": 2, "diferencas_ferramenta": 3}
+    with pytest.raises(ValueError):
+        comparador.validar_allowlist([{**base, "id": "c", "origem": "outra"}])

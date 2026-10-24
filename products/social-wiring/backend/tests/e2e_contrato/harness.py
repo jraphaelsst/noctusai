@@ -56,7 +56,7 @@ import json
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 # ─── bootstrap: make `app.*` / `noctusai_lib` / `noctusai_seed` importable
@@ -112,6 +112,10 @@ class Prontidao:
     pendentes: list[dict] = field(default_factory=list)  #: refusing pendentes (rollback mode only)
     conflitos: list[dict] = field(default_factory=list)
     revisao_campos: list[dict] = field(default_factory=list)  #: recorded for the legal review (non-blocking)
+    #: Spec-scoped readiness (`obter_geracao`): `None` = the legacy readiness
+    #: that predates the specification catalogue (fields absent).
+    especificacoes: Optional[list[str]] = None
+    sugeridas: Optional[list[str]] = None
 
 
 def _client() -> Any:
@@ -179,8 +183,52 @@ def relatorio_prontidao(client: Any, org_id: UUID, cliente_id: UUID, contrato_id
         pendentes=pre["pendentes"],
         conflitos=pre["conflitos"],
         revisao_campos=pre["revisao_campos"],
+        especificacoes=_lista_ou_none(geracao.get("especificacoes")),
+        sugeridas=_lista_ou_none(geracao.get("sugeridas")),
     )
     return prontidao, dados
+
+
+def _lista_ou_none(valor: Any) -> Optional[list[str]]:
+    return [str(v) for v in valor] if isinstance(valor, (list, tuple)) else None
+
+
+def resumo_especificacoes(
+    prontidao: Prontidao,
+    esperadas: Optional[list[str]],
+    *,
+    governa: Callable[[str], bool],
+    exige: Callable[[Any, str], bool],
+    requisitos: Callable[[Any], Any],
+) -> dict:
+    """Per-deal specification view (codes/counts/booleans only).
+
+    `especificacoes` = the selection, else (legacy) the suggestion; `scope_leak`
+    = readiness faltas whose key the catalogue GOVERNS but whose specs do not
+    require — the regression metric of the spec-scoped readiness (0 when
+    scoped). Absent specs (legacy readiness) → `scope_leak` is not measured."""
+    specs = prontidao.especificacoes if prontidao.especificacoes is not None else prontidao.sugeridas
+    out: dict = {}
+    if prontidao.sugeridas is not None:
+        out["sugeridas"] = list(prontidao.sugeridas)
+    if specs is None:
+        return out
+    out["especificacoes"] = list(specs)
+    pedidos = requisitos(specs)
+    out["scope_leak"] = sum(
+        1 for f in prontidao.faltando if governa(f.get("campo", "")) and not exige(pedidos, f.get("campo", ""))
+    )
+    if esperadas is not None and prontidao.sugeridas is not None:
+        out["especificacoes_ok"] = set(prontidao.sugeridas) == set(esperadas)
+    return out
+
+
+def _origem_allowlist(allowlist: list, aplicadas: dict[str, int]) -> dict:
+    """Applied allowlist entries by WHO is wrong: the signed `referencia` or
+    the `ferramenta` (template). Counts only."""
+    por_id = {e.id: getattr(e, "origem", "ferramenta") for e in allowlist}
+    ref = sum(n for i, n in aplicadas.items() if por_id.get(i) == "referencia")
+    return {"diferencas_referencia": ref, "diferencas_ferramenta": sum(aplicadas.values()) - ref}
 
 
 # ─── in-memory render (no persistence) ─────────────────────────────────
@@ -776,6 +824,7 @@ def pontuar_deal(
     *,
     allowlist: list,
     limiares: Any,
+    especificacoes_esperadas: Optional[list[str]] = None,
 ) -> dict:
     """One deal → `{"resumo": <verdict-level>, "detalhe": <private, masked>}`.
 
@@ -809,6 +858,11 @@ def pontuar_deal(
     com_marcadores = not prontidao.pronto
     modo = "marcadores" if com_marcadores else "producao"
     marcadores = dados_com_marcadores(dados)[1] if com_marcadores else 0
+    from app.modules.card_hub.contrato_gerador import especificacoes as _esp
+
+    por_spec = resumo_especificacoes(
+        prontidao, especificacoes_esperadas, governa=_esp.governa, exige=_esp.exige, requisitos=_esp.requisitos
+    )
     try:
         renderizado = renderizar_em_memoria(dados, com_marcadores=com_marcadores)
     except Exception as exc:  # noqa: BLE001 — reported (class only), never swallowed
@@ -824,6 +878,7 @@ def pontuar_deal(
             "render_erro": type(exc).__name__,
             "gaps": gaps,
             "proveniencia": proveniencia,
+            **por_spec,
         }
         return {"resumo": resumo, "detalhe": {**resumo, "gaps_campos": gaps_campos}}
     achados = lint_renderizado(renderizado)
@@ -837,6 +892,10 @@ def pontuar_deal(
         # certidões is a gap (`incompleto`), not a material failure
         certidoes_ausentes_sao_lacuna=any(str(f.get("campo", "")).startswith("certidao.") for f in prontidao.faltando),
     )
+    extra = {
+        **por_spec,
+        **_origem_allowlist(allowlist, card.allowlist_aplicadas),
+    }
     veredito = card.veredito
     if veredito in ("aprovado", "aprovado_com_observacoes") and not prontidao.pode_gerar:
         # Text matches, but production would still refuse this card — the
@@ -853,9 +912,11 @@ def pontuar_deal(
         "lint_achados": len(achados),
         "gaps": gaps,
         "proveniencia": proveniencia,
+        **extra,
     }
     detalhe = {
         **card.detalhe(),
+        **extra,
         "veredito": veredito,
         "veredito_texto": card.veredito,
         "render_modo": modo,
@@ -907,6 +968,7 @@ def executar_lote(entrada: Path, saida: Path) -> dict:
                 deal["ref_paragrafos"],
                 allowlist=allowlist,
                 limiares=limiares,
+                especificacoes_esperadas=deal.get("especificacoes_esperadas"),
             )
         except Exception as exc:  # noqa: BLE001 — per-deal, reported by class, the batch goes on
             r = {"resumo": {"veredito": "erro", "erro": type(exc).__name__}, "detalhe": {"veredito": "erro", "erro": type(exc).__name__}}
