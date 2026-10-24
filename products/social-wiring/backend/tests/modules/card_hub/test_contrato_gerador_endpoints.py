@@ -566,8 +566,9 @@ class TestGeracao:
         assert r.status_code == 200, r.text
         body = r.json()
         assert set(body) == {"contrato_id", "pronto", "assinatura_referencia", "assinatura_data",
-                             "modelo_derivado", "modelo_confere",
-                             "modelo_automatico", "processo_legado", "modalidade_assinatura",
+                             "modelo_derivado", "modelo", "modelo_confere",
+                             "modelo_automatico", "especificacoes", "especificacoes_versao",
+                             "sugeridas", "conflitos", "processo_legado", "modalidade_assinatura",
                              "revisao_final_unica", "switches", "faltando", "bloqueios",
                              "avisos", "confirmacoes", "itens_revisao",
                              "correcoes_contestadas"}
@@ -996,6 +997,57 @@ class TestIniciar:
             if c["origem"] == "gerado" and c["atendimento_id"] == ids["atendimento"]
         ]
         assert len(gerados) == 2
+
+
+class TestEspecificacoesNaGeracao:
+    """Owner direction 2026-10-24 — the selected specifications scope the
+    readiness and label the contract (`contrato_gerador/especificacoes.py`)."""
+
+    V1 = ["compra_venda", "sinal_saldo", "financiamento_bancario", "intermediarias", "intermediacao"]
+
+    def _selecionar(self, client, ids, especificacoes):
+        r = client.put(_url(ids, "especificacoes"), json={"especificacoes": especificacoes}, headers=_auth())
+        assert r.status_code == 200, r.text
+
+    def test_legacy_reports_the_suggestion_and_no_selection(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        body = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert body["especificacoes"] is None and body["especificacoes_versao"] is None
+        assert body["sugeridas"] == self.V1 and body["conflitos"] == []
+        assert body["modelo"] == body["modelo_derivado"] == "compra_venda"
+
+    def test_a_matching_selection_is_ready_with_its_modelo(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        self._selecionar(client, ids, self.V1)
+        body = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert body["pronto"] is True, (body["faltando"], body["bloqueios"])
+        assert body["especificacoes"] == self.V1 and body["especificacoes_versao"] == 1
+        assert body["conflitos"] == [] and body["modelo"] == "compra_venda"
+
+    def test_a_selection_the_data_contradicts_blocks_and_lists_it(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        self._selecionar(client, ids, [c for c in self.V1 if c != "intermediacao"])
+        body = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert body["pronto"] is False and len(body["conflitos"]) == 1
+        bloqueio = next(b for b in body["bloqueios"] if b["codigo"] == "ESPEC_CONTRADIZ_DADOS")
+        assert body["conflitos"][0] in bloqueio["mensagem"]
+
+    def test_iniciar_labels_a_continued_draft_by_its_selection_not_the_data(
+        self, client, scoped, fake_storage
+    ):
+        ids = _seed_base(scoped)
+        r = client.post(f"/api/clientes/{ids['cliente']}/contratos/gerar", headers=_auth())
+        ids = {**ids, "contrato": r.json()["contrato"]["id"]}
+        self._selecionar(client, ids, ["compra_venda", "a_vista", "permuta"])
+        r = client.post(f"/api/clientes/{ids['cliente']}/contratos/gerar", headers=_auth())
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["contrato"]["modelo"] == "compra_venda_permuta"
+        geracao = body["geracao"]
+        assert geracao["modelo"] == "compra_venda_permuta" and geracao["modelo_confere"] is True
+        assert geracao["modelo_derivado"] == "compra_venda"
+        campos = {f["campo"] for f in geracao["faltando"]}
+        assert {"especificacao.permuta", "negociacao.multa_rescisoria_base"} <= campos
 
 
 class TestModeloDeContratoGerado:

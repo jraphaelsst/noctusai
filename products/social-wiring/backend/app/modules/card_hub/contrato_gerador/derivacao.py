@@ -672,6 +672,23 @@ class Avaliacao:
     #: recorded on the generated version (`revisao_juridica_itens`). Never a
     #: readiness condition: the review itself is the gate.
     itens_revisao: list[dict] = field(default_factory=list)
+    #: [Owner direction 2026-10-24] The readiness SCOPE: the `especificacoes.
+    #: requisitos` of the operator's selected contract specifications. `None`
+    #: = legacy mode (no stored selection): every falta is asked, exactly as
+    #: before the catalogue existed. See `pede` — the one gate every `falta`
+    #: goes through.
+    requisitos: Optional[frozenset[str]] = None
+
+    def pede(self, campo: str) -> bool:
+        """THE scope gate (every `falta` passes it): a falta key some
+        specification GOVERNS (`especificacoes.governa`) is asked only when
+        the selection requires it (`especificacoes.exige`) — data specific to
+        one specification is never demanded by a selection that does not use
+        it. An ungoverned key (parties, certidões, the imóvel's registry
+        data…) is about every contract and is always asked."""
+        if self.requisitos is None or not especificacoes.governa(campo):
+            return True
+        return especificacoes.exige(self.requisitos, campo)
 
     @property
     def pendentes_confirmacao(self) -> list[dict]:
@@ -697,6 +714,8 @@ class Avaliacao:
         opens, for the rare falta grouped under one screen but fixed on
         another (the foro comarca: a matrícula fact, fixed on the imóvel's
         documents)."""
+        if not self.pede(campo):
+            return
         chave = (campo, parte_id)
         if any((f["campo"], f["parte_id"]) == chave for f in self.faltando):
             return
@@ -1065,6 +1084,16 @@ def certidao_unica_sp_vale(c: Optional[Certidao]) -> bool:
 
 
 TIPO_CRF_FGTS = "fgts_regularidade"
+
+
+def exige_crf_fgts(d: DadosContrato) -> bool:
+    """Is the companies' CRF/FGTS required on this deal? The deal's own
+    opt-in (`exigir_crf_fgts`, migration 295) — or, when the operator
+    selected the contract's specifications, the ``fgts`` specification: a
+    deal paid with FGTS is the case that asks for it (owner direction
+    2026-10-24 — the specification scopes the data). Legacy mode (no
+    selection) is the opt-in alone, as before."""
+    return d.exigir_crf_fgts or (d.especificacoes is not None and "fgts" in d.especificacoes)
 
 
 def tipos_exigidos(
@@ -2984,11 +3013,11 @@ def _certidoes(
                     alvo=alvo,
                 )
         idx = indice_certidoes(certs, tipo_documento)
-        if tipo_documento == "cnpj" and not d.exigir_crf_fgts and not (
+        if tipo_documento == "cnpj" and not exige_crf_fgts(d) and not (
             idx.get(TIPO_CRF_FGTS) and idx[TIPO_CRF_FGTS].resultado
         ):
             fgts_opcional.append(nome_grupo)
-        for tipo in tipos_exigidos(tipo_documento, idx, exigir_fgts=d.exigir_crf_fgts):
+        for tipo in tipos_exigidos(tipo_documento, idx, exigir_fgts=exige_crf_fgts(d)):
             rotulo = frases.rotulo_certidao(tipo, None)
             c = idx.get(tipo)
             if c is None or not c.resultado:
@@ -3692,9 +3721,11 @@ def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
             )
 
 
-def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
+def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], *, legado: bool = True) -> None:
+    # Legacy mode only: with selected specifications the data is checked
+    # against the SELECTION instead (`_especificacoes`, ESPEC_CONTRADIZ_DADOS).
     derivado = modelo_derivado(sw)
-    if d.modelo != derivado:
+    if legado and d.modelo != derivado:
         av.avisa("MODELO_DIVERGENTE", f"O modelo do contrato é '{d.modelo}', mas os dados indicam '{derivado}'.")
     # [Owner directive, 2026-09-23] "the paragraph is required, so no
     # silent omission" — `itens_integrantes` alone cannot tell "nobody
@@ -3809,6 +3840,90 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
 avaliar_partes = _partes
 
 
+# ─── selected contract specifications (owner direction 2026-10-24) ───────
+
+#: The falta label of each `especificacoes.PENDENTES_DECISAO` key — asked
+#: whenever the selection requires it, because NO data can answer an open
+#: owner question (nothing is invented in its place). A test pins this table
+#: to `PENDENTES_DECISAO`.
+ROTULO_PENDENTE_DECISAO: dict[str, str] = {
+    "negociacao.multa_rescisoria_base": (
+        "Aguardando decisão do escritório: base da multa rescisória para contrato à vista "
+        "(sem sinal). Se o negócio tem sinal, selecione também 'Sinal + saldo'."
+    ),
+}
+
+#: A selected specification whose data is ABSENT — never a silently dropped
+#: clause: `especificacao.<chave>` (an ungoverned key, so the gate always
+#: lets it through) is asked while none of the specification's
+#: `switches_implicados` is witnessed by the deal's data. ``a_vista`` and
+#: ``sinal_saldo`` are absent on purpose: an à vista selection with no
+#: parcelas is already `negociacao.parcelas`, one with financing data is a
+#: contradiction (`especificacoes.conflitos`), and the sinal is the governed
+#: requisito `negociacao.parcela_sinal`. A test pins the key set.
+ESPECIFICACAO_SEM_DADOS: dict[str, tuple[str, str]] = {
+    "financiamento_bancario": (
+        "Financiamento bancário selecionado: inclua a parcela de financiamento", "negociacao",
+    ),
+    "fgts": (
+        "Uso de FGTS selecionado: marque o uso de FGTS no financiamento", "financiamento",
+    ),
+    "parcelas_diretas": (
+        "Parcelas diretas selecionadas: inclua as parcelas diretas ao vendedor", "negociacao",
+    ),
+    "intermediarias": (
+        "Parcelas intermediárias selecionadas: inclua as parcelas intermediárias", "negociacao",
+    ),
+    "confissao_divida": (
+        "Confissão de dívida selecionada: marque as parcelas diretas que entram na confissão",
+        "negociacao",
+    ),
+    "permuta": (
+        "Permuta selecionada: inclua a parcela de permuta com o(s) imóvel(is) dado(s) em permuta",
+        "negociacao",
+    ),
+    "intermediacao": ("Intermediação selecionada: cadastre os intermediários", "negociacao"),
+}
+
+
+def especificacoes_selecionadas(d: DadosContrato) -> tuple[Optional[tuple[str, ...]], Optional[str]]:
+    """`(selection, erro)`: the operator's stored specifications validated
+    (catalogue order), or `None` = legacy mode (nothing stored). A stored
+    selection the CURRENT catalogue refuses (a later vocabulary change) is
+    `(None, <the validar message>)` — the caller reports it as a bloqueio
+    and the readiness falls back to legacy, never to a guessed scope."""
+    if d.especificacoes is None:
+        return None, None
+    try:
+        return especificacoes.validar(d.especificacoes), None
+    except ValueError as exc:
+        return None, str(exc)
+
+
+def _especificacoes(
+    av: Avaliacao, sw: dict[str, bool], selecao: tuple[str, ...]
+) -> None:
+    """The selection against the data: what the selection requires but no
+    data can answer yet (an open owner decision), what it selects but the
+    data lacks, and what the data carries that contradicts it."""
+    requisitos = av.requisitos or frozenset()
+    for campo, rotulo in ROTULO_PENDENTE_DECISAO.items():
+        if especificacoes.exige(requisitos, campo):
+            av.falta(campo, rotulo, "negociacao")
+    for chave, (rotulo, onde) in ESPECIFICACAO_SEM_DADOS.items():
+        implicados = especificacoes.POR_CHAVE[chave].switches_implicados
+        if chave in selecao and not any(sw.get(s) for s in implicados):
+            av.falta(f"especificacao.{chave}", rotulo, onde)
+    contradicoes = especificacoes.conflitos(selecao, sw)
+    if contradicoes:
+        av.bloqueia(
+            "ESPEC_CONTRADIZ_DADOS",
+            "As especificações selecionadas contradizem os dados do negócio: "
+            + " ".join(contradicoes)
+            + " Ajuste a seleção ou os dados.",
+        )
+
+
 def avaliar(
     d: DadosContrato,
     switches: dict[str, bool],
@@ -3817,14 +3932,31 @@ def avaliar(
     hoje: Optional[date] = None,
 ) -> Avaliacao:
     """`hoje` (default TODAY — `_hoje_padrao`) is the E1 empresa-
-    classification reference date, distinct from `assinatura` (E2/H2)."""
+    classification reference date, distinct from `assinatura` (E2/H2).
+
+    [Owner direction 2026-10-24] The operator's selected specifications
+    (`d.especificacoes`) SCOPE the faltas: `Avaliacao.requisitos` =
+    `especificacoes.requisitos(selection)`, enforced by `Avaliacao.pede` on
+    every `falta`. No stored selection = legacy mode: no scope, every falta
+    asked exactly as before (byte-identical — `especificacoes.sugerir(
+    switches)` is only REPORTED, `service.obter_geracao['sugeridas']`; used
+    as a scope it would drop the sinal on a deal whose only parcela is fgts,
+    which the legacy gate asks for)."""
+    selecao, erro_selecao = especificacoes_selecionadas(d)
     av = Avaliacao(
         destinos=Destinos(
             cliente_id=d.cliente_id,
             contrato_id=d.contrato_id,
             imovel_codigo=d.imovel.codigo if d.imovel else None,
-        )
+        ),
+        requisitos=especificacoes.requisitos(selecao) if selecao is not None else None,
     )
+    if erro_selecao is not None:
+        av.bloqueia(
+            "ESPECIFICACOES_INVALIDAS",
+            f"As especificações salvas no contrato não valem no catálogo atual ({erro_selecao}) "
+            "— selecione-as de novo.",
+        )
     _partes(av, d, politica)
     _doacao_adiantamento_legitima(av, d)
     _imovel(av, d, switches, politica, assinatura)
@@ -3834,7 +3966,9 @@ def avaliar(
     _certidoes(av, d, switches, politica, assinatura, hoje)
     _imobiliaria(av, d, politica)
     _intermediacao(av, d, switches)
-    _contrato(av, d, switches)
+    _contrato(av, d, switches, legado=selecao is None)
+    if selecao is not None:
+        _especificacoes(av, switches, selecao)
     return av
 
 
@@ -3851,6 +3985,10 @@ __all__ = [
     "ROTULO_CONDOMINIO_FALTA",
     "ALVO_ITENS_INTEGRANTES",
     "Avaliacao",
+    "ESPECIFICACAO_SEM_DADOS",
+    "ROTULO_PENDENTE_DECISAO",
+    "especificacoes_selecionadas",
+    "exige_crf_fgts",
     "Destinos",
     "EmpresaExigida",
     "MODELO_A_VISTA",

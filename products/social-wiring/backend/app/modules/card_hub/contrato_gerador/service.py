@@ -19,12 +19,14 @@ from noctusai_lib.primitives.exceptions import AppException
 
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import services as svc
+from app.modules.card_hub.contrato_gerador import especificacoes as esp
 from app.modules.card_hub.contrato_gerador.carregador import carregar
 from app.modules.card_hub.contrato_gerador.contexto import snapshot_sha256
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato
 from app.modules.card_hub.contrato_gerador.derivacao import (
     avaliar,
     derivar_switches,
+    especificacoes_selecionadas,
     modelo_derivado,
 )
 from app.modules.card_hub.contrato_gerador.documento import MIME_PDF, gerar_pdf, renderizar
@@ -107,6 +109,14 @@ class ContratoPdfNaoGerado(AppException):
         )
 
 
+def modelo_do_contrato(dados: DadosContrato, switches: dict[str, bool]) -> str:
+    """The `modelo` label a generated contract carries: the one the
+    operator's SELECTED specifications imply (`especificacoes.modelo_de`) —
+    or, in legacy mode (no valid selection), the one the data derives."""
+    selecao, _ = especificacoes_selecionadas(dados)
+    return esp.modelo_de(selecao) if selecao is not None else modelo_derivado(switches)
+
+
 def obter_geracao(
     client: Any,
     org_id: UUID,
@@ -134,6 +144,8 @@ def obter_geracao(
     data = data_assinatura(dados, assinatura)
     avaliacao = avaliar(dados, switches, politica, data, referencia)
     derivado = modelo_derivado(switches)
+    selecao, _ = especificacoes_selecionadas(dados)
+    modelo = modelo_do_contrato(dados, switches)
     return {
         "contrato_id": str(contrato_id),
         "pronto": avaliacao.pronto,
@@ -143,10 +155,25 @@ def obter_geracao(
         # The date stored on the contract (migration 114), when any.
         "assinatura_data": dados.assinatura_data.isoformat() if dados.assinatura_data else None,
         "modelo_derivado": derivado,
-        "modelo_confere": dados.modelo == derivado,
-        # True = `gerar` will set the contract's modelo to `modelo_derivado`
+        # [Owner direction 2026-10-24] The contract's label: the SELECTED
+        # specifications' (`especificacoes.modelo_de`), else — legacy mode —
+        # `modelo_derivado`.
+        "modelo": modelo,
+        "modelo_confere": dados.modelo == modelo,
+        # True = `gerar` will set the contract's modelo to `modelo`
         # (a 'gerado' contract); False = a mismatch is only flagged.
         "modelo_automatico": dados.origem == "gerado",
+        # Migration 308 — the operator's selected specifications (catalogue
+        # order; `None` = legacy mode: nothing selected, the readiness asks
+        # for everything the data implies), the catalogue version they were
+        # chosen against, what the data SUGGESTS (`especificacoes.sugerir` —
+        # the selector's default), and what the data contradicts in the
+        # selection (each one is also inside the ESPEC_CONTRADIZ_DADOS
+        # bloqueio).
+        "especificacoes": list(selecao) if selecao is not None else None,
+        "especificacoes_versao": dados.especificacoes_versao,
+        "sugeridas": esp.sugerir(switches),
+        "conflitos": esp.conflitos(selecao, switches) if selecao is not None else [],
         # Migration 151 — so the UI can show the dispensation is active
         # even before the reader gets down to the avisos that name it.
         "processo_legado": dados.processo_legado,
@@ -188,8 +215,9 @@ def iniciar(
     politica: Politica,
 ) -> dict:
     """Start a generated contract for this deal — or CONTINUE one already
-    started, when it never got a version. Sets the contract's modelo to the
-    one the deal's data derives, and returns it with the readiness report —
+    started, when it never got a version. Sets the contract's modelo to
+    `modelo_do_contrato` (the selected specifications' label, else the one
+    the deal's data derives), and returns it with the readiness report —
     so the card can show "what is missing" at once. Nothing is rendered
     here; v1 comes from `gerar` once `pronto`.
 
@@ -200,7 +228,7 @@ def iniciar(
     rascunho_gerado_sem_versao` finds the atendimento's newest `origem=
     'gerado'`, `status='rascunho'` draft that still has ZERO versions, if
     any, and this reuses it — same as a freshly created row, its modelo is
-    still re-derived and corrected below, so "the same derived modelo" is
+    still recomputed and corrected below, so "the right modelo" is
     true by construction rather than something this function has to compare
     up front. The caller (the router) is told whether a row was created or
     reused, to answer 201 vs 200.
@@ -220,10 +248,12 @@ def iniciar(
         )
     contrato_id = UUID(row["id"])
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
-    derivado = modelo_derivado(derivar_switches(dados, politica, hoje()))
-    if derivado != row["modelo"]:
-        contratos_svc.definir_modelo(client, org_id, contrato_id, derivado)
-        row["modelo"] = derivado
+    # A continued draft may already carry selected specifications: its
+    # label is then theirs, never overwritten by the data's derivation.
+    modelo = modelo_do_contrato(dados, derivar_switches(dados, politica, hoje()))
+    if modelo != row["modelo"]:
+        contratos_svc.definir_modelo(client, org_id, contrato_id, modelo)
+        row["modelo"] = modelo
     return {
         "contrato": contratos_svc.saida(client, org_id, row),
         "geracao": obter_geracao(
@@ -300,12 +330,13 @@ async def gerar(
     if achados:
         raise ContratoReprovadoNaRevisao(achados)
 
-    # A 'gerado' contract's modelo is the derived one by construction — keep
-    # it in sync with the data this version was rendered from (the deal may
-    # have gained parcelas since `iniciar` set it).
-    derivado = modelo_derivado(switches)
-    if dados.origem == "gerado" and dados.modelo != derivado:
-        contratos_svc.definir_modelo(client, org_id, contrato_id, derivado)
+    # A 'gerado' contract's modelo is `modelo_do_contrato` by construction —
+    # the selected specifications' label, or (legacy mode) the derived one,
+    # kept in sync with the data this version was rendered from (the deal
+    # may have gained parcelas since `iniciar` set it).
+    modelo = modelo_do_contrato(dados, switches)
+    if dados.origem == "gerado" and dados.modelo != modelo:
+        contratos_svc.definir_modelo(client, org_id, contrato_id, modelo)
 
     # `renderizado.docx` is the editable rendering; `gerar_pdf` derives the
     # ABNT PDF from it. BOTH are stored on the saved version (migration 120,
@@ -349,6 +380,7 @@ __all__ = [
     "gerar",
     "hoje",
     "iniciar",
+    "modelo_do_contrato",
     "obter_geracao",
     "precondicao_gerar",
 ]
