@@ -115,6 +115,34 @@ finding.
 - Template-era differences (e.g. a Feb-2026 contract with a generic "documents the sellers will
   deliver" list instead of itemised certidões) are observations, not generator defects.
 
+### 4.1 · The gap-marker render (a NOT-`pronto` card) — gated inputs and their stand-ins
+
+A not-`pronto` card is scored from `harness.dados_com_marcadores` (every gap is a visible marker, never
+a silently missing word). The generator `assert … # gated`s / `# type: ignore`s inputs that the readiness
+gate (`derivacao`) guarantees in production, so the marker copy must supply a stand-in for **each** one.
+Inventory (audited 2026-10-24; no assertion lacked a readiness rule — none is a production 500 at
+"Gerar versão"):
+
+| gated input (`contexto.py`) | readiness rule that guarantees it | marker-mode stand-in |
+|---|---|---|
+| `imovel`, `valor_negociado` | `negociacao.imovel`, `negociacao.valor_negociado` | money sentinel (imóvel absent = no render) |
+| `endereco_curto` (imóvel + each permuta ativo) | `matricula.atos` / `imovel.endereco_registro_texto` / `matricula.permuta.<id>.atos` | `endereco_registro_texto` = marker, only when the matrícula yields no street |
+| `cartorio_partes(...)` under `tem_onus_ja_quitado` | `imovel.numero_registro_imoveis` (empty or no city) | `CARTORIO_LACUNA` |
+| `onus_fonte_atos[0]`, `AtoCitado.numero` | `matricula.onus_fonte`, `ONUS_FONTE_INVALIDA` | synthetic ato / `999` |
+| `termos.onus_baixa_protocolo_em` | `negociacao.onus_baixa_protocolo_em` | date sentinel |
+| `favorecidos[...]` (sinal tranche, divisão, corretagem) | `negociacao.parcela.<id>.favorecido`, `…divisao.<n>.favorecido`, `FAVORECIDO_INEXISTENTE` | one synthetic favorecido |
+| `Parcela.valor`, `Intermediario.valor`, `DivisaoFavorecido.valor`, `pct_comissao` | `negociacao.parcela.<id>.valor`, `…intermediario.<id>.valor`, `…divisao.<n>.valor`, `negociacao.pct_comissao` | money / `999` sentinel (`harness.ENTRADAS_ESTRUTURAIS`) |
+| `representantes(...)[0]` of each PJ | `partes.pj.representante` | blank synthetic representante |
+| sinal parcela, fixed `posse_data` | `negociacao.sinal`, `posse.data` | synthetic sinal / date sentinel |
+
+Declared **no-render** cards (raise → `incompleto_sem_render`): no seller or buyer on a side, no imóvel,
+a permuta parcela whose imóvel is not loaded. `tests/e2e_contrato/test_harness_fuzz_marcadores.py` blanks
+every field of every dataclass (and drops list elements) one at a time over every fixture variant plus
+the PJ / já-quitado / divisão / sinal-em-partes / permuta scenarios, and asserts the marker render never
+raises (outside that list) **and** the harness rewrites only declared fields — a production-optional field
+(`Endereco.complemento`, intermediário representante, `prazo_pendencias_dias`, a resolvable
+`endereco_registro_texto`) is never turned into a marker. A new gated input fails that test until it gets a row.
+
 ## 5 · Close the loop
 
 1. Every finding → fix slice (seed reader / SW service / FE), synthetic tests, integrate (merged-tip

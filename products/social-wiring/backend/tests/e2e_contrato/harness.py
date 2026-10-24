@@ -229,9 +229,59 @@ CAMPOS_DATA_MARCAVEIS = frozenset({"emitida_em", "data_casamento"})
 #: Agreement stand-in for a printed person whose gender is missing (marker mode only).
 GENERO_LACUNA = "m"
 
+#: Registry stand-in whose city `frases.cartorio_partes` can read.
+CARTORIO_LACUNA = "Cartório de Registro de Imóveis de Lacuna"
+
 #: Id of the synthetic favorecido (named by the marker) every unset/dangling
 #: favorecido reference points at in marker mode — the owner's bank data gap.
 FAVORECIDO_LACUNA_ID = "lacuna-favorecido"
+
+
+#: One stand-in per `# gated` INPUT the context builder cannot go without
+#: (`contexto.montar_contexto` asserts / `# type: ignore`s it; production
+#: guarantees it through a `derivacao` readiness rule — inventory in
+#: `KB § CONTEXT/PRODUCTS/social-wiring/CONTRACT-E2E-RUNBOOK.md` § 4.1). Keyed
+#: `(dataclass, field)`; the value names the sentinel kind. Generated from
+#: the inventory, never hand-patched per incident: a new gated input without
+#: a row here is caught by `test_harness_fuzz_marcadores.py`.
+ENTRADAS_ESTRUTURAIS: dict[tuple[str, str], str] = {
+    ("DadosContrato", "valor_negociado"): "dinheiro",  # negociacao.valor_negociado
+    ("Parcela", "valor"): "dinheiro",  # negociacao.parcela.<id>.valor
+    ("Intermediario", "valor"): "dinheiro",  # negociacao.intermediario.<id>.valor
+    ("DadosContrato", "pct_comissao"): "inteiro",  # negociacao.pct_comissao
+    ("AtoCitado", "numero"): "inteiro",  # ONUS_FONTE_INVALIDA (ato sem número)
+    # A divisão share with neither a valor nor a percentual (`_divisao`).
+    ("DivisaoFavorecido", "valor"): "dinheiro_sem_percentual",
+}
+
+
+def _com_representante_lacuna(dados: Any, contagem: int) -> tuple[Any, int]:
+    """Every PJ party needs ONE representante the context builder indexes
+    (`contexto._pj_com_representante`, gated by `partes.pj.representante`).
+    A PJ with none gets a synthetic one — blank, so the normal marking pass
+    turns its qualification into visible markers."""
+    import dataclasses
+
+    from app.modules.card_hub.contrato_gerador.dados import Pessoa, representantes
+
+    pjs = getattr(dados, "partes_pj", None) or []
+    pessoas = list(getattr(dados, "vendedores", []) or []) + list(getattr(dados, "compradores", []) or [])
+    mudancas: dict[str, Any] = {}
+    for pj in pjs:
+        if representantes(pessoas, pj.parte_id):
+            continue
+        lado = "vendedores" if pj.lado == "vendedor" else "compradores"
+        fantasma = Pessoa(
+            cliente_id=f"lacuna-representante-{pj.parte_id}",
+            lado=pj.lado,
+            papel="representante",
+            parte_id=f"lacuna-representante-{pj.parte_id}",
+            representa_parte_id=pj.parte_id,
+        )
+        mudancas[lado] = [*mudancas.get(lado, getattr(dados, lado)), fantasma]
+        pessoas.append(fantasma)
+        contagem += 1
+    return (dataclasses.replace(dados, **mudancas) if mudancas else dados), contagem
 
 
 def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
@@ -262,6 +312,7 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
     contagem = 0
     valor_lacuna = Decimal(comparador.VALOR_LACUNA)
     data_lacuna = date.fromisoformat(comparador.DATA_LACUNA)
+    dados, contagem = _com_representante_lacuna(dados, contagem)
 
     def _visita(obj: Any, pai: str = "") -> Any:
         nonlocal contagem
@@ -273,6 +324,17 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
             for f in dataclasses.fields(obj):
                 valor = getattr(obj, f.name)
                 tipo = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", str(f.type))
+                sentinela = ENTRADAS_ESTRUTURAIS.get((classe, f.name))
+                if sentinela == "dinheiro_sem_percentual" and getattr(obj, "percentual", None) is not None:
+                    sentinela = None
+                if sentinela and valor is None:
+                    mudancas[f.name] = (
+                        valor_lacuna if sentinela.startswith("dinheiro") else Decimal(comparador.INTEIRO_LACUNA)
+                    )
+                    if sentinela == "inteiro" and "int" in tipo:
+                        mudancas[f.name] = int(comparador.INTEIRO_LACUNA)
+                    contagem += 1
+                    continue
                 if f.name in marcaveis and valor in (None, "") and "str" in tipo:
                     mudancas[f.name] = comparador.MARCADOR_LACUNA
                     contagem += 1
@@ -310,16 +372,10 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
 
     marcado = _visita(dados)
     estruturais: dict[str, Any] = {}
-    if getattr(marcado, "valor_negociado", "ausente") is None:
-        estruturais["valor_negociado"] = valor_lacuna
-        contagem += 1
     parcelas = list(getattr(marcado, "parcelas", []) or [])
     if parcelas or hasattr(marcado, "parcelas"):
         novas = []
         for p in parcelas:
-            if p.valor is None:
-                p = dataclasses.replace(p, valor=valor_lacuna)
-                contagem += 1
             novas.append(p)
         if not any(p.tipo == "sinal" for p in novas):
             from app.modules.card_hub.contrato_gerador.dados import Parcela
@@ -391,7 +447,63 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
                     cpf_cnpj=comparador.MARCADOR_LACUNA,
                 ),
             ]
-    termos = getattr(marcado, "termos", None)
+    # The posse clauses print the REGISTRY address (`contexto` asserts it is
+    # resolved — gated by `matricula.atos` / `imovel.endereco_registro_texto`
+    # and the permuta analogues). When neither the override nor the matrícula
+    # yields a street, the field IS the gap: the marker, only then — a
+    # resolvable address is never marked (it is optional in production).
+    from app.modules.card_hub.contrato_gerador.derivacao import resolver_endereco_posse
+
+    matricula = getattr(marcado, "matricula", None)
+    im = getattr(marcado, "imovel", None)
+    if im is not None and matricula is not None and not resolver_endereco_posse(
+        im.endereco_registro_texto,
+        matricula.descricao_imovel_texto or matricula.texto,
+        matricula.texto,
+    ):
+        im = dataclasses.replace(im, endereco_registro_texto=comparador.MARCADOR_LACUNA)
+        estruturais["imovel"] = im
+        contagem += 1
+    termos_cartao = getattr(marcado, "termos", None)
+    if im is not None and termos_cartao is not None:
+        from app.modules.card_hub.contrato_gerador import frases
+        from app.modules.card_hub.contrato_gerador.dados import AtoCitado
+        from app.modules.card_hub.contrato_gerador.derivacao import ONUS_COM_SALDO
+
+        if im.situacao_onus in ONUS_COM_SALDO and not im.onus_fonte_atos:
+            # matricula.onus_fonte: the acts that register the ônus.
+            im = dataclasses.replace(im, onus_fonte_atos=[AtoCitado("R", int(comparador.INTEIRO_LACUNA))])
+            estruturais["imovel"] = im
+            contagem += 1
+        if (
+            termos_cartao.onus_quitacao == frases.QUITACAO_ONUS_JA_QUITADO
+            and frases.cartorio_partes(im.numero_registro_imoveis) is None
+        ):
+            # imovel.numero_registro_imoveis: the "já quitado" wording names
+            # the registry's city (`contexto` asserts it reads), and the reader
+            # only accepts letters there — so the stand-in city is the word
+            # "Lacuna" (the gap itself stays reported by the readiness leg).
+            im = dataclasses.replace(im, numero_registro_imoveis=CARTORIO_LACUNA)
+            estruturais["imovel"] = im
+            contagem += 1
+        if termos_cartao.onus_quitacao == frases.QUITACAO_ONUS_JA_QUITADO and termos_cartao.onus_baixa_protocolo_em is None:
+            estruturais["termos"] = dataclasses.replace(
+                estruturais.get("termos", termos_cartao), onus_baixa_protocolo_em=data_lacuna
+            )
+            contagem += 1
+    permutas = []
+    for pi in getattr(marcado, "permuta_imoveis", None) or []:
+        if not resolver_endereco_posse(
+            pi.endereco_registro_texto,
+            pi.descricao_imovel_texto or pi.descricao_matricula or "",
+            pi.descricao_matricula or "",
+        ):
+            pi = dataclasses.replace(pi, endereco_registro_texto=comparador.MARCADOR_LACUNA)
+            contagem += 1
+        permutas.append(pi)
+    if any(a is not b for a, b in zip(permutas, getattr(marcado, "permuta_imoveis", None) or [])):
+        estruturais["permuta_imoveis"] = permutas
+    termos = estruturais.get("termos", getattr(marcado, "termos", None))
     if termos is not None and termos.posse_marco == "data_fixa" and termos.posse_data is None:
         # A fixed-date posse (migration 201) the render cannot go without.
         estruturais["termos"] = dataclasses.replace(termos, posse_data=data_lacuna)
@@ -423,6 +535,22 @@ def clausulas_desligadas(switches: dict[str, bool]) -> list[str]:
     ]
 
 
+def _preparar_render(dados, com_marcadores: bool):
+    """`(alvo, switches, politica, assinatura, referencia)` — `service.gerar`'s
+    own sequence up to the render. Switches are derived from the card AS
+    LOADED (a marker must never flip a switch); the template data is the
+    marker copy when `com_marcadores`."""
+    from app.modules.card_hub.contrato_gerador.derivacao import derivar_switches
+    from app.modules.card_hub.contrato_gerador.service import data_assinatura, hoje
+
+    politica = politica_producao()
+    referencia = hoje()
+    switches = derivar_switches(dados, politica, referencia)
+    assinatura = data_assinatura(dados, None)
+    alvo = dados_com_marcadores(dados)[0] if com_marcadores else dados
+    return alvo, switches, politica, assinatura, referencia
+
+
 def renderizar_em_memoria(dados, *, com_marcadores: bool = False) -> Any:
     """`documento.renderizar` with the REAL docx adapter and the production
     policy — `service.gerar`'s own sequence (one `hoje()` snapshot for
@@ -434,17 +562,25 @@ def renderizar_em_memoria(dados, *, com_marcadores: bool = False) -> Any:
     raises — the caller reports it."""
     from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
-    from app.modules.card_hub.contrato_gerador.derivacao import derivar_switches
     from app.modules.card_hub.contrato_gerador.documento import renderizar
-    from app.modules.card_hub.contrato_gerador.service import data_assinatura, hoje
 
-    politica = politica_producao()
-    referencia = hoje()
-    switches = derivar_switches(dados, politica, referencia)
-    assinatura = data_assinatura(dados, None)
-    alvo = dados_com_marcadores(dados)[0] if com_marcadores else dados
+    alvo, switches, politica, assinatura, referencia = _preparar_render(dados, com_marcadores)
     adapter = get_docx_render_adapter(real=True)
     return renderizar(adapter, alvo, switches, politica, assinatura, referencia)
+
+
+def contexto_em_memoria(dados, *, com_marcadores: bool = False) -> Any:
+    """The template context only (`documento.montar_contexto`, where every
+    `# gated` assertion lives) — `renderizar_em_memoria` without the docx
+    build, ~7x faster; what the marker fuzz iterates."""
+    from noctusai_lib.integrations.docx_render import get_docx_render_adapter
+
+    from app.modules.card_hub.contrato_gerador.contexto import montar_contexto
+    from app.modules.card_hub.contrato_gerador.numeracao import ContadorParagrafos
+
+    alvo, switches, politica, assinatura, referencia = _preparar_render(dados, com_marcadores)
+    adapter = get_docx_render_adapter(real=True)
+    return montar_contexto(alvo, switches, politica, assinatura, ContadorParagrafos(None), adapter, referencia)
 
 
 def lint_renderizado(renderizado) -> list[dict]:
