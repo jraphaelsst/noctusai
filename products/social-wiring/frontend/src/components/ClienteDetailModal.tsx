@@ -687,8 +687,10 @@ export function ClienteDetailModal({
       // identity item's slot (`cin` / `cnh`). The generic Anexos button hands
       // it the catalogue's first type, which is right for a loose attachment
       // and wrong for an identity document.
+      // Returns the run: a failed outcome is drawn on the slot (seed
+      // upload-refusal organ) besides `falhaDoDocumento`'s toast.
       onUploadDocumentoChecklist={(_item, file, tipoDocumento) =>
-        void uploadChecklist.run({ file, tipoDocumento })
+        uploadChecklist.run({ file, tipoDocumento })
       }
       // Discards the FILE. The row stays — the mandatory list is server-defined
       // and there is no such thing as deleting "CPF" from it. The reason
@@ -757,7 +759,7 @@ export function ClienteDetailModal({
         })
       }
       onUploadChecklistExtra={(extraId, file) =>
-        checklistExtraMutations.uploadDocumento.mutate(
+        checklistExtraMutations.uploadDocumento.mutateAsync(
           { extraId, file },
           {
             // The 400 naming the exact limit/type it hit — never a client-side
@@ -781,7 +783,7 @@ export function ClienteDetailModal({
       onUploadDocumento={(file, tipoDocumento) =>
         // A 400 naming the exact limit/type it hit (contract §3) still shows
         // the server's own copy — see `falhaDoDocumento`.
-        void uploadAnexo.run({ file, tipoDocumento })
+        uploadAnexo.run({ file, tipoDocumento })
       }
       // `isRunning` spans the waits BETWEEN automatic attempts too, so the
       // button cannot fire a second upload while one is still being retried.

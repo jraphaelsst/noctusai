@@ -30,7 +30,8 @@
  *     seed variants here would silently opt this page out of them and leave it
  *     looking subtly unlike every other page in the product.
  */
-import { tipoArquivoAceito } from "@noctusai/lib";
+import { UploadErro } from "@noctusai/lib/components";
+import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -354,32 +355,31 @@ export default function Certidoes() {
     uploadInputRef.current?.click();
   };
 
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    // Reset immediately so re-picking the SAME file still fires `change`.
-    e.target.value = "";
-    if (!file || !uploadingId) return;
-
-    if (!tipoArquivoAceito(file, ["application/pdf"])) {
-      toast.error("Apenas arquivos PDF são aceitos.");
-      setUploadingId(null);
-      return;
-    }
-
-    try {
+  // Every refusal — the client-side PDF check and the server's — is drawn
+  // on the page with the file name (seed upload-refusal organ), not only a
+  // toast. KB § PATTERNS/frontend/silent-refusal.md.
+  const envio = useUploadDocumento(
+    async (file: File, resultadoId: string) => {
       const formData = new FormData();
       formData.append("file", file);
       // `api.upload`, not a hand-rolled multipart fetch: `api.post` would
       // JSON.stringify the FormData into `"{}"` and the endpoint would 422.
       // ERP hand-rolled this because it predates the seed's `upload` method.
-      await api.upload(`/api/certidoes/resultados/${uploadingId}/upload`, formData);
-
+      await api.upload(`/api/certidoes/resultados/${resultadoId}/upload`, formData);
       toast.success("Certidão enviada com sucesso!");
       queryClient.invalidateQueries({ queryKey: ["certidao-consulta"] });
       queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Erro ao enviar certidão";
-      toast.error(msg);
+    },
+    { aceitos: ["application/pdf"], mensagemTipo: () => "apenas arquivos PDF são aceitos." },
+  );
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset immediately so re-picking the SAME file still fires `change`.
+    e.target.value = "";
+    if (!file || !uploadingId) return;
+    try {
+      await envio.enviar(file, uploadingId);
     } finally {
       setUploadingId(null);
     }
@@ -401,6 +401,7 @@ export default function Certidoes() {
         data-testid="upload-input"
         onChange={handleFileSelected}
       />
+      <UploadErro erro={envio.erro} onDismiss={envio.limpar} className="text-sm" data-testid="certidoes-upload-erro" />
 
       {/* Header */}
       <div className="flex items-center justify-between">

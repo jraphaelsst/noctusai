@@ -48,7 +48,7 @@ export function certidaoCasamentoDe(documentos: Documento[]): Documento | undefi
 
 export interface CertidaoCasamentoSlotProps {
   documentos: Documento[];
-  onUpload: (file: File) => void;
+  onUpload: (file: File) => Promise<unknown>;
   uploading?: boolean;
   onVisualizar?: (documentoId: string) => void;
   /** Absent where the caller has no distinct download-under-original-name

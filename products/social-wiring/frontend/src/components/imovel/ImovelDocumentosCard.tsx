@@ -72,6 +72,8 @@ import { TIPOS_DOCUMENTO, codigoDoDocumento, formatBytes } from "@/hooks/useImov
 import { CAMPOS_POR_TIPO, RESULTADO_LABEL } from "@/hooks/useImovelContrato";
 import { isValidadeVencida } from "@/types/certidoesEstruturadas";
 import { formatDate } from "@/lib/utils";
+import { UploadErro } from "@noctusai/lib/components";
+import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 
 /** The fixed motivo the confirm dialog sends — same string the seed Anexos
  *  organ already uses for the same action (`AnexosSection.tsx`). */
@@ -93,7 +95,9 @@ interface Props {
    *  — rendered in place of the empty state, so a failed read never claims
    *  "Nenhum documento enviado". The page passes the seed `QueryErrorState`. */
   erroLista?: ReactNode;
-  onUpload: (file: File, tipoDocumento: string) => void;
+  /** Returns the upload's promise (`mutateAsync`): a refusal is drawn under
+   *  the picker with the file name (`<UploadErro>`). KB § PATTERNS/frontend/silent-refusal.md. */
+  onUpload: (file: File, tipoDocumento: string) => Promise<unknown>;
   /** `codigo` = the document's OWN código (path of the action). */
   onRemove: (documentoId: string, motivo: string, codigo?: string) => void;
   onOpen: (documentoId: string, codigo?: string) => void;
@@ -147,6 +151,7 @@ export default function ImovelDocumentosCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const [tipo, setTipo] = useState<string>(TIPOS_DOCUMENTO[0].value);
   const [removerAlvo, setRemoverAlvo] = useState<ImovelDocumento | null>(null);
+  const envio = useUploadDocumento((file: File, t: string) => onUpload(file, t));
 
   function pick() {
     inputRef.current?.click();
@@ -154,7 +159,7 @@ export default function ImovelDocumentosCard({
 
   function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) onUpload(file, tipo);
+    if (file) void envio.enviar(file, tipo);
     // Reset so choosing the SAME file twice still fires a change event.
     e.target.value = "";
   }
@@ -213,6 +218,7 @@ export default function ImovelDocumentosCard({
           />
         </div>
 
+        <UploadErro erro={envio.erro} onDismiss={envio.limpar} className="text-sm" data-testid="imovel-documento-upload-erro" />
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         {/* `loading` is the caller's `isPending || isFetching`, and it

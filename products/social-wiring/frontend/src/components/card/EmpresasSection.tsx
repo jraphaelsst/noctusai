@@ -815,7 +815,7 @@ function EmpresaCartaoSlot({ empresaId, clienteId }: { empresaId: string; client
         documentos={docs}
         tipoDocumento="cartao_cnpj"
         label="Cartão CNPJ"
-        onUpload={(file) => upload.mutate(file)}
+        onUpload={(file) => upload.mutateAsync(file)}
         uploading={upload.isPending}
         // §D.4 — ONE signed URL serves both actions (unlike the
         // person-scoped documentos, which mint a separate `intent=view|

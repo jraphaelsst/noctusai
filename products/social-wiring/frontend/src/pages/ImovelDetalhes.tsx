@@ -503,14 +503,15 @@ export default function ImovelDetalhes() {
                     : (documentoMutations.reextrair.variables?.documentoId ?? null))
                 : null
             }
+            // An upload refusal is drawn by the card itself (seed upload-refusal
+            // organ, with the file name) — not repeated here.
             error={
-              documentoMutations.upload.error?.message ??
               documentoMutations.remove.error?.message ??
               documentoMutations.reextrair.error?.message ??
               null
             }
             onUpload={(file, tipoDocumento) =>
-              documentoMutations.upload.mutate({ file, tipoDocumento })
+              documentoMutations.upload.mutateAsync({ file, tipoDocumento })
             }
             onRemove={(documentoId, motivo, docCodigo) =>
               documentoMutations.remove.mutate({ documentoId, motivo, codigo: docCodigo })

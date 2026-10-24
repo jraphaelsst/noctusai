@@ -46,6 +46,8 @@ import {
 } from "lucide-react";
 
 import { TableSkeleton } from "@noctusai/lib/design-system";
+import { UploadErro } from "@noctusai/lib/components";
+import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 import {
   Table,
   TableBody,
@@ -182,6 +184,9 @@ export function CertidoesPartePanel({
   const vincular = clienteId ? vincularCliente : empresaId ? vincularEmpresa : vincularParte;
   const confirmar = useConfirmarResultado({ atendimentoParteId, clienteId, empresaId });
   const upload = useUploadResultadoManual({ atendimentoParteId, clienteId, empresaId });
+  // The refusal is drawn on the row it belongs to (`chave` = resultado id),
+  // with the file name. KB § PATTERNS/frontend/silent-refusal.md.
+  const envio = useUploadDocumento((file: File, resultadoId: string) => upload.mutateAsync({ resultadoId, file }));
   const situacaoCadastral = useAtualizarSituacaoCadastral({
     atendimentoParteId,
     clienteId,
@@ -340,7 +345,7 @@ export function CertidoesPartePanel({
     // Reset immediately so re-picking the SAME file still fires `change`.
     e.target.value = "";
     if (!file || !uploadAlvo) return;
-    upload.mutate({ resultadoId: uploadAlvo, file });
+    void envio.enviarEm(uploadAlvo, file, uploadAlvo);
     setUploadAlvo(null);
   };
 
@@ -648,6 +653,13 @@ export function CertidoesPartePanel({
                           <Pencil className="h-3 w-3" />
                         </Button>
                       </div>
+                      <UploadErro
+                        erro={envio.erro}
+                        chave={resultado.id}
+                        onDismiss={envio.limpar}
+                        className="mt-1 max-w-xs text-left"
+                        data-testid={`certidoes-parte-upload-erro-${resultado.id}`}
+                      />
                     </TableCell>
                   </TableRow>
                 );

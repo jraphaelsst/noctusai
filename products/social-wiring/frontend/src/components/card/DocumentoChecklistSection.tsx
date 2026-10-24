@@ -133,7 +133,7 @@ export interface DocumentoChecklistSectionProps {
   savingCampo?: boolean;
   /** Uploads a file that satisfies a DOCUMENT item, filed under
    *  `tipoDocumento` (the identity item's slot: `cin` / `cnh`). */
-  onUploadDocumento?: (item: DocumentoChecklistItem, file: File, tipoDocumento: string) => void;
+  onUploadDocumento?: (item: DocumentoChecklistItem, file: File, tipoDocumento: string) => Promise<unknown>;
   /** Discards that file. The row stays — the list is server-defined. */
   onRemoverDocumento?: (documentoId: string, item: DocumentoChecklistItem) => void;
   uploading?: boolean;

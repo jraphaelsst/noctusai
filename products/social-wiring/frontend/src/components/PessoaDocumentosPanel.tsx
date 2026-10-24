@@ -200,7 +200,7 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         // first type (what the generic Anexos button does) would file every
         // identity document as whatever happens to sort first.
         onUploadDocumento={(_item, file, tipoDocumento) =>
-          docs.upload.mutate(
+          docs.upload.mutateAsync(
             { file, tipoDocumento },
             {
               onError: (e) =>
@@ -255,7 +255,7 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
             documentos={documentos.data ?? []}
             uploading={docs.upload.isPending}
             onUpload={(file) =>
-              docs.upload.mutate(
+              docs.upload.mutateAsync(
                 { file, tipoDocumento: slot.tipo },
                 {
                   onError: (e) =>

@@ -1103,7 +1103,7 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 | Marcar/desmarcar membro | — | Define os membros (profissionais) do card | — | "Não foi possível atualizar os membros." |
 | Criar checklist / adicionar, marcar, remover item / remover checklist | — | Grava no card | — | "Não foi possível criar o checklist." / "…adicionar o item." / "…atualizar o item." / "…remover o item." / "…remover o checklist." |
 | Salvar descrição | — | Cria ou atualiza a descrição | — | "Não foi possível salvar a descrição." / "Não foi possível criar a descrição." |
-| "Enviar anexo" | Tipo escolhido (senão o botão diz "Escolha o tipo do documento antes de enviar") | Envia o arquivo ao bucket `igig-cardhub` | — | "Não foi possível enviar o anexo." (arquivo acima de 25 MB ou formato não aceito é recusado pelo servidor) |
+| "Enviar anexo" | Tipo escolhido (senão o botão diz "Escolha o tipo do documento antes de enviar") | Envia o arquivo ao bucket `igig-cardhub` | — | "Não foi possível enviar o anexo." (aviso) e, na própria seção Anexos, a linha `"<nome do arquivo>" não foi enviado: <motivo do servidor>` (ex.: arquivo acima de 25 MB ou formato não aceito), que fica até a próxima tentativa; o tipo escolhido é mantido para tentar de novo |
 | Abrir anexo | — | Gera link temporário (**5 minutos**) e abre em nova aba; o acesso é registrado | — | "Não foi possível abrir o anexo." |
 | Remover anexo (lixeira) | — | Remove **sem confirmação**; exclusão lógica com motivo "Removido pelo usuário"; registrado | — | "Não foi possível remover o anexo." |
 | "Comentar" | Texto | Adiciona comentário à linha do tempo | — | "Não foi possível enviar o comentário." |

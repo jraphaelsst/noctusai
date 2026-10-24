@@ -76,7 +76,7 @@ interface Props {
   uploading: boolean;
   error?: string | null;
   onSave: (patch: FinanciamentoPatch) => void;
-  onUpload: (file: File, tipoDocumento: string) => void;
+  onUpload: (file: File, tipoDocumento: string) => Promise<unknown>;
   onRemove: (documentoId: string, motivo: string) => void;
   onOpen: (documentoId: string) => void;
   /** Migration 171 extraction actions (contract §E.5/§F) — re-run a
@@ -480,7 +480,7 @@ function Secao({
   docsPorTipo: Map<string, FinanciamentoDocumento>;
   loading: boolean;
   uploading: boolean;
-  onUpload: (file: File, tipo: string) => void;
+  onUpload: (file: File, tipo: string) => Promise<unknown>;
   onRemove: (documentoId: string, motivo: string) => void;
   onOpen: (documentoId: string) => void;
   onExtrair?: (documentoId: string) => void;
@@ -563,7 +563,7 @@ function FinanciamentoDocSlot({
   documentos: FinanciamentoDocumento[];
   loading: boolean;
   uploading: boolean;
-  onUpload: (file: File, tipo: string) => void;
+  onUpload: (file: File, tipo: string) => Promise<unknown>;
   onRemove: (documentoId: string, motivo: string) => void;
   onOpen: (documentoId: string) => void;
   onExtrair?: (documentoId: string) => void;

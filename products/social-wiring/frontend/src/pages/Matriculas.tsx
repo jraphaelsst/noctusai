@@ -35,7 +35,8 @@
  *   · the FONTES panel — heuristic título aquisitivo / ônus suggestions,
  *     clearly labelled as suggestions, with confirm / choose-other / clear.
  */
-import { tipoArquivoAceito } from "@noctusai/lib";
+import { UploadErro } from "@noctusai/lib/components";
+import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -202,18 +203,19 @@ export default function Matriculas() {
   }, [searchParams]);
 
   // Auto-select newly created extraction for live status tracking
+  // The refusal (client PDF check or the server's) stays under the dropzone
+  // with the file name — not only the hook's toast. KB § PATTERNS/frontend/silent-refusal.md.
+  const envio = useUploadDocumento(
+    (file: File, codigo: string | undefined) => uploadMutation.mutateAsync(codigo ? { file, codigo } : file),
+    { aceitos: ['application/pdf'], mensagemTipo: () => 'apenas arquivos PDF são aceitos.' },
+  );
+  const { enviar } = envio;
   const handleUpload = useCallback((file: File) => {
-    if (!tipoArquivoAceito(file, ['application/pdf'])) {
-      toast.error('Apenas arquivos PDF são aceitos.');
-      return;
-    }
     const codigo = codigoUpload.trim() || undefined;
-    uploadMutation.mutate(codigo ? { file, codigo } : file, {
-      onSuccess: (data) => {
-        setSelectedId(data.id);
-      },
+    void enviar(file, codigo).then((r) => {
+      if (r.ok) setSelectedId(r.valor.id);
     });
-  }, [uploadMutation, codigoUpload]);
+  }, [enviar, codigoUpload]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -442,6 +444,7 @@ export default function Matriculas() {
                 </>
               )}
             </div>
+            <UploadErro erro={envio.erro} onDismiss={envio.limpar} className="mt-2 text-sm" data-testid="matricula-upload-erro" />
 
             {/* Processing indicator */}
             {isProcessing && (

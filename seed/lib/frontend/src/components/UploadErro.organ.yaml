@@ -1,0 +1,33 @@
+name: UploadErro
+kind: component
+path: seed/lib/frontend/src/components/UploadErro.tsx
+phase: pilot-seed
+registered_at: "2026-10-24"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Import: import { UploadErro } from '@noctusai/lib/components'; the hook: import { useUploadDocumento } from '@noctusai/lib/upload-refusal' (also re-exported from '@noctusai/lib')."
+  - "Contract: const envio = useUploadDocumento((file, ...args) => mutation.mutateAsync(...)); envio.enviar(file, ...args) NEVER rejects — it resolves { ok: true, valor } | { ok: false, recusa }; the refusal is envio.erro until the next attempt or envio.limpar(). The caller renders <UploadErro erro={envio.erro} />."
+  - "The send fn is typed Promise<unknown>: an onUpload prop that returns void (mutate instead of mutateAsync) does not compile — that void return is where F78/F86 vanished."
+  - "Message: a 4xx shows the server's own words (body error.message / detail, '[NNN] ' prefix stripped); a 5xx / transport failure shows describeFailure's reason class; text is '\"<arquivo>\" não foi enviado: <motivo>' (textoDaRecusa)."
+  - "Client-side refusals: options.aceitos (MIME, via tipoArquivoAceito — '' and application/octet-stream always go to the server sniff, F75b), options.maxBytes, and envio.recusar(file, msg) for a caller's own refusal (e.g. no tipo picked)."
+  - "A useRetryableAction().run outcome with ok=false (run never rejects) counts as a refusal."
+  - "Per-row: envio.enviarEm(chave, file, ...) tags the refusal; <UploadErro erro={envio.erro} chave={rowKey} /> shows only that row's."
+  - "Backstop keeper: check_silent_refusal (--check-silent-refusal) flags useUploadDocumento whose erro is never read, mutate-based uploads with no observed failure, and fire-and-forget onUpload= callbacks."
+  - "Consumers at registration: seed AnexosSection, ChecklistExtrasSection; social-wiring DocumentoTipoSlot (+ CertidaoCasamentoSlot, FinanciamentoPanel, EmpresasSection), IdentidadeChecklistRow, ImovelDocumentosCard, ImovelCertidoesCard, CertidoesPartePanel, CertidoesPartesTab (certidão cells), pages/Certidoes, pages/Matriculas."
+
+errors_encountered: []
+drifts_surfaced:
+  - "Before this organ every upload slot had its own `onUpload: (file) => void` + `mutation.mutate(...)` chain; four refusals were lost in one replay (F75b, F76-adjacent, F78, F86) and each was fixed locally."
+alternatives_considered:
+  - "A toast-only channel (the hooks' onError) — rejected: a toast vanishes, the F86 report lost 10 uploads that way; the refusal stays on the slot until the next attempt."
+  - "Replacing the product mutations with an upload-specific mutation hook — rejected: the hooks keep their cache writes (useCacheWriteMutation); the organ wraps mutateAsync instead."
+manual_validation_log: []
+integration_test_status: unit-tested (upload-refusal.test.tsx, AnexosSection.test.tsx, ChecklistExtrasSection.test.tsx)
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

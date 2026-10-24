@@ -31,7 +31,8 @@
  * Slice C) — a MOVE, not a rewrite: markup, classes and data-testids are SW's,
  * so SW's own suites pass unchanged once it consumes this copy (Slice F).
  */
-import { tipoArquivoAceito } from "../../uploadTipo";
+import { useUploadDocumento } from "../../upload-refusal";
+import { UploadErro } from "../UploadErro";
 import { useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, FileText, Loader2, RotateCw, Trash2, Upload } from "lucide-react";
 
@@ -101,12 +102,13 @@ export interface AnexosSectionProps {
   refreshing?: boolean;
   uploading?: boolean;
   /** `tipoDocumento` is the operator's OWN pick from this section's own
-   *  `<Select>` — never a caller-supplied default. A caller that can learn the
-   *  outcome returns the upload's promise (`mutateAsync`): a REJECTION is shown
-   *  in this section (`anexo-upload-erro`, the error's message + the file name)
-   *  and the picked tipo is kept for a retry. A `void` return = fire-and-forget
-   *  (the tipo resets at once, as before). */
-  onUpload: (file: File, tipoDocumento: string) => void | Promise<unknown>;
+   *  `<Select>` — never a caller-supplied default. Returns the upload's
+   *  promise (`mutateAsync`, never `mutate`): a REJECTION is shown in this
+   *  section (`anexo-upload-erro`, the server's message + the file name, via
+   *  the seed upload-refusal organ) and the picked tipo is kept for a retry.
+   *  A fire-and-forget `void` callback no longer type-checks — that is where
+   *  the F78 refusal vanished. KB § PATTERNS/frontend/silent-refusal.md. */
+  onUpload: (file: File, tipoDocumento: string) => Promise<unknown>;
   onOpenDocumento: (id: string) => void;
   onDeleteDocumento: (id: string, motivo: string) => void;
   /** Re-queues an extraction (`POST .../extrair`) — a failed read, or a
@@ -155,8 +157,13 @@ export function AnexosSection({
   const tiposComuns = tipos.filter((t) => !t.identidade);
   const podeEnviar = !!tipoEscolhido && !uploading;
   // A file that arrives WITHOUT being uploaded (no tipo, wrong MIME) used to be
-  // dropped silently — no row, no toast, no error. Now it always says why.
-  const [erroArquivo, setErroArquivo] = useState<string | null>(null);
+  // dropped silently — no row, no toast, no error. Every refusal — this
+  // section's own and the server's — is now state of the seed upload organ,
+  // rendered below by `<UploadErro>`.
+  const envio = useUploadDocumento((file: File, tipo: string) => onUpload(file, tipo), {
+    aceitos: ACCEPT_DOCUMENTO.split(","),
+    mensagemTipo: (file) => `formato ${file.type} não aceito (use PDF, JPEG, PNG ou WebP).`,
+  });
 
   return (
     <div className="mb-4" data-testid={testId}>
@@ -169,30 +176,17 @@ export function AnexosSection({
           const file = e.target.files?.[0];
           if (file) {
             if (!tipoEscolhido) {
-              setErroArquivo(
-                `"${file.name}" não foi enviado: escolha o tipo do documento e selecione o arquivo de novo.`,
-              );
-            } else if (!tipoArquivoAceito(file, ACCEPT_DOCUMENTO.split(","))) {
-              setErroArquivo(
-                `"${file.name}" não foi enviado: formato ${file.type} não aceito (use PDF, JPEG, PNG ou WebP).`,
-              );
+              envio.recusar(file, "escolha o tipo do documento e selecione o arquivo de novo.");
             } else {
-              setErroArquivo(null);
               const tipoEnviado = tipoEscolhido;
-              const resetarTipo = () =>
+              void envio.enviar(file, tipoEnviado).then((resultado) => {
                 // Reset — the NEXT attachment gets its own deliberate pick
                 // rather than silently reusing this one's type. Only when the
-                // upload did not fail (a refused one keeps the pick for retry).
-                setTipoEscolhido((atual) => (atual === tipoEnviado ? "" : atual));
-              const resultado = onUpload(file, tipoEnviado);
-              if (resultado && typeof (resultado as Promise<unknown>).then === "function") {
-                (resultado as Promise<unknown>).then(resetarTipo, (err: unknown) => {
-                  const motivo = err instanceof Error && err.message ? err.message : "o servidor recusou o arquivo";
-                  setErroArquivo(`"${file.name}" não foi enviado: ${motivo}`);
-                });
-              } else {
-                resetarTipo();
-              }
+                // upload went through (a refused one keeps the pick for retry).
+                if (resultado.ok) {
+                  setTipoEscolhido((atual) => (atual === tipoEnviado ? "" : atual));
+                }
+              });
             }
           }
           // Cleared so re-picking the SAME file fires `change` again.
@@ -212,7 +206,7 @@ export function AnexosSection({
         <div className="flex items-center gap-1.5">
           <Select value={tipoEscolhido} onValueChange={(v) => {
               setTipoEscolhido(v);
-              setErroArquivo(null);
+              envio.limpar();
             }}>
             <SelectTrigger
               className="h-7 w-44 text-xs"
@@ -265,16 +259,7 @@ export function AnexosSection({
           />
         </div>
       </div>
-      {erroArquivo && (
-        <p
-          role="alert"
-          className="mb-2 flex items-center gap-1 text-xs text-destructive"
-          data-testid="anexo-upload-erro"
-        >
-          <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
-          {erroArquivo}
-        </p>
-      )}
+      <UploadErro erro={envio.erro} className="mb-2" data-testid="anexo-upload-erro" />
       {/* `documentos.length === 0` guards the skeleton the same way the
           checklist above does: a stale `loading=true` mid-refetch can never
           replace rows that are already here. */}

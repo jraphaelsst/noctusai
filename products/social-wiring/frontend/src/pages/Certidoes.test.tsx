@@ -595,8 +595,11 @@ describe("Certidoes — recovery paths", () => {
     const file = new File(["nope"], "certidao.png", { type: "image/png" });
     fireEvent.change(getByTestId("upload-input"), { target: { files: [file] } });
 
+    // Drawn on the page with the file name (seed upload-refusal organ).
     await waitFor(() =>
-      expect(mockToastError).toHaveBeenCalledWith("Apenas arquivos PDF são aceitos."),
+      expect(getByTestId("certidoes-upload-erro").textContent).toBe(
+        '"certidao.png" não foi enviado: apenas arquivos PDF são aceitos.',
+      ),
     );
     expect(mockApiUpload).not.toHaveBeenCalled();
   });

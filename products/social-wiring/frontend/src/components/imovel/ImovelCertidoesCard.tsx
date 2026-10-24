@@ -48,6 +48,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UploadErro } from "@noctusai/lib/components";
+import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 import {
   Select,
   SelectContent,
@@ -100,7 +102,9 @@ export interface ImovelCertidoesCardProps {
   /** The document whose confirmation is in flight, or `null`. */
   savingDocumentoId: string | null;
   errorMessage?: string | null;
-  onUpload: (file: File, tipoDocumento: string) => void;
+  /** Returns the upload's promise (`mutateAsync`): a refusal is drawn under
+   *  the picker with the file name (`<UploadErro>`). KB § PATTERNS/frontend/silent-refusal.md. */
+  onUpload: (file: File, tipoDocumento: string) => Promise<unknown>;
   onConfirmar: (
     documentoId: string,
     tipo: string,
@@ -431,6 +435,7 @@ export default function ImovelCertidoesCard({
   // reason `ImovelDocumentosCard` documents: a shared input files every
   // card's upload onto whichever one rendered it.
   const inputRef = useRef<HTMLInputElement>(null);
+  const envio = useUploadDocumento((file: File, t: string) => onUpload(file, t));
   const [tipoUpload, setTipoUpload] = useState<string>(TIPOS_UPLOAD[0].value);
 
   const porTipo = new Map((certidoes ?? []).map((c) => [c.tipo, c]));
@@ -496,7 +501,7 @@ export default function ImovelCertidoesCard({
             accept="application/pdf,image/jpeg,image/png,image/webp"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) onUpload(file, tipoUpload);
+              if (file) void envio.enviar(file, tipoUpload);
               // Reset so choosing the SAME file twice still fires a change.
               e.target.value = "";
             }}
@@ -504,6 +509,7 @@ export default function ImovelCertidoesCard({
           />
         </div>
 
+        <UploadErro erro={envio.erro} onDismiss={envio.limpar} data-testid="imovel-certidao-upload-erro" />
         {errorMessage && (
           <p className="text-xs text-destructive" data-testid="imovel-certidoes-erro-mutacao">
             {errorMessage}

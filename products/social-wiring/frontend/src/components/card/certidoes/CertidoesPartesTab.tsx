@@ -28,10 +28,11 @@ import {
   useCertidoesPartes, useCienciaPcen, useDefinirExigencias, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
   useAplicarValoresLidos, useBaixarZipDaParte, useCancelarEmissao, useDescartarEmissao, useReemitirComErro, useVoltarAoAutomatico, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula, useDigitarNaCelula,
 } from "@/hooks/useCertidoesPartes";
-import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
+import type { CertidaoParte, CertidaoParteLinha, UploadCelulaInput } from "@/types/certidoesPartes";
 
 import { alvoSubtabCertidoes, type GrupoCertidoes } from "../destinoDoContrato";
 import { mensagemDoErro } from "../mensagemDoErro";
+import { textoDaRecusa, useUploadDocumento } from "@noctusai/lib/upload-refusal";
 import { AntigosProprietariosPainel } from "./AntigosProprietariosPainel";
 import { podeReler } from "./certidoesCelula";
 import { ResultadoEditForm } from "@/components/ResultadoEditForm";
@@ -81,12 +82,23 @@ export function CertidoesPartesTab(props: {
       for (const k of chaves) delete n[k];
       return n;
     });
-  const recusasDaParte = (parteChave: string): Record<string, string> =>
-    Object.fromEntries(
+  // Cell uploads go through the seed upload-refusal organ: the refusal (the
+  // server's message + the FILE NAME) is tagged with the cell's key and drawn
+  // on that row alongside the emission refusals above.
+  // KB § PATTERNS/frontend/silent-refusal.md.
+  const envioCelula = useUploadDocumento((_file: File, i: UploadCelulaInput) => upload.mutateAsync(i));
+  const recusasDaParte = (parteChave: string): Record<string, string> => {
+    const out: Record<string, string> = Object.fromEntries(
       Object.entries(recusas)
         .filter(([k]) => k.startsWith(`${parteChave}|`))
         .map(([k, v]) => [k.slice(parteChave.length + 1), v]),
     );
+    const erroUpload = envioCelula.erro;
+    if (erroUpload?.chave?.startsWith(`${parteChave}|`)) {
+      out[erroUpload.chave.slice(parteChave.length + 1)] = textoDaRecusa(erroUpload);
+    }
+    return out;
+  };
   const chavesDaEmissao = (parteChave: string, tipos: string[] | null, linhas: CertidaoParteLinha[]) =>
     tipos === null
       ? [`${parteChave}|*`]
@@ -244,9 +256,7 @@ export function CertidoesPartesTab(props: {
                 onUpload={(i) => {
                   const chave = `${parte.chave}|${i.linhaChave}`;
                   limparRecusa([chave]);
-                  upload.mutate(i, {
-                    onError: (e) => marcarRecusa([chave], e, "Não foi possível enviar a certidão."),
-                  });
+                  void envioCelula.enviarEm(chave, i.file, i);
                 }}
                 recusas={recusasDaParte(parte.chave)}
                 enviandoLinha={
