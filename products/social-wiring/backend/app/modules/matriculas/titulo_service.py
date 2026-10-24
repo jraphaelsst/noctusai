@@ -392,35 +392,40 @@ def obter_titulo(
     if not ato_id:
         motivo = MOTIVO_SEM_TITULO
     else:
-        extracao = estrutura_svc.exigir_extracao(
+        extracao = estrutura_svc.extracao_viva(
             client, org_id, linha["titulo_aquisitivo_extracao_id"]
         )
-        por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
-        ato = por_id.get(str(ato_id))
-        if ato is None:
-            # 109's RESTRICT FK makes this unreachable in the database.
-            raise ValueError(
-                f"imóvel {codigo}: título aponta para o ato {ato_id}, ausente da "
-                f"extração {extracao['id']}"
-            )
-        det = detalhes.get(str(ato_id))
-        ato_saida = {
-            "extracao_id": str(extracao["id"]),
-            "ato_id": str(ato["id"]),
-            "kind": ato["kind"],
-            "numero": ato.get("numero"),
-            "ato_ref": _ato_ref(ato),
-            "detalhes_origem": det.get("origem") if det else None,
-        }
-        if det is None:
-            motivo = MOTIVO_SEM_DETALHES
+        if extracao is None:
+            # The pointer quotes a REMOVED documento's extraction: no título
+            # until the fill re-points it at a live one.
+            motivo = MOTIVO_SEM_TITULO
         else:
-            detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
-            sugestao = cadeia_dominial.frase_titulo(
-                ato, det, cadeia_dominial.matricula_origem(client, org_id, extracao)
-            )
-            if sugestao is None:
-                motivo = MOTIVO_SEM_INSTRUMENTO
+            por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
+            ato = por_id.get(str(ato_id))
+            if ato is None:
+                # 109's RESTRICT FK makes this unreachable in the database.
+                raise ValueError(
+                    f"imóvel {codigo}: título aponta para o ato {ato_id}, ausente da "
+                    f"extração {extracao['id']}"
+                )
+            det = detalhes.get(str(ato_id))
+            ato_saida = {
+                "extracao_id": str(extracao["id"]),
+                "ato_id": str(ato["id"]),
+                "kind": ato["kind"],
+                "numero": ato.get("numero"),
+                "ato_ref": _ato_ref(ato),
+                "detalhes_origem": det.get("origem") if det else None,
+            }
+            if det is None:
+                motivo = MOTIVO_SEM_DETALHES
+            else:
+                detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
+                sugestao = cadeia_dominial.frase_titulo(
+                    ato, det, cadeia_dominial.matricula_origem(client, org_id, extracao)
+                )
+                if sugestao is None:
+                    motivo = MOTIVO_SEM_INSTRUMENTO
 
     divergencias = divergencias_do_titulo(linha.get("titulo_aquisitivo_texto"), sugestao)
     return {
@@ -600,9 +605,13 @@ def _extracao_do_imovel(
     """The título's own extraction when one is confirmed; otherwise the
     imóvel's newest concluded transcription."""
     if linha.get("titulo_aquisitivo_extracao_id"):
-        return estrutura_svc.exigir_extracao(
+        # A pointer into a REMOVED documento's extraction is stale: ignored
+        # (falls through to the live ones), never read.
+        apontada = estrutura_svc.extracao_viva(
             client, org_id, linha["titulo_aquisitivo_extracao_id"]
         )
+        if apontada is not None:
+            return apontada
     # The matrícula is the PROPERTY's: a Vista código linked to a manual
     # imóvel falls back to the manual one's transcription (`vinculo_legal`).
     for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
@@ -618,6 +627,8 @@ def _extracao_do_imovel(
         # A CLOSED (transferred) matrícula is a predecessor: never the current
         # reading, however recently transcribed (`cadeia_dominial`).
         for linha_extracao in rows:
+            if estrutura_svc.documento_removido(client, org_id, linha_extracao):
+                continue
             if not cadeia_dominial.extracao_e_predecessora(client, org_id, linha_extracao):
                 return linha_extracao
     return None

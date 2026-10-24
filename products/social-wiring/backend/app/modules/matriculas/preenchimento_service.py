@@ -82,15 +82,8 @@ SITUACAO_MULTIPLA = "outro"
 
 
 def _extracao(client: Any, org_id: Any, extracao_id: Any) -> Optional[dict]:
-    rows = (
-        table_reads.table(client, estrutura_svc.EXTRACOES_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("id", str(extracao_id))
-        .limit(1)
-        .execute()
-    ).data or []
-    return rows[0] if rows else None
+    """The extraction, unless its documento was removed (`estrutura_service.extracao_viva`)."""
+    return estrutura_svc.extracao_viva(client, org_id, extracao_id)
 
 
 def _ref(ato: dict) -> Optional[tuple[str, int]]:

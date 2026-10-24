@@ -151,3 +151,51 @@ def test_f70_a_stored_outro_with_a_profession_as_name_is_rederived(client, scope
 
     assert nova["natureza"] == "cessao_direitos"
     assert [p["nome"] for p in nova["transmitentes"]] == ["MARCOS ANTONIO EXEMPLO", "JOANA MARIA EXEMPLO"]
+
+
+# ─── F71 · a soft-deleted documento never feeds the derivations ────────────
+
+
+def test_f71_a_removed_documents_extraction_never_feeds_titulo_or_antigos(client, scoped):
+    from tests.modules.matriculas.conftest import documento_row
+
+    vivo, morto = documento_row(), documento_row()
+    morto["deleted_at"] = "2026-10-22T10:00:00+00:00"
+    # Same act twice; the removed document's copy is the NEWER one and its
+    # R-4 carries a different (wrong) donee.
+    texto_vivo = CABECA + AV2 + R3 + R4
+    texto_morto = CABECA + AV2 + R3 + R4.replace("ANA BETA FICTICIA", "FANTASMA REMOVIDO EXEMPLO")
+    e_vivo = extracao_row(texto=texto_vivo, imovel_documento_id=vivo["id"])
+    e_vivo["created_at"] = "2026-03-01T00:00:00+00:00"
+    e_morto = extracao_row(texto=texto_morto, imovel_documento_id=morto["id"])
+    e_morto["created_at"] = "2026-04-01T00:00:00+00:00"
+    seed(scoped, registry=[registry_row()], extracoes=[e_vivo, e_morto], documentos=[vivo, morto])
+
+    antigos = titulo_service.antigos_proprietarios(scoped, ORG, CODIGO, hoje=HOJE)
+    assert antigos["extracao_id"] == e_vivo["id"]
+    assert [t["nome"] for t in antigos["transmitentes"]] == [
+        "MARCOS ANTONIO EXEMPLO", "JOANA MARIA EXEMPLO",
+    ]
+    atual = titulo_service.titularidade_atual(scoped, ORG, CODIGO)
+    assert [p["nome"] for p in atual["proprietarios"]] == ["ANA BETA FICTICIA"]
+
+
+def test_f71_a_pointer_into_a_removed_documents_extraction_is_ignored(client, scoped):
+    from tests.modules.imovel_hub.conftest import dados_row
+    from tests.modules.matriculas.conftest import documento_row
+
+    vivo, morto = documento_row(), documento_row()
+    morto["deleted_at"] = "2026-10-22T10:00:00+00:00"
+    e_vivo = extracao_row(texto=CABECA + AV2 + R3 + R4, imovel_documento_id=vivo["id"])
+    e_morto = extracao_row(texto=CABECA + AV2 + R3 + R4, imovel_documento_id=morto["id"])
+    seed(scoped, registry=[registry_row()], extracoes=[e_vivo, e_morto], documentos=[vivo, morto])
+    atos = svc.atos_da_extracao(scoped, ORG, e_morto)
+    ato_morto = next(a for a in atos if a["kind"] == "R" and a["numero"] == 4)
+    scoped.set_table_data("imovel_dados", [dados_row(
+        titulo_aquisitivo_extracao_id=e_morto["id"], titulo_aquisitivo_ato_id=ato_morto["id"],
+    )])
+
+    out = titulo_service.obter_titulo(scoped, ORG, CODIGO)
+
+    assert out["sugestao"] is None and out["ato"] is None
+    assert out["motivo_sem_sugestao"] == titulo_service.MOTIVO_SEM_TITULO

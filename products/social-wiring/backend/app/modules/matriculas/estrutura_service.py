@@ -362,6 +362,46 @@ def exigir_extracao(client: Any, org_id: UUID, extracao_id: UUID) -> dict:
     return rows[0]
 
 
+def documento_removido(client: Any, org_id: Any, extracao: dict) -> bool:
+    """True when the extraction belongs to an imóvel documento the operator
+    SOFT-DELETED (`deleted_at` set). THE choke point of every reader that
+    derives facts for an imóvel (título, última transferência, antigos
+    proprietários, the fill, the autopilot, the contract's default
+    matrícula): a removed document's acts must never feed them — a stale
+    reading of it (real, 2026-10-23: a doação with no escritura date) would
+    outvote the live document's healed one. An extraction with no document
+    (transcribed without one) is live. Direct, by-id management of an
+    extraction (`exigir_extracao`) is deliberately NOT filtered."""
+    documento_id = extracao.get("imovel_documento_id")
+    if not documento_id:
+        return False
+    rows = (
+        _t(client, docs_svc.TABLE)
+        .select("deleted_at")
+        .eq("org_id", str(org_id))
+        .eq("id", str(documento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows and rows[0].get("deleted_at"))
+
+
+def extracao_viva(client: Any, org_id: Any, extracao_id: Any) -> Optional[dict]:
+    """The extraction row, or None when it does not exist or its documento
+    was removed (see `documento_removido`)."""
+    rows = (
+        _t(client, EXTRACOES_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("id", str(extracao_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows or documento_removido(client, org_id, rows[0]):
+        return None
+    return rows[0]
+
+
 def vincular_imovel(
     client: Any,
     org_id: UUID,
@@ -1442,6 +1482,7 @@ def _extracao_padrao_do_imovel(client: Any, org_id: UUID, codigo: str) -> Option
         .eq("org_id", str(org_id))
         .eq("codigo", codigo)
         .eq("tipo_documento", "matricula")
+        .is_("deleted_at", "null")
         .order("created_at", desc=True)
         .execute()
     ).data or []
