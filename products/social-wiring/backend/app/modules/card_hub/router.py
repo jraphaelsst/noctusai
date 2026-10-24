@@ -113,6 +113,7 @@ from app.modules.card_hub.schemas import (
     ContratoPatchBody,
     EmpresaManualCreateBody,
     EmpresaParticipacaoDecisaoBody,
+    EmpresaParticipacaoEditBody,
     FinanciamentoPatchBody,
     LinhaMatrizCreateBody,
     LinhaMatrizPatchBody,
@@ -1134,6 +1135,26 @@ def decidir_participacao_empresa_route(
         participante_cliente_id=body.participante_cliente_id,
         decisao=body.decisao,
         acting_user_id=getattr(user, "id", None),
+    )
+
+
+@router.patch("/{cliente_id}/empresas/{empresa_id}/participacao/dados")
+def editar_participacao_empresa_route(
+    cliente_id: UUID,
+    empresa_id: UUID,
+    body: EmpresaParticipacaoEditBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Type the participação % / "desde" of an existing link by hand — see
+    `empresas_svc.editar_participacao`."""
+    _user, org_id = _auth_parts(auth)
+    updates = body.model_dump(mode="json", exclude_unset=True)
+    updates.pop("participante_cliente_id", None)
+    return empresas_svc.editar_participacao(
+        client, org_id, cliente_id, empresa_id,
+        participante_cliente_id=body.participante_cliente_id,
+        updates=updates,
     )
 
 

@@ -44,6 +44,27 @@ class TestPatchEmpresa:
         assert r.json()["nome_fantasia"] == "Fantasia Nova"
         assert r.json()["pendente_confirmacao"] == []
 
+    def test_cartao_fields_are_typeable_by_hand(self, client, scoped):
+        empresa_id = str(uuid4())
+        scoped.set_table_data("empresas", [empresa_row(empresa_id, dados_origem="manual")])
+
+        r = client.patch(
+            f"/api/empresas/{empresa_id}",
+            json={
+                "natureza_juridica": "206-2 - Sociedade Empresária Limitada",
+                "data_abertura": "2010-03-15",
+                "motivo_situacao": "Sem motivo",
+            },
+            headers=auth(),
+        )
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["natureza_juridica"] == "206-2 - Sociedade Empresária Limitada"
+        assert body["data_abertura"] == "2010-03-15"
+        assert body["motivo_situacao"] == "Sem motivo"
+        assert body["pendente_confirmacao"] == []
+
     def test_non_admin_editing_a_document_sourced_field_defers(self, client, scoped):
         empresa_id = str(uuid4())
         scoped.set_table_data("empresas", [

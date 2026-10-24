@@ -306,6 +306,7 @@ def listar(
                     "lado": pessoa["lado"],
                     "papel": pessoa["papel"],
                     "participacao_pct": part.get("participacao_pct"),
+                    "desde": part.get("desde"),
                     "origem": part.get("origem"),
                     # [Migration 299] The human decision on a machine-read
                     # participação — the Empresas section's "Confirmar
@@ -459,6 +460,46 @@ DECISAO_REABRIR = "reabrir"
 DECISOES_PARTICIPACAO: tuple[str, ...] = (DECISAO_CONFIRMAR, DECISAO_DESCARTAR, DECISAO_REABRIR)
 
 
+def _participacao_do_card(
+    client: Any, org_id: UUID, cliente_id: UUID, empresa_id: UUID, participante_cliente_id: UUID,
+) -> dict:
+    """The `cliente_empresa_participacoes` row of a person ON THIS card for
+    `empresa_id` — 404 for a stranger or a missing link. Shared by the
+    decision (`decidir_participacao`) and the value edit
+    (`editar_participacao`)."""
+    ensure_cliente(client, org_id, cliente_id)
+    try:
+        atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
+    except AmbiguousAtendimento:
+        raise NotFoundError(ATENDIMENTOS_TABLE, str(cliente_id)) from None
+    rows = (
+        _t(client, ATENDIMENTOS_TABLE)
+        .select("id, cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(atendimento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise NotFoundError(ATENDIMENTOS_TABLE, str(atendimento_id))
+    participantes = {p["cliente_id"] for p in pessoas_do_card(client, org_id, rows[0])}
+    if str(participante_cliente_id) not in participantes:
+        raise NotFoundError(PARTES_TABLE, str(participante_cliente_id))
+
+    existentes = (
+        _t(client, PARTICIPACOES_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(participante_cliente_id))
+        .eq("empresa_id", str(empresa_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not existentes:
+        raise NotFoundError(PARTICIPACOES_TABLE, str(empresa_id))
+    return existentes[0]
+
+
 def decidir_participacao(
     client: Any,
     org_id: UUID,
@@ -493,37 +534,9 @@ def decidir_participacao(
             f"decisao inválida: {decisao!r}. Permitidas: {', '.join(DECISOES_PARTICIPACAO)}",
             field="decisao",
         )
-    ensure_cliente(client, org_id, cliente_id)
-    try:
-        atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
-    except AmbiguousAtendimento:
-        raise NotFoundError(ATENDIMENTOS_TABLE, str(cliente_id)) from None
-    rows = (
-        _t(client, ATENDIMENTOS_TABLE)
-        .select("id, cliente_id")
-        .eq("org_id", str(org_id))
-        .eq("id", str(atendimento_id))
-        .limit(1)
-        .execute()
-    ).data or []
-    if not rows:
-        raise NotFoundError(ATENDIMENTOS_TABLE, str(atendimento_id))
-    participantes = {p["cliente_id"] for p in pessoas_do_card(client, org_id, rows[0])}
-    if str(participante_cliente_id) not in participantes:
-        raise NotFoundError(PARTES_TABLE, str(participante_cliente_id))
-
-    existentes = (
-        _t(client, PARTICIPACOES_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(participante_cliente_id))
-        .eq("empresa_id", str(empresa_id))
-        .limit(1)
-        .execute()
-    ).data or []
-    if not existentes:
-        raise NotFoundError(PARTICIPACOES_TABLE, str(empresa_id))
-    participacao = existentes[0]
+    participacao = _participacao_do_card(
+        client, org_id, cliente_id, empresa_id, participante_cliente_id
+    )
     if participacao.get("origem") == "manual":
         raise ValidationError_(
             "Esta participação foi cadastrada manualmente e já vale para o contrato — "
@@ -551,10 +564,57 @@ def decidir_participacao(
     return atualizados[0] if atualizados else {**participacao, **patch}
 
 
+_PCT_MAX = 100
+
+
+def editar_participacao(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    empresa_id: UUID,
+    *,
+    participante_cliente_id: UUID,
+    updates: dict,
+) -> dict:
+    """`PATCH /{cliente_id}/empresas/{empresa_id}/participacao/dados` — a
+    human types the participação % and/or "desde" of an EXISTING link (a field
+    must never be upload-only). Works on any `origem`: a machine-read value is
+    corrected in place. `crednet_service._upsert_participacao` is fill-empty
+    on both columns, so a typed value is never overwritten by a later Crednet
+    re-read. Only keys present in `updates` are written; `None` clears."""
+    participacao = _participacao_do_card(
+        client, org_id, cliente_id, empresa_id, participante_cliente_id
+    )
+    patch: dict[str, Any] = {}
+    if "participacao_pct" in updates:
+        pct = updates["participacao_pct"]
+        if pct is not None:
+            pct = float(pct)
+            if not 0 <= pct <= _PCT_MAX:
+                raise ValidationError_(
+                    "participacao_pct deve estar entre 0 e 100.", field="participacao_pct"
+                )
+        patch["participacao_pct"] = pct
+    if "desde" in updates:
+        desde = updates["desde"]
+        patch["desde"] = (desde.strip() or None) if isinstance(desde, str) else None
+    if not patch:
+        return participacao
+    atualizados = (
+        _t(client, PARTICIPACOES_TABLE)
+        .update(patch)
+        .eq("id", str(participacao["id"]))
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    return atualizados[0] if atualizados else {**participacao, **patch}
+
+
 __all__ = [
     "DECISOES_PARTICIPACAO",
     "adicionar_manual",
     "decidir_participacao",
+    "editar_participacao",
     "listar",
     "pessoas_do_card",
     "remover",

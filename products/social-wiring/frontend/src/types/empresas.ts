@@ -47,6 +47,8 @@ export interface EmpresaOwner {
   lado: LadoParte;
   papel: string;
   participacao_pct: number | null;
+  /** Free text ("desde" — Crednet prints it as typed, e.g. `03/2015`). */
+  desde?: string | null;
   /** `'serasa_crednet' | 'manual' | 'certidao_consulta'` — the
    *  `cliente_empresa_participacoes.origem` CHECK vocabulary (§A.2). */
   origem: string;
@@ -130,6 +132,15 @@ export interface DecidirParticipacaoBody {
   decisao: DecisaoParticipacao;
 }
 
+/** `PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/participacao/dados`
+ *  — type the % / desde of an existing participação. Only sent keys are
+ *  written; `null` clears. */
+export interface EditarParticipacaoBody {
+  participante_cliente_id: string;
+  participacao_pct?: number | null;
+  desde?: string | null;
+}
+
 /** `POST /api/clientes/{cliente_id}/empresas` (§D.2) — manual link. */
 export interface AdicionarEmpresaBody {
   cnpj: string;
@@ -184,6 +195,9 @@ export interface AtualizarEmpresaBody {
   nome_fantasia?: string;
   situacao_cadastral?: SituacaoCadastral;
   data_situacao_cadastral?: string;
+  natureza_juridica?: string;
+  data_abertura?: string;
+  motivo_situacao?: string;
 }
 
 /** The empresa row plus `pendente_confirmacao` — item keys this PATCH

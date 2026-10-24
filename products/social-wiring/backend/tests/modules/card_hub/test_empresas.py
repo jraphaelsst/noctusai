@@ -635,3 +635,48 @@ class TestHttpDecidirParticipacao:
         assert dono["confirmado_em"] == "2026-10-20T10:00:00+00:00"
         assert dono["descartado_em"] is None
         assert dono["certificando"] is True
+
+
+class TestHttpEditarParticipacao:
+    """`PATCH .../participacao/dados` — type the % / desde by hand."""
+
+    _card = TestHttpDecidirParticipacao._card
+    _linha = TestHttpDecidirParticipacao._linha
+
+    def _dados(self, client, cid, empresa_id, participante, **body):
+        return client.patch(
+            f"/api/clientes/{cid}/empresas/{empresa_id}/participacao/dados", headers=_auth(),
+            json={"participante_cliente_id": participante, **body},
+        )
+
+    def test_types_pct_and_desde_on_a_crednet_row(self, client, scoped):
+        cid, vendedor_id, empresa = self._card(scoped, participacao_pct=None)
+        r = self._dados(client, cid, empresa["id"], vendedor_id, participacao_pct=33.5, desde="03/2015")
+        assert r.status_code == 200, r.text
+        linha = self._linha(scoped)
+        assert float(linha["participacao_pct"]) == 33.5 and linha["desde"] == "03/2015"
+        owner = svc.listar(scoped, ORG_ID, cid)["items"][0]["owners"][0]
+        assert owner["desde"] == "03/2015"
+
+    def test_only_sent_fields_are_written(self, client, scoped):
+        cid, vendedor_id, empresa = self._card(scoped, desde="01/2020")
+        r = self._dados(client, cid, empresa["id"], vendedor_id, participacao_pct=10)
+        assert r.status_code == 200, r.text
+        assert self._linha(scoped)["desde"] == "01/2020"
+
+    def test_pct_out_of_range_is_422(self, client, scoped):
+        cid, vendedor_id, empresa = self._card(scoped)
+        r = self._dados(client, cid, empresa["id"], vendedor_id, participacao_pct=101)
+        assert r.status_code == 422, r.text
+
+    def test_a_person_not_on_the_card_is_404(self, client, scoped):
+        cid, _v, empresa = self._card(scoped)
+        r = self._dados(client, cid, empresa["id"], str(uuid4()), participacao_pct=10)
+        assert r.status_code == 404, r.text
+
+    def test_requires_auth(self, anon_client):
+        r = anon_client.patch(
+            f"/api/clientes/{uuid4()}/empresas/{uuid4()}/participacao/dados",
+            json={"participante_cliente_id": str(uuid4()), "participacao_pct": 1},
+        )
+        assert r.status_code == 401

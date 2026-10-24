@@ -501,7 +501,8 @@ def confirmar_dados(
 #: always applies immediately, gated only by mod-11 validity + uniqueness.
 CAMPOS_PATCH_EDITAVEIS: tuple[str, ...] = (
     "cnpj", "razao_social", "nome_fantasia", "situacao_cadastral",
-    "data_situacao_cadastral",
+    "data_situacao_cadastral", "natureza_juridica", "data_abertura",
+    "motivo_situacao",
 )
 
 

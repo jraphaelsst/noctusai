@@ -43,6 +43,7 @@ import {
   useAdicionarEmpresa,
   useAtualizarEmpresa,
   useDecidirParticipacao,
+  useEditarParticipacao,
   useEmpresaChecklist,
   useEmpresaDocumentoUrl,
   useEmpresaDocumentos,
@@ -143,12 +144,26 @@ export function EmpresasSection({ clienteId }: EmpresasSectionProps) {
 
   const [novoCnpj, setNovoCnpj] = useState("");
   const [novoParticipante, setNovoParticipante] = useState("");
+  const [novaRazao, setNovaRazao] = useState("");
+  const [novoPct, setNovoPct] = useState("");
 
   const handleAdicionar = () => {
     if (!novoCnpj.trim() || !novoParticipante) return;
+    const pct = novoPct.trim() === "" ? NaN : Number(novoPct.replace(",", "."));
     adicionar.mutate(
-      { cnpj: novoCnpj.trim(), cliente_id: novoParticipante },
-      { onSuccess: () => setNovoCnpj("") },
+      {
+        cnpj: novoCnpj.trim(),
+        cliente_id: novoParticipante,
+        ...(novaRazao.trim() ? { razao_social: novaRazao.trim() } : {}),
+        ...(Number.isFinite(pct) ? { participacao_pct: pct } : {}),
+      },
+      {
+        onSuccess: () => {
+          setNovoCnpj("");
+          setNovaRazao("");
+          setNovoPct("");
+        },
+      },
     );
   };
 
@@ -227,6 +242,25 @@ export function EmpresasSection({ clienteId }: EmpresasSectionProps) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <Label htmlFor="adicionar-empresa-razao">Razão social (opcional)</Label>
+            <Input
+              id="adicionar-empresa-razao"
+              value={novaRazao}
+              onChange={(e) => setNovaRazao(e.target.value)}
+              data-testid="adicionar-empresa-razao"
+            />
+          </div>
+          <div>
+            <Label htmlFor="adicionar-empresa-pct">Participação % (opcional)</Label>
+            <Input
+              id="adicionar-empresa-pct"
+              inputMode="decimal"
+              value={novoPct}
+              onChange={(e) => setNovoPct(e.target.value)}
+              data-testid="adicionar-empresa-pct"
+            />
           </div>
         </div>
         <Button
@@ -409,6 +443,30 @@ function ParticipacaoLinha({
   clienteId: string;
 }) {
   const decidir = useDecidirParticipacao(clienteId);
+  const editar = useEditarParticipacao(clienteId);
+  const [editando, setEditando] = useState(false);
+  const [pct, setPct] = useState("");
+  const [desde, setDesde] = useState("");
+  const abrirEdicao = () => {
+    setPct(o.participacao_pct != null ? String(o.participacao_pct) : "");
+    setDesde(o.desde ?? "");
+    setEditando(true);
+  };
+  const salvarEdicao = () => {
+    const n = pct.trim() === "" ? null : Number(pct.replace(",", "."));
+    if (n !== null && !Number.isFinite(n)) return;
+    editar.mutate(
+      {
+        empresaId,
+        body: {
+          participante_cliente_id: o.cliente_id,
+          participacao_pct: n,
+          desde: desde.trim() === "" ? null : desde.trim(),
+        },
+      },
+      { onSuccess: () => setEditando(false) },
+    );
+  };
   const testId = `empresa-participacao-${empresaId}-${o.cliente_id}`;
   const enviar = (decisao: DecisaoParticipacao) =>
     decidir.mutate({ empresaId, body: { participante_cliente_id: o.cliente_id, decisao } });
@@ -419,6 +477,7 @@ function ParticipacaoLinha({
       <Badge variant="secondary">
         {o.nome}
         {o.participacao_pct != null && ` (${o.participacao_pct}%)`}
+        {o.desde ? ` · desde ${o.desde}` : ""}
         {o.certificando && " ★"}
       </Badge>
       {o.origem !== "manual" && o.confirmado_em && (
@@ -468,6 +527,51 @@ function ParticipacaoLinha({
           Desfazer
         </Button>
       )}
+      {!editando && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={abrirEdicao}
+          data-testid={`${testId}-editar`}
+        >
+          <Pencil className="mr-1.5 h-3.5 w-3.5" />
+          Editar participação
+        </Button>
+      )}
+      {editando && (
+        <div className="flex flex-wrap items-end gap-1.5" data-testid={`${testId}-editar-form`}>
+          <div>
+            <Label htmlFor={`${testId}-pct`}>Participação %</Label>
+            <Input
+              id={`${testId}-pct`}
+              inputMode="decimal"
+              value={pct}
+              onChange={(e) => setPct(e.target.value)}
+              data-testid={`${testId}-pct-input`}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${testId}-desde`}>Desde</Label>
+            <Input
+              id={`${testId}-desde`}
+              value={desde}
+              onChange={(e) => setDesde(e.target.value)}
+              data-testid={`${testId}-desde-input`}
+            />
+          </div>
+          <Button size="sm" onClick={salvarEdicao} disabled={editar.isPending} data-testid={`${testId}-editar-salvar`}>
+            Salvar
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setEditando(false)}>
+            Cancelar
+          </Button>
+          {editar.isError && (
+            <span className="text-xs text-destructive" data-testid={`${testId}-editar-erro`}>
+              {(editar.error as { message?: string } | null)?.message ?? "Não foi possível salvar."}
+            </span>
+          )}
+        </div>
+      )}
       {decidir.isError && (
         <span className="text-xs text-destructive" data-testid={`${testId}-erro`}>
           {(decidir.error as { message?: string } | null)?.message ??
@@ -501,6 +605,9 @@ function EmpresaEditForm({
     nome_fantasia: empresa.nome_fantasia ?? "",
     situacao_cadastral: empresa.situacao_cadastral ?? "",
     data_situacao_cadastral: empresa.data_situacao_cadastral ?? "",
+    natureza_juridica: empresa.natureza_juridica ?? "",
+    data_abertura: empresa.data_abertura ?? "",
+    motivo_situacao: empresa.motivo_situacao ?? "",
   });
 
   const handleSalvar = () => {
@@ -514,6 +621,15 @@ function EmpresaEditForm({
     }
     if (form.data_situacao_cadastral !== (empresa.data_situacao_cadastral ?? "")) {
       body.data_situacao_cadastral = form.data_situacao_cadastral || undefined;
+    }
+    if (form.natureza_juridica !== (empresa.natureza_juridica ?? "")) {
+      body.natureza_juridica = form.natureza_juridica;
+    }
+    if (form.data_abertura !== (empresa.data_abertura ?? "")) {
+      body.data_abertura = form.data_abertura || undefined;
+    }
+    if (form.motivo_situacao !== (empresa.motivo_situacao ?? "")) {
+      body.motivo_situacao = form.motivo_situacao;
     }
     if (Object.keys(body).length === 0) {
       onSaved();
@@ -583,6 +699,34 @@ function EmpresaEditForm({
               setForm((f) => ({ ...f, data_situacao_cadastral: e.target.value }))
             }
             data-testid={`${testId}-data-situacao-input`}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${testId}-natureza`}>Natureza jurídica</Label>
+          <Input
+            id={`${testId}-natureza`}
+            value={form.natureza_juridica}
+            onChange={(e) => setForm((f) => ({ ...f, natureza_juridica: e.target.value }))}
+            data-testid={`${testId}-natureza-input`}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${testId}-abertura`}>Data de abertura</Label>
+          <Input
+            id={`${testId}-abertura`}
+            type="date"
+            value={form.data_abertura}
+            onChange={(e) => setForm((f) => ({ ...f, data_abertura: e.target.value }))}
+            data-testid={`${testId}-abertura-input`}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${testId}-motivo`}>Motivo da situação</Label>
+          <Input
+            id={`${testId}-motivo`}
+            value={form.motivo_situacao}
+            onChange={(e) => setForm((f) => ({ ...f, motivo_situacao: e.target.value }))}
+            data-testid={`${testId}-motivo-input`}
           />
         </div>
       </div>

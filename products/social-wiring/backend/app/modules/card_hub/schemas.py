@@ -749,6 +749,16 @@ class EmpresaParticipacaoDecisaoBody(StrictHttpModel):
     decisao: Literal["confirmar", "descartar", "reabrir"]
 
 
+class EmpresaParticipacaoEditBody(StrictHttpModel):
+    """`PATCH /{cliente_id}/empresas/{empresa_id}/participacao/dados` — type
+    the participação % and/or "desde" of an existing link by hand. Only the
+    fields sent are written (`null` clears)."""
+
+    participante_cliente_id: UUID
+    participacao_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    desde: Optional[str] = Field(default=None, max_length=40)
+
+
 class LinhaMatrizCreateBody(StrictHttpModel):
     """`POST /{cliente_id}/certidoes/matriz/linhas` — "+ Adicionar
     certidão" on the Certidões matriz tab (migration 170). Blank/whitespace-

@@ -387,6 +387,70 @@ describe("EmpresasSection", () => {
     });
   });
 
+  describe("manual values (a field is never upload-only)", () => {
+    it("PATCHes the Cartão CNPJ fields typed by hand", async () => {
+      mockRoutes(empresasResponse([empresaItem()]));
+      mockPatch.mockResolvedValue({ ...empresaItem().empresa, pendente_confirmacao: [] });
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-editar"));
+      fireEvent.change(await screen.findByTestId("empresa-editar-emp-1-natureza-input"), {
+        target: { value: "Sociedade Limitada" },
+      });
+      fireEvent.change(screen.getByTestId("empresa-editar-emp-1-abertura-input"), {
+        target: { value: "2010-03-15" },
+      });
+      fireEvent.change(screen.getByTestId("empresa-editar-emp-1-motivo-input"), {
+        target: { value: "Sem motivo" },
+      });
+      fireEvent.click(screen.getByTestId("empresa-editar-emp-1-salvar"));
+
+      await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+      expect(mockPatch).toHaveBeenCalledWith("/api/empresas/emp-1", {
+        natureza_juridica: "Sociedade Limitada",
+        data_abertura: "2010-03-15",
+        motivo_situacao: "Sem motivo",
+      });
+    });
+
+    it("types the % and desde of a Crednet participação", async () => {
+      mockRoutes(
+        empresasResponse([
+          empresaItem({
+            owners: [
+              {
+                cliente_id: "cli-2", nome: "Maria Vendedora", lado: "vendedor",
+                papel: "proprietario", participacao_pct: null, origem: "serasa_crednet",
+                confirmado_em: null, descartado_em: null, certificando: true,
+              },
+            ],
+          }),
+        ]),
+      );
+      mockPatch.mockResolvedValue({ participacao_pct: "40.00", desde: "03/2015" });
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+      fireEvent.click(screen.getByTestId("empresa-participacao-emp-1-cli-2-editar"));
+      fireEvent.change(screen.getByTestId("empresa-participacao-emp-1-cli-2-pct-input"), {
+        target: { value: "40" },
+      });
+      fireEvent.change(screen.getByTestId("empresa-participacao-emp-1-cli-2-desde-input"), {
+        target: { value: "03/2015" },
+      });
+      fireEvent.click(screen.getByTestId("empresa-participacao-emp-1-cli-2-editar-salvar"));
+
+      await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+      expect(mockPatch).toHaveBeenCalledWith(
+        "/api/clientes/cli-1/empresas/emp-1/participacao/dados",
+        { participante_cliente_id: "cli-2", participacao_pct: 40, desde: "03/2015" },
+      );
+    });
+  });
+
   // §D.4 — the Cartão CNPJ slot's view/download/remove, wired the same way
   // `CertidaoCasamentoSlot`'s owner wires the person-scoped slot's own three
   // callbacks (tech-lead review, 2026-09-24).

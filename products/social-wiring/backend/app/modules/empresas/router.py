@@ -52,6 +52,9 @@ class EmpresaPatchBody(StrictHttpModel):
     nome_fantasia: Optional[str] = None
     situacao_cadastral: Optional[str] = None
     data_situacao_cadastral: Optional[str] = None
+    natureza_juridica: Optional[str] = None
+    data_abertura: Optional[str] = None
+    motivo_situacao: Optional[str] = None
 
 
 @router.get("/{empresa_id}")

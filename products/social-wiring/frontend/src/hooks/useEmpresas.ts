@@ -24,6 +24,7 @@ import type {
   AtualizarEmpresaBody,
   AtualizarEmpresaResponse,
   DecidirParticipacaoBody,
+  EditarParticipacaoBody,
   EmpresaCardItem,
   EmpresaChecklistResponse,
   EmpresaDocumento,
@@ -218,6 +219,51 @@ export function useDecidirParticipacao(clienteId: string) {
           comDecisao(old, vars, {
             confirmado_em: result?.confirmado_em ?? null,
             descartado_em: result?.descartado_em ?? null,
+          }),
+      },
+    ],
+  });
+}
+
+interface EditarParticipacaoVars {
+  empresaId: string;
+  body: EditarParticipacaoBody;
+}
+
+/** `PATCH .../participacao/dados` — a human types the participação % /
+ *  "desde" (a field is never upload-only). Drawn on the owner's row at once,
+ *  committed from the server's answer. */
+export function useEditarParticipacao(clienteId: string) {
+  const aplicar = (
+    old: EmpresasDoCardResponse | undefined,
+    { empresaId, body }: EditarParticipacaoVars,
+    valores: { participacao_pct?: number | null; desde?: string | null },
+  ) =>
+    naEmpresa(old, empresaId, (item) => ({
+      ...item,
+      owners: item.owners.map((o) =>
+        o.cliente_id !== body.participante_cliente_id ? o : { ...o, ...valores },
+      ),
+    }));
+  const pick = (b: { participacao_pct?: unknown; desde?: unknown }) => ({
+    ...("participacao_pct" in b ? { participacao_pct: b.participacao_pct as number | null } : {}),
+    ...("desde" in b ? { desde: b.desde as string | null } : {}),
+  });
+  return useCacheWriteMutation<
+    { participacao_pct: number | string | null; desde: string | null },
+    EditarParticipacaoVars
+  >({
+    mutationFn: ({ empresaId, body }) =>
+      api.patch(`${clienteEmpresaBase(clienteId, empresaId)}/participacao/dados`, body),
+    targets: [
+      {
+        queryKey: EMPRESAS_DO_CARD_KEY(clienteId),
+        optimistic: (old: EmpresasDoCardResponse | undefined, vars) => aplicar(old, vars, pick(vars.body)),
+        commit: (old: EmpresasDoCardResponse | undefined, result, vars) =>
+          aplicar(old, vars, {
+            participacao_pct:
+              result?.participacao_pct == null ? null : Number(result.participacao_pct),
+            desde: result?.desde ?? null,
           }),
       },
     ],
