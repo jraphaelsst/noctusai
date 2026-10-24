@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 def _reexec_under_venv() -> None:
     """Self-heal the interpreter: re-exec under the project venv when needed.
 
-    The CLI's tools import `pydantic` / `noctusai_lib`, which live ONLY in the
+    The CLI's tools import `pydantic` / `noctusai_lib` / `noctusai_seed`, which live ONLY in the
     project venv (``mcp/noctusai/.venv`` — the same interpreter the MCP server
     runs under, per ``.mcp.json``). When the documented ``python
     mcp/noctusai/cli.py …`` resolves to a bare host interpreter without those
@@ -51,6 +51,9 @@ def _reexec_under_venv() -> None:
         # hit it 2026-10-06), and a pydantic-only probe then skips the re-exec.
         import pydantic  # noqa: F401
         import noctusai_lib  # noqa: F401
+        # ... and the seed framework: a host env with the lib but not the framework (or the
+        # framework missing from the venv) made verdicts depend on the launching python.
+        import noctusai_seed  # noqa: F401
         return
     except ImportError:
         pass
