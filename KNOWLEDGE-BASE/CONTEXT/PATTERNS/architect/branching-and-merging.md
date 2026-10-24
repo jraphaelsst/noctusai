@@ -1914,7 +1914,7 @@ Don't default everything to accept-with-rationale — it is for divergences, ¬ 
 
 ### 21.8 — Wave-gated convergence
 
-Don't finalize a multi-branch convergence **or** a phased-push while ANY chunk is still in flight; the **last-running chunk gates converge+push** (wave-based-dispatch §18 applied to the *merge* wave, ¬ just the dispatch wave). Convergence order = least-conflict-first (C1 → C2 → C3-resolved).
+Don't finalize a multi-branch convergence **or** a phased-push while ANY chunk is still in flight; the **last-running chunk gates converge+push** (wave-based-dispatch §18 applied to the *merge* wave, ¬ just the dispatch wave). Convergence order = least-conflict-first (C1 → C2 → C3-resolved). Mechanised (2026-10-24, owner rule merge-all-before-integrating): `task_branch action=train` merges the ready `feat/*` branches `--no-ff` into one `train-<name>` branch in that order (`order='auto'` derives it from path overlap), stops at the first conflict for a dedicated reconciliation commit, reports `overlap_files` + `suggested_tests`, and ONE `integrate` of the train lands them all (30-40 min of merged-tip gates once, not per slice) → [[branching-dispatch]] §6b.
 
 ### 21.9 — The collision taxonomy is OPEN — new patterns get absorbed
 

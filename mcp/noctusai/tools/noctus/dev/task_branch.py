@@ -77,6 +77,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -98,6 +99,7 @@ from tools.noctus.dev._benign_stash import (
 from node_env import is_transient_node_modules_entry as _is_transient_nm_entry
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness
 from tools.noctus.dev import gate_budget as _gate_budget
+from tools.noctus.dev import task_branch_train as _train
 
 logger = logging.getLogger(__name__)
 
@@ -2060,13 +2062,40 @@ def _auto_cleanup_after_integrate(
     return out
 
 
+def _train_riders_after_integrate(
+    git, task_branch_fn, dev_before: str | None, new_head: str | None,
+    auto_cleanup: bool, kwargs: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Ride-along teardown for a landed TRAIN: each rider's worktree+branch is
+    cleaned through the ordinary `cleanup` action (same merged check, refuse-if-
+    dirty, pointer -> shipped) -- never a parallel implementation. Riders are
+    derived from the train's own merge-commit subjects. Never raises."""
+    try:
+        rc, out, _e = git("log", "--merges", "--format=%s", f"{dev_before}..{new_head}")
+        riders = _train.parse_train_riders(out.splitlines() if rc == 0 else [])
+    except Exception as e:  # noqa: BLE001
+        return [{"slug": "<derive>", "status": "error", "reason": f"{type(e).__name__}: {e}"}]
+    res: list[dict[str, Any]] = []
+    for s in riders:
+        if not auto_cleanup:
+            res.append({"slug": s, "status": "kept", "reason": "keep_worktree"})
+            continue
+        try:
+            r = task_branch_fn(action="cleanup", slug=s, confirm=True, **kwargs)
+            res.append({"slug": s, "status": r.get("status"), "pointer": r.get("pointer"),
+                        "reason": r.get("error") or r.get("reason") or ""})
+        except Exception as e:  # noqa: BLE001 -- a landed train must still report success
+            res.append({"slug": s, "status": "error", "reason": f"{type(e).__name__}: {e}"})
+    return res
+
+
 def _task_branch_is_write(bound_args: dict) -> bool:
     """`task_branch`'s REFUSE predicate (2026-09-18, the incident tool
     itself): only the MUTATING actions — `start` / `integrate` / `cleanup`
     — with `confirm=True` are a write. `action='status'` is always a read
     regardless of `confirm` (it never inspects the flag)."""
     return (
-        bound_args.get("action") in {"start", "integrate", "cleanup"}
+        bound_args.get("action") in {"start", "integrate", "cleanup", "train"}
         and bool(bound_args.get("confirm", False))
     )
 
@@ -2109,8 +2138,18 @@ def task_branch(
     parent: str | None = None,
     verbose: bool = False,
     wire_products: list[str] | None = None,
+    slugs: list[str] | None = None,
+    order: str = "given",
 ) -> dict[str, Any]:
-    """`action` ∈ {status, start, integrate, cleanup}.
+    """`action` ∈ {status, start, integrate, cleanup, train, sync_primary}.
+
+    `train` (merge-all-before-integrating, owner rule 2026-10-24): `slugs=[...]`
+    merges each ready `feat/<slug>` --no-ff into ONE `train-<slug|date>` task
+    branch (`order='given'` or `'auto'` = least path-overlap first), refusing a
+    dirty rider, stopping at the first conflict WITHOUT resolving or aborting it
+    (status 'conflict' + files). No `slugs` => dry-run candidate listing. Then
+    ONE `integrate` of the train lands everything and flips each rider's pointer
+    + cleans its worktree. See `task_branch_train.py`.
 
     Branch-tree pointer lifecycle (see `PointerOps`): `start` claims an
     `on_going` pointer (`project`/`brief`/`paths`/`agent`/`role`/`parent` fill
@@ -2240,9 +2279,29 @@ def task_branch(
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
 
-    if action not in {"status", "start", "integrate", "cleanup", "sync_primary"}:
+    if action not in {"status", "start", "integrate", "cleanup", "train", "sync_primary"}:
         return {"ok": False, "status": "error", "exit_code": 1,
-                "error": f"unknown action '{action}' (expected status|start|integrate|cleanup|sync_primary)"}
+                "error": f"unknown action '{action}' (expected status|start|integrate|cleanup|train|sync_primary)"}
+
+    # ── TRAIN ── merge every ready feat/<slug> into one train branch (see module doc).
+    if action == "train":
+        root = _resolve_primary_root(primary_root)
+
+        def _start_train(tslug: str) -> dict[str, Any]:
+            return task_branch(
+                action="start", slug=tslug, confirm=True, remote=remote, dev_branch=dev_branch,
+                worktrees_dir=worktrees_dir, branch_prefix=branch_prefix, wire_env=wire_env,
+                primary_root=primary_root, run=run, fs=fs, pointer_ops=pointer_ops,
+                project=project, paths=paths, agent=agent, role=role, parent=parent,
+                brief=brief or f"integration train {tslug}", wire_products=wire_products,
+                allow_stale_toolkit=True)
+
+        return _train.run_train(
+            tb=sys.modules[__name__], git=git, runner=runner, remote=remote,
+            dev_branch=dev_branch, branch_prefix=branch_prefix, worktrees_dir=worktrees_dir,
+            primary_root=root, slugs=slugs, name=slug, order=order, confirm=confirm,
+            today=datetime.now(timezone.utc).strftime("%Y%m%d"), start_fn=_start_train,
+            exists=lambda rel: os.path.exists(os.path.join(root, rel)))
 
     # ── SYNC_PRIMARY ── one-shot repair: fetch, then the same ff-only primary
     # fast-forward integrate ends with (removes byte-identical untracked
@@ -2525,7 +2584,10 @@ def task_branch(
                     _shared_discard_derived(
                         lambda *a: runner(["git", *a], cwd=wt_path), _derived,
                         log_prefix="task_branch.integrate")
-            rc, out, err = git("rebase", f"{remote}/{dev_branch}", cwd=wt_path)
+            # A train carries merge commits: --rebase-merges replays them as merges
+            # (rider tips stay ancestors, resolutions kept) instead of flattening.
+            _rb = (("--rebase-merges",) if _train.is_train_slug(slug) else ())
+            rc, out, err = git("rebase", *_rb, f"{remote}/{dev_branch}", cwd=wt_path)
             if rc != 0:
                 # Rebase failed — distinguish "refused" (worktree still dirty after
                 # stash, rebase never started) from "conflicted" (rebase started and
@@ -2901,6 +2963,16 @@ def task_branch(
                 # check, refuse-if-dirty, pointer -> shipped, claim release);
                 # never a parallel implementation. LAST on purpose: it runs
                 # its own settle + drain, and removes the caller's cwd.
+                if _train.is_train_slug(slug):
+                    result["train_riders"] = _train_riders_after_integrate(
+                        git, task_branch, dev, new_head, auto_cleanup,
+                        dict(remote=remote, dev_branch=dev_branch, worktrees_dir=worktrees_dir,
+                             branch_prefix=branch_prefix, primary_root=primary_root, run=run,
+                             fs=fs, settle=settle, pointer_ops=pointer_ops, verbose=verbose,
+                             settle_and_drain=post_integrate_fn is None,
+                             allow_stale_toolkit=True))
+                    result["message"] += (
+                        f" Train riders: {[r['slug'] for r in result['train_riders']]}.")
                 if auto_cleanup:
                     result["auto_cleanup"] = _auto_cleanup_after_integrate(
                         runner, wt_path, slug, task_branch, dict(
@@ -3116,7 +3188,13 @@ def register(server) -> None:
             "(retry on the concurrent-push race; a rebase conflict is aborted + "
             "surfaced, never auto-resolved; a migration file this branch "
             "introduces is re-checked for a number collision AFTER the rebase "
-            "and BLOCKS the push if found); action='cleanup' slug= (learn-"
+            "and BLOCKS the push if found); action='train' slugs=[...] (slug= "
+            "names the train) merges every ready feat/<slug> --no-ff into ONE "
+            "train-<name> branch (order='given'|'auto' least-overlap-first; dirty "
+            "riders refused; a conflict is left in progress, never auto-resolved) "
+            "and returns overlap_files + suggested_tests - then ONE integrate of "
+            "the train lands all and cleans each rider (no slugs => dry-run "
+            "candidates); action='cleanup' slug= (learn-"
             "before-delete, KB § storage-hygiene § 2.3) surfaces the learnings-"
             "extraction checkpoint + sequences a mole worktree-sweep, THEN "
             "removes the worktree (refuses if dirty) + deletes the MERGED branch "
@@ -3197,8 +3275,10 @@ def register(server) -> None:
         wire_products: list[str] | None = None,
         accept_unmeasured: list[str] | None = None,
         accept_unmeasured_reason: str | None = None,
+        slugs: list[str] | None = None,
+        order: str = "given",
     ) -> dict:
-        return task_branch(accept_unmeasured=accept_unmeasured,
+        return task_branch(accept_unmeasured=accept_unmeasured, slugs=slugs, order=order,
                            accept_unmeasured_reason=accept_unmeasured_reason,action=action, slug=slug, confirm=confirm,
                            keep_worktree=keep_worktree,
                            wire_env=wire_env, verbose=verbose,

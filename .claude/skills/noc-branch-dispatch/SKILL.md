@@ -17,9 +17,9 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 4. **Dispatch in ONE message** (multiple `Agent` calls) so they run concurrently. Each brief ≤~15 lines, references `engineer-seed`. Sonnet default; `model: opus` only for judgment-heavy slices.
 5. Collect each engineer's short-form return + a `/tmp` patch overlay-safety copy.
 6. **Detect collisions** — (a) path-overlap AND (b) semantic-duplicate git can't see.
-7. Merge `--no-ff` least-conflict-first; **dedicated honest reconciliation commit** for any reconciliation.
+7. **Train-integrate all ready slices** (owner rule: merge all before integrating): `task_branch action=train slugs=[...]` (no slugs = candidate list; `order=auto` = least-overlap first) merges each `feat/<slug>` `--no-ff` into ONE `train-<name>` branch, stops at the first conflict (resolve in a **dedicated honest reconciliation commit**, re-run), returns `overlap_files` + `suggested_tests` → run those narrow tests → ONE `integrate` of the train. Serial per-slug integrate only for a lone ready branch or a hotfix.
 8. Architect runs the FULL gate ONCE at integration on a clean `origin/dev` tree (engineers run only the narrowest scoped check).
-9. Cleanup worktrees: automatic - `task_branch integrate` removes its own worktree on success, and the SessionStart sweep reclaims abandoned merged+clean ones (no manual ritual).
+9. Cleanup worktrees: automatic - `task_branch integrate` removes its own worktree on success (a train's integrate also flips each rider's pointer to shipped and cleans each rider's worktree), and the SessionStart sweep reclaims abandoned merged+clean ones (no manual ritual).
 10. Gate `main` only at 100% — human-gated per R4.
 
 ## Guardrails
