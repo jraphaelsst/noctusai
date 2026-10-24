@@ -158,6 +158,8 @@ export type {
 } from './components/index';
 
 export { SideDrawer, SIDE_DRAWER_LEAVE_MESSAGE } from './components/index';
+export { useUnsavedChanges, useBeforeUnloadGuard, UnsavedChangesNotice, UNSAVED_CHANGES_MESSAGE, changedFields, sameFieldValue } from './components/index';
+export type { UseUnsavedChangesOptions, UnsavedChanges, UnsavedChangesNoticeProps } from './components/index';
 export type { SideDrawerProps, SideDrawerWidth } from './components/index';
 
 // Audio recording (voice answers)
@@ -233,8 +235,8 @@ export { lazyWithReload } from "./lazyWithReload";
 // Poll an async job while it runs — and keep polling in a hidden tab, refetching
 // at once on return — so a progress UI never freezes in the background.
 // → KB § PATTERNS/frontend/frontend.md ("Job-progress polling")
-export { jobPolling } from './job-polling';
-export type { JobPollingOptions, JobPollingQuery } from './job-polling';
+export { jobPolling, handOffToPolling, resetJobHandOffs, JOB_HANDOFF_GRACE_MS } from './job-polling';
+export type { JobPollingOptions, JobPollingQuery, HandOffToPollingOptions, HandOffUntil, HandOffQueryClient } from './job-polling';
 
 // ─── Edição de Fotos (seed feature) ──────────────────────────────────────────
 // Seed-portable AI photo-editing organs — no Social-Wiring coupling. See
