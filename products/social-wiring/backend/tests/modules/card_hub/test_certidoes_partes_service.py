@@ -251,33 +251,31 @@ class TestUltimaTentativa:
 
 
 class TestReemitirNaoClonaCelulasNaoPedidas:
-    def test_so_o_tipo_pedido_e_criado_e_serasa_vem_do_crednet(self, monkeypatch):
+    def test_so_o_tipo_pedido_e_criado_e_serasa_vem_do_crednet(self, scoped):
         """`reemitir` inserts ONLY the requested tipo. A `serasa` row appearing
         on the new consulta is `aplicar_crednet_pendente` applying the CPF's
-        stored Crednet (intentional, no API call, no billing)."""
-        inseridos: list = []
+        stored Crednet (intentional, no API call, no billing). Real path over
+        the fake client — no patching of our own functions."""
+        cid, aid, [vid] = _card(scoped)
+        cpf = next(c for c in _dados(scoped, "clientes") if c["id"] == vid)["cpf"]
+        scoped.set_table_data("cliente_documentos", [{
+            "id": str(uuid4()), "org_id": str(ORG_ID), "cliente_id": vid,
+            "tipo_documento": "serasa_crednet", "extracao_status": "ok", "deleted_at": None,
+            "storage_path": "x/serasa.pdf",
+            "extracao_crednet": {"cpf": cpf, "protocolo": "P-9", "consulta_em": "2026-10-20T10:00:00",
+                                 "ocorrencias_constam": False},
+        }])
+        pedido = next(c for c in CERTIDOES_CONFIG if c["tipo"] != "serasa")
+        parte = next(p for partes in svc._partes_do_card(scoped, ORG_ID, cid) for p in partes
+                     if p["cliente_id"] == vid)
+        out = svc._criar_consulta_automatica(scoped, ORG_ID, "u", parte, [pedido])
 
-        class _T:
-            def __init__(self, nome): self.nome = nome
-            def insert(self, dados):
-                inseridos.append((self.nome, dados))
-                class _E:
-                    def execute(_s):
-                        class _R: data = [{"id": "c1"}] if isinstance(dados, dict) else [{"id": "r1", "tipo": d["tipo"]} for d in dados]
-                        return _R()
-                return _E()
-
-        class _C:
-            def table(self, nome): return _T(nome)
-
-        aplicado: list = []
-        monkeypatch.setattr(svc.certidoes_svc, "aplicar_crednet_pendente", lambda *a: aplicado.append(a) or True)
-        monkeypatch.setattr(svc, "_dados_consulta", lambda *a: {})
-        parte = {"cliente_id": "cli", "empresa_id": None, "parte_id": None}
-        svc._criar_consulta_automatica(_C(), ORG_ID, "u", parte, [CERTIDOES_CONFIG[0]])
-        tipos = [d["tipo"] for n, d in inseridos if isinstance(d, list) for d in d]
-        assert tipos == [CERTIDOES_CONFIG[0]["tipo"]] and len(aplicado) == 1
-
+        assert [r["tipo"] for r in out["resultados"]] == [pedido["tipo"]]
+        novos = [r for r in _dados(scoped, "certidao_resultados") if r["consulta_id"] == out["consulta_id"]]
+        assert {r["tipo"] for r in novos} == {pedido["tipo"], "serasa"}
+        serasa = next(r for r in novos if r["tipo"] == "serasa")
+        assert (serasa["status"], serasa["numero"]) == ("sucesso", "P-9")
+        assert not serasa.get("api_requested_at")
 
 class TestMontar:
     def test_resposta_tem_os_campos_exatos_do_contrato(self, scoped):
