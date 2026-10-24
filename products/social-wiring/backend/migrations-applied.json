@@ -51,6 +51,8 @@
     "302_certidao_emitida_em_origem.sql": "0780d1b965de4a54c4cfe4da88432ed24c5d3c7452c6472905be635b095d182b",
     "303_natureza_transmissao_ampla.sql": "2f94301a975d035a0dac28b4b21ba0e675fefe06e2fada5a4e57b01297a9784b",
     "304_repair_cancelado_manual_humano.sql": "7534353836d0625c429ec3c2008ab1dedea899fba78cdbee2e97fbe67ed01518",
-    "305_natureza_cessao_direitos.sql": "6d930c2f8b364e65f6c0769c77df1f59cafdfa370ef93b57a8d937c88c1975a8"
+    "305_natureza_cessao_direitos.sql": "6d930c2f8b364e65f6c0769c77df1f59cafdfa370ef93b57a8d937c88c1975a8",
+    "306_imovel_campos_manuais.sql": "98759bd37a0319ae50bf91ecfbf3109062915b016155e29a8733321c08bf429b",
+    "307_certidao_consulta_manual_sem_documento.sql": "07bd6d537a5ccf58b59a9b4477e26a739cb60bd14ddc41e9ce83e1696c66c4ee"
   }
 }
