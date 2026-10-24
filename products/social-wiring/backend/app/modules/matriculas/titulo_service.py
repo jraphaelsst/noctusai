@@ -76,6 +76,7 @@ from uuid import UUID
 
 from noctusai_lib.integrations.documents import (
     NATUREZAS_TRANSFERENCIA,
+    normalizar_nome_parte,
     parse_detalhes_json,
     partes_de_bloco,
     transmitentes_por_referencia,
@@ -673,7 +674,7 @@ def _transmitentes_por_referencia(
     if anteriores:
         ultimo = max(anteriores, key=lambda r: r["ordem"])
         return [
-            {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
+            {"nome": normalizar_nome_parte(p.get("nome")), "cpf_cnpj": p.get("cpf_cnpj")}
             for p in detalhes[str(ultimo["id"])]["adquirentes"]
             if p.get("nome")
         ]
@@ -799,7 +800,7 @@ def antigos_proprietarios(
         # The derived act's sellers are still who sold, whatever answers the
         # date question below.
         saida["transmitentes"] = [
-            {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
+            {"nome": normalizar_nome_parte(p.get("nome")), "cpf_cnpj": p.get("cpf_cnpj")}
             for p in det.get("transmitentes") or []
         ]
         if not saida["transmitentes"]:

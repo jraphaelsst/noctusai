@@ -15127,6 +15127,14 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "imovel_dados_ultima_transferencia_manual_natureza_check",
         "Migration 303 unapplied — the widened manual-override natureza CHECK has no live constraint to probe yet.",
     ),
+    # Migration 305 (social-wiring) is NOT APPLIED: it only widens the
+    # natureza vocabulary CHECK (+cessao_direitos). Replace with a real
+    # GuardProbe in the SAME change that applies it.
+    (
+        "products/social-wiring/backend/migrations/305_natureza_cessao_direitos.sql",
+        "matricula_ato_detalhes_natureza_check",
+        "Migration 305 unapplied — the widened natureza vocabulary CHECK has no live constraint to probe yet.",
+    ),
     # Migration 167 (social-wiring, P0c contract) is FILE-ONLY — the
     # contract's own §A explicitly forbids applying it in this slice
     # ("It is not applied by the slice"; `migrations/APPLIED.md` still

@@ -51,6 +51,7 @@ from noctusai_lib.integrations.documents import (
     extrair_detalhes_ato,
     formatar_cpf_cnpj,
     nome_de_parte_valido,
+    normalizar_nome_parte,
     parse_detalhes_json,
 )
 from noctusai_lib.integrations.documents.matricula_ato_detalhes import ALTA, NENHUMA
@@ -162,7 +163,7 @@ def linha_de_detalhes(
     linha = _linha_vazia(org_id, extracao_id, str(ato_row["id"]))
     linha.update(
         extrair_detalhes_ato(
-            texto[inicio:fim], ruido=_ruido_local(ruido, inicio, fim)
+            texto[inicio:fim], ruido=_ruido_local(ruido, inicio, fim), anterior=texto[:inicio]
         ).to_json()
     )
     return linha
@@ -226,6 +227,12 @@ def _campos_sem_rebaixar(atual: dict, nova: dict) -> dict:
     saida: dict[str, Any] = {}
     for campo in _GRUPOS_CAMPOS:
         novo, velho = depois[campo], antes[campo]
+        if campo in _PARTES:
+            # Compare the STORED names as stored: `parse_detalhes_json`
+            # normalises them (line breaks, hyphen wraps), which would hide
+            # exactly the rows that need healing ("CE--\nZAR").
+            velho = list(atual.get(campo) or [])
+            novo = list(nova.get(campo) or [])
         if novo == velho:
             continue
         if _vazio(novo):
@@ -351,6 +358,14 @@ def _valor_saida(valor: Any) -> Optional[str]:
     return str(Decimal(str(valor)).quantize(Decimal("0.01")))
 
 
+def partes_normalizadas(partes: Optional[Sequence[dict]]) -> list[dict]:
+    """Stored parties with every name run through the seed's single name
+    normalizer — the READ side of the rule `Parte` applies at parse (a row
+    stored before it, or typed by a human, still shows "CEZAR", not
+    "CE--<newline>ZAR")."""
+    return [{**p, "nome": normalizar_nome_parte(p.get("nome"))} for p in partes or ()]
+
+
 def detalhes_saida(row: Optional[dict], resolved: dict) -> Optional[dict]:
     """The API shape of one row (`valor` as a 2-place decimal string)."""
     if row is None:
@@ -360,7 +375,9 @@ def detalhes_saida(row: Optional[dict], resolved: dict) -> Optional[dict]:
         valor = row.get(campo)
         if campo == "valor":
             valor = _valor_saida(valor)
-        elif campo in ("transmitentes", "adquirentes", "atos_referidos"):
+        elif campo in _PARTES:
+            valor = partes_normalizadas(valor)
+        elif campo == "atos_referidos":
             valor = valor or []
         saida[campo] = valor
         saida[f"{campo}_confianca"] = row.get(f"{campo}_confianca") or NENHUMA

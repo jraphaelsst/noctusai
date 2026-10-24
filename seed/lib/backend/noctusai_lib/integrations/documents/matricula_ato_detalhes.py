@@ -51,6 +51,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Optional, Sequence
 
+from noctusai_lib.integrations.documents.civil_status import find_regime_bens
 from noctusai_lib.integrations.documents.cpf import format_cpf
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_valido
 from noctusai_lib.integrations.documents.datas_ptbr import datas_no_texto as _datas
@@ -70,6 +71,7 @@ NaturezaAto = Literal[
     "arrematacao",
     "adjudicacao",
     "integralizacao",
+    "cessao_direitos",
     "hipoteca",
     "alienacao_fiduciaria",
     "cancelamento",
@@ -90,6 +92,7 @@ NATUREZAS_ATO: tuple[str, ...] = (
     "arrematacao",
     "adjudicacao",
     "integralizacao",
+    "cessao_direitos",
     "hipoteca",
     "alienacao_fiduciaria",
     "cancelamento",
@@ -100,7 +103,9 @@ NATUREZAS_ATO: tuple[str, ...] = (
     "outro",
 )
 
-#: Natures that move ownership to someone else.
+#: Natures that move ownership to someone else. `cessao_direitos` is NOT one:
+#: a compromissário's cession of his promise rights transfers the contract
+#: position, never the domain (the owner is still the promisor).
 NATUREZAS_TRANSFERENCIA: frozenset[str] = frozenset(
     {
         "compra_e_venda", "doacao", "permuta", "partilha", "dacao", "arrematacao",
@@ -117,20 +122,47 @@ CONFIANCAS: tuple[str, ...] = (ALTA, BAIXA, NENHUMA)
 # ─── value objects ────────────────────────────────────────────────────────
 
 
+_QUEBRA_SILABA = re.compile(r"(?<=[^\W\d_])-+\s+(?=[^\W\d_])")
+
+
+def normalizar_nome_parte(nome: Optional[str]) -> Optional[str]:
+    """THE party-name normalizer (parse AND read): a PDF line break becomes a
+    space, a syllable hyphen-wrap ("CE--<newline>ZAR", "CE- ZAR") is joined,
+    spaces collapse. A hyphen with no whitespace after it ("MARIA-LUIZA") and
+    a spaced dash ("ANA - MARIA") are left alone."""
+    if not nome:
+        return nome
+    return " ".join(_QUEBRA_SILABA.sub("", nome).split())
+
+
 @dataclass(frozen=True)
 class Parte:
-    """A party to an act. `nome` is a literal substring; `cpf_cnpj` is the
-    formatted document number, or None when the act does not print one."""
+    """A party to an act. `nome` is the literal name, normalised by
+    `normalizar_nome_parte`; `cpf_cnpj` is the formatted document number, or
+    None when the act does not print one. `conjuge` — the spouse the act
+    names for this party ("casado com X"); informational, rides inside the
+    parties JSON (no column)."""
 
     nome: str
     cpf_cnpj: Optional[str] = None
+    conjuge: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "nome", normalizar_nome_parte(self.nome) or "")
+        if self.conjuge:
+            object.__setattr__(self, "conjuge", normalizar_nome_parte(self.conjuge))
 
     def to_json(self) -> dict:
-        return {"nome": self.nome, "cpf_cnpj": self.cpf_cnpj}
+        saida = {"nome": self.nome, "cpf_cnpj": self.cpf_cnpj}
+        if self.conjuge:
+            saida["conjuge"] = self.conjuge
+        return saida
 
     @classmethod
     def from_json(cls, data: dict) -> "Parte":
-        return cls(nome=str(data["nome"]), cpf_cnpj=data.get("cpf_cnpj"))
+        return cls(
+            nome=str(data["nome"]), cpf_cnpj=data.get("cpf_cnpj"), conjuge=data.get("conjuge")
+        )
 
 
 @dataclass(frozen=True)
@@ -241,6 +273,12 @@ class AtoDetalhes:
 
 _BORDA = " \t\r\n,;:-–—"
 
+#: One hyphen closing a LOWERCASE word fragment at the end of a line, the rest
+#: of the word starting the next one. Lowercase on both sides on purpose: a
+#: double hyphen ("desta--<newline>matricula") is line padding after a
+#: complete word, and an upper-case "SP" after "Paulo-<newline>" is a UF.
+_QUEBRA_DE_PALAVRA = re.compile(r"(?<=[a-zà-ÿ])-[ \t]*\r?\n[ \t]*(?=[a-zà-ÿ])")
+
 
 class _Texto:
     """The act text, its normalised twin (line breaks flattened 1:1 to spaces
@@ -248,7 +286,20 @@ class _Texto:
 
     def __init__(self, texto: str) -> None:
         self.original = texto
-        norm, self.origem = normalized_with_offsets(texto)
+        norm, origem = normalized_with_offsets(texto)
+        # A typed page wraps a word with a single hyphen ("lavra-<newline>da"):
+        # the twin reads it joined, so "lavrada aos 28/01/1988" is found; the
+        # offset map still points into the original (literals keep the wrap).
+        quebras = {
+            i
+            for m in _QUEBRA_DE_PALAVRA.finditer(texto)
+            for i in range(m.start(), m.end())
+        }
+        if quebras:
+            manter = [k for k, o in enumerate(origem) if o not in quebras]
+            norm = "".join(norm[k] for k in manter)
+            origem = [origem[k] for k in manter]
+        self.origem = origem
         self.norm = "".join(" " if c.isspace() else c for c in norm)
 
     def span(self, a: int, b: int) -> tuple[int, int]:
@@ -317,6 +368,14 @@ _NATUREZAS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "compra_e_venda",
         _rx(r"COMPRA\s+E\s+VENDA|VENDA\s+E\s+COMPRA|VENDA|VENDEU|VENDERAM|VENDID[OA]S?"),
+    ),
+    (
+        "cessao_direitos",
+        _rx(
+            r"CED(?:EU|ERAM)\s+E\s+TRANS(?:-+\s*)?FER(?:IU|IRAM)\s+(?:TODOS\s+)?(?:OS\s+)?(?:SEUS\s+)?DIREITOS"
+            r"|CED(?:EU|ERAM)\s+(?:TODOS\s+)?(?:OS\s+)?(?:SEUS\s+)?DIREITOS"
+            r"|CESSAO\s+(?:E\s+TRANSFERENCIA\s+)?D[EOA]S?\s+DIREITOS"
+        ),
     ),
     ("doacao", _rx(r"DOACAO|DOOU|DOARAM|DOAD[OA]S?")),
     ("permuta", _rx(r"PERMUTA|PERMUTAD[OA]S?|PERMUTARAM")),
@@ -421,6 +480,18 @@ def _natureza(
     ]
     if not achados:
         return None, NENHUMA
+    cessao = next((a for a in sorted(achados) if a[2] == "cessao_direitos"), None)
+    if cessao is not None:
+        # "os compromissários … CEDERAM E TRANSFERIRAM … os direitos do
+        # compromisso de compra e venda": the promise it names (and the sale
+        # it promises) is the OBJECT of the cession, not a second reading.
+        achados = [
+            a
+            for a in achados
+            if a[2] == "cessao_direitos"
+            or a[2] not in ("outro", "compra_e_venda")
+            or ". " in t.norm[min(a[0], cessao[0]) : max(a[0], cessao[0])]
+        ]
     achados.sort(key=lambda a: (a[0], -(a[1] - a[0])))
     inicio, fim, natureza = achados[0]
     fim_frase_m = _FIM_FRASE.search(t.norm, fim)
@@ -430,6 +501,10 @@ def _natureza(
         # What follows a cancellation in its own sentence is its OBJECT
         # (`CANCELAMENTO da hipoteca`), not a competing reading.
         conflitos = set()
+    if natureza == "cessao_direitos":
+        # The qualification of the cedentes precedes the verb, so the verb is
+        # legitimately far from the act's start; the phrase is unambiguous.
+        return natureza, ALTA
     distancia = inicio - corpo
     if distancia <= _JANELA_TITULO and not conflitos:
         return natureza, ALTA
@@ -702,7 +777,8 @@ _QUALIFICACAO = re.compile(
     r"^(?:BRASILEIR|ESTRANGEIR|SOLTEIR|CASAD|VIUV|DIVORCIAD|SEPARAD|NASCID|MAIOR(?:ES)?$|"
     r"MENOR$|CAPAZ$|EMPRESARI|ADVOGAD|ENGENHEIR|MEDIC[OA]S?$|COMERCIANT|COMERCIARI|APOSENTAD|"
     r"FUNCIONARI|PROFESSOR|INDUSTRIAL|AGRICULTOR|PRODUTOR|AUTONOM|SERVIDOR|ARQUITET|CONTADOR|"
-    r"DENTISTA|ECONOMISTA|PROPRIETARI|CONJUGE|MARIDO$|MULHER$|ESPOSA$|ESPOSO$|NOMEAD|"
+    r"DENTISTA|ECONOMISTA|PEDAGOG|PSICOLOG|ENFERMEIR|FARMACEUTIC|VETERINARI|ANALISTA|TECNIC|"
+    r"BANCARI|MOTORISTA|PROPRIETARI|CONJUGE|MARIDO$|MULHER$|ESPOSA$|ESPOSO$|NOMEAD|"
     r"QUALIFICAD|RETRO|SUPRA|ACIMA|ANTERIORMENTE|DOMICILIAD|RESIDENT|MENCIONAD|CITAD|"
     r"REFERID|IDENTIFICAD|DESCRIT)"
 )
@@ -746,6 +822,24 @@ def _fim_nome(norm: str, a: int, b: int) -> int:
     return m.start() if m else b
 
 
+#: "casado com a senhora X" / "casada com Y": the spouse a party's own
+#: qualification names (not the "e sua mulher X" form, which `_pessoas`
+#: already lists as a party of its own).
+_CASADO_COM = re.compile(
+    r"(?<![A-Z])CASAD[OA]S?(?:\s+[A-Z]+){0,3}?\s+COM\s+(?:(?:A|O)\s+(?:SENHORA|SENHOR|SRA?\.?|SR\.?)\s+)?"
+)
+
+
+def _conjuge(t: _Texto, a: int, b: int) -> Optional[str]:
+    m = _CASADO_COM.search(t.norm, a, b)
+    if m is None:
+        return None
+    fim = _fim_nome(t.norm, m.end(), b)
+    if not _nome_valido(t.norm[m.end() : fim]):
+        return None
+    return t.nome(m.end(), fim)
+
+
 def _pessoas(t: _Texto, a: int, b: int) -> list[tuple[Parte, bool]]:
     """Parties in the block `[a, b)`: (Parte, its document verifies)."""
     fronteiras = [a]
@@ -775,12 +869,13 @@ def _pessoas(t: _Texto, a: int, b: int) -> list[tuple[Parte, bool]]:
         documento, valido = _documento(t.norm, s_ini, s_fim)
         if len(partes_nome) > 1:
             documento, valido = None, False  # one qualification, two people: whose CPF?
+        conjuge = _conjuge(t, partes_nome[0][1], s_fim) if len(partes_nome) == 1 else None
         for x, y in partes_nome:
             if not _nome_valido(t.norm[x:y]):
                 continue
             nome = t.nome(x, y)
             if nome:
-                saida.append((Parte(nome=nome, cpf_cnpj=documento), valido))
+                saida.append((Parte(nome=nome, cpf_cnpj=documento, conjuge=conjuge), valido))
     return saida
 
 
@@ -843,6 +938,7 @@ _CUE_TRANSMITENTE = _rx(
     rf"(?:CO-?)?PROPRIETARI{_W}|(?:PROMITENTES?\s+)?VENDEDOR{_W}|TRANSMITENTE{_W}"
     rf"|OUTORGANTE{_W}(?:\s+(?:VENDEDOR|DOADOR|TRANSMITENTE){_W})?|DOADOR{_W}|ALIENANTE{_W}"
     rf"|CEDENTE{_W}|PERMUTANTE{_W}"
+    rf"|(?:PROMITENTES?\s+|PROMISSARI[OA]S?\s+)?COMPROMISSARI{_W}(?:\s+(?:COMPRADOR|VENDEDOR){_W})?"
 )
 
 #: The seller named AFTER the transfer (no verb subject): the deceased of a
@@ -944,6 +1040,24 @@ def _transmitente_depois(t: _Texto, corpo: int) -> list[tuple[Parte, bool]]:
     return []
 
 
+#: The cessionário of a cession of rights: past the object ("os direitos e
+#: obrigações decorrentes do compromisso …, à FULANO"), after the comma + the
+#: preposition that introduces him.
+_CESSIONARIO = re.compile(r",\s*(?:A|AO|AOS|AS|PARA)\s+(?=[A-Z])")
+
+
+def _cessionario(t: _Texto, corpo: int) -> list[tuple[Parte, bool]]:
+    verbo = _VERBOS_SUJEITO.search(t.norm, corpo)
+    if verbo is None:
+        return []
+    for m in _CESSIONARIO.finditer(t.norm, verbo.end()):
+        corte = _FIM_FRASE.search(t.norm, m.end())
+        achados = _pessoas(t, m.end(), corte.start() if corte else len(t.norm))
+        if achados:
+            return achados
+    return []
+
+
 def _partes(
     t: _Texto, corpo: int, blocos: list[tuple[str, int, int]], natureza: Optional[str] = None
 ):
@@ -965,6 +1079,8 @@ def _partes(
             if achados:
                 adq = achados
                 break
+    if not adq and natureza == "cessao_direitos":
+        adq = _cessionario(t, corpo)
     if not trans:
         for verbo in _VERBOS_SUJEITO.finditer(t.norm, corpo):
             achados = _sujeito(t, corpo, verbo.start())
@@ -983,6 +1099,64 @@ def _partes(
         tuple(p for p, _ in adq),
         _confianca_partes(adq, adq_rotulado),
     )
+
+
+# ─── spouse as co-owner ───────────────────────────────────────────────────
+
+_ANTES_LEI_6515 = re.compile(
+    r"(?:ANTES|ANTERIOR\w*|PRE)\s+(?:(?:A|DA|DE|DO)\s+)*(?:VIGENCIA\s+(?:DA\s+)?)?LEI\s+(?:N[O°]?\.?\s*)?6\.?515"
+)
+_JANELA_REGIME = (300, 700)
+
+
+def _chave_nome(texto: str) -> str:
+    """A name as a comparable key: accents/case folded, syllable hyphen-wraps
+    joined, whitespace collapsed."""
+    return " ".join(_QUEBRA_SILABA.sub("", normalize(texto)).split())
+
+
+def _regime_universal(chave: str, contexto: str) -> bool:
+    """Does `contexto` (the act itself + the matrícula text before it) state
+    that the person named `chave` is married in comunhão UNIVERSAL — the
+    regime that makes the spouse a co-owner of whatever he acquires? The most
+    recent statement wins. Same rule as the certidão de casamento reader: an
+    unqualified "comunhão de bens" is universal ONLY when the text places the
+    marriage before Lei 6.515/77. Silence, parcial, separação, or an
+    ambiguous "comunhão de bens" -> False (never invent a co-owner)."""
+    plano = _chave_nome(contexto)
+    posicoes = [m.start() for m in re.finditer(re.escape(chave), plano)]
+    antes, depois = _JANELA_REGIME
+    for pos in reversed(posicoes):
+        janela = plano[max(0, pos - antes) : pos + len(chave) + depois]
+        valor, _conf, _rotulo = find_regime_bens(janela)
+        if valor == "comunhao_universal":
+            return True
+        if valor is not None:
+            return False
+        if "COMUNHAO DE BENS" in janela and _ANTES_LEI_6515.search(janela):
+            return True
+    return False
+
+
+def _com_conjuges(partes: tuple[Parte, ...], contexto: str) -> tuple[Parte, ...]:
+    """The parties plus the spouse of each one the text names ("casado com X")
+    WHEN the regime is comunhão universal — the spouse is co-adquirente."""
+    if not any(p.conjuge for p in partes):
+        return partes
+    conhecidos = {_chave_nome(p.nome) for p in partes}
+    saida = list(partes)
+    for parte in partes:
+        if not parte.conjuge:
+            continue
+        chave_conjuge = _chave_nome(parte.conjuge)
+        if chave_conjuge in conhecidos:
+            continue
+        if _regime_universal(_chave_nome(parte.nome), contexto) or _regime_universal(
+            chave_conjuge, contexto
+        ):
+            saida.append(Parte(nome=parte.conjuge))
+            conhecidos.add(chave_conjuge)
+    return tuple(saida)
 
 
 # ─── credor ───────────────────────────────────────────────────────────────
@@ -1332,7 +1506,7 @@ def _atos_referidos(
 
 
 def extrair_detalhes_ato(
-    texto_ato: str, *, ruido: Sequence[tuple[int, int]] = ()
+    texto_ato: str, *, ruido: Sequence[tuple[int, int]] = (), anterior: str = ""
 ) -> AtoDetalhes:
     """Read one act's details. Pure and deterministic; see module docstring.
 
@@ -1343,6 +1517,11 @@ def extrair_detalhes_ato(
     against the full transcription). `()` (the default, and every caller
     before this parameter existed) is a no-op. See `_natureza`'s docstring
     for why this only affects the title window, never the reading itself.
+
+    `anterior` — the matrícula text BEFORE this act (the caller's context,
+    "" by default). It is read for ONE thing: the marital regime an earlier
+    act states for an adquirente who is "casado com X" here (comunhão
+    universal makes X a co-adquirente — see `_com_conjuges`).
     """
     if not texto_ato or not texto_ato.strip():
         return AtoDetalhes()
@@ -1357,6 +1536,7 @@ def extrair_detalhes_ato(
     valor, valor_conf = _valor(t, corpo)
     blocos = _blocos_rotulados(t, corpo)
     transmitentes, trans_conf, adquirentes, adq_conf = _partes(t, corpo, blocos, natureza)
+    adquirentes = _com_conjuges(adquirentes, f"{anterior}\n{texto_ato}")
     credor, credor_conf = _credor(t, corpo, natureza, blocos)
     adquirentes, adq_conf, credor, credor_conf = _credor_nao_adquirente(
         natureza, adquirentes, adq_conf, credor, credor_conf
@@ -1596,6 +1776,7 @@ __all__ = [
     "formatar_cpf_cnpj",
     "frase_titulo_aquisitivo",
     "nome_de_parte_valido",
+    "normalizar_nome_parte",
     "parse_detalhes_json",
     "partes_de_bloco",
     "transmitentes_por_referencia",

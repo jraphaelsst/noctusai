@@ -630,3 +630,7 @@ Authored 2026-10-22. Widens two CHECK vocabularies: `matricula_ato_detalhes.natu
 ## 304 — repair_cancelado_manual_humano — NOT APPLIED
 
 Authored 2026-10-23. Data repair: manual-origin consultas' human-filled resultados that `cancelar_processamento` had flipped to `erro` / "Cancelado manualmente pelo usuário." go back to `pendente` (erro_mensagem NULL). Scoped to manual, non-excluded consultas/resultados with evidence; recomputes nothing. Idempotent. Readers already treat such rows as `pendente`, so applying is not a deploy prerequisite; apply to clear the 23 damaged prod rows.
+
+## 305 — natureza_cessao_direitos — NOT APPLIED
+
+Authored 2026-10-23. Widens `matricula_ato_detalhes.natureza`'s CHECK with `cessao_direitos` (a compromissário's cession of promise rights, previously `outro`; NOT a transfer of ownership). Additive, idempotent. Apply BEFORE deploying the image whose reader types that nature (an un-migrated DB rejects the detalhes write of such an act).
