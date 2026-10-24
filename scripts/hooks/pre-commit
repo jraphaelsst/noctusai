@@ -973,6 +973,20 @@ if [[ -n "$STAGED_MIO" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-quater-ter. Stale-after-write gate (blocking) ─────────────
+# Keepers `check_mutation_family_write` + `check_job_start_without_handoff` (2026-10-24): a raw
+# setQueryData that never refreshes its key's derived reads (F88), and a job-starting write that never
+# hands off to the polled read (F87). Families derive from the product's own query keys; no baseline.
+STAGED_SAW=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/frontend/src/.*\.tsx?|seed/(lib|framework)/frontend/src/.*\.tsx?|mcp/noctusai/tools/noctus/dev/query_key_family_predicate\.py)$' || true)
+if [[ -n "$STAGED_SAW" ]] && have_py; then
+    echo "[pre-commit] frontend source staged — checking stale-after-write (write family / job hand-off)..."
+    if ! "$PY" "$CLI" --check-stale-after-write --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] STALE-AFTER-WRITE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Refresh the written key's family (invalidateQueries prefix / useCacheWriteMutation), or handOffToPolling (@noctusai/lib) from a job-starting write. See KB § PATTERNS/frontend/mutation-cache-writes.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies-quater-bis. Async handler / sync DB gate (blocking, ratchet) ──
 # Keeper `check_async_handler_sync_db` (2026-10-21): an `async def` route handler that calls the sync
 # supabase client directly blocks the event loop for the whole round-trip (concurrent requests serialize).

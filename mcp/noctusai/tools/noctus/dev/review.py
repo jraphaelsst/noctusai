@@ -103,6 +103,7 @@ def _detect(
         check_private_unique_violation_predicate,      # postgrest-errors 2026-10-10
         check_private_accent_fold,                     # accents 2026-10-10
         check_mutation_invalidate_only,                # mutation-cache-writes 2026-10-21
+        check_stale_after_write,                       # stale-after-write 2026-10-24
         check_async_handler_sync_db,                   # request-path-latency 2026-10-21
     )
 
@@ -147,6 +148,7 @@ def _detect(
         issues.extend(check_private_unique_violation_predicate())  # postgrest-errors 2026-10-10
         issues.extend(check_private_accent_fold())  # accents 2026-10-10
         issues.extend(check_mutation_invalidate_only())  # mutation-cache-writes 2026-10-21
+        issues.extend(check_stale_after_write())  # stale-after-write 2026-10-24
         issues.extend(check_async_handler_sync_db())  # request-path-latency 2026-10-21
     return products, issues
 

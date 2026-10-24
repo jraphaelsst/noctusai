@@ -8818,6 +8818,122 @@ def check_mutation_invalidate_only(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_mutation_family_write` + `check_job_start_without_handoff` — the
+# screen must not lie after a write or an async job (2026-10-24).
+#
+# Both escaped `check_mutation_invalidate_only`, which asks only "does the
+# mutation put ANYTHING into the cache?" (a `setQueryData`/`onMutate` token):
+#   * F88 — `useNegociacaoMutation` DID `setQueryData([...,"negociacao"])`, so
+#     it passed; but `setQueryData` is EXACT while the product also reads
+#     `[...,"negociacao","estruturada"]` / `[...,"conflitos"]` derived from the
+#     same row. Nothing refreshed them. → `check_mutation_family_write`.
+#   * F87 — `useSolicitarEmissao` carried an honest
+#     `noc-allow: invalidate-only — queues emissions ... the polled partes
+#     read`; but the polled read's `jobPolling(isActive)` saw the refetch land
+#     before the async job's rows, so it never polled. → the job-start write
+#     must `handOffToPolling` (`@noctusai/lib`). `check_job_start_without_handoff`.
+# Families are DERIVED from the query-key convention (every `queryKey` of the
+# product resolved to its segments — `query_key_family_predicate`), never a
+# hand list. Escapes on the `useMutation(` line:
+# `// noc-allow: exact-write — why` / `// noc-allow: no-job-handoff — why`.
+# F91 (a picked value shown as applied, never persisted) has no precise
+# static rule — its mechanism is the seed organ `useUnsavedChanges`.
+# KB § PATTERNS/frontend/mutation-cache-writes.md
+# ---------------------------------------------------------------------------
+
+from tools.noctus.dev import query_key_family_predicate as _qkf  # noqa: E402
+
+
+def _qkf_trees(root: Path) -> list[tuple[str, Path]]:
+    """(product label, frontend src dir) — ACTIVE products + the seed FE libraries."""
+    trees: list[tuple[str, Path]] = []
+    for d in _active_product_dirs(root / "products"):
+        src = d / "frontend" / "src"
+        if src.is_dir():
+            trees.append((d.name, src))
+    for rel in ("seed/lib/frontend/src", "seed/framework/frontend/src"):
+        if (root / rel).is_dir():
+            trees.append(("seed", root / rel))
+    return trees
+
+
+def _qkf_scan(root: Path) -> Iterator[tuple[str, Path, list, list]]:
+    for label, src in _qkf_trees(root):
+        files = [
+            f for f in sorted(src.rglob("*.ts*"))
+            if f.suffix in (".ts", ".tsx") and "node_modules" not in f.parts and "__tests__" not in f.parts
+            and ".test." not in f.name and ".spec." not in f.name
+        ]
+        mutations, reads = _qkf.scan(_qkf.Product(src, files))
+        yield label, src, mutations, reads
+
+
+def check_stale_after_write(repo_root: Path | None = None) -> list[dict]:
+    """Both stale-after-write keepers over ONE scan (the CLI / pre-commit entry point)."""
+    root = repo_root or REPO_ROOT
+    scanned = list(_qkf_scan(root))
+    return check_mutation_family_write(root, scanned) + check_job_start_without_handoff(root, scanned)
+
+
+def check_mutation_family_write(repo_root: Path | None = None, _scanned: list | None = None) -> list[dict]:
+    """A raw `useMutation` that `setQueryData`s a key whose FAMILY has other reads (keys extending it —
+    `[..."negociacao"]` → `[..."negociacao","estruturada"]`) must also refresh that family:
+    `invalidateQueries({ queryKey: <the key or an ancestor> })` (a prefix match), or each descendant.
+    `setQueryData` is exact — the derived reads keep the pre-write answer (F88). Prefer
+    `useCacheWriteMutation`, whose settle invalidates every target's family by construction.
+    Families derive from the product's own query keys. Escape: `// noc-allow: exact-write — why`.
+    Severity `high`. KB § PATTERNS/frontend/mutation-cache-writes.md."""
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    for label, _src, mutations, reads in (_scanned if _scanned is not None else _qkf_scan(root)):
+        for mu, written, stale in _qkf.family_write_hits(mutations, reads):
+            rel = mu.info.path.relative_to(root).as_posix()
+            issues.append({
+                "product": label, "file": rel, "line": mu.line, "severity": "high",
+                "issue": (
+                    f"line {mu.line}: setQueryData({_qkf.fmt_key(written)}) is exact, but this product also reads "
+                    f"{', '.join(_qkf.fmt_key(k) for k in stale)} under that key and the mutation never refreshes "
+                    "them — they keep showing the pre-write answer. Invalidate the family "
+                    f"(invalidateQueries({{ queryKey: {_qkf.fmt_key(written)} }}) is a prefix match) or use "
+                    "useCacheWriteMutation (its settle does). Escape: `// noc-allow: exact-write — why`. "
+                    "KB § PATTERNS/frontend/mutation-cache-writes.md"
+                ),
+            })
+    return issues
+
+
+def check_job_start_without_handoff(repo_root: Path | None = None, _scanned: list | None = None) -> list[dict]:
+    """A mutation that STARTS server-side async work — its response type carries a job / consulta id,
+    it handles a 202, or its own `noc-allow: invalidate-only` reason says the work is queued /
+    background — must hand off to the polled read with `handOffToPolling(qc, readKey)` (`@noctusai/lib`)
+    unless it writes the polled read's entry with the server's answer. A bare invalidate races the
+    worker: the refetch lands before the job is visible, `jobPolling`'s `isActive(data)` is false and
+    the poll never starts (F87). Escape: `// noc-allow: no-job-handoff — why` (e.g. a cancel that ENDS
+    work). Severity `high`. KB § PATTERNS/frontend/mutation-cache-writes.md."""
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    for label, _src, mutations, reads in (_scanned if _scanned is not None else _qkf_scan(root)):
+        for mu, reached in _qkf.job_handoff_hits(mutations, reads):
+            rel = mu.info.path.relative_to(root).as_posix()
+            target = (
+                f"it invalidates the polled read(s) {', '.join(_qkf.fmt_key(k) for k in reached)} — hand off to them"
+                if reached else
+                "no jobPolling read is reached — spread jobPolling(...) into the read that shows the job's result "
+                "(jobPolling(() => false, POLL_MS) polls only during a hand-off) and hand off to it"
+            )
+            issues.append({
+                "product": label, "file": rel, "line": mu.line, "severity": "high",
+                "issue": (
+                    f"line {mu.line}: this {mu.kind} starts server-side async work ({mu.job_start}) but never calls "
+                    f"handOffToPolling: {target}. A bare invalidate can land before the job is visible and the poll "
+                    "never starts. Escape: `// noc-allow: no-job-handoff — why`. "
+                    "KB § PATTERNS/frontend/mutation-cache-writes.md"
+                ),
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_async_handler_sync_db` — an `async def` route handler that calls the
 # SYNC supabase-py client directly parks the single uvicorn event loop for the
 # whole network round-trip, so concurrent requests serialize (orbity, 2026-10-21:
