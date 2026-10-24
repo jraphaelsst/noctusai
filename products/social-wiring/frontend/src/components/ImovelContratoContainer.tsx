@@ -123,8 +123,8 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
               ? (removerCertidaoManual.variables?.tipo ?? null)
               : null
         }
+        // An upload refusal is drawn by the card itself, with the file name.
         errorMessage={
-          documentoMutations.upload.error?.message ??
           confirmarExtracao.error?.message ??
           salvarCertidaoManual.error?.message ??
           removerCertidaoManual.error?.message ??
@@ -133,7 +133,7 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
         onSalvarManual={(tipo, valores) => salvarCertidaoManual.mutate({ tipo, valores })}
         onRemoverManual={(tipo) => removerCertidaoManual.mutate({ tipo })}
         onUpload={(file, tipoDocumento) =>
-          documentoMutations.upload.mutate({ file, tipoDocumento })
+          documentoMutations.upload.mutateAsync({ file, tipoDocumento })
         }
         onConfirmar={(documentoId, _tipo, patch) => {
           // The certidão may belong to the linked manual record: the PATCH

@@ -59,13 +59,16 @@ import type { DocumentoChecklistItem, IdentidadeSlot } from "@/types/cardHub";
 
 import type { DadosPessoais } from "./DadosPessoaisForm";
 
-import { TokenCheckbox, TooltipIconButton, formatBytes } from "@noctusai/lib/components";
+import { TokenCheckbox, TooltipIconButton, UploadErro, formatBytes } from "@noctusai/lib/components";
+import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 
 export interface IdentidadeChecklistRowProps {
   item: DocumentoChecklistItem;
   onToggle: (key: string, concluido: boolean | null) => void;
-  /** Files the upload under the SLOT's type (`cin` / `cnh`), never the item key. */
-  onUploadDocumento?: (item: DocumentoChecklistItem, file: File, tipoDocumento: string) => void;
+  /** Files the upload under the SLOT's type (`cin` / `cnh`), never the item key.
+   *  Returns the upload's promise: a refusal is drawn under the slot
+   *  (`<UploadErro>`). KB § PATTERNS/frontend/silent-refusal.md. */
+  onUploadDocumento?: (item: DocumentoChecklistItem, file: File, tipoDocumento: string) => Promise<unknown>;
   onRemoverDocumento?: (documentoId: string, item: DocumentoChecklistItem) => void;
   uploading?: boolean;
   onVisualizarDocumento?: (documentoId: string) => void;
@@ -355,9 +358,13 @@ function IdentidadeSlotLinha({
   // once, and a shared input would file one person's CNH onto another.
   const inputArquivo = useRef<HTMLInputElement>(null);
   const doc = slot.documento;
+  const envio = useUploadDocumento((file: File) =>
+    onUploadDocumento ? onUploadDocumento(item, file, slot.tipo_documento) : Promise.resolve(undefined),
+  );
 
   return (
-    <li className="flex items-center gap-2" data-testid={`${tid}-slot`}>
+    <li data-testid={`${tid}-slot-wrap`}>
+    <div className="flex items-center gap-2" data-testid={`${tid}-slot`}>
       <span className="w-32 shrink-0 text-xs font-medium text-muted-foreground">
         {slot.rotulo}
       </span>
@@ -387,7 +394,7 @@ function IdentidadeSlotLinha({
             data-testid={`${tid}-arquivo-input`}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) onUploadDocumento(item, file, slot.tipo_documento);
+              if (file) void envio.enviar(file);
               e.target.value = "";
             }}
           />
@@ -446,6 +453,8 @@ function IdentidadeSlotLinha({
           onClick={() => onRemoverDocumento(doc.id, item)}
         />
       )}
+    </div>
+    <UploadErro erro={envio.erro} onDismiss={envio.limpar} className="mt-1" data-testid={`${tid}-upload-erro`} />
     </li>
   );
 }

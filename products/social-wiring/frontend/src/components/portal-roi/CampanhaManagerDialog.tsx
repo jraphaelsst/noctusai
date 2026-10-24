@@ -53,6 +53,7 @@ import {
   type CampanhaRow,
   type CampanhaWritableFields,
 } from "@/hooks/usePortalRoi";
+import { QueryErrorState } from "@noctusai/lib/components";
 
 function describeMutationError(err: unknown, fallback: string): string {
   const message = err instanceof Error ? err.message : "";
@@ -291,6 +292,8 @@ export function CampanhaManagerDialog({
                   (KB § PATTERNS/frontend/lying-loading-state.md) */}
               {campanhas.isPending && !campanhas.data ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
+              ) : campanhas.isError && !campanhas.data ? (
+                <QueryErrorState query={campanhas} variant="inline" />
               ) : rows.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
                   Nenhum lançamento registrado para este portal ainda.

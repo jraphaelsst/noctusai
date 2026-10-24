@@ -467,7 +467,7 @@ export interface ClienteCardDialogProps {
     item: DocumentoChecklistItem,
     file: File,
     tipoDocumento: string,
-  ) => void;
+  ) => Promise<unknown>;
   /** Discards that file. The ROW stays: the mandatory list is server-defined
    *  and there is no such thing as deleting "CPF" from it. */
   onRemoverDocumentoChecklist?: (
@@ -509,7 +509,7 @@ export interface ClienteCardDialogProps {
   onRenomearChecklistExtra?: (extraId: string, label: string) => void;
   onSalvarTextoChecklistExtra?: (extraId: string, valorTexto: string) => void;
   onRemoverChecklistExtra?: (extraId: string) => void;
-  onUploadChecklistExtra?: (extraId: string, file: File) => void;
+  onUploadChecklistExtra?: (extraId: string, file: File) => Promise<unknown>;
   onRemoverDocumentoChecklistExtra?: (extraId: string) => void;
   checklistExtrasSaving?: boolean;
 
@@ -520,7 +520,9 @@ export interface ClienteCardDialogProps {
    *  the list (`KB § PATTERNS/frontend/lying-loading-state.md`). */
   documentosRefreshing?: boolean;
   tiposDocumento: TipoDocumento[];
-  onUploadDocumento: (file: File, tipoDocumento: string) => void;
+  /** Returns the upload's promise — the receiving slot draws a refusal
+   *  (KB § PATTERNS/frontend/silent-refusal.md). */
+  onUploadDocumento: (file: File, tipoDocumento: string) => Promise<unknown>;
   uploadingDocumento?: boolean;
   onOpenDocumento: (documentoId: string) => void;
   onDeleteDocumento: (documentoId: string, motivo: string) => void;
@@ -902,7 +904,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                         onRenomear={props.onRenomearChecklistExtra ?? (() => {})}
                         onSalvarTexto={props.onSalvarTextoChecklistExtra ?? (() => {})}
                         onRemover={props.onRemoverChecklistExtra ?? (() => {})}
-                        onUploadDocumento={props.onUploadChecklistExtra ?? (() => {})}
+                        onUploadDocumento={props.onUploadChecklistExtra ?? (() => Promise.resolve(undefined))}
                         onRemoverDocumento={props.onRemoverDocumentoChecklistExtra ?? (() => {})}
                         onVisualizarDocumento={props.onVisualizarDocumentoChecklistExtra}
                         onBaixarDocumento={props.onBaixarDocumentoChecklistExtra}

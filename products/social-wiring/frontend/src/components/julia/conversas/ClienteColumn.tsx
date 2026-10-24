@@ -148,7 +148,9 @@ export function ClienteColumn({ contatoId, nome, etiquetas, credito = null }: Pr
       </Secao>
 
       <Secao titulo="Visitas solicitadas">
-        {(contato?.visitas ?? []).length === 0 ? (
+        {isError && !hist ? (
+          <p className="text-xs text-muted-foreground">Indisponível — o histórico não carregou.</p>
+        ) : (contato?.visitas ?? []).length === 0 ? (
           <p className="text-xs text-muted-foreground">Nenhuma visita solicitada.</p>
         ) : (
           <ul className="space-y-1 text-xs">

@@ -361,7 +361,8 @@ describe("CertidoesPartesTab", () => {
       const file = new File(["x"], "a.pdf", { type: "application/pdf" });
       fireEvent.change(screen.getByTestId("parte-upload-input-c:cli-1"), { target: { files: [file] } });
       const recusa = await screen.findByTestId("parte-recusa-c:cli-1-serasa");
-      expect(recusa.textContent).toBe("Linha de certidão inválida.");
+      // The seed upload-refusal organ: the server's words AND the file name.
+      expect(recusa.textContent).toBe('"a.pdf" não foi enviado: Linha de certidão inválida.');
       expect(recusa.getAttribute("role")).toBe("alert");
       expect(mockUpload).not.toHaveBeenCalled();
       // The next attempt clears it; a success leaves nothing behind.
@@ -383,7 +384,7 @@ describe("CertidoesPartesTab", () => {
       fireEvent.change(screen.getByTestId("parte-upload-input-c:cli-1"), {
         target: { files: [new File(["x"], "a.pdf", { type: "application/pdf" })] },
       });
-      expect((await screen.findByTestId("parte-recusa-c:cli-1-serasa")).textContent).toBe("Arquivo grande demais.");
+      expect((await screen.findByTestId("parte-recusa-c:cli-1-serasa")).textContent).toBe('"a.pdf" não foi enviado: Arquivo grande demais.');
     });
 
     it("an emission refusal is shown on the party (todas) or on the selected rows", async () => {

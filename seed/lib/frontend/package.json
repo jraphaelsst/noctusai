@@ -21,6 +21,7 @@
     "./query-client": "./src/query-client.ts",
     "./retry": "./src/retry.ts",
     "./cache-writes": "./src/cache-writes.ts",
+    "./upload-refusal": "./src/upload-refusal.ts",
     "./supabase": "./src/supabase.ts",
     "./components": "./src/components/index.ts"
   },

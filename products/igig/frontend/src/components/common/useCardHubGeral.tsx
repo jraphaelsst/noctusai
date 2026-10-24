@@ -153,7 +153,8 @@ export function useCardHubGeral(
           refreshing: docsState.isRefreshing,
           uploading: docMut.upload.isPending,
           onUpload: (file, tipoDocumento) =>
-            docMut.upload.mutate({ file, tipoDocumento }, { onError: erroToast("Não foi possível enviar o anexo.") }),
+            // The promise: a refusal is drawn in the section (seed upload-refusal organ).
+            docMut.upload.mutateAsync({ file, tipoDocumento }, { onError: erroToast("Não foi possível enviar o anexo.") }),
           onOpenDocumento: (documentoId) =>
             docMut.getUrl.mutate(
               { documentoId, intent: "view" },

@@ -7,7 +7,7 @@
  * (`EmpresaDocumento`-shaped) — the whole point of H7's generalization.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { DocumentoTipoSlot, documentoDoTipo } from "./DocumentoTipoSlot";
 
@@ -106,4 +106,26 @@ describe("DocumentoTipoSlot", () => {
 
 afterEach(() => {
   cleanup();
+});
+
+describe("DocumentoTipoSlot — a refused upload is drawn under the row (silent-refusal, F78)", () => {
+  afterEach(cleanup);
+
+  it("🔴 the server's refusal shows the file name + reason; the next good upload clears it", async () => {
+    const onUpload = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("Tipo de documento reservado."), { status: 400 }))
+      .mockResolvedValueOnce({ id: "d1" });
+    render(
+      <DocumentoTipoSlot documentos={[]} tipoDocumento="cartao_cnpj" label="Cartão CNPJ" onUpload={onUpload} testId="cnpj" />,
+    );
+    const file = new File(["x"], "cartao.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("cnpj-arquivo-input"), { target: { files: [file] } });
+    expect(onUpload).toHaveBeenCalledWith(file);
+    const erro = await screen.findByTestId("cnpj-upload-erro");
+    expect(erro.textContent).toContain('"cartao.pdf" não foi enviado: Tipo de documento reservado.');
+    expect(erro.getAttribute("role")).toBe("alert");
+    fireEvent.change(screen.getByTestId("cnpj-arquivo-input"), { target: { files: [file] } });
+    await waitFor(() => expect(screen.queryByTestId("cnpj-upload-erro")).toBeNull());
+  });
 });

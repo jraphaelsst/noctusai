@@ -41,7 +41,13 @@ export function PainelLeadConteudo({ connectionId, chatId }: { connectionId: str
         <dt className="text-muted-foreground">Operação</dt>
         <dd className="font-medium">{(op && OPERACAO[op]) || "—"}</dd>
       </div>
-      {ativas.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma pergunta ativa.</p>}
+      {perguntas.isError && !perguntas.data ? (
+        <p className="text-xs text-destructive" data-testid="painel-perguntas-erro">
+          Não foi possível carregar as perguntas.
+        </p>
+      ) : (
+        ativas.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma pergunta ativa.</p>
+      )}
       {ativas.map((p) => {
         const v = slots[p.chave];
         const vazio = v === undefined || v === null || v === "";

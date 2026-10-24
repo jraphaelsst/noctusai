@@ -31,6 +31,7 @@ import {
 import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
 import type { EventoHistorico, Headline } from "@/types/geracao";
+import { QueryErrorState } from "@noctusai/lib/components";
 
 const SUGERIDAS = "/media-creation/headlines/sugeridas";
 const PESQUISA_PENDENTES = "/media-creation/pesquisa?status=pending";
@@ -105,7 +106,8 @@ export default function Dashboard() {
         <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
       </header>
 
-      {!marcasQ.isPending && marcas.length === 0 && (
+      <QueryErrorState query={marcasQ} variant="inline" title="Não foi possível carregar as marcas." />
+      {!marcasQ.isPending && !marcasQ.isError && marcas.length === 0 && (
         <p className="rounded-md border p-4 text-sm text-muted-foreground">
           Cadastre uma marca para ver o seu dashboard.
         </p>

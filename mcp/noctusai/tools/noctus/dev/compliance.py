@@ -8818,6 +8818,158 @@ def check_mutation_invalidate_only(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_silent_refusal` — a refusal the user never sees (2026-10-24).
+#
+# Four instances in ONE social-wiring replay (N=4 ⇒ formalize): F76 a failed
+# imóvel search (502/401) rendered "Nenhum imóvel encontrado" + "Cadastrar
+# novo" (an invitation to register a duplicate); F78 a 400 on an anexo upload
+# vanished; F86 a 422 on a certidão cell upload vanished; F75b a client-side
+# type check refused a valid file. Each was fixed locally; the CLASS remained.
+#
+# Construction side (what makes the right shape the easy one): the seed upload
+# organ `@noctusai/lib/upload-refusal` (`useUploadDocumento` — the send fn must
+# return the upload's promise, a refusal becomes `erro` state — plus
+# `<UploadErro>`), the `onUpload: (...) => Promise<unknown>` prop contract on
+# every seed/SW upload slot, and `QueryErrorState` for a failed query.
+#
+# This keeper is the backstop (AST, ts-morph —
+# `mcp/noctusai/node/silent_refusal_scan.mjs`, whose docstring carries the
+# exact detection rules):
+#   * `empty_over_error` — a query's empty branch (`rows.length === 0`, `!rows.length`,
+#     `isEmpty=`) reachable while the query is in error;
+#   * `upload_mutate_unhandled` / `upload_raw_unhandled` / `upload_void_callback` —
+#     an upload whose failure nobody observes;
+#   * `upload_organ_erro_unread` — `useUploadDocumento` whose `erro` is never rendered.
+# Scope: ACTIVE products' `frontend/src` + `seed/{lib,framework}/frontend/src`
+# (tests excluded). Severity high, blocking (no baseline: every live hit was
+# fixed when the keeper landed). Escape, per finding, with a reason:
+# `// noc-allow: silent-refusal — <why>` on the line or up to 3 lines above.
+# KB § PATTERNS/frontend/silent-refusal.md
+# ---------------------------------------------------------------------------
+
+_SILENT_REFUSAL_SCRIPT_REL = ("mcp", "noctusai", "node", "silent_refusal_scan.mjs")
+_SILENT_REFUSAL_TIMEOUT_SECONDS = 300  # ~10 s on an idle machine for the whole fleet; generous under a parallel vitest
+_SILENT_REFUSAL_SEED_ROOTS = ("seed/lib/frontend/src", "seed/framework/frontend/src")
+_SILENT_REFUSAL_RULE_FIX: dict[str, str] = {
+    "empty_over_error": (
+        "guard the empty branch with the query's error first (`q.isError && !q.data ? <QueryErrorState query={q} /> : …`, "
+        "or `!q.isError && rows.length === 0`) — a failed request must never read as \"nothing found\""
+    ),
+    "upload_mutate_unhandled": "route it through useUploadDocumento + <UploadErro> (@noctusai/lib/upload-refusal)",
+    "upload_raw_unhandled": "route it through useUploadDocumento + <UploadErro> (@noctusai/lib/upload-refusal)",
+    "upload_void_callback": "return `X.mutateAsync(…)` so the receiving slot's useUploadDocumento draws the refusal",
+    "upload_organ_erro_unread": "render it: <UploadErro erro={envio.erro} />",
+}
+
+
+def _silent_refusal_files(root: Path) -> dict[str, list[Path]]:
+    """Candidate `.ts`/`.tsx` files grouped by owner (product slug or `seed`)."""
+    groups: dict[str, list[Path]] = {}
+    srcs: list[tuple[str, Path]] = []
+    products_dir = root / "products"
+    if products_dir.is_dir():
+        for child in _active_product_dirs(products_dir):
+            src = child / "frontend" / "src"
+            if src.is_dir():
+                srcs.append((child.name, src))
+    for rel in _SILENT_REFUSAL_SEED_ROOTS:
+        src = root / rel
+        if src.is_dir():
+            srcs.append(("seed", src))
+    for owner, src in srcs:
+        for f in sorted(src.rglob("*.ts*")):
+            if f.suffix not in (".ts", ".tsx"):
+                continue
+            parts = set(f.relative_to(root).parts)
+            if parts & {"node_modules", "__tests__", "dist", "test", "tests"} or ".test." in f.name or ".spec." in f.name:
+                continue
+            groups.setdefault(owner, []).append(f)
+    return groups
+
+
+def silent_refusal_scan(files: list[Path], root: Path | None = None) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
+    """Run the ts-morph scan over ``files``. Returns ``(results, per_file_errors, bootstrap_error)``;
+    ``bootstrap_error`` is set when the scan could not run at all (never a silent zero)."""
+    base = root or REPO_ROOT
+    script = base.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
+    if not script.exists():
+        script = REPO_ROOT.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
+    if not files:
+        return {}, {}, None
+    if shutil.which("node") is None:
+        return {}, {}, "node_unavailable: `node` not on PATH — the silent-refusal AST scan cannot run"
+    if not script.exists():
+        return {}, {}, f"script_missing: {script}"
+    try:
+        proc = subprocess.run(
+            ["node", str(script)],
+            input=json.dumps({"files": [str(f) for f in files]}),
+            capture_output=True,
+            text=True,
+            timeout=_SILENT_REFUSAL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return {}, {}, f"timeout: the silent-refusal scan exceeded {_SILENT_REFUSAL_TIMEOUT_SECONDS}s ({len(files)} files)"
+    except OSError as exc:
+        return {}, {}, f"spawn_failed: {exc}"
+    if proc.returncode != 0:
+        tail = (proc.stderr or "")[-600:]
+        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
+            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
+        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
+    if not parsed.get("ok"):
+        return {}, {}, f"bad_request: {parsed.get('error')}"
+    return parsed.get("results", {}), parsed.get("errors", {}), None
+
+
+def check_silent_refusal(repo_root: Path | None = None) -> list[dict]:
+    """A refusal the user never sees: a query's empty branch reachable while it is in ERROR
+    (`empty_over_error` — F76), or an upload whose failure nobody observes
+    (`upload_mutate_unhandled` / `upload_raw_unhandled` / `upload_void_callback` /
+    `upload_organ_erro_unread` — F78, F86, F75b). ts-morph AST scan over ACTIVE products' and the
+    seed's frontend sources (`mcp/noctusai/node/silent_refusal_scan.mjs`). Severity `high`.
+    Escape: `// noc-allow: silent-refusal — <why>`. A scan that cannot run is ONE explicit
+    finding, never a silent pass. KB § PATTERNS/frontend/silent-refusal.md."""
+    root = repo_root or REPO_ROOT
+    groups = _silent_refusal_files(root)
+    files = [f for fs in groups.values() for f in fs]
+    owner_of = {str(f): owner for owner, fs in groups.items() for f in fs}
+    results, errors, bootstrap = silent_refusal_scan(files, root)
+    if bootstrap is not None:
+        return [{
+            "product": "*", "file": "mcp/noctusai/node/silent_refusal_scan.mjs", "severity": "high",
+            "issue": f"silent-refusal scan could not run — {bootstrap}. KB § PATTERNS/frontend/silent-refusal.md",
+        }]
+    issues: list[dict] = []
+    for path, message in sorted(errors.items()):
+        rel = Path(path).relative_to(root).as_posix() if path.startswith(str(root)) else path
+        issues.append({
+            "product": owner_of.get(path, "*"), "file": rel, "severity": "high",
+            "issue": f"silent-refusal scan could not read this file ({message[:200]}) — fix the parse error; a skipped file is not a clean one.",
+        })
+    for path, findings in sorted(results.items()):
+        rel = Path(path).relative_to(root).as_posix() if path.startswith(str(root)) else path
+        for f in findings:
+            rule = f.get("rule", "?")
+            issues.append({
+                "product": owner_of.get(path, "*"),
+                "file": rel,
+                "line": f.get("line"),
+                "rule": rule,
+                "severity": "high",
+                "issue": (
+                    f"[{rule}] line {f.get('line')}: {f.get('detail')}. Fix: {_SILENT_REFUSAL_RULE_FIX.get(rule, '')}. "
+                    "Escape (with a reason): `// noc-allow: silent-refusal — why`. KB § PATTERNS/frontend/silent-refusal.md"
+                ),
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_async_handler_sync_db` — an `async def` route handler that calls the
 # SYNC supabase-py client directly parks the single uvicorn event loop for the
 # whole network round-trip, so concurrent requests serialize (orbity, 2026-10-21:
@@ -17318,6 +17470,11 @@ def _detector_has_regression_test(detector: str, tests_dir: Path) -> bool:
     if not tests_dir.exists():
         return False
 
+    # A dedicated `tests/test_<detector>.py` covers it — the shape the
+    # missing-test message itself recommends (module-level tests, no class).
+    if (tests_dir / f"test_{detector}.py").exists():
+        return True
+
     # Build a case-insensitive regex matching `class Test<Body>` where
     # <Body> is the joined snake_case parts (with or without leading
     # `Check`). E.g. `check_ai_feature_completeness` matches both
@@ -18152,6 +18309,10 @@ def check_all_products() -> tuple[int, list]:
     # mutation-cache-writes (2026-10-21) — ratchet: invalidate-only
     # useMutation blocks may only go down. KB § PATTERNS/frontend/mutation-cache-writes.md.
     all_issues.extend(check_mutation_invalidate_only())
+    # silent-refusal (2026-10-24, N=4: F75b F76 F78 F86) — an empty branch reachable
+    # while the query is in error, or an upload whose refusal nobody sees.
+    # KB § PATTERNS/frontend/silent-refusal.md.
+    all_issues.extend(check_silent_refusal())
     # request-path-latency (2026-10-21) — ratchet: async handlers calling the sync
     # supabase client directly may only go down. KB § PATTERNS/backend/request-path-latency.md.
     all_issues.extend(check_async_handler_sync_db())

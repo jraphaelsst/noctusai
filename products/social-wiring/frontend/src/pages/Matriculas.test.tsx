@@ -204,7 +204,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUseExtracoes.mockReturnValue(makeQuery({ data: [], refetch: mockRefetch }));
   mockUseExtracao.mockReturnValue(makeQuery({ data: null }));
-  mockUseUpload.mockReturnValue({ mutate: mockUploadMutate, isPending: false });
+  mockUploadMutate.mockResolvedValue({ id: "nova-extracao" });
+  mockUseUpload.mockReturnValue({ mutateAsync: mockUploadMutate, isPending: false });
   mockUseCriarManual.mockReturnValue({ mutate: mockCriarManualMutate, isPending: false });
   mockUseDelete.mockReturnValue({ mutate: mockDeleteMutate, isPending: false });
   mockUseRetranscrever.mockReturnValue({ mutate: mockRetranscreverMutate, isPending: false });
@@ -306,30 +307,43 @@ describe("Matriculas — history states", () => {
 
 describe("Matriculas — upload", () => {
   it("rejects a non-PDF client-side and never calls the mutation", async () => {
-    const { getByTestId, fireEvent } = await renderPage();
+    const { getByTestId, fireEvent, findByTestId } = await renderPage();
 
     fireEvent.change(getByTestId("matricula-file-input"), {
       target: { files: [new File(["x"], "foto.png", { type: "image/png" })] },
     });
 
-    expect(mockToastError).toHaveBeenCalledWith("Apenas arquivos PDF são aceitos.");
+    // Drawn ON the page with the file name (seed upload-refusal organ), not a toast.
+    expect((await findByTestId("matricula-upload-erro")).textContent).toBe(
+      '"foto.png" não foi enviado: apenas arquivos PDF são aceitos.',
+    );
     expect(mockUploadMutate).not.toHaveBeenCalled();
   });
 
   it("uploads a PDF and auto-selects the new extraction on success", async () => {
     const { getByTestId, fireEvent } = await renderPage();
+    const { waitFor } = await import("@testing-library/react");
 
     fireEvent.change(getByTestId("matricula-file-input"), { target: { files: [pdf()] } });
 
     expect(mockUploadMutate).toHaveBeenCalledTimes(1);
-    const [file, opts] = mockUploadMutate.mock.calls[0];
+    const [file] = mockUploadMutate.mock.calls[0];
     expect(file.name).toBe("matricula.pdf");
-    // The onSuccess callback is what makes the new extraction poll live.
-    expect(typeof opts.onSuccess).toBe("function");
+    // Selecting the new row is what makes the extraction poll live.
+    await waitFor(() => expect(mockUseExtracao).toHaveBeenLastCalledWith("nova-extracao"));
+  });
+
+  it("a server refusal stays on the page with the file name and the server's message", async () => {
+    mockUploadMutate.mockRejectedValueOnce(new Error("PDF acima de 20 MB."));
+    const { getByTestId, fireEvent, findByTestId } = await renderPage();
+    fireEvent.change(getByTestId("matricula-file-input"), { target: { files: [pdf()] } });
+    expect((await findByTestId("matricula-upload-erro")).textContent).toBe(
+      '"matricula.pdf" não foi enviado: PDF acima de 20 MB.',
+    );
   });
 
   it("shows the sending state while the upload mutation is pending", async () => {
-    mockUseUpload.mockReturnValue({ mutate: mockUploadMutate, isPending: true });
+    mockUseUpload.mockReturnValue({ mutateAsync: mockUploadMutate, isPending: true });
     const { getByText, queryByText } = await renderPage();
 
     expect(getByText("Enviando...")).toBeTruthy();

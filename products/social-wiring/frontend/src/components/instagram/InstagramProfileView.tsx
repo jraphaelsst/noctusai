@@ -143,7 +143,8 @@ export function InstagramProfileView({ accountId, showPosts = true }: InstagramP
 
   const reconnect = () => oauth.mutate(profile?.marca_id ? { marcaId: profile.marca_id } : undefined);
 
-  const noData = !!profile && !profile.last_synced_at && all.length === 0;
+  // A failed trend read is not "no data yet" (KB § PATTERNS/frontend/silent-refusal.md).
+  const noData = !!profile && !profile.last_synced_at && !trendQ.isError && all.length === 0;
   const chartXFormatter = (v: string) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
     return m ? `${m[3]}/${m[2]}` : v;

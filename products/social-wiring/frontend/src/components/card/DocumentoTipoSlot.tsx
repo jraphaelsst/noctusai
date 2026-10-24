@@ -22,7 +22,8 @@ import { useRef } from "react";
 import { Download, ExternalLink, Trash2, Upload } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { TooltipIconButton, formatBytes } from "@noctusai/lib/components";
+import { TooltipIconButton, UploadErro, formatBytes } from "@noctusai/lib/components";
+import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 
 /**
  * The narrowest shape this slot needs off a document row — deliberately NOT
@@ -62,7 +63,10 @@ export interface DocumentoTipoSlotProps {
   /** The pt-BR label this slot shows and speaks in every tooltip
    *  ("Enviar {label}", "Visualizar {label}", …). */
   label: string;
-  onUpload: (file: File) => void;
+  /** Returns the upload's promise (`mutateAsync`): a refusal is drawn under
+   *  this row (`<UploadErro>`, the server's message + the file name).
+   *  KB § PATTERNS/frontend/silent-refusal.md. */
+  onUpload: (file: File) => Promise<unknown>;
   uploading?: boolean;
   onVisualizar?: (documentoId: string) => void;
   /** Absent where the caller has no distinct download-under-original-name
@@ -86,10 +90,12 @@ export function DocumentoTipoSlot({
 }: DocumentoTipoSlotProps) {
   const documento = documentoDoTipo(documentos, tipoDocumento);
   const inputArquivo = useRef<HTMLInputElement>(null);
+  const envio = useUploadDocumento((file: File) => onUpload(file));
 
   return (
+    <div className="mb-3">
     <div
-      className="mb-3 flex items-center gap-2 rounded-md border border-border/60 bg-card/40 px-2.5 py-1.5 text-sm"
+      className="flex items-center gap-2 rounded-md border border-border/60 bg-card/40 px-2.5 py-1.5 text-sm"
       data-testid={`${testId}-row`}
     >
       <span className="shrink-0 font-medium" data-testid={`${testId}-label`}>
@@ -114,7 +120,7 @@ export function DocumentoTipoSlot({
         data-testid={`${testId}-arquivo-input`}
         onChange={(e) => {
           const file = e.target.files?.[0];
-          if (file) onUpload(file);
+          if (file) void envio.enviar(file);
           // Cleared so re-picking the SAME file fires `change` again.
           e.target.value = "";
         }}
@@ -159,6 +165,13 @@ export function DocumentoTipoSlot({
           onClick={() => onRemover(documento.id, `Descartado para reenvio: ${label}`)}
         />
       )}
+    </div>
+    <UploadErro
+      erro={envio.erro}
+      onDismiss={envio.limpar}
+      className="mt-1 px-1"
+      data-testid={`${testId}-upload-erro`}
+    />
     </div>
   );
 }

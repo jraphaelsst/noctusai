@@ -60,6 +60,7 @@ import {
 import { useRecipients, type Recipient } from "@/hooks/useSettings";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
 import { toast } from "sonner";
+import { QueryErrorState } from "@noctusai/lib/components";
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 const PRIVACY_OPTIONS: { value: PrivacyStatus; label: string; help: string }[] = [
@@ -421,7 +422,8 @@ function YouTubeAccountPicker({
   // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
   // and would unmount this select on every background refresh.
   // → KB § PATTERNS/frontend/lying-loading-state.md
-  const { data: accounts = [], isPending } = useIntegrationAccounts("youtube");
+  const accountsQ = useIntegrationAccounts("youtube");
+  const { data: accounts = [], isPending } = accountsQ;
 
   // Auto-select on first load ONLY when there is exactly one account — with
   // more than one, the user must pick explicitly (the placeholder below).
@@ -438,6 +440,16 @@ function YouTubeAccountPicker({
           <Loader2 className="mr-2 h-3 w-3 animate-spin" />
           Carregando contas...
         </div>
+      </div>
+    );
+  }
+
+  // A failed read is not "no account connected" (KB § PATTERNS/frontend/silent-refusal.md).
+  if (accountsQ.isError && !accountsQ.data) {
+    return (
+      <div className="grid gap-1.5">
+        <Label>Conta YouTube</Label>
+        <QueryErrorState query={accountsQ} variant="inline" title="Não foi possível carregar as contas." />
       </div>
     );
   }

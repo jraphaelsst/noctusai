@@ -49,6 +49,7 @@ import {
   ExportButtons,
   useDateRange,
 } from "./adsShared";
+import { QueryErrorState } from "@noctusai/lib/components";
 
 export default function AdsFinanceiro() {
   const accountQ = useAdsAccount();
@@ -129,6 +130,8 @@ export default function AdsFinanceiro() {
         <CardContent>
           {pacingQ.isPending && !pacingQ.data ? (
             <AdsLoading label="Resolvendo orçamentos das campanhas ativas…" />
+          ) : pacingQ.isError && !pacingQ.data ? (
+            <QueryErrorState query={pacingQ} variant="inline" />
           ) : !pacing.length ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
               Nenhuma campanha ativa com orçamento diário definido.
@@ -195,6 +198,8 @@ export default function AdsFinanceiro() {
         <CardContent>
           {seriesQ.isPending && !seriesQ.data ? (
             <AdsLoading label="Carregando…" />
+          ) : seriesQ.isError && !seriesQ.data ? (
+            <QueryErrorState query={seriesQ} variant="inline" />
           ) : !costTrend.length ? (
             <p className="py-8 text-center text-sm text-muted-foreground">Sem dados no período.</p>
           ) : (

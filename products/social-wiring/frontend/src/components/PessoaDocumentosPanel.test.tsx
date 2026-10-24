@@ -164,7 +164,7 @@ describe("PessoaDocumentosPanel — marriage-gated UI (this slice)", () => {
       "certidao-casamento-cli-1-arquivo-input",
     ) as HTMLInputElement;
     fireEvent.change(input, { target: { files: [file] } });
-    expect(mockUploadMutate).toHaveBeenCalledWith(
+    expect(uploadAsyncById.get("cli-1")!).toHaveBeenCalledWith(
       { file, tipoDocumento: "certidao_casamento" },
       expect.any(Object),
     );
@@ -179,7 +179,7 @@ describe("PessoaDocumentosPanel — marriage-gated UI (this slice)", () => {
       screen.getByTestId("pacto-antenupcial-cli-1-arquivo-input") as HTMLInputElement,
       { target: { files: [file] } },
     );
-    expect(mockUploadMutate).toHaveBeenCalledWith(
+    expect(uploadAsyncById.get("cli-1")!).toHaveBeenCalledWith(
       { file, tipoDocumento: "pacto_antenupcial" },
       expect.any(Object),
     );
@@ -224,8 +224,9 @@ describe("PessoaDocumentosPanel — a party's upload posts to THAT party's clien
       { target: { files: [fileB] } },
     );
 
-    const uploadA = uploadMutateById.get("cli-parte-a")!;
-    const uploadB = uploadMutateById.get("cli-parte-b")!;
+    // Slots return the upload promise (seed upload-refusal organ) — `mutateAsync`.
+    const uploadA = uploadAsyncById.get("cli-parte-a")!;
+    const uploadB = uploadAsyncById.get("cli-parte-b")!;
     expect(uploadA).toHaveBeenCalledWith(
       { file: fileA, tipoDocumento: "certidao_casamento" },
       expect.any(Object),

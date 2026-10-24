@@ -50,7 +50,7 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
       agentesLoading={agentes.isPending}
       onSave={(patch) => mutation.mutate(patch)}
       onUpload={(file, tipoDocumento) =>
-        docs.upload.mutate({ file, tipoDocumento })
+        docs.upload.mutateAsync({ file, tipoDocumento })
       }
       onRemove={(documentoId, motivo) =>
         docs.remove.mutate({ documentoId, motivo })

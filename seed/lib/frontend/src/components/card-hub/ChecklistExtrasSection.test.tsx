@@ -142,3 +142,26 @@ describe("uma linha de arquivo já respondida", () => {
     expect(getByTestId("checklist-extras-add-arquivo")).toBeTruthy();
   });
 });
+
+describe("ChecklistExtrasSection — a refused file upload is drawn on its row (silent-refusal)", () => {
+  it("🔴 a server refusal shows the file name + the server's message under THAT row, not on another", async () => {
+    const onUploadDocumento = vi.fn().mockRejectedValue(new Error("Arquivo acima do limite de 15 MB."));
+    const { getByTestId, findByTestId, queryByTestId } = await render(
+      baseProps({
+        items: [
+          extra("e1", { tipo: "arquivo", valor_texto: null, documento: null }),
+          extra("e2", { tipo: "arquivo", valor_texto: null, documento: null }),
+        ],
+        onUploadDocumento,
+      }),
+    );
+    const rtl = await import("@testing-library/react");
+    rtl.fireEvent.change(getByTestId("checklist-extras-e1-arquivo-input"), {
+      target: { files: [new File(["x"], "comprovante.pdf", { type: "application/pdf" })] },
+    });
+    expect(onUploadDocumento).toHaveBeenCalledWith("e1", expect.any(File));
+    const erro = await findByTestId("checklist-extras-e1-upload-erro");
+    expect(erro.textContent).toContain('"comprovante.pdf" não foi enviado: Arquivo acima do limite de 15 MB.');
+    expect(queryByTestId("checklist-extras-e2-upload-erro")).toBeNull();
+  });
+});

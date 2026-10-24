@@ -13,7 +13,7 @@ export function EquipeWizard({ onClose }: { onClose: () => void }) {
   const [passo, setPasso] = useState(1);
   const [campos, setCampos] = useState<CamposValor>(CAMPOS_PADRAO);
   const [sel, setSel] = useState<string[]>([]);
-  const { data: usuarios = [], isPending } = useTeamMembers();
+  const { data: usuarios = [], isPending, isError } = useTeamMembers();
   const criar = useCriarEquipe();
   const set = (p: Partial<CamposValor>) => setCampos((c) => ({ ...c, ...p }));
   const nomeOk = campos.nome.trim().length > 0;
@@ -48,7 +48,8 @@ export function EquipeWizard({ onClose }: { onClose: () => void }) {
         <fieldset className="space-y-2" data-testid="passo-membros">
           <legend className="text-sm font-medium">Quem faz parte da equipe?</legend>
           {isPending && <p className="text-sm text-muted-foreground">Carregando usuários…</p>}
-          {!isPending && usuarios.length === 0 && <p className="text-sm text-muted-foreground">Nenhum usuário na organização.</p>}
+          {isError && <p className="text-sm text-destructive">Não foi possível carregar os usuários.</p>}
+          {!isPending && !isError && usuarios.length === 0 && <p className="text-sm text-muted-foreground">Nenhum usuário na organização.</p>}
           {usuarios.map((u) => (
             <label key={u.id} className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={sel.includes(u.id)}

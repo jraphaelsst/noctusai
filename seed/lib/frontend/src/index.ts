@@ -25,6 +25,16 @@ export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneD
 export { createApiClient, extractErrorMessage, ApiError, TransientAuthError, isTransientHttpStatus, refreshWithBackoff } from './api';
 export { mfaChallenge } from './mfaChallenge';
 export { tipoArquivoAceito } from './uploadTipo';
+// Upload refusal organ — every upload's refusal is state the caller renders
+// (`<UploadErro>`). KB § PATTERNS/frontend/silent-refusal.md.
+export {
+  useUploadDocumento,
+  motivoDaRecusa,
+  recusaDeUpload,
+  textoDaRecusa,
+  UPLOAD_RECUSA_MENSAGENS,
+} from './upload-refusal';
+export type { UploadRecusa, UploadResultado, UploadDocumento, UploadDocumentoOptions, EnvioOpcoes } from './upload-refusal';
 export type { MfaTransport, MfaVerifyResult, MfaChallengeRequest } from './mfaChallenge';
 export { checkProductAccess, redirectToSemAcesso, isOrgSemLicencaBody, ORG_SEM_LICENCA_CODE, SEM_ACESSO_PATH, ORG_SELECTION_CHANGED_CODE, ORG_SELECTION_REQUIRED_CODE, isOrgSelectionChangedBody, isOrgSelectionRefusalBody, orgSelectionOf, isMemberOrgPicker, NO_ORG_SELECTION } from './access';
 export type { MeAccess, OrgSelectionState, OrgChoice, OrgRef, EligibleOrg, ManageableOrg } from './access';
@@ -126,7 +136,8 @@ export { createProductSupabase, assertSupabaseBuildEnv } from './supabase';
 export { ErrorBoundary, withErrorBoundary, SSOCallback, createAuthProvider, FakeModeBadge } from './components/index';
 export { ConfirmProvider, useConfirm } from './components/index';
 export type { ConfirmOptions, ConfirmFn } from './components/index';
-export { RetryableError, QueryErrorState, toastRetryableError, RETRYABLE_ERROR_MESSAGES } from './components/index';
+export { RetryableError, QueryErrorState, toastRetryableError, RETRYABLE_ERROR_MESSAGES, UploadErro } from './components/index';
+export type { UploadErroProps } from './components/index';
 export type { RetryableErrorProps, QueryErrorStateProps, RetryableQueryLike } from './components/index';
 export type { SSOCallbackProps, FakeModeBadgeProps, FakeModeBadgeVariant } from './components/index';
 

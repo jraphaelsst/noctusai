@@ -21,6 +21,8 @@ export {
   RETRYABLE_ERROR_MESSAGES,
 } from './RetryableError';
 export type { RetryableErrorProps, QueryErrorStateProps, RetryableQueryLike } from './RetryableError';
+export { UploadErro } from './UploadErro';
+export type { UploadErroProps } from './UploadErro';
 export type { SideDrawerProps, SideDrawerWidth } from './SideDrawer';
 export { VoiceAnswerInput, VOICE_ANSWER_MESSAGES } from './VoiceAnswerInput';
 export type { VoiceAnswerInputProps } from './VoiceAnswerInput';

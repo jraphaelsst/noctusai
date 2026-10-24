@@ -79,6 +79,8 @@ import type { ChecklistExtra, ChecklistExtraTipo } from "./types";
 import { TokenCheckbox } from "./TokenCheckbox";
 import { TooltipIconButton } from "./TooltipIconButton";
 import { formatBytes } from "./format";
+import { useUploadDocumento } from "../../upload-refusal";
+import { UploadErro } from "../UploadErro";
 
 const TICK_DERIVADO =
   "Marcado automaticamente quando a linha recebe um valor ou um arquivo";
@@ -98,7 +100,9 @@ export interface ChecklistExtrasSectionProps {
   onRenomear: (extraId: string, label: string) => void;
   onSalvarTexto: (extraId: string, valorTexto: string) => void;
   onRemover: (extraId: string) => void;
-  onUploadDocumento: (extraId: string, file: File) => void;
+  /** Returns the upload's promise (`mutateAsync`): a refusal is drawn under
+   *  the row (`<UploadErro>`). KB § PATTERNS/frontend/silent-refusal.md. */
+  onUploadDocumento: (extraId: string, file: File) => Promise<unknown>;
   /** Discards the FILE and keeps the row — the same rule the mandatory rows
    *  follow, so "delete" never means two different things on one screen. */
   onRemoverDocumento: (extraId: string) => void;
@@ -293,7 +297,9 @@ function ChecklistExtraRow({
   onRenomear: (extraId: string, label: string) => void;
   onSalvarTexto: (extraId: string, valorTexto: string) => void;
   onRemover: (extraId: string) => void;
-  onUploadDocumento: (extraId: string, file: File) => void;
+  /** Returns the upload's promise (`mutateAsync`): a refusal is drawn under
+   *  the row (`<UploadErro>`). KB § PATTERNS/frontend/silent-refusal.md. */
+  onUploadDocumento: (extraId: string, file: File) => Promise<unknown>;
   onRemoverDocumento: (extraId: string) => void;
   onVisualizarDocumento?: (documentoId: string) => void;
   onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
@@ -308,6 +314,7 @@ function ChecklistExtraRow({
   // Its OWN input, per the same rule the mandatory rows follow: several file
   // rows share a screen, and a shared element uploads onto the wrong one.
   const inputArquivo = useRef<HTMLInputElement>(null);
+  const envio = useUploadDocumento((file: File) => onUploadDocumento(extra.id, file));
 
   function abrir(qual: "label" | "valor") {
     setRascunho(qual === "label" ? extra.label : (extra.valor_texto ?? ""));
@@ -332,7 +339,8 @@ function ChecklistExtraRow({
     : extra.valor_texto || "—";
 
   return (
-    <li
+    <li data-testid={`${tid}-item`}>
+    <div
       className="flex items-center gap-2 rounded-md border border-border/60 bg-card/40 px-2.5 py-1.5 text-sm"
       data-testid={`${tid}-row`}
     >
@@ -431,7 +439,7 @@ function ChecklistExtraRow({
                 data-testid={`${tid}-arquivo-input`}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) onUploadDocumento(extra.id, file);
+                  if (file) void envio.enviar(file);
                   e.target.value = "";
                 }}
               />
@@ -499,6 +507,8 @@ function ChecklistExtraRow({
           />
         </>
       )}
+    </div>
+    <UploadErro erro={envio.erro} onDismiss={envio.limpar} className="mt-1 px-1" data-testid={`${tid}-upload-erro`} />
     </li>
   );
 }
