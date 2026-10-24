@@ -281,12 +281,26 @@ if [[ "$PUSH" == "1" ]]; then
   fi
   echo "[fleet] docker login ghcr.io as ${GHCR_USERNAME}"
   echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+  # GHCR intermittently answers a layer push with "unknown blob" (seen twice on
+  # 2026-10-23, same step, green on a plain re-run): a registry-side race, not a
+  # build defect. Retry the push itself with backoff; a real failure still fails
+  # after the last attempt — never swallowed.
+  push_with_retry() {
+    local ref="$1" attempt
+    for attempt in 1 2 3; do
+      if docker push "$ref"; then return 0; fi
+      echo "[fleet] push of ${ref} failed (attempt ${attempt}/3)" >&2
+      [[ "$attempt" -lt 3 ]] && sleep $((attempt * 15))
+    done
+    echo "ERROR: push of ${ref} failed after 3 attempts" >&2
+    return 1
+  }
   pushed=0
   for slug in "${ALL_SLUGS[@]}"; do
     want "$slug" || continue
     image="${REGISTRY}/noctus-${slug}:${TAG}"
     echo "[fleet] pushing ${image}"
-    docker push "${image}"
+    push_with_retry "${image}"
     # PROD-PIN fix (2026-07-20): :latest — what the fleet's compose file
     # actually pulls — moves ONLY when the caller explicitly opted in via
     # --move-latest (the CI workflow does this ONLY for a prod-ref build).
@@ -296,10 +310,10 @@ if [[ "$PUSH" == "1" ]]; then
     if [[ "$TAG" != "latest" ]]; then
       if [[ "$MOVE_LATEST" == "1" ]]; then
         docker tag "${image}" "${REGISTRY}/noctus-${slug}:latest"
-        docker push "${REGISTRY}/noctus-${slug}:latest"
+        push_with_retry "${REGISTRY}/noctus-${slug}:latest"
       else
         docker tag "${image}" "${REGISTRY}/noctus-${slug}:edge"
-        docker push "${REGISTRY}/noctus-${slug}:edge"
+        push_with_retry "${REGISTRY}/noctus-${slug}:edge"
       fi
     fi
     pushed=$((pushed + 1))
