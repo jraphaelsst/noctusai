@@ -90,6 +90,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
@@ -502,6 +503,21 @@ AVISO_TITULAR_NAO_CONFERE = "comprovante_titular_nao_confere"
 #: 2026-10-05) — the WRONG KIND of value for the field. The group is applied
 #: WITHOUT a número and the document is flagged for a human.
 AVISO_NUMERO_INVALIDO = "endereco_numero_invalido"
+#: 🔴 F82 (2026-10-24, prod): `extracao_aviso` for a comprovante whose CEP,
+#: looked up, names ANOTHER city/UF (or another street) than the one the
+#: document printed beside the holder's name — the CEP is then the wrong
+#: block's (the utility's own "Remetente" CEP, on the triggering bill). The
+#: address is NOT applied; it stays on the document row as a suggestion.
+AVISO_CEP_DIVERGE = "endereco_cep_diverge"
+MENSAGEM_CEP_DIVERGE = (
+    "O CEP lido no comprovante pertence a outra cidade/UF (ou outra rua) que "
+    "a impressa junto ao nome do titular — o endereço NÃO foi aplicado; fica "
+    "como sugestão aguardando confirmação."
+)
+#: Avisos under which a comprovante's address is held back as a suggestion a
+#: human may accept over a SET address (`sugestoes_pendentes` /
+#: `_confirmar_endereco`).
+_AVISOS_ENDERECO_EM_SUGESTAO = frozenset({AVISO_TITULAR_NAO_CONFERE, AVISO_CEP_DIVERGE})
 
 #: 🔴 FICHA PREVALECE (owner decision, 2026-10-13). For the party's
 #: residential address the ficha cadastral — filled in by the client — is
@@ -2674,11 +2690,66 @@ def _bairro_completado_pelo_cep(do_documento: Any, do_cep: Any) -> bool:
     return len(doc) >= 2 and len(cep) > len(doc) and cep[: len(doc)] == doc
 
 
+def _contido(menor: str, maior: str) -> bool:
+    """`menor`'s words appear, in order and contiguous, inside `maior`."""
+    a, b = menor.split(), maior.split()
+    return bool(a) and any(b[i : i + len(a)] == a for i in range(len(b) - len(a) + 1))
+
+
+def _cep_contradiz_leitura(partes: dict[str, Any], resultado: Any) -> Optional[str]:
+    """Why the looked-up CEP cannot be this reading's CEP, or None.
+
+    🔴 F82 (2026-10-24): the lookup used to OVERWRITE cidade/UF with whatever
+    the CEP names — so a CEP read off the WRONG block (the utility's own
+    sender address) moved the party to the utility's city. The STREET
+    decides whose CEP it is:
+
+    - the CEP names the printed street (`_RUA_CONFERE`) -> the CEP is this
+      address's, and stays the authority for cidade/UF (F3: the printed
+      city/UF was the wrong one 4/19 times) — never a contradiction;
+    - the CEP names a street sharing almost nothing with the printed one
+      (`_RUA_DIVERGE`) -> another block's CEP: contradiction;
+    - the CEP names no street (a city-wide `NNNNN-000`), or one in between ->
+      the locality decides: a different UF, or a printed city that is
+      neither the CEP's city (also as a phrase inside it — "Ipiranga - São
+      Paulo") nor the CEP's own bairro (F3: a neighbourhood in `cidade`).
+
+    Returns a short reason code (logged, never address text)."""
+    logradouro_lido = partes.get("logradouro")
+    if resultado.logradouro and not _vazio(logradouro_lido):
+        ka = divergencia_resolucao.chave_logradouro(str(logradouro_lido))
+        kb = divergencia_resolucao.chave_logradouro(resultado.logradouro)
+        if ka and kb:
+            semelhanca = 1.0 if ka == kb else SequenceMatcher(None, ka, kb).ratio()
+            if semelhanca >= _RUA_CONFERE:
+                return None
+            if semelhanca < _RUA_DIVERGE:
+                return "logradouro"
+    uf_lida = partes.get("uf")
+    if not _vazio(uf_lida) and resultado.uf and str(uf_lida).strip().upper() != resultado.uf.upper():
+        return "uf"
+    cidade_lida = partes.get("cidade")
+    if not _vazio(cidade_lida) and resultado.cidade:
+        c, rc = _norm_bairro(str(cidade_lida)), _norm_bairro(resultado.cidade)
+        rb = _norm_bairro(resultado.bairro) if resultado.bairro else ""
+        if not (c == rc or _contido(rc, c) or (rb and c == rb)):
+            return "cidade"
+    return None
+
+
+#: Street-name similarity (type + connectors stripped) at/above which the CEP
+#: names the printed street (a dropped OCR letter still confers), and below
+#: which it names another street.
+_RUA_CONFERE = 0.8
+_RUA_DIVERGE = 0.5
+
+
 def _enriquecer_endereco_via_cep(
     partes: dict[str, Any],
     cep_lookup: Optional[CepLookupAdapter],
     *,
     documento_id: Optional[UUID],
+    divergencias: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """F3 (live prod test, 2026-09-30): CEP is the AUTHORITY for cidade/uf
     once it resolves — the CEP printed on a document was correct for 15/19
@@ -2712,6 +2783,20 @@ def _enriquecer_endereco_via_cep(
 
     resultado = cep_lookup.lookup(str(partes["cep"]))
     if resultado is None:
+        return partes
+
+    motivo = _cep_contradiz_leitura(partes, resultado)
+    if motivo is not None:
+        # F82: the CEP is another block's — it never rewrites the city, UF or
+        # bairro the document printed beside the holder. Reported to the
+        # caller (`divergencias`), which holds the reading back.
+        logger.warning(
+            "identidade_extracao: CEP lido contradiz a leitura (%s) — "
+            "localidade do CEP NÃO aplicada, documento=%s",
+            motivo, documento_id,
+        )
+        if divergencias is not None:
+            divergencias.append(motivo)
         return partes
 
     partes = dict(partes)
@@ -2956,7 +3041,23 @@ def aplicar_endereco_ao_cliente(
         if avisos is not None:
             avisos.append(AVISO_NUMERO_INVALIDO)
     partes = {**partes, "numero": numero, "bairro": bairro, "complemento": complemento}
-    partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
+    divergencias_cep: list[str] = []
+    partes = _enriquecer_endereco_via_cep(
+        partes, cep_lookup, documento_id=documento_id, divergencias=divergencias_cep
+    )
+    if divergencias_cep:
+        # F82: the CEP names another locality than the one printed beside the
+        # holder — nothing is written, no conflict opens; the reading stays on
+        # the document row as a suggestion a human confirms
+        # (`sugestoes_pendentes`), the document flagged.
+        if avisos is not None:
+            avisos.append(AVISO_CEP_DIVERGE)
+        logger.info(
+            "endereco do cliente %s NÃO aplicado (documento %s): CEP contradiz "
+            "a cidade/UF/rua lida — mantido como sugestão",
+            cliente_id, documento_id,
+        )
+        return False, None
     # Canonical ON WRITE (`canonical-identifiers`): a CEP that fits is stored
     # `13010-110`; one that does not fit stays as read.
     partes = {
@@ -5359,6 +5460,10 @@ async def extrair_identidade(
                         AVISO_COMPROVANTE_CONFIRMA_FICHA,
                         MENSAGEM_COMPROVANTE_CONFIRMA_FICHA,
                     )
+                if AVISO_CEP_DIVERGE in avisos_endereco:
+                    _sinalizar(AVISO_CEP_DIVERGE, MENSAGEM_CEP_DIVERGE)
+                    # A reading whose CEP is another block's is never `alta`.
+                    _marcar(client, documento_id, extracao_endereco_confianca="baixa")
                 if AVISO_NUMERO_INVALIDO in avisos_endereco:
                     _sinalizar(
                         AVISO_NUMERO_INVALIDO,
@@ -6438,7 +6543,12 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         # still decide it: offered here as a substitution, accepted via
         # `confirmar_sugestao` / refused via `descartar_sugestao`.
         for doc in candidatos:
-            if AVISO_TITULAR_NAO_CONFERE not in (doc.get("extracao_aviso") or "").split("+"):
+            avisos_doc = set((doc.get("extracao_aviso") or "").split("+"))
+            aviso_doc = next(
+                (a for a in (AVISO_TITULAR_NAO_CONFERE, AVISO_CEP_DIVERGE) if a in avisos_doc),
+                None,
+            )
+            if aviso_doc is None:
                 continue
             if _vazio(doc.get("extracao_endereco_logradouro")):
                 continue
@@ -6463,7 +6573,7 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
                 "rotulo": doc.get("extracao_endereco_rotulo"),
                 "titular_documento": doc.get("extracao_endereco_titular"),
                 "substitui": True,
-                "aviso": AVISO_TITULAR_NAO_CONFERE,
+                "aviso": aviso_doc,
                 "leitura_comprometida": _doc_leitura_comprometida(doc),
             }
             break
@@ -6520,7 +6630,9 @@ def _confirmar_endereco(
     tem_endereco = any(not _vazio(v) for v in anterior.values())
     # A bill whose holder is not this person is held back as a suggestion; a
     # human accepting it is the decision that may replace a SET address.
-    substituicao = AVISO_TITULAR_NAO_CONFERE in (doc.get("extracao_aviso") or "").split("+")
+    substituicao = bool(
+        _AVISOS_ENDERECO_EM_SUGESTAO & set((doc.get("extracao_aviso") or "").split("+"))
+    )
     if tem_endereco and not substituicao:
         raise ValidationError_(
             "Este cliente já tem um endereço registrado.", field=CAMPO_ENDERECO

@@ -211,7 +211,7 @@ class TestIssuerCepTwoLinesFromItsOwnCnpjMarker:
         r = find_endereco(self.TEXTO)
         assert r.presente, "expected a real address, not `_NADA`"
         assert r.cep == "09876-543"
-        assert "FARIA LIMA" in (r.logradouro or "")
+        assert "Faria Lima" in (r.logradouro or "")
         assert r.cidade == "GUARULHOS"
         assert r.uf == "SP"
 
@@ -247,31 +247,32 @@ class TestIssuerCepTwoLinesFromItsOwnCnpjMarker:
 
 class TestLogradouroTypeAbbreviationExpansion:
     """G18: bills print `AL`, `R`, `AV`, `ESTR`, etc.; the contract wants the
-    full DNE type ("Alameda ..."). Only the LEADING type token is touched —
-    the rest of the string, whatever case a bill printed it in, survives
-    untouched, and an unrecognised leading token is left exactly as-is."""
+    full DNE type ("Alameda ..."). Only the LEADING type token is expanded,
+    and an unrecognised leading token is left exactly as-is; a read printed
+    in capitals is then title-cased (`caixa_logradouro`, F82 — never a mixed
+    "Alameda DAS ACACIAS")."""
 
     def test_al_expands_to_alameda(self):
         r = find_endereco("AL DAS ACACIAS 45\nCEP: 09876-543 - CAMPINAS/SP\n")
-        assert r.logradouro == "Alameda DAS ACACIAS"
+        assert r.logradouro == "Alameda das Acacias"
 
     def test_av_expands_to_avenida(self):
         r = find_endereco(
             "AV BRIGADEIRO FARIA LIMA 900\nCEP: 09876-543 - GUARULHOS/SP\n"
         )
-        assert r.logradouro == "Avenida BRIGADEIRO FARIA LIMA"
+        assert r.logradouro == "Avenida Brigadeiro Faria Lima"
 
     def test_bare_r_expands_to_rua(self):
         r = find_endereco("R PROF ARTUR RAMOS 123\nCEP: 01454-011 - SAO PAULO/SP\n")
-        assert r.logradouro == "Rua PROF ARTUR RAMOS"
+        assert r.logradouro == "Rua Prof Artur Ramos"
 
     def test_a_leading_full_word_is_never_double_expanded(self):
         r = find_endereco("RUA DAS FLORES 123\nCEP: 01234-567 - SAO PAULO/SP\n")
-        assert r.logradouro == "RUA DAS FLORES"
+        assert r.logradouro == "Rua das Flores"
 
     def test_a_trailing_period_on_the_abbreviation_is_consumed(self):
         r = find_endereco("AV. ENGENHEIRO BERRINI 1500\nCEP: 04571-010 - SAO PAULO/SP\n")
-        assert r.logradouro == "Avenida ENGENHEIRO BERRINI"
+        assert r.logradouro == "Avenida Engenheiro Berrini"
 
     def test_an_unknown_leading_token_is_left_exactly_as_printed(self):
         # `normalizar_tipo_logradouro` is pure and total — call it directly
@@ -473,7 +474,7 @@ class TestAddressPresenceRound3:
         r = find_endereco(texto)
         assert r.presente
         assert r.cep == "99999-999"
-        assert r.logradouro == "AVENIDA MONTE CASTELO"
+        assert r.logradouro == "Avenida Monte Castelo"
         assert r.numero == "456"
         assert r.confianca == "alta"
 
@@ -515,7 +516,7 @@ class TestAddressPresenceRound3:
         r = find_endereco(texto)
         assert r.presente
         assert r.cep is None
-        assert r.logradouro == "ALAMEDA CAJA MIRIM"
+        assert r.logradouro == "Alameda Caja Mirim"
         assert r.numero == "100"
         assert (r.cidade, r.uf) == ("COTIA", "SP")
         assert r.confianca == "baixa"
@@ -535,7 +536,7 @@ class TestAddressPresenceRound3:
         r = find_endereco(texto)
         assert r.presente
         assert r.cep is None
-        assert (r.logradouro, r.numero) == ("ALAMEDA CAJA MIRIM", "100")
+        assert (r.logradouro, r.numero) == ("Alameda Caja Mirim", "100")
         assert (r.cidade, r.uf) == ("COTIA", "SP")
         assert r.titular == "PAULO HENRIQUE ARAUJO"
 
@@ -607,7 +608,7 @@ class TestDispersoOneComponentPerLine:
         r = find_endereco(texto)
         assert r.presente
         assert r.cep is None
-        assert r.logradouro == "RUA DAS ACACIAS"
+        assert r.logradouro == "Rua das Acacias"
         assert r.numero == "123"
         assert r.bairro == "JARDIM BOTANICO"
         assert (r.cidade, r.uf) == ("CAMPINAS", "SP")
@@ -666,7 +667,7 @@ class TestBairroGluedOrBehindAnEmptySlot:
             "EXEMPLO - SP\n"
         )
         r = find_endereco(texto)
-        assert r.logradouro == "AVENIDA DAS PALMEIRAS"
+        assert r.logradouro == "Avenida das Palmeiras"
         assert r.numero == "344"
         assert r.bairro == "VILA NOVA"
 
@@ -700,7 +701,7 @@ class TestBairroGluedOrBehindAnEmptySlot:
         still a column boundary."""
         texto = "Endereço: RUA A, 12  Fone: 1199999\nCEP 01234-567 COTIA SP\n"
         r = find_endereco(texto)
-        assert r.logradouro == "RUA A"
+        assert r.logradouro == "Rua A"
         assert r.numero == "12"
         assert r.bairro is None
 

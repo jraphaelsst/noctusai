@@ -27,6 +27,17 @@ Every bill carries the utility's own address — usually beside its CNPJ
 A CEP whose neighbourhood mentions a CNPJ / inscrição estadual is the
 ISSUER's and is never a candidate. Several remaining CEPs that disagree mean
 this parser cannot tell which is the holder's: the result is `nenhuma`.
+A `Remetente:`/`Emitente:` block, and a CEP line naming a company ("Companhia
+de…"), SAC, ouvidoria or agências, are the issuer's too (F82, 2026-10-24).
+
+🔴 ONE ADDRESS, ONE BLOCK
+-------------------------
+CEP, city and UF come from the SAME block as the holder's street — never a
+CEP printed elsewhere on the page (F82: a gas bill labelled only the sender's
+CEP, and the customer moved to the sender's city). A labelled street whose
+block prints no CEP takes the locality, as one group, from the envelope block
+that prints the same street and número. When the street is printed more than
+once, the spelling most copies agree on wins.
 
 🔴 THE HOLDER IS OFTEN SOMEONE ELSE
 ------------------------------------
@@ -36,13 +47,16 @@ check it against the person the document was uploaded for — this module does
 not decide whose address it is, it reports whose name the bill carries.
 
 Values are literal slices of the caller's text (accents and casing as
-printed), via the same offset map `matricula_atos` uses; the CEP alone is
-canonicalised to `NNNNN-NNN`.
+printed), via the same offset map `matricula_atos` uses; the CEP is
+canonicalised to `NNNNN-NNN`, and the logradouro gets its type expanded and,
+when printed in capitals, title case (`caixa_logradouro`).
 """
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 from typing import Optional
 
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
@@ -355,6 +369,29 @@ _EMISSOR_RE = re.compile(r"\bCNPJ\b|INSCRICAO\s+ESTADUAL|\bI\.?\s?E\.?\s*[:.]|RA
 #: (an unrelated attachment, a different section) does not reach back and
 #: reject a genuine holder CEP.
 _EMISSOR_JANELA_LINHAS = 2
+
+#: 🔴 F82 (2026-10-24), real, prod: a Comgás gas bill prints its sender block
+#: as ONE line — "Remetente: Companhia de Gás de São Paulo, Rua …, 975 - CEP
+#: NNNNN-NNN - Ipiranga - São Paulo - SP" — with no CNPJ anywhere near it, so
+#: `_EMISSOR_RE` never fired, the utility's CEP was the only LABELLED CEP on
+#: the bill, and `_rotulado` took it (plus "Ipiranga - São Paulo" as the
+#: city) for the customer — applied, then CEP-enriched into the wrong city.
+#: A `Remetente:`/`Emitente:` label opens the issuer's block: that line and
+#: the next `_REMETENTE_ALCANCE_LINHAS` (up to a blank line) are never the
+#: holder's address.
+_REMETENTE_RE = re.compile(
+    r"^\s*(?:REMETENTE|EMITENTE|EMISSOR|PRESTADOR\s+DE\s+SERVICOS?|FORNECEDOR)\b"
+)
+_REMETENTE_ALCANCE_LINHAS = 3
+#: Issuer-only tokens checked on the CEP's OWN line only (never a window — a
+#: logo line "Companhia de Gás…" right above the customer's envelope block
+#: must not reject the customer's CEP): a company name ("Companhia de…",
+#: "Cia. de…", LTDA, S/A), its SAC / ouvidoria / agências / central de
+#: atendimento lines. A person's postal line carries none of them.
+_EMISSOR_NA_LINHA_RE = re.compile(
+    r"\b(?:COMPANHIA|CIA\.?)\s+(?:DE|DO|DA|DOS|DAS)\b|\bSAC\b|\bOUVIDORIA\b|"
+    r"\bAGENCIAS?\b|\bCENTRAL\s+DE\s+ATENDIMENTO\b|\bLTDA\b|\bS/A\b"
+)
 
 #: Labelled-mode field labels (normalised). Each must start the value's line
 #: or follow at least two spaces / a separator, so "RUA" inside a street name
@@ -687,9 +724,28 @@ def _cidade_uf(t: _Texto, base: int, linha: str) -> tuple[Optional[str], Optiona
 
 
 def _emissor_proximo(t: _Texto, idx: int) -> bool:
+    """Is line `idx` part of the ISSUER's own address block?
+
+    Three signals, any one suffices: a CNPJ / IE / razão-social marker
+    within `_EMISSOR_JANELA_LINHAS` lines (the original rule); an
+    issuer-only token ON THIS LINE (`_EMISSOR_NA_LINHA_RE` — "Companhia
+    de…", SAC, ouvidoria, agências); or this line sitting inside a
+    `Remetente:`/`Emitente:` block (`_REMETENTE_RE` on this line or up to
+    `_REMETENTE_ALCANCE_LINHAS` lines above, no blank line between).
+    """
     ini = max(0, idx - _EMISSOR_JANELA_LINHAS)
     fim = min(len(t.linhas), idx + _EMISSOR_JANELA_LINHAS + 1)
-    return any(_EMISSOR_RE.search(t.linhas[i][1]) for i in range(ini, fim))
+    if any(_EMISSOR_RE.search(t.linhas[i][1]) for i in range(ini, fim)):
+        return True
+    if _EMISSOR_NA_LINHA_RE.search(t.linhas[idx][1]):
+        return True
+    for j in range(idx, max(-1, idx - _REMETENTE_ALCANCE_LINHAS - 1), -1):
+        linha = t.linhas[j][1]
+        if not linha.strip():
+            break
+        if _REMETENTE_RE.match(linha):
+            return True
+    return False
 
 
 #: A `CIDADE`/`MUNICIPIO`/`LOCALIDADE` label sitting on a CEP's OWN line —
@@ -738,11 +794,69 @@ def _completar_cidade_uf_da_linha_do_cep(
             achados["cidade"] = cidade
 
 
-def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
-    """Labelled-mode read, or None when there is no labelled street."""
+#: How far (in lines, no blank line between) a CEP may sit from the labelled
+#: street and still belong to the SAME address block. A labelled form prints
+#: Endereço / Bairro / CEP / Cidade on consecutive lines; a CEP further away
+#: is another block's (F82).
+_BLOCO_LINHAS = 4
+
+
+def _mesmo_bloco(t: _Texto, a: int, b: int) -> bool:
+    """Lines `a` and `b` belong to one address block: at most `_BLOCO_LINHAS`
+    apart with no blank line between them."""
+    ini, fim = min(a, b), max(a, b)
+    if fim - ini > _BLOCO_LINHAS:
+        return False
+    return all(t.linhas[i][1].strip() for i in range(ini, fim + 1))
+
+
+def _cep_do_bloco(
+    t: _Texto, candidatos: list[tuple[int, re.Match[str]]], idx_rua: Optional[int]
+) -> tuple[Optional[tuple[int, re.Match[str]]], bool]:
+    """The CEP candidate of the street's OWN block, and whether it is one.
+
+    🔴 F82 (2026-10-24): the first labelled CEP in the document used to win,
+    wherever it sat — on a bill that labels only the sender's CEP, that was
+    the sender's. Now the nearest candidate inside the street's block wins
+    (`_mesmo_bloco`; a tie goes to the one AFTER the street, the printed
+    order). With none in the block, a single, unambiguous CEP elsewhere is
+    still returned — flagged `False` (out of block) so `find_endereco` lets
+    an envelope block that reads the same street replace it; several
+    distinct ones elsewhere -> no CEP at all, never a guess.
+    """
+    if not candidatos:
+        return None, False
+    if idx_rua is not None:
+        no_bloco = [c for c in candidatos if _mesmo_bloco(t, idx_rua, c[0])]
+        if no_bloco:
+            return min(no_bloco, key=lambda c: (abs(c[0] - idx_rua), c[0] < idx_rua)), True
+    if _ceps_do_documento(t) == {_cep(*m.groups()) for _i, m in candidatos}:
+        # The ONLY CEP the document prints (issuer's excluded) — no other
+        # block it could belong to.
+        if len({_cep(*m.groups()) for _i, m in candidatos}) == 1:
+            return candidatos[0], idx_rua is None
+    return None, False
+
+
+def _ceps_do_documento(t: _Texto) -> set[str]:
+    """Every CEP-shaped token outside the issuer's own block."""
+    achados: set[str] = set()
+    for idx, (_base, linha) in enumerate(t.linhas):
+        ms = list(_CEP_ROTULO_RE.finditer(linha)) + list(_CEP_HIFEN_RE.finditer(linha))
+        if ms and not _emissor_proximo(t, idx):
+            achados.update(_cep(*m.groups()) for m in ms)
+    return achados
+
+
+def _rotulado(t: _Texto) -> Optional[tuple[EnderecoLido, bool]]:
+    """Labelled-mode read, or None when there is no labelled street.
+
+    Returns `(lido, cep_no_bloco)` — the second item says the CEP (and the
+    city/UF read off its line) came from the street's own block."""
     achados: dict[str, Optional[str]] = {}
     titular: Optional[str] = None
-    cep: Optional[str] = None
+    candidatos: list[tuple[int, re.Match[str]]] = []
+    idx_rua: Optional[int] = None
     for idx, (base, linha) in enumerate(t.linhas):
         if titular is None:
             mt = _TITULAR_ROTULO_RE.match(linha)
@@ -750,9 +864,7 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
                 titular = t.literal(base + mt.start(1), base + mt.end(1))
         mc = _CEP_ROTULO_RE.search(linha)
         if mc and not _emissor_proximo(t, idx):
-            if cep is None:
-                cep = _cep(*mc.groups())
-            _completar_cidade_uf_da_linha_do_cep(t, base, linha, mc.end(), achados)
+            candidatos.append((idx, mc))
         for campo, rotulo in _ROTULOS.items():
             if achados.get(campo):
                 continue
@@ -765,6 +877,7 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
                 if _emissor_proximo(t, idx):
                     continue
                 partes = _parse_logradouro(t, base + m.start("v"), m.group("v"))
+                idx_rua = idx
                 for k, v in partes.items():
                     if v and not achados.get(k):
                         achados[k] = v
@@ -774,10 +887,10 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
                     achados["uf"] = uf
                     if cid and not achados.get("cidade") and cid != achados.get("bairro"):
                         achados["cidade"] = cid
-                if not cep:
+                if not _CEP_ROTULO_RE.search(linha):
                     mh = _CEP_HIFEN_RE.search(linha)
                     if mh:
-                        cep = _cep(*mh.groups())
+                        candidatos.append((idx, mh))
             elif campo == "cidade":
                 cid, uf = _cidade_uf(t, base + m.start("v"), m.group("v"))
                 if cid:
@@ -807,7 +920,16 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
                 achados[campo] = t.literal(base + m.start("v"), base + m.end("v"))
     if not achados.get("logradouro"):
         return None
-    return EnderecoLido(
+    escolhido, no_bloco = _cep_do_bloco(t, candidatos, idx_rua)
+    cep: Optional[str] = None
+    if escolhido is not None:
+        idx_cep, mc = escolhido
+        cep = _cep(*mc.groups())
+        base_cep, linha_cep = t.linhas[idx_cep]
+        # The city/UF tail of the CHOSEN CEP's line only — never another
+        # block's ("… CEP 04203-051 - Ipiranga - São Paulo - SP", F82).
+        _completar_cidade_uf_da_linha_do_cep(t, base_cep, linha_cep, mc.end(), achados)
+    lido = EnderecoLido(
         cep=cep,
         logradouro=achados.get("logradouro"),
         numero=achados.get("numero"),
@@ -816,9 +938,10 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
         cidade=achados.get("cidade"),
         uf=achados.get("uf"),
         titular=titular,
-        confianca="alta" if cep else "baixa",
+        confianca="alta" if cep and no_bloco else "baixa",
         rotulo="ENDERECO",
     )
+    return lido, no_bloco
 
 
 def _envelope(t: _Texto) -> EnderecoLido:
@@ -1153,6 +1276,150 @@ def _disperso(t: _Texto) -> EnderecoLido:
     return _NADA
 
 
+def _chave_rua(logradouro: Optional[str]) -> str:
+    """Comparable street key: accents/case/punctuation off, the leading type
+    token canonicalised ("EST" == "Estrada")."""
+    palavras = re.sub(r"[^A-Z0-9 ]", " ", strip_accents_upper(logradouro or "")).split()
+    if palavras:
+        palavras[0] = _tipo_canonico(palavras[0]) or palavras[0]
+    return " ".join(palavras)
+
+
+def _mesma_rua(a: Optional[str], b: Optional[str]) -> bool:
+    """Two reads of ONE street — equal keys, or an OCR letter apart
+    (dropped/swapped character: "STEURER" / "STEUER")."""
+    ka, kb = _chave_rua(a), _chave_rua(b)
+    if not ka or not kb:
+        return False
+    return ka == kb or SequenceMatcher(None, ka, kb).ratio() >= 0.9
+
+
+def _numero_igual(a: Optional[str], b: Optional[str]) -> bool:
+    return bool(a and b) and re.sub(r"\s", "", a).upper() == re.sub(r"\s", "", b).upper()
+
+
+def _completar_pelo_envelope(
+    t: _Texto, lido: EnderecoLido
+) -> tuple[EnderecoLido, Optional[str]]:
+    """A labelled street whose own block printed no CEP takes its CEP,
+    city and UF — AS ONE GROUP — from the unlabelled envelope block that
+    prints the SAME street and número (F82: a gas bill labels the customer's
+    street, prints the customer's CEP only in its window-envelope block, and
+    labels only the SENDER's CEP). Returns `(lido, ancora)` — `ancora` is the
+    street read of the block the locality came from (None when nothing was
+    taken). Only the CEP-anchored blocks that print THIS street and número
+    count (another stray CEP elsewhere does not make it ambiguous); two of
+    them disagreeing on the CEP -> `lido` as is, never a guess."""
+    blocos: list[EnderecoLido] = []
+    for idx, (_base, linha) in enumerate(t.linhas):
+        for m in list(_CEP_ROTULO_RE.finditer(linha)) or list(_CEP_HIFEN_RE.finditer(linha)):
+            if _emissor_proximo(t, idx):
+                continue
+            bloco = _ler_bloco(t, idx, _cep(*m.groups()))
+            if (
+                bloco is not None
+                and _numero_igual(bloco.numero, lido.numero)
+                and _mesma_rua(bloco.logradouro, lido.logradouro)
+            ):
+                blocos.append(bloco)
+    if len({b.cep for b in blocos}) != 1:
+        return lido, None
+    env = blocos[0]
+    concordam = _chave_rua(env.logradouro) == _chave_rua(lido.logradouro)
+    return (
+        replace(
+            lido,
+            cep=env.cep,
+            cidade=env.cidade,
+            uf=env.uf,
+            bairro=lido.bairro or env.bairro,
+            complemento=lido.complemento or env.complemento,
+            titular=lido.titular or env.titular,
+            confianca="alta" if concordam else "baixa",
+        ),
+        env.logradouro,
+    )
+
+
+def _rua_mais_lida(t: _Texto, lido: EnderecoLido, ancora: Optional[str]) -> EnderecoLido:
+    """The street as the MAJORITY of its reads print it.
+
+    A bill prints the holder's street more than once (window envelope +
+    customer box); an OCR/vision read can drop a letter in one copy. Every
+    street-type line outside the issuer's block that carries the same
+    número and the same street (`_mesma_rua`) is a read; the most frequent
+    spelling wins. A tie keeps the read of the block the CEP came from
+    (`ancora`), else the one already chosen — a lone disagreeing pair is
+    left as read, never guessed between."""
+    if not lido.logradouro or not lido.numero:
+        return lido
+    leituras: list[str] = [lido.logradouro]
+    for idx, (base, linha) in enumerate(t.linhas):
+        corpo = linha.strip()
+        if not _TIPO_RE.match(corpo) or _emissor_proximo(t, idx):
+            continue
+        recuo = len(linha) - len(linha.lstrip())
+        corte = _CEP_ROTULO_RE.search(corpo) or _CEP_HIFEN_RE.search(corpo)
+        corpo = corpo[: corte.start()].rstrip(" -,") if corte else corpo
+        partes = _parse_logradouro(t, base + recuo, corpo)
+        log = partes.get("logradouro")
+        if (
+            log
+            and _numero_igual(partes.get("numero"), lido.numero)
+            and _mesma_rua(log, lido.logradouro)
+        ):
+            leituras.append(log)
+    if lido.rotulo != "ENDERECO":
+        # The chosen read IS one of the street lines just collected.
+        leituras = leituras[1:] or [lido.logradouro]
+    contagem = Counter(_chave_rua(l) for l in leituras)
+    maximo = max(contagem.values())
+    vencedoras = {k for k, n in contagem.items() if n == maximo}
+    for preferida in (ancora, lido.logradouro):
+        if preferida and _chave_rua(preferida) in vencedoras:
+            escolhida = next(l for l in leituras if _chave_rua(l) == _chave_rua(preferida))
+            break
+    else:
+        escolhida = next(l for l in leituras if _chave_rua(l) in vencedoras)
+    if _chave_rua(escolhida) == _chave_rua(lido.logradouro):
+        return lido
+    return replace(lido, logradouro=escolhida)
+
+
+#: Street tokens kept exactly as printed when title-casing: Brasília's
+#: quadra codes and roman numerals ("Rua XV de Novembro").
+_SIGLAS_LOGRADOURO = frozenset({"SQN", "SQS", "SHIS", "SHIN", "SCLN", "SCLS", "CLN", "CLS", "QI", "QL"})
+_ROMANO_RE = re.compile(r"^(?=[IVX])X{0,3}(?:IX|IV|V?I{0,3})$")
+
+
+def caixa_logradouro(logradouro: Optional[str]) -> Optional[str]:
+    """Title-case a street read printed in CAPITALS, connectors lower-case:
+    "Estrada MUNICIPAL DO EMBU" / "RUA DAS FLORES" -> "Estrada Municipal do
+    Embu" / "Rua das Flores" (F82: the type expansion alone left a mixed
+    "Estrada MUNICIPAL …"; the CEP lookup and a human both store title
+    case). A read already in mixed case (a human typed it, a ficha printed
+    it so) is returned untouched; tokens with a digit, roman numerals and
+    quadra codes keep their print."""
+    if not logradouro or not logradouro.strip():
+        return logradouro
+    palavras = logradouro.split()
+    resto = " ".join(palavras[1:])
+    if not resto or resto != resto.upper() or not re.search(r"[A-ZÀ-Ý]", resto):
+        return logradouro
+    saida: list[str] = []
+    for i, w in enumerate(palavras):
+        chave = strip_accents_upper(w).strip(".,")
+        if chave in _SIGLAS_LOGRADOURO or re.search(r"\d", w) or (i and _ROMANO_RE.match(chave)):
+            saida.append(w)
+        elif i == 0:
+            saida.append(w.capitalize() if w.isupper() else w)
+        elif chave in _CONECTORES_LOGRADOURO and i < len(palavras) - 1:
+            saida.append(w.lower())
+        else:
+            saida.append("-".join(p.capitalize() for p in w.split("-")))
+    return " ".join(saida)
+
+
 def find_endereco(text: str) -> EnderecoLido:
     """The holder's address off a comprovante, or an empty `EnderecoLido`.
 
@@ -1172,9 +1439,16 @@ def find_endereco(text: str) -> EnderecoLido:
     if not text or not text.strip():
         return _NADA
     t = _Texto(text)
-    lido = _rotulado(t)
-    if lido is None:
+    rotulado = _rotulado(t)
+    ancora: Optional[str] = None
+    if rotulado is None:
         lido = _envelope(t)
+        ancora = lido.logradouro
+    else:
+        lido, cep_no_bloco = rotulado
+        ancora = lido.logradouro if cep_no_bloco else None
+        if not cep_no_bloco:
+            lido, ancora = _completar_pelo_envelope(t, lido)
     if not lido.presente:
         lido = _sem_cep(t)
     if not lido.presente:
@@ -1185,10 +1459,11 @@ def find_endereco(text: str) -> EnderecoLido:
         titular_fraco = _titular_por_heuristicas_fracas(t)
         if titular_fraco:
             lido = replace(lido, titular=titular_fraco)
+    lido = _rua_mais_lida(t, lido, ancora)
     bairro, complemento = separar_complemento_do_bairro(lido.bairro, lido.complemento)
     return replace(
         lido,
-        logradouro=normalizar_tipo_logradouro(lido.logradouro),
+        logradouro=caixa_logradouro(normalizar_tipo_logradouro(lido.logradouro)),
         bairro=bairro,
         complemento=complemento,
     )
@@ -1197,6 +1472,7 @@ def find_endereco(text: str) -> EnderecoLido:
 __all__ = [
     "EnderecoLido",
     "UFS",
+    "caixa_logradouro",
     "colapsar_tipo_logradouro_duplicado",
     "find_endereco",
     "limpar_residuo_de_pagina",

@@ -216,7 +216,7 @@ class TestEndereco:
         e = find_endereco(CONTA_LUZ_ENEL)
         assert e.partes() == {
             "cep": "01234-567",
-            "logradouro": "RUA DAS FLORES",
+            "logradouro": "Rua das Flores",
             "numero": "123",
             "complemento": "AP 45",
             "bairro": "JARDIM PAULISTA",
@@ -228,13 +228,13 @@ class TestEndereco:
 
     def test_labelled_water_bill_reads_high_with_accents_kept(self):
         # G18 (P1/883, 2026-09-25): the leading street-type abbreviation
-        # ("R") expands to its full DNE form ("Rua") — everything else in
-        # `logradouro` stays a literal slice of the source text, accents
-        # included, exactly as this test's own name promises.
+        # ("R") expands to its full DNE form ("Rua"); a capitals read is
+        # title-cased (F82), every other part stays a literal slice of the
+        # source text, accents included, as this test's own name promises.
         e = find_endereco(CONTA_AGUA_SABESP)
         assert e.partes() == {
             "cep": "01454-011",
-            "logradouro": "Rua PROF ARTUR RAMOS",
+            "logradouro": "Rua Prof Artur Ramos",
             "numero": "123",
             "complemento": "APTO 12",
             "bairro": "JARDIM PAULISTANO",
