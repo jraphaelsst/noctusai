@@ -146,6 +146,18 @@ class Parte:
     nome: str
     cpf_cnpj: Optional[str] = None
     conjuge: Optional[str] = None
+    #: The qualification an EARLIER act of the same matrícula gave this party
+    #: when THIS act only says "já qualificado" (`matricula_qualificacao.
+    #: qualificar_por_referencia`). `qualificado_em` is that act's ref
+    #: ("R-3", "AV-2", "abertura") — the provenance of `cpf_cnpj` and of every
+    #: field below. All `None` for a party qualified in its own act (its own
+    #: qualification is `extrair_qualificacoes`' job) or not resolved.
+    rg: Optional[str] = None
+    rg_orgao_expedidor: Optional[str] = None
+    estado_civil: Optional[str] = None
+    profissao: Optional[str] = None
+    nacionalidade: Optional[str] = None
+    qualificado_em: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "nome", normalizar_nome_parte(self.nome) or "")
@@ -156,13 +168,27 @@ class Parte:
         saida = {"nome": self.nome, "cpf_cnpj": self.cpf_cnpj}
         if self.conjuge:
             saida["conjuge"] = self.conjuge
+        for campo in _CAMPOS_QUALIFICACAO_PARTE:
+            valor = getattr(self, campo)
+            if valor is not None:
+                saida[campo] = valor
         return saida
 
     @classmethod
     def from_json(cls, data: dict) -> "Parte":
         return cls(
-            nome=str(data["nome"]), cpf_cnpj=data.get("cpf_cnpj"), conjuge=data.get("conjuge")
+            nome=str(data["nome"]),
+            cpf_cnpj=data.get("cpf_cnpj"),
+            conjuge=data.get("conjuge"),
+            **{c: data.get(c) for c in _CAMPOS_QUALIFICACAO_PARTE},
         )
+
+
+#: `Parte`'s optional back-referenced qualification — emitted in the JSON only
+#: when set, so a party read off its own act keeps the `{nome, cpf_cnpj}` shape.
+_CAMPOS_QUALIFICACAO_PARTE: tuple[str, ...] = (
+    "rg", "rg_orgao_expedidor", "estado_civil", "profissao", "nacionalidade", "qualificado_em",
+)
 
 
 @dataclass(frozen=True)
@@ -1549,9 +1575,12 @@ def extrair_detalhes_ato(
     for why this only affects the title window, never the reading itself.
 
     `anterior` — the matrícula text BEFORE this act (the caller's context,
-    "" by default). It is read for ONE thing: the marital regime an earlier
+    "" by default). It is read for TWO things: the marital regime an earlier
     act states for an adquirente who is "casado com X" here (comunhão
-    universal makes X a co-adquirente — see `_com_conjuges`).
+    universal makes X a co-adquirente — see `_com_conjuges`), and the
+    qualification of a party this act names only as "já qualificado" (the
+    most recent earlier act that qualified that name — see
+    `matricula_qualificacao.qualificar_por_referencia`).
     """
     if not texto_ato or not texto_ato.strip():
         return AtoDetalhes()
@@ -1573,6 +1602,19 @@ def extrair_detalhes_ato(
     )
     instrumento, inst_conf = _instrumento(t, corpo, blocos)
     referidos, ref_conf = _atos_referidos(t, corpo, proprio, sufixo_proprio)
+    if anterior and (
+        any(not p.cpf_cnpj for p in transmitentes) or any(not p.cpf_cnpj for p in adquirentes)
+    ):
+        # "o proprietário FULANO, já qualificado, transmitiu …": FULANO's
+        # CPF/RG/estado civil live in the earlier act that qualified him.
+        # Local import — `matricula_qualificacao` builds on this module.
+        from noctusai_lib.integrations.documents.matricula_qualificacao import (
+            qualificar_por_referencia,
+        )
+
+        transmitentes, adquirentes = qualificar_por_referencia(
+            (transmitentes, adquirentes), texto_ato, anterior
+        )
 
     return AtoDetalhes(
         natureza=natureza,

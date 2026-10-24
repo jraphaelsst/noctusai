@@ -1663,6 +1663,42 @@ def _confianca_do_armazenado(
     return rows[0].get(campo.coluna_confianca) if rows else None
 
 
+#: Fields whose truth MOVES over time — a later dated statement is newer
+#: evidence, not a second opinion (`aplicar_campos_ao_cliente(datas_evidencia=…)`).
+CAMPOS_DATADOS: frozenset[str] = frozenset({"estado_civil"})
+REGRA_EVIDENCIA_MAIS_RECENTE = "evidencia_mais_recente"
+
+
+def _evidencia_mais_recente(
+    client: Any, org_id: UUID, campo: CampoExtraido, atual: dict, data_proposta: Optional[date]
+) -> bool:
+    """Is the proposed reading dated AFTER the stored MACHINE value's own
+    evidence? The stored side's date is its document's issuance
+    (`extracao_data_emissao`); a typed/confirmed value, a value with no
+    document, or an undated document is never judged older."""
+    if (
+        data_proposta is None
+        or campo.item_key not in CAMPOS_DATADOS
+        or _valor_humano(atual, campo)
+    ):
+        return False
+    doc_id = atual.get(campo.documento_id)
+    if not doc_id:
+        return False
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("extracao_data_emissao")
+        .eq("org_id", str(org_id))
+        .eq("id", str(doc_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    bruto = rows[0].get("extracao_data_emissao") if rows else None
+    if not bruto:
+        return False
+    return data_proposta > date.fromisoformat(str(bruto)[:10])
+
+
 def aplicar_campos_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -1682,6 +1718,7 @@ def aplicar_campos_ao_cliente(
     ligar_pessoa: bool = False,
     leituras_anteriores: Optional[dict[str, Any]] = None,
     data_negocio: Optional[date] = None,
+    datas_evidencia: Optional[dict[str, date]] = None,
 ) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record — owner decision D1.
 
@@ -1793,6 +1830,17 @@ def aplicar_campos_ao_cliente(
 
     `documento_id=None` means this source has no `cliente_documentos` row to
     point at — the column is written as an explicit NULL.
+
+    🔴 `datas_evidencia` (F97, owner 2026-10-24) — `{item_key: date}`, the
+    date the SOURCE states the fact (a matrícula act's `data_registro`). For
+    a field whose truth moves over time (`CAMPOS_DATADOS`: estado civil), a
+    reading dated AFTER the stored value's own evidence (its document's
+    `extracao_data_emissao`) replaces a MACHINE value — a 2024 registry
+    statement beats a 2009 certidão de nascimento — still machine-pending
+    (`confirmado_por` NULL: a suggestion, never a confirmation), audited as
+    `REGRA_EVIDENCIA_MAIS_RECENTE`. A typed/confirmed value is never touched
+    by it (that still conflicts), and an undated side falls through to the
+    generic resolver.
 
     Returns `({item_key: foi_aplicado}, [conflito, ...])` — the second list
     holds every NEWLY opened conflict (this function never does async I/O;
@@ -2136,6 +2184,47 @@ def aplicar_campos_ao_cliente(
                         )
                         if novo is not None:
                             conflitos.append(novo)
+                        continue
+                    if _evidencia_mais_recente(
+                        client, org_id, campo, atual, (datas_evidencia or {}).get(campo.item_key)
+                    ):
+                        # 🔴 A NEWER statement of a fact that moves over time
+                        # (see the docstring's `datas_evidencia` bullet).
+                        origem_anterior = atual.get(campo.origem)
+                        updates[campo.item_key] = valor
+                        updates[campo.origem] = origem
+                        updates[campo.documento_id] = (
+                            str(documento_id) if documento_id else None
+                        )
+                        updates[campo.em] = now
+                        updates[campo.confirmado_por] = None
+                        updates[campo.confirmado_em] = None
+                        aplicados[campo.item_key] = True
+                        campo_conflitos.registrar_decisao_automatica(
+                            client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                            campo.item_key,
+                            valor_anterior=presente,
+                            origem_anterior=origem_anterior,
+                            valor_proposto=valor,
+                            origem_proposto=origem,
+                            confianca_proposta=confianca,
+                            fonte_tabela=fonte_tabela,
+                            fonte_id=fonte_id,
+                            decisao=divergencia_resolucao.Decisao(
+                                vencedor="proposto",
+                                regra=REGRA_EVIDENCIA_MAIS_RECENTE,
+                                motivo=(
+                                    f"{origem} declara {campo.item_key} em "
+                                    f"{datas_evidencia[campo.item_key]:%d/%m/%Y}, depois "
+                                    f"da evidência de {origem_anterior} — a declaração "
+                                    "mais recente prevalece (sugestão, não confirmação)."
+                                ),
+                                requer_humano=False,
+                            ),
+                            evidencia_ids=[
+                                i for i in (documento_id, atual.get(campo.documento_id)) if i
+                            ],
+                        )
                         continue
                     # Owner directive, 2026-09-29 — resolve without a human
                     # FIRST, using the measured evidence table (validators ->

@@ -76,9 +76,11 @@ from uuid import UUID
 
 from noctusai_lib.integrations.documents import (
     NATUREZAS_TRANSFERENCIA,
+    Parte,
     normalizar_nome_parte,
     parse_detalhes_json,
     partes_de_bloco,
+    qualificar_por_referencia,
     transmitentes_por_referencia,
 )
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
@@ -820,6 +822,39 @@ def _manual_ultima_transferencia(linha: dict) -> Optional[dict]:
     }
 
 
+def _transmitentes_qualificados(
+    extracao: dict, ato: dict, partes: list[dict]
+) -> list[dict]:
+    """The act's sellers as `{nome, cpf_cnpj[, qualificado_em]}`. A seller the
+    act names only as "já qualificado" carries the CPF/CNPJ the most recent
+    EARLIER act of the same matrícula qualified him with (F97 — the seed's
+    `qualificar_por_referencia`, the same mechanism `extrair_detalhes_ato`
+    runs at parse). A machine row already carries it; a HUMAN-confirmed row
+    (never re-derived) is resolved here, at read, off the stored text — the
+    confirmation is never rewritten, a document the human left blank is only
+    completed when the text proves whose it is."""
+    lidas = [Parte.from_json(p) for p in partes if p.get("nome")]
+    texto = extracao.get("texto_extraido")
+    if (
+        texto
+        and ato.get("char_inicio") is not None
+        and any(not p.cpf_cnpj for p in lidas)
+    ):
+        inicio, fim = int(ato["char_inicio"]), int(ato["char_fim"])
+        (lidas,) = qualificar_por_referencia((lidas,), texto[inicio:fim], texto[:inicio])
+    saida = []
+    for p in lidas:
+        item = {"nome": normalizar_nome_parte(p.nome), "cpf_cnpj": p.cpf_cnpj}
+        if p.qualificado_em:
+            item["qualificado_em"] = p.qualificado_em
+        saida.append(item)
+    # A stored party with a document but no name stays as it was.
+    saida += [
+        {"nome": None, "cpf_cnpj": p.get("cpf_cnpj")} for p in partes if not p.get("nome")
+    ]
+    return saida
+
+
 def _transmitentes_por_referencia(
     client: Any, org_id: UUID, extracao: dict, ato: dict, det: dict
 ) -> list[dict]:
@@ -998,10 +1033,9 @@ def _antigos_proprietarios_derivados(
         data_registro = date.fromisoformat(str(bruto)[:10]) if bruto else None
         # The derived act's sellers are still who sold, whatever answers the
         # date question below.
-        saida["transmitentes"] = [
-            {"nome": normalizar_nome_parte(p.get("nome")), "cpf_cnpj": p.get("cpf_cnpj")}
-            for p in det.get("transmitentes") or []
-        ]
+        saida["transmitentes"] = _transmitentes_qualificados(
+            extracao_do_ato, ato, det.get("transmitentes") or []
+        )
         if not saida["transmitentes"]:
             saida["transmitentes"] = _transmitentes_por_referencia(
                 client, org_id, extracao_do_ato, ato, det

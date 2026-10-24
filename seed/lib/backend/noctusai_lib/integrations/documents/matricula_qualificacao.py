@@ -86,6 +86,21 @@ Only pass acts belonging to the SAME extraction; merging across two
 different matrículas would silently attribute one person's address to
 another's CPF.
 
+🔴 "JÁ QUALIFICADO" BY NAME — `qualificar_por_referencia`
+-------------------------------------------------------
+The merge above joins by CPF, so it cannot help the party whose act prints
+NO document ("o proprietário FULANO, já qualificado, transmitiu …" — F97:
+the previous owner was synced without a CPF and his certidões refused).
+`qualificar_por_referencia` resolves exactly that party: in an act carrying
+the back-reference, a party without a CPF/CNPJ takes the qualification of
+the MOST RECENT earlier act of the same matrícula that qualified the same
+normalised name (`qualificacao_por_nome`; two homonyms with different
+documents in that act ⇒ nothing). `extrair_detalhes_ato` runs it through
+its `anterior` context, so the act's stored party carries the CPF/CNPJ, RG +
+órgão, estado civil, profissão, nacionalidade and `qualificado_em` (the act
+it came from). Same literal-substring discipline: every value is read off
+the earlier act's text.
+
 All fixture names, CPFs, CNPJs, RGs and addresses in this module's tests are
 invented; the CPFs/CNPJs are check-digit-valid synthetic values.
 """
@@ -102,17 +117,23 @@ from noctusai_lib.integrations.documents.civil_status import (
 from noctusai_lib.integrations.documents.matricula_ato_detalhes import (
     ALTA,
     BAIXA,
+    _CASADO_COM,
     _CNPJ,
     _CPF,
     _FIM_FRASE,
+    _HEADER,
     _PREFIXO_NOME,
+    _RETRO_REFERENCIA,
     _SEPARA_PESSOA,
+    Parte,
+    _chave_nome,
     _Texto,
     _digitos,
     _nome_valido,
     cpf_cnpj_valido,
     formatar_cpf_cnpj,
 )
+from noctusai_lib.integrations.documents.matricula_atos import segment_matricula_atos
 
 # The alternation helper is identical to the sibling's `_rx` — reused, not
 # redefined, per this package's own N=2 recurrence rule.
@@ -296,7 +317,7 @@ def _nome_pessoa_fisica(norm: str, ancora: int, doc_inicio: int) -> Optional[tup
     formula's own second field), and everything name-shaped right before
     THAT — never everything between `ancora` and the document, which would
     just as happily swallow the connecting prose of a verb clause."""
-    ancora = _ancora_refinada(norm, ancora, doc_inicio)
+    ancora = _ancora_conjuge(norm, _ancora_refinada(norm, ancora, doc_inicio), doc_inicio)
     achados = list(_NACIONALIDADE.finditer(norm, ancora, doc_inicio))
     if not achados:
         return None
@@ -309,6 +330,20 @@ def _nome_pessoa_fisica(norm: str, ancora: int, doc_inicio: int) -> Optional[tup
     if inicio >= fim or not _nome_valido(norm[inicio:fim], minimo_palavras=2):
         return None
     return inicio, fim
+
+
+def _ancora_conjuge(norm: str, ancora: int, doc_inicio: int) -> int:
+    """`…, CPF <n>, casado com MARIA X, brasileira, …, CPF <m>`: the spouse's
+    own formula opens right after `casado com` — the cue is the boundary of
+    HER name. Only when nothing between `ancora` and the cue is another
+    person's formula (no nationality word): in "FULANO, brasileiro, casado
+    com BELTRANA, …, CPF <n>" the CPF is FULANO's and the cue is ignored."""
+    for m in _CASADO_COM.finditer(norm, ancora, doc_inicio):
+        if _NACIONALIDADE.search(norm, ancora, m.start()):
+            return ancora
+        if _NACIONALIDADE.search(norm, m.end(), doc_inicio):
+            return m.end()
+    return ancora
 
 
 def _nome_pessoa_juridica(norm: str, ancora: int, doc_inicio: int) -> Optional[tuple[int, int]]:
@@ -668,9 +703,105 @@ def mesclar_qualificacoes(
     return tuple(saida)
 
 
+# ─── "já qualificado": the qualification an EARLIER act gave a name ──────
+
+
+def _ref_do_ato(kind: str, numero: Optional[int]) -> str:
+    return "abertura" if kind == "abertura" else f"{kind}-{numero}"
+
+
+def qualificacoes_anteriores(anterior: str) -> tuple[tuple[str, tuple[Qualificacao, ...]], ...]:
+    """`((ato_ref, extrair_qualificacoes(...)), ...)` for every act of
+    `anterior` (the matrícula text BEFORE some act — abertura included), in
+    the text's own (chronological) order. Offsets point into `anterior`.
+    `ato_ref` is "abertura" / "R-3" / "AV-2"."""
+    if not anterior or not anterior.strip():
+        return ()
+    return tuple(
+        (_ref_do_ato(a.kind, a.numero), extrair_qualificacoes(anterior, a.start, a.end))
+        for a in segment_matricula_atos(anterior)
+    )
+
+
+def qualificacao_por_nome(
+    nome: str, indice: Sequence[tuple[str, Sequence[Qualificacao]]]
+) -> Optional[tuple[str, Qualificacao]]:
+    """The MOST RECENT act of `indice` (`qualificacoes_anteriores`) that
+    qualified `nome` — same normalised name (accents/case/hyphen-wrap folded,
+    `matricula_ato_detalhes._chave_nome`) — as `(ato_ref, Qualificacao)`.
+
+    🔴 `None` when that most recent act qualifies the name with TWO different
+    documents (two homonyms): an older act never breaks that tie — which
+    homonym THIS act means is not something the text says."""
+    chave = _chave_nome(nome or "")
+    if not chave:
+        return None
+    for ato_ref, qualificacoes in reversed(tuple(indice)):
+        achadas = [q for q in qualificacoes if q.cpf_cnpj and _chave_nome(q.nome) == chave]
+        if not achadas:
+            continue
+        if len({_digitos(q.cpf_cnpj) for q in achadas}) > 1:
+            return None
+        return ato_ref, achadas[-1]
+    return None
+
+
+def _com_qualificacao(parte: Parte, ato_ref: str, q: Qualificacao) -> Parte:
+    return Parte(
+        nome=parte.nome,
+        cpf_cnpj=q.cpf_cnpj,
+        conjuge=parte.conjuge,
+        rg=q.rg,
+        rg_orgao_expedidor=q.rg_orgao_expedidor,
+        estado_civil=q.estado_civil,
+        profissao=q.profissao,
+        nacionalidade=q.nacionalidade,
+        qualificado_em=ato_ref,
+    )
+
+
+def qualificar_por_referencia(
+    grupos: Sequence[Sequence[Parte]], texto_ato: str, anterior: str
+) -> tuple[tuple[Parte, ...], ...]:
+    """Resolve the parties an act names only as "já qualificado(a)(s)" /
+    "retro qualificado" / "supra qualificados" to the qualification an
+    EARLIER act of the same matrícula gave them.
+
+    `grupos` — the act's party groups (transmitentes, adquirentes, …), as
+    read off `texto_ato`; `anterior` — the matrícula text BEFORE the act. A
+    party WITHOUT a CPF/CNPJ in its own act, in an act that carries the
+    back-reference, takes the CPF/CNPJ, RG + órgão, estado civil, profissão
+    and nacionalidade of the most recent earlier act that qualified that
+    same normalised name (`qualificacao_por_nome`), with `qualificado_em`
+    naming that act. A party with its own document, an act with no
+    back-reference, or a name no earlier act qualifies (or qualifies
+    ambiguously) is returned untouched — never a guess. Pure."""
+    grupos_t = tuple(tuple(g) for g in grupos)
+    if not anterior or not texto_ato or not any(
+        not p.cpf_cnpj for g in grupos_t for p in g
+    ):
+        return grupos_t
+    t = _Texto(texto_ato)
+    cabecalho = _HEADER.match(t.norm)
+    if not _RETRO_REFERENCIA.search(t.norm, cabecalho.end() if cabecalho else 0):
+        return grupos_t
+    indice = qualificacoes_anteriores(anterior)
+    saida: list[tuple[Parte, ...]] = []
+    for grupo in grupos_t:
+        novos: list[Parte] = []
+        for parte in grupo:
+            achado = None if parte.cpf_cnpj else qualificacao_por_nome(parte.nome, indice)
+            novos.append(_com_qualificacao(parte, *achado) if achado else parte)
+        saida.append(tuple(novos))
+    return tuple(saida)
+
+
 __all__ = [
     "Qualificacao",
     "QualificacaoConsolidada",
     "extrair_qualificacoes",
     "mesclar_qualificacoes",
+    "qualificacao_por_nome",
+    "qualificacoes_anteriores",
+    "qualificar_por_referencia",
 ]

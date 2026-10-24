@@ -211,6 +211,9 @@ from noctusai_lib.integrations.documents.matricula_qualificacao import (
     QualificacaoConsolidada,
     extrair_qualificacoes,
     mesclar_qualificacoes,
+    qualificacao_por_nome,
+    qualificacoes_anteriores,
+    qualificar_por_referencia,
 )
 from noctusai_lib.integrations.documents.ficha_cadastral import (
     CampoWidget,
@@ -488,6 +491,9 @@ __all__ = [
     "make_matricula_extractor",
     "make_proposta_financiamento_extractor",
     "mesclar_qualificacoes",
+    "qualificacao_por_nome",
+    "qualificacoes_anteriores",
+    "qualificar_por_referencia",
     "montar_pessoas",
     "normalize",
     "normalize_lines",
