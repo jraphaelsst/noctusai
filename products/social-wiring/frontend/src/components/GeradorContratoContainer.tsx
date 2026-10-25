@@ -29,9 +29,9 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import GeradorContratoSection, { type GeracaoDestino } from "@/components/card/GeradorContratoSection";
+import GeradorContratoSection, { type GeracaoDestino, type GeracaoSugestaoAplicavel } from "@/components/card/GeradorContratoSection";
 import ValidacaoExtracaoDialog from "@/components/card/ValidacaoExtracaoDialog";
-import { useDecidirConflitoMutation } from "@/hooks/useCardHub";
+import { useDecidirConflitoMutation, useExtracaoSugestaoMutation } from "@/hooks/useCardHub";
 import { useCienciaPcen } from "@/hooks/useCertidoesPartes";
 import {
   ContratoGeracaoError,
@@ -98,6 +98,7 @@ export function GeradorContratoContainer({
   const contrato = contratos.data?.find((c) => c.id === contratoId);
   const ciencia = useCienciaPcen(clienteId);
   const decidirConflito = useDecidirConflitoMutation();
+  const aplicarSugestao = useExtracaoSugestaoMutation(clienteId);
   const assinaturaData = assinaturaDigitada || query.data?.assinatura_referencia || hoje();
   const [erroGeracao, setErroGeracao] = useState<ContratoGeracaoError | null>(null);
   const [avisosGerados, setAvisosGerados] = useState<string[] | null>(null);
@@ -229,6 +230,29 @@ export function GeradorContratoContainer({
     );
   }
 
+  /** A document reading waiting on a falta's field, applied through the
+   *  existing confirm route (provenance = that document, confirmed by the
+   *  user); the readiness is re-read once the record changed. */
+  function handleAplicarSugestao(sugestao: GeracaoSugestaoAplicavel) {
+    aplicarSugestao.mutate(
+      {
+        clienteId: sugestao.cliente_id,
+        documentoId: sugestao.documento_id,
+        acao: "confirmar",
+        itemKey: sugestao.item_key,
+      },
+      {
+        onSuccess: () => {
+          toast.success(`${sugestao.valor} aplicado.`);
+          void query.refetch();
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Não foi possível aplicar a sugestão.");
+        },
+      },
+    );
+  }
+
   function handleSalvarManual(item: PendenteValidacao, valor: string) {
     if (!item.edicao) return;
     setSalvandoChave(item.chave);
@@ -266,6 +290,8 @@ export function GeradorContratoContainer({
         erroGeracao={erroGeracao}
         avisosGerados={avisosGerados}
         onIrPara={onIrPara}
+        onAplicarSugestao={handleAplicarSugestao}
+        aplicandoSugestao={aplicarSugestao.isPending}
         onCienciaPcen={(resultadoId, acao) => ciencia.mutateAsync({ resultadoId, acao })}
         onDecidirCorrecao={handleDecidirCorrecao}
         decidindoCorrecaoId={

@@ -47,6 +47,7 @@ import { EspecificacoesPicker } from "./EspecificacoesPicker";
 import { ItensRevisaoLista } from "./ItensRevisaoLista";
 import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
 import { destinoDoBloqueio, destinoEfetivo } from "./destinoDoContrato";
+import { rotuloTipoDocumento } from "@/lib/documentoTipos";
 
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
  *  by WHERE to go fill the field, not just what field it is. */
@@ -110,9 +111,26 @@ export interface GeracaoSugestao {
   destino: GeracaoDestino | null;
 }
 
+/**
+ * `faltando[].sugestao` -- a document reading ALREADY waiting for a decision
+ * on this falta's field (`sugestoes_prontidao.py`): applied in one click
+ * through the existing `.../extracao/confirmar` route. One mechanism for
+ * every identity field (genero, nacionalidade, estado civil, profissao...).
+ */
+export interface GeracaoSugestaoAplicavel {
+  cliente_id: string;
+  item_key: string;
+  documento_id: string;
+  documento_nome?: string | null;
+  tipo_documento?: string | null;
+  valor: string;
+  confianca?: string | null;
+}
+
 export type FaltandoComDestino = GeracaoFaltando & {
   destino?: GeracaoDestino;
   sugestoes?: GeracaoSugestao[];
+  sugestao?: GeracaoSugestaoAplicavel;
 };
 
 /** Card subpage labels, canonical source (`cardSubpages.CARD_SUBPAGES`) —
@@ -202,21 +220,50 @@ function SugestoesLista({
   parteId,
   onIrPara,
   prefixo,
+  aplicavel,
+  onAplicar,
+  aplicando,
 }: {
   sugestoes?: GeracaoSugestao[];
   campo: string;
   parteId: string | null;
   onIrPara?: (destino: GeracaoDestino) => void;
   prefixo: string;
+  aplicavel?: GeracaoSugestaoAplicavel;
+  onAplicar?: (sugestao: GeracaoSugestaoAplicavel) => void;
+  aplicando?: boolean;
 }) {
-  if (!sugestoes || sugestoes.length === 0) return null;
+  const aplicar =
+    aplicavel && onAplicar ? (
+      <p className="ml-3 mt-0.5" data-testid={`${prefixo}-faltando-aplicar-${campo}-${parteId ?? ""}`}>
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-xs font-normal"
+          disabled={aplicando}
+          data-testid={`${prefixo}-faltando-aplicar-btn-${campo}-${parteId ?? ""}`}
+          onClick={() => onAplicar(aplicavel)}
+        >
+          Aplicar: {aplicavel.valor}
+        </Button>{" "}
+        <span className="text-muted-foreground/80">
+          (lido da {rotuloTipoDocumento(aplicavel.tipo_documento).toLowerCase()}
+          {aplicavel.documento_nome ? ` — ${aplicavel.documento_nome}` : ""})
+        </span>
+      </p>
+    ) : null;
+  if (!sugestoes || sugestoes.length === 0) return aplicar;
   return (
+    <>
+    {aplicar}
     <ul
       className="ml-3 mt-0.5 list-disc space-y-0.5 text-muted-foreground/80"
       data-testid={`${prefixo}-faltando-sugestoes-${campo}-${parteId ?? ""}`}
     >
       {sugestoes.map((sugestao, i) => {
-        const documentoRotulo = sugestao.tipo_documento ?? sugestao.rotulo;
+        // Never the raw `tipo_documento` key (`certidao_casamento`).
+        const documentoRotulo = rotuloTipoDocumento(sugestao.tipo_documento, sugestao.rotulo);
         const resolved = sugestao.destino
           ? resolverDestinoRico(sugestao.destino, onIrPara)
           : null;
@@ -232,7 +279,7 @@ function SugestoesLista({
                   className="text-primary hover:underline"
                   data-testid={`${prefixo}-faltando-sugestao-link-${campo}-${parteId ?? ""}-${i}`}
                 >
-                  {sugestao.rotulo}
+                  {sugestao.rotulo !== documentoRotulo ? sugestao.rotulo : "abrir"}
                 </Link>
               </>
             )}
@@ -259,6 +306,7 @@ function SugestoesLista({
         );
       })}
     </ul>
+    </>
   );
 }
 
@@ -277,10 +325,14 @@ function FaltandoLinha({
   item,
   onIrPara,
   prefixo,
+  onAplicarSugestao,
+  aplicandoSugestao,
 }: {
   item: FaltandoComDestino;
   onIrPara?: (destino: GeracaoDestino) => void;
   prefixo: string;
+  onAplicarSugestao?: (sugestao: GeracaoSugestaoAplicavel) => void;
+  aplicandoSugestao?: boolean;
 }) {
   // The backend's destino, narrowed to the CONTROL that answers this campo
   // (`destinoDoContrato.ts`) — "Resolver" lands on the field, not the page.
@@ -293,6 +345,9 @@ function FaltandoLinha({
         {item.rotulo}
         <SugestoesLista
           sugestoes={item.sugestoes}
+          aplicavel={item.sugestao}
+          onAplicar={onAplicarSugestao}
+          aplicando={aplicandoSugestao}
           campo={item.campo}
           parteId={item.parte_id}
           onIrPara={onIrPara}
@@ -329,6 +384,9 @@ function FaltandoLinha({
           </div>
           <SugestoesLista
             sugestoes={item.sugestoes}
+          aplicavel={item.sugestao}
+          onAplicar={onAplicarSugestao}
+          aplicando={aplicandoSugestao}
             campo={item.campo}
             parteId={item.parte_id}
             onIrPara={onIrPara}
@@ -347,6 +405,9 @@ function FaltandoLinha({
         )}
         <SugestoesLista
           sugestoes={item.sugestoes}
+          aplicavel={item.sugestao}
+          onAplicar={onAplicarSugestao}
+          aplicando={aplicandoSugestao}
           campo={item.campo}
           parteId={item.parte_id}
           onIrPara={onIrPara}
@@ -380,6 +441,9 @@ function FaltandoLinha({
       </div>
       <SugestoesLista
         sugestoes={item.sugestoes}
+          aplicavel={item.sugestao}
+          onAplicar={onAplicarSugestao}
+          aplicando={aplicandoSugestao}
         campo={item.campo}
         parteId={item.parte_id}
         onIrPara={onIrPara}
@@ -477,7 +541,12 @@ export function ProntidaoListas({
   onIrPara,
   entreBloqueiosEAvisos,
   prefixo = "gerador-contrato",
+  onAplicarSugestao,
+  aplicandoSugestao,
 }: {
+  /** One-click apply of a document reading waiting on a falta's field. */
+  onAplicarSugestao?: (sugestao: GeracaoSugestaoAplicavel) => void;
+  aplicandoSugestao?: boolean;
   faltando: GeracaoFaltando[];
   bloqueios: GeracaoBloqueio[];
   avisos: GeracaoAviso[];
@@ -537,6 +606,8 @@ export function ProntidaoListas({
                     item={item}
                     onIrPara={onIrPara}
                     prefixo={prefixo}
+                    onAplicarSugestao={onAplicarSugestao}
+                    aplicandoSugestao={aplicandoSugestao}
                   />
                 ))}
               </ul>
@@ -690,6 +761,9 @@ interface Props {
    *  `alvo`. Omitted outside the card dialog — card destinos then render as
    *  guidance text. */
   onIrPara?: (destino: GeracaoDestino) => void;
+  /** Applies a document reading waiting on a falta (the container owns the mutation). */
+  onAplicarSugestao?: (sugestao: GeracaoSugestaoAplicavel) => void;
+  aplicandoSugestao?: boolean;
   /** Receita PCEN 2ª via: the operator's acknowledgment / support question
    *  (the container owns the mutation — this file stays presentational). */
   onCienciaPcen?: (resultadoId: string, acao: "entendi" | "duvida") => Promise<CienciaPcenResult>;
@@ -726,6 +800,8 @@ export default function GeradorContratoSection({
   erroGeracao,
   avisosGerados,
   onIrPara,
+  onAplicarSugestao,
+  aplicandoSugestao,
   onCienciaPcen,
   onDecidirCorrecao,
   decidindoCorrecaoId,
@@ -835,6 +911,8 @@ export default function GeradorContratoSection({
         avisos={status.avisos}
         pronto={status.pronto}
         onIrPara={onIrPara}
+        onAplicarSugestao={onAplicarSugestao}
+        aplicandoSugestao={aplicandoSugestao}
         entreBloqueiosEAvisos={
           <>
             {confirmacoes.length > 0 && onCienciaPcen && (

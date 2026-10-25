@@ -27,10 +27,15 @@ vi.mock("@/hooks/useCertidoesPartes", () => ({
 // Migration 291 — the owner decides a contested correction through the
 // ordinary cliente conflict route; only the mutation is replaced here.
 const mockDecidirConflitoMutate = vi.fn();
+const mockAplicarSugestaoMutate = vi.fn();
 vi.mock("@/hooks/useCardHub", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useCardHub")>("@/hooks/useCardHub");
   return {
     ...actual,
+    useExtracaoSugestaoMutation: () => ({
+      mutate: mockAplicarSugestaoMutate,
+      isPending: false,
+    }),
     useDecidirConflitoMutation: () => ({
       mutate: mockDecidirConflitoMutate,
       isPending: false,
@@ -204,6 +209,50 @@ describe("GeradorContratoContainer", () => {
     expect(mockUseContratoGeracao).toHaveBeenLastCalledWith("cli1", "c1", true, "2026-08-11");
     fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
     expect(mockGerarMutate.mock.calls[0][0].assinaturaData).toBe("2026-08-11");
+  });
+
+  it("🔴 'Aplicar' on a falta writes the document reading through the EXISTING confirm mutation (for the party's own cliente) and re-reads the readiness", async () => {
+    mockUseContratoGeracao.mockReturnValue({
+      data: statusFixture({
+        pronto: false,
+        faltando: [
+          {
+            campo: "qualificacao.genero",
+            rotulo: "Gênero — Fulano Teste",
+            onde: "partes",
+            parte_id: null,
+            sugestao: {
+              cliente_id: "titular1",
+              item_key: "genero",
+              documento_id: "doc1",
+              documento_nome: "cert-teste.pdf",
+              tipo_documento: "certidao_casamento",
+              valor: "Masculino",
+              confianca: "media",
+            },
+          },
+        ],
+      } as unknown as Partial<ContratoGeracaoStatus>),
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      refetch: mockRefetch,
+    });
+    const { screen, fireEvent } = await render();
+    const botao = screen.getByTestId("gerador-contrato-faltando-aplicar-btn-qualificacao.genero-");
+    expect(screen.getByTestId("gerador-contrato-faltando-aplicar-qualificacao.genero-").textContent).toContain(
+      "Certidão de casamento".toLowerCase(),
+    );
+    fireEvent.click(botao);
+    const [vars, opts] = mockAplicarSugestaoMutate.mock.calls[0];
+    expect(vars).toEqual({
+      clienteId: "titular1",
+      documentoId: "doc1",
+      acao: "confirmar",
+      itemKey: "genero",
+    });
+    opts.onSuccess();
+    expect(mockRefetch).toHaveBeenCalled();
   });
 
   it("🔴 a 400 CONTRATO_INCOMPLETO shows details.faltando/bloqueios via the section", async () => {

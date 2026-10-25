@@ -670,7 +670,14 @@ export function useExtracaoSugestaoMutation(clienteId: string) {
       documentoId,
       acao,
       itemKey,
+      clienteId: dono,
     }: {
+      /**
+       * The person whose record the document belongs to, when it is not the
+       * card this hook was mounted for (the contract readiness applies a
+       * suggestion for ANY party). Defaults to the hook's `clienteId`.
+       */
+      clienteId?: string;
       documentoId: string;
       acao: "confirmar" | "descartar";
       /**
@@ -685,12 +692,13 @@ export function useExtracaoSugestaoMutation(clienteId: string) {
         /** `endereco` only: the address that was replaced (`null` when it filled a blank). */
         substituiu?: Record<string, string | null> | null;
       }>(
-        `${clienteBase(clienteId)}/documentos/${documentoId}/extracao/${acao}`,
+        `${clienteBase(dono ?? clienteId)}/documentos/${documentoId}/extracao/${acao}`,
         itemKey ? { item_key: itemKey } : {},
       ),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
-      void qc.invalidateQueries({ queryKey: DOCUMENTOS_KEY(clienteId) });
+    onSuccess: (_resultado, { clienteId: dono }) => {
+      const alvo = dono ?? clienteId;
+      void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(alvo) });
+      void qc.invalidateQueries({ queryKey: DOCUMENTOS_KEY(alvo) });
       void qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY });
       // A confirmed `cpf`/`rg` suggestion also moves what a titular's card
       // shows for this person as a party.

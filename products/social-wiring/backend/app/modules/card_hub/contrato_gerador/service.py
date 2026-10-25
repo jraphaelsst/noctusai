@@ -31,6 +31,8 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
 )
 from app.modules.card_hub.contrato_gerador.documento import MIME_PDF, gerar_pdf, renderizar
 from app.modules.card_hub.contrato_gerador.lint import lint
+from app.modules.card_hub.contrato_gerador.sugestoes_prontidao import anexar_sugestoes
+from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.contrato_gerador.politica import Politica
 from app.modules.card_hub.contrato_gerador.validacao_extracao import (
     correcoes_contestadas,
@@ -143,6 +145,13 @@ def obter_geracao(
     # the dialog dated the contract otherwise).
     data = data_assinatura(dados, assinatura)
     avaliacao = avaliar(dados, switches, politica, data, referencia)
+    # A falta whose field a document already reads gets that reading as an
+    # actionable `sugestao` (one-click apply, never auto-written).
+    anexar_sugestoes(
+        dados,
+        avaliacao.faltando,
+        lambda cid: identidade_svc.sugestoes_pendentes(client, org_id, UUID(cid)),
+    )
     derivado = modelo_derivado(switches)
     selecao, _ = especificacoes_selecionadas(dados)
     modelo = modelo_do_contrato(dados, switches)
