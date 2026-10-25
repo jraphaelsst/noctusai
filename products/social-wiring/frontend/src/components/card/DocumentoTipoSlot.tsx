@@ -19,7 +19,7 @@
  * did.
  */
 import { useRef } from "react";
-import { Download, ExternalLink, Trash2, Upload } from "lucide-react";
+import { Download, ExternalLink, RotateCw, Trash2, Upload } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { TooltipIconButton, UploadErro, formatBytes } from "@noctusai/lib/components";
@@ -73,6 +73,13 @@ export interface DocumentoTipoSlotProps {
    *  round trip wired — the button simply does not render. */
   onBaixar?: (documentoId: string, nomeArquivo: string) => void;
   onRemover?: (documentoId: string, motivo: string) => void;
+  /** "Ler o documento novamente" — offered on EVERY filed document (every
+   *  typed slot is machine-read), so a reader fix reaches an existing upload
+   *  without delete + re-upload (F101). The caller owns the mutation and its
+   *  refusal toast; omit only where no re-read round trip exists. */
+  onReler?: (documentoId: string) => void;
+  /** The re-read is in flight — disables the button and spins its icon. */
+  relendo?: boolean;
   /** Disambiguates testids when several such slots are on screen. */
   testId?: string;
 }
@@ -86,6 +93,8 @@ export function DocumentoTipoSlot({
   onVisualizar,
   onBaixar,
   onRemover,
+  onReler,
+  relendo,
   testId = "documento-tipo",
 }: DocumentoTipoSlotProps) {
   const documento = documentoDoTipo(documentos, tipoDocumento);
@@ -138,6 +147,17 @@ export function DocumentoTipoSlot({
         />
       )}
 
+      {documento && onReler && (
+        <TooltipIconButton
+          label="Ler o documento novamente"
+          icon={RotateCw}
+          testId={`${testId}-reextrair`}
+          className="h-7 w-7"
+          disabled={relendo}
+          iconClassName={relendo ? "animate-spin" : undefined}
+          onClick={() => onReler(documento.id)}
+        />
+      )}
       {documento && onVisualizar && (
         <TooltipIconButton
           label={`Visualizar ${label}`}

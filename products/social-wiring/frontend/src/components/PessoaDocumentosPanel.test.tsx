@@ -45,6 +45,7 @@ const {
   uploadMutateById,
   uploadAsyncById,
   reextrairMutateById,
+  docsList,
 } = vi.hoisted(() => ({
   mockChecklist: vi.fn(),
   mockDadosMutate: vi.fn(),
@@ -53,6 +54,7 @@ const {
   uploadMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
   uploadAsyncById: new Map<string, ReturnType<typeof vi.fn>>(),
   reextrairMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
+  docsList: [] as unknown[],
 }));
 
 // The single-party tests below all use clienteId="cli-1" — route that id's
@@ -79,7 +81,7 @@ vi.mock("@/hooks/useCardHub", () => ({
     };
   },
   useDadosPessoaisMutation: () => ({ mutate: mockDadosMutate, isPending: false }),
-  useDocumentos: () => ({ data: [], isPending: false, isFetching: false }),
+  useDocumentos: () => ({ data: docsList, isPending: false, isFetching: false }),
   // Bug 2 (prod card 755253934) — the polling/invalidation side effect;
   // this suite is about the marriage-gated UI, not the poll (see
   // `useCardHub.test.ts` for that).
@@ -118,6 +120,24 @@ describe("PessoaDocumentosPanel — marriage-gated UI (this slice)", () => {
     render(<PessoaDocumentosPanel clienteId="cli-1" />);
     expect(screen.getByTestId("casado-toggle-cli-1")).toBeTruthy();
     expect(screen.getByTestId("certidao-casamento-cli-1-row")).toBeTruthy();
+  });
+
+  it("F101: the filed certidão offers 'Ler o documento novamente' through the shared re-read mutation", async () => {
+    docsList.splice(0, docsList.length, {
+      id: "doc-cert",
+      nome_original: "certidao.pdf",
+      tamanho_bytes: 10,
+      tipo_documento: "certidao_casamento",
+    });
+    try {
+      mockChecklist.mockReturnValue(checklist("casado"));
+      const { PessoaDocumentosPanel } = await import("./PessoaDocumentosPanel");
+      render(<PessoaDocumentosPanel clienteId="cli-1" />);
+      fireEvent.click(screen.getByTestId("certidao-casamento-cli-1-reextrair"));
+      expect(reextrairMutateById.get("cli-1")).toHaveBeenCalledWith("doc-cert", expect.anything());
+    } finally {
+      docsList.splice(0);
+    }
   });
 
   it("a married party (união estável) ALSO renders both", async () => {

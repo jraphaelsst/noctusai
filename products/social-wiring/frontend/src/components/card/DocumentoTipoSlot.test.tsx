@@ -128,4 +128,31 @@ describe("DocumentoTipoSlot — a refused upload is drawn under the row (silent-
     fireEvent.change(screen.getByTestId("cnpj-arquivo-input"), { target: { files: [file] } });
     await waitFor(() => expect(screen.queryByTestId("cnpj-upload-erro")).toBeNull());
   });
+
+  it("offers 'Ler o documento novamente' on a filed document and calls onReler (F101)", () => {
+    const onReler = vi.fn();
+    render(
+      <DocumentoTipoSlot
+        documentos={[empresaDoc()]}
+        tipoDocumento="cartao_cnpj"
+        label="Cartão CNPJ"
+        onUpload={vi.fn()}
+        onReler={onReler}
+        testId="s"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("s-reextrair"));
+    expect(onReler).toHaveBeenCalledWith("doc-1");
+  });
+
+  it("shows no re-read control while empty, and disables it while re-reading", () => {
+    const { rerender } = render(
+      <DocumentoTipoSlot documentos={[]} tipoDocumento="cartao_cnpj" label="X" onUpload={vi.fn()} onReler={vi.fn()} testId="s" />,
+    );
+    expect(screen.queryByTestId("s-reextrair")).toBeNull();
+    rerender(
+      <DocumentoTipoSlot documentos={[empresaDoc()]} tipoDocumento="cartao_cnpj" label="X" onUpload={vi.fn()} onReler={vi.fn()} relendo testId="s" />,
+    );
+    expect((screen.getByTestId("s-reextrair") as HTMLButtonElement).disabled).toBe(true);
+  });
 });

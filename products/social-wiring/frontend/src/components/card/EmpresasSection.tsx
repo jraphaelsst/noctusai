@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
+import { toast } from "sonner";
 import { DocumentoTipoSlot, documentoDoTipo } from "@/components/card/DocumentoTipoSlot";
 import { RemoverEmpresaConfirmDialog } from "@/components/card/RemoverEmpresaConfirmDialog";
 
@@ -835,6 +836,15 @@ function EmpresaCartaoSlot({ empresaId, clienteId }: { empresaId: string; client
           })
         }
         onRemover={(documentoId, motivo) => removerDoc.mutate({ documentoId, motivo })}
+        onReler={(documentoId) =>
+          extracao.reextrair.mutate(documentoId, {
+            onError: (err: unknown) =>
+              toast.error(
+                err instanceof Error ? err.message : "Não foi possível reler o documento.",
+              ),
+          })
+        }
+        relendo={extracao.reextrair.isPending}
         testId={`empresa-cartao-${empresaId}`}
       />
       {emAndamento && (

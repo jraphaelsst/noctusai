@@ -75,7 +75,14 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
             ),
         })
       }
-      onReler={(documentoId) => extracao.reler.mutate(documentoId)}
+      onReler={(documentoId) =>
+        extracao.reler.mutate(documentoId, {
+          onError: (err: unknown) =>
+            toast.error(
+              err instanceof Error ? err.message : "Não foi possível reler o documento.",
+            ),
+        })
+      }
       onRelerTodos={() => extracao.relerTodos.mutate()}
       relendo={extracao.reler.isPending}
       relendoTodos={extracao.relerTodos.isPending}

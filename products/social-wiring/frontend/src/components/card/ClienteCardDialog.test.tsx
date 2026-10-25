@@ -203,6 +203,41 @@ describe("ClienteCardDialog — Descrição", () => {
   });
 });
 
+describe("ClienteCardDialog — titular Anexos re-read (F101)", () => {
+  it("a read titular anexo offers 'Ler o documento novamente' through the shared callback", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    const onReextrairDocumento = vi.fn();
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          documentos: [
+            {
+              id: "doc-cert",
+              nome_original: "certidao.pdf",
+              mime_type: "application/pdf",
+              tamanho_bytes: 10,
+              tipo_documento: "certidao_casamento",
+              categoria_lgpd: "identidade",
+              retencao_ate: null,
+              enviado_por: null,
+              created_at: "2026-09-01T00:00:00Z",
+              thumbnail_url: null,
+              extracao_status: "ok",
+              extracao_erro: null,
+              extracao_aviso: null,
+              extracao_aviso_mensagem: null,
+            },
+          ],
+          onReextrairDocumento,
+          reextraindoDocumentoId: null,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("anexo-reextrair-doc-cert"));
+    expect(onReextrairDocumento).toHaveBeenCalledWith("doc-cert");
+  });
+});
+
 describe("ClienteCardDialog — Anexos empty state", () => {
   // No tab to open: Anexos lives on Geral now, under the parties' panels.
   it("shows the empty-anexos copy when there are no documentos", async () => {

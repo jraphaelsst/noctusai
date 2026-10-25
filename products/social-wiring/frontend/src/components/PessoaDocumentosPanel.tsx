@@ -254,6 +254,8 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
             testId={`${slot.testId}-${clienteId}`}
             documentos={documentos.data ?? []}
             uploading={docs.upload.isPending}
+            onReler={reextrair}
+            relendo={docs.reextrair.isPending}
             onUpload={(file) =>
               docs.upload.mutateAsync(
                 { file, tipoDocumento: slot.tipo },
