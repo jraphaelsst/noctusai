@@ -292,6 +292,7 @@ def rederivar_do_documento(client: Any, org_id: UUID, imovel_documento_id: Any) 
     """Re-derive the machine detail rows of every concluded extraction read
     from this imóvel documento ("Ler novamente"). Deterministic, no LLM."""
     from app.modules.matriculas import estrutura_service as estrutura_svc
+    from app.modules.matriculas import qualificacao_service as qualificacao_svc
 
     extracoes = (
         _t(client, estrutura_svc.EXTRACOES_TABLE)
@@ -308,6 +309,12 @@ def rederivar_do_documento(client: Any, org_id: UUID, imovel_documento_id: Any) 
             str(r["ato_id"]): r for r in linhas_da_extracao(client, org_id, extracao["id"])
         }
         total += rederivar_sugestoes(client, org_id, extracao, atos, existentes)
+        # F104: the qualificações (people + CPFs) are re-read too — a person
+        # the first parse missed gets a row; untouched machine rows refresh.
+        total += qualificacao_svc.rederivar_sugestoes(
+            client, org_id, extracao, atos,
+            qualificacao_svc.linhas_da_extracao(client, org_id, extracao["id"]),
+        )
     return total
 
 

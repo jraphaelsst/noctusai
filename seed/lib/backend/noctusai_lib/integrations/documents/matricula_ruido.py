@@ -228,7 +228,10 @@ _MOBILIARIO_CONHECIDO = re.compile(
     r"|[-–—]+\s*MATRICULA\s*[-–—]+\s*[#.\s]+[-–—]+\s*FICHA\s*[-–—]*\s*[#.\s]*"
     r"|INSCRICAO\s+N[O°]?\b.*SERVENTIAS.*"
     r"|CODIGO\s+NACIONAL\s+DE\s+SERVENTIAS.*"
-    r"|\(?CONTINUA\s+(?:NO\s+VERSO|NA\s+PROXIMA\s+PAGINA|NA\s+FICHA\s+SEGUINTE)\)?\.?"
+    r"|\(?CONTINUA\s+(?:NO\s+VERSO|NA\s+PROXIMA\s+PAGINA|NA\s+(?:FICHA|FOLHA|PAGINA)\b.*)\)?\.?"
+    r"|MOD(?:ELO)?\.?\s*[#.\-\s]*"
+    r"|\(?VERSO\)?\.?"
+    r"|(?:FLS?\.?|FOLHAS?|FICHA)\s*(?:N[O°]?\.?)?\s*[#.\-/\s]*\s*\(?VERSO\)?\.?"
     r")$"
 )
 
@@ -264,6 +267,30 @@ def _detectar_mobiliario_conhecido(
                 )
             )
     return tuple(spans)
+
+
+def neutralizar_quebra_pagina(texto: str) -> str:
+    """`texto` with every page-continuation furniture LINE ("continua no
+    verso", "MOD. 10", "(verso)", "fls. 2 verso", a repeated matrícula page
+    head) blanked IN PLACE — replaced by spaces, same length, newlines kept.
+
+    Run BEFORE act parsing / qualification extraction so a sentence the
+    registry split across two pages reads whole ("… transmitiu o <furniture>
+    imóvel desta matrícula a FULANO, …"). Length-preserving on purpose:
+    every offset a caller holds into `texto` stays valid. Whole-line match
+    only (the same `_MOBILIARIO_CONHECIDO` shapes `detectar_ruido` uses, but
+    anywhere in the text, not just at a page boundary: a stored joined text
+    may no longer carry the page structure). Conservative — a line that
+    merely CONTAINS such words among other text is untouched."""
+    if not texto:
+        return texto
+    saida: list[str] = []
+    for linha in texto.split("\n"):
+        if linha.strip() and _MOBILIARIO_CONHECIDO.match(_linha_normalizada(linha)):
+            saida.append(" " * len(linha))
+        else:
+            saida.append(linha)
+    return "\n".join(saida)
 
 
 def _fundir(spans: Sequence[RuidoSpan]) -> tuple[RuidoSpan, ...]:
@@ -356,4 +383,4 @@ def subtrair_ruido(
     return tuple(resultado)
 
 
-__all__ = ["RuidoKind", "RuidoSpan", "detectar_ruido", "subtrair_ruido"]
+__all__ = ["RuidoKind", "RuidoSpan", "detectar_ruido", "neutralizar_quebra_pagina", "subtrair_ruido"]

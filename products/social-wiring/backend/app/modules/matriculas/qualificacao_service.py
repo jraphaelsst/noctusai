@@ -439,7 +439,13 @@ def _linha(
 
 
 def persistir_sugestoes(
-    db: Any, org_id: Any, extracao_id: str, texto: str, ato_rows: list[dict]
+    db: Any,
+    org_id: Any,
+    extracao_id: str,
+    texto: str,
+    ato_rows: list[dict],
+    *,
+    ignorar_cpfs: frozenset[str] = frozenset(),
 ) -> int:
     """Insert one row per person `mesclar_qualificacoes` consolidates out of
     `ato_rows`. Returns how many were written.
@@ -466,7 +472,11 @@ def persistir_sugestoes(
         (str(row["id"]), extrair_qualificacoes(texto, int(row["char_inicio"]), int(row["char_fim"])))
         for row in sorted(atos, key=lambda r: r["ordem"])
     ]
-    consolidadas = mesclar_qualificacoes(por_ato)
+    consolidadas = tuple(
+        c
+        for c in mesclar_qualificacoes(por_ato)
+        if _digitos(c.qualificacao.cpf_cnpj) not in ignorar_cpfs
+    )
     if not consolidadas:
         return 0
     por_cpf = _clientes_por_cpf(
@@ -581,6 +591,52 @@ def revincular_pendentes(
     return vinculados
 
 
+_CAMPOS_REDERIVAVEIS: tuple[str, ...] = (
+    "nome", "nacionalidade", "estado_civil", "profissao", "rg",
+    "rg_orgao_expedidor", "endereco", "genero", "confianca",
+)
+
+
+def rederivar_sugestoes(
+    db: Any, org_id: Any, extracao: dict, ato_rows: list[dict], existentes: list[dict]
+) -> int:
+    """Re-run the current reader over the stored text: insert the people it
+    now finds that have no row yet, and refresh the data fields of rows that
+    are still untouched machine suggestions (not confirmed, discarded or
+    applied to a cliente). Deterministic, no LLM. Returns rows written."""
+    texto = extracao.get("texto_extraido") or ""
+    atos = [r for r in ato_rows if r["kind"] != "abertura"]
+    if not atos or not texto.strip():
+        return 0
+    por_cpf_existente = {
+        _digitos(r.get("cpf_cnpj") or r.get("cpf_cnpj_normalizado") or ""): r for r in existentes
+    }
+    escritas = persistir_sugestoes(
+        db, org_id, extracao["id"], texto, ato_rows,
+        ignorar_cpfs=frozenset(k for k in por_cpf_existente if k),
+    )
+    por_ato = [
+        (str(row["id"]), extrair_qualificacoes(texto, int(row["char_inicio"]), int(row["char_fim"])))
+        for row in sorted(atos, key=lambda r: r["ordem"])
+    ]
+    for c in mesclar_qualificacoes(por_ato):
+        atual = por_cpf_existente.get(_digitos(c.qualificacao.cpf_cnpj))
+        if atual is None or atual.get("confirmado_em") or atual.get("confirmado_por") or atual.get(
+            "descartado_em"
+        ) or atual.get("aplicado_campos"):
+            continue
+        novos = {k: getattr(c.qualificacao, k) for k in _CAMPOS_REDERIVAVEIS}
+        novos["origem"] = {k: str(v) for k, v in c.origem.items()}
+        novos["nome_inicio"] = c.qualificacao.nome_inicio
+        novos["nome_fim"] = c.qualificacao.nome_fim
+        if all(atual.get(k) == v for k, v in novos.items()):
+            continue
+        _t(db, TABLE).update(novos).eq("org_id", str(org_id)).eq("id", str(atual["id"])).execute()
+        atual.update(novos)
+        escritas += 1
+    return escritas
+
+
 def qualificacoes_da_extracao(
     client: Any, org_id: Any, extracao: dict, ato_rows: list[dict]
 ) -> list[dict]:
@@ -591,8 +647,11 @@ def qualificacoes_da_extracao(
     if revincular_pendentes(client, org_id, linhas=existentes):
         existentes = linhas_da_extracao(client, org_id, extracao["id"])
     texto = extracao.get("texto_extraido")
-    if not existentes and texto:
-        escritas = persistir_sugestoes(client, org_id, extracao["id"], texto, ato_rows)
+    if texto:
+        # Re-derive with the CURRENT parser (F104): a person the first read
+        # missed is minted; an untouched machine row is refreshed. Rows a
+        # human confirmed/discarded/applied are never rewritten.
+        escritas = rederivar_sugestoes(client, org_id, extracao, ato_rows, existentes)
         if escritas:
             logger.info(
                 "matricula %s: backfilled %d qualificacao suggestions on read",

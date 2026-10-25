@@ -398,7 +398,8 @@ def test_merge_is_first_writer_wins_per_field_with_provenance():
         nome_fim=17,
         confianca="alta",
     )
-    # a later act restates her, wrongly, as "casada" — first writer wins.
+    # a later act restates her as "casada" — estado civil changes over time,
+    # so the NEWEST act wins that field; every other field is first-writer.
     parcial_divergente = Qualificacao(
         nome="ANA EXEMPLO SOUZA",
         cpf_cnpj=CPF_MARIA,
@@ -418,12 +419,13 @@ def test_merge_is_first_writer_wins_per_field_with_provenance():
     )
     assert len(mesclado) == 1
     consolidada = mesclado[0]
-    assert consolidada.qualificacao.estado_civil == "solteiro"  # ato-1 wins
+    assert consolidada.qualificacao.estado_civil == "casado"  # newest act wins
+    assert consolidada.origem["estado_civil"] == "ato-2"
     assert consolidada.qualificacao.nome_inicio == 0  # offsets travel with nome
     assert consolidada.origem == {
         "nome": "ato-1",
         "nacionalidade": "ato-1",
-        "estado_civil": "ato-1",
+        "estado_civil": "ato-2",
         "profissao": "ato-1",
         "rg": "ato-1",
         "rg_orgao_expedidor": "ato-1",
