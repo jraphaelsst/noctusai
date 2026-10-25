@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from noctusai_lib.integrations.llm import ToolCall, ToolResult, ToolSpec
 
+from app.channels import proveniencia as prov
 from app.channels import texto_seguro
 from app.clients.social_wiring import (
     JULIA_TOOL_TIMEOUT_SECONDS,
@@ -479,6 +480,10 @@ class JuliaTurno:
     guarda_campos: Callable[[str], bool] | None = None
     #: ``tool.field`` codes of the lead-influenced arguments replaced this turn (codes only, never the text).
     campos_substituidos: list[str] = field(default_factory=list)
+    #: The turn's honeytoken and how many tool calls carried it in their RAW arguments (counted before the staff-facing
+    #: sanitisers run: a random hex marker can contain a digit run ``sem_contatos`` reads as a phone and strips).
+    marcador: str | None = None
+    chamadas_com_marcador: int = 0
 
     def proteger_args(self, nome: str, args: BaseModel) -> BaseModel:
         """The lead-influenced arguments that reach humans, scanned for the prompt: a hit replaces the field
@@ -998,6 +1003,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         if call.name not in oferecidas:
             return ToolResult(call.call_id, t.texto("ferramenta.resultado.desconhecida"), True)
         t.chamadas += 1
+        t.chamadas_com_marcador += prov.marcador_em([prov.texto_da_acao(call.arguments or {})], t.marcador)
         t.chamadas_por_ferramenta[call.name] = t.chamadas_por_ferramenta.get(call.name, 0) + 1
         if _acima_do_limite_do_turno(call.name):  # over the per-turn cap: a refusal that counts against the budget
             res = _recusa(t, "limite_ferramentas")

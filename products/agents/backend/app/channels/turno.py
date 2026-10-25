@@ -403,7 +403,7 @@ async def executar(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
         threads=svc.threads, skills=skills, sw=sw, ident=svc.ident, handoff_destino=HandoffDestino.dono_da_org(),
-        limites=limites, mensagens_lead=mensagens_lead, sinais=sinais, escopo=prep.escopo, estado_sw=estado_sw,
+        marcador=prep.marcador, limites=limites, mensagens_lead=mensagens_lead, sinais=sinais, escopo=prep.escopo, estado_sw=estado_sw,
         ferramentas_sw=ferramentas_sw, lote_lead=list(lote_lead),
         chat_id=(getattr(thread, "channel_ref", None) or {}).get("chat_id"),
         opt_out=OptOutService(
@@ -516,7 +516,7 @@ async def executar(
     if nivel == "handoff":  # B4: repeated extraction / identity attempts -> a person takes over, the agent pauses
         await executar_handoff(
             turno, "seguranca", conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", "seguranca"))
-    violacoes += _marcador_nas_acoes(turno.actions, prep.marcador)
+    violacoes += _marcador_nas_acoes(turno.chamadas_com_marcador)
     await _escalar(svc, turno, regras, org_id, lead_ref_id, lote_lead)
 
     usage: dict[str, Any] = {}
@@ -642,10 +642,11 @@ def _marcadores_da_resposta(resposta: str, marcador: str | None, tag: str, regra
     return out
 
 
-def _marcador_nas_acoes(actions: list[dict[str, Any]], marcador: str | None) -> list[Violacao]:
+def _marcador_nas_acoes(n: int) -> list[Violacao]:
     """The honeytoken inside a tool call's arguments (the text that reaches staff): the action already ran, so it is
-    recorded (never blocked) -- the platform learns the model was steered into carrying the marker out."""
-    n = prov.marcador_em([prov.texto_da_acao(a) for a in actions], marcador)
+    recorded (never blocked) -- the platform learns the model was steered into carrying the marker out. ``n`` is
+    counted on the RAW call arguments (``JuliaTurno.chamadas_com_marcador``), never on the recorded action: the
+    staff-facing sanitisers may have stripped part of the marker by then."""
     return [Violacao("vazamento_prompt", "registrar", {prov.MARCADOR_HONEYTOKEN: True, "acoes": n})] if n else []
 
 

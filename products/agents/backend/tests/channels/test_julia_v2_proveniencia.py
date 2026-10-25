@@ -495,3 +495,20 @@ class TestTruncatedMessageIsLabelled:
         users = [m.content for m in chan.provider.calls[-1]["messages"] if m.role == "user"]
         assert users[0] == "c" * MESSAGE_MAX_CHARS + f'\n{{"{self.ROTULO}": true}}'
         assert users[-1] == "ok"
+
+    def test_a_marker_the_staff_sanitiser_would_strip_as_a_phone_is_still_recorded(self, chan):
+        """The marker is random hex: one with a long digit run reads as a phone to ``sem_contatos`` and is gone from
+        the recorded action, so the detector must read the RAW call arguments (it was a ~2% flake)."""
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[say("Qual o bairro?")]))
+        chan.turn(turn_body("Oi", ids=["a"]))
+        loja = get_marcador_store(settings)
+        marcador = "43915947e16325a5c13e38ba1e1453a3"  # a real one that failed CI
+        loja._m[chan.version.id] = marcador  # the Fake store's own state: a deterministic marker, no patching
+        assert _marcador(chan) == marcador
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("handoff", motivo_codigo="outro", motivo=f"cliente citou {marcador}")), say("Vou te passar.")]))
+        chan.turn(turn_body("quero falar com alguém", ids=["b"]))
+        achados = [x for x in chan.conformidade.listar_violacoes(chan.org_id, chan.agent.id)
+                   if x.regra == "vazamento_prompt" and x.detalhe.get("acoes")]
+        assert achados and all(marcador not in repr(x.detalhe) for x in achados)
