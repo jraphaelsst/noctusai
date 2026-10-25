@@ -595,6 +595,10 @@ function FinanciamentoDocSlot({
         uploading={uploading}
         onVisualizar={(documentoId) => onOpen(documentoId)}
         onRemover={(documentoId, motivo) => onRemove(documentoId, motivo)}
+        // Re-readable at every status (F101) except while a read is already
+        // in flight — the server refuses a request that races its own job.
+        onReler={emAndamento ? undefined : onReler}
+        relendo={relendo || loading}
         testId={testId}
       />
       {emAndamento && (
@@ -656,20 +660,6 @@ function FinanciamentoDocSlot({
             </Button>
           )}
         </div>
-      )}
-      {/* The file is already stored: an `ok` reading is re-readable too, so
-          an improved reader reaches existing rows without a re-upload.
-          `erro`/`sem_dados` carry their own contextual action above. */}
-      {onReler && documento?.extracao_status === "ok" && (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => onReler(documento.id)}
-          disabled={loading || relendo}
-          data-testid={`${testId}-reextrair`}
-        >
-          Ler o documento novamente
-        </Button>
       )}
       {documento?.extracao_aviso && (
         <p

@@ -395,6 +395,14 @@ describe("FinanciamentoPanel", () => {
       expect(onReler).toHaveBeenCalledWith("d-guia_itbi");
     });
 
+    it("offers the re-read at every filed status, not only ok (F101)", async () => {
+      const { screen, fireEvent, onReler } = await render({
+        documentos: [doc("guia_itbi", { extracao_status: "sem_dados" })],
+      });
+      fireEvent.click(screen.getByTestId("financiamento-slot-guia_itbi-reextrair"));
+      expect(onReler).toHaveBeenCalledWith("d-guia_itbi");
+    });
+
     it("hides the slot action while a read is in flight", async () => {
       const { queryByTestId } = await render({
         documentos: [doc("guia_itbi", { extracao_status: "processando" })],

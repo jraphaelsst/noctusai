@@ -989,6 +989,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   onUpload={(file) => props.onUploadDocumento(file, slot.tipo)}
                   onVisualizar={props.onOpenDocumento}
                   onRemover={props.onDeleteDocumento}
+                  onReler={props.onReextrairDocumento}
+                  relendo={props.reextraindoDocumentoId != null}
                 />
               ))}
             {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
