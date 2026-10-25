@@ -94,3 +94,26 @@ export function rotuloTipo(superficie: string, tipo: string): string {
           : TIPO_LABEL;
   return map[tipo] ?? tipo;
 }
+
+/**
+ * The label a person reads for a `tipo_documento` key -- NEVER the raw
+ * snake_case key (`certidao_casamento`). One resolver for every surface that
+ * names a document type from a server payload: the server's own label
+ * (`rotulo`, `proveniencia.fontes.ROTULOS_TIPO_DOCUMENTO`) wins, then the
+ * maps above, then a humanized slug as a last resort. A value that is
+ * already prose (not a slug) is returned as is.
+ */
+export function rotuloTipoDocumento(
+  tipo: string | null | undefined,
+  rotuloServidor?: string | null,
+): string {
+  const bruto = (tipo ?? "").trim();
+  const ehSlug = /^[a-z0-9]+(_[a-z0-9]+)+$|^[a-z0-9]+$/.test(bruto);
+  if (bruto && !ehSlug) return bruto;
+  const doServidor = (rotuloServidor ?? "").trim();
+  if (doServidor && doServidor !== bruto) return doServidor;
+  const mapa = TIPO_LABEL_CLIENTE[bruto] ?? TIPO_LABEL[bruto];
+  if (mapa) return mapa;
+  const humano = bruto.replace(/_/g, " ");
+  return humano ? humano.charAt(0).toUpperCase() + humano.slice(1) : "documento";
+}

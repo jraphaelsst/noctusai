@@ -381,6 +381,62 @@ describe("GeradorContratoSection", () => {
     expect(link.getAttribute("href")).toBe("/matriculas");
   });
 
+  it("🔴 [F106] sugestoes name the document by its LABEL, never the raw snake_case tipo key; no rendered readiness text carries a tipo key", async () => {
+    const tipos = ["certidao_casamento", "ficha_cadastral", "comprovante_endereco", "cin", "matricula"];
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "qualificacao.genero",
+            rotulo: "Gênero — Fulano Teste",
+            onde: "partes",
+            parte_id: "p1",
+            sugestoes: tipos.map((t) => ({
+              tipo_documento: t,
+              rotulo: t === "cin" ? "CIN" : t === "matricula" ? "Matrícula do imóvel" : t,
+              destino: null,
+            })),
+          },
+        ],
+      }),
+    });
+    const texto = screen.getByTestId("gerador-contrato-faltando").textContent ?? "";
+    expect(texto).toContain("Envie Certidão de casamento");
+    expect(texto).toContain("Envie Ficha cadastral / formulário do banco");
+    expect(texto).toContain("Envie Comprovante de endereço");
+    expect(texto).toContain("Envie CIN");
+    expect(texto).toContain("Envie Matrícula do imóvel");
+    expect(document.body.textContent ?? "").not.toMatch(/\b[a-z0-9]+_[a-z0-9_]+\b/);
+  });
+
+  it("🔴 [F107] a falta with a pending document reading offers 'Aplicar: <valor>' naming the source; the click hands the sugestao to the container", async () => {
+    const sugestao = {
+      cliente_id: "titular1",
+      item_key: "genero",
+      documento_id: "doc1",
+      documento_nome: "cert-teste.pdf",
+      tipo_documento: "certidao_casamento",
+      valor: "Masculino",
+      confianca: "media",
+    };
+    const onAplicarSugestao = vi.fn();
+    const { screen, fireEvent } = await render({
+      onAplicarSugestao,
+      status: status({
+        pronto: false,
+        faltando: [
+          { campo: "qualificacao.genero", rotulo: "Gênero — Fulano Teste", onde: "partes", parte_id: null, sugestao },
+        ],
+      }),
+    });
+    const bloco = screen.getByTestId("gerador-contrato-faltando-aplicar-qualificacao.genero-");
+    expect(bloco.textContent).toContain("Aplicar: Masculino");
+    expect(bloco.textContent).toContain("lido da certidão de casamento — cert-teste.pdf");
+    fireEvent.click(screen.getByTestId("gerador-contrato-faltando-aplicar-btn-qualificacao.genero-"));
+    expect(onAplicarSugestao).toHaveBeenCalledWith(sugestao);
+  });
+
   // 🔴 Prod crash (2026-09-25): `sugestoes[].destino` is `derivacao.py`'s
   // rich `Destinos.para` OBJECT (`Avaliacao.falta` injects the faltando's
   // own `destino` into every suggestion verbatim), never the narrower
