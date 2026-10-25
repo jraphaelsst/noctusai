@@ -65,6 +65,14 @@ _FIM_NOME = (
 _FILHO_DE_RE = re.compile(
     r"\bFILH[OA]S?\s+(?:LEGITIM[OA]\s+)?DE\s+(?P<resto>[A-Z][A-Z' .]{3,160}?)" + _FIM_NOME
 )
+#: The SP RCPN typed layout (old livro): "filho de: <PAI>, e de: <MÃE>, avós
+#: ..." — a colon after each "de" and a comma before the connector, which the
+#: prose pattern above (name ends at the first comma) cannot span. The colons
+#: ARE the anchor, so this stays as strict as the prose form.
+_FILHO_DE_DOIS_PONTOS_RE = re.compile(
+    r"\bFILH[OA]S?\s+DE\s*:\s*(?P<pai>" + _NOME + r")\s*[,;]?\s+E\s+DE\s*:\s*"
+    r"(?P<mae>" + _NOME + r")(?=\s*(?:[,;.\n]|$)|\s+(?:AVOS?|AVO|NASCID|OBSERV))"
+)
 #: Explicit role labels. `PAI` / `MAE` alone only count at a line start or
 #: after a separator, so "COMPANHIA", "CAMPAI" are never matched.
 _PAPEL_RE = re.compile(
@@ -155,6 +163,13 @@ def _filiacao_de(norm: str, text: str, origem: list[int], *, bloco: bool = True)
             _literal(text, origem, norm, ini + a1, ini + b1),
             _literal(text, origem, norm, ini + a2, ini + b2),
         ))
+    for m in _FILHO_DE_DOIS_PONTOS_RE.finditer(norm):
+        pai_t, mae_t = _colapsa(m.group("pai")), _colapsa(m.group("mae"))
+        if _nome_valido(pai_t) and _nome_valido(mae_t):
+            pares_narrativos.append((
+                _literal(text, origem, norm, m.start("pai"), m.end("pai")),
+                _literal(text, origem, norm, m.start("mae"), m.end("mae")),
+            ))
     if pares_narrativos:
         # Two different "filho de" clauses = two holders (a certidão de
         # casamento read whole): not attributable, never the first one's.
