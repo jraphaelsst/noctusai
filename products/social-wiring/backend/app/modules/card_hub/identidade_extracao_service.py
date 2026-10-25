@@ -131,6 +131,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.integrations.documents.name import looks_like_a_name
 from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError, ValidationError_
 
+from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.proveniencia import fontes
 from app.services import campo_conflitos, clientes_service, divergencia_resolucao, extracao_job, table_reads
@@ -5293,6 +5294,7 @@ async def extrair_identidade(
             tipo_lido == "certidao_nascimento"
             and not fields.leitura_comprometida
             and lidos["estado_civil"][0] is None
+            and not certidao_antiga_para_estado_civil(data_emissao)
             and not _casamento_evidenciado(
                 client, org_id, cliente_id, excluir_documento_id=documento_id
             )
@@ -5860,6 +5862,22 @@ def _casamento_evidenciado(
     )
 
 
+def certidao_antiga_para_estado_civil(data_emissao: Any, *, hoje: Optional[date] = None) -> bool:
+    """F103 (prod deal 874, 2026-10-24): a certidão issued MORE than the
+    office's estado-civil window ago (`Politica.certidao_estado_civil_max_dias`)
+    proves nothing about the CURRENT estado civil — a 2009 birth certificate
+    "sem averbação" is not evidence of being single in 2026. Such a document
+    yields NO inferred estado civil. An undated certidão cannot be judged
+    stale and is not (the human confirms the suggestion either way)."""
+    if not data_emissao:
+        return False
+    try:
+        emitida = date.fromisoformat(str(data_emissao)[:10])
+    except ValueError:
+        return False
+    return ((hoje or date.today()) - emitida).days >= POLITICA_PADRAO.certidao_estado_civil_max_dias
+
+
 def _solteiro_inferido() -> tuple[Any, str, Optional[str], bool]:
     """The `lidos` entry F4 contributes — `baixa`, labelled as an inference
     so a human reading the document row knows it was not printed.
@@ -5911,7 +5929,7 @@ def _sugerir_solteiro_no_documento(client: Any, org_id: UUID, cliente_id: UUID) 
         return False
     docs = (
         _t(client, DOCUMENTOS_TABLE)
-        .select("id,extracao_status,extracao_estado_civil,extracao_aviso,created_at")
+        .select("id,extracao_status,extracao_estado_civil,extracao_aviso,extracao_data_emissao,created_at")
         .eq("org_id", str(org_id))
         .eq("cliente_id", str(cliente_id))
         .eq("tipo_documento", "certidao_nascimento")
@@ -5924,6 +5942,7 @@ def _sugerir_solteiro_no_documento(client: Any, org_id: UUID, cliente_id: UUID) 
         if d.get("extracao_status") == "ok"
         and (_vazio(d.get("extracao_estado_civil")) or d.get("extracao_estado_civil") == ESTADO_CIVIL_SOLTEIRO)
         and AVISO_LEITURA_COMPROMETIDA not in str(d.get("extracao_aviso") or "")
+        and not certidao_antiga_para_estado_civil(d.get("extracao_data_emissao"))
     ]
     if not candidatos:
         return False
@@ -6788,6 +6807,14 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         for doc in candidatos:
             valor = doc.get(campo.coluna_valor)
             if not _oferecer(campo, atual, valor):
+                continue
+            if (
+                campo.item_key == "estado_civil"
+                and doc.get(campo.coluna_rotulo) == ROTULO_SOLTEIRO_INFERIDO
+                and certidao_antiga_para_estado_civil(doc.get("extracao_data_emissao"))
+            ):
+                # F103: an inference stored before the window rule existed —
+                # an old certidão does not prove the current estado civil.
                 continue
             # Flags a still-pending RG reading that matches the CPF on file —
             # confirm against the document. `None` for every other field and

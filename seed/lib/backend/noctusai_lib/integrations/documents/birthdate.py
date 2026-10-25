@@ -115,6 +115,9 @@ _DECOY_LABELS = (
     "REGISTRADO EM",
     "REGISTRO EM",
     "LAVRADO NO DIA",
+    "LAVRADO EM",
+    "LAVRADA EM",
+    "LAVRADO AOS",
     "VALIDA ATE",
     "VALIDO ATE",
     "EXPEDICAO",
@@ -179,6 +182,34 @@ _COLUMNAR_DATE = re.compile(
 _ROTULO_DIA_MES_ANO = re.compile(
     r"\bDIA\s+(\d{1,2})\s+MES\s+(\d{1,2})\s+ANO\s+(\d{4})\b"
 )
+
+
+#: F102 (prod deal 874, 2026-10-24) — the typed old-layout RCPN certidão de
+#: nascimento: "...foi lavrado em 03 de março de 1982 o assento do nascimento
+#: de: NOME NASCIDO, aos dezenove de fevereiro de mil ... (((19 de fevereiro
+#: de 1982))), às 20:30...". The registration ("lavrado em") date sits right
+#: after "REGISTRO DE NASCIMENTOS" and won the label race; the REAL birth date
+#: is the one in the "NASCIDO aos/em ..." clause, usually after a spelled-out
+#: form the date regexes cannot see. This clause is the document's own
+#: statement of the fact, so it outranks every other candidate.
+_NASCIDO_CLAUSULA = re.compile(r"\bNASCID[OA]\b\s*,?\s*(?:AOS?|EM|NO\s+DIA|DIA)\b")
+_NASCIDO_JANELA = 240
+
+
+def data_clausula_nascido(norm: str, today: date) -> Optional[date]:
+    """The plausible date in the first `NASCIDO aos/em ...` clause of the
+    NORMALISED text (see `normalize`), else None. Public so a consumer can
+    cross-check an already-read birth date against the printed clause."""
+    datas: set[date] = set()
+    for m in _NASCIDO_CLAUSULA.finditer(norm):
+        trecho = norm[m.end(): m.end() + _NASCIDO_JANELA]
+        achadas = sorted(_iter_dates(trecho))
+        if achadas and _plausible(achadas[0][1], today):
+            datas.add(achadas[0][1])
+    # Two different clauses = two holders (a certidão de casamento read
+    # whole): not attributable, left to the label race (which reports the
+    # ambiguity as absence).
+    return next(iter(datas)) if len(datas) == 1 else None
 
 
 def normalize(text: str) -> str:
@@ -279,6 +310,10 @@ def find_birthdate(
     if not norm:
         return (None, "nenhuma", None)
 
+    clausula = data_clausula_nascido(norm, today)
+    if clausula is not None:
+        return (clausula, "alta", "NASCIDO")
+
     labelled: list[tuple[date, str]] = []
     unlabelled: list[date] = []
 
@@ -308,4 +343,4 @@ def find_birthdate(
     return (None, "nenhuma", None)
 
 
-__all__ = ["MAX_AGE", "MIN_AGE", "find_birthdate", "normalize"]
+__all__ = ["MAX_AGE", "MIN_AGE", "data_clausula_nascido", "find_birthdate", "normalize"]

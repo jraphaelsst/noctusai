@@ -134,9 +134,10 @@ class TestNascimentoFiledAsCasamento:
         assert AVISO_TIPO_DOCUMENTO_DIVERGENTE in (doc["extracao_aviso"] or "").split("+")
         assert "reenvie com o tipo certo" in doc["extracao_aviso_mensagem"]
         assert doc["extracao_estado_civil"] != "casado"
-        # Read as the birth certificate it is: the solteiro SUGGESTION (F4)
-        # and the emission date (freshness) ride on the row.
-        assert doc["extracao_estado_civil"] == svc.ESTADO_CIVIL_SOLTEIRO
+        # Read as the birth certificate it is; the emission date rides on the
+        # row. F103: issued in 2009 => older than the estado-civil window, so
+        # NO solteiro suggestion (an old certidão proves nothing current).
+        assert doc["extracao_estado_civil"] is None
         assert doc["extracao_data_emissao"].startswith("2009")
 
 

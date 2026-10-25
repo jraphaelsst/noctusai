@@ -357,3 +357,17 @@ class TestF4CertidaoNascimentoProvesSolteiro:
         svc.inferir_solteiro_por_certidao_nascimento(scoped, ORG_UUID, UUID(cid))
         assert _cliente(scoped, cid).get("estado_civil") is None
         assert _conflitos(scoped) == []
+
+
+class TestCertidaoAntigaEstadoCivil:
+    """F103 — an old certidão proves nothing about the CURRENT estado civil."""
+
+    def test_window_rule(self):
+        from datetime import date
+        from app.modules.card_hub.identidade_extracao_service import certidao_antiga_para_estado_civil as f
+
+        hoje = date(2026, 10, 24)
+        assert f("2009-08-24", hoje=hoje) is True
+        assert f("2026-10-01", hoje=hoje) is False
+        assert f(None, hoje=hoje) is False
+        assert f("lixo", hoje=hoje) is False
