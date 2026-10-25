@@ -195,6 +195,7 @@ LerAntigos = Callable[..., dict]
 def _info_matricula(
     client: Any, org_id: UUID, atendimento_id: str, usuario_id: Optional[Any],
     ler: Optional[LerAntigos] = None,
+    rederivar: bool = False,
 ) -> Optional[dict]:
     """`titulo_service.antigos_proprietarios` for THIS atendimento's imóvel,
     or `None` when the deal has no imóvel linked at all. The imóvel is the
@@ -204,6 +205,15 @@ def _info_matricula(
     codigo = imoveis_do_atendimento.imovel_canonico(client, org_id, atendimento_id)
     if not codigo:
         return None
+    if rederivar:
+        # "Sincronizar com a matrícula" must not depend on a prior "Ler
+        # novamente": re-run the deterministic readers over the stored text.
+        try:
+            from app.modules.matriculas import ato_detalhes_service
+
+            ato_detalhes_service.rederivar_do_imovel(client, org_id, codigo)
+        except Exception as exc:  # noqa: BLE001 - logged; sync proceeds on the stored read
+            logger.error("antigos: re-derivação da matrícula %s falhou: %s", codigo, exc, exc_info=True)
     return (ler or titulo_service.antigos_proprietarios)(
         client, org_id, codigo, usuario_id=usuario_id
     )
@@ -378,7 +388,7 @@ def sincronizar(
     # above all no billed automatic emission, unless the deal opted in.
     if not _atendimento_row(client, org_id, alvo).get("exigir_certidoes_antigos"):
         return {**vazio, "ignorado": "nao_exigido"}
-    info = _info_matricula(client, org_id, alvo, user_id, ler_antigos)
+    info = _info_matricula(client, org_id, alvo, user_id, ler_antigos, rederivar=True)
     if info is None:
         return {**vazio, "ignorado": "sem_imovel"}
     if info.get("origem") not in _ORIGENS_MATRICULA:

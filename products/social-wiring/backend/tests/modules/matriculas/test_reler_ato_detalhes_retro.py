@@ -130,3 +130,54 @@ def test_rederive_never_downgrades_a_machine_suggestion(client, scoped):
     assert nova["credor"] == "BANCO FICTICIO S.A."  # parser finds none: kept
     assert str(nova["data_registro"])[:10] == "1988-02-12"  # different non-null parse
     assert [p["nome"] for p in nova["adquirentes"]] == ["ANA QUARTA FICTICIA"]
+
+
+def test_rederivar_do_imovel_heals_old_parser_rows_and_spares_confirmed(client, scoped):
+    """F104: an extraction minted by the old parser (adquirente lost to a page
+    break) heals on the sync path; a confirmed qualificação is never touched."""
+    from app.modules.matriculas import qualificacao_service as qsvc
+    from tests.modules.matriculas.test_qualificacao import CPF_CAMILA, CPF_JOSE
+
+    texto = (
+        "MATRÍCULA Nº 90.222 — FICHA 01\nIMÓVEL: Casa ficticia da Rua dos Exemplos.\n"
+        "R-1/90.222 - Em 10/05/2021. VENDA E COMPRA. A proprietária EMPRESA EXEMPLO "
+        "LTDA, já qualificada, transmitiu o\n\ncontinua no verso\n\nMOD. 10\n\n"
+        "imóvel desta matrícula a JOSÉ EXEMPLO LIMA, brasileiro, divorciado, piloto, "
+        f"RG nº 11.222.333-4-SSP/SP, CPF nº {CPF_JOSE}, residente na Rua Um, 10.\n"
+        "R-2/90.222 - Em 10/03/2023. VENDA. JOSÉ EXEMPLO LIMA, já qualificado, vendeu "
+        "o imóvel a CAMILA EXEMPLO BRITO, brasileira, solteira, arquiteta, RG nº "
+        f"66.777.888-SSP/SP, CPF nº {CPF_CAMILA}, residente na Avenida Modelo, 90.\n"
+    )
+    ext = extracao_row(texto=texto)
+    seed(scoped, registry=[registry_row()], extracoes=[ext])
+    atos = svc.atos_da_extracao(scoped, ORG, ext)
+    detalhes_svc.detalhes_por_ato(scoped, ORG, ext, atos)
+    qsvc.qualificacoes_da_extracao(scoped, ORG, ext, atos)
+
+    # Simulate the OLD parser: José's qualificação missing, R-2's seller bare;
+    # Camila's row confirmed by a human with a different profissão.
+    rows = scoped.table("matricula_qualificacoes").select("*").execute().data
+    camila = next(r for r in rows if r["cpf_cnpj"] == CPF_CAMILA)
+    scoped.set_table_data("matricula_qualificacoes", [camila])
+    scoped.table("matricula_qualificacoes").update(
+        {"profissao": "pintora", "confirmado_em": "2026-10-01T00:00:00+00:00", "confirmado_por": "u-1"}
+    ).eq("id", camila["id"]).execute()
+    r2 = next(a for a in atos if a["numero"] == 2)
+    scoped.table(detalhes_svc.DETALHES_TABLE).update(
+        {"transmitentes": [{"nome": "JOSÉ EXEMPLO LIMA", "cpf_cnpj": None}], "origem": "sugestao"}
+    ).eq("ato_id", str(r2["id"])).execute()
+
+    detalhes_svc.rederivar_do_imovel(scoped, ORG, CODIGO)
+
+    qs = {r["cpf_cnpj"]: r for r in scoped.table("matricula_qualificacoes").select("*").execute().data}
+    assert qs[CPF_JOSE]["estado_civil"] == "divorciado"
+    assert qs[CPF_CAMILA]["profissao"] == "pintora"  # confirmed row untouched
+    linha = _linha_do_ato(scoped, ext, 2)
+    assert linha["transmitentes"][0]["cpf_cnpj"] == CPF_JOSE
+
+
+def _linha_do_ato(scoped, ext, numero):
+    atos = svc.atos_da_extracao(scoped, ORG, ext)
+    det = detalhes_svc.detalhes_por_ato(scoped, ORG, ext, atos)
+    ato = next(a for a in atos if a["numero"] == numero)
+    return det[str(ato["id"])]
