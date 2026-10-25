@@ -26,6 +26,8 @@ import { AlertCircle, CheckCircle2, Loader2, User } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+import type { ReactNode } from "react";
+
 import { useQualificacaoCompletude } from "@/hooks/useCardHub";
 import {
   rotuloEstadoCivil,
@@ -46,12 +48,19 @@ export interface QualificacaoCompletudePanelProps {
    * name as plain, unclickable text.
    */
   onAbrirConjuge?: (clienteId: string, nome: string | null) => void;
+  /**
+   * The spouse this person's certidão de casamento READ, one click away —
+   * shown with the "Cônjuge pendente" line so the operator adds her from the
+   * document instead of typing. Omitted/`null` ⇒ the line is unchanged.
+   */
+  renderConjugeSugerido?: (clienteId: string) => ReactNode;
 }
 
 export function QualificacaoCompletudePanel({
   clienteId,
   nome,
   onAbrirConjuge,
+  renderConjugeSugerido,
 }: QualificacaoCompletudePanelProps) {
   const completude = useQualificacaoCompletude(clienteId);
 
@@ -157,6 +166,7 @@ export function QualificacaoCompletudePanel({
           Cônjuge pendente — vincule no papel da parte.
         </p>
       )}
+      {data.faltando.includes("conjuge") && (renderConjugeSugerido?.(clienteId) ?? null)}
 
       {data.conjuge && (
         <div

@@ -13,6 +13,8 @@ import { api } from "@noctusai/seed/infra";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import type {
+  ConjugeDaCertidaoBody,
+  ConjugeSugeridoResponse,
   EmissaoCertidoesResponse,
   ParteContratoOut,
   ParteContratoPatch,
@@ -194,6 +196,63 @@ export function useAtualizarContratoParte(clienteId: string) {
               "parte_id",
             ),
           ),
+      },
+    ],
+    invalidate: [["sw", "cardHub"], ["sw", "clientes", clienteId]],
+  });
+}
+
+const CONJUGE_SUGERIDO_KEY = (clienteId: string, lado: string, atendimentoId?: string | null) =>
+  ["sw", "clientes", clienteId, "conjugeSugerido", lado, atendimentoId ?? null] as const;
+
+/**
+ * `GET /api/clientes/{id}/conjuge/sugerido?lado=` — the spouse a read
+ * certidão de casamento names who is not yet a party (empty list otherwise).
+ * Two signals off `data`, never `isLoading`.
+ */
+export function useConjugeSugerido(
+  clienteId: string | null,
+  lado: "comprador" | "vendedor" = "comprador",
+  atendimentoId?: string | null,
+) {
+  const query = useQuery({
+    queryKey: CONJUGE_SUGERIDO_KEY(clienteId ?? "__none__", lado, atendimentoId),
+    queryFn: () =>
+      api.get<ConjugeSugeridoResponse>(
+        `${clienteBase(clienteId as string)}/conjuge/sugerido${qs({ lado, atendimento_id: atendimentoId })}`,
+      ),
+    enabled: !!clienteId,
+    placeholderData: keepPreviousData,
+  });
+  return {
+    ...query,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
+}
+
+/**
+ * `POST .../conjuge/da-certidao` — add the spouse the certidão read as a
+ * `conjuge` party. The party goes into the partes lists and the suggestion
+ * leaves its list at once (the server answer is the commit); the card,
+ * qualificação and compradores refetch in the background — the attribution the
+ * server ran fills the couple's facts, so those reads changed too.
+ */
+export function useAdicionarConjugeDaCertidao(clienteId: string) {
+  return useCacheWriteMutation<ParteItem, ConjugeDaCertidaoBody>({
+    mutationFn: (body) => api.post<ParteItem>(`${clienteBase(clienteId)}/conjuge/da-certidao`, body),
+    targets: [
+      {
+        queryKey: partesDoCardKey(clienteId),
+        match: "prefix",
+        commit: (old: PartesResponse | undefined, saved) => pageOps.add(old, saved, "append", "parte_id"),
+      },
+      {
+        queryKey: ["sw", "clientes", clienteId, "conjugeSugerido"],
+        match: "prefix",
+        commit: (old: ConjugeSugeridoResponse | undefined, saved) =>
+          // The suggestion of THIS side is consumed (another proprietário's, if any, returns on the refetch below).
+          old ? { ...old, items: old.items.filter((i) => i.lado !== saved.lado) } : old,
       },
     ],
     invalidate: [["sw", "cardHub"], ["sw", "clientes", clienteId]],
