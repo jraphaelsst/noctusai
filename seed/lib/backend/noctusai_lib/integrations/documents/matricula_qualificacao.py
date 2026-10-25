@@ -134,6 +134,7 @@ from noctusai_lib.integrations.documents.matricula_ato_detalhes import (
     formatar_cpf_cnpj,
 )
 from noctusai_lib.integrations.documents.matricula_atos import segment_matricula_atos
+from noctusai_lib.integrations.documents.matricula_ruido import neutralizar_quebra_pagina
 
 # The alternation helper is identical to the sibling's `_rx` — reused, not
 # redefined, per this package's own N=2 recurrence rule.
@@ -287,7 +288,10 @@ _NOME_INTRODUZIDO = _rx(
     r"(?:VENDID[OA]S?|VENDA|VENDEU|VENDERAM|DOAD[OA]S?|DOACAO|TRANSMITID[OA]S?"
     r"|TRANSMITIU|TRANSMITIRAM|ALIENOU|ALIENARAM|CEDEU|CEDERAM|PERMUTOU|PERMUTARAM"
     r"|DOOU|DOARAM|ADQUIRIU|ADQUIRIRAM|COMPROU|COMPRARAM|ARREMATOU|ARREMATARAM)"
-    r"(?:\s+[A-Z]+){0,6}?\s+(?:A|AO|AOS|AS|PARA)"
+    r"(?:\s+[A-Z0-9%][A-Z0-9%.,/]*){0,14}?\s+(?:A|AO|AOS|AS|PARA)"
+    # "vendeu A parte ideal … A NOME": the first A is the object's article,
+    # not the preposition that introduces the buyer (F97).
+    r"(?!\s+(?:PARTE|PARTES|FRACAO|FRACOES|METADE|TOTALIDADE|QUOTA|COTA|PORCAO|UNIDADE)\b)"
 )
 
 
@@ -528,7 +532,7 @@ def extrair_qualificacoes(text: str, start: int, end: int) -> tuple[Qualificacao
     `text` is the caller's own buffer (pass the SAME buffer across every
     call so `nome_inicio`/`nome_fim` share one coordinate space — see the
     module docstring); `start`/`end` are typically one act's span."""
-    bloco = text[start:end]
+    bloco = neutralizar_quebra_pagina(text[start:end])
     if not bloco.strip():
         return ()
     t = _Texto(bloco)
@@ -639,6 +643,13 @@ _CAMPOS_MESCLAVEIS: tuple[str, ...] = (
 )
 
 
+#: Fields where the LATEST act wins instead of the first: a person's estado
+#: civil changes over time (solteiro -> casado -> divorciado), so the most
+#: recent act that states one is the current truth. Everything else is
+#: identity-like and stays first-writer-wins.
+_CAMPOS_ULTIMO_VALE: frozenset[str] = frozenset({"estado_civil"})
+
+
 def mesclar_qualificacoes(
     por_ato: Sequence[tuple[Hashable, Sequence[Qualificacao]]],
 ) -> tuple[QualificacaoConsolidada, ...]:
@@ -648,7 +659,8 @@ def mesclar_qualificacoes(
     natural (chronological) order. A field already set by an earlier act is
     never overwritten by a later, less complete mention — the same
     first-writer-wins rule `documents/__init__.py` states for
-    `data_nascimento`. `nome_inicio`/`nome_fim` travel with whichever act
+    `data_nascimento` — EXCEPT `estado_civil` (`_CAMPOS_ULTIMO_VALE`), where the
+    newest act's non-empty value wins. `nome_inicio`/`nome_fim` travel with whichever act
     supplied `nome`. Never mix acts from two different extractions into one
     call: the join key is a bare CPF/CNPJ, and a match across extractions
     would silently attribute one person's data to another's document."""
@@ -672,7 +684,14 @@ def mesclar_qualificacoes(
             alvo = campos[chave]
             for nome_campo in _CAMPOS_MESCLAVEIS:
                 valor = getattr(q, nome_campo)
-                if valor is not None and nome_campo not in alvo:
+                if valor is None:
+                    continue
+                if nome_campo in _CAMPOS_ULTIMO_VALE:
+                    # Time-varying fact: the NEWEST dated act states it best
+                    # (acts arrive chronologically; a later non-empty read wins).
+                    alvo[nome_campo] = valor
+                    origem[chave][nome_campo] = ato_ref
+                elif nome_campo not in alvo:
                     alvo[nome_campo] = valor
                     origem[chave][nome_campo] = ato_ref
                     if nome_campo == "nome":

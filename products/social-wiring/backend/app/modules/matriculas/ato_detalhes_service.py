@@ -288,19 +288,14 @@ def rederivar_sugestoes(
     return atualizados
 
 
-def rederivar_do_documento(client: Any, org_id: UUID, imovel_documento_id: Any) -> int:
-    """Re-derive the machine detail rows of every concluded extraction read
-    from this imóvel documento ("Ler novamente"). Deterministic, no LLM."""
+def _rederivar_extracoes(client: Any, org_id: UUID, filtro: dict) -> int:
     from app.modules.matriculas import estrutura_service as estrutura_svc
+    from app.modules.matriculas import qualificacao_service as qualificacao_svc
 
-    extracoes = (
-        _t(client, estrutura_svc.EXTRACOES_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("imovel_documento_id", str(imovel_documento_id))
-        .eq("status", estrutura_svc.STATUS_CONCLUIDA)
-        .execute()
-    ).data or []
+    q = _t(client, estrutura_svc.EXTRACOES_TABLE).select("*").eq("org_id", str(org_id))
+    for coluna, valor in filtro.items():
+        q = q.eq(coluna, str(valor))
+    extracoes = q.eq("status", estrutura_svc.STATUS_CONCLUIDA).execute().data or []
     total = 0
     for extracao in extracoes:
         atos = estrutura_svc.atos_da_extracao(client, org_id, extracao)
@@ -308,7 +303,26 @@ def rederivar_do_documento(client: Any, org_id: UUID, imovel_documento_id: Any) 
             str(r["ato_id"]): r for r in linhas_da_extracao(client, org_id, extracao["id"])
         }
         total += rederivar_sugestoes(client, org_id, extracao, atos, existentes)
+        # F104: the qualificações (people + CPFs) are re-read too — a person
+        # the first parse missed gets a row; untouched machine rows refresh.
+        total += qualificacao_svc.rederivar_sugestoes(
+            client, org_id, extracao, atos,
+            qualificacao_svc.linhas_da_extracao(client, org_id, extracao["id"]),
+        )
     return total
+
+
+def rederivar_do_documento(client: Any, org_id: UUID, imovel_documento_id: Any) -> int:
+    """Re-derive the machine detail + qualificação rows of every concluded
+    extraction read from this imóvel documento ("Ler novamente").
+    Deterministic, no LLM; human-confirmed rows are never touched."""
+    return _rederivar_extracoes(client, org_id, {"imovel_documento_id": imovel_documento_id})
+
+
+def rederivar_do_imovel(client: Any, org_id: UUID, codigo: str) -> int:
+    """Same re-derivation for the imóvel's concluded extraction(s), by código
+    ("Sincronizar com a matrícula" runs it first). Idempotent."""
+    return _rederivar_extracoes(client, org_id, {"codigo": codigo})
 
 
 def detalhes_por_ato(
@@ -525,5 +539,6 @@ __all__ = [
     "persistir_sugestoes",
     "purgar_da_extracao",
     "rederivar_do_documento",
+    "rederivar_do_imovel",
     "rederivar_sugestoes",
 ]

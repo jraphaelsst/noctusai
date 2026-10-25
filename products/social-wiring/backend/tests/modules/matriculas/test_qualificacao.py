@@ -532,3 +532,28 @@ def test_purging_the_text_purges_the_qualificacoes_read_from_it(scoped):
         .data
     )
     assert restantes == []
+
+
+# ─── F104: an act split across pages still yields its adquirente ───────────
+
+TEXTO_QUEBRA_PAGINA = (
+    "MATRÍCULA Nº 90.222 — FICHA 01\n"
+    "IMÓVEL: Casa ficticia nº 9 da Rua dos Exemplos, Cotia.\n"
+    "R-1/90.222 - Em 10/05/2021. VENDA E COMPRA. Por instrumento particular, a "
+    "proprietária EMPRESA EXEMPLO LTDA, já qualificada, transmitiu o\n\n"
+    "continua no verso\n\nMOD. 10\n\n"
+    "imóvel desta matrícula a JOSÉ EXEMPLO LIMA, brasileiro, divorciado, piloto, "
+    f"RG nº 11.222.333-4-SSP/SP, CPF nº {CPF_JOSE}, residente e domiciliado na "
+    "Rua Fictícia, nº 45, Cotia-SP, pelo valor de R$ 100.000,00.\n"
+)
+
+
+def test_adquirente_de_ato_quebrado_em_paginas_ganha_qualificacao(client, scoped):
+    ext = extracao_row(texto=TEXTO_QUEBRA_PAGINA)
+    seed(scoped, extracoes=[ext])
+
+    jose = _por_cpf(_atos(client, ext["id"])["qualificacoes"])[CPF_JOSE]
+
+    assert jose["nome"] == "JOSÉ EXEMPLO LIMA"
+    assert jose["estado_civil"] == "divorciado"
+    assert jose["profissao"] == "piloto"

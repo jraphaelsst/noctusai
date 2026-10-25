@@ -57,6 +57,7 @@ from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_valido
 from noctusai_lib.integrations.documents.datas_ptbr import datas_no_texto as _datas
 from noctusai_lib.integrations.documents.matricula import normalize
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
+from noctusai_lib.integrations.documents.matricula_ruido import neutralizar_quebra_pagina
 
 ALTA = "alta"
 BAIXA = "baixa"
@@ -1584,6 +1585,10 @@ def extrair_detalhes_ato(
     """
     if not texto_ato or not texto_ato.strip():
         return AtoDetalhes()
+    # Page-continuation furniture ("continua no verso", "MOD. 10") blanked in
+    # place (length-preserving) so an act split across pages reads whole.
+    texto_ato = neutralizar_quebra_pagina(texto_ato)
+    anterior = neutralizar_quebra_pagina(anterior)
     t = _Texto(texto_ato)
     cabecalho = _HEADER.match(t.norm)
     corpo = cabecalho.end() if cabecalho else 0
