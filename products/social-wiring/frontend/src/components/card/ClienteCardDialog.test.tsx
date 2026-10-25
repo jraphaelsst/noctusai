@@ -2314,6 +2314,23 @@ describe("ClienteCardDialog — Cônjuge (rail entry above Vendedor, marriage-ga
     expect(onAdicionar).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the render-prop spouse read from the certidão above the manual button, which stays", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          dadosPessoais: { estado_civil: "Casado(a)" },
+          onAdicionarConjuge: vi.fn(),
+          renderConjugeDaCertidao: () => <div data-testid="sugestao-certidao" />,
+        })}
+      />,
+    );
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(screen.getByTestId("card-subpage-tab-conjuge"));
+    expect(screen.getByTestId("sugestao-certidao")).toBeTruthy();
+    expect(screen.getByTestId("adicionar-conjuge-btn")).toBeTruthy();
+  });
+
   it("🔴 uploads from this tab post to the SPOUSE's own cliente_id — expanded by default, no extra click first", async () => {
     const { fireEvent, render, screen } = await import("@testing-library/react");
     const renderPanel = vi.fn(() => <div data-testid="painel-conjuge" />);

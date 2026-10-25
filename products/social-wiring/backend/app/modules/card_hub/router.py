@@ -51,6 +51,7 @@ from app.modules.card_hub import agendamentos_service as agenda_svc
 from app.modules.card_hub import certidoes_matriz_service as certidoes_matriz_svc
 from app.modules.card_hub import certidoes_matriz_linhas_service as certidoes_matriz_linhas_svc
 from app.modules.card_hub import compradores_service as compradores_svc
+from app.modules.card_hub import conjuge_da_certidao_service as conjuge_certidao_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
@@ -86,7 +87,7 @@ from app.modules.card_hub.contrato_testemunhas_router import (
 from app.modules.card_hub.negociacao_estruturada_router import (
     router as negociacao_estruturada_router,
 )
-from app.modules.card_hub.partes_schemas import ParteCreateBody
+from app.modules.card_hub.partes_schemas import ConjugeDaCertidaoBody, ParteCreateBody
 from app.modules.card_hub.roteiro_schemas import (
     RoteiroCreateBodyV2,
     RoteiroPatchBodyV2,
@@ -1042,6 +1043,41 @@ def create_comprador_route(
         cnpj=body.cnpj,
         razao_social=body.razao_social,
         cpf=body.cpf,
+    )
+
+
+@router.get("/{cliente_id}/conjuge/sugerido")
+def conjuge_sugerido_route(
+    cliente_id: UUID,
+    atendimento_id: Optional[UUID] = None,
+    lado: Optional[str] = None,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """The spouse a read certidão de casamento names who is not yet a party
+    (`conjuge_da_certidao_service`) — empty when none."""
+    _user, org_id = _auth_parts(auth)
+    return conjuge_certidao_svc.sugerir(
+        client, org_id, cliente_id, atendimento_id=atendimento_id, lado=lado
+    )
+
+
+@router.post("/{cliente_id}/conjuge/da-certidao", status_code=201)
+def conjuge_da_certidao_route(
+    cliente_id: UUID,
+    body: ConjugeDaCertidaoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return conjuge_certidao_svc.adicionar(
+        client, org_id, cliente_id,
+        documento_id=body.documento_id,
+        atendimento_id=body.atendimento_id,
+        lado=body.lado,
+        parte_cliente_id=body.cliente_id,
+        criar_novo=body.criar_novo,
+        user_id=getattr(user, "id", None),
     )
 
 

@@ -14,6 +14,18 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.primitives import identificador as ident_primitives
 
 
+class ConjugeDaCertidaoBody(StrictHttpModel):
+    """`POST .../conjuge/da-certidao` — add the spouse a certidão de casamento
+    read. `cliente_id` links the org's existing same-name+birthdate person the
+    409 offered; `criar_novo` says she is someone new despite the match."""
+
+    documento_id: UUID
+    atendimento_id: Optional[UUID] = None
+    lado: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    criar_novo: bool = False
+
+
 class ParteCreateBody(StrictHttpModel):
     """Add a party — a person (PF) or a company (PJ).
 

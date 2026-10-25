@@ -35,6 +35,7 @@ vi.mock("@/hooks/useGerarProposta", () => ({
 vi.mock("@/hooks/usePartes", () => ({
   usePartes: () => ({ data: undefined, showSkeleton: false, isRefreshing: false }),
   useAdicionarParte: () => ({ mutate: vi.fn(), isPending: false }),
+  useConjugeSugerido: () => ({ data: undefined }),
   useParteLookup: () => ({ data: undefined, showSkeleton: false, isRefreshing: false }),
   useAtualizarContratoParte: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
 }));

@@ -195,6 +195,11 @@ Both must tolerate PJ `parte_id`s (`cliente_id` null): PATCH `conjuge` on PJ ⇒
 - Errors: **400** `VALIDATION_ERROR` `"CPF inválido."` / `"CNPJ inválido."` / `"Informe um CPF ou CNPJ válido."` (wrong length). Org-scoped; never returns another org's rows.
 - Read-only; no writes.
 
+### 2.6 `GET /api/clientes/{cliente_id}/conjuge/sugerido?lado=&atendimento_id=` · `POST .../conjuge/da-certidao` — the spouse a certidão de casamento read
+
+A document-derived field is never hand-typed. When a principal's (buyer side: the titular; seller side: each `proprietario`) live, read `certidao_casamento` attributes exactly ONE other, unattributed spouse in `cliente_documentos.extracao_conjuges` (estado civil casado/união estável or unstated), and the principal has no `conjuge_cliente_id`, the GET offers her (`conjuge_da_certidao_service.sugerir`): `{items:[{principal_cliente_id, documento_id, lado, nome, nome_anterior, data_nascimento, nacionalidade, profissao, genero, naturalidade, nome_mae, nome_pai}], atendimento_id, lado}` (empty, never an error, with no single open atendimento).
+- POST body `{documento_id, atendimento_id?, lado?, cliente_id?, criar_novo?}` adds her as a `conjuge` party of the same `lado` through `compradores_service.adicionar` (no CPF passed ⇒ nothing stamped `manual`), links the pair with `certidao_casamento` provenance and runs `aplicar_certidao_casamento_ao_conjuge` (fields machine-pending). A cliente of the org with the same normalised name + birthdate ⇒ **409** `CONJUGE_CANDIDATOS` with `details.candidatos[{cliente_id,nome,data_nascimento}]`; resend with `cliente_id` (link it) or `criar_novo=true`. A `documento_id` that no longer suggests anyone ⇒ **409**. The CPF-valid unattended creation (`_criar_conjuge_da_certidao`) is unchanged; this is its operator-confirmed twin for the CPF-less page.
+
 ---
 
 ## 3 · Atendimento imóveis (BE-imoveis · FE-leads-partes)

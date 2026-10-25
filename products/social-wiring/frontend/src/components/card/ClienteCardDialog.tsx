@@ -206,6 +206,12 @@ export interface ClienteCardDialogProps {
    * same shape as every other optional add-handler here.
    */
   onAdicionarConjuge?: () => void;
+  /**
+   * The spouse a read certidão de casamento names who is not yet a party,
+   * rendered ABOVE the manual "Adicionar cônjuge" (which stays for when there
+   * is no certidão). A render prop: the container owns the mutation.
+   */
+  renderConjugeDaCertidao?: () => ReactNode;
 
   // ─── Vendedores — the other side of the table (migration 098) ──────────
   /**
@@ -1007,6 +1013,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         </div>
       ) : (
         <div data-testid="card-subpage-conjuge-vazio" className="space-y-3">
+          {props.renderConjugeDaCertidao?.() ?? null}
           <p className="text-sm text-muted-foreground">
             Nenhum cônjuge cadastrado neste atendimento.
           </p>

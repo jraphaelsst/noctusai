@@ -159,3 +159,41 @@ export const CAMPOS_SEDE_PJ = [
   "uf",
   "cep",
 ] as const;
+
+/** `GET .../conjuge/sugerido` — the spouse a read certidão de casamento names
+ *  who is not yet a party. Every value was read off the document. */
+export interface ConjugeSugerido {
+  principal_cliente_id: string;
+  documento_id: string;
+  lado: LadoParteContrato;
+  nome: string;
+  nome_anterior: string | null;
+  data_nascimento: string | null;
+  nacionalidade: string | null;
+  profissao: string | null;
+  genero: string | null;
+  naturalidade: string | null;
+  nome_mae: string | null;
+  nome_pai: string | null;
+}
+
+export interface ConjugeSugeridoResponse {
+  items: ConjugeSugerido[];
+  atendimento_id: string | null;
+  lado: LadoParteContrato;
+}
+
+/** The 409's `details.candidatos`: same name + birthdate already in the org. */
+export interface ConjugeCandidato {
+  cliente_id: string;
+  nome: string | null;
+  data_nascimento: string | null;
+}
+
+export interface ConjugeDaCertidaoBody {
+  documento_id: string;
+  atendimento_id?: string;
+  lado?: LadoParteContrato;
+  cliente_id?: string;
+  criar_novo?: boolean;
+}

@@ -270,6 +270,7 @@ New module `backend/app/modules/card_hub/pos_aceite_service.py`, entry point `di
 
 ### 7.2 Matrícula
 For the accepted proposta's `imovel_codigo`:
+- **Spouse read off a certidão de casamento (no CPF on the page):** offered, not typed — `GET /api/clientes/{id}/conjuge/sugerido` + `POST .../conjuge/da-certidao` (`conjuge_da_certidao_service`, see `atendimento-partes-imoveis-CONTRACT.md` §2.6). One click adds her as the `conjuge` party of the principal's `lado` (buyer titular or seller proprietário), then the attribution fills her facts machine-pending (`origem='certidao_casamento'`).
 - **A matrícula document on file:** ensure its extraction + autopilot ran (`matriculas` extraction → `autopiloto_service._aplicar_autopiloto`), re-running when the document is newer than the last extraction. That yields título aquisitivo, ônus, antigos proprietários (which triggers their certidões, 7.1).
 - **None on file:** `status='faltando', motivo='matricula_ausente'`, plus a checklist pendência "Certidão de matrícula atualizada" on the imóvel. 🔴 The repo has **no automatic matrícula emission** today (no ARISP/ONR/InfoSimples matrícula integration): owner question Q5 in PROJECT.md. Until answered, the matrícula is uploaded, and its extraction then runs automatically on upload.
 

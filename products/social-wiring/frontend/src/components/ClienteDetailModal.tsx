@@ -80,7 +80,13 @@ import {
 } from "@/components/card/AdicionarCompradorDialog";
 import { PropostasSection } from "@/components/propostas/PropostasSection";
 import { AtendimentoImoveisSection } from "@/components/card/AtendimentoImoveisSection";
-import { useAdicionarParte, useAtualizarContratoParte, usePartes } from "@/hooks/usePartes";
+import {
+  useAdicionarParte,
+  useAtualizarContratoParte,
+  useConjugeSugerido,
+  usePartes,
+} from "@/hooks/usePartes";
+import { ConjugeDaCertidaoContainer } from "@/components/ConjugeDaCertidaoContainer";
 import { toastServerError } from "@/lib/erroServidor";
 import { QualificacaoContratoContainer } from "@/components/QualificacaoContratoContainer";
 import { ArquivarAtendimentoConfirmDialog } from "@/components/card/ArquivarAtendimentoConfirmDialog";
@@ -299,6 +305,24 @@ export function ClienteDetailModal({
   // PF-or-PJ add (+ optional chained certidão re-emission) and the §2.1 list
   // that carries the PJ parties `compradores` deliberately omits.
   const adicionarParte = useAdicionarParte(id ?? "__none__");
+  // The spouse a read certidão de casamento names, per side (a certidão never
+  // creates her unattended without a CPF — the operator confirms in one click).
+  const conjugeSugeridoComprador = useConjugeSugerido(id, "comprador", atendimentoId);
+  const conjugeSugeridoVendedor = useConjugeSugerido(id, "vendedor", atendimentoId);
+  function renderConjugeSugeridoDe(pessoaId: string) {
+    const sugestao = [
+      ...(conjugeSugeridoComprador.data?.items ?? []),
+      ...(conjugeSugeridoVendedor.data?.items ?? []),
+    ].find((s) => s.principal_cliente_id === pessoaId);
+    return sugestao && id ? (
+      <ConjugeDaCertidaoContainer
+        key={sugestao.documento_id}
+        clienteId={id}
+        sugestao={sugestao}
+        atendimentoId={atendimentoId}
+      />
+    ) : null;
+  }
   const partes = usePartes(id, atendimentoId);
   // Migration 193 — a party's contract-qualification fields (PJ NIRE + sede,
   // a representante's company); read back through `partes` above.
@@ -849,6 +873,7 @@ export function ClienteDetailModal({
       }
       onAlterarPapelComprador={handleAlterarPapel}
       onAdicionarConjuge={() => setConjugeDialogOpen(true)}
+      renderConjugeDaCertidao={() => (id ? renderConjugeSugeridoDe(id) : null)}
       vendedores={vendedores.data?.items ?? []}
       vendedoresLoading={vendedores.isPending || vendedores.isFetching}
       onAdicionarVendedor={() => setVendedorDialogOpen(true)}
@@ -899,6 +924,7 @@ export function ClienteDetailModal({
         <QualificacaoCompletudePanel
           clienteId={pessoaId}
           nome={nome}
+          renderConjugeSugerido={renderConjugeSugeridoDe}
           onAbrirConjuge={(clienteId, nomeConjuge) =>
             setConjugeAberto({ clienteId, nome: nomeConjuge })
           }
@@ -936,6 +962,7 @@ export function ClienteDetailModal({
           <QualificacaoCompletudePanel
             clienteId={id}
             nome={card.data?.cliente.nome ?? undefined}
+            renderConjugeSugerido={renderConjugeSugeridoDe}
             onAbrirConjuge={(clienteId, nomeConjuge) =>
               setConjugeAberto({ clienteId, nome: nomeConjuge })
             }
