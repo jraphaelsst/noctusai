@@ -34,6 +34,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/photo-editing-seed.md
   - CONTEXT/PATTERNS/backend/migrate-product-mcp-tool.md
   - CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md
+  - CONTEXT/PATTERNS/backend/leads-organ.md
   - CONTEXT/PATTERNS/backend/chatbot-operational-readiness.md
   - CONTEXT/PATTERNS/backend/boundary-contract-tests.md
   - CONTEXT/PATTERNS/backend/upload-route-body-override-derivation.md
@@ -118,7 +119,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Domain (per-product backend)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/05-AI-FEATURES.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
 **Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md` · `KB § PATTERNS/backend/audit-trail.md` (request-history middleware; optional `Request` injection is `request: Request = None`, never `Optional[Request]`).
 **LLM & AI** → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-provider-selection.md` (the fleet-wide chat/vision/embedding/audio vendor map + the `resolve_llm_provider` manual switch) · `KB § PATTERNS/backend/photo-editing-seed.md` (AI photo-editing engine: `PhotoEditingPorts` + job handlers).
-**Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md`.
+**Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md` · `KB § PATTERNS/backend/leads-organ.md` (WhatsApp-fed leads funnel organ).
 **Tests** → `KB § PATTERNS/backend/boundary-contract-tests.md`.
 **Realtime** → `KB § PATTERNS/common/realtime-sse-bus.md`.
 **Performance (client view)** → `KB § PATTERNS/common/performance-analysis.md` (`noctus.dev.perf_probe`; skill `noc-perf-probe`).
