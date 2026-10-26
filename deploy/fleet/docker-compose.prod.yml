@@ -637,6 +637,34 @@ services:
     tmpfs:
       - /tmp:mode=1777,size=96m
 
+  # ── monica 8020 — CRM of Mônica Tangerino's practice (prod exposure consented 2026-10-26;
+  # deploy/consent/monica.prod.yml). Only NON-SECRET config here; everything else is read from the root
+  # .env (env_file): ENCRYPTION_KEY (required — the boot refuses without it), MONICA_WAHA_BASE_URL /
+  # MONICA_WAHA_SESSION / MONICA_WAHA_WEBHOOK_HMAC_SECRET (Monica's OWN WAHA — never the shared one),
+  # REDIS_URL (inbox realtime). Conversations are health-adjacent personal data: no message bodies in logs.
+  # No mem_limit (owner decision: server protection without per-container limits).
+  monica:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-monica:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-monica
+    environment:
+      <<: *prod-env
+    expose:
+      - "8020"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8020/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=96m
+
   # ── transcriber 9000 — self-hosted faster-whisper worker (infra, NOT a product) ─
   # Contract: products/social-wiring/projects/core-studio-build/specs/transcription-contract.md §2.
   # Deliberately NOT <<: *prod-defaults: no env_file (holds no credentials besides

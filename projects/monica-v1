@@ -1,0 +1,18 @@
+# Monica v1 — roadmap (2026-10)
+
+> Plain-file roadmap: it exists at this exact path because the owner's prod-exposure consent record
+> (`deploy/consent/monica.prod.yml`, immutable, authored by the harness from the owner's typed sentence) points its
+> `consent_ref` at `projects/monica-v1#v1-golive`. Move it with the consent record if that reference is ever re-authored.
+
+**What:** Monica = the CRM of Mônica Tangerino's psychoanalysis practice (future ERP), first product of the org
+"Mônica Tangerino". Leads (Funil + Lista), WhatsApp conversations, her own context, WhatsApp connection by QR.
+Every screen is a seed organ; see `products/monica/README.md`.
+
+## Milestones
+
+- ✅ built · 2026-10-26 · leads, WhatsApp inbox + connections, Contexto proxy, settings shell (`SectionTabsPage`); migrations `monica` 014–016, core 087; backend 75 tests, frontend 10 + finance route.
+- ✅ v1-golive consent · 2026-10-26 · the owner authorized `monica` for production in-session ("I authorize monica to be published to production."; record `deploy/consent/monica.prod.yml`). This is the CONSENT only — the go-live itself is NOT done yet.
+- ⏳ v1-golive runbook (`KB § GUIDES/production-deploy.md § 5a`): apply core 087 + the `monica` chain (`migrate_product monica … allow_inactive=True`) → release → build image (`gh workflow run build-and-push.yml -f products=monica`) → tunnel `apply` + DNS for `monica.noctusai.com` → `ensure_product_url_roster` → first container → **flip `deploy_scope='live'` in core admin LAST** → `--refresh-build-scope` (adds `monica` to `build-scope.txt`).
+- ⏳ env on the VPS: `ENCRYPTION_KEY` (exists), `MONICA_WAHA_BASE_URL` (+ session / HMAC) once the owner chooses between a dedicated WAHA Core instance and WAHA Plus, `REDIS_URL`, `PRODUCT_URL_AGENTS`.
+- ⏳ agent definition `monica-leads` + prefill (`products/monica/ops/agents/README.md`).
+- ⏳ LGPD: retention + per-chat erasure decision (`LGPD-WARNINGS.md`).

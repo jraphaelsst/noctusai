@@ -118,6 +118,10 @@ routes:
   - hostname: commerce.noctusai.com
     service:  http://commerce:8019
 
+  # ── monica (prod exposure consented 2026-10-26; see deploy/consent/monica.prod.yml) ──
+  - hostname: monica.noctusai.com
+    service:  http://monica:8020
+
   - hostname: igig.noctusai.com
     service:  http://igig:8013
 
