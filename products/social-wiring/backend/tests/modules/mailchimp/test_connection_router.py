@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app.dependencies import coerce_org_uuid
 from tests.modules.mailchimp.conftest import MailchimpAuthError, MailchimpUnreachableError
+from noctusai_lib.testing import handler_status
 
 
 class TestAuthRequired:
@@ -101,7 +102,7 @@ class TestPutConnection:
 
         fake.ping = _ping_fail
         resp = c.put("/api/mailchimp/connection", json={"api_key": "k-us6"})
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert resp.json()["error"]["code"] == "mailchimp_unreachable"
 
     def test_auth_failed_ping_returns_502(self, mailchimp_client):
@@ -112,7 +113,7 @@ class TestPutConnection:
 
         fake.ping = _ping_auth
         resp = c.put("/api/mailchimp/connection", json={"api_key": "k-us6"})
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert resp.json()["error"]["code"] == "mailchimp_auth_failed"
 
 

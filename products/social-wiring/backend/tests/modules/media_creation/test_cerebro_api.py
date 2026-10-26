@@ -18,6 +18,7 @@ from app.modules.media_creation.cerebro_templates import TEMPLATES_BY_SLUG, ques
 from app.modules.media_creation.deps import CEREBRO_BUCKET, get_cerebro_storage
 from app.modules.media_creation.services import cerebro_service
 from app.modules.media_creation.services.cerebro_ai import get_cerebro_llm
+from noctusai_lib.testing import handler_status
 
 BASE = "/api/media-creation/cerebro"
 ORG = "test-org-123"
@@ -182,7 +183,7 @@ class TestTemplatesAndBrains:
         }).execute()
         cc._tc.app.dependency_overrides[get_cerebro_storage] = lambda: _BrokenStorage()
         r = cc.delete(f"{BASE}/brains/{b['id']}")
-        assert r.status_code == 502
+        assert handler_status(r) == 502
         assert [x for x in _rows(cc, "cs_brains") if x["id"] == b["id"]]
 
 

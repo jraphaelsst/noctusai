@@ -510,3 +510,62 @@ def _payload_too_large_response(limit: int, observed: Optional[int] = None) -> J
     if observed is not None:
         detail["observed_bytes"] = observed
     return JSONResponse(status_code=413, content=detail)
+
+
+#: Statuses CloudFlare never lets through from an origin: it discards the
+#: origin's body and serves its own "Bad gateway" page (HTML to a browser,
+#: `error code: 502` to curl). Verified live 2026-10-26 on
+#: `social.noctusai.com/api/chat/message`.
+EDGE_MASKED_STATUSES = frozenset({502, 504})
+#: What a masked status is rewritten to — the upstream capability is
+#: unavailable, not our code (same reasoning as `ProviderQuotaExhausted`).
+EDGE_SAFE_STATUS = 503
+#: Response header that keeps the status the handler actually chose.
+UPSTREAM_STATUS_HEADER = "X-Upstream-Status"
+
+
+class EdgeSafeStatusMiddleware:
+    """
+    Rewrites an outgoing 502/504 to 503 so the response body survives CloudFlare.
+
+    Every product sits behind CloudFlare, which replaces an origin's 502/504
+    with its own error page. The app's JSON — `{error: {code, message}}`,
+    the PT-BR text the FE would show — never reaches the browser, and the
+    SPA has nothing to show but the edge page's raw HTML (social-wiring's
+    YouTube chat, 2026-10-26: an OpenAI quota error rendered as a wall of
+    CloudFlare markup).
+
+    502 is the semantically natural answer for "an upstream failed", so
+    handlers across the fleet keep choosing it (~160 sites) — fixing them
+    one at a time would fix the wrong level, and the next one would re-open
+    it. This rewrites at the single choke point every response crosses: the
+    status becomes 503, the body is untouched, and the handler's own choice
+    stays visible in `X-Upstream-Status`. Request logs still record the
+    original status (this sits outside `RequestLoggingMiddleware`).
+
+    Pure ASGI — see the module docstring for why that is not optional.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message) -> None:
+            if (
+                message["type"] == "http.response.start"
+                and message["status"] in EDGE_MASKED_STATUSES
+            ):
+                original = message["status"]
+                message = {
+                    **message,
+                    "status": EDGE_SAFE_STATUS,
+                    "headers": list(message.get("headers", [])),
+                }
+                MutableHeaders(scope=message)[UPSTREAM_STATUS_HEADER] = str(original)
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)

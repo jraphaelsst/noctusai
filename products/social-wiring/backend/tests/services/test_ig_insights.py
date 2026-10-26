@@ -36,7 +36,7 @@ from noctusai_lib.integrations.meta import (
     PostInsights,
 )
 from noctusai_lib.testing import (
-    MockSupabaseClient,
+    handler_status, MockSupabaseClient,
     bind_consent_module_to_mock,
 )
 
@@ -270,7 +270,7 @@ class TestContextEndpoint:
     def test_context_graph_error_502(self, ig_client):
         _override_adapter(_seeded_adapter(raise_list_instagram_accounts=True))
         resp = ig_client.get(f"/api/meta/context?{_QS}")
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
         assert resp.json()["error"]
 
 
@@ -291,7 +291,7 @@ class TestInsightsEndpoint:
             _seeded_adapter(raise_account_insights_for=frozenset({_IG_USER}))
         )
         resp = ig_client.get(f"/api/meta/instagram/insights?{_QS}")
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
         assert resp.json()["error"]
 
     def test_insights_app_review_gate_returns_200(self, ig_client):

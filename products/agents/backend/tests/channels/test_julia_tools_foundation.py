@@ -26,6 +26,7 @@ from app.studio.models import ConteudoBundle, TextoData
 from app.studio.textos_registry import TEXTOS
 from tests.channels.conftest import OTHER_ORG, contexto_body, turn_body
 from tests.channels.julia_v2 import texto_de
+from noctusai_lib.testing import handler_status
 
 HASH = "a" * 64
 GOLDEN = Path(__file__).parent / "golden" / "contexto_system.md"
@@ -322,13 +323,13 @@ class TestResumo:
     def test_unusable_model_output_is_502_not_a_guess(self, chan):
         conv = self._setup(chan, args={"resumo": "", "desfecho_sugerido": "frio"})
         resp = self._post(chan, conv)
-        assert resp.status_code == 502 and resp.json()["code"] == "llm_upstream"
+        assert handler_status(resp) == 502 and resp.json()["code"] == "llm_upstream"
 
     def test_no_tool_call_is_502(self, chan):
         conv = self._setup(chan)
         chan.use_provider(FakeProvider(tool_responses=["só texto"]))
         resp = self._post(chan, conv)
-        assert resp.status_code == 502 and resp.json()["code"] == "llm_upstream"
+        assert handler_status(resp) == 502 and resp.json()["code"] == "llm_upstream"
 
     def test_unknown_request_field_is_422(self, chan):
         conv = self._setup(chan)

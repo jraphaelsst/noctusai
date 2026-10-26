@@ -10,6 +10,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from gotrue.errors import AuthApiError, AuthRetryableError
 from tests.conftest import MockUser, MockUserResponse, MockQueryBuilder
+from noctusai_lib.testing import handler_status
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +253,7 @@ class TestLogout:
         client.mock_supabase.auth.admin.sign_out = MagicMock(side_effect=RuntimeError("gotrue down"))
         with caplog.at_level("ERROR"):
             resp = client.post("/api/auth/logout?scope=global", headers={"Authorization": "Bearer t"})
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert resp.json().get("ok") is not True
         assert "global sign_out failed" in caplog.text
 

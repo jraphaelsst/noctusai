@@ -91,3 +91,59 @@ def test_client_built_without_sdk_retries():
     assert client.max_retries == 0
     assert openai_provider._is_retryable(_err("rate_limit_exceeded", "requests"))
     assert not openai_provider._is_retryable(_err("insufficient_quota"))
+
+
+# ── OpenAIClientAdapter (caller-owned client) translates the same way ────────
+
+
+class _Completions:
+    def __init__(self, error: Exception, *, sync: bool = False):
+        self.error = error
+        self.sync = sync
+        self.calls = 0
+
+    def _raise(self):
+        self.calls += 1
+        raise self.error
+
+    def create(self, **kwargs):
+        if self.sync:
+            self._raise()
+
+        async def _later():
+            self._raise()
+
+        return _later()
+
+
+def _adapter(comp: _Completions) -> openai_provider.OpenAIClientAdapter:
+    client = SimpleNamespace(chat=SimpleNamespace(completions=comp))
+    return openai_provider.OpenAIClientAdapter(client)
+
+
+def _user(text: str):
+    from noctusai_lib.integrations.llm.tool_calling import ChatMessage
+
+    return ChatMessage(role="user", content=text)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync", [False, True])
+async def test_client_adapter_quota_is_typed(sync):
+    """Was a raw `openai.RateLimitError` -> the chat router's opaque 502
+    (social-wiring YouTube chat, 2026-10-26)."""
+    comp = _Completions(_err("insufficient_quota"), sync=sync)
+    with pytest.raises(ProviderQuotaExhausted) as ei:
+        await _adapter(comp).chat_with_tools([_user("oi")], [], model="m")
+    assert ei.value.status_code == 503
+    assert "esgotados" in ei.value.message
+    assert isinstance(ei.value.__cause__, openai.RateLimitError)
+    assert comp.calls == 1  # the adapter adds no retry loop
+
+
+@pytest.mark.asyncio
+async def test_client_adapter_other_sdk_error_is_llm_api_error():
+    comp = _Completions(_err("rate_limit_exceeded", "requests"))
+    with pytest.raises(LLMAPIError) as ei:
+        await _adapter(comp).chat_with_tools([_user("oi")], [], model="m")
+    assert not isinstance(ei.value, ProviderQuotaExhausted)

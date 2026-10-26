@@ -10,6 +10,7 @@ The public capture endpoint is tested separately (test_crm_router.py).
 import pytest
 
 from tests.routers.test_financial_router import make_admin
+from noctusai_lib.testing import handler_status
 
 
 CID = "c1000000-0000-4000-8000-000000000001"
@@ -128,7 +129,7 @@ class TestCnpjLookup:
             resp = client.get(self.URL)
         finally:
             app.dependency_overrides.clear()
-        assert resp.status_code == 502 and "manualmente" in resp.text
+        assert handler_status(resp) == 502 and "manualmente" in resp.text
 
 
 class TestClientDelete:

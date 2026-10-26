@@ -729,9 +729,17 @@ class OpenAIClientAdapter:
             messages, tools, model=model, temperature=None,
             max_tokens=max_tokens, tool_choice=tool_choice,
         )
-        response = self._client.chat.completions.create(**payload)
-        if inspect.isawaitable(response):
-            response = await response
+        # The caller owns the client, not the error contract: an SDK error
+        # leaving here raw skipped `ProviderQuotaExhausted` (503 + PT-BR
+        # message) and reached social-wiring's chat as an opaque 502
+        # (2026-10-26). Same translation as `OpenAIProvider.chat_with_tools`.
+        try:
+            response = self._client.chat.completions.create(**payload)
+            if inspect.isawaitable(response):
+                response = await response
+        except OpenAIError as exc:
+            logger.error("OpenAI chat_with_tools (caller client) failed: %s", exc)
+            raise _to_llm_error(exc) from exc
         return parse_openai_response(response, model=model)
 
 

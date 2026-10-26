@@ -15,6 +15,7 @@ from app.services import email_config
 from app.services.financeiro_service import limites_da_competencia, proxima_competencia
 from app.store import aplicar_schema_sqlite, get_repositorios, get_repositorios_admin
 from tests.email_support import SEM_GCP, SMTP, Senders
+from noctusai_lib.testing import handler_status
 
 ORG = str(coerce_org_uuid("test-org-123"))
 
@@ -951,7 +952,7 @@ class TestEnviarFatura:
             "cliente_id": cliente["id"], "competencia": "2026-08",
         }).json()
         resp = api_email.post(f"/api/financeiro/faturas/{fatura['id']}/enviar")
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert resp.json()["code"] == "envio_falhou"
         assert repos.fatura.buscar(ORG, fatura["id"])["status"] != "enviada"
 

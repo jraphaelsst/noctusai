@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
+from noctusai_lib.testing import handler_status
 
 # uuid5(NAMESPACE_OID, "test-org-123") — matches coerce_org_uuid("test-org-123")
 COERCED_TEST_ORG = "48ab962b-ec86-517e-9e42-7b581f622377"
@@ -175,7 +176,7 @@ class TestPublicReportEndpoint:
         builder = client.mock_supabase.table("reports")
         with patch.object(builder, "select", side_effect=RuntimeError("connection refused")):
             resp = client.raw().get(f"/api/reports/public/{token}")
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
 
 
 # ---------------------------------------------------------------------------

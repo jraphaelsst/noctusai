@@ -14,6 +14,7 @@ from app.stores.studio_definitions import MODELS_BY_PROVIDER
 from app.studio.plataforma import ensure_definicao, ensure_instancia, ensure_instancias
 from tests.channels.conftest import OTHER_ORG
 from tests.routers.conftest import DEFAULT_USER_ID, seed_org_role
+from noctusai_lib.testing import handler_status
 
 PLATFORM_ORG = UUID(int=900001)
 
@@ -239,11 +240,11 @@ class TestChannelTokenMint:
     def test_an_unaudited_mint_is_revoked_and_fails(self, chan):
         chan.audit.fail = True
         resp = _mint(chan)
-        assert resp.status_code == 502 and resp.json()["code"] == "audit_failed"
+        assert handler_status(resp) == 502 and resp.json()["code"] == "audit_failed"
         assert all(r["revoked_at"] is not None for r in chan.token_admin.rows["agents"])
         assert "pk_" not in resp.text
 
     def test_a_mint_failure_is_a_clean_502(self, chan):
         chan.token_admin.fail_mint = True
         resp = _mint(chan)
-        assert resp.status_code == 502 and resp.json()["code"] == "mint_failed"
+        assert handler_status(resp) == 502 and resp.json()["code"] == "mint_failed"

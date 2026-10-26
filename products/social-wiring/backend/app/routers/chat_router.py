@@ -24,6 +24,7 @@ from uuid import UUID
 import redis
 from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.integrations.redis import make_redis_client
+from noctusai_lib.primitives.exceptions import AppException
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
@@ -331,6 +332,12 @@ async def chat_message(
 
     try:
         reply = await chatbot.reply(text or "")
+    except AppException:
+        # Typed failures (e.g. `ProviderQuotaExhausted`) already carry their
+        # status + PT-BR message; the framework handler renders them.
+        # Re-wrapping one as "chatbot failure: …" 502 buried that message.
+        logger.exception("chatbot reply failed for session=%s", normalized_session)
+        raise
     except Exception as exc:
         logger.exception("chatbot reply failed for session=%s", normalized_session)
         raise HTTPException(

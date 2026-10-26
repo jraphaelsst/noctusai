@@ -19,6 +19,7 @@ from noctusai_lib.integrations.llm import (
 from app.config import settings
 from app.runtime.llm_runtime import LlmTurnLimiter
 from tests.channels.conftest import CONNECTION_ID, ORG_KEY, OTHER_ORG, turn_body
+from noctusai_lib.testing import handler_status
 
 
 def _msgs(chan, conversation_id, role=None):
@@ -267,7 +268,7 @@ class TestIdempotency:
 
         chan.use_provider(Flaky(tool_responses=["Comprar ou alugar?"]))
         body = turn_body("Oi", ids=["m1"])
-        assert chan.turn(body).status_code == 502
+        assert handler_status(chan.turn(body)) == 502
         retry = chan.turn(body)
         assert retry.status_code == 200
         assert [m.texto for m in _msgs(chan, retry.json()["conversation_id"], "user")] == ["Oi"]
@@ -439,7 +440,7 @@ class TestRefusalsBeforeAnythingIsPersisted:
 
         chan.use_provider(Boom())
         resp = chan.turn()
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert resp.json()["code"] == "llm_upstream"
         assert "secret" not in resp.text and "sk-live" not in resp.text
         assert chan.limiter.health()["busy"] == 0
@@ -463,7 +464,7 @@ class TestRefusalsBeforeAnythingIsPersisted:
             resp = chan.turn()
         finally:
             settings.channel_turn_timeout_seconds = old
-        assert resp.status_code == 502 and resp.json()["code"] == "llm_upstream"
+        assert handler_status(resp) == 502 and resp.json()["code"] == "llm_upstream"
         assert chan.limiter.health()["busy"] == 0
 
 

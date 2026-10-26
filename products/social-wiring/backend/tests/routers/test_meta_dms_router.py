@@ -20,7 +20,7 @@ from noctusai_lib.integrations.meta import (
     InstagramAccount,
     MetaGraphError,
 )
-from noctusai_lib.testing import MockSupabaseClient, bind_consent_module_to_mock
+from noctusai_lib.testing import handler_status, MockSupabaseClient, bind_consent_module_to_mock
 
 _ACCOUNT = "00000000-0000-4000-8000-0000000000ac"
 _ORG = "00000000-0000-4000-8000-000000000099"
@@ -149,7 +149,7 @@ class TestConversations:
         gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one", page_id=_PAGE)])
         _override(gated)
         resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
 
     def test_list_conversations_advanced_access_timeout_returns_app_review_gate(
         self, client
@@ -325,7 +325,7 @@ class TestInstagramLoginModel:
 
         _override_ig_login(_Gated().seed(me={"id": _IG_USER, "username": "one"}))
         resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
 
     def test_advanced_access_gate_maps_the_same_on_this_model(self, client):
         # Advanced Access gates BOTH models (it is an App-Review gate, not a

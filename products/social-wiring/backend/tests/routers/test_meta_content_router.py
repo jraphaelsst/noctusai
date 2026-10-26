@@ -17,7 +17,7 @@ from noctusai_lib.integrations.meta import (
     FakeMetaAdapter,
     MetaGraphError,
 )
-from noctusai_lib.testing import MockSupabaseClient, bind_consent_module_to_mock
+from noctusai_lib.testing import handler_status, MockSupabaseClient, bind_consent_module_to_mock
 
 _ACCOUNT = "00000000-0000-4000-8000-0000000000ac"
 _ORG = "00000000-0000-4000-8000-000000000099"
@@ -167,7 +167,7 @@ class TestInstagramPublish:
             f"/api/meta/instagram/publish?{_QS}",
             json={"kind": "media", "media_url": "https://x/img.jpg"},
         )
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
         assert resp.json()["error"]
 
     def test_unknown_key_rejected_422(self, client):
@@ -242,4 +242,4 @@ class TestFacebookPostsList:
         )
         _override(gated)
         resp = client.get(f"/api/meta/facebook/posts?{_QS}&page_id={_PAGE}")
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text

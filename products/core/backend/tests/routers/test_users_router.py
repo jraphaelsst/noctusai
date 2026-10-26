@@ -8,6 +8,7 @@ DELETE /api/admin/users/{user_id}
 """
 import pytest
 from datetime import date, timedelta
+from noctusai_lib.testing import handler_status
 
 today = date.today().isoformat()
 yesterday = (date.today() - timedelta(days=1)).isoformat()
@@ -414,7 +415,7 @@ class TestReassignUserOrg:
 
         resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
 
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert mock_sb.rpc_calls == []
         assert mock_sb.table("noctus_users").updated_payloads == []
 

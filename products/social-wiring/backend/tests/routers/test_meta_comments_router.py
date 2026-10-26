@@ -17,7 +17,7 @@ from noctusai_lib.integrations.meta import (
     InstagramComment,
     MetaGraphError,
 )
-from noctusai_lib.testing import MockSupabaseClient, bind_consent_module_to_mock
+from noctusai_lib.testing import handler_status, MockSupabaseClient, bind_consent_module_to_mock
 
 _ACCOUNT = "00000000-0000-4000-8000-0000000000ac"
 _ORG = "00000000-0000-4000-8000-000000000099"
@@ -151,7 +151,7 @@ class TestInstagramComments:
         )
         _override(gated)
         resp = client.delete(f"/api/meta/instagram/comments?{_QS}&comment_id=c1")
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
 
 
 # ─── Facebook ────────────────────────────────────────────────────────────

@@ -296,6 +296,29 @@ reach for `AppException` whenever you need a structured `code`.
 
 Seed handlers: `seed/lib/backend/noctusai_lib/primitives/exceptions.py`.
 
+### A 502/504 body never reaches the browser — the seed rewrites it to 503
+
+CloudFlare (in front of every product) **discards an origin's 502/504 body** and
+serves its own page: branded HTML to a browser, `error code: 502` to curl
+(verified live 2026-10-26). So `HTTPException(502, detail=...)` or an
+`AppException(status_code=502)` reaches the user as markup, not as your PT-BR
+message — social-wiring's YouTube chat showed a wall of CloudFlare HTML for an
+OpenAI "no credits" error.
+
+Fixed at the choke point, not at the ~160 handlers that pick 502:
+`noctusai_lib.api.middleware.EdgeSafeStatusMiddleware`, installed outermost by
+`create_product_app`, rewrites the **wire** status 502/504 → 503 with the body
+untouched and the original in `X-Upstream-Status`. Request logs/timing sit inside
+it and still record the real 502. Consequences:
+
+- Keep choosing 502 for "upstream failed" if it reads better — it is safe now.
+- A test through the full app sees **503** + `X-Upstream-Status: 502`.
+- An app NOT built by `create_product_app` does not get this — build through the seed.
+- Re-raise typed `AppException`s; don't wrap them in `HTTPException(502, f"...: {exc}")`
+  (that buried `ProviderQuotaExhausted`'s message behind an English prefix).
+- FE: never render a non-2xx body raw — read it with `extractErrorMessage`
+  (`@noctusai/lib/api`), which falls back to `Erro HTTP <n>` for non-JSON bodies.
+
 ## N+1 zero tolerance
 
 - Reads: `.in_("id", ids)` — batch fetch.

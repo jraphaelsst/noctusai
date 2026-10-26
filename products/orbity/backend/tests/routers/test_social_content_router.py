@@ -13,6 +13,7 @@ Validation:
 from unittest.mock import patch
 
 import pytest
+from noctusai_lib.testing import handler_status
 
 TEST_ORG = "00000000-0000-0000-0000-000000000001"
 TEST_TOKEN = "00000000-0000-0000-0000-000000000099"
@@ -276,7 +277,7 @@ class TestPublicApproveTokenValidation:
         builder = client.mock_supabase.table("post_approvals")
         with patch.object(builder, "select", side_effect=RuntimeError("connection refused")):
             resp = client.raw().get(f"/api/content/approve/{TEST_TOKEN}")
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
 
     def test_post_approval_genuine_db_error_returns_502(self, client):
         """A well-formed token that hits a real DB failure is still 502, not 404."""
@@ -286,4 +287,4 @@ class TestPublicApproveTokenValidation:
                 f"/api/content/approve/{TEST_TOKEN}",
                 json={"decision": "approved"},
             )
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502

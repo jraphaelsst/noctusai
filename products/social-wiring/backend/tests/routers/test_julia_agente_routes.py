@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.api.auth.session import FakeProductTokenAdmin
-from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
+from noctusai_lib.testing import handler_status, TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
 from app.clients.agents import (
     AgentNotFound,
@@ -303,7 +303,7 @@ class TestSwitchOn:
 
         admin.w.waha.list_chats = boom
         r = self._on(admin)
-        assert r.status_code == 502 and "snapshot_falhou" in r.text
+        assert handler_status(r) == 502 and "snapshot_falhou" in r.text
         assert admin.conn()["agente_leads_ativo"] is False and admin.snapshot_ids() == set()
 
     def test_11_1_an_incomplete_listing_is_the_same_502_not_a_partial_snapshot(self, admin):
@@ -318,7 +318,7 @@ class TestSwitchOn:
             return chats[:limit]
 
         admin.w.waha.list_chats = flaky
-        assert self._on(admin).status_code == 502
+        assert handler_status(self._on(admin)) == 502
         assert admin.snapshot_ids() == set() and admin.conn()["agente_leads_ativo"] is False
 
     def test_11_1_a_session_with_no_chats_snapshots_nothing_and_turns_on(self, admin):
@@ -491,7 +491,7 @@ class TestToken:
     def test_agents_being_down_is_502_and_nothing_is_stored(self, admin):
         admin.token_builder_agents = FakeAgentsClient(status_error=AgentsTimeout("down"))
         r = admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert r.status_code == 502 and "agents_indisponivel" in r.text
+        assert handler_status(r) == 502 and "agents_indisponivel" in r.text
         assert admin.w.admin.table("credentials").select("*").execute().data == []
 
     @pytest.mark.parametrize("body", [{"token": "short"}, {"token": ""}, {}, {"token": "x" * 600}])
@@ -565,7 +565,7 @@ class TestChatPause:
         self._scene(admin)
         admin.w.agents.errors["set_participante"] = AgentsTimeout()
         r = admin.tc.patch(self.URL, json={"pausado": True}, headers=H)
-        assert r.status_code == 502
+        assert handler_status(r) == 502
         assert admin.w.chat_row()["agente_pausado"] is False  # SW flips no local flag on its own
 
     def test_a_chat_agents_never_served_has_nothing_to_pause_404(self, admin):

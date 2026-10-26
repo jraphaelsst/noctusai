@@ -13,6 +13,7 @@ from noctusai_lib.integrations.llm.config import LLMConfig
 from noctusai_lib.integrations.llm.registry import register
 
 from app.dependencies import coerce_org_uuid
+from noctusai_lib.testing import handler_status
 
 ORG_UUID = str(coerce_org_uuid("test-org-123"))
 PLAN_ID = "11111111-1111-1111-1111-111111111111"
@@ -182,4 +183,4 @@ class TestAI:
         client.mock_supabase.set_table_data("content_plans", [_plan()])
         client.mock_supabase.set_table_data("content_plan_items", [])
         r = client.post(f"/api/content/plans/{PLAN_ID}/ai-items", json=AI_BODY)
-        assert r.status_code == 502
+        assert handler_status(r) == 502

@@ -30,6 +30,7 @@ from app.modules.media_creation.services.legenda_service import (
     get_legenda_llm,
 )
 from app.modules.media_creation.services.roteiro_service import get_roteiro_ia_check
+from noctusai_lib.testing import handler_status
 
 ORG = "test-org-123"
 MARCA = str(uuid.uuid4())
@@ -354,7 +355,7 @@ class TestLegenda:
         _roteiro_pronto(ec)
         ec.llm.replies = ["isto não é json"]
         r = ec.post(LEGENDA_URL)
-        assert r.status_code == 502
+        assert handler_status(r) == 502
         assert has_code(r, "ia_resposta_invalida")
         assert len(_geracoes(ec)) == 1  # the model was reached (and paid): the slot is spent
 

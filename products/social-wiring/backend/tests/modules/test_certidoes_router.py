@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from noctusai_lib.integrations.storage import FakeStorageBackend
-from noctusai_lib.testing import MockSupabaseClient, MockSupabaseResponse
+from noctusai_lib.testing import handler_status, MockSupabaseClient, MockSupabaseResponse
 
 from app.main import app as _app
 from app.modules.certidoes import service
@@ -988,9 +988,9 @@ class TestDownloadCertidao:
         key = f"{CALLER_ORG}/certidoes/consulta-001/x.pdf"
         _seed(db, resultados=[_resultado(id="r1", arquivo_url=key)])
         # Nothing seeded at that key — the REAL seam answers None.
-        assert client.get(
+        assert handler_status(client.get(
             f"{BASE}/download", params={"url": key}
-        ).status_code == 502
+        )) == 502
 
     def test_url_obrigatoria(self, client, certidoes_db):
         assert client.get(f"{BASE}/download").status_code == 422
@@ -1095,9 +1095,9 @@ class TestDownloadZip:
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"),
         ])
         # No blob seeded at all — every read answers None.
-        assert client.get(
+        assert handler_status(client.get(
             f"{BASE}/consultas/consulta-001/download-zip"
-        ).status_code == 502
+        )) == 502
 
     def test_consulta_de_outra_org_e_404(self, client, certidoes_db):
         db, _ = certidoes_db

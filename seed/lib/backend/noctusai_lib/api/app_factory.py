@@ -33,6 +33,7 @@ from .audit import AuditMiddleware, AuditSink
 from .middleware import (
     CorrelationIdMiddleware,
     DEFAULT_MAX_BODY_BYTES,
+    EdgeSafeStatusMiddleware,
     MaxBodyOverrideValue,
     MaxBodySizeMiddleware,
     RequestLoggingMiddleware,
@@ -302,6 +303,10 @@ def configure_app(
     )
     # Outermost: even 413s from MaxBodySizeMiddleware carry the security headers.
     app.add_middleware(SecurityHeadersMiddleware)
+    # Outside everything that logs or times the request, so those still see
+    # the handler's real 502/504; only the wire status becomes 503 — the one
+    # CloudFlare passes through with our body intact. See its docstring.
+    app.add_middleware(EdgeSafeStatusMiddleware)
 
     # -----------------------------------------------------------------------
     # Exception handlers

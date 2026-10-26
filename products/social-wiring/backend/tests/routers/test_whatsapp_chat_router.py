@@ -55,6 +55,7 @@ from app.services.message_store import MessageStore, StoredMessage
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionStore
 from app.sqlite_client import SQLiteClient
+from noctusai_lib.testing import handler_status
 
 # ── Shared constants ─────────────────────────────────────────────────────────
 
@@ -973,7 +974,7 @@ class TestSendMessage:
             else:
                 app.dependency_overrides[get_waha_client_factory] = _prev
 
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
         body = resp.json()
         assert body["error"]["code"] == "waha_send_failed", f"unexpected body: {body}"
 
@@ -1094,7 +1095,7 @@ class TestRecoverConnection:
             else:
                 app.dependency_overrides[get_waha_client_factory] = _prev
 
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
 
 
 # ── GET /stream (Slice 5, new — SSE) ──────────────────────────────────────────

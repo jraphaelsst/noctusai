@@ -37,3 +37,40 @@ def assert_error_contains(response: Any, expected_substring: str) -> None:
     assert expected_substring in msg, (
         f"Expected {expected_substring!r} in error message; got: {body!r}"
     )
+
+
+def handler_status(response: Any) -> int:
+    """The status the HANDLER chose, read through `EdgeSafeStatusMiddleware`.
+
+    A seed-built app (`create_product_app`) never puts 502/504 on the wire —
+    CloudFlare would replace the body — it sends 503 and keeps the handler's
+    choice in `X-Upstream-Status`. Tests that pin "this upstream failure is a
+    502" assert `handler_status(resp) == 502`: that still checks the handler's
+    intent AND that the wire status is the edge-safe one.
+
+    Trip history (2026-10-26): 46 full-app assertions across agents, core,
+    igig, orbity and social-wiring pinned the raw wire 502.
+
+    Raises:
+        AssertionError: a raw 502/504 reached the wire (an app not built
+            through the seed factory), or the header is present on a status
+            other than the edge-safe one.
+    """
+    from noctusai_lib.api.middleware import (
+        EDGE_MASKED_STATUSES,
+        EDGE_SAFE_STATUS,
+        UPSTREAM_STATUS_HEADER,
+    )
+
+    status = response.status_code
+    assert status not in EDGE_MASKED_STATUSES, (
+        f"a raw {status} left the app — CloudFlare would discard its body; "
+        "build the app through create_product_app (EdgeSafeStatusMiddleware)"
+    )
+    original = response.headers.get(UPSTREAM_STATUS_HEADER)
+    if original is None:
+        return status
+    assert status == EDGE_SAFE_STATUS, (
+        f"{UPSTREAM_STATUS_HEADER}={original} on a {status} response"
+    )
+    return int(original)

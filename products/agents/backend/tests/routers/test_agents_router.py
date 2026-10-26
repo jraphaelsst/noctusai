@@ -8,6 +8,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, seed_org_role
+from noctusai_lib.testing import handler_status
 
 
 def _seed_member(agents_client, role: str = "member") -> None:
@@ -115,7 +116,7 @@ class TestToggleAgent:
         )
         agents_client.stores.social_wiring.fail_connection_ids.add(str(connection_id))
         resp = agents_client.post("/api/agents/one-chat/toggle", json={"ativo": True})
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
         assert resp.json()["code"] == "upstream_failed"
 
     def test_one_chat_toggle_success_reflects_bridge_state(self, agents_client):

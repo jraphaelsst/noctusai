@@ -8,6 +8,7 @@ from app.clients.agents import (
     AgentsTimeout, AgentsTokenInvalid, AgentsUpstreamError, EstagioInfo, FakeAgentsClient, HttpAgentsClient, parse_estagios,
 )
 from tests.support.julia_world import ORG_ID
+from noctusai_lib.testing import handler_status
 
 URL = "/api/julia/qualificacao/estagios"
 
@@ -56,7 +57,7 @@ def test_the_default_fake_stage_list_is_ordered(estagios):
 def test_failures_are_typed_codes_without_upstream_detail(estagios, agents, status, code):
     estagios.agents = agents
     r = estagios.raw.get(URL)
-    assert r.status_code == status and r.json()["error"]["code"] == code
+    assert handler_status(r) == status and r.json()["error"]["code"] == code
     assert "secret detail" not in r.text
 
 

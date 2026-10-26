@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from noctusai_lib.testing import TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
+from noctusai_lib.testing import handler_status, TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
 from app.clients.agents import AgentsTimeout, FakeAgentsClient
 from app.services import julia_solicitacoes_titular_service as sol
@@ -149,7 +149,7 @@ class TestHistorico:
     def test_agents_down_is_a_typed_502_not_an_empty_list(self, admin):
         admin.w.agents.errors["listar_opt_outs"] = AgentsTimeout()
         r = admin.req("get", BASE)
-        assert r.status_code == 502 and r.json()["code"] == "agents_indisponivel" if "code" in r.json() else r.status_code == 502
+        assert handler_status(r) == 502 and r.json()["code"] == "agents_indisponivel" if "code" in r.json() else handler_status(r) == 502
 
     def test_a_failed_notice_shows_its_error_and_renotify_resends_it(self, admin):
         c = admin.lead()

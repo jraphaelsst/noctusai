@@ -23,6 +23,7 @@ from noctusai_lib.integrations.meta import (
 
 from app.modules.instagram.repository import IgInsightsRepository, encode_cursor
 from tests.modules.instagram.fakes import FakeSupabase
+from noctusai_lib.testing import handler_status
 
 ORG_A = "00000000-0000-4000-8000-00000000000a"
 ORG_B = "00000000-0000-4000-8000-00000000000b"
@@ -246,7 +247,7 @@ class TestSyncErrors:
         adapter.seed(user_insights_error=MetaGraphError("expired", code=190))
         _login()
         r = client.post(f"/api/instagram/accounts/{ACC}/sync")
-        assert r.status_code == 502 and r.json()["code"] == 190
+        assert handler_status(r) == 502 and r.json()["code"] == 190
 
     def test_permission_error_is_requires_app_review(self, client, adapter):
         adapter.seed(user_insights_error=MetaGraphError("no advanced access", code=200))

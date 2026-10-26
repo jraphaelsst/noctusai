@@ -8,6 +8,7 @@ path, and the 502 upstream-error translation.
 from __future__ import annotations
 
 from tests.modules.n8n.conftest import delete_with_body, make_n8n_account
+from noctusai_lib.testing import handler_status
 
 
 # ─── auth boundary ──────────────────────────────────────────────────────
@@ -137,7 +138,7 @@ class TestUpstreamError:
                 params={"account_id": str(account.id), "scope": "client"},
             )
 
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
         # The cause must be in the LOG, not only in the response body the
         # browser gets — that asymmetry is what made the live 502
         # undiagnosable without lifting a session token out of a browser.

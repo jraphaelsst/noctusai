@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from noctusai_lib.testing import TEST_ORG_ID, MockUser, MockUserResponse
+from noctusai_lib.testing import handler_status, TEST_ORG_ID, MockUser, MockUserResponse
 
 
 _ENC_KEY = "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg="
@@ -530,7 +530,7 @@ class TestPurgeRemoteApiFailurePreservesCatalog:
         finally:
             app.dependency_overrides.pop(get_yt_service_builder, None)
 
-        assert resp.status_code == 502, resp.text
+        assert handler_status(resp) == 502, resp.text
         # Catalog row must NOT have been deleted.
         mock_table.delete.assert_not_called()
 

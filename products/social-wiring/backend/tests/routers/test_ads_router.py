@@ -39,7 +39,7 @@ from noctusai_lib.integrations.meta import (
     LeadgenQuestion,
     MetaGraphError,
 )
-from noctusai_lib.testing import MockSupabaseClient, bind_consent_module_to_mock
+from noctusai_lib.testing import handler_status, MockSupabaseClient, bind_consent_module_to_mock
 
 from app.config import settings
 
@@ -220,7 +220,7 @@ class TestListAccounts:
         _override_adapter(_ORG_A, _Raising())
 
         resp = tc.get("/api/meta/ads/accounts")
-        assert resp.status_code in (200, 502), resp.text
+        assert handler_status(resp) in (200, 502), resp.text
 
 
 # ─── GET /campaigns ───────────────────────────────────────────────────

@@ -42,6 +42,7 @@ from tests.email_support import (
     ConfigBox,
     Senders,
 )
+from noctusai_lib.testing import handler_status
 
 
 @pytest.fixture
@@ -287,7 +288,7 @@ class TestSmtpTestar:
         api.put("/api/integracoes/email/smtp", json=SMTP)
         senders.falhar = True
         resp = api.post("/api/integracoes/email/smtp/testar", json={"para": "a@b.co"})
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert resp.json()["code"] == "envio_falhou"
 
     def test_invalid_address(self, api):

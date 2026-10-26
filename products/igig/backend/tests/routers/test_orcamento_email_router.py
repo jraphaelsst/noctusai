@@ -22,6 +22,7 @@ from app.repositories import Repositorios
 from app.repositories.email import repositorios_email
 from app.services import email_config
 from tests.email_support import MAILBOX, ORG, SEM_GCP, SMTP, ConfigBox, Senders
+from noctusai_lib.testing import handler_status
 
 PDF = b"%PDF-1.7 orcamento"
 CHAVE_PDF = f"{ORG}/orcamentos/o1/v1.pdf"
@@ -206,7 +207,7 @@ class TestEnviar:
         senders.falhar = True
         orc = _orcamento(repos, lead)
         resp = _enviar(api, orc["id"])
-        assert resp.status_code == 502
+        assert handler_status(resp) == 502
         assert repos.orcamento.buscar(ORG, orc["id"])["status"] == "rascunho"
         assert repositorios_email(repos.store).emails.do_orcamento(ORG, orc["id"]) == []
 

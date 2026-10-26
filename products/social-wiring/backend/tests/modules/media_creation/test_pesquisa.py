@@ -22,6 +22,7 @@ from app.modules.media_creation.prompts.pesquisa_classifier import (
     parse_classifier_output,
 )
 from app.modules.media_creation.routers.pesquisa import get_pesquisa_llm
+from noctusai_lib.testing import handler_status
 
 BASE = "/api/media-creation/pesquisa"
 ORG = "test-org-123"
@@ -199,7 +200,7 @@ class TestClassify:
     def test_llm_error_is_502_and_saves_nothing(self, pc):
         pc.llm_error = RuntimeError("provider down")
         r = pc.post(f"{BASE}/items/classify", json={"marca_id": MARCA, "text": "insônia"})
-        assert r.status_code == 502
+        assert handler_status(r) == 502
         assert r.json()["error"]["message"] == "Falha ao classificar com IA"
         assert _items(pc) == []
 

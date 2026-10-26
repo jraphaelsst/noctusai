@@ -12,6 +12,7 @@
  * useUpload does.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { extractErrorMessage } from "@noctusai/lib/api";
 
 import { apiUrl } from "@/lib/apiBase";
 
@@ -111,8 +112,13 @@ export function useChat() {
           body: form,
         });
         if (!res.ok) {
-          const body = await res.text();
-          throw new Error(body || `chat HTTP ${res.status}`);
+          // Never render the raw body: an edge error page (CloudFlare HTML)
+          // once reached the user as a wall of markup. JSON errors go through
+          // the seed's canonical extractor; anything else is `Erro HTTP <n>`.
+          // (Raw `fetch`, not `api.upload`: its 120s abort would cut off a
+          // large video attached to the message.)
+          const data = await res.json().catch(() => null);
+          throw new Error(extractErrorMessage(data, res.status));
         }
         const data: ChatReply = await res.json();
         if (data.session_id && data.session_id !== sessionId) {
@@ -141,10 +147,22 @@ export function useChat() {
       setPending(null);
       return;
     }
-    await fetch(
-      apiUrl(`/api/chat/reset/${encodeURIComponent(sessionId)}`),
-      { method: "POST" }
-    );
+    setError(null);
+    try {
+      const res = await fetch(
+        apiUrl(`/api/chat/reset/${encodeURIComponent(sessionId)}`),
+        { method: "POST" }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(extractErrorMessage(data, res.status));
+      }
+    } catch (exc) {
+      // The server still holds the conversation — clearing the screen
+      // would claim a reset that did not happen.
+      setError(exc instanceof Error ? exc.message : String(exc));
+      return;
+    }
     setMessages([]);
     setPending(null);
   }, [sessionId]);
