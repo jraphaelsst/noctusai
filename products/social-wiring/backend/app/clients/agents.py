@@ -40,13 +40,27 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol, Sequence, Union, runtime_checkable
 
 import httpx
+from noctusai_lib.integrations.agents import (  # shared taxonomy + transport live in the seed (KB § INTEGRATIONS/agents-org-specs.md)
+    DEFAULT_RETRY_AFTER_S,
+    DEFAULT_TIMEOUT_S,
+    AgentNotFound,
+    AgentsBadRequest,
+    AgentsClientError,
+    AgentsHttpTransport,
+    AgentsNotConfigured,
+    AgentsTimeout,
+    AgentsTokenInvalid,
+    AgentsUpstreamError,
+)
+from noctusai_lib.integrations.agents import error_code as _error_code
+from noctusai_lib.integrations.agents import need as _need
+from noctusai_lib.integrations.agents import opt_str as _opt_str
+from noctusai_lib.integrations.agents import retry_after as _retry_after
 from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_S = 60.0
-DEFAULT_RETRY_AFTER_S = 30
 
 #: Hard shape limits of section 3.1 -- the lead path trims to these BEFORE the call.
 MAX_BATCH_MESSAGES = 20
@@ -493,24 +507,6 @@ class EstagioInfo:
 
 
 # ── typed errors (one per row of the section 3.1 error table) ───────────────
-class AgentsClientError(Exception):
-    """Base of every failure of a call to agents. `code` is agents' own code."""
-
-    def __init__(self, message: str = "", *, code: Optional[str] = None):
-        super().__init__(message or code or self.__class__.__name__)
-        self.code = code
-
-
-class AgentsNotConfigured(AgentsClientError, IntegrationNotConfigured):
-    """No token for this org (prod): the link is simply not set up."""
-
-
-class AgentsTokenInvalid(AgentsClientError):
-    """401, or 403 product_required / scope_missing / issuer_not_allowed / agent_not_allowed."""
-
-
-class AgentNotFound(AgentsClientError):
-    """404 agent_not_found."""
 
 
 class ConversationNotFound(AgentsClientError):
@@ -566,8 +562,6 @@ class IdempotencyConflict(AgentsClientError):
     """409 on a replayed provider_message_id with different text (M2). A bug on our side."""
 
 
-class AgentsBadRequest(AgentsClientError):
-    """422 invalid_field -- a bug, logged as an error."""
 
 
 class LlmNotConfigured(AgentsClientError, IntegrationNotConfigured):
@@ -582,12 +576,8 @@ class CapacityExceeded(AgentsClientError):
         self.retry_after = retry_after
 
 
-class AgentsUpstreamError(AgentsClientError):
-    """502 llm_upstream (and any other 5xx / malformed 2xx): no reply, logged."""
 
 
-class AgentsTimeout(AgentsClientError):
-    """No answer within the 60 s budget (or the network is down)."""
 
 
 # ── Protocol ────────────────────────────────────────────────────────────────
@@ -1056,30 +1046,6 @@ class FakeAgentsClient:
 
 
 # ── Real ────────────────────────────────────────────────────────────────────
-def _error_code(response: httpx.Response) -> Optional[str]:
-    """agents' errors are `HTTPException(detail={"detail", "code"})`; the seed auth
-    deps raise plain-string details. Read both shapes defensively."""
-    try:
-        body = response.json()
-    except ValueError:
-        return None
-    if not isinstance(body, dict):
-        return None
-    detail = body.get("detail")
-    if isinstance(detail, dict):
-        code = detail.get("code")
-        return str(code) if code else None
-    code = body.get("code")
-    return str(code) if code else None
-
-
-def _retry_after(response: httpx.Response) -> int:
-    raw = response.headers.get("Retry-After", "")
-    try:
-        value = int(float(raw))
-    except (TypeError, ValueError):
-        return DEFAULT_RETRY_AFTER_S
-    return max(1, min(value, 3600))
 
 
 def _raise_for_agents_status(response: httpx.Response) -> None:
@@ -1129,15 +1095,6 @@ def _raise_for_agents_status(response: httpx.Response) -> None:
     raise AgentsUpstreamError(f"agents answered {status}", code=code)
 
 
-def _need(body: Any, key: str, kind: type | tuple) -> Any:
-    if not isinstance(body, dict) or key not in body or not isinstance(body[key], kind):
-        raise AgentsUpstreamError(f"malformed agents response: '{key}'")
-    return body[key]
-
-
-def _opt_str(body: Any, key: str) -> Optional[str]:
-    value = body.get(key) if isinstance(body, dict) else None
-    return value if isinstance(value, str) and value else None
 
 
 def parse_qualificacao_resumo(raw: Any) -> Optional[QualificacaoResumo]:
@@ -1447,9 +1404,10 @@ def parse_qualificacao_estado(body: Any) -> QualificacaoEstado:
     )
 
 
-class HttpAgentsClient:
+class HttpAgentsClient(AgentsHttpTransport):
     """The real client. `base_url` = `resolve_product_url("agents")`; `token` is the
-    org's `pk_...` channel token (sent as a bearer). The token is never logged."""
+    org's `pk_...` channel token (sent as a bearer). The token is never logged.
+    Transport (httpx, timeout/network mapping) is the seed's `AgentsHttpTransport`; the status table is ours."""
 
     def __init__(
         self,
@@ -1463,40 +1421,7 @@ class HttpAgentsClient:
             raise ValueError("HttpAgentsClient needs a base_url")
         if not token:
             raise ValueError("HttpAgentsClient needs a token")
-        self._base_url = base_url.rstrip("/")
-        self._token = token
-        self._timeout = timeout
-        self._transport = transport
-
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=self._timeout,
-            headers={"Authorization": f"Bearer {self._token}"},
-            transport=self._transport,
-        )
-
-    async def _send(
-        self, method: str, path: str, *, json: Optional[dict] = None, params: Optional[dict] = None,
-        ok_statuses: tuple[int, ...] = (),
-    ) -> Any:
-        try:
-            async with self._client() as client:
-                response = await client.request(method, path, json=json, params=params)
-        except httpx.TimeoutException as exc:
-            raise AgentsTimeout("agents did not answer in time") from exc
-        except httpx.HTTPError as exc:
-            # Connection refused / DNS / TLS: same user-visible outcome as a timeout.
-            raise AgentsTimeout(f"agents unreachable: {type(exc).__name__}") from exc
-        if response.status_code in ok_statuses:
-            return None
-        _raise_for_agents_status(response)
-        if response.status_code == 204 or not response.content:
-            return {}
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise AgentsUpstreamError("agents returned a non-JSON body") from exc
+        super().__init__(base_url, token, timeout=timeout, transport=transport, raise_for_status=_raise_for_agents_status)
 
     async def run_turn(self, req: TurnRequest) -> TurnResult:
         return parse_turn_result(await self._send("POST", "/api/channels/turns", json=req.to_wire()))
