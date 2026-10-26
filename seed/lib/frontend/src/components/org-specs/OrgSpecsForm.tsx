@@ -8,7 +8,10 @@
  */
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Badge, Button, EmptyState, ErrorState, Skeleton, Textarea } from '../../design-system';
+import { Badge } from '../../design-system/ui/Badge';
+import { Button } from '../../design-system/ui/Button';
+import { EmptyState, ErrorState, Textarea } from '../../design-system/ui/FormControls';
+import { Skeleton } from '../../design-system/ui/Skeleton';
 import { ApiError } from '../../api';
 import { UnsavedChangesNotice, useUnsavedChanges } from '../UnsavedChanges';
 import type { OrgSpecsHooks } from './createOrgSpecsHooks';

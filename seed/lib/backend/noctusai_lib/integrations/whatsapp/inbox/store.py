@@ -433,8 +433,8 @@ class SupabaseWhatsAppChatStore:
         """Newest-first page of ``limit`` rows strictly after the cursor in
         ``(ts_col, tie_col)`` DESC order. Two plain queries instead of one
         ``or(...)`` so the shape stays inside the portable filter subset."""
-        def run(extra: Callable[[Any], Any]) -> list[dict[str, Any]]:
-            q = extra(make_query())
+        def run(narrow: Callable[[Any], Any]) -> list[dict[str, Any]]:
+            q = narrow(make_query())
             return list(q.order(ts_col, desc=True).order(tie_col, desc=True).limit(limit).execute().data or [])
 
         if decoded is None:
