@@ -4,7 +4,7 @@ service's DI seam (`ler_antigos`); everything else runs against the mock DB.
 Every name / CPF / CNPJ is synthetic."""
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from noctusai_lib.primitives.exceptions import ConflictError, ValidationError_
@@ -447,3 +447,69 @@ class TestProcessoLegadoNaoEmite:
         )
         assert emitida["consulta_id"]
         assert len(scoped.table("certidao_consultas").select("*").execute().data) == 1
+
+
+class TestF109ReusoDeCliente:
+    """F109 — add → remove → add of the same transmitente must not mint a second
+    cliente (one resolver, `compradores_service._resolver_cliente_novo`)."""
+
+    NOME = "Fulano Transmitente Exemplo"
+
+    def _clientes_do_nome(self, scoped):
+        rows = scoped.table("clientes").select("*").execute().data
+        return [r for r in rows if (r.get("nome") or "") == self.NOME]
+
+    def _add_nome(self, scoped, cid, aid):
+        from app.modules.card_hub import compradores_service as comp
+
+        return comp.adicionar(
+            scoped, ORG_ID, UUID(cid), nome=self.NOME, papel="antigo_proprietario",
+            atendimento_id=UUID(aid), lado="vendedor", origem="manual",
+        )
+
+    def test_add_remove_add_by_name_reuses_the_orphan(self, scoped):
+        from app.modules.card_hub import compradores_service as comp
+
+        cid, aid = _card(scoped)
+        p1 = self._add_nome(scoped, cid, aid)
+        comp.remover(scoped, ORG_ID, UUID(cid), UUID(p1["parte_id"]))
+        assert len(self._clientes_do_nome(scoped)) == 1
+        p2 = self._add_nome(scoped, cid, aid)
+        assert len(self._clientes_do_nome(scoped)) == 1
+        assert p2["cliente_id"] == p1["cliente_id"]
+        assert "avisos" not in p2
+
+    def test_sync_twice_creates_no_duplicate(self, scoped):
+        cid, _aid = _card(scoped)
+        info = _info((self.NOME, ""))
+        _sync(scoped, cid, info)
+        _sync(scoped, cid, info)
+        assert len(self._clientes_do_nome(scoped)) == 1
+
+    def test_sync_after_remove_reuses_the_cliente(self, scoped):
+        cid, _aid = _card(scoped)
+        info = _info((self.NOME, ""))
+        out = _sync(scoped, cid, info)
+        svc.remover(scoped, ORG_ID, UUID(cid), UUID(out["criados"][0]["parte_id"]))
+        _sync(scoped, cid, info)
+        assert len(self._clientes_do_nome(scoped)) == 1
+
+    def test_homonym_with_a_different_cpf_is_not_merged(self, scoped):
+        cid, aid = _card(scoped)
+        outro = str(uuid4())
+        rows = scoped.table("clientes").select("*").execute().data
+        scoped.set_table_data("clientes", rows + [cliente_row(outro, nome=self.NOME, cpf=CPF_B)])
+        p = self._add_nome(scoped, cid, aid)
+        assert p["cliente_id"] != outro
+        assert p["avisos"][0]["codigo"] == "HOMONIMO_AMBIGUO"
+        assert len(self._clientes_do_nome(scoped)) == 2
+
+    def test_homonym_with_links_is_not_merged_on_name_alone(self, scoped):
+        cid, aid = _card(scoped)
+        outro = str(uuid4())
+        rows = scoped.table("clientes").select("*").execute().data
+        scoped.set_table_data("clientes", rows + [cliente_row(outro, nome=self.NOME)])
+        scoped.set_table_data("cliente_notas", [{"id": str(uuid4()), "org_id": ORG_ID, "cliente_id": outro}])
+        p = self._add_nome(scoped, cid, aid)
+        assert p["cliente_id"] != outro
+        assert p["avisos"][0]["codigo"] == "HOMONIMO_AMBIGUO"
