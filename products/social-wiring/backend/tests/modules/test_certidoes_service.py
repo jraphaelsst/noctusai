@@ -315,6 +315,12 @@ class TestBuildParamsTrf3:
             "tipo": "1",
             "abrangencia": "3",
             "nome_social": "João da Silva",
+            # Complementary data the TRF3 asks for only on its conditional
+            # step — sent whenever the consulta knows it (prod 606, 2026-10).
+            "nome_mae": "Maria da Silva",
+            "birthdate": "1990-01-15",
+            "tipo_documento": "2",
+            "documento": "123456789",
         }
 
     def test_cnpj_so_documento_sem_nome_social(self):
@@ -338,6 +344,12 @@ class TestBuildParamsTrf3Sp:
             "tipo": "1",
             "abrangencia": "2",
             "nome_social": "João da Silva",
+            # Complementary data the TRF3 asks for only on its conditional
+            # step — sent whenever the consulta knows it (prod 606, 2026-10).
+            "nome_mae": "Maria da Silva",
+            "birthdate": "1990-01-15",
+            "tipo_documento": "2",
+            "documento": "123456789",
         }
 
     def test_cnpj_so_documento_sem_nome_social(self):
@@ -347,6 +359,15 @@ class TestBuildParamsTrf3Sp:
             "tipo": "1",
             "abrangencia": "2",
         }
+
+    def test_cpf_sem_dados_complementares_nao_os_envia(self):
+        params = _build_params_trf3_sp(CONSULTA_MINIMAL, "tok")
+        for chave in ("nome_mae", "birthdate", "tipo_documento", "documento"):
+            assert chave not in params
+
+    def test_rg_igual_ao_cpf_cin_nao_vai_como_rg(self):
+        params = _build_params_trf3_sp({**CONSULTA_CPF, "rg": "123.456.789-01"}, "tok")
+        assert "tipo_documento" not in params and "documento" not in params
 
     def test_mesmo_endpoint_do_regional_difere_so_na_abrangencia(self):
         """The two TRF3 entries share an endpoint and are both Cível —
@@ -422,6 +443,14 @@ class TestBuildParamsTjsp:
         assert params["genero"] == "M"
         assert params["nome_mae"] == "Maria da Silva"
         assert params["nome_pai"] == "José da Silva"
+
+    def test_rg_igual_ao_cpf_vai_como_cin(self):
+        """Docs: an RG filled with the CPF number is not processed — a CIN
+        holder (RG == CPF) goes as `cin`."""
+        with patch(_REGISTRY_RESOLVE, return_value=None):
+            params = _build_params_tjsp({**CONSULTA_CPF, "rg": "123.456.789-01"}, "tok")
+        assert params["cin"] == "12345678901"
+        assert "rg" not in params
 
     def test_omite_campos_opcionais_quando_ausentes(self):
         with patch(_REGISTRY_RESOLVE, return_value=None):
@@ -1403,7 +1432,9 @@ class TestProcessSingleCertidao:
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(tipo=TJSP_TIPO)],
         )
-        with patch(_REGISTRY_RESOLVE, return_value=None):
+        # The delivery e-mail is configured: without it the pre-call check
+        # parks the cell and nothing is requested (`requer_credencial`).
+        with patch(_REGISTRY_RESOLVE, return_value="fila@example.com"):
             await service._process_single_certidao(
                 config_for(TJSP_TIPO), _consulta_row(), "tok", db,
                 "resultado-001", _FakeHttp({"code": 400, "errors": ["x"]}),
