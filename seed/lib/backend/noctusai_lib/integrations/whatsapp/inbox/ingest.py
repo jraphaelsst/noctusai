@@ -58,6 +58,10 @@ from noctusai_lib.integrations.whatsapp.mappers import (
 logger = logging.getLogger(__name__)
 
 OnNewChat = Callable[[UUID, UUID, InboxChat], Awaitable[None]]
+#: ``on_message(org_id, connection_id, chat, message)`` - fired for every message that was NEWLY stored (inbound
+#: and outbound, never for a duplicate or a backfilled one). Best-effort: a raising consumer is logged and
+#: never fails the webhook (e.g. keep a downstream card's last-message preview fresh).
+OnMessage = Callable[[UUID, UUID, InboxChat, InboxMessage], Awaitable[None]]
 #: ``record -> WAHA client`` (only used to resolve an unknown @lid to a phone).
 WahaClientFactory = Callable[[WhatsAppConnectionRecord], Any]
 
@@ -247,6 +251,7 @@ async def ingest_waha_event(
     chat_store: WhatsAppChatStore,
     realtime: Optional[InboxRealtime] = None,
     on_new_chat: Optional[OnNewChat] = None,
+    on_message: Optional[OnMessage] = None,
     lid_cache: Optional[LidPhoneCache] = None,
     waha_client_factory: Optional[WahaClientFactory] = None,
 ) -> IngestResult:
@@ -306,6 +311,9 @@ async def ingest_waha_event(
         )
         await realtime.publish(connection_id, EVENT_CHAT_UPSERT, {"chat": chat.as_dict()})
 
+    if inserted and on_message is not None:
+        await notify_message(on_message, org_id, connection_id, chat, replace(parsed.message, chat_id=identity.chat_id))
+
     fired = False
     if on_new_chat is not None and state.notification_pending:
         fired = await _fire_new_chat(
@@ -316,6 +324,18 @@ async def ingest_waha_event(
         "message" if inserted else "duplicate", chat_id=identity.chat_id,
         message_id=parsed.message.id, new_chat_fired=fired,
     )
+
+
+async def notify_message(
+    on_message: OnMessage, org_id: UUID, connection_id: UUID, chat: InboxChat, message: InboxMessage
+) -> None:
+    """Run the best-effort ``on_message`` seam (shared by live ingest and the router's send path)."""
+    try:
+        await on_message(org_id, connection_id, chat, message)
+    except Exception:  # noqa: BLE001 - a consumer bug must not fail the webhook / the send
+        logger.exception(
+            "on_message failed (connection=%s chat=%s message=%s)", connection_id, chat.chat_id, message.id
+        )
 
 
 async def _fire_new_chat(

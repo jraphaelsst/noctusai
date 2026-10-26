@@ -216,3 +216,21 @@ def test_sao_paulo_ms_timestamps_are_normalised(store, record):
     ingest(record, store, waha_message(mid="m1", ts=1_790_000_000_000), None)
     msg = store.list_messages(org_id=ORG, connection_id=CONN, chat_id=CHAT)[0][0]
     assert msg.timestamp.startswith("2026-")
+
+
+def test_on_message_fires_per_newly_stored_message_and_a_raising_consumer_never_fails_ingest(store, record):
+    seen: list = []
+
+    async def on_message(org_id, connection_id, chat, message):
+        seen.append((chat.chat_id, message.id, message.from_me))
+        raise RuntimeError("downstream preview update exploded")
+
+    for event in ("message", "message.any"):
+        result = run(ingest_waha_event(
+            waha_message(mid="m1", event=event), connection=record, chat_store=store, on_message=on_message
+        ))
+        assert result.status in {"message", "duplicate"}
+    run(ingest_waha_event(
+        waha_message(mid="m2", ts=1_790_000_100), connection=record, chat_store=store, on_message=on_message
+    ))
+    assert seen == [(CHAT, "m1", False), (CHAT, "m2", False)]

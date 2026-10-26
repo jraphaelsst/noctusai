@@ -46,7 +46,7 @@ all find `+5511994573387`. Text matches name / e-mail / notes (`ILIKE`, accent-s
 `on_new_chat`; `chat` is any object or mapping with `chat_id, name, phone, last_message_preview, last_message_at`.
 Idempotent by `(org, connection, chat)` — the `uq_leads_chat` partial UNIQUE index is the real guard (a lost race
 re-reads the winner). A deleted lead is NOT recreated by `touch_last_message`; the inbox fires `on_new_chat` once
-per chat, so deleting a non-lead number is permanent.
+per chat, so deleting a non-lead number is permanent. Keep the card fresh by passing `LeadsService.touch_last_message` from the inbox's `on_message` seam (inbound AND outbound) -- see `monica`'s `app/services/whatsapp_leads.py`.
 
 ## 4. Frontend surface
 

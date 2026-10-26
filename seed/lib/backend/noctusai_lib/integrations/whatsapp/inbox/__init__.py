@@ -32,9 +32,11 @@ from noctusai_lib.integrations.whatsapp.inbox.ddl import (
 )
 from noctusai_lib.integrations.whatsapp.inbox.ingest import (
     IngestResult,
+    OnMessage,
     OnNewChat,
     ParsedMessage,
     ingest_waha_event,
+    notify_message,
     parse_waha_message,
     resolve_chat_identity,
 )
@@ -75,6 +77,8 @@ __all__ = [
     "InboxRealtimeNotConfigured",
     "InboxStoreNotConfigured",
     "IngestResult",
+    "OnMessage",
+    "notify_message",
     "OnNewChat",
     "ParsedMessage",
     "SupabaseWhatsAppChatStore",

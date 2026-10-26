@@ -125,6 +125,7 @@ class _Harness:
         self.chat_store = build_whatsapp_chat_store(None, schema="monica", allow_fake=True)
         self.waha = FakeWahaClient(session="default")
         self.new_chats: list = []
+        self.messages: list = []
         self.realtime = build_inbox_realtime(allow_in_process=True) if realtime else None
         self.lid_cache = InMemoryLidPhoneCache() if with_lid_cache else None
 
@@ -133,6 +134,9 @@ class _Harness:
 
         async def on_new_chat(org_id, connection_id, chat):
             self.new_chats.append((org_id, connection_id, chat))
+
+        async def on_message(org_id, connection_id, chat, message):
+            self.messages.append((chat.chat_id, message.from_me, message.body))
 
         app = FastAPI()
         app.include_router(create_whatsapp_connections_router(
@@ -143,7 +147,7 @@ class _Harness:
         app.include_router(create_whatsapp_inbox_router(
             chat_store_factory=lambda: self.chat_store, connection_store_factory=lambda: self.conn_store,
             get_current_user_org=_auth(org, raise_401=raise_401), waha_client_factory=waha_factory,
-            on_new_chat=on_new_chat, realtime=self.realtime, lid_cache=self.lid_cache,
+            on_new_chat=on_new_chat, on_message=on_message, realtime=self.realtime, lid_cache=self.lid_cache,
             webhook_hmac_secret=hmac_secret, mirror_read_to_whatsapp=mirror_read,
         ))
         self.client = TestClient(app)
@@ -257,6 +261,16 @@ def test_other_orgs_connection_is_404_on_every_route():
     assert client.post(f"{base}/chats/{CHAT}/read").status_code == 404
     assert client.post(f"{base}/backfill").status_code == 404
     assert client.get(f"{base}/events").status_code == 404
+
+
+def test_on_message_fires_for_inbound_webhook_and_outbound_send_but_not_for_duplicates():
+    h = _Harness()
+    conn_id, path = h.create_connection()
+    for event in ("message", "message.any"):  # the pair is ONE stored message
+        h.post_event(path, _msg(event=event))
+    h.client.post(f"/api/whatsapp/connections/{conn_id}/chats/{CHAT}/messages", json={"text": "Olá!"})
+    h.post_event(path, _msg("fake-msg-1", from_me=True, body="Olá!", event="message.any"))  # echo = duplicate
+    assert h.messages == [(CHAT, False, "oi"), (CHAT, True, "Olá!")]
 
 
 # ─── send ───────────────────────────────────────────────────────────────────

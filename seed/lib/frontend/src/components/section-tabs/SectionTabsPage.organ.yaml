@@ -1,0 +1,29 @@
+name: SectionTabsPage
+kind: component
+path: seed/lib/frontend/src/components/section-tabs/SectionTabsPage.tsx
+phase: pilot-seed
+registered_at: '2026-10-26'
+organ_version: '1.0'
+validation_status: emerging
+known_facts:
+- 'Import: import { SectionTabsPage } from "@noctusai/lib/components"; mount under a splat route
+  (<Route path="/configuracoes/*"/>) with the same basePath. sections = [{ key, label, icon?, visible?, render }].'
+- Owns the URL <-> tab sync (deep link, back button, redirect of the bare base / unknown / hidden segment to the
+  first visible section). Only the ACTIVE section renders, so a section that fetches does not fetch in the background.
+- Built because ~15 products hand-roll a settings shell (social-wiring's Configuracoes is the cautionary tale);
+  first consumer is monica (Configuracoes > Conexoes, designed to grow by adding one entry).
+- 'visible:false is a UX gate only; the server enforces the real one. All sections hidden renders nothing, never an
+  empty shell.'
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+- 'Nested <Outlet/> routes owned by the page (each section a child <Route>) - rejected: the host would repeat the
+  route table the organ already derives from `sections`; one array is the single source.'
+manual_validation_log: []
+integration_test_status: unit-tested (SectionTabsPage.test.tsx)
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

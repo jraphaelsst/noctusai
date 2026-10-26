@@ -41,6 +41,9 @@ Security notes:
 * ``mirror_read_to_whatsapp`` (default OFF) additionally sends WAHA
   ``sendSeen`` on mark-read - blue ticks on the owner's real phone.
 
+``on_message(org_id, connection_id, chat, message)`` (optional) fires for every newly stored message - inbound
+webhook AND outbound send from this router; best-effort (a raising consumer is logged, never fails the call).
+
 Decoupling: imports nothing from ``app.*``; every product concern is a kwarg
 (Class-B DI seam).
 """
@@ -71,12 +74,14 @@ from noctusai_lib.integrations.whatsapp.inbox import (
     EVENT_MESSAGE_NEW,
     InboxMessage,
     InboxRealtime,
+    OnMessage,
     OnNewChat,
     WhatsAppChatStore,
     backfill_connection,
     ingest_waha_event,
     inbox_scope,
     is_backfill_running,
+    notify_message,
 )
 from noctusai_lib.integrations.whatsapp.inbox.store import utc_now_iso
 from noctusai_lib.integrations.whatsapp.lid_auth import (
@@ -146,6 +151,7 @@ def create_whatsapp_inbox_router(
     get_current_user_org: Callable[..., Any],
     waha_client_factory: Callable[..., Any] = get_whatsapp_client,
     on_new_chat: Optional[OnNewChat] = None,
+    on_message: Optional[OnMessage] = None,
     realtime: Optional[InboxRealtime] = None,
     lid_cache: Optional[LidPhoneCache] = None,
     webhook_hmac_secret: Optional[str] = None,
@@ -292,6 +298,8 @@ def create_whatsapp_inbox_router(
         if realtime is not None:
             await realtime.publish(connection_id, EVENT_MESSAGE_NEW, {"chat_id": chat_id, "message": message.as_dict()})
             await realtime.publish(connection_id, EVENT_CHAT_UPSERT, {"chat": fresh_chat.as_dict()})
+        if on_message is not None:
+            await notify_message(on_message, org_id, connection_id, fresh_chat, message)
         return InboxMessageOut(**message.as_dict())
 
     # ─── read ───────────────────────────────────────────────────────────
@@ -404,6 +412,7 @@ def create_whatsapp_inbox_router(
             chat_store=chat_store_factory(),
             realtime=realtime,
             on_new_chat=on_new_chat,
+            on_message=on_message,
             lid_cache=lid_cache,
             waha_client_factory=lambda rec: _client_for_identity(rec, store),
         )
