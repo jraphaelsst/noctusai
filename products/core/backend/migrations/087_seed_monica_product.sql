@@ -17,7 +17,7 @@ VALUES (
     'Monica',
     'monica',
     'CRM do consultório de psicanálise de Mônica Tangerino: leads vindos do conteúdo no Instagram, funil, conversas de WhatsApp e o contexto da Mônica (futuro ERP).',
-    'Users',
+    'UsersRound',
     'https://monica.noctusai.com',
     '#7c5c8a',
     true

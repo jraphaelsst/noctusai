@@ -1,3 +1,6 @@
+// @consumes-organ LeadCard@1.0 +seam=pre-existing-product-fork
+// @consumes-organ LeadFormDialog@1.0 +seam=pre-existing-product-fork
+// NOC-REMEDIATE[orbity-consume-seed-leads]: this file predates the seed leads organ (2026-10-26) and keeps its own LeadCard/LeadFormDialog; the product's shape (not the organ's) is why it has not converged yet. Converge onto @noctusai/lib leads when the product adopts the organ (KB PATTERNS/backend/leads-organ.md) — 2026-10-26
 /**
  * Funil — CRM Kanban board (leads grouped by funnel stage).
  *
