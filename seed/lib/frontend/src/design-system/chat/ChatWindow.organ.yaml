@@ -23,6 +23,7 @@ known_facts:
       First (and only, at this pass) consumer of both: `products/agents/frontend/src/hooks/useJuliaChat.ts` (`useCreateConversation`'s onSuccess + a new `useJuliaRenameConversationAdapter`). WhatsApp/Instagram DMs/Agent Studio's Chat tab pass neither prop/hook and are unaffected."
 
   - "2026-10-14 (Lais W2, header slot): ADDITIVE adapter seam `ThreadHeaderExtra?: ComponentType<{scopeId, thread}>` rendered in the open thread's header between the title and the auto-reply switch (a COMPONENT so it may call hooks), plus an opaque `ChatThread.meta?: Record<string, unknown>` the organ never reads and hands back to it. Omit ⇒ header byte-identical. First consumer: products/social-wiring WhatsAppChatWindow (Julia chip + pause toggle + LGPD delete). Colocated tests in ChatWindow.test.tsx."
+  - "2026-10-26 (WhatsAppInbox): ADDITIVE left-pane slots `threadListHeader?: ReactNode` (between the 'Conversas' label and the list - a search box) and `threadListFooter?: ReactNode` (under the list - a 'load more' button). The organ never reads them; they render even when the list is empty/errored so a search with no results keeps its input. Omit both => pane byte-identical. First consumer: components/whatsapp-inbox/WhatsAppInbox.tsx. Two colocated tests."
 
 errors_encountered: []
 

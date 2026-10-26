@@ -82,7 +82,8 @@ _SUBMODULES = frozenset(
         "dependencies", "dev_auth", "health", "llm_defaults", "llm_router",
         "me_router", "mfa_router", "rate_limit", "routers", "scheduler_router",
         "status_pagina_router", "team_policy", "upload_route_overrides",
-        "whatsapp_connections_router", "_version", "_version_static",
+        "whatsapp_connections_router", "whatsapp_inbox_router", "_version",
+        "_version_static",
     }
 )
 

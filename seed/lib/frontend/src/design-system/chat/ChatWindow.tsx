@@ -295,6 +295,14 @@ export interface ChatWindowProps {
    */
   selectedThreadId?: string | null;
   onSelectThread?: (threadId: string | null) => void;
+  /**
+   * Optional slots in the LEFT pane (2026-10-26, WhatsAppInbox): `threadListHeader` renders
+   * between the "Conversas" label and the list (a search box), `threadListFooter` renders
+   * under the list (a "load more" button). The organ never reads them. Omit both ⇒ the pane
+   * is byte-identical to before.
+   */
+  threadListHeader?: ReactNode;
+  threadListFooter?: ReactNode;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1037,6 +1045,8 @@ export function ChatWindow({
   className,
   selectedThreadId: controlledSelectedThreadId,
   onSelectThread,
+  threadListHeader,
+  threadListFooter,
 }: ChatWindowProps) {
   const [internalSelectedThreadId, setInternalSelectedThreadId] = useState<string | null>(null);
   // Controlled/uncontrolled split (contract-free React idiom): a consumer
@@ -1068,6 +1078,7 @@ export function ChatWindow({
         <div className="border-b px-3 py-1.5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Conversas</p>
         </div>
+        {threadListHeader}
         <div className="flex-1 overflow-y-auto">
           {/* Same scoping as the message list below — see its comment. */}
           {loadingThreads && threads.length === 0 ? (
@@ -1091,6 +1102,7 @@ export function ChatWindow({
               ))}
             </div>
           )}
+          {threadListFooter}
         </div>
       </div>
 

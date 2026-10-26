@@ -58,6 +58,11 @@ Public surface:
   `FakeResponseRegistry` + `PersistentResponseRegistry` +
   `get_response_registry` (drift observability side-car).
 - FastAPI: `create_whatsapp_webhook_router(... , dedup=)` factory.
+- Inbox (read + reply conversations): the `inbox` subpackage -
+  chats/messages DDL + `WhatsAppChatStore` (Fake+Supabase+fake-or-refuse factory) +
+  `ingest_waha_event` (`on_new_chat` exactly once) + NOWEB backfill + realtime; router
+  `noctusai_seed.whatsapp_inbox_router`. Not re-exported here (import
+  `noctusai_lib.integrations.whatsapp.inbox`). See `KB § CONTEXT/INTEGRATIONS/whatsapp.md` §4d.
 - Settings: `WhatsAppSettings` Pydantic model.
 
 See `KB § PATTERNS/whatsapp-chatbot-seed.md` for the wiring recipe.

@@ -350,6 +350,43 @@ BR mobiles exist on WhatsApp with or without the 9th digit (older accounts: `55 
 - Errors: `WahaNumberNotOnWhatsApp(tried)` (no spelling registered), `WahaNumberCheckError` (check endpoint unavailable -> `send_text_to_phone` falls back to send-then-retry across variants).
 - `FakeWahaClient.registered_numbers` / `check_unavailable` mirror it. `send_text(chat_id, ...)` is unchanged (backward compatible).
 
+## 4d. Inbox organ — read + reply conversations (2026-10-26)
+
+The conversations pipeline `social-wiring` grew (chat list, thread, reply, unread, backfill, realtime) lifted to the seed WITHOUT its Julia / chatbot / auto-reply / lead-intake behaviour. First consumer: `monica` (pilot #1). Sits on top of the QR organ (§4: `whatsapp_connections_router` + `connection_store`) — one connection = one WAHA line.
+
+| Piece | Where | What |
+|---|---|---|
+| DDL | `noctusai_lib.integrations.whatsapp.inbox` | `whatsapp_chats_table_ddl(schema)` (PK `(connection_id, chat_id)`, FK to connections ON DELETE CASCADE, `origin`, `new_chat_notified_at`) + `whatsapp_messages_table_ddl(schema)` (`UNIQUE (connection_id, waha_message_id)` = the dedup guard). Authoring-time helpers like `whatsapp_connections_table_ddl`. |
+| Store | same | `WhatsAppChatStore` Protocol · `FakeWhatsAppChatStore` · `SupabaseWhatsAppChatStore` · `build_whatsapp_chat_store(client, schema=, allow_fake=False)` — **fake-or-refuse**: no client and no explicit `allow_fake` raises `InboxStoreNotConfigured`. |
+| Ingest | same | `ingest_waha_event(body, connection=, chat_store=, realtime=, on_new_chat=, lid_cache=, waha_client_factory=)`: `message` / `message.any` / `message.ack` / `session.status`. |
+| Backfill | same | `backfill_connection` / `run_backfill_all` / `register_inbox_backfill_job` (seed scheduler). |
+| Realtime | same | `build_inbox_realtime(redis_client= \| redis_url= \| allow_in_process=True)` over `noctusai_lib.realtime`; events `message.new`, `chat.upsert`, `message.ack`, `chat.read`, `session.status` on scope `wa:conn:{connection_id}`. |
+| Router | `noctusai_seed.whatsapp_inbox_router.create_whatsapp_inbox_router` | `GET .../chats`, `GET\|POST .../chats/{chat_id}/messages`, `POST .../chats/{chat_id}/read`, `POST .../backfill`, `GET .../events` (SSE) + the PUBLIC webhook. |
+| Frontend | `@noctusai/lib` | `createWhatsAppInboxHooks(api, {getAuthToken})` + `<WhatsAppInbox hooks connectionId initialChatId renderChatHeaderExtra/>` (organ `components/whatsapp-inbox/`, on the seed `ChatWindow`). |
+
+**Consume recipe (backend).** Mount the connections router AND the inbox router; the webhook path must be the same value in both (`webhook_path_prefix`, default `/api/whatsapp/webhook`) because the connections router MINTS `{product_url}{prefix}/{token}` and registers it on WAHA, and the inbox router RECEIVES on `{prefix}/{token}` (`test_webhook_path_matches_minted_url` pins the round trip). Pass `on_new_chat=lead_service.upsert_from_whatsapp` to turn a new contact into a lead.
+
+**Contracts worth knowing**
+
+- **`on_new_chat(org_id, connection_id, chat)` fires exactly once** per chat row first created by an INBOUND message to a NON-group chat. The decision is an atomic conditional UPDATE (`claim_new_chat_notification`) on the chat row — so a replayed webhook, the `message` + `message.any` pair, concurrent deliveries, and deleting the downstream lead (the chat row persists) can never fire it twice. Chats created by an outbound message or by backfill never fire. A consumer that raises releases the claim; the next inbound message of that chat retries (so the consumer must be idempotent — e.g. UNIQUE `(org, connection, chat)` on leads).
+- **Dedup is the DB.** No Redis/in-memory pre-filter: a duplicate costs one cheap UNIQUE-conflict insert. The webhook returns 5xx on a store failure (WAHA retries; the retry is idempotent) and 200 for payloads it cannot parse.
+- **@lid.** A `@lid` chat is canonicalised to `<phone>@c.us` through the seed `LidPhoneCache` (then `resolve_identity` over WAHA, fail-soft); unresolved stays `@lid` with `phone = null`. Chat ids are never rebuilt from a sender field (`fromMe` -> `to`, inbound -> `from`; a group's `participant` is the SENDER, not the chat). A chat stored under an `@lid` id before its phone resolved is NOT merged retroactively.
+- **Unread is recomputed** (inbound messages newer than `last_read_at`), never incremented. Backfilled chats start read.
+- **Pagination.** Chats: opaque `next_cursor`. Messages: pages are chronological, `before` = `<iso>|<id>` of the oldest held (WAHA timestamps have 1 s resolution — a bare timestamp cursor loses ties).
+- **Send** goes through the `WahaClient`, which paces every request on the shared `"whatsapp"` token bucket (`integrations.rate_limit`); a connection with no `base_url` is refused (503) rather than handed the Fake client.
+- **Webhook auth.** Path token (unknown -> generic 404, never logged) + `X-Webhook-Hmac-SHA256` when `webhook_hmac_secret` is set. The seed `set_webhook` registers `hmac: None` per webhook, so WAHA only signs if it runs with a global `WHATSAPP_HOOK_HMAC_KEY` — set the same value on the product.
+
+**Traps**
+
+1. **NOWEB store.** Backfill needs `list_chats` / `fetch_chat_messages`, which only work on a session started with `store.enabled` + `fullSync` (the seed start/restart does that). WAHA answers HTTP 400 otherwise -> report status `noweb_store_required`.
+2. **Backfill single-flight is per process.** An in-memory set + the scheduler's `max_instances=1`; with >1 worker/replica each process may backfill the same connection. Safe (UNIQUE makes inserts idempotent), wasteful. `NOC-REMEDIATE[wa-inbox-backfill-distributed-lock]`.
+3. **Backfill is one-shot per chat** (`synced_through`): `fetch_chat_messages` has no `before=` cursor.
+4. **Realtime is per process unless Redis.** `allow_in_process=True` is a declared single-worker decision; neither it nor Redis -> `InboxRealtimeNotConfigured`.
+5. **Media URLs are WAHA's own** (browser-unreachable behind the docker network): stored as given; a media proxy is not in v1.
+6. **Mark-read does not touch the phone** unless `mirror_read_to_whatsapp=True` (WAHA `sendSeen` = blue ticks for the contact).
+
+`NOC-REMEDIATE[sw-consume-seed-wa-inbox]`: `social-wiring` keeps its own copy of this pipeline (`whatsapp_chat_store.py`, `whatsapp_backfill.py`, `whatsapp_realtime.py`, migration 042, chat routes, `useWhatsAppChats.ts`) — converging it onto the organ is deferred until `monica` has run the organ in prod and the community product has adopted it (SW's richer behaviour — Julia pause, agente mirror, LGPD delete — needs named seams first).
+
 ## 5. Gaps / out-of-scope (with destinations)
 
 | Item | Status | Destination |
@@ -360,6 +397,6 @@ BR mobiles exist on WhatsApp with or without the 9th digit (older accounts: `55 
 | Live confirmation of WAHA group-endpoint wire shapes | inferred from the WAHA Groups API's documented convention, not fetched from a live swagger this pass (no `waha` MCP / web access bound to this dispatch, live-VPS read denied) | Re-verify against `GET /api/server/version` + the live swagger (`waha.server.version` MCP tool, or `/api` on a bound session) before group ops carry real traffic; see `NOC-REMEDIATE[waha-verify]` in `mappers.py` |
 | `devlikeapro/waha:latest` unpinned in `deploy/` | pre-existing, untouched by this slice (group endpoints differ by engine: WEBJS/NOWEB/GOWS — fleet runs NOWEB) | `deploy/services/compose.services.yml:106` / `deploy/fleet/compose.infra.prod.yml:109` — pin when a devops slice is scheduled |
 | Read-state INBOUND (phone → app) | **not expressible with this transport** | `message.ack` carries acks only for messages WE sent; `chats/overview`'s `ChatSummary` (`{id,name,picture,lastMessage,_chat}`) has no top-level `unreadCount`. `sendSeen` therefore syncs read state OUT to the device, but reading a chat ON the phone does not clear the app's badge. Probe the untyped `_chat.unreadCount` once a session is `WORKING` if this needs revisiting. |
-| Realtime delivery to the browser | shipped, but **not in this package** | `noctusai_lib.realtime` (SSE + Redis Streams) → `CONTEXT/PATTERNS/common/realtime-sse-bus.md` |
+| Realtime delivery to the browser | shipped, but **not in this package** (the inbox organ §4d wires it) | `noctusai_lib.realtime` (SSE + Redis Streams) → `CONTEXT/PATTERNS/common/realtime-sse-bus.md` |
 | Chatbot orchestration (buffer/worker/LLM dispatch) | **separate by design** | `noctusai_lib.domain.chatbot` + recipe `CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md` |
 | FB Pages / Instagram Graph | **separate package** | `noctusai_lib.integrations.meta` — `CONTEXT/INTEGRATIONS/meta.md` |

@@ -915,3 +915,34 @@ describe("ChatWindow — rename seam", () => {
     expect(screen.queryByTestId("chat-thread-rename-input-t1")).toBeNull();
   });
 });
+
+describe("ChatWindow — thread-list slots (threadListHeader / threadListFooter)", () => {
+  it("renders both slots around the list, and still renders them when the list is empty", () => {
+    const { rerender } = render(
+      <ChatWindow
+        scopeId="s1"
+        adapter={makeAdapter()}
+        threadListHeader={<div data-testid="slot-header">busca</div>}
+        threadListFooter={<div data-testid="slot-footer">mais</div>}
+      />,
+    );
+    expect(screen.getByTestId("slot-header")).toBeTruthy();
+    expect(screen.getByTestId("slot-footer")).toBeTruthy();
+    expect(screen.getByText("João Raphael")).toBeTruthy();
+    rerender(
+      <ChatWindow
+        scopeId="s1"
+        adapter={makeAdapter({ useThreads: () => ({ data: [], isLoading: false, isError: false }) })}
+        threadListHeader={<div data-testid="slot-header">busca</div>}
+      />,
+    );
+    // The search box must survive a search with no results.
+    expect(screen.getByTestId("slot-header")).toBeTruthy();
+  });
+
+  it("omitting both slots leaves the pane unchanged", () => {
+    render(<ChatWindow scopeId="s1" adapter={makeAdapter()} />);
+    expect(screen.queryByTestId("slot-header")).toBeNull();
+    expect(screen.getByText("Maria Silva")).toBeTruthy();
+  });
+});
