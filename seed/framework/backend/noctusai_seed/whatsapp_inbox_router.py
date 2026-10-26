@@ -34,6 +34,9 @@ Security notes:
   ``webhook_hmac_secret`` is set. ``set_webhook`` in the seed client registers
   ``hmac: None`` per webhook, so signing only happens if WAHA itself is run
   with a global ``WHATSAPP_HOOK_HMAC_KEY`` - set the same value here.
+* **Per-app switch**: a connection with ``app_enabled=False`` answers the webhook ``200 {"status":"disabled"}``
+  (nothing stored, no ``on_new_chat`` / ``on_message``) and refuses sends with 409 ``app_disabled``. A
+  ``session_role='borrower'`` line cannot backfill (409 ``session_borrowed``).
 * Sending never falls back to the Fake: a connection with no ``base_url``
   yields 503 instead of a fake "Sent".
 * Outbound pacing is the seed ``whatsapp`` token bucket that every
@@ -258,6 +261,11 @@ def create_whatsapp_inbox_router(
         record = await run_in_threadpool(
             lambda: _require_record(conn_store, connection_id=connection_id, org_id=org_id, decrypt=True)
         )
+        if not record.app_enabled:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"code": "app_disabled", "message": "This app is switched OFF for this WhatsApp line"},
+            )
         chat = await run_in_threadpool(
             lambda: chats.get_chat(org_id=org_id, connection_id=connection_id, chat_id=chat_id)
         )
@@ -348,6 +356,12 @@ def create_whatsapp_inbox_router(
         record = await run_in_threadpool(
             lambda: _require_record(conn_store, connection_id=connection_id, org_id=org_id, decrypt=True)
         )
+        if record.session_role == "borrower":
+            # backfill reads the whole WAHA history of a session this app does not own
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"code": "session_borrowed", "message": "This line borrows another app's WhatsApp session"},
+            )
         if is_backfill_running(connection_id):
             return BackfillStartedOut(status="already_running")
         client = _waha_client(record)
@@ -400,6 +414,11 @@ def create_whatsapp_inbox_router(
         if record is None:
             # The token is a routing credential: never logged, generic 404.
             raise HTTPException(status.HTTP_404_NOT_FOUND)
+        if not record.app_enabled:
+            # Per-app switch OFF: acknowledge (200, so WAHA does not retry) but store/notify NOTHING. Other apps
+            # on the same session have their own webhook entry and are unaffected. A future per-chat dispatcher
+            # fans out from exactly this point.
+            return {"status": "disabled"}
         try:
             body = json.loads(verified.body.decode("utf-8")) if verified.body else {}
         except ValueError:

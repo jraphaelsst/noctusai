@@ -91,6 +91,11 @@ async def toggle_agent(
             detail={"detail": "Agente não encontrado.", "code": "not_found"},
         ) from exc
 
+    # NOC-REMEDIATE[agents-toggle-bridge-generalize]: this bridge is one-chat -> social-wiring only. Phase 2 of the
+    # per-app WhatsApp switch: generalise it so `external_ref={product, connection_id}` calls THAT product's seed
+    # route `PUT /api/whatsapp/connections/{id}/enabled` (seed `create_whatsapp_connections_router`, already
+    # shipped) -- then the "Agentes" toggle IS the app's on/off button for every app (monica first); the
+    # social-wiring `auto_reply_enabled` flag maps onto `app_enabled` when SW is restructured — 2026-10-26
     if key == "one-chat":
         # Contract §E.2: "one-chat: calls E.6, and the response reflects
         # social-wiring's returned state." The local `agents.ativo` column

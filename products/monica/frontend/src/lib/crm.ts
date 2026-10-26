@@ -3,7 +3,7 @@
  * writes no query code). Every page imports from here, so Funil, Lista, Conversas and the lead modal share one
  * query cache per resource.
  */
-import { createLeadsHooks, createWhatsAppConnectionsHooks, createWhatsAppInboxHooks } from "@noctusai/lib";
+import { createLeadsHooks, createWhatsAppConnectionsHooks, createWhatsAppInboxHooks, leadsKeys } from "@noctusai/lib";
 import { createOrgSpecsHooks } from "@noctusai/lib/components";
 
 import { api, getAuthToken } from "@/lib/api";
@@ -12,7 +12,8 @@ import { api, getAuthToken } from "@/lib/api";
 export const CONTEXTO_AGENT_KEY = "monica-leads";
 
 export const leadsHooks = createLeadsHooks(api);
-export const connectionsHooks = createWhatsAppConnectionsHooks(api);
+/** A purge deletes / detaches leads: the board and the list refresh with it. */
+export const connectionsHooks = createWhatsAppConnectionsHooks(api, { purgeInvalidates: [leadsKeys.all] });
 export const inboxHooks = createWhatsAppInboxHooks(api, { getAuthToken });
 /** `/api/contexto` is monica's own proxy to the agents org specs (it forwards the user's bearer). */
 export const contextoHooks = createOrgSpecsHooks(api, { path: () => "/api/contexto" });

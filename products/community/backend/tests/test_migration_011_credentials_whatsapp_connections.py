@@ -97,5 +97,5 @@ def test_credentials_matches_seed_ddl_helper(flat: str):
 def test_whatsapp_connections_matches_seed_ddl_helper(flat: str):
     from noctusai_lib.integrations.whatsapp.connection_store import whatsapp_connections_table_ddl
 
-    expected = " ".join(whatsapp_connections_table_ddl("community").split())
+    expected = " ".join(whatsapp_connections_table_ddl("community", app_switch=False).split())
     assert expected in flat

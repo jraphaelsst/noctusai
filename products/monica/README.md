@@ -15,11 +15,13 @@ CRM do consultório de psicanálise de **Mônica Tangerino** (psicanalista; fala
 
 Funil: **Lead → Atendimento → Negociação → Fechado**. Origens: WhatsApp, Instagram, Indicação, Outro (`backend/app/crm.py` — são dados, mudar não pede migration). Todo número novo que escreve (não-grupo) vira lead em "Lead" com origem WhatsApp; apagar o lead **não** o traz de volta (a conversa persiste — é o desejado). Toda mensagem, recebida ou enviada, atualiza a prévia do cartão.
 
+**Liga/desliga por app (fase de testes)**: cada conexão tem um interruptor (`PUT /api/whatsapp/connections/{id}/enabled`). Desligado, o Monica ignora a linha (o webhook responde `disabled` e não grava nada; enviar dá 409) — outros apps no mesmo número continuam respondendo. Uma conexão `borrower` usa a sessão de WhatsApp de outro app: parear/reiniciar/desconectar ficam bloqueados. Com o app desligado, "Apagar dados de teste" (`POST .../purge`, digitando o nome da conexão) apaga conversas, mensagens e os leads automáticos que ninguém editou; leads editados são mantidos, sem o vínculo com a conversa. Detalhes: `KB § INTEGRATIONS/whatsapp.md`.
+
 ## Stack
 
 - **Backend**: FastAPI via `create_product_app()` (porta 8020); `mount_leads`, conexões + caixa de entrada do WhatsApp (`app/routers/whatsapp_router.py`), proxy `/api/contexto`, `mount_finance`.
 - **Frontend**: React via `createProductApp()` + `createProductLayout()` (porta 8240).
-- **Banco**: Supabase, schema `monica` (migrations 001–016: leads, `whatsapp_connections|chats|messages`, finance, `status_pagina`).
+- **Banco**: Supabase, schema `monica` (migrations 001–017: leads, `whatsapp_connections|chats|messages`, finance, `status_pagina`).
 
 ## Configuração (nomes; valores só no `.env` do servidor)
 

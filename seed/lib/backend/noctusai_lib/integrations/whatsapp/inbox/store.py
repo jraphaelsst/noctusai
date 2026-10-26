@@ -206,6 +206,11 @@ class WhatsAppChatStore(Protocol):
 
     def list_connection_chat_ids(self, *, org_id: UUID, connection_id: UUID) -> list[str]: ...
 
+    def delete_connection_chats(self, *, org_id: UUID, connection_id: UUID) -> tuple[int, int]:
+        """Testing-phase purge: delete ALL of the connection's chats (messages go with them).
+        Returns ``(chats_deleted, messages_deleted)``."""
+        ...
+
 
 # ─── Fake ───────────────────────────────────────────────────────────────────
 
@@ -380,6 +385,17 @@ class FakeWhatsAppChatStore:
             row = self._chat(org_id, connection_id, chat_id)
             if row is not None:
                 row["synced_through"] = synced_through
+
+    def delete_connection_chats(self, *, org_id, connection_id):
+        with self._lock:
+            cid, oid = str(connection_id), str(org_id)
+            chat_keys = [k for k, r in self.chats.items() if k[0] == cid and r["org_id"] == oid]
+            msg_keys = [k for k, r in self.messages.items() if k[0] == cid and r["org_id"] == oid]
+            for k in chat_keys:
+                del self.chats[k]
+            for k in msg_keys:
+                del self.messages[k]
+            return len(chat_keys), len(msg_keys)
 
     def list_connection_chat_ids(self, *, org_id, connection_id):
         with self._lock:
@@ -580,6 +596,15 @@ class SupabaseWhatsAppChatStore:
         rows = (self._chats().select("chat_id").eq("org_id", str(org_id))
                 .eq("connection_id", str(connection_id)).execute().data or [])
         return [r["chat_id"] for r in rows]
+
+    def delete_connection_chats(self, *, org_id, connection_id):
+        # messages first, explicitly: correctness must not depend on a product's FK cascade being declared
+        def scoped(query):
+            return query.eq("org_id", str(org_id)).eq("connection_id", str(connection_id))
+
+        messages = scoped(self._messages().delete()).execute()
+        chats = scoped(self._chats().delete()).execute()
+        return len(chats.data or []), len(messages.data or [])
 
 
 def _escape_like(text: str) -> str:

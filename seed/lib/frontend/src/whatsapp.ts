@@ -31,7 +31,7 @@
  * `./components/whatsapp-connections` (`WhatsAppConnectionsPage`,
  * `CreateConnectionDialog`, `ConnectionDetailDialog`).
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { listOps, useCacheWriteMutation } from './cache-writes';
 import type { ApiClient } from './api';
 
@@ -54,8 +54,24 @@ export interface WhatsAppConnectionLine {
   session_name: string;
   /** Auto-minted public inbound webhook URL; read-only. */
   webhook_url: string | null;
+  /**
+   * The app's on/off switch for this line: off => THIS app ignores the line's traffic (other apps sharing the
+   * same WAHA session are unaffected). Absent on a product whose backend predates the switch (treated as on).
+   */
+  app_enabled?: boolean;
+  /** `borrower` = the line shares another app's WAHA session; its session controls are refused (409). */
+  session_role?: 'owner' | 'borrower';
   created_at: string;
   updated_at: string;
+}
+
+/** Result of the testing-phase purge (`POST .../{id}/purge`). */
+export interface WhatsAppPurgeResult {
+  connection_id: string;
+  chats_deleted: number;
+  messages_deleted: number;
+  /** Whatever the product's purge seam reported (e.g. `leads_deleted` / `leads_detached`). */
+  extra: Record<string, number>;
 }
 
 /**
@@ -65,6 +81,8 @@ export interface WhatsAppConnectionLine {
 export interface CreateWhatsAppConnectionBody {
   label: string;
   api_key: string;
+  /** `borrower` registers a line on a session another app owns (test phases). Default `owner`. */
+  session_role?: 'owner' | 'borrower';
 }
 
 /**
@@ -156,6 +174,8 @@ export interface IntakeCancelResult {
 export interface CreateWhatsAppConnectionsHooksOptions {
   /** Default `/api/whatsapp/connections`. */
   basePath?: string;
+  /** The product's own derived reads a purge changes (e.g. its leads board), refreshed after a purge. */
+  purgeInvalidates?: QueryKey[];
 }
 
 const DEFAULT_CONNECTIONS_BASE_PATH = '/api/whatsapp/connections';
@@ -165,6 +185,7 @@ export function createWhatsAppConnectionsHooks(
   options: CreateWhatsAppConnectionsHooksOptions = {},
 ) {
   const basePath = options.basePath ?? DEFAULT_CONNECTIONS_BASE_PATH;
+  const purgeInvalidates = options.purgeInvalidates ?? [];
   const KEY = ['whatsapp', 'connections', basePath] as const;
 
   /**
@@ -355,9 +376,45 @@ export function createWhatsAppConnectionsHooks(
     });
   }
 
+  /**
+   * The app's on/off switch for one line (`PUT .../{id}/enabled`). The toggle flips on the click and the
+   * server's answer replaces it; a refusal puts the previous value back (the cache-write contract).
+   */
+  function useSetConnectionEnabled() {
+    return useCacheWriteMutation<WhatsAppConnectionLine, { id: string; enabled: boolean }>({
+      mutationFn: ({ id, enabled }) =>
+        api.put<WhatsAppConnectionLine>(`${basePath}/${encodeURIComponent(id)}/enabled`, { enabled }),
+      targets: ({ id }) => [
+        {
+          queryKey: KEY,
+          optimistic: (old: WhatsAppConnectionLine[] | undefined, { enabled }) =>
+            listOps.patch(old, id, { app_enabled: enabled }),
+          commit: (old: WhatsAppConnectionLine[] | undefined, saved) => listOps.patch(old, id, saved),
+        },
+      ],
+    });
+  }
+
+  /**
+   * Testing-phase purge (`POST .../{id}/purge`): erases the line's chats + messages (and the product's derived
+   * data). Needs the app OFF and the connection label typed back as `confirm`. `alsoInvalidate` names the
+   * product's own derived reads (e.g. its leads board) that the purge changes.
+   */
+  function usePurgeConnection(alsoInvalidate: QueryKey[] = purgeInvalidates) {
+    return useCacheWriteMutation<WhatsAppPurgeResult, { id: string; confirm: string }>({
+      mutationFn: ({ id, confirm }) =>
+        api.post<WhatsAppPurgeResult>(`${basePath}/${encodeURIComponent(id)}/purge`, { confirm }),
+      // The result is counts only: what changed is the inbox (chats / messages gone) and the product's derived views.
+      targets: [{ queryKey: KEY }],
+      invalidate: [['whatsapp-inbox'], ...alsoInvalidate],
+    });
+  }
+
   return {
     useConnections,
     useConnectionMutations,
+    useSetConnectionEnabled,
+    usePurgeConnection,
     useConnectionStatus,
     useConnectionQr,
     useConnectionActions,

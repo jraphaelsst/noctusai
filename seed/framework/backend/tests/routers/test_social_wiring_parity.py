@@ -284,7 +284,9 @@ class TestWhatsAppConnectionsRouterParity:
             "/api/whatsapp/connections", json={"label": "L", "api_key": "k"}
         )
         assert resp.status_code == 201
-        assert set(resp.json().keys()) == SW_WHATSAPP_CONNECTION_OUT_CORE_FIELDS
+        # SW's core fields are all present and unchanged; the ONLY additions are the per-app switch columns
+        # (additive -- SW keeps its own router, and its `auto_reply_enabled` maps onto `app_enabled` later).
+        assert set(resp.json().keys()) == SW_WHATSAPP_CONNECTION_OUT_CORE_FIELDS | {"app_enabled", "session_role"}
 
     def test_status_codes_match_sw_contract(self):
         app = self._app()

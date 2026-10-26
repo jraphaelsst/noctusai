@@ -10,6 +10,10 @@ Mounts the SEED organs, no product logic:
   `monica.whatsapp_chats|messages`. `on_new_chat` turns each new inbound number into a lead, `on_message` keeps the
   card preview fresh (`app/services/whatsapp_leads.py`).
 
+Per-app switch / borrowed session / purge: `PUT .../{id}/enabled`, `session_role='borrower'` (migration 017) and
+`POST .../{id}/purge` (leads seam `on_purge`) come with the seed connections router -- see
+`KB § INTEGRATIONS/whatsapp.md § Per-app switch, borrowed sessions and purge`.
+
 The webhook prefix is the same default value in both routers (the connections router mints
 `{product_url}/api/whatsapp/webhook/{token}`; the inbox router receives it).
 """
@@ -31,7 +35,7 @@ from noctusai_seed.whatsapp_inbox_router import create_whatsapp_inbox_router
 
 from app.config import settings
 from app.dependencies import _db, coerce_org_uuid, get_admin_client, get_current_user_org
-from app.services.whatsapp_leads import on_message, on_new_chat
+from app.services.whatsapp_leads import on_message, on_new_chat, on_purge
 
 SCHEMA = "monica"
 
@@ -77,6 +81,9 @@ router.include_router(
         waha_session=settings.monica_waha_session,
         resolve_org_id=coerce_org_uuid,
         resolve_user_id=_resolve_user_id,
+        chat_store_factory=_chat_store,
+        on_purge=on_purge,
+        audit_product_slug="monica",
     )
 )
 router.include_router(

@@ -215,3 +215,97 @@ describe('WhatsAppConnectionsPage: delete', () => {
     expect(api.delete).not.toHaveBeenCalled();
   });
 });
+
+// ── 8. App switch / borrowed session / purge ───────────────────────────────────
+
+describe('WhatsAppConnectionsPage: per-app switch', () => {
+  const withLine = (extra: Partial<WhatsAppConnectionLine>, over: Record<string, any> = {}) =>
+    makeApi({
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith('/status')) return STATUS_UNPAIRED;
+        if (path.endsWith('/qr')) return QR_SCANNABLE;
+        return [{ ...LINE, app_enabled: true, session_role: 'owner', ...extra }];
+      }),
+      ...over,
+    });
+
+  it('draws no switch on a backend that predates it', async () => {
+    renderPage(makeApi());
+    await screen.findByText('Atendimento');
+    expect(screen.queryByTestId('wa-enabled-conn-1')).not.toBeInTheDocument();
+  });
+
+  it('PUTs /enabled and flips the switch on the click, before the server answers', async () => {
+    let release!: (line: WhatsAppConnectionLine) => void;
+    const api = withLine({}, { put: vi.fn(() => new Promise((r) => { release = r as any; })) });
+    renderPage(api);
+    const sw = await screen.findByTestId('wa-enabled-conn-1');
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(sw);
+    await waitFor(() => expect(screen.getByTestId('wa-enabled-conn-1')).toHaveAttribute('aria-checked', 'false'));
+    expect(api.put).toHaveBeenCalledWith('/api/whatsapp/connections/conn-1/enabled', { enabled: false });
+    expect(screen.getByTestId('wa-off-conn-1')).toBeInTheDocument();
+    release({ ...LINE, app_enabled: false, session_role: 'owner' });
+  });
+
+  it('puts the switch back when the server refuses', async () => {
+    const api = withLine({}, { put: vi.fn(async () => { throw new Error('boom'); }) });
+    renderPage(api);
+    const sw = await screen.findByTestId('wa-enabled-conn-1');
+    fireEvent.click(sw);
+    await waitFor(() => expect(api.put).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('wa-enabled-conn-1')).toHaveAttribute('aria-checked', 'true'));
+  });
+
+  it('marks a borrowed line and disables every session control in its detail', async () => {
+    renderPage(withLine({ session_role: 'borrower' }));
+    expect(await screen.findByTestId('wa-borrower-conn-1')).toHaveTextContent('Sessão compartilhada');
+    fireEvent.click(screen.getByText('Atendimento'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('wa-borrowed-note')).toBeInTheDocument();
+    expect(within(dialog).queryByTestId('wa-qr-panel')).not.toBeInTheDocument();
+    for (const name of ['Iniciar', 'Reiniciar', 'Desconectar', /Recuperar conexão/, 'Reenviar configuração']) {
+      expect(within(dialog).getByRole('button', { name })).toBeDisabled();
+    }
+  });
+});
+
+describe('WhatsAppConnectionsPage: purge', () => {
+  const offLine = () =>
+    makeApi({
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith('/status')) return STATUS_UNPAIRED;
+        if (path.endsWith('/qr')) return QR_SCANNABLE;
+        return [{ ...LINE, app_enabled: false, session_role: 'owner' }];
+      }),
+      post: vi.fn(async () => ({ connection_id: 'conn-1', chats_deleted: 2, messages_deleted: 5, extra: { leads_deleted: 1 } })),
+    });
+
+  it('offers the purge only while the app is off', async () => {
+    renderPage(makeApi({
+      get: vi.fn(async (path: string) => (path.endsWith('/status') ? STATUS_UNPAIRED : path.endsWith('/qr') ? QR_SCANNABLE : [{ ...LINE, app_enabled: true }])),
+    }));
+    fireEvent.click(await screen.findByText('Atendimento'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('button', { name: 'Apagar dados de teste' })).not.toBeInTheDocument();
+  });
+
+  it('arms only when the label is typed back, then POSTs it and shows the counts', async () => {
+    const api = offLine();
+    renderPage(api);
+    fireEvent.click(await screen.findByText('Atendimento'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Apagar dados de teste' }));
+    const confirmInput = await screen.findByLabelText(/Digite/);
+    const submit = screen.getByRole('button', { name: 'Apagar dados' });
+    expect(submit).toBeDisabled();
+    fireEvent.change(confirmInput, { target: { value: 'Atendiment' } });
+    expect(submit).toBeDisabled();
+    fireEvent.change(confirmInput, { target: { value: 'Atendimento' } });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/whatsapp/connections/conn-1/purge', { confirm: 'Atendimento' }),
+    );
+    expect(await screen.findByTestId('wa-purge-done')).toHaveTextContent('2 conversas e 5 mensagens apagadas');
+  });
+});

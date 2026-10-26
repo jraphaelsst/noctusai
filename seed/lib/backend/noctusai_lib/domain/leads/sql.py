@@ -9,6 +9,9 @@ them never needs a migration. `position` is `numeric` (fractional ordering, see
 `domain.pipeline.ordering`): an integer column would put a card on the wrong side of its neighbour.
 `phone` is canonical E.164 (`primitives.phone.normalize_phone`).
 
+`edited_at` is set only by a HUMAN edit (`LeadsService.update` / a stage move), never by the WhatsApp preview
+refresh: it is what the testing-phase purge reads to keep a lead somebody worked on.
+
 Prerequisite (not created here): `public.current_org_id_for(text)`.
 """
 from __future__ import annotations
@@ -45,7 +48,8 @@ def leads_table_ddl(schema: str, *, table: str = "leads", org_id_expr: str | Non
     last_message_preview   TEXT,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by             UUID
+    created_by             UUID,
+    edited_at              TIMESTAMPTZ
 );
 -- One lead per WhatsApp chat: the guard that makes `upsert_from_whatsapp` idempotent under concurrent webhooks.
 CREATE UNIQUE INDEX IF NOT EXISTS {UQ_CHAT.format(table=t)}

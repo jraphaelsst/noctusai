@@ -122,6 +122,21 @@ class SupabaseLeadsStore:
         q = q.order("position").order("created_at").order("id").limit(limit)
         return [dict(r) for r in (q.execute().data or [])]
 
+    def purge_from_connection(self, org_id: str, connection_id: str, *, origin: str) -> tuple[int, int]:
+        # Delete first (untouched automatic leads), then detach whatever is left of the connection: the second
+        # statement therefore only ever sees human-touched rows. A crash between them leaves rows attached to a
+        # connection the caller is about to remove; re-running the purge finishes it.
+        gone = (
+            self._t().delete().eq("org_id", str(org_id)).eq("whatsapp_connection_id", str(connection_id))
+            .eq("origin", origin).is_("created_by", "null").is_("edited_at", "null").execute()
+        )
+        kept = (
+            self._t()
+            .update({"whatsapp_connection_id": None, "whatsapp_chat_id": None, "last_message_preview": None})
+            .eq("org_id", str(org_id)).eq("whatsapp_connection_id", str(connection_id)).execute()
+        )
+        return len(getattr(gone, "data", None) or []), len(getattr(kept, "data", None) or [])
+
 
 def build_leads_store(
     client: Any = None, *, table: str = "leads", schema: Optional[str] = None, fake: bool = False

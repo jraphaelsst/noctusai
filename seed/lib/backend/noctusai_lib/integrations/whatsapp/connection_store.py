@@ -49,12 +49,17 @@ __all__ = [
     "WhatsAppConnectionRecord",
     "WhatsAppConnectionStore",
     "WhatsAppConnectionStoreError",
+    "SESSION_ROLES",
+    "app_switch_alter_ddl",
     "build_whatsapp_connection_store",
     "resolve_by_webhook_token",
     "whatsapp_connections_table_ddl",
 ]
 
 DEFAULT_TABLE = "whatsapp_connections"
+
+#: ``owner`` pairs/drives the WAHA session; ``borrower`` shares another app's session (test phases).
+SESSION_ROLES = ("owner", "borrower")
 
 # Sentinel so update_connection() can distinguish "clear webhook_url to
 # NULL" from "leave webhook_url untouched" (both differ from passing a
@@ -94,6 +99,12 @@ class WhatsAppConnectionRecord:
     updated_at: Any
     api_key: Optional[str] = None
     webhook_token: Optional[str] = None
+    #: per-app on/off switch: ``False`` => THIS app ignores the line's traffic (webhook stores nothing, sends
+    #: refused). Other apps sharing the same WAHA session keep their own webhook entries and are unaffected.
+    app_enabled: bool = True
+    #: ``owner`` registered/paired the WAHA session; ``borrower`` shares another app's session and must never
+    #: drive its lifecycle (start/restart/logout/recover/qr/webhook/backfill are refused).
+    session_role: str = "owner"
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -163,6 +174,8 @@ class WhatsAppConnectionStore:
             updated_at=row.get("updated_at"),
             api_key=api_key,
             webhook_token=row.get("webhook_token"),
+            app_enabled=bool(row.get("app_enabled", True)),
+            session_role=row.get("session_role") or "owner",
             extra=self._record_extension(row),
         )
 
@@ -216,11 +229,16 @@ class WhatsAppConnectionStore:
         session_name: str = "default",
         webhook_url: Optional[str] = None,
         webhook_token: Optional[str] = None,
+        session_role: str = "owner",
         extra_fields: Optional[dict[str, Any]] = None,
     ) -> WhatsAppConnectionRecord:
         """Create a new connection. ``extra_fields`` is written verbatim
         into the insert payload — the write-side of the
-        ``record_extension`` extension seam."""
+        ``record_extension`` extension seam. ``session_role`` is only sent
+        when it is not the default, so a table created before the app
+        switch (no ``session_role`` column) keeps accepting owner inserts."""
+        if session_role not in SESSION_ROLES:
+            raise ValueError(f"session_role must be one of {SESSION_ROLES}, got {session_role!r}")
         payload: dict[str, Any] = {
             "org_id": str(org_id),
             "user_id": str(user_id),
@@ -231,6 +249,8 @@ class WhatsAppConnectionStore:
             "webhook_url": webhook_url,
             "webhook_token": webhook_token,
         }
+        if session_role != "owner":
+            payload["session_role"] = session_role
         if extra_fields:
             payload.update(extra_fields)
         resp = self._table().insert(payload).execute()
@@ -281,6 +301,14 @@ class WhatsAppConnectionStore:
         )
         rows = list(resp.data or [])
         return self._record(rows[0]) if rows else None
+
+    def set_app_enabled(
+        self, *, connection_id: UUID, org_id: UUID, enabled: bool
+    ) -> Optional[WhatsAppConnectionRecord]:
+        """Flip the per-app switch (org-scoped). ``None`` => no such line."""
+        return self.update_connection(
+            connection_id=connection_id, org_id=org_id, extra_fields={"app_enabled": bool(enabled)}
+        )
 
     def delete_connection(self, *, connection_id: UUID, org_id: UUID) -> bool:
         resp = (
@@ -333,7 +361,9 @@ def resolve_by_webhook_token(
     return store.get_by_webhook_token(token)
 
 
-def whatsapp_connections_table_ddl(schema: str, *, table: str = DEFAULT_TABLE) -> str:
+def whatsapp_connections_table_ddl(
+    schema: str, *, table: str = DEFAULT_TABLE, app_switch: bool = True
+) -> str:
     """DDL template for the org-scoped ``whatsapp_connections`` table.
 
     Mirrors `social-wiring` migrations 004 + 005 + 086 (org-scoped,
@@ -351,12 +381,25 @@ def whatsapp_connections_table_ddl(schema: str, *, table: str = DEFAULT_TABLE) -
     Supabase project (see
     :func:`noctusai_lib.security.api_keys.credentials_table_ddl`'s
     docstring for the same prerequisite).
+
+    ``app_switch`` (default True) adds the per-app switch columns
+    (``app_enabled``, ``session_role``). A migration already applied
+    BEFORE the switch existed pins the old shape with ``app_switch=False``
+    and gets the columns from a follow-up ``ALTER`` (see
+    :data:`APP_SWITCH_ALTER_DDL`).
     """
     select_policy = rls_subquery_policy(
         schema, table, f"{table}_select_own_org", "SELECT",
         using="org_id = current_org_id()",
     )
     bypass_policy = service_role_bypass(table, schema=schema)
+    switch_cols = (
+        "    app_enabled BOOLEAN NOT NULL DEFAULT true,\n"
+        "    session_role TEXT NOT NULL DEFAULT 'owner' "
+        "CHECK (session_role IN ('owner', 'borrower')),\n"
+        if app_switch
+        else ""
+    )
     return (
         f"CREATE TABLE {schema}.{table} (\n"
         f"    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n"
@@ -368,6 +411,7 @@ def whatsapp_connections_table_ddl(schema: str, *, table: str = DEFAULT_TABLE) -
         f"    encrypted_api_key TEXT NOT NULL,\n"
         f"    webhook_url TEXT,\n"
         f"    webhook_token TEXT NOT NULL,\n"
+        f"{switch_cols}"
         f"    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n"
         f"    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n"
         f"    UNIQUE (org_id, label)\n"
@@ -378,4 +422,17 @@ def whatsapp_connections_table_ddl(schema: str, *, table: str = DEFAULT_TABLE) -
         f"CREATE INDEX idx_{schema}_{table}_org ON {schema}.{table}(org_id, created_at DESC);\n"
         f"CREATE UNIQUE INDEX idx_{schema}_{table}_webhook_token "
         f"ON {schema}.{table}(webhook_token);"
+    )
+
+
+def app_switch_alter_ddl(schema: str, *, table: str = DEFAULT_TABLE) -> str:
+    """Idempotent ``ALTER`` adding the per-app switch columns to a table that
+    predates them (a product whose connections migration is already applied)."""
+    return (
+        f"ALTER TABLE {schema}.{table}\n"
+        f"    ADD COLUMN IF NOT EXISTS app_enabled BOOLEAN NOT NULL DEFAULT true,\n"
+        f"    ADD COLUMN IF NOT EXISTS session_role TEXT NOT NULL DEFAULT 'owner';\n"
+        f"ALTER TABLE {schema}.{table} DROP CONSTRAINT IF EXISTS {table}_session_role_check;\n"
+        f"ALTER TABLE {schema}.{table} ADD CONSTRAINT {table}_session_role_check "
+        f"CHECK (session_role IN ('owner', 'borrower'));"
     )

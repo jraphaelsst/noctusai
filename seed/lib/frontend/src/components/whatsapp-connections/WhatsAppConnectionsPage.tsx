@@ -30,6 +30,7 @@ import { AlertCircle, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { Badge } from '../../design-system/ui/Badge';
 import { Button } from '../../design-system/ui/Button';
 import { Skeleton } from '../../design-system/ui/Skeleton';
+import { Switch } from '../../design-system/ui/switch';
 import { ApiError } from '../../api';
 import { useConfirm } from '../confirm';
 import type {
@@ -69,6 +70,10 @@ function ConnectionRow({
   onDelete: () => void;
   deleting: boolean;
 }) {
+  const setEnabled = hooks.useSetConnectionEnabled();
+  // Absent => a backend that predates the switch: treated as on, and no switch is drawn.
+  const hasSwitch = line.app_enabled !== undefined;
+  const enabled = line.app_enabled !== false;
   return (
     <li
       className="flex items-center justify-between gap-3 rounded-md border border-border p-3"
@@ -81,7 +86,26 @@ function ConnectionRow({
       >
         <span className="truncate text-sm font-medium">{line.label}</span>
         <StatusBadge hooks={hooks} connectionId={line.id} />
+        {line.session_role === 'borrower' && (
+          <Badge variant="muted" data-testid={`wa-borrower-${line.id}`}>
+            Sessão compartilhada
+          </Badge>
+        )}
+        {hasSwitch && !enabled && (
+          <Badge variant="muted" data-testid={`wa-off-${line.id}`}>
+            App desligado
+          </Badge>
+        )}
       </button>
+      {hasSwitch && (
+        <Switch
+          checked={enabled}
+          onCheckedChange={(next) => setEnabled.mutate({ id: line.id, enabled: next })}
+          disabled={setEnabled.isPending}
+          aria-label={`${enabled ? 'Desligar' : 'Ligar'} o app para ${line.label}`}
+          data-testid={`wa-enabled-${line.id}`}
+        />
+      )}
       <Button
         type="button"
         variant="ghost"
