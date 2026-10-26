@@ -185,7 +185,9 @@ describe("Integrações page — Gmail OAuth return", () => {
   it("turns ?gmail=erro&motivo= into a pt-BR toast and clears the params", async () => {
     renderWith(<Integracoes />, "/integracoes?gmail=erro&motivo=state_invalido");
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("a autorização expirou")));
-    await waitFor(() => expect(lastLocation).toBe("/integracoes"));
+    // SectionTabsPage keeps ?query across the first-tab redirect, so the OAuth
+    // return lands on the email tab and the page then clears the params there.
+    await waitFor(() => expect(lastLocation).toBe("/integracoes/email"));
   });
 
   it("?gmail=ok says it connected", async () => {
