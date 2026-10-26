@@ -31,8 +31,6 @@ from uuid import UUID
 
 from noctusai_lib.integrations.documents import cnpj as cnpj_docs
 from noctusai_lib.integrations.documents import cpf as cpf_docs
-from noctusai_lib.integrations.documents import normalizar_nome_parte
-from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import (
     AppException,
     ConflictError,
@@ -468,8 +466,7 @@ def sincronizar(
     }
 
 
-def _chave_nome(nome: Any) -> str:
-    return " ".join(fold_accents_ascii(normalizar_nome_parte(str(nome or "")) or "").upper().split())
+_chave_nome = comp_svc.chave_nome
 
 
 def _preencher_cpf(client: Any, org_id: UUID, cliente_id: Any, doc: str) -> None:

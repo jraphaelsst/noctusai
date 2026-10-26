@@ -297,6 +297,7 @@ def adicionar(
         nome=None if parte_cliente_id else entrada["nome"],
         papel=comp.PAPEL_CONJUGE,
         atendimento_id=UUID(alvo), lado=lado_alvo, user_id=user_id,
+        forcar_novo=criar_novo,
     )
     novo = UUID(str(parte["cliente_id"]))
     # `adicionar` links only when its principal resolution is unambiguous; here

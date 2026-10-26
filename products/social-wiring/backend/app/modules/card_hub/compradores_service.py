@@ -33,6 +33,7 @@ never both.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -43,6 +44,9 @@ from noctusai_lib.primitives.exceptions import (
     ValidationError_,
 )
 
+from noctusai_lib.integrations.documents import normalizar_nome_parte
+from noctusai_lib.primitives.accents import fold_accents_ascii
+
 from app.services import clientes_service as clientes_svc
 from app.modules.card_hub.services import (
     AmbiguousAtendimento,
@@ -52,6 +56,8 @@ from app.modules.card_hub.services import (
     ensure_cliente,
     resolve_atendimento_id,
 )
+
+logger = logging.getLogger(__name__)
 
 TABLE = "atendimento_partes"
 CLIENTES_TABLE = "clientes"
@@ -296,6 +302,7 @@ def adicionar(
     razao_social: Optional[str] = None,
     cpf: Optional[str] = None,
     origem: Optional[str] = None,
+    forcar_novo: bool = False,
 ) -> dict:
     """Attach another party (PF or PJ) to this card's atendimento.
 
@@ -343,6 +350,7 @@ def adicionar(
 
     novo_cliente_id: Optional[str] = None
     novo_empresa_id: Optional[str] = None
+    aviso_homonimo: Optional[dict] = None
     if e_pj:
         novo_empresa_id = _resolver_empresa(
             client, org_id, empresa_id=empresa_id, cnpj=cnpj,
@@ -377,14 +385,14 @@ def adicionar(
                     f"({existentes[0].get('nome_oficial') or existentes[0].get('nome') or 'sem nome'})"
                     " — selecione-a em vez de criar outra."
                 )
-        novo_cliente_id = _criar_cliente(
-            client,
-            org_id,
-            nome=nome,
-            celular=celular,
-            vinculado_a=cliente_id,
-            lado=lado_alvo,
+        # F109 — ONE resolver: an orphan left by an earlier add/remove of the
+        # same person is reused, never duplicated.
+        novo_cliente_id, aviso_homonimo = _resolver_cliente_novo(
+            client, org_id, nome=nome, celular=celular, cpf=cpf,
+            titular_id=cliente_id, lado=lado_alvo, forcar_novo=forcar_novo,
         )
+        if novo_cliente_id is not None and aviso_homonimo is None:
+            _vincular(client, org_id, novo_cliente_id, cliente_id, lado_alvo)
         if cpf:
             # The existing manual-edit path stamps cpf_origem='manual' /
             # cpf_em — the same quinteto a hand-typed CPF on the card gets.
@@ -473,7 +481,10 @@ def adicionar(
     clientes = _clientes_por_id(client, org_id, [novo_cliente_id] if novo_cliente_id else [])
     legado = _out(row, clientes.get(novo_cliente_id) if novo_cliente_id else None)
     item = partes_service.item_da_parte(client, org_id, cliente_id, alvo, row["id"])
-    return {**legado, **item}
+    out = {**legado, **item}
+    if aviso_homonimo:
+        out["avisos"] = [aviso_homonimo]
+    return out
 
 
 def _resolver_empresa(
@@ -873,6 +884,114 @@ def _criar_cliente(
     }
     _t(client, CLIENTES_TABLE).insert(row).execute()
     return row["id"]
+
+
+def chave_nome(nome: Any) -> str:
+    """Normalised full-name key (accents/case/spacing folded) — the ONE name
+    comparison for "is this the same person" without a CPF."""
+    return " ".join(
+        fold_accents_ascii(normalizar_nome_parte(str(nome or "")) or "").upper().split()
+    )
+
+
+#: Tables whose `cliente_id` makes a cliente more than a stray row. A cliente
+#: with any row here is somebody's history — never reused by name alone.
+_TABELAS_VINCULO = (
+    "atendimento_partes", "atendimentos", "atendimento_propostas",
+    "cliente_documentos", "cliente_notas", "cliente_imovel_interesses",
+    "imovel_proprietarios",
+)
+
+
+def _tem_vinculos(client: Any, org_id: UUID, cliente_id: str) -> bool:
+    for tabela in _TABELAS_VINCULO:
+        achou = (
+            _t(client, tabela).select("id").eq("org_id", str(org_id))
+            .eq("cliente_id", cliente_id).limit(1).execute()
+        ).data
+        if achou:
+            return True
+    seguidores = (
+        _t(client, CLIENTES_TABLE).select("id").eq("org_id", str(org_id))
+        .eq("vinculado_a_cliente_id", cliente_id).limit(1).execute()
+    ).data
+    return bool(seguidores)
+
+
+def _resolver_cliente_novo(
+    client: Any,
+    org_id: UUID,
+    *,
+    nome: Optional[str],
+    celular: Optional[str],
+    cpf: Optional[str],
+    titular_id: UUID,
+    lado: str,
+    forcar_novo: bool = False,
+) -> tuple[str, Optional[dict]]:
+    """THE find-or-create for a party typed/synced by NAME (F109).
+
+    Reuses an org cliente instead of minting a duplicate when, in order:
+    1. the CPF matches an existing one (callers that pass a CPF are refused
+       earlier with 409 so the operator links explicitly — this is only
+       reached CPF-free of conflicts);
+    2. no CPF is known (or none is on file) and exactly ONE cliente has the
+       same normalised full name, holds no CPF, no canonical channel key, no
+       other titular's vínculo, and NO links anywhere (an orphan left by an
+       earlier add/remove or sync).
+    A homonym with links or a CPF is never merged on name alone: a new cliente
+    is created and an `aviso` is returned for the caller to surface. Returns
+    `(cliente_id, aviso|None)`.
+    """
+    chave = chave_nome(nome)
+    candidatos: list[dict] = []
+    if chave and not forcar_novo:  # explicit "it is someone new" is honoured
+        primeiro = chave.split()[0]
+        vistos: set[str] = set()
+        for coluna in ("nome_completo", "nome"):
+            linhas = (
+                _t(client, CLIENTES_TABLE)
+                .select("id,nome,nome_completo,cpf,chave_canonica,vinculado_a_cliente_id")
+                .eq("org_id", str(org_id))
+                .ilike(coluna, f"{primeiro}%")
+                .execute()
+            ).data or []
+            for r in linhas:
+                rid = str(r["id"])
+                if rid in vistos:
+                    continue
+                vistos.add(rid)
+                if chave_nome(r.get("nome_completo") or r.get("nome")) == chave:
+                    candidatos.append(r)
+    orfaos = []
+    homonimos = []
+    for r in candidatos:
+        rid = str(r["id"])
+        if rid == str(titular_id):
+            continue
+        sem_conflito_cpf = not r.get("cpf")
+        pertence = r.get("vinculado_a_cliente_id") in (None, str(titular_id))
+        if sem_conflito_cpf and not r.get("chave_canonica") and pertence and not _tem_vinculos(client, org_id, rid):
+            orfaos.append(r)
+        else:
+            homonimos.append(r)
+    if len(orfaos) == 1:
+        rid = str(orfaos[0]["id"])
+        logger.info("cliente órfão %s reutilizado para o mesmo nome (F109)", rid)
+        return rid, None
+    novo = _criar_cliente(
+        client, org_id, nome=nome, celular=celular, vinculado_a=titular_id, lado=lado,
+    )
+    if len(orfaos) > 1 or homonimos:
+        logger.warning("homônimo ambíguo para novo cliente %s (F109): %d órfãos, %d outros",
+                       novo, len(orfaos), len(homonimos))
+        return novo, {
+            "codigo": "HOMONIMO_AMBIGUO",
+            "mensagem": "Já existe(m) cadastro(s) com este mesmo nome; foi criado um novo. "
+                        "Confira se não é a mesma pessoa.",
+            "cliente_ids": [str(r["id"]) for r in orfaos + homonimos],
+        }
+    return novo, None
 
 
 def _parte_do_cliente(
