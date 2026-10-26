@@ -311,6 +311,11 @@ export * from './items';
 // noctusai_lib.domain.parties. Product-agnostic; the host supplies the authenticated api client.
 export * from './parties';
 
+// Leads organ (WhatsApp-fed funnel: stages + origins are product data, kanban + list, detail modal, fractional card order) —
+// `createLeadsHooks`, `<LeadsBoard/>`, `<LeadsList/>`, `<LeadDetailModal/>`, `<LeadFormDialog/>`. Backend:
+// noctusai_lib.domain.leads. Product-agnostic; the host passes its authenticated api client.
+export * from './leads';
+
 // Contracts organ (billing models one_time/installments/recurring/retainer, versions/aditivos, reajuste, rescisão, assinatura) —
 // `createContractsHooks`, `<ContractsTable/>`, `<ContractEditor/>`, `<ContractTimeline/>`, `<ContractBillingPreview/>`. Backend:
 // noctusai_lib.domain.contracts. Product-agnostic; the host passes its authenticated api client.

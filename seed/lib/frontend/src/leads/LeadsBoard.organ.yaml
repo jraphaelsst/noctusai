@@ -1,0 +1,35 @@
+name: LeadsBoard
+kind: component
+path: seed/lib/frontend/src/leads/LeadsBoard.tsx
+phase: pilot-seed
+registered_at: "2026-10-26"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "The funnel: seed KanbanBoard with a column per configured stage, LeadCard per lead, click opens LeadDetailModal, drag moves via useMoveLead. Filters controlled-optional so Funil and Lista share one search."
+  - "Part of the leads organ (backend: noctusai_lib/domain/leads; KB § PATTERNS/backend/leads-organ.md). Formalizes the divergent social-wiring/orbity/igig lead copies (N=4 forbidden). First consumer: product monica."
+  - "Stages and origins are DATA from GET /api/leads/config (product-supplied LeadsConfig); nothing in the organ hardcodes a stage or origin. Wire types mirror domain/leads (renaming a member is a wire-contract change)."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); never isLoading."
+  - "Seed-portable: the host passes its authenticated api client; pt-BR copy in leads/messages.ts."
+
+errors_encountered:
+  - "The PostgREST test double ignores or_(): text-search semantics are tested on the Fake store and the Real store's expression is pinned as a string; the DB guards run on PGlite."
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "PipelineBoard/createPipelineHooks were rejected: they are bound to DB-row stages (stages endpoint, mover-etapa, etapa_id). Leads stages are static product data, so the organ uses the seed KanbanBoard + boardOps cache ops directly and reuses domain/pipeline/ordering for the fractional position."
+  - "Per-product copies were rejected (replication-to-seed symmetry)."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

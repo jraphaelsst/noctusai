@@ -219,6 +219,21 @@ def test_mount_parties_routes_overrides_and_strict_401():
     assert list(moved.max_body_path_overrides) == ["/api/pty/import"]
 
 
+def test_leads_organ_is_registered_and_mounts_with_strict_401():
+    from noctusai_lib.domain.leads import LeadsConfig, leads_migration
+    from noctusai_seed.organs import mount_leads
+
+    spec = ORGAN_REGISTRY["leads"]
+    assert spec.migration("erp") == leads_migration("erp") and spec.guard_probes is not None
+    cfg = LeadsConfig(stages=["lead", "fechado"], origins=["whatsapp", "outro"])
+    organ = mount_leads(auth_dependency=_auth, get_admin_client=lambda: object(), config=cfg)
+    client = TestClient(_app_of(organ))
+    assert client.get("/api/leads").status_code == 401
+    assert client.get("/api/leads/board").status_code == 401
+    assert client.post("/api/leads/x/move", json={}).status_code == 401
+    assert {r.path for router in organ for r in router.routes} >= {"/api/leads", "/api/leads/board", "/api/leads/config", "/api/leads/{lead_id}/move"}
+
+
 def test_mount_inventory_routes_and_strict_401():
     from noctusai_seed.organs import mount_inventory
 
