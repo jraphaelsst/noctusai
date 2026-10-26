@@ -85,6 +85,8 @@ from app.schemas.studio_plataforma import (
     PlataformaAgentCreateRequest,
     PlataformaAgentOut,
     PlataformaAgentUpdateRequest,
+    PlataformaGrantRequest,
+    PlataformaGrantsOut,
 )
 from app.stores._db_errors import StudioConflict
 from app.stores.errors import NotFound
@@ -706,6 +708,35 @@ def update_platform_definition_config(
             {"kind": "definicao", "campos": sorted(fields)}, {"kind": "definicao", "campos": sorted(fields)},
         )
     return _definicao_out(updated)
+
+
+@router.get("/plataforma/agents/{key}/grants", response_model=PlataformaGrantsOut)
+def list_platform_definition_grants(
+    key: str, ctx: AuthContext = Depends(require_platform_content_admin), store=Depends(get_studio_definition_store_dep),
+) -> PlataformaGrantsOut:
+    """The orgs explicitly granted this definition (the only orgs besides the open case that may hold an instance)."""
+    agent = _definicao_ou_404(store, key)
+    return PlataformaGrantsOut(key=key, instanciavel=agent.instanciavel, org_ids=store.list_definition_grants(agent.id))
+
+
+@router.post("/plataforma/agents/{key}/grants", status_code=status.HTTP_201_CREATED, response_model=PlataformaGrantsOut)
+def grant_platform_definition_org(
+    key: str, payload: PlataformaGrantRequest, ctx: AuthContext = Depends(require_platform_content_admin),
+    store=Depends(get_studio_definition_store_dep),
+) -> PlataformaGrantsOut:
+    """Grant ``payload.org_id`` the right to hold an instance of ``key`` (idempotent; audited when it creates). THE
+    sanctioned way to give one org / app an agent -- never ``instanciavel=true`` on a product-owned definition."""
+    agent = _definicao_ou_404(store, key)
+    ator = actor_id(ctx)
+    created = store.grant_definition_org(agent.id, payload.org_id, ator)
+    if created:
+        store.append_audit(
+            agent.org_id, agent.id, ator, "conteudo_editado_mcp",
+            {"kind": "grant", "org_id": None}, {"kind": "grant", "org_id": str(payload.org_id)},
+        )
+    return PlataformaGrantsOut(
+        key=key, instanciavel=agent.instanciavel, org_ids=store.list_definition_grants(agent.id), created=created,
+    )
 
 
 __all__ = ["router", "require_content_write", "SCOPE_STUDIO_CONTENT_WRITE"]

@@ -104,7 +104,7 @@ def montar_julia_v2(
     d = studio.create_studio_agent(
         PLAT_ORG, JULIA_KEY, "Julia", None, runtime="llm", owner_product="social-wiring",
         definition_scope="plataforma", escopo_qualificacao="sdr", padrao_qualificacao="imob-lead",
-        rascunho_padrao=JULIA_RASCUNHO, instanciavel=True,
+        rascunho_padrao=JULIA_RASCUNHO, instanciavel=False,
     )
     draft = studio.create_draft(PLAT_ORG, d.id, None, d.id)
     studio.update_draft(PLAT_ORG, draft.id, dict(JULIA_RASCUNHO))
@@ -125,6 +125,7 @@ def montar_julia_v2(
     version = draft
     if publicar:
         version = publish(studio, PLAT_ORG, d, draft.id, user_id, catalog=catalog)
+    studio.grant_definition_org(d.id, org_id)  # 050: a product-owned definition reaches an org only by grant
     inst = studio.create_studio_agent(
         org_id, JULIA_KEY, "Julia", None, runtime="llm", owner_product="social-wiring",
         definition_scope="instancia", definition_agent_id=d.id,

@@ -64,6 +64,8 @@ def plat(studio):
     _platform_admin(studio)
     resp = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
     assert resp.status_code == 201, resp.text
+    # 050: julia is product-owned (closed) -- the other org holds an instance only because it was granted
+    studio.store.grant_definition_org(studio.store.get_platform_definition("julia").id, OTHER_ORG_ID)
     studio.as_role("owner")
     return studio
 
@@ -122,12 +124,12 @@ class TestPlatformDefinition:
         _platform_admin(studio)
         body = {
             "key": "sdr-teste", "nome": "SDR", "runtime": "llm", "owner_product": "social-wiring",
-            "escopo_qualificacao": "sdr", "padrao_qualificacao": "imob-lead", "instanciavel": True,
+            "escopo_qualificacao": "sdr", "padrao_qualificacao": "imob-lead", "instanciavel": False,
             "rascunho_padrao": {"provider": "openai", "model": "gpt-5.6-terra", "max_turns": 8},
         }
         made = studio.post(f"{PLAT}/agents", json=body).json()
         assert (made["runtime"], made["owner_product"], made["usa_canais"]) == ("llm", "social-wiring", True)
-        assert (made["escopo_qualificacao"], made["padrao_qualificacao"], made["instanciavel"]) == ("sdr", "imob-lead", True)
+        assert (made["escopo_qualificacao"], made["padrao_qualificacao"], made["instanciavel"]) == ("sdr", "imob-lead", False)
         draft = studio.store.get_draft(DEFAULT_ORG_ID, UUID(made["id"]))
         assert (draft.provider, draft.model, draft.max_turns) == ("openai", "gpt-5.6-terra", 8)
         got = studio.get(f"{PLAT}/agents/sdr-teste").json()
@@ -137,6 +139,20 @@ class TestPlatformDefinition:
         assert (upd.json()["padrao_qualificacao"], upd.json()["owner_product"], upd.json()["usa_canais"]) == (None, None, False)
         assert studio.patch(f"{PLAT}/agents/sdr-teste", json={"runtime": None}).json()["code"] == "invalid_field"
         assert studio.patch(f"{PLAT}/agents/nao-existe", json={"instanciavel": True}).status_code == 404
+
+    def test_a_product_owned_definition_cannot_be_opened_and_is_granted_per_org(self, studio):
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        refused = studio.post(f"{PLAT}/agents", json={**JULIA_BODY, "key": "aberta", "instanciavel": True})
+        assert refused.status_code == 422 and refused.json()["code"] == "invalid_field"
+        assert studio.post(f"{PLAT}/agents", json={**JULIA_BODY, "key": "fechada"}).status_code == 201
+        org = "11111111-2222-4333-8444-555555555555"
+        first = studio.post(f"{PLAT}/agents/fechada/grants", json={"org_id": org})
+        assert first.status_code == 201 and first.json()["created"] is True and first.json()["org_ids"] == [org]
+        again = studio.post(f"{PLAT}/agents/fechada/grants", json={"org_id": org})
+        assert again.json()["created"] is False and again.json()["org_ids"] == [org]
+        assert studio.get(f"{PLAT}/agents/fechada/grants").json()["org_ids"] == [org]
+        assert studio.post(f"{PLAT}/agents/nao-existe/grants", json={"org_id": org}).status_code == 404
 
     def test_there_is_at_most_one_generator(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
@@ -352,6 +368,7 @@ class TestOrgInstanceAndSpecs:
         a = plat.get(f"{BASE}/julia/compilado").json()
         # a second org
         third = UUID(int=777001)
+        plat.store.grant_definition_org(plat.store.get_platform_definition("julia").id, third)
         from tests.routers.conftest import bind_user, seed_org_role
 
         bind_user(plat, user_id=UUID(int=777002), org_id=third)

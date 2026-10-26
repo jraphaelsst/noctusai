@@ -212,7 +212,7 @@ routes, studio thread state/results).
   every mechanism from the definition record (`plataforma.escopo_de/padrao_de`, compile, the channel turn, org-instance
   creation). `usa_canais` (on the agent summary/detail) is DERIVED from that data (`owner_product` set on an `llm`
   runtime — the compiler's own `canal` rule), so the UI shows the channels tab off it, not off a key.
-  An org gets an instance of every PUBLISHED, `instanciavel` definition on first list (`plataforma.ensure_instancias`)
+  An org gets an instance of every PUBLISHED definition that is `instanciavel` (default false; never for an owned definition) OR granted to it (`definition_org_grants`) on first list (`plataforma.ensure_instancias`)
   and of a channel agent on first channel use (`ensure_instancia`). A key that is a platform definition is refused as an
   org agent (`key_taken`); the only legacy key knowledge left is `channels/chaves_legadas.py`
   (`NOC-REMEDIATE[drop-lead-imob-alias]`). `conteudo_modo='linhas'` (always for plataforma/instancia): every

@@ -369,6 +369,7 @@ class TestRefusalsBeforeAnythingIsPersisted:
         the provider is never called with org A's key."""
         chan.seed_agent()
         studio = chan.rt.studio
+        studio.grant_definition_org(chan.world.definicao.id, OTHER_ORG)  # 050: closed definition -> explicit grant
         b_agent = studio.create_studio_agent(
             OTHER_ORG, "julia", "Julia", None, runtime="llm", owner_product="social-wiring",
             definition_scope="instancia", definition_agent_id=chan.world.definicao.id)

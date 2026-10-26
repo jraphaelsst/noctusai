@@ -69,3 +69,19 @@ class PlataformaAgentOut(BaseModel):
     papel: str | None
     #: The generation started by ``briefing`` (``null`` when none was sent).
     geracao: GeracaoOut | None = None
+
+
+class PlataformaGrantRequest(StrictHttpModel):
+    """Grant ONE org the right to hold an instance of a closed (non-``instanciavel``) platform definition."""
+
+    org_id: UUID
+
+
+class PlataformaGrantsOut(BaseModel):
+    """The orgs granted a definition (``instanciavel`` shown so a caller sees whether the grants even matter)."""
+
+    key: str
+    instanciavel: bool
+    org_ids: list[UUID]
+    #: ``True`` when this call created the grant (``False`` = it already existed).
+    created: bool | None = None

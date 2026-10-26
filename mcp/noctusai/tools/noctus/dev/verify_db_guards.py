@@ -4640,6 +4640,40 @@ _AGENTS_GERACAO_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_ISOLATION_MIGS = (_m("031"), "049_agent_geracao.sql", "050_definition_org_grants.sql")
+_PLAT_DEF_COLS = "org_id, key, nome, runtime, definition_mode, definition_scope, conteudo_modo"
+_PLAT_DEF_VALS = "v_plat, 'noc-probe-' || v_sufixo, 'NOC probe', 'llm', 'studio', 'plataforma', 'linhas'"
+
+# 050: org/app configuration reaches an org only through an explicit grant (KB § PATTERNS/compliance/org-config-isolation.md).
+_AGENTS_ISOLATION_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="agents.product_owned_definition_never_instanciavel",
+        guard_name="agents_product_owned_not_instanciavel", migrations=_ISOLATION_MIGS, setup="",
+        fixture=_JV2_PLAT_ORG_FIXTURE,
+        attack=(f"INSERT INTO {_JV2}.agents ({_PLAT_DEF_COLS}, owner_product, instanciavel) "
+                f"VALUES ({_PLAT_DEF_VALS}, 'noc-probe', true);"),
+        fragments=("agents_product_owned_not_instanciavel",),
+        what="a product-owned platform definition opened to every org (instanciavel=true)",
+        rationale="A definition owned by one product/app is never instantiated in every org: another org's or app's "
+                  "configuration reaches an org only through an explicit definition_org_grants row.",
+    ),
+    _julia_v2_probe(
+        probe_id="agents.instance_requires_grant", guard_name="guard_agent_definition_scope",
+        migrations=_ISOLATION_MIGS,
+        setup=(f"INSERT INTO {_JV2}.agents ({_PLAT_DEF_COLS}, instanciavel) VALUES ({_PLAT_DEF_VALS}, false) "
+               "RETURNING id INTO v_agent2;"),
+        fixture=_JV2_PLAT_ORG_FIXTURE,
+        attack=(f"INSERT INTO {_JV2}.agents (org_id, key, nome, runtime, definition_mode, definition_scope, "
+                "definition_agent_id, conteudo_modo) VALUES "
+                "(v_org, 'noc-probe-' || v_sufixo, 'NOC probe', 'llm', 'studio', 'instancia', v_agent2, 'linhas');"),
+        fragments=("definition_not_granted",),
+        what="an instance of a closed definition for an org that was never granted it",
+        rationale="A closed (non-instanciavel) definition is held only by granted orgs: an ungranted instance is the "
+                  "cross-org configuration leak (julia/social-wiring reaching every org), refused by the database.",
+    ),
+)
+
+
 _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
     # ── 031 · platform definition / instance / content mode ──
     _julia_v2_probe(
@@ -10790,6 +10824,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_STUDIO_PROBES,
     *_AGENTS_JULIA_V2_PROBES,
     *_AGENTS_GERACAO_PROBES,
+    *_AGENTS_ISOLATION_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,

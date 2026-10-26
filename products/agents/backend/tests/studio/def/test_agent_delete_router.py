@@ -144,6 +144,7 @@ class TestDeleteGuards:
             DEFAULT_ORG_ID, "julia", "Julia", None, definition_scope="plataforma",
         )
         studio.store.create_draft(DEFAULT_ORG_ID, definition.id, None, DEFAULT_USER_ID)
+        studio.store.grant_definition_org(definition.id, UUID(int=77))  # 050: closed definition -> grant
         studio.store.create_studio_agent(
             UUID(int=77), "julia", "Julia", None, definition_scope="instancia", definition_agent_id=definition.id,
         )

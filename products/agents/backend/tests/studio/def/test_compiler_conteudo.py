@@ -297,6 +297,7 @@ class TestResolutionAndStore:
         st.set_compiled_hash(PLAT, draft.id, c.hash)
         st.publish_version(PLAT, draft.id, d.id, None, "motivo suficientemente longo aqui", expected_hash=c.hash,
                            texto=c.texto, manifest=c.manifest_json())
+        st.grant_definition_org(d.id, ORG)  # 050: a closed definition is held only by a granted org
         inst = st.create_studio_agent(ORG, "julia", "Julia", None, runtime="llm", owner_product="social-wiring",
                                       definition_scope="instancia", definition_agent_id=d.id)
         return st, cat, d, inst
