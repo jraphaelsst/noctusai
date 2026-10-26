@@ -18,6 +18,15 @@ total failure with no error to read. The guard now requires a truthy
 ``owner_id`` before it can exclude anything. For erp the behaviour is
 identical, because the column is never null there.
 
+🔴 A SECOND DIVERGENCE (2026-10-26): ``_valor_na_faixa`` checks each bound on
+its own. It used to treat a missing floor as "no band at all", which ignored
+every "até R$X" ceiling — see its docstring. erp's 56-test matching suite is
+unchanged by it; an erp interest carrying only a ceiling now actually gates.
+
+For SWAPS, prefer :mod:`.permuta` — this module scores how ALIKE two
+properties are, which is the right question for "similar listings" and the
+wrong one for "does each owner get what they asked for".
+
 WHAT A CONSUMER OWES THIS MODULE
 ────────────────────────────────
 Two plain dicts. Nothing here touches a database, a client or a settings
@@ -379,12 +388,22 @@ def _valor_na_faixa(valor: float, interesse: dict) -> bool:
     out loud ("até 1,2 milhão"), not limits they would walk away over, and an
     exact bound turns a R$1.250.000 house into a non-match for someone who
     said 1,2M. 20% is what erp has always used.
+
+    🔴 EACH BOUND STANDS ON ITS OWN. This returned "fits" whenever EITHER
+    bound was missing, and a ceiling with no floor is how people state a value
+    ("até 1,2 milhão") — 116 of 118 social-wiring interests (2026-10-26). Every
+    stated ceiling was being ignored, so a R$14M house was offered to an owner
+    who accepts at most R$1.65M.
     """
     valor_min = _num(interesse.get("valor_min"))
     valor_max = _num(interesse.get("valor_max"))
-    if valor <= 0 or valor_min <= 0 or valor_max <= 0:
+    if valor <= 0:
         return True
-    return valor_min * 0.8 <= valor <= valor_max * 1.2
+    if valor_min > 0 and valor < valor_min * 0.8:
+        return False
+    if valor_max > 0 and valor > valor_max * 1.2:
+        return False
+    return True
 
 
 def _imovel_atende_permuta(imovel: dict, permuta: dict) -> bool:

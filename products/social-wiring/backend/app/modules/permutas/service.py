@@ -7,8 +7,10 @@ belt-and-braces against a future caller handing in an admin client.
 
 WHERE THE SCORING IS
 ────────────────────
-Not here. `noctusai_lib.domain.real_estate.matching` scores two dicts and
-`adapter.py` produces them. This module is the part that cannot be shared: the
+Not here. `noctusai_lib.domain.real_estate.permuta` scores two dicts as a
+SWAP (does each owner get what they asked for?) and `adapter.py` produces
+them. Vehicle offers still go through `matching`, the similarity engine — the
+swap scorer models property-for-property only. This module is the part that cannot be shared: the
 queries, the upsert, and the rule about which rows a re-run is allowed to
 touch.
 """
@@ -20,9 +22,12 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.domain.real_estate.matching import (
-    SCORE_MINIMO_PADRAO,
     falta_vetor_bilateral,
     gerar_matches_para_imovel,
+)
+from noctusai_lib.domain.real_estate.permuta import (
+    SCORE_MINIMO_PERMUTA,
+    emitir_permuta,
 )
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError
 
@@ -286,7 +291,7 @@ def gerar_matches(
     org_id: UUID,
     *,
     ativo_id: Optional[UUID] = None,
-    score_minimo: float = SCORE_MINIMO_PADRAO,
+    score_minimo: float = SCORE_MINIMO_PERMUTA,
 ) -> dict:
     """Run the engine and persist what it finds.
 
@@ -330,9 +335,6 @@ def gerar_matches(
     #                      against the first pool would silently return 6% of
     #                      the answer: no error, just far fewer matches.
     #
-    # `como_oferta` relabels the right-hand side's `natureza` so the scorer's
-    # specs comparison and region gate actually engage (see its docstring).
-    #
     # 🔴 ONE CANONICAL ORIENTATION PER PAIR: origem is always the
     # lexicographically smaller id. A→B and B→A are NOT the same match —
     # `calcular_qualidade_anuncio` scores the ORIGEM side only — so without a
@@ -357,17 +359,25 @@ def gerar_matches(
             alvo = str(ativo_id)
             pares = [p for p in pares if alvo in (p[0]["id"], p[1]["id"])]
 
+    # 🔴 THE SWAP SCORER, NOT THE SIMILARITY ONE. `matching` rewards two
+    # properties for being alike (same city, close price, same type); a swap
+    # needs each to be what the OTHER owner asked for. On the 2026-10-26
+    # corpus the similarity engine broke an owner's stated ceiling in 73% of
+    # its matches and recovered 1 of the 7 pairs brokers had kept; the swap
+    # scorer breaks none and recovers all 7. See `permuta.py`'s header.
     matches: list[dict] = []
     sem_semantica = 0
     for origem, destino in pares:
-        candidato = (
-            destino if destino["natureza"] != "imovel" else adapter.como_oferta(destino)
-        )
-        encontrados = gerar_matches_para_imovel(origem, [candidato], score_minimo)
-        if not encontrados:
+        if destino["natureza"] == "permuta_automovel":
+            # A car is not a property: no type/place to cross-check, so it
+            # keeps the vehicle branch of the similarity engine.
+            encontrado = next(iter(gerar_matches_para_imovel(origem, [destino], score_minimo)), None)
+        else:
+            encontrado = emitir_permuta(origem, destino, score_minimo)
+        if not encontrado:
             continue
-        matches.extend(encontrados)
-        if falta_vetor_bilateral(origem, candidato):
+        matches.append(encontrado)
+        if falta_vetor_bilateral(origem, destino):
             sem_semantica += 1
 
     gravados = _upsert_matches(client, org_id, matches)

@@ -147,6 +147,9 @@ def ativo_para_scorer(
         # x2 are two people). No contact => None, which the lib's guard reads
         # as "unknown", never as "same".
         "owner_id": identidade_proprietario(ativo),
+        # The intent's own prose. The swap scorer reads it next to each
+        # interest's `observacoes` when looking for a named place.
+        "observacoes": ativo.get("observacoes"),
     }
 
     if natureza == "imovel":
@@ -328,6 +331,11 @@ def como_oferta(ativo_scorer: dict) -> dict:
     they fall through — specs score 0 for every pair and the region gate never
     applies. The property's own fields are already populated from the catalog,
     so relabelling is all that is needed; nothing is fabricated.
+
+    Since 2026-10-26 the permutas engine (`service.gerar_matches`) no longer
+    needs this: it scores pairs with `noctusai_lib.domain.real_estate.permuta`,
+    which is symmetric and ignores `natureza`. The similarity engine's other
+    consumer — `imovel_hub.similares_service` — still relies on it.
     """
     return {**ativo_scorer, "natureza": "permuta_imovel"}
 

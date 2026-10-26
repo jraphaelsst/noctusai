@@ -47,6 +47,12 @@ from noctusai_lib.domain.real_estate.matching import (
     gerar_matches_para_imovel,
     gerar_matches_para_permuta,
 )
+from noctusai_lib.domain.real_estate.permuta import (
+    SCORE_MINIMO_PERMUTA,
+    emitir_permuta,
+    emitir_permutas,
+    pontuar_permuta,
+)
 from noctusai_lib.domain.real_estate.metadata import (
     build_youtube_metadata,
     imovel_to_property_data,
@@ -95,6 +101,14 @@ __all__ = [
     "falta_vetor_bilateral",
     "gerar_matches_para_imovel",
     "gerar_matches_para_permuta",
+    # Swap-shaped (cross-fit) scoring: does EACH owner get what they asked
+    # for? `.matching` answers "how alike are these two properties" — right for
+    # "similar listings", wrong for a swap. See `.permuta`'s header for the
+    # 2026-10-26 measurement that made this a separate scorer.
+    "SCORE_MINIMO_PERMUTA",
+    "emitir_permuta",
+    "emitir_permutas",
+    "pontuar_permuta",
     "build_youtube_metadata",
     "imovel_to_property_data",
     # Even installment split (contract-terms drafting) — Decimal-exact.
