@@ -34,12 +34,12 @@ export function fakeHttp(routes: Record<string, Route>): FakeHttp {
   };
 }
 
-export function renderWithBilling(http: FakeHttp, ui: ReactNode) {
+export function renderWithBilling(http: FakeHttp, ui: ReactNode, initialEntries: string[] = ['/']) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return (
     <QueryClientProvider client={client}>
       <BillingApiProvider value={createBillingApi(http)}>
-        <MemoryRouter>{ui}</MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
       </BillingApiProvider>
     </QueryClientProvider>
   );
