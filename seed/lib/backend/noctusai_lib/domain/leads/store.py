@@ -133,6 +133,11 @@ class LeadsStore(Protocol):
     def column(self, org_id: str, stage: str, filters: LeadFilters, *, limit: int, exclude_id: Optional[str] = None) -> list[dict]:
         """The first `limit` cards of a stage, in board order (position, then created_at), optionally without one lead."""
 
+    def purge_from_connection(self, org_id: str, connection_id: str, *, origin: str) -> tuple[int, int]:
+        """Testing-phase purge of one WhatsApp connection's leads: DELETE those with `origin`, no `created_by`
+        and no `edited_at` (nobody touched them); DETACH the rest (connection / chat ids and the message preview
+        cleared -- the preview is conversation text). Returns `(deleted, detached)`."""
+
 
 @dataclass
 class FakeLeadsStore:
@@ -193,6 +198,19 @@ class FakeLeadsStore:
             (r for r in self._own(org_id) if matches(r, f) and r["id"] != exclude_id), key=board_sort_key
         )
         return deepcopy(rows[:limit])
+
+    def purge_from_connection(self, org_id: str, connection_id: str, *, origin: str) -> tuple[int, int]:
+        deleted = detached = 0
+        for r in list(self._own(org_id)):
+            if r.get("whatsapp_connection_id") != str(connection_id):
+                continue
+            if r.get("origin") == origin and not r.get("created_by") and not r.get("edited_at"):
+                del self.rows[r["id"]]
+                deleted += 1
+            else:
+                r.update(whatsapp_connection_id=None, whatsapp_chat_id=None, last_message_preview=None)
+                detached += 1
+        return deleted, detached
 
 
 __all__ = [

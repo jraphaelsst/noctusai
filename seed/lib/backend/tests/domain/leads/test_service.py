@@ -305,3 +305,47 @@ def test_touch_last_message_updates_the_card_but_never_rewinds_it(svc):
     assert got["last_message_preview"] == "Posso amanhã?"
     late = asyncio.run(svc.touch_last_message(ORG_A, CONN, CHAT["chat_id"], preview="antiga", at=datetime(2026, 9, 1, tzinfo=timezone.utc)))
     assert late["last_message_preview"] == "Posso amanhã?"
+
+
+# -- testing-phase purge ----------------------------------------------------------------------------------
+
+
+def _chat(n: int) -> dict:
+    return {**CHAT, "chat_id": f"551199457000{n}@c.us", "phone": f"551199457000{n}", "name": f"Contato {n}"}
+
+
+def test_update_and_move_mark_the_lead_edited_but_a_new_message_does_not(svc):
+    lead = asyncio.run(svc.upsert_from_whatsapp(ORG_A, CONN, CHAT))
+    assert not lead.get("edited_at")
+    asyncio.run(svc.touch_last_message(ORG_A, CONN, CHAT["chat_id"], preview="outra", at=datetime(2026, 10, 2, tzinfo=timezone.utc)))
+    assert not svc.get(ORG_A, lead["id"]).get("edited_at")
+    svc.update(ORG_A, lead["id"], {"notes": "ligar amanhã"})
+    assert svc.get(ORG_A, lead["id"])["edited_at"]
+    other = asyncio.run(svc.upsert_from_whatsapp(ORG_A, CONN, _chat(1)))
+    svc.move(ORG_A, other["id"], "atendimento", 0)
+    assert svc.get(ORG_A, other["id"])["edited_at"]
+
+
+def test_purge_deletes_untouched_whatsapp_leads_and_detaches_the_human_touched_ones(svc):
+    untouched = asyncio.run(svc.upsert_from_whatsapp(ORG_A, CONN, _chat(1)))
+    edited = asyncio.run(svc.upsert_from_whatsapp(ORG_A, CONN, _chat(2)))
+    svc.update(ORG_A, edited["id"], {"notes": "cliente em negociação"})
+    manual = svc.create(ORG_A, {"name": "Criada à mão", "origin": "whatsapp"}, user_id="00000000-0000-4000-8000-000000000001")
+    svc.update(ORG_A, manual["id"], {"phone": "11994573387"})
+    svc.store.update(ORG_A, manual["id"], {"whatsapp_connection_id": CONN, "whatsapp_chat_id": "x@c.us"})
+    elsewhere = asyncio.run(svc.upsert_from_whatsapp(ORG_A, "11111111-1111-4111-8111-111111111111", _chat(3)))
+    foreign_org = asyncio.run(svc.upsert_from_whatsapp(ORG_B, CONN, _chat(4)))
+
+    result = asyncio.run(svc.purge_from_whatsapp(ORG_A, CONN))
+
+    assert result == {"leads_deleted": 1, "leads_detached": 2}
+    assert svc.store.get(ORG_A, untouched["id"]) is None
+    for kept_id in (edited["id"], manual["id"]):
+        kept = svc.get(ORG_A, kept_id)
+        assert kept["whatsapp_connection_id"] is None and kept["whatsapp_chat_id"] is None
+        assert kept["last_message_preview"] is None  # conversation text does not outlive the purge
+    assert svc.get(ORG_A, edited["id"])["notes"] == "cliente em negociação"  # the human's work is intact
+    assert svc.get(ORG_A, elsewhere["id"])["whatsapp_connection_id"] == "11111111-1111-4111-8111-111111111111"
+    assert svc.store.get(ORG_B, foreign_org["id"]) is not None  # org-scoped
+    # purging again is a no-op
+    assert asyncio.run(svc.purge_from_whatsapp(ORG_A, CONN)) == {"leads_deleted": 0, "leads_detached": 0}

@@ -221,7 +221,7 @@ class LeadsService:
             patch.update(stage=data["stage"], stage_changed_at=_now(), **{POSITION_FIELD_COL: self._top(org_id, data["stage"])})
         if not patch:
             return current
-        patch["updated_at"] = _now()
+        patch["updated_at"] = patch["edited_at"] = _now()
         saved = self.store.update(org_id, str(lead_id), patch)
         if saved is None:
             raise not_found("Lead")
@@ -238,7 +238,7 @@ class LeadsService:
         current = self.get(org_id, lead_id)
         index = max(0, int(index))
         neighbours = self.store.column(org_id, stage, LeadFilters(), limit=index + 1, exclude_id=str(lead_id))
-        patch: dict[str, Any] = {POSITION_FIELD_COL: position_for_index(_as_cards(neighbours), index), "updated_at": _now()}
+        patch: dict[str, Any] = {POSITION_FIELD_COL: position_for_index(_as_cards(neighbours), index), "updated_at": _now(), "edited_at": _now()}
         if current["stage"] != stage:
             patch["stage_changed_at"] = _now()
         patch["stage"] = stage
@@ -249,6 +249,16 @@ class LeadsService:
 
     def _top(self, org_id: str, stage: str) -> Decimal:
         return position_on_top(_as_cards(self.store.column(org_id, stage, LeadFilters(), limit=1)))
+
+    def purge_from_whatsapp_sync(self, org_id: str, connection_id: str) -> tuple[int, int]:
+        """Testing-phase purge of a connection's leads: `(deleted, detached)`. Deletes the automatic leads nobody
+        touched (`origin` = whatsapp, no `created_by`, no `edited_at`); detaches the human-touched ones."""
+        return self.store.purge_from_connection(str(org_id), str(connection_id), origin=self.config.whatsapp_origin)
+
+    async def purge_from_whatsapp(self, org_id: Any, connection_id: Any) -> dict[str, int]:
+        """`on_purge(org_id, connection_id)` seam of the connections router; returns `{leads_deleted, leads_detached}`."""
+        deleted, detached = await asyncio.to_thread(self.purge_from_whatsapp_sync, str(org_id), str(connection_id))
+        return {"leads_deleted": deleted, "leads_detached": detached}
 
     # -- WhatsApp seam ------------------------------------------------------------------------------
 

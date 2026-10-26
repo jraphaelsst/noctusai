@@ -12,6 +12,7 @@ import { Badge } from '../../design-system/ui/Badge';
 import { Button } from '../../design-system/ui/Button';
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../../design-system/ui/Dialog';
 import type { WhatsAppConnectionLine, WhatsAppConnectionsHooks } from '../../whatsapp';
+import { PurgeConnectionDialog } from './PurgeConnectionDialog';
 
 function StatusBadge({ status, paired }: { status: string | null | undefined; paired: boolean | undefined }) {
   if (paired) {
@@ -79,11 +80,17 @@ export function ConnectionDetailDialog({ open, onClose, line, hooks }: Connectio
   const recover = hooks.useRecoverConnection();
   const configureWebhook = hooks.useConfigureConnectionWebhook();
 
+  const [purgeOpen, setPurgeOpen] = React.useState(false);
+
   const paired = !!status?.paired;
+  // A borrowed session belongs to another app: its owner pairs / restarts / re-registers it, never this app.
+  const borrowed = line.session_role === 'borrower';
   const anyActionPending =
+    borrowed ||
     actions.start.isPending || actions.restart.isPending || actions.logout.isPending || recover.isPending;
 
   return (
+    <>
     <Dialog open={open} onClose={onClose} title={line.label} className="max-w-lg">
       <DialogHeader>
         <div>
@@ -94,7 +101,14 @@ export function ConnectionDetailDialog({ open, onClose, line, hooks }: Connectio
         </div>
       </DialogHeader>
       <DialogBody className="grid gap-4">
-        {!paired && <QrPanel hooks={hooks} connectionId={line.id} enabled={open} />}
+        {!paired && !borrowed && <QrPanel hooks={hooks} connectionId={line.id} enabled={open} />}
+
+        {borrowed && (
+          <p className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground" data-testid="wa-borrowed-note">
+            Esta conexão usa a sessão de WhatsApp de outro app. Parear, reiniciar e desconectar são feitos por quem é
+            dono da sessão; aqui você só liga ou desliga este app.
+          </p>
+        )}
 
         {status?.error && (
           <p role="alert" className="text-xs text-destructive" data-testid="wa-status-error">
@@ -113,7 +127,7 @@ export function ConnectionDetailDialog({ open, onClose, line, hooks }: Connectio
               variant="outline"
               size="sm"
               className="w-fit"
-              disabled={configureWebhook.isPending}
+              disabled={borrowed || configureWebhook.isPending}
               onClick={() =>
                 configureWebhook.mutate({ id: line.id, body: { url: line.webhook_url! } })
               }
@@ -150,6 +164,15 @@ export function ConnectionDetailDialog({ open, onClose, line, hooks }: Connectio
             )}
           </Button>
         </div>
+
+        {line.app_enabled === false && (
+          <div className="grid gap-1 border-t pt-3">
+            <span className="text-xs font-medium text-muted-foreground">Fase de testes</span>
+            <Button type="button" variant="destructive" size="sm" className="w-fit" onClick={() => setPurgeOpen(true)}>
+              Apagar dados de teste
+            </Button>
+          </div>
+        )}
       </DialogBody>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onClose}>
@@ -157,5 +180,7 @@ export function ConnectionDetailDialog({ open, onClose, line, hooks }: Connectio
         </Button>
       </DialogFooter>
     </Dialog>
+    <PurgeConnectionDialog open={purgeOpen} onClose={() => setPurgeOpen(false)} line={line} hooks={hooks} />
+    </>
   );
 }

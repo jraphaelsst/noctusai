@@ -103,6 +103,7 @@ class _FakeSupabase:
         return _SchemaHandle(tables)
 
 
+OWN_HOOK = "https://product.example.com/api/whatsapp/webhook/custom-token"
 ORG_A = str(uuid.uuid4())
 USER_A = str(uuid.uuid4())
 
@@ -325,14 +326,32 @@ class TestLiveWahaOps:
         created = self._create(app)
         resp = TestClient(app).post(
             f"/api/whatsapp/connections/{created['id']}/webhook",
-            json={"url": "https://custom-hook.example.com", "events": ["message"]},
+            json={"url": OWN_HOOK, "events": ["message"]},
         )
         assert resp.status_code == 200
-        assert resp.json()["url"] == "https://custom-hook.example.com"
-        assert waha.webhook_config["url"] == "https://custom-hook.example.com"
+        assert resp.json()["url"] == OWN_HOOK
+        assert waha.webhook_config["url"] == OWN_HOOK
         # persisted — a subsequent GET reflects the new webhook_url
         listed = TestClient(app).get("/api/whatsapp/connections").json()
-        assert listed[0]["webhook_url"] == "https://custom-hook.example.com"
+        assert listed[0]["webhook_url"] == OWN_HOOK
+
+    def test_configure_webhook_refuses_a_foreign_url(self):
+        """H1: set_webhook replaces entries under the owned prefix -- a URL outside this product's own minted
+        route (e.g. another app's) must never reach WAHA."""
+        app, _store, waha = _app()
+        created = self._create(app)
+        before = dict(waha.webhook_config)
+        for url in (
+            "https://custom-hook.example.com",
+            "https://other-app.example.com/api/whatsapp/webhook/abc",
+            "https://product.example.com/api/whatsapp/webhook/",  # the bare prefix would own everything
+        ):
+            resp = TestClient(app).post(
+                f"/api/whatsapp/connections/{created['id']}/webhook", json={"url": url, "events": ["message"]}
+            )
+            assert resp.status_code == 422, url
+            assert resp.json()["detail"]["code"] == "webhook_url_foreign"
+        assert waha.webhook_config == before
 
     def test_auth_boundary_strict_401(self):
         app, _store, _waha = _app(raise_401=True)

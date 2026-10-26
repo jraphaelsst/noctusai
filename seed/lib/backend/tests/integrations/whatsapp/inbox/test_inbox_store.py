@@ -207,3 +207,19 @@ def test_ddl_carries_the_load_bearing_constraints():
     assert "new_chat_notified_at" in chats and "ENABLE ROW LEVEL SECURITY" in chats
     assert "UNIQUE (connection_id, waha_message_id)" in messages
     assert "service_role_bypass" in messages and "current_org_id()" in messages
+
+
+def test_delete_connection_chats_removes_chats_and_messages_org_scoped(store):
+    _chat(store)
+    _chat(store, "5511999990002@c.us")
+    _add(store, "m1", "2026-10-26T10:00:00+00:00")
+    _add(store, "m2", "2026-10-26T10:01:00+00:00")
+    # another org's rows on the same connection id must survive (defence in depth on org_id)
+    _chat(store, "5511999990003@c.us", org=OTHER_ORG)
+
+    chats, messages = store.delete_connection_chats(org_id=ORG, connection_id=CONN)
+
+    assert (chats, messages) == (2, 2)
+    assert store.list_connection_chat_ids(org_id=ORG, connection_id=CONN) == []
+    assert store.list_connection_chat_ids(org_id=OTHER_ORG, connection_id=CONN) == ["5511999990003@c.us"]
+    assert store.delete_connection_chats(org_id=ORG, connection_id=CONN) == (0, 0)

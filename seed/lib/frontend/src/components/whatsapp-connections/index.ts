@@ -18,6 +18,7 @@ export type {
   WhatsAppConnectionRecoverResult,
   ConfigureWhatsAppConnectionWebhookBody,
   WhatsAppConnectionWebhookResult,
+  WhatsAppPurgeResult,
 } from '../../whatsapp';
 
 export { WhatsAppConnectionsPage } from './WhatsAppConnectionsPage';
@@ -25,6 +26,9 @@ export type { WhatsAppConnectionsPageProps } from './WhatsAppConnectionsPage';
 
 export { CreateConnectionDialog } from './CreateConnectionDialog';
 export type { CreateConnectionDialogProps } from './CreateConnectionDialog';
+
+export { PurgeConnectionDialog } from './PurgeConnectionDialog';
+export type { PurgeConnectionDialogProps } from './PurgeConnectionDialog';
 
 export { ConnectionDetailDialog } from './ConnectionDetailDialog';
 export type { ConnectionDetailDialogProps } from './ConnectionDetailDialog';

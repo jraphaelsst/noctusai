@@ -4,6 +4,8 @@
   number; every such number becomes a lead (stage `lead`, origin `whatsapp`). Deleting that lead does NOT bring it
   back: the chat row persists, and the claim that fires `on_new_chat` is never re-won. That is intended -- Monica
   deletes numbers that are not leads.
+* `on_purge` -- the testing-phase purge of a connection: the untouched automatic leads go, the ones a person
+  worked on are DETACHED from the connection (kept, without the conversation link / preview).
 * `on_message` -- every newly stored message, inbound AND outbound, refreshes the lead card's preview.
   A chat without a lead (deleted, or a group) is left alone: `touch_last_message` never recreates one.
 
@@ -37,3 +39,7 @@ async def on_message(org_id: UUID, connection_id: UUID, chat: Any, message: Any)
     await leads_service().touch_last_message(
         org_id, connection_id, chat.chat_id, preview=preview, at=getattr(message, "timestamp", None)
     )
+
+
+async def on_purge(org_id: UUID, connection_id: UUID) -> dict[str, int]:
+    return await leads_service().purge_from_whatsapp(org_id, connection_id)

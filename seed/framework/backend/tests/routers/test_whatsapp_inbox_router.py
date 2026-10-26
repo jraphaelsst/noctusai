@@ -118,7 +118,7 @@ def _auth(org=ORG_A, *, raise_401=False):
 
 class _Harness:
     def __init__(self, *, hmac_secret=None, org=ORG_A, raise_401=False, mirror_read=False, realtime=True,
-                 with_lid_cache=False):
+                 with_lid_cache=False, on_purge=None, audit_sink=None):
         self.conn_store = build_whatsapp_connection_store(
             _FakeSupabase(), encryption_key=generate_key().decode(), schema="monica"
         )
@@ -143,7 +143,10 @@ class _Harness:
             MagicMock(), MagicMock(), store_factory=lambda: self.conn_store,
             get_current_user_org=_auth(org, raise_401=raise_401), waha_base_url="https://waha.example.com",
             resolve_webhook_base_url=lambda: "https://monica.example.com", waha_client_factory=waha_factory,
+            chat_store_factory=lambda: self.chat_store, on_purge=on_purge, audit_product_slug="monica",
         ))
+        if audit_sink is not None:
+            app.state.audit_sink, app.state.audit_enabled = audit_sink, True
         app.include_router(create_whatsapp_inbox_router(
             chat_store_factory=lambda: self.chat_store, connection_store_factory=lambda: self.conn_store,
             get_current_user_org=_auth(org, raise_401=raise_401), waha_client_factory=waha_factory,
@@ -152,9 +155,9 @@ class _Harness:
         ))
         self.client = TestClient(app)
 
-    def create_connection(self) -> tuple[str, str]:
+    def create_connection(self, **extra) -> tuple[str, str]:
         """Create via the seed connections router; returns (connection_id, minted webhook PATH)."""
-        resp = self.client.post("/api/whatsapp/connections", json={"label": "Mônica", "api_key": "k"})
+        resp = self.client.post("/api/whatsapp/connections", json={"label": "Mônica", "api_key": "k", **extra})
         assert resp.status_code == 201, resp.text
         body = resp.json()
         return body["id"], urlparse(body["webhook_url"]).path
@@ -403,3 +406,153 @@ def test_bad_cursor_is_422():
     h = _Harness()
     conn_id, _ = h.create_connection()
     assert h.client.get(f"/api/whatsapp/connections/{conn_id}/chats?cursor=garbage").status_code == 422
+
+
+# ─── per-app switch ─────────────────────────────────────────────────────────
+
+
+def test_disabled_connection_webhook_stores_nothing_and_fires_no_hooks():
+    h = _Harness()
+    conn_id, path = h.create_connection()
+    base = f"/api/whatsapp/connections/{conn_id}"
+    resp = h.client.put(f"{base}/enabled", json={"enabled": False})
+    assert resp.status_code == 200 and resp.json()["app_enabled"] is False
+    resp = h.post_event(path, _msg())
+    assert resp.status_code == 200 and resp.json() == {"status": "disabled"}  # 200: WAHA must not retry
+    assert h.new_chats == [] and h.messages == []
+    assert h.client.get(f"{base}/chats").json()["items"] == []
+    # switching back on resumes ingestion
+    assert h.client.put(f"{base}/enabled", json={"enabled": True}).json()["app_enabled"] is True
+    assert h.post_event(path, _msg("m2")).json() == {"status": "message"}
+    assert len(h.new_chats) == 1
+
+
+def test_send_is_refused_409_app_disabled_while_off():
+    h = _Harness()
+    conn_id, path = h.create_connection()
+    h.post_event(path, _msg())
+    base = f"/api/whatsapp/connections/{conn_id}"
+    h.client.put(f"{base}/enabled", json={"enabled": False})
+    sent_before = len(h.waha.sent) if hasattr(h.waha, "sent") else None
+    resp = h.client.post(f"{base}/chats/{CHAT}/messages", json={"text": "oi"})
+    assert resp.status_code == 409 and resp.json()["detail"]["code"] == "app_disabled"
+    if sent_before is not None:
+        assert len(h.waha.sent) == sent_before
+
+
+def test_enabled_route_is_org_scoped_and_strict_401():
+    h = _Harness()
+    conn_id, _path = h.create_connection()
+    assert _Harness(raise_401=True).client.put(
+        f"/api/whatsapp/connections/{conn_id}/enabled", json={"enabled": False}
+    ).status_code == 401
+    intruder = FastAPI()
+    intruder.include_router(create_whatsapp_connections_router(
+        MagicMock(), MagicMock(), store_factory=lambda: h.conn_store, get_current_user_org=_auth(ORG_B),
+        waha_base_url="https://waha.example.com", resolve_webhook_base_url=lambda: "https://monica.example.com",
+    ))
+    resp = TestClient(intruder).put(f"/api/whatsapp/connections/{conn_id}/enabled", json={"enabled": False})
+    assert resp.status_code == 404
+    assert h.conn_store.get_connection(connection_id=uuid.UUID(conn_id), org_id=uuid.UUID(ORG_A)).app_enabled is True
+
+
+# ─── borrowed session ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("method,suffix,body", [
+    ("post", "start", None), ("post", "restart", None), ("post", "logout", None), ("post", "recover", None),
+    ("get", "qr", None), ("post", "backfill", None),
+    ("post", "webhook", {"url": "https://monica.example.com/api/whatsapp/webhook/x", "events": ["message"]}),
+])
+def test_borrower_session_controls_are_409_session_borrowed(method, suffix, body):
+    h = _Harness()
+    conn_id, _path = h.create_connection(session_role="borrower")
+    # a borrower registers ITS OWN webhook but never starts/pairs the shared session
+    assert h.waha.start_count == 0 and h.waha.webhook_config is not None
+    resp = getattr(h.client, method)(f"/api/whatsapp/connections/{conn_id}/{suffix}", **({"json": body} if body else {}))
+    assert resp.status_code == 409, suffix
+    assert resp.json()["detail"]["code"] == "session_borrowed"
+
+
+def test_borrower_is_exposed_and_still_ingests_and_owner_controls_still_work():
+    h = _Harness()
+    conn_id, path = h.create_connection(session_role="borrower")
+    listed = h.client.get("/api/whatsapp/connections").json()
+    assert listed[0]["session_role"] == "borrower" and listed[0]["app_enabled"] is True
+    assert h.post_event(path, _msg()).json() == {"status": "message"}
+    h2 = _Harness()  # default role: owner
+    oid, _p = h2.create_connection()
+    assert h2.client.post(f"/api/whatsapp/connections/{oid}/restart").status_code == 200
+
+
+# ─── purge ──────────────────────────────────────────────────────────────────
+
+
+def test_purge_is_refused_while_the_app_is_on():
+    h = _Harness()
+    conn_id, path = h.create_connection()
+    h.post_event(path, _msg())
+    resp = h.client.post(f"/api/whatsapp/connections/{conn_id}/purge", json={"confirm": "Mônica"})
+    assert resp.status_code == 409 and resp.json()["detail"]["code"] == "app_enabled"
+    assert len(h.client.get(f"/api/whatsapp/connections/{conn_id}/chats").json()["items"]) == 1
+
+
+def test_purge_requires_the_typed_label():
+    h = _Harness()
+    conn_id, _path = h.create_connection()
+    h.client.put(f"/api/whatsapp/connections/{conn_id}/enabled", json={"enabled": False})
+    resp = h.client.post(f"/api/whatsapp/connections/{conn_id}/purge", json={"confirm": "wrong"})
+    assert resp.status_code == 422 and resp.json()["detail"]["code"] == "confirm_mismatch"
+
+
+def test_purge_runs_the_seam_first_then_deletes_chats_and_audits_counts_only():
+    order: list[str] = []
+    audited: list = []
+
+    class _Sink:
+        async def record(self, entry):
+            audited.append(entry)
+
+    async def on_purge(org_id, connection_id):
+        # the chats are still there when the product erases its derived data
+        order.append(f"seam:{len(h.chat_store.list_connection_chat_ids(org_id=org_id, connection_id=connection_id))}")
+        return {"leads_deleted": 3, "leads_detached": 1}
+
+    h = _Harness(on_purge=on_purge, audit_sink=_Sink())
+    conn_id, path = h.create_connection()
+    h.post_event(path, _msg("m1"))
+    h.post_event(path, _msg("m2", chat="5511999990002@c.us"))
+    base = f"/api/whatsapp/connections/{conn_id}"
+    h.client.put(f"{base}/enabled", json={"enabled": False})
+    resp = h.client.post(f"{base}/purge", json={"confirm": "Mônica"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "connection_id": conn_id, "chats_deleted": 2, "messages_deleted": 2,
+        "extra": {"leads_deleted": 3, "leads_detached": 1},
+    }
+    assert order == ["seam:2"]
+    assert h.chat_store.list_connection_chat_ids(org_id=uuid.UUID(ORG_A), connection_id=uuid.UUID(conn_id)) == []
+    # the line itself survives the purge (it is not a delete)
+    assert h.client.get("/api/whatsapp/connections").json()[0]["id"] == conn_id
+    assert len(audited) == 1
+    params = audited[0].path_params
+    assert params["chats_deleted"] == 2 and params["leads_deleted"] == 3
+    assert "Mônica" not in repr(audited[0]) and CHAT not in repr(audited[0])
+
+
+def test_purge_is_org_scoped_and_strict_401():
+    h = _Harness()
+    conn_id, _path = h.create_connection()
+    h.client.put(f"/api/whatsapp/connections/{conn_id}/enabled", json={"enabled": False})
+    assert _Harness(raise_401=True).client.post(
+        f"/api/whatsapp/connections/{conn_id}/purge", json={"confirm": "Mônica"}
+    ).status_code == 401
+    app = FastAPI()
+    app.include_router(create_whatsapp_connections_router(
+        MagicMock(), MagicMock(), store_factory=lambda: h.conn_store, get_current_user_org=_auth(ORG_B),
+        waha_base_url="https://waha.example.com", resolve_webhook_base_url=lambda: "https://monica.example.com",
+        chat_store_factory=lambda: h.chat_store,
+    ))
+    assert TestClient(app).post(
+        f"/api/whatsapp/connections/{conn_id}/purge", json={"confirm": "Mônica"}
+    ).status_code == 404

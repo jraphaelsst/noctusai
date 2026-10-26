@@ -41,6 +41,7 @@ def auth_org_id():
         ("GET", f"/api/leads/{uuid.uuid4()}"), ("PATCH", f"/api/leads/{uuid.uuid4()}"),
         ("DELETE", f"/api/leads/{uuid.uuid4()}"),
         ("GET", "/api/whatsapp/connections"), ("POST", "/api/whatsapp/connections"),
+        ("PUT", f"/api/whatsapp/connections/{CONN}/enabled"), ("POST", f"/api/whatsapp/connections/{CONN}/purge"),
         ("GET", f"/api/whatsapp/connections/{CONN}/chats"),
         ("GET", f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/messages"),
         ("POST", f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/messages"),
@@ -58,6 +59,13 @@ def test_the_inbound_webhook_is_public_and_an_unknown_token_is_a_generic_404(cli
 
 def test_connection_routes_are_admin_only(client):
     resp = client.post("/api/whatsapp/connections", json={"label": "Mônica", "api_key": "k"})
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.parametrize("method,suffix,body", [("PUT", "enabled", {"enabled": False}), ("POST", "purge", {"confirm": "x"})])
+def test_switch_and_purge_are_admin_only(client, method, suffix, body):
+    call = client.put if method == "PUT" else client.post
+    resp = call(f"/api/whatsapp/connections/{CONN}/{suffix}", json=body)
     assert resp.status_code == 403, resp.text
 
 
@@ -157,6 +165,23 @@ def test_inbound_and_outbound_messages_both_refresh_the_card_preview(client):
     _ingest(chat_store, _event("m3", body="Pode ser às 15h", ts=now + 20))
     (lead,) = _leads(client)
     assert lead["last_message_preview"] == "Pode ser às 15h"
+
+
+def test_purge_seam_deletes_untouched_whatsapp_leads_and_keeps_the_edited_one_detached(client):
+    from app.services.whatsapp_leads import on_purge
+
+    chat_store = build_whatsapp_chat_store(None, schema="monica", allow_fake=True)
+    _ingest(chat_store, _event("m1"))
+    (lead,) = _leads(client)
+    assert asyncio.run(on_purge(ORG, CONN)) == {"leads_deleted": 1, "leads_detached": 0}
+    assert _leads(client) == []
+    _ingest(chat_store, {**_event("m9"), "payload": {**_event("m9")["payload"], "from": "5511999990009@c.us"}})
+    (lead,) = _leads(client)
+    assert client.patch(f"/api/leads/{lead['id']}", json={"notes": "cliente real"}).status_code == 200
+    assert asyncio.run(on_purge(ORG, CONN)) == {"leads_deleted": 0, "leads_detached": 1}
+    (kept,) = _leads(client)
+    assert kept["notes"] == "cliente real" and kept["whatsapp_connection_id"] is None
+    assert kept["last_message_preview"] is None
 
 
 # --- contexto proxy -----------------------------------------------------------------------------------------

@@ -15379,6 +15379,16 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "firing every product's org triggers (licenses, ERP site config). Its sibling guards (platform scope "
         "trigger, scope CHECKs) are probed.",
     ),
+    # Monica 017 is NOT APPLIED (file-only until the tech-lead runs migrate_product): it adds the per-app switch
+    # columns; `session_role` is a two-value vocabulary CHECK that is also enforced at the API edge (the seed
+    # create route's Literal + `SESSION_ROLES` in the store). The constraint does not exist in prod to probe yet.
+    # Replace with a real GuardProbe in the SAME change that applies it.
+    (
+        "products/monica/backend/migrations/017_whatsapp_app_switch.sql",
+        "whatsapp_connections_session_role_check",
+        "Migration 017 unapplied — the session_role vocabulary CHECK has no live constraint to probe yet; "
+        "the API edge (Literal + SESSION_ROLES) already refuses other values and is tested.",
+    ),
     # Migration 303 (social-wiring) is NOT APPLIED (file-only until the
     # tech-lead runs migrate_product): it only WIDENS two vocabulary CHECKs
     # (+adjudicacao/integralizacao; +doacao/partilha/... on the manual

@@ -29,6 +29,16 @@ Exact contract preserved (paths, request/response shapes, status codes)::
     POST   /api/whatsapp/connections/{id}/logout    -> WhatsAppConnectionStatusOut
     POST   /api/whatsapp/connections/{id}/recover   -> WhatsAppConnectionRecoverOut
     POST   /api/whatsapp/connections/{id}/webhook   -> WhatsAppWebhookResultOut
+    PUT    /api/whatsapp/connections/{id}/enabled   -> WhatsAppConnectionOut   (per-app on/off switch)
+    POST   /api/whatsapp/connections/{id}/purge     -> WhatsAppPurgeResultOut  (testing-phase erasure; needs ``chat_store_factory``)
+
+**Per-app switch** (``app_enabled``): off => THIS app ignores the line (the inbox webhook stores nothing and
+answers ``{"status":"disabled"}``, sends are refused 409 ``app_disabled``). Other apps sharing the WAHA session
+own their own webhook entries and keep answering. **Borrowed session** (``session_role='borrower'``): the line
+shares another app's WAHA session, so every control that drives the session (start/restart/logout/recover/qr/
+webhook) answers 409 ``session_borrowed``. **Purge**: erase the line's conversation data once the app is OFF;
+the product's ``on_purge`` seam (leads) runs FIRST, then the chats (messages cascade), and one audit row with
+COUNTS ONLY is written. See ``KB § INTEGRATIONS/whatsapp.md § Per-app switch, borrowed sessions and purge``.
 
 CRUD persists via :class:`~noctusai_lib.integrations.whatsapp.
 connection_store.WhatsAppConnectionStore` (resolved through the
@@ -79,15 +89,17 @@ concern is a constructor kwarg, never a module-level monkeypatch target.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import secrets
-from typing import Any, Awaitable, Callable, Optional, Sequence
+from typing import Any, Awaitable, Callable, Literal, Optional, Sequence
 from uuid import NAMESPACE_OID, UUID, uuid5
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.audit.types import AuditActor, AuditEntry
 from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
     WhatsAppConnectionRecord,
@@ -134,6 +146,8 @@ def _default_resolve_user_id(user: Any) -> UUID:
 class WhatsAppConnectionCreateIn(StrictHttpModel):
     label: str
     api_key: str
+    #: ``borrower`` = shares a session another app pairs and drives (test phases); see module docstring.
+    session_role: Literal["owner", "borrower"] = "owner"
 
 
 class WhatsAppConnectionUpdateIn(StrictHttpModel):
@@ -150,8 +164,27 @@ class WhatsAppConnectionOut(StrictHttpModel):
     base_url: str
     session_name: str
     webhook_url: Optional[str] = None
+    app_enabled: bool = True
+    session_role: str = "owner"
     created_at: Any
     updated_at: Any
+
+
+class WhatsAppEnabledIn(StrictHttpModel):
+    enabled: bool
+
+
+class WhatsAppPurgeIn(StrictHttpModel):
+    #: must equal the connection's label (typed by the admin) -- the same guard as deleting a repository
+    confirm: str
+
+
+class WhatsAppPurgeResultOut(StrictHttpModel):
+    connection_id: UUID
+    chats_deleted: int
+    messages_deleted: int
+    #: whatever the product's ``on_purge`` seam reported (e.g. ``leads_deleted`` / ``leads_detached``)
+    extra: dict[str, int] = {}
 
 
 class WhatsAppConnectionStatusOut(StrictHttpModel):
@@ -198,6 +231,8 @@ def _out(record: WhatsAppConnectionRecord) -> WhatsAppConnectionOut:
         base_url=record.base_url,
         session_name=record.session_name,
         webhook_url=record.webhook_url,
+        app_enabled=record.app_enabled,
+        session_role=record.session_role,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -236,8 +271,17 @@ def create_whatsapp_connections_router(
         Callable[[UUID, str, dict[str, Any]], Awaitable[None]]
     ] = None,
     prefix: str = "/api/whatsapp/connections",
+    chat_store_factory: Optional[Callable[[], Any]] = None,
+    on_purge: Optional[
+        Callable[[UUID, UUID], Awaitable[Optional[dict[str, int]]]]
+    ] = None,
+    audit_product_slug: str = "",
 ) -> APIRouter:
     """Build the ``/api/whatsapp/connections`` router.
+
+    ``chat_store_factory`` (a :class:`~noctusai_lib.integrations.whatsapp.inbox.WhatsAppChatStore`) enables the
+    ``/purge`` route; ``on_purge(org_id, connection_id) -> {count: n} | None`` is the product seam that erases
+    derived data (leads) BEFORE the chats go. ``audit_product_slug`` labels the purge audit row.
 
     ``deps`` / ``settings`` are accepted (unused directly) for call-site
     symmetry with the other ``noctusai_seed`` router factories — every
@@ -268,6 +312,25 @@ def create_whatsapp_connections_router(
         if record is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connection not found")
         return record
+
+    def _refuse_borrowed(record: WhatsAppConnectionRecord) -> None:
+        """A borrowed session is driven by its owner app: never restart / log out / re-register it from here."""
+        if record.session_role == "borrower":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "session_borrowed", "message": "This line borrows another app's WhatsApp session"},
+            )
+
+    def _owned_webhook_prefix() -> str:
+        """This product's own minted webhook prefix -- the ONLY namespace this router may register/clobber."""
+        try:
+            base = resolve_webhook_base_url()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Cannot build webhook URL: product URL not configured",
+            ) from exc
+        return f"{base}{webhook_path_prefix}/"
 
     def _waha_client(record: WhatsAppConnectionRecord):
         return waha_client_factory(
@@ -326,20 +389,25 @@ def create_whatsapp_connections_router(
             session_name=session_name,
             webhook_url=webhook_url,
             webhook_token=webhook_token,
+            session_role=body.session_role,
         )
 
         client = waha_client_factory(
             base_url=base_url or None, api_key=body.api_key.strip(), session=session_name
         )
+        if body.session_role != "borrower":  # a borrowed session is started/paired by its owner
+            try:
+                await client.start_session()
+            except Exception as exc:  # noqa: BLE001 — non-fatal, /start retries later
+                logger.warning(
+                    "WAHA start_session failed for new connection %s (session=%s): %s",
+                    record.id, session_name, exc,
+                )
         try:
-            await client.start_session()
-        except Exception as exc:  # noqa: BLE001 — non-fatal, /start retries later
-            logger.warning(
-                "WAHA start_session failed for new connection %s (session=%s): %s",
-                record.id, session_name, exc,
+            # owned_prefix is explicit: never derived from the URL, so only THIS product's entries are replaced.
+            await client.set_webhook(
+                webhook_url, webhook_events, owned_prefix=f"{product_base}{webhook_path_prefix}/"
             )
-        try:
-            await client.set_webhook(webhook_url, webhook_events)
         except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
             logger.error(
                 "WAHA set_webhook failed for connection %s (session=%s): %s",
@@ -440,6 +508,7 @@ def create_whatsapp_connections_router(
         record = _require_record(
             store, connection_id=connection_id, org_id=resolve_org_id(raw_org), decrypt=True
         )
+        _refuse_borrowed(record)
         client = _waha_client(record)
         try:
             png = await client.get_qr()
@@ -461,6 +530,7 @@ def create_whatsapp_connections_router(
         record = _require_record(
             store, connection_id=connection_id, org_id=resolve_org_id(raw_org), decrypt=True
         )
+        _refuse_borrowed(record)
         client = _waha_client(record)
         try:
             await getattr(client, action)()
@@ -514,6 +584,7 @@ def create_whatsapp_connections_router(
         record = _require_record(
             store, connection_id=connection_id, org_id=resolve_org_id(raw_org), decrypt=True
         )
+        _refuse_borrowed(record)
         client = _waha_client(record)
         try:
             outcome = await client.recover_session()
@@ -550,10 +621,19 @@ def create_whatsapp_connections_router(
         _user, _token, raw_org = auth
         org_id = resolve_org_id(raw_org)
         record = _require_record(store, connection_id=connection_id, org_id=org_id, decrypt=True)
-        client = _waha_client(record)
+        _refuse_borrowed(record)
         url = body.url.strip()
+        owned = _owned_webhook_prefix()
+        if not url.startswith(owned) or len(url) == len(owned):
+            # H1: set_webhook REPLACES entries under owned_prefix -- a URL shaped like another app's would
+            # delete that app's registration on the shared WAHA session.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "webhook_url_foreign", "message": "Webhook URL must be under this app's own webhook route"},
+            )
+        client = _waha_client(record)
         try:
-            result = await client.set_webhook(url, body.events)
+            result = await client.set_webhook(url, body.events, owned_prefix=owned)
         except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=f"WAHA webhook config failed: {exc}"
@@ -563,5 +643,86 @@ def create_whatsapp_connections_router(
         return WhatsAppWebhookResultOut(
             connection_id=connection_id, ok=True, url=url, events=body.events, status=waha_status
         )
+
+    # ─── per-app switch ─────────────────────────────────────────────────
+    @router.put("/{connection_id}/enabled", response_model=WhatsAppConnectionOut)
+    async def set_connection_enabled(
+        connection_id: UUID,
+        body: WhatsAppEnabledIn,
+        auth: tuple = Depends(get_current_user_org),
+        store: WhatsAppConnectionStore = Depends(_store_dep),
+    ) -> WhatsAppConnectionOut:
+        """The app's on/off switch for this line: off => this app ignores its traffic (other apps on the same
+        session are unaffected). Idempotent."""
+        _user, _token, raw_org = auth
+        org_id = resolve_org_id(raw_org)
+        _require_record(store, connection_id=connection_id, org_id=org_id)
+        record = store.set_app_enabled(connection_id=connection_id, org_id=org_id, enabled=body.enabled)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connection not found")
+        return _out(record)
+
+    # ─── testing-phase purge ────────────────────────────────────────────
+    if chat_store_factory is not None:
+
+        @router.post("/{connection_id}/purge", response_model=WhatsAppPurgeResultOut)
+        async def purge_connection_data(
+            connection_id: UUID,
+            body: WhatsAppPurgeIn,
+            request: Request,
+            auth: tuple = Depends(get_current_user_org),
+            store: WhatsAppConnectionStore = Depends(_store_dep),
+        ) -> WhatsAppPurgeResultOut:
+            """Erase the line's conversation data (chats + messages + the product's derived data). Only while the
+            app switch is OFF and only with the connection label typed back -- irreversible."""
+            user, _token, raw_org = auth
+            org_id = resolve_org_id(raw_org)
+            record = _require_record(store, connection_id=connection_id, org_id=org_id)
+            if record.app_enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "app_enabled", "message": "Turn the app OFF for this line before purging"},
+                )
+            if body.confirm.strip() != record.label:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "confirm_mismatch", "message": "Type the connection label to confirm"},
+                )
+            extra: dict[str, int] = {}
+            if on_purge is not None:  # derived data first: leads reference the chats being erased
+                extra = dict(await on_purge(org_id, connection_id) or {})
+            chats_deleted, messages_deleted = await asyncio.to_thread(
+                chat_store_factory().delete_connection_chats, org_id=org_id, connection_id=connection_id
+            )
+            await _audit_purge(
+                request, user, org_id, connection_id,
+                {"chats_deleted": chats_deleted, "messages_deleted": messages_deleted, **extra},
+            )
+            return WhatsAppPurgeResultOut(
+                connection_id=connection_id,
+                chats_deleted=chats_deleted,
+                messages_deleted=messages_deleted,
+                extra=extra,
+            )
+
+    async def _audit_purge(
+        request: Request, user: Any, org_id: UUID, connection_id: UUID, counts: dict[str, int]
+    ) -> None:
+        """One audit row, COUNTS ONLY (no label, number or message text). Skipped -- loudly logged -- when the
+        app has no audit sink wired."""
+        logger.warning("whatsapp.purge connection=%s org=%s counts=%s", connection_id, org_id, counts)
+        sink = getattr(request.app.state, "audit_sink", None)
+        if sink is None or not getattr(request.app.state, "audit_enabled", False):
+            return
+        await sink.record(AuditEntry(
+            product_slug=audit_product_slug,
+            method="POST",
+            route_template=f"{prefix}/{{connection_id}}/purge",
+            path_params={"connection_id": str(connection_id), **counts},
+            status=200,
+            actor_kind="user",
+            client_hint="whatsapp-purge",
+            actor=AuditActor(user_id=str(resolve_user_id(user)), org_id=str(org_id), role="admin"),
+        ))
 
     return router
