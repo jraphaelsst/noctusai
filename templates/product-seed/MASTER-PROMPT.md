@@ -28,7 +28,7 @@ products/{{PRODUCT_SLUG}}/backend/app/
 products/{{PRODUCT_SLUG}}/frontend/src/
   App.tsx              → createProductApp() + createProductLayout()
   vite.config.ts       → createViteConfig({ port: {{FRONTEND_PORT}} }) — 3 lines
-  pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
+  pages/               → Dashboard (stack status), Equipe (team), Configuracoes (`/configuracoes/conta` on the SectionTabsPage organ — the settings shape every product starts from), Landing, Login, etc.
   hooks/               → useNotificacoes (from seed lib); useExample = reference domain hooks (TanStack reads + useCacheWriteMutation writes)
   components/          → NotificationBell, ErrorBoundary, AuthProvider (from seed lib)
   NO Layout.tsx        → framework provides it via createProductLayout()
@@ -36,7 +36,7 @@ products/{{PRODUCT_SLUG}}/frontend/src/
 
 ### Database
 
-Schema: `{{SCHEMA_NAME}}` — only `status_pagina` (feature flags) and `invitations` (team invites). Zero domain tables.
+Schema: `{{SCHEMA_NAME}}` — only `status_pagina` (feature flags; `014_status_pagina_configuracoes.sql` adds the Configurações nav row) and `invitations` (team invites). Zero domain tables.
 
 ## What the framework provides automatically
 

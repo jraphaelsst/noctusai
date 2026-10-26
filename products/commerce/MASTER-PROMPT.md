@@ -24,7 +24,7 @@ products/commerce/backend/app/
 
 ### Frontend
 
-`createProductApp()` + `createProductLayout()`; back-office pages under `/admin/*` use the staff organ components; `/` is the host-resolved storefront.
+`createProductApp()` + `createProductLayout()`; back-office pages under `/admin/*` use the staff organ components; `/` is the host-resolved storefront. Store settings are ONE page on the seed `SectionTabsPage` organ: `/admin/configuracoes/{loja,enderecos,integracoes}` (`pages/admin/Configuracoes.tsx`; nav row `configuracoes` from migration `030_status_pagina_configuracoes.sql`); the old `/admin/loja`, `/admin/enderecos`, `/admin/integracoes` paths redirect there.
 
 ### Database
 

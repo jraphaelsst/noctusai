@@ -27,6 +27,7 @@ cd products/seed/frontend && npm run dev
 - `createViteConfig()` works (alias resolution, dependency deduplication)
 - SSO authentication flow
 - Page status filtering
+- Settings page on the `SectionTabsPage` organ (`/configuracoes/<tab>`, starting with `conta`; nav row from migration `014_status_pagina_configuracoes.sql`)
 - Notification proxying
 - Team/invitation management
 - Template auto-sync (post-commit hook → `templates/product-seed/`)
