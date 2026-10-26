@@ -1145,7 +1145,7 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
                 # Migration 291 — the on-file value is an OWNER CORRECTION
                 # this reading contests: a warning, not a block.
                 "protege_correcao": bool(r.get("protege_correcao")),
-                "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
+                "link": {"rota": "/configuracoes/pendencias", "rotulo": "Configurações → Pendências"},
             })
 
     codigos: list[str] = []
@@ -1207,7 +1207,7 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
                 "valor_atual": _texto(r.get("valor_anterior")),
                 "valor_proposto": _texto(r.get("valor_proposto")),
                 "origem_proposto": r.get("origem_proposto"),
-                "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
+                "link": {"rota": "/configuracoes/pendencias", "rotulo": "Configurações → Pendências"},
             })
 
     if dados.atendimento_id:
@@ -1237,7 +1237,7 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
                 "valor_atual": _texto(r.get("valor_anterior")),
                 "valor_proposto": _texto(r.get("valor_proposto")),
                 "origem_proposto": r.get("origem_proposto"),
-                "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
+                "link": {"rota": "/configuracoes/pendencias", "rotulo": "Configurações → Pendências"},
             })
     return saida
 

@@ -30,7 +30,6 @@ import {
   CalendarDays,
 } from "lucide-react";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
   DadosImobiliariaPatch,
@@ -92,7 +91,7 @@ import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard
 import { ImovelConflitosPendentesOrgCard } from "@/components/imovel/ImovelConflitosCard";
 import { useImovelConflitosPendentesOrg } from "@/hooks/useImovelDados";
 import { IdentificadoresNaoConformesPanel } from "@/components/IdentificadoresNaoConformesCard";
-import { UnsavedChangesNotice, useBeforeUnloadGuard } from "@noctusai/lib/components";
+import { SectionTabsPage, UnsavedChangesNotice, useBeforeUnloadGuard, type SectionTab } from "@noctusai/lib/components";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -1767,9 +1766,6 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
 function VisibilidadeTab() {
   return <StatusPaginaPanel api={api} enabled />;
 }
-
-// ─── Page shell ────────────────────────────────────────────────────────
-export default function Settings() {
 // ─── Document retention tab (migration 079) ─────────────────────────────
 //
 // The screen the owner asked for: "leave a UI for it so i can change it later
@@ -2181,6 +2177,9 @@ function PendenciasDadosTab() {
   );
 }
 
+
+// ─── Page shell ────────────────────────────────────────────────────────
+export default function Settings() {
   const ssoCtx = useEffectiveSSOContext();
   const isAdminOrDev = isOrgAdmin(ssoCtx) || ssoCtx.org.role === "dev";
   // Precise owner/admin check for the clientes-inactivity write form — the
@@ -2190,71 +2189,52 @@ function PendenciasDadosTab() {
   const canEditClientesInactivity =
     ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
 
-  return (
-    <div className="container mx-auto max-w-5xl px-4 py-8">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Configurações</h1>
-        <p className="text-sm text-muted-foreground">
-          Gerencie destinatários de notificação e status das chaves de integração.
-        </p>
-      </header>
-
-      <Tabs defaultValue="notifications" className="w-full">
-        <TabsList
-          className={`grid w-full ${
-            isAdminOrDev ? "grid-cols-7 sm:max-w-4xl" : "grid-cols-5 sm:max-w-2xl"
-          }`}
-        >
-          <TabsTrigger value="imobiliaria">Imobiliária</TabsTrigger>
-          <TabsTrigger value="notifications">Notificações</TabsTrigger>
-          <TabsTrigger value="keys">Chaves API</TabsTrigger>
-          <TabsTrigger value="clientes">Clientes</TabsTrigger>
-          <TabsTrigger value="retencao">Retenção</TabsTrigger>
-          {/* Owner/admin only — matches the backend's `decidir_conflito
-              _route` gate exactly (not "dev"), same terms as
-              `canEditClientesInactivity` below. */}
-          {canEditClientesInactivity && (
-            <TabsTrigger value="pendencias">Pendências</TabsTrigger>
-          )}
-          {isAdminOrDev && (
-            <TabsTrigger value="visibilidade">Visibilidade</TabsTrigger>
-          )}
-        </TabsList>
-
-        {/* First tab: it is the org's own identity, and everything else here
-            configures behaviour rather than saying who we are. Also the block
-            a generated contract needs before it can name the intermediary. */}
-        <TabsContent value="imobiliaria" className="mt-6 space-y-6">
+  // One entry per tab; the URL is the source of truth (`/configuracoes/<key>`), owned by the seed
+  // `SectionTabsPage`. `visible` is a UX gate only -- the backend enforces each role. The first
+  // visible entry is where the bare `/configuracoes` (and any stale segment) lands.
+  const sections: SectionTab[] = [
+    // First tab: it is the org's own identity, and everything else here configures behaviour rather
+    // than saying who we are. Also the block a generated contract needs before it can name the
+    // intermediary.
+    {
+      key: "imobiliaria",
+      label: "Imobiliária",
+      render: () => (
+        <div className="space-y-6">
           <DadosImobiliariaTab />
           <TestemunhasSection />
-        </TabsContent>
-        <TabsContent value="notifications" className="mt-6">
-          <NotificationsTab />
-        </TabsContent>
-        <TabsContent value="keys" className="mt-6">
-          <ApiKeysTab isAdminOrDev={isAdminOrDev} />
-        </TabsContent>
-        <TabsContent value="clientes" className="mt-6">
-          <ClientesInactivityTab canEdit={canEditClientesInactivity} />
-        </TabsContent>
-        {/* Read is open to any member — a corretor should be able to look up
-            how long we keep a buyer's income tax return. Only the write is
-            narrowed to owner/admin, matching the backend's `_require_admin`. */}
-        <TabsContent value="retencao" className="mt-6">
-          <DocumentoRetencaoTab canEdit={canEditClientesInactivity} />
-        </TabsContent>
-        {canEditClientesInactivity && (
-          <TabsContent value="pendencias" className="mt-6 space-y-6">
-            <PendenciasDadosTab />
-            <IdentificadoresNaoConformesPanel />
-          </TabsContent>
-        )}
-        {isAdminOrDev && (
-          <TabsContent value="visibilidade" className="mt-6">
-            <VisibilidadeTab />
-          </TabsContent>
-        )}
-      </Tabs>
+        </div>
+      ),
+    },
+    { key: "notificacoes", label: "Notificações", render: () => <NotificationsTab /> },
+    { key: "chaves-api", label: "Chaves API", render: () => <ApiKeysTab isAdminOrDev={isAdminOrDev} /> },
+    { key: "clientes", label: "Clientes", render: () => <ClientesInactivityTab canEdit={canEditClientesInactivity} /> },
+    // Read is open to any member -- a corretor should be able to look up how long we keep a buyer's
+    // income tax return. Only the write is narrowed to owner/admin (the backend's `_require_admin`).
+    { key: "retencao", label: "Retenção", render: () => <DocumentoRetencaoTab canEdit={canEditClientesInactivity} /> },
+    // Owner/admin only -- matches the backend's `decidir_conflito_route` gate exactly (not "dev").
+    {
+      key: "pendencias",
+      label: "Pendências",
+      visible: canEditClientesInactivity,
+      render: () => (
+        <div className="space-y-6">
+          <PendenciasDadosTab />
+          <IdentificadoresNaoConformesPanel />
+        </div>
+      ),
+    },
+    { key: "visibilidade", label: "Visibilidade", visible: isAdminOrDev, render: () => <VisibilidadeTab /> },
+  ];
+
+  return (
+    <div className="container mx-auto max-w-5xl px-4 py-8">
+      <SectionTabsPage
+        basePath="/configuracoes"
+        title="Configurações"
+        description="Gerencie destinatários de notificação e status das chaves de integração."
+        sections={sections}
+      />
     </div>
   );
 }

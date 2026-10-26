@@ -21,10 +21,8 @@
  *   · @noctusai/lib — resolveSSOContext (real role-resolution logic mirrored
  *     inline) + StatusPaginaPanel stubbed (Visibilidade tab, out of scope)
  *   · @/hooks/useSettings — all hooks mocked (recipients/keys/meta-app/instagram-app)
- *   · @/components/ui/tabs — stubbed as a structural pass-through (renders
- *     every TabsContent unconditionally) so the test doesn't depend on Radix's
- *     real activation semantics; Card/Badge/Input/etc stay real (thin shadcn
- *     wrappers, safe to render as-is).
+ *   · Settings is the seed SectionTabsPage: each test mounts it at
+ *     /configuracoes/<tab> (renderSettingsOnTab) so only that tab renders.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -194,17 +192,6 @@ vi.mock("@/hooks/useImovelDados", () => ({
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-
-// ─── @/components/ui/tabs — structural pass-through ─────────────────────
-// Renders every TabsContent unconditionally so tests don't depend on Radix's
-// real click/keyboard activation semantics — only content correctness
-// (Meta App section visibility + save flow) is under test here.
-vi.mock("@/components/ui/tabs", () => ({
-  Tabs: ({ children }: any) => <div>{children}</div>,
-  TabsList: ({ children }: any) => <div>{children}</div>,
-  TabsTrigger: ({ children }: any) => <button type="button">{children}</button>,
-  TabsContent: ({ children }: any) => <div>{children}</div>,
-}));
 
 // ─── Fixtures ────────────────────────────────────────────────────────────
 
@@ -426,7 +413,7 @@ function setUser(orgRole: string | null) {
  * `retry: false` so a failing query surfaces immediately instead of being
  * retried three times inside a test's timeout.
  */
-async function renderSettingsOnKeysTab() {
+async function renderSettingsOnTab(tab: string) {
   const { default: Settings } = await import("./Settings");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
@@ -437,12 +424,20 @@ async function renderSettingsOnKeysTab() {
     defaultOptions: { queries: { retry: false } },
   });
   // A router too: the Pendências tab links each imóvel conflict to its page.
-  const { MemoryRouter } = await import("react-router-dom");
+  const { MemoryRouter, Route, Routes } = await import("react-router-dom");
   const utils = rtl.render(
     React.createElement(
       QueryClientProvider,
       { client: qc },
-      React.createElement(MemoryRouter, null, React.createElement(Settings)),
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: [`/configuracoes/${tab}`] },
+        React.createElement(
+          Routes,
+          null,
+          React.createElement(Route, { path: "/configuracoes/*", element: React.createElement(Settings) }),
+        ),
+      ),
     ),
   );
   return { ...utils, fireEvent: rtl.fireEvent };
@@ -453,13 +448,13 @@ async function renderSettingsOnKeysTab() {
 describe("Settings — Meta App section visibility", () => {
   it("is hidden for a non-admin/dev user", async () => {
     setUser("member");
-    const { queryByText } = await renderSettingsOnKeysTab();
+    const { queryByText } = await renderSettingsOnTab("chaves-api");
     expect(queryByText("Meta App")).toBeNull();
   });
 
   it("renders for an admin user with status badges", async () => {
     setUser("admin");
-    const { getByText, getByTestId } = await renderSettingsOnKeysTab();
+    const { getByText, getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByText("Meta App")).toBeTruthy();
     expect(getByTestId("meta-app-id-badge")).toBeTruthy();
     expect(getByTestId("meta-app-secret-badge")).toBeTruthy();
@@ -467,13 +462,13 @@ describe("Settings — Meta App section visibility", () => {
 
   it("renders for a dev-role user (same gate as Visibilidade tab)", async () => {
     setUser("dev");
-    const { getByText } = await renderSettingsOnKeysTab();
+    const { getByText } = await renderSettingsOnTab("chaves-api");
     expect(getByText("Meta App")).toBeTruthy();
   });
 
   it("shows 'ausente' badges when nothing is configured", async () => {
     setUser("owner");
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("meta-app-id-badge").textContent).toMatch(/ausente/i);
     expect(getByTestId("meta-app-secret-badge").textContent).toMatch(/ausente/i);
   });
@@ -489,7 +484,7 @@ describe("Settings — Meta App section visibility", () => {
       loading: false,
       refresh: mockRefresh,
     });
-    const { getByTestId, getByText } = await renderSettingsOnKeysTab();
+    const { getByTestId, getByText } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("meta-app-id-badge").textContent).toMatch(/configurado/i);
     expect(getByTestId("meta-app-secret-badge").textContent).toMatch(/configurado/i);
     expect(getByText(/1234\*\*\*\*7890/)).toBeTruthy();
@@ -499,14 +494,14 @@ describe("Settings — Meta App section visibility", () => {
 describe("Settings — Meta App save flow", () => {
   it("blocks submit and does not call save() when App ID is empty", async () => {
     setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
     fireEvent.click(getByTestId("meta-app-save-btn"));
     expect(mockSave).not.toHaveBeenCalled();
   });
 
   it("calls save() with app_id + app_secret and clears both fields after success", async () => {
     setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
 
     const appIdInput = getByTestId("meta-app-id-input") as HTMLInputElement;
     const appSecretInput = getByTestId("meta-app-secret-input") as HTMLInputElement;
@@ -534,7 +529,7 @@ describe("Settings — Meta App save flow", () => {
 
   it("omits app_secret from the payload when left blank (keeps existing secret)", async () => {
     setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
 
     fireEvent.change(getByTestId("meta-app-id-input"), {
       target: { value: "999888777" },
@@ -553,13 +548,13 @@ describe("Settings — Meta App save flow", () => {
 describe("Settings — Instagram App section visibility", () => {
   it("is hidden for a non-admin/dev user", async () => {
     setUser("member");
-    const { queryByText } = await renderSettingsOnKeysTab();
+    const { queryByText } = await renderSettingsOnTab("chaves-api");
     expect(queryByText("Aplicativo Instagram")).toBeNull();
   });
 
   it("renders for an admin user with status badges", async () => {
     setUser("admin");
-    const { getByText, getByTestId } = await renderSettingsOnKeysTab();
+    const { getByText, getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByText("Aplicativo Instagram")).toBeTruthy();
     expect(getByTestId("instagram-app-id-badge")).toBeTruthy();
     expect(getByTestId("instagram-app-secret-badge")).toBeTruthy();
@@ -567,7 +562,7 @@ describe("Settings — Instagram App section visibility", () => {
 
   it("shows 'ausente' badges when nothing is configured", async () => {
     setUser("owner");
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("instagram-app-id-badge").textContent).toMatch(/ausente/i);
     expect(getByTestId("instagram-app-secret-badge").textContent).toMatch(/ausente/i);
   });
@@ -583,7 +578,7 @@ describe("Settings — Instagram App section visibility", () => {
       loading: false,
       refresh: mockRefreshInstagram,
     });
-    const { getByTestId, getByText } = await renderSettingsOnKeysTab();
+    const { getByTestId, getByText } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("instagram-app-id-badge").textContent).toMatch(/configurado/i);
     expect(getByTestId("instagram-app-secret-badge").textContent).toMatch(/configurado/i);
     expect(getByText(/5678\*\*\*\*4321/)).toBeTruthy();
@@ -593,14 +588,14 @@ describe("Settings — Instagram App section visibility", () => {
 describe("Settings — Instagram App save flow", () => {
   it("blocks submit and does not call save() when App ID is empty", async () => {
     setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
     fireEvent.click(getByTestId("instagram-app-save-btn"));
     expect(mockSaveInstagram).not.toHaveBeenCalled();
   });
 
   it("calls save() with app_id + app_secret and clears both fields after success", async () => {
     setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
 
     const appIdInput = getByTestId("instagram-app-id-input") as HTMLInputElement;
     const appSecretInput = getByTestId("instagram-app-secret-input") as HTMLInputElement;
@@ -625,7 +620,7 @@ describe("Settings — Instagram App save flow", () => {
 
   it("omits app_secret from the payload when left blank (keeps existing secret)", async () => {
     setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
 
     fireEvent.change(getByTestId("instagram-app-id-input"), {
       target: { value: "666777888" },
@@ -668,7 +663,7 @@ describe("Settings — recipient client scoping", () => {
   it("shows each recipient's scope, defaulting to org-wide", async () => {
     setUser("admin");
     stubRecipients([R_SCOPED, R_ORGWIDE]);
-    const { getByLabelText } = await renderSettingsOnKeysTab();
+    const { getByLabelText } = await renderSettingsOnTab("notificacoes");
 
     expect((getByLabelText("Marca de One contact") as HTMLSelectElement).value)
       .toBe("client-one");
@@ -679,7 +674,7 @@ describe("Settings — recipient client scoping", () => {
   it("scopes an org-wide recipient to a client", async () => {
     setUser("admin");
     const update = stubRecipients([R_ORGWIDE]);
-    const { getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByLabelText, fireEvent } = await renderSettingsOnTab("notificacoes");
 
     fireEvent.change(getByLabelText("Marca de Fallback"), {
       target: { value: "client-joao" },
@@ -690,7 +685,7 @@ describe("Settings — recipient client scoping", () => {
   it("clears a scope with an explicit null, never an omitted key", async () => {
     setUser("admin");
     const update = stubRecipients([R_SCOPED]);
-    const { getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByLabelText, fireEvent } = await renderSettingsOnTab("notificacoes");
 
     fireEvent.change(getByLabelText("Marca de One contact"), {
       target: { value: "__org__" },
@@ -724,7 +719,7 @@ describe("Settings — clientes inactivity threshold", () => {
   it("says the value is the platform default when the org never configured one", async () => {
     setUser("admin");
     stubInactivity({ configured: false, threshold_days: 365, default_threshold_days: 365 });
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("clientes");
 
     expect(getByTestId("clientes-inactivity-status-badge").textContent).toContain(
       "padrão da plataforma"
@@ -735,7 +730,7 @@ describe("Settings — clientes inactivity threshold", () => {
   it("says 'personalizado' and shows the org's own number when configured", async () => {
     setUser("admin");
     stubInactivity({ configured: true, threshold_days: 45 });
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("clientes");
 
     expect(getByTestId("clientes-inactivity-status-badge").textContent).toContain(
       "personalizado"
@@ -746,7 +741,7 @@ describe("Settings — clientes inactivity threshold", () => {
   it("renders 0 as an explicit 'desativado' state, never as an empty value", async () => {
     setUser("admin");
     stubInactivity({ configured: true, threshold_days: 0 });
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("clientes");
 
     expect(getByTestId("clientes-inactivity-status-badge").textContent).toContain(
       "desativado"
@@ -763,7 +758,7 @@ describe("Settings — clientes inactivity threshold", () => {
   it("is read-only for a non-admin — no form, and it says why", async () => {
     setUser("member");
     stubInactivity({});
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("clientes");
 
     expect(queryByTestId("clientes-inactivity-form")).toBeNull();
     expect(getByTestId("clientes-inactivity-readonly-note")).toBeTruthy();
@@ -775,7 +770,7 @@ describe("Settings — clientes inactivity threshold", () => {
   it("saves the typed threshold for an admin", async () => {
     setUser("admin");
     stubInactivity({ configured: true, threshold_days: 365 });
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("clientes");
 
     fireEvent.change(getByTestId("clientes-inactivity-input"), {
       target: { value: "540" },
@@ -809,7 +804,7 @@ describe("Settings — document retention policy", () => {
     // visible — but a settings screen that shows ONLY `extratos_fgts` is the
     // same defect as the imóvel filters showing `Cozinhaplanejada`.
     setUser("owner");
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("retencao");
 
     const linha = getByTestId("retencao-row-atendimento-extratos_fgts");
     expect(linha.textContent).toContain("Extratos do FGTS");
@@ -821,7 +816,7 @@ describe("Settings — document retention policy", () => {
     // the upload and from the deal's close it is years apart, and only the
     // second is what Lei 9.613/98 art. 10 III means.
     setUser("owner");
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("retencao");
 
     const linha = getByTestId("retencao-row-atendimento-extratos_fgts");
     expect(linha.textContent).toContain("a partir do encerramento do atendimento");
@@ -833,7 +828,7 @@ describe("Settings — document retention policy", () => {
   it("renders a null retention as 'Indefinidamente', never as a blank", async () => {
     setUser("owner");
     stubRetencao([{ ...RETENCAO_FGTS, retencao_dias: null, personalizado: true }]);
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("retencao");
 
     expect(
       getByTestId("retencao-row-atendimento-extratos_fgts").textContent
@@ -843,7 +838,7 @@ describe("Settings — document retention policy", () => {
   it("marks an org override and shows the default it replaced", async () => {
     setUser("owner");
     stubRetencao([{ ...RETENCAO_FGTS, retencao_dias: 365, personalizado: true }]);
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("retencao");
 
     const linha = getByTestId("retencao-row-atendimento-extratos_fgts");
     expect(linha.textContent).toContain("personalizado");
@@ -855,7 +850,7 @@ describe("Settings — document retention policy", () => {
     // Read stays open — a corretor should be able to look up how long we keep
     // a buyer's income tax return — but nothing on screen offers to change it.
     setUser("member");
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("retencao");
 
     const linha = getByTestId("retencao-row-atendimento-extratos_fgts");
     expect(linha.textContent).toContain("730");
@@ -865,7 +860,7 @@ describe("Settings — document retention policy", () => {
   it("saves the typed number for the right surface and type", async () => {
     setUser("owner");
     const { getByTestId, getByLabelText, fireEvent } =
-      await renderSettingsOnKeysTab();
+      await renderSettingsOnTab("retencao");
 
     fireEvent.click(getByTestId("retencao-alterar-extratos_fgts"));
     fireEvent.change(getByLabelText(/Retenção em dias para Extratos do FGTS/), {
@@ -886,7 +881,7 @@ describe("Settings — document retention policy", () => {
     // show as a policy on screen while behaving as no clock at all.
     setUser("owner");
     const { getByTestId, getByLabelText, fireEvent } =
-      await renderSettingsOnKeysTab();
+      await renderSettingsOnTab("retencao");
 
     fireEvent.click(getByTestId("retencao-alterar-extratos_fgts"));
     fireEvent.change(getByLabelText(/Retenção em dias para Extratos do FGTS/), {
@@ -900,7 +895,7 @@ describe("Settings — document retention policy", () => {
   it("restores the platform default from the override row", async () => {
     setUser("owner");
     stubRetencao([{ ...RETENCAO_FGTS, retencao_dias: 365, personalizado: true }]);
-    const { getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByLabelText, fireEvent } = await renderSettingsOnTab("retencao");
 
     fireEvent.click(getByLabelText("Restaurar o padrão de Extratos do FGTS"));
 
@@ -914,7 +909,7 @@ describe("Settings — document retention policy", () => {
   it("🔴 renders the imóvel surface alongside cliente/atendimento, with its own group and pt-BR label", async () => {
     setUser("owner");
     stubRetencao([RETENCAO_FGTS, RETENCAO_CONTRATO, RETENCAO_MATRICULA]);
-    const { getByText, getByTestId } = await renderSettingsOnKeysTab();
+    const { getByText, getByTestId } = await renderSettingsOnTab("retencao");
 
     expect(getByText("Documentos do imóvel")).toBeTruthy();
     const linha = getByTestId("retencao-row-imovel-matricula");
@@ -926,7 +921,7 @@ describe("Settings — document retention policy", () => {
   it("saves an imóvel-surface override with the right superficie", async () => {
     setUser("owner");
     stubRetencao([RETENCAO_MATRICULA]);
-    const { getByTestId, getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, getByLabelText, fireEvent } = await renderSettingsOnTab("retencao");
 
     fireEvent.click(getByTestId("retencao-alterar-matricula"));
     fireEvent.change(getByLabelText(/Retenção em dias para Matrícula do imóvel/), {
@@ -948,7 +943,7 @@ describe("Settings — document retention policy", () => {
       RETENCAO_FGTS,
       { ...RETENCAO_MATRICULA, superficie: "empresa", tipo_documento: "cartao_cnpj", retencao_dias: 1825 },
     ]);
-    const { getByText, getByTestId } = await renderSettingsOnKeysTab();
+    const { getByText, getByTestId } = await renderSettingsOnTab("retencao");
 
     expect(getByText("Documentos da empresa")).toBeTruthy();
     expect(getByTestId("retencao-row-empresa-cartao_cnpj").textContent).toContain("Cartão CNPJ");
@@ -957,7 +952,7 @@ describe("Settings — document retention policy", () => {
   it("renders a surface the screen does not know yet under its slug instead of hiding it", async () => {
     setUser("owner");
     stubRetencao([{ ...RETENCAO_FGTS, superficie: "nova_superficie", tipo_documento: "x" }]);
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("retencao");
 
     expect(getByTestId("retencao-row-nova_superficie-x")).toBeTruthy();
   });
@@ -969,7 +964,7 @@ describe("Settings — document retention policy", () => {
 
 describe("Settings — Google Calendar", () => {
   it("shows the adapter and offers connect when consent is required", async () => {
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("calendar-status").textContent).toContain("fake");
     expect(getByTestId("calendar-connect")).toBeTruthy();
   });
@@ -988,7 +983,7 @@ describe("Settings — Google Calendar", () => {
       error: null,
       refresh: vi.fn(),
     });
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("calendar-status").textContent).toContain("agenda@exemplo.com");
     expect(queryByTestId("calendar-connect")).toBeNull();
   });
@@ -998,7 +993,7 @@ describe("Settings — Google Calendar", () => {
     const original = window.open;
     (window as any).open = open;
     try {
-      const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+      const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
       fireEvent.click(getByTestId("calendar-connect"));
       await new Promise((r) => setTimeout(r, 0));
       expect(mockFetchCalendarAuthUrl).toHaveBeenCalled();
@@ -1019,7 +1014,7 @@ describe("Settings — Google Calendar", () => {
       error: "Falha ao consultar o status do calendário.",
       refresh: vi.fn(),
     });
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("calendar-error")).toBeTruthy();
   });
 });
@@ -1058,7 +1053,7 @@ const CONFIGURED_LOCAL = {
 describe("Settings — managed API keys card", () => {
   it("lists every managed key with an unconfigured badge", async () => {
     setUser("owner");
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("chaves-api");
     for (const key of [
       "openai_api_key",
       "infosimples_token",
@@ -1073,7 +1068,7 @@ describe("Settings — managed API keys card", () => {
 
   it("keeps the read-only .env health view alongside the editable keys", async () => {
     setUser("owner");
-    const { getByText } = await renderSettingsOnKeysTab();
+    const { getByText } = await renderSettingsOnTab("chaves-api");
     expect(getByText("Status do ambiente (.env)")).toBeTruthy();
     // A key that only exists in the .env view, not in the managed set.
     expect(getByText("WAHA base URL")).toBeTruthy();
@@ -1088,7 +1083,7 @@ describe("Settings — managed API keys card", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, getByText } = await renderSettingsOnKeysTab();
+    const { getByTestId, getByText } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("api-key-hint-openai_api_key").textContent).toBe("...b3f9");
     expect(getByTestId("api-key-badge-openai_api_key").textContent).toContain(
       "configurada"
@@ -1107,7 +1102,7 @@ describe("Settings — managed API keys card", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("api-key-hint-infosimples_email_envio").textContent).toBe(
       "juridico@empresa.com.br"
     );
@@ -1123,7 +1118,7 @@ describe("Settings — managed API keys card", () => {
       refetch: vi.fn(),
     });
     const { queryByTestId, getByTestId, getByText } =
-      await renderSettingsOnKeysTab();
+      await renderSettingsOnTab("chaves-api");
     expect(getByTestId("api-key-openai_api_key")).toBeTruthy();
     expect(queryByTestId("api-key-edit-openai_api_key")).toBeNull();
     expect(queryByTestId("api-key-remove-openai_api_key")).toBeNull();
@@ -1150,7 +1145,7 @@ describe("Settings — managed API keys card", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { queryByTestId, getByTestId } = await renderSettingsOnKeysTab();
+    const { queryByTestId, getByTestId } = await renderSettingsOnTab("chaves-api");
     expect(queryByTestId("api-key-remove-openai_api_key")).toBeNull();
     expect(getByTestId("api-key-source-openai_api_key").textContent).toBe(
       "configurada na plataforma"
@@ -1162,7 +1157,7 @@ describe("Settings — managed API keys save flow", () => {
   it("saves the typed value for the right key and clears the field", async () => {
     setUser("owner");
     const { getByTestId, queryByTestId, fireEvent } =
-      await renderSettingsOnKeysTab();
+      await renderSettingsOnTab("chaves-api");
     fireEvent.click(getByTestId("api-key-edit-infosimples_token"));
     fireEvent.change(getByTestId("api-key-input-infosimples_token"), {
       target: { value: "  tok-abcdef  " },
@@ -1179,7 +1174,7 @@ describe("Settings — managed API keys save flow", () => {
 
   it("does not call save when the field is empty", async () => {
     setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
     fireEvent.click(getByTestId("api-key-edit-infosimples_token"));
     fireEvent.submit(getByTestId("api-key-form-infosimples_token"));
     await new Promise((r) => setTimeout(r, 0));
@@ -1195,7 +1190,7 @@ describe("Settings — managed API keys save flow", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
     fireEvent.click(getByTestId("api-key-remove-openai_api_key"));
     await new Promise((r) => setTimeout(r, 0));
     expect(mockRemoveApiKey).toHaveBeenCalledWith("openai_api_key");
@@ -1212,7 +1207,7 @@ describe("Settings — managed API keys test probe", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("api-key-test-openai_api_key")).toBeTruthy();
     // configured but not testable
     expect(queryByTestId("api-key-test-infosimples_email_envio")).toBeNull();
@@ -1234,7 +1229,7 @@ describe("Settings — managed API keys test probe", () => {
       success: false,
       message: "API Key inválida ou expirada.",
     });
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("chaves-api");
     fireEvent.click(getByTestId("api-key-test-openai_api_key"));
     await new Promise((r) => setTimeout(r, 0));
     expect(mockTestApiKey).toHaveBeenCalledWith("openai_api_key");
@@ -1254,7 +1249,7 @@ describe("Settings — managed API keys loading + error states", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("api-keys-skeleton")).toBeTruthy();
     expect(queryByTestId("api-key-openai_api_key")).toBeNull();
   });
@@ -1268,7 +1263,7 @@ describe("Settings — managed API keys loading + error states", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("chaves-api");
     // 🔴 The regression this guards: gating on `isFetching` alone would
     // blank a populated list on every save-triggered invalidation.
     expect(getByTestId("api-key-openai_api_key")).toBeTruthy();
@@ -1286,7 +1281,7 @@ describe("Settings — managed API keys loading + error states", () => {
       isError: true,
       refetch,
     });
-    const { getByTestId, getByText, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, getByText, fireEvent } = await renderSettingsOnTab("chaves-api");
     expect(getByTestId("api-keys-error")).toBeTruthy();
     fireEvent.click(getByText("Tentar novamente"));
     expect(refetch).toHaveBeenCalled();
@@ -1301,7 +1296,7 @@ describe("Settings — managed API keys loading + error states", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByText } = await renderSettingsOnKeysTab();
+    const { getByText } = await renderSettingsOnTab("chaves-api");
     expect(getByText("Nenhuma chave configuravel neste produto.")).toBeTruthy();
   });
 });
@@ -1319,7 +1314,7 @@ describe("DadosImobiliariaTab", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("imobiliaria");
     expect(getByTestId("imob-skeleton")).toBeTruthy();
     expect(queryByTestId("imob-plataforma-nome")).toBeNull();
   });
@@ -1333,7 +1328,7 @@ describe("DadosImobiliariaTab", () => {
       isError: true,
       refetch,
     });
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
     expect(getByTestId("imob-error")).toBeTruthy();
     fireEvent.click(getByTestId("imob-retry"));
     expect(refetch).toHaveBeenCalled();
@@ -1349,7 +1344,7 @@ describe("DadosImobiliariaTab", () => {
     });
     // 🔴 The regression this guards: gating on a bare `isFetching` would
     // unmount the four migration-117 fields on every background refetch.
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("imobiliaria");
     expect(getByTestId("imob-refreshing")).toBeTruthy();
     expect(queryByTestId("imob-skeleton")).toBeNull();
     expect(
@@ -1358,7 +1353,7 @@ describe("DadosImobiliariaTab", () => {
   });
 
   it("🔴 carries ONLY the org-wide fields — company identity moved to the Imobiliárias registry", async () => {
-    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("imobiliaria");
     for (const id of [
       "imob-razao",
       "imob-fantasia",
@@ -1381,7 +1376,7 @@ describe("DadosImobiliariaTab", () => {
   });
 
   it("renders the four migration-117 fields with the saved values", async () => {
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("imobiliaria");
     expect((getByTestId("imob-plataforma-nome") as HTMLInputElement).value).toBe(
       "ClickSign",
     );
@@ -1413,7 +1408,7 @@ describe("DadosImobiliariaTab", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("imobiliaria");
     expect((getByTestId("imob-plataforma-nome") as HTMLInputElement).value).toBe("");
     expect((getByTestId("imob-posse-multa") as HTMLInputElement).value).toBe("");
     expect((getByTestId("imob-salvar") as HTMLButtonElement).disabled).toBe(true);
@@ -1421,7 +1416,7 @@ describe("DadosImobiliariaTab", () => {
 
   it("refuses a non-https signing-platform URL client-side, mirroring the backend", async () => {
     const { toast } = await import("sonner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
 
     fireEvent.change(getByTestId("imob-plataforma-url"), {
       target: { value: "http://app.clicksign.com" },
@@ -1436,7 +1431,7 @@ describe("DadosImobiliariaTab", () => {
 
   it("refuses a non-numeric daily holdover fine", async () => {
     const { toast } = await import("sonner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
 
     fireEvent.change(getByTestId("imob-posse-multa"), {
       target: { value: "abc" },
@@ -1449,7 +1444,7 @@ describe("DadosImobiliariaTab", () => {
 
   it("refuses a zero-or-negative default pendências window", async () => {
     const { toast } = await import("sonner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
 
     fireEvent.change(getByTestId("imob-prazo-pendencias"), {
       target: { value: "0" },
@@ -1463,7 +1458,7 @@ describe("DadosImobiliariaTab", () => {
   });
 
   it("saves the migration-117 fields as numbers, not strings, comma-decimal included", async () => {
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
 
     fireEvent.change(getByTestId("imob-plataforma-nome"), {
       target: { value: "D4Sign" },
@@ -1488,7 +1483,7 @@ describe("DadosImobiliariaTab", () => {
   });
 
   it("saves the support contact with the WhatsApp canonicalized to E.164 (migration 189)", async () => {
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
 
     fireEvent.change(getByTestId("imob-suporte-nome"), { target: { value: "Suporte" } });
     fireEvent.change(getByTestId("imob-suporte-whatsapp"), {
@@ -1509,7 +1504,7 @@ describe("DadosImobiliariaTab", () => {
 
   it("refuses an unresolvable support WhatsApp client-side", async () => {
     const { toast } = await import("sonner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
 
     fireEvent.change(getByTestId("imob-suporte-whatsapp"), { target: { value: "1199457" } });
     fireEvent.click(getByTestId("imob-salvar"));
@@ -1521,7 +1516,7 @@ describe("DadosImobiliariaTab", () => {
   });
 
   it("clearing the daily fine sends null, not an empty string", async () => {
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("imobiliaria");
 
     fireEvent.change(getByTestId("imob-posse-multa"), { target: { value: "" } });
     fireEvent.click(getByTestId("imob-salvar"));
@@ -1535,13 +1530,13 @@ describe("DadosImobiliariaTab", () => {
 describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", () => {
   it("the tab is hidden for a member", async () => {
     setUser("member");
-    const { queryByText } = await renderSettingsOnKeysTab();
+    const { queryByText } = await renderSettingsOnTab("pendencias");
     expect(queryByText("Pendências")).toBeNull();
   });
 
   it("the tab is hidden for a dev role (narrower than isAdminOrDev, matches decidir_conflito_route's own gate)", async () => {
     setUser("dev");
-    const { queryByText } = await renderSettingsOnKeysTab();
+    const { queryByText } = await renderSettingsOnTab("pendencias");
     expect(queryByText("Pendências")).toBeNull();
   });
 
@@ -1553,7 +1548,7 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByText } = await renderSettingsOnKeysTab();
+    const { getByText } = await renderSettingsOnTab("pendencias");
     expect(getByText("Nenhuma pendência de confirmação no momento.")).toBeTruthy();
   });
 
@@ -1578,7 +1573,7 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, getByText } = await renderSettingsOnKeysTab();
+    const { getByTestId, getByText } = await renderSettingsOnTab("pendencias");
     expect(getByTestId("pendencias-dados-tab")).toBeTruthy();
     expect(getByText("Estado civil")).toBeTruthy();
     expect(getByText("cliente-abc")).toBeTruthy();
@@ -1600,7 +1595,7 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
         imoveis: { resolvidos: 1, ainda_pendentes: 0, ignorados: 0 },
       }),
     );
-    const { getByTestId, findByTestId, fireEvent, getByText } = await renderSettingsOnKeysTab();
+    const { getByTestId, findByTestId, fireEvent, getByText } = await renderSettingsOnTab("pendencias");
     fireEvent.click(getByTestId("resolver-conflitos-auto-btn"));
     expect(mockResolverAuto).not.toHaveBeenCalled();
     expect(getByText(/nunca é\s+substituído/)).toBeTruthy();
@@ -1632,7 +1627,7 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("pendencias");
     fireEvent.click(getByTestId("pendencias-dados-tab-item-conflito-2-aprovar"));
     expect(mockDecidirConflito).toHaveBeenCalledWith(
       { conflitoId: "conflito-2", aceitar: true },
@@ -1666,7 +1661,7 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, queryByText } = await renderSettingsOnKeysTab();
+    const { getByTestId, queryByText } = await renderSettingsOnTab("pendencias");
     expect(getByTestId("imovel-conflito-ic-1").textContent).toContain("Número da matrícula");
     expect(getByTestId("imovel-conflito-ic-1-link").getAttribute("href")).toBe(
       "/imoveis/AP1234#imovel-conflitos",
@@ -1683,7 +1678,7 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    const { getByTestId, fireEvent } = await renderSettingsOnTab("pendencias");
     fireEvent.click(getByTestId("imovel-conflito-ic-1-rejeitar"));
     expect(mockDecidirImovelConflito).toHaveBeenCalledWith(
       { codigo: "AP1234", conflitoId: "ic-1", aceitar: false },
@@ -1718,7 +1713,7 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
       isError: false,
       refetch: vi.fn(),
     });
-    const { getByTestId } = await renderSettingsOnKeysTab();
+    const { getByTestId } = await renderSettingsOnTab("pendencias");
     expect(getByTestId("pendencias-imoveis-erro")).toBeTruthy();
     expect(getByTestId("pendencias-dados-tab")).toBeTruthy();
   });

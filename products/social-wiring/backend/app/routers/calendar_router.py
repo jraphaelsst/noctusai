@@ -331,7 +331,7 @@ def calendar_oauth_callback(
     if settings.frontend_base_url:
         target = (
             settings.frontend_base_url.rstrip("/")
-            + "/configuracoes?calendar=connected"
+            + "/configuracoes/chaves-api?calendar=connected"
         )
         return RedirectResponse(target, status_code=status.HTTP_302_FOUND)
     return {"ok": True, "account_email": account_email, "org_id": str(org_id)}

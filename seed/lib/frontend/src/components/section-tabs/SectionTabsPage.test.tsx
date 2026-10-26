@@ -11,7 +11,13 @@ const SECTIONS: SectionTab[] = [
 ];
 
 function Where() {
-  return <span data-testid="where">{useLocation().pathname}</span>;
+  const l = useLocation();
+  return (
+    <>
+      <span data-testid="where">{l.pathname}</span>
+      <span data-testid="search">{l.search}</span>
+    </>
+  );
 }
 
 function renderAt(path: string, sections = SECTIONS) {
@@ -40,6 +46,12 @@ describe('SectionTabsPage', () => {
     renderAt('/configuracoes');
     expect(screen.getByTestId('where')).toHaveTextContent('/configuracoes/conexoes');
     expect(screen.getByText('conteudo conexoes')).toBeInTheDocument();
+  });
+
+  it('keeps the query string and hash when redirecting to the first section', () => {
+    renderAt('/configuracoes?calendar=connected#x');
+    expect(screen.getByTestId('where')).toHaveTextContent('/configuracoes/conexoes');
+    expect(screen.getByTestId('search')).toHaveTextContent('?calendar=connected');
   });
 
   it('redirects an unknown segment and a hidden section to the first visible one', () => {
