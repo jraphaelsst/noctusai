@@ -1,6 +1,6 @@
 consented_by: joaoraphaelsst@gmail.com
 consented_on: 2026-10-26
-consent_ref: 'projects/monica-v1#v1-golive'
+consent_ref: 'project-history/roadmaps/monica-v1-2026-10.md#v1-golive'
 dev_validated: true
 recorded_by: agent
 authorization:
@@ -10,5 +10,5 @@ authorization:
   evidence_rank: canonical-exact/other
   candidates_considered: 2
   session_id: c06f59b2-2a26-44e2-8f02-a53a65fa2d3b
-  transcript_sha256: 4166ca6467c5ab9f0614b573154c69a59d407d08fac5a806f827e3d838cad76c
-  recorded_at: 2026-10-26T21:04:01+00:00
+  transcript_sha256: 5de4eb2e47bcea438017d36d8fbd8117c3d41591eef5b93984a6f55f830a9510
+  recorded_at: 2026-10-26T21:36:29+00:00
