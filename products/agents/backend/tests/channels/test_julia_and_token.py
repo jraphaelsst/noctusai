@@ -23,12 +23,17 @@ def _platform_definition(rt, **kw):
     """A platform definition (TEST DATA: key + settings are passed in, never registered in code)."""
     rt.studio.mark_platform_org(PLATFORM_ORG)
     params = dict(
-        nome="Julia", runtime="llm", owner_product="social-wiring", instanciavel=True,
+        nome="Julia", runtime="llm", owner_product="social-wiring", instanciavel=False,
         escopo_qualificacao="sdr", padrao_qualificacao="imob-lead",
         rascunho_padrao={"provider": "openai", "model": "gpt-5.6-terra", "tool_policy": {"web_search": False, "knowledge": False}},
     )
+    grant = kw.pop("grant", True)
     params.update(kw)
-    return ensure_definicao(PLATFORM_ORG, "julia", studio_store=rt.studio, created_by=DEFAULT_USER_ID, **params)
+    d = ensure_definicao(PLATFORM_ORG, "julia", studio_store=rt.studio, created_by=DEFAULT_USER_ID, **params)
+    if grant:  # 050: a product-owned (closed) definition reaches an org only by an explicit grant
+        for org in (rt.org_id, OTHER_ORG):
+            rt.studio.grant_definition_org(d.id, org, DEFAULT_USER_ID)
+    return d
 
 
 class TestPlatformDefinitionsAreData:
@@ -67,9 +72,10 @@ class TestPlatformDefinitionsAreData:
         assert (agent.key, agent.runtime, agent.owner_product, agent.ativo) == ("julia", "llm", "social-wiring", False)
         assert rt.studio.list_versions(rt.org_id, agent.id) == []
 
-    def test_a_non_instantiable_definition_is_never_instantiated(self, rt):
-        _platform_definition(rt, instanciavel=False)
+    def test_a_closed_definition_is_never_instantiated_without_a_grant(self, rt):
+        _platform_definition(rt, grant=False)
         assert ensure_instancia(rt.org_id, "julia", studio_store=rt.studio) is None
+        assert ensure_instancias(rt.org_id, studio_store=rt.studio) == []
 
     def test_is_idempotent_and_per_org(self, rt):
         _platform_definition(rt)

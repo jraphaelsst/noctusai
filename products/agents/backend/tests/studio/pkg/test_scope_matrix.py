@@ -71,6 +71,9 @@ CONTENT_WRITE_ROUTES = {
     ("POST", "/api/studio/plataforma/agents"),
     ("GET", "/api/studio/plataforma/agents/{key}"),
     ("PATCH", "/api/studio/plataforma/agents/{key}"),
+    # 050 org-config isolation: the grant is the ONLY way a closed definition reaches one org
+    ("GET", "/api/studio/plataforma/agents/{key}/grants"),
+    ("POST", "/api/studio/plataforma/agents/{key}/grants"),
     # S3a: AI-generated first drafts (the UI and the chat use the SAME routes)
     ("POST", "/api/studio/agents/{key}/geracoes"),
     ("GET", "/api/studio/agents/{key}/geracoes"),

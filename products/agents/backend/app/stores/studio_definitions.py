@@ -217,8 +217,9 @@ class StudioAgentRecord:
     escopo_qualificacao: str | None = None
     padrao_qualificacao: str | None = None
     rascunho_padrao: dict[str, Any] | None = None
-    #: 049: a PUBLISHED definition is instantiated in every org only when this is true.
-    instanciavel: bool = True
+    #: 049/050: a PUBLISHED definition is instantiated in every org only when this is true (closed by default;
+    #: a product-owned definition is never true; the exception is an explicit ``definition_org_grants`` row).
+    instanciavel: bool = False
     #: 049: ``gerador`` | ``exemplar`` | ``None`` -- the role a platform definition plays for a mechanism.
     papel: str | None = None
 
@@ -431,6 +432,16 @@ def _validate_definicao_fields(fields: dict[str, Any]) -> None:
         raise ValueError("instanciavel must be a boolean")
 
 
+def _check_not_owned_and_open(owner_product: str | None, instanciavel: bool) -> None:
+    """050 CHECK ``agents_product_owned_not_instanciavel``: a product-owned definition is never instantiated in every
+    org -- another org's / app's configuration is reachable only through an explicit ``definition_org_grants`` row."""
+    if owner_product is not None and instanciavel:
+        raise ValueError(
+            "instanciavel=true is refused for a product-owned definition (owner_product set): grant the orgs "
+            "explicitly (definition_org_grants) instead of opening it to every org"
+        )
+
+
 def validar_rascunho_padrao(settings: Any) -> None:
     """The first-draft settings of a definition: only version setting names, each valid for a version."""
     if not isinstance(settings, dict):
@@ -571,7 +582,7 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
         runtime: str = "claude_sdk", owner_product: str | None = None,
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
-        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = True, papel: str | None = None,
+        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
     ) -> StudioAgentRecord:
         """``definition_mode='studio'``, ``ativo=false``, ``runtime`` (default
         ``claude_sdk`` — the studio UI's only choice; ``llm`` is created by the
@@ -876,7 +887,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         runtime: str = "claude_sdk", owner_product: str | None = None,
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
-        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = True, papel: str | None = None,
+        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
@@ -902,6 +913,11 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             definition = self.get_agent_by_id(definition_agent_id)
             if definition.definition_scope != "plataforma" or definition.key != key:
                 raise StudioConflict("definition_invalid", "the definition must be the platform row of the same key")
+            # 050 `guard_agent_definition_scope`: a closed definition is held only by granted orgs
+            if not definition.instanciavel and not self.is_definition_granted(definition.id, org_id):
+                raise StudioConflict("definition_not_granted", "the org was not granted this definition")
+        if definition_scope == "plataforma":
+            _check_not_owned_and_open(owner_product, instanciavel)
         now = self._now()
         rec = StudioAgentRecord(
             id=uuid4(), org_id=org_id, key=key, nome=nome, descricao=descricao,
@@ -921,6 +937,9 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         before = self.get_agent(org_id, key)
         if before.definition_scope != "plataforma":
             raise ValueError("only a platform definition carries these fields")
+        _check_not_owned_and_open(
+            fields.get("owner_product", before.owner_product), bool(fields.get("instanciavel", before.instanciavel)),
+        )
         if fields.get("papel") == "gerador" and any(
             d.papel == "gerador" and d.id != before.id for d in self.list_platform_definitions()
         ):
@@ -1549,7 +1568,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             escopo_qualificacao=row.get("escopo_qualificacao"),
             padrao_qualificacao=row.get("padrao_qualificacao"),
             rascunho_padrao=dict(row["rascunho_padrao"]) if row.get("rascunho_padrao") is not None else None,
-            instanciavel=bool(row.get("instanciavel", True)), papel=row.get("papel"),
+            instanciavel=bool(row.get("instanciavel", False)), papel=row.get("papel"),
         )
 
     @staticmethod
@@ -1643,7 +1662,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         runtime: str = "claude_sdk", owner_product: str | None = None,
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
-        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = True, papel: str | None = None,
+        rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
@@ -1657,6 +1676,8 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         if definition_scope != "plataforma" and any(v is not None for v in attrs.values()):
             raise ValueError("escopo/padrao de qualificação and rascunho_padrao belong to a platform definition")
         _validate_definicao_fields({k: v for k, v in attrs.items() if v is not None})
+        if definition_scope == "plataforma":
+            _check_not_owned_and_open(owner_product, instanciavel)
         payload = {
             "org_id": str(org_id), "key": key, "nome": nome, "descricao": descricao,
             "runtime": runtime, "definition_mode": "studio", "ativo": False, "kind": kind,
@@ -1679,6 +1700,9 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         before = self.get_agent(org_id, key)
         if before.definition_scope != "plataforma":
             raise ValueError("only a platform definition carries these fields")
+        _check_not_owned_and_open(
+            fields.get("owner_product", before.owner_product), bool(fields.get("instanciavel", before.instanciavel)),
+        )
         if fields.get("papel") == "gerador" and any(
             d.papel == "gerador" and d.id != before.id for d in self.list_platform_definitions()
         ):

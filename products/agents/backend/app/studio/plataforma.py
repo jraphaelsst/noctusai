@@ -10,7 +10,8 @@ tool) and read by every mechanism (runtime, compile, qualification, org-instance
 * ``escopo_qualificacao`` -- the qualification SCOPE the agent works (``None`` = every scope);
 * ``padrao_qualificacao`` -- the qualification standard key the agent works (``None`` = none);
 * ``rascunho_padrao`` -- the settings its first draft starts with (provider / model / effort / ...);
-* ``instanciavel`` -- whether a PUBLISHED definition is instantiated in every org.
+* ``instanciavel`` -- whether a PUBLISHED definition is instantiated in every org (closed by default; a closed one
+  reaches only orgs granted via ``definition_org_grants``).
 
 Not one word of prompt text lives here either: the content is written as rows (Studio API / MCP tool).
 """
@@ -91,6 +92,12 @@ def _instanciar(org_id: UUID, definition: StudioAgentRecord, *, studio_store: An
     return agent
 
 
+def _pode_instanciar(definition: StudioAgentRecord, org_id: UUID, studio_store: Any) -> bool:
+    """Open definitions (``instanciavel``) reach every org; a closed one -- every product-owned definition -- reaches
+    ONLY the orgs explicitly granted it (``definition_org_grants``). Org/app configuration never leaks by default."""
+    return definition.instanciavel or studio_store.is_definition_granted(definition.id, org_id)
+
+
 def ensure_instancia(org_id: UUID, key: str, *, studio_store: Any) -> StudioAgentRecord | None:
     """The org's row for platform-defined ``key``: the existing one, else a new INSTANCE of the platform
     definition. ``None`` when no instantiable platform definition exists (nothing to instantiate -- no stranded
@@ -100,7 +107,7 @@ def ensure_instancia(org_id: UUID, key: str, *, studio_store: Any) -> StudioAgen
     except NotFound:
         pass
     definition = studio_store.get_platform_definition(key)
-    if definition is None or not definition.instanciavel:
+    if definition is None or not _pode_instanciar(definition, org_id, studio_store):
         return None
     return _instanciar(org_id, definition, studio_store=studio_store)
 
@@ -111,7 +118,7 @@ def ensure_instancias(org_id: UUID, *, studio_store: Any) -> list[StudioAgentRec
     have = {a.key for a in studio_store.list_agents(org_id)}
     created: list[StudioAgentRecord] = []
     for definition in studio_store.list_platform_definitions():
-        if definition.key in have or not definition.instanciavel or definition.org_id == org_id:
+        if definition.key in have or definition.org_id == org_id or not _pode_instanciar(definition, org_id, studio_store):
             continue
         if studio_store.get_active_version(definition.org_id, definition.id) is None:
             continue

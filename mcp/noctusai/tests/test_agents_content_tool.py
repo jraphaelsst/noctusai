@@ -91,6 +91,10 @@ def _handler(state: FakeAgents):
             """The S3a subset: definition config + generation runs (what the tool calls)."""
             if path == "/api/studio/plataforma/agents/novo" and m in ("GET", "PATCH"):
                 return self._send(200, {"key": "novo", "papel": (b or {}).get("papel"), "runtime": "llm"})
+            if path.endswith("/grants"):
+                if m == "POST":
+                    return self._send(201, {"key": "julia", "instanciavel": False, "org_ids": [b["org_id"]], "created": True})
+                return self._send(200, {"key": "julia", "instanciavel": False, "org_ids": [], "created": None})
             if m == "POST" and path.endswith("/geracoes"):
                 if "/julia/" not in path:
                     return self._err(404, "agente_nao_encontrado")
@@ -566,6 +570,30 @@ class TestAgentLifecycle:
 
 BRIEFING = {"nome": "Atendente", "objetivo": "Atender clientes de uma loja.", "publico": "Ciclistas", "canal": "web",
             "exemplos": "NUNCA-ECOAR-ESTE-TEXTO"}
+
+
+class TestConceder:
+    """conceder / concessoes: the sanctioned way to give ONE org a closed definition (org-config isolation)."""
+
+    ORG = "11111111-2222-4333-8444-555555555555"
+
+    def test_conceder_is_a_dry_run_then_posts_the_org(self, srv, private):
+        plan = run(srv, private, {"org_id": self.ORG}, action="conceder", agent="julia")
+        assert plan["status"] == "planned" and srv.log == []
+        assert plan["requisicao"] == "POST /api/studio/plataforma/agents/julia/grants"
+        out = run(srv, private, {"org_id": self.ORG}, action="conceder", agent="julia", confirm=True)
+        assert out["status"] == "granted" and out["concessoes"]["org_ids"] == [self.ORG]
+        [(method, path, body, _a)] = srv.log
+        assert (method, path, body) == ("POST", "/api/studio/plataforma/agents/julia/grants", {"org_id": self.ORG})
+
+    def test_conceder_needs_a_valid_org_id_and_nothing_else(self, srv, private):
+        assert run(srv, private, {"org_id": "not-a-uuid"}, action="conceder", agent="julia")["codigo"] == "payload_invalido"
+        assert run(srv, private, {"org_id": self.ORG, "x": 1}, action="conceder", agent="julia")["codigo"] == "payload_invalido"
+        assert srv.log == []
+
+    def test_concessoes_lists(self, srv):
+        out = C.content("concessoes", agent="julia", base_url=srv.url)
+        assert out["status"] == "ok" and out["resultado"]["org_ids"] == []
 
 
 class TestGeracao:

@@ -292,6 +292,17 @@ class ConteudoStore(Protocol):
         replacement of the old code registry: org-instance creation iterates this."""
         ...
 
+    # org grants (050): the allow-list of orgs that may hold an INSTANCE of a non-instanciavel definition
+    def grant_definition_org(self, definition_id: UUID, org_id: UUID, granted_by: UUID | None = None) -> bool:
+        """Allow ``org_id`` to hold an instance of the definition. Idempotent; ``True`` when newly granted."""
+        ...
+
+    def list_definition_grants(self, definition_id: UUID) -> list[UUID]:
+        """The org ids granted the definition (sorted)."""
+        ...
+
+    def is_definition_granted(self, definition_id: UUID, org_id: UUID) -> bool: ...
+
     def append_audit(
         self, org_id: UUID, agent_id: UUID, actor: UUID | None, acao: str,
         antes: dict[str, Any] | None, depois: dict[str, Any] | None,
@@ -358,6 +369,20 @@ class FakeConteudoMixin:
 
     def list_platform_definitions(self):
         return sorted((r for r in self._agents.values() if r.definition_scope == "plataforma"), key=lambda r: r.key)
+
+    def grant_definition_org(self, definition_id, org_id, granted_by=None) -> bool:
+        grants = self.__dict__.setdefault("_grants", set())
+        if (definition_id, org_id) in grants:
+            return False
+        self.get_agent_by_id(definition_id)  # FK: the definition exists
+        grants.add((definition_id, org_id))
+        return True
+
+    def list_definition_grants(self, definition_id):
+        return sorted(o for d, o in self.__dict__.get("_grants", set()) if d == definition_id)
+
+    def is_definition_granted(self, definition_id, org_id) -> bool:
+        return (definition_id, org_id) in self.__dict__.get("_grants", set())
 
     def append_audit(self, org_id, agent_id, actor, acao, antes, depois) -> None:
         self._agent_by_id(org_id, agent_id)
@@ -535,6 +560,29 @@ class SupabaseConteudoMixin:
             label="platform definitions", order=("key",),
         )
         return [self._agent(r) for r in rows]
+
+    def grant_definition_org(self, definition_id, org_id, granted_by=None) -> bool:
+        if self.is_definition_granted(definition_id, org_id):
+            return False
+        self._exec(self._t("definition_org_grants").insert({
+            "definition_id": str(definition_id), "org_id": str(org_id),
+            "granted_by": str(granted_by) if granted_by else None,
+        }))
+        return True
+
+    def list_definition_grants(self, definition_id):
+        rows = self._paged(
+            lambda: self._t("definition_org_grants").select("org_id").eq("definition_id", str(definition_id)),
+            label="definition grants", order=("org_id",),
+        )
+        return [UUID(str(r["org_id"])) for r in rows]
+
+    def is_definition_granted(self, definition_id, org_id) -> bool:
+        resp = (
+            self._t("definition_org_grants").select("org_id").eq("definition_id", str(definition_id))
+            .eq("org_id", str(org_id)).limit(1).execute()
+        )
+        return bool(resp.data)
 
     def append_audit(self, org_id, agent_id, actor, acao, antes, depois) -> None:
         self._exec(self._t("agent_audit_log").insert({

@@ -15946,6 +15946,187 @@ def check_table_has_rls(
     return findings
 
 
+# ---------------------------------------------------------------------------
+# ORG-CONFIG ISOLATION (owner directive 2026-10-26): "another org getting one org's / app's settings is
+# unacceptable". Two keepers close it at the root; KB § PATTERNS/compliance/org-config-isolation.md.
+#   * check_new_org_table_rls          -- BLOCKING DELTA gate: a NEW migration's table with an org_id column must
+#                                         enable RLS AND be org-scoped-readable (policy) or service-role-only.
+#   * check_org_owned_definition_not_instanciavel -- an agent definition owned by an org/product is never opened to
+#                                         every org (instanciavel=true) in the files that declare it.
+# ---------------------------------------------------------------------------
+
+_ORG_COLUMN_RE = re.compile(r"\borg_id\b", re.IGNORECASE)
+_POLICY_RE = re.compile(
+    r"CREATE\s+POLICY\s+\"?[\w-]+\"?\s+ON\s+(?:\"?(?P<schema>[\w-]+)\"?\.)?\"?(?P<table>[\w-]+)\"?(?P<rest>.*)",
+    re.IGNORECASE | re.DOTALL,
+)
+_ORG_SCOPE_RE = re.compile(r"org_id|current_org|my_org|org_ids", re.IGNORECASE)
+_REVOKE_RE = re.compile(
+    r"REVOKE\s+ALL\s+(?:PRIVILEGES\s+)?ON\s+(?:TABLE\s+)?(?:\"?(?P<schema>[\w-]+)\"?\.)?\"?(?P<table>[\w-]+)\"?"
+    r"\s+FROM\s+(?P<roles>[^;]+)",
+    re.IGNORECASE,
+)
+_ORG_TABLE_ALLOW = "noc-allow: org-table-rls"
+
+
+def _added_migration_files(root: Path) -> list[str]:
+    """Migration files this branch ADDED vs ``origin/dev`` (committed or not) -- the delta, repo-relative."""
+    import subprocess
+
+    out: set[str] = set()
+    for cmd in (
+        ["git", "diff", "--name-only", "--diff-filter=A", "origin/dev...HEAD", "--", "products/*/backend/migrations/*.sql"],
+        ["git", "diff", "--name-only", "--diff-filter=A", "--cached", "--", "products/*/backend/migrations/*.sql"],
+        ["git", "ls-files", "--others", "--exclude-standard", "--", "products/*/backend/migrations/*.sql"],
+    ):
+        try:
+            res = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("compliance: %s failed (%s)", " ".join(cmd[:3]), exc)
+            continue
+        out.update(line for line in res.stdout.splitlines() if line)
+    return sorted(out)
+
+
+def check_new_org_table_rls(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
+    """BLOCKING DELTA gate (promoted from the advisory ``check_table_has_rls``): a ``CREATE TABLE`` with an
+    ``org_id`` column in a NEW migration must (1) ``ENABLE ROW LEVEL SECURITY`` (static or the dynamic DO-block
+    shape) AND (2) be org-scoped-readable -- a ``CREATE POLICY ... ON <t>`` whose text names ``org_id`` /
+    ``current_org*`` -- OR be explicitly service-role-only (``REVOKE ALL ON <t> FROM ... authenticated``). A table
+    with an org column and neither is the cross-org read: any authenticated user could read every org's rows.
+
+    DELTA, not retroactive: ``paths`` (the staged ADDED migrations) scopes the scan; ``None`` = the migrations this
+    branch added vs ``origin/dev``. Existing tables are baselined (never re-failed). Escape for a reviewed case:
+    ``-- noc-allow: org-table-rls — <reason>`` in the file. KB § PATTERNS/compliance/org-config-isolation.md."""
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+    from noctusai_lib.testing.migration_parser import _strip_block_comments, _strip_line_comments, _walk_statements
+
+    rels = list(paths) if paths is not None else _added_migration_files(root)
+    for rel in rels:
+        f = root / rel
+        if f.suffix != ".sql" or "backend/migrations" not in f.as_posix() or not f.exists():
+            continue
+        try:
+            raw = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", f, exc)
+            continue
+        if _ORG_TABLE_ALLOW in raw:
+            continue
+        cleaned = _strip_block_comments(_strip_line_comments(raw))
+        stmts = list(_walk_statements(cleaned))
+        enabled = {
+            ((m.group("schema") or "").lower() or None, m.group("table").lower())
+            for m in _RLS_ALTER_ENABLE_RE.finditer(cleaned)
+        }
+        for st in stmts:
+            if st.lstrip()[:2].upper() == "DO":
+                enabled.update(_dynamic_rls_enabled_tables(st))
+        scoped_policy: set[str] = set()
+        for st in stmts:
+            m = _POLICY_RE.match(st.lstrip())
+            if m and _ORG_SCOPE_RE.search(m.group("rest")) and not re.match(
+                r"\s*(?:AS\s+\w+\s+)?FOR\s+(?:INSERT|UPDATE|DELETE)\b", m.group("rest"), re.IGNORECASE
+            ):
+                scoped_policy.add(m.group("table").lower())
+        do_blocks = [st for st in stmts if st.lstrip()[:2].upper() == "DO" and re.search(r"CREATE\s+POLICY", st, re.I)
+                     and _ORG_SCOPE_RE.search(st)]
+        private: set[str] = set()
+        for m in _REVOKE_RE.finditer(cleaned):
+            if re.search(r"\bauthenticated\b", m.group("roles"), re.IGNORECASE) or re.search(
+                r"\bPUBLIC\b", m.group("roles"), re.IGNORECASE
+            ):
+                private.add(m.group("table").lower())
+        for st in stmts:
+            m = _RLS_CREATE_TABLE_RE.match(st.lstrip())
+            if not m or not st.lstrip()[:30].upper().startswith("CREATE") or not _ORG_COLUMN_RE.search(st):
+                continue
+            schema = (m.group("schema") or "").lower() or None
+            table = m.group("table").lower()
+            lineno = cleaned[: cleaned.find(st)].count("\n") + 1 if st in cleaned else 1
+            if (schema, table) not in enabled and (None, table) not in enabled:
+                findings.append({
+                    "file": rel, "line": lineno, "severity": "high",
+                    "issue": (
+                        f"{rel}:{lineno} new table `{table}` has an org_id column but no `ENABLE ROW LEVEL SECURITY`: "
+                        "any authenticated user could read every org's rows. Enable RLS and add an org-scoped SELECT "
+                        "policy (or REVOKE it from authenticated if service-role-only). "
+                        "KB § PATTERNS/compliance/org-config-isolation.md."
+                    ),
+                })
+                continue
+            in_do = any(table in blk.lower() for blk in do_blocks)
+            if table not in scoped_policy and table not in private and not in_do:
+                findings.append({
+                    "file": rel, "line": lineno, "severity": "high",
+                    "issue": (
+                        f"{rel}:{lineno} new table `{table}` (org_id) has RLS on but neither an org-scoped SELECT policy "
+                        "(`CREATE POLICY ... ON <t> ... USING (... org_id ...)`) nor a service-role-only posture "
+                        "(`REVOKE ALL ON <t> FROM ... authenticated`). State which: org-scoped read, or service-role only. "
+                        "KB § PATTERNS/compliance/org-config-isolation.md."
+                    ),
+                })
+    return findings
+
+
+def _definition_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for base in sorted((root / "products").glob("*/ops/agents")):  # product-scope: all — declared agent definitions are config regardless of ativo
+        files += [p for p in base.rglob("*") if p.is_file() and p.suffix in (".json", ".yaml", ".yml")]
+    files += sorted((root / "products").glob("*/packages/*/package.yaml"))  # product-scope: all
+    return files
+
+
+def _truthy_pairs(node: Any, trail: str = "") -> list[str]:
+    """Paths of every mapping in ``node`` that carries a truthy ``owner_product`` AND ``instanciavel: true``."""
+    hits: list[str] = []
+    if isinstance(node, dict):
+        if node.get("owner_product") and node.get("instanciavel") is True:
+            hits.append(trail or "<root>")
+        for k, v in node.items():
+            hits += _truthy_pairs(v, f"{trail}.{k}" if trail else str(k))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            hits += _truthy_pairs(v, f"{trail}[{i}]")
+    return hits
+
+
+def check_org_owned_definition_not_instanciavel(repo_root: Path | None = None) -> list[dict]:
+    """An agent definition declared with an ``owner_product`` AND ``instanciavel: true`` is a fleet-wide leak: every
+    org would receive another app's agent. Scans ``products/*/ops/agents/**`` (json/yaml) and
+    ``products/*/packages/*/package.yaml``. The DB CHECK ``agents_product_owned_not_instanciavel`` (agents 050) is
+    the backstop; this refuses it in the declaration, before anything is applied. Give one org the agent with
+    ``noctus.agents.content action=conceder``. KB § PATTERNS/compliance/org-config-isolation.md."""
+    import yaml
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    for f in _definition_files(root):
+        try:
+            text = f.read_text(encoding="utf-8")
+            data = json.loads(text) if f.suffix == ".json" else yaml.safe_load(text)
+        except Exception as exc:  # noqa: BLE001 -- an unreadable declaration is reported, never skipped silently
+            findings.append({
+                "file": str(f.relative_to(root)), "severity": "high",
+                "issue": f"{f.relative_to(root)} cannot be parsed ({exc.__class__.__name__}); cannot verify it does not "
+                         "open an owned agent to every org.",
+            })
+            continue
+        for where in _truthy_pairs(data):
+            findings.append({
+                "file": str(f.relative_to(root)), "severity": "high",
+                "issue": (
+                    f"{f.relative_to(root)} ({where}) declares owner_product AND instanciavel=true: the agent would be "
+                    "instantiated in EVERY org. Set instanciavel=false and grant the org(s) explicitly "
+                    "(noctus.agents.content action=conceder). KB § PATTERNS/compliance/org-config-isolation.md."
+                ),
+            })
+    return findings
+
+
 def _describe_credential_sources_tried() -> str:
     """Human-readable summary of which ``supabase_access_token`` resolution
     tiers had a live value in THIS process's environment, for an honest SKIP

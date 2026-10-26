@@ -661,6 +661,27 @@ if [[ -n "$STAGED_TUNNEL" ]] && have_py; then
     fi
 fi
 
+# ── org-config isolation (owner directive 2026-10-26): no org's/app's config reaches another org ──
+# (a) a NEW migration's org_id table must enable RLS + be org-scoped or service-role-only (DELTA gate);
+# (b) an owned agent definition is never opened to every org (instanciavel=true).
+STAGED_NEW_MIGRATIONS=$(git diff --cached --name-only --diff-filter=A 2>/dev/null | grep -E '^products/[^/]+/backend/migrations/.*\.sql$' || true)
+if [[ -n "$STAGED_NEW_MIGRATIONS" ]] && have_py; then
+    echo "[pre-commit] new migration staged — checking org_id tables enable RLS + org-scoped read..."
+    STAGED_NEW_MIGRATIONS_CSV=$(echo "$STAGED_NEW_MIGRATIONS" | paste -sd, -)
+    if ! "$PY" "$CLI" --check-new-org-table-rls --paths "$STAGED_NEW_MIGRATIONS_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] NEW-ORG-TABLE-RLS failed. A table with org_id needs RLS + an org-scoped SELECT policy (or service-role-only). See KB § PATTERNS/compliance/org-config-isolation.md." >&2
+        exit 1
+    fi
+fi
+STAGED_AGENT_DEFS=$(git diff --cached --name-only 2>/dev/null | grep -E '^products/[^/]+/(ops/agents/.*\.(json|ya?ml)|packages/[^/]+/package\.yaml)$' || true)
+if [[ -n "$STAGED_AGENT_DEFS" ]] && have_py; then
+    echo "[pre-commit] agent definition staged — checking no owned agent is opened to every org..."
+    if ! "$PY" "$CLI" --check-org-owned-definition-not-instanciavel --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] ORG-OWNED DEFINITION is instanciavel. Set instanciavel=false + noctus.agents.content action=conceder. See KB § PATTERNS/compliance/org-config-isolation.md." >&2
+        exit 1
+    fi
+fi
+
 # ── prod compose hardening blocks stay in lockstep with the propagate source ──
 # agents' + academia-de-reciclagem's deploy/fleet/docker-compose.prod.yml
 # security blocks (cap_drop/read_only/tmpfs/...) must be byte-identical to

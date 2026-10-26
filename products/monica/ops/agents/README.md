@@ -21,10 +21,13 @@ Files here (data only, nothing is applied by the repo):
    (dry-run diff, then `confirm=True`).
 3. Publish a version (Studio; the draft needs a version for `GET /api/studio/agents/monica-leads/specs` to return
    the form -- the specs endpoint reads the ACTIVE version).
-4. Make sure Mônica's org has an INSTANCE row of the key (`agents.agents`, `definition_scope='instancia'`), then apply
-   `prefill-contexto.sql`.
+4. Grant Mônica's org the definition (the ONLY way a closed definition reaches an org -- never hand SQL, never
+   `instanciavel=true`, which the DB refuses on a product-owned definition):
+   `noctus.agents.content action=conceder agent=monica-leads base_url=<agents prod> payload_path=<json outside git:
+   {"org_id": "<Mônica org uuid>"}>` (dry-run, then `confirm=True`; `action=concessoes` lists the granted orgs). Her
+   instance row is then created on first use; then apply `prefill-contexto.sql`.
 
-**Open decision (surfaced, not assumed):** `instanciavel=true` would give EVERY org an instance of this agent
-once published; `false` keeps it Mônica-only but then her instance row is created by hand/Studio. Until step 3-4
-the Contexto page shows a clear "ainda não foi liberado" / "ainda não está disponível" message (the proxy answers
-404 or an empty form) -- it never shows made-up fields.
+**Isolation (decided 2026-10-26):** `instanciavel` stays `false` -- another org never receives this agent by default.
+Only orgs granted via `action=conceder` hold an instance (`KB § PATTERNS/compliance/org-config-isolation.md`).
+Until steps 3-4 the Contexto page shows a clear "ainda não foi liberado" / "ainda não está disponível" message (the
+proxy answers 404 or an empty form) -- it never shows made-up fields.

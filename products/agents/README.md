@@ -26,7 +26,7 @@ text lives in code (keeper `check_agent_prompt_text_in_code`). Design: `projects
 No agent KEY lives in code either (migration 049): a platform definition is any `plataforma` row, created
 with any key by `POST /api/studio/plataforma/agents` and configured by `GET/PATCH
 /api/studio/plataforma/agents/{key}` — `escopo_qualificacao`, `padrao_qualificacao`, `rascunho_padrao`
-(first-draft settings), `instanciavel` (published ⇒ instantiated in every org), `papel`
+(first-draft settings), `instanciavel` (published ⇒ instantiated in every org; DEFAULT false, never true for an `owner_product` definition — a closed one reaches only orgs granted via `definition_org_grants` / `noctus.agents.content action=conceder`; KB § PATTERNS/compliance/org-config-isolation.md), `papel`
 (`gerador`/`exemplar`). `usa_canais` (derived: `owner_product` set and `runtime='llm'`) gates channel UI.
 The only key literal left is the `lead-imob`→`julia` token alias (`app/channels/chaves_legadas.py`,
 `NOC-REMEDIATE[drop-lead-imob-alias]`).

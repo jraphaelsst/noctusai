@@ -7,6 +7,7 @@ owns_kb:
   - CONTEXT/PATTERNS/compliance/compliance-regression-baseline.md
   - CONTEXT/PATTERNS/compliance/testing.md
   - CONTEXT/PATTERNS/compliance/auth-boundary-false-green.md
+  - CONTEXT/PATTERNS/compliance/org-config-isolation.md
   - CONTEXT/PATTERNS/common/silent-test-failure-from-missing-dep.md
   - CONTEXT/PATTERNS/common/method-trials.md
 ---
@@ -27,6 +28,7 @@ Review code for quality, maintainability, standards + seed-compliance — indepe
 - **Eight-way sync verification.** Any rule/behavior change lives in KB ↔ CLAUDE.md ↔ memory same session; `verify-kb-sync` green. → `KB § PATTERNS/common/claude-md-router-discipline.md`
 - **Testing discipline.** No monkey-patching our own symbols (DI seam · `MockRequestBuilder.inserted_payloads` read-side · `patch.object` external only). Pytest is the oracle for segmented construction (grep-blindspot). → `KB § PATTERNS/compliance/testing.md`
 - **Auth-boundary false-green.** Auth tests asserting `status_code in (401, 404|422)` pass via the non-401 branch without exercising auth — flag them (the `check_auth_boundary_false_green` keeper is the static detector; a test runner can't catch a green). → `KB § PATTERNS/compliance/auth-boundary-false-green.md`
+- **Org-config isolation.** Org/app configuration reaches an org only by explicit grant, never by default: agent definitions are closed (`instanciavel` false; never true with `owner_product`; `definition_org_grants`), and a NEW migration's `org_id` table must enable RLS + an org-scoped read (or be service-role-only) — keepers `check_org_owned_definition_not_instanciavel` + `check_new_org_table_rls`. → `KB § PATTERNS/compliance/org-config-isolation.md`
 - **Silent-failure-from-missing-dep.** A test importing `X` where prod code does `try: import X / except ImportError` fails silently when `X` isn't declared in `requirements.txt`/`pyproject.toml` (lockstep). Sibling of boundary-contract-tests at the dep-declaration boundary; verify suite-green doesn't hide undeclared-dep failures. → `KB § PATTERNS/common/silent-test-failure-from-missing-dep.md`
 - **Verify on a clean `origin/dev` worktree.** A busy shared checkout yields phantom regressions (worktree-sensitivity). → `KB § PATTERNS/common/branching.md`
 - **Methodology codification pipeline ownership.** When a review surfaces an N≥2 recurrence or rule-gap, file the s1→s2→s3→s4 codification proposal — discipline → mechanism. → `KB § PATTERNS/common/methodology-codification-pipeline.md`

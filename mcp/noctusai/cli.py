@@ -215,6 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-drift-shield", action="store_true", help="Pre-deploy DRIFT-SHIELD: surface OPEN auto-improvement entries touching files changed in origin/prod..origin/main. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
+    parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
+    parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
     parser.add_argument("--check-prod-exposure-consent", action="store_true", help="Prod-promotion consent gate: a product's FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the production-promotion decision (:latest ships it with no later gate) — requires a user-authored deploy/consent/<slug>.prod.yml in an isolated prior commit. Severity high. KB § PATTERNS/devops/prod-exposure-consent.md.")
     parser.add_argument("--check-prod-compose-hardening-parity", action="store_true", help="deploy/fleet/docker-compose.prod.yml's agents + academia-de-reciclagem security blocks (cap_drop/cap_add/security_opt/read_only/tmpfs/mem_limit) must stay byte-identical to noctus.dev.propagate's _C_HARDENING_AGENTS/_C_HARDENING_ACADEMIA — the one propagate source the dev-shape composes already reuse. A hand-copy into the separate prod compose can silently drift a security control. Severity high. KB § PATTERNS/devops/containerization.md.")
@@ -1047,6 +1049,29 @@ def main():
             for i in warns:
                 print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1 if highs else 0)
+    elif args.check_new_org_table_rls:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_new_org_table_rls
+        _org_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_new_org_table_rls(repo_root=REPO_ROOT, paths=_org_paths)
+        if not issues:
+            print(f"  {GREEN}✓ new-org-table-rls: every new org_id table enables RLS and is org-scoped or service-role-only.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} new-org-table-rls finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_org_owned_definition_not_instanciavel:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_org_owned_definition_not_instanciavel
+        issues = check_org_owned_definition_not_instanciavel(repo_root=REPO_ROOT)
+        if not issues:
+            print(f"  {GREEN}✓ no org/product-owned agent definition is opened to every org.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} org-owned definition finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
     elif args.check_tunnel_ingress_snapshot_sync:
         # compliance snapshots REPO_ROOT at import; pass it explicitly so
         # --worktree-path is honoured (same reason as scan_wiring below).

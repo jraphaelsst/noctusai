@@ -64,6 +64,9 @@ Lifecycle actions (no payload, no ``kind``; ``agent`` = the key; dry-run unless 
   platform agent whose ``papel`` is ``gerador``). Dry-run makes NO request. Runs in the background; never publishes.
   ``geracao`` (``chave`` = the run id, empty = the list of runs) reads progress: per-area status, cost, lacunas, and
   which generated items are still ``gerado`` vs ``editado`` by the author.
+* ``conceder`` -- ``POST /api/studio/plataforma/agents/{key}/grants`` with ``payload_path`` = ``{"org_id": "<uuid>"}``:
+  the ONLY sanctioned way to give ONE org an instance of a closed (non-``instanciavel``) definition -- org/app
+  configuration never reaches another org by default. Idempotent, audited; ``concessoes`` lists the granted orgs.
 * ``excluir_agente`` -- ``DELETE /api/studio/agents/{key}``: needs the token minted with ``permitir_exclusao``
   (scope ``studio:agent-delete``); the server refuses (409 ``publicado`` / ``tem_instancias`` / ``tem_conversas`` /
   ``tem_canal`` / ``ativo``) anything that is published, in use or on. The audit rows survive the agent.
@@ -94,7 +97,9 @@ DEFAULT_ENV_FILE = Path("~/.config/noctus/agents.env")
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 ACTIONS = ("list", "get", "set")
-LIFECYCLE_ACTIONS = ("criar_agente", "excluir_agente", "configurar_agente", "definicao", "gerar", "geracao")
+LIFECYCLE_ACTIONS = (
+    "criar_agente", "excluir_agente", "configurar_agente", "definicao", "gerar", "geracao", "conceder", "concessoes",
+)
 _DEFINICAO_CAMPOS = (
     "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao", "rascunho_padrao",
     "instanciavel", "papel",
@@ -733,7 +738,7 @@ def _lifecycle(
     confirmed call, so a pre-read here would only be a second, stale opinion."""
     if not agent or not _AGENT_KEY_RE.match(agent):
         raise ContentError("agent_invalido", "Informe 'agent' (a chave do agente: letras, digitos, '_', '-', '.').")
-    reading = action in ("definicao", "geracao")
+    reading = action in ("definicao", "geracao", "concessoes")
     body: Any = None
     if action == "criar_agente":
         body = {"key": agent, **(_only(_load_payload(payload_path), _CRIAR_CAMPOS, "criar_agente") if payload_path else {})}
@@ -748,6 +753,13 @@ def _lifecycle(
         if not isinstance(body.get("briefing"), dict):
             raise ContentError("payload_invalido", "O payload de gerar precisa de 'briefing' (objeto).")
         method, path = "POST", f"/api/studio/agents/{_q(agent)}/geracoes"
+    elif action == "conceder":
+        body = _only(_load_payload(payload_path), ("org_id",), "conceder")
+        if not isinstance(body.get("org_id"), str) or not re.fullmatch(r"[0-9a-fA-F-]{36}", body["org_id"]):
+            raise ContentError("payload_invalido", "O payload de conceder precisa de 'org_id' (uuid da organização).")
+        method, path = "POST", f"/api/studio/plataforma/agents/{_q(agent)}/grants"
+    elif action == "concessoes":
+        method, path = "GET", f"/api/studio/plataforma/agents/{_q(agent)}/grants"
     elif action == "geracao":
         if chave and not re.fullmatch(r"[0-9a-fA-F-]{36}", chave):
             raise ContentError("chave_invalida", "chave deve ser o id (uuid) da geracao, ou vazia para listar.")
@@ -761,6 +773,7 @@ def _lifecycle(
         planned = {
             "criar_agente": "Cria a definição vazia (rascunho sem texto); com briefing no payload, também inicia a geração.",
             "configurar_agente": "Atualiza os dados da definição (runtime, produto, padrão de qualificação, rascunho padrão, papel...).",
+            "conceder": "Concede à organização do payload o direito de ter uma INSTÂNCIA deste agente (idempotente; auditado).",
             "gerar": "Inicia a geração por IA do RASCUNHO (no máximo US$ 5 por execução; roda em segundo plano; nada é publicado).",
         }.get(action, "Exige token com permitir_exclusao (studio:agent-delete); o servidor recusa agente publicado, com instâncias, "
                       "com conversas, com canal ativo ou ligado.")
@@ -781,6 +794,9 @@ def _lifecycle(
     if action == "configurar_agente":
         return {"status": "updated", **head, "dry_run": False, "agente": result,
                 "mensagem": "Dados da definição atualizados. Instâncias já criadas mantêm o runtime/produto com que nasceram."}
+    if action == "conceder":
+        return {"status": "granted", **head, "dry_run": False, "concessoes": result,
+                "mensagem": "Concessão registrada. A organização passa a poder ter uma instância (criada no primeiro uso)."}
     if action == "gerar":
         return {"status": "started", **head, "dry_run": False, "geracao": result,
                 "mensagem": "Geração iniciada em segundo plano (rascunho; nada publicado). Acompanhe com action=geracao."}
