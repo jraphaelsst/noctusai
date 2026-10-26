@@ -19,7 +19,7 @@ products/monica/backend/app/
   crm.py                       → LEADS_CONFIG: stages lead/atendimento/negociacao/fechado, origins whatsapp/instagram/indicacao/outro
   routers/whatsapp_router.py   → seed connections router (admin via make_organ_auth) + seed inbox router
   routers/contexto_router.py   → /api/contexto: proxy to agents org specs, forwards the USER's bearer
-  services/whatsapp_leads.py   → on_new_chat -> LeadsService.upsert_from_whatsapp; on_message -> touch_last_message
+  services/whatsapp_leads.py   → on_new_chat -> LeadsService.upsert_from_whatsapp; on_message -> touch_last_message; on_purge -> LeadsService.purge_from_whatsapp
 ```
 
 - **inbox → leads**: `on_new_chat` fires once per chat first created by an inbound non-group message (atomic claim on the chat row); a deleted lead is NOT recreated (intended — the chat row persists). `on_message` (seed seam, added with this product) fires for every newly stored message, inbound and outbound.
@@ -41,7 +41,7 @@ products/monica/frontend/src/
 
 ### Database (schema `monica`)
 
-`status_pagina`, `invitations`, finance (`fin_*`, 012), `leads` (014), `whatsapp_connections|chats|messages` (015), CRM `status_pagina` rows (016). RLS org-scoped on `public.current_org_id_for('monica')`; browser roles read, the backend writes with the service role.
+`status_pagina`, `invitations`, finance (`fin_*`, 012), `leads` (014), `whatsapp_connections|chats|messages` (015), CRM `status_pagina` rows (016), per-app switch `app_enabled`/`session_role` + `leads.edited_at` (017). RLS org-scoped on `public.current_org_id_for('monica')`; browser roles read, the backend writes with the service role.
 
 ## Rules
 
