@@ -53,7 +53,7 @@ from app.services.api_keys_store import resolve_api_key
 INFOSIMPLES_TOKEN = "infosimples_token"
 INFOSIMPLES_EMAIL_ENVIO = "infosimples_email_envio"
 OPENAI_API_KEY = "openai_api_key"
-#: The GOV.BR login InfoSimples' `pge/sp/cndt` (Dívida Ativa SP) requires —
+#: The GOV.BR login InfoSimples' `pge/sp/cndt` (Dívida Ativa SP) and `sefaz/sp/certidao-debitos` (CND Fazenda SP) require —
 #: the endpoint answers 606 "Parâmetros obrigatórios não foram enviados"
 #: without `login_cpf` + `login_senha`. Both are secrets, stored Fernet-
 #: encrypted like every sibling key, never logged and never returned to the FE.
