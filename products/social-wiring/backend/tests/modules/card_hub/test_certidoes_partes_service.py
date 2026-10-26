@@ -277,6 +277,28 @@ class TestReemitirNaoClonaCelulasNaoPedidas:
         assert (serasa["status"], serasa["numero"]) == ("sucesso", "P-9")
         assert not serasa.get("api_requested_at")
 
+class TestRequisitosFaltantes:
+    """F113: the party payload says up front which automatic tipos will park
+    as a `dados_parte` pendência (never billed) — same `campos_faltantes`
+    the pipeline's pre-call check runs."""
+
+    def test_pf_sem_data_de_nascimento_lista_cnd_federal(self, scoped):
+        cid, _aid, [vid] = _card(scoped)
+        out = svc.montar(scoped, ORG_ID, cid, hoje=HOJE)
+        vend = next(p for p in out["partes"] if p["cliente_id"] == vid)
+        assert vend["requisitos_faltantes"] == {"cnd_federal": ["data de nascimento"]}
+
+    def test_pf_com_data_de_nascimento_nao_lista_nada(self, scoped):
+        cid, _aid, [vid] = _card(scoped)
+        clientes = _dados(scoped, "clientes")
+        for c in clientes:
+            c["data_nascimento"] = "1980-02-03"
+        scoped.set_table_data("clientes", clientes)
+        out = svc.montar(scoped, ORG_ID, cid, hoje=HOJE)
+        vend = next(p for p in out["partes"] if p["cliente_id"] == vid)
+        assert vend["requisitos_faltantes"] == {}
+
+
 class TestMontar:
     def test_resposta_tem_os_campos_exatos_do_contrato(self, scoped):
         cid, aid, [vid] = _card(scoped)
@@ -292,7 +314,8 @@ class TestMontar:
         parte = out["partes"][0]
         assert set(parte) == {
             "chave", "kind", "tipo_pessoa", "rotulo", "lado", "grupo", "papel", "titular", "nome",
-            "documento", "cliente_id", "empresa_id", "parte_id", "totais", "celulas",
+            "documento", "cliente_id", "empresa_id", "parte_id", "requisitos_faltantes",
+            "totais", "celulas",
         }
         assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "processando", "relendo", "erros", "vencidas", "opcionais"}
         assert set(parte["celulas"]["cnd_federal"]) == {

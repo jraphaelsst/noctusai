@@ -42,6 +42,15 @@ Source: `https://api.infosimples.com/consultas/docs/receita-federal/pgfn.md`.
   (`tipo`, `abrangencia`, `modelo`, `preferencia_emissao`) plus the *names* of the keys sent; the documento is
   an org-scoped HMAC (`documento_hash`, salt env `CERTIDAO_OBS_SALT`).
 - Recording is best-effort: a failure is logged at ERROR and never breaks the emission.
+- **Pre-call requirements (F112/F113).** `registry.pendencia_pre_chamada` runs before every paid call: a
+  tipo's `requer_credencial` (org GOV.BR login) or `requer_campos` (`{tipo_documento: (consulta field,…)}` —
+  `cnd_federal` declares `{"cpf": ("data_nascimento",)}`) unmet ⇒ InfoSimples is NOT called; the cell parks
+  `pendente` with a pt-BR message (`credencial_govbr` | `dados_parte` pendência, `tipo_de_pendencia`). Class
+  guards for undeclared requirements: a login-naming failure (`e_erro_login_govbr`, 606 and 604) or a
+  "parâmetro obrigatório" failure (`e_erro_parametro_obrigatorio`) parks the same pendência + logs a WARNING.
+  A 606 is never retried nor 2ª-via'd (the same request fails the same way). Observed: `trf3` once answered
+  606 "são necessários os seguintes parâmetros adicionais: nome_mae, birthdate, tipo_documento, documento"
+  (1 of 73 calls, 29 successes) — conditional, so not declared pre-call; the guard catches it.
 
 ## 3 · The learned trigger
 

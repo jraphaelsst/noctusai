@@ -118,6 +118,8 @@ export function ParteSecao(p: ParteSecaoProps) {
   // An emission is PAID (InfoSimples) — every request goes through this confirmation first.
   const [pedido, setPedido] = useState<{
     executar: () => void; nomes: string[]; daSelecao: boolean; ignorados: string[];
+    /** "<rótulo> — falta <campo>": will be parked as a pendência, not billed. */
+    bloqueados: string[];
   } | null>(null);
   // Discarding is destructive (the cell loses that emission): confirm first.
   const [descartando, setDescartando] = useState<{ resultadoId: string; rotulo: string } | null>(null);
@@ -129,6 +131,12 @@ export function ParteSecao(p: ParteSecaoProps) {
   const semDocumento = !parte.documento;
   const vencidas = parte.totais.vencidas;
   const celulaDe = (l: CertidaoParteLinha) => parte.celulas[l.chave];
+  // Party data a tipo requires before the paid call (F113): emitting it now
+  // only parks the cell as a pendência — said up front, never billed.
+  const faltaDe = (tipo: string | null | undefined) => {
+    const campos = tipo ? parte.requisitos_faltantes?.[tipo] : undefined;
+    return campos && campos.length > 0 ? campos.join(", ") : null;
+  };
   const pedirEmissao = (input: SolicitarEmissaoInput, daSelecao = false) => {
     const alvo = input.tipos;
     // "Todas" never re-buys a certidão that is still in date (or being emitted):
@@ -139,15 +147,29 @@ export function ParteSecao(p: ParteSecaoProps) {
         : !!l.tipo && alvo.includes(l.tipo),
     );
     const ignoradas = alvo === null ? candidatas.filter((l) => jaVigenteOuEmEmissao(celulaDe(l))) : [];
-    const nomes = candidatas.filter((l) => !ignoradas.includes(l)).map((l) => l.rotulo);
-    if (alvo === null && nomes.length === 0) {
+    const pedidas = candidatas.filter((l) => !ignoradas.includes(l));
+    if (alvo === null && pedidas.length === 0) {
       toast.info("Todas as certidões automáticas desta parte já estão válidas ou em emissão.");
       return;
     }
-    setPedido({ executar: () => p.onSolicitar(input), nomes, daSelecao, ignorados: ignoradas.map((l) => l.rotulo) });
+    setPedido({
+      executar: () => p.onSolicitar(input),
+      nomes: pedidas.filter((l) => !faltaDe(l.tipo)).map((l) => l.rotulo),
+      bloqueados: pedidas.filter((l) => faltaDe(l.tipo)).map((l) => `${l.rotulo} — falta ${faltaDe(l.tipo)}`),
+      daSelecao,
+      ignorados: ignoradas.map((l) => l.rotulo),
+    });
   };
-  const pedirReemissao = (resultadoId: string, rotulo: string) =>
-    setPedido({ executar: () => p.onReemitir(resultadoId), nomes: [rotulo], daSelecao: false, ignorados: [] });
+  const pedirReemissao = (resultadoId: string, linha: CertidaoParteLinha) => {
+    const falta = faltaDe(linha.tipo);
+    setPedido({
+      executar: () => p.onReemitir(resultadoId),
+      nomes: falta ? [] : [linha.rotulo],
+      bloqueados: falta ? [`${linha.rotulo} — falta ${falta}`] : [],
+      daSelecao: false,
+      ignorados: [],
+    });
+  };
   // Failed automatic cells of this party — what "Reemitir com erro" retries.
   const comErro = linhas.filter((l) => {
     const c = celulaDe(l);
@@ -158,7 +180,7 @@ export function ParteSecao(p: ParteSecaoProps) {
     return !!c && podeCancelarEmissao(c);
   });
   const pedirReemissaoDeErros = () =>
-    setPedido({ executar: p.onReemitirErros, nomes: comErro.map((l) => l.rotulo), daSelecao: false, ignorados: [] });
+    setPedido({ executar: p.onReemitirErros, nomes: comErro.map((l) => l.rotulo), daSelecao: false, ignorados: [], bloqueados: [] });
   const progresso = progressoDaParte(parte);
   const toggle = (tipo: string) =>
     setSelecionadas((prev) => {
@@ -436,7 +458,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                           <div className="flex flex-wrap items-center gap-1">
                             {auto && c.resultado_id && !c.pendencia && (
                               <Button size="sm" variant={c.stale_para_contrato ? "default" : "ghost"} className="h-7 px-2 text-xs"
-                                onClick={() => pedirReemissao(c.resultado_id as string, linha.rotulo)}
+                                onClick={() => pedirReemissao(c.resultado_id as string, linha)}
                                 data-testid={`parte-reemitir-${parte.chave}-${linha.chave}`}>
                                 <RefreshCw className="mr-1 h-3 w-3" />
                                 Re-emitir
@@ -601,6 +623,16 @@ export function ParteSecao(p: ParteSecaoProps) {
                     </p>
                     <ul className="list-disc pl-5 text-muted-foreground">
                       {pedido.ignorados.map((n) => (
+                        <li key={n}>{n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {pedido && pedido.bloqueados.length > 0 && (
+                  <div data-testid={`parte-confirmar-emissao-bloqueadas-${parte.chave}`}>
+                    <p>Não será emitida (sem cobrança) até completar o cadastro:</p>
+                    <ul className="list-disc pl-5 text-muted-foreground">
+                      {pedido.bloqueados.map((n) => (
                         <li key={n}>{n}</li>
                       ))}
                     </ul>

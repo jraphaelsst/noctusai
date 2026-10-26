@@ -342,6 +342,36 @@ describe("CertidoesPartesTab", () => {
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/partes/pessoa/cli-1/emissao", { tipos: ["cnd_federal"], atendimento_id: "at-1" }));
   });
 
+  it("the paid-emission confirmation lists a tipo missing party data as NOT emitted (F113)", async () => {
+    mockGet.mockResolvedValue(resp([parte({ requisitos_faltantes: { cnd_federal: ["data de nascimento"] } })]));
+    render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    fireEvent.click(screen.getByTestId("parte-solicitar-todas-c:cli-1"));
+    const bloqueadas = await screen.findByTestId("parte-confirmar-emissao-bloqueadas-c:cli-1");
+    expect(bloqueadas.textContent).toContain("Não será emitida");
+    expect(bloqueadas.textContent).toContain("Receita Federal — falta data de nascimento");
+    expect(screen.queryByTestId("parte-confirmar-emissao-lista-c:cli-1")?.textContent ?? "").not.toContain("Receita Federal");
+  });
+
+  it("shows missing party data as PENDING with the reason, hides re-emit (F113)", async () => {
+    const msg = "Falta data de nascimento de Pessoa Teste — preencha no cadastro ou envie um documento";
+    mockGet.mockResolvedValue(resp([parte({
+      celulas: {
+        cnd_federal: cel({
+          status: "pendente", status_processamento: "pendente", resultado_id: "res-cf",
+          erro_mensagem: msg, pendencia: "dados_parte",
+        }),
+      },
+    })]));
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    expect(screen.getByTestId("parte-pendencia-c:cli-1-cnd_federal").textContent).toBe(msg);
+    expect(screen.queryByTestId("parte-erro-c:cli-1-cnd_federal")).toBeNull();
+    expect(screen.queryByTestId("parte-reemitir-c:cli-1-cnd_federal")).toBeNull();
+  });
+
   it("cancelling the paid-emission confirmation sends nothing", async () => {
     mockGet.mockResolvedValue(resp([parte()]));
     render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });

@@ -58,10 +58,12 @@ export interface CertidaoParteCelula {
   /** Receita "positiva com efeitos de negativa" 2ª via ONLY (owner 2026-10-01):
    *  judged by the PRINTED validity, and the operator must acknowledge it. */
   pcen: CertidaoPcen | null;
-  /** PENDING for a reason an operator can fix — not an error. `credencial_govbr`:
-   *  Dívida Ativa SP needs the office's GOV.BR login; `erro_mensagem` carries the
-   *  pt-BR text. The cell stays uploadable (Enviar PDF). */
-  pendencia?: "credencial_govbr" | null;
+  /** PENDING for a reason an operator can fix — not an error; never billed.
+   *  `credencial_govbr`: the tipo needs the office's GOV.BR login.
+   *  `dados_parte`: a party field the tipo requires is empty (birth date for a
+   *  CPF's CND Federal). `erro_mensagem` carries the pt-BR text. The cell stays
+   *  uploadable (Enviar PDF). */
+  pendencia?: "credencial_govbr" | "dados_parte" | null;
   /** Empty AND optional for this deal (owner 2026-10-21: CRF/FGTS and the
    *  antigos proprietários' certidões are not required unless the deal opts
    *  in). Optional for older payloads. */
@@ -169,6 +171,10 @@ export interface CertidaoParte {
   cliente_id: string | null;
   empresa_id: string | null;
   parte_id: string | null;
+  /** `{tipo: [campo, ...]}` — automatic tipos that will NOT be emitted (parked
+   *  as a `dados_parte` pendência, never billed) until these party fields are
+   *  filled. Optional for older payloads. */
+  requisitos_faltantes?: Record<string, string[]>;
   totais: CertidaoParteTotais;
   celulas: Record<string, CertidaoParteCelula>;
 }

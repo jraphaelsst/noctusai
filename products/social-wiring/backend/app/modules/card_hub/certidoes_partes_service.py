@@ -65,10 +65,12 @@ from app.modules.certidoes.registry import (
     CUSTOM_ROW_TIPO,
     MANUAL_CONFIG_BY_TIPO,
     MATRIZ_LINHAS,
-    PENDENCIA_CREDENCIAL_GOVBR,
+    ROTULO_CAMPO,
     TJSP_TIPO,
     aplicavel_a_tipo_documento,
-    e_pendencia_de_credencial,
+    campos_faltantes,
+    e_pendencia,
+    tipo_de_pendencia,
 )
 from app.services import table_reads
 
@@ -302,7 +304,7 @@ def ultimas_tentativas(
         if (
             r.get("linha_customizada_id") or not _emissao_automatica(tipo, r)
             or r.get("status") not in _TENTATIVA_STATUS
-            or _cancelado_vazio(r) or e_pendencia_de_credencial(r)
+            or _cancelado_vazio(r) or e_pendencia(r)
         ):
             continue
         ganhador = vencedores.get(tipo)
@@ -427,9 +429,10 @@ def montar_celula(
         "erro_mensagem": row.get("erro_mensagem"),
         "segunda_via": certidao_pcen.e_segunda_via(row.get("api_response")),
         "pcen": _bloco_pcen(row, validade, hoje) if excecao else None,
-        # PENDING for a reason a human can fix (not an error): the org has no
-        # GOV.BR login for this tipo, `erro_mensagem` carries the pt-BR text.
-        "pendencia": PENDENCIA_CREDENCIAL_GOVBR if e_pendencia_de_credencial(row) else None,
+        # PENDING for a reason a human can fix (not an error): `credencial_govbr`
+        # (the org has no GOV.BR login for this tipo) | `dados_parte` (a party
+        # field the tipo requires is empty); `erro_mensagem` carries the text.
+        "pendencia": tipo_de_pendencia(row),
     }
 
 
@@ -505,7 +508,7 @@ def _opcional(
 
 def montar_parte(
     parte: dict, linhas: list[dict], resultados: list[dict], hoje: date, limite: int,
-    exigencias: Optional[dict] = None,
+    exigencias: Optional[dict] = None, requisitos_faltantes: Optional[dict] = None,
 ) -> dict:
     exigencias = exigencias or {}
     por_tipo, por_linha = indexar_vencedores(resultados)
@@ -559,6 +562,10 @@ def montar_parte(
         "cliente_id": parte["cliente_id"],
         "empresa_id": parte["empresa_id"],
         "parte_id": parte["parte_id"],
+        # `{tipo: [rótulo, ...]}` — automatic tipos that WILL park as a
+        # `dados_parte` pendência (never billed) if emitted now, so the
+        # emission confirm can say "não será emitida: falta …" up front.
+        "requisitos_faltantes": requisitos_faltantes or {},
         "totais": totais,
         "celulas": celulas,
     }
@@ -649,6 +656,7 @@ def montar(
     # Age against the contract's signing date when set (same reference as the
     # gate's "na data da assinatura"); today only when absent.
     hoje = data_assinatura_do_atendimento(client, org_id, alvo) or hoje
+    faltas = _requisitos_faltantes(client, org_id, partes)
     return {
         "atendimento_id": alvo,
         "exigencias": exigencias,
@@ -656,7 +664,10 @@ def montar(
         "max_dias": limite,
         "linhas": linhas,
         "partes": [
-            montar_parte(p, linhas, resultados.get(_chave(p), []), hoje, limite, exigencias)
+            montar_parte(
+                p, linhas, resultados.get(_chave(p), []), hoje, limite, exigencias,
+                faltas.get(_chave(p)),
+            )
             for p in partes
         ],
     }
@@ -741,19 +752,56 @@ def _dados_consulta(
     if parte["tipo_pessoa"] == "PF":
         row = (
             _t(client, CLIENTES)
-            .select("id, data_nascimento, genero, rg, nome_mae")
+            .select(_COLUNAS_CLIENTE_CONSULTA)
             .eq("org_id", str(org_id))
             .eq("id", parte["cliente_id"])
             .limit(1)
             .execute()
         ).data or []
         if row:
-            for campo in ("data_nascimento", "rg", "nome_mae"):
-                if row[0].get(campo):
-                    dados[campo] = str(row[0][campo])
-            if row[0].get("genero") in ("M", "F"):
-                dados["genero"] = row[0]["genero"]
+            dados.update(_campos_do_cliente(row[0]))
     return dados
+
+
+_COLUNAS_CLIENTE_CONSULTA = "id, data_nascimento, genero, rg, nome_mae"
+
+
+def _campos_do_cliente(row: dict) -> dict:
+    """The consulta columns a cliente row feeds (`ConsultaCreate`'s optional
+    fields), empty ones left out."""
+    out: dict[str, Any] = {
+        campo: str(row[campo]) for campo in ("data_nascimento", "rg", "nome_mae") if row.get(campo)
+    }
+    if row.get("genero") in ("M", "F"):
+        out["genero"] = row["genero"]
+    return out
+
+
+def _requisitos_faltantes(client: Any, org_id: UUID, partes: list[dict]) -> dict[str, dict]:
+    """`{chave da parte: {tipo: [rótulo, ...]}}` — the automatic tipos each
+    PF party cannot be emitted for yet, judged by the SAME `campos_faltantes`
+    the pipeline's pre-call check runs on the consulta these fields would be
+    copied into (`_dados_consulta`). One batched clientes read."""
+    exigentes = [c for c in CERTIDOES_CONFIG if (c.get("requer_campos") or {}).get("cpf")]
+    pf = [p for p in partes if p["tipo_pessoa"] == "PF" and p.get("cliente_id")]
+    if not exigentes or not pf:
+        return {}
+    rows = table_reads.in_batched_rows(
+        client, CLIENTES, org_id, "id", [str(p["cliente_id"]) for p in pf],
+        select=_COLUNAS_CLIENTE_CONSULTA,
+    )
+    por_id = {str(r["id"]): r for r in rows}
+    out: dict[str, dict] = {}
+    for p in pf:
+        dados = {"tipo_documento": "cpf", **_campos_do_cliente(por_id.get(str(p["cliente_id"]), {}))}
+        faltas = {
+            c["tipo"]: [ROTULO_CAMPO.get(f, f) for f in campos_faltantes(c, dados)]
+            for c in exigentes
+        }
+        faltas = {t: r for t, r in faltas.items() if r}
+        if faltas:
+            out[_chave(p)] = faltas
+    return out
 
 
 def _vinculo(parte: dict) -> dict:
@@ -972,6 +1020,7 @@ def _parte_montada(
         montar_linhas(client, org_id, _titular_do(partes)),
         _resultados_da_parte(client, org_id, parte),
         referencia, limite, exig_svc.ler(client, org_id, alvo),
+        _requisitos_faltantes(client, org_id, [parte]).get(_chave(parte)),
     )
 
 
@@ -1323,7 +1372,7 @@ def reemitir_com_erro(
     falhas = [
         r for r in por_tipo.values()
         if r.get("status") == "erro" and _emissao_automatica(r.get("tipo"), r)
-        and not e_pendencia_de_credencial(r)
+        and not e_pendencia(r)
     ]
     # A failed re-emission hidden behind older valid evidence (F100) is a
     # failure to retry too — in place, on its own row.

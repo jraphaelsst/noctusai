@@ -18,7 +18,7 @@ from app.modules.certidoes.registry import (
     MSG_REQUER_GOVBR,
     PENDENCIA_CREDENCIAL_GOVBR,
     config_for,
-    e_pendencia_de_credencial,
+    e_pendencia,
 )
 from app.services.api_keys_store import MANAGED_API_KEYS, get_spec
 from tests.modules.test_certidoes_service import (
@@ -94,7 +94,7 @@ class TestSemCredencial:
         assert row["status"] == "pendente"
         assert row["erro_mensagem"] == MSG_REQUER_GOVBR
         assert "GOV.BR" in MSG_REQUER_GOVBR and "PDF" in MSG_REQUER_GOVBR
-        assert e_pendencia_de_credencial(row)
+        assert e_pendencia(row)
 
     @pytest.mark.asyncio
     async def test_meia_credencial_nao_conta(self):
@@ -133,7 +133,7 @@ class TestSemCredencial:
         assert partes.montar_celula("divida_ativa_sp", None, date(2026, 10, 1), 30)["pendencia"] is None
 
     def test_erro_real_nao_vira_pendencia(self):
-        assert not e_pendencia_de_credencial(
+        assert not e_pendencia(
             {"status": "erro", "erro_mensagem": MSG_REQUER_GOVBR}
         )
 

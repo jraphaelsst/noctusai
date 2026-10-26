@@ -55,6 +55,12 @@ CERTIDOES_CONFIG = [
         "endpoint": "receita-federal/pgfn",
         "ordem": 1,
         "params_fn": "cnd_federal",
+        # `receita-federal/pgfn` refuses a CPF lookup without `birthdate`
+        # (606 "O parâmetro 'birthdate' é obrigatório para a consulta por
+        # CPF") — billed, and retried as 2ª via, billed again: prod F113
+        # (2026-10-26, 5.1 of an antigo proprietário with no birth date).
+        # CNPJ needs nothing extra. See `pendencia_pre_chamada`.
+        "requer_campos": {"cpf": ("data_nascimento",)},
         "parse_fn": "padrao",
         "response_format": "pdf",
         # Holders of a "positiva com efeitos de negativa" cannot get a NEW
@@ -148,7 +154,7 @@ CERTIDOES_CONFIG = [
         # InfoSimples answers 606 without a GOV.BR login (44/44 failures in
         # prod, 2026-10-01). `requer_credencial` makes the pipeline refuse to
         # call (and bill) it until the org configures one — see
-        # `pendencia_de_credencial`.
+        # `pendencia_pre_chamada`.
         "params_fn": "govbr",
         "requer_credencial": "govbr",
         "parse_fn": "padrao",
@@ -341,7 +347,7 @@ def _build_params_tjsp(consulta: dict, token: str) -> dict:
 def _build_params_govbr(consulta: dict, token: str) -> dict:
     """Endpoints behind a GOV.BR login (Dívida Ativa SP, CND Fazenda SP): token + cpf/cnpj +
     `login_cpf` + `login_senha`. The login comes from the org credential
-    store. The caller (`pendencia_de_credencial`) has already refused to get
+    store. The caller (`pendencia_pre_chamada`) has already refused to get
     here without it; a missing login sends none rather than a half pair."""
     params = _token_and_doc(consulta, token)
     org_id = consulta.get("org_id")
@@ -358,6 +364,20 @@ SEGREDOS_DE_PARAMS = ("login_cpf", "login_senha", "pkcs12_cert", "pkcs12_pass")
 
 CREDENCIAL_GOVBR = "govbr"
 
+# --------------- Pre-call requirements (pendências) ---------------
+#
+# ONE check before every paid call (`pendencia_pre_chamada`): a tipo whose
+# config declares something the consulta/org does not have is NEVER sent to
+# InfoSimples — the call is guaranteed to fail and is billed anyway. The cell
+# parks as `pendente` with a pt-BR, actionable `erro_mensagem` (never `erro`),
+# and stays uploadable. Two declarations feed it:
+#   `requer_credencial`: an org credential (GOV.BR login) — F112.
+#   `requer_campos`: `{tipo_documento: (consulta field, ...)}` — party data the
+#                    endpoint refuses to run without — F113.
+# Each has a provider-side class guard (`e_erro_login_govbr`,
+# `e_erro_parametro_obrigatorio`) for the day the endpoint starts demanding
+# something the config does not declare.
+
 #: The cell/resultado message while the org has no GOV.BR login. ONE constant:
 #: the pipeline writes it, the cell + consulta aggregate recognise it by it.
 MSG_REQUER_GOVBR = (
@@ -365,34 +385,148 @@ MSG_REQUER_GOVBR = (
     "ou envie o PDF manualmente"
 )
 PENDENCIA_CREDENCIAL_GOVBR = "credencial_govbr"
+#: A party field the endpoint requires is empty (birth date for CND Federal).
+PENDENCIA_DADOS_PARTE = "dados_parte"
+
+#: The two fixed ends of every missing-party-data message — written by
+#: `msg_falta_dados`, recognised by `tipo_de_pendencia` (no other code path
+#: writes a `pendente` message shaped like this).
+_FALTA_PREFIXO = "Falta "
+_FALTA_SUFIXO = " — preencha no cadastro ou envie um documento"
+
+#: What the operator calls each consulta field (the cadastro's own words).
+ROTULO_CAMPO = {
+    "data_nascimento": "data de nascimento",
+    "nome_mae": "nome da mãe",
+    "nome_pai": "nome do pai",
+    "rg": "RG",
+    "genero": "gênero",
+    "nome": "nome",
+    "documento_identificacao": "documento de identificação (RG ou passaporte)",
+}
+
+#: InfoSimples parameter → the consulta field that feeds it, so a provider
+#: "obrigatório" error is reported in the operator's words.
+PARAM_PARA_CAMPO = {
+    "birthdate": "data_nascimento",
+    "nome_mae": "nome_mae",
+    "nome_pai": "nome_pai",
+    "rg": "rg",
+    "genero": "genero",
+    "nome": "nome",
+    "nome_completo": "nome",
+    "razao_social": "nome",
+    "tipo_documento": "documento_identificacao",
+    "documento": "documento_identificacao",
+}
+
+#: The GOV.BR login pairs are exactly the secret params.
+_PARAMS_LOGIN_GOVBR = SEGREDOS_DE_PARAMS
 
 
-def pendencia_de_credencial(config: dict, org_id: Optional[str]) -> Optional[str]:
-    """The pt-BR message when `config`'s tipo needs a credential the org has
-    not configured (so InfoSimples must NOT be called), else `None`."""
-    if config.get("requer_credencial") == CREDENCIAL_GOVBR and not govbr_login(org_id):
+def campos_faltantes(config: dict, consulta: dict) -> list[str]:
+    """The consulta fields `config` declares as required (`requer_campos`)
+    for this consulta's `tipo_documento` that are empty."""
+    exigidos = (config.get("requer_campos") or {}).get(consulta.get("tipo_documento"), ())
+    return [c for c in exigidos if not consulta.get(c)]
+
+
+def _juntar(itens: list[str]) -> str:
+    return itens[0] if len(itens) == 1 else f"{', '.join(itens[:-1])} e {itens[-1]}"
+
+
+def msg_falta_dados(campos: list[str], nome: Optional[str]) -> str:
+    """`Falta data de nascimento de <nome> — preencha no cadastro ou envie um
+    documento`. `campos` are consulta fields (unknown names are quoted)."""
+    rotulos = list(dict.fromkeys(ROTULO_CAMPO.get(c, f"'{c}'") for c in campos)) or ["dado obrigatório"]
+    alvo = f" de {nome}" if nome else ""
+    return f"{_FALTA_PREFIXO}{_juntar(rotulos)}{alvo}{_FALTA_SUFIXO}"
+
+
+def pendencia_pre_chamada(config: dict, consulta: dict) -> Optional[str]:
+    """The pt-BR message when `config`'s tipo cannot be emitted for this
+    consulta — an org credential or a party field it declares is missing —
+    so InfoSimples must NOT be called. `None` = go ahead."""
+    if config.get("requer_credencial") == CREDENCIAL_GOVBR and not govbr_login(consulta.get("org_id")):
         return MSG_REQUER_GOVBR
+    faltam = campos_faltantes(config, consulta)
+    if faltam:
+        return msg_falta_dados(faltam, consulta.get("nome"))
     return None
 
 
+def _falha_da_origem(raw_response: Any) -> Optional[str]:
+    """The response's lower-cased error text when it is an InfoSimples
+    failure (600-798), else `None`."""
+    if not isinstance(raw_response, dict):
+        return None
+    code = raw_response.get("code")
+    if not isinstance(code, int) or code not in range(600, 799):
+        return None
+    textos = [raw_response.get("code_message")] + list(raw_response.get("errors") or [])
+    return " ".join(t for t in textos if isinstance(t, str)).lower()
+
+
 def e_erro_login_govbr(raw_response: Any) -> bool:
-    """Is this InfoSimples response a 606 that names the GOV.BR login params?
+    """Is this InfoSimples failure one that names the GOV.BR login params?
 
     The class guard behind `requer_credencial`: the provider can start
     demanding a login on a tipo whose config does not declare it (F112,
-    `cnd_fazenda_sp`). Such a failure is a credential pendência, never an error.
+    `cnd_fazenda_sp` — as a 606 AND as a 604 "passou a exigir autenticação
+    via GOV.BR"). Such a failure is a credential pendência, never an error.
     """
-    if not isinstance(raw_response, dict) or raw_response.get("code") != 606:
-        return False
+    blob = _falha_da_origem(raw_response)
+    return blob is not None and any(m in blob for m in _PARAMS_LOGIN_GOVBR)
+
+
+def e_erro_parametro_obrigatorio(raw_response: Any) -> bool:
+    """Is this InfoSimples failure a "required parameter not sent" (606
+    "Parâmetros obrigatórios não foram enviados" / "o parâmetro 'x' é
+    obrigatório" / "são necessários os seguintes parâmetros adicionais")?
+
+    The class guard behind `requer_campos` (F113): missing data never appears
+    on a retry, so it is a party-data pendência, never an error.
+    """
+    if isinstance(raw_response, dict) and raw_response.get("code") == 606:
+        return True
+    blob = _falha_da_origem(raw_response)
+    return blob is not None and any(
+        m in blob for m in ("obrigatório", "obrigatorio", "parâmetros adicionais", "parametros adicionais")
+    )
+
+
+def params_exigidos_no_erro(raw_response: Any) -> list[str]:
+    """The quoted parameter names a "required parameter" failure lists
+    (`'birthdate'`, `'nome_mae'`), GOV.BR login names excluded."""
+    if not isinstance(raw_response, dict):
+        return []
     textos = [raw_response.get("code_message")] + list(raw_response.get("errors") or [])
-    blob = " ".join(t for t in textos if isinstance(t, str)).lower()
-    return any(m in blob for m in ("login_cpf", "login_senha", "pkcs12"))
+    nomes = re.findall(r"'([A-Za-z_][A-Za-z0-9_]*)'", " ".join(t for t in textos if isinstance(t, str)))
+    return [n for n in dict.fromkeys(nomes) if n not in _PARAMS_LOGIN_GOVBR]
 
 
-def e_pendencia_de_credencial(row: Optional[dict]) -> bool:
-    """Is this resultado row parked waiting for an org credential (pending —
-    never an error)? Recognised by the status + the one message constant."""
-    return bool(row) and row.get("status") == "pendente" and row.get("erro_mensagem") == MSG_REQUER_GOVBR
+def campos_do_erro(raw_response: Any) -> list[str]:
+    """`params_exigidos_no_erro`, in consulta-field terms (unmapped names kept)."""
+    return list(dict.fromkeys(PARAM_PARA_CAMPO.get(p, p) for p in params_exigidos_no_erro(raw_response)))
+
+
+def tipo_de_pendencia(row: Optional[dict]) -> Optional[str]:
+    """Which pendência this resultado row is parked on (`credencial_govbr` |
+    `dados_parte`), or `None`. Pending for a reason a human fixes — never an
+    error. Recognised by the status + the message shape this module writes."""
+    if not row or row.get("status") != "pendente":
+        return None
+    msg = row.get("erro_mensagem") or ""
+    if msg == MSG_REQUER_GOVBR:
+        return PENDENCIA_CREDENCIAL_GOVBR
+    if msg.startswith(_FALTA_PREFIXO) and msg.endswith(_FALTA_SUFIXO):
+        return PENDENCIA_DADOS_PARTE
+    return None
+
+
+def e_pendencia(row: Optional[dict]) -> bool:
+    """Is this resultado row parked on a pendência (credential or party data)?"""
+    return tipo_de_pendencia(row) is not None
 
 
 PARAM_BUILDERS = {

@@ -105,11 +105,14 @@ from app.modules.certidoes.registry import (
     config_for,
     CREDENCIAL_GOVBR,
     MSG_REQUER_GOVBR,
+    campos_do_erro,
     e_erro_login_govbr,
-    e_pendencia_de_credencial,
+    e_erro_parametro_obrigatorio,
+    e_pendencia,
     emissao_pela_consulta,
+    msg_falta_dados,
     parse_resultado,
-    pendencia_de_credencial,
+    pendencia_pre_chamada,
 )
 
 logger = logging.getLogger(__name__)
@@ -498,6 +501,11 @@ async def _fetch_certidao(
 
             # Don't retry on definitive API errors (bad params, auth, etc.)
             if isinstance(api_code, int) and 400 <= api_code < 500:
+                break
+            # 606 "Parâmetros obrigatórios não foram enviados": the same
+            # request fails the same way — no retry, no 2ª via (F113: one
+            # missing birthdate was billed 3x, nova + 2ª via + retry).
+            if api_code == 606:
                 break
 
             # The initial 2ª via (history said a PCEN is still valid) was
@@ -2053,12 +2061,13 @@ async def _process_single_certidao(
         or bool(atual_rows[0].get("confirmado_por"))
     )
 
-    # An org without the credential this tipo needs (GOV.BR login for Dívida
-    # Ativa SP / CND Fazenda SP) must NOT hit InfoSimples — the call is guaranteed to fail (606)
-    # and is billed. Park the cell as PENDING (never an error) with the pt-BR
-    # reason; manual upload stays available on it. A human-locked resultado is
-    # left exactly as it is.
-    pendencia = pendencia_de_credencial(config, org_id)
+    # A tipo whose declared requirements are not met — the org credential
+    # (GOV.BR login for Dívida Ativa SP / CND Fazenda SP) or a party field
+    # (birth date for a CPF's CND Federal) — must NOT hit InfoSimples: the
+    # call is guaranteed to fail (606) and is billed. Park the cell as PENDING
+    # (never an error) with the pt-BR reason; manual upload stays available on
+    # it. A human-locked resultado is left exactly as it is.
+    pendencia = pendencia_pre_chamada(config, consulta)
     if pendencia:
         if not travado:
             db.table(RESULTADOS).update({
@@ -2143,6 +2152,31 @@ async def _process_single_certidao(
             db.table(RESULTADOS).update({
                 "status": "pendente",
                 "erro_mensagem": MSG_REQUER_GOVBR,
+                "api_response": result["raw_response"],
+            }).eq("id", resultado_id).execute()
+        _atualizar_status_consulta(consulta_id, org_id, db)
+        return
+
+    if not result["success"] and e_erro_parametro_obrigatorio(result.get("raw_response")):
+        # Provider refused for a missing required parameter: missing data never
+        # appears on a retry, so it is a party-data pendência, never an error.
+        # `pendencia_pre_chamada` should have caught it before the (billed)
+        # call — the registry is missing a `requer_campos` declaration.
+        campos = campos_do_erro(result["raw_response"])
+        declarados = set(
+            (config.get("requer_campos") or {}).get(consulta.get("tipo_documento"), ())
+        )
+        logger.warning(
+            "certidoes: tipo %s answered a missing-required-parameter error naming %s "
+            "for a %s consulta; undeclared in requer_campos: %s — declare it in "
+            "registry.CERTIDOES_CONFIG and make its params builder send it (call was billed)",
+            config["tipo"], campos or "no parameter", consulta.get("tipo_documento"),
+            [c for c in campos if c not in declarados] or "none",
+        )
+        if not travado:
+            db.table(RESULTADOS).update({
+                "status": "pendente",
+                "erro_mensagem": msg_falta_dados(campos, consulta.get("nome")),
                 "api_response": result["raw_response"],
             }).eq("id", resultado_id).execute()
         _atualizar_status_consulta(consulta_id, org_id, db)
@@ -2344,7 +2378,7 @@ def _atualizar_status_consulta(consulta_id: str, org_id: Optional[str], db) -> N
         1 for r in rows
         if r["status"] in ("pendente", "processando", "na_fila")
         and not resultado_concluido(r)
-        and not e_pendencia_de_credencial(r)
+        and not e_pendencia(r)
     )
 
     if still_pending > 0:
