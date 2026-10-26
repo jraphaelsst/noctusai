@@ -116,6 +116,15 @@ class TestPosseClauseUsaEnderecoDoRegistro:
         assert av.pronto is True
         assert "ENDERECO_DIVERGENTE_DA_MATRICULA" in {a["codigo"] for a in av.avisos}
 
+    def test_o_aviso_nao_repete_o_rotulo_do_imovel(self):
+        # Prod deal 874 (2026-10-26): the caller's `rotulo` already carries
+        # "do imóvel", so the message read "do imóvel do imóvel".
+        d = _com_matricula_de_registro()
+        _pol, _sw, av = _avaliar(d)
+        msg = next(a["mensagem"] for a in av.avisos if a["codigo"] == "ENDERECO_DIVERGENTE_DA_MATRICULA")
+        assert "imóvel do imóvel" not in msg
+        assert msg.startswith("O logradouro cadastrado do imóvel (")
+
 
 class TestEnderecoDeCondominioMigracao159:
     """[owner rule, 2026-09-23] `im.endereco` is now THE PROPERTY TABLE's
