@@ -3,7 +3,7 @@ kind: component
 path: seed/lib/frontend/src/components/section-tabs/SectionTabsPage.tsx
 phase: pilot-seed
 registered_at: '2026-10-26'
-organ_version: '1.0'
+organ_version: '1.1'
 validation_status: emerging
 known_facts:
 - 'Import: import { SectionTabsPage } from "@noctusai/lib/components"; mount under a splat route
@@ -14,6 +14,7 @@ known_facts:
   first consumer is monica (Configuracoes > Conexoes, designed to grow by adding one entry).
 - 'visible:false is a UX gate only; the server enforces the real one. All sections hidden renders nothing, never an
   empty shell.'
+- 'v1.1: the redirect to the first section keeps ?query and #hash (OAuth return links like ?calendar=connected).'
 errors_encountered: []
 drifts_surfaced: []
 alternatives_considered:

@@ -4,7 +4,7 @@
  * Mount it under a splat route (`<Route path="/configuracoes/*" .../>`) with the same `basePath`; it owns the
  * URL <-> tab sync so no product hand-rolls it: a section is deep-linkable (`/configuracoes/conexoes`), the browser
  * back button works, and the bare `basePath` or a segment it does not know (typo, stale bookmark) redirects
- * (replace) to the canonical URL of the first section. The page grows by adding an entry to `sections` -- nothing
+ * (replace) to the canonical URL of the first section, keeping `?query` and `#hash` (OAuth return links such as `?calendar=connected`). The page grows by adding an entry to `sections` -- nothing
  * else changes.
  *
  * Only the ACTIVE section is rendered (a section that loads data does not fetch while another tab is open).
@@ -40,14 +40,14 @@ const trimBase = (basePath: string) => basePath.replace(/\/+$/, '');
 
 export function SectionTabsPage({ basePath, title, description, sections, className }: SectionTabsPageProps) {
   const base = trimBase(basePath);
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const navigate = useNavigate();
   const shown = sections.filter((s) => s.visible !== false);
   if (shown.length === 0) return null;
 
   const rest = (pathname.startsWith(base) ? pathname.slice(base.length) : '').replace(/^\/+|\/+$/g, '');
   const active = shown.find((s) => s.key === rest);
-  if (!active) return <Navigate to={`${base}/${shown[0].key}`} replace />;
+  if (!active) return <Navigate to={`${base}/${shown[0].key}${search}${hash}`} replace />;
 
   return (
     <div className={cn('space-y-4', className)} data-testid="section-tabs-page">

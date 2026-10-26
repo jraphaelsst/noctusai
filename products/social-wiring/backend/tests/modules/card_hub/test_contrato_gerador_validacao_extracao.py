@@ -631,7 +631,7 @@ class TestConflitosAbertos:
         [conflito] = corpo["conflitos"]
         assert conflito["id"] == cid and conflito["campo"] == "cpf"
         assert (conflito["valor_atual"], conflito["valor_proposto"]) == ("111", "222")
-        assert conflito["link"]["rota"] == "/configuracoes"
+        assert conflito["link"]["rota"] == "/configuracoes/pendencias"
         r = _gerar(client, ids)
         assert r.status_code == 409, r.text
         assert r.json()["error"]["details"]["conflitos"] == corpo["conflitos"]
@@ -777,7 +777,7 @@ class TestConflitosAbertos:
         assert conflito["rotulo"] == "Situação cadastral"
         assert conflito["grupo"] == "Empresa Empresa Conflito LTDA"
         assert (conflito["valor_atual"], conflito["valor_proposto"]) == ("ativa", "baixada")
-        assert conflito["link"]["rota"] == "/configuracoes"
+        assert conflito["link"]["rota"] == "/configuracoes/pendencias"
         r = _gerar(client, ids)
         assert r.status_code == 409, r.text
         assert r.json()["error"]["details"]["conflitos"] == corpo["conflitos"]
