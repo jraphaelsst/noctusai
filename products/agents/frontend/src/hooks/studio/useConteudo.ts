@@ -15,6 +15,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { createOrgSpecsHooks } from "@noctusai/lib/components";
 import { api } from "@/lib/api";
 import type {
   CompiladoOrg,
@@ -22,7 +23,6 @@ import type {
   ConteudoPayload,
   ConteudoRowByKind,
   ConteudoSetOut,
-  OrgSpecs,
   OrgStatus,
   PlataformaTexto,
 } from "@/api/studio/types-julia";
@@ -92,25 +92,14 @@ export function usePayload(key: string, versionId: string | null | undefined) {
 
 // ── org side ────────────────────────────────────────────────────────────────
 
-export function useOrgSpecs(key: string) {
-  const q = useQuery<OrgSpecs>({
-    queryKey: studioKeys.orgSpecs(key),
-    queryFn: () => api.get<OrgSpecs>(`${base(key)}/specs`),
-    enabled: !!key,
-    retry: false,
-    placeholderData: keepWithinAgent<OrgSpecs>(key),
-  });
-  return toView(q);
-}
-
-export function useUpdateOrgSpecs(key: string) {
-  return useCacheWriteMutation<OrgSpecs, { valores: Record<string, string> }>({
-    mutationFn: (payload) => api.put<OrgSpecs>(`${base(key)}/specs`, payload),
-    targets: [{ queryKey: studioKeys.orgSpecs(key), commit: (_old, saved) => saved }],
-    // Completeness status, controls and the org compile are computed from the values.
-    invalidate: [studioKeys.orgStatus(key), studioKeys.controle(key), ["studio", key, "compilado-org"]],
-  });
-}
+// The specs form is the seed organ's hooks (also used by other products); agents adds its derived views.
+export const orgSpecsHooks = createOrgSpecsHooks(api, {
+  path: (key) => `${base(key)}/specs`,
+  queryKey: studioKeys.orgSpecs,
+  // Completeness status, controls and the org compile are computed from the values.
+  invalidate: (key) => [studioKeys.orgStatus(key), studioKeys.controle(key), ["studio", key, "compilado-org"]],
+});
+export const { useOrgSpecs, useUpdateOrgSpecs } = orgSpecsHooks;
 
 export function useOrgStatus(key: string, enabled = true) {
   const q = useQuery<OrgStatus>({

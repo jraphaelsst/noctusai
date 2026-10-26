@@ -1,0 +1,30 @@
+name: OrgSpecsForm
+kind: component
+path: seed/lib/frontend/src/components/org-specs/OrgSpecsForm.tsx
+phase: pilot-seed
+registered_at: "2026-10-26"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Import: import { createOrgSpecsHooks, OrgSpecsForm } from '@noctusai/lib/components'. Build hooks once: const hooks = createOrgSpecsHooks(api, { path?, queryKey?, invalidate? }); render <OrgSpecsForm hooks={hooks} agentKey=... />."
+  - "Lifted from products/agents Studio EspecificacoesOrgTab (consumer #1, now a thin wrapper); consumer #2 = monica 'Contexto' page via its own backend proxy."
+  - "Wire: GET/PUT {path(agentKey)} -> { agent_key, declaradas[{chave,rotulo,descricao,tipo texto|texto_longo,obrigatoria,exemplo}], valores[{chave,valor}], faltando[] }; PUT body { valores } sends EVERY declared key (blank clears)."
+  - "Default path is agents' /api/studio/agents/{key}/specs; a non-agents product passes path: () => '/api/<its proxy>' (backend: noctusai_lib.integrations.agents.make_agents_org_specs_client, forwards the user's token)."
+  - "Write = useCacheWriteMutation (commit the saved view into the specs entry; `invalidate` refetches derived views). Draft = useUnsavedChanges (notice + beforeunload). Loading uses showSkeleton, never isLoading."
+  - "Server refusal 422 spec_conflita_com_regra_fixa: message starting `<chave>:` pins the error to that field; ApiError body `conflitos` rendered via the `conflictLabels` prop (names only)."
+  - "Props that stay product-side: canEdit (admin gate), notice (locked-rules text), formatError (PT-BR mapping), conflictLabels, intro, emptyMessage."
+
+errors_encountered: []
+drifts_surfaced:
+  - "agents keeps its own toView/keepWithinAgent; the organ re-implements the same view shape generically (placeholder kept only while the agent key is in the previous query key)."
+alternatives_considered:
+  - "Passing the ApiClient to the form instead of a hooks bag — rejected: matches createApiKeysHooks/ApiKeysPanel injection so a product can add invalidations."
+manual_validation_log: []
+integration_test_status: unit-tested (OrgSpecsForm.test.tsx) + agents EspecificacoesOrgTab.test.tsx
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

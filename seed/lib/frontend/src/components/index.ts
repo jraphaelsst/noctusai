@@ -43,6 +43,18 @@ export type {
   StatusPaginaStatus,
 } from './StatusPaginaPanel';
 
+// Org specs — the org's own context for an agent (lifted from agents' Studio EspecificacoesOrgTab).
+export { createOrgSpecsHooks, OrgSpecsForm } from './org-specs';
+export type {
+  CreateOrgSpecsHooksOptions,
+  OrgSpecDef,
+  OrgSpecValor,
+  OrgSpecsData,
+  OrgSpecsHooks,
+  OrgSpecsView,
+  OrgSpecsFormProps,
+} from './org-specs';
+
 // API keys — org-scoped, operator-settable managed credentials (lifted from
 // social-wiring's Settings "Chaves de API" tab as a pure addition).
 export { createApiKeysHooks, ApiKeysPanel } from './api-keys';
