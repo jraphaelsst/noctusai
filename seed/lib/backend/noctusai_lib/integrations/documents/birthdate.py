@@ -192,8 +192,96 @@ _ROTULO_DIA_MES_ANO = re.compile(
 #: is the one in the "NASCIDO aos/em ..." clause, usually after a spelled-out
 #: form the date regexes cannot see. This clause is the document's own
 #: statement of the fact, so it outranks every other candidate.
-_NASCIDO_CLAUSULA = re.compile(r"\bNASCID[OA]\b\s*,?\s*(?:AOS?|EM|NO\s+DIA|DIA)\b")
+#:
+#: 🔴 F102 REAL RUN (2026-10-26) — the first version allowed only an optional
+#: COMMA between "NASCIDO" and its connector ("NASCIDO, aos"). The vision
+#: transcription of the real document varies run to run between "NASCIDO,
+#: aos", "NASCIDO, aos:" and "NASCIDO: aos" (the model renders the typed form
+#: as LABEL: value); 3 of 4 measured reads were the colon shape, the clause
+#: never matched, and the label race had two unlabelled plausible dates (the
+#: birth date ~100 chars past the label, the 2009 issue date) -> NULL. Any
+#: run of separators (`,` `:` `;` `-` `.`) and an optional "(A)" gender
+#: suffix may now sit between the word and the connector, and after it.
+#: The connector itself stays REQUIRED: a bare "NASCIDO" also prints as
+#: "DECLARAÇÃO DE NASCIDO VIVO", whose number/date is not the birth date.
+_SEP = r"[\s,:;.\-]*"
+_NASCIDO_CLAUSULA = re.compile(
+    r"\bNASCID[OA]\b(?:\s*\(\s*[OA]\s*\))?" + _SEP
+    + r"(?:AOS?|EM|NO\s+DIA|DIA)\b" + _SEP
+)
 _NASCIDO_JANELA = 240
+
+#: Spelled-out numbers as a registrar writes a date ("dezenove de fevereiro
+#: de mil novecentos e oitenta e dois"). The clause's numeric repetition
+#: ("(((19 de fevereiro de 1982)))") is not printed on every certidão and a
+#: transcription may drop it; the words are then the only statement of the
+#: date, so they are read too — and when BOTH are present they must agree.
+_POR_EXTENSO = {
+    "UM": 1, "PRIMEIRO": 1, "DOIS": 2, "TRES": 3, "QUATRO": 4, "CINCO": 5,
+    "SEIS": 6, "SETE": 7, "OITO": 8, "NOVE": 9, "DEZ": 10, "ONZE": 11,
+    "DOZE": 12, "TREZE": 13, "QUATORZE": 14, "CATORZE": 14, "QUINZE": 15,
+    "DEZESSEIS": 16, "DEZASSEIS": 16, "DEZESSETE": 17, "DEZASSETE": 17,
+    "DEZOITO": 18, "DEZENOVE": 19, "DEZANOVE": 19, "VINTE": 20, "TRINTA": 30,
+    "QUARENTA": 40, "CINQUENTA": 50, "SESSENTA": 60, "SETENTA": 70,
+    "OITENTA": 80, "NOVENTA": 90, "CEM": 100, "CENTO": 100, "DUZENTOS": 200,
+    "TREZENTOS": 300, "QUATROCENTOS": 400, "QUINHENTOS": 500,
+    "SEISCENTOS": 600, "SETECENTOS": 700, "OITOCENTOS": 800, "NOVECENTOS": 900,
+}
+_PALAVRA_NUM = r"(?:" + "|".join(sorted(_POR_EXTENSO, key=len, reverse=True)) + r"|MIL)"
+_NUM_EXTENSO = _PALAVRA_NUM + r"(?:\s+(?:E\s+)?" + _PALAVRA_NUM + r")*"
+_DATA_EXTENSO = re.compile(
+    r"\b(?P<dia>" + _NUM_EXTENSO + r")\s+DE\s+(?P<mes>" + "|".join(_MONTHS)
+    + r")\s+(?:DO\s+ANO\s+)?DE\s+(?P<ano>" + _NUM_EXTENSO + r")\b"
+)
+
+
+def _valor_extenso(palavras: str) -> Optional[int]:
+    """"MIL NOVECENTOS E OITENTA E DOIS" -> 1982. None when a word is not a
+    number word (the regex only admits number words, so this is a guard)."""
+    total, parcial = 0, 0
+    for p in palavras.split():
+        if p == "E":
+            continue
+        if p == "MIL":
+            total += (parcial or 1) * 1000
+            parcial = 0
+            continue
+        v = _POR_EXTENSO.get(p)
+        if v is None:
+            return None
+        parcial += v
+    return total + parcial
+
+
+def _data_extenso(trecho: str) -> Optional[tuple[int, date]]:
+    """The first spelled-out date in `trecho`, with its offset."""
+    for m in _DATA_EXTENSO.finditer(trecho):
+        dia, ano = _valor_extenso(m.group("dia")), _valor_extenso(m.group("ano"))
+        if dia is None or ano is None:
+            continue
+        try:
+            return (m.start(), date(ano, _MONTHS[m.group("mes")], dia))
+        except ValueError:
+            continue
+    return None
+
+
+def _data_da_clausula(trecho: str) -> Optional[date]:
+    """The date a "NASCIDO aos ..." clause states: the first numeric/textual
+    date in its window and/or its spelled-out form. Both present and
+    DISAGREEING = a misread of one of them -> None (absence, not a guess)."""
+    achadas = sorted(_iter_dates(trecho))
+    numerica = achadas[0][1] if achadas else None
+    extenso = _data_extenso(trecho)
+    if extenso is not None and achadas and achadas[0][0] < extenso[0]:
+        # A numeric date BEFORE the spelled one is the clause's own value
+        # (the "NASCIDO em 19/02/1982" form); a later spelled date belongs
+        # to something else further along the window.
+        extenso = None
+    por_extenso = extenso[1] if extenso else None
+    if numerica and por_extenso and numerica != por_extenso:
+        return None
+    return numerica or por_extenso
 
 
 def data_clausula_nascido(norm: str, today: date) -> Optional[date]:
@@ -203,9 +291,9 @@ def data_clausula_nascido(norm: str, today: date) -> Optional[date]:
     datas: set[date] = set()
     for m in _NASCIDO_CLAUSULA.finditer(norm):
         trecho = norm[m.end(): m.end() + _NASCIDO_JANELA]
-        achadas = sorted(_iter_dates(trecho))
-        if achadas and _plausible(achadas[0][1], today):
-            datas.add(achadas[0][1])
+        d = _data_da_clausula(trecho)
+        if d is not None and _plausible(d, today):
+            datas.add(d)
     # Two different clauses = two holders (a certidão de casamento read
     # whole): not attributable, left to the label race (which reports the
     # ambiguity as absence).

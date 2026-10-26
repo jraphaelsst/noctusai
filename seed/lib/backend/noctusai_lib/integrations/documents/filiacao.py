@@ -69,9 +69,20 @@ _FILHO_DE_RE = re.compile(
 #: ..." — a colon after each "de" and a comma before the connector, which the
 #: prose pattern above (name ends at the first comma) cannot span. The colons
 #: ARE the anchor, so this stays as strict as the prose form.
+#:
+#: 🔴 F102 REAL RUN (2026-10-26): the real document's transcription puts each
+#: parent on their OWN line, filled to the margin with the registrar's
+#: "////" line-fill, with that parent's own "natural de: <cidade> (UF)" line
+#: between them — "FILHO DE: <PAI> ////\nNATURAL DE: X (SP)\n\nE DE: <MÃE>
+#: ////". 5 of 5 measured reads had this shape and none matched. The fill and
+#: ONE parent-naturalidade line (the parent's, never the holder's) are now
+#: allowed between the two anchors, and "/" ends a name like "," does.
+_LINHA_FILL = r"(?:\s*/{2,})?"
+_NATURAL_DO_PAI = r"(?:\s*\n\s*NATURAL\s+(?:DE|DO|DA)\s*:?[^\n]{1,80})?"
 _FILHO_DE_DOIS_PONTOS_RE = re.compile(
-    r"\bFILH[OA]S?\s+DE\s*:\s*(?P<pai>" + _NOME + r")\s*[,;]?\s+E\s+DE\s*:\s*"
-    r"(?P<mae>" + _NOME + r")(?=\s*(?:[,;.\n]|$)|\s+(?:AVOS?|AVO|NASCID|OBSERV))"
+    r"\bFILH[OA]S?\s+DE\s*:\s*(?P<pai>" + _NOME + r")" + _LINHA_FILL + _NATURAL_DO_PAI
+    + r"\s*[,;]?\s+E\s+DE\s*:\s*"
+    r"(?P<mae>" + _NOME + r")(?=\s*(?:[,;./\n]|$)|\s+(?:AVOS?|AVO|NASCID|OBSERV))"
 )
 #: Explicit role labels. `PAI` / `MAE` alone only count at a line start or
 #: after a separator, so "COMPANHIA", "CAMPAI" are never matched.
