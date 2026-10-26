@@ -103,6 +103,9 @@ from app.modules.certidoes.registry import (
     TJSP_COOLDOWN_SECONDS,
     TJSP_TIPO,
     config_for,
+    CREDENCIAL_GOVBR,
+    MSG_REQUER_GOVBR,
+    e_erro_login_govbr,
     e_pendencia_de_credencial,
     emissao_pela_consulta,
     parse_resultado,
@@ -2051,7 +2054,7 @@ async def _process_single_certidao(
     )
 
     # An org without the credential this tipo needs (GOV.BR login for Dívida
-    # Ativa SP) must NOT hit InfoSimples — the call is guaranteed to fail (606)
+    # Ativa SP / CND Fazenda SP) must NOT hit InfoSimples — the call is guaranteed to fail (606)
     # and is billed. Park the cell as PENDING (never an error) with the pt-BR
     # reason; manual upload stays available on it. A human-locked resultado is
     # left exactly as it is.
@@ -2124,6 +2127,26 @@ async def _process_single_certidao(
             raw_response=result["raw_response"],
             reference_id=resultado_id,
         )
+
+    if not result["success"] and e_erro_login_govbr(result.get("raw_response")):
+        # Provider demands a GOV.BR login: a credential pendência, never an
+        # error (the cell shows the actionable message). Already billed and
+        # recorded by the watcher above; if the config does not declare it,
+        # say so loudly — the registry needs `requer_credencial`.
+        if config.get("requer_credencial") != CREDENCIAL_GOVBR:
+            logger.warning(
+                "certidoes: tipo %s answered 606 (GOV.BR login) but its config lacks "
+                "requer_credencial='govbr' — declare it in registry.CERTIDOES_CONFIG "
+                "(call was billed)", config["tipo"],
+            )
+        if not travado:
+            db.table(RESULTADOS).update({
+                "status": "pendente",
+                "erro_mensagem": MSG_REQUER_GOVBR,
+                "api_response": result["raw_response"],
+            }).eq("id", resultado_id).execute()
+        _atualizar_status_consulta(consulta_id, org_id, db)
+        return
 
     if not result["success"]:
         db.table(RESULTADOS).update({

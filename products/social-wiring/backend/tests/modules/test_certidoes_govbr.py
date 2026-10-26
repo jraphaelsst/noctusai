@@ -175,3 +175,68 @@ class TestCredencialNaLoja:
             assert credentials.govbr_login(ORG) == (CPF, SENHA)
         with patch(_CRED, side_effect=_sem_login):
             assert credentials.govbr_login(ORG) is None
+
+
+class _Http606:
+    """httpx faked at the boundary: the 606 gov.br-login answer F112 saw."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def get(self, url, **kw):
+        self.calls += 1
+        r = MagicMock()
+        r.json.return_value = {
+            "code": 606,
+            "code_message": "Um dos pares de parâmetros deve ser informado para login no "
+            "gov.br: 'login_cpf'/'login_senha' OU 'pkcs12_cert'/'pkcs12_pass'.",
+            "errors": [],
+            "header": {"price": 0.28},
+        }
+        return r
+
+    post = get
+
+
+class TestCnd606ClassGuard:
+    def test_cnd_fazenda_sp_declara_govbr(self):
+        cfg = config_for("cnd_fazenda_sp")
+        assert cfg["params_fn"] == "govbr" and cfg["requer_credencial"] == "govbr"
+
+    @pytest.mark.asyncio
+    async def test_cnd_fazenda_sp_sem_login_nao_chama_infosimples(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="cnd_fazenda_sp", id="r-cnd", ordem=9, status="pendente")],
+        )
+        http = _Http606()
+        with patch(_CRED, side_effect=_sem_login):
+            await service._process_single_certidao(
+                config_for("cnd_fazenda_sp"), _consulta_row(), "tok", db, "r-cnd", http,
+                FakeStorageBackend(), analyze=_noop_analyze, extract_text=_noop_extract_text,
+                core_db=MockSupabaseClient(schema="public"),
+            )
+        row = db.table("certidao_resultados").select("*").eq("id", "r-cnd").execute().data[0]
+        assert http.calls == 0
+        assert row["status"] == "pendente" and row["erro_mensagem"] == MSG_REQUER_GOVBR
+
+    @pytest.mark.asyncio
+    async def test_606_govbr_em_tipo_nao_declarado_vira_pendencia_e_loga(self, caplog):
+        cfg = {k: v for k, v in config_for("cnd_fazenda_sp").items()
+               if k not in ("requer_credencial",)}
+        cfg["params_fn"] = "simples"
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="cnd_fazenda_sp", id="r-cnd", ordem=9, status="na_fila")],
+        )
+        http = _Http606()
+        with caplog.at_level("WARNING"):
+            await service._process_single_certidao(
+                cfg, _consulta_row(), "tok", db, "r-cnd", http,
+                FakeStorageBackend(), analyze=_noop_analyze, extract_text=_noop_extract_text,
+                core_db=MockSupabaseClient(schema="public"),
+            )
+        row = db.table("certidao_resultados").select("*").eq("id", "r-cnd").execute().data[0]
+        assert http.calls >= 1
+        assert row["status"] == "pendente" and row["erro_mensagem"] == MSG_REQUER_GOVBR
+        assert "lacks requer_credencial" in caplog.text

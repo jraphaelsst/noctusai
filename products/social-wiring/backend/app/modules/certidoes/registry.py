@@ -131,7 +131,12 @@ CERTIDOES_CONFIG = [
         "nome": "CND Fazenda SP",
         "endpoint": "sefaz/sp/certidao-debitos",
         "ordem": 9,
-        "params_fn": "simples",
+        # InfoSimples `sefaz/sp/certidao-debitos` now answers 606 without a
+        # GOV.BR login ("Um dos pares de parâmetros deve ser informado para
+        # login no gov.br ...") — billed 0.28, prod F112 (2026-10-26, 5.11
+        # "Débitos não inscritos"). Same contract as `divida_ativa_sp`.
+        "params_fn": "govbr",
+        "requer_credencial": "govbr",
         "parse_fn": "padrao",
         "response_format": "pdf",
     },
@@ -302,7 +307,7 @@ def _build_params_trt2_fisico(consulta: dict, token: str) -> dict:
 
 
 def _build_params_simples(consulta: dict, token: str) -> dict:
-    """Simple endpoints (TST, CENPROT, Fazenda SP, Dívida Ativa): token + cpf/cnpj only."""
+    """Simple endpoints (TST, CENPROT): token + cpf/cnpj only."""
     return _token_and_doc(consulta, token)
 
 
@@ -334,7 +339,7 @@ def _build_params_tjsp(consulta: dict, token: str) -> dict:
 
 
 def _build_params_govbr(consulta: dict, token: str) -> dict:
-    """Endpoints behind a GOV.BR login (Dívida Ativa SP): token + cpf/cnpj +
+    """Endpoints behind a GOV.BR login (Dívida Ativa SP, CND Fazenda SP): token + cpf/cnpj +
     `login_cpf` + `login_senha`. The login comes from the org credential
     store. The caller (`pendencia_de_credencial`) has already refused to get
     here without it; a missing login sends none rather than a half pair."""
@@ -368,6 +373,20 @@ def pendencia_de_credencial(config: dict, org_id: Optional[str]) -> Optional[str
     if config.get("requer_credencial") == CREDENCIAL_GOVBR and not govbr_login(org_id):
         return MSG_REQUER_GOVBR
     return None
+
+
+def e_erro_login_govbr(raw_response: Any) -> bool:
+    """Is this InfoSimples response a 606 that names the GOV.BR login params?
+
+    The class guard behind `requer_credencial`: the provider can start
+    demanding a login on a tipo whose config does not declare it (F112,
+    `cnd_fazenda_sp`). Such a failure is a credential pendência, never an error.
+    """
+    if not isinstance(raw_response, dict) or raw_response.get("code") != 606:
+        return False
+    textos = [raw_response.get("code_message")] + list(raw_response.get("errors") or [])
+    blob = " ".join(t for t in textos if isinstance(t, str)).lower()
+    return any(m in blob for m in ("login_cpf", "login_senha", "pkcs12"))
 
 
 def e_pendencia_de_credencial(row: Optional[dict]) -> bool:
