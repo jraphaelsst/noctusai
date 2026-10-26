@@ -1,0 +1,40 @@
+name: WhatsAppInbox
+path: seed/lib/frontend/src/components/whatsapp-inbox/WhatsAppInbox.tsx
+phase: pilot-seed
+registered_at: "2026-10-26"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Lifted from products/social-wiring (hooks/useWhatsAppChats.ts + components/WhatsAppChatWindow.tsx + the chat routes of routers/whatsapp_connections_router.py + services/whatsapp_chat_store.py / whatsapp_backfill.py / whatsapp_realtime.py + migration 042) WITHOUT its Julia pause / agente mirror / LGPD delete / auto-reply / lead intake. social-wiring is untouched (NOC-REMEDIATE[sw-consume-seed-wa-inbox]). First consumer: the monica product (pilot #1)."
+  - "Backend twin: noctusai_lib.integrations.whatsapp.inbox (store, ingest, backfill, realtime, DDL) + noctusai_seed.whatsapp_inbox_router.create_whatsapp_inbox_router. The wire DTOs InboxChat / InboxMessage here mirror inbox/types.py field-for-field - renaming one is a bump on both sides in the same commit."
+  - "Data layer is createWhatsAppInboxHooks(api, {getAuthToken, getBaseUrl, basePath}) (seed/lib/frontend/src/whatsapp-inbox.ts) -> useInboxChats / useInboxMessages (useInfiniteQuery), useSendInboxMessage / useMarkChatRead / useBackfillInbox (useCacheWriteMutation), useInboxEvents (SSE). The CALLER creates the bag once (module scope) and passes it as the `hooks` prop - same idiom as createWhatsAppConnectionsHooks."
+  - "Composition: a thin adapter from the hooks bag to the seed ChatWindow organ (design-system/chat). ChatWindow gained two ADDITIVE slots for it: threadListHeader (the search box) and threadListFooter ('Carregar mais conversas'); omitting both leaves every other consumer byte-identical."
+  - "Writes put the server's answer in the cache: a send draws an optimistic stand-in (id optimistic:*), the POST answer replaces it (if the realtime stream already delivered the real message the stand-in is just dropped - never two copies) and the chat preview is bumped to the top; mark-read clears the badge optimistically; failure rolls both back and ChatWindow shows the thrown Error verbatim."
+  - "Loading follows the server-state rules: showSkeleton = pending && no data (first load only), isRefreshing = fetching && data (quiet). The organ never passes a bare isLoading to ChatWindow, so a background refetch / poll never blanks the list or thread."
+  - "Realtime: one fetch-based SSE stream per connection (EventSource cannot send the bearer header) patches the caches idempotently via setQueryData(ies); a chat.upsert only INSERTS into the unfiltered list (a search list would gain non-matches). While the stream is not 'open' (or no getAuthToken was given) the organ polls every fallbackPollMs (default 10s; 0 disables) so a frozen inbox is never silent."
+  - "Deep link: `initialChatId` selects that chat; if it is outside the loaded pages the organ asks the server for exactly it (search q = the JID; the backend search text includes the chat id) and merges it into the list, so a lead -> conversation link never opens a blank pane. `renderChatHeaderExtra(chat)` renders in the thread header (the product puts 'ver lead' there) through ChatWindow's ThreadHeaderExtra seam."
+  - "Search is server-side and debounced 300ms; chat paging is cursor-based ('Carregar mais conversas'); message paging is the ChatWindow useLoadMore seam over before=<iso>|<id>."
+
+errors_encountered:
+  - "Tests that mock the API with STATIC data fail confusingly: useCacheWriteMutation's settle refetch brings the static answer back over the optimistic/committed write. The colocated tests use a stateful fake server (a write changes the next GET), like the real one."
+
+drifts_surfaced:
+  - "OpenAI credits were exhausted at lift time (2026-10-26): noctus.dev.register_organ for WhatsAppInbox returned embed-error, so the organ is NOT yet in the code-embeddings cache (find_reusable_component cannot find it by intent). Re-run register_organ WhatsAppInbox once credits are restored; this sidecar + git history carry the provenance meanwhile."
+  - "design-system/index.ts barrel re-export of the chat types still omits ChatReadStateResult / ChatLoadMoreResult (pre-existing, see ChatWindow.organ.yaml) - the inbox imports from design-system/chat directly."
+
+alternatives_considered:
+  - "Putting search inside ChatWindow (an adapter seam). Rejected: search is one consumer's need; two opaque ReactNode slots keep the organ provider-blind."
+  - "A single useQuery with a growing limit instead of infinite queries. Rejected: the server caps pages at 200 (older history unreachable) and cache writes then have to patch every limit variant."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

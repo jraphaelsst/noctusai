@@ -99,6 +99,17 @@ export type {
   IntakeCancelResult,
 } from './whatsapp';
 
+// WhatsApp inbox hooks (conversation list, thread, send, read-state, realtime)
+export { createWhatsAppInboxHooks, inboxCacheOps } from './whatsapp-inbox';
+export type {
+  CreateWhatsAppInboxHooksOptions,
+  WhatsAppInboxHooks,
+  InboxChat,
+  InboxMessage,
+  InboxChatsPage,
+  InboxMessagesPage,
+} from './whatsapp-inbox';
+
 // Query client
 export { createQueryClient } from './query-client';
 

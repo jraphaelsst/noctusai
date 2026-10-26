@@ -80,6 +80,19 @@ export type {
   WhatsAppConnectionsPageProps,
 } from './whatsapp-connections';
 
+// WhatsApp inbox — "Conversas": chat list + thread + reply on the seed ChatWindow
+// (backend: noctusai_seed.whatsapp_inbox_router.create_whatsapp_inbox_router).
+export { createWhatsAppInboxHooks, WhatsAppInbox } from './whatsapp-inbox';
+export type {
+  CreateWhatsAppInboxHooksOptions,
+  WhatsAppInboxHooks,
+  WhatsAppInboxProps,
+  InboxChat,
+  InboxMessage,
+  InboxChatsPage,
+  InboxMessagesPage,
+} from './whatsapp-inbox';
+
 // Detail — THE one record-detail modal. Layout lives here; the field list
 // is a descriptor the consumer builds once per entity, so a table row, a
 // kanban card and a search result all open the SAME modal and a new field
