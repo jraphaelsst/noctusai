@@ -481,7 +481,7 @@ def _verificar_coerencia_endereco(
         if alvo and alvo not in corpo:
             av.avisa(
                 "ENDERECO_DIVERGENTE_DA_MATRICULA",
-                f"O logradouro cadastrado do imóvel {rotulo} ('{logradouro}') não aparece "
+                f"O logradouro cadastrado {rotulo} ('{logradouro}') não aparece "
                 "na descrição da matrícula — pode ser a política de publicar o endereço da "
                 "portaria em vez do imóvel, um condomínio cujo endereço interno da unidade "
                 "diverge do endereço da portaria, ou um endereço realmente divergente; "
