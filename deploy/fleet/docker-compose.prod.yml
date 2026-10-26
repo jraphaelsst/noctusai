@@ -649,6 +649,9 @@ services:
     container_name: noctus-monica
     environment:
       <<: *prod-env
+      # Monica's OWN WAHA (waha-instances.yml -> compose.waha.yml); the HMAC secret stays in the root .env.
+      MONICA_WAHA_BASE_URL: http://waha-monica:3000
+      MONICA_WAHA_SESSION: default
     expose:
       - "8020"
     healthcheck:

@@ -1,0 +1,47 @@
+# GENERATED from deploy/fleet/waha-instances.yml by noctus.dev.waha_instance action='render' -- DO NOT EDIT.
+# One WAHA Core container per WhatsApp number. Run from deploy/fleet on the VPS (reads .env.fleet):
+#   docker compose -f compose.waha.yml up -d --no-deps waha-<name>
+# KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number.
+name: noctus-waha
+
+services:
+  waha-monica:
+    # monica's own WhatsApp number (session `default`). Internal only: http://waha-monica:3000
+    image: devlikeapro/waha:2026.7.2
+    platform: linux/amd64
+    container_name: noctus-waha-monica
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WHATSAPP_API_KEY: ${WAHA_MONICA_API_KEY:?generate WAHA_MONICA_API_KEY in .env.fleet on the VPS}
+      WHATSAPP_HOOK_HMAC_KEY: ${WAHA_MONICA_HMAC_SECRET:?generate WAHA_MONICA_HMAC_SECRET in .env.fleet on the VPS}
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_MONICA_DASHBOARD_PASSWORD:?generate WAHA_MONICA_DASHBOARD_PASSWORD in .env.fleet on the VPS}
+      WHATSAPP_SWAGGER_USERNAME: admin
+      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_MONICA_DASHBOARD_PASSWORD:?generate WAHA_MONICA_DASHBOARD_PASSWORD in .env.fleet on the VPS}
+      WHATSAPP_NOWEB_STORE_ENABLED: "true"
+      WHATSAPP_NOWEB_STORE_FULL_SYNC: "true"
+      WHATSAPP_START_SESSION: default
+      NODE_OPTIONS: --max-old-space-size=384
+    expose:
+      - "3000"
+    volumes:
+      - waha_monica:/app/.sessions
+    networks:
+      - noctus-net
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true
+
+volumes:
+  waha_monica:
+    name: noctus-waha-monica

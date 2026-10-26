@@ -24108,6 +24108,31 @@ def check_tunnel_ingress_snapshot_sync(
     }]
 
 
+def check_waha_instances_render_sync(repo_root: Path | None = None) -> list[dict]:
+    """`deploy/fleet/compose.waha.yml` must equal the render of `deploy/fleet/waha-instances.yml` (the declared
+    one-WAHA-per-number source of truth) -- derive, never hand-copy. KB § CONTEXT/INTEGRATIONS/whatsapp.md."""
+    root = Path(repo_root) if repo_root is not None else Path(REPO_ROOT)
+    data_p = root / "deploy" / "fleet" / "waha-instances.yml"
+    out_p = root / "deploy" / "fleet" / "compose.waha.yml"
+    if not data_p.is_file():
+        return []
+    try:
+        from .waha_instance import parse_instances, render_compose
+        want = render_compose(parse_instances(data_p.read_text(encoding="utf-8")))
+    except Exception as e:  # malformed declaration is itself the finding
+        return [{"file": "deploy/fleet/waha-instances.yml", "issue": f"waha instances could not be parsed/rendered: {e}",
+                 "severity": "high", "symbol": "waha-instances-unparseable"}]
+    have = out_p.read_text(encoding="utf-8") if out_p.is_file() else None
+    if have == want:
+        return []
+    return [{"file": "deploy/fleet/compose.waha.yml",
+             "issue": ("compose.waha.yml is "
+                       + ("MISSING" if have is None else "DIFFERENT from the render of waha-instances.yml")
+                       + " -- regenerate: noctus.dev.waha_instance action='render' write=True. "
+                         "KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number."),
+             "severity": "high", "symbol": "waha-instances-render-drift"}]
+
+
 # Slugs whose `deploy/fleet/docker-compose.prod.yml` security block MUST be
 # byte-identical to `noctus.dev.propagate`'s own hardening constant — the
 # ONE propagate source `products/<slug>/docker-compose.yml` (the dev shape)

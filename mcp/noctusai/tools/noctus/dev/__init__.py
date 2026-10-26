@@ -104,6 +104,7 @@ def register_all(server) -> None:
     from . import schema_drift
     from . import finance_import_igig
     from . import tunnel_config
+    from . import waha_instance
     from . import products
     from . import promotion
     from . import propagate
@@ -261,6 +262,7 @@ def register_all(server) -> None:
     schema_drift.register(server)
     finance_import_igig.register(server)
     tunnel_config.register(server)
+    waha_instance.register(server)
     products.register(server)
     promotion.register(server)
     propagate.register(server)

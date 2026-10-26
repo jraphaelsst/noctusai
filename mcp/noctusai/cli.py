@@ -215,6 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-drift-shield", action="store_true", help="Pre-deploy DRIFT-SHIELD: surface OPEN auto-improvement entries touching files changed in origin/prod..origin/main. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
+    parser.add_argument("--check-waha-instances-render-sync", action="store_true", help="deploy/fleet/compose.waha.yml must equal the render of deploy/fleet/waha-instances.yml (one WAHA Core container per number, declared as data). Severity high. KB § CONTEXT/INTEGRATIONS/whatsapp.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
     parser.add_argument("--check-prod-exposure-consent", action="store_true", help="Prod-promotion consent gate: a product's FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the production-promotion decision (:latest ships it with no later gate) — requires a user-authored deploy/consent/<slug>.prod.yml in an isolated prior commit. Severity high. KB § PATTERNS/devops/prod-exposure-consent.md.")
     parser.add_argument("--check-prod-compose-hardening-parity", action="store_true", help="deploy/fleet/docker-compose.prod.yml's agents + academia-de-reciclagem security blocks (cap_drop/cap_add/security_opt/read_only/tmpfs/mem_limit) must stay byte-identical to noctus.dev.propagate's _C_HARDENING_AGENTS/_C_HARDENING_ACADEMIA — the one propagate source the dev-shape composes already reuse. A hand-copy into the separate prod compose can silently drift a security control. Severity high. KB § PATTERNS/devops/containerization.md.")
@@ -1047,6 +1048,17 @@ def main():
             for i in warns:
                 print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1 if highs else 0)
+    elif args.check_waha_instances_render_sync:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_waha_instances_render_sync
+        issues = check_waha_instances_render_sync(repo_root=REPO_ROOT)
+        if not issues:
+            print(f"  {GREEN}✓ compose.waha.yml is the render of waha-instances.yml.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} waha-instances drift issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
     elif args.check_tunnel_ingress_snapshot_sync:
         # compliance snapshots REPO_ROOT at import; pass it explicitly so
         # --worktree-path is honoured (same reason as scan_wiring below).

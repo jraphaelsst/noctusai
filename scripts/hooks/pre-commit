@@ -661,6 +661,16 @@ if [[ -n "$STAGED_TUNNEL" ]] && have_py; then
     fi
 fi
 
+# ── one WAHA per number: compose.waha.yml is RENDERED from waha-instances.yml ──
+STAGED_WAHA=$(git diff --cached --name-only 2>/dev/null | grep -E '^deploy/fleet/(waha-instances\.yml|compose\.waha\.yml)$|waha_instance\.py$' || true)
+if [[ -n "$STAGED_WAHA" ]] && have_py; then
+    echo "[pre-commit] waha instances staged — verifying compose.waha.yml == render(waha-instances.yml)..."
+    if ! "$PY" "$CLI" --check-waha-instances-render-sync --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WAHA-INSTANCES drift. Run noctus.dev.waha_instance action='render' write=True. See KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number." >&2
+        exit 1
+    fi
+fi
+
 # ── prod compose hardening blocks stay in lockstep with the propagate source ──
 # agents' + academia-de-reciclagem's deploy/fleet/docker-compose.prod.yml
 # security blocks (cap_drop/read_only/tmpfs/...) must be byte-identical to
