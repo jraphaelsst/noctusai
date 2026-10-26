@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, {{PRODUCT_ICON}}, Boxes, Wallet } from "lucide-react";
+import { LayoutDashboard, Users, Home, {{PRODUCT_ICON}}, Boxes, Wallet, Settings } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -19,6 +19,8 @@ const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
+// Settings (seed `SectionTabsPage`) -- `/configuracoes/*`; the tab is a sub-route.
+const Configuracoes = lazy(() => import("@/pages/Configuracoes"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 // Finance organ (seed `FinanceShell`) -- `/financeiro/*`; section in the URL.
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
@@ -39,6 +41,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
+      { name: "Configurações", href: "/configuracoes/conta", icon: Settings, route: "configuracoes" },
     ],
   },
 ];
@@ -54,6 +57,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Financeiro", href: "/financeiro", icon: Wallet },
+      { name: "Configurações", href: "/configuracoes/conta", icon: Settings },
     ],
   },
 ];
@@ -73,6 +77,7 @@ export default createProductApp({
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
     { path: "/financeiro/*", component: Financeiro },
+    { path: "/configuracoes/*", component: Configuracoes },
   ],
   Layout,
   ...infra.appConfig,

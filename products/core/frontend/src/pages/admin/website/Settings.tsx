@@ -25,7 +25,8 @@
  * settings that are, in fact, loaded (the lying-empty-state shape this
  * platform's loading-state rule exists to prevent).
  */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { SectionTabsPage, type SectionTab } from '@noctusai/lib/components';
 import { Button, EmptyState, ErrorState, Skeleton } from '@noctusai/lib/design-system';
 import { useAuth } from '../../../lib/auth-context';
 import {
@@ -43,24 +44,10 @@ import { FaqTab } from './settings/FaqTab';
 import { TrackingTab } from './settings/TrackingTab';
 import { HistoryTab } from './settings/HistoryTab';
 
-const TABS = [
-  { id: 'geral', label: 'Geral' },
-  { id: 'secoes', label: 'Seções' },
-  { id: 'produtos', label: 'Produtos' },
-  { id: 'confianca', label: 'Confiança' },
-  { id: 'prova-social', label: 'Prova social' },
-  { id: 'faq', label: 'FAQ' },
-  { id: 'rastreamento', label: 'Rastreamento' },
-  { id: 'historico', label: 'Histórico' },
-] as const;
-
-type TabId = (typeof TABS)[number]['id'];
-
 export function Settings() {
   const { isMarketing } = useAuth();
   const { data, isPending, isFetching, error, refetch } = useWebsiteSettings();
   const update = useUpdateWebsiteSettings();
-  const [tab, setTab] = useState<TabId>('geral');
   const [draft, setDraft] = useState<WebsiteSettings | null>(null);
 
   const showSkeleton = isPending && !data;
@@ -103,25 +90,19 @@ export function Settings() {
   const dirty = JSON.stringify(effectiveDraft) !== JSON.stringify(data.settings);
   const conflict = isConflictError(update.error);
 
-  return (
+  // The save bar + conflict/error alerts sit above EVERY section (one shared draft, one save path), so they are
+  // rendered by each section's frame; the draft lives here, so it survives switching tabs.
+  const frame = (body: ReactNode) => (
     <div className="space-y-6" aria-busy={isRefreshing}>
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Configurações do site</h1>
-          <p className="mt-1 text-muted-foreground">noctusai.com — muda sem precisar de um novo deploy</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {dirty && !conflict && (
-            <span className="text-xs text-muted-foreground">Alterações não salvas</span>
-          )}
-          <Button variant="outline" size="sm" disabled={!dirty || update.isPending} onClick={() => setDraft(data.settings)}>
-            Descartar
-          </Button>
-          <Button size="sm" disabled={!dirty || update.isPending} onClick={save}>
-            {update.isPending ? 'Salvando…' : 'Salvar alterações'}
-          </Button>
-        </div>
-      </header>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {dirty && !conflict && <span className="text-xs text-muted-foreground">Alterações não salvas</span>}
+        <Button variant="outline" size="sm" disabled={!dirty || update.isPending} onClick={() => setDraft(data.settings)}>
+          Descartar
+        </Button>
+        <Button size="sm" disabled={!dirty || update.isPending} onClick={save}>
+          {update.isPending ? 'Salvando…' : 'Salvar alterações'}
+        </Button>
+      </div>
 
       {conflict && (
         <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -133,32 +114,29 @@ export function Settings() {
         <p role="alert" className="text-sm text-destructive">{update.error.message}</p>
       )}
 
-      <nav role="tablist" aria-label="Seções de configuração" className="flex flex-wrap gap-2 border-b border-border pb-2">
-        {TABS.map((t) => (
-          <Button
-            key={t.id}
-            role="tab"
-            aria-selected={tab === t.id}
-            variant={tab === t.id ? 'primary' : 'ghost'}
-            size="sm"
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </Button>
-        ))}
-      </nav>
-
-      <div role="tabpanel">
-        {tab === 'geral' && <GeneralTab draft={effectiveDraft} onChange={updateDraft} isMarketing={isMarketing} />}
-        {tab === 'secoes' && <SectionsTab draft={effectiveDraft} onChange={updateDraft} isMarketing={isMarketing} />}
-        {tab === 'produtos' && <ProductsTab draft={effectiveDraft} onChange={updateDraft} isMarketing={isMarketing} />}
-        {tab === 'confianca' && <TrustTab draft={effectiveDraft} onChange={updateDraft} isMarketing={isMarketing} />}
-        {tab === 'prova-social' && <SocialProofTab draft={effectiveDraft} onChange={updateDraft} isMarketing={isMarketing} />}
-        {tab === 'faq' && <FaqTab draft={effectiveDraft} onChange={updateDraft} isMarketing={isMarketing} />}
-        {tab === 'rastreamento' && <TrackingTab draft={effectiveDraft} onChange={updateDraft} isMarketing={isMarketing} />}
-        {tab === 'historico' && <HistoryTab isMarketing={isMarketing} currentVersion={data.version} />}
-      </div>
+      {body}
     </div>
+  );
+
+  const tabProps = { draft: effectiveDraft, onChange: updateDraft, isMarketing };
+  const sections: SectionTab[] = [
+    { key: 'geral', label: 'Geral', render: () => frame(<GeneralTab {...tabProps} />) },
+    { key: 'secoes', label: 'Seções', render: () => frame(<SectionsTab {...tabProps} />) },
+    { key: 'produtos', label: 'Produtos', render: () => frame(<ProductsTab {...tabProps} />) },
+    { key: 'confianca', label: 'Confiança', render: () => frame(<TrustTab {...tabProps} />) },
+    { key: 'prova-social', label: 'Prova social', render: () => frame(<SocialProofTab {...tabProps} />) },
+    { key: 'faq', label: 'FAQ', render: () => frame(<FaqTab {...tabProps} />) },
+    { key: 'rastreamento', label: 'Rastreamento', render: () => frame(<TrackingTab {...tabProps} />) },
+    { key: 'historico', label: 'Histórico', render: () => frame(<HistoryTab isMarketing={isMarketing} currentVersion={data.version} />) },
+  ];
+
+  return (
+    <SectionTabsPage
+      basePath="/admin/website/settings"
+      title="Configurações do site"
+      description="noctusai.com — muda sem precisar de um novo deploy"
+      sections={sections}
+    />
   );
 }
 

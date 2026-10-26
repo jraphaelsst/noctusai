@@ -119,3 +119,12 @@ describe('Settings — marketing role', () => {
     expect(whatsappInput.disabled).toBe(false);
   });
 });
+
+describe('Settings — sub-routes', () => {
+  it('deep-links a tab and keeps the shared draft across tabs', async () => {
+    const http = fakeHttp({ 'GET /api/admin/website/settings': () => ({ data: settingsVersion() }) });
+    render(renderWithWebsite(http, <Settings />, ['/admin/website/settings/faq']));
+    expect(await screen.findByTestId('section-panel-faq')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'FAQ', selected: true })).toBeTruthy();
+  });
+});

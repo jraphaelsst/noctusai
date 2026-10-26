@@ -222,7 +222,7 @@ Cada item do menu tem uma linha em `igig.status_pagina` (`nome_pagina` = chave d
 | `/calendario` | Calendário Editorial | `?cliente=<id>` filtra |
 | `/distribuicao` | Distribuição e Métricas | — |
 | `/financeiro` | Financeiro | — |
-| `/integracoes` | Integrações | `?gmail=ok\|erro` (retorno do Google) |
+| `/integracoes` | Integrações (abas: `/integracoes/email`, `/leads`, `/publicacao`, `/chaves`; o endereço sem aba abre E-mail) | `?gmail=ok\|erro` (retorno do Google) |
 | `/automacoes` | Automações | — |
 | `/custos` | Custos | — |
 | `/equipe` | Equipe | — |

@@ -25,7 +25,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { ApiKeysPanel, createApiKeysHooks } from "@noctusai/lib/components";
+import { ApiKeysPanel, SectionTabsPage, createApiKeysHooks, type SectionTab } from "@noctusai/lib/components";
 import { AlertTriangle, Link2Off, Plug, ShieldAlert } from "lucide-react";
 
 import { api } from "@/lib/api";
@@ -230,31 +230,41 @@ function Grupo({ titulo, children }: { titulo: string; children: React.ReactNode
   );
 }
 
+/**
+ * `/integracoes/*` — one tab per group, each a sub-route (the seed `SectionTabsPage`): E-mail · Fontes de lead ·
+ * Publicação · Chaves de API. The Google OAuth return stays `/integracoes?gmail=…` (backend-pinned); the bare base
+ * lands on the first tab (E-mail), where Gmail lives.
+ */
 export default function Integracoes() {
   const { integracoes, loading, isError, cofreConfigurado } = useIntegracoes();
   const isAdmin = useIsOrgAdmin();
   useRetornoGmail();
 
-  return (
-    <div className="mx-auto w-full min-w-0 max-w-full space-y-6 overflow-x-hidden p-4 sm:p-6">
-      <header>
-        <h1 className="text-xl font-semibold text-foreground sm:text-2xl">Integrações</h1>
-        <p className="text-sm text-muted-foreground">
-          E-mail, fontes de lead e canais de publicação. Senhas e tokens são gravados criptografados e nunca são
-          exibidos de volta.
-        </p>
-      </header>
-
-      <Grupo titulo="E-mail">
-        <SmtpCard />
-        <GmailCard />
-      </Grupo>
-
-      <Grupo titulo="Fontes de lead">
-        <WhatsappLeadsCard />
-        <MetaLeadsCard />
-      </Grupo>
-
+  const sections: SectionTab[] = [
+    {
+      key: "email",
+      label: "E-mail",
+      render: () => (
+        <Grupo titulo="E-mail">
+          <SmtpCard />
+          <GmailCard />
+        </Grupo>
+      ),
+    },
+    {
+      key: "leads",
+      label: "Fontes de lead",
+      render: () => (
+        <Grupo titulo="Fontes de lead">
+          <WhatsappLeadsCard />
+          <MetaLeadsCard />
+        </Grupo>
+      ),
+    },
+    {
+      key: "publicacao",
+      label: "Canais de publicação",
+      render: () => (
       <section className="space-y-3">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Canais de publicação</h2>
         {/* Surfaced up front, not only after a failed connect attempt —
@@ -291,14 +301,14 @@ export default function Integracoes() {
           explícita — nada é marcado como publicado sem confirmação da plataforma.
         </p>
       </section>
-
-      {/* Admin-only, same posture as every write action above (LinhaCanal's
-          connect/disconnect) — `ApiKeysPanel` itself deliberately does not
-          gate on role (its own doc comment), so the call site does. Read
-          is server-side open to any member; the panel is only reachable
-          here, so hiding it from non-admins also hides the write forms
-          they would get a 403 from anyway. */}
-      {isAdmin && (
+      ),
+    },
+    {
+      key: "chaves",
+      label: "Chaves de API",
+      // Admin-only (UX gate; the server enforces) -- see the note on the section below.
+      visible: isAdmin,
+      render: () => (
         <section className="space-y-3" data-testid="integracoes-chaves-api">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Chaves de API
@@ -312,7 +322,18 @@ export default function Integracoes() {
             IgIg usa a chave da plataforma, se houver.
           </p>
         </section>
-      )}
+      ),
+    },
+  ];
+
+  return (
+    <div className="mx-auto w-full min-w-0 max-w-full space-y-6 overflow-x-hidden p-4 sm:p-6">
+      <SectionTabsPage
+        basePath="/integracoes"
+        title="Integrações"
+        description="E-mail, fontes de lead e canais de publicação. Senhas e tokens são gravados criptografados e nunca são exibidos de volta."
+        sections={sections}
+      />
     </div>
   );
 }

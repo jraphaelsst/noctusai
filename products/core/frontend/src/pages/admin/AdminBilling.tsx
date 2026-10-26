@@ -1,27 +1,17 @@
 /**
  * Admin > Faturamento — platform billing for the edicao-fotos R2 release.
  *
- * Tabs: summary (MRR/ARR from what subscriptions actually pay), plans and
+ * Tabs are sub-routes (`/admin/billing/<tab>`, the seed `SectionTabsPage`): summary (MRR/ARR from what subscriptions actually pay), plans and
  * prices, subscriptions (incl. manual onboarding), payments with fees, and
  * gateway settings (keys, mode, automations, webhook URLs).
  */
-import { useState } from 'react';
-import { Badge, Button, Skeleton } from '@noctusai/lib/design-system';
+import { SectionTabsPage, type SectionTab } from '@noctusai/lib/components';
+import { Badge, Skeleton } from '@noctusai/lib/design-system';
 import { STATUS_LABEL, type SubscriptionStatus, formatMoney, useBillingSummary } from '../../lib/billing';
 import { GatewaysSection } from './billing/GatewaysSection';
 import { PaymentsSection } from './billing/PaymentsSection';
 import { PlansSection } from './billing/PlansSection';
 import { SubscriptionsSection } from './billing/SubscriptionsSection';
-
-const TABS = [
-  { id: 'summary', label: 'Resumo' },
-  { id: 'plans', label: 'Planos' },
-  { id: 'subscriptions', label: 'Assinaturas' },
-  { id: 'payments', label: 'Pagamentos' },
-  { id: 'gateways', label: 'Gateways' },
-] as const;
-
-type TabId = (typeof TABS)[number]['id'];
 
 function SummarySection() {
   const { data, isPending, isFetching, error } = useBillingSummary();
@@ -78,36 +68,19 @@ function SummarySection() {
 }
 
 export function AdminBilling() {
-  const [tab, setTab] = useState<TabId>('summary');
+  const sections: SectionTab[] = [
+    { key: 'summary', label: 'Resumo', render: () => <SummarySection /> },
+    { key: 'plans', label: 'Planos', render: () => <PlansSection /> },
+    { key: 'subscriptions', label: 'Assinaturas', render: () => <SubscriptionsSection /> },
+    { key: 'payments', label: 'Pagamentos', render: () => <PaymentsSection /> },
+    { key: 'gateways', label: 'Gateways', render: () => <GatewaysSection /> },
+  ];
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold text-foreground">Faturamento</h1>
-        <p className="mt-1 text-muted-foreground">Planos, assinaturas, pagamentos e gateways da plataforma</p>
-      </header>
-      <nav role="tablist" aria-label="Seções de faturamento" className="flex flex-wrap gap-2 border-b border-border pb-2">
-        {TABS.map((t) => (
-          <Button
-            key={t.id}
-            role="tab"
-            aria-selected={tab === t.id}
-            variant={tab === t.id ? 'primary' : 'ghost'}
-            size="sm"
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </Button>
-        ))}
-      </nav>
-      <div role="tabpanel">
-        {tab === 'summary' && <SummarySection />}
-        {tab === 'plans' && <PlansSection />}
-        {tab === 'subscriptions' && <SubscriptionsSection />}
-        {tab === 'payments' && <PaymentsSection />}
-        {tab === 'gateways' && <GatewaysSection />}
-      </div>
-    </div>
+    <SectionTabsPage
+      basePath="/admin/billing"
+      title="Faturamento"
+      description="Planos, assinaturas, pagamentos e gateways da plataforma"
+      sections={sections}
+    />
   );
 }
-
-export default AdminBilling;

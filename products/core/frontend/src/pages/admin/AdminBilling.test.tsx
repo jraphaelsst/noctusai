@@ -19,7 +19,9 @@ const PLANS = [{
 }];
 
 function openTab(name: string) {
-  fireEvent.click(screen.getByRole('tab', { name }));
+  const tab = screen.getByRole('tab', { name });
+  fireEvent.mouseDown(tab); // Radix Tabs activates on mouse-down
+  fireEvent.click(tab);
 }
 
 describe('AdminBilling — summary', () => {
@@ -200,5 +202,19 @@ describe('AdminBilling — subscriptions and payments', () => {
     expect(screen.getByText(/R\$\s*196,01/)).toBeTruthy();
     const pendingRow = screen.getByText('aguardando').closest('tr')!;
     expect(within(pendingRow).getByText('Cartão')).toBeTruthy();
+  });
+});
+
+describe('AdminBilling — sub-routes', () => {
+  it('redirects the bare base to the first tab and opens a deep-linked tab', async () => {
+    const http = fakeHttp({
+      'GET /api/admin/billing/summary': () => ({ data: SUMMARY }),
+      'GET /api/admin/billing/settings': () => ({ data: SETTINGS }),
+    });
+    render(renderWithBilling(http, <AdminBilling />, ['/admin/billing']));
+    expect(await screen.findByText('MRR (receita mensal recorrente)')).toBeTruthy();
+    cleanup();
+    render(renderWithBilling(http, <AdminBilling />, ['/admin/billing/gateways']));
+    expect(await screen.findByText('https://core.example.com/api/billing/webhook')).toBeTruthy();
   });
 });

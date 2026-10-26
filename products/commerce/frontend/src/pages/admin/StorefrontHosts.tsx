@@ -1,16 +1,15 @@
 /**
- * `/admin/enderecos` — the storefront hostnames that resolve to this store
+ * Configurações > Endereços (`/admin/configuracoes/enderecos`) — the storefront hostnames that resolve to this store
  * (platform-admin only; the server's 403 renders as an explanation, not an
  * error). List + add + remove on the same page.
  */
 import * as React from "react";
 import { Badge, Button, EmptyState, Field, FormError, Input, Skeleton } from "@noctusai/lib/design-system";
 
-import { AdminFrame } from "@/components/AdminFrame";
 import { useStorefrontHostMutations, useStorefrontHosts } from "@/hooks/useStorefrontHosts";
 import { describeError, usePageT } from "@/lib/i18n";
 
-function HostsBody() {
+export function HostsBody() {
   const { t } = usePageT();
   const hosts = useStorefrontHosts();
   const m = useStorefrontHostMutations();
@@ -117,13 +116,5 @@ function HostsBody() {
       </form>
       <FormError message={mutErr ? describeError(mutErr, t) : null} />
     </section>
-  );
-}
-
-export default function StorefrontHosts() {
-  return (
-    <AdminFrame titleKey="admin.hosts_title" introKey="admin.hosts_intro">
-      <HostsBody />
-    </AdminFrame>
   );
 }

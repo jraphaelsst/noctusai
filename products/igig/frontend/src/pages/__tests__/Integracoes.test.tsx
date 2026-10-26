@@ -50,7 +50,9 @@ vi.mock("@noctusai/seed/infra", () => ({
 // vs `createApiKeysHooks`'s `ApiKeysStatus`) through the same
 // `mockUseQuery.mockReturnValue(...)` call. This file only asserts the
 // admin gate + surrounding copy.
-vi.mock("@noctusai/lib/components", () => ({
+vi.mock("@noctusai/lib/components", async (orig) => ({
+  // The real tab organ (URL <-> section sync) -- only the Anthropic panel is stubbed.
+  SectionTabsPage: (await orig<typeof import("@noctusai/lib/components")>()).SectionTabsPage,
   ApiKeysPanel: ({ title }: { title?: string }) => <div data-testid="api-keys-panel-stub">{title}</div>,
   createApiKeysHooks: () => ({}),
 }));
@@ -122,7 +124,7 @@ describe("Integracoes — error honesty", () => {
       error: new ApiError(403, "Token recusado pela Meta Graph API"),
     };
 
-    render(<MemoryRouter><Integracoes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/integracoes/publicacao"]}><Integracoes /></MemoryRouter>);
 
     expect(screen.getByText(/Token recusado pela Meta Graph API/)).toBeInTheDocument();
     expect(screen.queryByText(/Sem IGIG_COFRE_KEY/)).not.toBeInTheDocument();
@@ -139,7 +141,7 @@ describe("Integracoes — cofre-not-configured banner", () => {
       error: null,
     } as never);
 
-    render(<MemoryRouter><Integracoes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/integracoes/publicacao"]}><Integracoes /></MemoryRouter>);
 
     expect(screen.getByText(/Criptografia não configurada/)).toBeInTheDocument();
     // A submit is guaranteed to 409 while unconfigured — disable it instead
@@ -161,7 +163,7 @@ describe("Integracoes — cofre-not-configured banner", () => {
       error: null,
     } as never);
 
-    render(<MemoryRouter><Integracoes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/integracoes/publicacao"]}><Integracoes /></MemoryRouter>);
 
     expect(screen.queryByText(/Criptografia não configurada/)).not.toBeInTheDocument();
   });
@@ -175,7 +177,7 @@ describe("Integracoes — cofre-not-configured banner", () => {
       error: null,
     } as never);
 
-    render(<MemoryRouter><Integracoes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/integracoes/publicacao"]}><Integracoes /></MemoryRouter>);
 
     expect(screen.queryByText(/Criptografia não configurada/)).not.toBeInTheDocument();
   });
@@ -194,7 +196,7 @@ describe("Integracoes — permissões (finding #20)", () => {
         error: null,
       } as never);
 
-      render(<MemoryRouter><Integracoes /></MemoryRouter>);
+      render(<MemoryRouter initialEntries={["/integracoes/publicacao"]}><Integracoes /></MemoryRouter>);
 
       expect(screen.queryByLabelText("Token Instagram")).not.toBeInTheDocument();
       expect(screen.getByText(/Somente administradores da agência podem alterar este canal/)).toBeInTheDocument();
@@ -215,7 +217,7 @@ describe("Integracoes — permissões (finding #20)", () => {
         error: null,
       } as never);
 
-      render(<MemoryRouter><Integracoes /></MemoryRouter>);
+      render(<MemoryRouter initialEntries={["/integracoes/chaves"]}><Integracoes /></MemoryRouter>);
 
       expect(screen.queryByTestId("integracoes-chaves-api")).not.toBeInTheDocument();
     } finally {
@@ -234,7 +236,7 @@ describe("Integracoes — Chaves de API (owner decision 2026-09-28)", () => {
       error: null,
     } as never);
 
-    render(<MemoryRouter><Integracoes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/integracoes/chaves"]}><Integracoes /></MemoryRouter>);
 
     expect(screen.getByTestId("integracoes-chaves-api")).toBeInTheDocument();
     expect(screen.getByTestId("api-keys-panel-stub")).toHaveTextContent("Assistente de IA (Anthropic)");
