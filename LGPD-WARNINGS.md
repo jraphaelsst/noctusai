@@ -15,6 +15,9 @@
 >
 > Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/lgpd.md`.
 
+- [ ] **monica stores full WhatsApp conversations (monica.whatsapp_messages.body, whatsapp_chats name/phone) of a psychoanalysis practice: health-adjacent personal data (LGPD art. 11), plus lead name/phone/e-mail/notes in monica.leads.** at `products/monica/backend/migrations/015_whatsapp.sql` — Retention, erasure and legal basis are not defined yet. Mitigations built in: org-scoped RLS (read-only for browser roles, writes via backend service role), WAHA api key encrypted at rest (Fernet), no message body in logs/audit payloads, a lead can be deleted from the UI. Open: (1) retention period + purge job for messages, (2) per-chat erasure on a titular request (deleting a lead does not delete the chat/messages), (3) WAHA media URLs are WAHA-side, (4) confirm legal basis and a DPA with the WAHA host before go-live.
+  - *Mitigation*: Org-scoped RLS, service-role-only writes, Fernet-encrypted WAHA key, no bodies in logs; retention/erasure to be defined with the owner before go-live (see KB PATTERNS/security/lgpd.md).
+  - *Flagged*: 2026-10-26
 - [ ] **Lead PII in social_wiring julia_*/lais_* tables (contacts, interactions, events, credit analyses/consents, notes, feedback) was readable by ANY org member directly over PostgREST (SELECT TO authenticated), bypassing the per-lead A7 owner/admin rule enforced only in the API.** at `products/social-wiring/backend/migrations/289_julia_db_lockdown.sql` — Security audit 2026-10-19 H1. Fixed by migration 289 (REVOKE + policy drop, assertion probes). Pending: apply, then confirm via the live verification query; assess whether any member actually read lead data directly (PostgREST logs) for LGPD incident assessment.
   - *Mitigation*: Migration 289 revokes anon/authenticated/PUBLIC on every julia_*/lais_* relation and drops caller-facing policies; predeploy db_guards probes keep it locked.
   - *Flagged*: 2026-10-19

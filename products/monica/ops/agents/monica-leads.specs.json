@@ -1,0 +1,92 @@
+{
+  "itens": [
+    {
+      "chave": "quem_sou",
+      "rotulo": "Quem sou",
+      "descricao": "Em poucas palavras: quem você é e o que faz.",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "abordagem",
+      "rotulo": "Abordagem",
+      "descricao": "Como você trabalha: a linha da psicanálise, o que o atendimento é (e não é).",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "servicos",
+      "rotulo": "Serviços",
+      "descricao": "O que você oferece: atendimento individual, grupos, palestras, conteúdo... Valores, se quiser que apareçam.",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "publico",
+      "rotulo": "Público",
+      "descricao": "Com quem você costuma trabalhar e quem costuma te procurar. Pode ser amplo.",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "tom_de_voz",
+      "rotulo": "Tom de voz",
+      "descricao": "Como você gosta de falar com quem chega: mais próxima, mais formal, expressões que usa ou evita.",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "instagram",
+      "rotulo": "Instagram",
+      "descricao": "Os perfis que você usa e para que serve cada um.",
+      "tipo": "texto",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "temas",
+      "rotulo": "Temas",
+      "descricao": "Os assuntos sobre os quais você fala e escreve.",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "valores",
+      "rotulo": "Valores",
+      "descricao": "O que é inegociável no seu trabalho e na forma de atender.",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "horarios",
+      "rotulo": "Horários",
+      "descricao": "Dias e horários de atendimento.",
+      "tipo": "texto",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "modalidade",
+      "rotulo": "Modalidade",
+      "descricao": "Presencial, online ou os dois; cidade/local, se presencial.",
+      "tipo": "texto",
+      "obrigatoria": false,
+      "exemplo": null
+    },
+    {
+      "chave": "observacoes",
+      "rotulo": "Observações",
+      "descricao": "Qualquer outra coisa que o atendimento precisa saber sobre você.",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "exemplo": null
+    }
+  ]
+}

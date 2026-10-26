@@ -51,6 +51,7 @@ include:
   - products/community/docker-compose.yml
   - products/store/docker-compose.yml
   - products/commerce/docker-compose.yml
+  - products/monica/docker-compose.yml
   # END_PRODUCTS_INCLUDE
 
 networks:

@@ -313,6 +313,7 @@ jobs:
           - community
           - store
           - commerce
+          - monica
 
     steps:
       - uses: actions/checkout@v7
@@ -572,6 +573,7 @@ jobs:
           - community
           - store
           - commerce
+          - monica
           - seed
 
     steps:
