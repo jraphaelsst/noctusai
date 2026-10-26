@@ -1,6 +1,6 @@
 /**
  * Pages whose data hooks live in this product (endpoints the organ hooks do not
- * wrap yet): `/minhas-compras?token=`, `/privacidade/verificar`, `/admin/enderecos`.
+ * wrap yet): `/minhas-compras?token=`, `/privacidade/verificar`, `/admin/configuracoes/enderecos`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, fireEvent, waitFor, cleanup, within } from "@testing-library/react";
@@ -14,7 +14,7 @@ vi.mock("@noctusai/seed/infra", () => ({ api: apiMock, useAuthStore: () => ({ us
 import { ApiError } from "@noctusai/lib";
 import MyOrders from "../storefront/MyOrders";
 import PrivacyVerify from "../storefront/PrivacyVerify";
-import StorefrontHosts from "../admin/StorefrontHosts";
+import Configuracoes from "../admin/Configuracoes";
 import { renderRoutes, stubFetch, STOREFRONT } from "@/test-utils";
 
 const ORDER = {
@@ -36,7 +36,7 @@ const ORDER = {
 const ROUTES = {
   "/minhas-compras": <MyOrders />,
   "/privacidade/verificar": <PrivacyVerify />,
-  "/admin/enderecos": <StorefrontHosts />,
+  "/admin/configuracoes/*": <Configuracoes />,
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -124,7 +124,7 @@ describe("Admin › Endereços da vitrine", () => {
 
   it("non platform-admin (403): explanation, no form", async () => {
     routeGets(new ApiError(403, "Apenas a administração da plataforma pode fazer isso."));
-    renderRoutes("/admin/enderecos", ROUTES);
+    renderRoutes("/admin/configuracoes/enderecos", ROUTES);
     expect(await screen.findByText(/Somente a administração da plataforma/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Adicionar endereço" })).toBeNull();
   });
@@ -134,7 +134,7 @@ describe("Admin › Endereços da vitrine", () => {
     apiMock.post
       .mockRejectedValueOnce(new ApiError(409, "x", { error: { code: "host_ja_existe", message: "x" } }))
       .mockResolvedValueOnce({ data: { hostname: "nova.exemplo.com", org_id: "o", is_primary: false } });
-    renderRoutes("/admin/enderecos", ROUTES);
+    renderRoutes("/admin/configuracoes/enderecos", ROUTES);
     expect(await screen.findByText("loja.exemplo.com.br")).toBeInTheDocument();
     expect(within(screen.getByTestId("hosts-list")).getByText("Principal")).toBeInTheDocument();
 
@@ -149,14 +149,14 @@ describe("Admin › Endereços da vitrine", () => {
 
   it("empty: says buyers cannot reach the store yet", async () => {
     routeGets({ data: [] });
-    renderRoutes("/admin/enderecos", ROUTES);
+    renderRoutes("/admin/configuracoes/enderecos", ROUTES);
     expect(await screen.findByText(/Nenhum endereço cadastrado/)).toBeInTheDocument();
   });
 
   it("removes a host after confirmation (DELETE)", async () => {
     routeGets({ data: [{ hostname: "loja.exemplo.com.br", org_id: "o", is_primary: false }] });
     apiMock.delete.mockResolvedValue(undefined);
-    renderRoutes("/admin/enderecos", ROUTES);
+    renderRoutes("/admin/configuracoes/enderecos", ROUTES);
     fireEvent.click(await screen.findByRole("button", { name: "Remover" }));
     expect(screen.getByText(/Remover loja.exemplo.com.br\?/)).toBeInTheDocument();
     const buttons = screen.getAllByRole("button", { name: "Remover" });

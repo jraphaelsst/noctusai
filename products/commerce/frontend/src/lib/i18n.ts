@@ -96,6 +96,8 @@ const PT: Table = {
   "admin.quotes_intro": "Propostas para clientes, com link seguro de aceite. Aceito, o orçamento de produtos vira um pedido e o de serviços vira um contrato (rascunho).",
   "admin.contracts_title": "Contratos",
   "admin.contracts_intro": "Contratos com cobrança recorrente: cada parcela vira uma conta a receber no financeiro.",
+  "admin.settings_title": "Configurações",
+  "admin.settings_intro": "Perfil da loja, endereços da vitrine e integrações.",
   "admin.settings_installments": "Parcelamento",
   "admin.settings_fiscal": "Dados fiscais",
   // ── storefront ──
@@ -233,6 +235,8 @@ const EN: Table = {
   "admin.quotes_intro": "Proposals for customers with a secure acceptance link. Once accepted, a goods quote becomes an order and a services quote becomes a (draft) contract.",
   "admin.contracts_title": "Contracts",
   "admin.contracts_intro": "Contracts with recurring billing: each installment becomes a receivable in finance.",
+  "admin.settings_title": "Settings",
+  "admin.settings_intro": "Store profile, storefront addresses and integrations.",
   "admin.settings_installments": "Installments",
   "admin.settings_fiscal": "Tax details",
   "store.cart": "Cart",

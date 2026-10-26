@@ -20,6 +20,7 @@
  * re-declared here.
  */
 import { lazy } from "react";
+import { Navigate } from "react-router-dom";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from "@noctusai/seed/infra";
 import type { NavGroupWithRoute } from "@noctusai/lib";
@@ -40,8 +41,6 @@ import {
   Truck,
   FileText,
   FileSignature,
-  Globe,
-  KeyRound,
   Settings,
 } from "lucide-react";
 
@@ -53,8 +52,6 @@ const NotFound = lazy(() => import("@/pages/NotFound"));
 
 // Back office
 const AdminHome = lazy(() => import("@/pages/admin/AdminHome"));
-const StoreProfile = lazy(() => import("@/pages/admin/StoreProfile"));
-const StorefrontHosts = lazy(() => import("@/pages/admin/StorefrontHosts"));
 const Categories = lazy(() => import("@/pages/admin/Categories"));
 const Products = lazy(() => import("@/pages/admin/Products"));
 const ProductEdit = lazy(() => import("@/pages/admin/ProductEdit"));
@@ -62,7 +59,7 @@ const Coupons = lazy(() => import("@/pages/admin/Coupons"));
 const Orders = lazy(() => import("@/pages/admin/Orders"));
 const OrderView = lazy(() => import("@/pages/admin/OrderView"));
 const Customers = lazy(() => import("@/pages/admin/Customers"));
-const ApiKeys = lazy(() => import("@/pages/admin/ApiKeys"));
+const Configuracoes = lazy(() => import("@/pages/admin/Configuracoes"));
 const Financeiro = lazy(() => import("@/pages/admin/Financeiro"));
 const Itens = lazy(() => import("@/pages/admin/Itens"));
 const Parceiros = lazy(() => import("@/pages/admin/Parceiros"));
@@ -84,6 +81,9 @@ const PrivacyVerify = lazy(() => import("@/pages/storefront/PrivacyVerify"));
 
 // Customer-facing quote link (public, signed token — no login, outside the authed shell)
 const QuoteAccept = lazy(() => import("@/pages/quote/QuoteAccept"));
+
+// Route-table components are lazy; a redirect is a one-line lazy component.
+const redirectTo = (to: string) => lazy(async () => ({ default: () => <Navigate to={to} replace /> }));
 
 // Nav — `route` keys are `status_pagina.nome_pagina` rows (an item without a row is hidden).
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -125,9 +125,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     label: "Configurações",
     icon: Settings,
     items: [
-      { name: "Perfil da loja", href: "/admin/loja", icon: Building2, route: "loja" },
-      { name: "Endereços da vitrine", href: "/admin/enderecos", icon: Globe, route: "enderecos" },
-      { name: "Integrações", href: "/admin/integracoes", icon: KeyRound, route: "integracoes" },
+      { name: "Configurações da loja", href: "/admin/configuracoes/loja", icon: Building2, route: "configuracoes" },
       { name: "Equipe", href: "/admin/equipe", icon: UserCog, route: "equipe" },
     ],
   },
@@ -166,9 +164,11 @@ export default createProductApp({
     { path: "/admin/compras", component: Compras },
     { path: "/admin/orcamentos", component: Orcamentos },
     { path: "/admin/contratos", component: Contratos },
-    { path: "/admin/loja", component: StoreProfile },
-    { path: "/admin/enderecos", component: StorefrontHosts },
-    { path: "/admin/integracoes", component: ApiKeys },
+    { path: "/admin/configuracoes/*", component: Configuracoes },
+    // Old settings pages (bookmarks, emails): now tabs of /admin/configuracoes.
+    { path: "/admin/loja", component: redirectTo("/admin/configuracoes/loja") },
+    { path: "/admin/enderecos", component: redirectTo("/admin/configuracoes/enderecos") },
+    { path: "/admin/integracoes", component: redirectTo("/admin/configuracoes/integracoes") },
     { path: "/admin/equipe", component: Equipe },
   ],
   publicRoutes: [

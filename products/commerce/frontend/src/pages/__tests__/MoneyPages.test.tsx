@@ -19,7 +19,7 @@ vi.mock("@noctusai/lib/design-system", async (orig) => ({
 
 import { ApiError, cartStorageKey } from "@noctusai/lib";
 import OrderView from "../admin/OrderView";
-import StoreProfile from "../admin/StoreProfile";
+import Configuracoes from "../admin/Configuracoes";
 import StoreOrder from "../storefront/StoreOrder";
 import StoreCheckout from "../storefront/StoreCheckout";
 import { renderRoutes, stubFetch, STOREFRONT, VALID_CPF } from "@/test-utils";
@@ -108,14 +108,14 @@ describe("Admin › pedido › dinheiro", () => {
 });
 
 describe("Admin › loja › parcelamento e fiscal", () => {
-  const ROUTES = { "/admin/loja": <StoreProfile /> };
+  const ROUTES = { "/admin/configuracoes/*": <Configuracoes /> };
   const gets = () => ({ "/api/commerce/profile": { data: PROFILE }, "/api/commerce/fiscal": { data: FISCAL }, "/api/commerce/hosts": new ApiError(403, "no") });
 
   it("the installments form defaults to 12x / 3x sem juros / platform rate and saves the whole profile (admin)", async () => {
     admin.value = true;
     routeGets(gets());
     apiMock.put.mockResolvedValue({ data: { ...PROFILE, version: 5 } });
-    renderRoutes("/admin/loja", ROUTES);
+    renderRoutes("/admin/configuracoes/loja", ROUTES);
     const max = await screen.findByLabelText("Máximo de parcelas");
     expect(max).toHaveValue("12");
     expect(screen.getByLabelText("Parcelas sem juros (até)")).toHaveValue("3");
@@ -127,7 +127,7 @@ describe("Admin › loja › parcelamento e fiscal", () => {
 
   it("staff see both money sections read-only", async () => {
     routeGets(gets());
-    renderRoutes("/admin/loja", ROUTES);
+    renderRoutes("/admin/configuracoes/loja", ROUTES);
     expect(await screen.findByLabelText("Máximo de parcelas")).toBeDisabled();
     expect(await screen.findByText("Nenhum certificado enviado")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Salvar parcelamento" })).toBeNull();
@@ -138,14 +138,14 @@ describe("Admin › loja › parcelamento e fiscal", () => {
   it("an admin sees the certificate upload and the fiscal save", async () => {
     admin.value = true;
     routeGets(gets());
-    renderRoutes("/admin/loja", ROUTES);
+    renderRoutes("/admin/configuracoes/loja", ROUTES);
     expect(await screen.findByRole("button", { name: "Enviar certificado" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Salvar dados fiscais" })).toBeInTheDocument();
   });
 
   it("a failing fiscal read shows the error state with retry (the profile part still renders)", async () => {
     routeGets({ ...gets(), "/api/commerce/fiscal": new ApiError(500, "boom") });
-    renderRoutes("/admin/loja", ROUTES);
+    renderRoutes("/admin/configuracoes/loja", ROUTES);
     expect(await screen.findByText(/Não foi possível carregar/)).toBeInTheDocument();
     expect(await screen.findByLabelText("Máximo de parcelas")).toBeInTheDocument();
   });
