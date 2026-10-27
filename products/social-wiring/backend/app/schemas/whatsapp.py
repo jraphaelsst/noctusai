@@ -194,6 +194,9 @@ class VideoCandidateSnapshot(BaseModel):
     file_size_bytes: int
     format: str
     duration_seconds: float | None = None
+    # "video" (landscape → normal YouTube video) | "short" (portrait →
+    # YouTube Short). Set by the folder-orientation flow.
+    kind: str = "video"
 
 
 class PendingUpload(BaseModel):
@@ -230,6 +233,16 @@ class PendingUpload(BaseModel):
     local_video_path: str | None = None
     local_video_filename: str | None = None
     local_video_size_bytes: int | None = None
+    # Folder-orientation flow (landscape → video, portrait → Short). While
+    # one orientation group is being asked about (``candidate_videos``),
+    # ``decided_videos`` keeps the files already settled for the other
+    # group, ``group_queue`` the ambiguous groups still to be asked, and
+    # ``choice_kind`` which group the open menu is for ("video"/"short").
+    # ``choice_kind is None`` = legacy single-pick menu.
+    decided_videos: list[VideoCandidateSnapshot] = Field(default_factory=list)
+    group_queue: list[list[VideoCandidateSnapshot]] = Field(default_factory=list)
+    choice_kind: str | None = None
+    exclusivity_detected: bool = False
     state: Literal[
         "idle",
         "awaiting_confirmation",

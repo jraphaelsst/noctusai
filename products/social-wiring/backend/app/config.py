@@ -265,6 +265,11 @@ class SocialWiringSettings(ProductSettings):
     # — disk fills up otherwise. Cache also evicts when the local file
     # is missing (cleanup, manual rm, etc.).
     download_cache_ttl_hours: int = 24
+    # Vision model that spots the One Consultoria logo watermark in still
+    # frames of exclusive-listing videos (YouTube upload folder flow). Must
+    # be priced in the seed model catalog (llm/models.py) or the budget
+    # guard is silently disabled.
+    watermark_vision_model: str = "claude-sonnet-5"
     # Optional listing-page URL template. ``{code}`` is substituted with
     # the property's ONE code (e.g. ``ONE7360``) when composing
     # post-upload notifications + the WhatsApp completion message.

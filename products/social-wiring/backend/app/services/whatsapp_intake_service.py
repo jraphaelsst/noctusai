@@ -35,6 +35,12 @@ from app.schemas.whatsapp import (
     VideoCandidateSnapshot,
     extract_waha_message_id,
 )
+from app.modules.youtube.services.watermark import (
+    VisionWatermarkDetector,
+    WatermarkDetectionError,
+    WatermarkDetector,
+    pick_logo_version,
+)
 from app.services import gdrive_service
 from app.services.chatbot_service import append_memory as _append_chat_memory
 from app.services.imoveis_service import ImoveisLookupError, build_imoveis_service
@@ -281,7 +287,13 @@ class WhatsAppIntakeService:
         org_id: UUID,
         connection_id: UUID | None = None,
         bound_chats: list[dict] | None = None,
+        watermark_detector: WatermarkDetector | None = None,
     ):
+        # Seam for the exclusive-listing logo check (ffmpeg stills + vision
+        # model). Tests inject ``FakeWatermarkDetector``.
+        self._watermark_detector: WatermarkDetector = (
+            watermark_detector or VisionWatermarkDetector()
+        )
         self._waha_base_url = waha_base_url
         self._waha_api_key = waha_api_key
         self._waha_session = waha_session
@@ -1278,6 +1290,223 @@ class WhatsAppIntakeService:
             f"Confirma o upload? Responda *SIM* para prosseguir ou *NÃO* para cancelar."
         )
 
+    # ─── Folder orientation flow (video / Short / exclusive logo) ────────
+
+    @staticmethod
+    def _snapshot(cand, kind: str) -> VideoCandidateSnapshot:
+        return VideoCandidateSnapshot(
+            local_path=str(cand.local_path),
+            file_name=cand.file_name,
+            file_size_bytes=cand.file_size_bytes,
+            format=cand.format,
+            duration_seconds=cand.duration_seconds,
+            kind=kind,
+        )
+
+    @staticmethod
+    def _discard_files(snaps) -> None:
+        """Delete local files of discarded candidates (partner versions, unchosen)."""
+        from pathlib import Path as _Path
+
+        for snap in snaps:
+            try:
+                gdrive_service.cleanup(_Path(snap.local_path))
+            except Exception:
+                logger.exception("cleanup failed for candidate %s", snap.local_path)
+
+    async def _detect_logo_pick(self, group: list[VideoCandidateSnapshot]) -> int | None:
+        """Index of the logo-carrying version in ``group`` or ``None`` (ask the user)."""
+        from pathlib import Path as _Path
+
+        try:
+            verdicts = await self._watermark_detector.detect(
+                [_Path(c.local_path) for c in group]
+            )
+        except WatermarkDetectionError as exc:
+            logger.warning("watermark detection failed (%s) — falling back to menu", exc)
+            return None
+        return pick_logo_version(verdicts)
+
+    async def _plan_orientation_upload(
+        self, phone: str, pending: PendingUpload, candidates: list, deliver
+    ) -> list[VideoCandidateSnapshot] | None:
+        """Split a folder into video (landscape/unknown) + Short (portrait) groups.
+
+        Returns the files to upload, or ``None`` after opening a choice menu
+        for a group whose watermark check was not clear-cut (state saved with
+        the already-decided picks so the answer resumes everything).
+        """
+        groups: dict[str, list[VideoCandidateSnapshot]] = {"video": [], "short": []}
+        for c in candidates:
+            kind = "short" if c.format == "reels" else "video"
+            groups[kind].append(self._snapshot(c, kind))
+
+        decided: list[VideoCandidateSnapshot] = []
+        ambiguous: list[list[VideoCandidateSnapshot]] = []
+        exclusive = False
+        for kind in ("video", "short"):
+            group = groups[kind]
+            if len(group) < 2:
+                decided.extend(group)
+                continue
+            pick = await self._detect_logo_pick(group)
+            if pick is None:
+                ambiguous.append(group)
+                continue
+            exclusive = True
+            decided.append(group[pick])
+            self._discard_files(c for i, c in enumerate(group) if i != pick)
+
+        pending.exclusivity_detected = exclusive
+        if not ambiguous:
+            return decided
+
+        pending.decided_videos = decided
+        pending.candidate_videos = ambiguous[0]
+        pending.group_queue = ambiguous[1:]
+        pending.choice_kind = ambiguous[0][0].kind
+        pending.state = "awaiting_video_choice"
+        await self._set_state(phone, pending)
+        await deliver(self._orientation_menu(pending, detection_failed=True))
+        return None
+
+    @staticmethod
+    def _orientation_menu(pending: PendingUpload, *, detection_failed: bool = False) -> str:
+        label = (
+            "vídeos verticais (viram YouTube Shorts)"
+            if pending.choice_kind == "short"
+            else "vídeos horizontais (YouTube)"
+        )
+        lines = [f"📂 Achei {len(pending.candidate_videos)} {label} nessa pasta."]
+        if detection_failed:
+            lines.append(
+                "Não consegui identificar com segurança qual tem a marca One."
+            )
+        for i, c in enumerate(pending.candidate_videos, 1):
+            dur = _format_duration(c.duration_seconds)
+            dur_part = f" ({dur})" if dur else ""
+            lines.append(f"{i}. {c.file_name}{dur_part} — {_format_size(c.file_size_bytes)}")
+        lines.append(
+            "\nQual quero subir? Responda *1*, *2*, … "
+            "Ou *TODOS* para subir todos (ou *CANCELAR*)."
+        )
+        return "\n".join(lines)
+
+    async def _dispatch_selected_videos(
+        self,
+        phone: str,
+        pending: PendingUpload,
+        chosen: list[VideoCandidateSnapshot],
+        *,
+        say,
+        inline_ok: bool,
+    ) -> bool:
+        """Announce the final selection in ONE message, then queue it.
+
+        Returns ``True`` when child ``_run_upload`` tasks were spawned (the
+        caller must stop); ``False`` when ``inline_ok`` and exactly one file
+        was set on ``pending`` for the caller to upload itself.
+        """
+        lines = []
+        for c in chosen:
+            icon, word = ("📱", "Short") if c.kind == "short" else ("🎬", "Vídeo")
+            lines.append(f"{icon} {word}: {c.file_name}")
+        if pending.exclusivity_detected:
+            lines.append(
+                "🏷️ Exclusividade: usando as versões com a marca One "
+                "(as sem marca ficam para os parceiros)"
+            )
+        await say("\n".join(lines))
+
+        base_title = pending.crm_title or f"Imóvel {pending.product_code}"
+        per_kind = {k: sum(1 for c in chosen if c.kind == k) for k in ("video", "short")}
+        seen = {"video": 0, "short": 0}
+        subs: list[PendingUpload] = []
+        for c in chosen:
+            seen[c.kind] += 1
+            sub = pending.model_copy(deep=True)
+            sub.local_video_path = c.local_path
+            sub.local_video_filename = c.file_name
+            sub.local_video_size_bytes = c.file_size_bytes
+            sub.video_format = c.format
+            if per_kind[c.kind] > 1:
+                sub.crm_title = f"{base_title} · Parte {seen[c.kind]}/{per_kind[c.kind]}"
+            sub.candidate_videos = []
+            sub.decided_videos = []
+            sub.group_queue = []
+            sub.choice_kind = None
+            sub.state = "processing"
+            subs.append(sub)
+
+        if inline_ok and len(subs) == 1:
+            only = subs[0]
+            for field in (
+                "local_video_path", "local_video_filename", "local_video_size_bytes",
+                "video_format", "crm_title", "candidate_videos", "decided_videos",
+                "group_queue", "choice_kind", "state",
+            ):
+                setattr(pending, field, getattr(only, field))
+            await self._set_state(phone, pending)
+            return False
+
+        pending.state = "processing"
+        pending.candidate_videos = []
+        pending.decided_videos = []
+        pending.group_queue = []
+        pending.choice_kind = None
+        await self._set_state(phone, pending)
+        # Pre-hold the active-uploads count for every child so it can't hit
+        # zero (and clear state) before they all start.
+        counter_key = _active_uploads_key(phone)
+        try:
+            self._redis.incr(counter_key, len(subs))
+            self._redis.expire(counter_key, _ACTIVE_UPLOADS_TTL)
+        except Exception:
+            logger.exception("active-uploads INCR failed for %s", phone)
+        for sub in subs:
+            asyncio.create_task(self._run_upload(phone, sub, counter_preheld=True))
+        return True
+
+    async def _handle_orientation_choice(
+        self, phone: str, normalized: str, pending: PendingUpload
+    ) -> None:
+        """Answer to the per-orientation menu; resumes ALL decided uploads."""
+        current = list(pending.candidate_videos)
+        if normalized in {"todos", "all", "a", "todas"}:
+            selected = current
+        else:
+            try:
+                idx = int(normalized) - 1
+            except ValueError:
+                await self._reply(
+                    phone,
+                    "Responda com o número do vídeo (ex: *1*), *TODOS* ou *CANCELAR*.",
+                )
+                return
+            if not (0 <= idx < len(current)):
+                await self._reply(
+                    phone,
+                    f"Opção inválida — responda entre *1* e *{len(current)}*, "
+                    "ou *CANCELAR*.",
+                )
+                return
+            selected = [current[idx]]
+            self._discard_files(c for i, c in enumerate(current) if i != idx)
+
+        pending.decided_videos = [*pending.decided_videos, *selected]
+        if pending.group_queue:
+            pending.candidate_videos = pending.group_queue[0]
+            pending.group_queue = pending.group_queue[1:]
+            pending.choice_kind = pending.candidate_videos[0].kind
+            await self._set_state(phone, pending)
+            await self._reply(phone, self._orientation_menu(pending))
+            return
+
+        await self._dispatch_selected_videos(
+            phone, pending, pending.decided_videos, say=lambda m: self._reply(phone, m),
+            inline_ok=False,
+        )
+
     async def _handle_video_choice(
         self, phone: str, body: str, pending: PendingUpload
     ) -> None:
@@ -1307,8 +1536,15 @@ class WhatsAppIntakeService:
                     logger.exception(
                         "cleanup failed for candidate %s", cand.local_path
                     )
+            # Orientation flow: also the already-decided + still-queued files.
+            self._discard_files(pending.decided_videos)
+            self._discard_files(c for g in pending.group_queue for c in g)
             await self._clear_state(phone)
             await self._reply(phone, "❎ Upload cancelado. Arquivos descartados.")
+            return
+
+        if pending.choice_kind is not None:
+            await self._handle_orientation_choice(phone, normalized, pending)
             return
 
         # "todos" / "all" — spawn one upload per candidate, with
@@ -2416,7 +2652,13 @@ class WhatsAppIntakeService:
             except asyncio.CancelledError:
                 return
 
-    async def _run_upload(self, phone: str, pending: PendingUpload) -> None:
+    async def _run_upload(
+        self,
+        phone: str,
+        pending: PendingUpload,
+        *,
+        counter_preheld: bool = False,
+    ) -> None:
         """Execute the upload pipeline in background.
 
         Dispatches to ``queue_browser_upload`` when ``pending.file_id``
@@ -2464,12 +2706,16 @@ class WhatsAppIntakeService:
         # finally below; state-clear is gated on count==0 so the bot
         # doesn't accidentally tell a user "idle" while another of their
         # parallel uploads is still running.
+        # ``counter_preheld``: the spawner already INCR'd on this task's
+        # behalf (see ``_dispatch_selected_videos``) so the count can never
+        # touch zero between the parent finishing and the children starting.
         counter_key = _active_uploads_key(phone)
-        try:
-            self._redis.incr(counter_key)
-            self._redis.expire(counter_key, _ACTIVE_UPLOADS_TTL)
-        except Exception:
-            logger.exception("active-uploads INCR failed for %s", phone)
+        if not counter_preheld:
+            try:
+                self._redis.incr(counter_key)
+                self._redis.expire(counter_key, _ACTIVE_UPLOADS_TTL)
+            except Exception:
+                logger.exception("active-uploads INCR failed for %s", phone)
 
         try:
             title = pending.crm_title or f"Imóvel {pending.product_code}"
@@ -2575,6 +2821,7 @@ class WhatsAppIntakeService:
                             gdrive_service.list_youtube_candidates,
                             folder_url=pending.drive_url,
                             target_dir=self._upload_dir,
+                            keep_vertical=True,
                         )
                         candidates = result.candidates
                         # Surface oversized drops (F7) — silent omission
@@ -2628,50 +2875,26 @@ class WhatsAppIntakeService:
 
                 if not candidates:
                     await deliver(
-                        "❌ Não achei vídeos no formato YouTube (16:9) nessa pasta. "
+                        "❌ Não achei vídeos utilizáveis nessa pasta. "
                         "Verifique o conteúdo do Drive e reenvie o pedido."
                     )
                     await self._clear_state(phone)
                     return
 
-                if len(candidates) == 1:
-                    chosen = candidates[0]
-                    pending.local_video_path = str(chosen.local_path)
-                    pending.local_video_filename = chosen.file_name
-                    pending.local_video_size_bytes = chosen.file_size_bytes
-                    pending.video_format = chosen.format
-                    await self._set_state(phone, pending)
-                    # Fall through to the upload branches below.
-                else:
-                    pending.candidate_videos = [
-                        VideoCandidateSnapshot(
-                            local_path=str(c.local_path),
-                            file_name=c.file_name,
-                            file_size_bytes=c.file_size_bytes,
-                            format=c.format,
-                            duration_seconds=c.duration_seconds,
-                        )
-                        for c in candidates
-                    ]
-                    pending.state = "awaiting_video_choice"
-                    await self._set_state(phone, pending)
-
-                    menu_lines = [
-                        f"📂 Achei {len(candidates)} vídeos no formato YouTube nessa pasta:"
-                    ]
-                    for i, c in enumerate(candidates, 1):
-                        dur = _format_duration(c.duration_seconds)
-                        dur_part = f" ({dur})" if dur else ""
-                        menu_lines.append(
-                            f"{i}. {c.file_name}{dur_part} — {_format_size(c.file_size_bytes)}"
-                        )
-                    menu_lines.append(
-                        "\nQual quero subir? Responda *1*, *2*, … "
-                        "Ou *TODOS* para subir todos como vídeos separados "
-                        "(ou *CANCELAR*)."
-                    )
-                    await deliver("\n".join(menu_lines))
-                    return  # wait for the user's choice; _run_upload re-enters from _handle_video_choice
+                # Landscape → normal video, portrait → Short. 2-video folders
+                # go straight through; ≥2 per orientation triggers the logo
+                # check (exclusive listing); anything unclear asks the user.
+                chosen_videos = await self._plan_orientation_upload(
+                    phone, pending, candidates, deliver
+                )
+                if chosen_videos is None:
+                    return  # menu open; _handle_video_choice resumes
+                if await self._dispatch_selected_videos(
+                    phone, pending, chosen_videos, say=deliver, inline_ok=True
+                ):
+                    return  # children spawned; they own the uploads now
+                # Exactly one file: ``pending.local_video_*`` is set — fall
+                # through to the upload branches below.
 
             if pending.file_id:
                 file_info = self.get_uploaded_file(pending.file_id)

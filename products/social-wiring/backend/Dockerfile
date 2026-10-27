@@ -79,6 +79,14 @@ COPY products/social-wiring/backend/ ./products/social-wiring/backend/
 COPY --from=frontend-build /app/products/social-wiring/frontend/dist ./products/social-wiring/frontend/dist
 ENV SERVE_SPA_DIR=/app/products/social-wiring/frontend/dist
 
+# ffmpeg (+ffprobe): orientation probe, duration, and the still frames the
+# watermark detector sends to the vision model. The seed backend base ships
+# neither — without this ffprobe silently returns None and every video is
+# classified "unknown".
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root user — created LAST (pip install above ran as root, before this).
 # chown ONLY /app — NOT /opt/venv. /opt/venv (~276MB) comes from the SHARED
 # backend base layer and is read-only at runtime (no runtime pip; editable
