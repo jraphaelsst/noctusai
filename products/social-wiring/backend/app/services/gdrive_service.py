@@ -548,8 +548,12 @@ def list_youtube_candidates(
     folder_url: str,
     target_dir: Path,
     max_bytes: int = DEFAULT_MAX_BYTES,
+    keep_vertical: bool = False,
 ) -> CandidateListResult:
     """Return every YT-format video in a Drive folder, no silent pick.
+
+    ``keep_vertical=True`` keeps portrait ("reels") files too, so the
+    caller can queue them as YouTube Shorts; the default still drops them.
 
     Mirrors ``pick_youtube_video`` for the download + classify steps,
     but does NOT pick the first match — returns the full list so the
@@ -586,7 +590,7 @@ def list_youtube_candidates(
     for vf in video_files:
         fmt = classify_video_format(vf)
         size = vf.stat().st_size
-        if fmt == "reels":
+        if fmt == "reels" and not keep_vertical:
             # Reels are wrong-aspect for YouTube long-form; drop early
             # so the menu doesn't list them.
             cleanup(vf)

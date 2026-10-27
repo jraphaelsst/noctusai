@@ -113,6 +113,13 @@ CAPACIDADES REAIS (todas implementadas e ativas):
     META_APP_ID/SECRET + visitar /api/meta/oauth/start. v1 e SOMENTE
     LEITURA — posting fica para futuro (precisa app review da Meta).
 
+12. Alterar videos JA publicados no YouTube (titulo, descricao,
+    privacidade, apagar, refazer upload que falhou, status). Isso NAO e
+    feito por voce: sao comandos digitados que o sistema executa direto.
+    Se o usuario pedir isso em linguagem natural, responda ensinando o
+    comando exato para ele enviar, com o codigo dele preenchido:
+{commands_help}
+
 CAPACIDADES PARCIAIS (mencione com honestidade quando o usuario perguntar):
 
 - Busca em base de conhecimento (RAG) sobre documentos passados: NAO
@@ -285,6 +292,14 @@ class ChatbotTool:
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+def _system_prompt() -> str:
+    # The command grammar has ONE home (the command module); the prompt
+    # quotes it rather than keeping a copy that would drift.
+    from app.services.youtube_chat_commands import HELP_TEXT
+
+    return SYSTEM_PROMPT.replace("{commands_help}", HELP_TEXT)
+
+
 ChatFn = Callable[[list, list], Awaitable[ChatToolsResponse]]
 
 
@@ -347,7 +362,9 @@ class ChatbotService:
                 the joined unanswered run of inbounds since the last
                 outbound — the chatbot reasons over the same blob the
                 regex extractor saw).
-            append_inbound: When False, skip the inbound memory write.
+            append_inbound: When False, the caller already wrote the
+                inbound to memory: skip the write AND don't re-send it to
+                the model (it is already the tail of the loaded memory).
                 The worker path uses this because the seed buffer
                 already wrote the per-message inbound entries; the
                 joined-blob would be a redundant duplicate.
@@ -358,12 +375,19 @@ class ChatbotService:
         """
         memory = self._load_memory()
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _system_prompt()},
         ]
         if self._extra_context:
             messages.append({"role": "system", "content": self._extra_context})
         messages.extend(self._memory_to_messages(memory))
-        messages.append({"role": "user", "content": inbound_text})
+        # append_inbound=False means the caller already recorded this turn
+        # (the WhatsApp buffer, the web chat endpoint), so it is the tail of
+        # `memory` — sending it again would show the model the message twice.
+        already_in_memory = (
+            not append_inbound and bool(memory) and memory[-1].get("direction") == "inbound"
+        )
+        if not already_in_memory:
+            messages.append({"role": "user", "content": inbound_text})
 
         async def _handle(call: ToolCall) -> ToolResult:
             result = await self._dispatch_tool(call.name, call.arguments)

@@ -62,6 +62,7 @@ FORA_DO_PORTAO: dict[tuple[str, str], str] = {
     # authorizes nobody (owner order 2026-10-20), so a lead line never reaches it.
     ("routers/whatsapp_router.py", "_process_waha_body"): "operator bot: once-per-24h denial reply + inline chatbot fallback",
     ("services/conversation_module.py", "_llm_fallback_dispatch_inner"): "operator bot LLM fallback",
+    ("services/conversation_module.py", "route_inbound"): "operator bot code-first router: typed YouTube command replies",
 }
 
 

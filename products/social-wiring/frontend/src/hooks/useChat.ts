@@ -1,10 +1,14 @@
 /**
  * Chat hooks — wrap the /api/chat/* endpoints.
  *
- * The chat surface drives the OpenAI tool-calling chatbot from the
- * platform UI. Same backend service as the WhatsApp inbound flow; the
- * difference is the session_id shape (`web:<uuid>` here vs the phone
- * JID on WhatsApp).
+ * The chat surface drives the YouTube upload chat from the platform UI.
+ * Same backend routing as the WhatsApp inbound flow (code first, Claude
+ * only for free-form questions); the difference is the session_id shape
+ * (`web:<uuid>` here vs the phone JID on WhatsApp).
+ *
+ * The upload keeps talking after the HTTP reply (Drive download, video
+ * choice, "publicado"), so while the server reports a pending upload the
+ * hook re-reads the history every `PENDING_POLL_MS`.
  *
  * No auth header for now — the chat endpoint is intentionally open per
  * the current product brief. When auth lands, the backend will derive
@@ -41,6 +45,7 @@ export interface ChatReply {
 }
 
 const SESSION_STORAGE_KEY = "ytcrawler:chat:session_id";
+export const PENDING_POLL_MS = 4000;
 
 function loadSessionId(): string {
   try {
@@ -75,6 +80,7 @@ export function useChat() {
       if (!res.ok) return;
       const data = await res.json();
       setMessages(Array.isArray(data.messages) ? data.messages : []);
+      setPending(data.pending ?? null);
     } catch {
       /* leave messages as-is on transient failures */
     }
@@ -87,6 +93,15 @@ export function useChat() {
       fetchHistory(sessionId);
     }
   }, [sessionId, fetchHistory]);
+
+  // While an upload is in flight, follow the server's messages.
+  useEffect(() => {
+    if (!pending || !sessionId) return;
+    const timer = window.setInterval(() => {
+      void fetchHistory(sessionId);
+    }, PENDING_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [pending, sessionId, fetchHistory]);
 
   const sendMessage = useCallback(
     async (text: string, file?: File | null): Promise<ChatReply | null> => {

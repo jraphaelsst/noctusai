@@ -51,7 +51,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Protocol
 from uuid import UUID
 
 from noctusai_lib.domain.real_estate import PRODUCT_CODE_SCAN_PATTERN
@@ -392,6 +392,96 @@ async def _dispatch_lead(
     await process_lead_batch(conversation_id, memory, deps=deps)
 
 
+class ChatCommands(Protocol):
+    """Typed post-upload commands (``ONE10874 privacidade publico`` …) —
+    deterministic, no model. ``try_handle`` returns the reply, or None when
+    the text is not a command (nor the answer to a pending confirmation)."""
+
+    def has_pending_confirmation(self, session_id: str) -> bool: ...
+
+    async def try_handle(self, session_id: str, text: str) -> Optional[str]: ...
+
+
+LlmFallback = Callable[[str], Awaitable[None]]
+
+
+async def route_inbound(
+    *,
+    intake: Any,
+    session_id: str,
+    text: str,
+    llm_fallback: LlmFallback,
+    commands: Optional[ChatCommands] = None,
+    attached_file_id: Optional[str] = None,
+) -> str:
+    """Code-first routing for the YouTube upload chat — ONE order for
+    WhatsApp and the platform chat. A model is consulted only when every
+    deterministic path declines. Returns the path taken (logs + tests).
+
+      1. ``command-confirm`` — a typed command (e.g. ``apagar``) is waiting
+         for its sim/não.
+      2. ``state-machine`` — the upload flow is mid-question (sim/não, manual
+         title, video choice): ``intake.handle_message`` owns the reply.
+         Regex + LLM would both misread a bare ``"1"`` or ``"sim"``.
+      3. ``command`` — a typed post-upload command.
+      4. ``upload-file`` — platform chat: a video is attached and the text
+         carries a property code.
+      5. ``upload-drive`` — the text carries a property code + Drive URL.
+      6. ``llm`` — everything else (free-form questions, partial requests).
+
+    Replies go out through the intake (WhatsApp send, or memory + the web
+    request's collector), so callers never format messages themselves.
+    """
+    if commands is not None and commands.has_pending_confirmation(session_id):
+        reply = await commands.try_handle(session_id, text)
+        if reply is not None:
+            await intake.send_reply(session_id, reply)
+            return "command-confirm"
+
+    pending = None
+    try:
+        pending = await intake._get_state(session_id)
+    except Exception:
+        logger.exception("conv=%s: intake state lookup failed", session_id)
+    current_state = pending.state if pending else "idle"
+    if current_state != "idle":
+        logger.info("conv=%s: state-machine path (state=%s)", session_id, current_state)
+        await intake.handle_message(session_id, text)
+        return "state-machine"
+
+    if commands is not None:
+        reply = await commands.try_handle(session_id, text)
+        if reply is not None:
+            logger.info("conv=%s: typed command path", session_id)
+            await intake.send_reply(session_id, reply)
+            return "command"
+
+    code, drive_url = _regex_extract(text)
+    if attached_file_id and code:
+        logger.info("conv=%s: attached-file upload path (code=%s)", session_id, code)
+        await intake.start_file_upload(session_id, product_code=code, file_id=attached_file_id)
+        return "upload-file"
+
+    if code and drive_url:
+        logger.info(
+            "conv=%s: regex fast-path matched (code=%s, drive=%s)",
+            session_id,
+            code,
+            drive_url[:60] + ("…" if len(drive_url) > 60 else ""),
+        )
+        await intake.handle_message(session_id, text)
+        return "upload-drive"
+
+    logger.info(
+        "conv=%s: deterministic paths declined (code=%s, drive=%s) → LLM fallback",
+        session_id,
+        code,
+        bool(drive_url),
+    )
+    await llm_fallback(text)
+    return "llm"
+
+
 async def _dispatch_conversation(
     *,
     buffer: ConversationBufferService,
@@ -400,29 +490,9 @@ async def _dispatch_conversation(
     conversation_id: str,
     joined_inbound: str,
 ) -> None:
-    """State-aware unified dispatch. Three paths in priority order:
-
-      1. **State-machine path** — intake state ≠ ``idle`` (the user is
-         answering a previous bot question: ``sim/não`` / a manual title /
-         a video-choice number). Route to ``intake.handle_message`` so
-         the existing state-machine handles the reply correctly. Skips
-         regex + LLM entirely; both would mis-interpret a bare ``"1"``
-         or ``"sim"``.
-
-      2. **Regex-fast-path** — intake state == ``idle`` AND the buffered
-         inbound contains both a product code + Drive URL. Hand to
-         ``intake.handle_message``; it parses + starts the upload flow.
-         Cheaper than the LLM call (the operator's team uses the
-         structured-input form ~90% of the time per user direction).
-
-      3. **LLM fallback** — intake state == ``idle`` AND regex missed
-         either field. Let the tool-calling chatbot (Anthropic) reason over
-         the buffered text. It can ask for the missing piece, parse
-         natural-language variants, or recognize a cancel/override
-         intent. Memory writes suppressed on the chatbot side; the
-         intake's ``_reply`` already writes outbound to the unified
-         buffer key.
-    """
+    """WhatsApp worker entry: build the intake and run :func:`route_inbound`
+    over the buffered inbound run. Failures are logged, never raised — the
+    worker thread must keep draining other conversations."""
     del buffer  # intake._reply writes outbound to the unified buffer key
     from app.routers.whatsapp_router import build_intake_service_for_processor
 
@@ -434,59 +504,23 @@ async def _dispatch_conversation(
         logger.warning("conv=%s: intake service unavailable", conversation_id)
         return
 
-    sender = conversation_id  # buffer's conversation_id IS the canonical session id
+    async def _llm(text: str) -> None:
+        await _llm_fallback_dispatch_inner(
+            intake=intake,
+            conversation_id=conversation_id,
+            joined_inbound=text,
+        )
 
-    # 1. State-machine path — bypasses regex + LLM when mid-flow.
-    pending = None
     try:
-        pending = await intake._get_state(sender)
+        await route_inbound(
+            intake=intake,
+            session_id=conversation_id,
+            text=joined_inbound,
+            llm_fallback=_llm,
+            commands=intake.youtube_chat_commands(),
+        )
     except Exception:
-        logger.exception("conv=%s: intake state lookup failed", conversation_id)
-
-    current_state = pending.state if pending else "idle"
-    if current_state != "idle":
-        logger.info(
-            "conv=%s: state-machine path (state=%s)",
-            conversation_id,
-            current_state,
-        )
-        try:
-            await intake.handle_message(sender, joined_inbound)
-        except Exception:
-            logger.exception(
-                "conv=%s: state-machine handle_message failed", conversation_id
-            )
-        return
-
-    # 2. Regex-fast-path.
-    code, drive_url = _regex_extract(joined_inbound)
-    if code and drive_url:
-        logger.info(
-            "conv=%s: regex fast-path matched (code=%s, drive=%s)",
-            conversation_id,
-            code,
-            drive_url[:60] + ("…" if len(drive_url) > 60 else ""),
-        )
-        try:
-            await intake.handle_message(sender, joined_inbound)
-        except Exception:
-            logger.exception(
-                "conv=%s: regex fast-path handle_message failed", conversation_id
-            )
-        return
-
-    # 3. LLM fallback.
-    logger.info(
-        "conv=%s: regex miss (code=%s, drive=%s) → LLM fallback",
-        conversation_id,
-        code,
-        bool(drive_url),
-    )
-    await _llm_fallback_dispatch_inner(
-        intake=intake,
-        conversation_id=conversation_id,
-        joined_inbound=joined_inbound,
-    )
+        logger.exception("conv=%s: route_inbound failed", conversation_id)
 
 
 async def _llm_fallback_dispatch_inner(

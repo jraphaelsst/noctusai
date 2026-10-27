@@ -30,7 +30,8 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.dependencies import get_admin_client
-from app.services.chatbot_service import ChatbotService
+from app.services.chatbot_service import ChatbotService, append_memory
+from app.services.conversation_module import route_inbound
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
 from noctusai_lib.integrations.vista import (
@@ -39,7 +40,7 @@ from noctusai_lib.integrations.vista import (
 )
 from app.services.media_service import make_media_service
 from app.modules.youtube.services.upload import stage_browser_upload
-from app.services.whatsapp_intake_service import WhatsAppIntakeService
+from app.services.whatsapp_intake_service import WhatsAppIntakeService, web_reply_sink
 from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,9 @@ class ChatHistoryItem(BaseModel):
 class ChatHistoryResponse(BaseModel):
     session_id: str
     messages: list[ChatHistoryItem] = Field(default_factory=list)
+    # The upload flow keeps talking after the HTTP reply (Drive download,
+    # video choice, "publicado"); while this is set the UI keeps polling.
+    pending: dict[str, Any] | None = None
 
 
 class ChatReply(BaseModel):
@@ -214,13 +218,18 @@ async def chat_message(
     session_id: str = Form(""),
     file: UploadFile | None = File(None),
 ) -> ChatReply:
-    """Drive the tool-calling loop for the platform UI.
+    """One chat turn for the platform UI — code first, model last.
 
-    Multipart so the same call can carry an optional file attachment.
-    When ``file`` is present, the backend stages it first, then injects
-    a system-style hint into the chatbot's extra_context so the model
-    knows it can call ``prepare_upload_from_file`` with the issued
-    file_id without the user having to copy/paste it.
+    Routed by :func:`route_inbound`, the same order WhatsApp uses: upload
+    answers (sim/não, título, escolha de vídeo), typed commands, code +
+    attached video, code + Drive link all run without a model; only the
+    rest reaches the Claude tool loop. Every reply the turn produced is
+    collected and returned as ``reply``.
+
+    Multipart so the same call can carry an optional file attachment. A
+    video is staged and registered under a ``file_id`` (used directly when
+    the text has a property code; otherwise passed to the model as
+    context). Other attachments are resolved to text for the model.
     """
     normalized_session = _ensure_web_session(session_id)
     intake = await run_blocking(_build_intake)
@@ -315,28 +324,59 @@ async def chat_message(
                 detail=f"failed to stage file: {exc}",
             ) from exc
 
-    chatbot = ChatbotService(
-        redis_client=intake.redis_client,
-        intake_service=intake,
+    # The user's turn goes to the conversation memory first, so every path
+    # below (deterministic or model) answers into the same history.
+    inbound_label = text or ""
+    if file is not None and getattr(file, "filename", None):
+        inbound_label = f"{inbound_label} 📎 {file.filename}".strip()
+    await run_blocking(
+        append_memory,
+        intake.redis_client,
         session_id=normalized_session,
-        model=settings.chatbot_llm_model,
-        extra_context=extra_context,
+        direction="inbound",
+        text=inbound_label,
     )
 
+    async def _llm(message: str) -> None:
+        chatbot = ChatbotService(
+            redis_client=intake.redis_client,
+            intake_service=intake,
+            session_id=normalized_session,
+            model=settings.chatbot_llm_model,
+            extra_context=extra_context,
+        )
+        answer = await chatbot.reply(message, append_inbound=False, append_outbound=False)
+        await intake.send_reply(normalized_session, answer)
+
+    collected: list[str] = []
+    token = web_reply_sink.set(collected)
     try:
-        reply = await chatbot.reply(text or "")
+        await route_inbound(
+            intake=intake,
+            session_id=normalized_session,
+            text=text or "",
+            llm_fallback=_llm,
+            commands=intake.youtube_chat_commands(),
+            attached_file_id=file_id,
+        )
     except AppException:
         # Typed failures (e.g. `ProviderQuotaExhausted`) already carry their
         # status + PT-BR message; the framework handler renders them.
-        # Re-wrapping one as "chatbot failure: …" 502 buried that message.
-        logger.exception("chatbot reply failed for session=%s", normalized_session)
+        logger.exception("chat routing failed for session=%s", normalized_session)
         raise
     except Exception as exc:
-        logger.exception("chatbot reply failed for session=%s", normalized_session)
+        logger.exception("chat routing failed for session=%s", normalized_session)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"chatbot failure: {exc}",
         ) from exc
+    finally:
+        web_reply_sink.reset(token)
+
+    reply = "\n\n".join(m for m in collected if m)
+    if not reply:
+        logger.warning("chat turn produced no reply for session=%s", normalized_session)
+        reply = "Recebi sua mensagem, mas não tenho uma resposta para ela agora."
 
     pending = await intake.get_pending_upload(normalized_session)
     return ChatReply(
@@ -349,20 +389,22 @@ async def chat_message(
 
 # ─── GET /api/chat/history/{session_id} ────────────────────────────────
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
-def chat_history(session_id: str) -> ChatHistoryResponse:
+async def chat_history(session_id: str) -> ChatHistoryResponse:
     """Return the recent conversation memory for the platform UI to
     render after a refresh. Caps at MAX_MEMORY_ITEMS items (12)."""
     normalized = _ensure_web_session(session_id)
-    intake = _build_intake()
+    intake = await run_blocking(_build_intake)
     chatbot = ChatbotService(
         redis_client=intake.redis_client,
         intake_service=intake,
         session_id=normalized,
         model=settings.chatbot_llm_model,
     )
+    pending = await intake.get_pending_upload(normalized)
     return ChatHistoryResponse(
         session_id=normalized,
         messages=[ChatHistoryItem(**m) for m in chatbot.load_history()],
+        pending=pending if pending.get("found") else None,
     )
 
 

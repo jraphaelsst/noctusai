@@ -49,6 +49,20 @@ Julia is the WhatsApp SDR for a real-estate org (renamed from "Lais" on
 
 - **Imóvel ↔ condomínio** (migration 300, owner decision 2026-10-21): each imóvel is attached to ONE condomínio of the master list (`imovel_dados.condominio_id`, FK; a condomínio has many imóveis) or marked `casa_de_rua` — exclusive (CHECK + 422) and same-org (trigger); both probed by `verify_db_guards`. The property page's Cartório card and the "Cadastrar/Editar imóvel" modal share `CondominioSelector` (checkbox "Casa de rua", search-as-you-type over `GET /api/condominios/buscar?q=`, "Cadastrar condomínio “…”" via `POST /api/condominios`, deduped by normalised name, created `sugerido`). `em_condominio` (202) is legacy read-only — the API exposes it DERIVED (attached → true, casa de rua → false, neither → null). Contract: the attached condomínio's `nome` wins the title over `empreendimento_manual` and the CRM name; unanswered ⇒ readiness `falta` "Informe o condomínio do imóvel ou marque 'Casa de rua'" (alvo `imovel-condominio`); legacy "em condomínio" without a link ⇒ non-blocking aviso `CONDOMINIO_NAO_VINCULADO`. The `condominio_imoveis` view and the /condominios stats resolve the FK first, the name/alias match only for an unlinked, non-casa-de-rua imóvel; merging condomínios re-points attached imóveis (and the undo moves them back).
 
+## YouTube upload chat (One Chat)
+
+Operators upload property videos to YouTube from WhatsApp or the platform
+chat by sending `ONE10874 <link da pasta do Drive>` (or the code with a video
+attached). Structured messages never reach a model: the shared router
+`app/services/conversation_module.py::route_inbound` sends them to the upload
+state machine (`whatsapp_intake_service.py`) or to the typed commands in
+`app/services/youtube_chat_commands.py` (send `ajuda` for the list). Only
+free-form questions go to the Claude tool loop (`chatbot_service.py`). A
+folder's landscape video is posted as a normal video and its portrait video as
+a Short; in an exclusive listing (two copies per orientation) the copy with the
+One logo watermark is detected by `app/modules/youtube/services/watermark.py`
+and the clean partner copy is skipped.
+
 ## Running
 
 ```bash

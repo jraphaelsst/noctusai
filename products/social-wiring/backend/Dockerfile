@@ -66,6 +66,15 @@ LABEL org.opencontainers.image.revision="${GIT_SHA}" \
       org.opencontainers.image.title="noctus-social-wiring"
 WORKDIR /app
 
+# ffmpeg (+ffprobe): orientation probe, duration, and the still frames the
+# watermark detector sends to the vision model. The seed backend base ships
+# neither — without this ffprobe silently returns None and every video is
+# classified "unknown".
+# Before the code COPY so a code change never re-runs this layer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Product-specific Python deps (seed lib/framework already in the base
 # venv; strip the `-e seed/` editable lines — they're inherited).
 COPY products/social-wiring/backend/requirements.txt /tmp/requirements.txt
