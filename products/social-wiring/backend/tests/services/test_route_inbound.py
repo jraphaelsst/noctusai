@@ -258,3 +258,18 @@ async def test_prerecorded_inbound_is_not_sent_to_the_model_twice(redis):
 
     user_turns = [m for m in seen[0] if getattr(m, "role", None) == "user"]
     assert [m.content for m in user_turns] == ["quais visitas amanha?"]
+
+
+def test_commands_are_off_without_a_youtube_connection(web_intake):
+    """No connection → no command executor, so the router falls through
+    instead of answering every command with a per-video failure."""
+    assert web_intake.youtube_chat_commands() is None
+
+
+def test_model_prompt_quotes_the_command_grammar_from_its_one_home():
+    from app.services.chatbot_service import _system_prompt
+    from app.services.youtube_chat_commands import HELP_TEXT
+
+    prompt = _system_prompt()
+    assert HELP_TEXT in prompt
+    assert "{commands_help}" not in prompt

@@ -517,6 +517,7 @@ async def _dispatch_conversation(
             session_id=conversation_id,
             text=joined_inbound,
             llm_fallback=_llm,
+            commands=intake.youtube_chat_commands(),
         )
     except Exception:
         logger.exception("conv=%s: route_inbound failed", conversation_id)

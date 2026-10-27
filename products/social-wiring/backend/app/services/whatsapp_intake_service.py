@@ -630,6 +630,39 @@ class WhatsAppIntakeService:
             ex=_FILE_REGISTRY_TTL_SECONDS,
         )
 
+    def youtube_chat_commands(self) -> Any:
+        """Typed post-upload commands (``ONE10874 privacidade publico`` …)
+        bound to this intake's org, Redis and YouTube connection. None when
+        YouTube is not connected — the router then falls through, and the
+        model explains instead of every command failing per video."""
+        if self._youtube is None:
+            return None
+        from app.modules.youtube.services.upload import UploadService
+        from app.services.notification_service import build_notification_service
+        from app.services.youtube_chat_commands import (
+            SupabaseCatalogSync,
+            SupabaseJobLookup,
+            UploadServiceRetrier,
+            YouTubeChatCommands,
+        )
+
+        upload_svc = UploadService(
+            user_supabase=self._admin,
+            admin_supabase=self._admin,
+            upload_dir=self._upload_dir,
+            youtube_service=self._youtube,
+            notification_service=build_notification_service(self._admin, settings),
+            redis_client=self._redis,
+        )
+        return YouTubeChatCommands(
+            org_id=self._org_id,
+            youtube=self._youtube,
+            jobs=SupabaseJobLookup(self._admin, self._org_id),
+            retrier=UploadServiceRetrier(upload_svc, self._org_id),
+            catalog=SupabaseCatalogSync(self._admin, self._org_id),
+            redis_client=self._redis,
+        )
+
     def get_uploaded_file(self, file_id: str) -> dict[str, Any] | None:
         raw = self._redis.get(self._file_registry_key(file_id))
         if not raw:

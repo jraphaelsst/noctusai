@@ -356,6 +356,7 @@ async def chat_message(
             session_id=normalized_session,
             text=text or "",
             llm_fallback=_llm,
+            commands=intake.youtube_chat_commands(),
             attached_file_id=file_id,
         )
     except AppException:

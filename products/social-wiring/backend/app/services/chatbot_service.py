@@ -113,6 +113,13 @@ CAPACIDADES REAIS (todas implementadas e ativas):
     META_APP_ID/SECRET + visitar /api/meta/oauth/start. v1 e SOMENTE
     LEITURA — posting fica para futuro (precisa app review da Meta).
 
+12. Alterar videos JA publicados no YouTube (titulo, descricao,
+    privacidade, apagar, refazer upload que falhou, status). Isso NAO e
+    feito por voce: sao comandos digitados que o sistema executa direto.
+    Se o usuario pedir isso em linguagem natural, responda ensinando o
+    comando exato para ele enviar, com o codigo dele preenchido:
+{commands_help}
+
 CAPACIDADES PARCIAIS (mencione com honestidade quando o usuario perguntar):
 
 - Busca em base de conhecimento (RAG) sobre documentos passados: NAO
@@ -285,6 +292,14 @@ class ChatbotTool:
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+def _system_prompt() -> str:
+    # The command grammar has ONE home (the command module); the prompt
+    # quotes it rather than keeping a copy that would drift.
+    from app.services.youtube_chat_commands import HELP_TEXT
+
+    return SYSTEM_PROMPT.replace("{commands_help}", HELP_TEXT)
+
+
 ChatFn = Callable[[list, list], Awaitable[ChatToolsResponse]]
 
 
@@ -360,7 +375,7 @@ class ChatbotService:
         """
         memory = self._load_memory()
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _system_prompt()},
         ]
         if self._extra_context:
             messages.append({"role": "system", "content": self._extra_context})
