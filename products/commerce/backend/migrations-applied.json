@@ -16,6 +16,7 @@
     "026_quotes.sql": "207e6900d311b660f96b013909e8d3ea4b8513c98c0f34c674e296c7a97255b4",
     "027_contracts.sql": "d256e570f945b0abf4786c949580014e209274aca630c13f1f6ecb98c1741c70",
     "028_commerce_erp.sql": "c3e3c84353d64f14024937c4c614b05a2d4089395fb70ec3ad114c2c6b275493",
-    "029_erp_pages_status_pagina.sql": "ac5092aaee43d79c7eee293e10c3eae1b22fd0d6b5d708be09159ff7259af08d"
+    "029_erp_pages_status_pagina.sql": "ac5092aaee43d79c7eee293e10c3eae1b22fd0d6b5d708be09159ff7259af08d",
+    "030_status_pagina_configuracoes.sql": "196215c9eff184a276324e1a1a59c6b631ae13097b177bac0a458ff32b0530be"
   }
 }
