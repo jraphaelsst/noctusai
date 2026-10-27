@@ -154,8 +154,8 @@ export interface CheckProductAccessOptions {
 /**
  * Ask the product whether the signed-in user's org holds its license.
  *
- * Returns `false` ONLY on an explicit `has_access: false` (or the
- * `org_sem_licenca` 403). Any other outcome (network error, 5xx, route absent
+ * Returns `false` ONLY on an explicit `has_access: false` with no org choice pending (or
+ * the `org_sem_licenca` 403). Any other outcome (network error, 5xx, route absent
  * on a pre-gate image) returns `true`: the server re-enforces on every call,
  * so a transient failure here must not lock a licensed user out of login.
  */
@@ -172,7 +172,12 @@ export async function checkProductAccess(opts: CheckProductAccessOptions): Promi
     }
     if (!res.ok) return true;
     const data = (await res.json().catch(() => null)) as Partial<MeAccess> | null;
-    return data?.has_access !== false;
+    if (data?.has_access !== false) return true;
+    // A multi-org member whose last-active org is unlicensed but who has >=2 licensed orgs has
+    // no effective org until they choose one (core 081): that is the shell's org picker, not
+    // `/sem-acesso` -- refusing here locked out a user the picker would have let in (2026-10-27).
+    const sel = data.org_selection;
+    return Boolean(sel?.available && sel.required);
   } catch {
     return true;
   }
