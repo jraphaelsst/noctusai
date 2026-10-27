@@ -160,7 +160,16 @@ def _patch_app(target: Path, manifest: dict[str, Any]) -> None:
     for p in pages:
         if p["icon"] not in icons:
             icons.append(p["icon"])
-    text = _sub_once(text, r'Wallet \} from "lucide-react";', f'Wallet, {", ".join(icons)} }} from "lucide-react";', what="App.tsx: lucide import")
+    # Anchor on the import itself, not on whichever icon happens to be last: the base template's icon list
+    # changes (Settings joined it with the SectionTabsPage settings), and an icon it already imports must
+    # not be imported twice.
+    lucide = re.search(r'import \{ (.*?) \} from "lucide-react";', text)
+    if lucide is None:
+        raise OverlayError("anchor not found in the base template (App.tsx: lucide import)")
+    imported = [n.strip() for n in lucide.group(1).split(",") if n.strip()]
+    merged = imported + [i for i in icons if i not in imported]
+    text = _sub_once(text, re.escape(lucide.group(0)), f'import {{ {", ".join(merged)} }} from "lucide-react";',
+                     what="App.tsx: lucide import")
     lazies = "".join(f'const {p["file"]} = lazy(() => import("@/pages/{p["file"]}"));\n' for p in pages)
     anchor = 'const Financeiro = lazy(() => import("@/pages/Financeiro"));\n'
     if text.count(anchor) != 1:
