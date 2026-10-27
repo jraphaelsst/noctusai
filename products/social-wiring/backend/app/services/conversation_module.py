@@ -27,7 +27,7 @@ Product-owned (this module):
 (uses ``time.sleep``). We schedule it via ``asyncio.to_thread(...)`` from
 lifespan startup so the poll-loop doesn't block the asyncio event loop. The
 processor closure, running in the worker thread, dispatches async work
-(WAHA send, OpenAI tool-loop) back to the main loop via
+(WAHA send, LLM tool-loop) back to the main loop via
 ``asyncio.run_coroutine_threadsafe(...)`` and blocks the worker thread on
 the resulting future. The worker thread is dedicated to one conversation
 at a time, so blocking it is fine for OPERATOR keys; the asyncio loop stays
@@ -291,7 +291,7 @@ def _build_redis_client() -> Any:
 # ---------------------------------------------------------------------------
 
 PROCESSOR_TIMEOUT_S = 180.0
-"""Hard timeout per dispatched conversation. Covers OpenAI tool-loop
+"""Hard timeout per dispatched conversation. Covers LLM tool-loop
 latency + WAHA send roundtrips. Far above expected tail latency; the
 exception path logs + moves on so a single stuck conversation doesn't
 freeze the worker thread."""
@@ -416,7 +416,7 @@ async def _dispatch_conversation(
          structured-input form ~90% of the time per user direction).
 
       3. **LLM fallback** — intake state == ``idle`` AND regex missed
-         either field. Let the OpenAI tool-calling chatbot reason over
+         either field. Let the tool-calling chatbot (Anthropic) reason over
          the buffered text. It can ask for the missing piece, parse
          natural-language variants, or recognize a cancel/override
          intent. Memory writes suppressed on the chatbot side; the
@@ -495,7 +495,7 @@ async def _llm_fallback_dispatch_inner(
     conversation_id: str,
     joined_inbound: str,
 ) -> None:
-    """LLM fallback: run the OpenAI tool-calling chatbot over the buffered
+    """LLM fallback: run the tool-calling chatbot (Anthropic) over the buffered
     text and send the reply via the paragraph-splitter.
 
     Called from ``_dispatch_conversation`` after the state-machine check
@@ -510,26 +510,11 @@ async def _llm_fallback_dispatch_inner(
     from app.services.chatbot_service import ChatbotService
     from app.services.whatsapp_outbound import send_paragraphs
 
-    if not settings.openai_api_key:
-        logger.warning(
-            "conv=%s LLM-fallback: OPENAI_API_KEY not set; routing to intake "
-            "state machine instead.",
-            conversation_id,
-        )
-        try:
-            await intake.handle_message(conversation_id, joined_inbound)
-        except Exception:
-            logger.exception(
-                "conv=%s LLM-fallback degraded intake failed", conversation_id
-            )
-        return
-
     chatbot = ChatbotService(
         redis_client=intake.redis_client,
         intake_service=intake,
         session_id=conversation_id,
-        model=settings.openai_chat_model,
-        api_key=settings.openai_api_key,
+        model=settings.chatbot_llm_model,
     )
     try:
         reply = await chatbot.reply(

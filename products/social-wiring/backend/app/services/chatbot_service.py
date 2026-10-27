@@ -1,4 +1,4 @@
-"""OpenAI tool-calling chatbot — surface-agnostic.
+"""Tool-calling chatbot (Anthropic Claude) — surface-agnostic.
 
 This is the generalized successor to ``whatsapp_chatbot_service.py``. The
 WhatsApp path now imports :class:`ChatbotService` and passes
@@ -18,8 +18,13 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from noctusai_lib.integrations.llm import ToolCall, ToolResult, chat_with_tools, run_tool_loop
-from noctusai_lib.integrations.llm.providers.openai_provider import OpenAIClientAdapter
+from noctusai_lib.integrations.llm import (
+    ChatToolsResponse,
+    ToolCall,
+    ToolResult,
+    chat_with_tools,
+    run_tool_loop,
+)
 
 from app.config import settings
 
@@ -41,7 +46,7 @@ CAPACIDADES REAIS (todas implementadas e ativas):
    Voce automatiza o upload a partir de um codigo ONE + um video
    (arquivo anexado ou link do Google Drive). Ferramentas dedicadas
    abaixo. Apos confirmar, o video sobe automaticamente com titulo
-   e descricao puxados do Vista CRM.
+   e descricao puxados do catalogo local de imoveis.
 
 2. Transcricao de audio. Quando o usuario manda uma mensagem de voz
    ou arquivo de audio, voce automaticamente recebe a transcricao no
@@ -115,7 +120,7 @@ CAPACIDADES PARCIAIS (mencione com honestidade quando o usuario perguntar):
 
 FERRAMENTAS DE UPLOAD (caminho 1 — YouTube):
 
-- lookup_property(product_code): consulta o Vista CRM para o codigo ONE.
+- lookup_property(product_code): consulta o catalogo local de imoveis para o codigo ONE.
 - prepare_upload_request(product_code, drive_url, manual_title?, privacy_status?):
   valida e salva um upload pendente a partir de um link do Google Drive.
 - prepare_upload_from_file(product_code, file_id, manual_title?, privacy_status?):
@@ -280,8 +285,24 @@ class ChatbotTool:
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+ChatFn = Callable[[list, list], Awaitable[ChatToolsResponse]]
+
+
+def _anthropic_chat(model: str) -> ChatFn:
+    """The production engine: one seed tool-calling turn on Anthropic.
+
+    Goes through the seed registry (key resolution, budget guard, usage
+    sink), so the Anthropic key configured for the org is the one used.
+    """
+
+    async def _chat(msgs, specs):
+        return await chat_with_tools(msgs, specs, provider="anthropic", model=model)
+
+    return _chat
+
+
 class ChatbotService:
-    """Surface-agnostic OpenAI tool-calling orchestrator.
+    """Surface-agnostic tool-calling orchestrator (Anthropic Claude).
 
     ``session_id`` is an opaque conversation key. For the WhatsApp path
     it's the sender's phone (e.g. ``"5511974693365@c.us"``); for the
@@ -296,16 +317,18 @@ class ChatbotService:
         session_id: str | None = None,
         phone: str | None = None,
         model: str | None = None,
-        api_key: str | None = None,
         extra_context: str | None = None,
+        chat: ChatFn | None = None,
     ):
         if session_id is None and phone is None:
             raise ValueError("ChatbotService requires session_id (or legacy phone)")
         self._redis = redis_client
         self._intake = intake_service
         self._session_id = session_id or phone
-        self._model = model or settings.openai_chat_model
-        self._api_key = api_key or settings.openai_api_key
+        self._model = model or settings.chatbot_llm_model
+        # DI seam: tests hand in a scripted turn function; production
+        # runs the seed's Anthropic tool-calling turn.
+        self._chat = chat or _anthropic_chat(self._model)
         self._extra_context = extra_context
         self._tools = self._build_tools()
 
@@ -333,9 +356,6 @@ class ChatbotService:
                 outbound to the seed buffer (which also bumps the idle
                 queue) via ``buffer.append_to_memory``.
         """
-        if not self._api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-
         memory = self._load_memory()
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -344,11 +364,6 @@ class ChatbotService:
             messages.append({"role": "system", "content": self._extra_context})
         messages.extend(self._memory_to_messages(memory))
         messages.append({"role": "user", "content": inbound_text})
-
-        adapter = OpenAIClientAdapter(self._client())
-
-        async def _chat(msgs, specs):
-            return await chat_with_tools(msgs, specs, model=self._model, provider_impl=adapter)
 
         async def _handle(call: ToolCall) -> ToolResult:
             result = await self._dispatch_tool(call.name, call.arguments)
@@ -361,7 +376,7 @@ class ChatbotService:
             messages,
             self._tools_payload(),
             _handle,
-            chat=_chat,
+            chat=self._chat,
             max_iterations=MAX_TOOL_ITERATIONS,
             fallback_reply=FALLBACK_REPLY,
         )
@@ -375,11 +390,6 @@ class ChatbotService:
         return text
 
     # ─── Memory helpers (Redis-backed conversation log) ────────────────
-    def _client(self):
-        from openai import AsyncOpenAI
-
-        return AsyncOpenAI(api_key=self._api_key)
-
     def _memory_key(self) -> str:
         return memory_key_for(self._session_id)
 
@@ -436,7 +446,7 @@ class ChatbotService:
         return {
             "lookup_property": ChatbotTool(
                 name="lookup_property",
-                description="Consulta um codigo de imovel ONE no Vista CRM.",
+                description="Consulta um codigo de imovel ONE no catalogo local de imoveis.",
                 parameters={
                     "type": "object",
                     "properties": {

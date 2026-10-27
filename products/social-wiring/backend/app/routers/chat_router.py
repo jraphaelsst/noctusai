@@ -1,4 +1,4 @@
-"""Platform-side chat surface for the OpenAI tool-calling chatbot.
+"""Platform-side chat surface for the tool-calling chatbot (Anthropic).
 
 Mirrors the WhatsApp inbound flow but lives behind an HTTP API the
 frontend can call directly. The same :class:`ChatbotService` and
@@ -214,7 +214,7 @@ async def chat_message(
     session_id: str = Form(""),
     file: UploadFile | None = File(None),
 ) -> ChatReply:
-    """Drive the OpenAI tool-calling loop for the platform UI.
+    """Drive the tool-calling loop for the platform UI.
 
     Multipart so the same call can carry an optional file attachment.
     When ``file`` is present, the backend stages it first, then injects
@@ -319,16 +319,9 @@ async def chat_message(
         redis_client=intake.redis_client,
         intake_service=intake,
         session_id=normalized_session,
-        model=settings.openai_chat_model,
-        api_key=settings.openai_api_key,
+        model=settings.chatbot_llm_model,
         extra_context=extra_context,
     )
-
-    if not settings.openai_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OPENAI_API_KEY is not configured",
-        )
 
     try:
         reply = await chatbot.reply(text or "")
@@ -365,8 +358,7 @@ def chat_history(session_id: str) -> ChatHistoryResponse:
         redis_client=intake.redis_client,
         intake_service=intake,
         session_id=normalized,
-        model=settings.openai_chat_model,
-        api_key=settings.openai_api_key or "noop",
+        model=settings.chatbot_llm_model,
     )
     return ChatHistoryResponse(
         session_id=normalized,
@@ -383,8 +375,7 @@ async def chat_reset(session_id: str) -> None:
         redis_client=intake.redis_client,
         intake_service=intake,
         session_id=normalized,
-        model=settings.openai_chat_model,
-        api_key=settings.openai_api_key or "noop",
+        model=settings.chatbot_llm_model,
     )
     await run_blocking(chatbot.reset_history)
     await intake.cancel_pending_upload(normalized)

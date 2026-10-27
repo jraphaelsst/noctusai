@@ -1,8 +1,8 @@
 """Unit tests for the generalized chatbot service + file registry.
 
-The OpenAI tool-calling loop is exercised via integration smoke (real
-API call) in ``scripts/smoke_real_apis.py``; here we cover the parts
-that don't need a live OpenAI key:
+The live Anthropic tool-calling loop is exercised via integration smoke
+(real API call) in ``scripts/smoke_real_apis.py``; here we cover the parts
+that don't need a live key (the engine is injected through ``chat=``):
 
 - Memory key shape (web session vs WhatsApp phone JID)
 - History load/reset round-trip
@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+from noctusai_lib.integrations.llm import ChatToolsResponse, ToolCall
 
 from app.services.chatbot_service import ChatbotService, MEMORY_PREFIX
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
@@ -91,8 +92,7 @@ class TestChatbotMemoryKey:
             redis_client=fake_redis,
             intake_service=intake,
             session_id="web:abc123",
-            model="gpt-4o-mini",
-            api_key="noop",
+            model="claude-haiku-4-5",
         )
         assert bot._memory_key() == f"{MEMORY_PREFIX}web:abc123"
 
@@ -101,8 +101,7 @@ class TestChatbotMemoryKey:
             redis_client=fake_redis,
             intake_service=intake,
             session_id="5511974693365@c.us",
-            model="gpt-4o-mini",
-            api_key="noop",
+            model="claude-haiku-4-5",
         )
         assert bot._memory_key() == f"{MEMORY_PREFIX}5511974693365"
 
@@ -111,8 +110,7 @@ class TestChatbotMemoryKey:
             redis_client=fake_redis,
             intake_service=intake,
             phone="5511974693365@c.us",
-            model="gpt-4o-mini",
-            api_key="noop",
+            model="claude-haiku-4-5",
         )
         assert bot._memory_key().endswith("5511974693365")
 
@@ -121,8 +119,52 @@ class TestChatbotMemoryKey:
             ChatbotService(
                 redis_client=fake_redis,
                 intake_service=intake,
-                api_key="noop",
             )
+
+
+class TestChatbotEngine:
+    """The tool loop runs on whatever turn function is injected — the seam
+    production fills with the seed's Anthropic ``chat_with_tools``."""
+
+    @pytest.mark.asyncio
+    async def test_reply_runs_a_tool_then_answers(self, fake_redis, intake):
+        turns: list[list] = []
+
+        async def scripted_chat(msgs, specs):
+            turns.append(list(msgs))
+            if len(turns) == 1:
+                return ChatToolsResponse(
+                    tool_calls=(
+                        ToolCall(call_id="c1", name="get_pending_upload", arguments={}),
+                    ),
+                    finish_reason="tool_calls",
+                )
+            return ChatToolsResponse(text="Nenhum upload pendente.")
+
+        intake.get_pending_upload = AsyncMock(return_value={"found": False})
+        bot = ChatbotService(
+            redis_client=fake_redis,
+            intake_service=intake,
+            session_id="web:engine",
+            chat=scripted_chat,
+        )
+        reply = await bot.reply("tem algo pendente?")
+
+        assert reply == "Nenhum upload pendente."
+        assert len(turns) == 2
+        # The second turn carries the tool result back to the model.
+        assert any(getattr(m, "role", None) == "tool" for m in turns[1])
+        history = bot.load_history()
+        assert [h["content"] for h in history] == ["tem algo pendente?", "Nenhum upload pendente."]
+
+    def test_default_model_is_the_configured_claude(self, fake_redis, intake):
+        from app.config import settings
+
+        bot = ChatbotService(
+            redis_client=fake_redis, intake_service=intake, session_id="web:x"
+        )
+        assert bot._model == settings.chatbot_llm_model
+        assert settings.chatbot_llm_model.startswith("claude-")
 
 
 class TestChatbotHistory:
@@ -131,7 +173,6 @@ class TestChatbotHistory:
             redis_client=fake_redis,
             intake_service=intake,
             session_id="web:abc",
-            api_key="noop",
         )
         assert bot.load_history() == []
 
@@ -140,7 +181,6 @@ class TestChatbotHistory:
             redis_client=fake_redis,
             intake_service=intake,
             session_id="web:abc",
-            api_key="noop",
         )
         bot._append_memory("inbound", "ola")
         bot._append_memory("outbound", "oi")
@@ -155,7 +195,6 @@ class TestChatbotHistory:
             redis_client=fake_redis,
             intake_service=intake,
             session_id="web:abc",
-            api_key="noop",
         )
         bot._append_memory("inbound", "ola")
         bot.reset_history()
