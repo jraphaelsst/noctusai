@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import time
+from contextvars import ContextVar
 from typing import Any
 from uuid import UUID
 
@@ -68,6 +69,53 @@ _DRIVE_URL_RE = re.compile(
 # Confirmation responses
 _YES_RESPONSES = {"sim", "s", "confirmar", "confirma", "yes", "y", "ok"}
 _NO_RESPONSES = {"não", "nao", "n", "cancelar", "cancela", "cancel", "no"}
+
+WEB_SESSION_PREFIX = "web:"
+
+#: Per-request collector for replies to a platform-chat (``web:``) session.
+#: The HTTP chat endpoint sets a list here, routes the message through the
+#: same code-first dispatcher WhatsApp uses, then returns what was collected
+#: as the HTTP reply. Unset (None) outside a web request.
+web_reply_sink: ContextVar[list[str] | None] = ContextVar("web_reply_sink", default=None)
+
+
+def is_web_session(session_id: str) -> bool:
+    return session_id.startswith(WEB_SESSION_PREFIX)
+
+
+def _confirmation_prompt(
+    *,
+    product_code: str,
+    title: str,
+    youtube_title: str,
+    address: str | None = None,
+    price: str | None = None,
+    description: str | None = None,
+) -> str:
+    """The "Dados encontrados … Confirma o upload?" message — one wording for
+    every entry point (Drive link and attached file)."""
+    msg = f"✅ Dados encontrados:\n🏠 {product_code} — {title}\n"
+    if address:
+        msg += f"📍 {address}\n"
+    if price:
+        msg += f"💰 {price}\n"
+    desc_preview = (description or "")[:200]
+    if desc_preview:
+        msg += f"📝 {desc_preview}{'...' if len(description or '') > 200 else ''}\n"
+    msg += "🔒 Privacidade: Privado\n"
+    msg += (
+        f"\n📺 Título no YouTube: {youtube_title}\n\n"
+        "Confirma o upload? Responda *SIM* para prosseguir ou *NÃO* para cancelar."
+    )
+    return msg
+
+
+def _manual_title_prompt(product_code: str) -> str:
+    return (
+        f"⚠️ Não consegui buscar os dados de {product_code} no CRM.\n\n"
+        "Deseja prosseguir com título manual?\n"
+        "Envie o título desejado ou *CANCELAR*."
+    )
 
 _REDIS_KEY_PREFIX = "whatsapp:conv:"
 _REDIS_TTL_SECONDS = 30 * 60  # 30 minutes
@@ -825,7 +873,19 @@ class WhatsAppIntakeService:
         recall reflects what it just said — not just what the user said.
         Send failures are NOT recorded (the message never reached the
         user, so the agent shouldn't claim it did).
+
+        Platform-chat sessions (``web:``) have no WhatsApp chat: the reply
+        goes to the conversation memory (what ``/api/chat/history`` renders)
+        and to the in-flight HTTP request's collector, if any.
         """
+        if is_web_session(phone):
+            _append_chat_memory(
+                self._redis, session_id=phone, direction="outbound", text=text
+            )
+            sink = web_reply_sink.get()
+            if sink is not None:
+                sink.append(text)
+            return
         client = get_whatsapp_client(
             base_url=self._waha_base_url,
             api_key=self._waha_api_key,
@@ -1087,32 +1147,71 @@ class WhatsAppIntakeService:
         # Build confirmation message
         if crm_data:
             yt_meta = build_youtube_metadata(crm_data, product_code)
-            confirm_msg = (
-                f"✅ Dados encontrados:\n"
-                f"🏠 {product_code} — {crm_data.title}\n"
-            )
-            if crm_data.address:
-                confirm_msg += f"📍 {crm_data.address}\n"
-            if crm_data.price:
-                confirm_msg += f"💰 {crm_data.price}\n"
-            desc_preview = (crm_data.description or "")[:200]
-            if desc_preview:
-                confirm_msg += f"📝 {desc_preview}{'...' if len(crm_data.description or '') > 200 else ''}\n"
-            confirm_msg += f"🔒 Privacidade: Privado\n"
-            confirm_msg += (
-                f"\n📺 Título no YouTube: {yt_meta['title']}\n\n"
-                f"Confirma o upload? Responda *SIM* para prosseguir ou *NÃO* para cancelar."
+            confirm_msg = _confirmation_prompt(
+                product_code=product_code,
+                title=crm_data.title,
+                youtube_title=yt_meta["title"],
+                address=crm_data.address,
+                price=crm_data.price,
+                description=crm_data.description,
             )
         else:
-            confirm_msg = (
-                f"⚠️ Não consegui buscar os dados de {product_code} no CRM.\n\n"
-                f"Deseja prosseguir com título manual?\n"
-                f"Envie o título desejado ou *CANCELAR*."
-            )
+            confirm_msg = _manual_title_prompt(product_code)
             pending.state = "awaiting_manual_title"
             await self._set_state(phone, pending)
 
         await self._reply(phone, confirm_msg)
+
+    async def start_file_upload(self, phone: str, *, product_code: str, file_id: str) -> None:
+        """Code + attached video (platform chat): the file twin of
+        ``_handle_new_command`` — stores the pending upload and asks for
+        confirmation (or the manual title), with no model involved."""
+        result = await self.prepare_upload_from_file_request(
+            phone, product_code=product_code, file_id=file_id
+        )
+        if not result.get("ok"):
+            error = result.get("error")
+            if error == "invalid_product_code":
+                msg = (
+                    f"❌ Código inválido: {result.get('product_code')}\n"
+                    "Use o formato ONExxxx (ex: ONE5555)"
+                )
+            elif error == "file_not_found":
+                msg = "❌ O arquivo anexado expirou ou foi removido. Anexe o vídeo novamente."
+            else:
+                msg = f"❌ Não consegui preparar o upload ({error})."
+            await self._reply(phone, msg)
+            return
+
+        if result["state"] == "awaiting_manual_title":
+            await self._reply(phone, _manual_title_prompt(result["product_code"]))
+            return
+
+        if result.get("has_crm_data") and not settings.youtube_auto_confirmation_message:
+            queued = await self.confirm_pending_upload(phone)
+            if queued.get("ok"):
+                await self._reply(
+                    phone,
+                    f"🚀 Iniciando upload — {result['product_code']} "
+                    f"({result.get('youtube_title') or result.get('title')}).\n"
+                    "Auto-confirmação ATIVADA. Te aviso ao concluir.",
+                )
+                return
+            # Not queued (e.g. YouTube not connected): fall through to the
+            # confirmation prompt so the operator sees the state, not silence.
+            logger.warning("auto-confirm of file upload failed: %s", queued)
+
+        await self._reply(
+            phone,
+            _confirmation_prompt(
+                product_code=result["product_code"],
+                title=result.get("title") or result["product_code"],
+                youtube_title=result.get("youtube_title") or result.get("title") or "",
+                address=result.get("address"),
+                price=result.get("price"),
+                description=result.get("description_preview"),
+            ),
+        )
 
     async def _handle_confirmation(
         self, phone: str, body: str, pending: PendingUpload

@@ -347,7 +347,9 @@ class ChatbotService:
                 the joined unanswered run of inbounds since the last
                 outbound — the chatbot reasons over the same blob the
                 regex extractor saw).
-            append_inbound: When False, skip the inbound memory write.
+            append_inbound: When False, the caller already wrote the
+                inbound to memory: skip the write AND don't re-send it to
+                the model (it is already the tail of the loaded memory).
                 The worker path uses this because the seed buffer
                 already wrote the per-message inbound entries; the
                 joined-blob would be a redundant duplicate.
@@ -363,7 +365,14 @@ class ChatbotService:
         if self._extra_context:
             messages.append({"role": "system", "content": self._extra_context})
         messages.extend(self._memory_to_messages(memory))
-        messages.append({"role": "user", "content": inbound_text})
+        # append_inbound=False means the caller already recorded this turn
+        # (the WhatsApp buffer, the web chat endpoint), so it is the tail of
+        # `memory` — sending it again would show the model the message twice.
+        already_in_memory = (
+            not append_inbound and bool(memory) and memory[-1].get("direction") == "inbound"
+        )
+        if not already_in_memory:
+            messages.append({"role": "user", "content": inbound_text})
 
         async def _handle(call: ToolCall) -> ToolResult:
             result = await self._dispatch_tool(call.name, call.arguments)

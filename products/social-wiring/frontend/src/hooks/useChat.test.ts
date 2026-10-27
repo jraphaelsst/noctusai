@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
-import { useChat } from "./useChat";
+import { PENDING_POLL_MS, useChat } from "./useChat";
 
 const CLOUDFLARE_PAGE =
   '<!DOCTYPE html><html><head><title>noctusai.com | 502: Bad gateway</title></head><body>cf</body></html>';
@@ -74,5 +74,54 @@ describe("useChat.reset", () => {
 
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.error).toBe("redis unavailable");
+  });
+});
+
+describe("useChat pending-upload follow-up", () => {
+  it("polls the history while an upload is pending and stops when it ends", async () => {
+    vi.useFakeTimers();
+    try {
+      window.localStorage.setItem("ytcrawler:chat:session_id", "web:abc");
+      let historyCalls = 0;
+      const fetchMock = vi.fn(async (url: string) => {
+        if (String(url).includes("/history/")) {
+          historyCalls += 1;
+          // 1st load: upload in progress. 2nd: the video was published.
+          return historyCalls === 1
+            ? jsonResponse(200, {
+                session_id: "web:abc",
+                messages: [{ role: "assistant", content: "🚀 Upload iniciado!" }],
+                pending: { found: true, state: "processing" },
+              })
+            : jsonResponse(200, {
+                session_id: "web:abc",
+                messages: [
+                  { role: "assistant", content: "🚀 Upload iniciado!" },
+                  { role: "assistant", content: "✅ Vídeo publicado!" },
+                ],
+                pending: null,
+              });
+        }
+        return jsonResponse(404, {});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { result } = renderHook(() => useChat());
+      await act(async () => {});
+      expect(result.current.pending?.state).toBe("processing");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PENDING_POLL_MS);
+      });
+      expect(result.current.messages.at(-1)?.content).toBe("✅ Vídeo publicado!");
+      expect(result.current.pending).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PENDING_POLL_MS * 3);
+      });
+      expect(historyCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
