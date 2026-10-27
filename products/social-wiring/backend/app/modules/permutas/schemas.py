@@ -116,6 +116,9 @@ class EtapaPatchBody(StrictHttpModel):
 
     etapa: str
     observacoes: Optional[str] = None
+    motivo_rejeicao: Optional[str] = None
+    motivo_rejeicao_detalhe: Optional[str] = None
+    motivo_lado: Optional[str] = None
 
 
 __all__ = [

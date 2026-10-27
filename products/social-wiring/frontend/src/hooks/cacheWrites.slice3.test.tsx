@@ -246,7 +246,20 @@ describe("optimistic: the change is drawn while the request is in flight", () =>
     api.patch.mockReturnValue(defer().promise);
     const { qc, result } = mount(() => useMoverEtapa(), [[key, [{ id: "m1", etapa: "novo" }]]]);
     act(() => result.current.mutate({ matchId: "m1", etapa: "visita" as never }));
-    await waitFor(() => expect(qc.getQueryData(key)).toEqual([{ id: "m1", etapa: "visita" }]));
+    // Any move off `rejeitado` clears the rejection reason server-side, so the
+    // cache write nulls the three motivo fields too — a card must never keep
+    // showing a reason for a match that is no longer rejected.
+    await waitFor(() =>
+      expect(qc.getQueryData(key)).toEqual([
+        {
+          id: "m1",
+          etapa: "visita",
+          motivo_rejeicao: null,
+          motivo_rejeicao_detalhe: null,
+          motivo_lado: null,
+        },
+      ]),
+    );
   });
 
   it("propostas: excluir", async () => {

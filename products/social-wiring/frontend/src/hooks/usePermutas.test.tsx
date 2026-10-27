@@ -16,6 +16,8 @@ vi.mock("@noctusai/seed/infra", () => ({ api: { get, post, patch, delete: del } 
 import {
   useAtualizarAtivo,
   useCriarAtivo,
+  useMotivosRejeicao,
+  useMoverEtapa,
   usePermutaAtivos,
   useRemoverAtivo,
 } from "./usePermutas";
@@ -99,5 +101,61 @@ describe("mutações do registro", () => {
     ).rejects.toThrow("natureza é obrigatória");
     // Cache-write contract: a failed write rolls back and the settle re-reads the server's truth.
     await waitFor(() => expect(keys(spy)).toContain('["sw","permutas"]'));
+  });
+});
+
+describe("motivo de rejeição", () => {
+  it("useMotivosRejeicao lê o vocabulário do backend", async () => {
+    get.mockResolvedValue({ items: [{ codigo: "preco", rotulo: "Preço", exige_detalhe: false }] });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useMotivosRejeicao(), { wrapper });
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+    expect(get).toHaveBeenCalledWith("/api/permutas/motivos-rejeicao");
+  });
+
+  function comCache(match: Record<string, unknown>) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["sw", "permutas", "matches", undefined], [match]);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    return { qc, wrapper };
+  }
+  const lido = (qc: QueryClient) =>
+    (qc.getQueryData(["sw", "permutas", "matches", undefined]) as Record<string, unknown>[])[0];
+
+  it("rejeitar envia os campos de motivo no PATCH e os grava no cache", async () => {
+    const saved = {
+      id: "m1", etapa: "rejeitado", motivo_rejeicao: "preco",
+      motivo_rejeicao_detalhe: null, motivo_lado: "origem",
+    };
+    patch.mockResolvedValue(saved);
+    const { qc, wrapper } = comCache({ id: "m1", etapa: "sugerido", motivo_rejeicao: null });
+    const { result } = renderHook(() => useMoverEtapa(), { wrapper });
+    await result.current.mutateAsync({
+      matchId: "m1", etapa: "rejeitado", motivo_rejeicao: "preco", motivo_lado: "origem",
+    });
+    expect(patch).toHaveBeenCalledWith("/api/permutas/matches/m1", {
+      etapa: "rejeitado", motivo_rejeicao: "preco", motivo_lado: "origem",
+    });
+    await waitFor(() => expect(lido(qc).motivo_rejeicao).toBe("preco"));
+  });
+
+  it("mover para outra etapa não envia motivo e zera o motivo no cache", async () => {
+    patch.mockResolvedValue({ id: "m1", etapa: "avaliacao" });
+    const { qc, wrapper } = comCache({
+      id: "m1", etapa: "rejeitado", motivo_rejeicao: "preco",
+      motivo_rejeicao_detalhe: "x", motivo_lado: "ambos",
+    });
+    const { result } = renderHook(() => useMoverEtapa(), { wrapper });
+    await result.current.mutateAsync({ matchId: "m1", etapa: "avaliacao" });
+    expect(patch).toHaveBeenCalledWith("/api/permutas/matches/m1", { etapa: "avaliacao" });
+    await waitFor(() => {
+      const m = lido(qc);
+      expect(m.etapa).toBe("avaliacao");
+      expect(m.motivo_rejeicao).toBeNull();
+      expect(m.motivo_rejeicao_detalhe).toBeNull();
+      expect(m.motivo_lado).toBeNull();
+    });
   });
 });

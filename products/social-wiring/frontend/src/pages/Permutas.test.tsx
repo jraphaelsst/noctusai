@@ -39,6 +39,8 @@ vi.mock("sonner", () => ({
 const mockUsePermutaMatches = vi.fn();
 const mockUsePermutaAtivos = vi.fn();
 const mockGerar = vi.fn();
+const mockMover = vi.fn();
+const mockMotivos = vi.fn();
 
 vi.mock("@/hooks/usePermutas", async () => {
   const actual =
@@ -49,7 +51,8 @@ vi.mock("@/hooks/usePermutas", async () => {
     usePermutaAtivos: mockUsePermutaAtivos,
     useGerarMatches: () => ({ mutateAsync: mockGerar, isPending: false }),
     useGerarEmbeddings: () => ({ mutateAsync: vi.fn(), isPending: false }),
-    useMoverEtapa: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useMoverEtapa: () => ({ mutateAsync: mockMover, isPending: false }),
+    useMotivosRejeicao: () => mockMotivos(),
     useCriarAtivo: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useAtualizarAtivo: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useRemoverAtivo: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -107,6 +110,11 @@ function match(over: Record<string, unknown> = {}) {
   };
 }
 
+const MOTIVOS = [
+  { codigo: "preco", rotulo: "Preço incompatível", exige_detalhe: false },
+  { codigo: "outro", rotulo: "Outro motivo", exige_detalhe: true },
+];
+
 async function render() {
   const { render: rtlRender } = await import("@testing-library/react");
   const { default: Permutas } = await import("./Permutas");
@@ -117,6 +125,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUsePermutaAtivos.mockReturnValue(query());
   mockUsePermutaMatches.mockReturnValue(query());
+  mockMover.mockResolvedValue({});
+  mockMotivos.mockReturnValue(query({ data: MOTIVOS }));
 });
 
 describe("os quatro estados", () => {
@@ -318,5 +328,140 @@ describe("abas", () => {
     const { getByRole, getByTestId } = await render();
     fireEvent.mouseDown(getByRole("tab", { name: "Imóveis em permuta" }), { button: 0 });
     await waitFor(() => expect(getByTestId("permuta-ativos-lista")).toBeTruthy());
+  });
+});
+
+describe("rejeição com motivo", () => {
+  async function abrirDialogo() {
+    const rtl = await import("@testing-library/react");
+    mockUsePermutaMatches.mockReturnValue(query({ data: [match()] }));
+    const r = await render();
+    // The stage-filter bar repeats the labels; the card's buttons come last.
+    rtl.fireEvent.click(r.getAllByRole("button", { name: "Descartado" }).at(-1)!);
+    return { ...r, rtl };
+  }
+
+  it("abrir 'Rejeitado' mostra o diálogo e não move ainda", async () => {
+    const { getByText } = await abrirDialogo();
+    expect(getByText("Por que rejeitar este match?")).toBeTruthy();
+    expect(mockMover).not.toHaveBeenCalled();
+  });
+
+  it("confirmar fica desabilitado até escolher o motivo", async () => {
+    const { getByRole, getByLabelText, rtl } = await abrirDialogo();
+    const confirmar = getByRole("button", { name: "Confirmar rejeição" }) as HTMLButtonElement;
+    expect(confirmar.disabled).toBe(true);
+    rtl.fireEvent.click(getByLabelText("Preço incompatível"));
+    expect(confirmar.disabled).toBe(false);
+  });
+
+  it("motivo que exige detalhe pede o detalhe", async () => {
+    const { getByRole, getByLabelText, rtl } = await abrirDialogo();
+    const confirmar = getByRole("button", { name: "Confirmar rejeição" }) as HTMLButtonElement;
+    rtl.fireEvent.click(getByLabelText("Outro motivo"));
+    expect(confirmar.disabled).toBe(true);
+    rtl.fireEvent.change(getByLabelText(/Detalhes/), { target: { value: "  " } });
+    expect(confirmar.disabled).toBe(true);
+    rtl.fireEvent.change(getByLabelText(/Detalhes/), { target: { value: "dono desistiu" } });
+    expect(confirmar.disabled).toBe(false);
+  });
+
+  it("envia motivo, lado e detalhe; 'Não sei' omite o lado", async () => {
+    const { getByRole, getByLabelText, rtl } = await abrirDialogo();
+    rtl.fireEvent.click(getByLabelText("Preço incompatível"));
+    rtl.fireEvent.click(getByLabelText("Destino"));
+    rtl.fireEvent.change(getByLabelText(/Detalhes/), { target: { value: "acima do teto" } });
+    rtl.fireEvent.click(getByRole("button", { name: "Confirmar rejeição" }));
+    await rtl.waitFor(() =>
+      expect(mockMover).toHaveBeenCalledWith({
+        matchId: "m1",
+        etapa: "rejeitado",
+        motivo_rejeicao: "preco",
+        motivo_rejeicao_detalhe: "acima do teto",
+        motivo_lado: "destino",
+      }),
+    );
+  });
+
+  it("sem lado escolhido o campo não vai no corpo", async () => {
+    const { getByRole, getByLabelText, rtl } = await abrirDialogo();
+    rtl.fireEvent.click(getByLabelText("Preço incompatível"));
+    rtl.fireEvent.click(getByRole("button", { name: "Confirmar rejeição" }));
+    await rtl.waitFor(() =>
+      expect(mockMover).toHaveBeenCalledWith({
+        matchId: "m1",
+        etapa: "rejeitado",
+        motivo_rejeicao: "preco",
+      }),
+    );
+  });
+
+  it("🔴 a recusa do servidor aparece no diálogo (nunca silenciosa)", async () => {
+    mockMover.mockRejectedValue(new Error("motivo inválido"));
+    const { getByRole, getByLabelText, findByText, rtl } = await abrirDialogo();
+    rtl.fireEvent.click(getByLabelText("Preço incompatível"));
+    rtl.fireEvent.click(getByRole("button", { name: "Confirmar rejeição" }));
+    expect(await findByText("motivo inválido")).toBeTruthy();
+  });
+
+  it("mostra carregando enquanto os motivos carregam, e o erro se falharem", async () => {
+    mockMotivos.mockReturnValue(query({ isPending: true, data: undefined }));
+    const a = await abrirDialogo();
+    expect(a.getByTestId("motivos-carregando")).toBeTruthy();
+    a.rtl.cleanup();
+    mockMotivos.mockReturnValue(
+      query({ isError: true, error: { message: "fora do ar" }, data: undefined }),
+    );
+    const b = await abrirDialogo();
+    expect(b.getByText(/Não foi possível carregar os motivos/)).toBeTruthy();
+  });
+
+  it("outra etapa move na hora, sem diálogo nem campos de motivo", async () => {
+    const rtl = await import("@testing-library/react");
+    mockUsePermutaMatches.mockReturnValue(query({ data: [match()] }));
+    const { getAllByRole, queryByText } = await render();
+    rtl.fireEvent.click(getAllByRole("button", { name: "Em avaliação" }).at(-1)!);
+    await rtl.waitFor(() =>
+      expect(mockMover).toHaveBeenCalledWith({ matchId: "m1", etapa: "avaliacao" }),
+    );
+    expect(queryByText("Por que rejeitar este match?")).toBeNull();
+  });
+
+  it("cartão rejeitado mostra rótulo, lado e detalhe", async () => {
+    mockUsePermutaMatches.mockReturnValue(
+      query({
+        data: [
+          match({
+            etapa: "rejeitado",
+            motivo_rejeicao: "preco",
+            motivo_lado: "origem",
+            motivo_rejeicao_detalhe: "acima do teto",
+          }),
+        ],
+      }),
+    );
+    const { getByTestId } = await render();
+    const t = getByTestId("motivo-rejeicao").textContent;
+    expect(t).toContain("Preço incompatível");
+    expect(t).toContain("Origem");
+    expect(t).toContain("acima do teto");
+  });
+
+  it("sem o vocabulário carregado cai no código cru", async () => {
+    mockMotivos.mockReturnValue(query({ data: undefined, isPending: true }));
+    mockUsePermutaMatches.mockReturnValue(
+      query({ data: [match({ etapa: "rejeitado", motivo_rejeicao: "preco" })] }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("motivo-rejeicao").textContent).toContain("preco");
+  });
+
+  it("🔴 cartão rejeitado legado não mostra motivo nem 'undefined'", async () => {
+    mockUsePermutaMatches.mockReturnValue(
+      query({ data: [match({ etapa: "rejeitado", origem: "permutas_legacy", score: 0 })] }),
+    );
+    const { queryByTestId, container } = await render();
+    expect(queryByTestId("motivo-rejeicao")).toBeNull();
+    expect(container.textContent).not.toContain("undefined");
   });
 });
