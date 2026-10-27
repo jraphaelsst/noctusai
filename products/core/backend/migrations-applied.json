@@ -6,6 +6,7 @@
     "084_owner_grant_and_block_rules.sql": "7a9afc384907e2f654504991a7e5209d0a883dc7188c77c0c12c8df30d657ca7",
     "085_finance.sql": "01ecaea2ba21c7e27a9ba11497179ae25d2b41f99c8a394b6faee8455f23c377",
     "086_revoke_browser_secrets_tables.sql": "f95d651aa3dd0fce4ac285280a273b8c1a58425c2a864cad54da4b444d0644fa",
-    "087_seed_monica_product.sql": "d2c476feeaca8da650c88d0ce5c11fb456f4c0bc7a6bc03900389dd5e1e7cbaf"
+    "087_seed_monica_product.sql": "d2c476feeaca8da650c88d0ce5c11fb456f4c0bc7a6bc03900389dd5e1e7cbaf",
+    "088_org_picker_mfa_default_off.sql": "f42c45958fecabe1b5c0fb074e73546a857da8b3644aea589080e9c2718be802"
   }
 }
