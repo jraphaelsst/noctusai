@@ -16,6 +16,16 @@ describe('checkProductAccess', () => {
     const f = vi.fn().mockResolvedValue(res(200, { has_access: true }));
     expect(await checkProductAccess({ baseUrl: '', token: 't', fetchImpl: f as any })).toBe(true);
   });
+  it('true when has_access=false but a member org choice is required (the picker decides)', async () => {
+    const sel = { available: true, required: true, eligible_orgs: [{ id: 'o2' }, { id: 'o3' }] };
+    const f = vi.fn().mockResolvedValue(res(200, { has_access: false, org_selection: sel }));
+    expect(await checkProductAccess({ baseUrl: '', token: 't', fetchImpl: f as any })).toBe(true);
+  });
+  it('false when has_access=false and no choice is pending', async () => {
+    const sel = { available: false, required: false };
+    const f = vi.fn().mockResolvedValue(res(200, { has_access: false, org_selection: sel }));
+    expect(await checkProductAccess({ baseUrl: '', token: 't', fetchImpl: f as any })).toBe(false);
+  });
   it('false on 403 org_sem_licenca', async () => {
     const f = vi.fn().mockResolvedValue(res(403, { detail: 'x', code: 'org_sem_licenca' }));
     expect(await checkProductAccess({ baseUrl: '', token: 't', fetchImpl: f as any })).toBe(false);
