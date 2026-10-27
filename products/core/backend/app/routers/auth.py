@@ -22,7 +22,6 @@ from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, Passwor
 from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_token_rejection
 from noctusai_lib.api.auth.org_selection import make_org_selection_store
 from noctusai_lib.config.product_urls import resolve_product_url
-from noctusai_lib.primitives.roles import customer_may_access_product
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -212,12 +211,22 @@ async def get_me(authorization: Optional[str] = Header(None)):
     # Get organization
     org_result = (await anyio.to_thread.run_sync(db.table("organizations").select("*").eq("id", org_id).single().execute))
 
-    # Get licensed products for this org (checks expiry)
+    # has_access = the SSO admission rule (S4 multi-org): ANY active membership whose org holds a
+    # live license, minus orgs where the user is BLOCKED from the product (D5) -- not only the
+    # profile org, or the card locks a product /api/sso/token would admit. One license + one block
+    # lookup per membership org (a user belongs to a handful), never per product.
     from app.dependencies import get_licensed_product_ids
-    licensed_product_ids = get_licensed_product_ids(db, org_id)
-    # D5 (owner, 2026-10-14): a product the user is BLOCKED from in this org is not offered here.
+    from app.services import product_admission
     from app.services.team_memberships import blocked_product_ids
-    blocked_ids = (await anyio.to_thread.run_sync(lambda: blocked_product_ids(db, user.id, org_id))) if org_id else set()
+
+    def _admission_inputs():
+        memberships = product_admission.ordered_memberships(db, user.id, org_id)
+        orgs = {str(m["org_id"]) for m in memberships if m.get("org_id")}
+        licensed = {o: {str(p) for p in get_licensed_product_ids(db, o)} for o in orgs}
+        blocked = {o: blocked_product_ids(db, user.id, o) for o in orgs}
+        return memberships, licensed, blocked
+
+    memberships, licensed_by_org, blocked_by_org = await anyio.to_thread.run_sync(_admission_inputs)
 
     # Get all products (for the marketplace view).
     #
@@ -256,17 +265,18 @@ async def get_me(authorization: Optional[str] = Header(None)):
             )
             resolved_url = product.get("url_base") or ""
         # RESPONSE is the public allowlist only; the wide row above exists solely
-        # so customer_may_access_product can read `aceita_clientes`. Operational
+        # so the admission rule can read `aceita_clientes`. Operational
         # columns (house_port, sso_callback_verified_at, db_schema, ...) never leave.
         products_with_access.append({
             **{k: product[k] for k in _PUBLIC_PRODUCT_KEYS if k in product},
             "url_base": resolved_url,
-            # SEC-2: a customer (CUSTOMER_ORG_ROLES) only reaches products
-            # whose catalog row declares `aceita_clientes` — the switcher
-            # must not offer what /api/sso/token will refuse.
-            "has_access": product["id"] in licensed_product_ids
-            and str(product["id"]) not in blocked_ids
-            and customer_may_access_product(profile.get("org_role"), product),
+            # The switcher must not offer what /api/sso/token will refuse, nor lock
+            # what it would admit (SEC-2 customer roles included, per membership).
+            "has_access": product_admission.admitting_membership(
+                memberships, product,
+                is_licensed=lambda o, pid=str(product["id"]): pid in licensed_by_org.get(o, ()),
+                is_blocked=lambda o, pid=str(product["id"]): pid in blocked_by_org.get(o, ()),
+            ) is not None,
         })
 
     return {

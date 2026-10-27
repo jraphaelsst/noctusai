@@ -34,7 +34,7 @@ from app.sso_regime import (
     build_sso_launch_url, new_bind_nonce, origin_same_site, resolve_launch_base, site_of,
     sso_bind_cookie_name, sso_regime, unbound_redeem_allowed,
 )
-from app.services import team_memberships
+from app.services import product_admission, team_memberships
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,6 @@ router = APIRouter(prefix="/api/sso", tags=["SSO"])
 
 from noctusai_lib.api.auth import SSOSessionCache
 from noctusai_lib.config.product_urls import resolve_product_url
-from noctusai_lib.primitives.roles import customer_may_access_product
 
 # SEC-2 (2026-09-28): an end customer (org_role in CUSTOMER_ORG_ROLES) only
 # ever SSOs into a product whose catalog row declares `aceita_clientes`.
@@ -80,11 +79,8 @@ def _admitting_membership(db, profile: dict, user_id: str, product: dict, *, den
     D5). No membership at all is a denial, never a fall-back
     to the profile column (the profile's org is an ACTIVE membership by DB invariant).
     """
-    memberships = team_memberships.list_user_active_memberships(db, user_id)
-    home = profile.get("org_id")
-    memberships.sort(key=lambda m: 0 if m.get("org_id") == home else 1)  # stable: keeps recency order
-    eligible = [m for m in memberships if customer_may_access_product(m.get("org_role") or "member", product)]
-    if not eligible:
+    memberships = product_admission.ordered_memberships(db, user_id, profile.get("org_id"))
+    if not any(product_admission.may_reach(m, product) for m in memberships):
         # Includes "no membership": a customer-only (or member-less) caller never reaches a product here.
         raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED if memberships else denied_detail)
     if product.get("ativo") is not True:
@@ -94,12 +90,15 @@ def _admitting_membership(db, profile: dict, user_id: str, product: dict, *, den
     # D5 (owner, 2026-10-14): never admit through an org where the user is BLOCKED from this
     # product (org_member_product_access); another eligible membership may still admit.
     blocked = team_memberships.blocked_org_ids(db, user_id, product["id"])
-    eligible = [m for m in eligible if str(m.get("org_id")) not in blocked]
 
     from app.dependencies import check_org_license
-    for m in eligible:
-        if check_org_license(db, m["org_id"], product["id"]):
-            return m["org_id"], m.get("org_role") or "member"
+    admitted = product_admission.admitting_membership(
+        memberships, product,
+        is_licensed=lambda org_id: check_org_license(db, org_id, product["id"]),
+        is_blocked=lambda org_id: org_id in blocked,
+    )
+    if admitted is not None:
+        return admitted["org_id"], admitted.get("org_role") or "member"
     raise HTTPException(status_code=403, detail=denied_detail)
 
 # Launch host must be same-site with core or the SameSite=Strict bind cookie
