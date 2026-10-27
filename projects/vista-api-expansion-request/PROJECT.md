@@ -11,8 +11,8 @@
 > Every number below was measured live — none is inferred.
 
 - **Created:** 2026-08-05
-- **Last updated:** 2026-09-16
-- **Status:** 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the Tier-2 version question (now much better evidenced). The § 10a corretores re-ask is **CLOSED — NOT SENT, by the owner's decision on 2026-08-24**; the draft stays for reference, do not re-raise it. The LGPD intake that gated consumption is **done** — the ERP Clientes tab has read the family live since 2026-08-22 under a two-tier minimisation split (`vista.md` § 5.1); three controller-level questions remain in `LGPD-WARNINGS.md`.
+- **Last updated:** 2026-10-27
+- **Status:** ✅ **FULLY SATISFIED 2026-10-26 (see § 13)** — history of the prior state follows: 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the Tier-2 version question (now much better evidenced). The § 10a corretores re-ask is **CLOSED — NOT SENT, by the owner's decision on 2026-08-24**; the draft stays for reference, do not re-raise it. The LGPD intake that gated consumption is **done** — the ERP Clientes tab has read the family live since 2026-08-22 under a two-tier minimisation split (`vista.md` § 5.1); three controller-level questions remain in `LGPD-WARNINGS.md`.
 - **2026-09-16 update:** the owner opened a second ticket (photo-write + owner-data permissions on `…644c`) and Vista replied that the grants were resolved. **Re-probed on production: NOT landed** — `/imoveis/fotos` write still `Permissão Negada`, owner data still 403. `/lead` turns out to be **permitted** on our key. The write surface is now built and sandbox-verified (§ 12); § 12a holds the send-ready follow-up.
 - **Owner / stakeholders:** USER (joaoraphaelsst) sends + owns the vendor relationship · tech-lead evaluates the reply
 - **Related docs:**
@@ -332,12 +332,13 @@ measured counter-example resolves it fastest.
 ## 8. Success criteria
 
 1. A definitive (a)/(b)/(c) answer for every Tier-2 family — no open ❓.
+   *(2026-10-26: largely moot — most "absent" families exist under other names; § 13. Remaining unknowns are wire-shape, not availability.)*
 2. Tier 1 either granted-and-probe-verified, or refused with a reason the
-   user has seen.
+   user has seen. ✅ **MET 2026-10-26** — all three methods 200, plus owner data and photo/anexos writes.
 3. `clientes/lead` availability answered **yes or no**, with the product
-   consequence surfaced to the user either way.
+   consequence surfaced to the user either way. ✅ **MET** — top-level `/lead` exists and is permitted (2026-09-16).
 4. `KB § INTEGRATIONS/vista.md` § 4 + § 9 updated to match the outcome, so
-   the next agent inherits truth rather than this project's assumptions.
+   the next agent inherits truth rather than this project's assumptions. ✅ **MET 2026-10-27** (§ 4.2/4.5/4.6/4.7/4.8/8/9).
 5. This project flipped to ✅ SHIPPED or ❌ CLOSED with the verdict recorded,
    then archived per `noc-archive-absorb` (absorb learnings → KB **before**
    deleting).
@@ -348,8 +349,9 @@ measured counter-example resolves it fastest.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-10-27 | **Full grant landed — Tier 1 fully satisfied; project ready to archive.** Live probe 2026-10-26 (§ 13). `vista.md` §§ 4.2/4.5/4.6/4.7/4.8/8/9 rewritten, GUIDE updated. | Claude Sonnet 5.5 |
 | 2026-09-16 | **Vista's "resolved" NOT verified.** Owner's second ticket (photo write + owner data on `…644c`) came back "resolved"; live re-probe, twice: photo write still `Permissão Negada`, owner data still 403. New: `/lead` PERMITTED, `/clientes/anexos` denied — via an empty-POST probe that is non-mutating because Vista authorises before it validates (proven on both sides of the gate). Lead contract derived on the sandbox. Built: seed write methods + write-permission probe + MCP write tools (opt-in) — `vista.md` § 4.7/§ 8. Follow-up drafted (§ 12a). | Claude Opus 5 |
-| 2026-08-21 | **✅ The grant LANDED — Tier 1 is 2-of-3.** Vista replied that they had re-adjusted the endpoint permissions on `…644c` and cleared their system cache. Verified per § 7.0 (probe, not their word), twice: `vista.diagnostics.probe` and raw HTTP in a fresh process. `clientes/listar` 401 → **200** (42,960 clients); `clientes/detalhes` 401 → **200**; `corretores/listar` **still 401** → § 10a re-ask drafted. § 10's key question is closed: same key, no rotation. Also landed, all live-measured: the `clientes` field set mapped **without reading any client record** (11 of 32 candidates accepted — and the old guess omitted 7 fields the tenant does expose, which matters because calibration narrows and never widens); LGPD categories corrected (no CPF/address/email, but DataNascimento/Sexo/EstadoCivil/Profissao/Celular); `/imoveis` **delta sync solved** via `filter` on `DataAtualizacao`, closing a Tier-4 ask with no vendor involvement, while `/clientes` has no such field (860-request full crawl); `/clientes/listarConteudo`'s PHP crash fixed upstream; two § 2.3 route names exposed as **our own typos** (`pesquisar` is not a Vista method; history is `historico`, not `historicos`). Code: endpoint baseline re-graded so a future 401 reads as a ROLLBACK, and calibration now drops every rejected field per pass — **13 round-trips → 2**, measured live. `vista.md` § 2/4.2/4.5/8/9 updated. | Claude Opus 5 |
+| 2026-08-21 | **✅ The grant LANDED — Tier 1 is 2-of-3.** Vista replied that they had re-adjusted the endpoint permissions on `…644c` and cleared their system cache. Verified per § 7.0 (probe, not their word), twice: `vista.diagnostics.probe` and raw HTTP in a fresh process. `clientes/listar` 401 → **200** (42,960 clients); `clientes/detalhes` 401 → **200**; `corretores/listar` **still 401** → § 10a re-ask drafted. § 10's key question is closed: same key, no rotation. Also landed, all live-measured: the `clientes` field set mapped **without reading any client record** (11 of 32 candidates accepted — and the old guess omitted 7 fields the tenant does expose, which matters because calibration narrows and never widens); LGPD categories corrected (no CPF/address/email — 🔴 RETRACTED 2026-10-27, guessed field names, see § 13 — but DataNascimento/Sexo/EstadoCivil/Profissao/Celular); `/imoveis` **delta sync solved** via `filter` on `DataAtualizacao`, closing a Tier-4 ask with no vendor involvement, while `/clientes` has no such field (860-request full crawl); `/clientes/listarConteudo`'s PHP crash fixed upstream; two § 2.3 route names exposed as **our own typos** (`pesquisar` is not a Vista method; history is `historico`, not `historicos`). Code: endpoint baseline re-graded so a future 401 reads as a ROLLBACK, and calibration now drops every rejected field per pass — **13 round-trips → 2**, measured live. `vista.md` § 2/4.2/4.5/8/9 updated. | Claude Opus 5 |
 | 2026-08-19 | **Re-probe: the grant has NOT landed.** Verified twice (MCP probe + raw HTTP, fresh process, well-formed payloads) — `clientes/listar`, `clientes/detalhes`, `corretores/listar` all still 401. Full § 2.3 404 surface re-swept: nothing moved. Two new endpoint facts: `/corretores/detalhes` + `/corretores/listarConteudo` are 404; `/clientes/listarConteudo` exists ungated but crashes (raw PHP `in_array()` error) — not a partial grant. Separately, refined the gated MCP surface to parity with the working one (silent pagination drop, dead candidate-field constant, **401 poisoning the calibration cache**, missing `vista.clientes.get`, unenforced Fake↔Real parity) so a grant lands on working code instead of stubs. `vista.md` § 4.2/4.5/5.3/8/9 updated. Status → BLOCKED-EXTERNAL, awaiting the key question in § 10. | Claude Opus 5 |
 | 2026-08-05 | Project filed. Live audit of 24 Vista routes established the § 2 baseline; the 401-vs-404 split and the read-only 405/404 write-probe technique were the two enabling findings. Email drafted (§ 6). Related same-day fix `d3cb3c26` shipped the credential redaction, corrected the endpoint tables in `vista.md`, and lifted `PROBE_ENDPOINTS` to a seed-canonical baseline after finding it forked at N=2. **Status: awaiting user send.** | Claude Opus 5 |
 
@@ -528,3 +530,45 @@ que a alteração tivesse efeito — poderiam verificar se é o mesmo caso?
 Atenciosamente,
 *[assinatura]*
 
+---
+
+## 13. 2026-10-26 — full grant landed
+
+Probe on key `…644c`, tenant `oneconsu-rest`, non-mutating (GETs + empty POSTs).
+Verified by probe, not by Vista's word (§ 7.0):
+
+| surface | 2026-09-16 (§ 12) | 2026-10-26 |
+|---|---|---|
+| `/corretores/listar` | 🔒 401 | ✅ **200** — new `{items, meta}` envelope, top-level `page`/`limit`, `fields` ignored |
+| owner data (`proprietarios` on `detalhes`) | ❌ 403 | ✅ **200** (CPFCNPJ/Celular/Email reachable) |
+| `POST /imoveis/fotos` | ❌ Permissão Negada | ✅ **permitted** |
+| `POST /clientes/anexos` | ❌ Permissão Negada | ✅ **permitted** (empty POST → 400 formato) |
+| `POST /lead` | ✅ permitted | ✅ permitted |
+
+Everything the project asked for is satisfied; the § 12a follow-up email is
+**moot** (do not send). Beyond the asks, the probe found a large surface this
+project had classed "absent": `negocios`+`pipes`, `agenda`, `proprietarios`,
+`contratos`, `destaques`, `finalidades`, `listarcampos` on five families,
+`status`, `reloadcache`, `vendas` (500). **§ 2.3 above ("Absent — 404") is
+therefore stale as an availability claim** — those were 404s under guessed
+names. History is a field relation (`prontuarios`, `historicos`), not a route:
+the 4th instance of "404 on a guessed name ≠ absent". Full contracts:
+`KB § INTEGRATIONS/vista.md` § 4.6, § 4.8.
+
+New follow-ups are **engineering**, not vendor asks: pin the `/negocios` paging
+contract, the `/contratos` filter 500 and `/vendas` 500 shapes, and decide the
+LGPD intake for owner PII (now reachable). Still outstanding on Vista's side:
+credential echo + key rotation (§ 4, Tier 4).
+
+**Recommendation (not performed here):** archive this project via skill
+`noc-archive-absorb` — learnings are absorbed into `vista.md` (§ 4.2 correction
+block, § 4.8, § 8 entry 2026-10-26), and the success criteria are met.
+
+### 13a. 2026-10-27 — client identity PII is reachable (retraction)
+
+Re-probed live on `…644c`: `/clientes/listar` accepts `CPFCNPJ`, `RG`,
+`EmailResidencial`, `EnderecoResidencial` (200); only the guessed name `CPF`
+is rejected. The 2026-08-21 "no CPF/address/email" intake was built on guessed
+names. Code (feat/vista-full-surface) strips identity PII from the default
+clientes projection; `LGPD-WARNINGS.md` carries the corrected entry.
+`/negocios/listar` paging was also settled the same day (KB `vista.md` § 4.8).
