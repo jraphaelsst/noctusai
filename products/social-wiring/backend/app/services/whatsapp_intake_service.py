@@ -292,7 +292,7 @@ class WhatsAppIntakeService:
         # Seam for the exclusive-listing logo check (ffmpeg stills + vision
         # model). Tests inject ``FakeWatermarkDetector``.
         self._watermark_detector: WatermarkDetector = (
-            watermark_detector or VisionWatermarkDetector()
+            watermark_detector or VisionWatermarkDetector(org_id=org_id)
         )
         self._waha_base_url = waha_base_url
         self._waha_api_key = waha_api_key
@@ -351,6 +351,11 @@ class WhatsAppIntakeService:
             if n:
                 result.append(n)
         return result
+
+    @property
+    def org_id(self) -> str | None:
+        """The org this intake serves — scopes the per-org LLM key lookup."""
+        return str(self._org_id) if self._org_id else None
 
     @property
     def has_authorized_numbers(self) -> bool:

@@ -187,8 +187,10 @@ VisionFn = Callable[..., Awaitable[str]]
 class VisionWatermarkDetector:
     """ffmpeg stills + one seed ``analyze_image`` request per group."""
 
-    def __init__(self, *, model: str | None = None, vision_fn: VisionFn | None = None,
-                 logo_path: Path = LOGO_ASSET):
+    def __init__(self, *, org_id=None, model: str | None = None,
+                 vision_fn: VisionFn | None = None, logo_path: Path = LOGO_ASSET):
+        # The org whose Anthropic key (Configurações → Chaves de API) pays.
+        self._org_id = org_id
         self._model = model or settings.watermark_vision_model
         self._vision_fn = vision_fn
         self._logo_path = logo_path
@@ -209,7 +211,10 @@ class VisionWatermarkDetector:
         if vision is None:
             from noctusai_lib.integrations.llm import analyze_image as vision
         try:
-            reply = await vision(images, prompt, provider="anthropic", model=self._model)
+            reply = await vision(
+                images, prompt, provider="anthropic", model=self._model,
+                org_id=str(self._org_id) if self._org_id else None,
+            )
         except Exception as exc:  # provider/quota/network — surfaced, caller asks the user
             logger.warning("watermark vision call failed: %s", exc)
             raise WatermarkDetectionError(f"falha na análise de imagem: {exc}") from exc
