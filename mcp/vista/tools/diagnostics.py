@@ -11,8 +11,19 @@ from noctusai_lib.integrations.vista import (
 
 from noctusai_lib.integrations.vista import calibrator
 from ..settings import get_settings
-from ..types import CalibratedFieldsOutput, ProbeOutput, WritePermissionsOutput
-from ._common import client as _client
+from ..types import (
+    CalibratedFieldsOutput,
+    ListFieldsInput,
+    ListFieldsOutput,
+    ProbeOutput,
+    WritePermissionsOutput,
+)
+from ._common import (
+    HANDLED_READ_ERRORS,
+    client as _client,
+    probe_status_for,
+    typed_error as _typed_error,
+)
 
 # The endpoint baseline is seed-canonical (`VISTA_ENDPOINT_BASELINE`) — this
 # module and the ERP showcase service consume the SAME tuple, so a re-probe
@@ -29,33 +40,75 @@ _TOOL_BY_PATH = {
     "/clientes/listar": "vista.clientes.list",
     "/clientes/detalhes": "vista.clientes.get",
     "/corretores/listar": "vista.corretores.list",
+    "/status": None,
 }
 
 # Which dotted tool writes to each write route (None = no tool on purpose).
 _WRITE_TOOL_BY_PATH = {
     "/imoveis/fotos": "vista.imoveis.add_photos",
     "/lead": "vista.leads.submit",
-    "/clientes/anexos": None,
+    "/clientes/anexos": None,  # PERMITTED since 2026-10-26; no tool on purpose
 }
 
-# Known to Vista's public docs but NOT in the probe loop — either wrapped by a
-# tool that takes a required arg (`/imoveis/detalhes`), or confirmed 404 on
-# this tenant. Listed so a caller stops re-deriving their reachability.
+# Known to this MCP but NOT in the probe loop — either wrapped by a tool that
+# needs a required arg / scope param, or confirmed 404/405 on this tenant.
+# Listed so a caller stops re-deriving their reachability.
 # `absent` ≠ `permission_gated`: a support request will NOT unlock these.
 #
-# Re-swept against the PUBLISHED method names 2026-08-21 (vistasoft.com.br/api).
-# The previous list carried two names Vista never documented — `pesquisar` and
-# `historicos` (the real one is singular, `historico`) — so two of its four
-# "confirmed absent" rows were confirming our own typos. Every row below was
-# GET-probed: 404 = no route, 405 = exists but rejects GET.
+# Re-swept against the PUBLISHED method names 2026-08-21 (vistasoft.com.br/api),
+# then re-probed 2026-10-26/27 after Vista's "full access" grant on `…644c`,
+# which surfaced a large never-seen surface (field catalogs, deals, agenda,
+# owners, contracts). HISTORY is not a route on this tenant — it is a field
+# relation (`prontuarios` on imóveis, `historicos` on clientes); the
+# `/…/historico` rows below stay 404 for that reason. Every row was probed:
+# 200/400 = route exists (needs params), 404 = no route, 405 = rejects GET.
 _UNPROBED_KNOWN: list[dict] = [
     {"path": "/imoveis/detalhes", "probe_status": "live_probed", "tool": "vista.imoveis.get"},
+    # ── opened by the 2026-10-26 grant (live_probed 2026-10-27) ──
+    {"path": "/imoveis/listarcampos", "probe_status": "live_probed", "tool": "vista.diagnostics.list_fields"},
+    {"path": "/clientes/listarcampos", "probe_status": "live_probed", "tool": "vista.diagnostics.list_fields"},
+    {"path": "/usuarios/listarcampos", "probe_status": "live_probed", "tool": "vista.diagnostics.list_fields"},
+    {"path": "/agencias/listarcampos", "probe_status": "live_probed", "tool": "vista.diagnostics.list_fields"},
+    {"path": "/agenda/listarcampos", "probe_status": "live_probed", "tool": "vista.diagnostics.list_fields"},
+    {"path": "/imoveis/destaques", "probe_status": "live_probed", "tool": "vista.imoveis.list_destaques"},
+    {"path": "/imoveis/finalidades", "probe_status": "live_probed", "tool": "vista.imoveis.list_finalidades"},
+    {"path": "/clientes/listarConteudo", "probe_status": "live_probed", "tool": "vista.clientes.list_filters"},
+    {"path": "/negocios/listar", "probe_status": "live_probed", "tool": "vista.negocios.list",
+     "note": "needs top-level codigo_pipe XOR codigo_cliente (bare GET → 400)"},
+    {"path": "/negocios/detalhes", "probe_status": "live_probed", "tool": "vista.negocios.get"},
+    {"path": "/pipes/listar", "probe_status": "live_probed", "tool": "vista.pipes.list",
+     "note": "needs pesquisa.filter.Empresa; answers [] on oneconsu-rest (unsettled)"},
+    {"path": "/agenda/listar", "probe_status": "live_probed", "tool": "vista.agenda.list"},
+    {"path": "/agenda/detalhes", "probe_status": "live_probed", "tool": "vista.agenda.get"},
+    {"path": "/proprietarios/listar", "probe_status": "live_probed", "tool": "vista.proprietarios.list",
+     "note": "identity-PII family (LGPD) — tool defaults to Codigo+Nome"},
+    {"path": "/proprietarios/detalhes", "probe_status": "live_probed", "tool": "vista.proprietarios.get"},
+    {"path": "/contratos/listar", "probe_status": "live_probed", "tool": "vista.contratos.list"},
+    {"path": "/vendas", "probe_status": "live_probed", "tool": None,
+     "note": "route exists (bare GET → 500); query shape unknown"},
+    {"path": "/reloadcache", "probe_status": "live_probed", "tool": None,
+     "note": "Vista-side cache flush — side-effecting; never call from an automatic probe"},
+    # ── write-only routes found 2026-10-26 (GET → 405); no tool on purpose ──
+    {"path": "/negocios/etapas", "probe_status": "write_only", "tool": None,
+     "note": "PUT-only — moves a deal between pipeline stages"},
+    {"path": "/contratos/detalhes", "probe_status": "write_only", "tool": None,
+     "note": "POST/PUT-only; empty POST passes auth (400 'informar os dados no indice fields')"},
+    # ── still 404 after the 2026-10-26 grant (no catalog route) ──
+    {"path": "/negocios/listarcampos", "probe_status": "absent", "tool": None},
+    {"path": "/proprietarios/listarcampos", "probe_status": "absent", "tool": None,
+     "note": "owner fields = the `proprietarios` relation of /imoveis/listarcampos"},
+    {"path": "/contratos/listarcampos", "probe_status": "absent", "tool": None},
+    {"path": "/corretores/listarcampos", "probe_status": "absent", "tool": None},
+    {"path": "/corretores/detalhes", "probe_status": "absent", "tool": None},
+    {"path": "/corretores/listarConteudo", "probe_status": "absent", "tool": None},
     # ── /clientes sub-routes: documented by Vista, absent on this tenant ──
-    {"path": "/clientes/historico", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/historico", "probe_status": "absent", "tool": None,
+     "note": "history is the `historicos` relation → vista.clientes.history"},
     {"path": "/clientes/porcorretor", "probe_status": "absent", "tool": None},
     {"path": "/clientes/poragencia", "probe_status": "absent", "tool": None},
     {"path": "/clientes/favoritos", "probe_status": "absent", "tool": None},
-    {"path": "/clientes/campos", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/campos", "probe_status": "absent", "tool": None,
+     "note": "the real catalog route is /clientes/listarcampos"},
     # Absent under THIS name — leads are top-level `/lead` (write rows below).
     {"path": "/clientes/lead", "probe_status": "absent", "tool": None},
     {"path": "/clientes/cadastrar", "probe_status": "absent", "tool": None},
@@ -64,8 +117,10 @@ _UNPROBED_KNOWN: list[dict] = [
     {"path": "/clientes/cadcor", "probe_status": "absent", "tool": None},
     # ── /imoveis sub-routes: documented by Vista, absent on this tenant ──
     {"path": "/imoveis/listas", "probe_status": "absent", "tool": None},
-    {"path": "/imoveis/campos", "probe_status": "absent", "tool": None},
-    {"path": "/imoveis/historico", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/campos", "probe_status": "absent", "tool": None,
+     "note": "the real catalog route is /imoveis/listarcampos"},
+    {"path": "/imoveis/historico", "probe_status": "absent", "tool": None,
+     "note": "history is the `prontuarios` relation → vista.imoveis.history"},
     {"path": "/imoveis/docs", "probe_status": "absent", "tool": None},
     {"path": "/imoveis/porcorretor", "probe_status": "absent", "tool": None},
     {"path": "/imoveis/poragencia", "probe_status": "absent", "tool": None},
@@ -193,10 +248,24 @@ async def show_calibrated_fields(args: dict) -> dict:
     if "clientes" in snap:
         out.clientes = [f for f in snap["clientes"].safe_fields if isinstance(f, str)]
         out.rejected["clientes"] = snap["clientes"].rejected
-    if "corretores" in snap:
-        out.corretores = [f for f in snap["corretores"].safe_fields if isinstance(f, str)]
-        out.rejected["corretores"] = snap["corretores"].rejected
+    # `corretores` is no longer calibrated (2026-10-27): the route ignores
+    # `fields` and always answers Codigo + Nome, so `out.corretores` stays
+    # empty by design — see `calibration.CORRETOR_RETURNED_FIELDS`.
     return out.model_dump()
+
+
+async def list_fields(args: dict) -> dict:
+    """The tenant's real field catalog for one family (`/<family>/listarcampos`)."""
+    inp = ListFieldsInput(**args)
+    try:
+        result = await _client().listar_campos(inp.family)
+    except HANDLED_READ_ERRORS as e:
+        return ListFieldsOutput(
+            family=inp.family, typed_error=_typed_error(e), probe_status=probe_status_for(e)
+        ).model_dump()
+    data = result.data if isinstance(result.data, dict) else {}
+    fields = {k: [str(f) for f in v] for k, v in data.items() if isinstance(v, list)}
+    return ListFieldsOutput(family=inp.family, fields=fields).model_dump()
 
 
 HANDLERS = {
@@ -204,6 +273,7 @@ HANDLERS = {
     "vista.diagnostics.list_known_endpoints": list_known_endpoints,
     "vista.diagnostics.probe_write_permissions": probe_write_permissions,
     "vista.diagnostics.show_calibrated_fields": show_calibrated_fields,
+    "vista.diagnostics.list_fields": list_fields,
 }
 
 
@@ -266,6 +336,22 @@ def tool_descriptors() -> list[Tool]:
                 "lazy calibration."
             ),
             inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="vista.diagnostics.list_fields",
+            description=(
+                "Read the tenant's REAL field catalog for a family "
+                "(`/<family>/listarcampos`; family ∈ imoveis | clientes | "
+                "usuarios | agencias | agenda). Returns {family: [fields], "
+                "Relation: [sub-fields]} — e.g. imoveis carries the "
+                "`prontuarios` (history) and `proprietarios` (owners, PII) "
+                "relations, clientes the `historicos` and `CorretorCliente` "
+                "ones. Use it before passing any `fields` argument and before "
+                "concluding a capability is absent: on this tenant history and "
+                "owner data are field relations, not routes. Field NAMES only — "
+                "no records are read."
+            ),
+            inputSchema=ListFieldsInput.model_json_schema(),
         ),
     ]
 

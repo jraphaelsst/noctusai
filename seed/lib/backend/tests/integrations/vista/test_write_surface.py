@@ -201,13 +201,15 @@ async def test_probe_write_permission_unconfigured() -> None:
     assert row["verdict"] == "not_configured"
 
 
-def test_write_baseline_records_the_2026_09_16_verdicts() -> None:
+def test_write_baseline_records_the_2026_10_26_verdicts() -> None:
     verdicts = {path: verdict for path, verdict, _ in VISTA_WRITE_PERMISSION_BASELINE}
-    # Vista said the grant was resolved; the probe says photo write is STILL
-    # denied on …644c. Flip this only on a probe that reads `permitted`.
-    assert verdicts["/imoveis/fotos"] == WRITE_DENIED
+    # Flipped only on a live probe that read `permitted` (2026-10-26, re-read
+    # 2026-10-27): `/imoveis/fotos` answers the missing-`cadastro` 401 and
+    # `/clientes/anexos` the format 400 — both past the auth check. A
+    # `denied` from here on is a grant ROLLBACK.
+    assert verdicts["/imoveis/fotos"] == WRITE_PERMITTED
     assert verdicts["/lead"] == WRITE_PERMITTED
-    assert verdicts["/clientes/anexos"] == WRITE_DENIED
+    assert verdicts["/clientes/anexos"] == WRITE_PERMITTED
 
 
 @pytest.mark.asyncio

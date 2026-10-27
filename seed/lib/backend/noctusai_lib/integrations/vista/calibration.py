@@ -150,34 +150,45 @@ CANDIDATE_CONTEUDO_FIELDS: list[str] = ["Status", "Categoria", "Cidade", "Bairro
 # applied the § 9 Tier-1 grant. The eleven fields marked ✅ below were
 # confirmed live on `oneconsu-rest`; the rest are the public-doc superset,
 # kept because **calibration can only narrow, never widen** — a field absent
-# from this list is invisible to every consumer forever, no matter what the
-# tenant exposes. That is exactly what went wrong here: the pre-grant list was
-# a guess that happened to omit seven fields this tenant does offer
-# (DataNascimento, Corretor, Status, Profissao, EstadoCivil, Sexo, Interesse),
-# so the first post-grant calibration would have silently under-fetched.
+# from this list is invisible to the calibrated tools forever. That is exactly
+# what went wrong pre-grant: the list omitted seven fields this tenant does
+# offer (DataNascimento, Corretor, Status, Profissao, EstadoCivil, Sexo,
+# Interesse), so the first post-grant calibration would have under-fetched.
 #
-# ⚠️ LGPD — the live set is NOT the one vista.md assumed. `CPF`, `Email`,
-# `Endereco`/`CEP`/`Cidade` and `Fone`/`FoneCelular` are all REJECTED by this
-# tenant, but `Celular`, `DataNascimento`, `Sexo`, `EstadoCivil` and
-# `Profissao` are available — i.e. no CPF or address, yet more sensitive
-# demographic categories than the doc claimed. Re-do the data-category intake
-# against THIS list, not the old assumption (vista.md § 4.2).
+# ⚠️ LGPD — CORRECTED 2026-10-26 against `/clientes/listarcampos` (91 fields).
+# The 2026-08-21 note read "this tenant rejects CPF / Email / Endereco / Fone,
+# so it exposes no CPF or address". Wrong conclusion: those are public-doc
+# NAMES this tenant does not use. The catalog proves the tenant DOES expose
+# identity PII under its own names — `CPFCNPJ`, `RG`, `EmailResidencial`,
+# `EnderecoResidencial`, `Banco`/`Agencia`/`Conta`, spouse data, … (see
+# `projections.CLIENTE_IDENTITY_PII_FIELDS`). Those names are deliberately
+# NOT added here: this list doubles as the DEFAULT projection of
+# `vista.clientes.*` and the ERP Clientes tab, so widening it to the catalog
+# would silently start pulling CPFs into every list call. The full catalog is
+# reachable via `listar_campos("clientes")`; a caller that needs an identity
+# field asks for it explicitly. Pinned by
+# `test_candidate_cliente_fields_never_carry_identity_pii`.
 CANDIDATE_CLIENTE_FIELDS: list[str] = [
     # ── confirmed live 2026-08-21 (✅ accepted by `oneconsu-rest`) ──
     "Codigo", "Nome", "Celular", "DataCadastro", "DataNascimento",
     "Corretor", "Status", "Profissao", "EstadoCivil", "Sexo", "Interesse",
     # ── public-doc superset; rejected by THIS tenant, kept for others ──
-    "Email", "Fone", "FoneCelular", "Telefone", "CPF",
-    "Bairro", "Cidade", "Estado", "UF", "CEP",
-    "Endereco", "Numero", "Complemento", "Observacao",
+    # Identity names (`CPF`, `Email`, `Endereco`/`Numero`/`Complemento`/`CEP`)
+    # were REMOVED 2026-10-27: on a tenant that does use those names they
+    # would have become part of the default projection — the exact hazard the
+    # LGPD note above describes. Contact/locality names stay.
+    "Fone", "FoneCelular", "Telefone",
+    "Bairro", "Cidade", "Estado", "UF", "Observacao",
     "Tipo", "Origem", "Categoria", "Finalidade",
     "ValorMaximo", "ValorMinimo", "DataAtualizacao",
 ]
 
-CANDIDATE_CORRETOR_FIELDS: list[str] = [
-    "Codigo", "Nome", "Email", "Fone", "Celular", "Creci",
-    "Setor", "Foto", "Status", "DataCadastro",
-]
+# /corretores/listar is NOT calibrated (removed 2026-10-27). Since the
+# 2026-10-26 grant the route ignores `fields` entirely — items only ever carry
+# `Codigo` + `Nome` — so a "calibration" would always "succeed" with whatever
+# candidate list it sent and report fields the response never contains. The
+# returned set is fixed, recorded here for consumers that need to name it.
+CORRETOR_RETURNED_FIELDS: tuple[str, ...] = ("Codigo", "Nome")
 
 # Floor — if calibration drops everything except the primary id, this is
 # what survives. Used as a sentinel to abort the probe loop.
@@ -322,19 +333,6 @@ class Calibrator:
             endpoint="/clientes/listar",
             candidates=CANDIDATE_CLIENTE_FIELDS,
             requester=lambda fields: client.listar_clientes(
-                fields=fields, page=1, page_size=1
-            ),
-        )
-        return [f for f in result if isinstance(f, str)]
-
-    async def get_corretor_fields(self, client: VistaClient) -> list[str]:
-        """🔒 Gated — returns the floor (uncached) while the tenant answers 401."""
-        result = await self._calibrate(
-            client,
-            cache_key="corretores",
-            endpoint="/corretores/listar",
-            candidates=CANDIDATE_CORRETOR_FIELDS,
-            requester=lambda fields: client.listar_corretores(
                 fields=fields, page=1, page_size=1
             ),
         )
@@ -501,5 +499,5 @@ __all__ = [
     "calibrator",
     "FLOOR_FIELDS",
     "CANDIDATE_CLIENTE_FIELDS",
-    "CANDIDATE_CORRETOR_FIELDS",
+    "CORRETOR_RETURNED_FIELDS",
 ]

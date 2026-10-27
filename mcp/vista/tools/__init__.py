@@ -11,10 +11,36 @@ from __future__ import annotations
 
 from _kit.registry import build_registry
 
-from . import imoveis, usuarios, agencias, clientes, corretores, leads, diagnostics
+from . import (
+    agencias,
+    agenda,
+    clientes,
+    contratos,
+    corretores,
+    diagnostics,
+    imoveis,
+    leads,
+    negocios,
+    pipes,
+    proprietarios,
+    usuarios,
+)
 
 
-LEAF_MODULES = (imoveis, usuarios, agencias, clientes, corretores, leads, diagnostics)
+LEAF_MODULES = (
+    imoveis,
+    usuarios,
+    agencias,
+    clientes,
+    corretores,
+    negocios,
+    pipes,
+    agenda,
+    proprietarios,
+    contratos,
+    leads,
+    diagnostics,
+)
 
 all_handlers, all_descriptors, register_all = build_registry(LEAF_MODULES)
 

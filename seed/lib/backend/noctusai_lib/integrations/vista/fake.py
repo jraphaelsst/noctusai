@@ -51,6 +51,8 @@ from .client import (
     _assert_detalhes_describes_record,
     validate_fotos_payload,
     validate_lead_payload,
+    validate_listarcampos_family,
+    validate_negocios_scope,
 )
 
 
@@ -156,18 +158,107 @@ class FakeVistaClient:
         return self._resolve("/clientes/listar", ["key", "pesquisa", "showtotal"])
 
     async def detalhes_cliente(
-        self, codigo: str, *, fields: list[str]
+        self, codigo: str, *, fields: list[Any]
     ) -> VistaCallResult:
         return self._resolve("/clientes/detalhes", ["cliente", "key", "pesquisa"])
 
     async def listar_corretores(
         self,
         *,
-        fields: list[str],
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> VistaCallResult:
-        return self._resolve("/corretores/listar", ["key", "pesquisa", "showtotal"])
+        # Top-level `page` + `limit`, no `pesquisa` — the Real's wire shape
+        # since the 2026-10-26 `{items, meta}` envelope. Seed the response
+        # with that envelope to exercise `extract_corretores_items`.
+        return self._resolve("/corretores/listar", ["key", "limit", "page"])
+
+    # ─── Pipeline / CRM surface (parity with VistaClient, 2026-10-26) ──
+
+    async def listar_negocios(
+        self,
+        *,
+        fields: list[str],
+        codigo_pipe: Optional[str] = None,
+        codigo_cliente: Optional[str] = None,
+        order: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
+        # Same XOR guard as the Real — a Fake that accepted both would let a
+        # consumer ship the call Vista answers with an empty body.
+        validate_negocios_scope(codigo_pipe, codigo_cliente)
+        scope = "codigo_pipe" if codigo_pipe else "codigo_cliente"
+        return self._resolve("/negocios/listar", [scope, "key", "pesquisa", "showtotal"])
+
+    async def detalhes_negocio(
+        self, codigo: str, *, fields: Optional[list[str]] = None
+    ) -> VistaCallResult:
+        keys = ["codigo_negocio", "key"] + (["pesquisa"] if fields else [])
+        return self._resolve("/negocios/detalhes", keys)
+
+    async def listar_pipes(
+        self, *, empresa: str = "1", fields: Optional[list[str]] = None
+    ) -> VistaCallResult:
+        return self._resolve("/pipes/listar", ["key", "pesquisa"])
+
+    async def listar_agenda(
+        self,
+        *,
+        fields: list[str],
+        filter_: Optional[dict] = None,
+        order: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
+        return self._resolve("/agenda/listar", ["key", "pesquisa", "showtotal"])
+
+    async def detalhes_agenda(self, codigo: str, *, fields: list[str]) -> VistaCallResult:
+        return self._resolve("/agenda/detalhes", ["codigo", "key", "pesquisa"])
+
+    async def listar_proprietarios(
+        self,
+        *,
+        fields: list[str],
+        filter_: Optional[dict] = None,
+        order: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
+        return self._resolve("/proprietarios/listar", ["key", "pesquisa", "showtotal"])
+
+    async def detalhes_proprietario(self, codigo: str, *, fields: list[str]) -> VistaCallResult:
+        return self._resolve("/proprietarios/detalhes", ["codigo", "key", "pesquisa"])
+
+    async def listar_contratos(self) -> VistaCallResult:
+        return self._resolve("/contratos/listar", ["key"])
+
+    async def listar_destaques_imoveis(
+        self,
+        *,
+        fields: Optional[list[str]] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
+        return self._resolve("/imoveis/destaques", ["key", "pesquisa"])
+
+    async def listar_finalidades_imoveis(self) -> VistaCallResult:
+        return self._resolve("/imoveis/finalidades", ["key"])
+
+    async def historico_imovel(self, codigo: str, *, fields: list[str]) -> VistaCallResult:
+        # Rides detalhes_imovel exactly like the Real, so the unpublished
+        # guard fires on the Fake too.
+        return await self.detalhes_imovel(codigo, fields=["Codigo", {"prontuarios": list(fields)}])
+
+    async def historico_cliente(self, codigo: str, *, fields: list[str]) -> VistaCallResult:
+        return await self.detalhes_cliente(codigo, fields=["Codigo", {"historicos": list(fields)}])
+
+    async def listar_conteudo_clientes(self, *, fields: list[str]) -> VistaCallResult:
+        return self._resolve("/clientes/listarConteudo", ["key", "pesquisa"])
+
+    async def listar_campos(self, family: str) -> VistaCallResult:
+        validate_listarcampos_family(family)
+        return self._resolve(f"/{family}/listarcampos", ["key"])
 
     # ─── Writes (parity with VistaClient — same validation, no network) ─
 

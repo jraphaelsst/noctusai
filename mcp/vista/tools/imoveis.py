@@ -5,6 +5,10 @@ Tools registered:
 - vista.imoveis.get            — full property detail (auto-fetches photo from listar)
 - vista.imoveis.list_filters   — enum content for Status/Categoria/Cidade/Bairro
 - vista.imoveis.add_photos     — ✍️ WRITE: attach photos by URL (`POST /imoveis/fotos`)
+- vista.imoveis.list_destaques — featured listings (`/imoveis/destaques`, 2026-10-26)
+- vista.imoveis.list_finalidades — live finalidade values (`/imoveis/finalidades`)
+- vista.imoveis.history        — property HISTORY = the `prontuarios` relation
+                                 on `/imoveis/detalhes` (there is no history route)
 """
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from noctusai_lib.integrations.vista import (
+    DEFAULT_PRONTUARIO_FIELDS,
     VistaConfigError,
     VistaFieldNotAvailable,
     VistaNotFound,
@@ -24,12 +29,18 @@ from noctusai_lib.integrations.vista import (
     VistaUpstreamError,
     calibrator,
     extract_items,
+    resolve_fields,
     vista_imovel_detalhes_to_showcase,
     vista_imovel_to_showcase,
 )
 
 from ..types import (
     AddImovelFotosInput,
+    FinalidadesOutput,
+    HistoryInput,
+    HistoryOutput,
+    ListDestaquesInput,
+    RawListOutput,
     GetImovelInput,
     GetImovelOutput,
     ListImoveisFiltersOutput,
@@ -38,8 +49,11 @@ from ..types import (
     WriteOutput,
 )
 from ._common import (
+    HANDLED_READ_ERRORS,
     WritesDisabled,
     client as _client,
+    history_page,
+    probe_status_for,
     require_writes_enabled,
     typed_error as _typed_error,
 )
@@ -187,6 +201,42 @@ async def add_imovel_fotos(args: dict) -> dict:
     return WriteOutput(result=data, http_status=result.status).model_dump()
 
 
+async def list_imoveis_destaques(args: dict) -> dict:
+    inp = ListDestaquesInput(**args)
+    try:
+        result = await _client().listar_destaques_imoveis(
+            fields=inp.fields, page=inp.page, page_size=inp.page_size
+        )
+    except HANDLED_READ_ERRORS as e:
+        return RawListOutput(typed_error=_typed_error(e), probe_status=probe_status_for(e)).model_dump()
+    items, pagination = extract_items(result.data)
+    return RawListOutput(items=items, pagination=pagination).model_dump()
+
+
+async def list_imoveis_finalidades(args: dict) -> dict:
+    try:
+        result = await _client().listar_finalidades_imoveis()
+    except HANDLED_READ_ERRORS as e:
+        return FinalidadesOutput(typed_error=_typed_error(e), probe_status=probe_status_for(e)).model_dump()
+    data = result.data if isinstance(result.data, list) else []
+    return FinalidadesOutput(finalidades=[str(v) for v in data]).model_dump()
+
+
+async def imovel_history(args: dict) -> dict:
+    """Property history — `prontuarios` relation, windowed client-side."""
+    inp = HistoryInput(**args)
+    try:
+        result = await _client().historico_imovel(
+            inp.codigo, fields=resolve_fields(inp.fields, DEFAULT_PRONTUARIO_FIELDS)
+        )
+    except HANDLED_READ_ERRORS as e:
+        # VistaRecordUnpublished is a VistaUpstreamError — an unpublished
+        # codigo surfaces typed, never as an empty-but-successful history.
+        return HistoryOutput(typed_error=_typed_error(e), probe_status=probe_status_for(e)).model_dump()
+    items, total = history_page(result.data, "prontuarios", inp.offset, inp.limit)
+    return HistoryOutput(items=items, total=total).model_dump()
+
+
 # ─── Registration ───────────────────────────────────────────────────────
 
 
@@ -195,6 +245,9 @@ HANDLERS = {
     "vista.imoveis.get": get_imovel,
     "vista.imoveis.list_filters": list_imoveis_filters,
     "vista.imoveis.add_photos": add_imovel_fotos,
+    "vista.imoveis.list_destaques": list_imoveis_destaques,
+    "vista.imoveis.list_finalidades": list_imoveis_finalidades,
+    "vista.imoveis.history": imovel_history,
 }
 
 
@@ -249,12 +302,45 @@ def tool_descriptors() -> list[Tool]:
                 "(`POST /imoveis/fotos`). Pass `fotos` as a keyed map of PUBLIC "
                 "http(s) URLs; Vista downloads and re-hosts each one. A 207 "
                 "means some photos failed (see result.Fotos.<key>) and those "
-                "created nothing. Returns VistaPermissionDenied while the key "
-                "lacks the photo-write grant — check "
-                "vista.diagnostics.probe_write_permissions first. Disabled "
-                "unless the server runs with VISTA_MCP_ALLOW_WRITES=1."
+                "created nothing. The key is PERMITTED to write photos since "
+                "the 2026-10-26 grant; a VistaPermissionDenied means it was "
+                "rolled back (check vista.diagnostics.probe_write_permissions). "
+                "Disabled unless the server runs with VISTA_MCP_ALLOW_WRITES=1."
             ),
             inputSchema=AddImovelFotosInput.model_json_schema(),
+        ),
+        Tool(
+            name="vista.imoveis.list_destaques",
+            description=(
+                "List the agency's featured (destaque) listings "
+                "(`/imoveis/destaques`). Rows carry Codigo + CodigoImovel; add "
+                "listing fields such as TituloSite via `fields`. Paged (max "
+                "page_size=50) but Vista reports no total."
+            ),
+            inputSchema=ListDestaquesInput.model_json_schema(),
+        ),
+        Tool(
+            name="vista.imoveis.list_finalidades",
+            description=(
+                "List the live `finalidade` values this tenant uses (e.g. "
+                "['Venda', 'Aluguel']) — `/imoveis/finalidades`."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="vista.imoveis.history",
+            description=(
+                "Property HISTORY (prontuário) for one imóvel code — the "
+                "`prontuarios` relation on /imoveis/detalhes (there is no "
+                "history route; /imoveis/historico is 404). Vista returns the "
+                "whole history at once (hundreds of entries) so `offset`/`limit` "
+                "window it client-side; `total` is the full count. Default "
+                "sub-fields: Data, Hora, Assunto, Pendente, Status, "
+                "CodigoCorretor — `Texto` (free text), `Cliente`, `PROPOSTA` "
+                "are opt-in via `fields` (personal data). Unpublished imóveis "
+                "return a VistaRecordUnpublished typed_error."
+            ),
+            inputSchema=HistoryInput.model_json_schema(),
         ),
     ]
 
