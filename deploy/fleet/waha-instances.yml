@@ -6,9 +6,9 @@
 # Secrets are NOT here: each instance reads WAHA_<NAME>_API_KEY / _HMAC_SECRET / _DASHBOARD_PASSWORD from
 # deploy/fleet/.env.fleet, generated ON the VPS (KB § GUIDES/production-deploy.md § 5a step 7).
 # KB § CONTEXT/INTEGRATIONS/whatsapp.md § "One WAHA per number".
-image: devlikeapro/waha:2026.7.2   # pinned to the running version (2026-10); bump deliberately, fleet-wide
+image: devlikeapro/waha:noweb-2026.9.2   # WAHA tags are <engine>-<version>; verified pullable on the VPS 2026-10-27. Bump deliberately
 platform: linux/amd64
-engine: NOWEB                      # needed for chat list / history backfill (store.enabled)
+engine: NOWEB                      # chat list / history backfill; the store itself is enabled per session by the product's start call
 mem_limit: 512m                    # measured ~208 MB RSS idle on the first instance; headroom for the NOWEB store
 node_heap_mb: 384
 instances:

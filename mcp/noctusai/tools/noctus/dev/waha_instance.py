@@ -89,9 +89,6 @@ def _service(spec: dict, inst: dict) -> str:
       WAHA_DASHBOARD_PASSWORD: ${{{k['dashboard_password']}:?generate {k['dashboard_password']} in .env.fleet on the VPS}}
       WHATSAPP_SWAGGER_USERNAME: admin
       WHATSAPP_SWAGGER_PASSWORD: ${{{k['dashboard_password']}:?generate {k['dashboard_password']} in .env.fleet on the VPS}}
-      WHATSAPP_NOWEB_STORE_ENABLED: "true"
-      WHATSAPP_NOWEB_STORE_FULL_SYNC: "true"
-      WHATSAPP_START_SESSION: {inst.get('session')}
       NODE_OPTIONS: --max-old-space-size={spec['node_heap_mb']}
     expose:
       - "3000"

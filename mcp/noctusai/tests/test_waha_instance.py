@@ -12,7 +12,7 @@ from tools.noctus.dev import waha_instance as wi  # noqa: E402
 from tools.noctus.dev.compliance import check_waha_instances_render_sync  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
-DATA = """image: devlikeapro/waha:2026.7.2
+DATA = """image: devlikeapro/waha:noweb-2026.9.2
 platform: linux/amd64
 engine: NOWEB
 mem_limit: 512m
@@ -44,12 +44,14 @@ class TestRender:
             assert f"${{WAHA_{up}_API_KEY:?" in out and f"${{WAHA_{up}_HMAC_SECRET:?" in out
         assert out.count("expose:") == 2 and "ports:" not in out
         assert "mem_limit: 512m" in out and "healthcheck:" in out and "restart: unless-stopped" in out
-        assert 'WHATSAPP_NOWEB_STORE_ENABLED: "true"' in out
+        # The NOWEB store is a per-session setting the product sends on start; WAHA has no env for it,
+        # and an env-autostarted session would come up without it.
+        assert "NOWEB_STORE" not in out and "START_SESSION" not in out
 
     def test_no_secret_value_is_ever_rendered(self):
         assert "openssl" not in wi.render_compose(wi.parse_instances(DATA))
 
-    @pytest.mark.parametrize("bad", [DATA.replace("2026.7.2", "latest"), DATA.replace("monica", "Bad Name", 1),
+    @pytest.mark.parametrize("bad", [DATA.replace("noweb-2026.9.2", "latest"), DATA.replace("monica", "Bad Name", 1),
                                      DATA + "  - name: monica\n    product: x\n"])
     def test_invalid_declarations_raise(self, bad):
         with pytest.raises(ValueError):
