@@ -326,23 +326,38 @@ async def test_write_tool_surfaces_payload_errors_as_typed(_settings):
     assert out["typed_error"]["error_class"] == "ValueError"
 
 
+@pytest.fixture
+def _fake_client():
+    """Install a `FakeVistaClient` through the tools' DI seam
+    (`_common.configure_client_factory`) — never by patching our own client."""
+    from noctusai_lib.integrations.vista import FakeVistaClient
+    from vista.tools import _common
+
+    def _install(**kwargs):
+        fake = FakeVistaClient(**kwargs)
+        _common.configure_client_factory(lambda: fake)
+        return fake
+
+    yield _install
+    _common.configure_client_factory(None)
+
+
 @pytest.mark.asyncio
-async def test_probe_write_permissions_flags_deviations(_settings, monkeypatch):
+async def test_probe_write_permissions_flags_deviations(_settings, _fake_client):
     """`unexpected` lists only routes whose verdict moved off the baseline —
-    `/imoveis/fotos` turning `permitted` is how a Vista grant shows up."""
-    from noctusai_lib.integrations.vista import VistaClient
+    since 2026-10-26 every route is `permitted`, so a `denied` row is how a
+    grant ROLLBACK shows up."""
+    from noctusai_lib.integrations.vista import VistaPermissionDenied
     from vista.tools import all_handlers
 
     _settings(None)
-
-    async def fake_probe(self, endpoint):
-        return {"endpoint": endpoint, "verdict": "permitted", "http_status": 401}
-
-    monkeypatch.setattr(VistaClient, "probe_write_permission", fake_probe)
+    _fake_client(
+        errors={"/imoveis/fotos": VistaPermissionDenied(401, "{}", "/imoveis/fotos")}
+    )
     out = await all_handlers()["vista.diagnostics.probe_write_permissions"]({})
     assert out["configured"] is True
     assert out["writes_enabled"] is False
-    assert out["unexpected"] == ["/imoveis/fotos", "/clientes/anexos"]
+    assert out["unexpected"] == ["/imoveis/fotos"]
 
 
 @pytest.mark.asyncio
@@ -354,7 +369,8 @@ async def test_known_endpoints_lists_write_routes_with_their_tools():
     assert by_path["/lead"]["tool"] == "vista.leads.submit"
     assert by_path["/lead"]["write_permission"] == "permitted"
     assert by_path["/clientes/anexos"]["tool"] is None
+    assert by_path["/clientes/anexos"]["write_permission"] == "permitted"
     assert by_path["/imoveis/fotos"]["tool"] == "vista.imoveis.add_photos"
-    assert by_path["/imoveis/fotos"]["write_permission"] == "denied"
+    assert by_path["/imoveis/fotos"]["write_permission"] == "permitted"
     # /imoveis/fotos is already a read-baseline row; enriched, not duplicated
     assert [r["path"] for r in out["endpoints"]].count("/imoveis/fotos") == 1

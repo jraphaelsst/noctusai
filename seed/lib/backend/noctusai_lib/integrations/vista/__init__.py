@@ -76,8 +76,14 @@ from .client import (
     VistaRecordUnpublished,
     VistaTimeout,
     VistaUpstreamError,
+    VISTA_LISTARCAMPOS_FAMILIES,
+    extract_corretores_items,
     extract_items,
+    extract_relation,
     redact_api_key,
+    unwrap_keyed_record,
+    validate_listarcampos_family,
+    validate_negocios_scope,
 )
 from .factory import make_vista_client
 from .fake import FakeVistaClient
@@ -89,6 +95,17 @@ from .normalizers import (
     vista_imovel_detalhes_to_showcase,
     vista_imovel_to_showcase,
     vista_usuario_to_showcase,
+)
+from .projections import (
+    CLIENTE_IDENTITY_PII_FIELDS,
+    DEFAULT_AGENDA_FIELDS,
+    DEFAULT_CONTRATO_FIELDS,
+    DEFAULT_HISTORICO_CLIENTE_FIELDS,
+    DEFAULT_NEGOCIO_FIELDS,
+    DEFAULT_PRONTUARIO_FIELDS,
+    DEFAULT_PROPRIETARIO_FIELDS,
+    project_contrato,
+    resolve_fields,
 )
 from .protocol import VistaCRMAdapter
 from .real import VistaNotConfigured, VistaRESTAdapter
@@ -112,6 +129,25 @@ __all__ = [
     "make_vista_client",
     "VistaCallResult",
     "extract_items",
+    # `/corretores/listar`'s `{items, meta}` envelope (2026-10-26) — mapped
+    # onto the same {total, paginas, pagina, quantidade} vocabulary.
+    "extract_corretores_items",
+    "extract_relation",
+    "unwrap_keyed_record",
+    "validate_negocios_scope",
+    "validate_listarcampos_family",
+    "VISTA_LISTARCAMPOS_FAMILIES",
+    # LGPD-minimal default projections for the families opened 2026-10-26
+    # (owners, deals, agenda, contracts, history relations).
+    "DEFAULT_PROPRIETARIO_FIELDS",
+    "DEFAULT_NEGOCIO_FIELDS",
+    "DEFAULT_AGENDA_FIELDS",
+    "DEFAULT_PRONTUARIO_FIELDS",
+    "DEFAULT_HISTORICO_CLIENTE_FIELDS",
+    "DEFAULT_CONTRATO_FIELDS",
+    "CLIENTE_IDENTITY_PII_FIELDS",
+    "resolve_fields",
+    "project_contrato",
     # Credential hygiene — Vista echoes the API key in 4xx bodies + in the
     # URL httpx renders on transport errors (vista.md § 3).
     "redact_api_key",

@@ -333,8 +333,10 @@ def test_baseline_records_non_200_expectations() -> None:
     # validation, so this was 401; a bare GET now reaches the real
     # missing-`cliente` 400 underneath it.
     assert expected["/clientes/detalhes"] == 400
-    # NOT included in the 2026-08-21 grant — still the one open Tier-1 ask.
-    assert expected["/corretores/listar"] == 401
+    # Opened by the 2026-10-26 "full access" grant; a 401 is now a ROLLBACK.
+    assert expected["/corretores/listar"] == 200
+    # Health route joined the baseline with the same grant re-probe.
+    assert expected["/status"] == 200
     # Write-only upload route — GET is 405, NOT the 404 we used to claim.
     assert expected["/imoveis/fotos"] == 405
 
@@ -346,8 +348,10 @@ def test_baseline_distinguishes_gated_from_absent() -> None:
     # re-probe in a fresh process, per project § 7.0 — never on their word).
     assert status["/clientes/listar"] == "live_probed"
     assert status["/clientes/detalhes"] == "live_probed"
-    # corretores was asked for in the SAME request and did NOT come back.
-    assert status["/corretores/listar"] == "permission_gated"
+    # corretores was the open Tier-1 ask until the 2026-10-26 grant.
+    assert status["/corretores/listar"] == "live_probed"
+    # Nothing in the baseline is permission-gated any more on …644c.
+    assert "permission_gated" not in status.values()
     assert status["/imoveis/fotos"] == "write_only"
     assert status["/imoveis/listar"] == "live_probed"
 
@@ -403,14 +407,19 @@ async def test_listar_clientes_respects_the_server_side_50_cap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_listar_corretores_forwards_pagination_to_the_wire() -> None:
+async def test_listar_corretores_pages_on_top_level_page_and_limit() -> None:
+    """Since 2026-10-26 `/corretores/listar` pages on TOP-LEVEL `page`/`limit`
+    and ignores `pesquisa` entirely — sending `paginacao` there would be a
+    parameter the wire silently discards (always page 1)."""
     seen, transport = _capture()
     async with httpx.AsyncClient(transport=transport) as http:
         client = VistaClient("https://t.example.com", SECRET, http_client=http)
-        await client.listar_corretores(fields=["Codigo"], page=2, page_size=10)
+        await client.listar_corretores(page=2, page_size=10)
 
-    pesquisa = json.loads(seen[0].url.params["pesquisa"])
-    assert pesquisa["paginacao"] == {"pagina": 2, "quantidade": 10}
+    params = seen[0].url.params
+    assert params["page"] == "2"
+    assert params["limit"] == "10"
+    assert "pesquisa" not in params
 
 
 @pytest.mark.asyncio
@@ -504,6 +513,20 @@ def test_fake_client_and_real_client_signatures_agree() -> None:
         "listar_clientes",
         "detalhes_cliente",
         "listar_corretores",
+        "listar_negocios",
+        "detalhes_negocio",
+        "listar_pipes",
+        "listar_agenda",
+        "detalhes_agenda",
+        "listar_proprietarios",
+        "detalhes_proprietario",
+        "listar_contratos",
+        "listar_destaques_imoveis",
+        "listar_finalidades_imoveis",
+        "historico_imovel",
+        "historico_cliente",
+        "listar_conteudo_clientes",
+        "listar_campos",
         "cadastrar_fotos_imovel",
         "enviar_lead",
         "probe_write_permission",

@@ -12,7 +12,7 @@ tighten as call sites stabilize.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -99,11 +99,123 @@ class GetClienteOutput(BaseModel):
 
 
 class ListCorretoresOutput(BaseModel):
-    """Same gating as ListClientesOutput."""
-    items: list[dict] = Field(default_factory=list, description="Raw Vista corretor rows. See vista.md § 4.5 — /usuarios/listar already returns the broker roster ungated, so this family is largely substitutable.")
-    pagination: dict = Field(default_factory=dict, description="{total, paginas, pagina, quantidade} — empty while the family is 401-gated.")
-    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} when the tenant key lacks the grant.")
-    probe_status: str = Field("permission_gated", description="One of live_probed | permission_gated | write_only | absent.")
+    """Broker roster — same list shape as every other family."""
+    items: list[dict] = Field(default_factory=list, description="Raw Vista corretor rows. Since the 2026-10-26 grant Vista returns ONLY {Codigo, Nome} here regardless of `fields`; richer broker data lives in `vista.usuarios.list` (Setor='Corretores').")
+    pagination: dict = Field(default_factory=dict, description="{total, paginas, pagina, quantidade} — mapped from Vista's new `meta` {totalItems, totalPages, currentPage, itemsPerPage}.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} on failure. A VistaPermissionDenied (401) now means the 2026-10-26 grant was ROLLED BACK.")
+    probe_status: str = Field("live_probed", description="One of live_probed | permission_gated | write_only | absent.")
+
+
+# ─── Families opened by the 2026-10-26 grant (raw rows, LGPD-minimal) ─────
+
+_PAGE = Field(1, ge=1, description="Page number.")
+_PAGE_SIZE = Field(50, ge=1, le=50, description="Page size (Vista rejects quantidade > 50 with a 400).")
+
+
+class RawListOutput(BaseModel):
+    """Generic list result: raw Vista rows + the shared pagination vocabulary."""
+    items: list[dict] = Field(default_factory=list, description="Raw Vista rows, projected to the requested (or minimal default) fields.")
+    pagination: dict = Field(default_factory=dict, description="{total, paginas, pagina, quantidade} when Vista reports them; empty for routes that do not page.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} on failure — key-redacted at the client boundary. ValueError = the request was refused before any call.")
+    probe_status: str = Field("live_probed", description="One of live_probed | permission_gated | write_only | absent.")
+
+
+class RawGetOutput(BaseModel):
+    """Generic single-record result."""
+    item: Optional[dict] = Field(None, description="The raw Vista record, or null on failure / not found.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} on failure.")
+    probe_status: str = Field("live_probed", description="One of live_probed | permission_gated | write_only | absent.")
+
+
+class ListNegociosOutput(RawListOutput):
+    valor_total: Optional[str] = Field(None, description="Vista's `valorTotal` sibling — the sum of ValorNegocio over the WHOLE scoped result (not just this page).")
+
+
+class ListNegociosInput(BaseModel):
+    codigo_pipe: Optional[str] = Field(None, description="Pipeline code (e.g. '1', '2'). Exactly ONE of codigo_pipe / codigo_cliente is required — Vista answers an empty body when both are sent.")
+    codigo_cliente: Optional[str] = Field(None, description="Client code — list that client's deals. Exactly ONE of codigo_pipe / codigo_cliente.")
+    fields: Optional[list[str]] = Field(None, description="Deal fields to return. Default is a minimal set WITHOUT the client's name/photo (NomeCliente, FotoCliente are opt-in — personal data). Unknown names → 400.")
+    order: Optional[dict[str, str]] = Field(None, description="Vista order, e.g. {\"Codigo\": \"desc\"}.")
+    page: int = _PAGE
+    page_size: int = _PAGE_SIZE
+
+
+class GetNegocioInput(BaseModel):
+    codigo: str = Field(..., description="Deal code, sent as the top-level `codigo_negocio=` param.")
+    fields: Optional[list[str]] = Field(None, description="Fields to return; default = the minimal deal projection.")
+
+
+class ListPipesInput(BaseModel):
+    empresa: str = Field("1", description="Agency (Empresa) code — mandatory for Vista; `1` on oneconsu-rest (see vista.agencias.list).")
+
+
+class ListAgendaInput(BaseModel):
+    fields: Optional[list[str]] = Field(None, description="Activity fields (catalog: vista.diagnostics.list_fields family='agenda'). Default omits NomeCliente / Texto / Local — opt in explicitly (personal data / free text).")
+    filter: Optional[dict[str, Any]] = Field(None, description="Vista filter, e.g. {\"DataHora\": [\">=\", \"2026-10-01\"]} (proven live 2026-10-27).")
+    order: Optional[dict[str, str]] = Field(None, description="Vista order, e.g. {\"DataHora\": \"desc\"}.")
+    page: int = _PAGE
+    page_size: int = _PAGE_SIZE
+
+
+class GetAgendaInput(BaseModel):
+    codigo: str = Field(..., description="Activity code, sent as the top-level `codigo=` param.")
+    fields: Optional[list[str]] = Field(None, description="Fields to return; default = the minimal agenda projection. NB: `TipoAtividade` is a 500 on this route.")
+
+
+class ListProprietariosInput(BaseModel):
+    fields: Optional[list[str]] = Field(None, description="🔴 LGPD: default is ONLY {Codigo, Nome}. Owner rows carry CPFCNPJ, RG, bank account, income and spouse data — request such a field ONLY by naming it here, and only when the task needs it. Catalog: vista.diagnostics.list_fields family='imoveis' → `proprietarios` relation.")
+    page: int = _PAGE
+    page_size: int = _PAGE_SIZE
+
+
+class GetProprietarioInput(BaseModel):
+    codigo: str = Field(..., description="Owner code, sent as the top-level `codigo=` param.")
+    fields: Optional[list[str]] = Field(None, description="🔴 LGPD: default is ONLY {Codigo, Nome}; any identity/bank field must be named explicitly.")
+
+
+class ListContratosInput(BaseModel):
+    fields: Optional[list[str]] = Field(None, description="Keys to keep (UPPERCASE, e.g. CODIGO, IMOVEL, VLR_VENDA). Vista ignores projections on this route, so this is applied CLIENT-SIDE. Default drops OBS and the relation objects Clientes / Proprietarios / Corretores / Agencias / Anexos (personal data) — name them to include.")
+
+
+class ListDestaquesInput(BaseModel):
+    fields: Optional[list[str]] = Field(None, description="Listing fields, e.g. ['Codigo', 'TituloSite']. Default ['Codigo']; `CodigoImovel` always comes back (and is a 400 if requested).")
+    page: int = _PAGE
+    page_size: int = _PAGE_SIZE
+
+
+class FinalidadesOutput(BaseModel):
+    finalidades: list[str] = Field(default_factory=list, description="Live finalidade values, e.g. ['Venda', 'Aluguel'].")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} on failure.")
+    probe_status: str = Field("live_probed", description="One of live_probed | permission_gated | write_only | absent.")
+
+
+class HistoryInput(BaseModel):
+    codigo: str = Field(..., description="Imóvel code (vista.imoveis.history) or client code (vista.clientes.history).")
+    fields: Optional[list[str]] = Field(None, description="History-entry sub-fields (catalog: the `prontuarios` / `historicos` relation in vista.diagnostics.list_fields). Default omits `Texto` and client/offer details — opt in explicitly. `Codigo` is NOT a valid sub-field.")
+    offset: int = Field(0, ge=0, description="Client-side window start — Vista returns the WHOLE history at once (hundreds of entries).")
+    limit: int = Field(50, ge=1, le=500, description="Client-side window size.")
+
+
+class HistoryOutput(BaseModel):
+    items: list[dict] = Field(default_factory=list, description="History entries in Vista's order, windowed by offset/limit.")
+    total: int = Field(0, description="Total entries Vista returned before windowing.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} on failure.")
+    probe_status: str = Field("live_probed", description="One of live_probed | permission_gated | write_only | absent.")
+
+
+class ListClienteFiltersInput(BaseModel):
+    fields: list[str] = Field(default_factory=lambda: ["Status", "Interesse", "VeiculoCaptacao"], min_length=1, description="Client fields to enumerate distinct values for (`Codigo` is a 400).")
+
+
+class ListFieldsInput(BaseModel):
+    family: Literal["imoveis", "clientes", "usuarios", "agencias", "agenda"] = Field(..., description="Family whose `/<family>/listarcampos` catalog to read. Owner fields are the `proprietarios` relation of 'imoveis'; there is no catalog route for negocios / contratos / corretores / proprietarios / pipes.")
+
+
+class ListFieldsOutput(BaseModel):
+    family: str = Field("", description="The family queried.")
+    fields: dict[str, list[str]] = Field(default_factory=dict, description="{\"<family>\": [field...], \"<Relation>\": [sub-field...]} — the tenant's REAL field names; use them for any `fields` argument and for relation sub-fields.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} on failure.")
+    probe_status: str = Field("live_probed", description="One of live_probed | permission_gated | write_only | absent.")
 
 
 # ─── ✍️ Writes (vista.md § 4.7) ─────────────────────────────────────────────
@@ -158,7 +270,7 @@ class CalibratedFieldsOutput(BaseModel):
     usuarios: list[str] = Field(default_factory=list)
     agencias: list[str] = Field(default_factory=list)
     clientes: list[str] = Field(default_factory=list, description="🔒 Gated — stays empty while the tenant answers 401 (a permission denial is deliberately not cached).")
-    corretores: list[str] = Field(default_factory=list, description="🔒 Gated — stays empty while the tenant answers 401.")
+    corretores: list[str] = Field(default_factory=list, description="Not calibrated since 2026-10-27 — `/corretores/listar` ignores `fields` and always returns Codigo + Nome. Stays empty.")
     rejected: dict[str, list[str]] = Field(default_factory=dict, description="Per-endpoint list of fields probed and rejected during calibration.")
     calibrated_at: Optional[str] = Field(None, description="ISO timestamp of last calibration run; null if no probe has run.")
 
@@ -177,6 +289,24 @@ __all__ = [
     "GetClienteOutput",
     "ListCorretoresInput",
     "ListCorretoresOutput",
+    "RawListOutput",
+    "RawGetOutput",
+    "ListNegociosInput",
+    "ListNegociosOutput",
+    "GetNegocioInput",
+    "ListPipesInput",
+    "ListAgendaInput",
+    "GetAgendaInput",
+    "ListProprietariosInput",
+    "GetProprietarioInput",
+    "ListContratosInput",
+    "ListDestaquesInput",
+    "FinalidadesOutput",
+    "HistoryInput",
+    "HistoryOutput",
+    "ListClienteFiltersInput",
+    "ListFieldsInput",
+    "ListFieldsOutput",
     "AddImovelFotosInput",
     "SubmitLeadInput",
     "WriteOutput",

@@ -1,79 +1,50 @@
-"""vista.corretores.* tools — 🔒 permission-gated on this tenant.
+"""vista.corretores.* tools — ✅ GRANTED on this tenant since 2026-10-26.
 
-Same gating story as clientes (`KB § INTEGRATIONS/vista.md § 4.5`):
-`/corretores/listar` answers **401** — the route exists, our key lacks the
-per-method grant. `/corretores/detalhes` and `/corretores/listarConteudo`
-answer **404** (re-probed 2026-08-19) and are genuinely absent, so this
-module exposes exactly one tool.
+`/corretores/listar` answered **401** until Vista's "full access" grant on key
+`…644c` (live re-probe 2026-10-26/27, not the vendor's word). It now answers
+200 — 24 brokers — with an envelope NO other family uses::
 
-**Worth knowing before you reach for this family:** `/usuarios/listar`
-(§ 4.3, ungated ✅) already returns the broker roster with
-`Setor: "Corretores"`, and `/imoveis/listar` embeds the listing broker's
-name + email per property. So the practical gap this 401 leaves is small —
-`vista.usuarios.list` is the working substitute, and the tool description
-says so, because a host LLM that hits the 401 should be routed to the
-substitute rather than left blocked.
+    {"items": [{"Codigo", "Nome"}], "meta": {currentPage, totalItems,
+     itemCount, itemsPerPage, totalPages}}
+
+paged by TOP-LEVEL `page` + `limit`; `pesquisa`/`fields` are ignored. The
+tool used to feed this to `extract_items`, which read `meta` as a row and
+dropped every broker — `extract_corretores_items` maps it onto the shared
+`{total, paginas, pagina, quantidade}` vocabulary instead.
+
+`/corretores/detalhes` and `/corretores/listarConteudo` stay **404**, so this
+module still exposes exactly one tool. Richer broker data (e-mail, Setor,
+photo) is `vista.usuarios.list`; the per-client broker record
+(`CorretorCliente` relation on clientes) is identity PII (CPF, RG, CNH) and
+is deliberately NOT surfaced by any default projection.
 """
 from __future__ import annotations
 
 from mcp.server import Server
 from mcp.types import Tool
 
-from noctusai_lib.integrations.vista import (
-    VistaConfigError,
-    VistaFieldNotAvailable,
-    VistaNotFound,
-    VistaPermissionDenied,
-    VistaTimeout,
-    VistaUpstreamError,
-    calibrator,
-    extract_items,
-)
+from noctusai_lib.integrations.vista import extract_corretores_items
 
 from ..types import ListCorretoresInput, ListCorretoresOutput
-from ._common import client as _client, typed_error as _typed_error
-
-_HANDLED = (
-    VistaConfigError,
-    VistaPermissionDenied,
-    VistaNotFound,
-    VistaFieldNotAvailable,
-    VistaTimeout,
-    VistaUpstreamError,
+from ._common import (
+    HANDLED_READ_ERRORS,
+    client as _client,
+    probe_status_for,
+    typed_error as _typed_error,
 )
-
-
-def _probe_status(e: Exception) -> str:
-    if isinstance(e, VistaPermissionDenied):
-        return "permission_gated"
-    if isinstance(e, VistaNotFound):
-        return "absent"
-    return "live_probed"
 
 
 async def list_corretores(args: dict) -> dict:
     inp = ListCorretoresInput(**args)
-    client = _client()
     try:
-        fields = await calibrator.get_corretor_fields(client)
-        result = await client.listar_corretores(
-            fields=fields, page=inp.page, page_size=inp.page_size
-        )
-    except _HANDLED as e:
+        result = await _client().listar_corretores(page=inp.page, page_size=inp.page_size)
+    except HANDLED_READ_ERRORS as e:
         return ListCorretoresOutput(
-            items=[],
-            pagination={},
-            typed_error=_typed_error(e),
-            probe_status=_probe_status(e),
+            typed_error=_typed_error(e), probe_status=probe_status_for(e)
         ).model_dump()
 
-    raw_items, pagination = extract_items(result.data)
-    return ListCorretoresOutput(
-        items=raw_items,
-        pagination=pagination,
-        typed_error=None,
-        probe_status="live_probed",
-    ).model_dump()
+    items, pagination = extract_corretores_items(result.data)
+    return ListCorretoresOutput(items=items, pagination=pagination).model_dump()
 
 
 HANDLERS = {"vista.corretores.list": list_corretores}
@@ -88,12 +59,14 @@ def tool_descriptors() -> list[Tool]:
         Tool(
             name="vista.corretores.list",
             description=(
-                "List Vista brokers. 🔒 PERMISSION-GATED: this tenant returns "
-                "401, in which case the response carries a typed_error, an "
-                "empty items list and probe_status='permission_gated'. "
-                "SUBSTITUTE: `vista.usuarios.list` is ungated and already "
-                "returns the broker roster (Setor='Corretores') — prefer it "
-                "over waiting on this grant. Paginated (max page_size=50)."
+                "List Vista brokers. ✅ GRANTED on this tenant 2026-10-26 (24 "
+                "brokers). Rows carry ONLY {Codigo, Nome} — Vista ignores field "
+                "selection on this route; for e-mail/Setor/photo use "
+                "`vista.usuarios.list`. Paginated (max page_size=50); "
+                "`pagination` uses the same {total, paginas, pagina, "
+                "quantidade} keys as every other list tool. A typed_error with "
+                "probe_status='permission_gated' means the grant was rolled "
+                "back — ask Vista, do not retry."
             ),
             inputSchema=ListCorretoresInput.model_json_schema(),
         ),

@@ -8,16 +8,18 @@ client deferred-config rule (see settings.py + client.py) means the
 server starts cleanly even with no key — tool calls then return
 typed `VistaConfigError`.
 
-Tool surface (Phase 1 — see KB § INTEGRATIONS/vista.md § 7):
-- vista.imoveis.{list, get, list_filters}    — live-probed
-- vista.usuarios.list                         — live-probed
-- vista.agencias.list                         — live-probed
-- vista.clientes.{list, get}                  — granted 2026-08-21 (typed_error if rolled back)
-- vista.corretores.list                       — permission-gated (returns typed_error on 401)
-- vista.imoveis.add_photos                    — ✍️ write; key …644c still DENIED (2026-09-16)
-- vista.leads.submit                          — ✍️ write; key …644c permitted
+Tool surface (KB § INTEGRATIONS/vista.md § 7; re-probed 2026-10-26/27 after
+Vista's "full access" grant on key …644c — nothing is gated any more):
+- vista.imoveis.{list, get, list_filters, list_destaques, list_finalidades,
+  history}
+- vista.usuarios.list · vista.agencias.list · vista.corretores.list
+- vista.clientes.{list, get, history, list_filters}
+- vista.negocios.{list, get} · vista.pipes.list · vista.agenda.{list, get}
+- vista.proprietarios.{list, get} · vista.contratos.list   — 🔴 LGPD-minimal
+  default projections; identity fields only when named in `fields`
+- vista.imoveis.add_photos · vista.leads.submit            — ✍️ writes
 - vista.diagnostics.{probe, probe_write_permissions, list_known_endpoints,
-  show_calibrated_fields}
+  show_calibrated_fields, list_fields}
 
 Both write tools refuse unless VISTA_MCP_ALLOW_WRITES=1 — they mutate the
 agency's live CRM.
