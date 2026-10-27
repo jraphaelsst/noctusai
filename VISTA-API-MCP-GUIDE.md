@@ -608,7 +608,10 @@ Re-probed live **2026-08-21** (every row below measured, not inferred):
 > `accepted = requested − rejected`:
 > `Codigo · Nome · Celular · DataCadastro · DataNascimento · Corretor ·
 > Status · Profissao · EstadoCivil · Sexo · Interesse`.
-> **⚠️ LGPD:** no CPF, no address, no email on this tenant — but
+> **🔴 RETRACTED 2026-10-27:** the "no CPF/address/email" line below came from
+> probing guessed names. `CPFCNPJ`, `RG`, `EmailResidencial`, `EnderecoResidencial`
+> ARE readable — always take field names from `/clientes/listarcampos`.
+> ~~**⚠️ LGPD:**~~ *(superseded)* no CPF, no address, no email on this tenant — but
 > `DataNascimento`/`Sexo`/`EstadoCivil`/`Profissao`/`Celular` are returned.
 > Do the intake against THIS list. **No `DataAtualizacao` ⇒ no delta sync**:
 > a full refresh is 860 requests at the 50-row cap.

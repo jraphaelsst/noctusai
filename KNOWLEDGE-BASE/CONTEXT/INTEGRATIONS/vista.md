@@ -8,7 +8,7 @@
 >    `/imoveis` + `/clientes` only; other families appear in the navigation but
 >    have no spec).
 > 2. **Live probe results** against the user's tenant
->    `oneconsu-rest.vistahost.com.br` — most recent re-probe 2026-05-03
+>    `oneconsu-rest.vistahost.com.br` — most recent re-probe 2026-10-26/27
 >    captured in the §8 change log.
 > 3. **Adapter behavior** as implemented in
 >    `seed/lib/backend/noctusai_lib/integrations/vista/` (canonical platform
@@ -771,6 +771,17 @@ but different: **no CPF, no address, no email**, yet `DataNascimento`, `Sexo`,
 demographic profile, and a data-category intake written against the old
 assumption would have classified the wrong categories entirely.
 
+> 🔴 **RETRACTED 2026-10-27 — "no CPF, no address, no email" is FALSE.** The
+> 2026-08-21 probe asked for the guessed names `CPF` / `Email` / `Endereco`,
+> which Vista rejects. The real names, read from `/clientes/listarcampos`, are
+> `CPFCNPJ`, `RG`, `EmailResidencial`, `EnderecoResidencial` (+ bank fields) —
+> re-probed live 2026-10-27 on `…644c`: **all accepted (200)**. This is the
+> 5th instance of the guessed-name trap (§ 4.2 correction block): a rejected
+> *guessed* field name proves nothing. Clients DO carry identity PII; the seed's
+> default clientes projection and `CANDIDATE_CLIENTE_FIELDS` were stripped of
+> it (identity PII only by explicit `fields`), and `LGPD-WARNINGS.md` carries
+> the corrected intake.
+
 #### The bogus-code probe — verify a DETAIL field set with zero data exposure
 
 `/clientes/detalhes` validates `fields` **before** it resolves the record. That
@@ -1207,9 +1218,14 @@ universal and a wrong one yields `400 "Origem X e campo Codigo"`. Tool:
 - `GET /negocios/listar` — **top-level** `codigo_pipe=` or `codigo_cliente=` (inside
   `pesquisa` → 400). Pipe 1 ≈ 8,700 deals, pipe 2 ≈ 1,991. `showtotal=1` →
   `total/paginas/pagina/quantidade` (pipe 1 = 8,712, 10 per page).
-  `pesquisa` combined with `paginacao` → **500**; top-level `pagina=` ignored —
-  the paging contract is not fully pinned yet. `fields` IS validated (unknown →
-  400 naming it). Row keys: FotoCliente, Codigo, NomeNegocio, Status, DataInicial,
+  **Paging (settled 2026-10-27):** only `pesquisa.paginacao` **together with
+  `fields`** pages — `paginacao` without `fields` → **500**; top-level
+  `pagina=` is ignored; `quantidade` max **50** (above → 400). The response
+  also carries a `valorTotal` beside the rows. `codigo_pipe` XOR
+  `codigo_cliente` is enforced client-side before any request. `filter` is
+  unproven (`Status:"Aberto"` → empty) and NOT exposed. `fields` IS validated
+  (unknown → 400 naming it); `TempoDaEtapaAtualDoNegocioDias` appears in rows
+  but is rejected as a requested field. Row keys: FotoCliente, Codigo, NomeNegocio, Status, DataInicial,
   DataFinal, ValorNegocio, PrevisaoFechamento, VeiculoCaptacao, CodigoMotivoPerda,
   MotivoPerda, ObservacaoPerda. Tools `vista.negocios.list`/`.get`.
 - `GET /negocios/detalhes?codigo_negocio=N` (top-level) → 200 incl. `CodigoPipe`.
@@ -1439,11 +1455,15 @@ VISTA_ENDPOINT_BASELINE = (
     ("/imoveis/listarConteudo",400, "live_probed",      "bare GET needs `pesquisa`"),
     ("/usuarios/listar",       200, "live_probed",      "reachable"),
     ("/agencias/listar",       200, "live_probed",      "reachable"),
-    ("/clientes/listar",       401, "permission_gated", "§ 4.2"),
-    ("/clientes/detalhes",     401, "permission_gated", "§ 4.2; 401 precedes the missing-param 400"),
-    ("/corretores/listar",     401, "permission_gated", "§ 4.5"),
+    ("/clientes/listar",       200, "live_probed",      "granted 2026-08-21"),
+    ("/clientes/detalhes",     400, "live_probed",      "granted 2026-08-21; bare GET → missing-`cliente` 400"),
+    ("/corretores/listar",     200, "live_probed",      "granted 2026-10-26; {items, meta} envelope"),
     ("/imoveis/fotos",         405, "write_only",       "GET not allowed"),
+    ("/status",                200, "live_probed",      "health route, found 2026-10-26"),
 )
+# Excerpt — the code is canonical (client.py). Write verdicts for …644c
+# (VISTA_WRITE_PERMISSION_BASELINE, 2026-10-26): /imoveis/fotos, /lead,
+# /clientes/anexos → all `permitted`.
 ```
 
 > **`/clientes/detalhes` joined the baseline 2026-08-19.** It is the second
@@ -1762,8 +1782,13 @@ Live probe 2026-10-26/27, non-mutating (GETs + empty POSTs):
 - **Code (parallel slice):** `vista.corretores.list` envelope fix, 12 tool
   additions (§ 4.8), baselines re-graded. Stale before this probe:
   `VISTA_ENDPOINT_BASELINE`, `VISTA_WRITE_PERMISSION_BASELINE`, `_UNPROBED_KNOWN`.
-- **Open:** `/negocios/listar` paging contract; `/contratos/listar` filter 500;
-  `/vendas` 500; `/pipes/listar` empty with `Empresa=1`.
+- **Open:** `/contratos/listar` filter 500; `/vendas` 500; `/pipes/listar`
+  empty with `filter.Empresa=1`; negocios `filter` unproven; `/agenda/detalhes`
+  500 when `TipoAtividade` is requested; client `historicos` drops `Data`.
+  (`/negocios` paging was settled 2026-10-27 — § 4.8.)
+- **🔴 Client identity PII correction (2026-10-27):** `CPFCNPJ`/`RG`/
+  `EmailResidencial`/`EnderecoResidencial` ARE readable on `/clientes` — the
+  2026-08-21 "no CPF" finding probed guessed names (§ 4.2 retraction).
 
 ### 2026-09-16 — Vista's "grants resolved" NOT verified + write surface built
 
@@ -1815,7 +1840,8 @@ Vista replied that they had re-applied the endpoint permissions on key
   established from 400 error messages **without reading any client record**.
   The old guess was wrong in both directions; the seven omissions were the
   dangerous half, because calibration narrows and never widens (§ 4.2).
-- **LGPD categories corrected** — no CPF/address/email on this tenant, but
+- **LGPD categories corrected** — *(🔴 the "no CPF/address/email" half was
+  RETRACTED 2026-10-27: guessed field names; see § 4.2)* — no CPF/address/email on this tenant, but
   `DataNascimento`/`Sexo`/`EstadoCivil`/`Profissao`/`Celular` are returned.
   The intake must be re-done against the real list.
 - **Delta sync solved for `/imoveis`** (§ 2) — `filter` on `DataAtualizacao`
