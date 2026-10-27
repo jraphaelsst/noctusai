@@ -165,6 +165,16 @@ export interface AtivoResumo {
   corretores?: { nome?: string; email?: string; codigo?: string }[];
 }
 
+export type MotivoLado = "origem" | "destino" | "ambos";
+
+/** One entry of the backend-owned rejection vocabulary
+ *  (`GET /api/permutas/motivos-rejeicao`) — never hardcoded here. */
+export interface MotivoRejeicao {
+  codigo: string;
+  rotulo: string;
+  exige_detalhe: boolean;
+}
+
 export interface PermutaMatch {
   id: string;
   ativo_origem_id: string;
@@ -186,6 +196,11 @@ export interface PermutaMatch {
   is_bilateral: boolean;
   etapa: Etapa;
   observacoes: string;
+  /** Why the broker rejected the pair (tuning data for the scorer). Only ever
+   *  set while `etapa === "rejeitado"`; legacy rejected rows have none. */
+  motivo_rejeicao?: string | null;
+  motivo_rejeicao_detalhe?: string | null;
+  motivo_lado?: MotivoLado | null;
   origem: "motor" | "permutas_legacy" | "manual";
   created_at: string;
   decidido_em: string | null;
@@ -351,26 +366,62 @@ export function useGerarEmbeddings() {
   });
 }
 
+export interface MoverEtapaInput {
+  matchId: string;
+  etapa: Etapa;
+  observacoes?: string;
+  motivo_rejeicao?: string;
+  motivo_rejeicao_detalhe?: string;
+  motivo_lado?: MotivoLado;
+}
+
+/** The rejection vocabulary. Lives only in the backend; it changes rarely. */
+export function useMotivosRejeicao() {
+  return useQuery({
+    queryKey: [...PERMUTAS_KEY, "motivos-rejeicao"],
+    queryFn: async () =>
+      (await api.get<{ items: MotivoRejeicao[] }>(`${BASE}/motivos-rejeicao`)).items,
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
 export function useMoverEtapa() {
-  return useCacheWriteMutation<
-    PermutaMatch,
-    { matchId: string; etapa: Etapa; observacoes?: string }
-  >({
-    mutationFn: ({ matchId, etapa, observacoes }) =>
+  return useCacheWriteMutation<PermutaMatch, MoverEtapaInput>({
+    mutationFn: ({ matchId, etapa, observacoes, motivo_rejeicao, motivo_rejeicao_detalhe, motivo_lado }) =>
       api.patch<PermutaMatch>(`${BASE}/matches/${matchId}`, {
         etapa,
         ...(observacoes !== undefined ? { observacoes } : {}),
+        ...(motivo_rejeicao !== undefined ? { motivo_rejeicao } : {}),
+        ...(motivo_rejeicao_detalhe !== undefined ? { motivo_rejeicao_detalhe } : {}),
+        ...(motivo_lado !== undefined ? { motivo_lado } : {}),
       }),
     // The stage (and note) is what the user chose; membership of stage-filtered lists converges on settle.
-    targets: ({ matchId, etapa, observacoes }) => [
-      {
-        queryKey: [...PERMUTAS_KEY, "matches"],
-        match: "prefix",
-        optimistic: (old: PermutaMatch[] | undefined) =>
-          listOps.patch(old, matchId, { etapa, ...(observacoes !== undefined ? { observacoes } : {}) }),
-        commit: (old: PermutaMatch[] | undefined, saved) => listOps.patch(old, matchId, saved),
-      },
-    ],
+    // The motivo fields belong to `rejeitado` only: any other stage nulls them (the server clears them too),
+    // so a card moved out of "rejeitado" never shows a stale reason.
+    targets: ({ matchId, etapa, observacoes, motivo_rejeicao, motivo_rejeicao_detalhe, motivo_lado }) => {
+      const motivo =
+        etapa === "rejeitado"
+          ? {
+              motivo_rejeicao: motivo_rejeicao ?? null,
+              motivo_rejeicao_detalhe: motivo_rejeicao_detalhe ?? null,
+              motivo_lado: motivo_lado ?? null,
+            }
+          : { motivo_rejeicao: null, motivo_rejeicao_detalhe: null, motivo_lado: null };
+      return [
+        {
+          queryKey: [...PERMUTAS_KEY, "matches"],
+          match: "prefix" as const,
+          optimistic: (old: PermutaMatch[] | undefined) =>
+            listOps.patch(old, matchId, {
+              etapa,
+              ...(observacoes !== undefined ? { observacoes } : {}),
+              ...motivo,
+            }),
+          commit: (old: PermutaMatch[] | undefined, saved: PermutaMatch) =>
+            listOps.patch(old, matchId, { ...motivo, ...saved }),
+        },
+      ];
+    },
     invalidate: [PERMUTAS_KEY],
   });
 }

@@ -44,7 +44,9 @@ import {
   type PermutaMatch,
   useGerarEmbeddings,
   useGerarMatches,
+  useMotivosRejeicao,
   useMoverEtapa,
+  type MoverEtapaInput,
   usePermutaAtivos,
   usePermutaMatches,
 } from "@/hooks/usePermutas";
@@ -53,6 +55,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton, TableSkeleton } from "@noctusai/lib/design-system";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MotivoRejeicaoDialog } from "@/components/permutas/MotivoRejeicaoDialog";
 import { PermutaAtivosLista } from "@/components/permutas/PermutaAtivosLista";
 
 const BRL = new Intl.NumberFormat("pt-BR", {
@@ -142,6 +145,30 @@ function LadoDoMatch({ ativo, papel }: { ativo: AtivoResumo | null; papel: strin
   );
 }
 
+const LADO_ROTULOS = { origem: "Origem", destino: "Destino", ambos: "Ambos" } as const;
+
+/** Shows why a rejected pair was rejected. Legacy rejected rows carry no
+ *  motivo and render nothing extra. */
+function MotivoDaRejeicao({ match }: { match: PermutaMatch }) {
+  const motivos = useMotivosRejeicao();
+  if (match.etapa !== "rejeitado" || !match.motivo_rejeicao) return null;
+  const rotulo =
+    motivos.data?.find((m) => m.codigo === match.motivo_rejeicao)?.rotulo ?? match.motivo_rejeicao;
+  return (
+    <div className="rounded-md border border-dashed p-3 text-sm" data-testid="motivo-rejeicao">
+      <div>
+        <span className="font-medium">Motivo da rejeição:</span> {rotulo}
+        {match.motivo_lado && (
+          <span className="text-muted-foreground"> · Recusou: {LADO_ROTULOS[match.motivo_lado]}</span>
+        )}
+      </div>
+      {match.motivo_rejeicao_detalhe && (
+        <p className="mt-1 text-muted-foreground">{match.motivo_rejeicao_detalhe}</p>
+      )}
+    </div>
+  );
+}
+
 function LinhaDeMatch({
   match,
   onMover,
@@ -198,6 +225,8 @@ function LinhaDeMatch({
           <LadoDoMatch ativo={match.ativo_destino} papel="Recebe" />
         </div>
 
+        <MotivoDaRejeicao match={match} />
+
         <div className="flex flex-wrap gap-2">
           {ETAPAS.filter((e) => e !== match.etapa).map((etapa) => (
             <Button
@@ -221,6 +250,8 @@ export default function Permutas() {
   const [aba, setAba] = useState<"matches" | "imoveis">("matches");
   const [etapa, setEtapa] = useState<Etapa | undefined>(undefined);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [rejeitandoId, setRejeitandoId] = useState<string | null>(null);
+  const [erroRejeicao, setErroRejeicao] = useState<string | null>(null);
 
   const matchesQuery = usePermutaMatches(etapa);
   const ativosQuery = usePermutaAtivos();
@@ -301,6 +332,12 @@ export default function Permutas() {
   }
 
   async function handleMover(matchId: string, novaEtapa: Etapa) {
+    // Rejecting needs a reason first (tuning data for the scorer) — see the dialog.
+    if (novaEtapa === "rejeitado") {
+      setErroRejeicao(null);
+      setRejeitandoId(matchId);
+      return;
+    }
     try {
       await mover.mutateAsync({ matchId, etapa: novaEtapa });
       toast.success(`Movido para ${ETAPA_LABELS[novaEtapa]}`);
@@ -308,6 +345,20 @@ export default function Permutas() {
       toast.error("Erro ao mover", {
         description: erroDoServidor(err, "Tente novamente"),
       });
+    }
+  }
+
+  async function handleConfirmarRejeicao(
+    dados: Pick<MoverEtapaInput, "motivo_rejeicao" | "motivo_rejeicao_detalhe" | "motivo_lado">,
+  ) {
+    if (!rejeitandoId) return;
+    try {
+      await mover.mutateAsync({ matchId: rejeitandoId, etapa: "rejeitado", ...dados });
+      toast.success(`Movido para ${ETAPA_LABELS.rejeitado}`);
+      setRejeitandoId(null);
+    } catch (err) {
+      // The refusal stays in the dialog — never silent, never closed over.
+      setErroRejeicao(erroDoServidor(err, "Não foi possível rejeitar. Tente novamente."));
     }
   }
 
@@ -370,6 +421,14 @@ export default function Permutas() {
           </Button>
         </div>
       </div>
+
+      <MotivoRejeicaoDialog
+        aberto={rejeitandoId !== null}
+        onFechar={() => setRejeitandoId(null)}
+        onConfirmar={handleConfirmarRejeicao}
+        enviando={mover.isPending}
+        erro={erroRejeicao}
+      />
 
       {aviso && (
         <div className="flex gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
