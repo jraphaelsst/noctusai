@@ -157,6 +157,13 @@ class TestChatbotEngine:
         history = bot.load_history()
         assert [h["content"] for h in history] == ["tem algo pendente?", "Nenhum upload pendente."]
 
+    def test_engine_is_scoped_to_the_intake_org(self, intake):
+        # The org-entered key (Configurações → Chaves de API) is only
+        # readable with an org_id; the chat and the logo detector both
+        # take it from the intake.
+        assert intake.org_id == "00000000-0000-4000-8000-000000000001"
+        assert intake._watermark_detector._org_id == intake._org_id
+
     def test_default_model_is_the_configured_claude(self, fake_redis, intake):
         from app.config import settings
 

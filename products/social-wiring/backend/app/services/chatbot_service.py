@@ -303,15 +303,19 @@ def _system_prompt() -> str:
 ChatFn = Callable[[list, list], Awaitable[ChatToolsResponse]]
 
 
-def _anthropic_chat(model: str) -> ChatFn:
+def _anthropic_chat(model: str, org_id) -> ChatFn:
     """The production engine: one seed tool-calling turn on Anthropic.
 
     Goes through the seed registry (key resolution, budget guard, usage
-    sink), so the Anthropic key configured for the org is the one used.
+    sink). ``org_id`` is what lets the resolver read the key the operator
+    entered in Configurações → Chaves de API — without it the per-org
+    tiers are skipped and only env/platform keys are seen.
     """
 
     async def _chat(msgs, specs):
-        return await chat_with_tools(msgs, specs, provider="anthropic", model=model)
+        return await chat_with_tools(
+            msgs, specs, provider="anthropic", model=model, org_id=org_id
+        )
 
     return _chat
 
@@ -343,7 +347,8 @@ class ChatbotService:
         self._model = model or settings.chatbot_llm_model
         # DI seam: tests hand in a scripted turn function; production
         # runs the seed's Anthropic tool-calling turn.
-        self._chat = chat or _anthropic_chat(self._model)
+        org_id = intake_service.org_id if intake_service is not None else None
+        self._chat = chat or _anthropic_chat(self._model, org_id)
         self._extra_context = extra_context
         self._tools = self._build_tools()
 

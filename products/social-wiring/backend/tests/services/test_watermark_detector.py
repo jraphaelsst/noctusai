@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from uuid import UUID
 import shutil
 import subprocess
 
@@ -72,11 +73,13 @@ def test_real_detector_extracts_frames_and_sends_one_request(tmp_path):
             {"id": "A", "has_logo": False, "confidence": 0.9},
             {"id": "B", "has_logo": True, "confidence": 0.9}]})
 
-    det = VisionWatermarkDetector(model="claude-sonnet-5", vision_fn=vision)
+    org = UUID("00000000-0000-4000-8000-000000000001")
+    det = VisionWatermarkDetector(org_id=org, model="claude-sonnet-5", vision_fn=vision)
     verdicts = asyncio.run(det.detect(clips))
     assert pick_logo_version(verdicts) == 1
     assert seen["n"] == 1 + 2 * 2  # logo + 2 frames per video, ONE request
-    assert seen["kw"] == {"provider": "anthropic", "model": "claude-sonnet-5"}
+    # org_id scopes the key lookup to the operator-entered Anthropic key.
+    assert seen["kw"] == {"provider": "anthropic", "model": "claude-sonnet-5", "org_id": str(org)}
     assert "Vídeo A" in seen["prompt"] and "Vídeo B" in seen["prompt"]
 
 

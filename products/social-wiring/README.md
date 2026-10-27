@@ -57,7 +57,9 @@ attached). Structured messages never reach a model: the shared router
 `app/services/conversation_module.py::route_inbound` sends them to the upload
 state machine (`whatsapp_intake_service.py`) or to the typed commands in
 `app/services/youtube_chat_commands.py` (send `ajuda` for the list). Only
-free-form questions go to the Claude tool loop (`chatbot_service.py`). A
+free-form questions go to the Claude tool loop (`chatbot_service.py`), which
+—like the logo detector—uses the org's Anthropic key from **Configurações →
+Chaves de API** (scoped by the intake's `org_id`; env/platform key as fallback). A
 folder's landscape video is posted as a normal video and its portrait video as
 a Short; in an exclusive listing (two copies per orientation) the copy with the
 One logo watermark is detected by `app/modules/youtube/services/watermark.py`
