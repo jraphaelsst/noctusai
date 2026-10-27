@@ -6,7 +6,7 @@ the seed's `Depends(get_user_client)` shape does not chain because its
 positional `token` argument becomes a required query parameter. See
 `KB § PATTERNS/backend.md § Auth — canonical pattern`.
 
-🔴 ROUTE ORDER: `/matches` and `/gerar` are declared BEFORE `/{ativo_id}`.
+🔴 ROUTE ORDER: `/matches`, `/gerar` and `/motivos-rejeicao` are declared BEFORE `/{ativo_id}`.
 FastAPI resolves in registration order, so a literal second segment must
 precede the dynamic one or `/api/permutas/matches` binds to `/{ativo_id}` and
 422s on "matches" not being a UUID — the same hazard `main.py` documents at the
@@ -69,8 +69,17 @@ def patch_match_route(
         match_id,
         etapa=body.etapa,
         observacoes=body.observacoes,
+        motivo_rejeicao=body.motivo_rejeicao,
+        motivo_rejeicao_detalhe=body.motivo_rejeicao_detalhe,
+        motivo_lado=body.motivo_lado,
         user_id=getattr(user, "id", None),
     )
+
+
+@router.get("/motivos-rejeicao")
+def motivos_rejeicao_route(auth: tuple = Depends(get_current_user_org)) -> dict:
+    """The closed rejection vocabulary the funnel's reject dialog offers."""
+    return {"items": [dict(m) for m in svc.MOTIVOS_REJEICAO]}
 
 
 @router.post("/gerar")

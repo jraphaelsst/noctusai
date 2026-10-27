@@ -29,7 +29,7 @@ from noctusai_lib.domain.real_estate.permuta import (
     SCORE_MINIMO_PERMUTA,
     emitir_permuta,
 )
-from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError
+from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_ as ValidationError
 
 from app.modules.permutas import adapter
 
@@ -43,6 +43,24 @@ MATCHES = "permuta_matches"
 #: The one stage a re-run may overwrite. Everything else is a human decision.
 ETAPA_INICIAL = "sugerido"
 ETAPAS = ("sugerido", "avaliacao", "negociacao", "fechado", "rejeitado")
+
+#: Why a broker rejects a match — the tuning labels for the swap scorer. The
+#: ONE vocabulary: migration 310's CHECK mirrors it (parity pinned by a test)
+#: and `GET /api/permutas/motivos-rejeicao` serves it to the UI.
+MOTIVOS_REJEICAO: tuple[dict, ...] = (
+    {"codigo": "valor", "rotulo": "Valor / diferença incompatível", "exige_detalhe": False},
+    {"codigo": "tipo", "rotulo": "Tipo de imóvel não interessa", "exige_detalhe": False},
+    {"codigo": "localizacao", "rotulo": "Localização não interessa", "exige_detalhe": False},
+    {"codigo": "caracteristicas", "rotulo": "Características (tamanho, quartos, estrutura)", "exige_detalhe": False},
+    {"codigo": "proprietario_sem_interesse", "rotulo": "Proprietário não quis seguir", "exige_detalhe": False},
+    {"codigo": "indisponivel", "rotulo": "Imóvel indisponível ou já negociado", "exige_detalhe": False},
+    {"codigo": "documentacao", "rotulo": "Documentação / situação jurídica", "exige_detalhe": False},
+    {"codigo": "duplicado", "rotulo": "Mesmo proprietário ou par duplicado", "exige_detalhe": False},
+    {"codigo": "outro", "rotulo": "Outro", "exige_detalhe": True},
+)
+MOTIVOS_CODIGOS = tuple(m["codigo"] for m in MOTIVOS_REJEICAO)
+MOTIVO_LADOS = ("origem", "destino", "ambos")
+ETAPA_REJEITADO = "rejeitado"
 
 #: Columns a caller may set on an ativo. `id`, `org_id`, the embeddings and the
 #: audit columns are derived here, never accepted.
@@ -503,7 +521,8 @@ def _remover_sugestoes_obsoletas(client: Any, org_id: UUID, matches: list[dict])
 MATCH_FIELDS = (
     "id,ativo_origem_id,ativo_destino_id,score,justificativa,detalhes,"
     "score_breakdown,is_bilateral,etapa,observacoes,origem,created_at,"
-    "updated_at,decidido_por,decidido_em"
+    "updated_at,decidido_por,decidido_em,"
+    "motivo_rejeicao,motivo_rejeicao_detalhe,motivo_lado"
 )
 
 
@@ -604,6 +623,36 @@ def _resumos_de_ativos(client: Any, org_id: UUID, ids: list[str]) -> dict[str, d
     return saida
 
 
+def _validar_motivo(
+    etapa: str,
+    motivo: Optional[str],
+    detalhe: Optional[str],
+    lado: Optional[str],
+) -> dict[str, Optional[str]]:
+    """The three motivo columns to write for this move (all None unless rejecting)."""
+    vazio: dict[str, Optional[str]] = {
+        "motivo_rejeicao": None, "motivo_rejeicao_detalhe": None, "motivo_lado": None,
+    }
+    detalhe = (detalhe or "").strip() or None
+    if etapa != ETAPA_REJEITADO:
+        if motivo is not None or detalhe is not None or lado is not None:
+            raise ValidationError("Motivo só se aplica a uma rejeição.")
+        return vazio
+    if not motivo:
+        raise ValidationError("Informe o motivo da rejeição.")
+    if motivo not in MOTIVOS_CODIGOS:
+        raise ValidationError("Motivo de rejeição inválido.")
+    if motivo == "outro" and not detalhe:
+        raise ValidationError("Descreva o motivo da rejeição.")
+    if lado is not None and lado not in MOTIVO_LADOS:
+        raise ValidationError("Lado do motivo inválido. Use origem, destino ou ambos.")
+    return {
+        "motivo_rejeicao": motivo,
+        "motivo_rejeicao_detalhe": detalhe,
+        "motivo_lado": lado,
+    }
+
+
 def atualizar_etapa(
     client: Any,
     org_id: UUID,
@@ -612,8 +661,14 @@ def atualizar_etapa(
     etapa: str,
     observacoes: Optional[str] = None,
     user_id: Optional[UUID] = None,
+    motivo_rejeicao: Optional[str] = None,
+    motivo_rejeicao_detalhe: Optional[str] = None,
+    motivo_lado: Optional[str] = None,
 ) -> dict:
     """Move a match through the funnel.
+
+    Rejecting requires a `motivo_rejeicao` (the tuning label); any other move
+    clears the three motivo columns and refuses to accept them.
 
     Stamps `decidido_por`/`decidido_em` on anything leaving `sugerido`, which
     is what makes the row permanently exempt from the generator's upsert.
@@ -622,6 +677,10 @@ def atualizar_etapa(
         raise ValidationError(
             f"Etapa inválida. Use uma de: {', '.join(ETAPAS)}."
         )
+
+    motivo = _validar_motivo(
+        etapa, motivo_rejeicao, motivo_rejeicao_detalhe, motivo_lado
+    )
 
     atuais = (
         _t(client, MATCHES)
@@ -634,7 +693,7 @@ def atualizar_etapa(
     if not atuais:
         raise NotFoundError("Match não encontrado.")
 
-    updates: dict[str, Any] = {"etapa": etapa}
+    updates: dict[str, Any] = {"etapa": etapa, **motivo}
     if observacoes is not None:
         updates["observacoes"] = observacoes
     if etapa != ETAPA_INICIAL:
@@ -667,6 +726,7 @@ def atualizar_etapa(
 
 __all__ = [
     "ATIVO_EDITAVEL",
+    "MOTIVOS_REJEICAO",
     "ETAPAS",
     "INTERESSE_EDITAVEL",
     "atualizar_ativo",
