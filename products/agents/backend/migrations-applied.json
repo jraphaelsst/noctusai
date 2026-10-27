@@ -26,6 +26,7 @@
     "046_julia_v2_proveniencia_canario.sql": "ca69840c29f3e42598ce3148b04016005a6d8cc7c98224e7ae4be3c4394b50cd",
     "047_audit_acao_check_restore.sql": "303a71c0553f7cdce415443755f41709c25c621898c68e184c438af74a97118e",
     "048_agent_lifecycle_delete.sql": "4ed04e9b775366cee30a0a0d9fcaea35d7ba5b3b30a9c0ebec2c27a0de31f3f7",
-    "049_agent_geracao.sql": "1a8d5bac5519f5cc0115a25f949bdf38503f0f63c9a3269f8475c3ed7fb24ed4"
+    "049_agent_geracao.sql": "1a8d5bac5519f5cc0115a25f949bdf38503f0f63c9a3269f8475c3ed7fb24ed4",
+    "050_definition_org_grants.sql": "7cc7b49685b618188c01e8e1f132a4de839bb6c15c54e3d1ddaa259e97a45d9b"
   }
 }
