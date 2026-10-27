@@ -1248,7 +1248,7 @@ async def _process_waha_body(
         else True  # legacy route: respect only the settings gate below
     )
     try:
-        if cfg.whatsapp_chatbot_enabled and cfg.openai_api_key and _auto_reply_allowed:
+        if cfg.whatsapp_chatbot_enabled and _auto_reply_allowed:
             # Buffer the inbound into the seed conversation buffer; the
             # ConversationWorker drains the queue after the debounce
             # window (settings.message_debounce_seconds, default 8s).
@@ -1286,8 +1286,7 @@ async def _process_waha_body(
                     redis_client=intake.redis_client,
                     intake_service=intake,
                     session_id=canonical_session,
-                    model=cfg.openai_chat_model,
-                    api_key=cfg.openai_api_key,
+                    model=cfg.chatbot_llm_model,
                 )
                 reply = await chatbot.reply(message_body)
                 if reply:

@@ -80,7 +80,12 @@ class SocialWiringSettings(ProductSettings):
     default_from_name: str = "NoctusAI"
     default_from_email: str = "noreply@noctusai.com"
 
-    # ─── OpenAI chatbot orchestration ─────────────────────────────────
+    # ─── Chatbot orchestration (YouTube upload chat, web + WhatsApp) ──
+    # Anthropic since 2026-10-27 (owner: OpenAI credits ran out; switch
+    # the engine). Priced in the seed catalog, so the budget guard is armed.
+    chatbot_llm_model: str = "claude-haiku-4-5"
+
+    # ─── OpenAI (media: transcription / image description / embeddings) ─
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4o-mini"
     # Whisper-tier model used by media_service.transcribe_audio. Default

@@ -31,9 +31,14 @@ import base64
 import logging
 from typing import Any, Optional, Sequence, Union
 
-from anthropic import AsyncAnthropic, APIError as AnthropicAPIError
+from anthropic import AsyncAnthropic, APIError as AnthropicAPIError, APIStatusError
 
-from ..exceptions import LLMAPIError, LLMNotConfigured, ProviderNotImplemented
+from ..exceptions import (
+    LLMAPIError,
+    LLMNotConfigured,
+    ProviderNotImplemented,
+    ProviderQuotaExhausted,
+)
 from ..registry import register
 from ..stream_types import StreamOutcome
 from ..tool_calling import ChatMessage, ChatToolsResponse, ToolCall, ToolSpec, build_usage
@@ -58,6 +63,33 @@ _DEFAULT_MAX_TOKENS = 4096
 #: certidão at this exact boundary — see
 #: `documents.transcription.identity_document_render_dpi_policy`.
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+#: Anthropic reports an empty prepaid balance as HTTP 400
+#: `invalid_request_error` whose message says the credit balance is too low
+#: (newer API versions also use a `billing_error` type). It is permanent
+#: until someone tops up, exactly like OpenAI's `insufficient_quota`.
+_CREDIT_MARKERS = ("credit balance is too low", "billing_error")
+
+
+def is_quota_exhausted(exc: BaseException) -> bool:
+    """True when Anthropic refused for lack of credit (billing, not a rate limit)."""
+    if not isinstance(exc, APIStatusError):
+        return False
+    if exc.status_code not in (400, 402, 403):
+        return False
+    body = exc.body if isinstance(exc.body, dict) else {}
+    inner = body.get("error") if isinstance(body.get("error"), dict) else body
+    haystack = " ".join(
+        str(v) for v in (str(exc), inner.get("type"), inner.get("message")) if v
+    ).lower()
+    return any(marker in haystack for marker in _CREDIT_MARKERS)
+
+
+def _to_llm_error(exc: AnthropicAPIError) -> LLMAPIError:
+    if is_quota_exhausted(exc):
+        return ProviderQuotaExhausted("anthropic", str(exc))
+    return LLMAPIError("anthropic", str(exc))
 
 
 def _split_system_and_messages(
@@ -344,7 +376,7 @@ class AnthropicProvider:
             return content
         except AnthropicAPIError as exc:
             logger.error("Anthropic chat_completion failed: %s", exc)
-            raise LLMAPIError("anthropic", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
     async def chat_with_tools(
         self,
@@ -369,7 +401,7 @@ class AnthropicProvider:
             response = await client.messages.create(**payload)
         except AnthropicAPIError as exc:
             logger.error("Anthropic chat_with_tools failed: %s", exc)
-            raise LLMAPIError("anthropic", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
         parsed = parse_anthropic_response(response, model=model)
         u = parsed.usage
         await record_usage(
@@ -501,7 +533,7 @@ class AnthropicProvider:
             return texto
         except AnthropicAPIError as exc:
             logger.error("Anthropic analyze_image failed: %s", exc)
-            raise LLMAPIError("anthropic", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
     async def chat_completion_stream(
         self,
@@ -566,7 +598,7 @@ class AnthropicProvider:
                     cache_read_input_tokens = getattr(usage, "cache_read_input_tokens", None)
         except AnthropicAPIError as exc:
             logger.error("Anthropic chat_completion_stream failed: %s", exc)
-            raise LLMAPIError("anthropic", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
         await record_usage(
             provider="anthropic",

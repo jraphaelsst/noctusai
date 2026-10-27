@@ -418,3 +418,49 @@ class TestD5SsoNeverAdmitsThroughABlockedOrg:
         self._seed(client.mock_supabase, blocks=["org-1", "org-2"])
         assert client.post("/api/sso/token", json={"product_slug": "social-wiring"}).status_code == 403
         assert client.get("/api/sso/launch/social-wiring", follow_redirects=False).status_code == 403
+
+
+class TestDashboardAdmitsLikeSso:
+    """S4: the dashboard's has_access is the SSO admission rule -- a product licensed only to one
+    of the user's OTHER active orgs is open (2026-10-27: a multi-org owner saw the card locked
+    while /api/sso/token would have admitted her through her own org)."""
+
+    def _seed(self, mock_sb, *, other_role="owner", blocks=()):
+        mock_sb.set_table_data("noctus_users", {"id": USER, "org_id": "org-1", "org_role": "admin",
+                                                 "role": "user", "email": "test@example.com"})
+        mock_sb.set_table_data("organizations", {"id": "org-1", "nome": "Home"})
+        mock_sb.set_table_data("org_memberships", [
+            {"user_id": USER, "org_id": "org-1", "org_role": "admin", "status": "active", "updated_at": "2026-01-02"},
+            {"user_id": USER, "org_id": "org-2", "org_role": other_role, "status": "active", "updated_at": "2026-01-01"},
+        ])
+        mock_sb.set_table_data("products", [{
+            "id": "p-mo", "slug": "monica", "nome": "Monica", "url_base": "http://localhost:8080",
+            "aceita_clientes": False, "ativo": True, "deploy_scope": "live"}])
+        mock_sb.set_table_data("licenses", [
+            {"id": "l-2", "status": "active", "fim": None, "org_id": "org-2", "product_id": "p-mo"}])
+        mock_sb.set_table_data("org_member_product_access", [
+            {"id": f"b-{o}", "user_id": USER, "org_id": o, "product_id": "p-mo", "unblocked_at": None}
+            for o in blocks])
+
+    def _has_access(self, client):
+        resp = client.get("/api/auth/me")
+        assert resp.status_code == 200, resp.text
+        return {p["slug"]: p["has_access"] for p in resp.json()["products"]}["monica"]
+
+    def test_a_product_licensed_only_to_another_membership_org_is_open(self, client):
+        self._seed(client.mock_supabase)
+        assert self._has_access(client) is True
+        assert client.post("/api/sso/token", json={"product_slug": "monica"}).status_code == 200
+
+    def test_blocked_in_the_only_licensed_org_is_locked(self, client):
+        self._seed(client.mock_supabase, blocks=["org-2"])
+        assert self._has_access(client) is False
+        assert client.post("/api/sso/token", json={"product_slug": "monica"}).status_code == 403
+
+    def test_a_customer_role_in_the_licensed_org_is_locked(self, client):
+        self._seed(client.mock_supabase, other_role="membro")
+        assert self._has_access(client) is False
+        assert client.post("/api/sso/token", json={"product_slug": "monica"}).status_code == 403
+
+    def test_unauthenticated_is_401(self, unauth_client):
+        assert unauth_client.get("/api/auth/me").status_code == 401
