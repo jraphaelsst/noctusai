@@ -26,6 +26,51 @@
 
 ---
 
+## UPDATE 2026-10-26/27 — read before §4 (supersedes the conflicting rows below)
+
+A fresh live probe (tenant `oneconsu-rest`, non-mutating: GETs + empty POSTs)
+changed the picture. Where §4/§9/§10 below say "401", "denied" or "absent",
+**this block wins**; the older rows are kept as history of a smaller grant.
+
+1. **The full-access grant landed.** `/corretores/listar` → 200 (see 3);
+   owner data (`proprietarios` on `/imoveis/detalhes`) → 200 incl. CPF/CNPJ,
+   Celular, Email; `/imoveis/fotos` write and `/clientes/anexos` write →
+   permitted; `/lead` permitted. All three formerly-gated read methods are open.
+2. **Many "absent" families exist under other names/params:**
+   `/negocios/listar|detalhes` (+ `/pipes/listar`), `/agenda/listar|detalhes`,
+   `/proprietarios/listar|detalhes`, `/contratos/listar|detalhes`,
+   `/imoveis/destaques`, `/imoveis/finalidades`, `/{imoveis,clientes,usuarios,
+   agencias,agenda}/listarcampos`, `/status`, `/reloadcache` (flushes Vista's
+   cache — never auto-probe), `/vendas` (500, shape unknown). §4.6's list is
+   therefore only "no route under the guessed name".
+3. **`/corretores/listar` has a NEW envelope** `{"items":[{Codigo,Nome}],
+   "meta":{currentPage,totalItems,itemCount,itemsPerPage,totalPages}}`, paged by
+   TOP-LEVEL `page=`/`limit=` (50 → all 24); `fields` and `pesquisa.paginacao`
+   are ignored. Do not parse it as the classic numeric-keyed dict.
+4. **History is NOT absent — it is a field relation, not a route:**
+   `prontuarios` on `/imoveis/detalhes` (property history; e.g. 333 entries for
+   one listing) and `historicos` on `/clientes/*`. Other relations: `Video`,
+   `Autorizacao`, `PontoInteresse`, `FotoEmpreendimento`, `Relacionamentos`,
+   `CorretorCliente` (broker PII).
+5. **`listarcampos` is the field catalog** (imoveis 266 fields + 13 relations,
+   proprietarios 149, clientes 91, usuarios 56, agencias 23, agenda 29).
+   🔴 **Rule: check `/<family>/listarcampos` before concluding a field,
+   relation or capability is absent** — a 404 on a guessed name proves nothing
+   (this mistake was made four times). Relation sub-fields must come from the
+   catalog: `Codigo` is not universal (`400 "Origem X e campo Codigo"`).
+6. **Wire quirks of the new families:** `/negocios/listar` takes TOP-LEVEL
+   `codigo_pipe=`/`codigo_cliente=` (inside `pesquisa` → 400), `showtotal=1`
+   gives totals, `pesquisa`+`paginacao` → 500; `/pipes/listar` needs
+   `pesquisa.filter.Empresa`; `/contratos/listar` returns a bare JSON LIST with
+   UPPERCASE keys and 500s on an `ANO` filter; `/agenda` and `/proprietarios`
+   use the classic envelope with validated `fields`.
+7. **Privacy:** owner data (CPF/RG/bank/income/spouse) and `CorretorCliente`
+   PII are now reachable by the tenant key, and `DELETE /imoveis/fotos` is
+   reachable too. A permission grant is not authorization to ingest: keep these
+   behind admin-gating, out of logs, and writes opt-in (§8).
+
+---
+
 ## 0. TL;DR — what surprised us
 
 If you read nothing else, read these:
@@ -675,7 +720,7 @@ Site     string
 `Estado`, `UF`, `CEP`, `Telefone`, `Email`, `Foto`, `Logo`, `Status`,
 `DataCadastro`. Avoid unless your tenant exposes them.
 
-### 4.5 `/corretores` — brokers (🔒 one route, ❌ two)
+### 4.5 `/corretores` — brokers (✅ list OPEN since 2026-10-26 — see UPDATE block; detail/content ❌)
 
 Re-probed live **2026-08-21**:
 
@@ -703,7 +748,7 @@ name + email per property. An MCP author should route a caller that hits
 this 401 to `usuarios` rather than report the capability as unavailable —
 the practical gap is much smaller than the 401 suggests.
 
-### 4.6 Endpoint families NOT exposed on the probed tenant (❌)
+### 4.6 Endpoint families — no route under the GUESSED name (see UPDATE block: several exist under other names)
 
 These returned 404 on `oneconsu-rest.vistahost.com.br`. They appear in the
 public-doc nav but the public docs provide no spec body. Treat as ❓ for

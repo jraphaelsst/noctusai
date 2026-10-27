@@ -35,6 +35,26 @@
 >   not probed it. An MCP that targets a tenant with permission MUST verify
 >   the shape before relying on it.
 
+> ### 🟢 2026-10-26/27 — CURRENT STATE (read this first)
+>
+> A live probe on key `…644c` found the "full access" grant **landed** and a
+> large surface this doc had never seen. Where an older section below says
+> "denied", "🔒 401" or "❌ absent", the **2026-10-26 row/§ 4.8 wins**; the
+> older text is kept as history (change-log style).
+>
+> - **Granted:** `/corretores/listar` → 200 (new `{items, meta}` envelope);
+>   owner data (`proprietarios` on `/imoveis/detalhes`) → 200;
+>   `/imoveis/fotos` write and `/clientes/anexos` write → **permitted**;
+>   `/lead` still permitted. § 9 Tier 1 is **fully satisfied**.
+> - **New families exist** (under names/params we never tried): `negocios` +
+>   `pipes`, `agenda`, `proprietarios`, `contratos`, `destaques`,
+>   `finalidades`, `listarcampos`, `status`, `reloadcache`, `vendas` (500) —
+>   § 4.6 / § 4.8.
+> - **History is NOT absent** — it is a field *relation* (`prontuarios`,
+>   `historicos`), not a route — § 4.2 correction block.
+> - 🔴 **Rule:** before concluding a field/relation/family is absent, check
+>   `/<family>/listarcampos`; a 404 on a guessed name proves nothing.
+
 ---
 
 ## 1. Authentication
@@ -590,7 +610,7 @@ and `Embu Das Artes` — Vista does NOT canonicalize. A filter using
 exactly one form will miss properties listed under the other. Surface
 this to the user / model when populating dropdowns.
 
-### 4.2 `/clientes` (Clients) — ✅ two routes GRANTED 2026-08-21, the rest ❌ absent
+### 4.2 `/clientes` (Clients) — ✅ two routes GRANTED 2026-08-21 (+ `anexos` write 2026-10-26), history via relation, the rest ❌ absent
 
 **Re-probed live 2026-08-21 — the § 9 Tier-1 grant LANDED.** The critical
 distinction this table carries: **🔒 401 ≠ ❌ 404**. Only 🔒 is unlocked by a
@@ -608,9 +628,12 @@ row is still 404 after the same grant.
 > changed was on Vista's side, and their cache flush is the most likely
 > reason the first attempt appeared to do nothing.
 >
-> **`/corretores/listar` was in the SAME request and did NOT open** — it
-> still returns 401 (§ 4.5). Record this ask as *partially* satisfied; two of
-> three methods.
+> **`/corretores/listar` was in the SAME request and did NOT open** on
+> 2026-08-21 — it still returned 401 (§ 4.5). Record this ask as *partially*
+> satisfied; two of three methods.
+>
+> **✅ 2026-10-26 update — it opened.** `/corretores/listar` → 200 on `…644c`
+> (§ 4.5); the ask is now fully satisfied. The paragraph above is history.
 
 | Op | Method | Path | ID param | This tenant (2026-08-21) | Public docs | MCP tool |
 |---|---|---|---|---|---|---|
@@ -618,16 +641,16 @@ row is still 404 after the same grant.
 | Detail | GET | `/clientes/detalhes` | `?cliente=` | ✅ 200 | 📖 | `vista.clientes.get` |
 | By broker | GET | `/clientes/porcorretor` | — | ❌ 404 | 📖 |
 | By agency | GET | `/clientes/poragencia` | — | ❌ 404 | 📖 |
-| History | GET | `/clientes/historico` | `?cliente=` | ❌ 404 | 📖 |
+| History | GET | `/clientes/historico` | `?cliente=` | ❌ 404 as a *route* — **but history exists as the `historicos` relation on `/clientes/listar`/`detalhes` (✅, 2026-10-26; see correction block)** | 📖 | `vista.clientes.history` |
 | Favorites | GET | `/clientes/favoritos` | `?cliente=` | ❌ 404 | 📖 |
-| Available fields | GET | `/clientes/campos` | — | ❌ 404 | 📖 |
+| Available fields | GET | `/clientes/campos` | — | ❌ 404 — **the real route is `/clientes/listarcampos` ✅ 200 (91 fields + relations, 2026-10-26)** | 📖 | `vista.diagnostics.list_fields` |
 | Create | POST | `/clientes/cadastrar` | — | ❌ 404 | 📖 |
 | Update | PUT | `/clientes/update` | `?cliente=` | ❌ 404 | 📖 |
 | Add history | POST | `/clientes/cadhis` | `?cliente=` | ❌ 404 | 📖 |
 | Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❌ 404 | 📖 |
 | ~~Submit lead~~ | ~~POST~~ | ~~`/clientes/lead`~~ | — | ❌ 404 | 📖 | **Wrong name — see `/lead` below.** |
 | **Submit lead** | **POST** | **`/lead`** (top-level) | — | ✅ **405 = exists, write-only** | 📖 | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. **Our key: PERMITTED** (empty-POST probe 2026-09-16). Contract derived on the sandbox — § 4.7. Client: `enviar_lead` · MCP: `vista.leads.submit`. |
-| **Add attachment** | **POST** | **`/clientes/anexos`** | — | ✅ **405 = exists, write-only** | — | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. **Our key: DENIED** (2026-09-16). No tool — no consumer needs it. |
+| **Add attachment** | **POST** | **`/clientes/anexos`** | — | ✅ **405 = exists, write-only** | — | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. **Our key: ~~DENIED~~ (2026-09-16) → PERMITTED (2026-10-26, empty POST → `400 formato`, past the auth check).** No write tool — no consumer needs it. |
 
 > **🔴 Two route names in the pre-2026-08-21 table were OUR typos, not
 > Vista's routes.** `/clientes/pesquisar` is not a documented Vista method at
@@ -642,6 +665,24 @@ row is still 404 after the same grant.
 > the ❓ rows (`porcorretor`, `poragencia`, `historico`, `favoritos`,
 > `campos`, and the four write ops) are confirmed ❌ — they had simply never
 > been probed.
+
+> **🔴 CORRECTION 2026-10-26 — "no history" was WRONG; this is the 4th instance
+> of the same error.** Everything this section says about history being absent
+> (and the "what a grant would not buy" paragraph below) described only the
+> *route* `/clientes/historico`. History is served as a **field relation**, not
+> a route: `historicos` on `/clientes/listar`/`detalhes` (15 sub-fields: Data,
+> Hora, Assunto, Pendente, Texto, Codigoimovel, …) and `prontuarios` on
+> `/imoveis/detalhes` (20 sub-fields; `CA2830` → 333 entries). Neither relation
+> was reachable via any route name we probed. Tools: `vista.clientes.history`,
+> `vista.imoveis.history`.
+>
+> The four instances of "a 404 on a guessed name ≠ absent": (1) `/clientes/pesquisar`
+> (invented name), (2) `historicos` vs documented `historico`, (3) `/clientes/lead`
+> vs top-level `/lead`, (4) history-as-relation vs history-as-route.
+> **New rule — check `/<family>/listarcampos` (and the relations it lists) before
+> concluding a field, relation or capability is absent.** The catalogs existed the
+> whole time; we simply never asked. Relation sub-fields MUST come from
+> listarcampos — `Codigo` is not universal (400 `"Origem X e campo Codigo"`).
 
 **How the write rows were probed without issuing a write.** Vista's router
 returns **405** for a route that exists but rejects the method, and **404**
@@ -845,7 +886,18 @@ Site     string
 Fields that returned 400 on this tenant: `Estado`, `UF`, `CEP`, `Telefone`,
 `Email`, `Foto`, `Logo`, `Status`, `DataCadastro`. Avoid.
 
-### 4.5 `/corretores` (brokers) — 🔒 one route gated, two ❌ absent
+### 4.5 `/corretores` (brokers) — ✅ list OPEN since 2026-10-26, detail/content ❌ absent
+
+**✅ 2026-10-26 — `/corretores/listar` is OPEN on `…644c`** (bare GET → 200;
+was 401). It returns a **new envelope** `{"items":[{Codigo,Nome}],"meta":{currentPage,
+totalItems,itemCount,itemsPerPage,totalPages}}` — NOT the classic numeric-keyed
+dict. Paging is **top-level** `page=` + `limit=` (`limit=50` → all 24 brokers);
+`pesquisa.paginacao` and `fields` are **ignored** — items only ever carry
+`Codigo` + `Nome`. The pre-fix `vista.corretores.list` misparsed this envelope
+(returned `meta` as an item); fixed by the 2026-10-26 code slice. The roster is
+still thin (no Email/Creci) — `/usuarios/listar` (§ 4.3) remains the richer
+source, and `CorretorCliente`/`Corretor` relations (§ 4.8) carry broker detail.
+The 2026-08-21 text below is history.
 
 **Re-probed live 2026-08-21 — still gated, and now notably so.** Vista
 granted `clientes/listar` + `clientes/detalhes` on the same key the same
@@ -857,7 +909,7 @@ the sibling methods in the same ticket did land.
 
 | Op | Method | Path | This tenant (2026-08-21) | MCP tool |
 |---|---|---|---|---|
-| List | GET | `/corretores/listar` | 🔒 401 | `vista.corretores.list` |
+| List | GET | `/corretores/listar` | ~~🔒 401~~ → ✅ **200** (2026-10-26) | `vista.corretores.list` |
 | Detail | GET | `/corretores/detalhes` | ❌ 404 | — |
 | Content | GET | `/corretores/listarConteudo` | ❌ 404 | — |
 
@@ -886,42 +938,43 @@ substitute, so a host LLM that hits the 401 is routed to the working call
 instead of reporting itself blocked. Weigh that before spending a support
 request on this family.
 
-### 4.6 Endpoint families NOT exposed on this tenant — ❌
+### 4.6 Endpoint families — what exists, what is genuinely absent
 
-**Re-probed live 2026-08-05** (`<family>/listar`, GET): every one below
-returned **404 "No route found"** — not 401. They are referenced in the
-public-doc nav with no spec body.
+**Rewritten 2026-10-26.** The 2026-08-05 version of this section listed ~13
+families as "❌ not exposed" from `<family>/listar` GETs. A wider probe on
+2026-10-26 showed that was too quick: several of them **do exist under a
+different name or with different params** (the "404 on a guessed name ≠ absent"
+lesson, § 4.2). Current verdicts, key `…644c`:
+
+| What we wanted | Real route (2026-10-26) | Notes | § |
+|---|---|---|---|
+| leads / negociações / propostas | `/negocios/listar`, `/negocios/detalhes` + `/pipes/listar` | pipelines & deals; `codigo_pipe` is TOP-LEVEL | 4.8 |
+| agendamentos / atendimentos / tarefas | `/agenda/listar`, `/agenda/detalhes` | activities & visits (3,954) | 4.8 |
+| owners | `/proprietarios/listar`, `/proprietarios/detalhes` | 8,555 rows; **PII** | 4.8 |
+| vendas / contratos | `/contratos/listar`, `/contratos/detalhes`; `/vendas` exists but answers **500** | contracts list works (3 rows) | 4.8 |
+| highlights / purposes | `/imoveis/destaques`, `/imoveis/finalidades` | | 4.8 |
+| field discovery | `/{imoveis,clientes,usuarios,agencias,agenda}/listarcampos` | full field catalogs | 4.8 |
+| service health / cache | `/status`, `/reloadcache` | `/reloadcache` flushes Vista's cache — never put in an automatic probe | 4.8 |
+
+**Still genuinely 404 "No route found"** (2026-08-05 sweep, not contradicted by
+the 2026-10-26 sweep; each was probed under the guessed name only, so treat as
+"no route under that name" and consult `listarcampos` before any stronger claim):
 
 ```
-/leads/*                  ❌ 404   (public-doc nav only; doc body empty)
-/atendimentos/*           ❌ 404
-/agendamentos/*           ❌ 404
-/negociacoes/*            ❌ 404
-/propostas/*              ❌ 404
-/vendas/*                 ❌ 404
-/condominios/*            ❌ 404
-/empreendimentos/*        ❌ 404
-/portais/*                ❌ 404
-/buscas/*                 ❌ 404
-/campanhas/*              ❌ 404
-/tarefas/*                ❌ 404
-/reservas/*               ❌ 404
-/bairros/*                ❓       (not re-probed; enum values already come
-/cidades/*                ❓        from /imoveis/listarConteudo, so there is
-/categorias/*             ❓        no consumer need — probe before relying)
-/tabelas/*                ❓
-/ancillary-revenue/*      ❓       (referenced via the user-supplied link
-                                    `#fotos_ancillary-revenue`; no body)
+/leads/*          /atendimentos/*     /agendamentos/*    /negociacoes/*
+/propostas/*      /condominios/*      /empreendimentos/* /portais/*
+/buscas/*         /campanhas/*        /tarefas/*         /reservas/*
 ```
 
-**A 404 cannot distinguish** "not provisioned for this tenant" from "not
-built in this Vista REST version" — only Vista can answer that. That
-question is the Tier-2 ask in the support request (§ 9).
+Several of these concepts are served by the families above (e.g. `/negociacoes`
+→ `/negocios`, `/agendamentos` → `/agenda`; `FotoEmpreendimento` is a relation
+on imóveis). Still ❓ unprobed: `/bairros/*`, `/cidades/*`, `/categorias/*`,
+`/tabelas/*`, `/ancillary-revenue/*` (enum values already come from
+`/imoveis/listarConteudo`, so no consumer need).
 
-If/when an MCP targets a tenant that exposes any of these, the adapter must
-re-probe and add a row above with verified shape.
-
----
+**A 404 cannot distinguish** "not provisioned for this tenant" from "not built
+in this Vista REST version" from "you guessed the wrong name" — and the third
+turned out to be the common case.
 
 ### 4.7 The WRITE surface — `/imoveis/fotos`, and the permission split
 
@@ -1015,7 +1068,7 @@ carried its 28 real photos with zero probe artifacts afterwards.
 
 | key | `/imoveis/fotos` write | owner data (§ 4.1 `proprietarios`) |
 |---|---|---|
-| `…644c` — **ours**, the ERP's key | ❌ **DENIED** (`Permissão Negada`) | ❌ 403 |
+| `…644c` — **ours**, the ERP's key | ❌ **DENIED** (`Permissão Negada`) → ✅ **PERMITTED 2026-10-26** | ❌ 403 → ✅ **200 2026-10-26** |
 | `…bced` — issued for the **Quinto Andar** portal | ✅ **PERMITTED** | ✅ 200 |
 
 > ✅ **READS ARE UNGATED — do not over-read this table.** It covers photo **writes**.
@@ -1036,7 +1089,14 @@ carried its 28 real photos with zero probe artifacts afterwards.
 > listings, and `…644c` **cannot re-upload them**, so there is no API-side
 > recovery. Carried into the § 9 ask as a read-only request.
 
-#### ✅ 2026-09-16 — re-probed after Vista said the grants were fixed: they are NOT
+> **✅ 2026-10-26 — the table above is HISTORY for `…644c`.** Both rows flipped:
+> photo write permitted, owner data 200 (CPF/CNPJ, Celular, Email reachable).
+> `/clientes/anexos` write also permitted. The **sharp edge now applies to OUR
+> key too**: `…644c` can `POST`/`PUT`/**`DELETE`** `/imoveis/fotos` on live
+> listings and read full owner PII. Keep `VISTA_MCP_ALLOW_WRITES` off by
+> default and treat the key as high-privilege (§ 4.8 LGPD notes).
+
+#### 2026-09-16 — re-probed after Vista said the grants were fixed: they were NOT (superseded 2026-10-26)
 
 Vista told the owner the permission grants had been resolved. Verified by probe,
 not by their word (project § 7.0), on production with `…644c`, twice, minutes
@@ -1109,6 +1169,114 @@ object (verified: distinct 22 KB / 24 KB JPEGs, HTTP 200), the sandbox listing
 still read `Foto: []`. That is a **demo-tenant limitation, not an upload
 defect** — the same `Foto` group on production returns 28 photos for `CA2830`.
 Do not conclude "upload does not attach" from a sandbox read-back.
+
+---
+
+### 4.8 Families mapped 2026-10-26/27 (live probe, key `…644c`)
+
+**Method:** non-mutating — GETs and empty POSTs only. Raw catalogs were
+captured from `/<family>/listarcampos`; counts below are what matters. All
+families need the standard `key` param; top-level params are called out because
+**filters placed in `pesquisa` that belong at top level return 400**.
+
+#### `listarcampos` — the field catalogs (use these FIRST)
+
+`GET /{imoveis,clientes,usuarios,agencias,agenda}/listarcampos` → 200, a dict
+of `{group: [field names]}`. Counts: **imoveis 266** root fields + 13 relations
+(`carac` 76, `infra` 67, `Corretor` 59, `Agencia` 23, `Autorizacao` 8, `Foto` 13,
+`FotoEmpreendimento` 9, `Anexo` 8, `Video` 10, `PontoInteresse` 13,
+`prontuarios` 20, **`proprietarios` 149**); **clientes 91** + `Anexos` 10,
+`Relacionamentos` 6, `Google` 1, `historicos` 15, `CorretorCliente` 54;
+**usuarios 56** + `Equipe`, `GerenteDoCorretor` 4; **agencias 23**;
+**agenda 29**. Relation sub-fields must be taken from here — `Codigo` is not
+universal and a wrong one yields `400 "Origem X e campo Codigo"`. Tool:
+`vista.diagnostics.list_fields`.
+
+#### Relations (history lives here)
+
+| Relation | On | Content |
+|---|---|---|
+| `prontuarios` | `/imoveis/detalhes` | property **history** (Data, Hora, Assunto, Pendente, Texto…); `CA2830` → 333 entries. Tool `vista.imoveis.history` |
+| `historicos` | `/clientes/listar`/`detalhes` | client **history** (… Codigoimovel). Tool `vista.clientes.history` |
+| `proprietarios` | `/imoveis/detalhes` | owners, 149 fields, **PII** |
+| `Video`, `Autorizacao`, `PontoInteresse`, `FotoEmpreendimento`, `Anexo`, `Foto` | `/imoveis/detalhes` | media / authorizations / POIs |
+| `Anexos`, `Relacionamentos`, `CorretorCliente` | `/clientes` | attachments / relations / **broker PII** (CPF_CGC, RG…) |
+
+#### `/negocios` + `/pipes` (deals & pipelines)
+
+- `GET /negocios/listar` — **top-level** `codigo_pipe=` or `codigo_cliente=` (inside
+  `pesquisa` → 400). Pipe 1 ≈ 8,700 deals, pipe 2 ≈ 1,991. `showtotal=1` →
+  `total/paginas/pagina/quantidade` (pipe 1 = 8,712, 10 per page).
+  `pesquisa` combined with `paginacao` → **500**; top-level `pagina=` ignored —
+  the paging contract is not fully pinned yet. `fields` IS validated (unknown →
+  400 naming it). Row keys: FotoCliente, Codigo, NomeNegocio, Status, DataInicial,
+  DataFinal, ValorNegocio, PrevisaoFechamento, VeiculoCaptacao, CodigoMotivoPerda,
+  MotivoPerda, ObservacaoPerda. Tools `vista.negocios.list`/`.get`.
+- `GET /negocios/detalhes?codigo_negocio=N` (top-level) → 200 incl. `CodigoPipe`.
+- `/negocios/etapas` → 405 Allow PUT (write; untouched).
+- `GET /pipes/listar` — requires `pesquisa.filter.Empresa` (agency `Codigo` = 1);
+  top-level or pesquisa-root → 400 "informar Empresa"; with the filter → 200 `[]`
+  (empty on this tenant). Tool `vista.pipes.list`.
+
+#### `/agenda` (activities & visits)
+
+`/agenda/listar` — classic numeric-keyed envelope, 3,954 rows with `showtotal=1`;
+`fields` from `/agenda/listarcampos` (29); `filter` works (`DataHora >= 2026-10-01`
+→ 102). `/agenda/detalhes` exists. Tools `vista.agenda.list`/`.get`.
+
+#### `/proprietarios` (owners) — PII
+
+`/proprietarios/listar` — classic envelope, 8,555 rows; `fields` validated
+(unknown → 400). `/proprietarios/detalhes` exists (bare → 400). Tools
+`vista.proprietarios.list`/`.get`.
+
+#### `/contratos`
+
+`GET /contratos/listar` returns a **JSON list** (not a dict) with **UPPERCASE**
+keys (CODIGO, IMOVEL, VLR_VENDA, VLR_COMISSAO, VLR_COMISSAO_CORRETOR,
+DATA_CONTRATO, ANO, NUMERO_CONTRATO, SEQUENCIA_VENDA, PERC_COMISSAO, PERC_IMOB,
+PERC_CORRETOR); 2–3 rows, all `ANO` 2024; a filter on `ANO` → 500.
+`/contratos/detalhes` GET → 405 (Allow POST, PUT); empty POST → 400
+`"informar os dados no indice fields"` (auth passed). Tool `vista.contratos.list`.
+`/vendas` (bare) → 500: exists, query shape unknown.
+
+#### Small routes
+
+- `/imoveis/destaques` — needs `pesquisa`; returns `{CODE:{Codigo,CodigoImovel}}` (10).
+  Tool `vista.imoveis.list_destaques`.
+- `/imoveis/finalidades` → `["Venda","Aluguel"]`. Tool `vista.imoveis.list_finalidades`.
+- `/clientes/listarConteudo` works with a real field (`fields=["Status"]` →
+  `{"Status":[...]}`; `Codigo` → 400). Tool `vista.clientes.list_filters`.
+- `/status` → `{"status":200,"message":"ok","ip":…}`.
+- `/reloadcache` GET → 200 list: **flushes Vista's cache** (benign but
+  side-effecting — never in an automatic probe).
+
+#### Tool names (MCP, shipped by the 2026-10-26 code slice)
+
+`vista.corretores.list` (envelope fixed) · `vista.negocios.list`/`.get` ·
+`vista.pipes.list` · `vista.agenda.list`/`.get` · `vista.proprietarios.list`/`.get` ·
+`vista.contratos.list` · `vista.imoveis.list_destaques` · `vista.imoveis.list_finalidades` ·
+`vista.imoveis.history` · `vista.clientes.history` · `vista.clientes.list_filters` ·
+`vista.diagnostics.list_fields`. The stale `VISTA_ENDPOINT_BASELINE`,
+`VISTA_WRITE_PERMISSION_BASELINE` and `_UNPROBED_KNOWN` constants were re-graded
+by the same slice (§ 5.3).
+
+#### 🔴 LGPD notes (2026-10-26)
+
+- **`proprietarios`** (relation on imóveis *and* the `/proprietarios` family)
+  exposes CPF/CNPJ, RG, Nascimento, Renda, Banco/Agência/Conta, endereço and
+  spouse data — Art. 5 personal data, some of it financial. `…644c` can now read
+  all of it. A grant is not an authorisation to ingest (§ 9): no bulk pull, no
+  caching of these fields, and the MCP/adapter must keep them behind admin-gating
+  (§ 5.6) and out of audit-log values (§ 5.4).
+- **`CorretorCliente`** (clients) carries broker CPF_CGC/RG — third-party PII
+  riding on an otherwise "client" call; request only the sub-fields needed.
+- `historicos`/`prontuarios` are free-text (`Texto`) and may contain sensitive
+  data; treat as personal data, never log bodies.
+- Photos: with write now permitted on our key, `DELETE /imoveis/fotos` is
+  reachable from the ERP key (§ 4.7) — writes stay opt-in.
+- Record new categories in `LGPD-WARNINGS.md` before any intake; the data-category
+  intake (`KB § PATTERNS/security/lgpd.md`) still gates ingestion.
 
 ---
 
@@ -1576,6 +1744,27 @@ ships):
 
 ## 8. Change log
 
+### 2026-10-26 — ✅ "Full access" grant LANDED on `…644c` + a large never-seen surface
+
+Live probe 2026-10-26/27, non-mutating (GETs + empty POSTs):
+
+- **Grants landed:** `/corretores/listar` 200 (new `{items,meta}` envelope,
+  top-level `page`/`limit`, `fields` ignored); owner data 200; `/imoveis/fotos`
+  write + `/clientes/anexos` write permitted; `/lead` still permitted. § 9 Tier 1
+  is fully satisfied (3 of 3). §§ 4.2/4.5/4.7 current-state rows flipped; the
+  prior text is kept as history.
+- **Never-seen routes:** `listarcampos` on 5 families, `negocios`+`pipes`,
+  `agenda`, `proprietarios`, `contratos`, `destaques`, `finalidades`, `status`,
+  `reloadcache`, `vendas` (500) — § 4.6 rewritten, § 4.8 added.
+- **🔴 Correction:** history is a field relation (`prontuarios`, `historicos`),
+  not a route — 4th instance of "404 on a guessed name ≠ absent"; new rule:
+  check `/<family>/listarcampos` first (§ 4.2).
+- **Code (parallel slice):** `vista.corretores.list` envelope fix, 12 tool
+  additions (§ 4.8), baselines re-graded. Stale before this probe:
+  `VISTA_ENDPOINT_BASELINE`, `VISTA_WRITE_PERMISSION_BASELINE`, `_UNPROBED_KNOWN`.
+- **Open:** `/negocios/listar` paging contract; `/contratos/listar` filter 500;
+  `/vendas` 500; `/pipes/listar` empty with `Empresa=1`.
+
 ### 2026-09-16 — Vista's "grants resolved" NOT verified + write surface built
 
 - **Re-probed after the owner's ticket:** photo write and owner data are still
@@ -1772,18 +1961,24 @@ Follow-up filed: refactor `VistaRESTAdapter` to compose `VistaClient.detalhes_im
 > naming `clientes/listar` + `clientes/detalhes` is a one-line change on
 > their side.
 
-### Tier 1 — grant these on our existing key (no contract change)
+### Tier 1 — ✅ FULLY SATISFIED (2026-10-26)
+
+> **2026-10-26: all three methods are 200 on `…644c`** (`corretores/listar`
+> opened; owner data and photo/anexos writes were granted too — § 4.7, § 8).
+> The table and status text below are the history of how it got there; do not
+> re-ask. Still outstanding on their side: the credential-echo defect and key
+> rotation (Tier 4).
 
 | Method | Today | Why we need it |
 |---|---|---|
 | `clientes/listar` | ✅ **200** (granted 2026-08-21) | Client roster — the base for any CRM-side view |
 | `clientes/detalhes` | ✅ **200** (granted 2026-08-21) | Per-client record |
-| `corretores/listar` | 🔒 **401 — still open** | Broker roster (partially substitutable — see § 4.5) |
+| `corretores/listar` | ~~🔒 401~~ → ✅ **200** (2026-10-26) | Broker roster (partially substitutable — see § 4.5) |
 
 These three are the **only** routes a permission grant can unlock; every
 other gap below is a 404, where permission is not the blocker.
 
-> **Status 2026-08-21 — ✅ 2 of 3 granted; the tier stays open on one.**
+> **Status 2026-08-21 (history) — ✅ 2 of 3 granted; the tier stayed open on one.**
 > Vista re-applied the permissions on key `…644c` and cleared their system
 > cache; `clientes/listar` and `clientes/detalhes` now return 200, verified
 > by live probe in a fresh process (§ 4.2). No key rotation was involved —
@@ -1885,7 +2080,9 @@ technical detail.
 - **No write probes.** The write surface was mapped read-only via the
   405-vs-404 distinction (§ 4.2). Never POST to a live CRM to discover a
   route.
-- **No `/clientes` data pulled — still true after the grant (2026-08-21).**
+- **No `/clientes` or `/proprietarios` data pulled — still true after the
+  2026-10-26 grant** (owner PII is now reachable too; § 4.8 LGPD notes).
+- **(2026-08-21 text)** **No `/clientes` data pulled — still true after the grant.**
   The 401 is gone, so LGPD is now the *only* thing holding this line, and it
   holds it just as firmly: **a permission grant is not authorization to
   ingest.** The field set in § 4.2 was mapped by reading which names Vista's
