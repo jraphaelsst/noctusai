@@ -1,7 +1,15 @@
 {
   "_doc": "Migration files applied in prod (filename -> sha256 as stored in the ledger). Maintained by noctus.dev.migrate_product confirm=True; applied files are frozen. KB \u00a7 PATTERNS/architect/vertical-seed.md.",
   "applied": {
-    "012_finance.sql": "bc57e6e8ce00df4cdb9acc449a24c5a98bb6bb91b2499a7a96cb084d2e046f2b",
-    "013_status_pagina_financeiro.sql": "1b76cfb14284e59829cd47047d046ba60f7e8ef11e106c46e182604f23613b40"
+    "008_org_picker_acting_audit.sql": "007a706c1ccfbfa8d04ea913bac90747617c08e501ee60c4fd6e13bd2e493c30",
+    "009_org_picker_ready.sql": "e78acf0495136ca7af19d3feb6a67cc42282ad5cc08e4c873ea0dd1d3113c01c",
+    "010_anon_grant_lockdown.sql": "359f2eff3d4eec55717ab029378ce55677753d6c400fa65ad3107c85a6a352b8",
+    "011_anon_sequence_lockdown.sql": "32cb83689e1b71653aad773b603dc9c7e6dba460b397fb3acb559c5e64cc8555",
+    "012_finance.sql": "940a13a3c533a7678faa73dc8357ae6453155f05b5b57fcc20c56ea06087058b",
+    "013_status_pagina_financeiro.sql": "136678745d5b89a6ee262ca39458d02f1f765c97d5610be71b538b433042bfd0",
+    "014_leads.sql": "e56f13d52af905fb73cbe07f7ad4930a3313fced97a104d96e3ec8b58828d5dd",
+    "015_whatsapp.sql": "afaeb8037a9c8ae587199e7e7a8f83f948b7126ccda03c86f2130bd5925919a5",
+    "016_status_pagina_crm.sql": "940997e9db99e678b9b6cb0dc59932c7fdb6629225a3b2ad54fefd4b333442fe",
+    "017_whatsapp_app_switch.sql": "62e984eef3f2e7f9fe39a991b0458f9336aa4e362ca569cc0c954074f70d9ffc"
   }
 }
