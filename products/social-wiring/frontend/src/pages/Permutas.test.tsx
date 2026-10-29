@@ -343,13 +343,13 @@ describe("rejeição com motivo", () => {
 
   it("abrir 'Rejeitado' mostra o diálogo e não move ainda", async () => {
     const { getByText } = await abrirDialogo();
-    expect(getByText("Por que rejeitar este match?")).toBeTruthy();
+    expect(getByText("Por que descartar este match?")).toBeTruthy();
     expect(mockMover).not.toHaveBeenCalled();
   });
 
   it("confirmar fica desabilitado até escolher o motivo", async () => {
     const { getByRole, getByLabelText, rtl } = await abrirDialogo();
-    const confirmar = getByRole("button", { name: "Confirmar rejeição" }) as HTMLButtonElement;
+    const confirmar = getByRole("button", { name: "Confirmar descarte" }) as HTMLButtonElement;
     expect(confirmar.disabled).toBe(true);
     rtl.fireEvent.click(getByLabelText("Preço incompatível"));
     expect(confirmar.disabled).toBe(false);
@@ -357,7 +357,7 @@ describe("rejeição com motivo", () => {
 
   it("motivo que exige detalhe pede o detalhe", async () => {
     const { getByRole, getByLabelText, rtl } = await abrirDialogo();
-    const confirmar = getByRole("button", { name: "Confirmar rejeição" }) as HTMLButtonElement;
+    const confirmar = getByRole("button", { name: "Confirmar descarte" }) as HTMLButtonElement;
     rtl.fireEvent.click(getByLabelText("Outro motivo"));
     expect(confirmar.disabled).toBe(true);
     rtl.fireEvent.change(getByLabelText(/Detalhes/), { target: { value: "  " } });
@@ -371,7 +371,7 @@ describe("rejeição com motivo", () => {
     rtl.fireEvent.click(getByLabelText("Preço incompatível"));
     rtl.fireEvent.click(getByLabelText("Destino"));
     rtl.fireEvent.change(getByLabelText(/Detalhes/), { target: { value: "acima do teto" } });
-    rtl.fireEvent.click(getByRole("button", { name: "Confirmar rejeição" }));
+    rtl.fireEvent.click(getByRole("button", { name: "Confirmar descarte" }));
     await rtl.waitFor(() =>
       expect(mockMover).toHaveBeenCalledWith({
         matchId: "m1",
@@ -386,7 +386,7 @@ describe("rejeição com motivo", () => {
   it("sem lado escolhido o campo não vai no corpo", async () => {
     const { getByRole, getByLabelText, rtl } = await abrirDialogo();
     rtl.fireEvent.click(getByLabelText("Preço incompatível"));
-    rtl.fireEvent.click(getByRole("button", { name: "Confirmar rejeição" }));
+    rtl.fireEvent.click(getByRole("button", { name: "Confirmar descarte" }));
     await rtl.waitFor(() =>
       expect(mockMover).toHaveBeenCalledWith({
         matchId: "m1",
@@ -400,7 +400,7 @@ describe("rejeição com motivo", () => {
     mockMover.mockRejectedValue(new Error("motivo inválido"));
     const { getByRole, getByLabelText, findByText, rtl } = await abrirDialogo();
     rtl.fireEvent.click(getByLabelText("Preço incompatível"));
-    rtl.fireEvent.click(getByRole("button", { name: "Confirmar rejeição" }));
+    rtl.fireEvent.click(getByRole("button", { name: "Confirmar descarte" }));
     expect(await findByText("motivo inválido")).toBeTruthy();
   });
 
@@ -424,7 +424,7 @@ describe("rejeição com motivo", () => {
     await rtl.waitFor(() =>
       expect(mockMover).toHaveBeenCalledWith({ matchId: "m1", etapa: "avaliacao" }),
     );
-    expect(queryByText("Por que rejeitar este match?")).toBeNull();
+    expect(queryByText("Por que descartar este match?")).toBeNull();
   });
 
   it("cartão rejeitado mostra rótulo, lado e detalhe", async () => {

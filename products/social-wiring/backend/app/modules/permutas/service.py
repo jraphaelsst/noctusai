@@ -636,14 +636,14 @@ def _validar_motivo(
     detalhe = (detalhe or "").strip() or None
     if etapa != ETAPA_REJEITADO:
         if motivo is not None or detalhe is not None or lado is not None:
-            raise ValidationError("Motivo só se aplica a uma rejeição.")
+            raise ValidationError("Motivo só se aplica a um descarte.")
         return vazio
     if not motivo:
-        raise ValidationError("Informe o motivo da rejeição.")
+        raise ValidationError("Informe o motivo do descarte.")
     if motivo not in MOTIVOS_CODIGOS:
-        raise ValidationError("Motivo de rejeição inválido.")
+        raise ValidationError("Motivo de descarte inválido.")
     if motivo == "outro" and not detalhe:
-        raise ValidationError("Descreva o motivo da rejeição.")
+        raise ValidationError("Descreva o motivo do descarte.")
     if lado is not None and lado not in MOTIVO_LADOS:
         raise ValidationError("Lado do motivo inválido. Use origem, destino ou ambos.")
     return {

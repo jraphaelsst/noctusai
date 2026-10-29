@@ -157,7 +157,7 @@ function MotivoDaRejeicao({ match }: { match: PermutaMatch }) {
   return (
     <div className="rounded-md border border-dashed p-3 text-sm" data-testid="motivo-rejeicao">
       <div>
-        <span className="font-medium">Motivo da rejeição:</span> {rotulo}
+        <span className="font-medium">Motivo do descarte:</span> {rotulo}
         {match.motivo_lado && (
           <span className="text-muted-foreground"> · Recusou: {LADO_ROTULOS[match.motivo_lado]}</span>
         )}
@@ -358,7 +358,7 @@ export default function Permutas() {
       setRejeitandoId(null);
     } catch (err) {
       // The refusal stays in the dialog — never silent, never closed over.
-      setErroRejeicao(erroDoServidor(err, "Não foi possível rejeitar. Tente novamente."));
+      setErroRejeicao(erroDoServidor(err, "Não foi possível descartar. Tente novamente."));
     }
   }
 

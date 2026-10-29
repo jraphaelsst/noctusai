@@ -78,7 +78,7 @@ export function MotivoRejeicaoDialog({
     <Dialog open={aberto} onOpenChange={(o) => !o && !enviando && onFechar()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Por que rejeitar este match?</DialogTitle>
+          <DialogTitle>Por que descartar este match?</DialogTitle>
           <DialogDescription>
             O motivo ajuda a calibrar o motor de sugestões de permuta.
           </DialogDescription>
@@ -155,7 +155,7 @@ export function MotivoRejeicaoDialog({
           </Button>
           <Button onClick={confirmar} disabled={!valido || enviando}>
             {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Confirmar rejeição
+            Confirmar descarte
           </Button>
         </DialogFooter>
       </DialogContent>

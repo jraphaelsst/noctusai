@@ -64,18 +64,18 @@ def _move(db, etapa, **kw):
 
 
 def test_rejeitar_sem_motivo_e_recusado():
-    with pytest.raises(ValidationError, match="Informe o motivo da rejeição."):
+    with pytest.raises(ValidationError, match="Informe o motivo do descarte."):
         _move(_db(), "rejeitado")
 
 
 def test_motivo_invalido_e_recusado():
-    with pytest.raises(ValidationError, match="Motivo de rejeição inválido."):
+    with pytest.raises(ValidationError, match="Motivo de descarte inválido."):
         _move(_db(), "rejeitado", motivo_rejeicao="porque_sim")
 
 
 def test_outro_exige_detalhe():
     for detalhe in (None, "   "):
-        with pytest.raises(ValidationError, match="Descreva o motivo da rejeição."):
+        with pytest.raises(ValidationError, match="Descreva o motivo do descarte."):
             _move(_db(), "rejeitado", motivo_rejeicao="outro", motivo_rejeicao_detalhe=detalhe)
 
 
@@ -103,7 +103,7 @@ def test_detalhe_vazio_vira_none_e_lado_e_opcional():
 @pytest.mark.parametrize("campo", ["motivo_rejeicao", "motivo_rejeicao_detalhe", "motivo_lado"])
 def test_motivo_com_etapa_nao_rejeitada_e_recusado(campo):
     valor = "valor" if campo == "motivo_rejeicao" else "origem" if campo == "motivo_lado" else "x"
-    with pytest.raises(ValidationError, match="Motivo só se aplica a uma rejeição."):
+    with pytest.raises(ValidationError, match="Motivo só se aplica a um descarte."):
         _move(_db(), "avaliacao", **{campo: valor})
 
 
