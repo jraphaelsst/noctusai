@@ -27,7 +27,10 @@ export interface Lead {
 export interface LeadStageConfig {
   slug: string;
   label: string;
+  /** A pipeline `STAGE_COLORS` token (`success`, `warning`...) or null (neutral). */
   color: string | null;
+  /** The coloured status-tag text of a lead in this stage (e.g. "Em atendimento"); null => `label`. */
+  tag: string | null;
 }
 
 export interface LeadOriginConfig {

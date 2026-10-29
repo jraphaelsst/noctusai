@@ -2,7 +2,7 @@
 export * from './types';
 export { createLeadsHooks, leadsKeys, placeInBoard, apiErrorCode as leadsApiErrorCode } from './hooks';
 export type { LeadsApi, LeadsHooks } from './hooks';
-export { daysLabel, daysSince, displayPhone, filterQuery, firstContactLabel, hasActiveFilters, originLabel, stageLabel } from './format';
+export { daysLabel, daysSince, displayPhone, filterQuery, firstContactLabel, hasActiveFilters, originLabel, stageLabel, stageOf, stageTagLabel } from './format';
 export { LeadCard } from './LeadCard';
 export type { LeadCardProps } from './LeadCard';
 export { LeadsBoard } from './LeadsBoard';

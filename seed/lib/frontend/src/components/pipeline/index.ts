@@ -42,6 +42,7 @@ export {
   STAGE_COLOR_OPTIONS,
   STAGE_ROLE_LABELS,
   stageColorClasses,
+  stageTagClasses,
 } from './stageTokens';
 export type { StageColorClasses } from './stageTokens';
 

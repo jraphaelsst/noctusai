@@ -96,6 +96,9 @@ export interface DetailAction {
 export interface EntityDetailBadge {
   label: string;
   variant?: BadgeVariant;
+  /** Extra classes over the variant -- e.g. a status colour from `stageTagClasses(token)`. */
+  className?: string;
+  testId?: string;
 }
 
 export interface EntityDetailDialogProps {
@@ -259,7 +262,7 @@ export function EntityDetailDialog({
           <div className="flex w-full flex-wrap items-center gap-2">
             <h2 className="min-w-0 flex-1 truncate text-lg font-semibold">{title}</h2>
             {badges?.map((b) => (
-              <Badge key={b.label} variant={b.variant ?? 'default'}>
+              <Badge key={b.label} variant={b.variant ?? 'default'} className={b.className} data-testid={b.testId}>
                 {b.label}
               </Badge>
             ))}

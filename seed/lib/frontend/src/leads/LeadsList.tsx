@@ -5,10 +5,12 @@
 import { Plus } from 'lucide-react';
 import * as React from 'react';
 
+import type { DetailAction } from '../components/detail/EntityDetailDialog';
 import { Badge } from '../design-system/ui/Badge';
 import { Button } from '../design-system/ui/Button';
 import { EmptyState, ListSkeleton, RefreshingBar, RetryError } from './controls';
-import { displayPhone, firstContactLabel, hasActiveFilters, originLabel, stageLabel } from './format';
+import { displayPhone, firstContactLabel, hasActiveFilters, originLabel, stageLabel, stageOf } from './format';
+import { stageTagClasses } from '../components/pipeline/stageTokens';
 import { errorMessage, type LeadsHooks } from './hooks';
 import { t } from './i18n';
 import { LeadDetailModal } from './LeadDetailModal';
@@ -22,10 +24,12 @@ export interface LeadsListProps {
   filters?: LeadFiltersState;
   onFiltersChange?: (next: LeadFiltersState) => void;
   onOpenConversation?: (lead: Lead) => void;
+  /** Extra detail-modal actions per lead (forwarded to `LeadDetailModal`). */
+  extraActions?: (lead: Lead) => DetailAction[];
   readOnly?: boolean;
 }
 
-export function LeadsList({ hooks, filters: controlled, onFiltersChange, onOpenConversation, readOnly }: LeadsListProps) {
+export function LeadsList({ hooks, filters: controlled, onFiltersChange, onOpenConversation, extraActions, readOnly }: LeadsListProps) {
   const [filters, setFilters] = useLeadFilters(controlled, onFiltersChange);
   const { data: config } = hooks.useLeadsConfig();
   const list = hooks.useLeadsList(filters);
@@ -79,7 +83,11 @@ export function LeadsList({ hooks, filters: controlled, onFiltersChange, onOpenC
                   <td className="px-3 py-2">
                     <Badge variant="outline">{originLabel(config, lead.origin)}</Badge>
                   </td>
-                  <td className="px-3 py-2">{stageLabel(config, lead.stage)}</td>
+                  <td className="px-3 py-2">
+                    <Badge variant="outline" className={stageTagClasses(stageOf(config, lead.stage)?.color)}>
+                      {stageLabel(config, lead.stage)}
+                    </Badge>
+                  </td>
                   <td className="px-3 py-2 text-muted-foreground">{firstContactLabel(lead)}</td>
                   <td className="max-w-xs truncate px-3 py-2 text-muted-foreground">{lead.last_message_preview ?? '—'}</td>
                 </tr>
@@ -95,7 +103,7 @@ export function LeadsList({ hooks, filters: controlled, onFiltersChange, onOpenC
           </Button>
         </div>
       )}
-      <LeadDetailModal hooks={hooks} lead={open} onClose={() => setOpenId(null)} onOpenConversation={onOpenConversation} />
+      <LeadDetailModal hooks={hooks} lead={open} onClose={() => setOpenId(null)} onOpenConversation={onOpenConversation} extraActions={extraActions} />
       <LeadFormDialog hooks={hooks} open={creating} lead={null} onClose={() => setCreating(false)} />
     </div>
   );

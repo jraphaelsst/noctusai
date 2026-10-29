@@ -90,6 +90,16 @@ export function stageColorClasses(cor: string | null | undefined): StageColorCla
   return STAGE_COLOR_CLASSES[cor as StageColor] ?? FALLBACK;
 }
 
+/**
+ * Classes for a TAG / status chip in a token's colour (tint + text + border) -- the same token map, so a lead's
+ * stage tag, a client status and a session status read in the colours the boards use. Layer it over the seed
+ * `Badge` (`<Badge variant="outline" className={stageTagClasses(token)}>`); unknown token -> neutral.
+ */
+export function stageTagClasses(cor: string | null | undefined): string {
+  const c = stageColorClasses(cor);
+  return `${c.bgColor} ${c.color} ${c.borderColor}`;
+}
+
 /** The pickable tokens, in the order the editor should offer them. */
 export const STAGE_COLOR_OPTIONS: StageColor[] = [
   'secondary',

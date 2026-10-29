@@ -147,6 +147,7 @@ export {
   STAGE_COLOR_OPTIONS,
   STAGE_ROLE_LABELS,
   stageColorClasses,
+  stageTagClasses,
 } from './pipeline';
 export type {
   PipelineBoardProps,
