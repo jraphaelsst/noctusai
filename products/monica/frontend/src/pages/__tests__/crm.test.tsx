@@ -2,7 +2,8 @@
  * Route tests for the CRM pages: each page mounts its seed organ and talks to monica's endpoints through the
  * product `api` client. Organ behaviour (drag, filters, thread, forms) is covered in `seed/lib`; this pins the
  * WIRING -- the right endpoint, the shared Funil/Lista filter, the `?chat=` deep link, "Ver lead", the Contexto
- * save payload, the settings sub-route and its admin gate.
+ * save payload, the settings sub-route and its admin gate, "Ver paciente" on a closed lead and the /pacientes routes
+ * (list, ?lead= redirect, agenda, one patient).
  */
 /// <reference types="@testing-library/jest-dom" />
 import * as React from "react";
@@ -33,12 +34,13 @@ import Contexto from "../Contexto";
 import Conversas from "../Conversas";
 import Dashboard from "../Dashboard";
 import Leads from "../Leads";
+import Pacientes from "../Pacientes";
 
 const STAGES = [
-  { slug: "lead", label: "Lead", color: null },
-  { slug: "atendimento", label: "Atendimento", color: null },
-  { slug: "negociacao", label: "Negociação", color: null },
-  { slug: "fechado", label: "Fechado", color: null },
+  { slug: "lead", label: "Lead", color: "destructive", tag: "Lead" },
+  { slug: "atendimento", label: "Atendimento", color: "warning", tag: "Em atendimento" },
+  { slug: "negociacao", label: "Negociação", color: "warning", tag: "Em atendimento" },
+  { slug: "fechado", label: "Fechado", color: "success", tag: "Paciente" },
 ];
 const CONFIG = {
   stages: STAGES,
@@ -57,7 +59,22 @@ const ANA = {
   notes: null, tags: [], whatsapp_connection_id: "c1", whatsapp_chat_id: CHAT,
   first_contact_at: "2026-10-20T12:00:00+00:00", last_message_at: null, last_message_preview: "Oi, queria marcar uma conversa",
 };
-const BOARD = STAGES.map((s, i) => ({ etapa: s.slug, stage: s, total: i === 0 ? 1 : 0, exibidos: i === 0 ? 1 : 0, cards: i === 0 ? [ANA] : [] }));
+const BIA = { ...ANA, id: "l2", name: "Bia Lima", stage: "fechado", whatsapp_chat_id: null };
+const CLIENTS_CONFIG = {
+  noun_singular: "Paciente", noun_plural: "Pacientes",
+  statuses: [{ slug: "ativo", label: "Ativo", color: "success" }, { slug: "encerrado", label: "Encerrado", color: "muted" }],
+  session_statuses: [{ slug: "agendada", label: "Agendada", color: "primary", billable: false }, { slug: "realizada", label: "Realizada", color: "success", billable: true }],
+  default_session_status: "agendada", default_duration_min: 50, default_price_cents: null,
+  payment_methods: [{ slug: "pix", label: "Pix" }], timezone: "America/Sao_Paulo", finance_enabled: true,
+};
+const PACIENTE = {
+  id: "p1", name: "Bia Lima", phone: "+5511994573387", email: null, doc: null, birth_date: null, status: "ativo", tags: ["online"],
+  notes: null, lead_id: "l2", whatsapp_chat_id: null, default_price_cents: 20000, session_duration_min: 50, started_at: "2026-10-29",
+  created_at: "2026-10-29T12:00:00+00:00", updated_at: "2026-10-29T12:00:00+00:00",
+  summary: { next_session_at: null, last_session_at: null, sessions_done: 0, open_cents: 0, overdue_cents: 0, paid_cents: 0 },
+};
+const cardsOf = (i: number) => (i === 0 ? [ANA] : i === 3 ? [BIA] : []);
+const BOARD = STAGES.map((s, i) => ({ etapa: s.slug, stage: s, total: cardsOf(i).length, exibidos: cardsOf(i).length, cards: cardsOf(i) }));
 const CONNECTION = {
   id: "c1", label: "Mônica", base_url: "http://waha", session_name: "default", webhook_url: null,
   created_at: "2026-10-20T12:00:00+00:00", updated_at: "2026-10-20T12:00:00+00:00",
@@ -75,12 +92,19 @@ const CONTEXTO = {
   valores: [{ chave: "quem_sou", valor: "Psicanalista." }],
 };
 
-function route(path: string): unknown {
+function route(path: string, q?: Record<string, unknown>): unknown {
   const p = path.split("?")[0];
   if (p === "/api/leads/config") return { data: CONFIG };
   if (p === "/api/leads/board") return { data: BOARD };
   if (p === "/api/leads") return { data: [ANA], next_cursor: null };
   if (p === `/api/leads/${ANA.id}`) return { data: ANA };
+  if (p === `/api/leads/${BIA.id}`) return { data: BIA };
+  if (p === "/api/clients/config") return { data: CLIENTS_CONFIG };
+  if (p === "/api/clients/tags") return { data: ["online"] };
+  if (p === "/api/clients") return { data: q?.lead_id === "l9" ? [] : [PACIENTE], next_cursor: null };
+  if (p === "/api/clients/sessions") return { data: [] };
+  if (p === "/api/clients/p1") return { data: PACIENTE };
+  if (p === "/api/clients/p1/sessions") return { data: [] };
   if (p === "/api/whatsapp/connections") return [CONNECTION];
   if (p === "/api/whatsapp/connections/c1/chats") return { items: [INBOX_CHAT], next_cursor: null };
   if (p.endsWith("/messages")) return { items: [], has_more: false };
@@ -90,7 +114,7 @@ function route(path: string): unknown {
 
 beforeEach(() => {
   state.isAdmin = true;
-  api.get.mockReset().mockImplementation(async (path: string) => route(path));
+  api.get.mockReset().mockImplementation(async (path: string, q?: Record<string, unknown>) => route(path, q));
   api.put.mockReset();
   api.post.mockReset().mockResolvedValue(null);
 });
@@ -122,9 +146,9 @@ const getsTo = (prefix: string) => api.get.mock.calls.filter(([p]) => String(p).
 describe("Dashboard", () => {
   it("shows the real lead count per stage", async () => {
     renderAt("/", "/", <Dashboard />);
-    expect(await screen.findByTestId("dashboard-total")).toHaveTextContent("1 lead no total.");
+    expect(await screen.findByTestId("dashboard-total")).toHaveTextContent("2 leads no total.");
     expect(screen.getByTestId("dashboard-stage-lead")).toHaveTextContent("1");
-    expect(screen.getByTestId("dashboard-stage-fechado")).toHaveTextContent("0");
+    expect(screen.getByTestId("dashboard-stage-fechado")).toHaveTextContent("1");
   });
 
   it("a failed load says so with a retry -- never '0 leads'", async () => {
@@ -170,6 +194,58 @@ describe("Leads", () => {
     fireEvent.click(await screen.findByText("Ana Souza"));
     fireEvent.click(await screen.findByTestId("lead-detail-open-chat"));
     expect(screen.getByTestId("where")).toHaveTextContent(`/conversas?chat=${encodeURIComponent(CHAT)}`);
+  });
+});
+
+describe("Leads -> Pacientes", () => {
+  it("a closed lead offers 'Ver paciente', which opens /pacientes?lead=<id>; an open lead does not", async () => {
+    renderAt("/leads", "/leads/*", <Leads />);
+    expect(await screen.findByTestId("lead-stage-tag-l2")).toHaveTextContent("Paciente");
+    expect(screen.getByTestId("lead-stage-tag-l1")).toHaveTextContent("Lead");
+    fireEvent.click(screen.getByText("Ana Souza"));
+    await screen.findByTestId("lead-detail-edit");
+    expect(screen.queryByTestId("lead-detail-ver-paciente")).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("lead-detail-edit")).toBeNull());
+    fireEvent.click(screen.getByText("Bia Lima"));
+    fireEvent.click(await screen.findByTestId("lead-detail-ver-paciente"));
+    expect(screen.getByTestId("where")).toHaveTextContent("/pacientes?lead=l2");
+  });
+});
+
+describe("Pacientes", () => {
+  it("the list reads /api/clients with the backend's noun", async () => {
+    renderAt("/pacientes", "/pacientes/*", <Pacientes />);
+    expect(await screen.findByTestId("client-row-p1")).toHaveTextContent("Bia Lima");
+    expect(screen.getByTestId("clients-new")).toHaveTextContent("Novo paciente");
+    fireEvent.click(screen.getByText("Bia Lima"));
+    expect(screen.getByTestId("where")).toHaveTextContent("/pacientes/p1");
+  });
+
+  it("?lead=<id> resolves the converted patient and redirects to it", async () => {
+    renderAt("/pacientes?lead=l2", "/pacientes/*", <Pacientes />);
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/pacientes/p1"));
+    expect(api.get.mock.calls.some(([p, q]) => p === "/api/clients" && q?.lead_id === "l2")).toBe(true);
+  });
+
+  it("?lead= of a lead not converted yet says so (no silent empty)", async () => {
+    renderAt("/pacientes?lead=l9", "/pacientes/*", <Pacientes />);
+    expect(await screen.findByTestId("pacientes-lead-sem-paciente")).toBeInTheDocument();
+  });
+
+  it("/pacientes/agenda reads one week of sessions", async () => {
+    renderAt("/pacientes/agenda", "/pacientes/*", <Pacientes />);
+    expect(await screen.findByTestId("clients-agenda")).toBeInTheDocument();
+    await waitFor(() => expect(getsTo("/api/clients/sessions").length).toBeGreaterThan(0));
+  });
+
+  it("/pacientes/:id opens the patient; the tab lives in ?aba=", async () => {
+    renderAt("/pacientes/p1", "/pacientes/*", <Pacientes />);
+    expect(await screen.findByRole("heading", { name: "Bia Lima" })).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByTestId("client-tab-dados"));
+    fireEvent.click(screen.getByTestId("client-tab-dados"));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/pacientes/p1?aba=dados"));
+    expect(await screen.findByTestId("client-form")).toBeInTheDocument();
   });
 });
 

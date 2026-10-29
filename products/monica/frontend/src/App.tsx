@@ -11,7 +11,8 @@ import infra from '@noctusai/seed/infra';
 import { stripNavRoutes, type NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
 import {
-  BookOpenText, Boxes, Filter, Home, Kanban, LayoutDashboard, List, MessageCircle, Settings, Smartphone, Users, Wallet,
+  BookOpenText, Boxes, CalendarDays, Filter, HeartHandshake, Home, Kanban, LayoutDashboard, List, MessageCircle, Settings, Smartphone,
+  Users, Wallet,
 } from "lucide-react";
 
 // Pages
@@ -21,6 +22,8 @@ const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Leads = lazy(() => import("@/pages/Leads"));
+// Clients organ (seed) -- `/pacientes/*`: list, week agenda, one patient (sessões / agenda fixa / financeiro / dados).
+const Pacientes = lazy(() => import("@/pages/Pacientes"));
 const Conversas = lazy(() => import("@/pages/Conversas"));
 const Contexto = lazy(() => import("@/pages/Contexto"));
 const Configuracoes = lazy(() => import("@/pages/Configuracoes"));
@@ -50,6 +53,15 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Funil", href: "/leads", icon: Kanban, route: "leads" },
       { name: "Lista", href: "/leads/lista", icon: List, route: "leads_lista" },
+    ],
+  },
+  {
+    key: "pacientes",
+    label: "Pacientes",
+    icon: HeartHandshake,
+    items: [
+      { name: "Lista", href: "/pacientes", icon: List, route: "pacientes" },
+      { name: "Agenda", href: "/pacientes/agenda", icon: CalendarDays, route: "pacientes_agenda" },
     ],
   },
   {
@@ -85,6 +97,7 @@ export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
     { path: "/leads/*", component: Leads },
+    { path: "/pacientes/*", component: Pacientes },
     { path: "/conversas", component: Conversas },
     { path: "/contexto", component: Contexto },
     { path: "/configuracoes/*", component: Configuracoes },
