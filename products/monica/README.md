@@ -11,17 +11,18 @@ CRM do consultório de psicanálise de **Mônica Tangerino** (psicanalista; fala
 | `/conversas` | Conversas de WhatsApp: ler e responder, `?chat=` abre uma conversa, "Ver lead" no cabeçalho | `WhatsAppInbox` |
 | `/contexto` | Quem a Mônica é, em palavras dela (abordagem, serviços, tom de voz…) — a base do futuro agente de leads | `OrgSpecsForm` via proxy `/api/contexto` |
 | `/configuracoes/conexoes` | Conexão do WhatsApp por QR (só administradores). Abas como sub-rotas; cresce com uma linha em `sections` | `SectionTabsPage`, `WhatsAppConnectionsPage` |
+| `/pacientes` (Lista) · `/pacientes/agenda` (Agenda) · `/pacientes/:id` | Pacientes: lista (busca, status, tags, próxima sessão, valor em aberto), agenda semanal de todas as sessões e a página do paciente com abas Sessões · Agenda fixa · Financeiro · Dados. Horário semanal fixo gera as próximas 8 semanas de sessões; sessão realizada ou falta com valor vira conta a receber no Financeiro; "Registrar pagamento" (Pix, dinheiro, cartão, transferência — sem gateway) dá baixa nela. `?lead=` abre o paciente de um lead | `ClientsList`, `ClientsAgenda`, `ClientDetailPage` |
 | `/equipe` · `/financeiro` | Equipe e financeiro (organs da seed) | `TeamPage`, `FinanceRoutedPage` |
 
-Funil: **Lead → Atendimento → Negociação → Fechado**. Origens: WhatsApp, Instagram, Indicação, Outro (`backend/app/crm.py` — são dados, mudar não pede migration). Todo número novo que escreve (não-grupo) vira lead em "Lead" com origem WhatsApp; apagar o lead **não** o traz de volta (a conversa persiste — é o desejado). Toda mensagem, recebida ou enviada, atualiza a prévia do cartão.
+Funil: **Lead → Atendimento → Negociação → Fechado**. Cada etapa tem uma etiqueta colorida no cartão e no lead: vermelha "Lead", amarela "Em atendimento" (Atendimento e Negociação), verde "Paciente" (Fechado). **Mover um lead para Fechado cria o paciente** (uma vez só; falha aparece como aviso, não desfaz a mudança) e o lead ganha "Ver paciente". Origens: WhatsApp, Instagram, Indicação, Outro (`backend/app/crm.py` — são dados, mudar não pede migration). Todo número novo que escreve (não-grupo) vira lead em "Lead" com origem WhatsApp; apagar o lead **não** o traz de volta (a conversa persiste — é o desejado). Toda mensagem, recebida ou enviada, atualiza a prévia do cartão.
 
 **Liga/desliga por app (fase de testes)**: cada conexão tem um interruptor (`PUT /api/whatsapp/connections/{id}/enabled`). Desligado, o Monica ignora a linha (o webhook responde `disabled` e não grava nada; enviar dá 409) — outros apps no mesmo número continuam respondendo. Uma conexão `borrower` usa a sessão de WhatsApp de outro app: parear/reiniciar/desconectar ficam bloqueados. Com o app desligado, "Apagar dados de teste" (`POST .../purge`, digitando o nome da conexão) apaga conversas, mensagens e os leads automáticos que ninguém editou; leads editados são mantidos, sem o vínculo com a conversa. Detalhes: `KB § INTEGRATIONS/whatsapp.md`.
 
 ## Stack
 
-- **Backend**: FastAPI via `create_product_app()` (porta 8020); `mount_leads`, conexões + caixa de entrada do WhatsApp (`app/routers/whatsapp_router.py`), proxy `/api/contexto`, `mount_finance`.
+- **Backend**: FastAPI via `create_product_app()` (porta 8020); `mount_leads` (gancho `on_stage_entered` → paciente), `mount_clients` (pacientes, sessões, horários, pagamentos), conexões + caixa de entrada do WhatsApp (`app/routers/whatsapp_router.py`), proxy `/api/contexto`, `mount_finance`.
 - **Frontend**: React via `createProductApp()` + `createProductLayout()` (porta 8240).
-- **Banco**: Supabase, schema `monica` (migrations 001–017: leads, `whatsapp_connections|chats|messages`, finance, `status_pagina`).
+- **Banco**: Supabase, schema `monica` (migrations 001–019: leads, pacientes (`clients`, `client_sessions`, `client_schedules`, `client_payments`), `whatsapp_connections|chats|messages`, finance, `status_pagina`).
 
 ## Configuração (nomes; valores só no `.env` do servidor)
 
@@ -46,7 +47,7 @@ cd products/monica/frontend && npm run dev
 ## Testes
 
 ```bash
-cd products/monica/backend && pytest          # 75: 401 estrito, inbox -> lead, contexto, finance, migrations
+cd products/monica/backend && pytest          # 100: 401 estrito, inbox -> lead, lead fechado -> paciente, contexto, finance, migrations
 cd products/monica/frontend && npx vitest run # 10 CRM + finance route
 cd products/monica/frontend && npx vite build
 ```

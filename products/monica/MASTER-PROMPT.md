@@ -14,9 +14,9 @@ Monica Tangerino is a psychoanalyst who talks about life's important matters thr
 
 ```
 products/monica/backend/app/
-  main.py                      → create_product_app + mount_leads + mount_finance + the routers below
+  main.py                      → create_product_app + mount_leads + mount_clients + mount_finance + the routers below
   config.py                    → SeedSettings: ENCRYPTION_KEY, MONICA_WAHA_*, REDIS_URL, AGENTS_*, MONICA_AGENT_KEY
-  crm.py                       → LEADS_CONFIG: stages lead/atendimento/negociacao/fechado, origins whatsapp/instagram/indicacao/outro
+  crm.py                       → LEADS_CONFIG: stages lead/atendimento/negociacao/fechado (colour + tag Lead/Em atendimento/Paciente), origins whatsapp/instagram/indicacao/outro; CLIENTS_CONFIG (Paciente/Pacientes, America/Sao_Paulo); on_stage_entered: fechado -> ClientsService.ensure_from_lead
   routers/whatsapp_router.py   → seed connections router (admin via make_organ_auth) + seed inbox router
   routers/contexto_router.py   → /api/contexto: proxy to agents org specs, forwards the USER's bearer
   services/whatsapp_leads.py   → on_new_chat -> LeadsService.upsert_from_whatsapp; on_message -> touch_last_message; on_purge -> LeadsService.purge_from_whatsapp
@@ -31,9 +31,10 @@ products/monica/backend/app/
 
 ```
 products/monica/frontend/src/
-  App.tsx                 → nav groups Principal / Leads / Gestão / Configurações (status_pagina route keys)
-  lib/crm.ts              → the hooks, built once: createLeadsHooks, createWhatsAppInboxHooks, createWhatsAppConnectionsHooks, createOrgSpecsHooks
+  App.tsx                 → nav groups Principal / Leads / Pacientes / Gestão / Configurações (status_pagina route keys)
+  lib/crm.ts              → the hooks, built once: createLeadsHooks, createWhatsAppInboxHooks, createWhatsAppConnectionsHooks, createOrgSpecsHooks, createClientsHooks
   pages/Leads.tsx         → /leads/* Funil + Lista sharing one filter state
+  pages/Pacientes.tsx     → /pacientes/* seed ClientsList / ClientsAgenda / ClientDetailPage (tab in ?aba=), ?lead= resolves a converted lead
   pages/Conversas.tsx     → seed WhatsAppInbox, ?chat= deep link, "Ver lead" header slot
   pages/Contexto.tsx      → seed OrgSpecsForm
   pages/Configuracoes.tsx → seed SectionTabsPage (sub-routes), section Conexões (admin only)
@@ -41,7 +42,7 @@ products/monica/frontend/src/
 
 ### Database (schema `monica`)
 
-`status_pagina`, `invitations`, finance (`fin_*`, 012), `leads` (014), `whatsapp_connections|chats|messages` (015), CRM `status_pagina` rows (016), per-app switch `app_enabled`/`session_role` + `leads.edited_at` (017). RLS org-scoped on `public.current_org_id_for('monica')`; browser roles read, the backend writes with the service role.
+`status_pagina`, `invitations`, finance (`fin_*`, 012), `leads` (014), `whatsapp_connections|chats|messages` (015), CRM `status_pagina` rows (016), per-app switch `app_enabled`/`session_role` + `leads.edited_at` (017), pacientes `clients|client_schedules|client_sessions|client_payments` (018 — session receivables go through the finance `FinanceBooking` seam, source `external`, ref `clients:session:<id>`), `pacientes`/`pacientes_agenda` status_pagina rows (019). RLS org-scoped on `public.current_org_id_for('monica')`; browser roles read, the backend writes with the service role.
 
 ## Rules
 
