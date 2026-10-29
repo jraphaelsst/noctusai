@@ -9,21 +9,40 @@ Contract §3.5. Protocol + Fake + Real + factory (CLAUDE.md §1 seed IO rule):
 
 All calls are IDEMPOTENT, so a retried webhook / re-run job never double-books:
 `book_receivable` / `book_payable` on `(source, source_ref)`, `book_settlement` on `(kind, external_ref)`.
+
+A consumer that OWNS the lifecycle of what it booked (the clients organ: a session priced, re-priced, un-billed,
+paid by hand) also goes through the seam, never the tables: `receivables` reads its entries back (batched),
+`update_receivable` / `cancel_receivable` / `settle_receivable` run the finance services (`entries.update_entry` /
+`entries.cancel_entry` / `settlements.settle_entry`) with their own refusals (cancel with a live settlement = 409
+`lancamento_com_baixa`; an amount under what is settled = 422). `settle_receivable` is idempotent on
+`external_ref` like every settlement.
 """
 from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any, Literal, Optional, Protocol, runtime_checkable
+from typing import Any, Literal, Optional, Protocol, Sequence, runtime_checkable
+
+from noctusai_lib.integrations.persistence.table_reads import in_batched_rows
 
 from ._common import Scope, iso, month_start, new_id
 from .accounts import get_or_create_gateway_account, require_usable_account
 from .categories import find_category_by_hint
 from .config import FinanceConfig
-from .entries import create_entry, find_by_source
-from .errors import DOCUMENTO_INVALIDO, LANCAMENTO_DUPLICADO, FinanceError, invalid, not_found
+from .entries import cancel_entry, create_entry, find_by_source, status_for, update_entry
+from .errors import (
+    BAIXA_EXCEDE_SALDO,
+    DOCUMENTO_INVALIDO,
+    LANCAMENTO_CANCELADO,
+    LANCAMENTO_COM_BAIXA,
+    LANCAMENTO_DUPLICADO,
+    FinanceError,
+    conflict,
+    invalid,
+    not_found,
+)
 from .settlements import find_settlement_by_ref, settle_entry
-from .types import CategoryDirection, EntrySource, SettlementKind, values
+from .types import CategoryDirection, EntrySource, EntryStatus, SettlementKind, values
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +133,19 @@ class NoopFinanceBooking:
     def book_settlement(self, org_id: str, **_: Any) -> Optional[str]:
         return None
 
+    def receivables(self, org_id: str, entry_ids: Sequence[str]) -> list[dict]:
+        return []
+
+    # Nothing is ever booked here, so any entry id handed back is not ours: 404, never a silent success.
+    def update_receivable(self, org_id: str, entry_id: str, **_: Any) -> None:
+        raise not_found("Lançamento")
+
+    def cancel_receivable(self, org_id: str, entry_id: str) -> None:
+        raise not_found("Lançamento")
+
+    def settle_receivable(self, org_id: str, entry_id: str, **_: Any) -> str:
+        raise not_found("Lançamento")
+
 
 class FakeFinanceBooking:
     """In-memory booking with the real idempotency keys; `entries` / `settlements` expose what was booked."""
@@ -125,8 +157,65 @@ class FakeFinanceBooking:
     def book_receivable(self, org_id: str, *, source: str, source_ref: str, **fields: Any) -> Optional[str]:
         key = (str(org_id), source, source_ref)
         if key not in self.entries:
-            self.entries[key] = {"id": new_id(), "org_id": str(org_id), "source": source, "source_ref": source_ref, **fields}
+            self.entries[key] = {"id": new_id(), "org_id": str(org_id), "source": source, "source_ref": source_ref,
+                                 "direction": "receivable", "status": EntryStatus.OPEN.value, "settled_cents": 0, **fields}
         return self.entries[key]["id"]
+
+    def _by_id(self, org_id: str, entry_id: str) -> dict:
+        for e in self.entries.values():
+            if e["id"] == str(entry_id) and e["org_id"] == str(org_id):
+                return e
+        raise not_found("Lançamento")
+
+    def receivables(self, org_id: str, entry_ids: Sequence[str]) -> list[dict]:
+        wanted = {str(i) for i in entry_ids}
+        return [
+            {
+                "id": e["id"], "description": e.get("description"), "amount_cents": int(e["amount_cents"]),
+                "settled_cents": int(e.get("settled_cents") or 0), "due_date": iso(e.get("due_date")),
+                "status": e.get("status") or EntryStatus.OPEN.value,
+            }
+            for e in self.entries.values()
+            if e["id"] in wanted and e["org_id"] == str(org_id)
+        ]
+
+    def update_receivable(self, org_id: str, entry_id: str, **fields: Any) -> None:
+        e = self._by_id(org_id, entry_id)
+        if e.get("status") == EntryStatus.CANCELLED.value:
+            raise conflict(LANCAMENTO_CANCELADO, "O lançamento está cancelado.")
+        patch = {k: v for k, v in fields.items() if v is not None}
+        if "amount_cents" in patch:
+            amount, settled = int(patch["amount_cents"]), int(e.get("settled_cents") or 0)
+            if amount < settled:
+                raise invalid("amount_cents", "O valor não pode ficar abaixo do que já foi baixado.", code="valor_abaixo_baixado")
+            patch["status"] = status_for(amount, settled)
+        e.update(patch)
+
+    def cancel_receivable(self, org_id: str, entry_id: str) -> None:
+        e = self._by_id(org_id, entry_id)
+        if int(e.get("settled_cents") or 0) > 0:
+            raise conflict(LANCAMENTO_COM_BAIXA, "O lançamento tem baixas; estorne-as antes de cancelar.")
+        e["status"] = EntryStatus.CANCELLED.value
+
+    def settle_receivable(
+        self, org_id: str, entry_id: str, *, account_id: str, amount_cents: int, settled_on: date,
+        method: Optional[str], external_ref: str,
+    ) -> str:
+        e = self._by_id(org_id, entry_id)
+        key = (str(org_id), SettlementKind.PAYMENT.value, external_ref)
+        if key in self.settlements:
+            return self.settlements[key]["id"]
+        if e.get("status") == EntryStatus.CANCELLED.value:
+            raise conflict(LANCAMENTO_CANCELADO, "O lançamento está cancelado.")
+        settled = int(e.get("settled_cents") or 0)
+        if amount_cents <= 0 or amount_cents > int(e["amount_cents"]) - settled:
+            raise invalid("amount_cents", "O valor excede o saldo em aberto do lançamento.", code=BAIXA_EXCEDE_SALDO)
+        self.settlements[key] = {"id": new_id(), "org_id": str(org_id), "entry_id": e["id"], "account_id": str(account_id),
+                                 "kind": SettlementKind.PAYMENT.value, "external_ref": external_ref,
+                                 "amount_cents": amount_cents, "settled_on": iso(settled_on), "method": method}
+        e["settled_cents"] = settled + amount_cents
+        e["status"] = status_for(int(e["amount_cents"]), e["settled_cents"])
+        return self.settlements[key]["id"]
 
     def book_payable(self, org_id: str, *, source: str, source_ref: str, **fields: Any) -> Optional[str]:
         key = (str(org_id), source, source_ref)
@@ -330,6 +419,75 @@ class SupabaseFinanceBooking:
         if interest_part > 0:
             interest_id = settle(interest_entry, interest_ref, interest_part, fee_cents if main_part == 0 else 0)
         return main_id or interest_id
+
+    def receivables(self, org_id: str, entry_ids: Sequence[str]) -> list[dict]:
+        ids = sorted({str(i) for i in entry_ids if i})
+        if not ids:
+            return []
+        s = self._scope(org_id)
+        rows = in_batched_rows(
+            self._db, self._cfg.table("entries"), s.org_id, "id", ids,
+            select="id,description,amount_cents,settled_cents,due_date,status",
+        )
+        return [
+            {
+                "id": str(r["id"]), "description": r.get("description"), "amount_cents": int(r["amount_cents"]),
+                "settled_cents": int(r.get("settled_cents") or 0), "due_date": iso(r.get("due_date")), "status": r["status"],
+            }
+            for r in rows
+        ]
+
+    def update_receivable(
+        self,
+        org_id: str,
+        entry_id: str,
+        *,
+        amount_cents: Optional[int] = None,
+        description: Optional[str] = None,
+        due_date: Optional[date] = None,
+        competence_month: Optional[date] = None,
+    ) -> None:
+        data: dict[str, Any] = {}
+        if amount_cents is not None:
+            data["amount_cents"] = amount_cents
+        if description is not None:
+            data["description"] = description
+        if due_date is not None:
+            data["due_date"] = due_date
+        if competence_month is not None:
+            data["competence_month"] = competence_month
+        if data:
+            update_entry(self._scope(org_id), entry_id, data)
+
+    def cancel_receivable(self, org_id: str, entry_id: str) -> None:
+        cancel_entry(self._scope(org_id), entry_id)
+
+    def settle_receivable(
+        self,
+        org_id: str,
+        entry_id: str,
+        *,
+        account_id: str,
+        amount_cents: int,
+        settled_on: date,
+        method: Optional[str],
+        external_ref: str,
+    ) -> str:
+        if not external_ref:
+            raise invalid("external_ref", "A referência externa é obrigatória para baixas automáticas.")
+        result = settle_entry(
+            self._scope(org_id),
+            entry_id,
+            {
+                "account_id": account_id,
+                "kind": SettlementKind.PAYMENT.value,
+                "settled_on": iso(settled_on),
+                "amount_cents": amount_cents,
+                "external_ref": external_ref,
+                "method": method,
+            },
+        )
+        return str(result["settlement"]["id"])
 
 
 def make_finance_booking(

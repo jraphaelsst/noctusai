@@ -234,6 +234,27 @@ def test_leads_organ_is_registered_and_mounts_with_strict_401():
     assert {r.path for router in organ for r in router.routes} >= {"/api/leads", "/api/leads/board", "/api/leads/config", "/api/leads/{lead_id}/move"}
 
 
+def test_clients_organ_is_registered_and_mounts_with_strict_401():
+    from noctusai_lib.domain.clients import ClientsConfig, clients_migration
+    from noctusai_lib.domain.finance import FinanceConfig
+    from noctusai_seed.organs import mount_clients
+
+    spec = ORGAN_REGISTRY["clients"]
+    assert spec.migration("erp") == clients_migration("erp") and spec.guard_probes is not None
+    assert [p.guard_name for p in spec.guard_probes("erp")] == ["uq_clients_lead", "uq_client_sessions_slot"]
+    organ = mount_clients(schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(),
+                          get_core_client=lambda: object(), config=ClientsConfig())
+    assert organ.max_body_path_overrides == {}
+    client = TestClient(_app_of(organ))
+    for method, path in (("GET", "/api/clients"), ("GET", "/api/clients/config"), ("POST", "/api/clients/x/payments"),
+                         ("DELETE", "/api/clients/x"), ("GET", "/api/clients/sessions")):
+        assert client.request(method, path, json={} if method == "POST" else None).status_code == 401, path
+    assert {r.path for router in organ for r in router.routes} >= {"/api/clients", "/api/clients/{client_id}/payments", "/api/clients/sessions"}
+    with pytest.raises(ValueError):
+        mount_clients(schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object(),
+                      config=ClientsConfig(), finance_cfg=FinanceConfig(schema="other"))
+
+
 def test_mount_inventory_routes_and_strict_401():
     from noctusai_seed.organs import mount_inventory
 

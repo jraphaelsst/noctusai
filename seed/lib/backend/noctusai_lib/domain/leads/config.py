@@ -1,6 +1,6 @@
 """`LeadsConfig` -- the funnel's stages and origins are DATA the product supplies, never an enum.
 
-A stage is `(slug, label, color)`; leads reference it by `slug`, which is the stable machine key
+A stage is `(slug, label, color, tag)`; leads reference it by `slug`, which is the stable machine key
 (a relabel is one edit here and every card follows). Origins work the same way. Nothing in the
 database constrains either column, so changing the lists later needs no migration -- a lead whose
 stage was removed from the config is still listed and shows up in the board's "Sem etapa" column
@@ -11,8 +11,8 @@ stage was removed from the config is still listed and shows up in the board's "S
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence, Union
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Optional, Sequence, Union
 
 from noctusai_lib.domain.pipeline.stages import STAGE_COLORS
 
@@ -26,6 +26,9 @@ class LeadStage:
     label: str
     #: one of the pipeline organ's colour tokens (`STAGE_COLORS`), or None
     color: Optional[str] = None
+    #: the coloured status-tag label a card shows for this stage (None => the stage `label`). Two stages may share a
+    #: tag ("Em atendimento" over both "Atendimento" and "Negociação").
+    tag: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not _SLUG.match(self.slug or ""):
@@ -34,9 +37,11 @@ class LeadStage:
             raise ValueError(f"LeadStage {self.slug!r}: label must not be empty")
         if self.color is not None and self.color not in STAGE_COLORS:
             raise ValueError(f"LeadStage {self.slug!r}: color must be one of {STAGE_COLORS}, got {self.color!r}")
+        if self.tag is not None and not self.tag.strip():
+            raise ValueError(f"LeadStage {self.slug!r}: tag must not be blank (use None for the label)")
 
     def as_dict(self) -> dict:
-        return {"slug": self.slug, "label": self.label, "color": self.color}
+        return {"slug": self.slug, "label": self.label, "color": self.color, "tag": self.tag or self.label}
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,10 @@ class LeadsConfig:
             `outro` when present, else the first origin).
         table: physical table name inside the product schema.
         board_stage_limit: cards a board response carries per column (`total` still counts them all).
+        on_stage_entered: optional host hook `(org_id, lead, stage_slug) -> Any`, fired AFTER a lead is saved on a
+            stage it was not on before (create, WhatsApp-born create, update that changes `stage`, move across
+            columns). Sync; called in the request thread. A raise is LOGGED and surfaced on the returned lead as
+            `stage_hook_error` -- it never rolls the lead write back (the lead move is the user's fact).
     """
 
     stages: Sequence[Union[LeadStage, str]]
@@ -85,6 +94,7 @@ class LeadsConfig:
     default_origin: Optional[str] = None
     table: str = "leads"
     board_stage_limit: int = 100
+    on_stage_entered: Optional[Callable[[str, dict, str], Any]] = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         stages = tuple(_stage(s) for s in self.stages)
