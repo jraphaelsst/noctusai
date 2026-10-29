@@ -10,3 +10,5 @@ export type { OrganApi } from './query';
 export { envelopeOps } from './cacheOps';
 export type { DataEnvelope } from './cacheOps';
 export { pageOps } from './page-ops';
+export { createOrganTranslator } from './i18n';
+export type { OrganTranslate } from './i18n';

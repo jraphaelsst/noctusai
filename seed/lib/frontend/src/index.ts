@@ -327,6 +327,11 @@ export * from './parties';
 // noctusai_lib.domain.leads. Product-agnostic; the host passes its authenticated api client.
 export * from './leads';
 
+// Clients organ (recurring-session clients -- patients, students, trainees: sessions, weekly slots, tags, receivables via
+// the finance organ) -- `createClientsHooks`, `<ClientsList/>`, `<ClientDetailPage/>`, `<ClientsAgenda/>`. Backend:
+// noctusai_lib.domain.clients. The noun ("Paciente") is product config. The host passes its authenticated api client.
+export * from './clients';
+
 // Contracts organ (billing models one_time/installments/recurring/retainer, versions/aditivos, reajuste, rescisão, assinatura) —
 // `createContractsHooks`, `<ContractsTable/>`, `<ContractEditor/>`, `<ContractTimeline/>`, `<ContractBillingPreview/>`. Backend:
 // noctusai_lib.domain.contracts. Product-agnostic; the host passes its authenticated api client.
