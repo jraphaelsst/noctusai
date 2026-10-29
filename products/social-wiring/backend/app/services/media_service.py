@@ -801,6 +801,8 @@ class MediaService:
                     raise
                 await self._sleep(min(max(busy.retry_after_s, 0.0), BUSY_ESPERA_MAX_S))
                 continue
+            # Duration + real-time factor only (never the text): the evidence for tuning the worker's caps.
+            logger.info("transcribed duracao_s=%s rtf=%s modelo=%s", result.duracao_s, result.rtf, result.modelo)
             return (result.text or "").strip()
         return ""  # unreachable: the last attempt returns or raises
 

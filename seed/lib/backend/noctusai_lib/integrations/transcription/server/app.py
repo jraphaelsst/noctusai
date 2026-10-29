@@ -36,6 +36,11 @@ log = logging.getLogger("noctus.transcriber")
 # 9000 s covers the platform API's 45-min max (3 x 2700 s = 8100 s) with headroom
 # (transcription-api CONTRACT §3, slice E). Products enforce their own lower caps.
 MAX_HARD_S = 9000.0
+# Floor for SHORT clips: Whisper pads every chunk to a 30 s window, so a 4 s voice
+# note costs about one full window (~25 s at the measured RTF 0.83 on the 1-core
+# VPS). A pure 3x-duration cap (11.5 s for 3.8 s) killed every chat voice note
+# (2026-10-29: two 504s in a row on a 3.8 s note).
+MIN_HARD_S = 60.0
 DEFAULT_MAX_SECONDS = 600.0
 MIN_SECONDS = 1.0
 DAILY_BACKSTOP_MIN = 600.0
@@ -47,8 +52,8 @@ PROBE_CONCURRENCY = 2
 
 
 def hard_cap_s(duracao_s: float) -> float:
-    """In-process kill deadline for one transcription: `min(MAX_HARD_S, 3 * duracao)` s."""
-    return min(MAX_HARD_S, 3.0 * duracao_s)
+    """In-process kill deadline for one transcription: `min(MAX_HARD_S, max(MIN_HARD_S, 3 * duracao))` s."""
+    return min(MAX_HARD_S, max(MIN_HARD_S, 3.0 * duracao_s))
 PROBE_TIMEOUT_S = 5.0
 RETRY_AFTER_S = "15"
 

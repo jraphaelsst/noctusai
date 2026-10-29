@@ -146,13 +146,22 @@ def test_engine_timeout_maps_to_504(monkeypatch):
     assert r.json()["codigo"] == "tempo_excedido"
 
 
-def test_deadline_is_3x_duration_for_short_audio(monkeypatch):
+def test_deadline_has_a_one_window_floor_for_short_audio(monkeypatch):
     monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(5.0))
     eng = FakeEngine()
     with TestClient(create_app(eng, token=TOKEN, load_in_background=False)) as c:
         t0 = time.monotonic()
         c.post("/v1/transcribe", content=b"a", headers=H)
-    assert 14.0 < eng.calls[0]["deadline"] - t0 < 16.5  # 3 x 5 s
+    assert 59.0 < eng.calls[0]["deadline"] - t0 < 61.5  # MIN_HARD_S, not 3 x 5 s
+
+
+def test_deadline_is_3x_duration_past_the_floor(monkeypatch):
+    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(40.0))
+    eng = FakeEngine()
+    with TestClient(create_app(eng, token=TOKEN, load_in_background=False)) as c:
+        t0 = time.monotonic()
+        c.post("/v1/transcribe", content=b"a", headers=H)
+    assert 119.0 < eng.calls[0]["deadline"] - t0 < 121.5  # 3 x 40 s
 
 
 def test_busy_503_with_retry_after(monkeypatch):
@@ -209,7 +218,9 @@ def test_probe_corrupt_422(client, monkeypatch):
 
 def test_hard_cap_allows_the_platform_45_min_max_and_stays_bounded():
     # Pure function: no 45-min PCM buffer is allocated to test the ceiling.
-    assert app_mod.hard_cap_s(5.0) == 15.0
+    # A short clip still gets a full 30 s Whisper window's worth of time.
+    assert app_mod.hard_cap_s(3.8) == app_mod.MIN_HARD_S == 60.0
+    assert app_mod.hard_cap_s(30.0) == 90.0
     assert app_mod.hard_cap_s(2700.0) == 8100.0
     assert app_mod.hard_cap_s(10_000.0) == app_mod.MAX_HARD_S
 
