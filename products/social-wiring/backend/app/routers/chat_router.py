@@ -271,7 +271,7 @@ async def chat_message(
                     # gets cleaned up after resolution (we don't keep
                     # non-video attachments).
                     try:
-                        media_service = make_media_service()
+                        media_service = make_media_service(org_id=intake._org_id)
                         resolved = await media_service.resolve_inbound(
                             url=None,  # bytes-in-hand path below overrides
                             mimetype=mt,

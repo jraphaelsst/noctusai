@@ -35,7 +35,7 @@ time by ``whatsapp_connections_router.py``):
       live WAHA round-trip).
 
 Only text messages are processed for the chatbot/intake flow; media
-messages are resolved to text via ``media_service`` when an OpenAI key is
+messages are resolved to text via ``media_service`` when an Anthropic key is
 configured, else acknowledged but not acted on.
 
 Auth note: these endpoints do NOT use the standard JWT auth because
@@ -608,20 +608,29 @@ async def _triar_remetente(connection, *, chat_id: str, sender: str, cfg):
         return julia_protecao_service.Triagem("erro", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
 
 
+def _org_da_midia(connection) -> UUID | None:
+    """Whose Anthropic key reads this inbound media: the connection's own org, else the process default org."""
+    if connection is not None:
+        return connection.org_id
+    try:
+        return _resolve_default_org(get_admin_client())
+    except Exception as exc:
+        logger.warning("media org resolution failed (%s)", type(exc).__name__)
+        return None
+
+
 async def _resolver_midia_do_lead(
     triagem, *, chat_id: str, url, mimetype, filename, legenda: str, cfg,
 ) -> MidiaLead:
     """The LEAD-path media resolution (GUARDRAILS B2/B5/B8): refused without an AI call for a blocked / over-limit / unreadable
-    triage, for a missing OpenAI key, or an exhausted media budget; otherwise streamed under the lead caps and read with the org's
+    triage or an exhausted media budget; otherwise streamed under the lead caps and read with the org's
     lead document prompt."""
     codigo = {"bloqueado": "bloqueado", "limitado": "limite_entrada", "erro": "falhou"}.get(triagem.estado)
-    if codigo is None and not cfg.openai_api_key:
-        codigo = "falhou"
     if codigo is not None:
         return midia_recusada(mimetype, filename, codigo, legenda=legenda)
     try:
         redis = make_redis_client(cfg.redis_url, decode_responses=True)
-        return await make_media_service().resolve_inbound_lead(
+        return await make_media_service(org_id=triagem.org_id).resolve_inbound_lead(
             url=url, mimetype=mimetype, filename=filename, legenda=legenda,
             reservar=lambda: triagem.reservar_midia(redis, chat_id),
             prompt_documento=triagem.config.get("prompt_documento_lead"),
@@ -905,9 +914,9 @@ async def _process_waha_body(
             legenda=legenda_original, cfg=cfg,
         )
         message_body = midia_lead.exibicao()  # SW's own inbox line (masked); agents gets `midia`, never this string
-    elif media_url and cfg.openai_api_key and not from_me and triagem is None:
+    elif media_url and not from_me and triagem is None:
         try:
-            media_service = make_media_service()
+            media_service = make_media_service(org_id=_org_da_midia(connection))
             resolved_media = await media_service.resolve_inbound(
                 url=media_url,
                 mimetype=media_mimetype,
@@ -923,7 +932,7 @@ async def _process_waha_body(
             logger.error("media resolution failed (%s)", type(exc).__name__)
 
     if not message_body and media_url:
-        # Media with no caption and no resolvable text (e.g. no OpenAI key):
+        # Media with no caption and no resolvable text (e.g. no Anthropic key):
         # still a message the operator must see and the document intake
         # (CONTRACT §2.3) must process — never dropped silently.
         message_body = "[Anexo recebido]"

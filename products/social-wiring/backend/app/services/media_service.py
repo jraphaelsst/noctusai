@@ -7,25 +7,24 @@ a text-form the OpenAI chatbot can reason about, so the user's
 "transcribe this audio" / "describe this image" / "look at this PDF"
 intents become first-class instead of "sorry, not supported here."
 
-Pattern mirrors ``whatsapp-google-scheduling``: audio → Whisper via
-``client.audio.transcriptions.create``; image → vision via
-``chat.completions.create`` with an ``image_url`` content block. We
-use the OpenAI SDK directly (same as ``ChatbotService``) rather than
-going through ``noctusai_lib.integrations.llm`` to keep failure modes
-local and avoid the LLMConfig singleton coupling.
+Providers (owner order 2026-10-29: nothing here uses OpenAI):
+audio -> the seed transcription seam (``make_transcriber()``, our
+self-hosted faster-whisper worker); image / PDF vision and text summaries
+-> Claude through ``noctusai_lib.integrations.llm`` with the org's
+Anthropic key (``org_id`` is REQUIRED for the operator-entered key to be
+read). Tests inject ``transcriber_factory`` / ``vision_fn`` / ``text_fn``.
 """
 from __future__ import annotations
 
-import base64
+import asyncio
 import logging
 import mimetypes
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 from urllib.parse import urlparse
@@ -34,6 +33,13 @@ from app.config import settings
 from app.services.identidade_mascara import mascarar_identificadores, ref as ref_log
 
 logger = logging.getLogger(__name__)
+
+VisionFn = Callable[..., Awaitable[Any]]
+TextFn = Callable[..., Awaitable[Any]]
+
+#: Chat voice notes: a busy transcriber is retried at most once, honouring retry_after_s, capped.
+BUSY_MAX_TENTATIVAS = 2
+BUSY_ESPERA_MAX_S = 10.0
 
 #: A generous ceiling for the operator / card paths (which keep their own prompts and no per-type cap); the LEAD path has the
 #: tight caps below.
@@ -209,26 +215,42 @@ class ResolvedMedia:
 
 class MediaService:
     """Per-request collaborator. Constructed with the WAHA base URL +
-    api key (for media downloads) and an OpenAI key (for transcription
-    + vision). Both come from ``SocialWiringSettings``."""
+    api key (for media downloads) and the ``org_id`` whose Anthropic key
+    pays for vision / text (Configuracoes -> Chaves de API). Audio goes to
+    the self-hosted Whisper worker via the seed transcription seam.
+
+    DI seams (tests; production leaves them None = the seed functions):
+    ``transcriber_factory() -> Transcriber``, ``vision_fn(images, prompt,
+    *, provider, model, org_id) -> str`` and ``text_fn(messages, *,
+    provider, model, org_id) -> str``."""
 
     def __init__(
         self,
         *,
         waha_base_url: str,
         waha_api_key: str,
-        openai_api_key: str,
-        audio_model: str = "gpt-4o-mini-transcribe",
-        vision_model: str = "gpt-4o-mini",
+        org_id: Optional[str] = None,
+        vision_model: str = "claude-sonnet-5",
+        text_model: str = "claude-haiku-4-5",
+        audio_max_seconds: float = 600.0,
+        transcriber_factory: Optional[Callable[[], Any]] = None,
+        vision_fn: Optional[VisionFn] = None,
+        text_fn: Optional[TextFn] = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         transport: Optional[httpx.AsyncBaseTransport] = None,
     ):
         # `transport` is the HTTP seam (tests inject `httpx.MockTransport`; production leaves it None = the real network).
         self._transport = transport
         self._waha_base_url = waha_base_url.rstrip("/")
         self._waha_api_key = waha_api_key
-        self._openai_api_key = openai_api_key
-        self._audio_model = audio_model
+        self._org_id = str(org_id) if org_id else None
         self._vision_model = vision_model
+        self._text_model = text_model
+        self._audio_max_seconds = audio_max_seconds
+        self._transcriber_factory = transcriber_factory
+        self._vision_fn = vision_fn
+        self._text_fn = text_fn
+        self._sleep = sleep
 
     # ─── Public entry points ───────────────────────────────────────────
     async def resolve_inbound(
@@ -744,55 +766,42 @@ class MediaService:
         return await self._call_vision_multi(paginas, prompt=prompt)
 
     async def _chat_texto(self, instrucao: str, texto: str) -> str:
-        if not self._openai_api_key or not texto.strip():
+        if not texto.strip():
             return ""
-        from openai import AsyncOpenAI
+        return await self._completar_texto(instrucao, texto)
 
-        client = AsyncOpenAI(api_key=self._openai_api_key)
-        response = await client.chat.completions.create(
-            model=self._vision_model,
-            messages=[{"role": "system", "content": instrucao}, {"role": "user", "content": texto}],
+    async def _completar_texto(self, instrucao: str, texto: str) -> str:
+        text_fn = self._text_fn
+        if text_fn is None:
+            from noctusai_lib.integrations.llm import chat_completion as text_fn
+        reply = await text_fn(
+            [{"role": "system", "content": instrucao}, {"role": "user", "content": texto}],
+            provider="anthropic", model=self._text_model, org_id=self._org_id,
         )
-        return (response.choices[0].message.content or "").strip()
+        return str(reply or "").strip()
 
-    # ─── OpenAI calls ──────────────────────────────────────────────────
+    # ─── Provider calls (seed seams) ───────────────────────────────────
     async def _call_whisper(self, audio_bytes: bytes, *, filename: str) -> str:
-        if not self._openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-        from openai import AsyncOpenAI
+        """Self-hosted Whisper through the seed transcription seam. A busy engine is retried once (bounded);
+        every typed seam error propagates to the callers' graceful paths."""
+        from noctusai_lib.integrations.transcription import TranscriberBusy, make_transcriber
 
-        client = AsyncOpenAI(api_key=self._openai_api_key)
-        buffer = BytesIO(audio_bytes)
-        buffer.name = filename
-        response = await client.audio.transcriptions.create(
-            model=self._audio_model,
-            file=buffer,
-            language="pt",
-        )
-        return (getattr(response, "text", "") or "").strip()
+        transcriber = (self._transcriber_factory or make_transcriber)()
+        for tentativa in range(1, BUSY_MAX_TENTATIVAS + 1):
+            try:
+                result = await transcriber.transcribe(audio_bytes, language="pt", max_seconds=self._audio_max_seconds)
+            except TranscriberBusy as busy:
+                if tentativa >= BUSY_MAX_TENTATIVAS:
+                    raise
+                await self._sleep(min(max(busy.retry_after_s, 0.0), BUSY_ESPERA_MAX_S))
+                continue
+            return (result.text or "").strip()
+        return ""  # unreachable: the last attempt returns or raises
 
     async def _call_vision(
         self, image_bytes: bytes, *, mimetype: str, prompt: str
     ) -> str:
-        if not self._openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=self._openai_api_key)
-        data_url = f"data:{mimetype};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-        response = await client.chat.completions.create(
-            model=self._vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                }
-            ],
-        )
-        return (response.choices[0].message.content or "").strip()
+        return await self._analisar([image_bytes], prompt)
 
     async def _call_vision_multi(
         self,
@@ -801,54 +810,36 @@ class MediaService:
         prompt: str,
         mimetype: str = "image/jpeg",
     ) -> str:
-        """Send multiple images in ONE chat completion so the model can
-        reason about them as a sequence (video keyframes, before/after,
-        multi-page scans). Caps at 6 images to stay under token budget."""
-        if not self._openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-        from openai import AsyncOpenAI
+        """Send multiple images in ONE request so the model can reason about them as a sequence (video keyframes,
+        before/after, multi-page scans). Caps at 6 images to stay under token budget."""
+        return await self._analisar(list(frames[:6]), prompt)
 
-        client = AsyncOpenAI(api_key=self._openai_api_key)
-        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for frame in frames[:6]:
-            data_url = f"data:{mimetype};base64,{base64.b64encode(frame).decode('ascii')}"
-            content.append({"type": "image_url", "image_url": {"url": data_url}})
-        response = await client.chat.completions.create(
-            model=self._vision_model,
-            messages=[{"role": "user", "content": content}],
+    async def _analisar(self, images: list[bytes], prompt: str) -> str:
+        vision = self._vision_fn
+        if vision is None:
+            from noctusai_lib.integrations.llm import analyze_image as vision
+        reply = await vision(
+            images if len(images) > 1 else images[0], prompt,
+            provider="anthropic", model=self._vision_model, org_id=self._org_id,
         )
-        return (response.choices[0].message.content or "").strip()
+        return str(reply or "").strip()
 
     async def _summarize_document_text(self, text: str) -> str:
-        if not self._openai_api_key or not text.strip():
+        if not text.strip():
             return ""
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=self._openai_api_key)
-        snippet = text[:12000]
-        response = await client.chat.completions.create(
-            model=self._vision_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Resuma o texto a seguir em pt-BR no formato:\n"
-                        "Tipo: <tipo do documento>\n"
-                        "Resumo: <2 a 4 frases>\n"
-                        "Dados visiveis:\n- <campo>: <valor>\n...\n\n"
-                        "NUNCA diga que nao consegue resumir — descreva o "
-                        "que voce LE no texto. Liste os campos mais "
-                        "relevantes (nome, valores, datas, codigos, "
-                        "enderecos, partes envolvidas, etc.). Transcreva "
-                        "textos curtos como aparecem; nao invente."
-                    ),
-                },
-                {"role": "user", "content": snippet},
-            ],
+        return await self._completar_texto(
+            "Resuma o texto a seguir em pt-BR no formato:\n"
+            "Tipo: <tipo do documento>\n"
+            "Resumo: <2 a 4 frases>\n"
+            "Dados visiveis:\n- <campo>: <valor>\n...\n\n"
+            "NUNCA diga que nao consegue resumir — descreva o "
+            "que voce LE no texto. Liste os campos mais "
+            "relevantes (nome, valores, datas, codigos, "
+            "enderecos, partes envolvidas, etc.). Transcreva "
+            "textos curtos como aparecem; nao invente.",
+            text[:12000],
         )
-        return (response.choices[0].message.content or "").strip()
 
-    # ─── Network ───────────────────────────────────────────────────────
     async def download(self, url: str) -> bytes:
         """Public WAHA media download (same rewrite + API key as the chatbot
         path) — the document intake's downloader (CONTRACT §2.3)."""
@@ -1261,15 +1252,17 @@ def _rasterize_pdf_pages(
     return images
 
 
-def make_media_service() -> MediaService:
+def make_media_service(org_id: Any = None) -> MediaService:
     """Default factory using product settings — used by webhook + chat
-    routers so they don't have to know the construction details."""
+    routers so they don't have to know the construction details. ``org_id``
+    selects whose Anthropic key (Chaves de API) pays for vision / text."""
     return MediaService(
         waha_base_url=settings.waha_base_url,
         waha_api_key=settings.waha_api_key,
-        openai_api_key=settings.openai_api_key,
-        audio_model=getattr(settings, "openai_audio_model", "gpt-4o-mini-transcribe"),
-        vision_model=getattr(settings, "openai_vision_model", settings.openai_chat_model),
+        org_id=org_id,
+        vision_model=settings.media_vision_model,
+        text_model=settings.chatbot_llm_model,
+        audio_max_seconds=settings.media_audio_max_seconds,
     )
 
 

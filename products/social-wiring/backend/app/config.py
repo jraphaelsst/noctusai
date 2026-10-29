@@ -85,20 +85,10 @@ class SocialWiringSettings(ProductSettings):
     # the engine). Priced in the seed catalog, so the budget guard is armed.
     chatbot_llm_model: str = "claude-haiku-4-5"
 
-    # ─── OpenAI (media: transcription / image description / embeddings) ─
+    # ─── OpenAI (legacy key; embeddings / photo editing / certidoes still read it) ─
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4o-mini"
-    # Whisper-tier model used by media_service.transcribe_audio. Default
-    # is the small Whisper-compatible endpoint that handles voice notes
-    # well at low cost; `whisper-1` also works.
-    openai_audio_model: str = "gpt-4o-mini-transcribe"
-    # Vision-capable chat model used by media_service.describe_image
-    # and media_service._call_vision_multi. gpt-4o-mini works for
-    # plain photos but misreads small text on scanned PDFs (CNH, ID
-    # cards). gpt-4o is materially more accurate on documents and
-    # video keyframes; cost is still reasonable for the volume the
-    # bot handles.
-    openai_vision_model: str = "gpt-4o"
+    # (media transcription / vision moved off OpenAI 2026-10-29: see media_vision_model / media_audio_max_seconds.)
     whatsapp_chatbot_enabled: bool = True
 
     # Fernet key for refresh-token-at-rest encryption. Generate with:
@@ -270,6 +260,11 @@ class SocialWiringSettings(ProductSettings):
     # be priced in the seed model catalog (llm/models.py) or the budget
     # guard is silently disabled.
     watermark_vision_model: str = "claude-sonnet-5"
+    # Image / PDF reading for WhatsApp + One Chat attachments (media_service). Sonnet reads images; Haiku
+    # (`chatbot_llm_model`) handles the text-only summaries. Both must be priced in the seed catalog.
+    media_vision_model: str = "claude-sonnet-5"
+    # Longest voice note the operator / chat path sends to the self-hosted Whisper (the fleet's measured limit).
+    media_audio_max_seconds: float = 600.0
     # Optional listing-page URL template. ``{code}`` is substituted with
     # the property's ONE code (e.g. ``ONE7360``) when composing
     # post-upload notifications + the WhatsApp completion message.

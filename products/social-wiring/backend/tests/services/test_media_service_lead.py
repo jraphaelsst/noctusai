@@ -18,7 +18,7 @@ URL = "http://localhost:3000/api/files/default/abc.bin"
 
 class FakeAI(MediaService):
     def __init__(self, handler, **kw):
-        super().__init__(waha_base_url=WAHA, waha_api_key="waha-secret", openai_api_key="sk-test",
+        super().__init__(waha_base_url=WAHA, waha_api_key="waha-secret", org_id="org-1",
                          transport=httpx.MockTransport(handler), **kw)
         self.ai_calls: list[str] = []
         self.vision_prompts: list[str] = []

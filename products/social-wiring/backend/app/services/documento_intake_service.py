@@ -269,7 +269,7 @@ async def processar_midia_do_webhook(
             deps.get_card_hub_client(), deps.get_storage_backend(), org_id, cliente_id,
             mensagem_id=mensagem_id, media_url=media_url, mimetype=mimetype,
             filename=filename,
-            downloader=make_media_service().download,
+            downloader=make_media_service(org_id=org_id).download,
             extractor_factory=deps.get_identity_extractor_factory(),
             notification_service=deps.get_conflict_notification_service(),
             cep_lookup=deps.get_cep_lookup_adapter(),

@@ -122,7 +122,7 @@ class TestMediaOnTheLeadPath:
     def _ai(self, rt, monkeypatch):
         rt.settings(openai_api_key="sk-test")
         self.svc = FakeAI(lambda request: httpx.Response(200, content=b"x" * 100))
-        monkeypatch.setattr("app.routers.whatsapp_router.make_media_service", lambda: self.svc)
+        monkeypatch.setattr("app.routers.whatsapp_router.make_media_service", lambda **_kw: self.svc)
 
     def test_media_is_buffered_structured_and_the_text_stays_the_caption(self, rt):
         _julia_scene(rt)
