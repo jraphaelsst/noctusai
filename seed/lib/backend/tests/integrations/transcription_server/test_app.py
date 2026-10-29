@@ -21,8 +21,10 @@ H = {"X-Transcriber-Token": TOKEN}
 class FakeEngine:
     model_name = "fake-model"
 
-    def __init__(self, loaded: bool = True, delay: float = 0.0, timeout: bool = False) -> None:
+    def __init__(self, loaded: bool = True, delay: float = 0.0, timeout: bool = False,
+                 loadable: bool = True) -> None:
         self._loaded = loaded
+        self._loadable = loadable
         self.delay = delay
         self.timeout = timeout
         self.calls: list[dict] = []
@@ -33,7 +35,8 @@ class FakeEngine:
         return self._loaded
 
     def load(self) -> None:
-        self._loaded = True
+        if self._loadable:
+            self._loaded = True
 
     def transcribe(self, audio, *, language, deadline):
         self.entered.set()
@@ -57,18 +60,21 @@ def engine():
     return FakeEngine()
 
 
+def _app(engine, *, seconds: float = 5.0, **kw):
+    """The worker app with the ffmpeg decoder replaced by a PCM fake of `seconds` (DI seam)."""
+    return create_app(engine, token=TOKEN, load_in_background=False, decode_fn=_pcm_decoder(seconds), **kw)
+
+
 @pytest.fixture
-def client(engine, monkeypatch):
-    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(5.0))
-    with TestClient(create_app(engine, token=TOKEN, load_in_background=False)) as c:
+def client(engine):
+    with TestClient(_app(engine)) as c:
         yield c
 
 
-def test_healthz_503_until_model_loaded(monkeypatch):
-    eng = FakeEngine(loaded=False)
-    # background load never runs in this test: engine stays unloaded
+def test_healthz_503_until_model_loaded():
+    # the background load runs but never completes: engine stays unloaded
+    eng = FakeEngine(loaded=False, loadable=False)
     a = create_app(eng, token=TOKEN, load_in_background=True)
-    monkeypatch.setattr(eng, "load", lambda: None)
     with TestClient(a) as c:
         r = c.get("/healthz")
     assert r.status_code == 503
@@ -95,11 +101,13 @@ def test_empty_configured_token_fails_closed(monkeypatch):
     assert r.status_code == 401
 
 
-def test_token_compare_is_constant_time(monkeypatch):
+def test_token_compare_is_constant_time():
+    import hmac
+
     calls = []
-    real = app_mod.hmac.compare_digest
-    monkeypatch.setattr(app_mod.hmac, "compare_digest", lambda a, b: calls.append(1) or real(a, b))
-    with TestClient(create_app(FakeEngine(), token=TOKEN, load_in_background=False)) as c:
+    compare = lambda a, b: calls.append(1) or hmac.compare_digest(a, b)  # noqa: E731
+    assert app_mod.create_app.__kwdefaults__["compare_fn"] is hmac.compare_digest
+    with TestClient(create_app(FakeEngine(), token=TOKEN, load_in_background=False, compare_fn=compare)) as c:
         c.post("/v1/probe", content=b"x", headers={"X-Transcriber-Token": "nope"})
     assert calls
 
@@ -124,9 +132,8 @@ def test_transcribe_duration_exceeded_422(client):
     assert r.json()["codigo"] == "duracao_excedida"
 
 
-def test_transcribe_too_short_422(engine, monkeypatch):
-    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(0.5))
-    with TestClient(create_app(engine, token=TOKEN, load_in_background=False)) as c:
+def test_transcribe_too_short_422(engine):
+    with TestClient(_app(engine, seconds=0.5)) as c:
         r = c.post("/v1/transcribe", content=b"a", headers=H)
     assert r.status_code == 422
     assert r.json()["codigo"] == "audio_vazio"
@@ -138,36 +145,32 @@ def test_empty_body_422(client):
     assert r.json()["codigo"] == "audio_vazio"
 
 
-def test_engine_timeout_maps_to_504(monkeypatch):
-    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(5.0))
-    with TestClient(create_app(FakeEngine(timeout=True), token=TOKEN, load_in_background=False)) as c:
+def test_engine_timeout_maps_to_504():
+    with TestClient(_app(FakeEngine(timeout=True), seconds=5.0)) as c:
         r = c.post("/v1/transcribe", content=b"a", headers=H)
     assert r.status_code == 504
     assert r.json()["codigo"] == "tempo_excedido"
 
 
-def test_deadline_has_a_one_window_floor_for_short_audio(monkeypatch):
-    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(5.0))
+def test_deadline_has_a_one_window_floor_for_short_audio():
     eng = FakeEngine()
-    with TestClient(create_app(eng, token=TOKEN, load_in_background=False)) as c:
+    with TestClient(_app(eng, seconds=5.0)) as c:
         t0 = time.monotonic()
         c.post("/v1/transcribe", content=b"a", headers=H)
     assert 59.0 < eng.calls[0]["deadline"] - t0 < 61.5  # MIN_HARD_S, not 3 x 5 s
 
 
-def test_deadline_is_3x_duration_past_the_floor(monkeypatch):
-    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(40.0))
+def test_deadline_is_3x_duration_past_the_floor():
     eng = FakeEngine()
-    with TestClient(create_app(eng, token=TOKEN, load_in_background=False)) as c:
+    with TestClient(_app(eng, seconds=40.0)) as c:
         t0 = time.monotonic()
         c.post("/v1/transcribe", content=b"a", headers=H)
     assert 119.0 < eng.calls[0]["deadline"] - t0 < 121.5  # 3 x 40 s
 
 
-def test_busy_503_with_retry_after(monkeypatch):
-    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(5.0))
+def test_busy_503_with_retry_after():
     eng = FakeEngine(delay=0.6)
-    app = create_app(eng, token=TOKEN, load_in_background=False)
+    app = _app(eng, seconds=5.0)
     results = {}
     with TestClient(app) as c:
         t = threading.Thread(
@@ -183,22 +186,21 @@ def test_busy_503_with_retry_after(monkeypatch):
     assert results["first"].status_code == 200
 
 
-def test_daily_backstop_503(monkeypatch):
-    monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(30.0))
+def test_daily_backstop_503():
     eng = FakeEngine()
-    with TestClient(create_app(eng, token=TOKEN, daily_limit_min=0.9, load_in_background=False)) as c:
+    with TestClient(_app(eng, seconds=30.0, daily_limit_min=0.9)) as c:
         assert c.post("/v1/transcribe", content=b"a", headers=H).status_code == 200  # 0.5 min
         r = c.post("/v1/transcribe", content=b"a", headers=H)  # would be 1.0 > 0.9
     assert r.status_code == 503
     assert r.json()["codigo"] == "capacidade_diaria"
 
 
-def test_probe_uses_probe_function(client, monkeypatch):
+def test_probe_uses_probe_function(engine):
     async def fake_probe(audio, *, timeout):
         return ProbeInfo(12.5, "opus", "matroska,webm", 48000, 2)
 
-    monkeypatch.setattr(app_mod, "probe_bytes", fake_probe)
-    r = client.post("/v1/probe", content=b"a", headers=H)
+    with TestClient(_app(engine, probe_fn=fake_probe)) as c:
+        r = c.post("/v1/probe", content=b"a", headers=H)
     assert r.status_code == 200
     assert r.json() == {
         "duracao_s": 12.5, "codec": "opus", "container": "matroska,webm",
@@ -206,12 +208,12 @@ def test_probe_uses_probe_function(client, monkeypatch):
     }
 
 
-def test_probe_corrupt_422(client, monkeypatch):
+def test_probe_corrupt_422(engine):
     async def bad(audio, *, timeout):
         raise app_mod.MediaError("ffprobe failed")
 
-    monkeypatch.setattr(app_mod, "probe_bytes", bad)
-    r = client.post("/v1/probe", content=b"a", headers=H)
+    with TestClient(_app(engine, probe_fn=bad)) as c:
+        r = c.post("/v1/probe", content=b"a", headers=H)
     assert r.status_code == 422
     assert r.json()["codigo"] == "audio_corrompido"
 

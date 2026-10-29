@@ -92,8 +92,14 @@ def create_app(
     token: Optional[str] = None,
     daily_limit_min: float = DAILY_BACKSTOP_MIN,
     load_in_background: bool = True,
+    decode_fn=decode_to_float32,
+    probe_fn=probe_bytes,
+    compare_fn=hmac.compare_digest,
 ) -> FastAPI:
-    """`token` defaults to env TRANSCRIBER_TOKEN; an empty token refuses every call (fail closed)."""
+    """`token` defaults to env TRANSCRIBER_TOKEN; an empty token refuses every call (fail closed).
+
+    `decode_fn` / `probe_fn` / `compare_fn` are the DI seams over ffmpeg decoding, ffprobe and the
+    constant-time token check — tests inject fakes here, never by patching this module."""
     expected = (token if token is not None else os.environ.get("TRANSCRIBER_TOKEN", "")).encode()
     busy = asyncio.Semaphore(1)
     probe_sem = asyncio.Semaphore(PROBE_CONCURRENCY)
@@ -116,7 +122,7 @@ def create_app(
     def _authorized(request: Request) -> bool:
         got = request.headers.get("X-Transcriber-Token", "").encode()
         # constant-time; empty configured token never authorizes
-        return bool(expected) and hmac.compare_digest(got, expected)
+        return bool(expected) and compare_fn(got, expected)
 
     async def _read_body(request: Request):
         cl = request.headers.get("content-length")
@@ -146,7 +152,7 @@ def create_app(
             return _err(422, "audio_vazio", "corpo vazio")
         async with probe_sem:  # <=2 concurrent; independent of the transcription semaphore
             try:
-                info = await probe_bytes(body, timeout=PROBE_TIMEOUT_S)
+                info = await probe_fn(body, timeout=PROBE_TIMEOUT_S)
             except MediaError as exc:
                 return _err(422, "audio_corrompido", str(exc))
         return {
@@ -179,7 +185,7 @@ def create_app(
             started = time.monotonic()
             try:
                 # decode up to max_seconds + 1 so an over-long file is detectable
-                audio = await decode_to_float32(body, max_seconds=max_seconds + 1.0)
+                audio = await decode_fn(body, max_seconds=max_seconds + 1.0)
             except MediaError as exc:
                 return _err(422, "audio_corrompido", str(exc))
             duracao = len(audio) / SAMPLE_RATE

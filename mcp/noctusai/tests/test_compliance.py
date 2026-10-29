@@ -965,6 +965,21 @@ class TestCheckNoSelfMonkeypatch:
         issues = check_no_self_monkeypatch(repo)
         assert all(i["severity"] == "warning" for i in issues)
 
+    def test_seed_lib_is_ratcheted_and_the_seed_product_is_not_mislabelled(self):
+        # 2026-10-29: the seed lib reached 0, so a NEW self-patch there blocks; the
+        # seed PRODUCT (`products/seed/…`) used to be mislabelled "<seed-lib>".
+        content = (
+            "from noctusai_lib.integrations.transcription.server import app as app_mod\n\n"
+            "def test_thing(monkeypatch):\n"
+            "    monkeypatch.setattr(app_mod, 'decode_to_float32', lambda *a, **k: None)\n"
+        )
+        tmp = Path(tempfile.mkdtemp(prefix="self_patch_test_"))
+        for d in ("seed/lib/backend/tests", "products/seed/backend/tests"):
+            (tmp / d).mkdir(parents=True)
+            (tmp / d / "test_x.py").write_text(content)
+        by_product = {i["product"]: i["severity"] for i in check_no_self_monkeypatch(tmp)}
+        assert by_product == {"<seed-lib>": "high", "seed": "warning"}
+
     # -----------------------------------------------------------------------
     # Allowlist regression tests for boundary accessors added 2026-04-29 by
     # `execution-workflow-codequality-rollout` Phase 3 (therapy cleanup).

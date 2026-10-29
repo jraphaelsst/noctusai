@@ -615,8 +615,10 @@ Detector severity is `warning` by default because the first run flagged 420 site
 
 **Currently ratcheted (`high`):**
 - `therapy-platform` — 115 → 0 (closed 2026-05-01 via `projects/keeper-warning-triage` Phase 1: pilot pattern-1 DI in `test_ai_pipeline_service.py`, pattern-3 seed-real-data sweep in `test_messaging_router.py`, and Wave C digest absorption side-effect on the remaining service tails).
+- `social-wiring` — 43 → 0 (2026-05-24, `social-wiring-settings-di-rewrite`).
+- `<seed-lib>` (`seed/…` only) — → 0 (2026-10-29: the transcriber worker's `create_app` took `decode_fn`/`probe_fn`/`compare_fn` seams; its 11 test patches went with them). The label now keys on the path PREFIX `seed/`; `products/seed/…` labels as the `seed` product (a `"/seed/" in` test had mislabelled it as the lib).
 
-**Still draining (`warning`):** `erp-imobiliario` (96), `core` (44), `mailing` (18), `personal-finance` (16), `daily-life` (11), `<seed-lib>` (8). Per-product follow-up project slugs: `<product>-tests-no-self-patch` (filed when picked up). Pilot proof + cleanup status lives in `projects/keeper-warning-triage/PROJECT.md` §6.
+**Still draining (`warning`):** `erp-imobiliario` (96), `core` (44), `mailing` (18), `personal-finance` (16), `daily-life` (11), `seed` (5, the seed product). Per-product follow-up project slugs: `<product>-tests-no-self-patch` (filed when picked up). Pilot proof + cleanup status lives in `projects/keeper-warning-triage/PROJECT.md` §6.
 
 **Pilot result (2026-04-28).** `products/therapy-platform/backend/app/services/ai_pipeline.py` introduced a `_PipelineHooks` dataclass with the 5 helper functions as fields; production callers omit `hooks=` and resolve to `_DEFAULT_HOOKS` (real services). `tests/services/test_ai_pipeline_service.py` migrated `TestProcessSessionEnd` (8 tests) + `TestPatientConsentGuards.{test_session_summary_consent_revoked, test_longitudinal_consent_revoked}` (2 tests) from `patch.object(<our_module>, ...)` to a `_hooks(...)` factory that returns `_PipelineHooks(transcribe=AsyncMock(...), summarize=AsyncMock(...), ...)`. 33 sites cleared (43 → 10 in that file; 315 → 282 platform-wide). All 17 tests in the file pass; real consent guards execute end-to-end; revoked-feature paths verified via `hooks.<helper>.assert_not_awaited()`.
 

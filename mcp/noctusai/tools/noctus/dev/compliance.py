@@ -1758,6 +1758,7 @@ from tools.noctus.dev.self_patch_predicate import (  # noqa: E402
 _NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS: frozenset[str] = frozenset({
     "therapy-platform",  # ratcheted 2026-05-01 (closed `therapy-tests-no-self-patch`)
     "social-wiring",  # ratcheted 2026-05-24 (closed `social-wiring-settings-di-rewrite`: 43→0)
+    "<seed-lib>",  # ratcheted 2026-10-29 (transcriber server got DI seams: 0 left in seed/)
 })
 
 
@@ -1845,7 +1846,9 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
         except ValueError:
             logger.warning("compliance: test file outside repo root, using absolute: %s", path)
             relative = str(path)
-        product_label = "<seed-lib>" if "/seed/" in relative else (
+        # `seed/…` is the shared spine; `products/seed/…` is the seed PRODUCT and
+        # labels as one (a `"/seed/" in` test mislabelled it as the lib).
+        product_label = "<seed-lib>" if relative.startswith("seed/") else (
             relative.split("/", 2)[1] if relative.startswith("products/") else "<mcp>"
         )
 
