@@ -66,6 +66,7 @@ from noctusai_lib.integrations.media.video import (
     extract_frames,
     ffmpeg_available,
     orientation,
+    probe_duration,
     probe_video,
 )
 from noctusai_lib.integrations.media.types import (
@@ -158,6 +159,7 @@ __all__ = [
     "extract_frames",
     "ffmpeg_available",
     "orientation",
+    "probe_duration",
     "probe_video",
     "InboundMedia",
     "ResolvedMedia",

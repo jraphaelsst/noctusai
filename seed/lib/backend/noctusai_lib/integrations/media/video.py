@@ -146,6 +146,35 @@ def probe_video(path: str | Path, *, ffprobe_bin: str = "ffprobe") -> VideoProbe
     return VideoProbe(width=width, height=height, duration_s=duration, rotation=_rotation(stream))
 
 
+def probe_duration(
+    source: bytes | str | Path, *, suffix: str = ".bin", ffprobe_bin: str = "ffprobe"
+) -> float:
+    """Container duration in seconds — any media (audio-only included).
+
+    ``source`` is a path or raw bytes (spooled to a temp file; ``suffix`` is a
+    demuxer hint). Raises `MediaProbeError` when ffprobe cannot tell.
+    """
+    def _probe(src: Path) -> float:
+        res = _run(
+            [ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(src)],
+            timeout=_PROBE_TIMEOUT_S, binary=ffprobe_bin,
+        )
+        if res.returncode != 0:
+            raise MediaProbeError(f"ffprobe failed on {src.name}: {_stderr(res)}")
+        try:
+            return float(res.stdout.decode("utf-8").strip())
+        except ValueError as exc:
+            raise MediaProbeError(f"no duration for {src.name}") from exc
+
+    if isinstance(source, (str, Path)):
+        return _probe(Path(source))
+    with tempfile.TemporaryDirectory(prefix="noctus-media-") as tmp:
+        src = Path(tmp) / f"input{suffix}"
+        src.write_bytes(source)
+        return _probe(src)
+
+
 def orientation(probe: VideoProbe) -> Orientation:
     """Display orientation (rotation-aware): wider -> landscape, taller -> portrait."""
     w, h = probe.display_width, probe.display_height
@@ -230,5 +259,6 @@ __all__ = [
     "extract_frames",
     "ffmpeg_available",
     "orientation",
+    "probe_duration",
     "probe_video",
 ]

@@ -116,3 +116,34 @@ class TestVisionAndText:
 
         assert await make(vision_fn=vision).describe_image(b"i") == ""
         assert "RuntimeError" in caplog.text
+
+
+def _clip(path, *, audio: bool) -> bytes:
+    import subprocess
+
+    cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=640x360:d=2:r=10"]
+    if audio:
+        cmd += ["-f", "lavfi", "-i", "sine=frequency=440:d=2", "-shortest"]
+    subprocess.run(cmd + [str(path)], check=True)
+    return path.read_bytes()
+
+
+@pytest.mark.skipif(
+    not __import__("noctusai_lib.integrations.media", fromlist=["ffmpeg_available"]).ffmpeg_available(),
+    reason="ffmpeg/ffprobe not installed on this test host",
+)
+class TestVideoViaSeedFfmpeg:
+    """The ffmpeg helpers are the seed `integrations.media.video` module (real binary)."""
+
+    async def test_keyframes_are_four_jpegs_capped(self, tmp_path):
+        from app.services.media_service import _extract_keyframes_via_ffmpeg
+
+        frames = _extract_keyframes_via_ffmpeg(_clip(tmp_path / "v.mp4", audio=False), count=4, max_width=320)
+        assert len(frames) == 4 and all(f[:2] == b"\xff\xd8" for f in frames)
+
+    async def test_video_audio_reaches_the_transcriber_and_a_silent_clip_skips_it(self, tmp_path):
+        t = ScriptedTranscriber("falou algo")
+        svc = make(transcriber_factory=lambda: t)
+        assert await svc._transcribe_video_audio(_clip(tmp_path / "a.mp4", audio=True), input_ext=".mp4") == "falou algo"
+        assert await svc._transcribe_video_audio(_clip(tmp_path / "m.mp4", audio=False), input_ext=".mp4") == ""
+        assert len(t.calls) == 1

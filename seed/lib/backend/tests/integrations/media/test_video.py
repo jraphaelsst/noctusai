@@ -14,6 +14,7 @@ from noctusai_lib.integrations.media import (
     extract_frames,
     ffmpeg_available,
     orientation,
+    probe_duration,
     probe_video,
 )
 
@@ -81,6 +82,15 @@ def test_extract_audio_ogg_opus_from_bytes_and_path(tmp_path):
     for src in (clip, clip.read_bytes()):
         audio = extract_audio(src)
         assert audio[:4] == b"OggS"
+
+
+def test_probe_duration_reads_audio_only_media(tmp_path):
+    audio = extract_audio(_clip(tmp_path / "d.mp4", "320x180", audio=True))
+    assert probe_duration(audio, suffix=".ogg") == pytest.approx(2.0, abs=0.3)
+    with pytest.raises(MediaProbeError):
+        probe_duration(b"not media", suffix=".ogg")
+    with pytest.raises(FfmpegNotInstalled):
+        probe_duration(audio, suffix=".ogg", ffprobe_bin=_MISSING)
 
 
 def test_extract_audio_without_audio_stream_is_typed(tmp_path):

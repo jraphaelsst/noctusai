@@ -19,8 +19,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
-import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +26,14 @@ from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 from urllib.parse import urlparse
+
+from noctusai_lib.integrations.media import (
+    FfmpegNotInstalled,
+    MediaProbeError,
+    extract_audio,
+    extract_frames,
+    probe_duration,
+)
 
 from app.config import settings
 from app.services.identidade_mascara import mascarar_identificadores, ref as ref_log
@@ -480,10 +486,10 @@ class MediaService:
             audio_bytes = _extract_audio_via_ffmpeg(video_bytes, input_ext=input_ext)
             if audio_bytes:
                 return await self.transcribe_audio(audio_bytes, filename="audio.ogg")
-            # ffmpeg unavailable — try raw bytes (Whisper accepts mp4 directly)
-            return await self.transcribe_audio(
-                video_bytes, filename=f"video{input_ext}"
-            )
+            return ""  # silent clip: no audio track to transcribe
+        except FfmpegNotInstalled:
+            logger.error("ffmpeg not installed — video audio not transcribed (image must be FROM noctus-seed-backend-media-base)")
+            return ""
         except Exception as exc:
             logger.error("video audio transcription failed (%s)", type(exc).__name__)
             return ""
@@ -923,20 +929,17 @@ class MediaService:
 # ─── Helpers ───────────────────────────────────────────────────────────
 
 def _duracao_via_ffprobe(dados: bytes, ext: str) -> Optional[float]:
-    """Audio duration from the container metadata (ffprobe); None when ffprobe is missing or cannot tell (the byte cap still holds)."""
-    if not shutil.which("ffprobe"):
+    """Audio duration from the container metadata (seed ``probe_duration``); None when it cannot tell (the byte cap still holds).
+
+    A missing ffprobe is a deploy defect (the image must be FROM the media base) — logged as an error, never silent."""
+    try:
+        return probe_duration(dados, suffix=ext)
+    except FfmpegNotInstalled:
+        logger.error("ffprobe not installed — audio duration unknown (image must be FROM noctus-seed-backend-media-base)")
         return None
-    with tempfile.TemporaryDirectory() as workdir:
-        src = Path(workdir) / f"audio{ext}"
-        src.write_bytes(dados)
-        try:
-            probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(src)],
-                capture_output=True, check=True, timeout=20, text=True,
-            )
-            return float((probe.stdout or "").strip())
-        except Exception:
-            return None
+    except MediaProbeError as exc:
+        logger.info("audio duration unreadable (%s)", type(exc).__name__)
+        return None
 
 
 def _contar_paginas_pdf(pdf: bytes) -> Optional[int]:
@@ -1033,123 +1036,40 @@ def _extract_keyframes_via_ffmpeg(
     count: int = 4,
     max_width: int = 768,
 ) -> list[bytes]:
-    """Sample N evenly-spaced JPEG frames from a video.
-
-    Strategy: probe the duration via ``ffprobe``, divide into N+1
-    intervals, grab the middle frame of each interval, scale to
-    ``max_width`` px to keep the vision payload small. Returns an
-    empty list when ffmpeg/ffprobe are unavailable or the video is
-    unreadable — callers compose around the empty list.
+    """Sample N evenly-spaced JPEG frames from the interior (10%-90%) of a
+    video via the seed ``extract_frames``. Returns an empty list when the
+    video is unreadable — callers compose around it; a missing ffmpeg is
+    logged as an error.
 
     Frame count default 4 is a compromise: 1-2 frames miss action;
-    8+ inflates the chat-completion token bill without adding much.
+    8+ inflates the vision token bill without adding much.
     """
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        return []
-    with tempfile.TemporaryDirectory() as workdir:
+    if count <= 1:
+        positions = [0.5]
+    else:
+        step = 0.8 / (count - 1)
+        positions = [0.1 + i * step for i in range(count)]
+    with tempfile.TemporaryDirectory(prefix="sw-keyframes-") as workdir:
         src = Path(workdir) / f"video{input_ext}"
         src.write_bytes(video_bytes)
-
-        # Duration probe.
         try:
-            probe = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-show_entries",
-                    "format=duration",
-                    "-of",
-                    "default=noprint_wrappers=1:nokey=1",
-                    str(src),
-                ],
-                capture_output=True,
-                check=True,
-                timeout=20,
-                text=True,
-            )
-            duration = float((probe.stdout or "0").strip() or 0)
-        except Exception:
-            duration = 0.0
-        if duration <= 0:
-            return []
-
-        # Pick N evenly-spaced timestamps, biased to the interior of
-        # the video (skipping the first/last 10%).
-        interior_start = duration * 0.1
-        interior_end = duration * 0.9
-        if interior_end <= interior_start:
-            interior_start, interior_end = 0.0, duration
-        if count <= 1:
-            timestamps = [interior_start + (interior_end - interior_start) / 2]
-        else:
-            step = (interior_end - interior_start) / (count - 1)
-            timestamps = [interior_start + i * step for i in range(count)]
-
-        frames: list[bytes] = []
-        for idx, ts in enumerate(timestamps):
-            out = Path(workdir) / f"frame-{idx:02d}.jpg"
-            try:
-                subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-y",
-                        "-ss",
-                        f"{ts:.3f}",
-                        "-i",
-                        str(src),
-                        "-frames:v",
-                        "1",
-                        "-vf",
-                        f"scale='min({max_width},iw)':-2",
-                        "-q:v",
-                        "4",
-                        str(out),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    timeout=30,
-                )
-            except Exception:
-                continue
-            if out.exists() and out.stat().st_size > 0:
-                frames.append(out.read_bytes())
-        return frames
+            return extract_frames(src, positions, max_px=max_width)
+        except FfmpegNotInstalled:
+            logger.error("ffmpeg not installed — no keyframes (image must be FROM noctus-seed-backend-media-base)")
+        except MediaProbeError as exc:
+            logger.info("video keyframes unreadable (%s)", type(exc).__name__)
+    return []
 
 
 def _extract_audio_via_ffmpeg(video_bytes: bytes, *, input_ext: str = ".mp4") -> bytes | None:
-    """Use ffmpeg (already in the backend image for the upload pipeline)
-    to extract a compressed audio track suitable for Whisper. Returns
-    None if ffmpeg is unavailable or fails."""
-    if not shutil.which("ffmpeg"):
+    """The video's audio track as ogg/opus via the seed ``extract_audio``.
+
+    None when the video has no (decodable) audio — normal for silent clips.
+    Raises ``FfmpegNotInstalled`` (a deploy defect) for the caller to log."""
+    try:
+        return extract_audio(video_bytes, suffix=input_ext)
+    except MediaProbeError:
         return None
-    with tempfile.TemporaryDirectory() as workdir:
-        src = Path(workdir) / f"video{input_ext}"
-        dst = Path(workdir) / "audio.ogg"
-        src.write_bytes(video_bytes)
-        try:
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    str(src),
-                    "-vn",
-                    "-acodec",
-                    "libopus",
-                    "-b:a",
-                    "32k",
-                    str(dst),
-                ],
-                check=True,
-                capture_output=True,
-                timeout=120,
-            )
-        except Exception:
-            return None
-        if not dst.exists() or dst.stat().st_size == 0:
-            return None
-        return dst.read_bytes()
 
 
 def _extract_pdf_text(pdf_bytes: bytes) -> str:
