@@ -58,6 +58,16 @@ from noctusai_lib.integrations.media.safe_fetch import (
     make_safe_fetcher,
     safe_fetch,
 )
+from noctusai_lib.integrations.media.video import (
+    FfmpegNotInstalled,
+    MediaProbeError,
+    VideoProbe,
+    extract_audio,
+    extract_frames,
+    ffmpeg_available,
+    orientation,
+    probe_video,
+)
 from noctusai_lib.integrations.media.types import (
     InboundMedia,
     MediaKind,
@@ -141,6 +151,14 @@ def get_media_resolver(
 
 
 __all__ = [
+    "FfmpegNotInstalled",
+    "MediaProbeError",
+    "VideoProbe",
+    "extract_audio",
+    "extract_frames",
+    "ffmpeg_available",
+    "orientation",
+    "probe_video",
     "InboundMedia",
     "ResolvedMedia",
     "MediaKind",

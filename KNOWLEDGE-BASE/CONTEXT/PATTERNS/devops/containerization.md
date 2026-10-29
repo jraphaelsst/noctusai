@@ -110,6 +110,18 @@ isolated `/opt/venv` with `noctusai_lib` + `noctusai_seed`
 editable-installed + `/app/seed` (the egg-link source). Runtime-shaped
 (no build-essential/headers in the final stage).
 
+**Opt-in media flavour (2026-10-29).** The same file has a `media` target
+(`FROM runtime` + `ffmpeg`/`ffprobe`) built as
+**`noctus-seed-backend-media-base`**; the plain base stays lean. A product
+that handles video/audio opts in by changing ONE line — its runtime stage's
+`FROM noctus-seed-backend-media-base:dev AS runtime` (in the propagate
+generator: `_D_MEDIA_BASE_SLUGS`; today `social-wiring`). It never installs
+ffmpeg itself: the binaries are the shared base's job, the code is
+`noctusai_lib.integrations.media.video` (raises `FfmpegNotInstalled` when
+the product forgot the opt-in, instead of the old silent `None`). The plain
+base is built with an explicit `--target runtime` because the media stage
+is last in the file.
+
 `seed/docker/Dockerfile.frontend-base` → **`noctus-seed-frontend-base`**:
 `node:20-alpine` with the seed Vite alias targets
 (`seed/framework/frontend`, `seed/lib/frontend`) and their deps

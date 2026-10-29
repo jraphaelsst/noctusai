@@ -651,6 +651,19 @@ _D_PIP_RUN: dict[str, str] = {
 }
 
 
+# Products that opt in to the `noctus-seed-backend-media-base` flavour (base +
+# ffmpeg/ffprobe, seed/docker/Dockerfile.backend-base `media` target). The
+# opt-in is ONE line — the runtime stage's FROM; the seed helper
+# `noctusai_lib.integrations.media.video` then finds the binaries.
+_D_MEDIA_BASE_SLUGS: frozenset[str] = frozenset({"social-wiring"})
+_D_BACKEND_FROM = "FROM noctus-seed-backend-base:dev AS runtime\n"
+_D_MEDIA_FROM = (
+    "# ffmpeg/ffprobe come from the seed MEDIA base flavour (the one-line opt-in;\n"
+    "# `noctusai_lib.integrations.media.video` raises FfmpegNotInstalled without them).\n"
+    "FROM noctus-seed-backend-media-base:dev AS runtime\n"
+)
+
+
 def _render_dockerfile(canon: str, slug: str, port: str) -> str:
     """Reproduce propagate-dockerfiles.sh substitutions EXACTLY, in order."""
     s = canon
@@ -666,6 +679,8 @@ def _render_dockerfile(canon: str, slug: str, port: str) -> str:
         f"products/seed/backend/Dockerfile; edit there + re-propagate).",
     )
     s = s.replace('title="noctus-seed"', f'title="noctus-{slug}"')
+    if slug in _D_MEDIA_BASE_SLUGS:
+        s = s.replace(_D_BACKEND_FROM, _D_MEDIA_FROM, 1)
     # per-product post-chown ownership fixups (roadmap D1) — see
     # `_D_POST_CHOWN_EXTRA`'s docstring for why this can't just live in
     # `_D_EXTRA` above.

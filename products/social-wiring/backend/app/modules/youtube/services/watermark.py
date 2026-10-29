@@ -21,14 +21,13 @@ import asyncio
 import json
 import logging
 import re
-import shutil
-import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol, Sequence
 
 from app.config import settings
+from noctusai_lib.integrations.media import FfmpegNotInstalled, MediaProbeError
+from noctusai_lib.integrations.media import extract_frames as seed_extract_frames
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,7 @@ LOGO_ASSET = Path(__file__).resolve().parents[3] / "assets" / "one_consultoria_l
 MIN_CONFIDENCE = 0.6
 # Fractions of the video duration where stills are grabbed (1-3 frames).
 FRAME_POSITIONS = (0.25, 0.6)
-_FRAME_MAX_WIDTH = 768
+_FRAME_MAX_PX = 768
 
 
 class WatermarkDetectionError(Exception):
@@ -82,47 +81,17 @@ def pick_logo_version(verdicts: Sequence[LogoVerdict]) -> int | None:
 # ─── Real detector ────────────────────────────────────────────────────
 
 
-def _probe_duration(path: Path) -> float | None:
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "json", str(path)],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        raise WatermarkDetectionError(f"ffprobe indisponível: {exc}") from exc
-    if out.returncode != 0:
-        raise WatermarkDetectionError(f"ffprobe falhou em {path.name}: {out.stderr[:200]}")
-    try:
-        return float(json.loads(out.stdout)["format"]["duration"])
-    except (KeyError, ValueError, TypeError):
-        return None
+def extract_frames(path: Path, positions: Sequence[float] = FRAME_POSITIONS) -> list[bytes]:
+    """One JPEG still per position (fraction of duration) — seed media helper.
 
-
-def extract_frames(path: Path, out_dir: Path, positions: Sequence[float] = FRAME_POSITIONS) -> list[bytes]:
-    """Grab one JPEG still per position (fraction of duration) via ffmpeg."""
-    duration = _probe_duration(path) or 0.0
-    frames: list[bytes] = []
-    for n, frac in enumerate(positions):
-        target = out_dir / f"{path.stem}-{n}.jpg"
-        cmd = [
-            "ffmpeg", "-v", "error", "-y",
-            "-ss", f"{max(duration * frac, 0.0):.2f}",
-            "-i", str(path),
-            "-frames:v", "1",
-            "-vf", f"scale='min({_FRAME_MAX_WIDTH},iw)':-2",
-            "-q:v", "3",
-            str(target),
-        ]
-        try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-            raise WatermarkDetectionError(f"ffmpeg indisponível: {exc}") from exc
-        if res.returncode != 0 or not target.exists():
-            raise WatermarkDetectionError(
-                f"ffmpeg falhou ao extrair frame de {path.name}: {res.stderr[:200]}"
-            )
-        frames.append(target.read_bytes())
+    Seed errors are re-typed to ``WatermarkDetectionError`` (the caller asks
+    the user); a missing ffmpeg is NOT swallowed into a fallback — it surfaces
+    with the seed's "build FROM the media base" remedy in the message.
+    """
+    try:
+        frames = seed_extract_frames(path, positions, _FRAME_MAX_PX)
+    except (FfmpegNotInstalled, MediaProbeError) as exc:
+        raise WatermarkDetectionError(f"{path.name}: {exc}") from exc
     if not frames:
         raise WatermarkDetectionError(f"nenhum frame extraído de {path.name}")
     return frames
@@ -198,11 +167,7 @@ class VisionWatermarkDetector:
     async def detect(self, videos: Sequence[Path]) -> list[LogoVerdict]:
         if not self._logo_path.exists():
             raise WatermarkDetectionError(f"logo de referência ausente: {self._logo_path}")
-        tmp = Path(tempfile.mkdtemp(prefix="wm-frames-"))
-        try:
-            per_video = [await asyncio.to_thread(extract_frames, v, tmp) for v in videos]
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        per_video = [await asyncio.to_thread(extract_frames, v) for v in videos]
         images: list[bytes] = [self._logo_path.read_bytes()]
         for frames in per_video:
             images.extend(frames)

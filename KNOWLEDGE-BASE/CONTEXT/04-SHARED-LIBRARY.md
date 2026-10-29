@@ -277,6 +277,10 @@ The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expa
 
 **Pilot consumer:** social-wiring's `products/social-wiring/backend/app/services/email_service.py` — `EmailService` is now a thin shim (unchanged public API/exceptions; SW is live in prod) that builds an `SmtpConfig(security="ssl", ...)` (matching its always-`SMTP_SSL` prior behaviour exactly) and delegates to `SmtpEmailSender`.
 
+### `integrations/media/video.py` — ffmpeg/ffprobe video helpers (fail-loud, no Fake)
+
+`probe_video(path) -> VideoProbe(width, height, duration_s, rotation)` (rotation side-data aware), `orientation(probe)` -> `landscape|portrait|square`, `extract_frames(path, positions, max_px) -> list[jpeg bytes]`, `extract_audio(bytes|path) -> ogg/opus mono 16k`, `ffmpeg_available()`. A missing binary raises `FfmpegNotInstalled`, an undecodable input `MediaProbeError` — never a silent `None` (the pre-seed helper classified every video "unknown" in an image without ffmpeg). The binaries ship in the opt-in base flavour `noctus-seed-backend-media-base` (`KB § PATTERNS/devops/containerization.md` §3.1): a product enables them by changing its runtime `FROM`. No Fake by design: pure functions over a local binary, no credentials; binary names are parameters so tests need no patching. Adopter: social-wiring (watermark stills, orientation probe).
+
 ### `integrations/documents/` — Documents → typed fields, or the whole text (Protocol+Fake+Real+factory)
 
 Answers "document → fields a column can store", which `integrations.media` deliberately does not: `ResolvedMedia.text` is a narrative rendering built for a chatbot to read, so every consumer needing a typed value out of it would re-parse that prose itself, differently, at each call site.

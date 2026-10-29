@@ -84,3 +84,21 @@ COPY --from=builder /app/start.sh /app/start.sh
 # NOTE: no USER here — product images add their deps (pip), product code,
 # then create the non-root user + chown as their LAST layers (so the venv
 # stays writable for the product's `pip install`).
+
+# ── media: runtime + ffmpeg/ffprobe (opt-in flavour) ────────────────────
+# `noctus-seed-backend-media-base` — the SAME spine plus the ffmpeg + ffprobe
+# binaries that `noctusai_lib.integrations.media.video` shells out to. A
+# product opts in by changing ONE line of its Dockerfile
+# (`FROM noctus-seed-backend-media-base:dev AS runtime`); the default base
+# stays lean for the products that never touch video/audio. Built from this
+# file as `--target media` (scripts/infra/build-base-images.sh); the default
+# (last-stage-wins) build would otherwise pick THIS stage, so the plain base
+# is always built with an explicit `--target runtime`.
+# Without the binaries the seed helpers raise `FfmpegNotInstalled` (loud);
+# the pre-seed behaviour was a silent None that classified every video
+# orientation "unknown".
+FROM runtime AS media
+LABEL org.opencontainers.image.title="noctus-seed-backend-media-base"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*

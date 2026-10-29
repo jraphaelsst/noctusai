@@ -10266,8 +10266,11 @@ def check_dockerfile_vite_supabase_args(
 # Universal markers — required of every in-noc product Dockerfile.
 _HOUSE_DOCKERFILE_MARKERS: tuple[tuple[str, str], ...] = (
     (
-        "FROM noctus-seed-backend-base",
-        "the shared backend base seam (`FROM noctus-seed-backend-base ... AS runtime`)",
+        # Prefix, so the opt-in `noctus-seed-backend-media-base` flavour
+        # (base + ffmpeg) satisfies the same seam as the plain base.
+        "FROM noctus-seed-backend-",
+        "the shared backend base seam (`FROM noctus-seed-backend-base ... AS runtime`, "
+        "or the opt-in `noctus-seed-backend-media-base` flavour)",
     ),
     (
         "AS runtime-watch",

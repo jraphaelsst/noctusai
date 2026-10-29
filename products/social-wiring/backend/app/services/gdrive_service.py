@@ -28,6 +28,8 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from noctusai_lib.integrations.media import MediaProbeError, probe_video
+
 logger = logging.getLogger(__name__)
 
 # YouTube's per-file upload ceiling is 256 GB but a more practical cap
@@ -403,49 +405,19 @@ def classify_video_format(file_path: Path) -> str:
 
 
 def _get_aspect_ratio(file_path: Path) -> float | None:
-    """Probe the video's width:height ratio via ffprobe.
+    """Display width:height ratio via the seed media helper (rotation-aware).
 
-    Returns None when ffprobe isn't available or the file isn't a
-    valid video — callers should fall back to "unknown" classification.
+    Returns None ONLY when the file is not a readable video
+    (``MediaProbeError``) — callers fall back to "unknown". A missing
+    ffmpeg/ffprobe (``FfmpegNotInstalled``) is deliberately NOT caught: it
+    used to degrade silently to "unknown" for every video.
     """
-    import subprocess
-    import json as _json
-
     try:
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=width,height",
-                "-of", "json",
-                str(file_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            logger.debug("ffprobe failed for %s: %s", file_path.name, result.stderr[:200])
-            return None
-
-        data = _json.loads(result.stdout)
-        streams = data.get("streams", [])
-        if not streams:
-            return None
-
-        width = int(streams[0].get("width", 0))
-        height = int(streams[0].get("height", 0))
-        if width <= 0 or height <= 0:
-            return None
-
-        return width / height
-    except FileNotFoundError:
-        logger.debug("ffprobe not found — aspect ratio classification unavailable")
+        probe = probe_video(file_path)
+    except MediaProbeError as exc:
+        logger.debug("video probe failed for %s: %s", file_path.name, exc)
         return None
-    except Exception as exc:
-        logger.debug("ffprobe error for %s: %s", file_path.name, exc)
-        return None
+    return probe.display_width / probe.display_height
 
 
 # ─── Folder download + pick ───────────────────────────────────────────

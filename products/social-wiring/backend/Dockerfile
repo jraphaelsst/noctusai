@@ -60,20 +60,13 @@ COPY products/social-wiring/backend/app/database.py ../backend/app/database.py
 RUN npm run build   # → /app/products/social-wiring/frontend/dist
 
 # ── runtime: API + SPA on one port ──────────────────────────────────────
-FROM noctus-seed-backend-base:dev AS runtime
+# ffmpeg/ffprobe come from the seed MEDIA base flavour (the one-line opt-in;
+# `noctusai_lib.integrations.media.video` raises FfmpegNotInstalled without them).
+FROM noctus-seed-backend-media-base:dev AS runtime
 ARG GIT_SHA
 LABEL org.opencontainers.image.revision="${GIT_SHA}" \
       org.opencontainers.image.title="noctus-social-wiring"
 WORKDIR /app
-
-# ffmpeg (+ffprobe): orientation probe, duration, and the still frames the
-# watermark detector sends to the vision model. The seed backend base ships
-# neither — without this ffprobe silently returns None and every video is
-# classified "unknown".
-# Before the code COPY so a code change never re-runs this layer.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
 
 # Product-specific Python deps (seed lib/framework already in the base
 # venv; strip the `-e seed/` editable lines — they're inherited).

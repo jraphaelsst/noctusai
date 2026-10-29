@@ -278,3 +278,17 @@ def test_load_products_missing_scope_file_keeps_everything(tmp_path):
     products = P._load_products(root)
 
     assert {slug for slug, _ in products} == {"awake-product", "asleep-product"}
+
+
+# ── media-base opt-in (2026-10-29) ──────────────────────────────────────────
+def test_render_dockerfile_media_base_opt_in_is_one_line():
+    """A slug in `_D_MEDIA_BASE_SLUGS` differs from the plain render ONLY in
+    the runtime stage's FROM (+ its comment); every other slug keeps the
+    plain base."""
+    canon = (REPO / "products/seed/backend/Dockerfile").read_text()
+    plain = P._render_dockerfile(canon, "igig", "8013")
+    media = P._render_dockerfile(canon, "social-wiring", "8011")
+    assert "FROM noctus-seed-backend-base:dev AS runtime" in plain
+    assert "backend-media-base" not in plain
+    assert "FROM noctus-seed-backend-media-base:dev AS runtime" in media
+    assert "FROM noctus-seed-backend-base:dev AS runtime" not in media

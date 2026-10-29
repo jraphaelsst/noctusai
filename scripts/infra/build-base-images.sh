@@ -18,8 +18,19 @@ GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo dev)"
 echo "[base] building noctus-seed-backend-base:${TAG}"
 docker build \
   --build-arg GIT_SHA="${GIT_SHA}" \
+  --target runtime \
   -f seed/docker/Dockerfile.backend-base \
   -t "noctus-seed-backend-base:${TAG}" .
+
+# Opt-in media flavour (= backend base + ffmpeg/ffprobe). Same Dockerfile,
+# `media` target on top of `runtime` — layers are shared, only the apt layer
+# is new. Products opt in by `FROM noctus-seed-backend-media-base:<tag>`.
+echo "[base] building noctus-seed-backend-media-base:${TAG}"
+docker build \
+  --build-arg GIT_SHA="${GIT_SHA}" \
+  --target media \
+  -f seed/docker/Dockerfile.backend-base \
+  -t "noctus-seed-backend-media-base:${TAG}" .
 
 echo "[base] building noctus-seed-frontend-base:${TAG}"
 docker build \
