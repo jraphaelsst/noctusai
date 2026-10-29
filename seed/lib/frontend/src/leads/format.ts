@@ -1,6 +1,6 @@
 /** Pure display helpers of the leads organ (pt-BR). */
 import { formatPhone } from '../phone';
-import type { Lead, LeadFiltersState, LeadsConfigData } from './types';
+import type { Lead, LeadFiltersState, LeadStageConfig, LeadsConfigData } from './types';
 
 const DAY_MS = 86_400_000;
 
@@ -34,6 +34,15 @@ export function originLabel(config: LeadsConfigData | undefined, slug: string): 
 
 export function stageLabel(config: LeadsConfigData | undefined, slug: string): string {
   return config?.stages.find((s) => s.slug === slug)?.label ?? slug;
+}
+
+export function stageOf(config: LeadsConfigData | undefined, slug: string): LeadStageConfig | undefined {
+  return config?.stages.find((s) => s.slug === slug);
+}
+
+/** The coloured tag text of a stage: its `tag`, else its label (an unknown stage shows its slug). */
+export function stageTagLabel(stage: LeadStageConfig | undefined, slug = ''): string {
+  return stage?.tag || stage?.label || slug;
 }
 
 /** The query string of a list / board request: empty filters are not sent. */

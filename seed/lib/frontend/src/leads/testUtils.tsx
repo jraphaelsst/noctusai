@@ -9,9 +9,9 @@ import type { Lead, LeadColumn, LeadsConfigData } from './types';
 
 export const CONFIG: LeadsConfigData = {
   stages: [
-    { slug: 'lead', label: 'Lead', color: null },
-    { slug: 'atendimento', label: 'Atendimento', color: null },
-    { slug: 'fechado', label: 'Fechado', color: 'success' },
+    { slug: 'lead', label: 'Lead', color: 'destructive', tag: 'Lead' },
+    { slug: 'atendimento', label: 'Atendimento', color: 'warning', tag: 'Em atendimento' },
+    { slug: 'fechado', label: 'Fechado', color: 'success', tag: null },
   ],
   origins: [
     { slug: 'whatsapp', label: 'WhatsApp' },

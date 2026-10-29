@@ -22,12 +22,20 @@ export interface Lead {
   last_message_preview: string | null;
   created_at?: string;
   updated_at?: string;
+  /**
+   * Set on a create / update / move response when the product's stage hook (e.g. lead→client conversion on entering
+   * a closing stage) failed. The write itself succeeded; the organ surfaces it as a non-blocking warning.
+   */
+  stage_hook_error?: string | null;
 }
 
 export interface LeadStageConfig {
   slug: string;
   label: string;
+  /** A pipeline `STAGE_COLORS` token (`success`, `warning`...) or null (neutral). */
   color: string | null;
+  /** The coloured status-tag text of a lead in this stage (e.g. "Em atendimento"); null => `label`. */
+  tag: string | null;
 }
 
 export interface LeadOriginConfig {

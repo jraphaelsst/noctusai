@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../api';
@@ -29,6 +30,20 @@ describe('LeadCard', () => {
     expect(screen.getByText('Oi, queria marcar uma conversa')).toBeInTheDocument();
   });
 
+  it('shows the stage tag in the stage colour (tag, else label) and free tags as neutral chips', () => {
+    const { rerender } = render(<LeadCard lead={{ ...bia, tags: ['indicação', 'urgente'] }} originLabel="Instagram" stage={CONFIG.stages[1]} />);
+    const tag = screen.getByTestId('lead-stage-tag-b');
+    expect(tag).toHaveTextContent('Em atendimento');
+    expect(tag.className).toContain('text-warning');
+    const chips = screen.getByTestId('lead-tags-b');
+    expect(within(chips).getByText('indicação')).toBeInTheDocument();
+    expect(within(chips).getByText('urgente')).toBeInTheDocument();
+    rerender(<LeadCard lead={{ ...bia, stage: 'fechado' }} originLabel="Instagram" stage={CONFIG.stages[2]} />);
+    expect(screen.getByTestId('lead-stage-tag-b')).toHaveTextContent('Fechado'); // tag null -> label
+    expect(screen.getByTestId('lead-stage-tag-b').className).toContain('text-success');
+    expect(screen.queryByTestId('lead-tags-b')).not.toBeInTheDocument();
+  });
+
   it('says so when there is no phone and omits an empty preview', () => {
     render(<LeadCard lead={bia} originLabel="Instagram" />);
     expect(screen.getByText('Sem telefone')).toBeInTheDocument();
@@ -42,7 +57,7 @@ describe('LeadsBoard', () => {
   it('renders one column per stage with totals and the cards', async () => {
     render(<LeadsBoard hooks={createLeadsHooks(makeApi(routes()))} />, { wrapper: wrapperFor() });
     expect(await screen.findByText('Ana Souza')).toBeInTheDocument();
-    for (const label of ['Lead', 'Atendimento', 'Fechado']) expect(screen.getByText(label)).toBeInTheDocument();
+    for (const label of ['Lead', 'Atendimento', 'Fechado']) expect(screen.getAllByText(label, { selector: 'span.font-semibold' }).length).toBeGreaterThan(0);
     expect(screen.getByText('Bia')).toBeInTheDocument();
     expect(screen.getAllByText('Nenhum lead nesta etapa.')).toHaveLength(1);
   });
@@ -51,6 +66,25 @@ describe('LeadsBoard', () => {
     render(<LeadsBoard hooks={createLeadsHooks(makeApi(routes()))} />, { wrapper: wrapperFor() });
     await screen.findByText('Ana Souza');
     expect(screen.queryByRole('status', { name: /carregando/i })).not.toBeInTheDocument();
+  });
+
+  it('each card carries its stage tag, resolved from the config', async () => {
+    render(<LeadsBoard hooks={createLeadsHooks(makeApi(routes()))} />, { wrapper: wrapperFor() });
+    expect(await screen.findByTestId('lead-stage-tag-a')).toHaveTextContent('Lead');
+    expect(screen.getByTestId('lead-stage-tag-a').className).toContain('text-destructive');
+    expect(screen.getByTestId('lead-stage-tag-b')).toHaveTextContent('Em atendimento');
+  });
+
+  it('forwards the extraActions seam to the detail modal', async () => {
+    const onPatient = vi.fn();
+    const api = makeApi({ ...routes(), 'GET /api/leads/a': env(ana) });
+    render(
+      <LeadsBoard hooks={createLeadsHooks(api)} extraActions={(l) => [{ label: 'Ver paciente', onClick: () => onPatient(l.id), testId: 'x-patient' }]} />,
+      { wrapper: wrapperFor() },
+    );
+    await userEvent.click(await screen.findByText('Ana Souza'));
+    await userEvent.click(await screen.findByTestId('x-patient'));
+    expect(onPatient).toHaveBeenCalledWith('a');
   });
 
   it('a card click opens the detail modal with the lead', async () => {
@@ -101,6 +135,26 @@ describe('LeadDetailModal', () => {
     rerender(<LeadDetailModal hooks={hooks} lead={bia} onClose={() => {}} onOpenConversation={onOpen} />);
     await screen.findByText('Bia');
     expect(screen.queryByTestId('lead-detail-open-chat')).not.toBeInTheDocument();
+  });
+
+  it('the stage badge is coloured with the tag; free tags render as chips, not a comma string', async () => {
+    const tagged = { ...bia, tags: ['indicação', 'urgente'] };
+    render(<LeadDetailModal hooks={createLeadsHooks(makeApi({ 'GET /api/leads/b': env(tagged) }))} lead={tagged} onClose={() => {}} />, { wrapper: wrapperFor() });
+    await waitFor(() => expect(screen.getByTestId('lead-detail-stage-tag')).toHaveTextContent('Em atendimento'));
+    expect(screen.getByTestId('lead-detail-stage-tag').className).toContain('text-warning');
+    const chips = screen.getByTestId('lead-detail-tags');
+    expect(within(chips).getByText('indicação')).toBeInTheDocument();
+    expect(screen.queryByText('indicação, urgente')).not.toBeInTheDocument();
+  });
+
+  it('extraActions add host actions for the lead (only when the host returns them)', async () => {
+    const hooks = createLeadsHooks(makeApi({ 'GET /api/leads/a': env(ana), 'GET /api/leads/b': env({ ...bia, stage: 'fechado' }) }));
+    const extra = (l: { stage: string }) => (l.stage === 'fechado' ? [{ label: 'Ver paciente', onClick: () => {}, testId: 'x-patient' }] : []);
+    const { rerender } = render(<LeadDetailModal hooks={hooks} lead={ana} onClose={() => {}} extraActions={extra} />, { wrapper: wrapperFor() });
+    await screen.findByTestId('lead-detail-edit');
+    expect(screen.queryByTestId('x-patient')).not.toBeInTheDocument();
+    rerender(<LeadDetailModal hooks={hooks} lead={{ ...bia, stage: 'fechado' }} onClose={() => {}} extraActions={extra} />);
+    expect(await screen.findByTestId('x-patient')).toBeInTheDocument();
   });
 
   it('delete asks first; cancelling deletes nothing, confirming deletes and closes', async () => {
@@ -160,6 +214,18 @@ describe('LeadFormDialog', () => {
     const body = api.patch.mock.calls[0][1] as Record<string, unknown>;
     expect(body.name).toBe('Ana M');
     expect('first_contact_at' in body).toBe(false);
+  });
+  it('a save whose stage hook failed still closes, with a non-blocking warning naming the reason', async () => {
+    const warn = vi.spyOn(toast, 'warning').mockImplementation(() => 'id');
+    const api = makeApi({ 'PATCH /api/leads/a': env({ ...ana, stage: 'fechado', stage_hook_error: 'conversão falhou' }) });
+    const onSaved = vi.fn();
+    render(<LeadFormDialog hooks={createLeadsHooks(api)} open lead={ana} onClose={() => {}} onSaved={onSaved} />, { wrapper: wrapperFor() });
+    await waitFor(() => expect(within(screen.getByLabelText(/Etapa/)).getByRole('option', { name: 'Fechado' })).toBeInTheDocument());
+    await userEvent.selectOptions(screen.getByLabelText(/Etapa/), 'fechado');
+    await userEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(warn).toHaveBeenCalledWith('O lead foi salvo, mas a ação automática desta etapa falhou.', { description: 'conversão falhou' });
+    warn.mockRestore();
   });
 });
 

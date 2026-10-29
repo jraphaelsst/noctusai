@@ -3,17 +3,22 @@
  *
  * One page component holds the filters, so Funil and Lista SHARE them (search, origin, first-contact range): switch
  * view and the same filter is still on. Create / edit / delete are the organ's own (full CRUD). "Abrir conversa"
- * on a lead opens the inbox on that chat (`/conversas?chat=`).
+ * on a lead opens the inbox on that chat (`/conversas?chat=`). A closed lead (stage `fechado`) is a patient: "Ver
+ * paciente" opens it (`/pacientes?lead=` resolves the conversion).
  */
 import * as React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { LeadsBoard, LeadsList, type Lead, type LeadFiltersState } from "@noctusai/lib";
+import type { DetailAction } from "@noctusai/lib/components";
+import { HeartHandshake } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@noctusai/lib/design-system";
 
-import { conversationPath, leadsHooks } from "@/lib/crm";
+import { conversationPath, leadsHooks, patientOfLeadPath } from "@/lib/crm";
 
 const LISTA_PATH = "/leads/lista";
 const FUNIL_PATH = "/leads";
+/** The stage whose leads are patients (the backend converts on entering it). */
+const STAGE_PACIENTE = "fechado";
 
 export default function Leads() {
   const { pathname } = useLocation();
@@ -25,6 +30,22 @@ export default function Leads() {
     (lead: Lead) => {
       if (lead.whatsapp_chat_id) navigate(conversationPath(lead.whatsapp_chat_id));
     },
+    [navigate],
+  );
+
+  const extraActions = React.useCallback(
+    (lead: Lead): DetailAction[] =>
+      lead.stage === STAGE_PACIENTE
+        ? [
+            {
+              label: "Ver paciente",
+              variant: "outline",
+              icon: <HeartHandshake className="mr-1 h-4 w-4" />,
+              onClick: () => navigate(patientOfLeadPath(lead.id)),
+              testId: "lead-detail-ver-paciente",
+            },
+          ]
+        : [],
     [navigate],
   );
 
@@ -43,9 +64,9 @@ export default function Leads() {
         </Tabs>
       </div>
       {view === "funil" ? (
-        <LeadsBoard hooks={leadsHooks} filters={filters} onFiltersChange={setFilters} onOpenConversation={openConversation} />
+        <LeadsBoard hooks={leadsHooks} filters={filters} onFiltersChange={setFilters} onOpenConversation={openConversation} extraActions={extraActions} />
       ) : (
-        <LeadsList hooks={leadsHooks} filters={filters} onFiltersChange={setFilters} onOpenConversation={openConversation} />
+        <LeadsList hooks={leadsHooks} filters={filters} onFiltersChange={setFilters} onOpenConversation={openConversation} extraActions={extraActions} />
       )}
     </div>
   );

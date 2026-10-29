@@ -5,12 +5,14 @@
 import { Plus } from 'lucide-react';
 import * as React from 'react';
 
+import type { DetailAction } from '../components/detail/EntityDetailDialog';
 import { Button } from '../design-system/ui/Button';
 import { KanbanBoard } from '../components/kanban/KanbanBoard';
 import type { KanbanColumnData } from '../components/kanban/types';
 import { toast } from 'sonner';
 import { ErrorState, RefreshingBar } from './controls';
-import { originLabel } from './format';
+import { originLabel, stageOf } from './format';
+import { warnStageHook } from './stageHook';
 import { errorMessage, type LeadsHooks } from './hooks';
 import { t } from './i18n';
 import { LeadCard } from './LeadCard';
@@ -26,11 +28,13 @@ export interface LeadsBoardProps {
   filters?: LeadFiltersState;
   onFiltersChange?: (next: LeadFiltersState) => void;
   onOpenConversation?: (lead: Lead) => void;
+  /** Extra detail-modal actions per lead (forwarded to `LeadDetailModal`). */
+  extraActions?: (lead: Lead) => DetailAction[];
   /** Hide the "Novo lead" button. */
   readOnly?: boolean;
 }
 
-export function LeadsBoard({ hooks, filters: controlled, onFiltersChange, onOpenConversation, readOnly }: LeadsBoardProps) {
+export function LeadsBoard({ hooks, filters: controlled, onFiltersChange, onOpenConversation, extraActions, readOnly }: LeadsBoardProps) {
   const [filters, setFilters] = useLeadFilters(controlled, onFiltersChange);
   const { data: config } = hooks.useLeadsConfig();
   const board = hooks.useLeadsBoard(filters);
@@ -81,16 +85,19 @@ export function LeadsBoard({ hooks, filters: controlled, onFiltersChange, onOpen
             </div>
           );
         }}
-        renderCard={(lead) => <LeadCard lead={lead} originLabel={originLabel(config, lead.origin)} />}
+        renderCard={(lead) => <LeadCard lead={lead} originLabel={originLabel(config, lead.origin)} stage={stageOf(config, lead.stage)} />}
         onCardActivate={(lead) => setOpenId(lead.id)}
         onMove={(id, from, to, toIndex) => {
           move.mutate(
             { id, stage: to, toIndex },
-            { onError: (err) => toast.error(t('board.move_error'), { description: errorMessage(err) }) },
+            {
+              onSuccess: (saved) => warnStageHook(saved),
+              onError: (err) => toast.error(t('board.move_error'), { description: errorMessage(err) }),
+            },
           );
         }}
       />
-      <LeadDetailModal hooks={hooks} lead={open} onClose={() => setOpenId(null)} onOpenConversation={onOpenConversation} />
+      <LeadDetailModal hooks={hooks} lead={open} onClose={() => setOpenId(null)} onOpenConversation={onOpenConversation} extraActions={extraActions} />
       <LeadFormDialog hooks={hooks} open={creating} lead={null} onClose={() => setCreating(false)} />
     </div>
   );

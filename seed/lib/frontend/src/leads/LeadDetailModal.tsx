@@ -9,7 +9,9 @@ import * as React from 'react';
 
 import { EntityDetailDialog, type DetailAction } from '../components/detail/EntityDetailDialog';
 import { useConfirm } from '../components/confirm/ConfirmProvider';
-import { displayPhone, firstContactLabel, originLabel, stageLabel } from './format';
+import { stageTagClasses } from '../components/pipeline/stageTokens';
+import { Badge } from '../design-system/ui/Badge';
+import { displayPhone, firstContactLabel, originLabel, stageLabel, stageOf, stageTagLabel } from './format';
 import { errorMessage, type LeadsHooks } from './hooks';
 import { t } from './i18n';
 import { LeadFormDialog } from './LeadFormDialog';
@@ -22,9 +24,14 @@ export interface LeadDetailModalProps {
   onClose: () => void;
   /** Host navigation to the conversation (shown only for a lead born from a WhatsApp chat). */
   onOpenConversation?: (lead: Lead) => void;
+  /**
+   * Host seam: extra footer actions for this lead (e.g. a product's "Ver paciente" on a closed lead). Rendered
+   * between the organ's own actions and "Editar"; the host decides when each applies.
+   */
+  extraActions?: (lead: Lead) => DetailAction[];
 }
 
-export function LeadDetailModal({ hooks, lead: seed, onClose, onOpenConversation }: LeadDetailModalProps) {
+export function LeadDetailModal({ hooks, lead: seed, onClose, onOpenConversation, extraActions }: LeadDetailModalProps) {
   const confirm = useConfirm();
   const { data: config } = hooks.useLeadsConfig();
   const fetched = hooks.useLead(seed?.id);
@@ -58,6 +65,7 @@ export function LeadDetailModal({ hooks, lead: seed, onClose, onOpenConversation
         ...(onOpenConversation && lead.whatsapp_chat_id
           ? [{ label: t('detail.open_chat'), variant: 'outline' as const, icon: <MessageCircle className="mr-1 h-4 w-4" />, onClick: () => onOpenConversation(lead), testId: 'lead-detail-open-chat' }]
           : []),
+        ...(extraActions?.(lead) ?? []),
         { label: t('detail.edit'), variant: 'primary', icon: <Pencil className="mr-1 h-4 w-4" />, onClick: () => setEditing(true), testId: 'lead-detail-edit' },
       ]
     : [];
@@ -69,7 +77,19 @@ export function LeadDetailModal({ hooks, lead: seed, onClose, onOpenConversation
         onClose={onClose}
         title={lead?.name ?? ''}
         subtitle={lead ? firstContactLabel(lead) && `${t('detail.first_contact')}: ${firstContactLabel(lead)}` : undefined}
-        badges={lead ? [{ label: stageLabel(config, lead.stage), variant: 'muted' }, { label: originLabel(config, lead.origin), variant: 'outline' }] : []}
+        badges={
+          lead
+            ? [
+                {
+                  label: stageTagLabel(stageOf(config, lead.stage), lead.stage),
+                  variant: 'outline',
+                  className: stageTagClasses(stageOf(config, lead.stage)?.color),
+                  testId: 'lead-detail-stage-tag',
+                },
+                { label: originLabel(config, lead.origin), variant: 'outline' },
+              ]
+            : []
+        }
         note={deleteError ?? undefined}
         sections={
           lead
@@ -78,9 +98,23 @@ export function LeadDetailModal({ hooks, lead: seed, onClose, onOpenConversation
                   fields: [
                     { label: t('detail.phone'), value: displayPhone(lead.phone) },
                     { label: t('detail.email'), value: lead.email },
+                    { label: t('detail.stage'), value: stageLabel(config, lead.stage) },
                     { label: t('detail.last_message'), value: lead.last_message_preview, wide: true },
                     { label: t('detail.notes'), value: lead.notes, wide: true },
-                    { label: t('detail.tags'), value: lead.tags.join(', '), hidden: lead.tags.length === 0 },
+                    {
+                      label: t('detail.tags'),
+                      value: (
+                        <span className="flex flex-wrap gap-1" data-testid="lead-detail-tags">
+                          {lead.tags.map((tag) => (
+                            <Badge key={tag} variant="muted" className="font-normal">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </span>
+                      ),
+                      wide: true,
+                      hidden: lead.tags.length === 0,
+                    },
                   ],
                 },
               ]
