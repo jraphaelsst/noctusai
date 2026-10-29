@@ -177,7 +177,7 @@ class LeadsService:
         orphan_total = self.store.count(org_id, orphan_f)
         if orphan_total:
             orphans = sorted(self.store.query(org_id, orphan_f, limit=cap), key=board_sort_key)
-            stage = {"slug": ORPHAN_STAGE, "label": ORPHAN_LABEL, "color": "muted"}
+            stage = {"slug": ORPHAN_STAGE, "label": ORPHAN_LABEL, "color": "muted", "tag": ORPHAN_LABEL}
             columns.append(self._column(ORPHAN_STAGE, stage, orphan_total, orphans))
             logger.warning("leads: %d lead(s) on a stage missing from the config are shown under %r", orphan_total, ORPHAN_LABEL)
         return columns
@@ -208,7 +208,7 @@ class LeadsService:
             "first_contact_at": fields.get("first_contact_at") or now,
             "created_by": user_id,
         }
-        return self.store.insert(org_id, row)
+        return self._entered(org_id, self.store.insert(org_id, row), stage)
 
     def update(self, org_id: str, lead_id: str, data: Mapping[str, Any]) -> dict:
         org_id = str(org_id)
@@ -216,8 +216,9 @@ class LeadsService:
         patch = self._normalize(data)
         if "name" in patch and not patch["name"]:
             raise invalid("name", "O nome não pode ficar vazio.", "nome_obrigatorio")
+        entered = None
         if data.get("stage") and data["stage"] != current["stage"]:
-            self._check_stage(data["stage"])
+            entered = self._check_stage(data["stage"])
             patch.update(stage=data["stage"], stage_changed_at=_now(), **{POSITION_FIELD_COL: self._top(org_id, data["stage"])})
         if not patch:
             return current
@@ -225,7 +226,7 @@ class LeadsService:
         saved = self.store.update(org_id, str(lead_id), patch)
         if saved is None:
             raise not_found("Lead")
-        return saved
+        return self._entered(org_id, saved, entered)
 
     def delete(self, org_id: str, lead_id: str) -> None:
         if not self.store.delete(str(org_id), str(lead_id)):
@@ -245,7 +246,22 @@ class LeadsService:
         saved = self.store.update(org_id, str(lead_id), patch)
         if saved is None:
             raise not_found("Lead")
-        return saved
+        return self._entered(org_id, saved, stage if current["stage"] != stage else None)
+
+    def _entered(self, org_id: str, lead: dict, stage: Optional[str]) -> dict:
+        """Fire `config.on_stage_entered` when `lead` was just saved on a stage it was not on before.
+
+        The hook runs AFTER the write: a failure cannot roll the lead back. It is logged with its traceback and
+        surfaced on the returned payload (`stage_hook_error`) -- never swallowed."""
+        hook = self.config.on_stage_entered
+        if hook is None or not stage:
+            return lead
+        try:
+            hook(str(org_id), dict(lead), stage)
+        except Exception as exc:  # noqa: BLE001 -- surfaced below, the lead write already happened
+            logger.exception("leads: on_stage_entered hook failed for lead %s entering %r", lead.get("id"), stage)
+            return {**lead, "stage_hook_error": f"{type(exc).__name__}: {exc}"}
+        return lead
 
     def _top(self, org_id: str, stage: str) -> Decimal:
         return position_on_top(_as_cards(self.store.column(org_id, stage, LeadFilters(), limit=1)))
@@ -291,12 +307,13 @@ class LeadsService:
             "last_message_preview": _preview(_chat_get(chat, "last_message_preview")),
         }
         try:
-            return self.store.insert(org_id, row), True
+            saved = self.store.insert(org_id, row)
         except LeadConflictError:  # a concurrent webhook won the race: its row is the lead
             winner = self.store.find_by_chat(org_id, connection_id, chat_id)
             if winner is None:
                 raise
             return winner, False
+        return self._entered(org_id, saved, self.config.first_stage), True
 
     async def upsert_from_whatsapp(self, org_id: Any, connection_id: Any, chat: WhatsAppChatLike | Mapping[str, Any]) -> dict:
         """`on_new_chat(org_id, connection_id, chat)` -- creates the lead of a chat (once); returns it."""
