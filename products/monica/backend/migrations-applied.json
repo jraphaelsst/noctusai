@@ -10,6 +10,8 @@
     "014_leads.sql": "e56f13d52af905fb73cbe07f7ad4930a3313fced97a104d96e3ec8b58828d5dd",
     "015_whatsapp.sql": "afaeb8037a9c8ae587199e7e7a8f83f948b7126ccda03c86f2130bd5925919a5",
     "016_status_pagina_crm.sql": "940997e9db99e678b9b6cb0dc59932c7fdb6629225a3b2ad54fefd4b333442fe",
-    "017_whatsapp_app_switch.sql": "62e984eef3f2e7f9fe39a991b0458f9336aa4e362ca569cc0c954074f70d9ffc"
+    "017_whatsapp_app_switch.sql": "62e984eef3f2e7f9fe39a991b0458f9336aa4e362ca569cc0c954074f70d9ffc",
+    "018_clients.sql": "a4a7f4326cae20501904f7155c5cc92d5b480f7a7df314d0d9be4392fd1f630a",
+    "019_status_pagina_pacientes.sql": "3e944d09094d6f3ab1492ce579b02ba642864a2d5409ad5757f8e2b685672de8"
   }
 }
