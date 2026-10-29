@@ -18,6 +18,7 @@ export const MESSAGES = {
   'board.error': 'Não foi possível carregar o funil.',
   'board.empty_column': 'Nenhum lead nesta etapa.',
   'board.move_error': 'Não foi possível mover o lead.',
+  'stage_hook.warning': 'O lead foi salvo, mas a ação automática desta etapa falhou.',
   'board.total': '{n}',
   'board.more': '+{n} não exibidos',
 

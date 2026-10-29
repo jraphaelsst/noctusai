@@ -49,9 +49,10 @@ export function TagChips({ tags, testId }: { tags: string[]; testId?: string }) 
 /** A refusal in pt-BR: the known codes by name, anything else with the server's message. */
 export function clientsErrorText(err: unknown, fallbackKey = 'form.error', vars?: Record<string, string>): string {
   const code = apiErrorCode(err);
-  for (const k of code ? [`error.${code}`, `error.${code.toUpperCase()}`] : []) {
-    const mapped = t(k, vars);
-    if (mapped !== k) return mapped;
+  // Codes are matched exactly as the server sends them (contract codes upper-case, field refusals lower-case).
+  if (code) {
+    const mapped = t(`error.${code}`, vars);
+    if (mapped !== `error.${code}`) return mapped;
   }
   return `${t(fallbackKey, vars)}: ${errorMessage(err)}`;
 }

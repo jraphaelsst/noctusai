@@ -12,6 +12,7 @@ import type { KanbanColumnData } from '../components/kanban/types';
 import { toast } from 'sonner';
 import { ErrorState, RefreshingBar } from './controls';
 import { originLabel, stageOf } from './format';
+import { warnStageHook } from './stageHook';
 import { errorMessage, type LeadsHooks } from './hooks';
 import { t } from './i18n';
 import { LeadCard } from './LeadCard';
@@ -89,7 +90,10 @@ export function LeadsBoard({ hooks, filters: controlled, onFiltersChange, onOpen
         onMove={(id, from, to, toIndex) => {
           move.mutate(
             { id, stage: to, toIndex },
-            { onError: (err) => toast.error(t('board.move_error'), { description: errorMessage(err) }) },
+            {
+              onSuccess: (saved) => warnStageHook(saved),
+              onError: (err) => toast.error(t('board.move_error'), { description: errorMessage(err) }),
+            },
           );
         }}
       />

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../api';
@@ -213,6 +214,18 @@ describe('LeadFormDialog', () => {
     const body = api.patch.mock.calls[0][1] as Record<string, unknown>;
     expect(body.name).toBe('Ana M');
     expect('first_contact_at' in body).toBe(false);
+  });
+  it('a save whose stage hook failed still closes, with a non-blocking warning naming the reason', async () => {
+    const warn = vi.spyOn(toast, 'warning').mockImplementation(() => 'id');
+    const api = makeApi({ 'PATCH /api/leads/a': env({ ...ana, stage: 'fechado', stage_hook_error: 'conversão falhou' }) });
+    const onSaved = vi.fn();
+    render(<LeadFormDialog hooks={createLeadsHooks(api)} open lead={ana} onClose={() => {}} onSaved={onSaved} />, { wrapper: wrapperFor() });
+    await waitFor(() => expect(within(screen.getByLabelText(/Etapa/)).getByRole('option', { name: 'Fechado' })).toBeInTheDocument());
+    await userEvent.selectOptions(screen.getByLabelText(/Etapa/), 'fechado');
+    await userEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(warn).toHaveBeenCalledWith('O lead foi salvo, mas a ação automática desta etapa falhou.', { description: 'conversão falhou' });
+    warn.mockRestore();
   });
 });
 

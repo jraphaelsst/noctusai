@@ -162,4 +162,13 @@ export const MESSAGES = {
   'error.CLIENTE_COM_FINANCEIRO': 'Este cadastro tem lançamentos no financeiro e não pode ser excluído. Encerre-o em vez de excluir.',
   'error.SESSAO_COM_PAGAMENTO': 'Esta sessão já tem pagamento registrado: não pode ser excluída, deixar de ser cobrada nem mudar de valor.',
   'error.VALOR_EXCEDE_ABERTO': 'O valor é maior do que o total em aberto.',
+  'error.status_invalido': 'Situação desconhecida.',
+  'error.telefone_invalido': 'Telefone inválido. Use o DDD + número (ex.: 11 99999-9999).',
+  'error.documento_invalido': 'CPF/CNPJ inválido.',
+  'error.metodo_invalido': 'Forma de pagamento desconhecida.',
+  'error.filtro_invalido': 'Filtro inválido.',
+  'error.nome_obrigatorio': 'Informe o nome.',
+  'error.agenda_invalida': 'Horário fixo inválido: confira o dia da semana, o horário e a frequência.',
+  'error.lancamento_invalido': 'Um dos lançamentos escolhidos não está em aberto para este cadastro.',
+  'error.valor_invalido': 'Informe um valor maior que zero.',
 } as const;

@@ -8,6 +8,7 @@ import { Button } from '../design-system/ui/Button';
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../design-system/ui/Dialog';
 import { Field, FormError, Input, Select, Textarea } from './controls';
 import { fromDateInput, splitTags, toDateInput } from './format';
+import { warnStageHook } from './stageHook';
 import { apiErrorCode, errorMessage, type LeadsHooks } from './hooks';
 import { t } from './i18n';
 import type { Lead, LeadInput } from './types';
@@ -67,6 +68,7 @@ function Form({ hooks, lead, onClose, onSaved, defaultStage }: Omit<LeadFormDial
     };
     const done = {
       onSuccess: (saved: Lead) => {
+        warnStageHook(saved);
         onSaved?.(saved);
         onClose();
       },
