@@ -965,9 +965,10 @@ class TestCheckNoSelfMonkeypatch:
         issues = check_no_self_monkeypatch(repo)
         assert all(i["severity"] == "warning" for i in issues)
 
-    def test_seed_lib_is_ratcheted_and_the_seed_product_is_not_mislabelled(self):
-        # 2026-10-29: the seed lib reached 0, so a NEW self-patch there blocks; the
-        # seed PRODUCT (`products/seed/…`) used to be mislabelled "<seed-lib>".
+    def test_seed_lib_and_seed_product_are_labelled_by_path_prefix(self):
+        # 2026-10-29: `seed/…` tests were labelled "<mcp>" and `products/seed/…`
+        # tests "<seed-lib>" (a `"/seed/" in` test) — so the seed lib's real
+        # self-patch count (139) was hidden from its own label.
         content = (
             "from noctusai_lib.integrations.transcription.server import app as app_mod\n\n"
             "def test_thing(monkeypatch):\n"
@@ -978,7 +979,7 @@ class TestCheckNoSelfMonkeypatch:
             (tmp / d).mkdir(parents=True)
             (tmp / d / "test_x.py").write_text(content)
         by_product = {i["product"]: i["severity"] for i in check_no_self_monkeypatch(tmp)}
-        assert by_product == {"<seed-lib>": "high", "seed": "warning"}
+        assert by_product == {"<seed-lib>": "warning", "seed": "warning"}
 
     # -----------------------------------------------------------------------
     # Allowlist regression tests for boundary accessors added 2026-04-29 by

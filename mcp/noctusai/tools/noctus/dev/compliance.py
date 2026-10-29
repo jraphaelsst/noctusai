@@ -1758,7 +1758,6 @@ from tools.noctus.dev.self_patch_predicate import (  # noqa: E402
 _NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS: frozenset[str] = frozenset({
     "therapy-platform",  # ratcheted 2026-05-01 (closed `therapy-tests-no-self-patch`)
     "social-wiring",  # ratcheted 2026-05-24 (closed `social-wiring-settings-di-rewrite`: 43→0)
-    "<seed-lib>",  # ratcheted 2026-10-29 (transcriber server got DI seams: 0 left in seed/)
 })
 
 
