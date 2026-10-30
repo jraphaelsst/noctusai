@@ -396,6 +396,16 @@ export async function refreshWithBackoff(
 /** Upper bound for one multipart upload round-trip (see `upload`). */
 export const UPLOAD_TIMEOUT_MS = 120_000;
 
+/** The `X-Noctus-Acting-Org` a request carried (`null` = none), whatever the headers shape. */
+function sentOrgPin(init: RequestInit): string | null {
+  try {
+    return new Headers(init.headers).get(ORG_PIN_HEADER);
+  } catch {
+    // Unparseable headers cannot have carried a pin we set (buildHeaders writes a plain record).
+    return null;
+  }
+}
+
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
   const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated, onMfaVerified, onOrgSemLicenca } = options;
   const transientRetryDelayMs = options.transientRetryDelayMs ?? 700;
@@ -545,12 +555,14 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
   // Org-picker: a 409 `org_selection_changed` means the pin is stale. Drop it
   // (so nothing re-sends it) and let the registered handler refetch access +
   // reopen the picker. The response still propagates to the caller.
-  async function checkOrgSelectionRefusal(response: Response): Promise<void> {
+  async function checkOrgSelectionRefusal(response: Response, init: RequestInit): Promise<void> {
     if (response.status !== 409) return;
     const data = await response.clone().json().catch(() => null);
     // org_selection_changed (stale pin) AND org_selection_required (no live
     // selection): both reopen the required picker; the pin clear stops any loop.
-    if (isOrgSelectionRefusalBody(data)) notifyOrgSelectionChanged();
+    // The pin the request CARRIED goes along: a refusal of a request sent under
+    // the previous org of an in-page swap is stale and must not undo the new pin.
+    if (isOrgSelectionRefusalBody(data)) notifyOrgSelectionChanged(sentOrgPin(init));
   }
 
   // The MFA interceptor wraps the auth-retrying fetch. `raw` (no interceptor)
@@ -559,7 +571,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
   async function fetchWithMfa(url: string, init: RequestInit): Promise<Response> {
     const response = await fetchWithAuthRetry(url, init);
     await checkLicenseRefusal(response);
-    await checkOrgSelectionRefusal(response);
+    await checkOrgSelectionRefusal(response, init);
     const required = await readMfaRequired(response);
     if (!required) return response;
     const verified = await mfaChallenge.request({

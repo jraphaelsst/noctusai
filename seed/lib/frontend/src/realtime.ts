@@ -51,6 +51,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { ORG_PIN_HEADER, getOrgPin, useOrgScopeEpoch } from "./org-pin";
+
 /** One frame off the stream. `id` is monotonic and sortable (`<ms>-<seq>`). */
 export interface RealtimeMessage {
   id: string;
@@ -139,6 +141,10 @@ export function useRealtimeStream(
   // otherwise re-open the connection on every render.
   const getAuthTokenRef = useRef(getAuthToken);
   getAuthTokenRef.current = getAuthToken;
+  // In-page org swap (org-pin.ts): a new org scope reconnects the stream and drops
+  // the resume cursor -- `since=` names a position in the PREVIOUS org's stream.
+  const orgScopeEpoch = useOrgScopeEpoch();
+  const cursorEpochRef = useRef(orgScopeEpoch);
 
   useEffect(() => {
     if (!url || !enabled) {
@@ -146,6 +152,10 @@ export function useRealtimeStream(
       return;
     }
 
+    if (cursorEpochRef.current !== orgScopeEpoch) {
+      cursorEpochRef.current = orgScopeEpoch;
+      lastEventIdRef.current = null; // never resume another org's cursor
+    }
     let controller: AbortController | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
@@ -233,6 +243,9 @@ export function useRealtimeStream(
 
         const headers: Record<string, string> = { Accept: "text/event-stream" };
         if (token) headers.Authorization = `Bearer ${token}`;
+        // Same intent pin as every API request: the server only ever narrows on it.
+        const pin = getOrgPin();
+        if (pin) headers[ORG_PIN_HEADER] = pin;
 
         const response = await fetch(target, {
           headers,
@@ -291,7 +304,7 @@ export function useRealtimeStream(
       controller?.abort();
       setStatus("closed");
     };
-  }, [url, enabled, maxBackoffMs, eventNamesKey]);
+  }, [url, enabled, maxBackoffMs, eventNamesKey, orgScopeEpoch]);
 
   return { status, lastEventId: lastEventIdRef.current };
 }

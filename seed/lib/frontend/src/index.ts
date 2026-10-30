@@ -40,7 +40,7 @@ export { checkProductAccess, redirectToSemAcesso, isOrgSemLicencaBody, ORG_SEM_L
 export type { MeAccess, OrgSelectionState, OrgChoice, OrgRef, EligibleOrg, ManageableOrg } from './access';
 // Org picker pin store (dependency-free). The `useOrgSelection` hook lives with
 // its organs in `@noctusai/lib/design-system` — it needs `@noctusai/seed/infra`.
-export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
+export { ORG_PIN_HEADER, getOrgPin, setOrgPin, getOrgScopeEpoch, useOrgScopeEpoch, useOrgSwapInFlight, onOrgScopeReset } from './org-pin';
 export { hasOrgVisitMarker, getOrgVisitOrg, markOrgVisit, clearOrgVisitMarker, beginOrgVisitEntry } from './org-visit';
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
@@ -111,7 +111,7 @@ export type {
 } from './whatsapp-inbox';
 
 // Query client
-export { createQueryClient } from './query-client';
+export { createQueryClient, OrgScopedQueryClientProvider, OrgScopeBoundary, getOrgScopedQueryClient } from './query-client';
 
 // Automatic retry — the canonical transient-failure policy (queries default to
 // it via createQueryClient; processes use useRetryableAction) + the button.
