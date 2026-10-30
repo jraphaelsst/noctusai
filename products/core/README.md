@@ -24,6 +24,7 @@ cd products/core/frontend && npm run dev
 
 - Organization creation and management
 - Org brand identity (`/api/brand`, page `/org-settings/identidade`): one visual identity per org — colors, fonts, radius, logos, favicon, derived dark mode — applied to core and every product by the seed `BrandProvider`; NOC standard when unset; `.md`/`.pdf` design-system upload analyzed by Claude into a validated, versioned draft
+- Platform Operação (`/api/admin/operations`, page `/admin/operacao`, platform admins): every product's scheduled jobs from the seed scheduler run ledger (`public.scheduler_runs` / `public.scheduler_jobs`, failures alert admins in-app at most once per job per 6h), container health (`/api/fleet`), the seed model catalog, LLM spend + cost ledger, and the owner daily brief (07:00 platform tz, code-only — no LLM; in-app + e-mail, history in `public.owner_briefs`, dead-man after 26h without an ok run)
 - User authentication and session handling (one cross-tab-locked refresh, `refreshCoreSession`; inactivity expiry ends only core's session via `POST /api/auth/logout?scope=local`, the "Sair" button ends every session)
 - SSO token exchange for product access
 - Stripe billing and subscription management
