@@ -67,10 +67,10 @@ export function isTabVisibleForKind(tab: StudioTabId, kind: string, usaCanais: b
   return !DEV_ADVISOR_ONLY.includes(tab);
 }
 
-/** Builds `/studio/:key?tab=…&…` for in-app links. */
+/** Builds `/agentes/:key?tab=…&…` for in-app links (the unified agent page; agents-unified CONTRACT §7). */
 export function studioTabHref(agentKey: string, tab: StudioTabId, extra: Record<string, string> = {}): string {
   const params = new URLSearchParams({ tab, ...extra });
-  return `/studio/${encodeURIComponent(agentKey)}?${params.toString()}`;
+  return `/agentes/${encodeURIComponent(agentKey)}?${params.toString()}`;
 }
 
 // ── Julia v2 tiers (CONTRACT §0.4) ──────────────────────────────────────────

@@ -68,6 +68,7 @@ from app.schemas.agents import (
     MessageOut,
     MessagePostResponse,
 )
+from app.stores.agents import legacy_chat_agent
 from app.stores.conversations import ConversationRecord
 from app.stores.errors import NotFound
 from app.stores.messages import MessageRecord
@@ -97,8 +98,6 @@ INSTANCE_ID = f"agents-{uuid4().hex[:12]}"
 
 _NOT_FOUND = {"detail": "Conversa não encontrada.", "code": "not_found"}
 
-#: Agent Studio §D6 — the agent a request that names none addresses.
-BIA_KEY = "bia"
 
 
 def _conversation_out(record: ConversationRecord, agent_key: str) -> ConversationOut:
@@ -163,10 +162,14 @@ def _llm_http(exc: LlmRuntimeError) -> HTTPException:
     )
 
 
-def _bia_agent(agent_store: Any, org_id: UUID) -> Any | None:
-    """Bia's row, or ``None`` while it was never seeded for this org (an
-    explicit "maybe" read — not an ``except NotFound`` fallback)."""
-    return next((a for a in agent_store.list(org_id) if a.key == BIA_KEY), None)
+def _legacy_chat_agent(agent_store: Any, org_id: UUID, key: str | None) -> Any | None:
+    """The code-defined chat agent ``key`` addresses (``None`` = the org's only one), or ``None`` when ``key`` names
+    a Studio agent / one never seeded. Data-driven (``AgentRecord.chat_legado``), never a key constant: the agents
+    unified model (agents-unified CONTRACT §5) keeps the academia agent on this path until its Renata cutover."""
+    try:
+        return legacy_chat_agent(agent_store, org_id, key)
+    except LookupError as exc:
+        raise _http(422, "agent_key_required", "Informe o agente (agent_key).") from exc
 
 
 def _resolve_studio_agent(studio_store: Any, org_id: UUID, key: str, *, allow_instancia: bool = False) -> Any:
@@ -281,19 +284,18 @@ async def _get_readable_conversation(
 
 @router.get("", response_model=ConversationListOut)
 def list_conversations(
-    agent_key: str = Query(default=BIA_KEY, min_length=1, max_length=64),
+    agent_key: str | None = Query(default=None, min_length=1, max_length=64),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_conversation_store_dep),
     agent_store=Depends(get_agent_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationListOut:
-    """Agent Studio §D6: filtered by agent, **default ``bia``** — Bia's
-    page sends no filter and keeps seeing exactly her conversations."""
-    if agent_key == BIA_KEY:
-        agent = _bia_agent(agent_store, ctx.org_id)
-        if agent is None:  # never seeded for this org ⇒ she has no conversations
+    """Agent Studio §D6: filtered by agent. No ``agent_key`` = the org's legacy chat agent (data-derived); a key
+    naming a legacy chat agent reads it; any other key resolves through the Studio resolver (404/409)."""
+    agent = _legacy_chat_agent(agent_store, ctx.org_id, agent_key)
+    if agent is None:
+        if agent_key is None:  # never seeded for this org ⇒ no conversations
             return ConversationListOut(items=[], total=0)
-    else:
         agent = _resolve_studio_agent(studio_store, ctx.org_id, agent_key)
     records = store.list_owned(ctx.org_id, ctx.user_id, agent_id=agent.id)
     items = [_conversation_out(r, agent.key) for r in records]
@@ -358,16 +360,18 @@ def create_conversation(
     store=Depends(get_conversation_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationOut:
-    if payload.agent_key == BIA_KEY:
+    agent_store.ensure_default_agents(ctx.org_id)
+    legado = _legacy_chat_agent(agent_store, ctx.org_id, payload.agent_key)
+    if legado is not None:
         if payload.client_id is not None:
             raise _http(422, "invalid_client", "Clientes só existem para agentes do Studio.")
-        agent_store.ensure_default_agents(ctx.org_id)
-        agent = agent_store.get_by_key(ctx.org_id, BIA_KEY)
-        record = store.create(ctx.org_id, agent.id, ctx.user_id, titulo=payload.titulo)
-        return _conversation_out(record, BIA_KEY)
+        record = store.create(ctx.org_id, legado.id, ctx.user_id, titulo=payload.titulo)
+        return _conversation_out(record, legado.key)
 
     # Agent Studio §D6: a studio conversation pins the ACTIVE version now (a
     # newer publish never moves it); with none yet, it pins at its first turn.
+    if payload.agent_key is None:
+        raise _http(422, "agent_key_required", "Informe o agente (agent_key).")
     agent = _resolve_studio_agent(studio_store, ctx.org_id, payload.agent_key)
     if payload.client_id is not None:
         # Scoped to THIS agent's clients: a foreign or unknown id is simply absent.
@@ -493,17 +497,19 @@ async def post_message(
     except NotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND) from exc
 
-    bia = _bia_agent(agent_store, ctx.org_id)
+    # The conversation's agent is a legacy chat agent when the org's legacy row with that id says so (data, not key).
+    legado = next(
+        (a for a in agent_store.list(ctx.org_id) if a.chat_legado and a.id == conversation.agent_id), None)
     studio_spec: AgentSpec | None = None
-    if bia is not None and conversation.agent_id == bia.id:
-        agent = bia
+    if legado is not None:
+        agent = legado
         if not agent.ativo:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"detail": "O agente Bia está desligado.", "code": "agent_off"},
+                detail={"detail": f"O agente {agent.nome} está desligado.", "code": "agent_off"},
             )
         capacity_text = (
-            "A Bia está atendendo o número máximo de conversas "
+            f"O agente {agent.nome} está atendendo o número máximo de conversas "
             "agora. Tente novamente em instantes."
         )
     else:

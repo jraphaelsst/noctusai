@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles, Wallet, BookOpen } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles, Wallet } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -22,23 +22,26 @@ const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 // Finance organ (seed `FinanceShell`) -- `/financeiro/*`; section in the URL.
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
-// Bia agents UI — contract §E (`projects/julia-agents-academia-CONTRACT.md`).
-const Bia = lazy(() => import("@/pages/Bia"));
+// Every agent in the same house — `products/agents/projects/agents-unified/CONTRACT.md` §7:
+// ONE listing (`/agentes`) + ONE dynamic page per agent (`/agentes/:key`).
 const Agentes = lazy(() => import("@/pages/Agentes"));
-const AgentesCatalogo = lazy(() => import("@/pages/AgentesCatalogo"));
-const BiaPersona = lazy(() => import("@/pages/BiaPersona"));
+const AgentePage = lazy(() => import("@/pages/agente/AgentePage"));
 const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
-// Pre-rename routes (Julia -> Bia, lead-imob -> julia) — NOC-REMEDIATE[drop-julia-route-redirects].
-const RedirectJuliaToBia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectJuliaToBia })));
-const RedirectJuliaPersonaToBia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectJuliaPersonaToBia })));
-const RedirectLeadImobStudioToJulia = lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m.RedirectLeadImobStudioToJulia })));
+// The former per-agent shells + listing redirect to the unified page (query kept) — see LegacyRedirects.tsx.
+const redirect = (name: keyof typeof import("@/pages/LegacyRedirects")) =>
+  lazy(() => import("@/pages/LegacyRedirects").then((m) => ({ default: m[name] })));
+const RedirectStudioAgent = redirect("RedirectStudioAgent");
+const RedirectAgentePersona = redirect("RedirectAgentePersona");
+const RedirectCatalogo = redirect("RedirectCatalogo");
+const RedirectAcademiaChat = redirect("RedirectAcademiaChat");
+const RedirectJuliaPersonaToBia = redirect("RedirectJuliaPersonaToBia");
+const RedirectLeadImobStudioToJulia = redirect("RedirectLeadImobStudioToJulia");
 // Platform-admin pages (server-enforced by `require_platform_admin`).
 const Credenciais = lazy(() => import("@/pages/Credenciais"));
 const ChavesIA = lazy(() => import("@/pages/ChavesIA"));
 const ConfiguracoesAgente = lazy(() => import("@/pages/ConfiguracoesAgente"));
 // Agent Studio — `products/agents/projects/agent-studio-isaia/CONTRACT.md` §G.
 const StudioList = lazy(() => import("@/pages/studio/StudioList"));
-const StudioAgent = lazy(() => import("@/pages/studio/StudioAgent"));
 const SkillsBiblioteca = lazy(() => import("@/pages/studio/SkillsBiblioteca"));
 const SkillBiblioteca = lazy(() => import("@/pages/studio/SkillBiblioteca"));
 const PromptByHash = lazy(() => import("@/pages/studio/PromptByHash"));
@@ -51,9 +54,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Home,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Bia", href: "/bia", icon: MessageCircle, route: "bia" },
       { name: "Agentes", href: "/agentes", icon: Bot, route: "agentes" },
-      { name: "Catálogo de agentes", href: "/agentes/catalogo", icon: BookOpen, route: "agentes-catalogo" },
       { name: "Agent Studio", href: "/studio", icon: Boxes, route: "studio" },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
     ],
@@ -79,9 +80,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Home,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Bia", href: "/bia", icon: MessageCircle },
       { name: "Agentes", href: "/agentes", icon: Bot },
-      { name: "Catálogo de agentes", href: "/agentes/catalogo", icon: BookOpen },
       { name: "Agent Studio", href: "/studio", icon: Boxes },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
     ],
@@ -112,12 +111,14 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
-    { path: "/bia", component: Bia },
     { path: "/agentes", component: Agentes },
-    { path: "/agentes/catalogo", component: AgentesCatalogo },
-    { path: "/agentes/bia/persona", component: BiaPersona },
-    { path: "/julia", component: RedirectJuliaToBia },
+    // react-router ranks static segments above `:key`, so these never read as an agent key.
+    { path: "/agentes/catalogo", component: RedirectCatalogo },
     { path: "/agentes/julia/persona", component: RedirectJuliaPersonaToBia },
+    { path: "/agentes/:key/persona", component: RedirectAgentePersona },
+    { path: "/agentes/:key", component: AgentePage },
+    { path: "/bia", component: RedirectAcademiaChat },
+    { path: "/julia", component: RedirectAcademiaChat },
     { path: "/aprovacoes", component: Aprovacoes },
     { path: "/equipe", component: Equipe },
     { path: "/financeiro/*", component: Financeiro },
@@ -131,7 +132,7 @@ export default createProductApp({
     { path: "/studio/biblioteca-skills", component: SkillsBiblioteca },
     { path: "/studio/biblioteca-skills/:chave", component: SkillBiblioteca },
     { path: "/studio/lead-imob", component: RedirectLeadImobStudioToJulia },
-    { path: "/studio/:key", component: StudioAgent },
+    { path: "/studio/:key", component: RedirectStudioAgent },
   ],
   Layout,
   ...infra.appConfig,

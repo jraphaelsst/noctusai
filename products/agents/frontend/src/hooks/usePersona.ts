@@ -1,6 +1,7 @@
 /**
- * Bia persona hooks — contract §E.2
- * (`GET`/`PUT /api/agents/bia/persona`).
+ * Persona hooks of a legacy chat agent — contract §E.2
+ * (`GET`/`PUT /api/agents/{key}/persona`; agents-unified CONTRACT §5 generalised the
+ * former single-agent path — the page's Persona section passes the agent's key).
  *
  * `PUT` is admin-only server-side (`require_admin`); the page also gates
  * the form on `useIsAdmin()` so a non-admin never sees an editable form
@@ -10,7 +11,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ApiError } from "@/lib/errors";
 
-const PERSONA_KEY = ["agents", "bia", "persona"] as const;
+function personaKey(agentKey: string) {
+  return ["agents", agentKey, "persona"] as const;
+}
+
+function personaUrl(agentKey: string) {
+  return `/api/agents/${encodeURIComponent(agentKey)}/persona`;
+}
 
 export const PERSONA_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] as const;
 export const PERSONA_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -44,10 +51,10 @@ export interface PersonaUpdateInput {
   project_display_name?: string | null;
 }
 
-export function usePersona() {
+export function usePersona(agentKey: string) {
   const query = useQuery<Persona>({
-    queryKey: PERSONA_KEY,
-    queryFn: () => api.get<Persona>("/api/agents/bia/persona"),
+    queryKey: personaKey(agentKey),
+    queryFn: () => api.get<Persona>(personaUrl(agentKey)),
     // A 404 here means "Bia has no persona yet" (contract §E.2,
     // `code: "not_found"`) — a definitive, stable answer, not a transient
     // failure. Retrying it 3x just stretches the skeleton before the page
@@ -71,13 +78,13 @@ export function usePersona() {
   };
 }
 
-export function useUpdatePersona() {
+export function useUpdatePersona(agentKey: string) {
   const qc = useQueryClient();
 
   return useMutation<Persona, unknown, PersonaUpdateInput>({
-    mutationFn: (payload) => api.put<Persona>("/api/agents/bia/persona", payload),
+    mutationFn: (payload) => api.put<Persona>(personaUrl(agentKey), payload),
     onSuccess: (persona) => {
-      qc.setQueryData(PERSONA_KEY, persona);
+      qc.setQueryData(personaKey(agentKey), persona);
     },
   });
 }

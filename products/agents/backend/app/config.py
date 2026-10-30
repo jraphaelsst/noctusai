@@ -89,6 +89,10 @@ class SeedSettings(ProductSettings):
     # reaches the Bia CLI subprocess.
     academia_api_token: str = ""
 
+    # NOC-REMEDIATE[agents-legacy-runtime-names]: `bia_agent_id` / `bia_max_turns` / `bia_cli_path` /
+    # `bia_cli_slots` are the env + credential names of the legacy `claude_sdk` chat runtime, which only the
+    # academia agent runs. Every ROUTE is de-pinned (agents-unified CONTRACT §5); these names go with that runtime
+    # in the Renata cutover slice (products/agents/projects/agents-unified/CONTRACT.md §8) — 2026-10-29.
     # The `agents.agents` row id for the `bia` key — contract §D `sub`
     # claim. ONE agents deployment holds exactly ONE `ACADEMIA_API_TOKEN`
     # (a single product token, not per-org — contract §B.0), and that

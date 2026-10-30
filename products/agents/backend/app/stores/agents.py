@@ -22,6 +22,7 @@ from app.stores.errors import NotFound
 __all__ = [
     "RUNTIMES",
     "DEFAULT_AGENT_KEYS",
+    "legacy_chat_agent",
     "AgentRecord",
     "AgentStore",
     "FakeAgentStore",
@@ -55,6 +56,23 @@ class AgentRecord:
     ativo: bool
     created_at: datetime
     updated_at: datetime
+    #: 012: ``legacy`` (code-defined: Bia, One Chat) | ``studio`` (a Studio row -- same table, every other agent).
+    definition_mode: str = "legacy"
+
+    @property
+    def chat_legado(self) -> bool:
+        """A code-defined agent served by the in-app ``claude_sdk`` chat runtime (the pre-Studio conversation
+        path). Decided by the row's data -- never by its key -- so the Renata cutover is a data change."""
+        return self.definition_mode == "legacy" and self.runtime == "claude_sdk"
+
+
+def legacy_chat_agent(store: "AgentStore", org_id: UUID, key: str | None = None) -> AgentRecord | None:
+    """The org's legacy chat agent named ``key`` (or, with ``key=None``, its only one), else ``None`` -- an explicit
+    "maybe" read over the rows the org has, not an ``except NotFound`` fallback."""
+    rows = [a for a in store.list(org_id) if a.chat_legado and (key is None or a.key == key)]
+    if key is None and len(rows) > 1:
+        raise LookupError(f"org {org_id} has {len(rows)} legacy chat agents; name one (agent_key)")
+    return rows[0] if rows else None
 
 
 class AgentStore(Protocol):
@@ -258,6 +276,7 @@ class SupabaseAgentStore:
             ativo=bool(row.get("ativo", False)),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            definition_mode=row.get("definition_mode") or "legacy",
         )
 
 

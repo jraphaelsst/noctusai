@@ -11,6 +11,8 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import type { AgentePainel, AgentesPainelResponse } from "@/api/agentes/types";
+import { AGENTES_PAINEL_KEY, agentePainelKey } from "@/hooks/useAgentesPainel";
 
 const AGENTS_KEY = ["agents", "list"] as const;
 
@@ -90,6 +92,13 @@ export function useToggleAgent() {
           ? { ...prev, items: prev.items.map((a) => (a.key === updated.key ? updated : a)) }
           : prev,
       );
+      // The unified listing + the agent page show the same switch (agents-unified CONTRACT §4): fill both.
+      const patch = (p: AgentePainel): AgentePainel =>
+        p.key === updated.key ? { ...p, ativo: updated.ativo, estado_externo: updated.estado_externo, aviso: updated.aviso } : p;
+      qc.setQueryData<AgentesPainelResponse>(AGENTES_PAINEL_KEY, (prev) =>
+        prev ? { ...prev, items: prev.items.map(patch) } : prev,
+      );
+      qc.setQueryData<AgentePainel>(agentePainelKey(updated.key), (prev) => (prev ? patch(prev) : prev));
     },
   });
 }
