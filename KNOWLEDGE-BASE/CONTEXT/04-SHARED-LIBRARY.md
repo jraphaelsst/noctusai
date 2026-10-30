@@ -719,10 +719,10 @@ Shipped 2026-04-26 by ai-expansion Phase 18. Wraps three concerns into one modul
 | Symbol | Purpose |
 |---|---|
 | `LLMBudgetExceeded(AppException)` | Raised at the hard threshold; HTTP 429. Message in PT-BR with spent/budget figures. |
-| `configure_budget_module(*, admin_client_factory)` | Wired by the seed at `create_product_app` time when `llm_usage_tracking=True`. Pass `None` to disable. |
+| `configure_budget_module(*, admin_client_factory)` | Wired by the seed at `create_product_app` time for every product writing the central ledger. Pass `None` to disable. |
 | `is_configured()` | Boolean — guard short-circuits silently when False. |
 | `fetch_budget_brl(org_id)` | Reads `org_settings.monthly_llm_budget_brl`. Returns `None` if unset / malformed. |
-| `compute_spend_usd(org_id, *, start_iso?, end_iso?)` | Sums `cost_estimate_usd` across all `_PRODUCT_SCHEMAS`. Defaults to month-to-date window. |
+| `compute_spend_usd(org_id, *, start_iso?, end_iso?)` | Sums the org's spend from the central ledger `public.ai_usage` (D25; every product). Defaults to month-to-date window. |
 | `compute_status(org_id)` | `{spent_brl, budget_brl, used_pct, status, soft_pct, hard_pct}` with `status ∈ {unset, ok, warn, hard_stop}`. Never raises. |
 | `enforce_budget(org_id)` | Called by `chat_completion` + `chat_completion_stream` before provider dispatch. Raises `LLMBudgetExceeded` at hard, logs at soft. **Fail-open** on any read error. |
 

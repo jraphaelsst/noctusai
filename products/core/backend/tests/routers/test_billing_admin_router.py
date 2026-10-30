@@ -136,7 +136,7 @@ def test_org_routes_refuse_plain_members(env, method, url, body):
 
 
 def test_platform_admin_passes_the_llm_usage_gate(env):
-    env.fakes.db.set_table_data("llm_usage", [])
+    env.fakes.db.set_table_data("ai_usage", [])
     resp = env.client.get("/api/admin/llm-usage", params={"product": "erp-imobiliario"})
     assert resp.status_code == 200
     assert resp.json()["per_product"]["erp-imobiliario"]["calls"] == 0

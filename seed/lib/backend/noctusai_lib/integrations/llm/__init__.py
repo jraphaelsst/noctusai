@@ -139,8 +139,23 @@ from .usage import (
     UsageEvent,
     UsageSink,
     estimate_cost_usd,
+    price_usage,
     record_usage,
 )
+from .attribution import (
+    UsageAttribution,
+    UsageAttributionMiddleware,
+    current_attribution,
+    llm_usage_context,
+    set_default_product,
+)
+from .ledger import (
+    CentralUsageSink,
+    FanOutUsageSink,
+    build_ai_usage_row,
+    make_central_usage_sink,
+)
+from .ledger_read import AiUsageWindowTooLarge, aggregate_ai_usage, read_ai_usage_rows
 from .inputs import (
     audio_bytes_to_named_buffer,
     image_bytes_to_data_url,
@@ -242,7 +257,21 @@ __all__ = [
     "InMemoryUsageSink",
     "SupabaseUsageSink",
     "estimate_cost_usd",
+    "price_usage",
     "record_usage",
+    # Central AI-usage ledger + attribution (D25 — public.ai_usage)
+    "UsageAttribution",
+    "UsageAttributionMiddleware",
+    "current_attribution",
+    "llm_usage_context",
+    "set_default_product",
+    "CentralUsageSink",
+    "FanOutUsageSink",
+    "build_ai_usage_row",
+    "make_central_usage_sink",
+    "AiUsageWindowTooLarge",
+    "aggregate_ai_usage",
+    "read_ai_usage_rows",
     # Input-shape helpers (vision data URLs, audio buffers)
     "image_bytes_to_data_url",
     "audio_bytes_to_named_buffer",

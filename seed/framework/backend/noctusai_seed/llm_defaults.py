@@ -34,6 +34,7 @@ def default_llm_config(
     usage_tracking_db: Any = None,
     usage_tracking_schema: str | None = None,
     usage_tracking_supports_image_columns: bool = False,
+    central_usage_sink: Any = None,
     **overrides: Any,
 ) -> LLMConfig:
     """Build an LLMConfig using platform defaults, with optional overrides.
@@ -52,6 +53,11 @@ def default_llm_config(
       `settings.llm_usage_wide_columns`. Default False keeps every
       pre-existing consumer's insert shape byte-identical — see
       `SupabaseUsageSink`'s docstring for the narrow-vs-wide history.
+
+    - `central_usage_sink`: the D25 central ledger sink
+      (`noctusai_lib.integrations.llm.ledger.CentralUsageSink` → `public.ai_usage`).
+      The framework ALWAYS passes it (outside pytest). When a legacy per-product
+      sink is also on, both receive every event (`FanOutUsageSink`).
 
     Usage:
         default_llm_config()
@@ -77,13 +83,24 @@ def default_llm_config(
     # Auto-wire the DB-backed usage sink when opted in. Both the db client
     # (service role — bypasses RLS for writes) and schema are required;
     # missing either means we keep `usage_sink=None` (no tracking).
+    sinks: list[Any] = []
+    if central_usage_sink is not None:
+        sinks.append(central_usage_sink)
     if usage_tracking_db is not None and usage_tracking_schema:
+        # Legacy per-product `<schema>.llm_usage` write — kept only while the
+        # transition lasts; every reader now reads `public.ai_usage`.
+        # NOC-REMEDIATE[ai-usage-retire-legacy-llm-usage]: drop SupabaseUsageSink wiring + llm_usage_tracking once no consumer needs the per-schema copy — 2026-10-29
         from noctusai_lib.integrations.llm.usage import SupabaseUsageSink
-        defaults["usage_sink"] = SupabaseUsageSink(
+        sinks.append(SupabaseUsageSink(
             db_client=usage_tracking_db,
             schema=usage_tracking_schema,
             supports_image_columns=usage_tracking_supports_image_columns,
-        )
+        ))
+    if len(sinks) == 1:
+        defaults["usage_sink"] = sinks[0]
+    elif sinks:
+        from noctusai_lib.integrations.llm.ledger import FanOutUsageSink
+        defaults["usage_sink"] = FanOutUsageSink(sinks)
 
     defaults.update(overrides)
     return LLMConfig(**defaults)

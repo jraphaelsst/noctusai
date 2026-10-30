@@ -30,6 +30,7 @@ from .request_memo import RequestMemoMiddleware
 from .request_timing import RequestTimingMiddleware
 from .security_headers import SecurityHeadersMiddleware
 from .audit import AuditMiddleware, AuditSink
+from noctusai_lib.integrations.llm.attribution import UsageAttributionMiddleware
 from .middleware import (
     CorrelationIdMiddleware,
     DEFAULT_MAX_BODY_BYTES,
@@ -295,6 +296,9 @@ def configure_app(
     app.add_middleware(RequestMemoMiddleware)  # per-request memo (effective-org resolved once)
     app.add_middleware(RequestTimingMiddleware)  # Server-Timing + `req_timing` log line (latency_report)
     app.add_middleware(AuditMiddleware, sink=audit_sink, product_slug=_product_slug, enabled=_audit_enabled)
+    # D25: every LLM call made while serving a request is attributed to the
+    # caller the auth dependency resolved + the matched route (read lazily).
+    app.add_middleware(UsageAttributionMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(
         MaxBodySizeMiddleware,

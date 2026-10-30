@@ -50,7 +50,9 @@ from noctusai_lib.domain.licensing import (
     make_license_checker,
 )
 from noctusai_lib.integrations.llm import LLMConfig
+from noctusai_lib.integrations.llm.attribution import set_default_product as set_llm_default_product
 from noctusai_lib.integrations.llm.budget import configure_budget_module
+from noctusai_lib.integrations.llm.ledger import make_central_usage_sink
 from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
 
 from noctusai_seed.database import create_database_module
@@ -347,7 +349,13 @@ def create_product_app(
 
     # 4. Auto-wire LLM access. Products inherit platform defaults unless they
     #    override via the llm_config parameter. `REDIS_URL` flips the
-    #    response cache on; `LLM_USAGE_TRACKING=1` flips the DB usage sink on.
+    #    response cache on. Usage: EVERY product writes the central D25 ledger
+    #    `public.ai_usage` (attributed to this product by construction —
+    #    `set_default_product` + `UsageAttributionMiddleware` in configure_app);
+    #    `LLM_USAGE_TRACKING=1` additionally keeps the legacy per-schema copy.
+    #    Late-binding lambda for the same reason the audit sink uses one (see 3a).
+    set_llm_default_product(CORE_SLUG if schema == "public" else _product_slug)
+    central_usage_sink = make_central_usage_sink(lambda: db.get_core_client())
     usage_db = None
     if getattr(settings, "llm_usage_tracking", False):
         try:
@@ -363,14 +371,18 @@ def create_product_app(
         usage_tracking_supports_image_columns=getattr(
             settings, "llm_usage_wide_columns", False
         ),
+        central_usage_sink=central_usage_sink,
     )
+    if llm_config is not None and central_usage_sink is not None and llm_config.usage_sink is None:
+        # A product-supplied config still bills to the central ledger.
+        llm_config.usage_sink = central_usage_sink
     configure_llm(effective_llm_config)
 
     # Phase 18 budget guardrails — wire the admin-client factory so
     # `chat_completion` can raise `LLMBudgetExceeded` before dispatch.
-    # Only enable when LLM usage tracking is on (otherwise there's no
-    # `<schema>.llm_usage` data to compute spend from).
-    if usage_db is not None:
+    # Enabled wherever spend data is being written: the central ledger
+    # (every product, outside pytest) or the legacy per-schema copy.
+    if central_usage_sink is not None or usage_db is not None:
         try:
             configure_budget_module(admin_client_factory=db.get_admin_client)
         except Exception as exc:

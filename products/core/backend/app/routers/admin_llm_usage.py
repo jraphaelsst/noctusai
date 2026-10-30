@@ -1,17 +1,15 @@
-"""Platform-admin endpoint for aggregate LLM token usage + cost.
+"""Platform-admin view of the central AI-usage ledger (``public.ai_usage``, D25).
 
-Reads across every product's `<schema>.llm_usage` table via the service role
-(bypasses RLS). Returns a unified view filterable by product, org, and date
-window. Used by the Core admin dashboard to track platform-wide LLM spend.
+ONE table holds every LLM call of every product, attributed at write time
+(org → product → feature → user / conversation / agent) and priced at write
+time (USD + BRL at the PTAX of the day, ``price_version`` recorded) — so this
+endpoint no longer keeps a hand-maintained product→schema map: a new product
+appears here the moment it makes its first call.
 
-Access: platform admin only — `public.noctus_users.role == 'admin'`, read
-from the database. It used to read `user_metadata.noctus_role`, which any
-user can set on themselves with `auth.updateUser({data})`: a spoofable
-gate over every product's cross-org usage. Any non-admin call → 403.
+Access: platform admin only — ``public.noctus_users.role == 'admin'`` read from
+the database (never ``user_metadata``). Any non-admin call → 403, no token → 401.
 
-LGPD note: each `llm_usage` row carries counts + provider/model/org_id +
-cost estimate only — never prompt text. This endpoint inherits that
-property; no new risk surface beyond the tables themselves.
+LGPD: ledger rows carry identifiers, counts and prices only — never prompt text.
 """
 from __future__ import annotations
 
@@ -21,123 +19,76 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.session.types import AuthContext
+from noctusai_lib.integrations.llm.ledger_read import (
+    AiUsageWindowTooLarge,
+    aggregate_ai_usage,
+    read_ai_usage_rows,
+)
+from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
 
 from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
-from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/llm-usage", tags=["Admin · LLM Usage"])
 
-
-# Schemas to scan. Add a new product by extending this map. Each entry maps
-# a product slug → the schema where its `llm_usage` table lives.
-_PRODUCT_SCHEMAS: dict[str, str] = {
-    "erp-imobiliario": "erp",
-    "therapy-platform": "therapy",
-    "social-wiring": "social_wiring",
-}
+_MAX_WINDOW_DAYS = 400
 
 
 @router.get("")
-def aggregate_llm_usage(
+async def aggregate_llm_usage(
     _: AuthContext = Depends(require_platform_admin_dep),
     db=Depends(get_trusted_db),
-    product: Optional[str] = Query(
-        None, description="Filter by product slug (default: all products)",
-    ),
-    org_id: Optional[str] = Query(None, description="Filter by org/clinic id"),
+    org_id: Optional[str] = Query(None, description="Filter by org id"),
+    product: Optional[str] = Query(None, description="Filter by product slug"),
+    feature: Optional[str] = Query(None, description="Filter by feature"),
     from_: Optional[str] = Query(None, alias="from", description="ISO-8601 start (default now-30d)"),
     to: Optional[str] = Query(None, description="ISO-8601 end (default now)"),
-    limit_per_product: int = Query(10000, ge=1, le=50000),
 ):
-    """Return aggregated LLM usage across all (or one) product schemas.
+    """Usage + cost rolled up per org → per product → per feature (+ by model).
 
-    Response shape::
+    Response::
 
         {
           "window": {"from": "...", "to": "..."},
-          "per_product": {
-            "erp-imobiliario": {
-              "calls": N, "total_tokens": N, "cost_estimate_usd": X,
-              "by_model": [{ provider, model, calls, ..., cost_estimate_usd }, ...]
-            },
-            ...
-          },
-          "totals": { "calls": N, "total_tokens": N, "cost_estimate_usd": X }
+          "filters": {"org_id": ..., "product": ..., "feature": ...},
+          "totals": {calls, errors, partial, input_tokens, output_tokens, ..., cost_usd, cost_brl},
+          "per_org": [{org_id, ...totals, "per_product": [{product, ...,
+                        "per_feature": [{feature, ...}], "by_model": [{provider, model, ...}]}]}],
+          "per_product": {"<slug>": {...totals summed across orgs}}
         }
     """
     now = datetime.now(tz=timezone.utc)
     start = _parse_iso(from_) or (now - timedelta(days=30))
     end = _parse_iso(to) or now
+    if end < start:
+        raise HTTPException(status_code=400, detail="'to' precede 'from'")
+    if end - start > timedelta(days=_MAX_WINDOW_DAYS):
+        raise HTTPException(status_code=400, detail=f"Janela maior que {_MAX_WINDOW_DAYS} dias")
 
-    targets = (
-        {product: _PRODUCT_SCHEMAS[product]}
-        if product and product in _PRODUCT_SCHEMAS
-        else _PRODUCT_SCHEMAS
-    )
-    if product and product not in _PRODUCT_SCHEMAS:
-        raise HTTPException(status_code=400, detail=f"Unknown product: {product}")
-
-    per_product: dict[str, dict] = {}
-    totals = {"calls": 0, "total_tokens": 0, "cost_estimate_usd": 0.0}
-
-    for slug, schema in targets.items():
-        try:
-            query = (
-                db.schema(schema)
-                .table("llm_usage")
-                .select("*")
-                .gte("at", start.isoformat())
-                .lte("at", end.isoformat())
+    try:
+        rows = await run_blocking(
+            lambda: read_ai_usage_rows(
+                db, start=start, end=end, org_id=org_id, product=product, feature=feature,
             )
-            if org_id:
-                query = query.eq("org_id", org_id)
-            rows = query.limit(limit_per_product).execute().data or []
-        except Exception as exc:
-            logger.warning("admin_llm_usage scan failed for %s: %s", slug, exc)
-            rows = []
+        )
+    except AiUsageWindowTooLarge:
+        raise HTTPException(status_code=400, detail="Janela grande demais; filtre por org/produto ou reduza o período")
 
-        product_totals = {"calls": 0, "total_tokens": 0, "cost_estimate_usd": 0.0}
-        by_model: dict[tuple[str, str], dict] = {}
-        for row in rows:
-            prov = row.get("provider") or ""
-            mdl = row.get("model") or ""
-            bucket = by_model.setdefault((prov, mdl), {
-                "provider": prov,
-                "model": mdl,
-                "calls": 0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "cost_estimate_usd": 0.0,
-            })
-            bucket["calls"] += 1
-            bucket["prompt_tokens"] += row.get("prompt_tokens") or 0
-            bucket["completion_tokens"] += row.get("completion_tokens") or 0
-            tt = row.get("total_tokens") or 0
-            bucket["total_tokens"] += tt
-            cost = float(row.get("cost_estimate_usd") or 0)
-            bucket["cost_estimate_usd"] += cost
-
-            product_totals["calls"] += 1
-            product_totals["total_tokens"] += tt
-            product_totals["cost_estimate_usd"] += cost
-
-        per_product[slug] = {
-            **product_totals,
-            "by_model": sorted(
-                by_model.values(),
-                key=lambda b: b["total_tokens"],
-                reverse=True,
-            ),
-        }
-        totals["calls"] += product_totals["calls"]
-        totals["total_tokens"] += product_totals["total_tokens"]
-        totals["cost_estimate_usd"] += product_totals["cost_estimate_usd"]
+    agg = aggregate_ai_usage(rows)
+    per_product: dict[str, dict] = {}
+    for org in agg["per_org"]:
+        for prod in org["per_product"]:
+            bucket = per_product.setdefault(prod["product"], {k: 0 for k in agg["totals"]})
+            for k in agg["totals"]:
+                bucket[k] += prod[k]
+    if product and product not in per_product:
+        per_product[product] = {k: 0 for k in agg["totals"]}
 
     return {
         "window": {"from": start.isoformat(), "to": end.isoformat()},
+        "filters": {"org_id": org_id, "product": product, "feature": feature},
+        **agg,
         "per_product": per_product,
-        "totals": totals,
     }

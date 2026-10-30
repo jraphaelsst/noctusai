@@ -176,25 +176,83 @@ class TestSalvarPreferencesDoesNotCrash:
         assert resp.status_code == 400
 
 
-class TestObterUsageDoesNotCrash:
-    """Same bug class also lived in `obter_usage` (GET /usage). Pin it."""
+def _wire_core_ledger(deps, rows):
+    """deps.get_core_client() → a mock whose `.table("ai_usage")` chain serves
+    `rows` (paged: `.range(a, b)` honoured); every other table stays a MagicMock
+    (the trusted-org lookup)."""
+    core = MagicMock()
+    chain = MagicMock()
+    captured: dict = {"eq": []}
+    for m in ("select", "gte", "lte", "order"):
+        getattr(chain, m).return_value = chain
+
+    def _eq(col, val):
+        captured["eq"].append((col, val))
+        return chain
+
+    def _range(lo, hi):
+        chain.execute.return_value = MagicMock(data=rows[lo : hi + 1])
+        return chain
+
+    chain.eq.side_effect = _eq
+    chain.range.side_effect = _range
+    default_table = core.table
+
+    def _table(name):
+        return chain if name == "ai_usage" else default_table(name)
+
+    core.table = MagicMock(side_effect=_table)
+    deps.get_core_client = MagicMock(return_value=core)
+    return captured
+
+
+class TestObterUsageReadsTheCentralLedger:
+    """GET /usage reads `public.ai_usage` (D25), scoped to the trusted org +
+    this process's product."""
 
     def test_returns_200_with_empty_rows(self, fake_deps):
         user = MagicMock()
         user.id = "user-1"
         fake_deps.get_current_user = AsyncMock(return_value=(user, "tok"))
-        _wire_user_client(fake_deps, select_data=[])
-        del fake_deps._db.get_user_client  # mirror real DatabaseModule shape
+        _wire_core_ledger(fake_deps, [])
         client = _client_with_deps(fake_deps)
-        resp = client.get(
-            "/api/llm/usage",
-            headers={"Authorization": "Bearer t"},
-        )
+        resp = client.get("/api/llm/usage", headers={"Authorization": "Bearer t"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["events"] == []
         assert body["aggregate"] == []
+        assert body["ledger"]["totals"]["calls"] == 0
         assert "window" in body
+
+    def test_aggregates_ledger_rows_and_filters_by_product(self, fake_deps):
+        from noctusai_lib.integrations.llm.attribution import set_default_product
+
+        user = MagicMock()
+        user.id = "user-1"
+        fake_deps.get_current_user = AsyncMock(return_value=(user, "tok"))
+        rows = [
+            {"id": 1, "created_at": "2026-10-20T10:00:00+00:00", "product": "social-wiring",
+             "feature": "julia.reply", "provider": "anthropic", "model": "claude-sonnet-5",
+             "input_tokens": 100, "output_tokens": 20, "cost_usd": 0.5, "cost_brl": 2.75, "status": "ok"},
+            {"id": 2, "created_at": "2026-10-21T10:00:00+00:00", "product": "social-wiring",
+             "feature": "julia.reply", "provider": "anthropic", "model": "claude-sonnet-5",
+             "input_tokens": 50, "output_tokens": 10, "cost_usd": 0.25, "cost_brl": 1.375, "status": "ok"},
+        ]
+        captured = _wire_core_ledger(fake_deps, rows)
+        set_default_product("social-wiring")
+        try:
+            client = _client_with_deps(fake_deps)
+            resp = client.get("/api/llm/usage?group_by=feature", headers={"Authorization": "Bearer t"})
+        finally:
+            set_default_product(None)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert ("product", "social-wiring") in captured["eq"]
+        assert any(col == "org_id" for col, _ in captured["eq"])
+        assert body["aggregate"][0]["calls"] == 2
+        assert body["aggregate"][0]["total_tokens"] == 180
+        assert body["ledger"]["totals"]["cost_brl"] == 4.125
+        assert body["events"][0]["id"] == 2  # newest first
 
 
 class TestModelsStillWorks:

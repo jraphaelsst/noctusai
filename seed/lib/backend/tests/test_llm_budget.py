@@ -29,7 +29,9 @@ def _build_admin(*, settings_rows=None, usage_by_schema=None):
     """Return a mock admin client with chainable .table()/.schema() builders.
 
     `settings_rows` mocks the `org_settings` SELECT response shape.
-    `usage_by_schema` is a `{schema_name: [{cost_estimate_usd: ...}, ...]}` dict.
+    `usage_by_schema` is a `{product_schema: [{cost_estimate_usd: ...}, ...]}` dict —
+    kept per product for readability; since D25 every product's rows live in ONE
+    `public.ai_usage` ledger, so the fake serves their union (as `cost_usd`) there.
     """
 
     def admin():
@@ -61,9 +63,11 @@ def _build_admin(*, settings_rows=None, usage_by_schema=None):
                 t.order.return_value = t
                 # The spend read is paged (`.order("id").range(a, b)`), so the fake honours the
                 # inclusive range the way PostgREST does; rows get ids to order by.
+                assert (name, _table_name) == ("public", "ai_usage"), "spend reads the central ledger"
+                ledger = [r for rows_ in (usage_by_schema or {}).values() for r in rows_]
                 rows = [
-                    {"id": f"{i:06d}", **r}
-                    for i, r in enumerate((usage_by_schema or {}).get(name, []))
+                    {"id": f"{i:06d}", "cost_usd": r["cost_estimate_usd"], "cost_brl": r.get("cost_brl")}
+                    for i, r in enumerate(ledger)
                 ]
 
                 def _range(start, end):
@@ -295,3 +299,18 @@ class TestEnforceBudget:
 
         configure_budget_module(admin_client_factory=raising)
         await enforce_budget("org-1")  # does not raise
+
+
+class TestLedgerBrl:
+    @pytest.mark.asyncio
+    async def test_prefers_the_row_cost_brl_over_the_env_rate(self):
+        os.environ["LLM_USD_TO_BRL"] = "5"
+        configure_budget_module(
+            admin_client_factory=_build_admin(
+                settings_rows=[{"value": "1000"}],
+                # priced at PTAX 5.5 at write time → 55 BRL, not 50 USD x 5
+                usage_by_schema={"any": [{"cost_estimate_usd": 10, "cost_brl": 55}]},
+            )
+        )
+        s = await compute_status("org-1")
+        assert s["spent_brl"] == 55.0

@@ -97,35 +97,21 @@ def test_never_stores_prompt_or_response_text(sql: str):
     assert "response_text" not in sql
 
 
-# ─── schema-map registration (resolving the remediation marker fully) ──
+# ─── readers moved to the central ledger (D25) ─────────────────────────
+# The hand-kept product→schema maps this file used to assert are gone: the
+# core admin report and the budget guard read `public.ai_usage`, where every
+# product lands by construction — social-wiring needs no registration.
+
+_REPO = Path(__file__).resolve().parents[4]
 
 
-def test_admin_llm_usage_router_registers_social_wiring():
-    router_path = (
-        Path(__file__).resolve().parents[4]
-        / "products"
-        / "core"
-        / "backend"
-        / "app"
-        / "routers"
-        / "admin_llm_usage.py"
-    )
-    assert router_path.is_file()
-    text = router_path.read_text(encoding="utf-8")
-    assert '"social-wiring": "social_wiring"' in text
+def test_admin_llm_usage_router_reads_the_central_ledger():
+    text = (_REPO / "products/core/backend/app/routers/admin_llm_usage.py").read_text(encoding="utf-8")
+    assert "read_ai_usage_rows" in text
+    assert "social_wiring" not in text  # no per-product schema map
 
 
-def test_llm_budget_module_registers_social_wiring():
-    budget_path = (
-        Path(__file__).resolve().parents[4]
-        / "seed"
-        / "lib"
-        / "backend"
-        / "noctusai_lib"
-        / "integrations"
-        / "llm"
-        / "budget.py"
-    )
-    assert budget_path.is_file()
-    text = budget_path.read_text(encoding="utf-8")
-    assert '"social-wiring": "social_wiring"' in text
+def test_llm_budget_reads_the_central_ledger():
+    text = (_REPO / "seed/lib/backend/noctusai_lib/integrations/llm/budget.py").read_text(encoding="utf-8")
+    assert '_LEDGER_TABLE = "ai_usage"' in text
+    assert "social_wiring" not in text

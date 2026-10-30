@@ -12124,6 +12124,103 @@ _NO_METADATA_AUTHZ_ALLOWLIST: dict[tuple[str, str], str] = {
 }
 
 
+# ── D26 — LLM vendor SDKs only behind the seed seam ───────────────────────────
+
+_DIRECT_LLM_SDK_MODULES: frozenset[str] = frozenset({"anthropic", "openai"})
+_DIRECT_LLM_SDK_SEVERITY = "high"
+_DIRECT_LLM_SDK_ESCAPE_RE = re.compile(r"#.*llm-sdk-direct-ok\b")
+_DIRECT_LLM_SDK_ESCAPE_WINDOW = 3
+
+
+def _direct_llm_sdk_targets(node: ast.AST) -> list[str]:
+    """Top-level vendor module names an AST node imports (static or
+    `importlib.import_module("…")` / `__import__("…")` with a literal)."""
+    found: list[str] = []
+    if isinstance(node, ast.Import):
+        found = [a.name.split(".")[0] for a in node.names]
+    elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+        found = [node.module.split(".")[0]]
+    elif isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name in ("import_module", "__import__") and isinstance(node.args[0].value, str):
+            found = [node.args[0].value.split(".")[0]]
+    return [m for m in found if m in _DIRECT_LLM_SDK_MODULES]
+
+
+def check_no_direct_llm_sdk_import(repo_root: Path | None = None) -> list[dict]:
+    """Refuse direct `anthropic` / `openai` SDK imports in product backends (D26).
+
+    Every LLM call must go through `noctusai_lib.integrations.llm` (or a seed
+    adapter built on it): that seam is what records each call — attributed and
+    priced — into the central ledger `public.ai_usage` (D25), enforces the
+    per-org budget guard, resolves per-org keys and normalizes vendor errors. A
+    product that instantiates `AsyncOpenAI` / `AsyncAnthropic` itself makes
+    calls the platform cannot bill, cap or see.
+
+    Scope: every ACTIVE product's `backend/` (`_active_product_dirs`), app code
+    only — `tests/` are excluded (they never bill). `seed/**` is the seam itself
+    and is out of scope by definition. AST-based (`KB § PATTERNS/common/ast.md`):
+    `import x` / `from x… import` / `importlib.import_module("x")` /
+    `__import__("x")`. Escape hatch: `# llm-sdk-direct-ok: <reason>` on the same
+    or one of the 3 preceding lines — for a vendor surface the seed genuinely
+    does not wrap yet (the reason must name the seed gap).
+    Per `KB § PATTERNS/common/gate-methodology-sync.md`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    products = root / "products"
+    if not products.is_dir():
+        return issues
+    for product_dir in _active_product_dirs(products):
+        backend = product_dir / "backend"
+        if not backend.is_dir():
+            continue
+        for path in sorted(backend.rglob("*.py")):
+            rel_parts = path.relative_to(backend).parts
+            if rel_parts and rel_parts[0] == "tests":
+                continue
+            if any(p in _POSTGREST_QUALIFIED_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            if "openai" not in content and "anthropic" not in content:
+                continue
+            try:
+                tree = ast.parse(content)
+            except SyntaxError as exc:
+                logger.debug("compliance: cannot parse %s (%s)", path, exc)
+                continue
+            lines = content.splitlines()
+            relative = str(path.relative_to(root))
+            for node in ast.walk(tree):
+                for module in _direct_llm_sdk_targets(node):
+                    line_no = getattr(node, "lineno", 1)
+                    window = lines[max(0, line_no - 1 - _DIRECT_LLM_SDK_ESCAPE_WINDOW):line_no]
+                    if any(_DIRECT_LLM_SDK_ESCAPE_RE.search(ln) for ln in window):
+                        continue
+                    issues.append({
+                        "file": relative,
+                        "issue": (
+                            f"`{relative}:{line_no}` imports the `{module}` SDK directly. "
+                            f"LLM calls must go through `noctusai_lib.integrations.llm` "
+                            f"(chat_completion / chat_with_tools / generate_embedding / "
+                            f"analyze_image / a seed adapter) — that seam records every "
+                            f"call into the central ledger `public.ai_usage` (attributed + "
+                            f"priced, D25), enforces the org budget and resolves the org key; "
+                            f"a direct SDK call is unbilled and invisible. Escape hatch for a "
+                            f"surface the seed does not wrap yet: `# llm-sdk-direct-ok: "
+                            f"<seed gap>`. Per `KB § PATTERNS/common/gate-methodology-sync.md`."
+                        ),
+                        "severity": _DIRECT_LLM_SDK_SEVERITY,
+                    })
+    return issues
+
+
+
 def _no_metadata_authz_receiver_is_metadata(node: ast.AST) -> bool:
     try:
         src = ast.unparse(node).lower()
