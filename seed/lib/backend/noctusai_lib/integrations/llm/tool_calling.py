@@ -290,9 +290,14 @@ async def chat_with_tools(
     impl = getattr(prov, "chat_with_tools", None)
     if impl is None:
         raise ToolCallingNotImplemented(effective_provider)
-    return await impl(
-        msgs, specs, model=effective_model, api_key=key, temperature=temperature,
-        max_tokens=max_tokens, tool_choice=tool_choice, org_id=org_id,
+    from .usage import metered_call
+
+    return await metered_call(
+        lambda: impl(
+            msgs, specs, model=effective_model, api_key=key, temperature=temperature,
+            max_tokens=max_tokens, tool_choice=tool_choice, org_id=org_id,
+        ),
+        provider=effective_provider, model=effective_model, operation="chat", org_id=org_id,
     )
 
 

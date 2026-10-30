@@ -1,7 +1,8 @@
 """`GET /api/custos` — per-integration spend for the Custos page.
 
-Two sources: `social_wiring.llm_usage` (own-schema, admin-scoped) and
-`public.cost_ledger` (cross-schema, `get_core_client()`). Both patched
+Two sources, both in `public` via `get_core_client()`: the central LLM
+ledger `public.ai_usage` (D25, filtered to product `social-wiring`) and
+`public.cost_ledger`. Both patched
 through the SAME `DatabaseModule.get_*_client` seam `test_painel_router.py`
 uses, so `get_core_client()` in this product resolves to the identical
 `MockSupabaseClient` instance (unscoped — schema="public" is the mock's own
@@ -38,15 +39,20 @@ def _today_iso(hour: int = 12) -> str:
 _next_id = iter(range(1, 100_000))
 
 
-def _llm_row(*, provider="anthropic", model="claude-sonnet-5", cost=1.0, tokens=1000, at=None):
+def _llm_row(*, provider="anthropic", model="claude-sonnet-5", cost=1.0, tokens=1000, at=None,
+             fx=5.0, fx_source=None, product="social-wiring"):
     return {
         "id": next(_next_id),
         "org_id": ORG_ID,
+        "product": product,
         "provider": provider,
         "model": model,
-        "total_tokens": tokens,
-        "cost_estimate_usd": cost,
-        "at": at or _today_iso(),
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cost_usd": cost,
+        "cost_brl": cost * fx,
+        "extra": {"fx_source": fx_source} if fx_source else {},
+        "created_at": at or _today_iso(),
     }
 
 
@@ -71,11 +77,9 @@ def _client_for(*, llm_rows=None, cost_ledger_rows=None, fx_rates=None):
         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
     ):
-        from app.dependencies import get_scoped_admin_client
         from app.main import app
 
-        scoped = get_scoped_admin_client("social_wiring")
-        scoped.set_table_data("llm_usage", llm_rows or [])
+        mock_sb.set_table_data("ai_usage", llm_rows or [])
         # `cost_ledger` / `fx_rates` live in `public` — `get_core_client()`
         # resolves to `mock_sb` itself (unscoped), per the module docstring.
         mock_sb.set_table_data("cost_ledger", cost_ledger_rows or [])
@@ -106,10 +110,13 @@ class TestAggregation:
             nomes = {i["nome"] for i in body["integracoes"]}
             assert nomes == {"llm", "infosimples", "d4sign", "google_maps"}
 
-    def test_llm_usage_converts_usd_to_brl_via_latest_ptax(self):
+    def test_llm_usage_sums_the_write_time_brl_of_each_ledger_row(self):
         for tc in _client_for(
-            llm_rows=[_llm_row(cost=2.0), _llm_row(provider="openai", model="gpt-4o-mini", cost=1.0)],
-            fx_rates=[{"pair": "USD/BRL", "quote_date": "2026-09-20", "rate": "5.00"}],
+            llm_rows=[
+                _llm_row(cost=2.0),
+                _llm_row(provider="openai", model="gpt-4o-mini", cost=1.0),
+                _llm_row(cost=50.0, product="agents"),  # another product's call — not this page
+            ],
         ):
             resp = tc.get(URL, headers=_auth())
             assert resp.status_code == 200, resp.text
@@ -123,8 +130,8 @@ class TestAggregation:
             assert by_model[("anthropic", "claude-sonnet-5")]["custo_usd"] == pytest.approx(2.0)
             assert by_model[("anthropic", "claude-sonnet-5")]["custo_brl"] == pytest.approx(10.0)
 
-    def test_no_ptax_bulletin_reports_fx_pending_never_a_guessed_rate(self):
-        for tc in _client_for(llm_rows=[_llm_row(cost=3.0)], fx_rates=[]):
+    def test_rows_priced_without_ptax_report_fx_pending_never_a_guessed_rate(self):
+        for tc in _client_for(llm_rows=[_llm_row(cost=3.0, fx_source="env_fallback")]):
             resp = tc.get(URL, headers=_auth())
             body = resp.json()
             llm_card = next(i for i in body["integracoes"] if i["nome"] == "llm")

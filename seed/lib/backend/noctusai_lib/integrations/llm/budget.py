@@ -10,10 +10,11 @@ Wraps three concerns into one module:
     absent the org has no budget configured (effectively unlimited). A
     MISSING TABLE (PGRST205) is not "no budget": it is a configuration error
     (`LLMBudgetNotConfigured`, logged at ERROR once per process).
-  - **Spend**: aggregated across every product's `<schema>.llm_usage`
-    table for the current month-to-date. USD cost is converted to BRL via
-    `LLM_USD_TO_BRL` env var (default 5.0; admins update when FX moves
-    beyond their tolerance).
+  - **Spend**: read from the ONE central ledger `public.ai_usage` (roadmap
+    D25, core migration 091) for the current month-to-date — every product's
+    calls, no per-product schema map. Each row already carries `cost_brl`
+    converted at write time from the latest BCB PTAX; a row without it
+    (never expected) falls back to `cost_usd × LLM_USD_TO_BRL` (default 5.0).
   - **Enforcement**: `enforce_budget(org_id)` is called by
     `chat_completion` (and `chat_completion_stream`) before provider
     dispatch. Soft-warn threshold (default 80%) logs WARN; hard-stop
@@ -62,13 +63,9 @@ _BUDGET_SCHEMA = "public"
 #: Ensures the "storage is missing" ERROR is logged once per process.
 _config_error_logged = False
 
-# Map product slug → schema (mirrors core/admin_llm_usage.py). Extend when a
-# new product gets `<schema>.llm_usage`.
-_PRODUCT_SCHEMAS: dict[str, str] = {
-    "erp-imobiliario": "erp",
-    "therapy-platform": "therapy",
-    "social-wiring": "social_wiring",
-}
+#: The central ledger (`noctusai_lib.integrations.llm.ledger`).
+_LEDGER_SCHEMA = "public"
+_LEDGER_TABLE = "ai_usage"
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +73,7 @@ _PRODUCT_SCHEMAS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 # Products inject their admin Supabase client here at startup so the budget
-# module can read org_settings + per-product llm_usage without each call site
+# module can read org_settings + the central public.ai_usage ledger without each call site
 # threading the client through. None means "guard disabled".
 _admin_client_factory: Optional[Callable[[], Any]] = None
 
@@ -209,50 +206,60 @@ async def fetch_budget_brl(org_id: str) -> Optional[float]:
         return None
 
 
-async def compute_spend_usd(
+async def _ledger_spend(
     org_id: str, *, start_iso: Optional[str] = None, end_iso: Optional[str] = None
-) -> float:
-    """Sum `cost_estimate_usd` across every product's `llm_usage` table for
-    the given org and time window."""
+) -> tuple[float, float]:
+    """``(spent_usd, spent_brl)`` of `org_id` in the window, from
+    ``public.ai_usage`` (paged — PostgREST caps every response at 1 000 rows,
+    KB § PATTERNS/backend/postgrest-row-cap.md). Raises on a read failure —
+    `enforce_budget` owns the fail-open posture."""
     if not _admin_client_factory or not org_id:
-        return 0.0
+        return 0.0, 0.0
     if not start_iso or not end_iso:
         start_iso, end_iso = _month_window()
     db = _admin_client_factory()
+    rate = _usd_to_brl()
 
-    # Sequential on purpose, but in ONE worker thread (not parked on the loop): `.schema(x)`
-    # mutates the shared client, so running the per-schema reads concurrently would race.
-    def _sum() -> float:
-        total = 0.0
-        for product, schema in _PRODUCT_SCHEMAS.items():
-            try:
-                # Paged: PostgREST caps every response at 1 000 rows, so the old `.limit(50_000)`
-                # silently under-counted a busy month (KB § PATTERNS/backend/postgrest-row-cap.md).
-                def fetch_page(start: int, end: int, _schema: str = schema) -> Any:
-                    return (
-                        db.schema(_schema)
-                        .table("llm_usage")
-                        .select("id,cost_estimate_usd")
-                        .eq("org_id", org_id)
-                        .gte("at", start_iso)
-                        .lte("at", end_iso)
-                        .order("id")
-                        .range(start, end)
-                        .execute()
-                        .data
-                    )
+    def _sum() -> tuple[float, float]:
+        usd = brl = 0.0
 
-                for row in iter_paged_rows(fetch_page, label=f"llm spend {product}/{org_id}"):
-                    total += float(row.get("cost_estimate_usd") or 0)
-            except Exception as exc:
-                logger.warning(
-                    "llm.budget.compute_spend_usd: %s/%s read failed for org=%s: %s",
-                    product, schema, org_id, exc,
-                )
-                continue
-        return total
+        # The cross-schema `.schema()` call stays inside the per-page thunk so the re-pin
+        # and the query run back to back on the same worker.
+        def fetch_page(start: int, end: int) -> Any:
+            return (
+                db.schema(_LEDGER_SCHEMA)
+                .table(_LEDGER_TABLE)
+                .select("id,cost_usd,cost_brl")
+                .eq("org_id", org_id)
+                .gte("created_at", start_iso)
+                .lte("created_at", end_iso)
+                .order("id")
+                .range(start, end)
+                .execute()
+                .data
+            )
+
+        for row in iter_paged_rows(fetch_page, label=f"llm spend {org_id}"):
+            row_usd = float(row.get("cost_usd") or 0)
+            usd += row_usd
+            row_brl = row.get("cost_brl")
+            brl += float(row_brl) if row_brl is not None else row_usd * rate
+        return usd, brl
 
     return await anyio.to_thread.run_sync(_sum)
+
+
+async def compute_spend_usd(
+    org_id: str, *, start_iso: Optional[str] = None, end_iso: Optional[str] = None
+) -> float:
+    """Sum ``cost_usd`` of the org's ``public.ai_usage`` rows in the window
+    (all products). Returns 0.0 and logs when the ledger is unreadable."""
+    try:
+        usd, _brl = await _ledger_spend(org_id, start_iso=start_iso, end_iso=end_iso)
+    except Exception as exc:
+        logger.warning("llm.budget.compute_spend_usd: ai_usage read failed for org=%s: %s", org_id, exc)
+        return 0.0
+    return usd
 
 
 async def compute_status(org_id: str) -> dict[str, Any]:
@@ -263,7 +270,6 @@ async def compute_status(org_id: str) -> dict[str, Any]:
     """
     soft = _soft_pct()
     hard = _hard_pct()
-    rate = _usd_to_brl()
 
     budget_brl = await fetch_budget_brl(org_id)
     if budget_brl is None or budget_brl <= 0:
@@ -276,8 +282,11 @@ async def compute_status(org_id: str) -> dict[str, Any]:
             "hard_pct": hard,
         }
 
-    spent_usd = await compute_spend_usd(org_id)
-    spent_brl = spent_usd * rate
+    try:
+        _spent_usd, spent_brl = await _ledger_spend(org_id)
+    except Exception as exc:
+        logger.warning("llm.budget.compute_status: ai_usage read failed for org=%s: %s", org_id, exc)
+        spent_brl = 0.0
     used_pct = (spent_brl / budget_brl) if budget_brl else 0.0
 
     if used_pct >= hard:

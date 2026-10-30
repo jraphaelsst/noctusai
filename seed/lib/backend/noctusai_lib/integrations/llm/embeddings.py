@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .client import get_llm_config, get_provider, resolve_api_key
+from .usage import metered_call
 
 
 async def generate_embedding(
@@ -46,12 +47,15 @@ async def generate_embedding(
     api_key = resolve_api_key(effective_provider, org_id)
 
     prov = get_provider(effective_provider)
-    return await prov.generate_embedding(
-        text,
-        model=effective_model,
-        api_key=api_key,
-        org_id=org_id,
-        **kwargs,
+    return await metered_call(
+        lambda: prov.generate_embedding(
+            text,
+            model=effective_model,
+            api_key=api_key,
+            org_id=org_id,
+            **kwargs,
+        ),
+        provider=effective_provider, model=effective_model, operation="embedding", org_id=org_id,
     )
 
 
@@ -93,18 +97,24 @@ async def generate_embeddings_batch(
     prov = get_provider(effective_provider)
     batch_fn = getattr(prov, "generate_embeddings_batch", None)
     if batch_fn is not None:
-        return await batch_fn(
-            texts,
-            model=effective_model,
-            api_key=api_key,
-            org_id=org_id,
-            **kwargs,
+        return await metered_call(
+            lambda: batch_fn(
+                texts,
+                model=effective_model,
+                api_key=api_key,
+                org_id=org_id,
+                **kwargs,
+            ),
+            provider=effective_provider, model=effective_model, operation="embedding", org_id=org_id,
         )
     # Fallback for a provider without native batch support: preserve the
     # funnel + result contract, just without the request-count win.
     return [
-        await prov.generate_embedding(
-            text, model=effective_model, api_key=api_key, org_id=org_id, **kwargs
+        await metered_call(
+            lambda text=text: prov.generate_embedding(
+                text, model=effective_model, api_key=api_key, org_id=org_id, **kwargs
+            ),
+            provider=effective_provider, model=effective_model, operation="embedding", org_id=org_id,
         )
         for text in texts
     ]

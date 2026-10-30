@@ -19,6 +19,7 @@ from .budget import enforce_budget
 from .cache import build_cache_key, try_get, try_set
 from .client import get_llm_config, get_provider, resolve_api_key
 from .stream_types import StreamOutcome
+from .usage import metered_call, metered_stream, prompt_chars_of
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +105,18 @@ async def chat_completion(
             return value
 
     prov = get_provider(effective_provider)
-    result = await prov.chat_completion(
-        messages,
-        model=effective_model,
-        api_key=api_key,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        response_format=response_format,
-        org_id=org_id,
-        **kwargs,
+    result = await metered_call(
+        lambda: prov.chat_completion(
+            messages,
+            model=effective_model,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            org_id=org_id,
+            **kwargs,
+        ),
+        provider=effective_provider, model=effective_model, operation="chat", org_id=org_id,
     )
 
     if cache_live and cache_key is not None:
@@ -172,18 +176,32 @@ async def chat_completion_stream(
             f"Provider {effective_provider!r} does not implement chat_completion_stream()."
         )
 
-    async for chunk in stream_fn(
-        messages,
+    # D25: a stream cut short (consumer abort / cancellation / mid-stream
+    # provider error) still records ONE ledger row — see `metered_stream`.
+    metered = metered_stream(
+        stream_fn(
+            messages,
+            model=effective_model,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            org_id=org_id,
+            outcome=outcome,
+            **kwargs,
+        ),
+        provider=effective_provider,
         model=effective_model,
-        api_key=api_key,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        response_format=response_format,
         org_id=org_id,
-        outcome=outcome,
-        **kwargs,
-    ):
-        yield chunk
+        prompt_chars=prompt_chars_of(messages),
+    )
+    try:
+        async for chunk in metered:
+            yield chunk
+    finally:
+        # Close the meter NOW (not at garbage collection) so a consumer abort
+        # records its partial row inside the caller's context.
+        await metered.aclose()
 
 
 def build_cached_messages(

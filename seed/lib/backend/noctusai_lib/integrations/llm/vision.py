@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence, Union
 
 from .client import get_llm_config, get_provider, resolve_api_key
+from .usage import metered_call
 from .vision_types import VisionResult
 
 
@@ -53,14 +54,17 @@ async def analyze_image(
     api_key = resolve_api_key(effective_provider, org_id)
 
     prov = get_provider(effective_provider)
-    return await prov.analyze_image(
-        image,
-        prompt,
-        model=effective_model,
-        api_key=api_key,
-        org_id=org_id,
-        return_metadata=return_metadata,
-        **kwargs,
+    return await metered_call(
+        lambda: prov.analyze_image(
+            image,
+            prompt,
+            model=effective_model,
+            api_key=api_key,
+            org_id=org_id,
+            return_metadata=return_metadata,
+            **kwargs,
+        ),
+        provider=effective_provider, model=effective_model, operation="vision", org_id=org_id,
     )
 
 
@@ -121,12 +125,15 @@ async def analyze_images(
         raise NotImplementedError(
             f"Provider {effective_provider!r} does not implement analyze_images()."
         )
-    return await fn(
-        images,
-        prompt,
-        response_schema=response_schema,
-        model=effective_model,
-        api_key=api_key,
-        org_id=org_id,
-        **kwargs,
+    return await metered_call(
+        lambda: fn(
+            images,
+            prompt,
+            response_schema=response_schema,
+            model=effective_model,
+            api_key=api_key,
+            org_id=org_id,
+            **kwargs,
+        ),
+        provider=effective_provider, model=effective_model, operation="vision", org_id=org_id,
     )
