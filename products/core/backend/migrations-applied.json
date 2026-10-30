@@ -12,6 +12,7 @@
     "090_scheduler_runs.sql": "1029e6aae5c7bfd671fddbe26a9161dab12b571b74a992acb732db7bd7c0ef42",
     "091_ai_usage.sql": "52905634bd0cbc1b33242fe178df2a34d60db0f2ac5afef53ea3098c452426cf",
     "092_platform_templates.sql": "6b7664262e78002588c81385bd09bf3b2b82e23ed97349973d4b860021210b65",
-    "093_credit_wallets.sql": "47f647fe4e388b725f17599b839ab7788c9236b502aba9bb7676be2921a54479"
+    "093_credit_wallets.sql": "47f647fe4e388b725f17599b839ab7788c9236b502aba9bb7676be2921a54479",
+    "094_brand_tokens_schema_not_null.sql": "eb287e3479daae311818cd30c2827b6b2ae832957e0d5c9c0b9cbe1d31d247e4"
   }
 }
