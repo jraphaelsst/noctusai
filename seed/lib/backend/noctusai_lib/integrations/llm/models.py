@@ -330,6 +330,38 @@ MODELS: Tuple[ModelEntry, ...] = (
         vision_max_edge_px=2576,
         vision_max_visual_tokens=4784,
     ),
+    #: Sonnet 5.5 is the core brand-identity extraction pin (projects/
+    #: org-brand-identity/CONTRACT.md §4); unpriced it recorded tokens at $0,
+    #: and per-org usage is what customers are billed on.
+    ModelEntry(
+        id="claude-sonnet-5-5",
+        label="Claude Sonnet 5.5",
+        provider="anthropic",
+        kind="chat",
+        description="Anthropic current mid-tier — balanced accuracy and cost, 1M context.",
+        cost_per_1m_input_tokens=2.00,
+        cost_per_1m_output_tokens=10.00,
+    ),
+    ModelEntry(
+        id="claude-sonnet-5-5",
+        label="Claude Sonnet 5.5 (Vision)",
+        provider="anthropic",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=2.00,
+        cost_per_1m_output_tokens=10.00,
+        vision_max_edge_px=2576,
+        vision_max_visual_tokens=4784,
+    ),
+    ModelEntry(
+        id="claude-haiku-5-5",
+        label="Claude Haiku 5.5",
+        provider="anthropic",
+        kind="chat",
+        description="Anthropic current fast tier — prompts up to 100K tokens (higher rate beyond).",
+        cost_per_1m_input_tokens=0.10,
+        cost_per_1m_output_tokens=0.50,
+    ),
     #: Opus 5.5 is the document-escalation pin (`documents.providers.
     #: ESCALATION_OCR_MODELS`, owner decision 2026-10-13); Fable 5.1 is the
     #: measured fallback if Opus keeps producing wrong values. Both priced so
