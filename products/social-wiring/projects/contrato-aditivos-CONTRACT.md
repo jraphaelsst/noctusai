@@ -2,7 +2,7 @@
 
 > Owner, 2026-09-24: aditivos are in scope — "model, store and generate them".
 > Backend: `products/social-wiring/backend/app/modules/card_hub/contrato_aditivo/` ·
-> migration `190_contrato_aditivos.sql`. Status: **BE shipped on `feat/contract-aditivos-be`; FE pending.**
+> migration `190_contrato_aditivos.sql`. Status: **BE and FE shipped** (FE: `frontend/src/components/AditivosContainer.tsx`, mounted in the cliente detail modal).
 
 An **aditivo** amends ONE contract (`atendimento_contratos` row) that is **assinado**, or that has an
 `assinatura_data` (and is not `cancelado`). Every aditivo re-qualifies all parties, cites the original

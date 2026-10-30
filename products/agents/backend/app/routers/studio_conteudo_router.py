@@ -639,13 +639,18 @@ async def create_platform_definition(
     EMPTY draft -- a shell grows over time; only PUBLISH is gated by completeness. ANY valid key is accepted: a
     platform definition is a DB row, never a code registry entry, and what used to be registered in code (runtime,
     owner product, qualification scope/standard, first-draft settings, role) is the body. ``nome`` is required for a
-    new key. Idempotent (an existing definition is returned unchanged); audits ``agente_criado`` only when it creates.
-    With ``briefing`` an AI generation of the draft starts (202-style: ``geracao`` is the booked run)."""
+    new key. An existing key is a 409 ``agente_ja_existe`` (a create form must never silently land on someone else's
+    definition) unless ``reutilizar=true``, which returns it unchanged (the MCP ``criar_agente`` idempotent path);
+    audits ``agente_criado`` only when it creates. With ``briefing`` an AI generation of the draft starts (202-style:
+    ``geracao`` is the booked run)."""
     ator = actor_id(ctx)
 
     def _criar():
         existing = store.get_platform_definition(payload.key)
         if existing is not None:
+            if not payload.reutilizar:
+                raise _flat(409, "agente_ja_existe", f"Já existe um agente com a chave '{payload.key}'.",
+                            {"key": payload.key})
             return existing
         if not payload.nome:
             raise _flat(422, "nome_obrigatorio", "Informe o nome do agente para criar uma nova definição.")

@@ -539,7 +539,7 @@ class TestAgentLifecycle:
         assert plan["requisicao"] == "POST /api/studio/plataforma/agents"
         out = C.content("criar_agente", agent="julia", base_url=srv.url, confirm=True)
         assert out["status"] == "created" and out["agente"]["key"] == "julia" and out["agente"]["conteudo_modo"] == "linhas"
-        assert [(m, p, b) for m, p, b, _a in srv.log] == [("POST", "/api/studio/plataforma/agents", {"key": "julia"})]
+        assert [(m, p, b) for m, p, b, _a in srv.log] == [("POST", "/api/studio/plataforma/agents", {"key": "julia", "reutilizar": True})]
         assert TOKEN not in json.dumps(out)
 
     def test_excluir_agente_is_a_dry_run_then_deletes(self, srv):
@@ -637,7 +637,7 @@ class TestGeracao:
         body = {"nome": "Novo", "papel": "gerador", "rascunho_padrao": {"model": "claude-opus-5"}, "instanciavel": False}
         out = run(srv, private, body, action="criar_agente", agent="novo-agente", confirm=True)
         assert out["status"] == "created"
-        assert srv.log[0][2] == {"key": "novo-agente", **body}
+        assert srv.log[0][2] == {"key": "novo-agente", **body, "reutilizar": True}
         assert run(srv, private, {"nome": "x", "inventado": 1}, action="criar_agente", agent="k")["codigo"] == "payload_invalido"
 
     def test_configurar_agente_patches_and_definicao_reads(self, srv, private):

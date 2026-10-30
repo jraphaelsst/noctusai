@@ -41,7 +41,10 @@ Auth: any org member (`require_member`); 401 unauthenticated, 403 for a non-memb
   "areas": [                       // [] unless tier == "plataforma"
     {"id": "ferramentas", "titulo": "Ferramentas", "descricao": "…", "ordem": 2, "multiplas_linhas": true,
      "campos": [{"chave": "ferramenta", "rotulo": "Ferramenta", "tipo": "texto|numero|booleano|escolha|lista|objeto",
-                 "obrigatorio": true, "max_length": null, "opcoes": null}],
+                 "obrigatorio": true, "max_length": null, "opcoes": null,
+                 // wizard slice: the limits a form needs to block a 422, and the server default
+                 "min_length": null, "pattern": null, "minimo": null, "minimo_exclusivo": null, "maximo": null,
+                 "padrao": null}],
      "enumeracao": {"tipo": "opcoes", "opcoes": ["abrir_skill", "…"]},     // textos: {"tipo":"chaves_por_categoria","grupos":[…]}
      "secoes": ["ferramentas"]}
   ],
@@ -142,7 +145,7 @@ Served in `GET /api/studio/modelo` → `assistente.passos` (platform admins only
 | 9 | revisao | Revisão | fechamento | none (summary of the answers) | |
 | 10 | publicar | Publicar | fechamento | plataforma.instanciavel, plataforma.limite_usd | |
 
-Submit: `POST /api/studio/plataforma/agents` with `{key, nome, descricao, runtime, owner_product, escopo_qualificacao, padrao_qualificacao, instanciavel, limite_usd, briefing: {nome, objetivo, publico, canal, idioma, tom_de_voz, limites, exemplos}}`. The response is the definition (`PlataformaAgentOut`) plus the booked AI generation; the wizard then navigates to `/agentes/:key`. Creating makes a **draft**; publishing a version goes through the eval gate (`POST /draft/publish`), never through the wizard.
+Submit: `POST /api/studio/plataforma/agents` with `{key, nome, descricao, runtime, owner_product, escopo_qualificacao, padrao_qualificacao, instanciavel, limite_usd, briefing: {nome, objetivo, publico, canal, idioma, tom_de_voz, limites, exemplos}}`. The response is the definition (`PlataformaAgentOut`) plus the booked AI generation; the wizard then navigates to `/agentes/:key`. An existing key answers **409 `agente_ja_existe`** unless the body sends `reutilizar: true` (the MCP `criar_agente` does; the wizard never does and returns to the identity step). Field labels (`rotulo`) are the models' pt-BR `title=`. Creating makes a **draft**; publishing a version goes through the eval gate (`POST /draft/publish`), never through the wizard.
 
 Frontend: the wizard is rendered with the seed `JourneyWizard` organ (built in parallel; props `steps[{id, title, category, content}]`, `onComplete`, `progress`): `id`/`title`/`category` come straight from `assistente.passos`, `content` renders the step's `campos`.
 
@@ -151,8 +154,8 @@ Frontend: the wizard is rendered with the seed `JourneyWizard` organ (built in p
 - `/agentes` — the unified listing: one card per item of `GET /api/agents/painel` (filter by `papel`), each linking to `/agentes/:key`; legacy agents get the on/off switch when `pode_alternar`.
 - `/agentes/:key` — `AgentePage`: header from the painel; section nav = `painel.secoes`, titled by `modelo.secoes`; body = the section's renderer (a registry `section id → component`; the content-area renderers are the existing Studio tab components). Superadmin extras come from `/painel/interno`, fetched only when the page shows an internal section.
 - States: skeleton only while there is no data yet (`isPending && !data`), a refetch never unmounts the page, error and empty states are explicit; never `isLoading` (KB server-state family).
-- Redirects: `/bia`, `/julia`, `/agentes/bia/conversar` → `/agentes/<destino>?tab=conversar` and `/agentes/bia/persona`, `/agentes/julia/persona` → `/agentes/<destino>?tab=persona`, where `<destino>` = `GET /api/agents/painel/destino-chat` (the agent the academia principal names, else the org's code-defined chat agent, else `/agentes`); `/agentes/bia` itself is NOT redirected (the key is free for a new agent); `/agentes/:key/persona` → `/agentes/:key?tab=persona`; `/studio/:key` → `/agentes/:key` (query kept); `/studio/lead-imob` → `/agentes/julia`; `/agentes/catalogo` → `/agentes`.
-- `/studio` (Agent Studio) stays as the create/import/delete console until the wizard slice; its rows link to `/agentes/:key`.
+- Redirects: `/bia`, `/julia`, `/agentes/bia/conversar` → `/agentes/<destino>?tab=conversar` and `/agentes/bia/persona`, `/agentes/julia/persona` → `/agentes/<destino>?tab=persona`, where `<destino>` = `GET /api/agents/painel/destino-chat` (the agent the academia principal names, else the org's code-defined chat agent, else `/agentes`); `/agentes/bia` itself is NOT redirected (the key is free for a new agent); `/agentes/:key/persona` → `/agentes/:key?tab=persona`; `/studio` → `/agentes`; `/studio/:key` → `/agentes/:key` (query kept); `/studio/lead-imob` → `/agentes/julia`; `/agentes/catalogo` → `/agentes`.
+- `/studio` (Agent Studio) stayed as the create/import/delete console until the wizard slice. **Wizard slice (done):** `/agentes/novo` (`NovoAgente.tsx`) renders `assistente.passos` on the seed `JourneyWizard`; `/studio` redirects to `/agentes`, whose header carries "Novo agente" / "Importar pacote" / the skills library, each card a platform-admin "Excluir", and the page the content-token card.
 
 ## 8 · What the next slices build
 

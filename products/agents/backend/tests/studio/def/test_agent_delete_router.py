@@ -180,10 +180,12 @@ class TestEmptyShellCreation:
         agent = studio.store.get_agent(DEFAULT_ORG_ID, "julia")
         draft = studio.store.get_draft(DEFAULT_ORG_ID, agent.id)
         assert studio.store.list_sections(DEFAULT_ORG_ID, draft.id) == [], "no text is required to create"
-        again = raw.post(f"{PLAT}/agents", json=JULIA_BODY)
+        dup = raw.post(f"{PLAT}/agents", json=JULIA_BODY)
+        assert dup.status_code == 409 and dup.json()["code"] == "agente_ja_existe", "a create never lands on an existing key"
+        again = raw.post(f"{PLAT}/agents", json={**JULIA_BODY, "reutilizar": True})
         assert again.status_code == 201 and again.json()["id"] == first.json()["id"]
         criado = [a for a in studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "agente_criado"]
-        assert len(criado) == 1, "audited when it creates, not on the idempotent hit"
+        assert len(criado) == 1, "audited when it creates, not on the reuse hit nor the refused duplicate"
 
     def test_a_token_without_the_scope_cannot_create(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)

@@ -225,6 +225,12 @@ def _register_media_wiring() -> ModuleRegistration:
 
     card_hub_extracao_scheduler.configure()
 
+    # LGPD retention sweeps for imóvel documents + matrícula text (03:40) —
+    # same import-time registration rule as the jobs above.
+    from app.services import retention_sweep_scheduler
+
+    retention_sweep_scheduler.configure()
+
     # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) —
     # see the module docstring above for why this calls the factory
     # directly instead of opting into `standard_routers=["auth"]`.

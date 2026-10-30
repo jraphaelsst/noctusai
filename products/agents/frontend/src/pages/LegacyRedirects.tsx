@@ -30,6 +30,11 @@ export function RedirectStudioAgent() {
   return <RedirectTo to={`/agentes/${encodeURIComponent(key)}`} />;
 }
 
+/** `/studio` (the former Agent Studio console) -> `/agentes`, where its actions now live. */
+export function RedirectStudio() {
+  return <RedirectTo to="/agentes" />;
+}
+
 /** `/agentes/:key/persona` -> `/agentes/:key?tab=persona` */
 export function RedirectAgentePersona() {
   const { key = "" } = useParams<{ key: string }>();

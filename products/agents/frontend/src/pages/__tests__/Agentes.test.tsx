@@ -11,10 +11,21 @@ import type { AgentePainel } from "@/api/agentes/types";
 import Agentes from "@/pages/Agentes";
 
 const mockUsePainel = vi.fn();
+const mockTier = vi.fn();
+const mockIsAdmin = vi.fn();
 const mutateAsync = vi.fn();
 
-vi.mock("@/hooks/useAgentesPainel", () => ({ useAgentesPainel: () => mockUsePainel() }));
+vi.mock("@/hooks/useAgentesPainel", () => ({
+  useAgentesPainel: () => mockUsePainel(),
+  useAgenteModelo: () => ({ data: { tier: mockTier() } }),
+}));
 vi.mock("@/hooks/useAgents", () => ({ useToggleAgent: () => ({ mutateAsync, isPending: false }) }));
+vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => mockIsAdmin() }));
+vi.mock("@/components/studio/ContentTokenCard", () => ({ ContentTokenCard: () => <div data-testid="content-token" /> }));
+vi.mock("@/components/studio/ImportBundleDialog", () => ({ ImportBundleDialog: () => <div data-testid="dlg-importar" /> }));
+vi.mock("@/components/studio/ExcluirAgenteDialog", () => ({
+  ExcluirAgenteDialog: ({ agentKey }: { agentKey: string }) => <div data-testid={`dlg-excluir-${agentKey}`} />,
+}));
 
 function agente(over: Partial<AgentePainel>): AgentePainel {
   return {
@@ -37,6 +48,8 @@ function estado(over: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockTier.mockReturnValue("membro");
+  mockIsAdmin.mockReturnValue(false);
   mutateAsync.mockResolvedValue({});
   mockUsePainel.mockReturnValue(estado({ data: [BIA, JULIA, ONE_CHAT] }));
 });
@@ -110,5 +123,38 @@ describe("Agentes — states", () => {
     await renderPage();
     expect(screen.getByTestId("agente-card-bia")).toBeTruthy();
     expect(screen.getByTestId("agentes-refreshing")).toBeTruthy();
+  });
+});
+
+describe("Agentes — the former /studio console actions", () => {
+  it("a platform admin gets the wizard, the skills library, the delete and the content token", async () => {
+    mockTier.mockReturnValue("plataforma");
+    mockIsAdmin.mockReturnValue(true);
+    await renderPage();
+    expect(screen.getByTestId("agentes-novo").getAttribute("href")).toBe("/agentes/novo");
+    expect(screen.getByTestId("agentes-biblioteca-skills")).toBeTruthy();
+    expect(screen.getByTestId("content-token")).toBeTruthy();
+    // a legacy / external agent has no delete; a platform agent does, behind the typed-key confirm
+    expect(screen.queryByTestId("agente-excluir-bia")).toBeNull();
+    expect(screen.queryByTestId("agente-excluir-one-chat")).toBeNull();
+    fireEvent.click(screen.getByTestId("agente-excluir-julia"));
+    expect(screen.getByTestId("dlg-excluir-julia")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("agentes-importar-pacote"));
+    expect(screen.getByTestId("dlg-importar")).toBeTruthy();
+  });
+
+  it("an org admin can import a bundle but not create, delete or mint tokens", async () => {
+    mockIsAdmin.mockReturnValue(true);
+    await renderPage();
+    expect(screen.getByTestId("agentes-importar-pacote")).toBeTruthy();
+    expect(screen.queryByTestId("agentes-novo")).toBeNull();
+    expect(screen.queryByTestId("agente-excluir-julia")).toBeNull();
+    expect(screen.queryByTestId("content-token")).toBeNull();
+  });
+
+  it("a member sees no console action", async () => {
+    await renderPage();
+    expect(screen.queryByTestId("agentes-importar-pacote")).toBeNull();
+    expect(screen.queryByTestId("agentes-novo")).toBeNull();
   });
 });

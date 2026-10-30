@@ -15,6 +15,7 @@
  * created agent — a brand-new row).
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { AGENTES_PAINEL_KEY } from "@/hooks/useAgentesPainel";
 import { api } from "@/lib/api";
 import { seg, studioKeys } from "./keys";
 
@@ -55,6 +56,7 @@ export function useImportBundle() {
     onSuccess: (summary, { key }) => {
       if (summary.dry_run) return;
       void qc.invalidateQueries({ queryKey: studioKeys.list() });
+      void qc.invalidateQueries({ queryKey: AGENTES_PAINEL_KEY });
       void qc.invalidateQueries({ queryKey: studioKeys.agent(key) });
       void qc.invalidateQueries({ queryKey: studioKeys.compiledAll(key) });
     },

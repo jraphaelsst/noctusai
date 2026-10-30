@@ -1,7 +1,7 @@
 """YouTube module scheduler — daily snapshot jobs.
 
 Registers one job on the seed-side scheduler:
-  - youtube_daily_snapshot: cron ``0 5 * * *`` (05:00 BRT = 08:00 UTC)
+  - youtube_daily_snapshot: cron ``0 6,18 * * *`` (06:00 and 18:00 America/Sao_Paulo)
     Iterates all validated YouTube integration_accounts and runs
     SnapshotService.run_for_account per account. Errors per-account are
     logged at WARNING + continue (one bad account does not kill the run).
@@ -118,9 +118,9 @@ def configure() -> None:
     seed_scheduler.register(
         "youtube_daily_snapshot",
         youtube_daily_snapshot_job,
-        cron="0 5 * * *",
+        cron="0 6,18 * * *",
     )
-    logger.info("youtube scheduler configured: daily snapshot at 05:00 BRT (cron '0 5 * * *')")
+    logger.info("youtube scheduler configured: snapshot at 06:00 and 18:00 (cron '0 6,18 * * *')")
 
 
 # Re-export seed lifecycle handles (same pattern as email_marketing.scheduler).

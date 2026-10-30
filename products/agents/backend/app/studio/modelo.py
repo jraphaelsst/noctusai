@@ -197,15 +197,28 @@ def _tipo(anotacao: Any) -> tuple[str, list[str] | None]:
     return "texto", None
 
 
+def _meta(info: FieldInfo, attr: str) -> Any:
+    """The first ``attr`` constraint carried by the field's metadata (``max_length``, ``min_length``, ``pattern``,
+    ``le``, ...), else None."""
+    return next((getattr(m, attr) for m in info.metadata if getattr(m, attr, None) is not None), None)
+
+
 def _campo(nome: str, info: FieldInfo) -> dict[str, Any]:
     tipo, opcoes = _tipo(info.annotation)
-    max_length = next((getattr(m, "max_length", None) for m in info.metadata if getattr(m, "max_length", None)), None)
+    padrao = None if info.is_required() else info.default
     return {
         "chave": nome,
         "rotulo": info.title or nome.replace("_", " ").capitalize(),
         "tipo": tipo,
         "obrigatorio": info.is_required(),
-        "max_length": max_length,
+        "max_length": _meta(info, "max_length"),
+        # The limits a form needs to block what the server would 422 (wizard validation reads them).
+        "min_length": _meta(info, "min_length"),
+        "pattern": _meta(info, "pattern"),
+        "minimo": _meta(info, "ge"),
+        "minimo_exclusivo": _meta(info, "gt"),
+        "maximo": _meta(info, "le"),
+        "padrao": padrao if isinstance(padrao, (str, int, float, bool)) else None,
         "opcoes": opcoes,
     }
 

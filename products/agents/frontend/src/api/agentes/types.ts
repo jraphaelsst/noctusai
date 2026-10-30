@@ -13,6 +13,14 @@ export interface CampoModelo {
   tipo: "texto" | "numero" | "booleano" | "escolha" | "lista" | "objeto";
   obrigatorio: boolean;
   max_length: number | null;
+  /** Limits a form needs to block what the create route would 422 (read from the Pydantic field). */
+  min_length?: number | null;
+  pattern?: string | null;
+  minimo?: number | null;
+  minimo_exclusivo?: number | null;
+  maximo?: number | null;
+  /** The server's default for the field (scalars only). */
+  padrao?: string | number | boolean | null;
   opcoes: string[] | null;
   modelo?: "plataforma" | "briefing" | null;
 }

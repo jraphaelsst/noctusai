@@ -609,8 +609,12 @@ class TestCreateWithBriefing:
         assert len(gen.studio.store.list_sections(DEFAULT_ORG_ID, draft.id)) == 2
 
     def test_an_existing_key_without_a_briefing_starts_nothing(self, gen):
-        r = gen.studio.post(f"{PLAT}/agents", json={"key": "alvo"})
+        r = gen.studio.post(f"{PLAT}/agents", json={"key": "alvo", "reutilizar": True})
         assert r.status_code == 201 and r.json()["geracao"] is None and gen.pending == []
+
+    def test_an_existing_key_is_409_and_starts_no_generation(self, gen):
+        r = gen.studio.post(f"{PLAT}/agents", json={"key": "alvo", "nome": "Alvo", "briefing": BRIEFING})
+        assert r.status_code == 409 and r.json()["code"] == "agente_ja_existe" and gen.pending == []
 
     def test_without_a_briefing_the_response_has_no_generation(self, gen):
         assert gen.studio.post(f"{PLAT}/agents", json={"key": "so-casca", "nome": "Casca"}).json()["geracao"] is None

@@ -14,6 +14,7 @@ import {
   RedirectAgentePersona,
   RedirectCatalogo,
   RedirectLeadImobStudioToJulia,
+  RedirectStudio,
   RedirectStudioAgent,
 } from "../LegacyRedirects";
 
@@ -35,6 +36,7 @@ function at(initial: string) {
           <Route path="/agentes/bia/persona" element={<RedirectAcademiaPersona />} />
           <Route path="/agentes/bia/conversar" element={<RedirectAcademiaChat />} />
           <Route path="/agentes/:key/persona" element={<RedirectAgentePersona />} />
+          <Route path="/studio" element={<RedirectStudio />} />
           <Route path="/studio/lead-imob" element={<RedirectLeadImobStudioToJulia />} />
           <Route path="/studio/:key" element={<RedirectStudioAgent />} />
           <Route path="*" element={<Where />} />
@@ -61,6 +63,10 @@ describe("old agent shells redirect to /agentes/:key", () => {
   });
   it("/agentes/catalogo -> /agentes", async () => {
     at("/agentes/catalogo");
+    expect(await where()).toBe("/agentes");
+  });
+  it("/studio (the former console) -> /agentes, where its actions now live", async () => {
+    at("/studio");
     expect(await where()).toBe("/agentes");
   });
   it("/studio/lead-imob -> /agentes/julia, keeping the query and hash", async () => {

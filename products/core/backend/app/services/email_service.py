@@ -169,6 +169,13 @@ def send_website_lead_notification(to: str, lead: dict) -> bool:
     return _send(to, subject, html)
 
 
+def send_owner_brief(to: str, subject: str, html: str) -> bool:
+    """The owner daily brief e-mail (`app/services/owner_brief_service.py`).
+    Same Resend channel as every core notification e-mail; returns False when
+    no provider is configured or the send failed (logged by `_send`)."""
+    return _send(to, subject, html)
+
+
 def _send(to: str, subject: str, html: str) -> bool:
     """Send an email via Resend or log it if not configured."""
     client = _get_resend()
