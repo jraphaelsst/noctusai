@@ -122,7 +122,7 @@ export default function ConfiguracoesAgente() {
           <p className="text-sm text-muted-foreground">Parâmetros de execução da Bia. Valem sem novo deploy.</p>
         </div>
         <Link
-          to="/agentes/bia/persona"
+          to="/agentes/bia?tab=persona"
           className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
         >
           <Settings className="h-3.5 w-3.5" />

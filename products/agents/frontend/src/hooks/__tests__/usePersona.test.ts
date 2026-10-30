@@ -58,7 +58,7 @@ describe("usePersona", () => {
     mockGet.mockResolvedValue(PERSONA);
     const { usePersona } = await import("@/hooks/usePersona");
     const qc = newClient();
-    const { result } = renderHook(() => usePersona(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => usePersona("bia"), { wrapper: wrapper(qc) });
 
     await waitFor(() => expect(result.current.showSkeleton).toBe(false));
     expect(mockGet).toHaveBeenCalledWith("/api/agents/bia/persona");
@@ -74,7 +74,7 @@ describe("usePersona", () => {
     );
     const { usePersona } = await import("@/hooks/usePersona");
     const qc = newClient();
-    const { result } = renderHook(() => usePersona(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => usePersona("bia"), { wrapper: wrapper(qc) });
 
     await waitFor(() => expect(result.current.showSkeleton).toBe(false));
     // A single call proves the 404 was not retried (react-query's default
@@ -90,7 +90,7 @@ describe("usePersona", () => {
     mockGet.mockRejectedValue(new ApiError(500, "Internal Server Error"));
     const { usePersona } = await import("@/hooks/usePersona");
     const qc = newClient();
-    const { result } = renderHook(() => usePersona(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => usePersona("bia"), { wrapper: wrapper(qc) });
 
     await waitFor(() => expect(result.current.showSkeleton).toBe(false));
     expect(result.current.isError).toBe(true);
@@ -103,7 +103,7 @@ describe("useUpdatePersona", () => {
     mockPut.mockResolvedValue({ ...PERSONA, versao: 4, papel: "Novo papel" });
     const { useUpdatePersona } = await import("@/hooks/usePersona");
     const qc = newClient();
-    const { result } = renderHook(() => useUpdatePersona(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useUpdatePersona("bia"), { wrapper: wrapper(qc) });
 
     const payload = {
       nome: "Bia",

@@ -1,5 +1,7 @@
 /**
- * Bia chat page — contract §E.2/§E.3/§E.7 (`/bia`).
+ * "Conversar" section of a LEGACY chat agent's page (`/agentes/:key?tab=conversar`; `/bia` redirects here) —
+ * contract §E.2/§E.3/§E.7. agents-unified CONTRACT §3: the server lists this section only on a legacy
+ * `claude_sdk` agent; an org Studio agent's "Conversar" is the Studio chat tab instead.
  *
  * All chat rendering + realtime (message streaming, tool chips, approval
  * cards, "Bia está pensando…") lives in the seed `<ChatWindow>` organ via
@@ -28,14 +30,15 @@
  * page is a surprise of its own — out of scope for this pass.
  */
 import { useState } from "react";
-import { Plus, MessageCircle } from "lucide-react";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@noctusai/lib/design-system";
 import { BiaChatWindow } from "@/components/BiaChatWindow";
 import { useCreateConversation } from "@/hooks/useBiaChat";
 import { errorMessage } from "@/lib/errors";
+import type { SecaoProps } from "../secaoTypes";
 
-export default function Bia() {
+export default function ConversarLegadoSecao({ agente }: SecaoProps) {
   const createConversation = useCreateConversation();
   const [creating, setCreating] = useState(false);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -53,20 +56,14 @@ export default function Bia() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col space-y-4">
+    <div className="flex h-[calc(100vh-14rem)] flex-col space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <MessageCircle className="h-6 w-6 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Bia</h1>
-            <p className="text-sm text-muted-foreground">Converse com o agente Bia.</p>
-          </div>
-        </div>
+        <p className="text-sm text-muted-foreground">Converse com {agente.nome}.</p>
         <Button
           variant="primary"
           onClick={handleNewConversation}
           disabled={creating}
-          data-testid="bia-new-conversation"
+          data-testid="conversar-nova-conversa"
         >
           <Plus className="mr-1.5 h-4 w-4" />
           Nova conversa

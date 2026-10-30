@@ -4,7 +4,7 @@
 One process-wide :class:`~noctusai_lib.realtime.RealtimeBus` (Redis-backed
 in prod, in-memory ``FakeRealtimeBus`` under dev/test — the seed's
 ``get_realtime_bus`` factory), scoped per-conversation as
-``agents:bia:conv:<conversation_id>`` (contract §E.3 "Scope"). This
+``agents:conv:<conversation_id>`` (contract §E.3 "Scope"). This
 module owns:
 
   - ``get_bus()`` — the singleton accessor.
@@ -59,8 +59,10 @@ def get_bus() -> RealtimeBus:
 
 
 def conversation_scope(conversation_id: UUID | str) -> str:
-    """Contract §E.3 "Scope": ``agents:bia:conv:<conversation_id>``."""
-    return f"agents:bia:conv:{conversation_id}"
+    """Contract §E.3 "Scope": ``agents:conv:<conversation_id>`` -- one scope shape for every agent's
+    conversation (agents-unified CONTRACT §5; was ``agents:bia:conv:`` -- the conversation id alone is unique,
+    and the publisher + SSE subscriber both build it here, so no client ever spells it)."""
+    return f"agents:conv:{conversation_id}"
 
 
 async def publish_event(

@@ -125,7 +125,7 @@ function NovoAgenteDialog({ open, onClose }: { open: boolean; onClose: () => voi
       const created = await create.mutateAsync({ key, nome: nome.trim(), descricao: descricao.trim() || undefined });
       toast.success(`Agente ${created.nome} criado com um rascunho v1.`);
       onClose();
-      navigate(`/studio/${encodeURIComponent(created.key)}`);
+      navigate(`/agentes/${encodeURIComponent(created.key)}`);
     } catch (err) {
       setErro(errorMessage(err));
     }
@@ -270,7 +270,7 @@ export default function StudioList() {
                 <tr key={a.id} className="border-b border-border last:border-0" data-testid={`studio-row-${a.key}`}>
                   <td className="px-4 py-3">
                     {a.definition_mode === "studio" ? (
-                      <Link to={`/studio/${encodeURIComponent(a.key)}`} className="font-medium text-primary hover:underline">
+                      <Link to={`/agentes/${encodeURIComponent(a.key)}`} className="font-medium text-primary hover:underline">
                         {a.nome}
                       </Link>
                     ) : (

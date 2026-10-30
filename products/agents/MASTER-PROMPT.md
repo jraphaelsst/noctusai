@@ -175,11 +175,23 @@ products/agents/backend/app/
 The Agents UI (Bia chat, inline approvals, persona, agent list with toggles) consumes the
 seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat components.
 
-`/agentes/catalogo` (`pages/AgentesCatalogo.tsx`, `hooks/useAgentesCatalogo.ts`; nav route `agentes-catalogo`, migration 040) shows one card per agent from `GET /api/agents/catalogo`: name, papel, runtime (Interno/Externo), public description, capability chips, with a papel filter. It renders display-level fields only; `ferramentas` / `versao_ativa` appear only when the server sends them (platform admins) and are never requested or inferred (owner IP rule, 2026-10-19).
+#### Every agent in the same house (`projects/agents-unified/CONTRACT.md`)
+
+`/agentes` (`pages/Agentes.tsx`, `GET /api/agents/painel`) is THE listing: one card per agent of the org (legacy,
+platform instance, org Studio agent), with papel / origin / state / capabilities from data, a papel filter, and the
+on/off switch only when the server sends `pode_alternar`. Every card opens ONE page, `/agentes/:key`
+(`pages/agente/AgentePage.tsx`): header from `GET /api/agents/{key}/painel`, section nav = `painel.secoes` (the
+sections THIS caller may open, decided server-side from origin + tier) titled by `GET /api/studio/modelo`, the section
+in `?tab=<id>`. Section ids are the former Studio tab ids, so the content renderers are the Studio tabs below; the
+renderer of `conversar` / `compilado` is chosen by the agent's origin, never its key. Agent internals
+(`/painel/interno`, the model's areas + wizard steps) answer 404 to anyone but a platform superadmin (D31).
+The former shells redirect, keeping the query: `/studio/:key`, `/agentes/:key/persona`, `/agentes/catalogo`, `/bia`.
+`/studio` stays as the create/import/delete console. `GET /api/agents/catalogo` (migration 040) still feeds the
+cards' papel / description / capabilities.
 
 #### Studio, tier-aware (Julia v2 — `frontend/src/pages/studio/`)
 
-Which tabs render is decided by the SERVER row, never by a role string: `definition_scope` on
+These tabs render as sections of `/agentes/:key` (above). Which tabs render is decided by the SERVER row, never by a role string: `definition_scope` on
 `/api/studio/agents[/{key}]` (`studioTier()` / `visibleTabsFor()` in `studioTabs.ts`).
 
 | Surface (`definition_scope`) | Who | Tabs |

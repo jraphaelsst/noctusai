@@ -46,7 +46,7 @@ describe("CriarAgentePlataformaDialog", () => {
     fireEvent.change(screen.getByTestId("criar-agente-key"), { target: { value: "Julia" } });
     fireEvent.click(screen.getByTestId("criar-agente-submit"));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/studio/plataforma/agents", { key: "julia", nome: "Júlia Vendas" }));
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/studio/julia"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/agentes/julia"));
     expect(spy).toHaveBeenCalledWith({ queryKey: studioKeys.list() });
   });
 
@@ -85,7 +85,7 @@ describe("CriarAgentePlataformaDialog · gerar com IA", () => {
         briefing: { nome: "Atendente Loja", objetivo: "Atender clientes da loja", publico: "Clientes", canal: "whatsapp", idioma: "pt-BR" },
       }),
     );
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/studio/atendente-loja"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/agentes/atendente-loja"));
   });
 
   it("blocks submit client-side when the briefing breaks the contract limits", async () => {

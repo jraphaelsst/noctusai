@@ -411,7 +411,7 @@ class TestSlotCapacityAndReleaseEveryPath:
         assert resp.status_code == 429, resp.text
         assert resp.json() == {
             "detail": (
-                "A Bia está atendendo o número máximo de conversas agora. "
+                "O agente Bia está atendendo o número máximo de conversas agora. "
                 "Tente novamente em instantes."
             ),
             "code": "bia_capacidade",

@@ -204,7 +204,7 @@ function LocationProbe() {
   return <output data-testid="location">{`${loc.pathname}${loc.search}`}</output>;
 }
 
-async function renderCompiledTab(initial = "/studio/estrategista?tab=compilado") {
+async function renderCompiledTab(initial = "/agentes/estrategista?tab=compilado") {
   const CompiledTab = (await import("@/pages/studio/tabs/CompiledTab")).default;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -212,7 +212,7 @@ async function renderCompiledTab(initial = "/studio/estrategista?tab=compilado")
       <MemoryRouter initialEntries={[initial]}>
         <Routes>
           <Route
-            path="/studio/:key"
+            path="/agentes/:key"
             element={
               <>
                 <CompiledTab agentKey="estrategista" />
@@ -276,7 +276,7 @@ describe("CompiledTab (inspector)", () => {
     const buttons = await screen.findAllByTestId("compiled-open-source");
     fireEvent.click(buttons[0]);
     await waitFor(() =>
-      expect(screen.getByTestId("location").textContent).toBe(`/studio/estrategista?tab=prompt&secao=${SEC_ID}&chave=identidade`),
+      expect(screen.getByTestId("location").textContent).toBe(`/agentes/estrategista?tab=prompt&secao=${SEC_ID}&chave=identidade`),
     );
   });
 
