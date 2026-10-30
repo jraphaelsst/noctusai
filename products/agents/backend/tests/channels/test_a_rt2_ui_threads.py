@@ -55,6 +55,7 @@ class TestChannelListResultado:
 
     def test_user_conversations_keep_both_fields_null(self, chan):
         chan.seed_agent()
+        chan.rt.stores.agents.seed_legacy_chat_agent(DEFAULT_ORG_ID)
         _usuario(chan, "owner")
         r = chan.rt.client.post("/api/conversations", json={"agent_key": "bia"})
         assert r.status_code in (200, 201), r.text

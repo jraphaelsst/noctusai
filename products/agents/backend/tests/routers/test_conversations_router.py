@@ -414,7 +414,7 @@ class TestSlotCapacityAndReleaseEveryPath:
                 "O agente Bia está atendendo o número máximo de conversas agora. "
                 "Tente novamente em instantes."
             ),
-            "code": "bia_capacidade",
+            "code": "agente_capacidade",
         }
         assert resp.headers["retry-after"] == "10"
 

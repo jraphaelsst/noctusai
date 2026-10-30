@@ -95,7 +95,7 @@ class TestWrites:
         [
             ("anthropic_api_key", "not-a-key"),
             ("academia_api_token", "tok_wrong"),
-            ("bia_agent_id", "not-a-uuid"),
+            ("academia_agent_id", "not-a-uuid"),
             ("anthropic_api_key", "   "),
         ],
     )
@@ -194,7 +194,7 @@ class TestRenew:
         assert row["scopes"] == list(SOCIAL_WIRING_API_TOKEN.scopes)
 
     @pytest.mark.asyncio
-    async def test_academia_renew_needs_bia_agent_id(self):
+    async def test_academia_renew_needs_academia_agent_id(self):
         kit = build_kit()
         with pytest.raises(CredentialError) as exc:
             await kit.service.renew("academia_api_token", actor_user_id=None, fallback_org_id=ORG_ID)
@@ -245,7 +245,7 @@ class TestRing:
 class TestExpiryAlerts:
     def test_alerts_for_expiring_expired_and_revoked(self):
         kit = build_kit(academia_api_token=OLD_ACADEMIA, social_wiring_api_token="pk_" + "c" * 64,
-                        bia_agent_id=str(BIA_ID))
+                        academia_agent_id=str(BIA_ID))
         seed_academia_token(kit, days_left=3)
         kit.admin.seed(
             "social_wiring", "pk_" + "c" * 64, org_id=ORG_ID,

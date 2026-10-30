@@ -82,9 +82,13 @@ class FatosAgente:
 
     @property
     def chat(self) -> bool:
-        """An in-app chat runtime: a legacy ``claude_sdk`` agent, or an org Studio runtime agent off-channel."""
+        """An in-app chat runtime: a legacy ``claude_sdk`` agent, an org Studio runtime agent off-channel, or an org
+        INSTANCE of a platform-defined ``claude_sdk`` agent off-channel (the academia agent after the Renata cutover:
+        its in-app chat carries the approval broker the academia write tools need)."""
         if self.origem == "legado":
             return self.runtime == "claude_sdk"
+        if self.origem == "instancia":
+            return self.kind == "runtime" and self.runtime == "claude_sdk" and not self.usa_canais
         return self.origem == "org" and self.kind == "runtime" and not self.usa_canais
 
 
@@ -134,7 +138,7 @@ def _area(id_secao: str, area: str, *, exige: tuple[str, ...] = (), titulo: str 
 #: ``linhas`` agent and the agent's own skills on a pre-v2 one).
 SECOES_PAGINA: tuple[SecaoPagina, ...] = (
     SecaoPagina("visao-geral", "Visão geral", "painel", "membro", ORIGENS),
-    SecaoPagina("conversar", "Conversar", "painel", "membro", ("legado", "org"), exige=("chat",)),
+    SecaoPagina("conversar", "Conversar", "painel", "membro", ("legado", "org", "instancia"), exige=("chat",)),
     SecaoPagina("persona", "Persona", "organizacao", "org_admin", ("legado",), exige=("chat",)),
     SecaoPagina("especificacoes-org", "Especificações da organização", "organizacao", "org_admin", ("instancia",)),
     SecaoPagina("controles", "Controles", "organizacao", "org_admin", ("instancia",)),

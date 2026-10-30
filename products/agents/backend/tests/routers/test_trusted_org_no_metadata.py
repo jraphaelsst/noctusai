@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from tests.routers.conftest import DEFAULT_ORG_ID, seed_org_role
+from tests.routers.conftest import DEFAULT_ORG_ID, seed_org_role, seed_pre_cutover_agents
 
 _PERSONA = {"nome": "Bia", "papel": "assistente", "model": "claude-sonnet-5", "effort": "medium"}
 _OTHER_ORG = UUID("22222222-2222-4222-8222-222222222222")
@@ -17,7 +17,7 @@ _OTHER_ORG = UUID("22222222-2222-4222-8222-222222222222")
 
 def test_owner_of_other_org_cannot_read_metadata_orgs_persona(agents_client):
     # Victim org (== the spoofed metadata org) has a published persona.
-    agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+    seed_pre_cutover_agents(agents_client.stores.agents)
     seed_org_role(agents_client, org_id=DEFAULT_ORG_ID, role="owner")
     assert agents_client.put("/api/agents/bia/persona", json=_PERSONA).status_code == 200
 
@@ -28,7 +28,7 @@ def test_owner_of_other_org_cannot_read_metadata_orgs_persona(agents_client):
 
 
 def test_owner_of_other_org_cannot_write_metadata_orgs_persona(agents_client):
-    agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+    seed_pre_cutover_agents(agents_client.stores.agents)
     seed_org_role(agents_client, org_id=_OTHER_ORG, role="owner")
     agents_client.put("/api/agents/bia/persona", json=_PERSONA)  # lands in _OTHER_ORG (or 4xx)
 

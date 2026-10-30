@@ -46,7 +46,7 @@ from app.credentials.registry import (
     ACADEMIA_API_TOKEN,
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
-    BIA_AGENT_ID,
+    ACADEMIA_AGENT_ID,
     SOCIAL_WIRING_API_TOKEN,
     CredentialSpec,
 )
@@ -149,6 +149,10 @@ def reset_for_testing() -> None:
     _handles.clear()
 
 
+#: The store key ``academia_agent_id`` had before the Renata cutover (053 renames the row).
+_LEGACY_ACADEMIA_AGENT_KEY = "bia_agent_id"
+
+
 class CredentialResolver:
     """Reads one credential at a time; never caches beyond the store's TTL."""
 
@@ -184,14 +188,18 @@ class CredentialResolver:
         key = self.approval_ring().signing_key(now or datetime.now(timezone.utc))
         return key.secret if key else None
 
-    def bia_agent_id(self) -> UUID | None:
-        raw = self.value(BIA_AGENT_ID)
+    def academia_agent_id(self) -> UUID | None:
+        raw = self.value(ACADEMIA_AGENT_ID)
+        if not raw:
+            # NOC-REMEDIATE[drop-bia-env-alias]: the pre-cutover store key, read until 053 (which renames it) has
+            # run everywhere — 2026-10-30.
+            raw = resolve_app_config_value(self._store, _LEGACY_ACADEMIA_AGENT_KEY, env_value=None)[0]
         if not raw:
             return None
         try:
             return UUID(raw)
         except ValueError:
-            logger.error("agents.bia_agent_id_malformed — ignoring the configured value")
+            logger.error("agents.academia_agent_id_malformed — ignoring the configured value")
             return None
 
 
@@ -216,7 +224,7 @@ def _missing_academia_keys(resolver: CredentialResolver) -> list[str]:
         for env, present in (
             ("APPROVAL_ASSERTION_SECRETS", bool(resolver.approval_signing_secret())),
             ("ACADEMIA_API_TOKEN", bool(resolver.academia_api_token())),
-            ("BIA_AGENT_ID", resolver.bia_agent_id() is not None),
+            ("ACADEMIA_AGENT_ID", resolver.academia_agent_id() is not None),
         )
         if not present
     ]

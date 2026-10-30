@@ -1,11 +1,11 @@
 /**
  * ConversarLegadoSecao.tsx (legacy agent "Conversar" section) tests — the controlled-selection wiring only (contract-free
- * UX seam, 2026-09-22). Stubs `@/hooks/useBiaChat`'s `useCreateConversation`
- * and `@/components/BiaChatWindow` so this asserts ONLY the page's own
+ * UX seam, 2026-09-22). Stubs `@/hooks/useLegacyChat`'s `useCreateConversation`
+ * and `@/components/LegacyChatWindow` so this asserts ONLY the page's own
  * logic: "Nova conversa" selects the conversation it just created. The
  * organ-level selection/rename mechanics live in the seed's own
  * `ChatWindow.test.tsx`; the adapter's optimistic rename lives in
- * `useBiaChat.test.ts`.
+ * `useLegacyChat.test.ts`.
  */
 import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
@@ -20,12 +20,12 @@ const AGENTE = {
   estado_externo: null, aviso: null, secoes: ["visao-geral", "conversar", "persona"], pode_alternar: true,
 };
 
-vi.mock("@/hooks/useBiaChat", () => ({
+vi.mock("@/hooks/useLegacyChat", () => ({
   useCreateConversation: () => ({ mutateAsync: mockMutateAsync }),
 }));
 
-vi.mock("@/components/BiaChatWindow", () => ({
-  BiaChatWindow: (props: { selectedThreadId?: string | null; onSelectThread?: (id: string | null) => void }) => (
+vi.mock("@/components/LegacyChatWindow", () => ({
+  LegacyChatWindow: (props: { selectedThreadId?: string | null; onSelectThread?: (id: string | null) => void }) => (
     <div
       data-testid="bia-chat-window"
       data-selected-thread-id={props.selectedThreadId ?? ""}

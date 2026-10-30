@@ -70,16 +70,24 @@ def build_studio_spec(
     definitions: Any,
     catalog: Any,
     persist: bool = True,
+    org_specs: dict[str, str] | None = None,
 ) -> AgentSpec:
     """The :class:`AgentSpec` for one studio turn (contract §E2).
 
-    ``agent`` is a ``StudioAgentRecord``; ``conversation`` anything with
+    ``agent`` is the row that OWNS the version: a ``StudioAgentRecord`` of the conversation's org, or -- for an org
+    INSTANCE of a platform-defined agent (agents-unified Renata cutover) -- the platform DEFINITION, with
+    ``org_specs`` = the instance org's spec values (the definition compiled FOR that org, like
+    ``app.studio.resolucao.compile_for_org``). Every version read, the compile and the proof-of-use row use the
+    owner's org (``agent.org_id``). ``conversation`` anything with
     ``org_id`` / ``version_id`` / ``client_id``. ``persist=False`` skips the
     ``compiled_prompts`` upsert — the eval runner's ephemeral turns judge a
     DRAFT, and a stored prompt referencing the draft would make it
     undiscardable (``draft_referenced``) for no proof-of-use benefit (the run
     itself records the judged ``compiled_hash``)."""
-    org_id = conversation.org_id
+    # The org that owns the version's rows: the conversation's org for an org agent, the platform org for an
+    # instance's definition.
+    org_id = agent.org_id
+    instancia = agent.org_id != conversation.org_id
     if conversation.version_id is None:
         raise StudioSpecError("no_active_version", "O agente não tem versão publicada.")
     version = definitions.get_version(org_id, conversation.version_id)
@@ -95,6 +103,9 @@ def build_studio_spec(
 
     client = None
     client_id = getattr(conversation, "client_id", None)
+    if client_id is not None and instancia:
+        # Client brains belong to an org's OWN Studio agent; an instance has none.
+        raise StudioSpecError("invalid_client", "Cliente inválido para este agente.")
     if client_id is not None:
         try:
             record = definitions.get_client(org_id, client_id)
@@ -106,13 +117,16 @@ def build_studio_spec(
             raise StudioSpecError("client_inactive", "O cliente desta conversa está desativado.")
         client = client_bundle(definitions, org_id, record)
 
-    compiled = compile_version(definitions, catalog, org_id, agent, version, client)
+    compiled = compile_version(definitions, catalog, org_id, agent, version, client, org_specs=org_specs)
     if len(compiled.texto) > MAX_COMPILED_PROMPT_CHARS:
         raise StudioSpecError(
             "prompt_too_large",
             f"O prompt compilado tem {len(compiled.texto)} caracteres; o máximo por turno é "
             f"{MAX_COMPILED_PROMPT_CHARS}.",
         )
+
+    ferramentas_grupo = _ferramentas_grupo(compiled)
+    exigir_executor_do_grupo(ferramentas_grupo, agent.runtime)
 
     if persist:
         # Write-once per (org, hash); an existing row is returned untouched.
@@ -146,4 +160,33 @@ def build_studio_spec(
         web_search=web_search,
         knowledge=knowledge,
         client_id=client_id,
+        ferramentas_grupo=ferramentas_grupo,
+        definicao_org_id=org_id,
     )
+
+
+def exigir_executor_do_grupo(ferramentas_grupo: tuple[tuple[str, str], ...], runtime: str) -> None:
+    """Tool groups run ONLY on the claude_sdk runtime, whose approval broker gates every write tool; the
+    provider-neutral runtime (``llm``) has no approval flow, so it is never handed one -- refused before anything
+    is persisted."""
+    if ferramentas_grupo and runtime != "claude_sdk":
+        raise StudioSpecError(
+            "ferramentas_exigem_claude_sdk",
+            "As ferramentas de grupo (ex.: academia) só rodam no executor claude_sdk, que pede aprovação humana "
+            "para toda escrita.",
+        )
+
+
+def _ferramentas_grupo(compiled: Any) -> tuple[tuple[str, str], ...]:
+    """The tool-group tools the version's ACTIVE ``ferramentas`` rows switch on, ``(name, description)`` in name
+    order. A legacy-content version (no rows) has none; a row without a description is not offered (same rule as
+    the channel toolset: there is no default description)."""
+    from app.studio.ferramentas_registry import grupo_de
+
+    conteudo = getattr(compiled, "conteudo", None)
+    if conteudo is None:
+        return ()
+    return tuple(sorted(
+        (f.ferramenta, f.descricao.strip()) for f in conteudo.ferramentas
+        if f.ativo and (f.descricao or "").strip() and grupo_de(f.ferramenta) is not None
+    ))

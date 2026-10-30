@@ -114,8 +114,8 @@ def agents_client(client):
     # doesn't care about turn behaviour still needs SOMETHING here. Both
     # are G2's REAL implementations (`app.runtime.fake_runtime.
     # FakeAgentRuntime` / `app.runtime.broker.StoreApprovalBroker`) —
-    # never a G1b-local stand-in. `get_build_bia_spec_dep` is NOT
-    # overridden: G2's real `build_bia_spec` reads two shipped files
+    # never a G1b-local stand-in. `get_build_legacy_chat_spec_dep` is NOT
+    # overridden: G2's real `build_legacy_chat_spec` reads two shipped files
     # (`BIA.md` / `spec.yaml`) and a persona row — no test double needed.
     #
     # `get_approval_broker(settings)` (the un-overridden factory) is a
@@ -152,6 +152,14 @@ def agents_client(client):
         tc.__exit__(None, None, None)
 
 
+def seed_pre_cutover_agents(store, org_id: UUID = DEFAULT_ORG_ID) -> None:
+    """The rows a pre-cutover org carries: the code-defined chat agent ``bia`` (no longer seeded by
+    ``ensure_default_agents`` since the Renata cutover, but still present in prod until the runbook retires it)
+    plus the seeded defaults."""
+    store.seed_legacy_chat_agent(org_id)
+    store.ensure_default_agents(org_id)
+
+
 def seed_org_role(client, *, user_id: UUID = DEFAULT_USER_ID, org_id: UUID = DEFAULT_ORG_ID, role: str = "owner") -> None:
     """Seed the ``noctus_users`` row ``resolve_org_role`` looks up."""
     # Studio definition reads are PLATFORM-ADMIN only (visibility tiers): an org owner/admin seeded
@@ -176,7 +184,7 @@ def bind_user(client, *, user_id: UUID = DEFAULT_USER_ID, org_id: UUID = DEFAULT
 def seed_active_agent_and_persona(agents_client, *, ativo: bool = True):
     """Bia, active, with a published persona — the minimum fixture every
     turn-loop / persona test needs."""
-    agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+    seed_pre_cutover_agents(agents_client.stores.agents)
     agent = agents_client.stores.agents.set_active(DEFAULT_ORG_ID, "bia", ativo)
     from app.stores.personas import PersonaInput
 

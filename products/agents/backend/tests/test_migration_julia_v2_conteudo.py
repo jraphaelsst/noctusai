@@ -66,7 +66,8 @@ def test_no_content_is_seeded_in_the_migration():
 def test_secdef_functions_revoke_execute_and_audit_actions_are_extended_once():
     for fn in ("guard_agent_definition_scope()", "copy_version_conteudo()", "replace_draft_conteudo(UUID, UUID, TEXT, JSONB)"):
         assert f"REVOKE ALL ON FUNCTION agents.{fn} FROM PUBLIC, anon, authenticated" in SQL
-    for acao in set(AUDIT_ACOES) - {"agente_excluido", "agente_criado", "agente_gerado"}:  # lifecycle actions arrive in 048 / 049
+    later = {"agente_excluido", "agente_criado", "agente_gerado", "historico_transferido", "agente_arquivado"}
+    for acao in set(AUDIT_ACOES) - later:  # lifecycle actions arrive in 048 / 049, the cutover ones in 053
         assert f"'{acao}'" in SQL
     assert "conversa_pausada" in SQL and "padrao_publicado" in SQL  # the contract §5.1 list, so siblings never redefine it
 

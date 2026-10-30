@@ -318,7 +318,7 @@ class TestWrapperUidRangeRefusal:
         assert result.returncode == 126, result.stderr
         assert "unreadable real uid" in result.stderr
 
-    def test_malformed_bia_cli_slots_is_refused(self, tmp_path):
+    def test_malformed_claude_cli_slots_is_refused(self, tmp_path):
         bindir = _fake_id_dir(tmp_path, "2000")
         result = _run(
             [str(_WRAPPER)],
@@ -327,7 +327,7 @@ class TestWrapperUidRangeRefusal:
         assert result.returncode == 126, result.stderr
         assert "BIA_CLI_SLOTS" in result.stderr
 
-    def test_custom_bia_cli_slots_widens_the_range(self, tmp_path):
+    def test_custom_claude_cli_slots_widens_the_range(self, tmp_path):
         # uid 2004 is outside the DEFAULT range (3 slots) but inside a
         # widened one (5 slots) — proving the bound is read from
         # BIA_CLI_SLOTS, not hardcoded to 3.

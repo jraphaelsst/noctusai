@@ -264,12 +264,12 @@ boot-time refusal — verify at first real use, not just `/api/health`):
 |---|---|---|
 | `JULIA_ANTHROPIC_API_KEY` 🔴 `deploy/fleet/.env.fleet`, NOT root `.env` — see callout above | agents (mapped to the container's `ANTHROPIC_API_KEY` in `docker-compose.prod.yml` — **never** the bare/shared `ANTHROPIC_API_KEY` dev-team reads, contract §E.5) | every Bia turn fails at the CLI-spawn step. |
 | `ACADEMIA_API_TOKEN` | agents only | agents' in-process MCP tool proxies can't authenticate to academia's API — Bia's academia-scoped tools 401. |
-| `BIA_AGENT_ID` | agents only | must equal `ACADEMIA_API_TOKEN`'s minted `principal_agent_id` exactly (contract §D step 5) — a mismatch fails every academia-side principal check, not just an empty-string default. |
+| `ACADEMIA_AGENT_ID` (deprecated name `BIA_AGENT_ID`, still read) | agents only | must equal `ACADEMIA_API_TOKEN`'s minted `principal_agent_id` exactly (contract §D step 5) — a mismatch fails every academia-side principal check, not just an empty-string default. |
 | `PRIMARY_SOURCE_ALLOWLIST` | academia-de-reciclagem only | comma-separated hostnames (contract §B.5 `POST /api/sources`); empty means every host triggers the AVISO warn-path, never a hard block. |
 
 **Managed from the UI since 2026-09-16 (Agentes → Credenciais e integrações).**
 `ANTHROPIC_API_KEY` (Bia), `ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`,
-`APPROVAL_ASSERTION_SECRETS` and `BIA_AGENT_ID` now resolve DB-first
+`APPROVAL_ASSERTION_SECRETS` and `ACADEMIA_AGENT_ID` now resolve DB-first
 (`agents.app_integration_config`, Fernet with the fleet `ENCRYPTION_KEY`),
 env-fallback. The `.env` values above stay as the bootstrap —
 `required_prod_config` still reads `APPROVAL_ASSERTION_SECRETS` and

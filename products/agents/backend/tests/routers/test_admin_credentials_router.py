@@ -60,13 +60,13 @@ def admin_client(agents_client, caplog):
         academia_api_token=OLD_ACADEMIA,
         anthropic_api_key=ANTHROPIC,
         approval_assertion_secrets="ring-secret-one,ring-secret-two",
-        bia_agent_id=str(BIA_ID),
+        academia_agent_id=str(BIA_ID),
     )
     runtime = RuntimeSettingsService(
         FakeRuntimeSettingsStore(),
-        type("S", (), {"approval_timeout_seconds": 300, "bia_max_turns": None,
+        type("S", (), {"approval_timeout_seconds": 300, "legacy_chat_max_turns": None,
                        "messages_rate_limit": "20/minute", "turn_timeout_seconds": 600,
-                       "bia_cli_slots": 3})(),
+                       "claude_cli_slots": 3})(),
         ttl_seconds=0,
     )
     app.dependency_overrides[get_credential_service_dep] = lambda: kit.service
@@ -192,7 +192,7 @@ class TestAgentSettings:
         items = {i["key"]: i for i in resp.json()["items"]}
         assert items["approval_timeout_seconds"]["value"] == 300
         assert items["max_turns"]["value"] == 40  # spec.yaml
-        assert items["bia_cli_slots"]["editable"] is False
+        assert items["claude_cli_slots"]["editable"] is False
 
     def test_update_then_reset(self, admin_client):
         _seed_user(admin_client, role="admin")
@@ -216,7 +216,7 @@ class TestAgentSettings:
             {"approval_timeout_seconds": 590},  # would outlive the turn deadline
             {"max_turns": 0},
             {"messages_rate_limit": "lots"},
-            {"bia_cli_slots": 5},  # read-only → unknown field
+            {"claude_cli_slots": 5},  # read-only → unknown field
         ],
     )
     def test_invalid_updates_422(self, admin_client, body):
@@ -240,9 +240,9 @@ class TestAgentSettingsJsonModeWrite:
         sb = admin_client.mock_supabase
         runtime = RuntimeSettingsService(
             SupabaseRuntimeSettingsStore(sb),
-            type("S", (), {"approval_timeout_seconds": 300, "bia_max_turns": None,
+            type("S", (), {"approval_timeout_seconds": 300, "legacy_chat_max_turns": None,
                            "messages_rate_limit": "20/minute", "turn_timeout_seconds": 600,
-                           "bia_cli_slots": 3})(),
+                           "claude_cli_slots": 3})(),
             ttl_seconds=0,
         )
         app.dependency_overrides[get_runtime_settings_service_dep] = lambda: runtime

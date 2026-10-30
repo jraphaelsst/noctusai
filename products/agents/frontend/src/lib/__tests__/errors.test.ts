@@ -83,20 +83,20 @@ describe("errorMessage — code-specific overrides (contract §E.2)", () => {
   });
 });
 
-describe("errorMessage — bia_capacidade (contract §E.11 Capacity)", () => {
-  it("429 bia_capacidade with a backend detail returns that detail verbatim", () => {
+describe("errorMessage — agente_capacidade (contract §E.11 Capacity)", () => {
+  it("429 agente_capacidade with a backend detail returns that detail verbatim", () => {
     const err = flatError(
       429,
       "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
-      "bia_capacidade",
+      "agente_capacidade",
     );
     expect(errorMessage(err)).toBe(
       "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
     );
   });
 
-  it("429 bia_capacidade with no usable detail falls back to the same contract text (never the rate-limit fallback)", () => {
-    const err = new ApiError(429, "Erro HTTP 429", { code: "bia_capacidade" });
+  it("429 agente_capacidade with no usable detail falls back to the same contract text (never the rate-limit fallback)", () => {
+    const err = new ApiError(429, "Erro HTTP 429", { code: "agente_capacidade" });
     expect(errorMessage(err)).toBe(
       "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
     );

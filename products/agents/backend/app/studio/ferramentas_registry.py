@@ -9,7 +9,69 @@ adds its name here in the same change.
 """
 from __future__ import annotations
 
-__all__ = ["FERRAMENTAS_CONHECIDAS", "FERRAMENTAS_DE_EXTRACAO", "ferramenta_conhecida", "ferramenta_da_conversa"]
+from app.runtime import gate
+
+__all__ = [
+    "FERRAMENTAS_CONHECIDAS",
+    "FERRAMENTAS_DE_EXTRACAO",
+    "GRUPOS_FERRAMENTAS",
+    "GrupoFerramentas",
+    "ferramenta_conhecida",
+    "ferramenta_da_conversa",
+    "grupo_de",
+    "nome_no_modelo",
+]
+
+
+class GrupoFerramentas:
+    """A content-configurable TOOL GROUP (agents-unified, Renata cutover S7): a set of tools served by one in-process
+    MCP server of the in-app chat runtime (``claude_sdk``), switched on per agent VERSION by its ``ferramentas`` rows.
+
+    A row's ``ferramenta`` is ``<grupo>_<nome>`` (the content pattern allows no separator but ``_``); the model sees
+    the tool under the server's own name ``mcp__<grupo>__<nome>``. The CLASS of each tool (read vs write) is the
+    group's gate table, never the row: a write tool always asks a human (the approval broker) before it runs, and a
+    group is never offered on a lead-facing channel turn (the channel toolset is ``app.channels.tool_registry.TOOLS``
+    only, guarded by a test)."""
+
+    def __init__(self, nome: str, leitura: tuple[str, ...], escrita: tuple[str, ...]) -> None:
+        self.nome = nome
+        prefixo = f"mcp__{nome}__"
+        self.leitura = tuple(n.removeprefix(prefixo) for n in leitura if n.startswith(prefixo))
+        self.escrita = tuple(n.removeprefix(prefixo) for n in escrita if n.startswith(prefixo))
+
+    @property
+    def ferramentas(self) -> frozenset[str]:
+        """The content names (``<grupo>_<nome>``) of every tool of the group."""
+        return frozenset(f"{self.nome}_{n}" for n in (*self.leitura, *self.escrita))
+
+    def nome_curto(self, ferramenta: str) -> str:
+        return ferramenta.removeprefix(f"{self.nome}_")
+
+    def nome_sdk(self, ferramenta: str) -> str:
+        return f"mcp__{self.nome}__{self.nome_curto(ferramenta)}"
+
+    def classe(self, ferramenta: str) -> str:
+        return "escrita" if self.nome_curto(ferramenta) in self.escrita else "leitura"
+
+
+#: The academia toolset (academia-de-reciclagem's HTTP API: KB, decisions, questions, timeline, roadmap, tasks,
+#: training content, research sources) -- the SAME gate table and handlers the code-defined academia agent used
+#: (``app.runtime.gate`` / ``app.runtime.tools``), so argument schemas, approvals and the signed assertion are one.
+GRUPOS_FERRAMENTAS: dict[str, GrupoFerramentas] = {
+    "academia": GrupoFerramentas("academia", gate.LEITURA, gate.ESCRITA),
+}
+
+
+def grupo_de(nome: str) -> GrupoFerramentas | None:
+    """The tool group a content tool name belongs to, else ``None`` (a channel / knowledge / extraction tool)."""
+    return next((g for g in GRUPOS_FERRAMENTAS.values() if nome in g.ferramentas), None)
+
+
+def nome_no_modelo(nome: str) -> str:
+    """The name the MODEL sees for a content tool: a group tool is ``mcp__<grupo>__<nome>``; any other is itself."""
+    grupo = grupo_de(nome)
+    return grupo.nome_sdk(nome) if grupo is not None else nome
+
 
 FERRAMENTAS_CONHECIDAS: frozenset[str] = frozenset({
     # Julia v2 channel toolset (CONTRACT §3.4) -- ``app.channels.tool_registry.TOOLS``. The pre-v2 tools
@@ -23,7 +85,7 @@ FERRAMENTAS_CONHECIDAS: frozenset[str] = frozenset({
     "kb_buscar", "kb_ler",
     # extraction tools (resumo / decisão) -- ``app.channels.extracao``
     "registrar_resumo", "registrar_escolha",
-})
+}) | frozenset().union(*(g.ferramentas for g in GRUPOS_FERRAMENTAS.values()))
 
 
 #: Tools of the two structured-extraction calls (``app.channels.extracao``: the episode summary and the transport

@@ -31,7 +31,7 @@ class CredentialOut(BaseModel):
     source: Literal["db", "env"] | None
     prefix: str | None = None
     fingerprint: str | None = None
-    value: str | None = None  # non-secret config only (bia_agent_id)
+    value: str | None = None  # non-secret config only (academia_agent_id)
     expires_at: datetime | None = None
     days_left: int | None = None
     last_used_at: datetime | None = None

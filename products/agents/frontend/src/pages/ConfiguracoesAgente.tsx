@@ -28,14 +28,14 @@ const INPUT_CLASS =
 const LABELS: Record<string, { label: string; help: string }> = {
   approval_timeout_seconds: {
     label: "Tempo limite de aprovação (segundos)",
-    help: "Uma aprovação sem resposta expira e a ação é negada. Ocupa um slot da Bia enquanto espera.",
+    help: "Uma aprovação sem resposta expira e a ação é negada. Ocupa um slot do executor enquanto espera.",
   },
-  max_turns: { label: "Máximo de turnos por resposta", help: "Limite de passos que a Bia executa em uma resposta." },
+  max_turns: { label: "Máximo de turnos por resposta", help: "Limite de passos que o agente de chat legado executa em uma resposta." },
   messages_rate_limit: {
     label: "Limite de mensagens por usuário",
     help: "Formato N/second|minute|hour|day, ex.: 20/minute.",
   },
-  bia_cli_slots: {
+  claude_cli_slots: {
     label: "Conversas simultâneas (slots)",
     help: "Estrutural — definido na imagem e no compose; muda apenas com um novo deploy.",
   },
@@ -119,10 +119,10 @@ export default function ConfiguracoesAgente() {
         <SlidersHorizontal className="h-6 w-6 text-primary" />
         <div>
           <h1 className="text-2xl font-bold text-foreground">Configurações do agente</h1>
-          <p className="text-sm text-muted-foreground">Parâmetros de execução da Bia. Valem sem novo deploy.</p>
+          <p className="text-sm text-muted-foreground">Parâmetros do executor claude_sdk e do chat legado. Valem sem novo deploy.</p>
         </div>
         <Link
-          to="/agentes/bia?tab=persona"
+          to="/agentes/bia/persona"
           className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
         >
           <Settings className="h-3.5 w-3.5" />
