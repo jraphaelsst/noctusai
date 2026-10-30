@@ -79,6 +79,7 @@ from .budget import (
     compute_status as compute_budget_status,
     configure_budget_module,
     enforce_budget,
+    enforce_credits,
     fetch_budget_brl,
     is_configured as is_budget_configured,
 )
@@ -87,6 +88,8 @@ from .exceptions import (
     ProviderQuotaExhausted,
     LLMBudgetExceeded,
     LLMBudgetNotConfigured,
+    LLMCreditsExhausted,
+    LLMCreditsUnverifiable,
     LLMNotConfigured,
     ProviderNotImplemented,
 )
@@ -175,6 +178,8 @@ __all__ = [
     "ProviderQuotaExhausted",
     "LLMBudgetExceeded",
     "LLMBudgetNotConfigured",
+    "LLMCreditsExhausted",
+    "LLMCreditsUnverifiable",
     "LLMNotConfigured",
     "ProviderNotImplemented",
     # Budget guardrails (Phase 18 X4)
@@ -182,6 +187,7 @@ __all__ = [
     "compute_budget_status",
     "configure_budget_module",
     "enforce_budget",
+    "enforce_credits",
     "fetch_budget_brl",
     "is_budget_configured",
     # Model catalog

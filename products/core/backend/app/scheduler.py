@@ -20,6 +20,9 @@ Jobs (America/Sao_Paulo):
 * `core_ptax_daily`               — 13:30 and 18:30 on weekdays. Stores the
   day's PTAX bulletin and prices every `fx_pending` cost/payment row.
 * `core_storage_cost_snapshot`    — 02:30 daily.
+* `core_credits_debit`            — every minute. Charges un-charged `ai_usage`
+  rows to their org's prepaid credit wallet (migration 093; idempotent per row,
+  BYOK orgs stamped 0). Orgs without a wallet are not touched.
 
 Every job body takes an optional context so tests run it on Fakes; errors
 are logged (a job must not take the scheduler down), never swallowed.
@@ -35,6 +38,7 @@ from app.config import settings
 from app.database import get_admin_client
 from app.services import billing_automations, fx_service, storage_cost_service
 from app.services.billing_context import BillingContext, build_billing_context
+from app.services.credits.debit import run_debit
 from app.services.webhook_retention_service import run_retention_sweep
 from app.services.audit_log_retention_service import (
     run_retention_sweep as run_audit_log_retention_sweep,
@@ -47,6 +51,7 @@ AUDIT_LOG_RETENTION_JOB = "core_audit_log_retention_sweep"
 BILLING_AUTOMATIONS_JOB = "core_billing_automations"
 PTAX_JOB = "core_ptax_daily"
 STORAGE_SNAPSHOT_JOB = "core_storage_cost_snapshot"
+CREDITS_DEBIT_JOB = "core_credits_debit"
 
 
 async def webhook_retention_sweep_job(db: Optional[Any] = None) -> dict:
@@ -108,6 +113,18 @@ async def storage_cost_snapshot_job(ctx: Optional[BillingContext] = None) -> dic
     return vars(report)
 
 
+async def credits_debit_job(ctx: Optional[BillingContext] = None) -> dict:
+    try:
+        report = run_debit(ctx or build_billing_context())
+    except Exception as exc:  # noqa: BLE001 — logged; the scheduler must keep running
+        logger.error("Credits debit failed: %s", exc)
+        return {"error": str(exc)}
+    result = report.as_dict()
+    if report.applied or report.errors:
+        logger.info("Credits debit: %s", result)
+    return result
+
+
 def configure() -> None:
     """Register every Core job (idempotent — re-registering replaces)."""
     register(
@@ -125,17 +142,20 @@ def configure() -> None:
     register(BILLING_AUTOMATIONS_JOB, billing_automations_job, cron="15 * * * *", misfire_grace_time=1800)
     register(PTAX_JOB, ptax_job, cron="30 13,18 * * 1-5", misfire_grace_time=3600)
     register(STORAGE_SNAPSHOT_JOB, storage_cost_snapshot_job, cron="30 2 * * *", misfire_grace_time=3600)
+    register(CREDITS_DEBIT_JOB, credits_debit_job, minutes=1, misfire_grace_time=30)
 
 
 __all__ = [
     "AUDIT_LOG_RETENTION_JOB",
     "BILLING_AUTOMATIONS_JOB",
+    "CREDITS_DEBIT_JOB",
     "PTAX_JOB",
     "STORAGE_SNAPSHOT_JOB",
     "WEBHOOK_RETENTION_JOB",
     "audit_log_retention_sweep_job",
     "billing_automations_job",
     "configure",
+    "credits_debit_job",
     "ptax_job",
     "start_scheduler",
     "stop_scheduler",

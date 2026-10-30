@@ -19,6 +19,7 @@ from noctusai_lib.integrations.llm.exceptions import LLMBudgetExceeded
 def _reset_module():
     """Reset module-level state + threshold env vars between tests."""
     configure_budget_module(admin_client_factory=None)
+    budget_module._reset_credit_state_for_tests()
     for key in ("LLM_BUDGET_SOFT_PCT", "LLM_BUDGET_HARD_PCT", "LLM_USD_TO_BRL"):
         os.environ.pop(key, None)
     yield
@@ -54,6 +55,16 @@ def _build_admin(*, settings_rows=None, usage_by_schema=None):
                 if _table_name == "org_settings":
                     assert name == "public", "budget storage is public.org_settings"
                     return org_settings_chain
+                if _table_name == "credit_wallets":
+                    # No prepaid wallet: these tests exercise the monthly budget only
+                    # (credits: tests/integrations/llm/test_credit_guard.py).
+                    assert name == "public", "credit wallets live in public.credit_wallets"
+                    w = MagicMock()
+                    w.select.return_value = w
+                    w.eq.return_value = w
+                    w.limit.return_value = w
+                    w.execute.return_value = MagicMock(data=[])
+                    return w
                 t = MagicMock()
                 t.select.return_value = t
                 t.eq.return_value = t
@@ -132,9 +143,15 @@ class TestMissingBudgetTable:
 
     @pytest.mark.asyncio
     async def test_transient_error_stays_fail_open(self):
+        # The monthly-budget leg stays fail-open on a transient error...
         configure_budget_module(admin_client_factory=self._admin_raising("connection reset"))
         assert await fetch_budget_brl("org-1") is None
-        await enforce_budget("org-1")
+        # ...but the same outage also hides the org's prepaid credit wallet, and an
+        # org never seen before may be prepaid: that leg refuses (fail-closed, core 093).
+        from noctusai_lib.integrations.llm.exceptions import LLMCreditsUnverifiable
+
+        with pytest.raises(LLMCreditsUnverifiable):
+            await enforce_budget("org-1")
 
 
 class TestFetchBudgetBrl:
@@ -292,13 +309,20 @@ class TestEnforceBudget:
         assert exc_info.value.status_code == 429
 
     @pytest.mark.asyncio
-    async def test_fails_open_on_db_error(self):
-        # Admin factory raises → enforce_budget swallows + logs.
+    async def test_db_down_for_an_unknown_org_is_refused_not_failed_open(self):
+        # Since the prepaid credit wallet (core 093) the guard cannot know whether an
+        # org it never read is prepaid — an unreadable wallet is refused (fail-closed),
+        # never served on an unknown balance. (The monthly budget alone stays fail-open:
+        # tests/integrations/llm/test_credit_guard.py covers a known non-prepaid org.)
+        from noctusai_lib.integrations.llm.exceptions import LLMCreditsUnverifiable
+
         def raising():
             raise RuntimeError("DB down")
 
         configure_budget_module(admin_client_factory=raising)
-        await enforce_budget("org-1")  # does not raise
+        with pytest.raises(LLMCreditsUnverifiable) as exc_info:
+            await enforce_budget("org-1")
+        assert exc_info.value.status_code == 503
 
 
 class TestLedgerBrl:

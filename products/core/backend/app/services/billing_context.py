@@ -20,6 +20,7 @@ from noctusai_lib.integrations.payments.protocol import PaymentGateway
 
 from app.config import Settings, settings as default_settings
 from app.database import get_admin_client
+from app.services.credits.ledger import CreditLedger, RpcCreditLedger
 from app.services.billing_config import (
     ASAAS_BASE_URLS,
     BillingConfig,
@@ -44,12 +45,21 @@ class BillingContext:
     inbox: EventInbox
     fx: FxRateAdapter
     clock: Clock = utc_now
+    #: AI credit wallet writer (migration 093). None = production `RpcCreditLedger(db)`;
+    #: tests pass `FakeCreditLedger(db)`.
+    credit_ledger: Optional[CreditLedger] = None
 
     def gateway(self, gateway: str, mode: str) -> PaymentGateway:
         return self.gateway_factory(gateway, mode)
 
     def checkout(self, gateway: str, mode: str) -> HostedCheckout:
         return self.checkout_factory(gateway, mode)
+
+    def credits(self) -> CreditLedger:
+        """The `CreditLedger` every credit movement goes through."""
+        if self.credit_ledger is None:
+            self.credit_ledger = RpcCreditLedger(self.db)
+        return self.credit_ledger
 
     def webhook_base_url(self) -> str:
         return (self.settings.public_api_base_url or self.settings.app_base_url).rstrip("/")

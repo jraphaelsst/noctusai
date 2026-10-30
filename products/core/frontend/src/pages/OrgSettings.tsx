@@ -110,6 +110,14 @@ export function OrgSettings() {
         <div className="mt-0.5 text-xs text-muted-foreground">Cores, fontes e logos da organização e dos seus produtos.</div>
       </button>
 
+      <button
+        onClick={() => navigate('/org-settings/creditos')}
+        className="mb-8 -mt-6 w-full rounded-lg border border-border bg-card px-4 py-3.5 text-left hover:bg-muted"
+      >
+        <strong className="text-sm text-foreground">Créditos e uso</strong>
+        <div className="mt-0.5 text-xs text-muted-foreground">Saldo de créditos de IA, consumo por produto e recarga.</div>
+      </button>
+
       {/* Existing settings */}
       {settings.length > 0 && (
         <div className="mb-8 space-y-2">

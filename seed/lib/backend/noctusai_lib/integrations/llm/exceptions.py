@@ -101,6 +101,50 @@ class LLMBudgetExceeded(AppException):
         )
 
 
+class LLMCreditsExhausted(AppException):
+    """The org's PREPAID AI credit wallet is at/below its overdraft floor.
+
+    Raised by `noctusai_lib.integrations.llm.budget.enforce_budget` BEFORE
+    provider dispatch (core migration 093, `public.credit_wallets`). HTTP 402
+    Payment Required: the org must buy credits (core `/creditos`). Orgs without
+    a wallet, `byok` and `postpaid_trusted` wallets are never refused.
+    """
+
+    def __init__(self, org_id: Optional[str], balance_credits: float, overdraft_limit_credits: float):
+        super().__init__(
+            code="LLM_CREDITS_EXHAUSTED",
+            message=(
+                "Créditos de IA esgotados para esta organização. "
+                "Recarregue em Créditos e uso para continuar usando a IA."
+            ),
+            status_code=402,
+            details={
+                "org_id": org_id,
+                "balance_credits": round(balance_credits, 6),
+                "overdraft_limit_credits": round(overdraft_limit_credits, 6),
+            },
+        )
+
+
+class LLMCreditsUnverifiable(AppException):
+    """The credit wallet of an org that is (or may be) PREPAID could not be read.
+
+    Fail CLOSED: a prepaid org's AI is never served on an unknown balance.
+    HTTP 503 — the guard is temporarily unable to verify, not "no credit".
+    """
+
+    def __init__(self, org_id: Optional[str], detail: str):
+        super().__init__(
+            code="LLM_CREDITS_UNVERIFIABLE",
+            message=(
+                "Não foi possível verificar o saldo de créditos de IA agora. "
+                "Tente novamente em instantes."
+            ),
+            status_code=503,
+            details={"org_id": org_id, "detail": detail[:300]},
+        )
+
+
 class LLMBudgetNotConfigured(AppException, IntegrationNotConfigured):
     """The budget guard cannot read its own storage (`public.org_settings`).
 
