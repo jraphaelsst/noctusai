@@ -24,6 +24,7 @@ cd products/core/frontend && npm run dev
 
 - Organization creation and management
 - Org brand identity (`/api/brand`, page `/org-settings/identidade`): one visual identity per org — colors, fonts, radius, logos, favicon, derived dark mode — applied to core and every product by the seed `BrandProvider`; NOC standard when unset; `.md`/`.pdf` design-system upload analyzed by Claude into a validated, versioned draft
+- Admin > Templates (`/api/admin/templates`, page `/admin/templates/*`, migration 092): DB-backed, versioned platform template library by kind (design system, agents/prompts, messages, documents, repo/workflow) and scope (platform or product); edit = new version, activate archives the previous; design-system templates seeded from the NOC standard tokens and validated with the brand-token rules; a read-only "Fontes" catalogue lists template-like assets that still live outside the DB. The filesystem scaffold browser moved to `/api/admin/template-scaffolds`
 - User authentication and session handling (one cross-tab-locked refresh, `refreshCoreSession`; inactivity expiry ends only core's session via `POST /api/auth/logout?scope=local`, the "Sair" button ends every session)
 - SSO token exchange for product access
 - Stripe billing and subscription management

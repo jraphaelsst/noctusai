@@ -31,6 +31,7 @@ from app.routers import admin_llm_spend as admin_llm_spend_router
 from app.routers import usage
 from app.routers import users
 from app.routers import templates
+from app.routers import platform_templates as platform_templates_router
 from app.routers import me_consents as me_consents_router
 from app.routers import fleet_control as fleet_control_router
 from app.routers import billing_admin as billing_admin_router
@@ -127,6 +128,7 @@ app = create_product_app(
         usage.router,
         users.router,
         templates.router,
+        platform_templates_router.router,
         me_consents_router.router,
         fleet_control_router.router,
         billing_admin_router.router,

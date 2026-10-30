@@ -1,8 +1,9 @@
 """
-Templates Router — List available project templates.
+Template scaffolds router — the filesystem project scaffolds under /templates (read-only browser).
+(The DB-backed, editable library lives in routers/platform_templates.py at /api/admin/templates.)
 
-GET /api/admin/templates         — List all templates
-GET /api/admin/templates/{name}  — Get template details (files, placeholders, README)
+GET /api/admin/template-scaffolds         — List all scaffolds
+GET /api/admin/template-scaffolds/{name}  — Scaffold details (files, placeholders, README)
 """
 import os
 import logging
@@ -13,7 +14,7 @@ from fastapi import APIRouter, Header, HTTPException
 from app.dependencies import get_current_admin
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/templates", tags=["Admin Templates"])
+router = APIRouter(prefix="/api/admin/template-scaffolds", tags=["Admin Template Scaffolds"])
 
 # Templates live at repo root /templates/
 TEMPLATES_DIR = Path(__file__).resolve().parents[4] / "templates"

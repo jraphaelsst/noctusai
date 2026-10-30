@@ -38,7 +38,7 @@ export function AdminTemplates() {
   async function fetchTemplates() {
     setLoading(true);
     try {
-      const res = await api.get('/api/admin/templates');
+      const res = await api.get('/api/admin/template-scaffolds');
       setTemplates(res.data || []);
     } catch {
       setTemplates([]);
@@ -50,7 +50,7 @@ export function AdminTemplates() {
   async function fetchDetail(name: string) {
     setLoadingDetail(true);
     try {
-      const res = await api.get(`/api/admin/templates/${name}`);
+      const res = await api.get(`/api/admin/template-scaffolds/${name}`);
       setSelected(res.data);
     } catch {
       setSelected(null);

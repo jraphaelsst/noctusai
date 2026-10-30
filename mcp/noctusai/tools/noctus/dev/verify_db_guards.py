@@ -5792,6 +5792,93 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry -- public.platform_templates (migration 092, admin > Templates).
+# Self-provisioning: every probe inserts its own throwaway rows inside the rollback-only wrapper
+# (a probe-only template key; nothing real is touched). (1) one version number per scope,
+# (2) at most one ACTIVE version per scope, (3) the append-only trigger: a non-draft version is
+# content-frozen and no row is ever deleted.
+# ---------------------------------------------------------------------------
+
+_PLATFORM_TEMPLATES_MIGRATIONS = ("092_platform_templates.sql",)
+
+
+def _platform_templates_probe(*, probe_id: str, guard_name: str, setup_sql: str, what: str, fragment: str, rationale: str) -> GuardProbe:
+    what_lit = _sql_lit(what)
+    fragment_lit = _sql_lit(fragment)
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=_PLATFORM_TEMPLATES_MIGRATIONS,
+        sql=_do_block(f"""
+BEGIN
+  IF to_regclass('public.platform_templates') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.platform_templates does not exist (migration 092 not applied)';
+  END IF;
+  BEGIN
+{setup_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded -- the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+        rationale=rationale,
+    )
+
+
+def _pt_insert(version: int, status: str) -> str:
+    return (
+        "    INSERT INTO public.platform_templates (kind, key, title, format, body, version, status)\n"
+        f"    VALUES ('message', 'noc-probe', 'probe', 'text', 'x', {version}, '{status}');"
+    )
+
+
+_PLATFORM_TEMPLATES_PROBES: tuple[GuardProbe, ...] = (
+    _platform_templates_probe(
+        probe_id="platform_templates.duplicate_version_refused",
+        guard_name="ux_platform_templates_version",
+        setup_sql=_pt_insert(1, "draft") + "\n" + _pt_insert(1, "draft"),
+        what="a second row with the same (product, kind, key, version)",
+        fragment="ux_platform_templates_version",
+        rationale="Version numbers are the audit trail of a template: two rows with the same number would make 'version N' ambiguous.",
+    ),
+    _platform_templates_probe(
+        probe_id="platform_templates.two_active_refused",
+        guard_name="ux_platform_templates_active",
+        setup_sql=_pt_insert(1, "active") + "\n" + _pt_insert(2, "active"),
+        what="two ACTIVE versions of the same template",
+        fragment="ux_platform_templates_active",
+        rationale="Consumers read THE active version; two would make the answer depend on row order.",
+    ),
+    _platform_templates_probe(
+        probe_id="platform_templates.frozen_body_refused",
+        guard_name="platform_templates_guard",
+        setup_sql=_pt_insert(1, "active") + "\n    UPDATE public.platform_templates SET body = 'tampered' WHERE key = 'noc-probe';",
+        what="editing the body of a non-draft version",
+        fragment="is frozen",
+        rationale="History is append-only: an edit is a NEW version, never a rewrite of one that was (or could have been) in use.",
+    ),
+    _platform_templates_probe(
+        probe_id="platform_templates.delete_refused",
+        guard_name="platform_templates_guard",
+        setup_sql=_pt_insert(1, "draft") + "\n    DELETE FROM public.platform_templates WHERE key = 'noc-probe';",
+        what="deleting a template version",
+        fragment="append-only",
+        rationale="Versions are archived, never deleted: the history must stay complete.",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — public.mfa_policy (migration 060, platform-admin-mfa).
 # (1) mode CHECK refuses an unknown mode; (2) the table is SERVICE-ROLE-ONLY:
 # `authenticated` (and `anon`) must not be able to write it — an admin who
@@ -10915,6 +11002,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_PLATFORM_TEMPLATES_PROBES,
     _SSO_PROMOTION_PROBE,
     *_MFA_POLICY_PROBES,
     *_SEED_ANON_LOCKDOWN_PROBES,

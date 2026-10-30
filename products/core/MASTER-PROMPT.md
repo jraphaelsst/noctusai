@@ -26,6 +26,7 @@ Central auth and administration hub for the NoctusAI multi-product SaaS platform
 - **team** -- invite members, manage org membership (uses noctusai_lib invitations)
 - **roles** -- 7-role hierarchy (owner, admin, manager, member, viewer, dev, test) with granular permissions
 - **brand** (`/api/brand`, migration 089) -- the org's visual identity, ONE per org, worn by core and every product of the selected org via the seed `BrandProvider`; falls back to the NOC standard (platform row, `org_id IS NULL`). Versioned drafts (`draft|active|archived|failed`), `.md`/`.pdf` ingestion through the seed LLM client (Sonnet 5.5) into `noctus.brand-tokens/v1` with deterministic validation (token keys derived from seed `tokens.css`, strict regexes, WCAG contrast in code, derived dark), activate/rollback via the service-role `brand_identity_activate`. `voice`/`brand_book`/`source` are server-only (column grant). Contract: `projects/org-brand-identity/CONTRACT.md`
+- **platform_templates** (`/api/admin/templates`, migration 092) -- platform-admin-only versioned template library (`design_system|agent|message|document|repo_workflow`, `product` NULL = platform-wide). Append-only history: a draft edits in place, editing an active/archived version spawns draft N+1; activation archives the previous active via the service-role `platform_template_activate`; non-draft rows are content-frozen by trigger. JSON bodies must parse to an object; `design_system` bodies are validated with the `noctus.brand-tokens/v1` rules (seed row = NOC standard tokens). Body cap 200k chars. `GET /meta` is the kind->scope nav tree, `GET /sources` the read-only "Fontes" catalogue (`app/services/platform_templates/sources.py`, path-existence tested). The filesystem scaffold browser lives at `/api/admin/template-scaffolds`
 
 ### Products and Licensing
 - **products** -- product registry, per-org product activation
@@ -71,7 +72,7 @@ audit, **audit_digest** (Phase 9 — weekly LLM narrative + multi-admin Resend f
 
 ## Frontend Pages
 
-AcceptInvite, AccountSettings, BillingSettings, BrandIdentity (`/org-settings/identidade` — Identidade visual: preview, upload, draft editor, activate, history), CheckoutCancel, CheckoutSuccess, Dashboard, Login, Onboarding, OrgSettings, Pricing, TeamManagement, admin/
+AcceptInvite, AccountSettings, BillingSettings, BrandIdentity (`/org-settings/identidade` — Identidade visual: preview, upload, draft editor, activate, history), CheckoutCancel, CheckoutSuccess, Dashboard, Login, Onboarding, OrgSettings, Pricing, TeamManagement, admin/ (incl. TemplatesAdmin at `/admin/templates/*`: kind->scope nav, editor with versions, Fontes)
 
 ## Development Guidelines
 
