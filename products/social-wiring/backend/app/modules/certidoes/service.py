@@ -4969,13 +4969,35 @@ def renderizar_transcricao_pdf(nome_display: str, texto: str, formatacao_json) -
 # (`_LeituraCrednetArmazenada`), independently of whichever dataclass wrote
 # it.
 #
-# NOC-REMEDIATE[crednet-lgpd-delete-cascade] — 2026-09-24. An LGPD delete of
-# the Crednet `cliente_documentos` row FK-nulls `certidao_resultados.
-# fonte_cliente_documento_id` (migration 167's `ON DELETE SET NULL`), but
-# `arquivo_url` — a verbatim copy of the SAME now-gone storage path (§C5:
-# "same bucket") — is left dangling, pointing at an object that no longer
-# exists. Owner decision H5: deferred, not fixed in this slice. Destination:
-# `project-history/roadmaps/sw-drive-extraction-2026-09.md` P1.
+# LGPD delete of a Crednet `cliente_documentos` row. The document is
+# SOFT-deleted (`deleted_at`), so migration 167's `ON DELETE SET NULL` FK never
+# fires; and `arquivo_url` is a verbatim copy of the SAME storage path (§C5:
+# "same bucket"). `desvincular_arquivo_crednet` — called by
+# `card_hub.documentos_service.delete_documento` BEFORE the delete — clears
+# the file reference (`arquivo_url`/`arquivo_nome`) and the provenance pointer
+# on every resultado that borrowed the document, so none is left pointing at
+# an object that is about to be gone. The reading itself (`resultado`,
+# `numero`, `emitida_em`) is kept: it is the consulta's outcome, not the file.
+
+
+def desvincular_arquivo_crednet(db, org_id, documento_id) -> int:
+    """Null the borrowed file reference on every `certidao_resultados` row
+    whose `fonte_cliente_documento_id` is `documento_id`. Returns the count."""
+    rows = (
+        db.table(RESULTADOS)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("fonte_cliente_documento_id", str(documento_id))
+        .execute()
+    ).data or []
+    for row in rows:
+        db.table(RESULTADOS).update({
+            "arquivo_url": None,
+            "arquivo_nome": None,
+            "fonte_cliente_documento_id": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", row["id"]).execute()
+    return len(rows)
 
 
 @dataclass(frozen=True)

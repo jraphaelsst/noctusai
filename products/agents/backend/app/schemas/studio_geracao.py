@@ -27,14 +27,15 @@ LIMITE_USD_PADRAO = 5.0
 
 
 class Briefing(StrictHttpModel):
-    nome: str = Field(..., min_length=1, max_length=80)
-    objetivo: str = Field(..., min_length=10, max_length=600)
-    publico: str = Field(..., min_length=3, max_length=300)
-    canal: Canal
-    idioma: str = Field(default="pt-BR", min_length=2, max_length=20)
-    tom_de_voz: str | None = Field(default=None, max_length=300)
-    limites: str | None = Field(default=None, max_length=1000)
-    exemplos: str | None = Field(default=None, max_length=4000)
+    # ``title`` = the pt-BR label forms show (`app.studio.modelo` serves it as ``rotulo``).
+    nome: str = Field(..., min_length=1, max_length=80, title="Nome")
+    objetivo: str = Field(..., min_length=10, max_length=600, title="Objetivo")
+    publico: str = Field(..., min_length=3, max_length=300, title="Público atendido")
+    canal: Canal = Field(..., title="Canal principal")
+    idioma: str = Field(default="pt-BR", min_length=2, max_length=20, title="Idioma")
+    tom_de_voz: str | None = Field(default=None, max_length=300, title="Tom de voz")
+    limites: str | None = Field(default=None, max_length=1000, title="Limites")
+    exemplos: str | None = Field(default=None, max_length=4000, title="Exemplos")
 
 
 class GeracaoCreateRequest(StrictHttpModel):

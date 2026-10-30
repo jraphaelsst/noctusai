@@ -1,6 +1,6 @@
 /**
  * Import bundle dialog — Agent Studio CONTRACT.md §D5, §F. Shared by
- * `StudioList` (admin "Importar pacote" — the target agent is whatever
+ * the `/agentes` listing (admin "Importar pacote" — the target agent is whatever
  * `bundle.agente.key` says, may create a brand-new studio agent) and the
  * Overview tab (import into THIS agent — a bundle for a different key is
  * refused client-side before any request is sent).
@@ -47,7 +47,7 @@ function parseBundle(raw: string): { bundle: ImportBundlePreview } | { error: st
 export interface ImportBundleDialogProps {
   /** Set on the Overview tab (import into THIS agent) — a bundle whose
    * `agente.key` differs is refused before any request. Omitted on
-   * `/studio` (StudioList), where the target key comes from the bundle. */
+   * the `/agentes` listing, where the target key comes from the bundle. */
   expectedAgentKey?: string;
   onClose: () => void;
   /** Called once a non-dry-run import succeeds, with the imported agent's key. */
@@ -164,7 +164,7 @@ export function ImportBundleDialog({ expectedAgentKey, onClose, onImported }: Im
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
             <span>
               Este pacote é do agente <strong>{bundle.agente.key}</strong>, mas você está importando para{" "}
-              <strong>{expectedAgentKey}</strong>. Abra o Agent Studio deste agente pela lista (<code>/studio</code>) ou
+              <strong>{expectedAgentKey}</strong>. Abra a página deste agente pela lista de Agentes ou
               escolha o pacote correto.
             </span>
           </div>

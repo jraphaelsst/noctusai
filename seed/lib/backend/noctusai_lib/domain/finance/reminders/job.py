@@ -26,7 +26,7 @@ def register_billing_reminders(
     scheduler: Any = None,
     job_id: str = JOB_ID,
 ) -> str:
-    """Register the daily job (America/Sao_Paulo wall clock, default 12:00). Call before `start_scheduler()`.
+    """Register the daily job (platform wall clock — `NOCTUS_TIMEZONE`, default America/Sao_Paulo — default 12:00). Call before `start_scheduler()`.
 
     `get_db` is called PER RUN. The job logs and swallows every exception: a failed tick must neither crash the
     scheduler nor de-register the job -- per-send failures are on the log rows and retried by later ticks.

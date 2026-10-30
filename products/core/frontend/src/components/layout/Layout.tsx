@@ -25,6 +25,7 @@ import {
   GitBranch,
   Search,
   Coins,
+  Activity,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { CoreHeader } from './CoreHeader';
@@ -46,6 +47,7 @@ export const NAV_GROUPS: NavGroup[] = [
           { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
           { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
           { name: 'Digest de auditoria', href: '/admin/audit-digest', icon: FileText },
+          { name: 'Operação', href: '/admin/operacao', icon: Activity },
           { name: 'Fleet Control', href: '/admin/fleet', icon: Zap },
         ],
       },

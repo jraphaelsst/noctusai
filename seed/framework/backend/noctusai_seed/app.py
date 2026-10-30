@@ -347,6 +347,23 @@ def create_product_app(
             (lambda: db.get_core_client()) if _audit_trail_enabled else None
         )
 
+    # 3b. Scheduler run ledger (2026-10-29) — every job registered on the seed
+    #     scheduler reports each run to core's `public.scheduler_runs` (and its
+    #     schedule to `public.scheduler_jobs` at start), and a failed run alerts
+    #     the platform admins (deduped 6h). Zero per-product code. Under pytest
+    #     the Fake keeps runs in memory (same posture as the audit sink above);
+    #     the late-binding lambda mirrors it too.
+    #     → noctusai_lib.domain.scheduler_runs
+    from noctusai_lib.api import scheduler as _seed_scheduler
+    from noctusai_lib.api.audit import running_under_pytest as _under_pytest
+    from noctusai_lib.domain.scheduler_runs import FakeRunLedger, make_run_ledger
+
+    _seed_scheduler.set_run_observer(
+        FakeRunLedger(_product_slug)
+        if _under_pytest()
+        else make_run_ledger(_product_slug, lambda: db.get_core_client())
+    )
+
     # 4. Auto-wire LLM access. Products inherit platform defaults unless they
     #    override via the llm_config parameter. `REDIS_URL` flips the
     #    response cache on. Usage: EVERY product writes the central D25 ledger

@@ -359,3 +359,8 @@ export * from './quotes';
 // ERP dashboard (composition over the finance / inventory / purchasing / contracts / quotes hooks; organ-optional tiles,
 // no backend of its own). Roadmap project-history/roadmaps/erp-seed-2026-10.md (W5). Names are Erp*-prefixed.
 export * from './erp-dashboard';
+
+// ─── Journey wizard organ ────────────────────────────────────────────────────
+// Categorized multi-step journey (steps, subtabs, progress, skip, a11y).
+export { JourneyWizard } from './journey';
+export type { JourneyWizardProps, JourneyStep, JourneySubtab, JourneyContext } from './journey';

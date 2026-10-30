@@ -1,0 +1,33 @@
+name: JourneyWizard
+kind: component
+path: seed/lib/frontend/src/journey/JourneyWizard.tsx
+phase: agent-creation-wizard-wave-1
+registered_at: "2026-10-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Steps carry {id,title,category,description?,content|(ctx)=>node,subtabs?,validate?,optional?}; the left rail groups consecutive steps by category."
+  - "validate() returning false or a string blocks Continue and forward rail jumps and renders the message in role=alert; backward moves are never blocked."
+  - "Optional steps expose a one-click Skip; onComplete receives {completed, skipped} step ids."
+  - "Controlled (currentStepId + onStepChange) or uncontrolled (initialStepId)."
+  - "Progress bar is role=progressbar with aria-valuenow; rail is role=tablist with arrow/Home/End keys."
+  - "Animations are CSS-only (tailwind transition/animate-in) and dropped when prefers-reduced-motion matches; no animation dependency added."
+  - "Design-system tokens only (bg-primary, bg-muted, text-success...), so BrandProvider CSS vars re-skin it."
+
+errors_encountered: []
+drifts_surfaced:
+  - "@noctusai/lib has no /design-system subpath export; the organ is exported from the root index and the new ./journey subpath."
+
+alternatives_considered:
+  - "Extending an existing stepper: find_reusable_component returned none."
+  - "framer-motion: not in seed/lib/frontend/package.json, so CSS only."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

@@ -74,8 +74,8 @@ export default function SkillsBiblioteca() {
 
   return (
     <div className="space-y-4" data-testid="skills-biblioteca">
-      <Link to="/studio" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-3.5 w-3.5" /> Agent Studio
+      <Link to="/agentes" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-3.5 w-3.5" /> Agentes
       </Link>
       <div className="flex flex-wrap items-center gap-3">
         <div>

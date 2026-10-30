@@ -903,7 +903,7 @@ def mount_finance_reminders(
 
     `get_ports() -> ReminderPorts` is the host's named seam (channels, contact resolver, optional veto): ONE object feeds
     both the preview route and the daily job, so "what would go out today" is exactly what the job sends. The returned
-    organ's `register_jobs` registers the daily `finance_billing_reminders` job (America/Sao_Paulo wall clock, `hour`:00)."""
+    organ's `register_jobs` registers the daily `finance_billing_reminders` job (platform wall clock, `NOCTUS_TIMEZONE`, `hour`:00)."""
     from noctusai_lib.domain.finance import FinanceConfig, FinanceContext
     from noctusai_lib.domain.finance.reminders import make_finance_reminders_router, register_billing_reminders
 

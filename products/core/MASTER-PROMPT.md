@@ -56,6 +56,7 @@ Central auth and administration hub for the NoctusAI multi-product SaaS platform
 - **audit_logs** -- compliance audit trail
 - **audit_digest** -- C2 weekly audit-log narrative digest (ai-expansion Phase 9). `POST /api/admin/audit-digest/{org_id}` aggregates the past `period_days` (default 7) of `audit_logs`, asks the LLM for a 3-paragraph PT narrative, and fans out via `noctusai_lib.email.digest.send_digest` to every `noctus_users.role='admin'` recipient. `GET .../preview` returns the rendered body without sending. Service: `app/services/audit_digest_service.py`. Rendering inline (no Jinja — same as metas digest).
 - **usage** -- usage tracking per org/product
+- **operations** -- `/api/admin/operations` (platform admin only): `GET routines` (per-product jobs from `public.scheduler_jobs` + last run/24h counts from `public.scheduler_runs`, missing runs computed from the published cron/interval, brief dead-man), `GET runs`, `GET models` (seed catalog), `GET costs` (LLM spend yesterday via the existing usage aggregation + `cost_ledger` per org), `GET/POST briefs`. Services: `operations_service.py`, `owner_brief_service.py`. Jobs (`app/scheduler.py`): `core_owner_daily_brief` 07:00 platform tz (code-only, no LLM; in-app to platform admins + e-mail to `settings.website_leads_notify_email`) and `core_scheduler_runs_retention`. The run ledger itself is seed-wide (`noctusai_lib.domain.scheduler_runs`, installed by `create_product_app`). Page: `/admin/operacao`.
 
 ### Communication
 - **notifications** -- `public.notifications` table, platform-wide notification delivery
@@ -83,7 +84,7 @@ audit, **audit_digest** (Phase 9 — weekly LLM narrative + multi-admin Resend f
 
 ## Frontend Pages
 
-AcceptInvite, AccountSettings, BillingSettings, BrandIdentity (`/org-settings/identidade` — Identidade visual: preview, upload, draft editor, activate, history), CheckoutCancel, CheckoutSuccess, Dashboard, Login, Onboarding, OrgSettings, Pricing, TeamManagement, admin/ (incl. AdminCreditos `/admin/creditos` — wallets, grant dialog, margin report, pricing editor; CreditosUso `/org-settings/creditos` — Créditos e uso: balance, usage, buy credits; TemplatesAdmin at `/admin/templates/*`: kind->scope nav, editor with versions, Fontes)
+AcceptInvite, AccountSettings, BillingSettings, BrandIdentity (`/org-settings/identidade` — Identidade visual: preview, upload, draft editor, activate, history), CheckoutCancel, CheckoutSuccess, Dashboard, admin/AdminOperacao (`/admin/operacao/*` — Rotinas, Saúde, Modelos de IA, Custos, Brief), Login, Onboarding, OrgSettings, Pricing, TeamManagement, admin/ (incl. AdminCreditos `/admin/creditos` — wallets, grant dialog, margin report, pricing editor; CreditosUso `/org-settings/creditos` — Créditos e uso: balance, usage, buy credits; TemplatesAdmin at `/admin/templates/*`: kind->scope nav, editor with versions, Fontes)
 
 ## Development Guidelines
 

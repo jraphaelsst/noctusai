@@ -16,9 +16,11 @@ absorption surfaced by Wave C's project-end sweep).
 """
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Callable, Iterator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _real_now_utc() -> datetime:
@@ -84,6 +86,40 @@ def current_day_ref() -> str:
     place that wants "today's date as a sortable string in UTC".
     """
     return _now_provider().strftime("%Y-%m-%d")
+
+
+#: Env var naming the platform's wall-clock timezone (IANA name). One setting for
+#: every "what time is it HERE" decision the platform makes on its own — the
+#: scheduler's cron triggers above all. Per-org data (a finance org's reminder
+#: timezone, a clinic's agenda timezone) keeps its own column; this is the
+#: PLATFORM clock, not a tenant's.
+PLATFORM_TIMEZONE_ENV = "NOCTUS_TIMEZONE"
+
+#: The platform clock when `NOCTUS_TIMEZONE` is unset — the operator is in Brazil.
+DEFAULT_PLATFORM_TIMEZONE = "America/Sao_Paulo"
+
+
+def platform_timezone_name() -> str:
+    """The platform timezone (IANA name): `NOCTUS_TIMEZONE`, default
+    `America/Sao_Paulo`.
+
+    Read at call time (never cached) so a test or a deploy can set it without
+    a re-import. An unknown zone name RAISES `ValueError` — a typo must fail
+    the boot loudly, never silently run every cron in UTC.
+    """
+    name = (os.environ.get(PLATFORM_TIMEZONE_ENV) or "").strip() or DEFAULT_PLATFORM_TIMEZONE
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"{PLATFORM_TIMEZONE_ENV}={name!r} is not a known IANA timezone"
+        ) from exc
+    return name
+
+
+def platform_tz() -> ZoneInfo:
+    """`ZoneInfo` for `platform_timezone_name()`."""
+    return ZoneInfo(platform_timezone_name())
 
 
 @contextmanager

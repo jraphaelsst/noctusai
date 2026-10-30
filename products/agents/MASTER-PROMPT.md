@@ -175,11 +175,48 @@ products/agents/backend/app/
 The Agents UI (Bia chat, inline approvals, persona, agent list with toggles) consumes the
 seed `ChatWindow` organ and `useRealtimeStream`. It adds no local chat components.
 
-`/agentes/catalogo` (`pages/AgentesCatalogo.tsx`, `hooks/useAgentesCatalogo.ts`; nav route `agentes-catalogo`, migration 040) shows one card per agent from `GET /api/agents/catalogo`: name, papel, runtime (Interno/Externo), public description, capability chips, with a papel filter. It renders display-level fields only; `ferramentas` / `versao_ativa` appear only when the server sends them (platform admins) and are never requested or inferred (owner IP rule, 2026-10-19).
+#### Every agent in the same house (`projects/agents-unified/CONTRACT.md`)
+
+`/agentes` (`pages/Agentes.tsx`, `GET /api/agents/painel`) is THE listing: one card per agent of the org (legacy,
+platform instance, org Studio agent), with papel / origin / state / capabilities from data, a papel filter, and the
+on/off switch only when the server sends `pode_alternar`. Every card opens ONE page, `/agentes/:key`
+(`pages/agente/AgentePage.tsx`): header from `GET /api/agents/{key}/painel`, section nav = `painel.secoes` (the
+sections THIS caller may open, decided server-side from origin + tier) titled by `GET /api/studio/modelo`, the section
+in `?tab=<id>`. Section ids are the former Studio tab ids, so the content renderers are the Studio tabs below; the
+renderer of `conversar` / `compilado` is chosen by the agent's origin, never its key. Agent internals
+(`/painel/interno`, the model's areas + wizard steps) answer 404 to anyone but a platform superadmin (D31).
+The former shells redirect, keeping the query: `/studio/:key`, `/agentes/:key/persona`, `/agentes/catalogo`, `/bia`.
+`/studio` redirects to `/agentes`: the former console's actions live on the listing — "Novo agente" (platform
+admins, from `modelo.tier`) opens the wizard, "Importar pacote" (org admins), and for platform admins the skills
+library link, a per-card "Excluir" (type-the-key confirm; not on legacy / external agents) and the MCP content-token
+card. `GET /api/agents/catalogo` (migration 040) still feeds the cards' papel / description / capabilities.
+Migration 052 drops the orphan `studio` status_pagina row (same cleanup as 051).
+
+#### New-agent wizard (`/agentes/novo` — `pages/agente/NovoAgente.tsx`, CONTRACT §6)
+
+Platform admins only: the page reads `GET /api/studio/modelo` and renders the standard not-found when the caller's
+tier is not `plataforma` (or `assistente` is null / the read is 403). The journey is the seed `JourneyWizard` organ
+(`@noctusai/lib/journey`) over `modelo.assistente.passos` — steps, order, categories and each step's fields come from
+the model; field widgets, required flags, limits (`min_length`, `max_length`, `pattern`, `minimo_exclusivo`,
+`maximo`), options and defaults (`padrao`) come from each `CampoModelo` (`lib/assistente.ts` holds only pt-BR
+fallback labels, hints and option names plus three create-body facts the schema cannot express: a new key needs `nome`, `limite_usd` only matters
+with a briefing, `briefing.nome` = the agent's name). A step mixing `plataforma` and `briefing` fields splits into
+subtabs. Two start modes: "Começar vazio" (definition only, briefing fields hidden) or "Gerar com IA" (the briefing
+is sent and the server writes the first DRAFT, capped at the model's `limite_usd.maximo` = US$ 5, shown on screen).
+Answers live in a localStorage draft (`agents:novo-agente:rascunho:v1`, try/catch, a refused write is said on
+screen) with the seed `UnsavedChangesNotice` until "Publicar"; "Revisão" summarises them with per-step edit.
+"Publicar" re-validates every step (jumps to the first invalid one), POSTs the §6 body to
+`POST /api/studio/plataforma/agents` via `useCreatePlatformAgent` (cache-writes: the new card is committed into
+`["agents","painel"]` and `["agents","painel",key]`, plus the Studio list), then opens `/agentes/:key`. Creating
+makes a draft; publishing a version is the eval-gated `POST /draft/publish`, never the wizard. An existing key is
+refused by the route (409 `agente_ja_existe` unless the body sends `reutilizar: true` — only the MCP `criar_agente`
+does, to stay idempotent); the wizard catches it, returns to the step that owns the key and shows the refusal on the
+field. Field labels are the models' pt-BR `title=` (`Briefing`, `PlataformaAgentCreateRequest`, served as `rotulo`);
+the FE table is only a fallback.
 
 #### Studio, tier-aware (Julia v2 — `frontend/src/pages/studio/`)
 
-Which tabs render is decided by the SERVER row, never by a role string: `definition_scope` on
+These tabs render as sections of `/agentes/:key` (above). Which tabs render is decided by the SERVER row, never by a role string: `definition_scope` on
 `/api/studio/agents[/{key}]` (`studioTier()` / `visibleTabsFor()` in `studioTabs.ts`).
 
 | Surface (`definition_scope`) | Who | Tabs |

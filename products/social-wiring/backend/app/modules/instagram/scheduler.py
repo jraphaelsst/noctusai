@@ -1,8 +1,8 @@
 """Instagram module scheduler — the daily catalog + snapshot job.
 
 Registers ``instagram_daily_snapshot`` on the seed scheduler at cron
-``30 5 * * *`` (05:30 BRT — 30 min after ``youtube_daily_snapshot`` so the
-two daily walks don't contend for the same worker minute). Walks every
+``5 6,18 * * *`` (06:05 and 18:05 America/Sao_Paulo — 5 min after
+``youtube_daily_snapshot`` so the two walks don't contend for the same worker minute). Walks every
 ``integration_accounts`` row with ``provider='instagram'`` and
 ``status='validated'`` and runs :class:`IgSyncService` per account; one bad
 account is logged and the walk continues (never silent, never fatal).
@@ -24,7 +24,7 @@ from app.dependencies import get_admin_client
 logger = logging.getLogger(__name__)
 
 JOB_NAME = "instagram_daily_snapshot"
-JOB_CRON = "30 5 * * *"
+JOB_CRON = "5 6,18 * * *"
 
 
 def run_daily_sync(repo: Any = None, adapter_builder: Any = None) -> dict[str, int]:
