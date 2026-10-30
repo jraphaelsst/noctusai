@@ -38,6 +38,8 @@ from app.routers import website_public as website_public_router
 from app.routers import website_admin as website_admin_router
 from app.routers.website_html import website_html_middleware
 from app.routers import transcriptions as transcriptions_router
+from app.routers import brand as brand_router
+from app.services.brand.wiring import start_brand_worker, stop_brand_worker
 from app.services.transcription_api.errors import TranscricaoErro, transcricao_erro_handler
 from app.services.transcription_api.wiring import (
     start_transcription_worker,
@@ -50,15 +52,21 @@ configure_scheduler()
 async def _lifespan_startup() -> None:
     try:
         start_scheduler()
-    finally:  # one failing hook must not keep the other from starting
-        await start_transcription_worker()
+    finally:  # one failing hook must not keep the others from starting
+        try:
+            await start_transcription_worker()
+        finally:
+            await start_brand_worker()
 
 
 async def _lifespan_shutdown() -> None:
     try:
-        await stop_transcription_worker()
+        await stop_brand_worker()
     finally:
-        stop_scheduler()
+        try:
+            await stop_transcription_worker()
+        finally:
+            stop_scheduler()
 
 
 # NOC's own books (platform finances) -- the seed finance organ in the `public` schema (`fin_*` tables),
@@ -83,6 +91,10 @@ app = create_product_app(
     lifespan_shutdown=_lifespan_shutdown,
     max_body_path_overrides={
         "/api/transcriptions": transcriptions_router.BODY_LIMIT_BYTES,  # file cap + multipart slack
+        # brand ingest (25 MB batch) + single asset (10 MB) — literal keys: the
+        # upload-route keeper reads them statically; test_brand_router asserts parity.
+        "/api/brand/identities/ingest": brand_router.BODY_LIMITS["/api/brand/identities/ingest"],
+        "/api/brand/identities/*/assets": brand_router.BODY_LIMITS["/api/brand/identities/*/assets"],
     },
     standard_routers=["health", "notificacoes", "ai_feedback", "status_paginas"],
     consent_features="app.services.ai_consent_features",
@@ -121,6 +133,7 @@ app = create_product_app(
         website_public_router.router,
         website_admin_router.router,
         transcriptions_router.router,
+        brand_router.router,
     ],
 )
 
