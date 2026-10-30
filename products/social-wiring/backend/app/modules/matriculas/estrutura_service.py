@@ -313,11 +313,7 @@ def purgar_texto_expirado(client: Any, org_id: UUID) -> int:
     transcription existed and was purged, same posture `documento_store.
     DocumentoStore.varrer_expirados` takes with a soft-deleted document.
 
-    NOC-REMEDIATE[retention-sweep-scheduler]: not wired to a scheduled job —
-    same as `documento_store.DocumentoStore.varrer_expirados` (imovel) and
-    `card_hub.financiamento_service.varrer_retencao` (atendimento) today. All
-    three read the same policy table; wiring one is wiring the pattern, not a
-    one-surface fix. — 2026-09-14
+    Scheduled daily by `app.services.retention_sweep_scheduler` (03:40).
     """
     # Filtered on `texto_extraido` in PYTHON, not via `.not_.is_()` — the same
     # caution `certidoes.service._get_tjsp_last_request_at` documents:

@@ -84,9 +84,9 @@ def configure() -> None:
     seed_scheduler.register(
         "meta_ig_snapshot_daily",
         daily_ig_snapshot_job,
-        cron="0 6 * * *",  # 06:00 America/Sao_Paulo daily
+        cron="15 6,18 * * *",  # 06:15 and 18:15 America/Sao_Paulo
     )
-    logger.info("meta ig snapshot scheduler configured: daily at 06:00")
+    logger.info("meta ig snapshot scheduler configured: at 06:15 and 18:15")
 
 
 __all__ = ["configure", "daily_ig_snapshot_job"]
