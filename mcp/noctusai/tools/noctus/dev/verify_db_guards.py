@@ -11196,7 +11196,7 @@ _CORE_BRAND_PROBES: tuple[GuardProbe, ...] = (
     GuardProbe(
         id="org_brand_identities.tokens.schema_check",
         product="core", schema="public", guard_name="org_brand_identities_tokens_schema",
-        kind="write_refusal", migrations=("089_org_brand_identities.sql",),
+        kind="write_refusal", migrations=("089_org_brand_identities.sql", "094_brand_tokens_schema_not_null.sql"),
         rationale=(
             "Every stored identity carries a noctus.brand-tokens/v1 document; a row "
             "with another (or no) schema would reach BrandProvider unvalidated."
