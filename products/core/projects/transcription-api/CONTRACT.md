@@ -65,9 +65,9 @@ Minutes from failures **we** caused (worker crash, timeout, unavailable) are ref
 
 **Kill switch:** `transcricao_api_habilitada` in `platform_settings` (DB first, env fallback), ships **false**. False → submit 503 `transcricao_desativada`; the worker loop leaves `na_fila` jobs untouched.
 
-**Timeouts:** worker call timeout `3×duracao + 60 s`; a job not finished `3×duracao + 1 h` after `iniciado_em` (or 6 h after `criado_em` if never started) is marked `falhou` by the sweep and refunded.
+**Timeouts:** the worker call has no read timeout since 2026-10-30 (only connect is bounded); a job not finished `3×duracao + 1 h` after `iniciado_em` (or 6 h after `criado_em` if never started) is marked `falhou` by the sweep and refunded.
 
-**Worker cap dependency:** the worker's in-process hard cap is `min(1800, 3×duracao)` s. A 45-min file needs up to 8100 s. Slice E raises the worker cap to `min(9000, 3×duracao)` (seed `integrations/transcription/server/`, coordinated with noctusai-76) **before** the 45-min limit is enabled; until then core enforces `duracao ≤ 10 min` (`TRANSCRIPTION_API_MAX_S` env, default 600).
+**Worker cap dependency:** none since 2026-10-30. The worker has no in-process wall-clock cap (owner: "whatever length, we shall read it"; the old `min(9000, 3×duracao)` deadline, earlier `min(1800, …)`, is gone) and enforces a length limit only when the caller passes `max_seconds` — core passes its own (`TRANSCRIPTION_API_MAX_S`, default 600). The sweep above is core's own backstop for a job that never finishes.
 
 ## 4 · Data (slice A — one core migration, number scaffolded at integrate)
 
