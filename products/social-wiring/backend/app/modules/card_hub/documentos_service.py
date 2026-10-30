@@ -192,6 +192,11 @@ async def delete_documento(
     motivo: str,
     usuario_id: Optional[UUID],
 ) -> None:
+    # A Crednet upload's stored file may also back a certidão `serasa`
+    # resultado (`arquivo_url`); drop that reference before the document goes.
+    from app.modules.certidoes.service import desvincular_arquivo_crednet
+
+    desvincular_arquivo_crednet(client, org_id, documento_id)
     await seed_docs.delete_documento(
         card_hub_config(), client, storage, org_id, cliente_id, documento_id,
         motivo=motivo, usuario_id=usuario_id,

@@ -1,9 +1,10 @@
 """Meta Ads console module scheduler — daily sync job (W2.4).
 
 Registers one job on the seed-side scheduler:
-  - ``meta_ads_daily_sync``: cron ``0 6 * * *`` (one hour after the
-    YouTube snapshot job's ``0 5 * * *`` slot, avoiding contention on
-    the same admin-client connection pool at the same minute).
+  - ``meta_ads_daily_sync``: cron ``10 6,18 * * *`` (06:10 and 18:10
+    America/Sao_Paulo — staggered after the YouTube ``0 6,18`` and Instagram
+    ``5 6,18`` snapshot slots, avoiding contention on the same admin-client
+    connection pool at the same minute).
     Skips entirely (logged once, not per-org) when
     ``settings.meta_ad_account_id`` / ``settings.meta_system_user_token``
     are not configured — the operator-actionable "not wired yet" state,
@@ -255,7 +256,7 @@ def configure() -> None:
     same pattern as ``youtube``/``email_marketing``. Idempotent.
 
     TWO jobs, deliberately on different cadences:
-      - ``meta_ads_daily_sync`` (06:00) — the ads console + the lead-sync
+      - ``meta_ads_daily_sync`` (06:10 and 18:10) — the ads console + the lead-sync
         correctness backstop. Daily is right: ``sync_all`` makes ~70
         rate-limit-paced Graph calls.
       - ``meta_leadgen_retry`` (every 15m) — drains the webhook inbox. Cheap
@@ -265,7 +266,7 @@ def configure() -> None:
     seed_scheduler.register(
         "meta_ads_daily_sync",
         meta_ads_daily_sync_job,
-        cron="0 6 * * *",
+        cron="10 6,18 * * *",
     )
     seed_scheduler.register(
         "meta_leadgen_retry",
@@ -273,7 +274,7 @@ def configure() -> None:
         cron="*/15 * * * *",
     )
     logger.info(
-        "meta_ads scheduler configured: daily sync '0 6 * * *', "
+        "meta_ads scheduler configured: sync '10 6,18 * * *', "
         "leadgen inbox retry '*/15 * * * *'"
     )
 
