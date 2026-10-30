@@ -20,7 +20,6 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 from noctusai_lib.integrations.transcription.server.engine import (
-    EngineTimeout,
     TranscriptionEngine,
 )
 from noctusai_lib.integrations.transcription.server.media import (
@@ -32,16 +31,11 @@ from noctusai_lib.integrations.transcription.server.media import (
 
 log = logging.getLogger("noctus.transcriber")
 
-# Wall-clock ceiling for ONE transcription: 3x real time, never more than 2.5 h.
-# 9000 s covers the platform API's 45-min max (3 x 2700 s = 8100 s) with headroom
-# (transcription-api CONTRACT §3, slice E). Products enforce their own lower caps.
-MAX_HARD_S = 9000.0
-# Floor for SHORT clips: Whisper pads every chunk to a 30 s window, so a 4 s voice
-# note costs about one full window (~25 s at the measured RTF 0.83 on the 1-core
-# VPS). A pure 3x-duration cap (11.5 s for 3.8 s) killed every chat voice note
-# (2026-10-29: two 504s in a row on a 3.8 s note).
-MIN_HARD_S = 60.0
-DEFAULT_MAX_SECONDS = 600.0
+# No wall-clock kill and no default length limit (owner, 2026-10-30: "remove the cap —
+# whatever length, we shall read it"). A 3x-duration deadline killed every chat voice
+# note on the 1-core VPS (2026-10-29/30: 504s on a 3.8 s note, first at cap 11.5 s, then
+# at a 60 s floor on a cold worker). A caller that wants a length limit passes
+# `max_seconds`; a slow transcription is never cut off here.
 MIN_SECONDS = 1.0
 DAILY_BACKSTOP_MIN = 600.0
 # Platform ceiling, not a product cap: core's transcription API accepts up to 150 MB;
@@ -49,11 +43,6 @@ DAILY_BACKSTOP_MIN = 600.0
 # BEFORE calling this internal-only worker. Small slack for multipart framing.
 MAX_UPLOAD_BYTES = 150 * 1024 * 1024 + 1024
 PROBE_CONCURRENCY = 2
-
-
-def hard_cap_s(duracao_s: float) -> float:
-    """In-process kill deadline for one transcription: `min(MAX_HARD_S, max(MIN_HARD_S, 3 * duracao))` s."""
-    return min(MAX_HARD_S, max(MIN_HARD_S, 3.0 * duracao_s))
 PROBE_TIMEOUT_S = 5.0
 RETRY_AFTER_S = "15"
 
@@ -167,7 +156,7 @@ def create_app(
     async def transcribe(
         request: Request,
         language: str = Query("pt"),
-        max_seconds: float = Query(DEFAULT_MAX_SECONDS, gt=0),
+        max_seconds: Optional[float] = Query(None, gt=0),
     ):
         if not _authorized(request):
             return _err(401, "nao_autorizado", "token invalido")
@@ -185,27 +174,20 @@ def create_app(
             started = time.monotonic()
             try:
                 # decode up to max_seconds + 1 so an over-long file is detectable
-                audio = await decode_fn(body, max_seconds=max_seconds + 1.0)
+                limit = max_seconds + 1.0 if max_seconds is not None else None
+                audio = await decode_fn(body, max_seconds=limit)
             except MediaError as exc:
                 return _err(422, "audio_corrompido", str(exc))
             duracao = len(audio) / SAMPLE_RATE
             if duracao < MIN_SECONDS:
                 return _err(422, "audio_vazio", "audio muito curto")
-            if duracao > max_seconds:
+            if max_seconds is not None and duracao > max_seconds:
                 return _err(422, "duracao_excedida", "audio excede a duracao maxima")
             minutes = duracao / 60.0
             if daily.would_exceed(minutes):
                 return _err(503, "capacidade_diaria", "capacidade diaria esgotada",
                             {"Retry-After": "3600"})
-            cap = hard_cap_s(duracao)
-            deadline = time.monotonic() + cap
-            try:
-                result: Any = await asyncio.to_thread(
-                    engine.transcribe, audio, language=language, deadline=deadline
-                )
-            except EngineTimeout:
-                log.warning("transcribe hard cap hit: duracao_s=%.1f cap_s=%.1f", duracao, cap)
-                return _err(504, "tempo_excedido", "transcricao excedeu o tempo maximo")
+            result: Any = await asyncio.to_thread(engine.transcribe, audio, language=language)
             daily.add(minutes)
             wall = time.monotonic() - started
             # never log transcript text or audio

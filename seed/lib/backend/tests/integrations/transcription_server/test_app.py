@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from noctusai_lib.integrations.transcription.server import app as app_mod
 from noctusai_lib.integrations.transcription.server.app import create_app
 from noctusai_lib.integrations.transcription.server.media import ProbeInfo
-from noctusai_lib.integrations.transcription.server.engine import EngineResult, EngineTimeout
+from noctusai_lib.integrations.transcription.server.engine import EngineResult
 
 TOKEN = "s3cret-token"
 H = {"X-Transcriber-Token": TOKEN}
@@ -21,12 +21,10 @@ H = {"X-Transcriber-Token": TOKEN}
 class FakeEngine:
     model_name = "fake-model"
 
-    def __init__(self, loaded: bool = True, delay: float = 0.0, timeout: bool = False,
-                 loadable: bool = True) -> None:
+    def __init__(self, loaded: bool = True, delay: float = 0.0, loadable: bool = True) -> None:
         self._loaded = loaded
         self._loadable = loadable
         self.delay = delay
-        self.timeout = timeout
         self.calls: list[dict] = []
         self.entered = threading.Event()
 
@@ -38,19 +36,20 @@ class FakeEngine:
         if self._loadable:
             self._loaded = True
 
-    def transcribe(self, audio, *, language, deadline):
+    def transcribe(self, audio, *, language):
         self.entered.set()
-        self.calls.append({"n": len(audio), "language": language, "deadline": deadline})
+        self.calls.append({"n": len(audio), "language": language})
         if self.delay:
             time.sleep(self.delay)
-        if self.timeout:
-            raise EngineTimeout()
         return EngineResult(text="ola mundo", segmentos=[{"inicio": 0, "fim": 1, "texto": "ola mundo"}])
 
 
-def _pcm_decoder(seconds: float):
-    async def fake(audio: bytes, *, max_seconds: float, timeout: float = 120.0):
-        return np.zeros(int(16000 * min(seconds, max_seconds)), dtype=np.float32)
+def _pcm_decoder(seconds: float, seen: list | None = None):
+    async def fake(audio: bytes, *, max_seconds, timeout: float = 120.0):
+        if seen is not None:
+            seen.append(max_seconds)
+        n = seconds if max_seconds is None else min(seconds, max_seconds)
+        return np.zeros(int(16000 * n), dtype=np.float32)
 
     return fake
 
@@ -121,7 +120,6 @@ def test_transcribe_ok(client, engine):
     assert body["modelo"] == "fake-model"
     assert body["duracao_s"] == pytest.approx(5.0)
     assert "rtf" in body
-    # hard cap = min(MAX_HARD_S, 3 x dur)
     assert engine.calls[0]["language"] == "pt"
 
 
@@ -145,27 +143,17 @@ def test_empty_body_422(client):
     assert r.json()["codigo"] == "audio_vazio"
 
 
-def test_engine_timeout_maps_to_504():
-    with TestClient(_app(FakeEngine(timeout=True), seconds=5.0)) as c:
-        r = c.post("/v1/transcribe", content=b"a", headers=H)
-    assert r.status_code == 504
-    assert r.json()["codigo"] == "tempo_excedido"
-
-
-def test_deadline_has_a_one_window_floor_for_short_audio():
-    eng = FakeEngine()
-    with TestClient(_app(eng, seconds=5.0)) as c:
-        t0 = time.monotonic()
-        c.post("/v1/transcribe", content=b"a", headers=H)
-    assert 59.0 < eng.calls[0]["deadline"] - t0 < 61.5  # MIN_HARD_S, not 3 x 5 s
-
-
-def test_deadline_is_3x_duration_past_the_floor():
-    eng = FakeEngine()
-    with TestClient(_app(eng, seconds=40.0)) as c:
-        t0 = time.monotonic()
-        c.post("/v1/transcribe", content=b"a", headers=H)
-    assert 119.0 < eng.calls[0]["deadline"] - t0 < 121.5  # 3 x 40 s
+def test_no_max_seconds_reads_the_whole_audio_and_never_cuts_it_off():
+    # Owner, 2026-10-30: any length is read. A 2-hour note decodes uncapped and a
+    # slow engine still answers 200 (no wall-clock 504 any more).
+    eng, seen = FakeEngine(delay=0.3), []
+    app = create_app(eng, token=TOKEN, load_in_background=False, daily_limit_min=1e9,
+                     decode_fn=_pcm_decoder(7200.0, seen))
+    with TestClient(app) as c:
+        r = c.post("/v1/transcribe?language=pt", content=b"a", headers=H)
+    assert r.status_code == 200
+    assert seen == [None]
+    assert r.json()["duracao_s"] == pytest.approx(7200.0)
 
 
 def test_busy_503_with_retry_after():
@@ -216,15 +204,6 @@ def test_probe_corrupt_422(engine):
         r = c.post("/v1/probe", content=b"a", headers=H)
     assert r.status_code == 422
     assert r.json()["codigo"] == "audio_corrompido"
-
-
-def test_hard_cap_allows_the_platform_45_min_max_and_stays_bounded():
-    # Pure function: no 45-min PCM buffer is allocated to test the ceiling.
-    # A short clip still gets a full 30 s Whisper window's worth of time.
-    assert app_mod.hard_cap_s(3.8) == app_mod.MIN_HARD_S == 60.0
-    assert app_mod.hard_cap_s(30.0) == 90.0
-    assert app_mod.hard_cap_s(2700.0) == 8100.0
-    assert app_mod.hard_cap_s(10_000.0) == app_mod.MAX_HARD_S
 
 
 def test_upload_cap_admits_platform_size_and_still_refuses_above_it(client):

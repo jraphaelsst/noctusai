@@ -25,7 +25,7 @@ class OpenAIWhisperTranscriber:
         raise ProbeNotSupported("openai backend cannot probe audio duration")
 
     async def transcribe(
-        self, audio: bytes, *, language: str = "pt", max_seconds: float
+        self, audio: bytes, *, language: str = "pt", max_seconds: Optional[float] = None
     ) -> TranscriptResult:
         # Imported here, not at module top: the LLM stack pulls every provider SDK
         # (anthropic, openai, …). The self-hosted transcriber image imports this

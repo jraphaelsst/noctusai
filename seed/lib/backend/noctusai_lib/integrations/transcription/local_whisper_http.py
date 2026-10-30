@@ -2,7 +2,7 @@
 
 Worker HTTP contract (see transcription-contract.md §1/§2):
 - `POST /v1/probe`      body = raw audio -> 200 AudioProbe JSON
-- `POST /v1/transcribe?language=pt&max_seconds=N` body = raw audio
+- `POST /v1/transcribe?language=pt[&max_seconds=N]` body = raw audio (no N = any length)
   -> 200 TranscriptResult JSON
 - header `X-Transcriber-Token` on every call
 - 503 `{"codigo":"ocupado"}` + `Retry-After` -> TranscriberBusy
@@ -24,14 +24,11 @@ from noctusai_lib.integrations.transcription.types import (
 )
 
 PROBE_TIMEOUT_S = 15.0
-# Matches the worker's MAX_HARD_S (9000 s) — a client that gives up before the
-# worker would abandon a job the worker is still allowed to finish.
-MAX_TIMEOUT_S = 9000.0
-
-
-def transcribe_timeout(duracao_s: float) -> float:
-    """`min(MAX_TIMEOUT_S, 3*duracao + 60)` seconds (worker cap + 60 s of slack)."""
-    return min(MAX_TIMEOUT_S, 3.0 * duracao_s + 60.0)
+# Transcription has no read deadline: the worker never cuts a job off (owner,
+# 2026-10-30 — "whatever length, we shall read it"), so neither does its client.
+# Only connecting is bounded, so a down worker still fails fast.
+CONNECT_TIMEOUT_S = 10.0
+TRANSCRIBE_TIMEOUT = httpx.Timeout(None, connect=CONNECT_TIMEOUT_S)
 
 
 class LocalWhisperTranscriber:
@@ -52,7 +49,9 @@ class LocalWhisperTranscriber:
             "Content-Type": "application/octet-stream",
         }
 
-    async def _post(self, path: str, audio: bytes, *, timeout: float, params=None) -> dict:
+    async def _post(
+        self, path: str, audio: bytes, *, timeout: float | httpx.Timeout, params=None
+    ) -> dict:
         url = f"{self._base_url}{path}"
         try:
             if self._client is not None:
@@ -105,13 +104,14 @@ class LocalWhisperTranscriber:
             raise TranscriberUnavailable(f"malformed probe response: {exc}") from exc
 
     async def transcribe(
-        self, audio: bytes, *, language: str = "pt", max_seconds: float
+        self, audio: bytes, *, language: str = "pt", max_seconds: Optional[float] = None
     ) -> TranscriptResult:
         data = await self._post(
             "/v1/transcribe",
             audio,
-            timeout=transcribe_timeout(max_seconds),
-            params={"language": language, "max_seconds": max_seconds},
+            timeout=TRANSCRIBE_TIMEOUT,
+            params={"language": language}
+            | ({"max_seconds": max_seconds} if max_seconds is not None else {}),
         )
         try:
             return TranscriptResult(

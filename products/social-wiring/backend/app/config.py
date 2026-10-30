@@ -88,7 +88,7 @@ class SocialWiringSettings(ProductSettings):
     # ─── OpenAI (legacy key; embeddings / photo editing / certidoes still read it) ─
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4o-mini"
-    # (media transcription / vision moved off OpenAI 2026-10-29: see media_vision_model / media_audio_max_seconds.)
+    # (media transcription / vision moved off OpenAI 2026-10-29: see media_vision_model; voice notes go to the self-hosted Whisper with no length limit.)
     whatsapp_chatbot_enabled: bool = True
 
     # Fernet key for refresh-token-at-rest encryption. Generate with:
@@ -263,8 +263,6 @@ class SocialWiringSettings(ProductSettings):
     # Image / PDF reading for WhatsApp + One Chat attachments (media_service). Sonnet reads images; Haiku
     # (`chatbot_llm_model`) handles the text-only summaries. Both must be priced in the seed catalog.
     media_vision_model: str = "claude-sonnet-5"
-    # Longest voice note the operator / chat path sends to the self-hosted Whisper (the fleet's measured limit).
-    media_audio_max_seconds: float = 600.0
     # Optional listing-page URL template. ``{code}`` is substituted with
     # the property's ONE code (e.g. ``ONE7360``) when composing
     # post-upload notifications + the WhatsApp completion message.

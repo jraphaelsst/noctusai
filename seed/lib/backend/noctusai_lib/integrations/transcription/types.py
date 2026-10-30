@@ -68,8 +68,8 @@ class Transcriber(Protocol):
         ...
 
     async def transcribe(
-        self, audio: bytes, *, language: str = "pt", max_seconds: float
+        self, audio: bytes, *, language: str = "pt", max_seconds: Optional[float] = None
     ) -> TranscriptResult:
-        """Transcribe `audio`. Raises `TranscriberBusy`,
+        """Transcribe `audio`; `max_seconds=None` means no length limit. Raises `TranscriberBusy`,
         `TranscriptionRejected` or `TranscriberUnavailable`."""
         ...

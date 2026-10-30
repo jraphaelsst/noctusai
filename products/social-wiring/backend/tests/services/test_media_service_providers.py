@@ -20,7 +20,7 @@ class ScriptedTranscriber:
     async def probe(self, audio):  # pragma: no cover - not used here
         raise NotImplementedError
 
-    async def transcribe(self, audio, *, language="pt", max_seconds):
+    async def transcribe(self, audio, *, language="pt", max_seconds=None):
         self.calls.append({"language": language, "max_seconds": max_seconds, "n": len(audio)})
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
@@ -40,11 +40,11 @@ def make(**kw) -> MediaService:
 
 
 class TestAudio:
-    async def test_transcribes_with_language_and_the_configured_cap(self):
+    async def test_transcribes_in_portuguese_with_no_length_limit(self):
         t = ScriptedTranscriber("  ola mundo ")
-        svc = make(transcriber_factory=lambda: t, audio_max_seconds=600)
+        svc = make(transcriber_factory=lambda: t)
         assert await svc.transcribe_audio(b"abc") == "ola mundo"
-        assert t.calls == [{"language": "pt", "max_seconds": 600, "n": 3}]
+        assert t.calls == [{"language": "pt", "max_seconds": None, "n": 3}]
 
     async def test_a_busy_engine_is_retried_once_honouring_retry_after_capped(self):
         t = ScriptedTranscriber(TranscriberBusy(retry_after_s=999), "depois de esperar")

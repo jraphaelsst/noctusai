@@ -20,7 +20,6 @@ from noctusai_lib.integrations.transcription import (
     sniff_container,
 )
 from noctusai_lib.integrations.transcription import validation as v
-from noctusai_lib.integrations.transcription.local_whisper_http import transcribe_timeout
 from noctusai_lib.integrations.transcription.types import ProbeNotSupported
 
 
@@ -159,9 +158,16 @@ def test_http_error_mapping():
         run(_client(slow).transcribe(b"a", max_seconds=10))
 
 
-def test_timeout_formula():
-    assert transcribe_timeout(10) == 90
-    assert transcribe_timeout(600) == 1860
-    # 45-min platform max must fit (old 1800 s ceiling abandoned anything > ~10 min)
-    assert transcribe_timeout(2700) == 8160
-    assert transcribe_timeout(100000) == 9000
+def test_transcribe_has_no_length_limit_and_no_read_deadline():
+    seen = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json={"text": "oi", "duracao_s": 7200.0, "idioma": "pt", "modelo": "m"})
+
+    assert run(_client(handler).transcribe(b"abc", language="pt")).text == "oi"
+    assert "max_seconds" not in seen[0].url.params
+    assert seen[0].url.params["language"] == "pt"
+    # a slow transcription is never abandoned; only connecting is bounded
+    assert seen[0].extensions["timeout"]["read"] is None
+    assert seen[0].extensions["timeout"]["connect"] == 10.0

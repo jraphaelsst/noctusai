@@ -23,11 +23,11 @@ New package `seed/lib/backend/noctusai_lib/integrations/transcription/`:
   - `TranscriptResult(text, duracao_s, idioma, modelo, rtf, segmentos?)`
   - `AudioProbe(duracao_s, codec, container, sample_rate, canais)`
   - Errors: `TranscriberBusy` (retryable, carries `retry_after_s`), `TranscriptionRejected` (permanent: decode or type failure), `TranscriberUnavailable`.
-- **`protocol.py`**: `Transcriber` with `async probe(audio: bytes) -> AudioProbe` and `async transcribe(audio: bytes, *, language="pt", max_seconds) -> TranscriptResult`.
+- **`protocol.py`**: `Transcriber` with `async probe(audio: bytes) -> AudioProbe` and `async transcribe(audio: bytes, *, language="pt", max_seconds=None) -> TranscriptResult` (`None` = no length limit).
 - **`fake.py`**: `FakeTranscriber`. Returns deterministic text, can be scripted to raise busy or rejected, and probes from a fixture map.
 - **Two Real adapters:**
   - `openai_whisper.py`: `OpenAIWhisperTranscriber` wraps the existing `llm.audio.transcribe_audio`.
-  - `local_whisper_http.py`: `LocalWhisperTranscriber`, an httpx client to the worker. Sends an `X-Transcriber-Token` header. Maps 503 to `TranscriberBusy`, 422 to `TranscriptionRejected`, and connection errors to `TranscriberUnavailable`. Timeout is `min(1800, 3×duracao + 60)` seconds.
+  - `local_whisper_http.py`: `LocalWhisperTranscriber`, an httpx client to the worker. Sends an `X-Transcriber-Token` header. Maps 503 to `TranscriberBusy`, 422 to `TranscriptionRejected`, and connection errors to `TranscriberUnavailable`. No read timeout (a transcription is never abandoned); only connecting is bounded (10 s).
 - **`validation.py`** (pure): magic-byte sniffer accepting only these signatures:
 
   | Format | Signature |
@@ -71,7 +71,7 @@ New package `seed/lib/backend/noctusai_lib/integrations/transcription/`:
 - Env: `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`. The entrypoint runs `nice -n 10`. A non-root process cannot lower priority below 0, so this only de-prioritises; `cpu_shares` does the real work.
 - **Restart: `on-failure:5`**, not `unless-stopped`. An OOM or crash loop then stops after 5 attempts instead of churning the box. `deploy_verify` and health checks will surface it.
 - Healthcheck: `GET /healthz` returns 200 only when the model is loaded. interval 30s, timeout 5s, retries 3, start_period 180s.
-- In-process hard cap: transcription is killed at `min(MAX_HARD_S, max(60, 3×duracao))` seconds (`MAX_HARD_S` = 9000 since the 45-min API; the 60 s floor, 2026-10-29, exists because Whisper pads every chunk to a 30 s window — a pure 3× cap killed every short voice note). The server also counts minutes per UTC day in memory, capped at 600 min/day. This is a backstop only.
+- No wall-clock cap (owner, 2026-10-30: "whatever length, we shall read it"). The old `3×duracao` kill deadline (later with a 60 s floor) 504'd every chat voice note on the 1-core VPS. `max_seconds` is optional; without it the whole audio is decoded and read. The server still counts minutes per UTC day in memory, capped at 600 min/day. This is a backstop only.
 
 **Job flow:**
 1. The social-wiring BE validates and reserves quota, then stores the audio in a private bucket.
@@ -123,7 +123,7 @@ Rolling 24h means `SUM(duracao_s) WHERE created_at > now()-'24h' AND status <> '
 - Global depth, global daily cap, transcriber unhealthy, or kill switch: **503**, `codigo` = `fila_cheia | capacidade_diaria | transcricao_indisponivel | transcricao_desativada`, with `Retry-After`.
 
 **Timeouts**
-- Worker hard cap: `max(60 s, 3×duracao)`, bounded by `MAX_HARD_S`.
+- Worker: no wall-clock cap; length limited only when the caller passes `max_seconds`.
 - Client timeout: worker cap + 60s.
 - A job still not finished 2h after creation is marked failed by the sweep and its minutes are refunded.
 

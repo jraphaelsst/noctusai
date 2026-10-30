@@ -49,7 +49,7 @@ class FakeTranscriber:
         return self._probes.get(audio, self._default_probe)
 
     async def transcribe(
-        self, audio: bytes, *, language: str = "pt", max_seconds: float
+        self, audio: bytes, *, language: str = "pt", max_seconds: Optional[float] = None
     ) -> TranscriptResult:
         self.calls.append({"bytes": len(audio), "language": language, "max_seconds": max_seconds})
         if self._script:

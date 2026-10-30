@@ -13,7 +13,6 @@ Contract: products/social-wiring/projects/core-studio-build/specs/transcription-
 from noctusai_lib.integrations.transcription.server.app import create_app
 from noctusai_lib.integrations.transcription.server.engine import (
     EngineResult,
-    EngineTimeout,
     FasterWhisperEngine,
     TranscriptionEngine,
 )
@@ -21,7 +20,6 @@ from noctusai_lib.integrations.transcription.server.engine import (
 __all__ = [
     "create_app",
     "EngineResult",
-    "EngineTimeout",
     "FasterWhisperEngine",
     "TranscriptionEngine",
 ]

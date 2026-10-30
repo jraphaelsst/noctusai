@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol, runtime_checkable
-
-
-class EngineTimeout(Exception):
-    """The hard deadline passed mid-transcription (checked per decoded segment)."""
 
 
 @dataclass
@@ -26,11 +21,8 @@ class TranscriptionEngine(Protocol):
     @property
     def loaded(self) -> bool: ...
 
-    def transcribe(self, audio: Any, *, language: str, deadline: float) -> EngineResult:
-        """`audio` = float32 mono 16 kHz numpy array. `deadline` = `time.monotonic()` value.
-
-        MUST raise `EngineTimeout` once the deadline passes.
-        """
+    def transcribe(self, audio: Any, *, language: str) -> EngineResult:
+        """`audio` = float32 mono 16 kHz numpy array. Runs to completion — no deadline."""
         ...
 
 
@@ -57,7 +49,7 @@ class FasterWhisperEngine:
     def loaded(self) -> bool:
         return self._model is not None
 
-    def transcribe(self, audio: Any, *, language: str, deadline: float) -> EngineResult:
+    def transcribe(self, audio: Any, *, language: str) -> EngineResult:
         if self._model is None:
             raise RuntimeError("model not loaded")
         segments, _info = self._model.transcribe(
@@ -65,13 +57,8 @@ class FasterWhisperEngine:
         )
         parts: list[str] = []
         segs: list[dict[str, Any]] = []
-        # `segments` is a lazy generator: decoding happens as we iterate, so the
-        # deadline is enforced at segment (~30 s window) granularity.
+        # `segments` is a lazy generator: decoding happens as we iterate.
         for seg in segments:
-            if time.monotonic() > deadline:
-                raise EngineTimeout()
             parts.append(seg.text.strip())
             segs.append({"inicio": seg.start, "fim": seg.end, "texto": seg.text.strip()})
-        if time.monotonic() > deadline:
-            raise EngineTimeout()
         return EngineResult(text=" ".join(p for p in parts if p).strip(), segmentos=segs)

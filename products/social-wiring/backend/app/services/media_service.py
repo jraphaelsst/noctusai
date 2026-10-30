@@ -238,7 +238,6 @@ class MediaService:
         org_id: Optional[str] = None,
         vision_model: str = "claude-sonnet-5",
         text_model: str = "claude-haiku-4-5",
-        audio_max_seconds: float = 600.0,
         transcriber_factory: Optional[Callable[[], Any]] = None,
         vision_fn: Optional[VisionFn] = None,
         text_fn: Optional[TextFn] = None,
@@ -252,7 +251,6 @@ class MediaService:
         self._org_id = str(org_id) if org_id else None
         self._vision_model = vision_model
         self._text_model = text_model
-        self._audio_max_seconds = audio_max_seconds
         self._transcriber_factory = transcriber_factory
         self._vision_fn = vision_fn
         self._text_fn = text_fn
@@ -795,13 +793,13 @@ class MediaService:
         transcriber = (self._transcriber_factory or make_transcriber)()
         for tentativa in range(1, BUSY_MAX_TENTATIVAS + 1):
             try:
-                result = await transcriber.transcribe(audio_bytes, language="pt", max_seconds=self._audio_max_seconds)
+                result = await transcriber.transcribe(audio_bytes, language="pt")  # no length limit (owner, 2026-10-30)
             except TranscriberBusy as busy:
                 if tentativa >= BUSY_MAX_TENTATIVAS:
                     raise
                 await self._sleep(min(max(busy.retry_after_s, 0.0), BUSY_ESPERA_MAX_S))
                 continue
-            # Duration + real-time factor only (never the text): the evidence for tuning the worker's caps.
+            # Duration + real-time factor only (never the text): the evidence for sizing the worker.
             logger.info("transcribed duracao_s=%s rtf=%s modelo=%s", result.duracao_s, result.rtf, result.modelo)
             return (result.text or "").strip()
         return ""  # unreachable: the last attempt returns or raises
@@ -1184,7 +1182,6 @@ def make_media_service(org_id: Any = None) -> MediaService:
         org_id=org_id,
         vision_model=settings.media_vision_model,
         text_model=settings.chatbot_llm_model,
-        audio_max_seconds=settings.media_audio_max_seconds,
     )
 
 

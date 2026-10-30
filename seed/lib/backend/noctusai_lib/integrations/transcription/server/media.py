@@ -76,12 +76,13 @@ async def probe_bytes(audio: bytes, *, timeout: float = 5.0) -> ProbeInfo:
 
 
 async def decode_to_float32(
-    audio: bytes, *, max_seconds: float, timeout: float = 120.0
+    audio: bytes, *, max_seconds: Optional[float], timeout: float = 120.0
 ) -> np.ndarray:
-    """ffmpeg pipe -> 16 kHz mono s16le -> float32 in [-1, 1)."""
+    """ffmpeg pipe -> 16 kHz mono s16le -> float32 in [-1, 1). `max_seconds=None` decodes it all."""
+    limit = ["-t", f"{max_seconds:.3f}"] if max_seconds is not None else []
     argv = [
         "ffmpeg", "-nostdin", "-v", "error", "-i", "pipe:0",
-        "-t", f"{max_seconds:.3f}", "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE),
+        *limit, "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE),
         "-f", "s16le", "-",
     ]
     try:
