@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 import textwrap
@@ -36,10 +37,25 @@ EAGER_REFERENCE: dict[str, tuple[str, str]] = {
 }
 
 
+def _child_env() -> dict[str, str]:
+    # The child must import the SAME noctusai_seed/noctusai_lib as this process — an
+    # editable install can point at another checkout (e.g. the primary tree while the
+    # tests run in a worktree), which would test the wrong code.
+    import noctusai_lib
+
+    roots = [
+        os.path.dirname(os.path.dirname(os.path.abspath(mod.__file__)))
+        for mod in (noctusai_seed, noctusai_lib)
+    ]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([*roots, env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    return env
+
+
 def _run(code: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=120, env=_child_env(),
     )
 
 
