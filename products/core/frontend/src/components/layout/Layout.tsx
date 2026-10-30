@@ -20,6 +20,10 @@ import {
   UserPlus,
   ShieldCheck,
   Landmark,
+  Palette,
+  MessageSquare,
+  GitBranch,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { CoreHeader } from './CoreHeader';
@@ -73,10 +77,23 @@ export const NAV_GROUPS: NavGroup[] = [
           { name: 'Chaves API', href: '/admin/api-keys', icon: KeyRound },
           { name: 'Chaves LLM', href: '/api-keys', icon: Brain },
           { name: 'Webhooks', href: '/admin/webhooks', icon: Webhook },
-          { name: 'Templates', href: '/admin/templates', icon: PackageOpen },
           { name: 'Logout Behavior', href: '/admin/logout-behavior', icon: LogOut },
           { name: 'Configuracoes', href: '/admin/settings', icon: Settings },
           { name: 'Segurança', href: '/security', icon: ShieldCheck },
+        ],
+      },
+      {
+        key: 'templates',
+        label: 'Templates',
+        icon: PackageOpen,
+        items: [
+          { name: 'Design system', href: '/admin/templates/design_system', icon: Palette },
+          { name: 'Agentes e prompts', href: '/admin/templates/agent', icon: Brain },
+          { name: 'Mensagens', href: '/admin/templates/message', icon: MessageSquare },
+          { name: 'Documentos', href: '/admin/templates/document', icon: FileText },
+          { name: 'Repositório e workflow', href: '/admin/templates/repo_workflow', icon: GitBranch },
+          { name: 'Fontes', href: '/admin/templates/fontes', icon: Search },
+          { name: 'Scaffolds de projeto', href: '/admin/templates/scaffolds', icon: Package },
         ],
       },
     ],

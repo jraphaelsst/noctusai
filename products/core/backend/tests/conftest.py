@@ -304,6 +304,8 @@ def _build_patches(
         ("app.routers.usage.get_current_user", mock_get_user),
         ("app.routers.usage.get_current_admin", mock_get_admin),
         ("app.routers.usage.get_org_id", mock_get_org_id),
+        # Platform templates router (admin > Templates) -- inline admin gate
+        ("app.routers.platform_templates.get_current_admin", mock_get_admin),
         # Users router (admin)
         ("app.routers.users.get_admin_client", mock_sb),
         ("app.routers.users.get_current_admin", mock_get_admin),

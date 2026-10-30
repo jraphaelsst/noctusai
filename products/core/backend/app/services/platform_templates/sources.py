@@ -1,0 +1,93 @@
+"""Read-only discovery catalogue ("Fontes"): template-like assets that live OUTSIDE the DB.
+
+Nothing here is editable from the admin; each entry points at where the asset lives so the platform
+has plain visibility of it. ``tests/services/test_platform_template_sources.py`` fails when a path
+stops existing (a stale pointer is a lie). Migrating an entry into the DB library = create a
+template, then delete the entry here.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+SOURCES: list[dict[str, Optional[str]]] = [
+    {"kind": 'agent', "product": 'agents', "title": 'Bia -- especificacao e prompt', "description": 'Prompt/spec do agente Bia (monta design systems e conduz a plataforma). Fonte de verdade em arquivo; versionado no git.',
+     "path": 'products/agents/backend/app/agents/bia/BIA.md'},
+    {"kind": 'agent', "product": 'agents', "title": 'Pacotes de agentes (Agent Packages)', "description": 'Um pacote por agente (package.yaml, secoes, skills, knowledge). Publicados no Studio.',
+     "path": 'products/agents/packages'},
+    {"kind": 'agent', "product": 'agents', "title": 'Studio de agentes (prompts no banco)', "description": 'Prompts compilados e editados no Studio de agentes (produto agents); a edicao acontece la, nao aqui.',
+     "path": 'products/agents/backend/app/studio'},
+    {"kind": 'agent', "product": 'agents', "title": 'Qualificacao de leads -- prompt', "description": 'Prompt do motor de qualificacao.',
+     "path": 'products/agents/backend/app/qualificacao/prompt.py'},
+    {"kind": 'agent', "product": 'agents', "title": 'Baseline de prompts em codigo', "description": 'Lista ratificada de prompts ainda no codigo (guardada por keeper).',
+     "path": 'products/agents/backend/prompt-text-baseline.json'},
+    {"kind": 'agent', "product": 'seed', "title": 'Edicao de fotos -- prompts', "description": 'Prompts do edit, avaliador, redator de notas, propositor de regras e style guide.',
+     "path": 'seed/lib/backend/noctusai_lib/domain/photo_editing/prompts'},
+    {"kind": 'agent', "product": 'seed', "title": 'Chatbot -- fragmentos de prompt', "description": 'Fragmentos compostos pelo orquestrador do chatbot.',
+     "path": 'seed/lib/backend/noctusai_lib/domain/chatbot/prompt_fragments.py'},
+    {"kind": 'agent', "product": 'seed', "title": 'Chat de ajuda -- servico', "description": 'Chat de ajuda embutido nos produtos.',
+     "path": 'seed/lib/backend/noctusai_lib/domain/help_chat'},
+    {"kind": 'agent', "product": 'seed', "title": 'Extracao de documentos -- prompts', "description": 'Prompts de leitura de documentos (identidade, matricula, fichas, certidoes).',
+     "path": 'seed/lib/backend/noctusai_lib/integrations/documents'},
+    {"kind": 'agent', "product": 'social-wiring', "title": 'Criacao de midia -- prompts', "description": 'Headline, roteiro, legenda, copy, score, storyboard, pesquisa, cerebro (18 prompts).',
+     "path": 'products/social-wiring/backend/app/modules/media_creation/prompts'},
+    {"kind": 'agent', "product": 'social-wiring', "title": 'Cerebro -- templates', "description": 'Templates de sintese e revisao do cerebro editorial.',
+     "path": 'products/social-wiring/backend/app/modules/media_creation/cerebro_templates.py'},
+    {"kind": 'agent', "product": 'social-wiring', "title": 'Atendimento -- blocos (WhatsApp)', "description": 'Lista fechada de blocos do atendimento e mapa etapa -> bloco.',
+     "path": 'products/social-wiring/backend/app/modules/atendimento_blocos/blocos.py'},
+    {"kind": 'agent', "product": 'therapy-platform', "title": 'Prompt inicial do sistema', "description": 'Prompt inicial do produto de terapia.',
+     "path": 'products/therapy-platform/psycho-system-initial-prompt.md'},
+    {"kind": 'agent', "product": 'therapy-platform', "title": 'Prompts de IA (admin)', "description": 'Tela admin de prompts do produto.',
+     "path": 'products/therapy-platform/frontend/src/pages/admin/AIPrompts.tsx'},
+    {"kind": 'message', "product": 'core', "title": 'E-mail: digest de auditoria', "description": 'Templates Jinja (html + txt) do digest semanal de auditoria.',
+     "path": 'products/core/backend/app/email_templates'},
+    {"kind": 'message', "product": 'seed', "title": 'E-mails base (digest)', "description": 'Bases html/txt dos digests e e-mails do seed.',
+     "path": 'seed/lib/backend/noctusai_lib/integrations/email/templates'},
+    {"kind": 'message', "product": 'seed', "title": 'Lembretes financeiros', "description": 'Texto das mensagens de lembrete de cobranca.',
+     "path": 'seed/lib/backend/noctusai_lib/domain/finance/reminders/templates.py'},
+    {"kind": 'message', "product": 'social-wiring', "title": 'E-mail marketing: debrief de campanha', "description": 'Templates Jinja do debrief de campanha.',
+     "path": 'products/social-wiring/backend/app/modules/email_marketing/email_templates'},
+    {"kind": 'message', "product": 'social-wiring', "title": 'E-mail marketing: editor de templates', "description": 'Tela de templates de e-mail (e Mailchimp).',
+     "path": 'products/social-wiring/frontend/src/pages/email/Templates.tsx'},
+    {"kind": 'message', "product": 'personal-finance', "title": 'E-mail: narrativa mensal', "description": 'Templates Jinja da narrativa mensal.',
+     "path": 'products/personal-finance/backend/app/email_templates'},
+    {"kind": 'message', "product": 'erp-imobiliario', "title": 'E-mails do ERP', "description": 'Templates Jinja de e-mail do ERP imobiliario.',
+     "path": 'products/erp-imobiliario/backend/app/email_templates'},
+    {"kind": 'message', "product": 'daily-life', "title": 'E-mails do daily-life', "description": 'Templates Jinja de e-mail.',
+     "path": 'products/daily-life/backend/app/email_templates'},
+    {"kind": 'document', "product": 'social-wiring', "title": 'Contrato: modelo de texto', "description": 'Clausulas e modelo de texto do gerador de contrato.',
+     "path": 'products/social-wiring/backend/app/modules/card_hub/contrato_gerador/modelo_texto.py'},
+    {"kind": 'document', "product": 'social-wiring', "title": 'Contrato: frases', "description": 'Frases juridicas do gerador de contrato.',
+     "path": 'products/social-wiring/backend/app/modules/card_hub/contrato_gerador/frases.py'},
+    {"kind": 'document', "product": 'social-wiring', "title": 'Contrato aditivo: modelo de texto', "description": 'Modelo do aditivo contratual.',
+     "path": 'products/social-wiring/backend/app/modules/card_hub/contrato_aditivo/modelo_texto.py'},
+    {"kind": 'document', "product": 'social-wiring', "title": 'Roteiro em PDF', "description": 'Template do PDF de roteiro.',
+     "path": 'products/social-wiring/backend/app/modules/card_hub/roteiro_pdf_template.py'},
+    {"kind": 'document', "product": 'academia-de-reciclagem', "title": 'Conteudo institucional (docx)', "description": 'Plano diretor, manifesto, legislacao, cooperativas, selo verde, indicadores.',
+     "path": 'products/academia-de-reciclagem/projects/content'},
+    {"kind": 'document', "product": 'seed', "title": 'Contratos (organ)', "description": 'Documentos do organ de contratos (cobranca, orcamento, assinatura).',
+     "path": 'seed/lib/backend/noctusai_lib/domain/contracts/documents.py'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Scaffold de produto (seed)', "description": 'Esqueleto copiado ao criar um produto; navegavel na aba Scaffolds.',
+     "path": 'templates/product-seed'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Scaffold de produto ERP', "description": 'Overlay ERP aplicado sobre o esqueleto base.',
+     "path": 'templates/product-erp'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Template de projeto', "description": 'PROJECT.md padrao.',
+     "path": 'templates/PROJECT-TEMPLATE.md'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Template de proposta', "description": 'Proposta/dispatch note padrao.',
+     "path": 'templates/PROPOSAL-TEMPLATE.md'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Workflows n8n', "description": 'Templates de automacao n8n.',
+     "path": 'templates/n8n'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Dispatcher', "description": 'Template do despachante.',
+     "path": 'templates/dispatcher.md'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Workflows de CI/CD', "description": 'GitHub Actions: testes, build, deploy, watchdog.',
+     "path": '.github/workflows'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Agentes de desenvolvimento', "description": 'Especialistas do time de dev (.claude/agents).',
+     "path": '.claude/agents'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Skills de procedimento', "description": 'Procedimentos auto-acionados (.claude/skills).',
+     "path": '.claude/skills'},
+    {"kind": 'repo_workflow', "product": None, "title": 'Comandos de barra', "description": 'Comandos /slash do time (.claude/commands).',
+     "path": '.claude/commands'},
+]
+
+
+def list_sources(*, product: Optional[str] = None, kind: Optional[str] = None) -> list[dict]:
+    return [dict(s) for s in SOURCES if (not product or s["product"] == product) and (not kind or s["kind"] == kind)]

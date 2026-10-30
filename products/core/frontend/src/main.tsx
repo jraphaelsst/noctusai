@@ -42,7 +42,7 @@ const AdminAnalytics = lazy(() => import('./pages/admin/AdminAnalytics').then(m 
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings').then(m => ({ default: m.AdminSettings })));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers').then(m => ({ default: m.AdminUsers })));
 const AdminLogoutBehavior = lazy(() => import('./pages/admin/AdminLogoutBehavior').then(m => ({ default: m.AdminLogoutBehavior })));
-const AdminTemplates = lazy(() => import('./pages/admin/AdminTemplates').then(m => ({ default: m.AdminTemplates })));
+const TemplatesAdmin = lazy(() => import('./pages/admin/TemplatesAdmin').then(m => ({ default: m.TemplatesAdmin })));
 const AdminAuditDigest = lazy(() => import('./pages/admin/AdminAuditDigest').then(m => ({ default: m.AdminAuditDigest })));
 const Docs = lazy(() => import('./pages/admin/website/Docs').then(m => ({ default: m.Docs })));
 const WebsiteSettings = lazy(() => import('./pages/admin/website/Settings').then(m => ({ default: m.Settings })));
@@ -86,7 +86,7 @@ const App = createProductApp({
     { path: '/admin/analytics', component: AdminAnalytics },
     { path: '/admin/settings', component: AdminSettings },
     { path: '/admin/logout-behavior', component: AdminLogoutBehavior },
-    { path: '/admin/templates', component: AdminTemplates },
+    { path: '/admin/templates/*', component: TemplatesAdmin },
     { path: '/admin/audit-digest', component: AdminAuditDigest },
     { path: '/admin/website/docs/*', component: Docs },
     { path: '/admin/website/settings/*', component: WebsiteSettings },
