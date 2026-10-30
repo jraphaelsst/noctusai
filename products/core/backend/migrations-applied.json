@@ -8,6 +8,10 @@
     "086_revoke_browser_secrets_tables.sql": "f95d651aa3dd0fce4ac285280a273b8c1a58425c2a864cad54da4b444d0644fa",
     "087_seed_monica_product.sql": "d2c476feeaca8da650c88d0ce5c11fb456f4c0bc7a6bc03900389dd5e1e7cbaf",
     "088_org_picker_mfa_default_off.sql": "f42c45958fecabe1b5c0fb074e73546a857da8b3644aea589080e9c2718be802",
-    "089_org_brand_identities.sql": "6c36bdbadfe33e1d16e94c102589a4e2d8e31a133b3e9a080bd385c09285b317"
+    "089_org_brand_identities.sql": "6c36bdbadfe33e1d16e94c102589a4e2d8e31a133b3e9a080bd385c09285b317",
+    "090_scheduler_runs.sql": "1029e6aae5c7bfd671fddbe26a9161dab12b571b74a992acb732db7bd7c0ef42",
+    "091_ai_usage.sql": "52905634bd0cbc1b33242fe178df2a34d60db0f2ac5afef53ea3098c452426cf",
+    "092_platform_templates.sql": "6b7664262e78002588c81385bd09bf3b2b82e23ed97349973d4b860021210b65",
+    "093_credit_wallets.sql": "47f647fe4e388b725f17599b839ab7788c9236b502aba9bb7676be2921a54479"
   }
 }
