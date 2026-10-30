@@ -11,7 +11,7 @@
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { handOffToPolling, jobPolling } from '@noctusai/lib';
-import { useEffectiveSSOContext } from '@noctusai/lib/design-system';
+import { brandCurrentQueryKey, useEffectiveSSOContext } from '@noctusai/lib/design-system';
 import { listOps, useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 
 import { api } from '../lib/api';
@@ -23,8 +23,12 @@ import {
 
 export const JOB_POLL_MS = 2_000;
 
+/** The /api/brand detail + write routes answer `{ data }` (core router envelope). */
+const unwrap = <T,>(r: { data: T }): T => r.data;
+
 export const brandKeys = {
-  current: (orgId: string) => ['core', 'brand', orgId, 'current'] as const,
+  // Seed-owned key: BrandProvider reads the same entry, so an activation here reskins live.
+  current: (orgId: string) => brandCurrentQueryKey(orgId),
   identities: (orgId: string) => ['core', 'brand', orgId, 'identities'] as const,
   identity: (orgId: string, id: string) => ['core', 'brand', orgId, 'identity', id] as const,
   job: (orgId: string, jobId: string) => ['core', 'brand', orgId, 'job', jobId] as const,
@@ -62,7 +66,7 @@ export function useBrandIdentity(id: string | null) {
   const orgId = useBrandOrgId();
   return useQuery<BrandIdentity>({
     queryKey: brandKeys.identity(orgId, id ?? ''),
-    queryFn: () => api.get<BrandIdentity>(`/api/brand/identities/${id}`),
+    queryFn: () => api.get<{ data: BrandIdentity }>(`/api/brand/identities/${id}`).then(unwrap),
     enabled: !!orgId && !!id,
     retry: false,
   });
@@ -113,7 +117,7 @@ export interface PatchInput {
 export function usePatchBrandIdentity() {
   const orgId = useBrandOrgId();
   return useCacheWriteMutation<Partial<BrandIdentity>, PatchInput>({
-    mutationFn: ({ id, ...body }) => api.patch<Partial<BrandIdentity>>(`/api/brand/identities/${id}`, body),
+    mutationFn: ({ id, ...body }) => api.patch<{ data: Partial<BrandIdentity> }>(`/api/brand/identities/${id}`, body).then(unwrap),
     targets: (vars) => [
       {
         queryKey: brandKeys.identity(orgId, vars.id),
@@ -130,7 +134,7 @@ export function useActivateBrandIdentity() {
   const orgId = useBrandOrgId();
   const qc = useQueryClient();
   return useCacheWriteMutation<Partial<BrandIdentity> | undefined, string>({
-    mutationFn: (id) => api.post<Partial<BrandIdentity> | undefined>(`/api/brand/identities/${id}/activate`),
+    mutationFn: (id) => api.post<{ data: Partial<BrandIdentity> }>(`/api/brand/identities/${id}/activate`).then(unwrap),
     targets: (id) => [
       {
         // The target becomes active, the previous active one is archived (rollback = activating an archived).
@@ -165,7 +169,7 @@ export function useUploadBrandAsset() {
       const form = new FormData();
       form.append('slot', slot);
       form.append('file', file);
-      return api.upload<Partial<BrandIdentity> | undefined>(`/api/brand/identities/${id}/assets`, form);
+      return api.upload<{ data: Partial<BrandIdentity> }>(`/api/brand/identities/${id}/assets`, form).then(unwrap);
     },
     targets: (vars) => [
       {

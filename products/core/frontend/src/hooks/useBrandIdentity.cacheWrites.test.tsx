@@ -34,7 +34,7 @@ describe('brand cache writes', () => {
       { id: 'a', version: 1, status: 'active' }, { id: 'b', version: 2, status: 'draft' },
     ]);
     qc.setQueryData(['core', 'brand', 'o1', 'identity', 'b'], { id: 'b', version: 2, status: 'draft', tokens });
-    mockPost.mockResolvedValue(undefined);
+    mockPost.mockResolvedValue({ data: {} });
     const { useActivateBrandIdentity } = await import('./useBrandIdentity');
     const { result } = renderHook(() => useActivateBrandIdentity(), { wrapper: w });
     act(() => result.current.mutate('b'));
@@ -61,7 +61,7 @@ describe('brand cache writes', () => {
   it('patching shows the edit at once and commits the re-validated row', async () => {
     const { qc, w } = setup();
     qc.setQueryData(['core', 'brand', 'o1', 'identity', 'b'], { id: 'b', brand_book: 'old', tokens, validation: {} });
-    mockPatch.mockResolvedValue({ brand_book: 'new', validation: { warnings: ['x'] } });
+    mockPatch.mockResolvedValue({ data: { brand_book: 'new', validation: { warnings: ['x'] } } });
     const { usePatchBrandIdentity } = await import('./useBrandIdentity');
     const { result } = renderHook(() => usePatchBrandIdentity(), { wrapper: w });
     act(() => result.current.mutate({ id: 'b', brand_book: 'new' }));

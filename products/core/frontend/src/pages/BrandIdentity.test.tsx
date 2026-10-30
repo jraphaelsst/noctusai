@@ -31,7 +31,7 @@ function route(over: Record<string, unknown> = {}) {
     if (path in over) { const v = over[path]; if (v instanceof Error) throw v; return v; }
     if (path === '/api/brand/current') return { source: 'platform', identity_id: null, version: null, tokens, assets: {}, updated_at: null };
     if (path === '/api/brand/identities') return [{ id: 'd1', version: 2, status: 'draft', created_at: '2026-10-29T10:00:00Z', activated_at: null }];
-    if (path === '/api/brand/identities/d1') return detail;
+    if (path === '/api/brand/identities/d1') return { data: detail };
     throw new Error(`unmocked ${path}`);
   });
 }
@@ -81,7 +81,7 @@ describe('BrandIdentity page', () => {
 
   it('editing a token marks the draft unsaved and saving PATCHes it', async () => {
     route();
-    mockPatch.mockResolvedValue({ ...detail });
+    mockPatch.mockResolvedValue({ data: { ...detail } });
     await mount();
     const input = await screen.findByLabelText('Valor primary');
     fireEvent.change(input, { target: { value: '10 50% 40%' } });
