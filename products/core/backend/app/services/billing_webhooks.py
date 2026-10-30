@@ -27,6 +27,7 @@ from noctusai_lib.integrations.payments.types import Money
 from app.services import billing_service, billing_subscriptions as subs
 from app.services.billing_context import BillingContext
 from app.services.billing_events import ParsedGatewayEvent
+from app.services.credits import purchases as credit_purchases
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,11 @@ def _handle_stripe(ctx: BillingContext, event: ParsedGatewayEvent) -> EventOutco
     kind = event.event_type
 
     if kind == "checkout.session.completed":
+        credited = credit_purchases.handle_stripe_checkout(ctx, obj)
+        if credited is not None:
+            status, org_id = credited
+            return EventOutcome("processed" if status != "ignored" else "ignored",
+                                f"credit purchase: {status}", org_id or None)
         ours = (obj.get("metadata") or {}).get("subscription_id")
         row = subs.get_subscription(ctx, ours) if ours else None
         if row is None or not row.get("automation_managed"):
@@ -298,6 +304,11 @@ def _handle_asaas(ctx: BillingContext, event: ParsedGatewayEvent) -> EventOutcom
         return EventOutcome("ignored", f"unhandled asaas event {kind}")
 
     payment = payload.get("payment") or {}
+    credited = credit_purchases.handle_asaas_payment(ctx, kind, payment)
+    if credited is not None:
+        status, org_id = credited
+        return EventOutcome("processed" if status != "ignored" else "ignored",
+                            f"credit purchase: {status}", org_id or None)
     sub_id = payment.get("subscription")
     row = subs.find_by_gateway_id(ctx, "asaas", str(sub_id)) if sub_id else None
     if row is None or not row.get("automation_managed"):

@@ -23,6 +23,7 @@ JOB_IDS = {
     core_scheduler.BILLING_AUTOMATIONS_JOB,
     core_scheduler.PTAX_JOB,
     core_scheduler.STORAGE_SNAPSHOT_JOB,
+    core_scheduler.CREDITS_DEBIT_JOB,
 }
 
 

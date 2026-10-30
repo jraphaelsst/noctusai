@@ -39,6 +39,8 @@ from app.routers import website_admin as website_admin_router
 from app.routers.website_html import website_html_middleware
 from app.routers import transcriptions as transcriptions_router
 from app.routers import brand as brand_router
+from app.routers import credits as credits_router
+from app.routers import admin_credits as admin_credits_router
 from app.services.brand.wiring import start_brand_worker, stop_brand_worker
 from app.services.transcription_api.errors import TranscricaoErro, transcricao_erro_handler
 from app.services.transcription_api.wiring import (
@@ -134,6 +136,8 @@ app = create_product_app(
         website_admin_router.router,
         transcriptions_router.router,
         brand_router.router,
+        credits_router.router,
+        admin_credits_router.router,
     ],
 )
 
