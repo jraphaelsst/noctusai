@@ -201,7 +201,9 @@ class TestRegisterIdempotency:
         sched.register("swap", _first, hours=1)
         sched.register("swap", _second, hours=1)
 
-        assert sched.scheduler.get_job("swap").func is _second
+        # The scheduler holds the run-ledger wrapper; the product callable is
+        # its `__wrapped__`.
+        assert sched.scheduler.get_job("swap").func.__wrapped__ is _second
 
     def test_registering_a_second_name_does_not_disturb_the_first(self):
         async def _job():
