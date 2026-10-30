@@ -265,7 +265,7 @@ function CertidaoEditor({
         ) : (
           <Badge
             variant="outline"
-            className="gap-1 border-amber-500 bg-amber-50 text-[10px] text-amber-700"
+            className="gap-1 border-warning bg-warning-light text-[10px] text-warning-foreground"
             data-testid={`certidao-${tipo}-sugestao`}
           >
             <Sparkles className="h-3 w-3" />
@@ -383,7 +383,7 @@ function CertidaoEditor({
               </Button>
             )
           )}
-          <UnsavedChangesNotice dirty={dirty} className="text-[11px] text-amber-600" data-testid={`certidao-${tipo}-nao-salvo`} />
+          <UnsavedChangesNotice dirty={dirty} className="text-[11px] text-warning-foreground" data-testid={`certidao-${tipo}-nao-salvo`} />
           <span className="text-[11px] text-muted-foreground">
             {registroManual === null
               ? "Preencha ao menos um campo."

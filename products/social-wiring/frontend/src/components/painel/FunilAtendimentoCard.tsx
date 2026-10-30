@@ -56,7 +56,7 @@ export function FunilAtendimentoCard() {
                 <p className="mb-1 text-xs font-medium text-muted-foreground">Visitas não realizadas</p>
                 <ul className="flex flex-wrap gap-1.5">
                   {Object.entries(data.visitas_nao_realizadas).map(([motivo, n]) => (
-                    <li key={motivo} className="rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-900">
+                    <li key={motivo} className="rounded-full bg-danger-light px-2 py-0.5 text-xs text-destructive">
                       {MOTIVOS_NAO_REALIZADA.find((m) => m.value === motivo)?.label ?? motivo}: {n}
                     </li>
                   ))}

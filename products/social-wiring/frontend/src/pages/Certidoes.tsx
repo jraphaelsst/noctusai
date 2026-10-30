@@ -142,13 +142,13 @@ const RESULTADO_STATUS_ICON: Record<
   { icon: typeof Clock; color: string; label?: string }
 > = {
   pendente: { icon: Clock, color: "text-muted-foreground" },
-  processando: { icon: Loader2, color: "text-blue-500" },
+  processando: { icon: Loader2, color: "text-info" },
   // `na_fila` is the TJSP rate-limit queue, not generic pending — the label
   // says so, otherwise a queued certificate looks indistinguishable from a
   // stalled one.
   na_fila: { icon: Clock, color: "text-muted-foreground", label: "Pendente (TJSP)" },
-  sucesso: { icon: CheckCircle, color: "text-green-500" },
-  erro: { icon: XCircle, color: "text-red-500" },
+  sucesso: { icon: CheckCircle, color: "text-success" },
+  erro: { icon: XCircle, color: "text-destructive" },
 };
 
 // --------------- Form Schema ---------------
@@ -440,7 +440,7 @@ export default function Certidoes() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Em Processamento</CardTitle>
-            <Loader2 className="h-4 w-4 text-blue-500" />
+            <Loader2 className="h-4 w-4 text-info" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{summary.pendentes}</div>
@@ -449,7 +449,7 @@ export default function Certidoes() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Concluídas</CardTitle>
-            <CheckCircle className="h-4 w-4 text-green-500" />
+            <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{summary.concluidas}</div>
@@ -458,7 +458,7 @@ export default function Certidoes() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Com Erros</CardTitle>
-            <AlertCircle className="h-4 w-4 text-red-500" />
+            <AlertCircle className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{summary.erros}</div>
@@ -478,14 +478,14 @@ export default function Certidoes() {
       {/* TJSP Queue Status */}
       {tjspFila && (tjspFila.total_na_fila > 0 || tjspFila.cooldown.ativo) && (
         <Card
-          className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20"
+          className="border-warning/40 bg-warning-light/50"
           data-testid="tjsp-fila"
         >
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Timer className="h-4 w-4 text-amber-500" />
+              <Timer className="h-4 w-4 text-warning-foreground" />
               Fila TJSP
-              <Badge variant="outline" className="ml-auto text-amber-600 border-amber-300">
+              <Badge variant="outline" className="ml-auto text-warning-foreground border-warning/40">
                 {tjspFila.total_na_fila} na fila
               </Badge>
             </CardTitle>
@@ -497,7 +497,7 @@ export default function Certidoes() {
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Cooldown TJSP (limite: 1 request / 30 min)</span>
                   <span
-                    className="font-mono font-medium text-amber-600"
+                    className="font-mono font-medium text-warning-foreground"
                     data-testid="tjsp-cooldown-countdown"
                   >
                     {Math.floor(cooldownSegs / 60)}:{String(cooldownSegs % 60).padStart(2, "0")}
@@ -674,7 +674,7 @@ export default function Certidoes() {
                           {consulta.concluidas}/{consulta.total_certidoes}
                         </span>
                         {isProcessing && (
-                          <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                          <Loader2 className="h-4 w-4 animate-spin text-info" />
                         )}
                       </div>
                     </div>

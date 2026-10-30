@@ -114,11 +114,11 @@ export default function ReceiverTokensCard() {
           and this value cannot be asked for again. */}
       {minted ? (
         <div
-          className="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/5 p-3"
+          className="space-y-2 rounded-md border border-warning/50 bg-warning/5 p-3"
           data-testid="receiver-token-reveal"
         >
           <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
             <div className="text-sm">
               <p className="font-medium">
                 Copie agora — esta URL não será mostrada de novo.
@@ -214,10 +214,10 @@ export default function ReceiverTokensCard() {
         <div className="space-y-3" data-testid="receiver-tokens-success" aria-busy={isRefreshing}>
           {neverUsed.length > 0 ? (
             <div
-              className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/5 p-3 text-sm"
+              className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/5 p-3 text-sm"
               data-testid="receiver-tokens-unused-banner"
             >
-              <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
+              <AlertTriangle className="mt-0.5 h-4 w-4 text-warning-foreground" />
               <div>
                 <p className="font-medium">
                   {neverUsed.length} URL(s) nunca receberam nada
@@ -234,7 +234,7 @@ export default function ReceiverTokensCard() {
               className="flex items-center gap-2 text-sm text-muted-foreground"
               data-testid="receiver-tokens-healthy"
             >
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               Todas as URLs ativas já receberam leads.
             </div>
           )}

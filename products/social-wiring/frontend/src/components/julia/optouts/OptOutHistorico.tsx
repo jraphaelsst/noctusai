@@ -80,14 +80,14 @@ export function OptOutHistorico({ eventoDestaque }: { eventoDestaque: string | n
             <li
               key={e.id} ref={destacado ? destaqueRef : undefined} data-testid="optout-item" data-tipo={e.tipo}
               data-destacado={destacado ? "true" : "false"}
-              className={`rounded-lg border p-3 ${destacado ? "ring-2 ring-primary" : ""} ${falhou ? "border-red-300 bg-red-50" : ""}`}
+              className={`rounded-lg border p-3 ${destacado ? "ring-2 ring-primary" : ""} ${falhou ? "border-destructive/40 bg-danger-light" : ""}`}
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0 space-y-0.5">
                   <div className="flex items-center gap-2 text-sm font-medium">
-                    {e.tipo === "opt_out" ? <ShieldOff className="h-4 w-4 text-amber-700" /> : <ShieldCheck className="h-4 w-4 text-emerald-700" />}
+                    {e.tipo === "opt_out" ? <ShieldOff className="h-4 w-4 text-warning-foreground" /> : <ShieldCheck className="h-4 w-4 text-success" />}
                     {e.tipo === "opt_out" ? "Pediu para não ser contatado" : "Atendimento reativado"}
-                    {e.ativo === true && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-900" data-testid="optout-ativo">opt-out ativo</span>}
+                    {e.ativo === true && <span className="rounded-full bg-warning-light px-2 py-0.5 text-xs text-warning-foreground" data-testid="optout-ativo">opt-out ativo</span>}
                   </div>
                   <div className="text-sm">{e.lead_nome || "Lead sem nome"} · {e.lead_telefone || "sem telefone"}</div>
                   <div className="text-xs text-muted-foreground">{formatarDataHora(e.em)} · {quemFez(e)}</div>
@@ -111,7 +111,7 @@ export function OptOutHistorico({ eventoDestaque }: { eventoDestaque: string | n
                 {e.tipo === "opt_out" && <div><dt className="text-xs text-muted-foreground">Conversas encerradas</dt><dd>{e.participantes_encerrados}</dd></div>}
                 <div>
                   <dt className="text-xs text-muted-foreground">Notificação</dt>
-                  <dd className={falhou ? "font-medium text-red-700" : ""} data-testid="optout-notificacao">
+                  <dd className={falhou ? "font-medium text-destructive" : ""} data-testid="optout-notificacao">
                     {e.notificacao_status === "enviada" ? `Enviada${e.notificado_em ? ` em ${formatarDataHora(e.notificado_em)}` : ""}`
                       : e.notificacao_status === "pendente" ? "Pendente" : "Falhou"}
                     {falhou && e.notificacao_erro && <span className="block text-xs">{e.notificacao_erro}</span>}

@@ -1,0 +1,31 @@
+name: BrandProvider
+kind: component
+path: seed/lib/frontend/src/design-system/BrandProvider.tsx
+phase: org-brand-identity-wave-1
+registered_at: "2026-10-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Mounted once by createProductApp (inside AuthProvider, around AppRoutes): core and every product wear the selected org's identity by construction. Fallback is the NOC standard (tokens.css)."
+  - "Fetches GET /api/brand/current via coreApi (core owns identities); query key ['core','brand', orgId, 'current'] (exported helper brandCurrentQueryKey, shared with core's Identidade visual page) with the org id from the shared /api/me/access cache entry, so a no-reload org swap refetches and org A's identity never stands in for org B (no placeholderData)."
+  - "Only client-validated values reach the DOM (brand-tokens.ts re-checks the contract regexes). Applied through one generated override stylesheet (:root light + .dark), not inline setProperty, because an inline :root value would beat the .dark class rule and break dark mode."
+  - "Token key list is never hand-maintained: the test derives it from tokens.css."
+  - "Last tokens per org cached in localStorage (signed asset URLs are NOT cached - they expire) and applied synchronously at boot via the last-org pointer."
+  - "useBrand() -> {logo:{light,dark,mark}, favicon, source, isLoading}; safe without a provider (NOC standard)."
+
+errors_encountered: []
+drifts_surfaced:
+  - "Fonts: tokens.css/tailwind base declare no font vars; the provider sets --font-heading/--font-body/--font-ui only, consumers opt in via font-family: var(--font-heading)."
+
+alternatives_considered:
+  - "Inline style.setProperty on documentElement for light (contract wording): rejected - inline beats .dark selectors, dark mode would show light values."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

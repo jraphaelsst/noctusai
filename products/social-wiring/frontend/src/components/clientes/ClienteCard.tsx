@@ -77,7 +77,7 @@ export function ClienteCard({ cliente, onRestore, restoring, onOpen }: ClienteCa
         {cliente.identidade_incerta && (
           <Badge
             variant="outline"
-            className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+            className="border-warning/40 bg-warning/10 text-warning-foreground"
             data-testid="cliente-identidade-incerta-badge"
           >
             <ShieldAlert className="mr-1 h-3 w-3" />

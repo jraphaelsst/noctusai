@@ -245,7 +245,7 @@ export function TeamManagement() {
                           )}
                           {!self && member.org_role !== 'owner' && (
                             <button
-                              className="rounded-md border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                              className="rounded-md border border-destructive/40 bg-danger-light px-3 py-1 text-xs font-medium text-destructive hover:bg-danger-light"
                               onClick={() => setConfirmRemove(member)}
                             >
                               Remover
@@ -273,7 +273,7 @@ export function TeamManagement() {
           <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold text-foreground">
             Convites pendentes
             {invitations.length > 0 && (
-              <span className="inline-flex rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800">
+              <span className="inline-flex rounded-full bg-warning-light px-2 py-0.5 text-xs font-medium text-warning-foreground">
                 {invitations.length}
               </span>
             )}
@@ -317,7 +317,7 @@ export function TeamManagement() {
                       </td>
                       <td className="px-4 py-3">
                         <button
-                          className="rounded-md border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                          className="rounded-md border border-destructive/40 bg-danger-light px-3 py-1 text-xs font-medium text-destructive hover:bg-danger-light disabled:opacity-50"
                           disabled={cancelInvite.isPending}
                           onClick={() => void handleCancelInvite(inv.id)}
                         >

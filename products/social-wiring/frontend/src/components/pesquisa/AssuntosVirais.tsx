@@ -338,7 +338,7 @@ export function AssuntosVirais({ marcaId }: Props) {
               key={a.id}
               className="flex items-center gap-3 overflow-hidden rounded-md border bg-card pr-3"
             >
-              <div className="w-1 self-stretch bg-orange-500" aria-hidden />
+              <div className="w-1 self-stretch bg-warning" aria-hidden />
               <Checkbox
                 aria-label={`Selecionar assunto: ${a.topic}`}
                 checked={selecionados.has(a.id)}

@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import type { Headline } from "@/types/geracao";
 import { HEADLINE_TEXTO_MAX } from "../labels";
 
-const AMBAR = "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-50";
+const AMBAR = "border-warning/40 bg-warning-light text-warning-foreground hover:bg-warning-light";
 
 export function textoAvisoTamanho(n: number, recomendado: number): string {
   return `Acima do recomendado (${n}/${recomendado} caracteres)`;
@@ -58,7 +58,7 @@ export function ContadorHeadline({ texto, recomendado }: { texto: string; recome
       data-estado={acimaMaximo ? "maximo" : acimaRecomendado ? "acima" : "ok"}
       className={cn(
         "flex items-center gap-1 text-xs",
-        acimaMaximo ? "text-destructive" : acimaRecomendado ? "text-amber-700" : "text-muted-foreground",
+        acimaMaximo ? "text-destructive" : acimaRecomendado ? "text-warning-foreground" : "text-muted-foreground",
       )}
     >
       {acimaRecomendado && !acimaMaximo && <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />}

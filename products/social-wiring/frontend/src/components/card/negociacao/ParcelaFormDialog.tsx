@@ -678,7 +678,7 @@ function DivisaoEditor({
         Adicionar favorecido
       </Button>
       <p
-        className={`text-xs ${conc.confere ? "text-emerald-700" : "text-amber-700"}`}
+        className={`text-xs ${conc.confere ? "text-success" : "text-warning-foreground"}`}
         data-testid="parc-divisao-conciliacao"
       >
         {conc.texto}

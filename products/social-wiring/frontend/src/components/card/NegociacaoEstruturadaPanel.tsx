@@ -180,7 +180,7 @@ export function visibilidadeSubtab(
 function ForaDasEspecificacoes({ especificacao }: { especificacao: string }) {
   return (
     <p
-      className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
+      className="mb-3 rounded-md border border-warning/40 bg-warning-light p-2 text-xs text-warning-foreground"
       data-testid="negest-fora-especificacoes"
     >
       Fora das especificações do contrato: "{rotuloEspecificacao(especificacao)}" não está
@@ -401,7 +401,7 @@ export default function NegociacaoEstruturadaPanel({
                 {contar ? ` (${contar(data)})` : ""}
                 {visibilidade[key] === "fora" && (
                   <AlertTriangle
-                    className="ml-1 h-3 w-3 text-amber-600"
+                    className="ml-1 h-3 w-3 text-warning-foreground"
                     aria-label="fora das especificações"
                   />
                 )}
@@ -462,7 +462,7 @@ function CompletudeCard({ completude }: { completude: NegociacaoCompletude }) {
                 className="flex items-center gap-2"
                 data-testid={`negest-completude-faltando-${item}`}
               >
-                <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                <AlertCircle className="h-3.5 w-3.5 text-warning-foreground" />
                 {rotuloNegociacaoFaltando(item)}
               </li>
             ))}
@@ -530,7 +530,7 @@ function ConflitosNegociacaoBanner({ clienteId }: { clienteId: string }) {
     <Card data-testid="negest-conflitos">
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTriangle className="h-4 w-4 text-warning-foreground" />
           <CardTitle className="text-sm">
             Conflitos aguardando decisão ({pendentes.length})
           </CardTitle>

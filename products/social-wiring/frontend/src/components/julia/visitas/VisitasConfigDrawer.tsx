@@ -60,7 +60,7 @@ export function VisitasConfigDrawer({ config, isAdmin, onClose }: Props) {
 
   const chip = (
     <span data-testid="visitas-status-chip"
-      className={`rounded-full px-2 py-0.5 text-xs ${op.ativo ? "bg-emerald-100 text-emerald-800" : "bg-muted text-muted-foreground"}`}>
+      className={`rounded-full px-2 py-0.5 text-xs ${op.ativo ? "bg-success-light text-success" : "bg-muted text-muted-foreground"}`}>
       {op.ativo ? "Ativo" : "Inativo"}
     </span>
   );

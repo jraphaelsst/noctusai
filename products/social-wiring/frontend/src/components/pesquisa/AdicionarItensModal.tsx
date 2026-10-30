@@ -213,7 +213,7 @@ function ResultadoView({ resultado, labelDe }: { resultado: Resultado; labelDe: 
           ))}
           {resultado.data.unclassified.length > 0 && (
             <div>
-              <h4 className="mb-1 font-medium text-orange-600">
+              <h4 className="mb-1 font-medium text-warning-foreground">
                 Não classificados ({resultado.data.unclassified.length})
               </h4>
               <ul className="list-disc space-y-0.5 pl-5 text-muted-foreground">

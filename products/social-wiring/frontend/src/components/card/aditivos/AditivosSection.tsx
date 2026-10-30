@@ -264,7 +264,7 @@ function AditivoItem({
           {aguardando && (
             <Badge
               variant="outline"
-              className="border-amber-300 bg-amber-50 text-[10px] text-amber-800"
+              className="border-warning/40 bg-warning-light text-[10px] text-warning-foreground"
               data-testid={`aditivo-rascunho-${aditivo.id}`}
             >
               Rascunho — aguardando revisão jurídica

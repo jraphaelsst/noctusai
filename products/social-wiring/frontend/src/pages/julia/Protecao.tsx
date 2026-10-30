@@ -70,7 +70,7 @@ export default function JuliaProtecao() {
       </header>
 
       {!isAdmin && (
-        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="protecao-sem-permissao">
+        <p className="rounded-md border border-warning/40 bg-warning-light px-3 py-2 text-sm text-warning-foreground" data-testid="protecao-sem-permissao">
           Somente owner ou admin da organização vê e edita a proteção.
         </p>
       )}
@@ -126,7 +126,7 @@ export default function JuliaProtecao() {
                         <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-normal" data-testid="bloqueio-origem">
                           {b.origem === "automatico" ? `Automático · ${ROTULO_GATILHO[b.gatilho] ?? b.gatilho}` : "Manual"}
                         </span>
-                        {!b.ativo && <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-normal text-green-900" data-testid="bloqueio-desfeito">desbloqueado</span>}
+                        {!b.ativo && <span className="ml-2 rounded-full bg-success-light px-2 py-0.5 text-xs font-normal text-success" data-testid="bloqueio-desfeito">desbloqueado</span>}
                       </p>
                       <p className="text-muted-foreground">{b.motivo}</p>
                       <p className="text-xs text-muted-foreground">

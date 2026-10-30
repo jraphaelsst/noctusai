@@ -111,13 +111,13 @@ export function ImobiliariaSelect({ atual, registro, onChange, salvando = false,
         </p>
       )}
       {escolhida?.excluida && (
-        <p className="text-xs text-amber-700" data-testid="imobiliaria-excluida">
+        <p className="text-xs text-warning-foreground" data-testid="imobiliaria-excluida">
           Esta imobiliária foi removida do cadastro. O contrato continua com ela, mas ela não pode
           ser escolhida em outros contratos.
         </p>
       )}
       {escolhida && escolhida.faltando.length > 0 && (
-        <p className="text-xs text-amber-700" data-testid="imobiliaria-faltando">
+        <p className="text-xs text-warning-foreground" data-testid="imobiliaria-faltando">
           Cadastro incompleto: falta {escolhida.faltando.map((f) => ROTULO_CAMPO_OBRIGATORIO[f] ?? f).join(", ")}.{" "}
           <a href="/imobiliarias" className="underline">
             Completar em Imobiliárias

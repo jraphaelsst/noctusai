@@ -38,9 +38,9 @@ import {
 
 const ESTADO_CLASSNAME: Record<ProvenienciaEstado, string> = {
   vazio: "border-muted-foreground/30 bg-muted text-muted-foreground",
-  maquina_pendente: "border-amber-300 bg-amber-50 text-amber-800",
-  confirmado: "border-emerald-600/30 bg-emerald-600/10 text-emerald-700",
-  manual: "border-sky-300 bg-sky-50 text-sky-800",
+  maquina_pendente: "border-warning/40 bg-warning-light text-warning-foreground",
+  confirmado: "border-success/30 bg-success/10 text-success",
+  manual: "border-info/40 bg-info-light text-info",
   conflito: "border-destructive/40 bg-destructive/5 text-destructive",
 };
 

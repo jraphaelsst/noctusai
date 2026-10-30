@@ -138,7 +138,7 @@ function PublishForm({ accountId, pageId }: { accountId: string; pageId: string 
           {gated && <AppReviewNotice error={gated.error} />}
 
           {succeeded && (
-            <div className="flex items-center gap-2 text-sm text-emerald-600" data-testid="fb-publish-success">
+            <div className="flex items-center gap-2 text-sm text-success" data-testid="fb-publish-success">
               <CircleCheck className="h-4 w-4 shrink-0" />
               Publicado com sucesso.
             </div>

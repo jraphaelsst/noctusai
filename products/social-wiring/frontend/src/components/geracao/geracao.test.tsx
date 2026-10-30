@@ -88,7 +88,7 @@ describe("tamanho da headline — recomendação, nunca bloqueio (owner 2026-10-
     expect(contador.getAttribute("data-estado")).toBe("ok");
     rtl.fireEvent.change(rtl.screen.getByLabelText("Headline"), { target: { value: "x".repeat(300) } });
     expect(contador.getAttribute("data-estado")).toBe("acima");
-    expect(contador.className).toContain("text-amber-700");
+    expect(contador.className).toContain("text-warning-foreground");
     expect(contador.textContent).toContain("Acima do recomendado (300/120 caracteres)");
     expect((rtl.screen.getByRole("button", { name: "Salvar" }) as HTMLButtonElement).disabled).toBe(false);
   });

@@ -232,7 +232,7 @@ export default function FinanciamentoPanel({
           </div>
 
           {situacao === null && f && (
-            <p className="text-xs text-amber-700" data-testid="financiamento-situacao-nao-informada">
+            <p className="text-xs text-warning-foreground" data-testid="financiamento-situacao-nao-informada">
               Situação ainda não informada — escolha uma das opções acima.
             </p>
           )}
@@ -301,7 +301,7 @@ export default function FinanciamentoPanel({
                 mistakes an auto-created bank for a hand-vetted one. */}
             {f?.agente_financeiro?.origem === "auto_criado" && (
               <p
-                className="flex items-center gap-1.5 text-xs text-amber-600"
+                className="flex items-center gap-1.5 text-xs text-warning-foreground"
                 data-testid="financiamento-agente-auto-criado"
               >
                 <AlertTriangle className="h-3 w-3" />
@@ -663,7 +663,7 @@ function FinanciamentoDocSlot({
       )}
       {documento?.extracao_aviso && (
         <p
-          className="flex items-center gap-1.5 text-xs text-amber-600"
+          className="flex items-center gap-1.5 text-xs text-warning-foreground"
           data-testid={`${testId}-aviso`}
         >
           <AlertTriangle className="h-3 w-3" />

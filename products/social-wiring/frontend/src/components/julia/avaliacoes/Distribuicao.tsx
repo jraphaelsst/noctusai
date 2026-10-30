@@ -9,7 +9,7 @@ export function Distribuicao({ distribuicao, total }: { distribuicao: Record<str
           <li key={n} className="flex items-center gap-2 text-sm" data-testid={`dist-${n}`}>
             <span className="w-8">{n}★</span>
             <div className="h-2 flex-1 overflow-hidden rounded bg-muted">
-              <div className="h-full bg-amber-400" style={{ width: `${pct}%` }} />
+              <div className="h-full bg-warning" style={{ width: `${pct}%` }} />
             </div>
             <span className="w-8 text-right tabular-nums">{c}</span>
           </li>

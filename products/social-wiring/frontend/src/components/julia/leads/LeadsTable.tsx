@@ -16,7 +16,7 @@ export function StatusLead({ lead }: { lead: LeadJulia }) {
   if (lead.status_envio === "enviado")
     return (
       <div>
-        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">Enviado ao SW</span>
+        <span className="rounded-full bg-success-light px-2 py-0.5 text-xs text-success">Enviado ao SW</span>
         <div className="mt-0.5 text-xs text-muted-foreground">{origemEnvio(lead.gatilho)}</div>
         {lead.lead_id && <Link className="text-xs text-primary underline" to={`/leads?lead=${lead.lead_id}`}>Abrir no SW</Link>}
       </div>
@@ -24,7 +24,7 @@ export function StatusLead({ lead }: { lead: LeadJulia }) {
   if (lead.status_envio === "erro")
     return (
       <div>
-        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800">Erro no envio</span>
+        <span className="rounded-full bg-danger-light px-2 py-0.5 text-xs text-destructive">Erro no envio</span>
         {lead.erro && <div className="mt-0.5 text-xs text-muted-foreground">{lead.erro}</div>}
       </div>
     );

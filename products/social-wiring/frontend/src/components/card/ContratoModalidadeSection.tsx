@@ -166,7 +166,7 @@ export function ContratoModalidadeSection({
           </div>
           {aguardaRevisao && !assinado && (
             <p
-              className="text-[11px] text-amber-800"
+              className="text-[11px] text-warning-foreground"
               data-testid={`contrato-impressao-aguarda-revisao-${id}`}
             >
               Impressão e assinatura liberadas depois da aprovação da revisão jurídica.
@@ -180,7 +180,7 @@ export function ContratoModalidadeSection({
           )}
           {assinado && (
             <p
-              className="flex items-center gap-1.5 text-xs text-emerald-700"
+              className="flex items-center gap-1.5 text-xs text-success"
               data-testid={`contrato-fisica-assinado-${id}`}
             >
               <CheckCircle2 className="h-3.5 w-3.5" />

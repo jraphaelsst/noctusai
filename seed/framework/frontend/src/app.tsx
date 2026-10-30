@@ -11,7 +11,7 @@ import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ErrorBoundary, ConfirmProvider, createAuthProvider, useAuthReconnecting, SSOCallback, env } from "@noctusai/lib";
 import { OrgScopeBoundary, OrgScopedQueryClientProvider, getOrgScopedQueryClient, initOrgScopedQueryClient } from "@noctusai/lib/query-client";
-import { PageSkeleton } from "@noctusai/lib/design-system";
+import { PageSkeleton, BrandProvider } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
 import { SemAcessoPage } from "./pages/SemAcessoPage";
 import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
@@ -429,6 +429,13 @@ export function createProductApp(config: ProductAppConfig) {
     );
   }
 
+  // Org visual identity, mounted ONCE here so core + every product wear it by construction.
+  // Inside AuthProvider (it reads the session); the identity is only fetched once signed in.
+  function Brand({ children }: { children: React.ReactNode }) {
+    const { user } = useAuth();
+    return <BrandProvider authenticated={!!user}>{children}</BrandProvider>;
+  }
+
   return function App() {
     return (
       <OrgScopedQueryClientProvider>
@@ -437,9 +444,12 @@ export function createProductApp(config: ProductAppConfig) {
             <BrowserRouter>
               <AuthProvider>
                 {/* Remounts the routes on an org swap so every query hook binds to the
-                    new org's client (auth + router above it survive the swap). */}
+                    new org's client (auth + router above it survive the swap). Brand sits
+                    INSIDE the boundary so it reads the new org's client and reskins on swap. */}
                 <OrgScopeBoundary>
-                  <AppRoutes />
+                  <Brand>
+                    <AppRoutes />
+                  </Brand>
                 </OrgScopeBoundary>
               </AuthProvider>
             </BrowserRouter>

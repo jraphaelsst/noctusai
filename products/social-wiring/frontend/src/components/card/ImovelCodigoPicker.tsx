@@ -145,7 +145,7 @@ export function ImovelCodigoPicker({
         className="flex items-center gap-2 rounded-md border px-3 py-2"
         data-testid={`${testId}-escolhido`}
       >
-        <Check className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+        <Check className="h-4 w-4 shrink-0 text-success" aria-hidden />
         <span className="min-w-0 flex-1 truncate text-sm font-medium tabular-nums">
           {value}
         </span>
@@ -226,19 +226,19 @@ export function ImovelCodigoPicker({
               nudge to check first, not a block. See `useImoveisPossiveisDuplicatas`. */}
           {possiveisDuplicatas.length > 0 && (
             <div
-              className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2 dark:border-amber-900 dark:bg-amber-950"
+              className="space-y-1 rounded-md border border-warning/40 bg-warning-light p-2"
               data-testid={`${testId}-duplicatas`}
             >
-              <p className="flex items-center gap-1.5 text-xs font-medium text-amber-900 dark:text-amber-200">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-warning-foreground">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 Você quis dizer um destes? Confira antes de cadastrar um novo.
               </p>
-              <ul className="divide-y divide-amber-200 dark:divide-amber-900">
+              <ul className="divide-y divide-warning/40">
                 {possiveisDuplicatas.map((imovel) => (
                   <li key={imovel.codigo}>
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 px-1 py-1.5 text-left text-sm hover:bg-amber-100 dark:hover:bg-amber-900"
+                      className="flex w-full items-center gap-2 px-1 py-1.5 text-left text-sm hover:bg-warning-light"
                       disabled={disabled}
                       onClick={() => escolher(imovel.codigo)}
                       data-testid={`${testId}-duplicata-${imovel.codigo}`}
@@ -377,7 +377,7 @@ export function ImovelCodigoPicker({
                     <span
                       className={cn(
                         "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-                        "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+                        "bg-warning-light text-warning-foreground",
                       )}
                     >
                       fora do catálogo

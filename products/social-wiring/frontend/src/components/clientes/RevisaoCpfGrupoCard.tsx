@@ -175,7 +175,7 @@ export function RevisaoCpfGrupoCard({
           <Badge
             variant="outline"
             data-testid="cpf-motivo-badge"
-            className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+            className="border-warning/40 bg-warning/10 text-warning-foreground"
           >
             CPF · Mesmo CPF em cadastros diferentes
           </Badge>

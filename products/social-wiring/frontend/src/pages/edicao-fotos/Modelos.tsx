@@ -516,7 +516,7 @@ function ModeloDialog({
           </div>
           {!precosValidos && <p className="text-xs text-destructive">Preços devem ser números não negativos.</p>}
           {precosValidos && semPreco && (
-            <p className="text-xs text-amber-600" data-testid="aviso-sem-preco">
+            <p className="text-xs text-warning-foreground" data-testid="aviso-sem-preco">
               Faltam preços: este modelo não poderá ser usado até eles serem preenchidos.
             </p>
           )}

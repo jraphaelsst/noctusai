@@ -26,7 +26,7 @@ export function VisitasSemResposta() {
           <h2 className="font-semibold">Visitas sem resposta</h2>
           {data && data.length > 0 && (
             <span
-              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900"
+              className="rounded-full bg-warning-light px-2 py-0.5 text-xs font-semibold text-warning-foreground"
               data-testid="painel-visitas-sem-resposta-badge"
             >
               {data.length}

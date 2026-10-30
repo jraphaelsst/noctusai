@@ -59,7 +59,7 @@ function AvisoForm({ aviso, isAdmin }: { aviso: JuliaAvisoAdmin; isAdmin: boolea
   return (
     <div className="space-y-4">
       {aviso.incompleto && (
-        <p role="alert" className="flex items-start gap-2 text-sm text-amber-700" data-testid="aviso-incompleto">
+        <p role="alert" className="flex items-start gap-2 text-sm text-warning-foreground" data-testid="aviso-incompleto">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             O aviso ainda tem campos "a definir" (nome da empresa ou contato). A Julia não pode ser ligada até

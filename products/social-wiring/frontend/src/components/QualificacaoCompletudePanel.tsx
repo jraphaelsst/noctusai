@@ -131,7 +131,7 @@ export function QualificacaoCompletudePanel({
 
       {data.completo ? (
         <p
-          className="flex items-center gap-1.5 text-sm text-emerald-600"
+          className="flex items-center gap-1.5 text-sm text-success"
           data-testid="qualificacao-completude-completo"
         >
           <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -144,7 +144,7 @@ export function QualificacaoCompletudePanel({
             .map((chave) => (
               <li
                 key={chave}
-                className="flex items-center gap-1.5 text-sm text-amber-700"
+                className="flex items-center gap-1.5 text-sm text-warning-foreground"
                 data-testid={`qualificacao-completude-faltando-${chave}`}
               >
                 <AlertCircle className="h-3.5 w-3.5 shrink-0" />
@@ -159,7 +159,7 @@ export function QualificacaoCompletudePanel({
           questions about a DIFFERENT person's record, not this one's. */}
       {data.faltando.includes("conjuge") && (
         <p
-          className="flex items-center gap-1.5 text-sm text-amber-700"
+          className="flex items-center gap-1.5 text-sm text-warning-foreground"
           data-testid="qualificacao-completude-conjuge-pendente"
         >
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />

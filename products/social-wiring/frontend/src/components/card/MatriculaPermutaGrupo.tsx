@@ -116,7 +116,7 @@ export default function MatriculaPermutaGrupo({
 
       {!codigo && (
         <p
-          className="text-xs text-amber-700"
+          className="text-xs text-warning-foreground"
           data-testid={`matricula-permuta-sem-codigo-${permutaAtivoId}`}
         >
           Este ativo de permuta não está vinculado a um imóvel do catálogo — vincule-o

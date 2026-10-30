@@ -44,9 +44,9 @@ export function CertidaoCelulaChip({
         {celula.emitida_em && <p>Emitida em: {formatDate(celula.emitida_em)}</p>}
         {celula.validade_ate && <p>Válida até: {formatDate(celula.validade_ate)}</p>}
         {segundaVia && <p>{segundaVia}</p>}
-        {aviso && <p className="text-amber-300">{aviso}</p>}
+        {aviso && <p className="text-warning-foreground">{aviso}</p>}
         {celula.analise_ia && <p>{celula.analise_ia}</p>}
-        {celula.erro_mensagem && <p className="text-red-300">{celula.erro_mensagem}</p>}
+        {celula.erro_mensagem && <p className="text-destructive">{celula.erro_mensagem}</p>}
       </TooltipContent>
     </Tooltip>
   );

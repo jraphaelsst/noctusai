@@ -166,7 +166,7 @@ export function ConflitosPendentesCard<T extends ConflitoPendenteBase = Conflito
     <Card data-testid={testId}>
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
-          <Clock3 className="h-4 w-4 text-amber-600" />
+          <Clock3 className="h-4 w-4 text-warning-foreground" />
           <CardTitle className="text-sm">
             {titulo} ({pendentes.length})
           </CardTitle>
@@ -182,7 +182,7 @@ export function ConflitosPendentesCard<T extends ConflitoPendenteBase = Conflito
               key={c.id}
               className={
                 correcao
-                  ? "rounded-md border border-amber-300 bg-amber-50 p-3 text-sm"
+                  ? "rounded-md border border-warning/40 bg-warning-light p-3 text-sm"
                   : "rounded-md border p-3 text-sm"
               }
               data-testid={itemId}
@@ -192,7 +192,7 @@ export function ConflitosPendentesCard<T extends ConflitoPendenteBase = Conflito
                 {correcao ? (
                   <Badge
                     variant="outline"
-                    className="border-amber-400 text-[11px] text-amber-800"
+                    className="border-warning text-[11px] text-warning-foreground"
                     data-testid={`${itemId}-correcao`}
                   >
                     sua correção
@@ -210,7 +210,7 @@ export function ConflitosPendentesCard<T extends ConflitoPendenteBase = Conflito
               )}
               {correcao ? (
                 <>
-                  <p className="mb-1 flex items-center gap-1 text-xs text-amber-800">
+                  <p className="mb-1 flex items-center gap-1 text-xs text-warning-foreground">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                     {MENSAGEM_CORRECAO_CONTESTADA}
                   </p>

@@ -300,7 +300,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
           <div className="space-y-5">
             {query.isRefreshing && <p className="text-xs text-muted-foreground" data-testid="proposta-refreshing">Atualizando…</p>}
             {proposta.status === "recusada" && proposta.motivo_recusa && (
-              <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-900" data-testid="proposta-motivo-recusa">
+              <p className="rounded-md bg-danger-light px-3 py-2 text-sm text-destructive" data-testid="proposta-motivo-recusa">
                 Recusada: {proposta.motivo_recusa}
               </p>
             )}
@@ -347,7 +347,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
               <ParcelasEditor value={draft.parcelas} onChange={(v, removido) => alterarParcelas(v, removido)} favorecidos={draft.favorecidos} disabled={!editavel} campos={campos} />
               {saldo !== null && (
                 <p
-                  className={Number(saldo) === 0 ? "text-xs text-green-700" : "text-xs text-amber-700"}
+                  className={Number(saldo) === 0 ? "text-xs text-success" : "text-xs text-warning-foreground"}
                   data-testid="proposta-saldo"
                 >
                   Saldo não alocado: {exibirMoeda(saldo)}
@@ -419,7 +419,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
             </Secao>
 
             {completude.length > 0 && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-testid="proposta-completude">
+              <div className="rounded-md border border-warning/40 bg-warning-light px-3 py-2 text-xs text-warning-foreground" data-testid="proposta-completude">
                 <p className="font-medium">Ainda falta para o contrato:</p>
                 <ul className="list-disc pl-4">{completude.map((c) => <li key={c}>{c}</li>)}</ul>
               </div>
@@ -495,7 +495,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
                 <ul className="list-disc pl-5">{completude.map((c) => <li key={c}>{c}</li>)}</ul>
               </div>
             ) : (
-              <p className="text-sm text-green-700" data-testid="aceitar-completude-ok">Nada pendente para o contrato.</p>
+              <p className="text-sm text-success" data-testid="aceitar-completude-ok">Nada pendente para o contrato.</p>
             )}
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>

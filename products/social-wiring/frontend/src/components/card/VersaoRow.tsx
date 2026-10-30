@@ -52,7 +52,7 @@ export function VersaoRow({
           )}
           {aguardandoRevisaoJuridica(versao) && (
             <span
-              className="ml-1.5 text-amber-700"
+              className="ml-1.5 text-warning-foreground"
               data-testid={`${testIdPrefix}-rascunho-${versao.id}`}
             >
               (rascunho)

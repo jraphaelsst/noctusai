@@ -22,9 +22,9 @@ export interface PostCardFaceProps {
 }
 
 const DUE_CLASSE = {
-  done: "bg-emerald-500/20 text-emerald-600",
-  overdue: "bg-red-500/20 text-red-600",
-  soon: "bg-amber-500/20 text-amber-600",
+  done: "bg-success/20 text-success",
+  overdue: "bg-destructive/20 text-destructive",
+  soon: "bg-warning/20 text-warning-foreground",
   upcoming: "bg-secondary text-secondary-foreground",
 } as const;
 

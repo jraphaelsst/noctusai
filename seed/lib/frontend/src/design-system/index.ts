@@ -18,6 +18,8 @@ export { Header, LOGOUT_LABELS } from "./components/Header";
 export type { HeaderProps, HeaderUser, LogoutScope } from "./components/Header";
 
 export { useTheme } from "./useTheme";
+export { BrandProvider, useBrand, brandCurrentQueryKey } from "./BrandProvider";
+export type { BrandProviderProps, BrandContextValue, BrandLogo } from "./BrandProvider";
 export { useActivityRefresh } from "./useActivityRefresh";
 export { InactivityWarning } from "./InactivityWarning";
 

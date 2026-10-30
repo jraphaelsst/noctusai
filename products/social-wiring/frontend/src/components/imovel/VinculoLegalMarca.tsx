@@ -29,14 +29,14 @@ export default function VinculoLegalMarca({
   return marca === "conflito" ? (
     <a
       href="#imovel-conflitos"
-      className="text-xs font-medium text-amber-700 underline dark:text-amber-300"
+      className="text-xs font-medium text-warning-foreground underline"
       data-testid={`vinculo-legal-${campo}`}
     >
       em conflito — revise
     </a>
   ) : (
     <span
-      className="text-xs text-sky-800 dark:text-sky-300"
+      className="text-xs text-info"
       data-testid={`vinculo-legal-${campo}`}
     >
       do cadastro manual

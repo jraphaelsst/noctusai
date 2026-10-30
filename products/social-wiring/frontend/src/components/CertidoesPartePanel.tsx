@@ -508,7 +508,7 @@ export function CertidoesPartePanel({
                         <div
                           className={
                             isEmissaoAntiga(resultado.emitida_em)
-                              ? "flex items-center gap-1 text-amber-600"
+                              ? "flex items-center gap-1 text-warning-foreground"
                               : ""
                           }
                         >
@@ -529,7 +529,7 @@ export function CertidoesPartePanel({
                             vencida
                               ? "flex items-center gap-1 text-destructive"
                               : vencendo
-                                ? "flex items-center gap-1 text-amber-600"
+                                ? "flex items-center gap-1 text-warning-foreground"
                                 : ""
                           }
                         >

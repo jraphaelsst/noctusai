@@ -13,8 +13,8 @@ import { mensagemErroServidor } from "@/lib/erroServidor";
 import { MotivoDialog } from "./MotivoDialog";
 
 const PRAZO: Record<PrazoSituacao, { rotulo: string; classe: string }> = {
-  vencida: { rotulo: "Prazo vencido", classe: "bg-red-100 text-red-800" },
-  vence_em_breve: { rotulo: "Vence em até 3 dias", classe: "bg-amber-100 text-amber-900" },
+  vencida: { rotulo: "Prazo vencido", classe: "bg-danger-light text-destructive" },
+  vence_em_breve: { rotulo: "Vence em até 3 dias", classe: "bg-warning-light text-warning-foreground" },
   no_prazo: { rotulo: "No prazo", classe: "bg-muted text-muted-foreground" },
   encerrada: { rotulo: "Encerrada", classe: "bg-muted text-muted-foreground" },
 };
@@ -86,7 +86,7 @@ export function SolicitacoesTitular({ destaque }: { destaque: string | null }) {
             return (
               <li
                 key={s.id} ref={s.id === destaque ? destaqueRef : undefined} data-testid="sol-item" data-prazo={s.prazo_situacao}
-                className={`rounded-lg border p-3 ${s.id === destaque ? "ring-2 ring-primary" : ""} ${s.prazo_situacao === "vencida" ? "border-red-300 bg-red-50" : urgente ? "border-amber-300 bg-amber-50" : ""}`}
+                className={`rounded-lg border p-3 ${s.id === destaque ? "ring-2 ring-primary" : ""} ${s.prazo_situacao === "vencida" ? "border-destructive/40 bg-danger-light" : urgente ? "border-warning/40 bg-warning-light" : ""}`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="space-y-0.5">
@@ -105,7 +105,7 @@ export function SolicitacoesTitular({ destaque }: { destaque: string | null }) {
                   {s.motivo_decisao && ` · ${s.motivo_decisao}`}
                 </div>
                 {s.notificacao_status === "falhou" && (
-                  <p className="mt-1 text-xs font-medium text-red-700" data-testid="sol-notificacao-falhou">
+                  <p className="mt-1 text-xs font-medium text-destructive" data-testid="sol-notificacao-falhou">
                     O aviso aos admins falhou: {s.notificacao_erro}
                   </p>
                 )}

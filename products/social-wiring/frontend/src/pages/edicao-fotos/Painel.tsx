@@ -263,9 +263,9 @@ function PainelView({ isPlatform }: { isPlatform: boolean }) {
           </div>
 
           {painel && !painel.custos.receita.disponivel && (
-            <Card className="border-amber-500/40 bg-amber-500/5" data-testid="painel-sem-faturamento">
+            <Card className="border-warning/40 bg-warning/5" data-testid="painel-sem-faturamento">
               <CardContent className="flex items-start gap-3 p-4">
-                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-warning-foreground" />
                 <p className="text-sm">
                   {painel.custos.receita.nota ?? "Sem dados de faturamento — a margem reflete apenas custos."}
                 </p>

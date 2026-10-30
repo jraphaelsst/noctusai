@@ -87,7 +87,7 @@ export default function JuliaCredito() {
       </header>
 
       {semProvedor && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="credito-sem-provedor">
+        <div className="rounded-md border border-warning/40 bg-warning-light p-3 text-sm text-warning-foreground" data-testid="credito-sem-provedor">
           Provedor de análise de crédito ainda não configurado.
         </div>
       )}

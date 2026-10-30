@@ -5,10 +5,10 @@ import { PROPOSTA_STATUS_LABELS, type Proposta, type PropostaStatus } from "@/ty
 
 const STATUS_CLASS: Record<PropostaStatus, string> = {
   rascunho: "bg-muted text-muted-foreground",
-  enviada: "bg-blue-100 text-blue-800",
-  aceita: "bg-green-100 text-green-800",
-  recusada: "bg-red-100 text-red-800",
-  cancelada: "bg-zinc-200 text-zinc-700",
+  enviada: "bg-info-light text-info",
+  aceita: "bg-success-light text-success",
+  recusada: "bg-danger-light text-destructive",
+  cancelada: "bg-muted text-foreground",
 };
 
 export function PropostaStatusBadge({ status }: { status: PropostaStatus }) {

@@ -31,7 +31,7 @@ export function ModeloPreviewDrawer({ modelo, onClose }: { modelo: Modelo | null
     <SideDrawer open={!!modelo} onOpenChange={(o) => !o && onClose()} title="Pré-visualização" description={modelo?.nome} testId="modelo-preview">
       {modelo && (
         <div className="mt-4 space-y-4">
-          <div className="rounded-lg bg-emerald-50 p-3 text-sm whitespace-pre-wrap" data-testid="preview-bolha">
+          <div className="rounded-lg bg-success-light p-3 text-sm whitespace-pre-wrap" data-testid="preview-bolha">
             {simular(modelo.conteudo, valores)}
           </div>
           {usados.length > 0 && (

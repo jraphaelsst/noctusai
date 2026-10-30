@@ -26,7 +26,7 @@ export function OptOutAviso({ connectionId, chatId }: { connectionId: string | n
   if (!chatId || (q.isPending && !q.data)) return null;
   if (q.isError || (q.data && !q.data.verificado)) {
     return (
-      <div role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="optout-aviso-nao-verificado">
+      <div role="status" className="rounded-md border border-warning/40 bg-warning-light px-3 py-2 text-sm text-warning-foreground" data-testid="optout-aviso-nao-verificado">
         <AlertTriangle className="mr-1 inline h-4 w-4" />
         Não foi possível verificar se este lead pediu para não ser contatado. Você ainda pode enviar a mensagem.
       </div>
@@ -34,7 +34,7 @@ export function OptOutAviso({ connectionId, chatId }: { connectionId: string | n
   }
   if (!q.data?.opt_out_ativo) return null;
   return (
-    <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900" data-testid="optout-aviso">
+    <div role="alert" className="rounded-md border border-destructive/40 bg-danger-light px-3 py-2 text-sm text-destructive" data-testid="optout-aviso">
       <ShieldOff className="mr-1 inline h-4 w-4" />
       Este lead pediu para não ser contatado em {formatarDataHora(q.data.opt_out_em)}
       {q.data.motivo ? ` — ${q.data.motivo}` : ""}. Você pode enviar mesmo assim, com cuidado.
@@ -69,7 +69,7 @@ export function OptOutAcoes({ connectionId, chatId, contatoId }: { connectionId:
   return (
     <>
       {ativo && (
-        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-900" data-testid="optout-badge">
+        <span className="inline-flex items-center gap-1 rounded-full bg-danger-light px-2 py-0.5 text-xs font-medium text-destructive" data-testid="optout-badge">
           <ShieldOff className="h-3 w-3" /> opt-out
         </span>
       )}

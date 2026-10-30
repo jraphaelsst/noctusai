@@ -408,8 +408,8 @@ function GuiaEfetivoSection() {
         ) : showSkeleton ? (
           <Skeleton className="h-24 w-full" />
         ) : atual === null ? (
-          <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div className="flex items-start gap-3 rounded-md border border-warning/40 bg-warning/5 p-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-warning-foreground" />
             <p className="text-sm">
               Nenhum guia de estilo ativo ainda — ative uma versão em "Guias de Estilo" para ver o guia efetivo.
             </p>

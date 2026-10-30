@@ -105,7 +105,7 @@ export function Composer({
         )}
         <span
           data-testid="medidor-contexto"
-          className={aviso ? "ml-auto text-xs font-medium text-amber-600" : "ml-auto text-xs text-muted-foreground"}
+          className={aviso ? "ml-auto text-xs font-medium text-warning-foreground" : "ml-auto text-xs text-muted-foreground"}
         >
           {contextoChars != null
             ? `${contextoChars.toLocaleString("pt-BR")} caracteres de contexto${aviso ? " — perto do limite" : ""}`

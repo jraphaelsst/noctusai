@@ -135,7 +135,7 @@ function PageRow({ page }: { page: LeadgenPageSubscription }) {
             variant="outline"
             className={
               page.subscribed
-                ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600"
+                ? "border-success/30 bg-success/15 text-success"
                 : "border-muted-foreground/30 text-muted-foreground"
             }
           >
@@ -190,7 +190,7 @@ function PageRow({ page }: { page: LeadgenPageSubscription }) {
             only the majority would hide exactly that. */}
         {typeof page.forms_total === "number" && page.forms_total > 0 &&
           page.forms_attributed !== page.forms_total && (
-            <span className="text-xs text-amber-600">
+            <span className="text-xs text-warning-foreground">
               {page.forms_attributed}/{page.forms_total} formulários atribuídos —
               os demais usam os alertas gerais
             </span>
@@ -222,7 +222,7 @@ function BulkResultsSummary({
       className="rounded-md border bg-muted/30 p-3 text-sm"
       data-testid="leadgen-bulk-results"
     >
-      <p className={failed.length === 0 ? "text-emerald-600" : "font-medium"}>
+      <p className={failed.length === 0 ? "text-success" : "font-medium"}>
         {okCount} de {results.length} página(s) inscrita(s)
         {failed.length === 0 ? " com sucesso." : "."}
       </p>
@@ -271,7 +271,7 @@ function DeliveryHealth() {
     <div className="space-y-2" data-testid="leadgen-delivery-health">
       <p className="text-sm font-medium">Saúde da entrega</p>
       {d.last_received_at === null ? (
-        <p className="text-sm text-amber-600" data-testid="leadgen-never-received">
+        <p className="text-sm text-warning-foreground" data-testid="leadgen-never-received">
           A Meta nunca chamou este webhook — normalmente significa que a
           inscrição do App (Painel da Meta) ainda não foi configurada.
           Confira o handshake usando a URL de callback abaixo.
@@ -287,7 +287,7 @@ function DeliveryHealth() {
           happened in production on 2026-08-04 (two real leads, zero alerts),
           so it is stated here rather than left to be noticed. */}
       {d.notification_recipients_active === 0 && (
-        <p className="text-sm text-amber-600" data-testid="leadgen-no-recipients">
+        <p className="text-sm text-warning-foreground" data-testid="leadgen-no-recipients">
           ⚠️ Nenhum destinatário de notificação ativo — os leads estão sendo
           salvos, mas <strong>ninguém está sendo avisado</strong>. Cadastre um
           destinatário em Configuração → Configurações.
@@ -356,10 +356,10 @@ export default function LeadgenWebhookCard() {
       <CardContent className="space-y-5">
         {s.gated && (
           <div
-            className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm"
+            className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 p-4 text-sm"
             data-testid="leadgen-gated-banner"
           >
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
             <div>
               <div className="font-medium">Requer permissão adicional</div>
               <p className="text-muted-foreground">{s.reason}</p>
@@ -372,7 +372,7 @@ export default function LeadgenWebhookCard() {
             className="flex items-start gap-3 rounded-lg border border-dashed p-4 text-sm"
             data-testid="leadgen-not-configured-banner"
           >
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
             <div>
               <div className="font-medium">
                 Verificação do webhook não configurada

@@ -42,12 +42,12 @@ export function AgentsLinkCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: 
         <div className="flex items-center gap-2 text-sm" data-testid="token-status">
           {data.token_configurado ? (
             <>
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               <span>Token configurado</span>
             </>
           ) : (
             <>
-              <AlertCircle className="h-4 w-4 text-amber-600" />
+              <AlertCircle className="h-4 w-4 text-warning-foreground" />
               <span>Token não configurado</span>
             </>
           )}

@@ -101,7 +101,7 @@ function LinhaRejeitada({
   if (!item.edicao) {
     return (
       <li
-        className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
+        className="rounded-md border border-warning/40 bg-warning-light p-2 text-xs text-warning-foreground"
         data-testid={`validacao-rejeitado-${item.chave}`}
       >
         <span className="font-medium">{item.rotulo}</span> ({item.grupo}) foi rejeitado e é
@@ -111,7 +111,7 @@ function LinhaRejeitada({
   }
   return (
     <li
-      className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs"
+      className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning-light p-2 text-xs"
       data-testid={`validacao-rejeitado-${item.chave}`}
     >
       <span className="min-w-40 flex-1">
@@ -231,7 +231,7 @@ export default function ValidacaoExtracaoDialog({
                           className={
                             item.confianca === "alta"
                               ? "text-[10px]"
-                              : "border-amber-400 text-[10px] text-amber-700"
+                              : "border-warning text-[10px] text-warning-foreground"
                           }
                         >
                           {CONFIANCA_ROTULO[item.confianca] ?? item.confianca}
@@ -250,7 +250,7 @@ export default function ValidacaoExtracaoDialog({
                       type="button"
                       size="icon"
                       variant="outline"
-                      className="h-7 w-7 text-emerald-700"
+                      className="h-7 w-7 text-success"
                       disabled={decidindo}
                       aria-label={`Aceitar ${item.rotulo}`}
                       title="Aceitar"
@@ -365,7 +365,7 @@ export default function ValidacaoExtracaoDialog({
 
         {rejeitados.length > 0 && (
           <div className="space-y-1" data-testid="validacao-rejeitados">
-            <p className="flex items-center gap-1 text-xs font-medium text-amber-800">
+            <p className="flex items-center gap-1 text-xs font-medium text-warning-foreground">
               <AlertCircle className="h-3.5 w-3.5" />
               Rejeitados — informe o valor correto
             </p>

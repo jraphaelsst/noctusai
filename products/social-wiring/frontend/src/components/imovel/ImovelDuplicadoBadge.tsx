@@ -6,7 +6,7 @@ export default function ImovelDuplicadoBadge({ className }: { className?: string
     <span
       className={cn(
         "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-        "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+        "bg-warning-light text-warning-foreground",
         className,
       )}
       data-testid="imovel-duplicado-badge"

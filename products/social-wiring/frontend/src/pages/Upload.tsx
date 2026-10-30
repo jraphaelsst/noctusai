@@ -136,7 +136,7 @@ function Stepper({ job }: { job: UploadJob }) {
         return (
           <li key={step.key} className="flex items-center gap-2 text-sm">
             {isDone ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
             ) : isActive ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
             ) : failed ? (
@@ -182,7 +182,7 @@ function ProgressCard({ jobId, onClose }: { jobId: string; onClose: () => void }
             {failed ? (
               <CircleAlert className="h-5 w-5 text-destructive" />
             ) : done ? (
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              <CheckCircle2 className="h-5 w-5 text-success" />
             ) : (
               <Loader2 className="h-5 w-5 animate-spin" />
             )}

@@ -47,7 +47,7 @@ export interface PreparandoContratoPanelProps {
 }
 
 function IconePasso({ status }: { status: AceitePasso["status"] }) {
-  if (status === "ok") return <CheckCircle2 className="h-4 w-4 text-green-600" />;
+  if (status === "ok") return <CheckCircle2 className="h-4 w-4 text-success" />;
   if (status === "erro") return <AlertTriangle className="h-4 w-4 text-destructive" />;
   // 'pulado' stays neutral/grey (below): not a failure of its own.
   return <MinusCircle className="h-4 w-4 text-muted-foreground" />;
@@ -134,7 +134,7 @@ export function PreparandoContratoPanel(p: PreparandoContratoPanelProps) {
               ) : null}
             </p>
             {p.posAceite.matricula.status === "faltando" && (
-              <p className="text-xs text-amber-700">
+              <p className="text-xs text-warning-foreground">
                 Anexe a certidão de matrícula atualizada na página do imóvel; a extração roda sozinha no envio.
               </p>
             )}

@@ -87,11 +87,11 @@ const STATUS_LABELS: Record<CampaignStatus, string> = {
 };
 
 const STATUS_COLORS: Record<CampaignStatus, string> = {
-  save: "bg-gray-100 text-gray-800",
-  paused: "bg-yellow-100 text-yellow-800",
-  schedule: "bg-blue-100 text-blue-800",
+  save: "bg-muted text-foreground",
+  paused: "bg-warning-light text-warning-foreground",
+  schedule: "bg-info-light text-info",
   sending: "bg-purple-100 text-purple-800",
-  sent: "bg-green-100 text-green-800",
+  sent: "bg-success-light text-success",
 };
 
 interface CreateForm {
@@ -353,7 +353,7 @@ function CampanhasContent() {
                         <span
                           className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
                             STATUS_COLORS[c.status] ??
-                            "bg-gray-100 text-gray-800"
+                            "bg-muted text-foreground"
                           }`}
                           data-testid={`status-badge-${c.id}`}
                         >

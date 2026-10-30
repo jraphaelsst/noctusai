@@ -164,7 +164,7 @@ export function ImportDesignSystemDialog({
               {result.assets} ativo(s), {result.sections} seção(ões).
             </p>
             {result.warnings.map((w) => (
-              <p key={w} className="text-amber-700">
+              <p key={w} className="text-warning-foreground">
                 Aviso: {w}
               </p>
             ))}

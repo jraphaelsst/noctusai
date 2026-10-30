@@ -112,7 +112,7 @@ export function IdentificadoresNaoConformesCard({
     <Card data-testid={TESTID}>
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTriangle className="h-4 w-4 text-warning-foreground" />
           <CardTitle className="text-sm">
             Números de documento fora do padrão ({data.total})
           </CardTitle>
@@ -148,7 +148,7 @@ export function IdentificadoresNaoConformesCard({
               <p className="mt-1">
                 Guardado: <code className="rounded bg-muted px-1">{item.valor}</code>
               </p>
-              <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300" data-testid={`${TESTID}-motivo-${item.chave}`}>
+              <p className="mt-0.5 text-xs text-warning-foreground" data-testid={`${TESTID}-motivo-${item.chave}`}>
                 {item.motivo}
               </p>
               <div className="mt-2">

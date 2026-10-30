@@ -55,7 +55,7 @@ export default function Descadastro() {
 
         {!showSkeleton && !invalid && confirm.isSuccess && (
           <div className="space-y-4" data-testid="descadastro-success">
-            <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
+            <CheckCircle className="mx-auto h-12 w-12 text-success" />
             <h1 className="text-2xl font-bold text-foreground">
               Descadastro confirmado
             </h1>

@@ -52,7 +52,7 @@ export function RevisaoGrupoCard({
             className={
               isC5
                 ? "border-destructive/40 bg-destructive/10 text-destructive"
-                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                : "border-warning/40 bg-warning/10 text-warning-foreground"
             }
           >
             {isC5 && <ShieldAlert className="mr-1 h-3 w-3" />}

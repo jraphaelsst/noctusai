@@ -129,9 +129,9 @@ export default function Configuracoes() {
       </div>
 
       {modeloAusente && (
-        <Card className="border-amber-500/40 bg-amber-500/5">
+        <Card className="border-warning/40 bg-warning/5">
           <CardContent className="flex items-start gap-3 p-4">
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-warning-foreground" />
             <p className="text-sm">
               Nenhum modelo de edição de imagem configurado — a criação de lotes está bloqueada até um
               modelo ser escolhido abaixo.

@@ -307,7 +307,7 @@ function EscolhaExplicita<V extends string>({
         })}
       </div>
       {valor === "" && (
-        <p className="text-xs text-amber-700" data-testid={`${id}-pendente`}>
+        <p className="text-xs text-warning-foreground" data-testid={`${id}-pendente`}>
           Sem resposta — a geração do contrato fica bloqueada até responder.
         </p>
       )}
@@ -755,7 +755,7 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
               {draft.onus_quitacao &&
                 ONUS_QUITACOES_COM_PRAZO.includes(draft.onus_quitacao) &&
                 draft.onus_prazo_dias.trim() === "" && (
-                  <p className="text-xs text-amber-700" data-testid="termos-onus-prazo-obrigatorio">
+                  <p className="text-xs text-warning-foreground" data-testid="termos-onus-prazo-obrigatorio">
                     Informe o prazo — obrigatório para esta forma de quitação.
                   </p>
                 )}
@@ -775,7 +775,7 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
                   data-testid="termos-onus-baixa-protocolo"
                 />
                 {!draft.onus_baixa_protocolo_em && (
-                  <p className="text-xs text-amber-700" data-testid="termos-onus-baixa-protocolo-obrigatorio">
+                  <p className="text-xs text-warning-foreground" data-testid="termos-onus-baixa-protocolo-obrigatorio">
                     Informe a data — o contrato cita o protocolo da baixa do ônus já quitado.
                   </p>
                 )}

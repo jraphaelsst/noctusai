@@ -144,7 +144,7 @@ export function RoteiroSecao({ post }: { post: PostDetalhe }) {
             {detalhe.data?.etapa && <span className="text-xs text-muted-foreground">{detalhe.data.etapa}</span>}
           </div>
           {r.headline_diferente && (
-            <p className="text-sm text-amber-600" data-testid="roteiro-headline-diferente">
+            <p className="text-sm text-warning-foreground" data-testid="roteiro-headline-diferente">
               Este roteiro foi escrito para outra headline.
             </p>
           )}

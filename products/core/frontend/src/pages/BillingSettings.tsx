@@ -102,12 +102,12 @@ export function BillingSettings() {
 
   function getStatusBadgeClasses(status: string): string {
     switch (status) {
-      case 'active': return 'bg-green-100 text-green-800';
-      case 'trialing': return 'bg-yellow-100 text-yellow-800';
+      case 'active': return 'bg-success-light text-success';
+      case 'trialing': return 'bg-warning-light text-warning-foreground';
       case 'canceled':
       case 'expired':
       case 'past_due':
-        return 'bg-red-100 text-red-800';
+        return 'bg-danger-light text-destructive';
       default: return 'bg-muted text-muted-foreground';
     }
   }
@@ -136,11 +136,11 @@ export function BillingSettings() {
 
   function getInvoiceStatusClasses(status: string): string {
     switch (status) {
-      case 'paid': return 'bg-green-100 text-green-800';
-      case 'open': return 'bg-yellow-100 text-yellow-800';
+      case 'paid': return 'bg-success-light text-success';
+      case 'open': return 'bg-warning-light text-warning-foreground';
       case 'void':
       case 'uncollectible':
-        return 'bg-red-100 text-red-800';
+        return 'bg-danger-light text-destructive';
       default: return 'bg-muted text-muted-foreground';
     }
   }
@@ -230,7 +230,7 @@ export function BillingSettings() {
                 </div>
               )}
               {Boolean(billing?.subscription?.metadata?.cancel_at_period_end) && (
-                <div className="mt-4 rounded-md bg-yellow-50 px-4 py-2 text-sm text-yellow-800">
+                <div className="mt-4 rounded-md bg-warning-light px-4 py-2 text-sm text-warning-foreground">
                   Seu plano sera cancelado ao final do periodo atual.
                 </div>
               )}

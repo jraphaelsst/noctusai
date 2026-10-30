@@ -90,7 +90,7 @@ export function AditivoGeracaoSection({
       <div className="flex flex-wrap items-center gap-2">
         {geracao.pronto ? (
           <Badge
-            className="gap-1 border-emerald-600/30 bg-emerald-600/10 text-[11px] text-emerald-700 hover:bg-emerald-600/10"
+            className="gap-1 border-success/30 bg-success/10 text-[11px] text-success hover:bg-success/10"
             data-testid={`${prefixo}-pronto`}
           >
             <CheckCircle2 className="h-3 w-3" />
@@ -120,7 +120,7 @@ export function AditivoGeracaoSection({
       />
 
       {temAlteracoesNaoSalvas && (
-        <p className="text-xs text-amber-700" data-testid={`${prefixo}-nao-salvo`}>
+        <p className="text-xs text-warning-foreground" data-testid={`${prefixo}-nao-salvo`}>
           Há alterações não salvas no aditivo — salve antes de gerar.
         </p>
       )}
@@ -159,11 +159,11 @@ export function AditivoGeracaoSection({
 
       {avisosGerados && avisosGerados.length > 0 && (
         <div
-          className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs"
+          className="space-y-1 rounded-md border border-warning/40 bg-warning-light p-2.5 text-xs"
           data-testid={`${prefixo}-avisos-pos-geracao`}
         >
           {avisosGerados.map((msg, i) => (
-            <p key={i} className="text-amber-800">
+            <p key={i} className="text-warning-foreground">
               {msg}
             </p>
           ))}

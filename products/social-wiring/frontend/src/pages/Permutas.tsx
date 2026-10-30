@@ -77,8 +77,8 @@ function erroDoServidor(err: unknown, fallback: string): string {
 /** Score bands. Deliberately three, not a gradient: the number is a heuristic
  *  and a 12-step colour ramp would imply a precision it does not have. */
 function faixaDoScore(score: number): { rotulo: string; classe: string } {
-  if (score >= 75) return { rotulo: "Forte", classe: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" };
-  if (score >= 55) return { rotulo: "Bom", classe: "bg-amber-500/15 text-amber-600 dark:text-amber-400" };
+  if (score >= 75) return { rotulo: "Forte", classe: "bg-success/15 text-success" };
+  if (score >= 55) return { rotulo: "Bom", classe: "bg-warning/15 text-warning-foreground" };
   return { rotulo: "Parcial", classe: "bg-muted text-muted-foreground" };
 }
 
@@ -203,7 +203,7 @@ function LinhaDeMatch({
                 </Badge>
               )}
               {semSemantica && (
-                <Badge variant="outline" className="gap-1 text-amber-600 dark:text-amber-400">
+                <Badge variant="outline" className="gap-1 text-warning-foreground">
                   <TriangleAlert className="h-3 w-3" />
                   Sem análise semântica
                 </Badge>
@@ -431,8 +431,8 @@ export default function Permutas() {
       />
 
       {aviso && (
-        <div className="flex gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <div className="flex gap-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
           <p>{aviso}</p>
         </div>
       )}

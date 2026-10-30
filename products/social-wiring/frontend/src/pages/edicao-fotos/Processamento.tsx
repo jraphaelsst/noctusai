@@ -156,7 +156,7 @@ function ProcessamentoView() {
               {painel.sonda ? (
                 <div className="flex items-center gap-2 text-sm" data-testid="sonda-resultado">
                   {painel.sonda.status === "ok" ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    <CheckCircle2 className="h-4 w-4 text-success" />
                   ) : (
                     <AlertCircle className="h-4 w-4 text-destructive" />
                   )}
@@ -183,8 +183,8 @@ function WorkerCard({ painel }: { painel: ProcessamentoPainel }) {
     : !w.rodando
       ? { rotulo: "Parado", icone: <AlertCircle className="h-4 w-4 text-destructive" /> }
       : w.pausado
-        ? { rotulo: "Rodando — pausado", icone: <PauseCircle className="h-4 w-4 text-amber-600" /> }
-        : { rotulo: "Rodando — processando", icone: <PlayCircle className="h-4 w-4 text-emerald-600" /> };
+        ? { rotulo: "Rodando — pausado", icone: <PauseCircle className="h-4 w-4 text-warning-foreground" /> }
+        : { rotulo: "Rodando — processando", icone: <PlayCircle className="h-4 w-4 text-success" /> };
   return (
     <Card data-testid="worker">
       <CardContent className="space-y-2 p-6 text-sm">
@@ -212,7 +212,7 @@ function FilaCard({ painel }: { painel: ProcessamentoPainel }) {
     ["Na fila", f.pendentes],
     ["Prontos para rodar", f.prontos_para_rodar],
     ["Em execução", f.em_execucao],
-    ["Lease expirado", f.lease_expirado, f.lease_expirado > 0 ? "text-amber-600" : undefined],
+    ["Lease expirado", f.lease_expirado, f.lease_expirado > 0 ? "text-warning-foreground" : undefined],
     ["Mortos (dead-letter)", f.mortos, f.mortos > 0 ? "text-destructive" : undefined],
   ];
   return (

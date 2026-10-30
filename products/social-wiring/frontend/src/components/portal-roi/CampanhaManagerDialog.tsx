@@ -356,7 +356,7 @@ export function CampanhaManagerDialog({
             <form onSubmit={handleSubmit} className="space-y-4 pt-2">
               {conflict && (
                 <div
-                  className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+                  className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
                   data-testid="campanha-conflict-banner"
                 >
                   <p>

@@ -683,7 +683,7 @@ export function ConnectionSettingsPanel({
       {/* Paired success */}
       {paired && (
         <div
-          className="mx-6 mt-5 flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-50/60 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+          className="mx-6 mt-5 flex items-center gap-2 rounded-md border border-success/40 bg-success-light/60 px-3 py-2 text-sm text-success"
           data-testid="paired-success"
         >
           <CheckCircle2 className="h-4 w-4 shrink-0" />

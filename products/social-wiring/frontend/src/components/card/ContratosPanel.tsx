@@ -628,7 +628,7 @@ function ContratoCard({
             {contrato.processo_legado && (
               <Badge
                 variant="outline"
-                className="gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-800"
+                className="gap-1 border-warning/40 bg-warning-light text-[10px] text-warning-foreground"
                 data-testid={`contrato-processo-legado-badge-${contrato.id}`}
               >
                 <History className="h-3 w-3" />
@@ -998,7 +998,7 @@ function _VersaoAtualRow({
         {aguardandoRevisaoJuridica(versao) && (
           <Badge
             variant="outline"
-            className="border-amber-300 bg-amber-50 text-[10px] text-amber-800"
+            className="border-warning/40 bg-warning-light text-[10px] text-warning-foreground"
             data-testid={`contrato-rascunho-${contratoId}`}
           >
             Rascunho — aguardando revisão jurídica
@@ -1355,7 +1355,7 @@ function _ProcessoLegadoForm({
 
   return (
     <div
-      className="space-y-2 rounded-md border border-amber-300 bg-amber-50/50 p-3"
+      className="space-y-2 rounded-md border border-warning/40 bg-warning-light/50 p-3"
       data-testid="processo-legado-dialog"
     >
       <p className="text-xs text-muted-foreground">

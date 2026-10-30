@@ -247,7 +247,7 @@ export default function CerebroEditor() {
           className="font-mono text-sm"
         />
         <div className="flex items-center gap-3">
-          {sujo && <span className="text-sm text-amber-600">Alterações não aplicadas</span>}
+          {sujo && <span className="text-sm text-warning-foreground">Alterações não aplicadas</span>}
           <Button className="ml-auto" disabled={!sujo || gerando || salvar.isPending} onClick={() => void onAplicar()}>
             {salvar.isPending ? "Aplicando…" : "Aplicar Alterações"}
           </Button>

@@ -243,7 +243,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                   data-testid={`parte-relendo-progresso-${parte.chave}`}
                 >
                   <span
-                    className="block h-full bg-sky-500"
+                    className="block h-full bg-info"
                     style={{ width: `${Math.round((progresso.feitas / Math.max(progresso.total, 1)) * 100)}%` }}
                   />
                 </span>
@@ -256,7 +256,7 @@ export function ParteSecao(p: ParteSecaoProps) {
           </span>
           {vencidas > 0 && (
             <span
-              className="flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+              className="flex items-center gap-1 rounded bg-warning-light px-1.5 py-0.5 text-xs font-medium text-warning-foreground"
               data-testid={`parte-stale-flag-${parte.chave}`}
             >
               <AlertTriangle className="h-3 w-3" />
@@ -333,7 +333,7 @@ export function ParteSecao(p: ParteSecaoProps) {
             </div>
           </div>
           {p.recusas?.["*"] && (
-            <p role="alert" className="text-xs text-red-700 dark:text-red-300" data-testid={`parte-recusa-${parte.chave}`}>
+            <p role="alert" className="text-xs text-destructive" data-testid={`parte-recusa-${parte.chave}`}>
               {p.recusas["*"]}
             </p>
           )}
@@ -406,12 +406,12 @@ export function ParteSecao(p: ParteSecaoProps) {
                           </span>
                         )}
                         {c.status_processamento === "erro" && c.erro_mensagem && !c.pendencia && (
-                          <p className="mt-0.5 max-w-xs text-xs text-red-700 dark:text-red-300" data-testid={`parte-erro-${parte.chave}-${linha.chave}`}>
+                          <p className="mt-0.5 max-w-xs text-xs text-destructive" data-testid={`parte-erro-${parte.chave}-${linha.chave}`}>
                             {c.erro_mensagem}
                           </p>
                         )}
                         {c.ultima_tentativa?.status === "erro" && (
-                          <p className="mt-0.5 max-w-xs text-xs text-red-700 dark:text-red-300" data-testid={`parte-ultima-tentativa-${parte.chave}-${linha.chave}`}>
+                          <p className="mt-0.5 max-w-xs text-xs text-destructive" data-testid={`parte-ultima-tentativa-${parte.chave}-${linha.chave}`}>
                             Última emissão falhou: {c.ultima_tentativa.erro || "erro desconhecido"}
                             {c.ultima_tentativa.em ? ` (${formatDate(c.ultima_tentativa.em)})` : ""} — evidência anterior mantida
                           </p>
@@ -422,7 +422,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                           </p>
                         )}
                         {p.recusas?.[linha.chave] && (
-                          <p role="alert" className="mt-0.5 max-w-xs text-xs text-red-700 dark:text-red-300" data-testid={`parte-recusa-${parte.chave}-${linha.chave}`}>
+                          <p role="alert" className="mt-0.5 max-w-xs text-xs text-destructive" data-testid={`parte-recusa-${parte.chave}-${linha.chave}`}>
                             {p.recusas[linha.chave]}
                           </p>
                         )}
@@ -447,7 +447,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                           </p>
                         )}
                         {aviso && (
-                          <p className="mt-0.5 flex items-center gap-1 text-amber-700 dark:text-amber-300" data-testid={`parte-stale-${parte.chave}-${linha.chave}`}>
+                          <p className="mt-0.5 flex items-center gap-1 text-warning-foreground" data-testid={`parte-stale-${parte.chave}-${linha.chave}`}>
                             <AlertTriangle className="h-3 w-3" />
                             {aviso}
                           </p>
@@ -559,7 +559,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                     {divergencias.length > 0 && c.resultado_id && (
                       <tr className="border-b last:border-b-0">
                         <td colSpan={5} className="p-2">
-                          <div className="flex flex-wrap items-start justify-between gap-2 rounded border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                          <div className="flex flex-wrap items-start justify-between gap-2 rounded border border-warning/40 bg-warning-light p-2 text-warning-foreground"
                             data-testid={`parte-divergencia-${parte.chave}-${linha.chave}`}>
                             <div className="space-y-0.5">
                               <p className="flex items-center gap-1 font-medium">

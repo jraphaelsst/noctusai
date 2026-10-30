@@ -493,7 +493,7 @@ function ParticipacaoLinha({
       )}
       {participacaoPendente(o) && (
         <>
-          <span className="text-xs text-amber-700" data-testid={`${testId}-pendente`}>
+          <span className="text-xs text-warning-foreground" data-testid={`${testId}-pendente`}>
             Lida do Serasa Crednet — fora do contrato até ser confirmada.
           </span>
           <Button
@@ -733,7 +733,7 @@ function EmpresaEditForm({
       </div>
 
       {pendenteConfirmacao.length > 0 && (
-        <p className="text-xs text-amber-600" data-testid={`${testId}-pendente`}>
+        <p className="text-xs text-warning-foreground" data-testid={`${testId}-pendente`}>
           Alteração enviada para confirmação de um administrador (o valor lido do documento
           continua valendo até a decisão).
         </p>
@@ -775,7 +775,7 @@ function EmpresaChecklist({ empresaId }: { empresaId: string }) {
       {items.map((it) => (
         <div key={it.item_key} className="flex items-center gap-1.5 text-sm">
           {it.satisfeito ? (
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
           ) : (
             <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />
           )}

@@ -145,7 +145,7 @@ export default function MinhaBiblioteca() {
       </header>
 
       {monitoramentoOff && (
-        <div role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div role="status" className="rounded-md border border-warning/40 bg-warning-light p-3 text-sm text-warning-foreground">
           Monitoramento ainda não ativado: as solicitações ficam em "Aguardando" até a ingestão
           da biblioteca ser ligada.
         </div>

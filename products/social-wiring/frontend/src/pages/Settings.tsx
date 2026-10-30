@@ -1056,7 +1056,7 @@ function ManagedApiKeyRow({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-xs text-red-600"
+              className="h-7 text-xs text-destructive"
               onClick={handleRemove}
               disabled={remove.isPending}
               data-testid={`api-key-remove-${item.key}`}
@@ -1133,7 +1133,7 @@ function ManagedApiKeyRow({
       {testResult && !editing && (
         <p
           className={`text-xs font-medium ${
-            testResult.success ? "text-green-600" : "text-red-600"
+            testResult.success ? "text-success" : "text-destructive"
           }`}
           data-testid={`api-key-test-result-${item.key}`}
         >

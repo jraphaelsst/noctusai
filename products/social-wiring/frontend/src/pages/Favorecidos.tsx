@@ -159,7 +159,7 @@ export default function Favorecidos() {
           </div>
           {termoSeguro === null && (
             <p
-              className="text-xs text-amber-700"
+              className="text-xs text-warning-foreground"
               data-testid="favorecidos-busca-documento"
             >
               A busca é por nome — não digite CPF/CNPJ aqui.
@@ -215,7 +215,7 @@ export default function Favorecidos() {
                     {!f.ativo && (
                       <Badge
                         variant="outline"
-                        className="text-[10px] text-amber-700"
+                        className="text-[10px] text-warning-foreground"
                         data-testid={`favorecido-reg-inativo-${f.id}`}
                       >
                         Inativo
@@ -230,7 +230,7 @@ export default function Favorecidos() {
                     {f.banco_requer_revisao && (
                       <Badge
                         variant="outline"
-                        className="ml-1 text-[10px] text-amber-700"
+                        className="ml-1 text-[10px] text-warning-foreground"
                       >
                         Revisar dados bancários
                       </Badge>

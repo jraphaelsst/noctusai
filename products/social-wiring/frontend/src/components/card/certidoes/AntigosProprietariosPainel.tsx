@@ -151,7 +151,7 @@ export function AntigosProprietariosPainel(props: {
           </p>
         )}
         {data.sincronizacao_pendente > 0 && (
-          <p className="text-xs text-amber-700" data-testid="antigos-pendentes">
+          <p className="text-xs text-warning-foreground" data-testid="antigos-pendentes">
             {data.sincronizacao_pendente} transmitente(s) da matrícula ainda não sincronizado(s) com o card.
           </p>
         )}
@@ -197,7 +197,7 @@ export function AntigosProprietariosPainel(props: {
         </p>
       )}
       {problemas.length > 0 && (
-        <ul className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" data-testid="antigos-emissoes-problema">
+        <ul className="space-y-1 rounded border border-warning/40 bg-warning-light p-2 text-xs text-warning-foreground" data-testid="antigos-emissoes-problema">
           {problemas.map((e) => (
             <li key={e.parte_id}>
               Emissão automática não iniciada para {sincronizar.data?.criados.find((c) => c.parte_id === e.parte_id)?.nome ?? "um antigo proprietário"}

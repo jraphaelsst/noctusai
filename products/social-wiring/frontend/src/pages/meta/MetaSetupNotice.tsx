@@ -22,7 +22,7 @@ export function MetaSetupNotice({ error }: { error?: string | null }) {
   return (
     <Card data-testid="meta-setup-gate" className="border-dashed">
       <CardContent className="flex items-start gap-3 p-4 text-sm">
-        <Settings2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        <Settings2 className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
         <div>
           <div className="font-medium">Requer configuração no app Meta</div>
           <p className="text-muted-foreground">

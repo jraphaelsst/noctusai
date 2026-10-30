@@ -259,7 +259,7 @@ export default function ImovelDocumentosCard({
                   </p>
                   {d.fonte_codigo && d.fonte_codigo !== pageCodigo && (
                     <p
-                      className="text-xs text-sky-800 dark:text-sky-300"
+                      className="text-xs text-info"
                       data-testid={`imovel-documento-fonte-${d.id}`}
                     >
                       do cadastro {d.fonte_codigo}
@@ -442,7 +442,7 @@ function EstruturaLinha({ documento }: { documento: ImovelDocumento }) {
   return (
     <div className="space-y-0.5 text-xs text-muted-foreground">
       {aviso && (
-        <p className="flex items-center gap-1 text-amber-700 dark:text-amber-400">
+        <p className="flex items-center gap-1 text-warning-foreground">
           <AlertTriangle className="h-3 w-3 shrink-0" />
           {aviso}
         </p>

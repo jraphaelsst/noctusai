@@ -264,7 +264,7 @@ export function PermutaAtivosLista() {
                       <Badge variant="outline">{NATUREZA_LABELS[a.natureza] ?? a.natureza}</Badge>
                       {a.status !== "ativo" && <Badge variant="secondary">{status}</Badge>}
                       {r.foraDoCatalogo && (
-                        <Badge variant="outline" className="text-amber-600 dark:text-amber-400">
+                        <Badge variant="outline" className="text-warning-foreground">
                           Fora do catálogo
                         </Badge>
                       )}
