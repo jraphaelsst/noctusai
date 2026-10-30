@@ -328,7 +328,7 @@ export default function NovoLote() {
                 <p className="text-xs text-muted-foreground">Motivo: {economicoBloqueadoMotivo}</p>
               )}
               {padraoEconomicoIndisponivel && (
-                <p role="status" className="text-xs text-amber-600">
+                <p role="status" className="text-xs text-warning-foreground">
                   O padrão da organização é Econômico, mas ele está indisponível para o modelo atual — este lote usará Urgente.
                 </p>
               )}
@@ -392,7 +392,7 @@ function ModeloAusenteState() {
   return (
     <Card data-testid="novo-lote-modelo-ausente">
       <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-        <AlertCircle className="h-10 w-10 text-amber-500" />
+        <AlertCircle className="h-10 w-10 text-warning-foreground" />
         <div>
           <p className="font-medium">Nenhum modelo de edição configurado.</p>
           <p className="text-sm text-muted-foreground">

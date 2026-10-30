@@ -84,9 +84,9 @@ function ReconnectBanner({
     <div
       role="alert"
       data-testid="ig-reconnect-banner"
-      className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+      className="flex flex-wrap items-center gap-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
     >
-      <ShieldAlert className="h-4 w-4 shrink-0 text-amber-500" />
+      <ShieldAlert className="h-4 w-4 shrink-0 text-warning-foreground" />
       <p className="flex-1">
         {detail ??
           "Esta conta foi conectada sem a permissão de métricas do Instagram. Reconecte para liberar os insights."}
@@ -262,7 +262,7 @@ export function InstagramProfileView({ accountId, showPosts = true }: InstagramP
           data-testid="ig-app-review-notice"
           className="flex items-start gap-3 rounded-md border border-dashed p-3 text-sm"
         >
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
           <p>
             {appReview.error ??
               "A permissão de métricas ainda está pendente de aprovação pela Meta (App Review). Os insights ficam disponíveis assim que ela for liberada."}

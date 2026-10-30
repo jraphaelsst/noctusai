@@ -502,7 +502,7 @@ function SugestaoExtraida({
 
   return (
     <div
-      className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-sm"
+      className="mt-2 rounded-md border border-warning/40 bg-warning/5 p-2.5 text-sm"
       data-testid={tid}
     >
       <p className="text-xs text-muted-foreground">
@@ -534,7 +534,7 @@ function SugestaoExtraida({
           equality is the document's valid state, not something to check. */}
       {s.aviso === "rg_igual_cpf" && (
         <p
-          className="mt-1 flex items-center gap-1 text-xs text-amber-700"
+          className="mt-1 flex items-center gap-1 text-xs text-warning-foreground"
           data-testid={`${tid}-aviso-rg-cpf`}
         >
           <AlertTriangle className="h-3 w-3 shrink-0" />
@@ -545,7 +545,7 @@ function SugestaoExtraida({
           gênero unknown it stays in the neutral (masculine) form read — ask. */}
       {s.aviso === "genero_desconhecido" && (
         <p
-          className="mt-1 flex items-center gap-1 text-xs text-amber-700"
+          className="mt-1 flex items-center gap-1 text-xs text-warning-foreground"
           data-testid={`${tid}-aviso-genero`}
         >
           <AlertTriangle className="h-3 w-3 shrink-0" />

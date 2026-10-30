@@ -176,7 +176,7 @@ export default function OlxWebhookCard() {
               className="flex items-center gap-2 text-sm text-muted-foreground"
               data-testid="olx-healthy"
             >
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               Todas as entregas recentes foram processadas.
             </div>
           )}

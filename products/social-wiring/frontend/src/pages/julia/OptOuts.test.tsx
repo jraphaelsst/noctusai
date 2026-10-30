@@ -80,7 +80,7 @@ describe("histórico", () => {
   it("a failed notice is red, shows its error and an admin can resend it", async () => {
     setup("/julia/opt-outs", { historico: [EV({ notificacao_status: "falhou", notificacao_erro: "sem destinatarios" })] });
     const item = await screen.findByTestId("optout-item");
-    expect(item.className).toContain("border-red");
+    expect(item.className).toContain("border-destructive");
     expect(within(item).getByTestId("optout-notificacao").textContent).toContain("sem destinatarios");
     fireEvent.click(within(item).getByTestId("optout-reenviar"));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/opt-outs/ev1/notificar", {}));
@@ -126,8 +126,8 @@ describe("solicitações de dados", () => {
     ] });
     const itens = await screen.findAllByTestId("sol-item");
     expect(itens.map((i) => i.getAttribute("data-prazo"))).toEqual(["vencida", "vence_em_breve", "no_prazo"]);
-    expect(itens[0].className).toContain("border-red");
-    expect(itens[1].className).toContain("border-amber");
+    expect(itens[0].className).toContain("border-destructive");
+    expect(itens[1].className).toContain("border-warning");
     expect(within(itens[0]).getByTestId("sol-prazo").textContent).toBe("Prazo vencido");
     expect(within(itens[1]).getByTestId("sol-notificacao-falhou").textContent).toContain("boom");
     expect(itens[0].textContent).toContain("quero apagar meus dados");

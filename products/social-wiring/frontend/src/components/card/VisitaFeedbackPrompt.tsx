@@ -59,11 +59,11 @@ export function VisitaFeedbackPrompt({ roteiro, onSubmit, pending }: VisitaFeedb
   return (
     <>
       <div
-        className="flex flex-wrap items-center justify-between gap-2 border-b bg-amber-50 px-3 py-2 dark:bg-amber-950/30"
+        className="flex flex-wrap items-center justify-between gap-2 border-b bg-warning-light px-3 py-2"
         data-testid={`visita-feedback-banner-${roteiro.id}`}
         role="status"
       >
-        <p className="flex items-center gap-2 text-sm font-medium text-amber-900 dark:text-amber-200">
+        <p className="flex items-center gap-2 text-sm font-medium text-warning-foreground">
           <CalendarCheck className="h-4 w-4" aria-hidden />A visita aconteceu?
         </p>
         <Button
@@ -175,8 +175,8 @@ function FeedbackDialog({
                 "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
                 aconteceu === o.v
                   ? o.v
-                    ? "border-emerald-600 bg-emerald-600 text-white"
-                    : "border-rose-600 bg-rose-600 text-white"
+                    ? "border-success bg-success text-white"
+                    : "border-destructive bg-destructive text-white"
                   : "hover:bg-muted",
               )}
               data-testid={`visita-feedback-${o.v ? "sim" : "nao"}`}

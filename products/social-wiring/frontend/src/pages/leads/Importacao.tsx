@@ -149,7 +149,7 @@ export default function Importacao() {
               </div>
 
               {preview.data.warnings.length > 0 && (
-                <div className="rounded-md border border-dashed border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                <div className="rounded-md border border-dashed border-warning bg-warning-light p-3 text-sm text-warning-foreground">
                   <p className="mb-1 font-medium">Avisos</p>
                   <ul className="list-inside list-disc space-y-0.5">
                     {preview.data.warnings.map((w, i) => (

@@ -204,7 +204,7 @@ export function TestemunhasSection() {
                   <div className="flex items-center gap-1.5">
                     <p className="text-sm font-medium">{t.nome}</p>
                     {t.cpf_pendente && (
-                      <Badge variant="outline" className="text-[10px] text-amber-700" data-testid={`testemunha-cpf-pendente-${t.id}`}>
+                      <Badge variant="outline" className="text-[10px] text-warning-foreground" data-testid={`testemunha-cpf-pendente-${t.id}`}>
                         CPF pendente
                       </Badge>
                     )}
@@ -319,7 +319,7 @@ export function TestemunhasSection() {
               deixa de aparecer para novos contratos.
               {removendo && removendo.contratos_em_uso > 0 && (
                 <span
-                  className="mt-2 block font-medium text-amber-700"
+                  className="mt-2 block font-medium text-warning-foreground"
                   data-testid="testemunha-remover-em-uso"
                 >
                   Atenção: {removendo.contratos_em_uso === 1

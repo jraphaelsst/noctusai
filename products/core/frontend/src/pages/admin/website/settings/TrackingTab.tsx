@@ -10,7 +10,7 @@ import type { SettingsTabProps } from './types';
 export function TrackingTab({ draft, onChange }: SettingsTabProps) {
   return (
     <div className="space-y-4">
-      <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-foreground">
+      <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
         Atenção: a política de privacidade precisa ser atualizada ANTES de ativar GA4, Meta Pixel ou qualquer outro
         script de terceiros. Os scripts só carregam quando um id está configurado E o visitante deu consentimento
         (nunca por padrão).

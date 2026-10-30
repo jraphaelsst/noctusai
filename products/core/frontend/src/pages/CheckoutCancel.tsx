@@ -7,7 +7,7 @@ export function CheckoutCancel() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-2xl font-bold text-red-600">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-danger-light text-2xl font-bold text-destructive">
           ✕
         </div>
         <h2 className="mb-3 text-2xl font-bold text-foreground">Checkout cancelado</h2>

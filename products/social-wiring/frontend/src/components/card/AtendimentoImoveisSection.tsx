@@ -108,7 +108,7 @@ export function AtendimentoImoveisSection({
         <>
           {pendente && (
             <div
-              className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+              className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-light px-3 py-2 text-sm text-warning-foreground"
               role="alert"
               data-testid="imovel-pendente-aviso"
             >
@@ -160,7 +160,7 @@ export function AtendimentoImoveisSection({
                         </span>
                       )}
                       {item.em_negociacao && (
-                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+                        <span className="rounded bg-success-light px-1.5 py-0.5 text-[10px] font-medium text-success">
                           Em negociação
                         </span>
                       )}

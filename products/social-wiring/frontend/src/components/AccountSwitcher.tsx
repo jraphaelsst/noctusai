@@ -143,7 +143,7 @@ export function AccountSwitcher({
 
       {/* Account selector */}
       <div className="flex items-center gap-1.5">
-        <Youtube className="h-3.5 w-3.5 shrink-0 text-red-500" aria-hidden="true" />
+        <Youtube className="h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden="true" />
         <label htmlFor="sw-account-select" className="text-xs text-muted-foreground sr-only">
           Conta {providerLabel}
         </label>

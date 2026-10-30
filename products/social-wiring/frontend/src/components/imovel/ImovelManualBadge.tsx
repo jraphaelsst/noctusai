@@ -24,7 +24,7 @@ export default function ImovelManualBadge({
     <span
       className={cn(
         "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-        "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
+        "bg-info-light text-info",
         className,
       )}
       data-testid="imovel-manual-badge"

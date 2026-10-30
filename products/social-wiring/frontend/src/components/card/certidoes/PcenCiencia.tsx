@@ -57,10 +57,10 @@ export function PcenCiencia(p: PcenCienciaProps) {
 
   return (
     <div
-      className="space-y-2 rounded-md border border-sky-300 bg-sky-50 p-2.5 text-xs dark:border-sky-800 dark:bg-sky-950/40"
+      className="space-y-2 rounded-md border border-info/40 bg-info-light p-2.5 text-xs"
       data-testid={p.testId}
     >
-      <p className="flex items-center gap-1 font-medium text-sky-900 dark:text-sky-200">
+      <p className="flex items-center gap-1 font-medium text-info">
         <Info className="h-3.5 w-3.5" />
         {p.titulo}
       </p>
@@ -70,7 +70,7 @@ export function PcenCiencia(p: PcenCienciaProps) {
         </p>
       ))}
       {p.ciente ? (
-        <p className="flex items-center gap-1 font-medium text-emerald-700" data-testid={`${p.testId}-ciente`}>
+        <p className="flex items-center gap-1 font-medium text-success" data-testid={`${p.testId}-ciente`}>
           <CheckCircle2 className="h-3.5 w-3.5" />
           Ciência registrada para a validade de {dataBr(p.validadeAte)}.
         </p>
@@ -107,7 +107,7 @@ export function PcenCiencia(p: PcenCienciaProps) {
         <div className="space-y-1 rounded border bg-background p-2" data-testid={`${p.testId}-suporte`}>
           <p>Dúvida registrada. O contrato continua aguardando a sua ciência.</p>
           {link ? (
-            <a className="font-medium text-sky-700 underline" href={link.href} target="_blank" rel="noopener noreferrer">
+            <a className="font-medium text-info underline" href={link.href} target="_blank" rel="noopener noreferrer">
               {link.rotulo}
             </a>
           ) : (

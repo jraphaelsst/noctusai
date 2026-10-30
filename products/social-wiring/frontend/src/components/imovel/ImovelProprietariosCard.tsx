@@ -76,7 +76,7 @@ export function ImovelProprietariosCard({ codigo }: { codigo: string }) {
                 )}
                 {p.fonte_codigo && p.fonte_codigo !== codigo && (
                   <span
-                    className="text-xs text-sky-800 dark:text-sky-300"
+                    className="text-xs text-info"
                     data-testid={`proprietario-fonte-${p.id}`}
                   >
                     do cadastro {p.fonte_codigo}
@@ -91,7 +91,7 @@ export function ImovelProprietariosCard({ codigo }: { codigo: string }) {
                 {p.fora_da_matricula && (
                   <Badge
                     variant="outline"
-                    className="border-amber-400 text-[10px] text-amber-800 dark:text-amber-300"
+                    className="border-warning text-[10px] text-warning-foreground"
                     data-testid={`proprietario-fora-matricula-${p.id}`}
                   >
                     Não confirmado pela matrícula

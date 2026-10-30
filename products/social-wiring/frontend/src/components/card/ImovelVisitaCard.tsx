@@ -86,7 +86,7 @@ export function ImovelVisitaCard({
         "flex gap-3 rounded-lg border bg-background p-3",
         isDragging && "z-10 opacity-80 shadow-lg",
         propostaAceita &&
-          "border-emerald-500 ring-2 ring-emerald-500/40 dark:border-emerald-400",
+          "border-success ring-2 ring-success/40",
       )}
       data-testid={`imovel-visita-${imovel.codigo}`}
     >
@@ -127,7 +127,7 @@ export function ImovelVisitaCard({
           <span className="truncate text-sm font-semibold">{imovel.codigo}</span>
           {propostaAceita && (
             <span
-              className="flex items-center gap-1 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+              className="flex items-center gap-1 rounded bg-success px-1.5 py-0.5 text-[10px] font-semibold text-white"
               data-testid="imovel-proposta-aceita"
             >
               <Handshake className="h-3 w-3" aria-hidden />
@@ -136,7 +136,7 @@ export function ImovelVisitaCard({
           )}
           {propostaFeita && !propostaAceita && (
             <span
-              className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-900 dark:bg-sky-950 dark:text-sky-200"
+              className="rounded bg-info-light px-1.5 py-0.5 text-[10px] font-medium text-info"
               data-testid="imovel-proposta-feita"
             >
               proposta enviada
@@ -149,7 +149,7 @@ export function ImovelVisitaCard({
             // street, so this explains the blanks below rather than leaving
             // them looking like a loading state.
             <span
-              className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+              className="rounded bg-warning-light px-1.5 py-0.5 text-[10px] font-medium text-warning-foreground"
               data-testid="imovel-fora-do-catalogo"
             >
               fora do catálogo

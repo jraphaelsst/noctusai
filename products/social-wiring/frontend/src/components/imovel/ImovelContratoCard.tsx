@@ -151,11 +151,11 @@ function SemSugestao({
   if (!explicacao) return null;
   return (
     <div
-      className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2"
+      className="space-y-1 rounded border border-warning/40 bg-warning-light p-2"
       data-testid={testId}
       data-motivo={motivo ?? ""}
     >
-      <p className="flex items-start gap-1.5 text-xs text-amber-800">
+      <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         {explicacao}
       </p>
@@ -311,7 +311,7 @@ export default function ImovelContratoCard({
               {titulo?.sugestao ? (
                 <div className="space-y-1 rounded bg-muted/40 p-2" data-testid="imovel-titulo-sugestao">
                   <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                    <Sparkles className="h-3 w-3 text-amber-500" />
+                    <Sparkles className="h-3 w-3 text-warning-foreground" />
                     Sugestão a partir do ato {titulo.ato?.ato_ref ?? "—"}
                   </p>
                   <p className="whitespace-pre-wrap text-xs">{titulo.sugestao}</p>
@@ -351,10 +351,10 @@ export default function ImovelContratoCard({
               />
               {titulo?.confirmado && (titulo.divergencias ?? []).length > 0 && (
                 <div
-                  className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2"
+                  className="space-y-1 rounded border border-warning/40 bg-warning-light p-2"
                   data-testid="imovel-titulo-divergencias"
                 >
-                  <p className="text-[11px] font-medium text-amber-800">
+                  <p className="text-[11px] font-medium text-warning-foreground">
                     O texto confirmado difere da matrícula nestes pontos:
                   </p>
                   <ul className="space-y-0.5 text-xs">
@@ -499,7 +499,7 @@ export default function ImovelContratoCard({
               {descricao?.derivado ? (
                 <div className="space-y-1 rounded bg-muted/40 p-2" data-testid="imovel-descricao-derivado">
                   <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                    <Sparkles className="h-3 w-3 text-amber-500" />
+                    <Sparkles className="h-3 w-3 text-warning-foreground" />
                     Lido da matrícula
                   </p>
                   <p className="whitespace-pre-wrap text-xs">{descricao.derivado}</p>
@@ -584,7 +584,7 @@ export default function ImovelContratoCard({
               {onus?.sugestao ? (
                 <div className="space-y-1 rounded bg-muted/40 p-2" data-testid="imovel-onus-credor-sugestao">
                   <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                    <Sparkles className="h-3 w-3 text-amber-500" />
+                    <Sparkles className="h-3 w-3 text-warning-foreground" />
                     Lido dos atos de ônus confirmados
                   </p>
                   <p className="text-xs">{onus.sugestao}</p>
@@ -621,7 +621,7 @@ export default function ImovelContratoCard({
                       {a.credor_confianca !== "alta" && (
                         <Badge
                           variant="outline"
-                          className="border-amber-500 bg-amber-50 text-[10px] text-amber-700"
+                          className="border-warning bg-warning-light text-[10px] text-warning-foreground"
                           data-testid={`imovel-onus-credor-confianca-${a.ato_id}`}
                         >
                           confira
@@ -744,10 +744,10 @@ export default function ImovelContratoCard({
                     // An unreadable date must lead to ASKING, never to silently
                     // waiving the certidões — so it is its own notice.
                     <div
-                      className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2"
+                      className="space-y-1 rounded border border-warning/40 bg-warning-light p-2"
                       data-testid="imovel-antigos-data-desconhecida"
                     >
-                      <p className="flex items-start gap-1.5 text-xs text-amber-800">
+                      <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
                         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                         A data do registro não foi lida. Confirme a data do ato{" "}
                         {antigos.ultima_transferencia.ato_ref ?? ""} nos detalhes do ato — sem ela,
@@ -765,7 +765,7 @@ export default function ImovelContratoCard({
 
                   {antigos.exige_certidoes && (
                     <p
-                      className="flex items-start gap-1.5 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
+                      className="flex items-start gap-1.5 rounded border border-warning/40 bg-warning-light p-2 text-xs text-warning-foreground"
                       data-testid="imovel-antigos-exige-certidoes"
                     >
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />

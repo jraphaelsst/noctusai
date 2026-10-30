@@ -414,7 +414,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
 
         {roteiro && status === "completo" && (
           <div className="space-y-4">
-            <p className="font-medium text-emerald-700">Roteiro criado com sucesso!</p>
+            <p className="font-medium text-success">Roteiro criado com sucesso!</p>
             <p className="text-sm text-muted-foreground">Já está salvo em Headlines › Roteiros.</p>
             {(roteiro.post || postId) && (
               <p className="text-sm text-muted-foreground" data-testid="roteiro-vinculado">

@@ -101,8 +101,7 @@ export function AdminLogoutBehavior() {
               <button
                 onClick={() => toggleBehavior(product)}
                 disabled={isToggling}
-                className={`
-                  shrink-0 flex items-center gap-2 rounded-full px-4 py-2 text-xs font-medium transition-all
+                className={`shrink-0 flex items-center gap-2 rounded-full px-4 py-2 text-xs font-medium transition-all
                   disabled:opacity-50 disabled:cursor-not-allowed
                   ${isRedirect
                     ? 'bg-primary/10 text-primary hover:bg-primary/20'

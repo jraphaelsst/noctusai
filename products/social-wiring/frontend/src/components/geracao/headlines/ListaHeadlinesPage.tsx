@@ -141,7 +141,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
         ref={destacada ? (el) => (linhaRef.current = el) : undefined}
         data-testid={`headline-${h.id}`}
         data-destacada={destacada || undefined}
-        className={cn("border-b", destacada && "bg-amber-50 ring-2 ring-inset ring-amber-300")}
+        className={cn("border-b", destacada && "bg-warning-light ring-2 ring-inset ring-warning/40")}
       >
         <td className="p-2">
           <Checkbox
@@ -195,7 +195,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
               disabled={favoritar.isPending}
               onClick={() => alternarFavorita(h)}
             >
-              <Heart className={cn("h-4 w-4", h.favorita && "fill-current text-rose-600")} />
+              <Heart className={cn("h-4 w-4", h.favorita && "fill-current text-destructive")} />
             </Button>
             {lista === "sugeridas" && h.viral?.permalink && (
               <Button size="icon" variant="ghost" asChild>

@@ -55,7 +55,7 @@ export function PainelLeadConteudo({ connectionId, chatId }: { connectionId: str
           <div key={p.chave} className="flex justify-between gap-3" data-testid={`painel-slot-${p.chave}`}>
             <dt className="flex items-center gap-1 text-muted-foreground">
               {p.qualificatoria && (
-                <Star className="h-3 w-3 fill-amber-400 text-amber-500" aria-label="Qualificatória" />
+                <Star className="h-3 w-3 fill-warning text-warning-foreground" aria-label="Qualificatória" />
               )}
               {p.label}
             </dt>

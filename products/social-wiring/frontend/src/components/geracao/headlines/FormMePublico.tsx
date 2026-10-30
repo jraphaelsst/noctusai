@@ -237,7 +237,7 @@ export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Pro
           <div className="space-y-1">
             <p className="text-sm font-medium">Perfil de Referência (máximo 2):</p>
             {filtraPorVariavel && (
-              <p role="status" className="text-xs text-amber-800">
+              <p role="status" className="text-xs text-warning-foreground">
                 Atenção! Exibindo somente perfis que possuem estruturas com as variáveis selecionadas.
               </p>
             )}

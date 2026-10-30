@@ -139,7 +139,7 @@ function RootDropZone({
 function ReconnectState() {
   return (
     <div className="flex flex-col items-center gap-3 rounded-md border border-dashed py-12 text-center">
-      <PlugZap className="h-10 w-10 text-amber-500" />
+      <PlugZap className="h-10 w-10 text-warning-foreground" />
       <div>
         <p className="text-sm font-medium">Esta marca precisa ser reconectada ao n8n</p>
         <p className="mt-1 text-xs text-muted-foreground">

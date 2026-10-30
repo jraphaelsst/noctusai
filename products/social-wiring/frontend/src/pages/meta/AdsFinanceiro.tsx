@@ -156,15 +156,15 @@ export default function AdsFinanceiro() {
                         {formatCents(p.spent, currency)} / {formatCents(p.budget, currency)}
                         <Badge variant="outline"
                           className={over
-                            ? "border-amber-500/30 bg-amber-500/15 text-amber-600"
-                            : "border-emerald-500/30 bg-emerald-500/15 text-emerald-600"}>
+                            ? "border-warning/30 bg-warning/15 text-warning-foreground"
+                            : "border-success/30 bg-success/15 text-success"}>
                           {over ? "acima" : `${pctOfBudget}%`}
                         </Badge>
                       </span>
                     </div>
                     <div className="h-2.5 w-full rounded bg-muted">
                       <div
-                        className={`h-2.5 rounded ${over ? "bg-amber-500" : "bg-primary"}`}
+                        className={`h-2.5 rounded ${over ? "bg-warning" : "bg-primary"}`}
                         style={{ width: `${Math.min(100, p.ratio * 100)}%` }}
                       />
                     </div>

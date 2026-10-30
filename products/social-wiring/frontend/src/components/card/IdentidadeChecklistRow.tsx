@@ -195,7 +195,7 @@ export function IdentidadeChecklistRow({
         </p>
       )}
       {faltando.length > 0 ? (
-        <div className="ml-6 text-xs text-amber-700" data-testid={`${tid}-faltando`}>
+        <div className="ml-6 text-xs text-warning-foreground" data-testid={`${tid}-faltando`}>
           <p>Falta:</p>
           <ul className="ml-3 list-disc">
             {faltando.map((campo, i) => (

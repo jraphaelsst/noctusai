@@ -522,7 +522,7 @@ function ScoreCard({ score }: { score: PostScore }) {
               {score.criteria.map((c) => (
                 <div key={c.name} className="flex items-start gap-1.5 text-xs">
                   {c.pass ? (
-                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
+                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
                   ) : (
                     <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
                   )}

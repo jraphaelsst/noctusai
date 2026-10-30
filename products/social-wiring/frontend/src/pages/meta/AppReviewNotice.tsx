@@ -18,7 +18,7 @@ export function AppReviewNotice({ error }: { error?: string | null }) {
   return (
     <Card data-testid="meta-app-review-gate" className="border-dashed">
       <CardContent className="flex items-start gap-3 p-4 text-sm">
-        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
         <div>
           <div className="font-medium">Requer Revisão do app Meta</div>
           <p className="text-muted-foreground">

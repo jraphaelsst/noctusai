@@ -82,14 +82,14 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 
 const SOURCE_COLORS: Record<string, string> = {
-  manual: "bg-blue-100 text-blue-800",
+  manual: "bg-info-light text-info",
   import: "bg-purple-100 text-purple-800",
-  whatsapp: "bg-green-100 text-green-800",
+  whatsapp: "bg-success-light text-success",
 };
 
 function SourceBadge({ source }: { source: string }) {
   const label = SOURCE_LABELS[source] ?? source;
-  const color = SOURCE_COLORS[source] ?? "bg-gray-100 text-gray-800";
+  const color = SOURCE_COLORS[source] ?? "bg-muted text-foreground";
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${color}`}

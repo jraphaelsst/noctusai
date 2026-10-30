@@ -571,7 +571,7 @@ export function ProntidaoListas({
       {avisos.filter((a) => a.codigo in AVISOS_DESTACADOS).map((a) => (
         <div
           key={a.codigo}
-          className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900"
+          className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-light p-2.5 text-xs text-warning-foreground"
           data-testid={`${prefixo}-aviso-destacado-${a.codigo}`}
         >
           <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -587,7 +587,7 @@ export function ProntidaoListas({
           {avisos
             .filter((a) => !(a.codigo in AVISOS_DESTACADOS))
             .map((a) => (
-              <li key={a.codigo} className="text-xs text-amber-700">
+              <li key={a.codigo} className="text-xs text-warning-foreground">
                 {a.mensagem}
               </li>
             ))}
@@ -681,14 +681,14 @@ export function CorrecoesContestadas({
   if (correcoes.length === 0) return null;
   return (
     <div
-      className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs"
+      className="space-y-2 rounded-md border border-warning/40 bg-warning-light p-2.5 text-xs"
       data-testid="gerador-contrato-correcoes"
     >
       {correcoes.map((c) => {
         const decidindo = decidindoId === c.id;
         return (
           <div key={c.id} className="space-y-1" data-testid={`gerador-contrato-correcao-${c.id}`}>
-            <p className="flex items-center gap-1 font-medium text-amber-800">
+            <p className="flex items-center gap-1 font-medium text-warning-foreground">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
               {c.mensagem}
             </p>
@@ -850,7 +850,7 @@ export default function GeradorContratoSection({
       <div className="flex flex-wrap items-center gap-2">
         {status.pronto ? (
           <Badge
-            className="gap-1 border-emerald-600/30 bg-emerald-600/10 text-[11px] text-emerald-700 hover:bg-emerald-600/10"
+            className="gap-1 border-success/30 bg-success/10 text-[11px] text-success hover:bg-success/10"
             data-testid="gerador-contrato-pronto"
           >
             <CheckCircle2 className="h-3 w-3" />
@@ -881,7 +881,7 @@ export default function GeradorContratoSection({
       )}
 
       {!status.modelo_confere && !status.modelo_automatico && (
-        <p className="text-xs text-amber-700" data-testid="gerador-contrato-modelo-diverge">
+        <p className="text-xs text-warning-foreground" data-testid="gerador-contrato-modelo-diverge">
           O modelo detectado ({MODELO_LABEL[status.modelo_derivado]}) é diferente do modelo
           atual do contrato. Confira antes de gerar.
         </p>
@@ -985,11 +985,11 @@ export default function GeradorContratoSection({
 
       {avisosGerados && avisosGerados.length > 0 && (
         <div
-          className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs"
+          className="space-y-1 rounded-md border border-warning/40 bg-warning-light p-2.5 text-xs"
           data-testid="gerador-contrato-avisos-pos-geracao"
         >
           {avisosGerados.map((msg, i) => (
-            <p key={i} className="text-amber-800">
+            <p key={i} className="text-warning-foreground">
               {msg}
             </p>
           ))}

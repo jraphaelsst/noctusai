@@ -102,7 +102,7 @@ export function ParteEmpresaContratoForm({
             : " · sede não informada"}
         </p>
         {faltam.length > 0 && (
-          <p className="text-[11px] text-amber-700" data-testid={`parte-empresa-contrato-faltam-${parteId}`}>
+          <p className="text-[11px] text-warning-foreground" data-testid={`parte-empresa-contrato-faltam-${parteId}`}>
             Falta para o contrato: {faltam.map((c) => ROTULO[c]).join(", ")}.
           </p>
         )}
@@ -196,7 +196,7 @@ export function RepresentanteEmpresaSelect({
 }) {
   if (empresas.length === 0) {
     return (
-      <p className="mb-2 text-xs text-amber-700" data-testid={`representante-sem-empresa-${parteId}`}>
+      <p className="mb-2 text-xs text-warning-foreground" data-testid={`representante-sem-empresa-${parteId}`}>
         Representante sem empresa: adicione a empresa (PJ) a este lado para escolher quem ela
         representa.
       </p>

@@ -82,9 +82,9 @@ function ReconnectBanner({ account }: { account: SimecAccount }) {
     <div
       role="alert"
       data-testid="simec-reconnect"
-      className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+      className="flex flex-wrap items-center gap-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
     >
-      <ShieldAlert className="h-4 w-4 shrink-0 text-amber-500" />
+      <ShieldAlert className="h-4 w-4 shrink-0 text-warning-foreground" />
       <p className="flex-1">
         {account.insights_scope_granted
           ? "A conexão deste perfil precisa ser renovada para continuar sincronizando as métricas."

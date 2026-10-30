@@ -68,7 +68,7 @@ export function ProgressPanel({ job, onCancelar, cancelando, onTentarNovamente }
       )}
       {job.status === "completed_with_errors" && (
         <>
-          <h3 className="font-medium text-amber-600">Extração concluída com avisos</h3>
+          <h3 className="font-medium text-warning-foreground">Extração concluída com avisos</h3>
           <Resultado job={job} />
         </>
       )}

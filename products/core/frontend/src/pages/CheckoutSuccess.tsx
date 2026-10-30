@@ -7,7 +7,7 @@ export function CheckoutSuccess() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-2xl font-bold text-green-600">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-success-light text-2xl font-bold text-success">
           ✓
         </div>
         <h2 className="mb-3 text-2xl font-bold text-foreground">Assinatura confirmada!</h2>

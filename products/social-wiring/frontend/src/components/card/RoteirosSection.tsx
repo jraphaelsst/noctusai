@@ -56,8 +56,8 @@ import { VisitaFeedbackPrompt, roteiroVencido } from "./VisitaFeedbackPrompt";
  *  buttons, not a checkbox: "não aconteceu ainda" and "não aconteceu" are
  *  different answers and the counts must not merge them. */
 const STATUS_OPCOES: { value: StatusVisita; label: string; classe: string }[] = [
-  { value: "realizada", label: "Realizada", classe: "bg-emerald-600 text-white" },
-  { value: "nao_realizada", label: "Não realizada", classe: "bg-rose-600 text-white" },
+  { value: "realizada", label: "Realizada", classe: "bg-success text-white" },
+  { value: "nao_realizada", label: "Não realizada", classe: "bg-destructive text-white" },
   { value: "pendente", label: "Pendente", classe: "bg-muted text-foreground" },
 ];
 
@@ -412,7 +412,7 @@ function VisitaRow({
           </span>
         )}
         {visita.status === "nao_realizada" && visita.nao_realizada_motivo && (
-          <span className="text-xs text-rose-700 dark:text-rose-300" data-testid={`visita-motivo-${visita.id}`}>
+          <span className="text-xs text-destructive" data-testid={`visita-motivo-${visita.id}`}>
             {MOTIVOS_NAO_REALIZADA.find((m) => m.value === visita.nao_realizada_motivo)?.label ??
               visita.nao_realizada_motivo}
           </span>
@@ -442,8 +442,8 @@ function Chip({ tom, children }: { tom: "ok" | "ruim" | "neutro"; children: Reac
     <span
       className={cn(
         "rounded-full px-2 py-0.5 text-xs font-medium",
-        tom === "ok" && "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
-        tom === "ruim" && "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200",
+        tom === "ok" && "bg-success-light text-success",
+        tom === "ruim" && "bg-danger-light text-destructive",
         tom === "neutro" && "bg-muted text-muted-foreground",
       )}
     >

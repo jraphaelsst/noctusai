@@ -91,8 +91,8 @@ export function AccountSettings() {
         {message && (
           <p className={`rounded-md px-3 py-2 text-sm ${
             message.includes('sucesso')
-              ? 'bg-green-50 text-green-800'
-              : 'bg-red-50 text-red-800'
+              ? 'bg-success-light text-success'
+              : 'bg-danger-light text-destructive'
           }`}>
             {message}
           </p>

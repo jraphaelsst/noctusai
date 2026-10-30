@@ -190,9 +190,9 @@ function ChannelInfoCard({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           {connected ? (
-            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+            <CheckCircle2 className="h-5 w-5 text-success" />
           ) : (
-            <CircleAlert className="h-5 w-5 text-amber-600" />
+            <CircleAlert className="h-5 w-5 text-warning-foreground" />
           )}
           Canal conectado
         </CardTitle>

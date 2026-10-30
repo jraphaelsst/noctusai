@@ -596,7 +596,7 @@ function LinhaItem({
       data-testid="pesquisa-linha"
     >
       <div
-        className={`self-stretch w-1 ${pendente ? "bg-orange-500" : "bg-purple-500"}`}
+        className={`self-stretch w-1 ${pendente ? "bg-warning" : "bg-purple-500"}`}
         aria-hidden
       />
       <Checkbox

@@ -87,7 +87,7 @@ function ConversationRow({
         )}
         {c.video_filename && <span className="truncate">{c.video_filename}</span>}
         {c.active_uploads > 0 && (
-          <span className="text-amber-600">
+          <span className="text-warning-foreground">
             {c.active_uploads} upload(s) ativo(s)
           </span>
         )}

@@ -2,10 +2,10 @@
 import type { CreditoStatus } from "@/hooks/useJuliaCredito";
 
 const META: Record<CreditoStatus, { label: string; cls: string }> = {
-  pendente: { label: "Pendente", cls: "bg-amber-100 text-amber-800" },
-  aprovado: { label: "Aprovado", cls: "bg-emerald-100 text-emerald-800" },
-  reprovado: { label: "Reprovado", cls: "bg-red-100 text-red-800" },
-  erro: { label: "Erro", cls: "bg-zinc-200 text-zinc-800" },
+  pendente: { label: "Pendente", cls: "bg-warning-light text-warning-foreground" },
+  aprovado: { label: "Aprovado", cls: "bg-success-light text-success" },
+  reprovado: { label: "Reprovado", cls: "bg-danger-light text-destructive" },
+  erro: { label: "Erro", cls: "bg-muted text-foreground" },
 };
 
 export function CreditoStatusChip({ status }: { status: string }) {

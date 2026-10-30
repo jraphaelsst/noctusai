@@ -530,9 +530,9 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
  */
 function SuccessEmptyState() {
   return (
-    <Card className="border-emerald-500/30 bg-emerald-500/5" data-testid="revisao-empty-success">
+    <Card className="border-success/30 bg-success/5" data-testid="revisao-empty-success">
       <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-        <CheckCircle2 className="h-10 w-10 text-emerald-600" />
+        <CheckCircle2 className="h-10 w-10 text-success" />
         <div>
           <p className="font-medium">Fila de revisão vazia — tudo certo!</p>
           <p className="text-sm text-muted-foreground">

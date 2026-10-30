@@ -235,7 +235,7 @@ function ConfiancaBadge({
       variant="outline"
       className={
         destaque
-          ? "border-amber-500 bg-amber-50 text-[10px] text-amber-700"
+          ? "border-warning bg-warning-light text-[10px] text-warning-foreground"
           : "text-[10px] text-muted-foreground"
       }
       data-testid={`${prefixo}-confianca-${campo}`}
@@ -389,7 +389,7 @@ export default function MatriculaAtoDetalhesEditor({
         ) : (
           <Badge
             variant="outline"
-            className="gap-1 border-amber-500 bg-amber-50 text-[10px] text-amber-700"
+            className="gap-1 border-warning bg-warning-light text-[10px] text-warning-foreground"
             data-testid={`${prefixo}-origem`}
             data-origem="sugestao"
           >

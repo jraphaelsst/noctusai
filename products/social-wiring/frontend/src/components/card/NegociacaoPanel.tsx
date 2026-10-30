@@ -561,7 +561,7 @@ export default function NegociacaoPanel({
                 // Owed to nobody named yet — said out loud rather than folded
                 // into the agency's share.
                 <p
-                  className="pl-4 text-xs text-amber-600 dark:text-amber-500"
+                  className="pl-4 text-xs text-warning-foreground"
                   data-testid="negociacao-sem-agentes"
                 >
                   Nenhum membro no cartão — esta parte ainda não tem destino.
@@ -578,7 +578,7 @@ export default function NegociacaoPanel({
                 </p>
               ) : (
                 <p
-                  className="pl-4 text-xs text-amber-600 dark:text-amber-500"
+                  className="pl-4 text-xs text-warning-foreground"
                   data-testid="negociacao-sem-captador"
                 >
                   Sem captador no imóvel — esta parte ainda não tem destino.

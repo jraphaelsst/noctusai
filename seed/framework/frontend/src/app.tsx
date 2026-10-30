@@ -12,7 +12,7 @@ import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ErrorBoundary, ConfirmProvider, createAuthProvider, useAuthReconnecting, SSOCallback, env } from "@noctusai/lib";
 import { createQueryClient } from "@noctusai/lib/query-client";
-import { PageSkeleton } from "@noctusai/lib/design-system";
+import { PageSkeleton, BrandProvider } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
 import { SemAcessoPage } from "./pages/SemAcessoPage";
 import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
@@ -427,6 +427,13 @@ export function createProductApp(config: ProductAppConfig) {
     );
   }
 
+  // Org visual identity, mounted ONCE here so core + every product wear it by construction.
+  // Inside AuthProvider (it reads the session); the identity is only fetched once signed in.
+  function Brand({ children }: { children: React.ReactNode }) {
+    const { user } = useAuth();
+    return <BrandProvider authenticated={!!user}>{children}</BrandProvider>;
+  }
+
   return function App() {
     return (
       <QueryClientProvider client={queryClient}>
@@ -434,7 +441,9 @@ export function createProductApp(config: ProductAppConfig) {
           <ConfirmProvider>
             <BrowserRouter>
               <AuthProvider>
-                <AppRoutes />
+                <Brand>
+                  <AppRoutes />
+                </Brand>
               </AuthProvider>
             </BrowserRouter>
           </ConfirmProvider>

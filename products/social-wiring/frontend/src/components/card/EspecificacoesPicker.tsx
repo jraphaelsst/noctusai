@@ -178,7 +178,7 @@ export function EspecificacoesPicker({
       </div>
 
       {problema && (
-        <p className="flex items-center gap-1 text-xs text-amber-700" data-testid="especificacoes-incoerente">
+        <p className="flex items-center gap-1 text-xs text-warning-foreground" data-testid="especificacoes-incoerente">
           <AlertTriangle className="h-3.5 w-3.5" />
           {problema}
         </p>

@@ -97,7 +97,7 @@ function FormRow({ form }: { form: LeadgenForm }) {
                 variant="outline"
                 className={
                   active
-                    ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600"
+                    ? "border-success/30 bg-success/15 text-success"
                     : "border-muted-foreground/30 text-muted-foreground"
                 }
               >
@@ -177,10 +177,10 @@ function RecordsPanel({
 
   if (!available) {
     return (
-      <Card className="border-amber-500/30 bg-amber-500/5">
+      <Card className="border-warning/30 bg-warning/5">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <Info className="h-4 w-4 text-amber-600" />
+            <Info className="h-4 w-4 text-warning-foreground" />
             Registros de leads — requer permissão adicional
           </CardTitle>
         </CardHeader>
@@ -225,7 +225,7 @@ function RecordsPanel({
             >
               <span
                 className={`inline-block h-1.5 w-1.5 rounded-full ${
-                  live.status === "open" ? "bg-emerald-500" : "bg-muted-foreground"
+                  live.status === "open" ? "bg-success" : "bg-muted-foreground"
                 }`}
               />
               {live.status === "open" ? "ao vivo" : "reconectando"}

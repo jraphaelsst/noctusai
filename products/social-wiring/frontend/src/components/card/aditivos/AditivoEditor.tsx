@@ -241,7 +241,7 @@ export function AditivoEditor({
 
       {!temPagamento && draft.parcelas.length > 0 && (
         <div
-          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning-light p-2 text-xs text-warning-foreground"
           data-testid={`aditivo-parcelas-orfas-${aditivo.id}`}
         >
           {draft.parcelas.length} parcela(s) sem a alteração de pagamento — adicione o pagamento ou
@@ -550,7 +550,7 @@ function AlteracaoBloco({
               data-testid={`aditivo-outro-texto-${aditivoId}`}
             />
           </div>
-          <p className="text-[11px] text-amber-700">
+          <p className="text-[11px] text-warning-foreground">
             Texto livre é sempre conferido na revisão jurídica.
           </p>
         </div>

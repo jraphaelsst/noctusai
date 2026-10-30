@@ -373,7 +373,7 @@ export function DadosPessoaisForm({
             because the editor closed. */}
         {!!pendenteConfirmacao?.length && (
           <p
-            className="rounded border border-amber-400/50 bg-amber-50 p-2 text-xs text-amber-800"
+            className="rounded border border-warning/50 bg-warning-light p-2 text-xs text-warning-foreground"
             data-testid={`${testId}-pendente-resumo`}
           >
             Aguardando confirmação de um administrador: {pendenteConfirmacao.join(", ")}.
@@ -535,7 +535,7 @@ export function DadosPessoaisForm({
               document when the two numbers happen to match. */}
           {rgIgualCpf && (
             <p
-              className="mt-1 rounded border border-amber-400/50 bg-amber-50 p-1.5 text-xs text-amber-800"
+              className="mt-1 rounded border border-warning/50 bg-warning-light p-1.5 text-xs text-warning-foreground"
               data-testid={`${testId}-rg-igual-cpf`}
             >
               RG igual ao CPF — correto apenas para a Carteira de Identidade
@@ -849,7 +849,7 @@ function Campo({
 function PendenteAviso({ ativo, testId }: { ativo: boolean; testId: string }) {
   if (!ativo) return null;
   return (
-    <p className="mt-1 text-xs text-amber-700" data-testid={`${testId}-pendente`}>
+    <p className="mt-1 text-xs text-warning-foreground" data-testid={`${testId}-pendente`}>
       Aguardando confirmação de um administrador — o valor do documento
       continua valendo até a decisão.
     </p>

@@ -165,9 +165,9 @@ function PoolReferenciasView({ ehPlataforma }: { ehPlataforma: boolean }) {
 
 function OcupacaoPool({ pool }: { pool: PoolReferencias }) {
   return (
-    <Card className={pool.cheio ? "border-amber-500/40 bg-amber-500/5" : undefined} data-testid="pool-ocupacao">
+    <Card className={pool.cheio ? "border-warning/40 bg-warning/5" : undefined} data-testid="pool-ocupacao">
       <CardContent className="flex items-center gap-3 p-4 text-sm">
-        {pool.cheio && <AlertCircle className="h-5 w-5 shrink-0 text-amber-600" />}
+        {pool.cheio && <AlertCircle className="h-5 w-5 shrink-0 text-warning-foreground" />}
         <span>
           {pool.limite_pares === null
             ? `${pool.pares_ativos} pares ativos · sem limite`

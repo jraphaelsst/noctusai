@@ -22,6 +22,10 @@
  */
 import React from "react";
 
+export const BrandProvider: React.FC<{ children: React.ReactNode; authenticated?: boolean }> = ({ children }) => (
+  <>{children}</>
+);
+
 export const PageSkeleton: React.FC = () => (
   <div data-testid="page-skeleton-stub" />
 );

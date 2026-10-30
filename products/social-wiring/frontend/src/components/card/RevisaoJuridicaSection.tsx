@@ -103,7 +103,7 @@ function LinhaCampo({ campo: c, testIdPrefix, revelado, onAlternarRevelar }: Lin
     : `${ORIGEM_NAO_EXTRAIDA[c.origem as string]} — revisar no documento`;
   return (
     <li
-      className="space-y-0.5 rounded border border-amber-200 bg-white/70 px-2 py-1.5 text-xs"
+      className="space-y-0.5 rounded border border-warning/40 bg-white/70 px-2 py-1.5 text-xs"
       data-testid={`${testIdPrefix}-campo-${c.chave}`}
     >
       <div className="flex flex-wrap items-baseline gap-x-2">
@@ -116,12 +116,12 @@ function LinhaCampo({ campo: c, testIdPrefix, revelado, onAlternarRevelar }: Lin
             {valor}
           </span>
         ) : (
-          extraido && <span className="text-[11px] italic text-amber-800">valor: confira no PDF</span>
+          extraido && <span className="text-[11px] italic text-warning-foreground">valor: confira no PDF</span>
         )}
         {c.valor_mascarado && c.valor != null && (
           <button
             type="button"
-            className="min-h-8 text-[11px] font-medium text-amber-900 underline"
+            className="min-h-8 text-[11px] font-medium text-warning-foreground underline"
             onClick={() => onAlternarRevelar(c.chave)}
             data-testid={`${testIdPrefix}-revelar-${c.chave}`}
           >
@@ -132,12 +132,12 @@ function LinhaCampo({ campo: c, testIdPrefix, revelado, onAlternarRevelar }: Lin
       {extraido && fonte && (
         <p className="text-[11px] text-muted-foreground">fonte: {fonte}</p>
       )}
-      <p className="text-[11px] text-amber-800">
+      <p className="text-[11px] text-warning-foreground">
         {motivo}
         {extraido ? ` · ${c.precisao ?? "sem medição"}` : ""}
       </p>
       {c.valor_confere === false && (
-        <p className="text-[11px] font-medium text-red-700" data-testid={`${testIdPrefix}-mudou-${c.chave}`}>
+        <p className="text-[11px] font-medium text-destructive" data-testid={`${testIdPrefix}-mudou-${c.chave}`}>
           O valor mudou depois que esta versão foi gerada — gere uma nova versão antes de aprovar.
         </p>
       )}
@@ -206,7 +206,7 @@ export function RevisaoJuridicaSection({
   if (status === "aprovada") {
     return (
       <p
-        className="flex flex-wrap items-center gap-1.5 text-xs text-emerald-700"
+        className="flex flex-wrap items-center gap-1.5 text-xs text-success"
         data-testid={`${testIdPrefix}-aprovada-${contratoId}`}
       >
         <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
@@ -233,15 +233,15 @@ export function RevisaoJuridicaSection({
   );
   return (
     <div
-      className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-2.5"
+      className="space-y-2 rounded-md border border-warning/40 bg-warning-light p-2.5"
       data-testid={`${testIdPrefix}-aguardando-${contratoId}`}
     >
       <div className="space-y-0.5">
-        <p className="flex items-center gap-1.5 text-sm font-medium text-amber-900">
+        <p className="flex items-center gap-1.5 text-sm font-medium text-warning-foreground">
           <FileSearch className="h-4 w-4 shrink-0" />
           Aguardando revisão jurídica
         </p>
-        <p className="text-xs text-amber-800" data-testid={`${testIdPrefix}-texto-${contratoId}`}>
+        <p className="text-xs text-warning-foreground" data-testid={`${testIdPrefix}-texto-${contratoId}`}>
           {textoRevisaoAguardando(campos, documento)}
         </p>
       </div>
@@ -249,7 +249,7 @@ export function RevisaoJuridicaSection({
         <div className="space-y-2" data-testid={`${testIdPrefix}-campos-${contratoId}`}>
           {porGrupo(principais).map(([grupo, itens]) => (
             <section key={grupo} className="space-y-1">
-              {grupo && <p className="text-[11px] font-semibold text-amber-900">{grupo}</p>}
+              {grupo && <p className="text-[11px] font-semibold text-warning-foreground">{grupo}</p>}
               <ul className="space-y-1">{itens.map(linha)}</ul>
             </section>
           ))}
@@ -257,10 +257,10 @@ export function RevisaoJuridicaSection({
       )}
       {corroborados.length > 0 && (
         <details
-          className="rounded border border-emerald-200 bg-white/60 px-2 py-1 text-xs"
+          className="rounded border border-success/40 bg-white/60 px-2 py-1 text-xs"
           data-testid={`${testIdPrefix}-corroborados-${contratoId}`}
         >
-          <summary className="min-h-8 cursor-pointer text-[11px] font-medium text-emerald-800">
+          <summary className="min-h-8 cursor-pointer text-[11px] font-medium text-success">
             Confirmado por documentos ({corroborados.length})
           </summary>
           <ul className="mt-1 space-y-1">{corroborados.map(linha)}</ul>
@@ -268,10 +268,10 @@ export function RevisaoJuridicaSection({
       )}
       {derivados.length > 0 && (
         <details
-          className="rounded border border-amber-200 bg-white/60 px-2 py-1 text-xs"
+          className="rounded border border-warning/40 bg-white/60 px-2 py-1 text-xs"
           data-testid={`${testIdPrefix}-derivados-${contratoId}`}
         >
-          <summary className="min-h-8 cursor-pointer text-[11px] font-medium text-amber-900">
+          <summary className="min-h-8 cursor-pointer text-[11px] font-medium text-warning-foreground">
             Derivados (conferir) ({derivados.length})
           </summary>
           <ul className="mt-1 space-y-1">{derivados.map(linha)}</ul>
@@ -301,7 +301,7 @@ export function RevisaoJuridicaSection({
         </Button>
       ) : (
         <p
-          className="text-[11px] text-amber-800"
+          className="text-[11px] text-warning-foreground"
           data-testid={`${testIdPrefix}-so-admin-${contratoId}`}
         >
           A revisão jurídica é aprovada por um administrador do escritório.

@@ -354,7 +354,7 @@ function OrigensConfig() {
           )}
           {!unmappedQ.isPending && !unmappedQ.isFetching && !unmappedQ.isError && unmapped.length === 0 && (
             <p
-              className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+              className="flex items-center gap-1.5 text-xs font-medium text-success"
               data-testid="sources-unmapped-empty"
             >
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
@@ -363,7 +363,7 @@ function OrigensConfig() {
           )}
           {!unmappedQ.isPending && !unmappedQ.isError && unmapped.length > 0 && (
             <div data-testid="sources-unmapped-queue">
-              <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+              <p className="mb-2 text-xs font-medium text-warning-foreground">
                 Não mapeados ({unmapped.length})
               </p>
               <div className="space-y-1.5">
@@ -785,7 +785,7 @@ function CorretoresConfig() {
           )}
           {!unmappedQ.isPending && !unmappedQ.isFetching && !unmappedQ.isError && unmapped.length === 0 && (
             <p
-              className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+              className="flex items-center gap-1.5 text-xs font-medium text-success"
               data-testid="corretores-unmapped-empty"
             >
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
@@ -794,7 +794,7 @@ function CorretoresConfig() {
           )}
           {!unmappedQ.isPending && !unmappedQ.isError && unmapped.length > 0 && (
             <div data-testid="corretores-unmapped-queue">
-              <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+              <p className="mb-2 text-xs font-medium text-warning-foreground">
                 Não mapeados ({unmapped.length})
               </p>
               <div className="space-y-1.5">

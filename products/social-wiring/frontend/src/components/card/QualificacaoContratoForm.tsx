@@ -183,9 +183,9 @@ export function QualificacaoContratoForm({
                 return (
                   <li key={c} data-testid={`${testId}-${c}`}>
                     <span className="text-muted-foreground">Pacto antenupcial — {ROTULO_PACTO[c].split(" (")[0]}:</span>{" "}
-                    {valor ? <span className="font-medium">{valor}</span> : <span className="text-amber-700">falta</span>}
+                    {valor ? <span className="font-medium">{valor}</span> : <span className="text-warning-foreground">falta</span>}
                     {prov && (
-                      <span className={`ml-1 text-[11px] ${prov.pendente ? "text-amber-700" : "text-muted-foreground"}`}>
+                      <span className={`ml-1 text-[11px] ${prov.pendente ? "text-warning-foreground" : "text-muted-foreground"}`}>
                         ({prov.texto})
                       </span>
                     )}
@@ -238,7 +238,7 @@ export function QualificacaoContratoForm({
                       data-testid={`${testId}-${c}-input`}
                     />
                     {prov && (
-                      <p className={`text-[11px] ${prov.pendente ? "text-amber-700" : "text-muted-foreground"}`}>
+                      <p className={`text-[11px] ${prov.pendente ? "text-warning-foreground" : "text-muted-foreground"}`}>
                         {prov.texto}
                       </p>
                     )}

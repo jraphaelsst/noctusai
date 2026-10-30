@@ -292,7 +292,7 @@ export default function MatriculaAtosSelector({
 
       {selecaoExtracaoId && extracaoAtualId && selecaoExtracaoId !== extracaoAtualId && (
         <div
-          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning-light p-2 text-xs text-warning-foreground"
           data-testid="matricula-atos-leitura-desatualizada"
         >
           <span>

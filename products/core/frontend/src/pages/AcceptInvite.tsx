@@ -135,7 +135,7 @@ export function AcceptInvite() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-2xl font-bold text-green-600">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-success-light text-2xl font-bold text-success">
             &#10003;
           </div>
           <h2 className="mb-3 text-2xl font-bold text-foreground">Convite aceito!</h2>
@@ -158,7 +158,7 @@ export function AcceptInvite() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-2xl font-bold text-red-600">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-danger-light text-2xl font-bold text-destructive">
             !
           </div>
           <h2 className="mb-3 text-2xl font-bold text-foreground">Erro no convite</h2>
@@ -189,7 +189,7 @@ export function AcceptInvite() {
         </div>
 
         {error && (
-          <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
+          <div className="mb-4 rounded-md bg-danger-light px-4 py-3 text-sm text-destructive">{error}</div>
         )}
 
         {signupMode ? (

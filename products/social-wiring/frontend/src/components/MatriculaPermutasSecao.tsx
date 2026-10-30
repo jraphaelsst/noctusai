@@ -133,7 +133,7 @@ export function MatriculaPermutasSecao({
           still points at it, and a silently missing section reads as "this
           deal has no permuta". */}
       {ativosQuery.data && ativos.length < ativoIds.length && (
-        <p className="text-xs text-amber-700" data-testid="matricula-permutas-nao-resolvidos">
+        <p className="text-xs text-warning-foreground" data-testid="matricula-permutas-nao-resolvidos">
           {ativoIds.length - ativos.length} ativo(s) de permuta desta negociação não foram
           encontrados no catálogo.
         </p>

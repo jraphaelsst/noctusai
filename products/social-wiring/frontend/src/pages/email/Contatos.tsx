@@ -54,14 +54,14 @@ const STATUS_LABEL: Record<string, string> = {
 export function OptinBadge({ optin }: { optin: EmContact["email_optin"] | undefined }) {
   if (optin === "pending") {
     return (
-      <Badge variant="outline" className="border-amber-500/50 text-amber-600" data-testid="optin-pending">
+      <Badge variant="outline" className="border-warning/50 text-warning-foreground" data-testid="optin-pending">
         Aguardando confirmação
       </Badge>
     );
   }
   if (optin === "confirmed") {
     return (
-      <Badge variant="outline" className="border-green-500/50 text-green-600" data-testid="optin-confirmed">
+      <Badge variant="outline" className="border-success/50 text-success" data-testid="optin-confirmed">
         Confirmado
       </Badge>
     );

@@ -418,8 +418,7 @@ export default function Matriculas() {
               onDragLeave={handleDragLeave}
               onClick={() => fileInputRef.current?.click()}
               data-testid="matricula-dropzone"
-              className={`
-                border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-colors
+              className={`border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-colors
                 ${isDragOver
                   ? 'border-primary bg-primary/5'
                   : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50'
@@ -448,8 +447,8 @@ export default function Matriculas() {
 
             {/* Processing indicator */}
             {isProcessing && (
-              <div className="mt-4 flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-900">
-                <Loader2 className="h-5 w-5 text-blue-500 animate-spin shrink-0" />
+              <div className="mt-4 flex items-center gap-3 p-4 bg-info-light rounded-lg border border-info/40">
+                <Loader2 className="h-5 w-5 text-info animate-spin shrink-0" />
                 <div>
                   <p className="font-medium text-sm">Extraindo texto...</p>
                   <p className="text-xs text-muted-foreground">
@@ -462,10 +461,10 @@ export default function Matriculas() {
 
             {/* Error display */}
             {isError && (
-              <div className="mt-4 p-4 bg-red-50 dark:bg-red-950/20 rounded-lg border border-red-200 dark:border-red-900">
+              <div className="mt-4 p-4 bg-danger-light rounded-lg border border-destructive/40">
                 <div className="flex items-center gap-2 mb-1">
-                  <XCircle className="h-4 w-4 text-red-500" />
-                  <p className="font-medium text-sm text-red-700 dark:text-red-400">Erro na extração</p>
+                  <XCircle className="h-4 w-4 text-destructive" />
+                  <p className="font-medium text-sm text-destructive">Erro na extração</p>
                 </div>
                 <p className="text-xs text-muted-foreground">{selected.erro_mensagem}</p>
                 {podeTranscreverNovamente(selected) && (
@@ -584,7 +583,7 @@ export default function Matriculas() {
 
             {isError && (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                <XCircle className="h-10 w-10 text-red-400 mb-4" />
+                <XCircle className="h-10 w-10 text-destructive mb-4" />
                 <p>Não foi possível extrair o texto</p>
               </div>
             )}
@@ -592,11 +591,11 @@ export default function Matriculas() {
             {isComplete && selected && selected.possui_marcacao_bruta && (
               <div
                 data-testid="matricula-marcacao-bruta-aviso"
-                className="mb-4 flex items-start gap-2 p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900"
+                className="mb-4 flex items-start gap-2 p-4 bg-warning-light rounded-lg border border-warning/40"
               >
-                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" />
+                <AlertTriangle className="h-4 w-4 text-warning-foreground mt-0.5 shrink-0" />
                 <div>
-                  <p className="font-medium text-sm text-amber-800 dark:text-amber-400">
+                  <p className="font-medium text-sm text-warning-foreground">
                     Este texto contém marcação de formatação bruta
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
@@ -726,7 +725,7 @@ export default function Matriculas() {
               data-testid="matriculas-historico-error"
               role="alert"
             >
-              <XCircle className="h-10 w-10 mx-auto mb-3 text-red-400" />
+              <XCircle className="h-10 w-10 mx-auto mb-3 text-destructive" />
               <p>Não foi possível carregar o histórico</p>
               <Button
                 size="sm"
@@ -772,7 +771,7 @@ export default function Matriculas() {
                           <span className="font-medium truncate max-w-[200px]">{ext.nome_arquivo}</span>
                           {ext.possui_marcacao_bruta && (
                             <AlertTriangle
-                              className="h-3.5 w-3.5 text-amber-600 dark:text-amber-500 shrink-0"
+                              className="h-3.5 w-3.5 text-warning-foreground shrink-0"
                               aria-label="Contém marcação de formatação bruta"
                             />
                           )}
@@ -1134,7 +1133,7 @@ function MatriculaAtosEFontes({ extracaoId }: { extracaoId: string }) {
                 ) : fontes.sugestoes.titulo_aquisitivo ? (
                   <div className="space-y-1.5 text-sm">
                     <p className="flex items-center gap-1.5 text-xs">
-                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      <Sparkles className="h-3.5 w-3.5 text-warning-foreground" />
                       Sugestão: {fontes.sugestoes.titulo_aquisitivo.rotulo} (
                       {fontes.sugestoes.titulo_aquisitivo.termo})
                     </p>
@@ -1217,7 +1216,7 @@ function MatriculaAtosEFontes({ extracaoId }: { extracaoId: string }) {
                 {fontes.sugestoes.onus.length > 0 && (
                   <div className="space-y-1 rounded bg-muted/30 p-2">
                     <p className="flex items-center gap-1.5 text-xs">
-                      <Sparkles className="h-3.5 w-3.5 text-amber-500" /> Sugestões
+                      <Sparkles className="h-3.5 w-3.5 text-warning-foreground" /> Sugestões
                     </p>
                     <ul className="space-y-0.5 text-xs">
                       {fontes.sugestoes.onus.map((o) => (

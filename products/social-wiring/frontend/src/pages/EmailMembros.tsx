@@ -79,11 +79,11 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  subscribed: "bg-green-100 text-green-800",
-  unsubscribed: "bg-gray-100 text-gray-800",
-  cleaned: "bg-red-100 text-red-800",
-  pending: "bg-yellow-100 text-yellow-800",
-  transactional: "bg-blue-100 text-blue-800",
+  subscribed: "bg-success-light text-success",
+  unsubscribed: "bg-muted text-foreground",
+  cleaned: "bg-danger-light text-destructive",
+  pending: "bg-warning-light text-warning-foreground",
+  transactional: "bg-info-light text-info",
 };
 
 interface MemberFormState {
@@ -295,7 +295,7 @@ function MembrosContent() {
                       <td className="px-4 py-3">
                         <span
                           className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            STATUS_COLORS[member.status] ?? "bg-gray-100 text-gray-800"
+                            STATUS_COLORS[member.status] ?? "bg-muted text-foreground"
                           }`}
                         >
                           {STATUS_LABELS[member.status] ?? member.status}

@@ -76,7 +76,7 @@ function IntegracaoCard({ integracao }: { integracao: CustosIntegracao }) {
           {integracao.chamadas} chamada{integracao.chamadas === 1 ? "" : "s"}
         </div>
         {integracao.fx_pendente && (
-          <div className="mt-2 flex items-start gap-1 text-xs text-amber-600">
+          <div className="mt-2 flex items-start gap-1 text-xs text-warning-foreground">
             <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
             <span>Cotação PTAX pendente</span>
           </div>
@@ -141,7 +141,7 @@ export default function Custos() {
                 {BRL.format(data.total_brl)}
               </div>
               {data.fx_pendente && (
-                <div className="mt-1 flex items-center gap-1 text-xs text-amber-600">
+                <div className="mt-1 flex items-center gap-1 text-xs text-warning-foreground">
                   <AlertTriangle className="h-3 w-3" />
                   Alguns valores aguardam cotação PTAX — o total pode subir quando resolvidos.
                 </div>

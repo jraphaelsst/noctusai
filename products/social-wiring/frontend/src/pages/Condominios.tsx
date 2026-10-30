@@ -31,8 +31,8 @@ import {
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
 const STATUS_CLASSE: Record<StatusValidacao, string> = {
-  sugerido: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  validado: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  sugerido: "bg-warning/15 text-warning-foreground",
+  validado: "bg-success/15 text-success",
   descartado: "bg-muted text-muted-foreground",
 };
 

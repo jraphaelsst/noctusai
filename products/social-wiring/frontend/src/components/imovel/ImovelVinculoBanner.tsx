@@ -50,7 +50,7 @@ export default function ImovelVinculoBanner({
 
   return (
     <div
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-100"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-info/40 bg-info-light p-3 text-sm text-info"
       data-testid="imovel-vinculo-banner"
     >
       <p>

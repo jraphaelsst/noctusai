@@ -25,7 +25,7 @@ export function ItensRevisaoLista({
   tom?: "neutro" | "revisao";
 }) {
   if (!itens || itens.length === 0) return null;
-  const borda = tom === "revisao" ? "border-amber-200 bg-white/70" : "border-muted bg-muted/30";
+  const borda = tom === "revisao" ? "border-warning/40 bg-white/70" : "border-muted bg-muted/30";
   return (
     <div className="space-y-1.5" data-testid={testId}>
       <p className="flex items-center gap-1.5 text-xs font-medium">

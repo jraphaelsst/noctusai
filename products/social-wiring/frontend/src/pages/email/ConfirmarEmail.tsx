@@ -52,7 +52,7 @@ export default function ConfirmarEmail() {
 
         {!showSkeleton && !invalid && confirm.isSuccess && (
           <div className="space-y-4" data-testid="confirmar-email-success">
-            <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
+            <CheckCircle className="mx-auto h-12 w-12 text-success" />
             <h1 className="text-2xl font-bold text-foreground">
               {confirm.data?.already ? "E-mail já confirmado" : "E-mail confirmado"}
             </h1>

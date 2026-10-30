@@ -72,7 +72,7 @@ export default function JuliaAvaliacoes() {
           </section>
 
           {!d.configurado.review_url && (
-            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="avaliacoes-sem-link">
+            <div className="rounded-md border border-warning/40 bg-warning-light p-3 text-sm text-warning-foreground" data-testid="avaliacoes-sem-link">
               Cadastre o link de avaliação do Google
               {isAdmin && <> — <button type="button" className="underline" onClick={() => setDrawer(true)}>configurar agora</button></>}
             </div>
@@ -93,7 +93,7 @@ export default function JuliaAvaliacoes() {
             <>
               <section className="space-y-3 rounded-lg border p-4">
                 <div className="flex items-center gap-2">
-                  <Star className="h-5 w-5 fill-amber-400 text-amber-400" />
+                  <Star className="h-5 w-5 fill-warning text-warning-foreground" />
                   <span className="text-xl font-bold" data-testid="avaliacoes-media">{d.media != null ? d.media.toFixed(1) : "—"}</span>
                   <span className="text-sm text-muted-foreground" data-testid="avaliacoes-total">{d.total} avaliações</span>
                 </div>

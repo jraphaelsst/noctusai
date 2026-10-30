@@ -11,8 +11,8 @@ export const STATUS_LABEL: Record<Visita["status"], string> = {
   solicitada: "Solicitada", confirmada: "Confirmada", remarcada: "Remarcada", cancelada: "Cancelada",
 };
 export const STATUS_CLASSE: Record<Visita["status"], string> = {
-  solicitada: "bg-amber-100 text-amber-800", confirmada: "bg-emerald-100 text-emerald-800",
-  remarcada: "bg-sky-100 text-sky-800", cancelada: "bg-muted text-muted-foreground line-through",
+  solicitada: "bg-warning-light text-warning-foreground", confirmada: "bg-success-light text-success",
+  remarcada: "bg-info-light text-info", cancelada: "bg-muted text-muted-foreground line-through",
 };
 const SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
 

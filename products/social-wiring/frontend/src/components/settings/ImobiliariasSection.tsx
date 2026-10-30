@@ -238,7 +238,7 @@ export function ImobiliariasSection() {
                   {i.faltando.length > 0 && (
                     <Badge
                       variant="outline"
-                      className="mt-1 text-[10px] text-amber-700"
+                      className="mt-1 text-[10px] text-warning-foreground"
                       data-testid={`imobiliaria-incompleta-${i.id}`}
                     >
                       Incompleta: {i.faltando.map((f) => ROTULO_CAMPO_OBRIGATORIO[f] ?? f).join(", ")}
@@ -336,7 +336,7 @@ export function ImobiliariasSection() {
               deixa de aparecer para novos contratos.
               {removendo && removendo.contratos_em_uso > 0 && (
                 <span
-                  className="mt-2 block font-medium text-amber-700"
+                  className="mt-2 block font-medium text-warning-foreground"
                   data-testid="imobiliaria-remover-em-uso"
                 >
                   Atenção:{" "}

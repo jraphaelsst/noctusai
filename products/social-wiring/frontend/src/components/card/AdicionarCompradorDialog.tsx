@@ -219,7 +219,7 @@ function DocumentoLookup({
       )}
       {vencidas && (
         <div
-          className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
+          className="flex items-start gap-2 rounded border border-warning/40 bg-warning-light p-2 text-xs text-warning-foreground"
           role="alert"
           data-testid="parte-lookup-certidoes-vencidas"
         >

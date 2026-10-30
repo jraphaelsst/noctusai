@@ -163,7 +163,7 @@ export function HeadlinesGeradasModal({ open, onOpenChange, loteId, marcaId, onR
                         disabled={favoritar.isPending}
                         onClick={() => alternarFavorita(h)}
                       >
-                        <Heart className={cn("h-4 w-4", h.favorita && "fill-current text-rose-600")} />
+                        <Heart className={cn("h-4 w-4", h.favorita && "fill-current text-destructive")} />
                       </Button>
                       <Button size="sm" variant="ghost" aria-label="Editar headline" onClick={() => setEditando(h)}>
                         <Pencil className="h-4 w-4" />

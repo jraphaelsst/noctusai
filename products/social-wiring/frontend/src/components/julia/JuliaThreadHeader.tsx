@@ -126,7 +126,7 @@ export function JuliaThreadHeader({
               ? "bg-muted text-muted-foreground"
               : estado.estado === "ativo"
                 ? "bg-primary/10 text-primary"
-                : "bg-amber-100 text-amber-900")
+                : "bg-warning-light text-warning-foreground")
           }
         >
           {estado.estado === "ativo" ? <Bot className="h-3 w-3" /> : <UserRound className="h-3 w-3" />}
@@ -142,7 +142,7 @@ export function JuliaThreadHeader({
       {juliaLigada && chipEstagio && (
         <span
           data-testid="julia-estagio"
-          className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900"
+          className="inline-flex items-center gap-1 rounded-full bg-success-light px-2 py-0.5 text-xs font-medium text-success"
         >
           <TrendingUp className="h-3 w-3" />
           {chipEstagio.rotulo || chipEstagio.estagio}

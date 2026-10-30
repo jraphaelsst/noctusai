@@ -113,9 +113,9 @@ function GuiasView() {
       </div>
 
       {!showSkeleton && !error && versaoAtiva === null && (
-        <Card className="border-amber-500/40 bg-amber-500/5" data-testid="sem-guia-ativo">
+        <Card className="border-warning/40 bg-warning/5" data-testid="sem-guia-ativo">
           <CardContent className="flex items-start gap-3 p-4">
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-warning-foreground" />
             <p className="text-sm">
               Nenhum guia ativo — os lotes não podem ser submetidos até uma versão ser ativada.
             </p>
@@ -244,7 +244,7 @@ function VersaoCard({ guia }: { guia: GuiaEstiloVersao }) {
   }
 
   return (
-    <Card className={ativa ? "border-emerald-500/50" : undefined} data-testid={`guia-v${guia.versao}`}>
+    <Card className={ativa ? "border-success/50" : undefined} data-testid={`guia-v${guia.versao}`}>
       <CardContent className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold">Versão {guia.versao}</span>
@@ -256,7 +256,7 @@ function VersaoCard({ guia }: { guia: GuiaEstiloVersao }) {
           <span className="ml-auto text-xs text-muted-foreground">Criada em {formatarData(guia.criado_em)}</span>
         </div>
         {ativa && (
-          <p className="flex items-center gap-1 text-xs text-emerald-700">
+          <p className="flex items-center gap-1 text-xs text-success">
             <CheckCircle2 className="h-3.5 w-3.5" /> Ativada em {formatarData(guia.ativado_em)}
           </p>
         )}

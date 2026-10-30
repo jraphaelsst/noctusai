@@ -66,7 +66,7 @@ function LinhaRow({
       </div>
 
       {bloqueadoLigar && (
-        <p className="text-xs text-amber-700" data-testid="motivo-desabilitado">
+        <p className="text-xs text-warning-foreground" data-testid="motivo-desabilitado">
           {SEM_NUMEROS}
         </p>
       )}
