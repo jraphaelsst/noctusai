@@ -1,4 +1,4 @@
-"""The central AI-usage ledger — ``public.ai_usage`` (roadmap D25, core migration 090).
+"""The central AI-usage ledger — ``public.ai_usage`` (roadmap D25, core migration 091).
 
 ONE append-only table for every LLM call of every product: attributed (org →
 product → feature → user / conversation / agent), priced at WRITE time from

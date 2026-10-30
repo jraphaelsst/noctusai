@@ -2,7 +2,7 @@
 
 Two sources, both org-scoped:
 
-  - `public.ai_usage` — the central LLM ledger (core migration 090, roadmap
+  - `public.ai_usage` — the central LLM ledger (core migration 091, roadmap
     D25): every LLM call (chat/vision/embedding/audio) of this product, written
     by the seed's `CentralUsageSink` with `cost_usd` AND `cost_brl` priced at
     write time (BRL at the latest stored PTAX of that moment). Read with

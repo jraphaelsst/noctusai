@@ -1,7 +1,7 @@
 # LLM Usage Tracking — Sink Pattern + Cost Accounting
 
 > **Since 2026-10-29 (roadmap D25) the source of truth is ONE central ledger:
-> `public.ai_usage`** (core migration `090_ai_usage.sql`). Every LLM call of
+> `public.ai_usage`** (core migration `091_ai_usage.sql`). Every LLM call of
 > every product, core included, is a row there. Rows are attributed, priced at
 > write time, append-only, and written by the seed by construction. §0 below
 > is the current contract. §1–§3 describe the legacy per-schema

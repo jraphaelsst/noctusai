@@ -1,4 +1,4 @@
--- Migration: 090_ai_usage
+-- Migration: 091_ai_usage
 -- Schema: public (core)
 -- Roadmap: project-history/roadmaps/product-agents-platform-2026-10.md — decision D25.
 --

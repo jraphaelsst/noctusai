@@ -14,7 +14,7 @@ Phase 3's default).
 
 Storage:
 - `<schema>.llm_preferences(org_id, provider, chat_model, embedding_model, updated_at)`
-- usage: the central ledger `public.ai_usage` (core migration 090, D25) —
+- usage: the central ledger `public.ai_usage` (core migration 091, D25) —
   every product's calls, attributed + priced at write time; this router reads
   the caller's org rows for THIS product only.
 

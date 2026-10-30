@@ -11,7 +11,7 @@ Wraps three concerns into one module:
     MISSING TABLE (PGRST205) is not "no budget": it is a configuration error
     (`LLMBudgetNotConfigured`, logged at ERROR once per process).
   - **Spend**: read from the ONE central ledger `public.ai_usage` (roadmap
-    D25, core migration 090) for the current month-to-date — every product's
+    D25, core migration 091) for the current month-to-date — every product's
     calls, no per-product schema map. Each row already carries `cost_brl`
     converted at write time from the latest BCB PTAX; a row without it
     (never expected) falls back to `cost_usd × LLM_USD_TO_BRL` (default 5.0).

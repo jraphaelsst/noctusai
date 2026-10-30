@@ -5792,7 +5792,7 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Registry — public.ai_usage append-only guard (core migration 090, D25).
+# Registry — public.ai_usage append-only guard (core migration 091, D25).
 # ---------------------------------------------------------------------------
 #
 # Self-provisioning: org_id/user_id are nullable, so each probe inserts its
@@ -5801,7 +5801,7 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 # setup in the re-stamp probe; the refusal under test is the SECOND stamp.
 
 _CORE_AI_USAGE_GUARD = "guard_ai_usage_append_only"
-_CORE_AI_USAGE_MIGRATIONS = ("090_ai_usage.sql",)
+_CORE_AI_USAGE_MIGRATIONS = ("091_ai_usage.sql",)
 
 
 def _core_ai_usage_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
@@ -5812,7 +5812,7 @@ DECLARE
   v_id bigint;
 BEGIN
   IF to_regclass('public.ai_usage') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.ai_usage does not exist (core migration 090 not applied)';
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.ai_usage does not exist (core migration 091 not applied)';
   END IF;
   BEGIN
     INSERT INTO public.ai_usage (product, provider, model, operation, fx_rate, price_version)
