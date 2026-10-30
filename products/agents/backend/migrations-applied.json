@@ -27,6 +27,9 @@
     "047_audit_acao_check_restore.sql": "303a71c0553f7cdce415443755f41709c25c621898c68e184c438af74a97118e",
     "048_agent_lifecycle_delete.sql": "4ed04e9b775366cee30a0a0d9fcaea35d7ba5b3b30a9c0ebec2c27a0de31f3f7",
     "049_agent_geracao.sql": "1a8d5bac5519f5cc0115a25f949bdf38503f0f63c9a3269f8475c3ed7fb24ed4",
-    "050_definition_org_grants.sql": "7cc7b49685b618188c01e8e1f132a4de839bb6c15c54e3d1ddaa259e97a45d9b"
+    "050_definition_org_grants.sql": "7cc7b49685b618188c01e8e1f132a4de839bb6c15c54e3d1ddaa259e97a45d9b",
+    "051_status_pagina_agentes_unificado.sql": "e1ff77cc149c7d57774b3f97638a9c5c80c154990f721882ab8242f6fbeaf03f",
+    "052_status_pagina_studio_drop.sql": "2c19dba0bd5a2fc9c0cc185559ca3bf1374485f54da9401025b27c9d462f55d4",
+    "053_renata_cutover.sql": "12292040e302b5b6dd72d4b4039e87200c4c2bd7aefa2efdbf9e99f26fd66e54"
   }
 }
