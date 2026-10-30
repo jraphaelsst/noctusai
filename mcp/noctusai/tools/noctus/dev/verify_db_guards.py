@@ -10781,6 +10781,89 @@ END;
 )
 
 
+
+# ── core 089 — org brand identities (CONTRACT projects/org-brand-identity §1) ──
+_BRAND_TABLE = "public.org_brand_identities"
+_BRAND_TOKENS = "'{\"schema\": \"noctus.brand-tokens/v1\"}'::jsonb"
+
+
+def _brand_double_insert_probe(*, id: str, guard_name: str, rationale: str, first_sql: str,
+                               second_sql: str) -> GuardProbe:
+    """Two inserts where the SECOND must trip ``guard_name`` (if the FIRST already
+    trips it — an existing row occupies the slot — the guard refused too)."""
+    fixture = (
+        "  SELECT id INTO v_org FROM public.organizations LIMIT 1;\n"
+        "  IF v_org IS NULL THEN\n"
+        "    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in public.organizations to borrow an org from';\n"
+        "  END IF;\n"
+    )
+    return GuardProbe(
+        id=id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
+        migrations=("089_org_brand_identities.sql",), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid;
+BEGIN
+{fixture}  BEGIN
+    {first_sql}
+    {second_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: second insert succeeded — {guard_name} did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_CORE_BRAND_PROBES: tuple[GuardProbe, ...] = (
+    GuardProbe(
+        id="org_brand_identities.tokens.schema_check",
+        product="core", schema="public", guard_name="org_brand_identities_tokens_schema",
+        kind="write_refusal", migrations=("089_org_brand_identities.sql",),
+        rationale=(
+            "Every stored identity carries a noctus.brand-tokens/v1 document; a row "
+            "with another (or no) schema would reach BrandProvider unvalidated."
+        ),
+        sql=_insert_check_probe(
+            schema="public", table="org_brand_identities",
+            columns_sql="org_id, version, status, tokens",
+            values_sql="id, 900001, 'draft', '{}'::jsonb",
+            fixture_from="public.organizations",
+            fixture_description="no row in public.organizations to borrow an org from",
+            guard_fragment="org_brand_identities_tokens_schema",
+        ),
+    ),
+    _brand_double_insert_probe(
+        id="org_brand_identities.active_org.unique",
+        guard_name="ux_org_brand_identities_active_org",
+        rationale="One ACTIVE identity per org — two would make /api/brand/current ambiguous.",
+        first_sql=f"INSERT INTO {_BRAND_TABLE} (org_id, version, status, tokens) VALUES (v_org, 900001, 'active', {_BRAND_TOKENS});",
+        second_sql=f"INSERT INTO {_BRAND_TABLE} (org_id, version, status, tokens) VALUES (v_org, 900002, 'active', {_BRAND_TOKENS});",
+    ),
+    _brand_double_insert_probe(
+        id="org_brand_identities.active_platform.unique",
+        guard_name="ux_org_brand_identities_active_platform",
+        rationale="One ACTIVE platform (NOC standard) row — the fallback every org without an identity wears.",
+        first_sql=f"INSERT INTO {_BRAND_TABLE} (org_id, version, status, tokens) VALUES (NULL, 900001, 'active', {_BRAND_TOKENS});",
+        second_sql=f"INSERT INTO {_BRAND_TABLE} (org_id, version, status, tokens) VALUES (NULL, 900002, 'active', {_BRAND_TOKENS});",
+    ),
+    _brand_double_insert_probe(
+        id="org_brand_identities.org_version.unique",
+        guard_name="ux_org_brand_identities_org_version",
+        rationale="Versions are unique per org (rollback addresses a version); a duplicate would make history ambiguous.",
+        first_sql=f"INSERT INTO {_BRAND_TABLE} (org_id, version, status, tokens) VALUES (v_org, 900001, 'draft', {_BRAND_TOKENS});",
+        second_sql=f"INSERT INTO {_BRAND_TABLE} (org_id, version, status, tokens) VALUES (v_org, 900001, 'draft', {_BRAND_TOKENS});",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -10893,6 +10976,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_BROWSER_LOCKDOWN_PROBES,
     *_CORE_BROWSER_LOCKDOWN_PROBES,
     *_IGIG_BROWSER_LOCKDOWN_PROBES,
+    *_CORE_BRAND_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
