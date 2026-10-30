@@ -8,7 +8,7 @@
 
 | Product | Path | Description | BE/FE Ports | Schema |
 |---------|------|-------------|-------------|--------|
-| **Core** | `products/core/` | Auth, orgs, billing, licenses, SSO, admin | 8000/5173 | `public` |
+| **Core** | `products/core/` | Auth, orgs, billing, licenses, SSO, admin, org brand identity (`/api/brand` — the visual identity every product of the org wears) | 8000/5173 | `public` |
 | **ERP** | `products/erp-imobiliario/` | Real estate CRM: clients, properties, matching, sales funnel, financial, WhatsApp | 8001/8080 | `erp` |
 | **PF** | `products/personal-finance/` | Finance tracker: accounts, transactions, budgets, portfolios, watchlists | 8002/8090 | `personal-finance` |
 | **Therapy** | `products/therapy-platform/` | Online therapy: video sessions, scheduling, clinical AI, wallets, messaging | 8003/8095 | `therapy` |
