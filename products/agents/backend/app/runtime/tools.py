@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from collections.abc import Mapping
 from typing import Any, Callable
 from uuid import UUID
 
@@ -268,10 +269,22 @@ def build_academia_tools(
     aud: str,
     approvals: ApprovalStore,
     use_window_seconds: int = DEFAULT_APPROVAL_USE_WINDOW_SECONDS,
+    only: frozenset[str] | None = None,
+    descricoes: Mapping[str, str] | None = None,
 ) -> Any:
     """Returns the ``McpSdkServerConfig`` ready for
     ``ClaudeAgentOptions.mcp_servers["academia"]`` — every §E.4 academia
-    tool, bound to THIS turn's context/identity/signing key."""
+    tool, bound to THIS turn's context/identity/signing key.
+
+    A studio agent that enables the ``academia`` tool group (agents-unified, Renata cutover S7) passes ``only`` —
+    the SHORT names its version's active ``ferramentas`` rows switch on, so a tool the version does not enable is
+    not even registered — and ``descricoes`` (short name -> the row's description: words live in rows). Argument
+    schemas, the approval gate and the signed assertion are unchanged and shared with the code-defined agent."""
+    descricoes = dict(descricoes or {})
+
+    def _d(name: str, default: str) -> str:
+        texto = (descricoes.get(name) or "").strip()
+        return texto or default
 
     def _escrita_bound(
         name: str,
@@ -287,7 +300,7 @@ def build_academia_tools(
         registrations below only names what actually varies per tool."""
         return _escrita(
             name,
-            description,
+            _d(name, description),
             schema,
             academia_api=academia_api,
             agent_id=agent_id,
@@ -301,8 +314,11 @@ def build_academia_tools(
             body_fn=body_fn,
         )
 
+    def _leitura_bound(name: str, description: str, schema: dict[str, Any], **kw: Any) -> SdkMcpTool[Any]:
+        return _leitura(name, _d(name, description), schema, **kw)
+
     leitura = [
-        _leitura(
+        _leitura_bound(
             "kb_buscar",
             "Busca entradas do KB da Academia de Reciclagem por texto, categoria, subcategoria ou tag.",
             _obj(
@@ -320,14 +336,14 @@ def build_academia_tools(
             path_fn=lambda a: "/api/kb",
             params_fn=lambda a: {k: v for k, v in a.items() if v is not None},
         ),
-        _leitura(
+        _leitura_bound(
             "kb_ler",
             "Lê uma entrada do KB pelo slug.",
             _obj({"slug": _S}, ["slug"]),
             academia_api=academia_api,
             path_fn=lambda a: f"/api/kb/{a['slug']}",
         ),
-        _leitura(
+        _leitura_bound(
             "decisao_listar",
             "Lista decisões do projeto, opcionalmente filtradas por estado.",
             _obj({"estado": _S_OPT}, []),
@@ -335,7 +351,7 @@ def build_academia_tools(
             path_fn=lambda a: "/api/decisions",
             params_fn=lambda a: {k: v for k, v in a.items() if v is not None},
         ),
-        _leitura(
+        _leitura_bound(
             "pergunta_listar",
             "Lista perguntas em aberto (ou respondidas/todas).",
             _obj({"estado": _S_OPT}, []),
@@ -343,7 +359,7 @@ def build_academia_tools(
             path_fn=lambda a: "/api/questions",
             params_fn=lambda a: {k: v for k, v in a.items() if v is not None},
         ),
-        _leitura(
+        _leitura_bound(
             "historico_timeline",
             "Lista eventos recentes do histórico do projeto.",
             _obj({"limite": _I}, []),
@@ -351,14 +367,14 @@ def build_academia_tools(
             path_fn=lambda a: "/api/timeline",
             params_fn=lambda a: {k: v for k, v in a.items() if v is not None},
         ),
-        _leitura(
+        _leitura_bound(
             "roadmap_ler",
             "Lê as fases do roadmap do projeto.",
             _obj({}, []),
             academia_api=academia_api,
             path_fn=lambda a: "/api/roadmap",
         ),
-        _leitura(
+        _leitura_bound(
             "tarefa_listar",
             "Lista tarefas, opcionalmente filtradas por fase ou estado.",
             _obj({"fase": _S_OPT, "estado": _S_OPT}, []),
@@ -366,14 +382,14 @@ def build_academia_tools(
             path_fn=lambda a: "/api/tasks",
             params_fn=lambda a: {k: v for k, v in a.items() if v is not None},
         ),
-        _leitura(
+        _leitura_bound(
             "tarefa_preparar_sessao",
             "Retorna o resumo de início de sessão: fase atual, próximas tarefas, bloqueadas e perguntas bloqueantes.",
             _obj({}, []),
             academia_api=academia_api,
             path_fn=lambda a: "/api/session-prep",
         ),
-        _leitura(
+        _leitura_bound(
             "conteudo_listar",
             "Lista conteúdos de treinamento (roteiro, trilha, quiz, copy...), opcionalmente por tipo.",
             _obj({"tipo": _S_OPT}, []),
@@ -381,7 +397,7 @@ def build_academia_tools(
             path_fn=lambda a: "/api/content",
             params_fn=lambda a: {k: v for k, v in a.items() if v is not None},
         ),
-        _leitura(
+        _leitura_bound(
             "conteudo_ler",
             "Lê um conteúdo de treinamento pelo código.",
             _obj({"codigo": _S}, ["codigo"]),
@@ -599,4 +615,7 @@ def build_academia_tools(
         ),
     ]
 
-    return create_sdk_mcp_server("academia", tools=[*leitura, *escrita])
+    tools = [*leitura, *escrita]
+    if only is not None:
+        tools = [t for t in tools if t.name in only]
+    return create_sdk_mcp_server("academia", tools=tools)

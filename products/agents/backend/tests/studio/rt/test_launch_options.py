@@ -11,7 +11,7 @@ import pytest
 
 pytestmark = pytest.mark.filterwarnings("ignore::UserWarning")
 
-from app.runtime import build_bia_spec
+from app.runtime import build_legacy_chat_spec
 from app.runtime.academia_api import FakeAcademiaApi
 from app.runtime.broker import StoreApprovalBroker
 from app.runtime.claude_runtime import (
@@ -136,7 +136,7 @@ class TestStudioLaunchOptions:
 
     def test_bia_spec_keeps_the_legacy_defaults_explicitly(self):
         persona = {"nome": "Bia", "papel": "assistente", "model": "claude-sonnet-5", "effort": "medium"}
-        spec = build_bia_spec(persona)
+        spec = build_legacy_chat_spec(persona)
         assert (spec.prompt_mode, spec.toolset, spec.compiled_hash) == ("preset_append", "academia", None)
         opts, _ = _build(spec, studio_tools=None)
         assert opts.system_prompt == {"type": "preset", "preset": "claude_code"}

@@ -3,16 +3,16 @@
  *
  * Wires the seed `<ChatWindow>` organ (`@noctusai/lib/design-system`) onto
  * `/api/conversations` for a STUDIO agent (`agent_key` != "bia"),
- * mirroring `useBiaChat.ts`'s shape (REST + one SSE stream per open
+ * mirroring `useLegacyChat.ts`'s shape (REST + one SSE stream per open
  * conversation patches the TanStack cache — no `refetchInterval`) with two
  * differences:
  *   - `agent_key` is a parameter (any studio agent, not just Bia) and
  *     conversation creation may pass an optional `client_id` (contract §D6).
- *   - No approval seam. §E.3 gives studio agents read-only
- *     `mcp__studio__*` tools with "no write tools" — there is no approval
- *     flow to wire, so `buildStudioChatAdapter` omits `useApprovalAction`
- *     entirely (the organ then renders any stray `approval` block
- *     read-only, same as an already-decided row).
+ *   - The approval seam is the shared `useApprovalDecisionAdapter`
+ *     (`useApprovals.ts`): most studio agents only have read-only
+ *     `mcp__studio__*` tools (§E.3) and never produce an approval card, but a
+ *     `claude_sdk` agent configured with the academia tool group (Renata
+ *     cutover) asks approvals for its write tools exactly like the legacy chat.
  *   - Every assistant message with a `compiled_hash` gets one extra
  *     `{kind: "link"}` block reading "versão N · prompt sha256:abcd…",
  *     pointing at `/studio/prompts/:hash` (contract §G) — the version
@@ -44,17 +44,21 @@ import type {
 } from "@noctusai/lib/design-system";
 import type { Envelope, StudioConversation, StudioMessage } from "@/api/studio/types-ke";
 import { formatUsdCost } from "@/lib/utils";
+import { useApprovalDecisionAdapter } from "@/hooks/useApprovals";
 
-/** Every event name the studio conversation stream emits — mirrors
- * `BIA_STREAM_EVENTS` minus `approval.*` (no write tools, §E.3). The
- * `events` list MUST name every one, or the seed transport silently drops
- * it (`seed/lib/frontend/src/realtime.ts`). */
+/** Every event name the studio conversation stream emits — the same set as
+ * `LEGACY_CHAT_STREAM_EVENTS`: a Studio `claude_sdk` agent configured with the
+ * academia tool group (Renata cutover) asks approvals exactly like the legacy
+ * chat. The `events` list MUST name every one, or the seed transport silently
+ * drops it (`seed/lib/frontend/src/realtime.ts`). */
 export const STUDIO_STREAM_EVENTS = [
   "message.new",
   "message.updated",
   "message.delta",
   "tool.started",
   "tool.finished",
+  "approval.requested",
+  "approval.resolved",
   "session.status",
   "conversation.upsert",
 ] as const;
@@ -228,6 +232,13 @@ export function useStudioMessagesAdapter(agentKey: string, conversationId: strin
       const p = evt.payload as Record<string, any>;
 
       switch (evt.event) {
+        case "approval.requested":
+        case "approval.resolved": {
+          // The approval card itself comes from `message.updated` blocks; this only keeps every open approvals
+          // surface (`/aprovacoes`, the pending badge) in sync.
+          qc.invalidateQueries({ queryKey: ["agents", "approvals"] });
+          break;
+        }
         case "message.new": {
           const msg = p as unknown as StudioMessage;
           qc.setQueryData<Envelope<StudioMessage>>(messagesKey(agentKey, conversationId), (prev) => upsertMessage(prev, msg));
@@ -265,7 +276,7 @@ export function useStudioMessagesAdapter(agentKey: string, conversationId: strin
         }
         // `tool.started`/`tool.finished` no longer build UI state — the
         // persisted `blocks` (via `message.updated`) are the source of
-        // truth (mirrors `useBiaChat.ts`).
+        // truth (mirrors `useLegacyChat.ts`).
         default:
           break;
       }
@@ -309,7 +320,7 @@ export function useStudioMessagesAdapter(agentKey: string, conversationId: strin
 export function useStudioSendAdapter(agentKey: string, conversationId: string | null) {
   const qc = useQueryClient();
   // Reactive cooldown countdown — ticked here, not in the organ, mirroring
-  // `useBiaSendAdapter` (`ChatSendResult.retryAfterSeconds` is purely
+  // `useLegacySendAdapter` (`ChatSendResult.retryAfterSeconds` is purely
   // reactive; `ChatWindow` never runs its own timer).
   const [retryAfterSeconds, setRetryAfterSeconds] = useState<number | null>(null);
 
@@ -359,12 +370,13 @@ export function useStudioSendAdapter(agentKey: string, conversationId: string | 
 // ─── Adapter bag ────────────────────────────────────────────────────────────
 
 /** Builds a `ChatWindowAdapter` scoped to one studio agent (contract §G
- * "Conversar"). `useApprovalAction` is deliberately omitted (see file
- * header). */
+ * "Conversar"). The approval seam is wired: an agent without write tools
+ * simply never produces an approval card. */
 export function buildStudioChatAdapter(agentKey: string): ChatWindowAdapter {
   return {
     useThreads: () => useStudioThreads(agentKey),
     useMessages: (_scopeId, threadId) => useStudioMessagesAdapter(agentKey, threadId),
     useSend: (_scopeId, threadId) => useStudioSendAdapter(agentKey, threadId),
+    useApprovalAction: () => useApprovalDecisionAdapter(),
   };
 }

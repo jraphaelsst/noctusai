@@ -9,10 +9,28 @@ per field (``NOC-REMEDIATE[config-merge]`` closed).
 """
 from __future__ import annotations
 
+import logging
+import os
+
 from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from noctusai_lib.config.csv_settings import parse_csv_setting, reject_json_array
 from noctusai_seed import ProductSettings
+
+
+logger = logging.getLogger(__name__)
+
+#: Pre-cutover env names (still read through the field aliases) -> the name to set instead.
+_DEPRECATED_ENV_NAMES: dict[str, str] = {
+    "BIA_AGENT_ID": "ACADEMIA_AGENT_ID",
+    "JULIA_AGENT_ID": "ACADEMIA_AGENT_ID",
+    "BIA_MAX_TURNS": "LEGACY_CHAT_MAX_TURNS",
+    "JULIA_MAX_TURNS": "LEGACY_CHAT_MAX_TURNS",
+    "BIA_CLI_PATH": "CLAUDE_CLI_PATH",
+    "JULIA_CLI_PATH": "CLAUDE_CLI_PATH",
+    "JULIA_CLI_SLOTS": "CLAUDE_CLI_SLOTS",
+}
+_DEPRECATED_ENV_LOGGED = False
 
 
 class SeedSettings(ProductSettings):
@@ -89,11 +107,15 @@ class SeedSettings(ProductSettings):
     # reaches the Bia CLI subprocess.
     academia_api_token: str = ""
 
-    # NOC-REMEDIATE[agents-legacy-runtime-names]: `bia_agent_id` / `bia_max_turns` / `bia_cli_path` /
-    # `bia_cli_slots` are the env + credential names of the legacy `claude_sdk` chat runtime, which only the
-    # academia agent runs. Every ROUTE is de-pinned (agents-unified CONTRACT §5); these names go with that runtime
-    # in the Renata cutover slice (products/agents/projects/agents-unified/CONTRACT.md §8) — 2026-10-29.
-    # The `agents.agents` row id for the `bia` key — contract §D `sub`
+    # Renata cutover (agents-unified, 2026-10-30): the runtime settings carry neutral names --
+    # `academia_agent_id` (the academia principal, whichever agent serves the academia), `legacy_chat_max_turns`
+    # (the code-defined chat agent's turn cap), `claude_cli_path` / `claude_cli_slots` (the `claude_sdk` CLI wrapper
+    # and its uid slots, which studio `claude_sdk` agents use too). The pre-cutover env names (BIA_* / JULIA_*) are
+    # still READ, each logged once as deprecated by `_log_deprecated_env_names` below.
+    # NOC-REMEDIATE[drop-bia-env-alias]: drop the BIA_* / JULIA_* aliases one release after every prod .env /
+    # .env.fleet carries the new names; `BIA_CLI_SLOTS` stays the image's own slot contract (Dockerfile ENV +
+    # bin/entrypoint.sh + /run/bia-K mounts) until the container slot names are renamed together — 2026-10-30.
+    # The `agents.agents` row id of the academia agent — contract §D `sub`
     # claim. ONE agents deployment holds exactly ONE `ACADEMIA_API_TOKEN`
     # (a single product token, not per-org — contract §B.0), and that
     # token's `principal_agent_id` is set ONCE when it is minted; this
@@ -102,9 +124,9 @@ class SeedSettings(ProductSettings):
     # time (same secret-provisioning step, never guessed at runtime).
     # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_AGENT_ID) is still read for one
     # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
-    bia_agent_id: str = Field(
+    academia_agent_id: str = Field(
         default="",
-        validation_alias=AliasChoices("bia_agent_id", "julia_agent_id"),
+        validation_alias=AliasChoices("academia_agent_id", "bia_agent_id", "julia_agent_id"),
     )
 
     # Per-user rate limit on `POST /api/conversations/{id}/messages`
@@ -141,9 +163,9 @@ class SeedSettings(ProductSettings):
     # `agents.runtime_settings` (Configurações do agente page) and wins.
     # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_MAX_TURNS) is still read for one
     # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
-    bia_max_turns: int | None = Field(
+    legacy_chat_max_turns: int | None = Field(
         default=None,
-        validation_alias=AliasChoices("bia_max_turns", "julia_max_turns"),
+        validation_alias=AliasChoices("legacy_chat_max_turns", "bia_max_turns", "julia_max_turns"),
     )
 
     # ── Bia CLI path (contract §E.5, roadmap D1) ──────────────────────
@@ -161,9 +183,9 @@ class SeedSettings(ProductSettings):
     # changes without a code change.
     # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_CLI_PATH) is still read for one
     # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
-    bia_cli_path: str = Field(
+    claude_cli_path: str = Field(
         default="/app/bin/bia-cli-exec",
-        validation_alias=AliasChoices("bia_cli_path", "julia_cli_path"),
+        validation_alias=AliasChoices("claude_cli_path", "bia_cli_path", "julia_cli_path"),
     )
 
     # ── Provider-neutral runtime (`runtime='llm'`, Lais A1) ─────────────
@@ -204,9 +226,9 @@ class SeedSettings(ProductSettings):
     # 2026-09-15: 3 slots.
     # NOC-REMEDIATE[drop-julia-env-alias]: the pre-rename env name (JULIA_CLI_SLOTS) is still read for one
     # release so a prod .env/.env.fleet not yet updated keeps working — 2026-10-19.
-    bia_cli_slots: int = Field(
+    claude_cli_slots: int = Field(
         default=3,
-        validation_alias=AliasChoices("bia_cli_slots", "julia_cli_slots"),
+        validation_alias=AliasChoices("claude_cli_slots", "bia_cli_slots", "julia_cli_slots"),
     )
 
     # ── Turn deadline + lock TTL (contract §E.11 "Route order") ─────────
@@ -260,6 +282,20 @@ class SeedSettings(ProductSettings):
         if v not in ("amarelo_editorial", "seguranca"):
             raise ValueError('on_classifier_outage must be "amarelo_editorial" or "seguranca"')
         return v
+
+    @model_validator(mode="after")
+    def _log_deprecated_env_names(self) -> "SeedSettings":
+        """A pre-cutover env name still in the environment is read (aliases above) and logged ONCE per process as
+        deprecated, naming its replacement -- never a silent alias. ``BIA_CLI_SLOTS`` is excluded: it is the image's
+        own slot contract (Dockerfile ENV, shared with bin/entrypoint.sh), not an operator-set value."""
+        global _DEPRECATED_ENV_LOGGED
+        if _DEPRECATED_ENV_LOGGED:
+            return self
+        _DEPRECATED_ENV_LOGGED = True
+        for velho, novo in _DEPRECATED_ENV_NAMES.items():
+            if os.environ.get(velho, "").strip():
+                logger.warning("agents.config.deprecated_env_name env=%s use=%s", velho, novo)
+        return self
 
     @model_validator(mode="after")
     def _turn_lock_ttl_outlives_turn_timeout(self) -> "SeedSettings":

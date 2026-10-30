@@ -5,7 +5,7 @@
  *
  * All chat rendering + realtime (message streaming, tool chips, approval
  * cards, "Bia está pensando…") lives in the seed `<ChatWindow>` organ via
- * `<BiaChatWindow>` (`@/components/BiaChatWindow.tsx`); this page owns
+ * `<LegacyChatWindow>` (`@/components/LegacyChatWindow.tsx`); this page owns
  * the "Nova conversa" action AND (2026-09-22) the selected conversation id,
  * via `ChatWindow`'s new controlled-selection seam
  * (`selectedThreadId`/`onSelectThread`) — a prod click-through found "Nova
@@ -16,13 +16,13 @@
  * reports every user click back up via `onSelectThread`, so the two stay in
  * sync either direction. Composer errors (409 `turn_in_progress` /
  * `agent_off`, 429 rate limit) surface INSIDE `ChatWindow`'s own inline
- * error banner — `useBiaSendAdapter` (`@/hooks/useBiaChat.ts`) throws a
+ * error banner — `useLegacySendAdapter` (`@/hooks/useLegacyChat.ts`) throws a
  * PT-BR-mapped `Error` that the organ renders verbatim, never faked as a
  * success.
  *
  * Duplicate-empty-conversation guard: deliberately NOT added. Detecting
  * "the selected conversation is empty and unsent" from this page would mean
- * mounting a second `useBiaMessagesAdapter(selectedConversationId)` call
+ * mounting a second `useLegacyMessagesAdapter(selectedConversationId)` call
  * here — which opens a SECOND SSE connection to the same conversation
  * stream (the hook's realtime subscription is not separable from its
  * message query) purely to answer a yes/no question `ChatWindow` already
@@ -33,8 +33,8 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@noctusai/lib/design-system";
-import { BiaChatWindow } from "@/components/BiaChatWindow";
-import { useCreateConversation } from "@/hooks/useBiaChat";
+import { LegacyChatWindow } from "@/components/LegacyChatWindow";
+import { useCreateConversation } from "@/hooks/useLegacyChat";
 import { errorMessage } from "@/lib/errors";
 import type { SecaoProps } from "../secaoTypes";
 
@@ -71,7 +71,7 @@ export default function ConversarLegadoSecao({ agente }: SecaoProps) {
       </div>
 
       <div className="min-h-0 flex-1 rounded-lg border border-border bg-card">
-        <BiaChatWindow
+        <LegacyChatWindow
           className="h-full"
           selectedThreadId={selectedConversationId}
           onSelectThread={setSelectedConversationId}

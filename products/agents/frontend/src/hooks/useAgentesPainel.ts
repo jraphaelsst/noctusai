@@ -62,3 +62,22 @@ export function useAgenteInterno(key: string, enabled: boolean) {
   });
   return { data: query.data, ...estados(query), error: query.error };
 }
+
+export interface DestinoChat {
+  key: string;
+  /** `academia` = the agent the academia principal names · `legado` = the org's code-defined chat agent. */
+  origem: "academia" | "legado";
+}
+
+/**
+ * Where the old academia chat URLs (`/bia`, `/julia`, `/agentes/bia/persona`) lead now — decided by the server from
+ * data (Renata cutover), never a key hard-coded here. `notFound` = the org has no in-app chat agent.
+ */
+export function useDestinoChat() {
+  const query = useQuery<DestinoChat>({
+    queryKey: ["agents", "destino-chat"],
+    queryFn: () => api.get<DestinoChat>("/api/agents/painel/destino-chat"),
+    retry: false,
+  });
+  return { data: query.data, ...estados(query), error: query.error };
+}

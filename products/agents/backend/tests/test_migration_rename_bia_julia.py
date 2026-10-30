@@ -37,7 +37,8 @@ def test_key_bearing_leftovers_are_moved_too():
 
 def test_python_side_matches_the_migration():
     # platform-defined agents are DATA, not reserved code keys (049)
-    assert DEFAULT_AGENT_KEYS == ("bia", "one-chat")
+    # (the code-defined chat agent stopped being seeded at the Renata cutover -- 053)
+    assert DEFAULT_AGENT_KEYS == ("one-chat",)
     # NOC-REMEDIATE[drop-lead-imob-alias]: the old SDR key stays an alias for one release.
     assert canonical_channel_agent_key("lead-imob") == "julia"
     assert canonical_channel_agent_key("julia") == "julia"

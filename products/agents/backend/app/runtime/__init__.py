@@ -1,5 +1,5 @@
 """The three §E.9 factories: :func:`get_agent_runtime`,
-:func:`get_approval_broker`, :func:`build_bia_spec`.
+:func:`get_approval_broker`, :func:`build_legacy_chat_spec`.
 
 Nothing in this module imports :mod:`claude_agent_sdk` at module scope —
 that import happens ONLY inside :func:`get_agent_runtime`'s real-runtime
@@ -26,7 +26,7 @@ __all__ = [
     "get_agent_runtime",
     "get_llm_runtime",
     "get_approval_broker",
-    "build_bia_spec",
+    "build_legacy_chat_spec",
     "make_academia_launch_provider",
     "make_studio_tools_factory",
 ]
@@ -102,7 +102,7 @@ def get_agent_runtime(
     ``FakeAgentRuntime`` in tests/dev. In a deploy context an unresolvable
     Anthropic key raises here — there is no silent Fake in prod (contract
     §E.9). The Bia-only config (approval signing key /
-    ``ACADEMIA_API_TOKEN`` / ``BIA_AGENT_ID`` / academia URL) is NOT
+    ``ACADEMIA_API_TOKEN`` / ``ACADEMIA_AGENT_ID`` / academia URL) is NOT
     resolved here: :func:`make_academia_launch_provider` resolves it when an
     academia-toolset turn launches, failing closed there — a studio turn
     builds and runs with none of it configured.
@@ -159,9 +159,9 @@ def get_agent_runtime(
         approval_use_window_seconds=int(
             getattr(settings, "approval_use_window_seconds", 120) or 120
         ),
-        # Config-wired (roadmap D1) — see `SeedSettings.bia_cli_path`'s
+        # Config-wired (roadmap D1) — see `SeedSettings.claude_cli_path`'s
         # docstring for why this must not be a second hardcoded literal.
-        cli_path=getattr(settings, "bia_cli_path", "") or DEFAULT_CLI_PATH,
+        cli_path=getattr(settings, "claude_cli_path", "") or DEFAULT_CLI_PATH,
         # Agent Studio §E3 — the per-turn read-only `studio` MCP server.
         studio_tools_factory=make_studio_tools_factory(settings),
     )
@@ -241,7 +241,7 @@ def make_academia_launch_provider(credentials: Any) -> Callable[[], Any]:
         )
         return AcademiaLaunchConfig(
             academia_api=academia_api,
-            agent_id=credentials.bia_agent_id() or _NIL_AGENT_ID,
+            agent_id=credentials.academia_agent_id() or _NIL_AGENT_ID,
             approval_secret=signing_secret,
         )
 
@@ -264,7 +264,8 @@ def make_studio_tools_factory(settings: Any):
         if spec.agent_id is None or spec.version_id is None:
             raise RuntimeError("a studio spec must carry agent_id and version_id")
         return build_studio_tools(
-            org_id=ctx.org_id,
+            # An org INSTANCE runs its platform definition's version: its skills / knowledge live in that org.
+            org_id=spec.definicao_org_id or ctx.org_id,
             agent_id=spec.agent_id,
             version_id=spec.version_id,
             knowledge_enabled=spec.knowledge,
@@ -275,7 +276,7 @@ def make_studio_tools_factory(settings: Any):
     return _factory
 
 
-#: `BIA_AGENT_ID` — the `agents.agents` row id for the `bia` key,
+#: `ACADEMIA_AGENT_ID` — the `agents.agents` row id of the academia agent (the legacy row, or the studio agent after the Renata cutover),
 #: contract §D `sub`. A process-WIDE constant, not per-org: `agents` holds
 #: exactly ONE `ACADEMIA_API_TOKEN` (contract §B.0) whose
 #: `principal_agent_id` was set when it was minted, and the resolved value
@@ -285,7 +286,7 @@ def make_studio_tools_factory(settings: Any):
 _NIL_AGENT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
-def build_bia_spec(persona_row: Any, *, max_turns: int | None = None) -> AgentSpec:
+def build_legacy_chat_spec(persona_row: Any, *, max_turns: int | None = None) -> AgentSpec:
     """Merge Bia's static spec (``agents/bia/spec.yaml`` + ``BIA.md``)
     with the active persona row into one :class:`AgentSpec` (contract
     §E.9). ``persona_row`` is anything with the

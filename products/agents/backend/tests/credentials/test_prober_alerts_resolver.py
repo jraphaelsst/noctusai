@@ -23,7 +23,7 @@ from app.credentials.registry import (
     ACADEMIA_API_TOKEN,
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
-    BIA_AGENT_ID,
+    ACADEMIA_AGENT_ID,
     SOCIAL_WIRING_API_TOKEN,
 )
 from app.credentials.resolver import CredentialResolver, require_resolved_prod_config
@@ -110,7 +110,7 @@ class TestHttpProber:
 
     @pytest.mark.asyncio
     async def test_non_probeable_spec(self):
-        result = await _prober(lambda r: httpx.Response(200), []).probe(BIA_AGENT_ID, "x")
+        result = await _prober(lambda r: httpx.Response(200), []).probe(ACADEMIA_AGENT_ID, "x")
         assert result.status == "error"
 
 
@@ -137,7 +137,7 @@ class TestAlerts:
 
     def test_maintenance_runs_both_legs(self, caplog):
         caplog.set_level(logging.DEBUG)
-        kit = build_kit(academia_api_token=OLD_ACADEMIA, bia_agent_id="22222222-2222-2222-2222-222222222222")
+        kit = build_kit(academia_api_token=OLD_ACADEMIA, academia_agent_id="22222222-2222-2222-2222-222222222222")
         seed_academia_token(kit, days_left=2)
         sink = FakeNotificationSink(["admin-1"])
         result = run_credential_maintenance(kit.service, sink)
@@ -158,15 +158,15 @@ class TestResolver:
         assert APPROVAL_RING.store_key == "approval_assertion_secrets:academia-de-reciclagem"
 
     def test_malformed_agent_id_is_none(self):
-        resolver = CredentialResolver(FakeAppConfigStore(), make_settings(bia_agent_id="nope"))
-        assert resolver.bia_agent_id() is None
+        resolver = CredentialResolver(FakeAppConfigStore(), make_settings(academia_agent_id="nope"))
+        assert resolver.academia_agent_id() is None
 
     def test_prod_guard_lists_every_gap(self, monkeypatch):
         monkeypatch.setenv("APP_ENV", "production")  # external deploy signal
         resolver = CredentialResolver(FakeAppConfigStore(), make_settings(anthropic_api_key=ANTHROPIC))
         with pytest.raises(MissingProdConfigError) as exc:
             require_resolved_prod_config(resolver)
-        assert exc.value.missing_keys == ["APPROVAL_ASSERTION_SECRETS", "ACADEMIA_API_TOKEN", "BIA_AGENT_ID"]
+        assert exc.value.missing_keys == ["APPROVAL_ASSERTION_SECRETS", "ACADEMIA_API_TOKEN", "ACADEMIA_AGENT_ID"]
 
     def test_prod_guard_accepts_db_only_values(self, monkeypatch):
         monkeypatch.setenv("APP_ENV", "production")
@@ -174,7 +174,7 @@ class TestResolver:
         for spec, value in (
             (ANTHROPIC_API_KEY, ANTHROPIC),
             (ACADEMIA_API_TOKEN, OLD_ACADEMIA),
-            (BIA_AGENT_ID, "22222222-2222-2222-2222-222222222222"),
+            (ACADEMIA_AGENT_ID, "22222222-2222-2222-2222-222222222222"),
             (APPROVAL_RING, "k1"),
         ):
             store.put(spec.store_key, value)

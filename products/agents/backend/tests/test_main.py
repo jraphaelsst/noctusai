@@ -21,7 +21,7 @@ class TestStartupSweepsTheSlotPool:
     def test_sweep_ran_and_left_the_pool_healthy(self, agents_client):
         pool = get_slot_pool(settings)
         health = pool.health()
-        assert health["total"] == settings.bia_cli_slots
+        assert health["total"] == settings.claude_cli_slots
         assert health["quarantined"] == []
 
 

@@ -1,19 +1,19 @@
 /**
- * BiaChatWindow — thin adapter wiring `/api/conversations` onto the seed
+ * LegacyChatWindow — thin adapter wiring `/api/conversations` onto the seed
  * `<ChatWindow>` organ (`@noctusai/lib/design-system`) via the shared
  * `<AgentChatWindow>` pass-through (`@/components/AgentChatWindow.tsx`,
  * extracted for Agent Studio's Conversar tab — contract §G, see that
  * file's header). All 2-pane rendering (thread list / thread panel /
  * composer / skeletons / empty / error / tool chips / approval cards)
  * lives in the organ; this file only supplies the adapter
- * (`useBiaChat.ts`) and the "Nova conversa" action, mirroring
+ * (`useLegacyChat.ts`) and the "Nova conversa" action, mirroring
  * `products/social-wiring/frontend/src/components/WhatsAppChatWindow.tsx`.
  */
 import { useMemo } from "react";
 import { AgentChatWindow } from "@/components/AgentChatWindow";
-import { buildBiaChatAdapter } from "@/hooks/useBiaChat";
+import { buildLegacyChatAdapter } from "@/hooks/useLegacyChat";
 
-export interface BiaChatWindowProps {
+export interface LegacyChatWindowProps {
   className?: string;
   /**
    * Optional CONTROLLED selection — forwarded to `AgentChatWindow`/seed
@@ -25,12 +25,12 @@ export interface BiaChatWindowProps {
   onSelectThread?: (threadId: string | null) => void;
 }
 
-export function BiaChatWindow({ className, selectedThreadId, onSelectThread }: BiaChatWindowProps) {
+export function LegacyChatWindow({ className, selectedThreadId, onSelectThread }: LegacyChatWindowProps) {
   // Stable identity across renders — ChatWindow calls each adapter hook by
   // reference every render; rebuilding this object would not itself break
   // anything (the hooks are plain functions, not memoized closures), but a
   // stable reference matches the established WhatsApp/`useMemo` convention.
-  const adapter = useMemo(() => buildBiaChatAdapter(), []);
+  const adapter = useMemo(() => buildLegacyChatAdapter(), []);
 
   return (
     <AgentChatWindow
@@ -45,4 +45,4 @@ export function BiaChatWindow({ className, selectedThreadId, onSelectThread }: B
   );
 }
 
-export default BiaChatWindow;
+export default LegacyChatWindow;

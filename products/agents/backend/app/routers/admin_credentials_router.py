@@ -83,7 +83,7 @@ def set_credential(
     service: CredentialService = Depends(get_credential_service_dep),
 ) -> CredentialOut:
     """Write-only set/replace (Anthropic key, a pasted ``pk_`` token, or
-    ``BIA_AGENT_ID``). The value is never returned."""
+    ``ACADEMIA_AGENT_ID``). The value is never returned."""
     try:
         return _out(service.set_value(name, payload.value))
     except CredentialError as exc:

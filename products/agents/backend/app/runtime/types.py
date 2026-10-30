@@ -71,7 +71,7 @@ class AgentSpec:
     """Everything ``ClaudeAgentSdkRuntime`` needs to launch a turn.
 
     Two producers (Agent Studio contract §E1 — generic, backward
-    compatible): ``build_bia_spec(persona_row)`` (Bia, the legacy
+    compatible): ``build_legacy_chat_spec(persona_row)`` (Bia, the legacy
     path: ``prompt_mode="preset_append"``, ``toolset="academia"`` — every
     field below that has a default keeps Bia's launch byte-identical)
     and ``app.studio.spec.build_studio_spec`` (a studio agent:
@@ -107,6 +107,14 @@ class AgentSpec:
     knowledge: bool = True
     #: The conversation's client brain, when one is bound (studio only).
     client_id: UUID | None = None
+    #: Studio only: the tool-group tools the pinned version's ACTIVE ``ferramentas`` rows switch on, as
+    #: ``(content name, row description)`` pairs (``("academia_kb_buscar", "...")``; agents-unified Renata cutover
+    #: S7). Empty = no tool group: the studio turn launches exactly as before. Served by the ``claude_sdk`` runtime
+    #: only (its approval broker gates every write tool); ``build_studio_spec`` refuses an ``llm`` agent with any.
+    ferramentas_grupo: tuple[tuple[str, str], ...] = ()
+    #: Studio only: the org that OWNS the pinned version (a platform definition's org for an org INSTANCE; the
+    #: conversation's own org otherwise). ``None`` = the turn's org.
+    definicao_org_id: UUID | None = None
 
 
 # `event` is exactly one of the E.3 names. `payload` has exactly the E.3 shape.
@@ -163,7 +171,7 @@ class AgentRuntime(Protocol):
     def try_reserve(self) -> TurnSlot | None:
         """Lease a free slot from this runtime's internal
         :class:`SlotPool`, or ``None`` when every slot is busy (the
-        route's 429 ``bia_capacidade``). Synchronous — see
+        route's 429 ``agente_capacidade``). Synchronous — see
         ``SlotPool.try_reserve``'s own docstring for why."""
         ...
 

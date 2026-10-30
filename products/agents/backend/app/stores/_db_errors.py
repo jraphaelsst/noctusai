@@ -95,6 +95,11 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "query_too_long": ValueError,
     "invalid_payload": ValueError,
     "client_required": ValueError,
+    # 053 Renata cutover (agents.transferir_historico_agente / agents.arquivar_agente_legado)
+    "transferir_origem_invalida": _conflict("origem_invalida"),
+    "transferir_destino_invalido": _conflict("destino_invalido"),
+    "transferir_mesmo_agente": _conflict("mesmo_agente"),
+    "arquivar_historico_pendente": _conflict("historico_pendente"),
 }
 
 

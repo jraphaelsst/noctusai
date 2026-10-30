@@ -105,7 +105,7 @@ PLACEHOLDER_ENV = {
     "CORS_ORIGINS": "http://localhost:5173",
     "ANTHROPIC_API_KEY": "",
     "ACADEMIA_API_TOKEN": "secc-proof-placeholder-token",
-    "BIA_AGENT_ID": "00000000-0000-0000-0000-000000000000",
+    "ACADEMIA_AGENT_ID": "00000000-0000-0000-0000-000000000000",
     "SOCIAL_WIRING_API_TOKEN": "secc-proof-placeholder-token",
     "APPROVAL_ASSERTION_SECRETS": "secc-proof-placeholder-secret",
 }

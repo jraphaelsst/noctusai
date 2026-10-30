@@ -108,7 +108,7 @@ class TestPlatformDefinitionsAreData:
         assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
 
     def test_the_legacy_default_keys_stay_reserved(self, rt):
-        resp = rt.post("/api/studio/agents", json={"key": "bia", "nome": "Falso"})
+        resp = rt.post("/api/studio/agents", json={"key": "one-chat", "nome": "Falso"})
         assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
 
 

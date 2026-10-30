@@ -7,12 +7,13 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, seed_org_role
+from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, seed_org_role, seed_pre_cutover_agents
 from noctusai_lib.testing import handler_status
 
 
 def _seed_member(agents_client, role: str = "member") -> None:
     seed_org_role(agents_client, role=role)
+    seed_pre_cutover_agents(agents_client.stores.agents)
 
 
 class TestAuthBoundary:
@@ -58,7 +59,7 @@ class TestListAgents:
     def test_one_chat_reachable_state(self, agents_client):
         _seed_member(agents_client)
         connection_id = uuid4()
-        agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+        seed_pre_cutover_agents(agents_client.stores.agents)
         agents_client.stores.agents.set_external_ref(
             DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
         )
@@ -73,7 +74,7 @@ class TestListAgents:
     def test_one_chat_unreachable_carries_aviso_not_error(self, agents_client):
         _seed_member(agents_client)
         connection_id = uuid4()
-        agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+        seed_pre_cutover_agents(agents_client.stores.agents)
         agents_client.stores.agents.set_external_ref(
             DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
         )
@@ -102,7 +103,7 @@ class TestToggleAgent:
 
     def test_one_chat_not_configured_409(self, agents_client):
         _seed_member(agents_client, role="owner")
-        agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+        seed_pre_cutover_agents(agents_client.stores.agents)
         resp = agents_client.post("/api/agents/one-chat/toggle", json={"ativo": True})
         assert resp.status_code == 409, resp.text
         assert resp.json()["code"] == "not_configured"
@@ -110,7 +111,7 @@ class TestToggleAgent:
     def test_one_chat_upstream_failure_502(self, agents_client):
         _seed_member(agents_client, role="owner")
         connection_id = uuid4()
-        agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+        seed_pre_cutover_agents(agents_client.stores.agents)
         agents_client.stores.agents.set_external_ref(
             DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
         )
@@ -122,7 +123,7 @@ class TestToggleAgent:
     def test_one_chat_toggle_success_reflects_bridge_state(self, agents_client):
         _seed_member(agents_client, role="owner")
         connection_id = uuid4()
-        agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+        seed_pre_cutover_agents(agents_client.stores.agents)
         agents_client.stores.agents.set_external_ref(
             DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
         )

@@ -211,7 +211,7 @@ class TestRealDiscovery:
         # bia-2 deliberately NOT created.
 
         class _Settings:
-            bia_cli_slots = 3
+            claude_cli_slots = 3
 
         pool = RealSlotPool(_Settings(), base_path=str(tmp_path))
 

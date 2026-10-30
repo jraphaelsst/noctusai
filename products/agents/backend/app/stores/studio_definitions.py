@@ -166,6 +166,7 @@ AUDIT_ACOES = (
     "conteudo_editado_mcp", "specs_org_editadas", "definicao_lida",
     "modo_alterado", "conversa_pausada", "conversa_retomada", "padrao_publicado",
     "agente_excluido", "agente_criado", "agente_gerado",
+    "historico_transferido", "agente_arquivado",
 )
 #: 048 ``agents.excluir_agente`` guard codes (the 409 ``code`` of ``DELETE /api/studio/agents/{key}``).
 EXCLUSAO_CODIGOS = ("publicado", "tem_instancias", "tem_conversas", "tem_canal", "ativo")
@@ -857,15 +858,16 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         self, org_id: UUID, key: str, *, agent_id: UUID | None = None, nome: str | None = None,
         definition_mode: str = "studio", ativo: bool = True, publicacao_limiar: float = 0.8,
         kind: str = "runtime", conteudo_modo: str = "legado", definition_scope: str = "org",
+        runtime: str = "claude_sdk", owner_product: str | None = None,
     ) -> StudioAgentRecord:
         """Test helper: an ``agents.agents`` row with explicit columns (the
         knowledge/eval router suites resolve agents through this store)."""
         now = self._now()
         rec = StudioAgentRecord(
             id=agent_id or uuid4(), org_id=org_id, key=key, nome=nome or key, descricao=None,
-            definition_mode=definition_mode, runtime="claude_sdk", ativo=ativo,
+            definition_mode=definition_mode, runtime=runtime, ativo=ativo,
             publicacao_limiar=publicacao_limiar, created_at=now, updated_at=now, kind=kind,
-            conteudo_modo=conteudo_modo, definition_scope=definition_scope,
+            conteudo_modo=conteudo_modo, definition_scope=definition_scope, owner_product=owner_product,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -873,7 +875,8 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
     # ── agents
     def list_agents(self, org_id: UUID) -> list[StudioAgentRecord]:
         return sorted(
-            (a for (o, _), a in self._agents.items() if o == org_id), key=lambda a: a.key
+            (a for (o, _), a in self._agents.items() if o == org_id and a.definition_mode != "arquivado"),
+            key=lambda a: a.key,
         )
 
     def get_agent(self, org_id: UUID, key: str) -> StudioAgentRecord:
@@ -1648,7 +1651,8 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
     # ── agents
     def list_agents(self, org_id: UUID) -> list[StudioAgentRecord]:
         rows = self._paged(
-            lambda: self._t("agents").select("*").eq("org_id", str(org_id)),
+            # a retired (053 `arquivado`) code-defined row is history, never a listed agent
+            lambda: self._t("agents").select("*").eq("org_id", str(org_id)).neq("definition_mode", "arquivado"),
             label=f"studio agents org_id={org_id}", order=("key",),
         )
         return [self._agent(r) for r in rows]

@@ -20,7 +20,7 @@ __all__ = [
     "CredentialKind",
     "CredentialSpec",
     "ISSUER",
-    "BIA_AGENT_ID",
+    "ACADEMIA_AGENT_ID",
     "SOCIAL_WIRING_API_TOKEN",
     "TOKEN_TTL_DAYS",
     "get_spec",
@@ -101,7 +101,7 @@ SOCIAL_WIRING_API_TOKEN = CredentialSpec(
 
 ANTHROPIC_API_KEY = CredentialSpec(
     name="anthropic_api_key",
-    label="Chave Anthropic da Bia",
+    label="Chave Anthropic do executor claude_sdk",
     kind="api_key",
     env_var="JULIA_ANTHROPIC_API_KEY → ANTHROPIC_API_KEY",
     settings_attr="anthropic_api_key",
@@ -118,12 +118,12 @@ APPROVAL_RING = CredentialSpec(
     settings_attr="approval_assertion_secrets",
 )
 
-BIA_AGENT_ID = CredentialSpec(
-    name="bia_agent_id",
-    label="ID da agente Bia (principal do token academia)",
+ACADEMIA_AGENT_ID = CredentialSpec(
+    name="academia_agent_id",
+    label="ID do agente da academia (principal do token academia)",
     kind="config",
-    env_var="BIA_AGENT_ID",
-    settings_attr="bia_agent_id",
+    env_var="ACADEMIA_AGENT_ID",
+    settings_attr="academia_agent_id",
     secret=False,
 )
 
@@ -132,7 +132,7 @@ CREDENTIALS: tuple[CredentialSpec, ...] = (
     SOCIAL_WIRING_API_TOKEN,
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
-    BIA_AGENT_ID,
+    ACADEMIA_AGENT_ID,
 )
 
 _BY_NAME = {spec.name: spec for spec in CREDENTIALS}

@@ -34,7 +34,7 @@ from app.dependencies import (
     get_agent_runtime_dep,
     get_agent_store_dep,
     get_approval_broker_dep,
-    get_build_bia_spec_dep,
+    get_build_legacy_chat_spec_dep,
     get_conformidade_store_dep,
     get_conversation_store_dep,
     get_core_client,
@@ -179,6 +179,33 @@ def _resolve_studio_agent(studio_store: Any, org_id: UUID, key: str, *, allow_in
     return resolve_agent(studio_store, org_id, key, allow_instancia=allow_instancia)
 
 
+def _instancia_conversavel(agent: Any) -> bool:
+    """An org INSTANCE of a platform-defined agent that serves the in-app chat (agents-unified Renata cutover): the
+    same data rule the page model applies to show "Conversar" (``FatosAgente.chat``) -- never its key."""
+    from app.studio.modelo import FatosAgente, origem_de
+
+    return FatosAgente(
+        origem=origem_de(agent.definition_mode, agent.definition_scope), conteudo_modo=agent.conteudo_modo,
+        kind=agent.kind, runtime=agent.runtime, usa_canais=agent.usa_canais,
+    ).chat
+
+
+def _resolve_chat_agent(studio_store: Any, org_id: UUID, key: str) -> Any:
+    """A Studio agent the org may chat with in-app: its own Studio agent, or an instance that serves the in-app
+    chat (any other instance keeps the 409 ``definicao_na_plataforma`` of the shared resolver)."""
+    agent = _resolve_studio_agent(studio_store, org_id, key, allow_instancia=True)
+    if agent.definition_scope == "instancia" and not _instancia_conversavel(agent):
+        return _resolve_studio_agent(studio_store, org_id, key)  # raises the shared 409
+    return agent
+
+
+def _version_owner(studio_store: Any, agent: Any) -> Any:
+    """The row that owns ``agent``'s versions: the platform definition for an instance, itself otherwise."""
+    if agent.definition_scope == "instancia":
+        return studio_store.get_agent_by_id(agent.definition_agent_id)
+    return agent
+
+
 def _studio_agent_by_id(studio_store: Any, org_id: UUID, agent_id: UUID) -> Any | None:
     for agent in studio_store.list_agents(org_id):
         if agent.id == agent_id and agent.definition_mode == "studio":
@@ -296,7 +323,7 @@ def list_conversations(
     if agent is None:
         if agent_key is None:  # never seeded for this org ⇒ no conversations
             return ConversationListOut(items=[], total=0)
-        agent = _resolve_studio_agent(studio_store, ctx.org_id, agent_key)
+        agent = _resolve_chat_agent(studio_store, ctx.org_id, agent_key)
     records = store.list_owned(ctx.org_id, ctx.user_id, agent_id=agent.id)
     items = [_conversation_out(r, agent.key) for r in records]
     return ConversationListOut(items=items, total=len(items))
@@ -372,7 +399,9 @@ def create_conversation(
     # newer publish never moves it); with none yet, it pins at its first turn.
     if payload.agent_key is None:
         raise _http(422, "agent_key_required", "Informe o agente (agent_key).")
-    agent = _resolve_studio_agent(studio_store, ctx.org_id, payload.agent_key)
+    agent = _resolve_chat_agent(studio_store, ctx.org_id, payload.agent_key)
+    if payload.client_id is not None and agent.definition_scope == "instancia":
+        raise _http(422, "invalid_client", "Cliente inválido para este agente.")
     if payload.client_id is not None:
         # Scoped to THIS agent's clients: a foreign or unknown id is simply absent.
         client = next(
@@ -381,7 +410,8 @@ def create_conversation(
         )
         if client is None or not client.ativo:
             raise _http(422, "invalid_client", "Cliente inválido para este agente.")
-    active = studio_store.get_active_version(ctx.org_id, agent.id)
+    dono = _version_owner(studio_store, agent)
+    active = studio_store.get_active_version(dono.org_id, dono.id)
     record = store.create(
         ctx.org_id, agent.id, ctx.user_id, titulo=payload.titulo,
         version_id=active.id if active is not None else None,
@@ -481,7 +511,7 @@ async def post_message(
     ctx: AuthContext = Depends(require_member),
     runtime: Any = Depends(get_agent_runtime_dep),
     broker: Any = Depends(get_approval_broker_dep),
-    build_spec: Any = Depends(get_build_bia_spec_dep),
+    build_spec: Any = Depends(get_build_legacy_chat_spec_dep),
     conv_store=Depends(get_conversation_store_dep),
     agent_store=Depends(get_agent_store_dep),
     msg_store=Depends(get_message_store_dep),
@@ -538,7 +568,7 @@ async def post_message(
     if slot is None:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={"detail": capacity_text, "code": "bia_capacidade"},
+            detail={"detail": capacity_text, "code": "agente_capacidade"},
             headers={"Retry-After": "10"},
         )
 
@@ -615,13 +645,20 @@ def _prepare_studio_turn(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND)
     if not agent.ativo:
         raise _http(409, "agent_inactive", f"O agente {agent.nome} está desligado.")
-    active = studio_store.get_active_version(org_id, agent.id)
+    org_specs = None
+    if agent.definition_scope == "instancia":
+        if not _instancia_conversavel(agent):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND)
+        # An instance runs its platform definition's version, compiled FOR this org (its spec values).
+        org_specs = {s.chave: s.valor for s in studio_store.list_org_specs(org_id, agent.key)}
+    dono = _version_owner(studio_store, agent)
+    active = studio_store.get_active_version(dono.org_id, dono.id)
     if active is None:
         raise _http(409, "no_active_version", f"O agente {agent.nome} não tem versão publicada.")
     if conversation.version_id is None:
         conversation = conv_store.pin_version(org_id, conversation.id, active.id)
     try:
-        spec = build_studio_spec(agent, conversation, definitions=studio_store, catalog=catalog)
+        spec = build_studio_spec(dono, conversation, definitions=studio_store, catalog=catalog, org_specs=org_specs)
     except StudioSpecError as exc:
         raise _http(409, exc.code, exc.detail) from exc
     return agent, spec

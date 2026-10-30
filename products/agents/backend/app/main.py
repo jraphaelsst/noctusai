@@ -12,7 +12,7 @@ conversations+SSE / approvals).
 / ``Orphaned`` are imported at module level — both are lightweight,
 ``claude_agent_sdk``-free). The runtime/broker/spec-builder INSTANCES are
 still resolved lazily via ``app/dependencies.py``'s ``get_agent_runtime_dep``
-/ ``get_approval_broker_dep`` / ``get_build_bia_spec_dep`` — deferring
+/ ``get_approval_broker_dep`` / ``get_build_legacy_chat_spec_dep`` — deferring
 the real runtime's conditional SDK import to first use, not because the
 package might be absent. The startup hook below (contract §E.2 "Startup",
 extended by §E.11 "Every slot is swept once at startup") is wrapped by
@@ -55,6 +55,7 @@ from app.routers.admin_credentials_router import router as admin_credentials_rou
 from app.routers.agent_settings_router import router as agent_settings_router
 from app.routers.agent_packages_router import router as agent_packages_router
 from app.routers.agente_painel_router import router as agente_painel_router
+from app.routers.agentes_cutover_router import router as agentes_cutover_router
 from app.routers.agents_router import router as agents_router
 from app.routers.catalogo_router import router as catalogo_router
 from app.routers.studio_padrao_router import router as studio_padrao_router
@@ -234,6 +235,8 @@ app = create_product_app(
         # The unified agent model + painel (agents-unified CONTRACT): static `/api/agents/painel` and
         # `/api/agents/{key}/painel[/interno]` + `/api/studio/modelo`.
         agente_painel_router,
+        # Renata cutover: static `/api/agents/painel/destino-chat` + `/api/agents/{key}/transferir-historico|arquivar`.
+        agentes_cutover_router,
         # catalogo before agents_router: `/api/agents/catalogo` must not be read as a `/{key}` path.
         catalogo_router,
         agents_router,

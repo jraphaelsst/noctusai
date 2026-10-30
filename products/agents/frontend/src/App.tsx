@@ -37,7 +37,7 @@ const RedirectStudio = redirect("RedirectStudio");
 const RedirectAgentePersona = redirect("RedirectAgentePersona");
 const RedirectCatalogo = redirect("RedirectCatalogo");
 const RedirectAcademiaChat = redirect("RedirectAcademiaChat");
-const RedirectJuliaPersonaToBia = redirect("RedirectJuliaPersonaToBia");
+const RedirectAcademiaPersona = redirect("RedirectAcademiaPersona");
 const RedirectLeadImobStudioToJulia = redirect("RedirectLeadImobStudioToJulia");
 // Platform-admin pages (server-enforced by `require_platform_admin`).
 const Credenciais = lazy(() => import("@/pages/Credenciais"));
@@ -116,7 +116,9 @@ export default createProductApp({
     // react-router ranks static segments above `:key`, so these never read as an agent key.
     { path: "/agentes/catalogo", component: RedirectCatalogo },
     { path: "/agentes/novo", component: NovoAgente },
-    { path: "/agentes/julia/persona", component: RedirectJuliaPersonaToBia },
+    { path: "/agentes/julia/persona", component: RedirectAcademiaPersona },
+    { path: "/agentes/bia/persona", component: RedirectAcademiaPersona },
+    { path: "/agentes/bia/conversar", component: RedirectAcademiaChat },
     { path: "/agentes/:key/persona", component: RedirectAgentePersona },
     { path: "/agentes/:key", component: AgentePage },
     { path: "/bia", component: RedirectAcademiaChat },
