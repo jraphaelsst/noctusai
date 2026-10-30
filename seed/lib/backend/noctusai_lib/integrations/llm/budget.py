@@ -25,10 +25,29 @@ Threshold tuning at runtime:
     LLM_BUDGET_SOFT_PCT = float env, default 0.8
     LLM_BUDGET_HARD_PCT = float env, default 1.0
 
-The current implementation is fail-open: when the org has no budget set
+The monthly-budget part is fail-open: when the org has no budget set
 OR the budget lookup fails (DB error / missing settings), the guard
 returns silently and the LLM call proceeds. Document this in Sentry to
 distinguish "no budget configured" from "guard is broken".
+
+**Prepaid credits (core migration 093) are fail-CLOSED** — `enforce_credits`
+runs first inside `enforce_budget`:
+
+  - reads ``public.credit_wallets`` for the org through a short TTL cache
+    (``LLM_CREDITS_CACHE_TTL_S``, default 15 s);
+  - no wallet ⇒ today's behaviour; ``byok`` / ``postpaid_trusted`` ⇒ never
+    refused; ``prepaid`` with ``balance <= -overdraft_limit`` ⇒
+    `LLMCreditsExhausted` (HTTP 402) BEFORE the provider call;
+  - the wallet read FAILS ⇒ refuse with `LLMCreditsUnverifiable` (503) unless
+    this process last saw the org as something other than prepaid (no wallet /
+    byok / trusted) — an unknown or prepaid org is never served on an unknown
+    balance. Every such refusal is marked: ERROR log + (rate-limited) an
+    in-app notification row for the platform admins;
+  - the TABLE is missing (PGRST205, migration not applied) ⇒ no wallet can
+    exist, so no org is prepaid: today's behaviour, logged at ERROR once.
+
+The balance lags the usage by at most the debit job's cadence (core,
+every minute) plus this cache TTL — the documented overdraft exposure.
 
 Read path: a Supabase admin client is used (service role) so RLS doesn't
 block the cross-product aggregation. Callers pass it via `db_client_factory`.
@@ -39,6 +58,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
@@ -46,7 +67,12 @@ import anyio.to_thread
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
 
-from .exceptions import LLMBudgetExceeded, LLMBudgetNotConfigured
+from .exceptions import (
+    LLMBudgetExceeded,
+    LLMBudgetNotConfigured,
+    LLMCreditsExhausted,
+    LLMCreditsUnverifiable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +114,10 @@ def configure_budget_module(
     """
     global _admin_client_factory
     _admin_client_factory = admin_client_factory
+    # A new client means a new source of truth: drop what the old one told us.
+    with _credit_lock:
+        _credit_cache.clear()
+        _credit_last_mode.clear()
 
 
 def is_configured() -> bool:
@@ -307,6 +337,150 @@ async def compute_status(org_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Prepaid credits (core migration 093) — fail-CLOSED
+# ---------------------------------------------------------------------------
+
+_CREDIT_TABLE = "credit_wallets"
+_CREDIT_SCHEMA = "public"
+_DEFAULT_CREDIT_TTL_S = 15.0
+_CREDIT_MARK_EVERY_S = 600.0
+#: Sentinel: this process never read the org's wallet successfully.
+_UNKNOWN = "__unknown__"
+
+_credit_lock = threading.Lock()
+#: org_id -> (expires_at_monotonic, wallet row | None)
+_credit_cache: dict[str, tuple[float, Optional[dict]]] = {}
+#: org_id -> last successfully read mode (None = no wallet). Never expires.
+_credit_last_mode: dict[str, Optional[str]] = {}
+#: org_id -> monotonic time of the last "unverifiable" platform-admin mark.
+_credit_marked_at: dict[str, float] = {}
+_credit_table_missing_logged = False
+_clock: Callable[[], float] = time.monotonic
+
+
+def _credit_ttl() -> float:
+    raw = os.environ.get("LLM_CREDITS_CACHE_TTL_S")
+    try:
+        return float(raw) if raw else _DEFAULT_CREDIT_TTL_S
+    except ValueError:
+        logger.warning("llm.credits: LLM_CREDITS_CACHE_TTL_S=%r is not a float; using %s", raw, _DEFAULT_CREDIT_TTL_S)
+        return _DEFAULT_CREDIT_TTL_S
+
+
+def _reset_credit_state_for_tests(clock: Optional[Callable[[], float]] = None) -> None:
+    global _credit_table_missing_logged, _clock
+    with _credit_lock:
+        _credit_cache.clear()
+        _credit_last_mode.clear()
+        _credit_marked_at.clear()
+    _credit_table_missing_logged = False
+    _clock = clock or time.monotonic
+
+
+async def _read_wallet(org_id: str) -> Optional[dict]:
+    """The org's wallet row, or None (no wallet / table not deployed). Raises on any
+    other read failure — `enforce_credits` owns the fail-closed posture."""
+    global _credit_table_missing_logged
+    assert _admin_client_factory is not None
+    db = _admin_client_factory()
+
+    def _read():
+        return (
+            db.schema(_CREDIT_SCHEMA)
+            .table(_CREDIT_TABLE)
+            .select("mode,balance_credits,overdraft_limit_credits")
+            .eq("org_id", org_id)
+            .limit(1)
+            .execute()
+        )
+
+    try:
+        result = await anyio.to_thread.run_sync(_read)
+    except Exception as exc:
+        if _is_missing_table(exc):
+            if not _credit_table_missing_logged:
+                _credit_table_missing_logged = True
+                logger.error(
+                    "llm.credits: %s.%s is not deployed (%s) — no org can hold a prepaid wallet; "
+                    "credit enforcement is inactive until core migration 093 is applied.",
+                    _CREDIT_SCHEMA, _CREDIT_TABLE, exc,
+                )
+            return None
+        raise
+    rows = result.data or []
+    return rows[0] if rows else None
+
+
+def _mark_unverifiable(org_id: str, exc: Exception) -> None:
+    """ERROR log every time; at most every 10 min per org, a bell notification for the
+    platform admins (best effort — the database just failed us; a failed mark is logged)."""
+    logger.error("llm.credits.unverifiable: org=%s wallet read failed — AI call refused: %s", org_id, exc)
+    now = _clock()
+    with _credit_lock:
+        last = _credit_marked_at.get(org_id)
+        if last is not None and now - last < _CREDIT_MARK_EVERY_S:
+            return
+        _credit_marked_at[org_id] = now
+    try:
+        db = _admin_client_factory() if _admin_client_factory else None
+        if db is None:
+            return
+        core = db.schema(_CREDIT_SCHEMA)
+        admins = core.table("noctus_users").select("id").eq("role", "admin").execute().data or []
+        rows = [
+            {
+                "user_id": str(a["id"]),
+                "type": "system",
+                "title": "Créditos de IA: saldo não verificável",
+                "message": f"A leitura da carteira da org {org_id} falhou; chamadas de IA dela foram recusadas.",
+                "metadata": {"tipo": "creditos_guarda_indisponivel", "org_id": org_id, "erro": str(exc)[:300]},
+            }
+            for a in admins
+            if a.get("id")
+        ]
+        if rows:
+            core.table("notifications").insert(rows).execute()
+    except Exception as mark_exc:  # noqa: BLE001 — the refusal already happened; the mark is best-effort, logged
+        logger.error("llm.credits: could not record the unverifiable mark for org=%s: %s", org_id, mark_exc)
+
+
+async def enforce_credits(org_id: Optional[str]) -> None:
+    """Refuse a PREPAID org at/below its overdraft floor (HTTP 402) — fail-closed.
+
+    No-op when `org_id` is None or the module is not configured (tests / CLI)."""
+    if not org_id or not _admin_client_factory:
+        return
+    now = _clock()
+    with _credit_lock:
+        cached = _credit_cache.get(org_id)
+    if cached is not None and cached[0] > now:
+        wallet = cached[1]
+    else:
+        try:
+            wallet = await _read_wallet(org_id)
+        except Exception as exc:
+            with _credit_lock:
+                last_mode = _credit_last_mode.get(org_id, _UNKNOWN)
+            if last_mode in (_UNKNOWN, "prepaid"):
+                await anyio.to_thread.run_sync(_mark_unverifiable, org_id, exc)
+                raise LLMCreditsUnverifiable(org_id, str(exc)) from exc
+            logger.warning(
+                "llm.credits: wallet read failed for org=%s (last seen mode=%s, not prepaid) — proceeding: %s",
+                org_id, last_mode, exc,
+            )
+            return
+        with _credit_lock:
+            _credit_cache[org_id] = (now + _credit_ttl(), wallet)
+            _credit_last_mode[org_id] = wallet.get("mode") if wallet else None
+    if not wallet or wallet.get("mode") != "prepaid":
+        return
+    balance = float(wallet.get("balance_credits") or 0)
+    overdraft = float(wallet.get("overdraft_limit_credits") or 0)
+    if balance <= -overdraft:
+        raise LLMCreditsExhausted(org_id, balance, overdraft)
+
+
+# ---------------------------------------------------------------------------
 # Enforcement
 # ---------------------------------------------------------------------------
 
@@ -323,6 +497,8 @@ async def enforce_budget(org_id: Optional[str]) -> None:
     """
     if not org_id or not _admin_client_factory:
         return
+    # Prepaid credits first — fail-CLOSED (raises LLMCreditsExhausted / LLMCreditsUnverifiable).
+    await enforce_credits(org_id)
     try:
         status = await compute_status(org_id)
     except LLMBudgetNotConfigured:
