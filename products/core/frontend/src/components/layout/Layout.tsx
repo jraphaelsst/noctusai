@@ -20,6 +20,7 @@ import {
   UserPlus,
   ShieldCheck,
   Landmark,
+  Coins,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { CoreHeader } from './CoreHeader';
@@ -63,6 +64,7 @@ export const NAV_GROUPS: NavGroup[] = [
           { name: 'Assinaturas', href: '/admin/subs', icon: CreditCard },
           { name: 'Faturamento', href: '/admin/billing', icon: Wallet },
           { name: 'Financeiro', href: '/admin/financeiro', icon: Landmark },
+          { name: 'Créditos de IA', href: '/admin/creditos', icon: Coins },
         ],
       },
       {

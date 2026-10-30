@@ -26,6 +26,8 @@ const TeamManagement = lazy(() => import('./pages/TeamManagement').then(m => ({ 
 const AccountSettings = lazy(() => import('./pages/AccountSettings').then(m => ({ default: m.AccountSettings })));
 const Security = lazy(() => import('./pages/Security').then(m => ({ default: m.Security })));
 const BrandIdentity = lazy(() => import('./pages/BrandIdentity').then(m => ({ default: m.BrandIdentity })));
+const CreditosUso = lazy(() => import('./pages/credits/CreditosUso').then(m => ({ default: m.CreditosUso })));
+const AdminCreditos = lazy(() => import('./pages/admin/AdminCreditos').then(m => ({ default: m.AdminCreditos })));
 const OrgSettings = lazy(() => import('./pages/OrgSettings').then(m => ({ default: m.OrgSettings })));
 const APIKeys = lazy(() => import('./pages/APIKeys').then(m => ({ default: m.APIKeys })));
 const Onboarding = lazy(() => import('./pages/Onboarding').then(m => ({ default: m.Onboarding })));
@@ -71,6 +73,7 @@ const App = createProductApp({
     { path: '/security', component: Security },
     { path: '/org-settings', component: OrgSettings },
     { path: '/org-settings/identidade', component: BrandIdentity },
+    { path: '/org-settings/creditos', component: CreditosUso },
     { path: '/api-keys', component: APIKeys },
     { path: '/settings/api-keys', component: APIKeys },
     { path: '/onboarding', component: Onboarding },
@@ -94,6 +97,7 @@ const App = createProductApp({
     { path: '/admin/website/leads/:id', component: WebsiteLeadDetail },
     { path: '/admin/fleet', component: FleetControl },
     { path: '/admin/financeiro/*', component: AdminFinanceiro },
+    { path: '/admin/creditos', component: AdminCreditos },
   ],
 });
 
