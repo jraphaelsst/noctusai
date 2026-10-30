@@ -23,7 +23,8 @@
     "./cache-writes": "./src/cache-writes.ts",
     "./upload-refusal": "./src/upload-refusal.ts",
     "./supabase": "./src/supabase.ts",
-    "./components": "./src/components/index.ts"
+    "./components": "./src/components/index.ts",
+    "./journey": "./src/journey/index.ts"
   },
   "peerDependencies": {
     "@supabase/supabase-js": "^2.0.0",
