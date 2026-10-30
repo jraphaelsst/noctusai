@@ -102,6 +102,10 @@ class BaseAppSettings(BaseSettings):
     # unrelated and are routinely confused.
     redis_session_encryption_key: str = ""
 
+    # LEGACY per-schema LLM usage copy (Phase 15). Since D25 every product
+    # writes the central `public.ai_usage` ledger unconditionally; this flag
+    # only keeps the old `<schema>.llm_usage` copy alongside it.
+    # (retirement tracked at the marker in noctusai_seed/llm_defaults.py).
     # LLM usage tracking (Phase 15) — opt-in per product via env var.
     # When true, create_product_app() constructs a SupabaseUsageSink that
     # writes every `UsageEvent` to `<schema>.llm_usage`.

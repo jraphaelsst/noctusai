@@ -85,6 +85,22 @@ class UsageEvent:
     # Hook for callers that want to attach a correlation id without mutating
     # the rest of the event. Opaque to the sink.
     extra: dict[str, Any] = field(default_factory=dict)
+    # ── D25 central-ledger dimensions (stamped by `record_usage` from
+    # `attribution.current_attribution()`; see `attribution.py`). ──
+    product: Optional[str] = None
+    feature: Optional[str] = None
+    purpose: Optional[str] = None
+    user_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    agent_key: Optional[str] = None
+    request_id: Optional[str] = None
+    #: "ok" | "partial" (a stream cut short — counts may be estimated, see
+    #: `extra["tokens_estimated"]`) | "error" (the provider call raised).
+    status: str = "ok"
+    #: Which rate card priced `cost_estimate_usd`: "catalog:<rates-hash>",
+    #: "override:v<N>" (an operator `llm_model_overrides` version) or
+    #: "unpriced" (no catalog row — cost 0, flagged, never silently billed).
+    price_version: Optional[str] = None
 
 
 class UsageSink(Protocol):
@@ -243,59 +259,93 @@ def estimate_cost_usd(
     cache_creation_input_tokens: Optional[int] = None,
     cache_read_input_tokens: Optional[int] = None,
 ) -> float:
-    """Compute a rough cost estimate from the model catalog.
+    """Compute a cost estimate (USD) from the model catalog.
 
     `image_input_tokens` / `image_output_tokens` price against the model's
     dedicated image rates (`ModelEntry.cost_per_1m_image_input_tokens` /
     `..._output_tokens`) — additive to the text `prompt_tokens` /
-    `completion_tokens` legs, never a substitute for them. Omitting them
-    (every pre-S2 caller) reproduces the exact prior text-only result.
+    `completion_tokens` legs, never a substitute for them.
 
     `cache_creation_input_tokens` / `cache_read_input_tokens` price against
     the model's own `cost_per_1m_input_tokens` rate at Anthropic's published
     multipliers (see `_ANTHROPIC_CACHE_WRITE_MULTIPLIER` /
     `_ANTHROPIC_CACHE_READ_MULTIPLIER`) — additive to `prompt_tokens`, which
     on an Anthropic response is only the *uncached* portion of the input.
-    Gated on `provider == "anthropic"`: OpenAI/Gemini providers never
-    populate these two args today, so the gate is inert for them, but a
-    future non-Anthropic caller passing them in wouldn't silently get
-    Anthropic's multiplier applied to a different vendor's rate card.
+    Gated on `provider == "anthropic"`.
 
-    Returns 0.0 when any input is missing or the model has no price in the
-    catalog (common for stubs + future models). A rate missing for just ONE
-    leg (e.g. an `image_edit` model priced on text-in but not yet on
-    image-in) zeroes only that leg's contribution, not the whole estimate.
-    Never raises — pricing should never break a successful LLM call.
+    Returns 0.0 when the model has no price in the catalog. A rate missing
+    for just ONE leg zeroes only that leg. Never raises. `price_usage` is the
+    same computation plus the rate-card version the ledger records.
     """
+    return price_usage(
+        provider=provider, model=model, prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens, image_input_tokens=image_input_tokens,
+        image_output_tokens=image_output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )[0]
+
+
+_UNPRICED = "unpriced"
+
+
+def _price_version_of(entry: Any) -> str:
+    """Stable id of the rate card that priced `entry` — an operator override
+    reports its own version; a static catalog row reports a hash of its
+    rates, so a price change in `models.py` changes the recorded version."""
+    import hashlib
+
+    from .catalog_overrides import get_model_override
+
+    override = get_model_override(entry.provider, entry.kind, entry.id)
+    if override is not None and override.version:
+        return f"override:v{override.version}"
+    rates = (
+        entry.cost_per_1m_input_tokens, entry.cost_per_1m_output_tokens,
+        entry.cost_per_1m_image_input_tokens, entry.cost_per_1m_image_output_tokens,
+    )
+    return "catalog:" + hashlib.sha256(repr(rates).encode()).hexdigest()[:10]
+
+
+def price_usage(
+    *,
+    provider: str,
+    model: str,
+    prompt_tokens: Optional[int],
+    completion_tokens: Optional[int],
+    image_input_tokens: Optional[int] = None,
+    image_output_tokens: Optional[int] = None,
+    cache_creation_input_tokens: Optional[int] = None,
+    cache_read_input_tokens: Optional[int] = None,
+) -> tuple[float, str]:
+    """``(cost_usd, price_version)`` at WRITE time from the effective catalog
+    (static rows + operator overlay). ``price_version == "unpriced"`` when the
+    model has no catalog row. Never raises."""
     from .models import models_for
 
     try:
-        entries = [m for m in models_for(provider) if m.id == model]
-        if not entries:
-            return 0.0
-        entry = entries[0]
-        in_rate = getattr(entry, "cost_per_1m_input_tokens", None) or 0.0
-        out_rate = getattr(entry, "cost_per_1m_output_tokens", None) or 0.0
-        img_in_rate = getattr(entry, "cost_per_1m_image_input_tokens", None) or 0.0
-        img_out_rate = getattr(entry, "cost_per_1m_image_output_tokens", None) or 0.0
-        pt = prompt_tokens or 0
-        ct = completion_tokens or 0
-        ipt = image_input_tokens or 0
-        ipo = image_output_tokens or 0
+        entry = next((m for m in models_for(provider) if m.id == model), None)
+        if entry is None:
+            return 0.0, _UNPRICED
+        in_rate = entry.cost_per_1m_input_tokens or 0.0
+        out_rate = entry.cost_per_1m_output_tokens or 0.0
+        img_in_rate = entry.cost_per_1m_image_input_tokens or 0.0
+        img_out_rate = entry.cost_per_1m_image_output_tokens or 0.0
         cost = (
-            pt * in_rate + ct * out_rate + ipt * img_in_rate + ipo * img_out_rate
+            (prompt_tokens or 0) * in_rate
+            + (completion_tokens or 0) * out_rate
+            + (image_input_tokens or 0) * img_in_rate
+            + (image_output_tokens or 0) * img_out_rate
         ) / 1_000_000.0
         if provider == "anthropic":
-            cache_write = cache_creation_input_tokens or 0
-            cache_read = cache_read_input_tokens or 0
             cost += (
-                cache_write * in_rate * _ANTHROPIC_CACHE_WRITE_MULTIPLIER
-                + cache_read * in_rate * _ANTHROPIC_CACHE_READ_MULTIPLIER
+                (cache_creation_input_tokens or 0) * in_rate * _ANTHROPIC_CACHE_WRITE_MULTIPLIER
+                + (cache_read_input_tokens or 0) * in_rate * _ANTHROPIC_CACHE_READ_MULTIPLIER
             ) / 1_000_000.0
-        return cost
+        return cost, _price_version_of(entry)
     except Exception as exc:
-        logger.debug("estimate_cost_usd failed for %s/%s: %s", provider, model, exc)
-        return 0.0
+        logger.warning("price_usage failed for %s/%s: %s", provider, model, exc)
+        return 0.0, _UNPRICED
 
 
 # ── Entry-point helper used by providers ──────────────────────────
@@ -315,20 +365,24 @@ async def record_usage(
     cache_read_input_tokens: Optional[int] = None,
     model_version: Optional[str] = None,
     batch: bool = False,
+    status: str = "ok",
+    extra: Optional[dict[str, Any]] = None,
 ) -> None:
-    """Provider-side convenience — builds a `UsageEvent` and dispatches to
-    the active sink. Safe to call with `sink=None` (no-op). Never raises.
+    """Provider-side convenience — builds a `UsageEvent`, prices it at write
+    time (`price_usage`), stamps the attribution in force
+    (`attribution.current_attribution()`) and dispatches to the active sink.
+    Safe to call with `sink=None` (no-op). Never raises.
 
-    `image_input_tokens` / `image_output_tokens` / `cache_creation_input_
-    tokens` / `cache_read_input_tokens` / `model_version` / `batch` are
-    additive, keyword-only, defaulted params — every call site that passes
-    none of them (every pre-existing caller plus every non-Anthropic
-    provider) behaves identically to before.
+    `org_id` passed here wins over the attribution's org (the provider knows
+    which org's key it billed). `status` is "ok" | "partial" | "error" — the
+    failure paths come from `record_failed_call` / `metered_stream`.
 
     Imported lazily inside provider methods to avoid a circular import
     (provider → client → usage → ...).
     """
-    cost = estimate_cost_usd(
+    from .attribution import current_attribution
+
+    cost, price_version = price_usage(
         provider=provider,
         model=model,
         prompt_tokens=prompt_tokens,
@@ -338,11 +392,18 @@ async def record_usage(
         cache_creation_input_tokens=cache_creation_input_tokens,
         cache_read_input_tokens=cache_read_input_tokens,
     )
+    try:
+        attr = current_attribution()
+    except Exception as exc:  # attribution must never cost a billable row
+        logger.warning("llm.usage: attribution unavailable (%s); recording unattributed", exc)
+        from .attribution import UsageAttribution
+
+        attr = UsageAttribution()
     event = UsageEvent(
         provider=provider,
         model=model,
         operation=operation,
-        org_id=org_id,
+        org_id=org_id or attr.org_id,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
@@ -353,6 +414,16 @@ async def record_usage(
         cost_estimate_usd=cost,
         model_version=model_version,
         batch=batch,
+        extra=dict(extra or {}),
+        product=attr.product,
+        feature=attr.feature,
+        purpose=attr.purpose,
+        user_id=attr.user_id,
+        conversation_id=attr.conversation_id,
+        agent_key=attr.agent_key,
+        request_id=attr.request_id,
+        status=status,
+        price_version=price_version,
     )
     # Every active `coletar_uso()` scope sees the event too — independent of
     # whether a sink is configured (a harness or an extractor attributing
@@ -372,6 +443,141 @@ async def record_usage(
         await sink.record(event)
     except Exception as exc:
         logger.warning("usage_sink.record failed: %s", exc)
+
+
+# ── Failure / partial emission (D25: a failed or cut call is still a row) ──
+
+
+async def record_failed_call(
+    *, provider: str, model: str, operation: str, org_id: Optional[str], exc: BaseException
+) -> None:
+    """One ``status="error"`` row for a provider call that raised before it
+    reported usage. Token counts stay NULL (unknown, not zero); the error
+    class rides in ``extra``. Never raises."""
+    try:
+        await record_usage(
+            provider=provider, model=model, operation=operation,
+            prompt_tokens=None, completion_tokens=None, total_tokens=None,
+            org_id=org_id, status="error",
+            extra={"error": type(exc).__name__, "cancelled": isinstance(exc, _cancelled_types())},
+        )
+    except BaseException as rec_exc:  # noqa: BLE001 — must not mask the original failure
+        logger.warning("llm.usage: could not record failed %s call: %s", operation, rec_exc)
+
+
+def _cancelled_types() -> tuple[type[BaseException], ...]:
+    import asyncio
+
+    return (asyncio.CancelledError,)
+
+
+async def metered_call(
+    call: Any, *, provider: str, model: str, operation: str, org_id: Optional[str]
+) -> Any:
+    """Await ``call()`` (a zero-arg coroutine factory) so that a provider call
+    that raises WITHOUT having recorded usage still leaves a ``status="error"``
+    row. A provider that recorded before raising is not double-counted."""
+    with coletar_uso() as eventos:
+        try:
+            return await call()
+        except BaseException as exc:
+            if not eventos and not _is_local_refusal(exc):
+                await record_failed_call(
+                    provider=provider, model=model, operation=operation, org_id=org_id, exc=exc,
+                )
+            raise
+
+
+def _is_local_refusal(exc: BaseException) -> bool:
+    """Failures raised before any request left the process (no key, a stub
+    provider, an unimplemented capability, a budget refusal) are not calls —
+    they never produce a ledger row."""
+    from .exceptions import LLMBudgetExceeded, LLMBudgetNotConfigured, LLMNotConfigured, ProviderNotImplemented
+
+    return isinstance(
+        exc,
+        (LLMNotConfigured, ProviderNotImplemented, NotImplementedError, LLMBudgetExceeded, LLMBudgetNotConfigured),
+    )
+
+
+def _approx_tokens(chars: int) -> int:
+    """~4 chars per token — the same heuristic `chat.build_cached_messages`
+    uses. Only ever applied to a cut-short stream, and always flagged."""
+    return max(0, (chars + 3) // 4)
+
+
+async def metered_stream(
+    stream: Any,
+    *,
+    provider: str,
+    model: str,
+    org_id: Optional[str],
+    prompt_chars: int,
+) -> Any:
+    """Wrap a provider stream (async iterator of text deltas). A stream that
+    runs to completion is left alone (the provider records the reported
+    counts). A stream that is cut short — consumer abort, cancellation, a
+    provider error mid-stream — records ONE row: ``status="partial"`` when any
+    text was delivered (output tokens estimated from the delivered chars,
+    input tokens from the prompt chars, ``extra.tokens_estimated=True``), else
+    ``status="error"``."""
+    delivered = 0
+    completed = False
+    failure: Optional[BaseException] = None
+    try:
+        async for chunk in stream:
+            delivered += len(chunk or "")
+            yield chunk
+        completed = True
+    except BaseException as exc:
+        failure = exc
+        raise
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if not completed and aclose is not None:
+            try:
+                await aclose()
+            except BaseException as close_exc:  # noqa: BLE001
+                logger.debug("llm.usage: closing a cut stream raised %s", close_exc)
+        if not completed:
+            reason = (
+                type(failure).__name__
+                if failure is not None and not isinstance(failure, GeneratorExit)
+                else "consumer_closed"
+            )
+            try:
+                if delivered:
+                    pt = _approx_tokens(prompt_chars)
+                    ct = _approx_tokens(delivered)
+                    await record_usage(
+                        provider=provider, model=model, operation="chat",
+                        prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct,
+                        org_id=org_id, status="partial",
+                        extra={"tokens_estimated": True, "cut_reason": reason,
+                               "delivered_chars": delivered},
+                    )
+                else:
+                    await record_usage(
+                        provider=provider, model=model, operation="chat",
+                        prompt_tokens=None, completion_tokens=None, total_tokens=None,
+                        org_id=org_id, status="error", extra={"error": reason},
+                    )
+            except BaseException as rec_exc:  # noqa: BLE001
+                logger.warning("llm.usage: could not record cut stream: %s", rec_exc)
+
+
+def prompt_chars_of(messages: Any) -> int:
+    """Total text length of an OpenAI-shaped message list (for estimates)."""
+    total = 0
+    for m in messages or ():
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    total += len(block["text"])
+    return total
 
 
 # ── Scoped collection (per-read cost attribution) ─────────────────

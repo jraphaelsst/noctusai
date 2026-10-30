@@ -14,11 +14,12 @@ Phase 3's default).
 
 Storage:
 - `<schema>.llm_preferences(org_id, provider, chat_model, embedding_model, updated_at)`
-- `<schema>.llm_usage(org_id, provider, model, operation, *_tokens, cost_estimate_usd, at)`
+- usage: the central ledger `public.ai_usage` (core migration 091, D25) —
+  every product's calls, attributed + priced at write time; this router reads
+  the caller's org rows for THIS product only.
 
-Both tables live in each product's schema — RLS-scoped per-org. Migrations
-ship per product (products/*/backend/migrations/NNN_llm_preferences.sql and
-NNN_llm_usage.sql).
+`llm_preferences` lives in each product's schema — RLS-scoped per-org
+(products/*/backend/migrations/NNN_llm_preferences.sql).
 """
 from __future__ import annotations
 
@@ -34,6 +35,12 @@ from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth import make_get_current_user_org
 from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.integrations.llm import all_providers, models_for
+from noctusai_lib.integrations.llm.attribution import get_default_product
+from noctusai_lib.integrations.llm.ledger_read import (
+    AiUsageWindowTooLarge,
+    aggregate_ai_usage,
+    read_ai_usage_rows,
+)
 from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
 
 logger = logging.getLogger(__name__)
@@ -185,41 +192,44 @@ def create_llm_router(deps) -> APIRouter:
         to: Optional[str] = Query(None, description="ISO-8601 end (default now)"),
         group_by: str = Query(
             "provider_model",
-            description="provider_model | provider | model | operation",
+            description="provider_model | provider | model | operation | feature",
         ),
-        limit: int = Query(5000, ge=1, le=20000, description="Max rows to scan"),
+        limit: int = Query(500, ge=1, le=5000, description="Max raw events returned"),
     ):
-        """Return LLM token usage + cost for the caller's org.
+        """LLM usage + cost of the caller's org IN THIS PRODUCT, read from the
+        central ledger ``public.ai_usage`` (D25).
 
-        RLS-scoped: only the caller's org rows are visible (for ERP admins,
-        every row in their org via the admin_full policy).
+        Org = the trusted ``noctus_users`` resolution (never metadata); the
+        read runs on the service-role core client filtered by that org and by
+        this process's product slug, so a caller only ever sees its own org.
 
-        Returns `{events, aggregate}` — `events` is the raw sample (capped
-        at `limit`), `aggregate` is a grouped summary totalling calls,
-        tokens, and estimated cost.
+        Returns ``{events, aggregate, ledger, window}`` — ``events`` the newest
+        ``limit`` rows, ``aggregate`` grouped by ``group_by``, ``ledger`` the
+        per product → per feature roll-up (`aggregate_ai_usage`).
         """
-        user, org_id, token = await _require_org(authorization)
+        _user, org_id, _token = await _require_org(authorization)
+        if not org_id:
+            raise HTTPException(status_code=403, detail="Usuário sem organização")
 
-        # Resolve date window.
         now = datetime.now(tz=timezone.utc)
         start = _parse_iso(from_) or (now - timedelta(days=30))
         end = _parse_iso(to) or now
-        db = deps.get_user_client(token)
-        rows = (
-            await run_blocking(
-                lambda: db.table("llm_usage")
-                .select("*")
-                .gte("at", start.isoformat())
-                .lte("at", end.isoformat())
-                .order("at", desc=True)
-                .limit(limit)
-                .execute()
+        product = get_default_product()
+        db = deps.get_core_client()
+        try:
+            rows = await run_blocking(
+                lambda: read_ai_usage_rows(
+                    db, start=start, end=end, org_id=str(org_id), product=product,
+                )
             )
-        ).data or []
+        except AiUsageWindowTooLarge:
+            raise HTTPException(status_code=400, detail="Janela grande demais; reduza o período")
 
+        newest = sorted(rows, key=lambda r: str(r.get("created_at") or ""), reverse=True)[:limit]
         return {
-            "events": rows,
+            "events": newest,
             "aggregate": _aggregate_rows(rows, group_by),
+            "ledger": aggregate_ai_usage(rows),
             "window": {"from": start.isoformat(), "to": end.isoformat()},
         }
 
@@ -227,12 +237,13 @@ def create_llm_router(deps) -> APIRouter:
 
 
 def _aggregate_rows(rows: list[dict], group_by: str) -> list[dict]:
-    """Group the raw rows by the requested key. Returns a list of bucket
+    """Group ledger rows by the requested key. Returns a list of bucket
     dicts sorted by total_tokens desc — the shape the UI wants."""
     key_fn = {
         "provider": lambda r: (r.get("provider"),),
         "model": lambda r: (r.get("model"),),
         "operation": lambda r: (r.get("operation"),),
+        "feature": lambda r: (r.get("feature"),),
         "provider_model": lambda r: (r.get("provider"), r.get("model")),
     }.get(group_by, lambda r: (r.get("provider"), r.get("model")))
 
@@ -245,13 +256,17 @@ def _aggregate_rows(rows: list[dict], group_by: str) -> list[dict]:
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
-            "cost_estimate_usd": 0.0,
+            "cost_usd": 0.0,
+            "cost_brl": 0.0,
         })
+        inp = int(row.get("input_tokens") or 0)
+        out = int(row.get("output_tokens") or 0)
         bucket["calls"] += 1
-        bucket["prompt_tokens"] += row.get("prompt_tokens") or 0
-        bucket["completion_tokens"] += row.get("completion_tokens") or 0
-        bucket["total_tokens"] += row.get("total_tokens") or 0
-        bucket["cost_estimate_usd"] += float(row.get("cost_estimate_usd") or 0)
-    out = list(buckets.values())
-    out.sort(key=lambda b: b["total_tokens"], reverse=True)
-    return out
+        bucket["prompt_tokens"] += inp
+        bucket["completion_tokens"] += out
+        bucket["total_tokens"] += inp + out
+        bucket["cost_usd"] += float(row.get("cost_usd") or 0)
+        bucket["cost_brl"] += float(row.get("cost_brl") or 0)
+    out_rows = list(buckets.values())
+    out_rows.sort(key=lambda b: b["total_tokens"], reverse=True)
+    return out_rows

@@ -309,9 +309,15 @@ class OpenAIImageEditAdapter:
             payload["mask"] = request.mask
         payload.update(request.extra)
 
+        from noctusai_lib.integrations.llm.usage import record_failed_call, record_usage
+
         try:
             response = await client.images.edit(**payload)
         except Exception as exc:
+            # D25: a failed edit is still a ledger row (status=error).
+            await record_failed_call(
+                provider="openai", model=self._model, operation="image_edit", org_id=org_id, exc=exc,
+            )
             from openai import OpenAIError
 
             if isinstance(exc, OpenAIError):
@@ -342,6 +348,14 @@ class OpenAIImageEditAdapter:
             image_input_tokens=getattr(details, "image_tokens", None),
             image_output_tokens=getattr(usage_obj, "output_tokens", None),
             total_tokens=getattr(usage_obj, "total_tokens", None),
+        )
+        # D25 central ledger (`public.ai_usage`), priced at write time.
+        await record_usage(
+            provider="openai", model=self._model, operation="image_edit",
+            prompt_tokens=usage.prompt_tokens, completion_tokens=None,
+            total_tokens=usage.total_tokens, org_id=org_id,
+            image_input_tokens=usage.image_input_tokens,
+            image_output_tokens=usage.image_output_tokens,
         )
 
         return ImageEditResult(
@@ -451,6 +465,7 @@ class OpenAIImageEditAdapter:
         from the returned tuple — the caller, who owns the custom_id list,
         treats a missing id as a retryable failure.
         """
+        # NOC-REMEDIATE[ai-usage-image-edit-batch]: batch items are not yet rows in public.ai_usage — this read can repeat per batch, so the row needs an idempotency key (batch_id + custom_id) first — 2026-10-29
         polled = await self.poll_batch(batch_id, org_id=org_id)
         if not polled.state.is_terminal:
             raise ImageEditBatchNotReady(

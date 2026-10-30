@@ -1178,6 +1178,18 @@ if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6g1b. No-direct-LLM-SDK gate (D26; blocking, only when backend Python changed)
+# Keeper `check_no_direct_llm_sdk_import`. Every LLM call goes through
+# `noctusai_lib.integrations.llm` so it lands in the central ledger
+# public.ai_usage (D25) and under the org budget guard.
+if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
+    if ! "$PY" "$CLI" --check-no-direct-llm-sdk-import --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] NO-DIRECT-LLM-SDK-IMPORT check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Call the LLM through noctusai_lib.integrations.llm (chat_completion / chat_with_tools / ...), never the vendor SDK." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6g2. No-metadata-authz gate (blocking, only when backend Python changed) ─
 # Keeper `check_no_metadata_authz` + `KB § PATTERNS/backend/no-metadata-authz.md`.
 # `user_metadata.org_id|role|org_role` is USER-WRITABLE (`auth.updateUser`);

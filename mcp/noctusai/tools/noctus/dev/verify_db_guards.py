@@ -5792,6 +5792,85 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — public.ai_usage append-only guard (core migration 091, D25).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning: org_id/user_id are nullable, so each probe inserts its
+# own throwaway row inside the rollback-only wrapper. The ONE allowed write
+# (charged_credits NULL -> value, the wallet's debit stamp) is exercised as
+# setup in the re-stamp probe; the refusal under test is the SECOND stamp.
+
+_CORE_AI_USAGE_GUARD = "guard_ai_usage_append_only"
+_CORE_AI_USAGE_MIGRATIONS = ("091_ai_usage.sql",)
+
+
+def _core_ai_usage_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("ai_usage_append_only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_id bigint;
+BEGIN
+  IF to_regclass('public.ai_usage') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.ai_usage does not exist (core migration 091 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO public.ai_usage (product, provider, model, operation, fx_rate, price_version)
+    VALUES ('noc-probe', 'noc-probe', 'noc-probe', 'chat', 5, 'noc-probe')
+    RETURNING id INTO v_id;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=_CORE_AI_USAGE_GUARD,
+        kind="write_refusal",
+        migrations=_CORE_AI_USAGE_MIGRATIONS,
+        sql=sql,
+        rationale=(
+            "ai_usage is the central LLM billing ledger (D25) — every per-org / "
+            "per-product charge is derived from it. A rewritable or deletable "
+            "row is a rewritable bill. UPDATE / DELETE are refused for every "
+            "role except the wallet's single charged_credits NULL -> value stamp."
+        ),
+    )
+
+
+_CORE_AI_USAGE_PROBES: tuple[GuardProbe, ...] = (
+    _core_ai_usage_probe(
+        probe_id="ai_usage.update_refused",
+        op_sql="    UPDATE public.ai_usage SET model = 'tampered' WHERE id = v_id;",
+        what="UPDATE of an ai_usage row",
+    ),
+    _core_ai_usage_probe(
+        probe_id="ai_usage.delete_refused",
+        op_sql="    DELETE FROM public.ai_usage WHERE id = v_id;",
+        what="DELETE of an ai_usage row",
+    ),
+    _core_ai_usage_probe(
+        probe_id="ai_usage.charged_credits_restamp_refused",
+        op_sql=(
+            "    UPDATE public.ai_usage SET charged_credits = 1 WHERE id = v_id;\n"
+            "    UPDATE public.ai_usage SET charged_credits = 2 WHERE id = v_id;"
+        ),
+        what="a second charged_credits stamp on an ai_usage row",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — public.mfa_policy (migration 060, platform-admin-mfa).
 # (1) mode CHECK refuses an unknown mode; (2) the table is SERVICE-ROLE-ONLY:
 # `authenticated` (and `anon`) must not be able to write it — an admin who
@@ -10915,6 +10994,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_CORE_AI_USAGE_PROBES,
     _SSO_PROMOTION_PROBE,
     *_MFA_POLICY_PROBES,
     *_SEED_ANON_LOCKDOWN_PROBES,

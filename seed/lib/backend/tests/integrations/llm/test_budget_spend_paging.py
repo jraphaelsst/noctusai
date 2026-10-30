@@ -54,11 +54,11 @@ class _Query:
 
 
 class _Client:
-    """One schema holds 2 500 rows of 0.01 USD; the others are empty."""
+    """The central ledger (`public.ai_usage`) holds 2 500 rows of 0.01 USD."""
 
     def __init__(self):
         self.rows = {
-            "social_wiring": [{"id": f"{i:06d}", "cost_estimate_usd": 0.01} for i in range(2500)],
+            "public": [{"id": f"{i:06d}", "cost_usd": 0.01, "cost_brl": 0.05} for i in range(2500)],
         }
 
     def schema(self, name):

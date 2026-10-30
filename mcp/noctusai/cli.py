@@ -247,6 +247,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-conflict-markers", action="store_true", help="Keeper: a tracked file committed with unresolved merge-conflict markers. Flags only when an opener (7+ '<') AND a closer (7+ '>') both appear at line start, so a lone '=======' Markdown underline or section divider is not a false positive. Found on origin/dev 2026-08-04 in a RENAMED migration, where git emits the 8-char marker variant that visual scanning misses; the header sat in a comment block so every semantic gate and the live schema both looked clean. Severity high. MCP keeper check_conflict_markers.")
     parser.add_argument("--check-lying-loading-state", action="store_true", help="Keeper: TanStack Query v5 `isLoading` is FALSE during a background refetch (`isLoading === isPending && isFetching`); a `loading=`/`isLoading=` JSX prop or a hand-rolled `!X.isLoading && ... .length === 0` guard falls through to its EMPTY branch mid-refetch, rendering \"no data\" over live data. Live incident 2026-07-21/22 (social-wiring Leads, 12,177 leads / 28 brokers, fixed b0cb47b1). Scans products/*/frontend/src/**/*.tsx. Severity warning (observe-first on a brand-new detector). Escape hatch: `lying-loading-ok` comment. KB § PATTERNS/frontend/lying-loading-state.md.")
     parser.add_argument("--check-no-self-monkeypatch", action="store_true", help="Keeper: tests that patch OUR OWN code instead of exercising it (CLAUDE.md §1). Same predicate the PreToolUse `test_seam_guard` denies writes with — one definition, two enforcement points. Exists as a TARGETED flag because the only other way to run it was the ~15-minute compliance suite, and a feedback loop that slow is how 56 findings accumulated unnoticed. Escape hatch: `# self-patch-ok: <reason>` on the patching line. KB § PATTERNS/compliance/testing.md.")
+    parser.add_argument("--check-no-direct-llm-sdk-import", action="store_true", help="Keeper (D26): refuse direct `anthropic`/`openai` SDK imports in active products' backend app code. LLM calls go through `noctusai_lib.integrations.llm`, which records every call into the central ledger public.ai_usage (attributed + priced, D25) and enforces the org budget. Escape hatch: `# llm-sdk-direct-ok: <seed gap>`. Severity high.")
     parser.add_argument("--check-postgrest-schema-qualified-table", action="store_true", help="Keeper: a Supabase/PostgREST client is ALREADY schema-bound, so `.table(name)`/`.from_(name)` resolves RELATIVE to that schema and never parses a dot as a separator. `db.table(f\"{deps._db.schema}.invitations\")` therefore asks for `<schema>.<schema>.<table>` → 500 \"Could not find the table ... in the schema cache\" on EVERY call, phrased so it reads as a missing migration. Invisible to unit tests: MockSupabaseClient keys tables by whatever string it is handed, so a qualified fixture agrees with a qualified caller (fixture-vs-real false-green). Live incident 2026-08-06 — seed team router, all 9 products mounting it, green in CI ~3 months. Scans seed/** + products/*/backend/** *.py for the interpolated + literal shapes. Severity high. Escape hatch: `postgrest-qualified-ok` comment. KB § PATTERNS/backend/postgrest-schema-targeting.md.")
     parser.add_argument("--check-hand-copied-org-admin", action="store_true", help="Keeper: awake product frontends must not hand-copy the org-admin UX gate (`isProductAdmin || org.role owner/admin`) — use useIsOrgAdmin()/isOrgAdmin(ctx) from @noctusai/lib. Severity high; blocking.")
     parser.add_argument("--check-private-unique-violation-predicate", action="store_true", help="Keeper: no private PostgREST unique-violation predicate outside noctusai_lib.primitives.postgrest_errors. Severity high; blocking.")
@@ -2001,6 +2002,17 @@ def main():
             print(f"  {GREEN}✓ migration-untyped-empty-array: clean.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} untyped empty ARRAY[] literal(s) (42P18 on apply):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_no_direct_llm_sdk_import:
+        from tools.noctus.dev.compliance import check_no_direct_llm_sdk_import
+        issues = check_no_direct_llm_sdk_import()
+        if not issues:
+            print(f"  {GREEN}✓ no-direct-llm-sdk-import: clean (every LLM call goes through the seed seam).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} direct LLM SDK import(s) — unbilled, invisible to public.ai_usage:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)

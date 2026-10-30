@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .client import get_llm_config, get_provider, resolve_api_key
+from .usage import metered_call
 
 
 async def transcribe_audio(
@@ -49,10 +50,13 @@ async def transcribe_audio(
     api_key = resolve_api_key(effective_provider, org_id)
 
     prov = get_provider(effective_provider)
-    return await prov.transcribe_audio(
-        audio,
-        model=effective_model,
-        api_key=api_key,
-        org_id=org_id,
-        **kwargs,
+    return await metered_call(
+        lambda: prov.transcribe_audio(
+            audio,
+            model=effective_model,
+            api_key=api_key,
+            org_id=org_id,
+            **kwargs,
+        ),
+        provider=effective_provider, model=effective_model, operation="audio", org_id=org_id,
     )

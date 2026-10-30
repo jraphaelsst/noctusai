@@ -2,27 +2,22 @@
 
 Two sources, both org-scoped:
 
-  - `social_wiring.llm_usage` — every LLM call (chat/vision/embedding/audio)
-    goes through `noctusai_lib.integrations.llm`'s `record_usage`, which
-    writes native-USD `cost_estimate_usd` per event (see `SupabaseUsageSink`,
-    `products/social-wiring/backend/migrations/122_llm_usage.sql`). Turned
-    on for this product via `SocialWiringSettings.llm_usage_tracking=True`
-    (repo-level default, not a VPS-only env knob).
+  - `public.ai_usage` — the central LLM ledger (core migration 091, roadmap
+    D25): every LLM call (chat/vision/embedding/audio) of this product, written
+    by the seed's `CentralUsageSink` with `cost_usd` AND `cost_brl` priced at
+    write time (BRL at the latest stored PTAX of that moment). Read with
+    `get_core_client()` filtered by org + `product = 'social-wiring'`.
   - `public.cost_ledger` — native-BRL InfoSimples rows, booked by
     `app.modules.certidoes.cost_ledger.book_infosimples_cost` right after
     each billed certidão call. Cross-schema table (core's migration 046),
     read via `get_core_client()` per `KB § PATTERNS/backend/backend.md
     § Cross-schema reach via get_core_client()`.
 
-USD→BRL conversion uses the LATEST stored `public.fx_rates` bulletin
-(BCB PTAX) — not a per-day historical rate. This is a deliberate
-simplification for a read endpoint (the daily-accurate per-transaction
-rate is what `products/core/backend/app/services/fx_service.py`'s
-`resolve_pending_cost_ledger` job computes when it PRICES a cost_ledger
-row at booking time — that machinery is core-app-internal and not
-reachable from this product). No stored bulletin at all ⇒ every LLM
-row's BRL total is explicitly `None` with `fx_pendente=True` on the
-response — never a guessed/default rate.
+LLM BRL = each ledger row's own `cost_brl` (converted at write time). A row
+written while no PTAX bulletin was readable carries `extra.fx_source =
+"env_fallback"` — its BRL came from an env default, so this page reports
+the LLM BRL as `None` with `fx_pendente=True` instead of showing a guessed
+rate.
 
 D4Sign and Google Maps are NOT instrumented yet (no per-call price
 surfaces from either API today) — see `CLAUDE/backend.md`'s "no invented
@@ -41,13 +36,16 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import Field
 
 from app.database import get_core_client
-from app.dependencies import coerce_org_uuid, get_current_user_org, get_scoped_admin_client
+from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.services import table_reads
 from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/custos", tags=["custos"])
+
+#: This product's slug in the central ledger (`public.ai_usage.product`).
+_PRODUCT = "social-wiring"
 
 
 class CustosPorModelo(StrictHttpModel):
@@ -96,28 +94,6 @@ def _parse_range(from_: Optional[str], to: Optional[str]) -> tuple[date, date]:
         return _default_range()
 
 
-def _latest_ptax_rate(core_client) -> Optional[Decimal]:
-    """Most recent stored `USD/BRL` bulletin, or `None` when the platform
-    has never stored one (the daily PTAX job hasn't run / BCB had no
-    bulletin yet). Never fetches live — a read endpoint books no state."""
-    rows = (
-        core_client.table("fx_rates")
-        .select("rate")
-        .eq("pair", "USD/BRL")
-        .order("quote_date", desc=True)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    if not rows:
-        return None
-    try:
-        return Decimal(str(rows[0]["rate"]))
-    except Exception:
-        return None
-
-
 @router.get("", response_model=CustosOut)
 def obter_custos(
     from_: Optional[str] = Query(None, alias="from"),
@@ -133,16 +109,16 @@ def obter_custos(
     ate_ts = (datetime.combine(ate, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
     de_ts = datetime.combine(de, datetime.min.time(), tzinfo=timezone.utc).isoformat()
 
-    sw_client = get_scoped_admin_client("social_wiring")
     core_client = get_core_client()
 
     llm_rows = table_reads.paged_rows(
-        sw_client,
-        "llm_usage",
+        core_client,
+        "ai_usage",
         org_id,
-        select="id,provider,model,total_tokens,cost_estimate_usd,at",
-        refine=lambda q: q.gte("at", de_ts).lt("at", ate_ts),
-        order_col="at",
+        eq_filters={"product": _PRODUCT},
+        select="id,provider,model,input_tokens,output_tokens,cost_usd,cost_brl,extra,created_at",
+        refine=lambda q: q.gte("created_at", de_ts).lt("created_at", ate_ts),
+        order_col="created_at",
     )
 
     infosimples_rows = table_reads.paged_rows(
@@ -155,25 +131,32 @@ def obter_custos(
         order_col="created_at",
     )
 
-    fx_rate = _latest_ptax_rate(core_client)
-    llm_fx_pending = fx_rate is None and bool(llm_rows)
-
     # ── LLM: per (provider, model) + per-day ────────────────────────────
     por_modelo: dict[tuple[str, str], dict] = {}
     por_dia: dict[str, Decimal] = defaultdict(Decimal)
     llm_total_usd = Decimal("0")
+    llm_total_brl = Decimal("0")
+    llm_fx_pending = False
     for row in llm_rows:
         key = (row.get("provider") or "?", row.get("model") or "?")
-        bucket = por_modelo.setdefault(key, {"chamadas": 0, "total_tokens": 0, "custo_usd": Decimal("0")})
+        bucket = por_modelo.setdefault(
+            key, {"chamadas": 0, "total_tokens": 0, "custo_usd": Decimal("0"), "custo_brl": Decimal("0"), "pendente": False}
+        )
         bucket["chamadas"] += 1
-        bucket["total_tokens"] += int(row.get("total_tokens") or 0)
-        cost = Decimal(str(row.get("cost_estimate_usd") or 0))
+        bucket["total_tokens"] += int(row.get("input_tokens") or 0) + int(row.get("output_tokens") or 0)
+        cost = Decimal(str(row.get("cost_usd") or 0))
         bucket["custo_usd"] += cost
         llm_total_usd += cost
-        if fx_rate is not None:
-            day = str(row.get("at") or "")[:10]
-            if day:
-                por_dia[day] += cost * fx_rate
+        if (row.get("extra") or {}).get("fx_source") == "env_fallback":
+            bucket["pendente"] = True
+            llm_fx_pending = True
+            continue
+        brl = Decimal(str(row.get("cost_brl") or 0))
+        bucket["custo_brl"] += brl
+        llm_total_brl += brl
+        day = str(row.get("created_at") or "")[:10]
+        if day:
+            por_dia[day] += brl
 
     llm_por_modelo = [
         CustosPorModelo(
@@ -182,12 +165,12 @@ def obter_custos(
             chamadas=v["chamadas"],
             total_tokens=v["total_tokens"],
             custo_usd=float(v["custo_usd"]),
-            custo_brl=float(v["custo_usd"] * fx_rate) if fx_rate is not None else None,
+            custo_brl=None if v["pendente"] else float(v["custo_brl"]),
         )
         for (provider, model), v in sorted(por_modelo.items())
     ]
 
-    llm_custo_brl = float(llm_total_usd * fx_rate) if fx_rate is not None else None
+    llm_custo_brl = None if llm_fx_pending else float(llm_total_brl)
 
     # ── InfoSimples ──────────────────────────────────────────────────────
     infosimples_total = Decimal("0")
@@ -208,9 +191,9 @@ def obter_custos(
             chamadas=len(llm_rows),
             custo_brl=llm_custo_brl,
             fx_pendente=llm_fx_pending,
-            observacao=None if fx_rate is not None or not llm_rows else (
-                "Nenhuma cotação PTAX armazenada ainda — custo em USD disponível "
-                "no detalhamento por modelo."
+            observacao=None if not llm_fx_pending else (
+                "Parte das chamadas foi registrada sem cotação PTAX armazenada — "
+                "custo em USD disponível no detalhamento por modelo."
             ),
         ),
         CustosIntegracao(
