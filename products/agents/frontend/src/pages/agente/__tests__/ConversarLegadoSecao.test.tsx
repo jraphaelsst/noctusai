@@ -1,5 +1,5 @@
 /**
- * Bia.tsx page tests — the controlled-selection wiring only (contract-free
+ * ConversarLegadoSecao.tsx (legacy agent "Conversar" section) tests — the controlled-selection wiring only (contract-free
  * UX seam, 2026-09-22). Stubs `@/hooks/useBiaChat`'s `useCreateConversation`
  * and `@/components/BiaChatWindow` so this asserts ONLY the page's own
  * logic: "Nova conversa" selects the conversation it just created. The
@@ -10,8 +10,15 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ConversarLegadoSecao from "@/pages/agente/secoes/ConversarLegadoSecao";
 
 const mockMutateAsync = vi.fn();
+
+const AGENTE = {
+  key: "bia", nome: "Bia", descricao: null, papel: "academia", capacidades: [], origem: "legado" as const,
+  tipo: "legacy", runtime: "claude_sdk", owner_product: null, usa_canais: false, ativo: true,
+  estado_externo: null, aviso: null, secoes: ["visao-geral", "conversar", "persona"], pode_alternar: true,
+};
 
 vi.mock("@/hooks/useBiaChat", () => ({
   useCreateConversation: () => ({ mutateAsync: mockMutateAsync }),
@@ -34,11 +41,10 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 async function renderPage() {
-  const Bia = (await import("@/pages/Bia")).default;
-  render(React.createElement(Bia));
+  render(React.createElement(ConversarLegadoSecao, { agentKey: "bia", agente: AGENTE }));
 }
 
-describe("Bia — auto-open the conversation 'Nova conversa' just created", () => {
+describe("ConversarLegadoSecao — auto-open the conversation 'Nova conversa' just created", () => {
   it("starts with no conversation selected", async () => {
     await renderPage();
     expect(screen.getByTestId("bia-chat-window").dataset.selectedThreadId).toBe("");
@@ -48,7 +54,7 @@ describe("Bia — auto-open the conversation 'Nova conversa' just created", () =
     mockMutateAsync.mockResolvedValue({ id: "conv-123", titulo: null });
     await renderPage();
 
-    fireEvent.click(screen.getByTestId("bia-new-conversation"));
+    fireEvent.click(screen.getByTestId("conversar-nova-conversa"));
 
     await waitFor(() =>
       expect(screen.getByTestId("bia-chat-window").dataset.selectedThreadId).toBe("conv-123"),
@@ -67,7 +73,7 @@ describe("Bia — auto-open the conversation 'Nova conversa' just created", () =
     mockMutateAsync.mockRejectedValue(new Error("Falha ao criar conversa."));
     await renderPage();
 
-    fireEvent.click(screen.getByTestId("bia-new-conversation"));
+    fireEvent.click(screen.getByTestId("conversar-nova-conversa"));
 
     await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId("bia-chat-window").dataset.selectedThreadId).toBe("");

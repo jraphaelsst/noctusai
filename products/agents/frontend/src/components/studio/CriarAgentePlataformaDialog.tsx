@@ -98,7 +98,7 @@ export function CriarAgentePlataformaDialog({ onClose }: { onClose: () => void }
           : "Agente criado. Ele começa vazio e cresce com o tempo.",
       );
       onClose();
-      navigate(`/studio/${encodeURIComponent(created.key)}`);
+      navigate(`/agentes/${encodeURIComponent(created.key)}`);
     } catch (err) {
       setErro(lifecycleError(err).message);
     }

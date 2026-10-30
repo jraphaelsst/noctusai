@@ -1,13 +1,12 @@
 /**
- * Persona da Bia — contract §E.2 (`GET`/`PUT /api/agents/bia/persona`),
- * `/agentes/bia/persona`. Admin-only (server-enforced via `require_admin`;
- * this page also gates on `useIsAdmin()` so a non-admin never sees an
- * editable form that would 403 on submit — members are redirected to
- * `/agentes`).
+ * Persona section of the agent page (`/agentes/:key?tab=persona`) — contract §E.2
+ * (`GET`/`PUT /api/agents/{key}/persona`). Offered only on a legacy chat agent and only to an org
+ * admin: the SERVER lists the section in `painel.secoes` (agents-unified CONTRACT §3) and enforces
+ * `require_admin` on the write; `useIsAdmin()` stays a UX guard so a member who deep-links here gets a
+ * restricted notice instead of an editable form that would 403 on submit.
  */
 import { useEffect, useState, type FormEvent } from "react";
-import { Navigate } from "react-router-dom";
-import { Settings, ShieldAlert } from "lucide-react";
+import { Lock, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button } from "@noctusai/lib/design-system";
 import {
@@ -18,6 +17,7 @@ import {
   type PersonaUpdateInput,
 } from "@/hooks/usePersona";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import type { SecaoProps } from "../secaoTypes";
 import { errorMessage } from "@/lib/errors";
 
 const INPUT_CLASS =
@@ -45,9 +45,9 @@ const MODEL_LABELS: Record<string, string> = {
 // CHECK-constrained, `app/stores/personas.py`); the free-text fields
 // (`papel`, `tom`, `system_prompt_append`) stay EMPTY — persona content is
 // the admin's to author, not a UI default.
-function emptyForm(): PersonaUpdateInput {
+function emptyForm(nome: string): PersonaUpdateInput {
   return {
-    nome: "Bia",
+    nome,
     papel: "",
     model: PERSONA_MODELS[1],
     effort: "medium",
@@ -59,10 +59,10 @@ function emptyForm(): PersonaUpdateInput {
   };
 }
 
-export default function BiaPersona() {
+export default function PersonaSecao({ agentKey, agente }: SecaoProps) {
   const isAdmin = useIsAdmin();
-  const { data: persona, showSkeleton, isError } = usePersona();
-  const updatePersona = useUpdatePersona();
+  const { data: persona, showSkeleton, isError } = usePersona(agentKey);
+  const updatePersona = useUpdatePersona(agentKey);
   // No persona row yet (contract §E.2 404, "Nenhuma persona ativa
   // configurada") vs. editing the existing one — drives copy + the submit
   // button label. `PUT` creates versão 1 either way (`update_persona`,
@@ -70,7 +70,7 @@ export default function BiaPersona() {
   // which is about to happen.
   const isCreateMode = !persona;
 
-  const [form, setForm] = useState<PersonaUpdateInput>(emptyForm());
+  const [form, setForm] = useState<PersonaUpdateInput>(() => emptyForm(agente.nome));
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -89,7 +89,11 @@ export default function BiaPersona() {
   }, [persona]);
 
   if (!isAdmin) {
-    return <Navigate to="/agentes" replace />;
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-card p-6 text-sm text-muted-foreground" data-testid="persona-restrita">
+        <Lock className="h-4 w-4" /> A persona é configurada pelos administradores da organização.
+      </div>
+    );
   }
 
   function setField<K extends keyof PersonaUpdateInput>(key: K, value: PersonaUpdateInput[K]) {
@@ -111,15 +115,9 @@ export default function BiaPersona() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <div className="flex items-center gap-3">
-        <Settings className="h-6 w-6 text-primary" />
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Persona da Bia</h1>
-          <p className="text-sm text-muted-foreground">
-            Configure o comportamento e o modelo usados pela Bia.
-          </p>
-        </div>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Configure o comportamento e o modelo usados por {agente.nome}.
+      </p>
 
       {showSkeleton ? (
         <div className="space-y-3" data-testid="persona-skeleton">
@@ -140,7 +138,7 @@ export default function BiaPersona() {
             </Badge>
           ) : (
             <p className="text-sm text-muted-foreground" data-testid="persona-create-notice">
-              Bia ainda não tem uma persona configurada e não vai responder até que uma seja
+              {agente.nome} ainda não tem uma persona configurada e não vai responder até que uma seja
               salva aqui.
             </p>
           )}
@@ -261,7 +259,7 @@ export default function BiaPersona() {
               id="persona-system-prompt"
               className={`${INPUT_CLASS} h-32 resize-y py-2`}
               value={form.system_prompt_append ?? ""}
-              placeholder="Instruções extras anexadas ao prompt de sistema da Bia"
+              placeholder="Instruções extras anexadas ao prompt de sistema do agente"
               onChange={(e) => setField("system_prompt_append", e.target.value)}
               data-testid="persona-system-prompt"
             />

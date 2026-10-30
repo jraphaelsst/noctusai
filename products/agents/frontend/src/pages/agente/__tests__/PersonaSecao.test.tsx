@@ -1,5 +1,5 @@
 /**
- * BiaPersona.tsx page tests — contract §E.2 (`GET`/`PUT
+ * PersonaSecao.tsx (agent page Persona section) tests — contract §E.2 (`GET`/`PUT
  * /api/agents/bia/persona`).
  *
  * Stubs `@/hooks/usePersona` and `@/hooks/useIsAdmin` so this test asserts
@@ -16,6 +16,7 @@ import React from "react";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import PersonaSecao from "@/pages/agente/secoes/PersonaSecao";
 
 const mockUsePersona = vi.fn();
 const mockUseUpdatePersona = vi.fn();
@@ -49,6 +50,12 @@ const PERSONA = {
   updated_at: "2026-09-01T00:00:00Z",
 };
 
+const AGENTE = {
+  key: "bia", nome: "Bia", descricao: null, papel: "academia", capacidades: [], origem: "legado" as const,
+  tipo: "legacy", runtime: "claude_sdk", owner_product: null, usa_canais: false, ativo: true,
+  estado_externo: null, aviso: null, secoes: ["visao-geral", "conversar", "persona"], pode_alternar: true,
+};
+
 let mutateAsync: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -61,11 +68,10 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 async function renderPage() {
-  const BiaPersona = (await import("@/pages/BiaPersona")).default;
-  render(React.createElement(MemoryRouter, null, React.createElement(BiaPersona)));
+  render(React.createElement(MemoryRouter, null, React.createElement(PersonaSecao, { agentKey: "bia", agente: AGENTE })));
 }
 
-describe("BiaPersona — no persona yet (404, contract §E.2 not_found)", () => {
+describe("PersonaSecao — no persona yet (404, contract §E.2 not_found)", () => {
   it("renders the form in create mode: no version badge, 'Criar persona' button", async () => {
     mockUsePersona.mockReturnValue({
       data: undefined,
@@ -134,7 +140,7 @@ describe("BiaPersona — no persona yet (404, contract §E.2 not_found)", () => 
   });
 });
 
-describe("BiaPersona — genuine failure (5xx/network)", () => {
+describe("PersonaSecao — genuine failure (5xx/network)", () => {
   it("renders the error card, not the form", async () => {
     mockUsePersona.mockReturnValue({
       data: undefined,
@@ -152,7 +158,7 @@ describe("BiaPersona — genuine failure (5xx/network)", () => {
   });
 });
 
-describe("BiaPersona — existing persona", () => {
+describe("PersonaSecao — existing persona", () => {
   it("renders current behaviour: version badge, 'Salvar' button, no create notice", async () => {
     mockUsePersona.mockReturnValue({
       data: PERSONA,
@@ -168,5 +174,15 @@ describe("BiaPersona — existing persona", () => {
     expect(screen.getByRole("button", { name: "Salvar" })).toBeTruthy();
     expect(screen.getByLabelText("Nome *")).toHaveProperty("value", "Bia");
     expect(screen.getByLabelText("Papel *")).toHaveProperty("value", "Assistente de conhecimento");
+  });
+});
+
+describe("PersonaSecao — non-admin deep link", () => {
+  it("shows the restricted notice instead of an editable form", async () => {
+    mockUseIsAdmin.mockReturnValue(false);
+    mockUsePersona.mockReturnValue({ data: undefined, showSkeleton: false, isError: false, isNotFound: true });
+    await renderPage();
+    expect(screen.getByTestId("persona-restrita")).toBeTruthy();
+    expect(screen.queryByLabelText("Nome *")).toBeNull();
   });
 });
