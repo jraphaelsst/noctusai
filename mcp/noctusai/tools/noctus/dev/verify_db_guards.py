@@ -5871,6 +5871,201 @@ _CORE_AI_USAGE_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — the prepaid AI credit wallet (core migration 093).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning inside the rollback-only wrapper: the fixture org is the
+# first `public.organizations` row (borrowed read-only — everything written
+# against it is rolled back), a throwaway `ai_usage` row is inserted where a
+# debit needs one. Probes that test a CHECK / UNIQUE behind the entries
+# trigger open the GUC carve-out first (`noctus.credit_wallet_write`) so the
+# constraint — not the trigger — is the guard under test.
+
+_CORE_CREDIT_MIGRATIONS = ("093_credit_wallets.sql",)
+_CREDIT_GUC_ON = "    PERFORM set_config('noctus.credit_wallet_write', 'on', true);"
+_CREDIT_USAGE_ROW = (
+    "    INSERT INTO public.ai_usage (org_id, product, provider, model, operation, fx_rate, price_version)\n"
+    "    VALUES (v_org, 'noc-probe', 'noc-probe', 'noc-probe', 'chat', 5, 'noc-probe') RETURNING id INTO v_usage;"
+)
+
+
+def _core_credit_probe(*, probe_id: str, guard_name: str, fragment: str, op_sql: str, what: str,
+                       rationale: str) -> GuardProbe:
+    fragment_lit = _sql_lit(fragment)
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid;
+  v_usage bigint;
+  v_res jsonb;
+BEGIN
+  IF to_regclass('public.credit_entries') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.credit_entries does not exist (core migration 093 not applied)';
+  END IF;
+  SELECT id INTO v_org FROM public.organizations ORDER BY created_at LIMIT 1;
+  IF v_org IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow';
+  END IF;
+  BEGIN
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=_CORE_CREDIT_MIGRATIONS,
+        sql=sql,
+        rationale=rationale,
+    )
+
+
+_CREDIT_LEDGER_WHY = (
+    "credit_entries is the per-org AI money ledger (prepaid purchases, admin grants, usage debits). "
+    "A rewritable, deletable or side-door-inserted row is a rewritable bill and a balance that no "
+    "longer equals the sum of its entries."
+)
+
+_CORE_CREDIT_PROBES: tuple[GuardProbe, ...] = (
+    _core_credit_probe(
+        probe_id="credit_entries.update_refused",
+        guard_name="guard_credit_entries_append_only",
+        fragment="credit_entries_append_only",
+        op_sql=(
+            "    v_res := public.credit_apply_entry(v_org, 'grant', 1, 'noc-probe');\n"
+            "    UPDATE public.credit_entries SET credits = 1000000 WHERE id = (v_res->>'entry_id')::bigint;"
+        ),
+        what="UPDATE of a credit_entries row",
+        rationale=_CREDIT_LEDGER_WHY,
+    ),
+    _core_credit_probe(
+        probe_id="credit_entries.delete_refused",
+        guard_name="guard_credit_entries_append_only",
+        fragment="credit_entries_append_only",
+        op_sql=(
+            "    v_res := public.credit_apply_entry(v_org, 'grant', 1, 'noc-probe');\n"
+            "    DELETE FROM public.credit_entries WHERE id = (v_res->>'entry_id')::bigint;"
+        ),
+        what="DELETE of a credit_entries row",
+        rationale=_CREDIT_LEDGER_WHY,
+    ),
+    _core_credit_probe(
+        probe_id="credit_entries.direct_insert_refused",
+        guard_name="guard_credit_entries_append_only",
+        fragment="credit_entries_write_via_credit_apply_entry",
+        op_sql=(
+            "    INSERT INTO public.credit_entries (org_id, kind, source, credits, balance_after, payment_ref)\n"
+            "    VALUES (v_org, 'purchase', 'noc-probe', 1, 1, 'noc-probe-direct');"
+        ),
+        what="a direct INSERT into credit_entries (bypassing credit_apply_entry)",
+        rationale=_CREDIT_LEDGER_WHY + " Only credit_apply_entry may append (it moves the balance in the same txn).",
+    ),
+    _core_credit_probe(
+        probe_id="credit_entries.double_debit_refused",
+        guard_name="ux_credit_entries_ai_usage",
+        fragment="ux_credit_entries_ai_usage",
+        op_sql="\n".join((
+            _CREDIT_USAGE_ROW,
+            "    v_res := public.credit_apply_entry(v_org, 'usage_debit', -1, 'noc-probe', p_ai_usage_id => v_usage);",
+            _CREDIT_GUC_ON,
+            "    INSERT INTO public.credit_entries (org_id, kind, source, credits, balance_after, ai_usage_id)",
+            "    VALUES (v_org, 'usage_debit', 'noc-probe', -1, 0, v_usage);",
+        )),
+        what="a second usage_debit for the same ai_usage row",
+        rationale="One AI call is charged exactly once: a retried debit job or a race must never bill it twice.",
+    ),
+    _core_credit_probe(
+        probe_id="credit_entries.double_purchase_refused",
+        guard_name="ux_credit_entries_payment",
+        fragment="ux_credit_entries_payment",
+        op_sql="\n".join((
+            _CREDIT_GUC_ON,
+            "    INSERT INTO public.credit_entries (org_id, kind, source, credits, balance_after, payment_ref)",
+            "    VALUES (v_org, 'purchase', 'noc-probe', 1, 1, 'noc-probe-pay');",
+            "    INSERT INTO public.credit_entries (org_id, kind, source, credits, balance_after, payment_ref)",
+            "    VALUES (v_org, 'purchase', 'noc-probe', 1, 2, 'noc-probe-pay');",
+        )),
+        what="a second purchase entry for the same payment reference",
+        rationale="A replayed paid webhook must credit the wallet once, never twice.",
+    ),
+    _core_credit_probe(
+        probe_id="credit_entries.sign_refused",
+        guard_name="credit_entries_sign",
+        fragment="credit_entries_sign",
+        op_sql="    v_res := public.credit_apply_entry(v_org, 'grant', -1, 'noc-probe');",
+        what="a negative grant",
+        rationale="A grant/purchase that removes credits (or a debit that adds them) inverts the ledger's meaning.",
+    ),
+    _core_credit_probe(
+        probe_id="credit_entries.debit_without_usage_refused",
+        guard_name="credit_entries_debit_has_usage",
+        fragment="credit_entries_debit_has_usage",
+        op_sql="\n".join((
+            _CREDIT_GUC_ON,
+            "    INSERT INTO public.credit_entries (org_id, kind, source, credits, balance_after)",
+            "    VALUES (v_org, 'usage_debit', 'noc-probe', -1, 0);",
+        )),
+        what="a usage_debit with no ai_usage row",
+        rationale="Every debit must point at the ledger row it charges — otherwise it is unauditable and un-deduplicable.",
+    ),
+    _core_credit_probe(
+        probe_id="credit_entries.purchase_without_ref_refused",
+        guard_name="credit_entries_purchase_has_ref",
+        fragment="credit_entries_purchase_has_ref",
+        op_sql="\n".join((
+            _CREDIT_GUC_ON,
+            "    INSERT INTO public.credit_entries (org_id, kind, source, credits, balance_after)",
+            "    VALUES (v_org, 'purchase', 'noc-probe', 1, 1);",
+        )),
+        what="a purchase with no payment reference",
+        rationale="A purchase without its gateway payment ref cannot be reconciled nor deduplicated.",
+    ),
+    _core_credit_probe(
+        probe_id="credit_wallets.balance_direct_write_refused",
+        guard_name="guard_credit_wallet_balance",
+        fragment="credit_wallet_balance_via_credit_apply_entry",
+        op_sql=(
+            "    INSERT INTO public.credit_wallets (org_id) VALUES (v_org) ON CONFLICT (org_id) DO NOTHING;\n"
+            "    UPDATE public.credit_wallets SET balance_credits = balance_credits + 1000000 WHERE org_id = v_org;"
+        ),
+        what="a direct UPDATE of credit_wallets.balance_credits",
+        rationale="The balance must equal the sum of the entries; only credit_apply_entry moves it, with an entry.",
+    ),
+    _core_credit_probe(
+        probe_id="credit_pricing.update_refused",
+        guard_name="guard_credit_pricing_insert_only",
+        fragment="credit_pricing_insert_only",
+        op_sql="    UPDATE public.credit_pricing SET margin = margin WHERE version = (SELECT min(version) FROM public.credit_pricing);",
+        what="UPDATE of a credit_pricing version",
+        rationale="Every debit records the pricing version it used; rewriting a version rewrites past bills.",
+    ),
+    _core_credit_probe(
+        probe_id="credit_pricing.divisor_refused",
+        guard_name="credit_pricing_divisor_positive",
+        fragment="credit_pricing_divisor_positive",
+        op_sql=(
+            "    INSERT INTO public.credit_pricing (version, credit_unit_brl, margin, iof_rate, simples_rate, gateway_fee_rate)\n"
+            "    VALUES (2147483000, 0.01, 1, 0.035, 0.5, 0.5);"
+        ),
+        what="a pricing version whose Simples + gateway fee leave no revenue",
+        rationale="price ÷ (1 − simples − gateway) explodes (or goes negative) as the divisor nears 0.",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — public.mfa_policy (migration 060, platform-admin-mfa).
 # (1) mode CHECK refuses an unknown mode; (2) the table is SERVICE-ROLE-ONLY:
 # `authenticated` (and `anon`) must not be able to write it — an admin who
@@ -10995,6 +11190,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
     *_CORE_AI_USAGE_PROBES,
+    *_CORE_CREDIT_PROBES,
     _SSO_PROMOTION_PROBE,
     *_MFA_POLICY_PROBES,
     *_SEED_ANON_LOCKDOWN_PROBES,
