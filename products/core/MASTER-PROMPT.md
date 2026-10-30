@@ -27,6 +27,9 @@ Central auth and administration hub for the NoctusAI multi-product SaaS platform
 - **roles** -- 7-role hierarchy (owner, admin, manager, member, viewer, dev, test) with granular permissions
 - **brand** (`/api/brand`, migration 089) -- the org's visual identity, ONE per org, worn by core and every product of the selected org via the seed `BrandProvider`; falls back to the NOC standard (platform row, `org_id IS NULL`). Versioned drafts (`draft|active|archived|failed`), `.md`/`.pdf` ingestion through the seed LLM client (Sonnet 5.5) into `noctus.brand-tokens/v1` with deterministic validation (token keys derived from seed `tokens.css`, strict regexes, WCAG contrast in code, derived dark), activate/rollback via the service-role `brand_identity_activate`. `voice`/`brand_book`/`source` are server-only (column grant). Contract: `projects/org-brand-identity/CONTRACT.md`
 
+### AI usage ledger
+- **ai_usage** (`public.ai_usage`, migration 090, roadmap D25) -- ONE append-only ledger of every LLM call of every product (core included), written by the seed `CentralUsageSink` (service role) with org / product / feature / user attribution, write-time price (`price_version`) and PTAX BRL. Trigger refuses UPDATE/DELETE/TRUNCATE except the wallet's single `charged_credits` NULL->value stamp; RLS = org members + platform admins read. Read by `/api/admin/llm-usage` (platform admin; `org_id/product/feature/from/to`), the seed `/api/llm/usage` and the budget guard. Pattern: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend/llm-usage.md` §0
+
 ### Products and Licensing
 - **products** -- product registry, per-org product activation
 - **licenses** -- license provisioning, `on_license_change` trigger auto-provisions product defaults
