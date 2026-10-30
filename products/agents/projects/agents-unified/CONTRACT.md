@@ -123,7 +123,7 @@ Any org member; 404 `agent_not_found` for a key the org does not have.
 | nav `Bia` + `Catálogo de agentes` items, status_pagina rows `bia`, `agentes-catalogo` | one `Agentes` item; migration 051 drops the two rows |
 | detail shells `/bia`, `/agentes/bia/persona`, `/studio/:key` | redirects to `/agentes/:key?tab=…` (generic `/agentes/:key/persona` → `?tab=persona`) |
 
-Still pinned, by design until the Renata cutover slice: `config.py` `bia_agent_id` / `bia_max_turns` / `bia_cli_path` / `bia_cli_slots` (env + credential names of the `claude_sdk` runtime), `get_build_bia_spec_dep` (Bia's code-defined spec), the `bia_capacidade` error code, `DEFAULT_AGENT_KEYS` seeding. Marker: `NOC-REMEDIATE[agents-legacy-runtime-names]`.
+Renata cutover (2026-10-30) removed the remaining pins: `config.py` `academia_agent_id` / `legacy_chat_max_turns` / `claude_cli_path` / `claude_cli_slots` (the old `BIA_*` / `JULIA_*` env names are still read, with a one-time deprecation log — `NOC-REMEDIATE[drop-bia-env-alias]`; the image keeps `BIA_CLI_SLOTS` and `/run/bia-K`), `get_build_legacy_chat_spec_dep`, the `agente_capacidade` error code, `DEFAULT_AGENT_KEYS = ("one-chat",)` (the code-defined `bia` row is no longer seeded). Credential key `bia_agent_id` → `academia_agent_id` (migration 053; the resolver still falls back to the old row).
 
 ## 6 · Wizard step schema (for the wizard slice)
 
@@ -151,11 +151,20 @@ Frontend: the wizard is rendered with the seed `JourneyWizard` organ (built in p
 - `/agentes` — the unified listing: one card per item of `GET /api/agents/painel` (filter by `papel`), each linking to `/agentes/:key`; legacy agents get the on/off switch when `pode_alternar`.
 - `/agentes/:key` — `AgentePage`: header from the painel; section nav = `painel.secoes`, titled by `modelo.secoes`; body = the section's renderer (a registry `section id → component`; the content-area renderers are the existing Studio tab components). Superadmin extras come from `/painel/interno`, fetched only when the page shows an internal section.
 - States: skeleton only while there is no data yet (`isPending && !data`), a refetch never unmounts the page, error and empty states are explicit; never `isLoading` (KB server-state family).
-- Redirects: `/bia`, `/julia` → `/agentes/bia?tab=conversar`; `/agentes/bia/persona`, `/agentes/julia/persona`, `/agentes/:key/persona` → `/agentes/:key?tab=persona`; `/studio/:key` → `/agentes/:key` (query kept); `/studio/lead-imob` → `/agentes/julia`; `/agentes/catalogo` → `/agentes`.
+- Redirects: `/bia`, `/julia`, `/agentes/bia/conversar` → `/agentes/<destino>?tab=conversar` and `/agentes/bia/persona`, `/agentes/julia/persona` → `/agentes/<destino>?tab=persona`, where `<destino>` = `GET /api/agents/painel/destino-chat` (the agent the academia principal names, else the org's code-defined chat agent, else `/agentes`); `/agentes/bia` itself is NOT redirected (the key is free for a new agent); `/agentes/:key/persona` → `/agentes/:key?tab=persona`; `/studio/:key` → `/agentes/:key` (query kept); `/studio/lead-imob` → `/agentes/julia`; `/agentes/catalogo` → `/agentes`.
 - `/studio` (Agent Studio) stays as the create/import/delete console until the wizard slice; its rows link to `/agentes/:key`.
 
 ## 8 · What the next slices build
 
 - **Wizard slice**: `JourneyWizard` over `assistente.passos`, submit to `POST /api/studio/plataforma/agents`; fold the `/studio` console's create/import/delete actions into `/agentes`.
-- **Renata slice**: move the academia agent onto a platform definition + instance (Renata), then drop the legacy chat path (`AgentRecord.chat_legado`, `config.bia_*`, `get_build_bia_spec_dep`, the `/bia` redirects).
-- **Bia slice**: retire the legacy `bia` row once Renata serves the academia orgs.
+- **Renata slice** (built, §9): academia tool group, history transfer + retire endpoints, dynamic `/bia` redirects. Left: drop the legacy chat path (`AgentRecord.chat_legado`, `get_build_legacy_chat_spec_dep`, `app/agents/bia/`) once no org has a code-defined chat agent.
+- **Bia (marketing) slice**: the key `bia` is free after the cutover's retire step.
+
+## 9 · Renata cutover (built 2026-10-30)
+
+- **Academia tool group (S7).** `app.studio.ferramentas_registry.GRUPOS_FERRAMENTAS["academia"]`: every academia tool is a `ferramentas` content row `academia_<nome>` (the model sees `mcp__academia__<nome>`); a version's active, described rows switch them on. Class (read/write) = `app.runtime.gate`, never the row; write tools never join `allowed_tools` and always go through the approval broker; `claude_sdk` runtime only (`ferramentas_exigem_claude_sdk` otherwise); never on a channel turn (`app.channels.tool_registry.TOOLS` only). Argument validation + audit are the same handlers as the code-defined agent (`app.runtime.tools`).
+- **Instances chat.** An org instance of a platform definition with `runtime=claude_sdk` and no channels has the `conversar` section; its conversations live under the instance row, its versions on the definition.
+- **`POST /api/agents/{source_key}/transferir-historico`** `{target_key, dry_run=true}` — superadmin only (404 otherwise, 401 without a credential). One transaction (053 `agents.transferir_historico_agente`): conversations (+ messages, approvals, transcripts) and both tokens tables' `principal_agent_id` move; audit `historico_transferido`; idempotent; re-points the `academia_agent_id` credential when it named the source. 409 `origem_invalida` / `destino_invalido` / `mesmo_agente`.
+- **`POST /api/agents/{key}/arquivar`** `{dry_run=true, todas_orgs=false}` — superadmin only. `definition_mode='arquivado'`, `ativo=false`, key → `<key>-arquivado-<id8>`; audit `agente_arquivado`; 409 `historico_pendente` while the row owns conversations; archived rows leave every listing.
+- **`GET /api/agents/painel/destino-chat`** → `{key, origem: academia|legado}` or 404.
+- Runbook: `RENATA-CUTOVER.md`.

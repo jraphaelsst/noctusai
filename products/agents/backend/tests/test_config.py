@@ -111,3 +111,29 @@ class TestTurnDeadlineAndLockTtlSettings:
 
         s = SeedSettings(turn_lock_ttl_seconds=601, turn_timeout_seconds=600)
         assert s.turn_lock_ttl_seconds == 601
+
+
+class TestDeprecatedRuntimeEnvNames:
+    """Renata cutover: the runtime settings carry neutral names; the pre-cutover `BIA_*` names are still READ
+    (an operator's existing .env keeps working) and logged once as deprecated -- never a silent alias."""
+
+    def test_the_old_name_is_read_and_logged_once(self, monkeypatch, caplog) -> None:
+        for n in ("ACADEMIA_AGENT_ID", "CLAUDE_CLI_PATH", "LEGACY_CHAT_MAX_TURNS"):
+            monkeypatch.delenv(n, raising=False)
+        monkeypatch.setenv("BIA_AGENT_ID", "00000000-0000-0000-0000-0000000000b1")
+        monkeypatch.setenv("BIA_CLI_PATH", "/opt/old-cli")
+        caplog.set_level("WARNING", logger="app.config")
+        config = _fresh_import_app_config()
+        assert config.settings.academia_agent_id == "00000000-0000-0000-0000-0000000000b1"
+        assert config.settings.claude_cli_path == "/opt/old-cli"
+        avisos = [r.getMessage() for r in caplog.records if "deprecated_env_name" in r.getMessage()]
+        assert "agents.config.deprecated_env_name env=BIA_AGENT_ID use=ACADEMIA_AGENT_ID" in avisos
+        assert "agents.config.deprecated_env_name env=BIA_CLI_PATH use=CLAUDE_CLI_PATH" in avisos
+        caplog.clear()
+        config.SeedSettings()  # a second instance in the same process does not log again
+        assert not [r for r in caplog.records if "deprecated_env_name" in r.getMessage()]
+
+    def test_the_new_name_wins(self, monkeypatch) -> None:
+        monkeypatch.setenv("BIA_AGENT_ID", "old")
+        monkeypatch.setenv("ACADEMIA_AGENT_ID", "new")
+        assert _fresh_import_app_config().settings.academia_agent_id == "new"

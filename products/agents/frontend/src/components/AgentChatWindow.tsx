@@ -5,12 +5,12 @@
  * exactly the way Bia does ... extract a shared AgentChatWindow if it
  * removes duplication, WITHOUT changing Bia's behaviour").
  *
- * The only "duplication" between `BiaChatWindow` and the Agent Studio
+ * The only "duplication" between `LegacyChatWindow` and the Agent Studio
  * Chat tab was the `useMemo(() => buildXChatAdapter(), [])` + `<ChatWindow
  * .../>` wrapping shape — this file is that shared shape, adapter-blind
- * (it never imports `useBiaChat` or `useStudioChat`). `BiaChatWindow`
+ * (it never imports `useLegacyChat` or `useStudioChat`). `LegacyChatWindow`
  * now renders through it with byte-identical props to before this slice
- * (verified: no test imports `BiaChatWindow` directly, and this file
+ * (verified: no test imports `LegacyChatWindow` directly, and this file
  * forwards every prop unchanged to `<ChatWindow>` — no new markup, no
  * behavioural seam).
  */

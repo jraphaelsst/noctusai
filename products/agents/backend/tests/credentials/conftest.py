@@ -34,7 +34,7 @@ def make_settings(**overrides):
         social_wiring_api_token="",
         anthropic_api_key="",
         approval_assertion_secrets="",
-        bia_agent_id="",
+        academia_agent_id="",
         credential_expiry_warning_days=30,
         approval_key_activation_delay_seconds=120,
         approval_key_retire_after_seconds=86400,
@@ -93,7 +93,7 @@ def kit() -> Kit:
         social_wiring_api_token=ENV_SOCIAL,
         anthropic_api_key=ANTHROPIC,
         approval_assertion_secrets=RING_ENV,
-        bia_agent_id=str(BIA_ID),
+        academia_agent_id=str(BIA_ID),
     )
 
 

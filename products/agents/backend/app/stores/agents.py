@@ -22,6 +22,7 @@ from app.stores.errors import NotFound
 __all__ = [
     "RUNTIMES",
     "DEFAULT_AGENT_KEYS",
+    "ARQUIVADO",
     "legacy_chat_agent",
     "AgentRecord",
     "AgentStore",
@@ -36,12 +37,18 @@ _TABLE = "agents"
 #: Contract §E.1 `runtime` CHECK.
 RUNTIMES = ("claude_sdk", "external")
 
-#: The two rows `ensure_default_agents` seeds, per org. Never inserted by
+#: The rows `ensure_default_agents` seeds, per org. The code-defined chat agent (`bia`, claude_sdk) is NO LONGER
+#: seeded (Renata cutover, 2026-10-30): the academia agent is a Studio agent now, the legacy rows are retired by
+#: `agents.arquivar_agente_legado` (053) and their key is free for a new agent -- re-seeding it on every request
+#: would resurrect the retired runtime and squat the key. Existing legacy rows are untouched (data, not code). Never inserted by
 #: the migration itself (org_id is per-org) — the migration header notes
 #: this; this module is the idempotent seeding path. Platform-defined agents are NOT here: they are data
 #: (``definition_scope='plataforma'`` rows); a key that is a platform definition is refused for an org agent by the
 #: create route (``store.get_platform_definition``).
-DEFAULT_AGENT_KEYS = ("bia", "one-chat")
+DEFAULT_AGENT_KEYS = ("one-chat",)
+
+#: 053: the ``definition_mode`` of a retired code-defined agent (row kept for its history, key renamed, never listed).
+ARQUIVADO = "arquivado"
 
 
 @dataclass(frozen=True)
@@ -77,7 +84,7 @@ def legacy_chat_agent(store: "AgentStore", org_id: UUID, key: str | None = None)
 
 class AgentStore(Protocol):
     def list(self, org_id: UUID) -> list[AgentRecord]:
-        """Every agent row for ``org_id``."""
+        """Every LIVE agent row for ``org_id`` (a retired ``arquivado`` row is history, never listed)."""
         ...
 
     def get_by_key(self, org_id: UUID, key: str) -> AgentRecord:
@@ -97,10 +104,9 @@ class AgentStore(Protocol):
         ...
 
     def ensure_default_agents(self, org_id: UUID) -> None:
-        """Idempotently create ``bia`` (claude_sdk) and ``one-chat``
-        (external, owner_product=social-wiring), both ``ativo=false``, for
-        ``org_id``. Safe to call every request — a no-op once the rows
-        exist."""
+        """Idempotently create ``one-chat`` (external, owner_product=social-wiring, ``ativo=false``) for
+        ``org_id``. Safe to call every request — a no-op once the row exists. The code-defined chat agent is
+        not seeded any more (see ``DEFAULT_AGENT_KEYS``)."""
         ...
 
 
@@ -114,7 +120,7 @@ class FakeAgentStore:
         return [
             self._to_record(row)
             for row in self._rows.values()
-            if row["org_id"] == org_id
+            if row["org_id"] == org_id and row.get("definition_mode") != ARQUIVADO
         ]
 
     def get_by_key(self, org_id: UUID, key: str) -> AgentRecord:
@@ -143,13 +149,20 @@ class FakeAgentStore:
 
     def ensure_default_agents(self, org_id: UUID) -> None:
         self._ensure_one(
-            org_id, key="bia", nome="Bia", runtime="claude_sdk",
-            owner_product=None,
-        )
-        self._ensure_one(
             org_id, key="one-chat", nome="One Chat", runtime="external",
             owner_product="social-wiring",
         )
+
+    def seed_legacy_chat_agent(self, org_id: UUID, key: str = "bia", nome: str = "Bia") -> AgentRecord:
+        """Fake-only fixture helper: a pre-cutover code-defined chat row (the rows prod still carries until the
+        Renata runbook retires them). Not on the Protocol -- production never creates one any more."""
+        self._ensure_one(org_id, key=key, nome=nome, runtime="claude_sdk", owner_product=None)
+        return self.get_by_key(org_id, key)
+
+    def put_row(self, row: AgentRecord) -> None:
+        """Fake-only: mirror a row another store created (a Studio agent) so this store's ``list`` sees it, as the
+        one shared ``agents.agents`` table does in production."""
+        self._rows[(row.org_id, row.key)] = dict(row.__dict__)
 
     def _ensure_one(
         self, org_id: UUID, *, key: str, nome: str, runtime: str,
@@ -193,7 +206,7 @@ class SupabaseAgentStore:
         return self._client.schema(_SCHEMA).table(_TABLE)
 
     def list(self, org_id: UUID) -> list[AgentRecord]:
-        resp = self._table().select("*").eq("org_id", str(org_id)).execute()
+        resp = self._table().select("*").eq("org_id", str(org_id)).neq("definition_mode", ARQUIVADO).execute()
         return [self._record(row) for row in (resp.data or [])]
 
     def get_by_key(self, org_id: UUID, key: str) -> AgentRecord:
@@ -239,14 +252,6 @@ class SupabaseAgentStore:
 
     def ensure_default_agents(self, org_id: UUID) -> None:
         defaults = [
-            {
-                "org_id": str(org_id),
-                "key": "bia",
-                "nome": "Bia",
-                "runtime": "claude_sdk",
-                "owner_product": None,
-                "ativo": False,
-            },
             {
                 "org_id": str(org_id),
                 "key": "one-chat",

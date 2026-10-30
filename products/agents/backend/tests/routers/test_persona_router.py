@@ -1,7 +1,7 @@
 """Tests for ``/api/agents/bia/persona`` (contract §E.2)."""
 from __future__ import annotations
 
-from tests.routers.conftest import DEFAULT_ORG_ID, seed_org_role
+from tests.routers.conftest import DEFAULT_ORG_ID, seed_org_role, seed_pre_cutover_agents
 
 
 class TestAuthBoundary:
@@ -25,7 +25,7 @@ class TestGetPersona:
 
     def test_returns_active_version(self, agents_client):
         seed_org_role(agents_client, role="member")
-        agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+        seed_pre_cutover_agents(agents_client.stores.agents)
         resp = agents_client.put(
             "/api/agents/bia/persona",
             json={"nome": "Bia", "papel": "assistente", "model": "claude-sonnet-5", "effort": "medium"},
@@ -63,6 +63,7 @@ class TestUpdatePersona:
 
     def test_model_outside_allowlist_422(self, agents_client):
         seed_org_role(agents_client, role="owner")
+        seed_pre_cutover_agents(agents_client.stores.agents)
         resp = agents_client.put(
             "/api/agents/bia/persona",
             json={"nome": "Bia", "papel": "assistente", "model": "gpt-4o", "effort": "medium"},
@@ -71,6 +72,7 @@ class TestUpdatePersona:
 
     def test_version_increments_on_second_edit(self, agents_client):
         seed_org_role(agents_client, role="owner")
+        seed_pre_cutover_agents(agents_client.stores.agents)
         first = agents_client.put(
             "/api/agents/bia/persona",
             json={"nome": "Bia", "papel": "assistente", "model": "claude-sonnet-5", "effort": "medium"},
@@ -90,6 +92,7 @@ class TestUpdatePersona:
 
     def test_extra_field_rejected_422(self, agents_client):
         seed_org_role(agents_client, role="owner")
+        seed_pre_cutover_agents(agents_client.stores.agents)
         resp = agents_client.put(
             "/api/agents/bia/persona",
             json={

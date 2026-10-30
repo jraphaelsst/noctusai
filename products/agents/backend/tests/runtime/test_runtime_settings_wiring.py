@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.runtime import build_bia_spec
+from app.runtime import build_legacy_chat_spec
 from app.runtime.broker import StoreApprovalBroker
 from app.runtime.slots import FakeSlotPool, RealSlotPool
 from app.runtime.types import TurnContext
@@ -23,8 +23,8 @@ _PERSONA = SimpleNamespace(
 
 
 def _settings(**overrides):
-    base = dict(approval_timeout_seconds=300, bia_max_turns=None, messages_rate_limit="20/minute",
-                turn_timeout_seconds=600, bia_cli_slots=3)
+    base = dict(approval_timeout_seconds=300, legacy_chat_max_turns=None, messages_rate_limit="20/minute",
+                turn_timeout_seconds=600, claude_cli_slots=3)
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -58,14 +58,14 @@ class TestBrokerTimeoutProvider:
 
 class TestMaxTurns:
     def test_spec_yaml_is_the_default(self):
-        assert build_bia_spec(_PERSONA).max_turns == 40
+        assert build_legacy_chat_spec(_PERSONA).max_turns == 40
 
     def test_override_wins(self):
-        assert build_bia_spec(_PERSONA, max_turns=12).max_turns == 12
+        assert build_legacy_chat_spec(_PERSONA, max_turns=12).max_turns == 12
 
     def test_service_default_follows_env_then_db(self):
         store = FakeRuntimeSettingsStore()
-        service = RuntimeSettingsService(store, _settings(bia_max_turns=25), ttl_seconds=0)
+        service = RuntimeSettingsService(store, _settings(legacy_chat_max_turns=25), ttl_seconds=0)
         assert service.max_turns() == 25
         service.update({"max_turns": 9}, updated_by=None)
         assert service.max_turns() == 9
@@ -87,13 +87,13 @@ class TestMaxTurns:
         assert service.max_turns() == 40
         assert "runtime_setting_invalid_in_db" in caplog.text
 
-    def test_get_build_bia_spec_dep_applies_the_override(self):
-        from app.dependencies import get_build_bia_spec_dep
+    def test_get_build_legacy_chat_spec_dep_applies_the_override(self):
+        from app.dependencies import get_build_legacy_chat_spec_dep
         from app.services import runtime_settings
 
         service = runtime_settings.get_runtime_settings_service(None)
         service.update({"max_turns": 17}, updated_by=None)
-        assert get_build_bia_spec_dep()(_PERSONA).max_turns == 17
+        assert get_build_legacy_chat_spec_dep()(_PERSONA).max_turns == 17
 
 
 class TestPoolIsolationMarker:

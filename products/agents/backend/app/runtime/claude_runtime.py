@@ -189,6 +189,16 @@ _ACADEMIA_AUD = "academia-de-reciclagem"
 _PUMP_DONE = object()
 
 
+def grupo_academia_nomes_sdk(spec: AgentSpec) -> tuple[str, ...]:
+    """The model-facing names (``mcp__academia__<nome>``) of the academia tool-group tools a studio spec enables —
+    only names the gate table classifies (anything else stays denied by construction)."""
+    from app.studio.ferramentas_registry import GRUPOS_FERRAMENTAS
+
+    grupo = GRUPOS_FERRAMENTAS["academia"]
+    nomes = (grupo.nome_sdk(f) for f, _ in spec.ferramentas_grupo if f in grupo.ferramentas)
+    return tuple(n for n in nomes if gate.classify(n) != "deny")
+
+
 def _leitura_short_names() -> list[str]:
     """The E.4 leitura academia tool short names (without the
     ``mcp__academia__`` prefix) — derived from :mod:`app.runtime.gate` so
@@ -217,6 +227,7 @@ def build_launch_options(
     approval_use_window_seconds: int = 120,
     anthropic_api_key: str | None = None,
     studio_tools: Any = None,
+    academia_grupo: Any = None,
 ) -> ClaudeAgentOptions:
     """Build the exact ``ClaudeAgentOptions`` for one turn — pure,
     synchronous, no subprocess spawned. ``can_use_tool`` is threaded in
@@ -265,6 +276,7 @@ def build_launch_options(
             cli_path=cli_path,
             anthropic_api_key=anthropic_api_key,
             studio_tools=studio_tools,
+            academia_grupo=academia_grupo,
         )
     if academia_api is None or agent_id is None or not approval_secret:
         # Fail closed: the academia MCP server can never be built without
@@ -324,8 +336,14 @@ def _build_studio_launch_options(
     cli_path: str,
     anthropic_api_key: str | None,
     studio_tools: Any,
+    academia_grupo: Any = None,
 ) -> ClaudeAgentOptions:
     """Agent Studio §A5/§E3 launch options — a fully custom system prompt.
+
+    ``academia_grupo`` (agents-unified Renata cutover S7) is the ``academia`` MCP server of a studio version that
+    switches the academia tool group on (``spec.ferramentas_grupo``): it is added NEXT to the ``studio`` server, its
+    READ tools join ``allowed_tools`` and its WRITE tools never do — they fall through to ``can_use_tool`` (gate →
+    approval broker), the same rule as the code-defined academia agent (see :func:`build_launch_options`).
 
     * ``system_prompt`` = :func:`studio_system_prompt` (no preset; see its
       comment for the verified SDK/CLI behaviour) and the compiled prompt
@@ -346,6 +364,12 @@ def _build_studio_launch_options(
             "refusing to launch a studio agent without its tools"
         )
     allowed = list(studio_allowed_tools(knowledge=spec.knowledge, web_search=spec.web_search))
+    servers: dict[str, Any] = {STUDIO_SERVER_NAME: studio_tools}
+    if spec.ferramentas_grupo:
+        if academia_grupo is None:
+            raise RuntimeError("a studio spec with the academia tool group needs its `academia` MCP server")
+        servers["academia"] = academia_grupo
+        allowed += [n for n in grupo_academia_nomes_sdk(spec) if gate.classify(n) == "leitura"]
     return ClaudeAgentOptions(
         cli_path=cli_path,
         tools=["WebSearch"] if spec.web_search else [],
@@ -353,7 +377,7 @@ def _build_studio_launch_options(
         system_prompt=studio_system_prompt(slot.handoff_dir),
         plugins=[],
         skills=[],
-        mcp_servers={STUDIO_SERVER_NAME: studio_tools},
+        mcp_servers=servers,
         strict_mcp_config=True,
         allowed_tools=allowed,
         disallowed_tools=list(STUDIO_DISALLOWED_TOOLS),
@@ -467,6 +491,7 @@ class _TurnDriver:
         broker: ApprovalBroker,
         academia_api: AcademiaApi | None,
         allowlist: frozenset[str] | None = None,
+        gated: frozenset[str] = frozenset(),
     ) -> None:
         self._ctx = ctx
         self._broker = broker
@@ -475,6 +500,9 @@ class _TurnDriver:
         # the whole policy — deny by default, no approval flow (there are no
         # studio write tools). `None` = Bia's gate table (unchanged).
         self._allowlist = allowlist
+        # Renata cutover S7: a studio turn's tool-GROUP tools (`mcp__academia__*` the version enables) go through
+        # the gate table — reads allowed, writes asked to a human — exactly like the code-defined academia agent.
+        self._gated = gated
         self.queue: "asyncio.Queue[AgentEvent]" = asyncio.Queue()
         self._tool_names: dict[str, str] = {}
         self._denied_tool_use_ids: set[str] = set()
@@ -486,8 +514,9 @@ class _TurnDriver:
         if self._allowlist is not None:
             if tool_name in self._allowlist:
                 return PermissionResultAllow()
-            self._denied_tool_use_ids.add(tool_use_id)
-            return PermissionResultDeny(message=f"{tool_name} não é uma ferramenta permitida.")
+            if tool_name not in self._gated:
+                self._denied_tool_use_ids.add(tool_use_id)
+                return PermissionResultDeny(message=f"{tool_name} não é uma ferramenta permitida.")
 
         cls = gate.classify(tool_name)
 
@@ -564,8 +593,8 @@ class _TurnDriver:
         if not slug:
             return {"antes": None, "depois": depois}
         if self._academia_api is None:
-            # Only a studio turn carries no academia client, and its exact-name
-            # allowlist denies every mcp__academia__ tool before this runs.
+            # Only a studio turn WITHOUT the academia tool group carries no academia client, and its
+            # exact-name allowlist denies every mcp__academia__ tool before this runs.
             raise RuntimeError("kb_escrever diff requested on a turn without an academia client")
         try:
             current = await self._academia_api.get(f"/api/kb/{slug}")
@@ -951,10 +980,15 @@ class ClaudeAgentSdkRuntime:
         # Bia-only inputs resolve HERE, per academia turn, and fail closed
         # (the provider raises) — a studio turn never touches them.
         academia: AcademiaLaunchConfig | None = None
-        if not studio:
+        gated: frozenset[str] = frozenset()
+        if not studio or spec.ferramentas_grupo:
+            # A studio version that enables the academia tool group needs the SAME academia inputs (client, the
+            # principal agent id, the approval signing key) — resolved here, failing closed, like the legacy path.
             if self._academia_config is None:
                 raise RuntimeError("this runtime was built without academia launch config")
             academia = self._academia_config()
+        if studio and spec.ferramentas_grupo:
+            gated = frozenset(grupo_academia_nomes_sdk(spec))
         if studio:
             if self._studio_tools_factory is None:
                 raise RuntimeError("this runtime was built without a studio tools factory")
@@ -991,7 +1025,24 @@ class ClaudeAgentSdkRuntime:
             broker=broker,
             academia_api=academia.academia_api if academia else None,
             allowlist=allowlist,
+            gated=gated,
         )
+        academia_grupo = None
+        if studio and spec.ferramentas_grupo and academia is not None:
+            from app.studio.ferramentas_registry import GRUPOS_FERRAMENTAS
+
+            grupo = GRUPOS_FERRAMENTAS["academia"]
+            academia_grupo = build_academia_tools(
+                ctx=ctx,
+                academia_api=academia.academia_api,
+                agent_id=academia.agent_id,
+                secret=academia.approval_secret,
+                aud=_ACADEMIA_AUD,
+                approvals=self._approvals,
+                use_window_seconds=self._approval_use_window_seconds,
+                only=frozenset(n.removeprefix("mcp__academia__") for n in gated),
+                descricoes={grupo.nome_curto(f): d for f, d in spec.ferramentas_grupo},
+            )
         options = build_launch_options(
             spec=spec,
             ctx=ctx,
@@ -1008,6 +1059,7 @@ class ClaudeAgentSdkRuntime:
             approval_use_window_seconds=self._approval_use_window_seconds,
             anthropic_api_key=self._anthropic_api_key,
             studio_tools=studio_tools,
+            academia_grupo=academia_grupo,
         )
 
         client, resumed_fresh, active_mirror = await self._connect_or_fresh(

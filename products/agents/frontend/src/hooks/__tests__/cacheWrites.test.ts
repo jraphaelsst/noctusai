@@ -38,7 +38,7 @@ function deferred<T = unknown>() {
 beforeAll(async () => {
   await Promise.all([
     import("@/hooks/useApprovals"),
-    import("@/hooks/useBiaChat"),
+    import("@/hooks/useLegacyChat"),
     import("@/hooks/useChannel"),
     import("@/hooks/studio/useVersions"),
   ]);
@@ -75,10 +75,10 @@ describe("approvals", () => {
   it("the chat approval seam removes the card on the click too", async () => {
     const { qc, w } = setup();
     const { APPROVALS_KEY } = await import("@/hooks/useApprovals");
-    const { useBiaApprovalActionAdapter } = await import("@/hooks/useBiaChat");
+    const { useApprovalDecisionAdapter } = await import("@/hooks/useApprovals");
     qc.setQueryData(APPROVALS_KEY, { items: [A, B], total: 2 });
     mockPost.mockReturnValue(new Promise(() => {}));
-    const { result } = renderHook(() => useBiaApprovalActionAdapter(), { wrapper: w });
+    const { result } = renderHook(() => useApprovalDecisionAdapter(), { wrapper: w });
     void result.current.decide("ap2", false);
     await waitFor(() => expect(qc.getQueryData(APPROVALS_KEY)).toEqual({ items: [A], total: 1 }));
   });
@@ -87,7 +87,7 @@ describe("approvals", () => {
 describe("chat conversations", () => {
   it("a new conversation is in the list from the POST answer", async () => {
     const { qc, w } = setup();
-    const { useCreateConversation } = await import("@/hooks/useBiaChat");
+    const { useCreateConversation } = await import("@/hooks/useLegacyChat");
     const key = ["agents", "bia", "conversations"];
     qc.setQueryData(key, { items: [{ id: "c1" }], total: 1 });
     const d = deferred();

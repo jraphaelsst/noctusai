@@ -18,7 +18,7 @@ bootstrap for a bare wrapper spawn — it is not specific to asyncio.
 
 ``settings=None`` is deliberate: :func:`app.runtime.slots._resolve_slot_
 count` falls back to the bare ``BIA_CLI_SLOTS`` env var
-(``getattr(None, "bia_cli_slots", None)`` is ``None``), which the image
+(``getattr(None, "claude_cli_slots", None)`` is ``None``), which the image
 already sets to ``3`` — no full ``SeedSettings`` construction (and its
 Supabase/JWT config requirements) is needed just to exercise the pool.
 

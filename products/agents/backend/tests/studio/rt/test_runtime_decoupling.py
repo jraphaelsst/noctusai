@@ -2,7 +2,7 @@
 remediation class ``studio-runtime-bia-coupling``, now resolved).
 
 The approval signing key, the academia API client (+ its URL) and
-``BIA_AGENT_ID`` are the inputs of an ``academia``-toolset turn only.
+``ACADEMIA_AGENT_ID`` are the inputs of an ``academia``-toolset turn only.
 ``get_agent_runtime`` used to resolve them eagerly, so a missing value
 refused EVERY turn — studio chats and eval runs included. They now resolve
 through :func:`app.runtime.make_academia_launch_provider`, called by the
@@ -26,7 +26,7 @@ from app.credentials.resolver import (
     require_resolved_prod_config,
     require_resolved_runtime_config,
 )
-from app.runtime import build_bia_spec, make_academia_launch_provider
+from app.runtime import build_legacy_chat_spec, make_academia_launch_provider
 from app.runtime.academia_api import FakeAcademiaApi, HttpAcademiaApi
 from app.runtime.claude_runtime import AcademiaLaunchConfig, ClaudeAgentSdkRuntime
 from app.runtime.slots import FakeSlotPool
@@ -59,7 +59,7 @@ def _resolver(**settings) -> CredentialResolver:
 
 
 def _bia_spec():
-    return build_bia_spec(
+    return build_legacy_chat_spec(
         {"nome": "Bia", "papel": "Assistente", "model": "claude-opus-5", "effort": "high"}
     )
 
@@ -117,7 +117,7 @@ async def test_studio_turn_in_deploy_context_needs_only_the_anthropic_key(tmp_pa
     # The full four-key view is unchanged (Bia's completeness check).
     with pytest.raises(MissingProdConfigError) as exc:
         require_resolved_prod_config(resolver)
-    assert exc.value.missing_keys == ["APPROVAL_ASSERTION_SECRETS", "ACADEMIA_API_TOKEN", "BIA_AGENT_ID"]
+    assert exc.value.missing_keys == ["APPROVAL_ASSERTION_SECRETS", "ACADEMIA_API_TOKEN", "ACADEMIA_AGENT_ID"]
 
 
 def test_runtime_guard_still_refuses_a_deploy_without_the_anthropic_key(monkeypatch):
@@ -156,7 +156,7 @@ async def test_academia_turn_in_deploy_context_refuses_on_missing_bia_keys(tmp_p
     agen = runtime.run_turn(_bia_spec(), _ctx(ephemeral=True), "oi", _broker(), slot=_slot(tmp_path))
     with pytest.raises(MissingProdConfigError) as exc:
         await agen.__anext__()
-    assert exc.value.missing_keys == ["APPROVAL_ASSERTION_SECRETS", "ACADEMIA_API_TOKEN", "BIA_AGENT_ID"]
+    assert exc.value.missing_keys == ["APPROVAL_ASSERTION_SECRETS", "ACADEMIA_API_TOKEN", "ACADEMIA_AGENT_ID"]
 
 
 @pytest.mark.asyncio
@@ -182,7 +182,7 @@ def test_provider_resolves_the_same_bia_inputs_the_factory_used(monkeypatch):
     resolver = _resolver(
         approval_assertion_secrets="ring-secret-one",
         academia_api_token=OLD_ACADEMIA,
-        bia_agent_id=_BIA_ID,
+        academia_agent_id=_BIA_ID,
     )
     config = make_academia_launch_provider(resolver)()
     assert isinstance(config, AcademiaLaunchConfig)

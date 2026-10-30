@@ -27,7 +27,7 @@
  * TEXT table would only re-couple this module to backend copy, the gap this
  * slice closes (contract slice `seed-apierror-flat-code`).
  *
- * `bia_capacidade` (contract §E.11 "Capacity") is a THIRD shape: the
+ * `agente_capacidade` (contract §E.11 "Capacity") is a THIRD shape: the
  * backend's own `detail` is the contract's authoritative PT-BR text, so it
  * is never overridden (no `CODE_MESSAGES` entry) — but a 429 body without a
  * usable `detail` must still resolve to that SAME text, not the generic
@@ -38,8 +38,8 @@
  *
  * The `Retry-After` countdown called for in §E.11 does NOT live here — the
  * seed `ApiError` (`seed/lib/frontend/src/api.ts`) now parses it onto
- * `ApiError.retryAfterSeconds`, and `useBiaSendAdapter`
- * (`hooks/useBiaChat.ts`) reads that field to drive the composer's
+ * `ApiError.retryAfterSeconds`, and `useLegacySendAdapter`
+ * (`hooks/useLegacyChat.ts`) reads that field to drive the composer's
  * countdown via `ChatSendResult.retryAfterSeconds`
  * (`@noctusai/lib/design-system`'s `<ChatWindow>`). This module only ever
  * resolves the STATIC PT-BR text; the live "tente novamente em Ns" is a
@@ -69,12 +69,12 @@ const CODE_MESSAGES: Record<string, string> = {
 
 /** Per-code fallback text, used only when the backend's own `detail` is
  * absent/unusable — never overrides a real `detail` (unlike `CODE_MESSAGES`).
- * Contract §E.11: the backend's `detail` for `bia_capacidade` already IS
+ * Contract §E.11: the backend's `detail` for `agente_capacidade` already IS
  * this exact string; this fallback exists only for the edge case of a
  * 429 body missing `detail`, so it must stay byte-identical to the
  * contract's PT-BR text. */
 const CODE_FALLBACKS: Record<string, string> = {
-  bia_capacidade:
+  agente_capacidade:
     "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
 };
 
@@ -131,7 +131,7 @@ export function errorMessage(err: unknown): string {
     // ("Erro HTTP 404") leaked through (no JSON body, or a body without
     // `detail` — e.g. slowapi's own 429 body, which is not contract-shaped).
     if (clean && !/^Erro HTTP \d+$/.test(clean)) return clean;
-    // A per-code fallback (currently only `bia_capacidade`) beats the
+    // A per-code fallback (currently only `agente_capacidade`) beats the
     // generic status table, so a capacity 429 without a usable `detail`
     // never gets mistaken for slowapi's rate-limit 429.
     if (err.code && CODE_FALLBACKS[err.code]) return CODE_FALLBACKS[err.code];

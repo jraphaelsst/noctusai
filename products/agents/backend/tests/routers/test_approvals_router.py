@@ -18,13 +18,14 @@ from tests.routers.conftest import (
     install_runtime,
     seed_active_agent_and_persona,
     seed_org_role,
+    seed_pre_cutover_agents,
     wait_for_pending_approval,
     wait_turn_released,
 )
 
 
 def _seed_conversation(agents_client, *, owner_user_id=DEFAULT_USER_ID):
-    agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
+    seed_pre_cutover_agents(agents_client.stores.agents)
     agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "bia")
     return agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, owner_user_id)
 

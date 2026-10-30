@@ -10,7 +10,7 @@
  * scoped to a CONNECTION (patches the whole thread list), Bia's stream is
  * scoped to a single CONVERSATION (`/api/conversations/{id}/stream`,
  * contract §E.3 "Scope"). So the realtime subscription is mounted inside
- * `useBiaMessagesAdapter`, which `ChatWindow`'s `ThreadPanel` already
+ * `useLegacyMessagesAdapter`, which `ChatWindow`'s `ThreadPanel` already
  * calls exactly once per opened thread (`key={thread.id}` — see
  * `ChatWindow.tsx`), not at the top `useThreads` level.
  *
@@ -39,7 +39,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import { ApiError, errorMessage } from "@/lib/errors";
-import { APPROVALS_KEY, withoutApproval, type ApprovalListResponse } from "./useApprovals";
+import { useApprovalDecisionAdapter } from "./useApprovals";
 import { getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream, type RealtimeMessage } from "@noctusai/lib";
 import type {
@@ -85,7 +85,7 @@ interface Envelope<T> {
  * drops it (`seed/lib/frontend/src/realtime.ts` — "load-bearing"). Revised
  * 2026-09-14: `message.updated` is now load-bearing (it is the source of
  * truth for `blocks`) and MUST be included. */
-export const BIA_STREAM_EVENTS = [
+export const LEGACY_CHAT_STREAM_EVENTS = [
   "message.new",
   "message.updated",
   "message.delta",
@@ -150,7 +150,7 @@ function emptyLive(): LiveTurnState {
 /**
  * No dedicated "list" SSE feed exists (contract §E.3 scope is per
  * conversation) — `conversation.upsert` only arrives while THAT
- * conversation's stream is open (patched in `useBiaMessagesAdapter`
+ * conversation's stream is open (patched in `useLegacyMessagesAdapter`
  * below), so the list itself uses a short `staleTime` rather than
  * `Infinity`, and every mutation that changes it (create, send) also
  * invalidates it.
@@ -235,7 +235,7 @@ export function useRenameConversation() {
  * `ChatWindowAdapter` addition, 2026-09-22) — `rename` MUST throw a
  * user-facing `Error`, same contract as `useSend`, so the inline pencil
  * editor can show WHY a rename failed instead of silently reverting. */
-export function useBiaRenameConversationAdapter(): ChatRenameThreadResult {
+export function useLegacyRenameConversationAdapter(): ChatRenameThreadResult {
   const mutation = useRenameConversation();
   return {
     rename: async (threadId, titulo) => {
@@ -251,7 +251,7 @@ export function useBiaRenameConversationAdapter(): ChatRenameThreadResult {
 
 // ─── Messages + realtime (per opened conversation) ──────────────────────────
 
-export function useBiaMessagesAdapter(conversationId: string | null) {
+export function useLegacyMessagesAdapter(conversationId: string | null) {
   const qc = useQueryClient();
   const [live, setLive] = useState<LiveTurnState | null>(null);
 
@@ -335,7 +335,7 @@ export function useBiaMessagesAdapter(conversationId: string | null) {
   useRealtimeStream(conversationId ? `/api/conversations/${conversationId}/stream` : null, {
     onEvent,
     getAuthToken,
-    events: BIA_STREAM_EVENTS,
+    events: LEGACY_CHAT_STREAM_EVENTS,
   });
 
   const mapped = useMemo(() => (query.data?.items ?? []).map(toChatMessage), [query.data]);
@@ -362,7 +362,7 @@ export function useBiaMessagesAdapter(conversationId: string | null) {
 
 // ─── Send ────────────────────────────────────────────────────────────────
 
-export function useBiaSendAdapter(conversationId: string | null) {
+export function useLegacySendAdapter(conversationId: string | null) {
   const qc = useQueryClient();
   // Capacity countdown (contract §E.11 "Capacity") — seconds remaining
   // before the composer may send again, or `null` when there is no active
@@ -432,44 +432,14 @@ export function useBiaSendAdapter(conversationId: string | null) {
   };
 }
 
-// ─── Approval decision (ChatWindow seam, contract §E.7) ────────────────────
-
-export function useBiaApprovalActionAdapter() {
-  const mutation = useCacheWriteMutation<unknown, { approvalId: string; aprovada: boolean }>({
-    mutationFn: ({ approvalId, aprovada }) =>
-      api.post(`/api/approvals/${approvalId}/decision`, { aprovada }),
-    // The decided approval leaves the pending list on the click (rolled back on error).
-    targets: ({ approvalId }) => [
-      {
-        queryKey: APPROVALS_KEY,
-        optimistic: (old: ApprovalListResponse | undefined) => withoutApproval(old, approvalId),
-      },
-    ],
-    // Settle covers both success (belt to the `approval.resolved` SSE patch) and the
-    // "already_decided" / "orphaned" refetch contract §E.2 requires.
-    invalidate: [CONVERSATIONS_KEY, APPROVALS_KEY_PREFIX],
-  });
-
-  return {
-    decide: async (approvalId: string, aprovada: boolean) => {
-      try {
-        await mutation.mutateAsync({ approvalId, aprovada });
-      } catch (err) {
-        throw new Error(errorMessage(err));
-      }
-    },
-    isPending: mutation.isPending,
-  };
-}
-
 // ─── Adapter bag ────────────────────────────────────────────────────────────
 
-export function buildBiaChatAdapter(): ChatWindowAdapter {
+export function buildLegacyChatAdapter(): ChatWindowAdapter {
   return {
     useThreads: () => useThreads(),
-    useMessages: (_scopeId, threadId) => useBiaMessagesAdapter(threadId),
-    useSend: (_scopeId, threadId) => useBiaSendAdapter(threadId),
-    useApprovalAction: () => useBiaApprovalActionAdapter(),
-    useRenameThread: () => useBiaRenameConversationAdapter(),
+    useMessages: (_scopeId, threadId) => useLegacyMessagesAdapter(threadId),
+    useSend: (_scopeId, threadId) => useLegacySendAdapter(threadId),
+    useApprovalAction: () => useApprovalDecisionAdapter(),
+    useRenameThread: () => useLegacyRenameConversationAdapter(),
   };
 }

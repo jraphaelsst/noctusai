@@ -434,15 +434,15 @@ def get_runtime_settings_service_dep():
 # ── Runtime seam (contract §E.9) ────────────────────────────────────────────
 #
 # `app/runtime/` is G2's slice (`get_agent_runtime` / `get_approval_broker`
-# / `build_bia_spec`). These three dependency functions still do the
+# / `build_legacy_chat_spec`). These three dependency functions still do the
 # `from app.runtime import ...` LAZILY, inside the function body — not
 # because the package might be absent any more (G2 shipped it), but
 # because `get_agent_runtime`'s real branch conditionally pulls in
 # `claude_agent_sdk`, and deferring the import keeps that cost out of
 # every request that never needs it. Tests override
 # `app.dependency_overrides[get_agent_runtime_dep | get_approval_broker_dep
-# | get_build_bia_spec_dep]` with G2's `FakeAgentRuntime` /
-# `StoreApprovalBroker` (over the shared test stores) / `build_bia_spec`
+# | get_build_legacy_chat_spec_dep]` with G2's `FakeAgentRuntime` /
+# `StoreApprovalBroker` (over the shared test stores) / `build_legacy_chat_spec`
 # — a dependency seam, never monkeypatching.
 def get_agent_runtime_dep():
     from app.runtime import get_agent_runtime
@@ -611,13 +611,13 @@ def get_realtime_bus_dep():
     return get_bus()
 
 
-def get_build_bia_spec_dep():
-    """Returns G2's ``build_bia_spec(persona_row) -> AgentSpec`` callable
+def get_build_legacy_chat_spec_dep():
+    """Returns G2's ``build_legacy_chat_spec(persona_row) -> AgentSpec`` callable
     itself (not its result) — the turn loop calls it once it has the
     active persona row. Same lazy-import-inside-the-function-body
     discipline as the two deps above; overridden in tests with a stand-in
     spec-builder so the turn loop never needs a real ``AgentSpec``."""
-    from app.runtime import build_bia_spec
+    from app.runtime import build_legacy_chat_spec
     from app.services.runtime_settings import get_runtime_settings_service
 
     runtime_settings = get_runtime_settings_service(settings)
@@ -625,7 +625,7 @@ def get_build_bia_spec_dep():
     def _build(persona_row):
         # `max_turns` resolved per turn: the admin override
         # (Configurações do agente) applies without a restart.
-        return build_bia_spec(persona_row, max_turns=runtime_settings.max_turns())
+        return build_legacy_chat_spec(persona_row, max_turns=runtime_settings.max_turns())
 
     return _build
 
@@ -672,7 +672,7 @@ __all__ = [
     "get_approval_broker_dep",
     "get_approval_store_dep",
     "get_auth_context",
-    "get_build_bia_spec_dep",
+    "get_build_legacy_chat_spec_dep",
     "get_conversation_store_dep",
     "get_credential_service_dep",
     "get_core_client",

@@ -1,5 +1,5 @@
 /**
- * useBiaChat.ts hook tests — contract §E.2 (conversations/messages),
+ * useLegacyChat.ts hook tests — contract §E.2 (conversations/messages),
  * §E.3 (SSE events → messages cache / blocks / streaming bubble, revised
  * 2026-09-14), §E.7.
  *
@@ -109,7 +109,7 @@ describe("useThreads", () => {
       ],
       total: 2,
     });
-    const { useThreads } = await import("@/hooks/useBiaChat");
+    const { useThreads } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
     const { result } = renderHook(() => useThreads(), { wrapper: wrapper(qc) });
 
@@ -123,7 +123,7 @@ describe("useThreads", () => {
 describe("useCreateConversation", () => {
   it("POSTs /api/conversations with {titulo}", async () => {
     mockPost.mockResolvedValue({ id: "c3", agent_id: "a1", owner_user_id: "u1", titulo: "Oi", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t" });
-    const { useCreateConversation } = await import("@/hooks/useBiaChat");
+    const { useCreateConversation } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
     const { result } = renderHook(() => useCreateConversation(), { wrapper: wrapper(qc) });
 
@@ -137,9 +137,9 @@ describe("useCreateConversation", () => {
 
 async function renderMessages(conversationId = "00000000-0000-4000-8000-0000000000c1") {
   mockGet.mockResolvedValue({ items: [], total: 0 });
-  const { useBiaMessagesAdapter } = await import("@/hooks/useBiaChat");
+  const { useLegacyMessagesAdapter } = await import("@/hooks/useLegacyChat");
   const qc = newClient();
-  const { result } = renderHook(() => useBiaMessagesAdapter(conversationId), {
+  const { result } = renderHook(() => useLegacyMessagesAdapter(conversationId), {
     wrapper: wrapper(qc),
   });
   // Wait for the initial GET to settle before replaying any SSE event —
@@ -161,7 +161,7 @@ function replay(options: { onEvent: (evt: FixtureEvent) => void }, uptoExclusive
   }
 }
 
-describe("useBiaMessagesAdapter — REST + subscription wiring", () => {
+describe("useLegacyMessagesAdapter — REST + subscription wiring", () => {
   it("GETs the message list", async () => {
     await renderMessages();
     expect(mockGet).toHaveBeenCalledWith(
@@ -236,10 +236,10 @@ describe("useBiaMessagesAdapter — REST + subscription wiring", () => {
       );
     });
 
-    const { useBiaApprovalActionAdapter } = await import("@/hooks/useBiaChat");
+    const { useApprovalDecisionAdapter } = await import("@/hooks/useApprovals");
     mockPost.mockResolvedValue({ id: APPROVAL_ID, decision: "aprovada" });
     const qc2 = newClient();
-    const { result: actionResult } = renderHook(() => useBiaApprovalActionAdapter(), { wrapper: wrapper(qc2) });
+    const { result: actionResult } = renderHook(() => useApprovalDecisionAdapter(), { wrapper: wrapper(qc2) });
     await actionResult.current.decide(APPROVAL_ID, true);
 
     expect(mockPost).toHaveBeenCalledWith(`/api/approvals/${APPROVAL_ID}/decision`, { aprovada: true });
@@ -387,12 +387,12 @@ const RAW_MESSAGE = {
   updated_at: "2026-09-01T10:00:00Z",
 };
 
-describe("useBiaSendAdapter", () => {
+describe("useLegacySendAdapter", () => {
   it("POSTs {texto} to .../messages", async () => {
     mockPost.mockResolvedValue({ mensagem: RAW_MESSAGE, status: "processando" });
-    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
+    const { useLegacySendAdapter } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
-    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useLegacySendAdapter("c1"), { wrapper: wrapper(qc) });
 
     await result.current.mutateAsync({ text: "Oi Bia" });
     expect(mockPost).toHaveBeenCalledWith("/api/conversations/c1/messages", { texto: "Oi Bia" });
@@ -406,9 +406,9 @@ describe("useBiaSendAdapter", () => {
         code: "turn_in_progress",
       }),
     );
-    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
+    const { useLegacySendAdapter } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
-    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useLegacySendAdapter("c1"), { wrapper: wrapper(qc) });
 
     await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow(
       "Bia ainda está respondendo a mensagem anterior.",
@@ -423,16 +423,16 @@ describe("useBiaSendAdapter", () => {
         code: "agent_off",
       }),
     );
-    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
+    const { useLegacySendAdapter } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
-    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useLegacySendAdapter("c1"), { wrapper: wrapper(qc) });
 
     await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow(
       "Bia está desligada — um administrador pode ligá-la em Agentes.",
     );
   });
 
-  it("maps a 429 bia_capacidade rejection to the contract's PT-BR message and leaves no phantom user message in the cache (contract §E.11: a capacity 429 persists no user message)", async () => {
+  it("maps a 429 agente_capacidade rejection to the contract's PT-BR message and leaves no phantom user message in the cache (contract §E.11: a capacity 429 persists no user message)", async () => {
     const { ApiError } = await import("@/lib/errors");
     mockPost.mockRejectedValue(
       new ApiError(
@@ -440,16 +440,16 @@ describe("useBiaSendAdapter", () => {
         "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
         {
           detail: "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
-          code: "bia_capacidade",
+          code: "agente_capacidade",
         },
       ),
     );
-    const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
+    const { useLegacySendAdapter } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
     const messagesKey = ["agents", "bia", "conversations", "c1", "messages"];
     const initial = { items: [], total: 0 };
     qc.setQueryData(messagesKey, initial);
-    const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useLegacySendAdapter("c1"), { wrapper: wrapper(qc) });
 
     await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow(
       "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
@@ -479,14 +479,14 @@ describe("useBiaSendAdapter", () => {
           "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
           {
             detail: "A Bia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
-            code: "bia_capacidade",
+            code: "agente_capacidade",
           },
           3,
         ),
       );
-      const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
+      const { useLegacySendAdapter } = await import("@/hooks/useLegacyChat");
       const qc = newClient();
-      const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
+      const { result } = renderHook(() => useLegacySendAdapter("c1"), { wrapper: wrapper(qc) });
 
       expect(result.current.retryAfterSeconds).toBeNull();
 
@@ -520,9 +520,9 @@ describe("useBiaSendAdapter", () => {
       mockPost.mockRejectedValue(
         new ApiError(429, "Muitas mensagens em pouco tempo.", { detail: "Muitas mensagens em pouco tempo." }),
       );
-      const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
+      const { useLegacySendAdapter } = await import("@/hooks/useLegacyChat");
       const qc = newClient();
-      const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
+      const { result } = renderHook(() => useLegacySendAdapter("c1"), { wrapper: wrapper(qc) });
 
       await act(async () => {
         await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow();
@@ -535,9 +535,9 @@ describe("useBiaSendAdapter", () => {
       mockPost.mockRejectedValue(
         new ApiError(409, "Já existe um turno em andamento.", { code: "turn_in_progress" }, 5),
       );
-      const { useBiaSendAdapter } = await import("@/hooks/useBiaChat");
+      const { useLegacySendAdapter } = await import("@/hooks/useLegacyChat");
       const qc = newClient();
-      const { result } = renderHook(() => useBiaSendAdapter("c1"), { wrapper: wrapper(qc) });
+      const { result } = renderHook(() => useLegacySendAdapter("c1"), { wrapper: wrapper(qc) });
 
       await act(async () => {
         await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow();
@@ -549,12 +549,12 @@ describe("useBiaSendAdapter", () => {
 
 // ─── Approval action (ChatWindow seam, contract §E.7) ──────────────────────
 
-describe("useBiaApprovalActionAdapter", () => {
+describe("useApprovalDecisionAdapter (the chat approval seam)", () => {
   it("decide() POSTs {aprovada} to /api/approvals/{id}/decision", async () => {
     mockPost.mockResolvedValue({ id: "ap1", decision: "aprovada" });
-    const { useBiaApprovalActionAdapter } = await import("@/hooks/useBiaChat");
+    const { useApprovalDecisionAdapter } = await import("@/hooks/useApprovals");
     const qc = newClient();
-    const { result } = renderHook(() => useBiaApprovalActionAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useApprovalDecisionAdapter(), { wrapper: wrapper(qc) });
 
     await result.current.decide("ap1", true);
     expect(mockPost).toHaveBeenCalledWith("/api/approvals/ap1/decision", { aprovada: true });
@@ -563,9 +563,9 @@ describe("useBiaApprovalActionAdapter", () => {
   it("already_decided rejects with the mapped message", async () => {
     const { ApiError } = await import("@/lib/errors");
     mockPost.mockRejectedValue(new ApiError(409, "Esta aprovação já foi decidida."));
-    const { useBiaApprovalActionAdapter } = await import("@/hooks/useBiaChat");
+    const { useApprovalDecisionAdapter } = await import("@/hooks/useApprovals");
     const qc = newClient();
-    const { result } = renderHook(() => useBiaApprovalActionAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useApprovalDecisionAdapter(), { wrapper: wrapper(qc) });
 
     await expect(result.current.decide("ap1", true)).rejects.toThrow(
       "Esta aprovação já foi decidida.",
@@ -592,7 +592,7 @@ describe("useRenameConversation", () => {
       () => new Promise((resolve) => setTimeout(() => resolve({ id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Renomeada", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t2" }), 10)),
     );
 
-    const { useRenameConversation } = await import("@/hooks/useBiaChat");
+    const { useRenameConversation } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
     seedConversationsCache(qc);
     const { result } = renderHook(() => useRenameConversation(), { wrapper: wrapper(qc) });
@@ -615,7 +615,7 @@ describe("useRenameConversation", () => {
   it("rolls back the cache to the previous titulo on error", async () => {
     mockPatch.mockRejectedValue(new Error("boom"));
 
-    const { useRenameConversation } = await import("@/hooks/useBiaChat");
+    const { useRenameConversation } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
     seedConversationsCache(qc);
     const { result } = renderHook(() => useRenameConversation(), { wrapper: wrapper(qc) });
@@ -630,16 +630,16 @@ describe("useRenameConversation", () => {
   });
 });
 
-describe("useBiaRenameConversationAdapter", () => {
+describe("useLegacyRenameConversationAdapter", () => {
   it("rename() calls the mutation with {id, titulo}", async () => {
     mockPatch.mockResolvedValue({
       id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Nova", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t",
     });
 
-    const { useBiaRenameConversationAdapter } = await import("@/hooks/useBiaChat");
+    const { useLegacyRenameConversationAdapter } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
     seedConversationsCache(qc);
-    const { result } = renderHook(() => useBiaRenameConversationAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useLegacyRenameConversationAdapter(), { wrapper: wrapper(qc) });
 
     await result.current.rename("c1", "Nova");
     expect(mockPatch).toHaveBeenCalledWith("/api/conversations/c1", { titulo: "Nova" });
@@ -649,10 +649,10 @@ describe("useBiaRenameConversationAdapter", () => {
     const { ApiError } = await import("@/lib/errors");
     mockPatch.mockRejectedValue(new ApiError(422, "titulo não pode ficar em branco"));
 
-    const { useBiaRenameConversationAdapter } = await import("@/hooks/useBiaChat");
+    const { useLegacyRenameConversationAdapter } = await import("@/hooks/useLegacyChat");
     const qc = newClient();
     seedConversationsCache(qc);
-    const { result } = renderHook(() => useBiaRenameConversationAdapter(), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useLegacyRenameConversationAdapter(), { wrapper: wrapper(qc) });
 
     await expect(result.current.rename("c1", "")).rejects.toThrow("titulo não pode ficar em branco");
   });

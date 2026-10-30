@@ -135,7 +135,7 @@ describe("ConfiguracoesAgente", () => {
     mockUseAgentSettings.mockReturnValue({
       data: [
         { key: "approval_timeout_seconds", value: 300, default: 300, source: "env", editable: true, min: 30, max: 570 },
-        { key: "bia_cli_slots", value: 3, default: 3, source: "env", editable: false, min: null, max: null },
+        { key: "claude_cli_slots", value: 3, default: 3, source: "env", editable: false, min: null, max: null },
       ],
       showSkeleton: false,
       isError: false,

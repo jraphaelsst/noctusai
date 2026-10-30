@@ -1,6 +1,6 @@
 /**
  * useStudioChat.ts hook tests — Agent Studio CONTRACT.md §D6, §G "Conversar".
- * Mirrors `useBiaChat.test.ts`'s mocking convention (`@/lib/api`,
+ * Mirrors `useLegacyChat.test.ts`'s mocking convention (`@/lib/api`,
  * `@noctusai/seed/infra`, `useRealtimeStream` captured, no real HTTP/SSE).
  */
 import React from "react";
@@ -218,7 +218,9 @@ describe("useStudioMessagesAdapter — versão/hash link block", () => {
       expect.objectContaining({ events: STUDIO_STREAM_EVENTS }),
     );
     // No approval seam for studio agents (no write tools, §E.3).
-    expect(STUDIO_STREAM_EVENTS).not.toContain("approval.requested");
+    // a claude_sdk agent with the academia tool group asks approvals (Renata cutover)
+    expect(STUDIO_STREAM_EVENTS).toContain("approval.requested");
+    expect(STUDIO_STREAM_EVENTS).toContain("approval.resolved");
   });
 
   it("message.delta drives a pending streaming bubble, cleared by the next message.new", async () => {

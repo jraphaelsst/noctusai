@@ -55,6 +55,7 @@ class TestCreateAndList:
             assert resp.json()["code"] == "invalid_client"
 
     def test_bia_takes_no_client(self, rt):
+        rt.stores.agents.seed_legacy_chat_agent(rt.org_id)
         resp = rt.post("/api/conversations", json={"client_id": "00000000-0000-0000-0000-000000000001"})
         assert resp.status_code == 422
         assert resp.json()["code"] == "invalid_client"
@@ -173,7 +174,7 @@ class TestStudioTurn:
         resp = self._post(rt, conv["id"])
         assert resp.status_code == 429
         body = resp.json()
-        assert body["code"] == "bia_capacidade"
+        assert body["code"] == "agente_capacidade"
         assert "Bia" not in body["detail"] and "Isa" in body["detail"]
 
     def test_bia_turn_is_not_stamped(self, rt):

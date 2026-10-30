@@ -130,7 +130,7 @@ class TestLlmAgentTestChat:
         assert provider.calls == []
         assert rt.get(f"/api/conversations/{conv['id']}/messages").json()["items"] == []
 
-    def test_full_limiter_is_429_bia_capacidade_like_every_runtime(self, rt):
+    def test_full_limiter_is_429_agente_capacidade_like_every_runtime(self, rt):
         provider = FakeProvider(tool_responses=["x"])
         runtime = _install_llm(rt, provider, capacity=1)
         _llm_agent(rt)
@@ -138,7 +138,7 @@ class TestLlmAgentTestChat:
         held = runtime.try_reserve()
         assert held is not None
         resp = _post(rt, conv["id"])
-        assert resp.status_code == 429 and resp.json()["code"] == "bia_capacidade"
+        assert resp.status_code == 429 and resp.json()["code"] == "agente_capacidade"
 
     def test_org_b_conversation_never_uses_org_a_key(self, rt):
         """The injected resolver only knows org A (`rt.org_id`); a different

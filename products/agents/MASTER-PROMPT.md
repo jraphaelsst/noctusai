@@ -8,10 +8,13 @@
 Home of the NoctusAI managed AI agents. An agent works **on** another product through that
 product's scoped API and never touches its database. Two agents in this release:
 
-- **Bia** runs here, on the Claude Agent SDK in headless mode. She is reachable only from
-  this app's UI. Her job is helping with the Academia de Reciclagem project, which she does
-  by reading the `academia-de-reciclagem` API and proposing writes to it. A person approves
-  or denies every write before it happens.
+- **The academia agent** runs here, on the Claude Agent SDK in headless mode, reachable only
+  from this app's UI. It helps with the Academia de Reciclagem project by reading the
+  `academia-de-reciclagem` API and proposing writes to it; a person approves or denies every
+  write before it happens. Until the Renata cutover it was the code-defined **Bia**
+  (`app/agents/bia/`); since then it is a Studio agent (Renata) whose version switches on the
+  `academia_*` tool group (`app/studio/ferramentas_registry.py`), and the key `bia` is free.
+  Runbook: `projects/agents-unified/RENATA-CUTOVER.md`.
 - **One Chat** runs inside `social-wiring` (WhatsApp) and stays there. This product lists it
   and switches its auto-reply on/off through a scoped social-wiring endpoint.
 
@@ -185,7 +188,10 @@ sections THIS caller may open, decided server-side from origin + tier) titled by
 in `?tab=<id>`. Section ids are the former Studio tab ids, so the content renderers are the Studio tabs below; the
 renderer of `conversar` / `compilado` is chosen by the agent's origin, never its key. Agent internals
 (`/painel/interno`, the model's areas + wizard steps) answer 404 to anyone but a platform superadmin (D31).
-The former shells redirect, keeping the query: `/studio/:key`, `/agentes/:key/persona`, `/agentes/catalogo`, `/bia`.
+The former shells redirect, keeping the query: `/studio/:key`, `/agentes/:key/persona`, `/agentes/catalogo`; the
+academia ones (`/bia`, `/julia`, `/agentes/bia/persona|conversar`) go to the agent `GET /api/agents/painel/destino-chat`
+names (the academia principal's agent, else the org's code-defined chat agent). Superadmin-only cutover routes:
+`POST /api/agents/{source_key}/transferir-historico` and `POST /api/agents/{key}/arquivar` (migration 053).
 `/studio` stays as the create/import/delete console. `GET /api/agents/catalogo` (migration 040) still feeds the
 cards' papel / description / capabilities.
 

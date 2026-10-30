@@ -2,10 +2,11 @@
  * Approvals hooks — contract §E.2
  * (`GET /api/approvals?estado=pendente`, `POST /api/approvals/{id}/decision`).
  *
- * Shared by the standalone `/aprovacoes` page AND `useBiaChat.ts`'s
- * `useApprovalAction` adapter (the `ChatWindow` approval-card seam,
- * contract §E.7) — both decide through the SAME mutation shape so a
- * decision made from either surface invalidates both caches.
+ * Shared by the standalone `/aprovacoes` page AND the chat windows'
+ * `useApprovalAction` seam (`useApprovalDecisionAdapter`, contract §E.7 —
+ * the legacy chat and, since the Renata cutover, a Studio `claude_sdk` agent
+ * carrying the academia write tools) — every surface decides through the SAME
+ * mutation shape so a decision made from either invalidates both caches.
  */
 import { useQuery } from "@tanstack/react-query";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
@@ -13,7 +14,7 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 
 export const APPROVALS_KEY = ["agents", "approvals", "pendente"] as const;
-/** Prefix shared with `useBiaChat.ts`'s per-conversation messages key —
+/** Prefix shared with `useLegacyChat.ts`'s per-conversation messages key —
  * used to invalidate every open conversation's message list after a
  * decision lands somewhere else (contract §E.2 "then refetch"). */
 export const CONVERSATIONS_PREFIX = ["agents", "bia", "conversations"] as const;
@@ -44,7 +45,7 @@ export interface ApprovalListResponse {
   total: number;
 }
 
-/** The decided approval leaves the cached pending list (and `total`). Shared with `useBiaChat.ts`. */
+/** The decided approval leaves the cached pending list (and `total`). Shared with `useLegacyChat.ts`. */
 export function withoutApproval(
   old: ApprovalListResponse | undefined,
   approvalId: string,
@@ -90,6 +91,39 @@ export function useDecideApproval() {
       },
     ],
     invalidate: [CONVERSATIONS_PREFIX],
+  });
+
+  return {
+    decide: async (approvalId: string, aprovada: boolean) => {
+      try {
+        await mutation.mutateAsync({ approvalId, aprovada });
+      } catch (err) {
+        throw new Error(errorMessage(err));
+      }
+    },
+    isPending: mutation.isPending,
+  };
+}
+
+
+/** Prefix of every approvals query (pending list + any filtered view). */
+const APPROVALS_KEY_PREFIX = ["agents", "approvals"] as const;
+
+/**
+ * The `ChatWindow` approval-card seam (contract §E.7): one decision POST, the decided approval leaves the pending
+ * list on the click (rolled back on error), and the settle refetch covers the "already_decided" / "orphaned"
+ * contract (§E.2). Used by every chat window that can show an approval card.
+ */
+export function useApprovalDecisionAdapter() {
+  const mutation = useCacheWriteMutation<unknown, { approvalId: string; aprovada: boolean }>({
+    mutationFn: ({ approvalId, aprovada }) => api.post(`/api/approvals/${approvalId}/decision`, { aprovada }),
+    targets: ({ approvalId }) => [
+      {
+        queryKey: APPROVALS_KEY,
+        optimistic: (old: ApprovalListResponse | undefined) => withoutApproval(old, approvalId),
+      },
+    ],
+    invalidate: [CONVERSATIONS_PREFIX, APPROVALS_KEY_PREFIX],
   });
 
   return {

@@ -29,7 +29,10 @@ def casa(agents_client):
     app.dependency_overrides[get_catalogo_store_dep] = lambda: catalogo
     # an org Studio agent (pre-v2 content) and the org's instance of a platform definition
     studio.seed_agent(DEFAULT_ORG_ID, "isaia", nome="IsaIA")
-    studio.seed_agent(DEFAULT_ORG_ID, "julia", nome="Julia", definition_scope="instancia", conteudo_modo="linhas")
+    studio.seed_agent(DEFAULT_ORG_ID, "julia", nome="Julia", definition_scope="instancia", conteudo_modo="linhas",
+                      runtime="llm", owner_product="social-wiring")
+    # the pre-cutover code-defined chat agent (still a prod row until the Renata runbook retires it)
+    agents_client.stores.agents.seed_legacy_chat_agent(DEFAULT_ORG_ID)
     agents_client.studio = studio
     try:
         yield agents_client

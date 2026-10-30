@@ -80,17 +80,18 @@ _UID_BASE = 2000
 
 
 def _resolve_slot_count(settings: Any) -> int:
-    """``BIA_CLI_SLOTS`` from ``settings`` (a ``SeedSettings`` field, so
+    """``claude_cli_slots`` from ``settings`` (a ``SeedSettings`` field, so
     pydantic-settings already binds the env var of the same name), falling
     back to a bare ``os.environ`` read for callers that pass a plain
     settings-shaped object without the field, and finally to
     :data:`DEFAULT_SLOT_COUNT` — mirrors
     ``app.runtime._resolve_instance_id``'s settings-then-env fallback
     shape."""
-    value = getattr(settings, "bia_cli_slots", None)
+    value = getattr(settings, "claude_cli_slots", None)
     if value:
         return int(value)
-    raw = os.environ.get("BIA_CLI_SLOTS", "").strip()
+    # `CLAUDE_CLI_SLOTS` first; `BIA_CLI_SLOTS` is still the image's own slot contract (Dockerfile ENV).
+    raw = (os.environ.get("CLAUDE_CLI_SLOTS", "") or os.environ.get("BIA_CLI_SLOTS", "")).strip()
     if raw:
         return int(raw)
     return DEFAULT_SLOT_COUNT

@@ -4476,7 +4476,7 @@ def _m(nn: str) -> str:
         "035": "035_julia_v2_threads_constraints.sql", "038": "038_julia_v2_evals_roteiro.sql",
         "039": "039_julia_v2_skills_compartilhadas.sql", "040": "040_julia_v2_pin_catalogo.sql",
         "042": "042_julia_v2_lead_opt_out_eventos.sql", "043": "043_julia_v2_lead_reativacao.sql",
-        "046": "046_julia_v2_proveniencia_canario.sql",
+        "046": "046_julia_v2_proveniencia_canario.sql", "053": "053_renata_cutover.sql",
     }[nn]
 
 
@@ -4724,6 +4724,16 @@ _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
         fragments=("agent_audit_log_acao_check",), what="an audit row with an unknown acao",
         rationale="The audit log is the accountability record of definition reads/MCP writes/control changes: "
                   "free-text actions would make it unqueryable by what happened.",
+    ),
+    _julia_v2_probe(
+        probe_id="agents.definition_mode_vocab", guard_name="agents_definition_mode_check",
+        migrations=(_m("053"),), setup="",
+        attack=(f"INSERT INTO {_JV2}.agents (org_id, key, nome, runtime, definition_mode) "
+                "VALUES (v_org, 'noc-probe-' || v_sufixo, 'NOC probe', 'claude_sdk', 'noc_probe_inventado');"),
+        fragments=("agents_definition_mode_check",), what="an agent with an unknown definition_mode",
+        rationale="definition_mode decides which runtime path serves an agent (legacy code spec / Studio rows / "
+                  "arquivado = served by nothing, Renata cutover 053): an unknown value would be silently served "
+                  "by whichever branch a reader's default picks.",
     ),
     # ── 032 · the qualification standard + per-lead records ──
     _julia_v2_probe(
