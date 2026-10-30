@@ -50,6 +50,7 @@ import type { LogoutScope, NavGroup, NavItem } from "@noctusai/lib/design-system
 import {
   resolveEffectiveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
   usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS, endSessionLocally,
+  useOrgScopeEpoch, useOrgSwapInFlight,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
 import { HelpChatBubble } from "@noctusai/lib/components";
@@ -373,6 +374,12 @@ export function createProductLayout(config: ProductLayoutConfig) {
     // Staff behind the org picker (or a pending entry): org-scoped header widgets are not
     // mounted (no bell / AI-badge fetches) and the enrichment "Carregando" state is moot.
     const orgEntryPending = useOrgEntryPending();
+    // In-page org swap (no reload): the app's OrgScopeBoundary remounts the routes on the
+    // new client; the epoch key below also remounts the product content itself (fresh
+    // component state, effects, realtime subscriptions), and while the swap is in flight
+    // the content shows a short neutral status instead of either org.
+    const orgScopeEpoch = useOrgScopeEpoch();
+    const orgSwapInFlight = useOrgSwapInFlight();
     // Per-user key of the "no picker" hint that lets a single-org member's entry render
     // while /api/me/access is still in flight (lib org-access-hint.ts).
     useOrgHintIdentity(user?.id);
@@ -560,7 +567,24 @@ export function createProductLayout(config: ProductLayoutConfig) {
           )}
           {/* Org picker: no product content behind a required picker / pending
               entry handshake (staff only; non-staff render as always). */}
-          <OrgContentGate>{children}</OrgContentGate>
+          {orgSwapInFlight ? (
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="org-swap-transition"
+              className="flex min-h-[50vh] items-center justify-center text-sm text-muted-foreground motion-safe:animate-pulse"
+            >
+              Trocando de organização…
+            </div>
+          ) : (
+            <div
+              key={`org-content-${orgScopeEpoch}`}
+              data-testid="org-scope-content"
+              className="motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-300"
+            >
+              <OrgContentGate>{children}</OrgContentGate>
+            </div>
+          )}
         </div>
         {/* Expiry is local only (never a server logout): this tab leaves for core;
             the session the product's other tabs share is untouched. */}

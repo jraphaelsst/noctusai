@@ -109,7 +109,7 @@ for non-staff, `403 code mfa_required` without aal2, `401` without a token.
   org_selection_changed` → refetch access + reopen picker.
 - Organs: `OrgPickerModal` (non-dismissible when `required`; home first; shows
   "Configure 2FA" CTA when `mfa_required`), `ActingAsBanner` (org name + "Trocar org",
-  rendered only when `available`). Swap → `window.location.reload()` (no cross-org cache).
+  rendered only when `available`). Swap → in-page, no reload (2026-10-29, `projects/org-brand-identity/CONTRACT.md` §7): fresh QueryClient per org scope, zero cross-org cache.
 - `layout.tsx`: mounts `<OrgSelectionGate>`; logout calls `DELETE /api/me/org-choice`
   best-effort before signOut. Role/banner labels come from `/api/me/access`, never metadata.
 

@@ -7,11 +7,10 @@
  */
 import { Suspense, type LazyExoticComponent } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ErrorBoundary, ConfirmProvider, createAuthProvider, useAuthReconnecting, SSOCallback, env } from "@noctusai/lib";
-import { createQueryClient } from "@noctusai/lib/query-client";
+import { OrgScopeBoundary, OrgScopedQueryClientProvider, getOrgScopedQueryClient, initOrgScopedQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
 import { SemAcessoPage } from "./pages/SemAcessoPage";
@@ -196,7 +195,10 @@ export function createProductApp(config: ProductAppConfig) {
     );
   }
 
-  const queryClient = createQueryClient();
+  // ONE client per org scope: an in-page org swap hands the provider a brand-new
+  // client (lib query-client.ts + org-selection.ts swapOrgScope), so nothing cached
+  // under the previous org survives -- the guarantee the old hard reload gave.
+  initOrgScopedQueryClient();
   // The SSO audience binding needs this product's slug (VITE_PRODUCT_SLUG,
   // injected by createViteConfig). Never silently omit it: core refuses an
   // unbound token, so a product without a slug cannot log in.
@@ -387,7 +389,7 @@ export function createProductApp(config: ProductAppConfig) {
                   coreApiUrl={env.CORE_API_URL}
                   coreUrl={env.CORE_URL}
                   productSlug={env.PRODUCT_SLUG || undefined}
-                  onIdentityChange={() => queryClient.clear()}
+                  onIdentityChange={() => getOrgScopedQueryClient().clear()}
                 />
               }
             />
@@ -429,18 +431,22 @@ export function createProductApp(config: ProductAppConfig) {
 
   return function App() {
     return (
-      <QueryClientProvider client={queryClient}>
+      <OrgScopedQueryClientProvider>
         <TooltipProvider>
           <ConfirmProvider>
             <BrowserRouter>
               <AuthProvider>
-                <AppRoutes />
+                {/* Remounts the routes on an org swap so every query hook binds to the
+                    new org's client (auth + router above it survive the swap). */}
+                <OrgScopeBoundary>
+                  <AppRoutes />
+                </OrgScopeBoundary>
               </AuthProvider>
             </BrowserRouter>
           </ConfirmProvider>
           <Toaster richColors position="top-right" />
         </TooltipProvider>
-      </QueryClientProvider>
+      </OrgScopedQueryClientProvider>
     );
   };
 }

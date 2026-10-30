@@ -205,7 +205,19 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
   none, or legacy marker) the marker is cleared and the phase goes straight to `ended`
   (required, non-dismissible picker, content blocked) WITHOUT the entry DELETE -- it would end
   the other tab's live selection; the next PUT replaces it and that tab re-prompts in turn. The
-  in-page swap branch still hard-reloads (purges the old org's cache) and the reload re-prompts.
+  in-page swap branch purges the old org's cache IN-PAGE and re-evaluates (same re-prompt the
+  reload used to land on).
+  **No reload on a swap (owner 2026-10-29, `org-selection.ts` `swapOrgScope`):** a choice or a
+  foreign swap unmounts the content (`org-pin` swap in flight: neutral "Trocando de
+  organização…" state, never a frame of either org), tears realtime down, runs
+  `onOrgScopeReset` resets (+ job hand-offs), cancels in-flight reads and hands the shell a
+  BRAND-NEW QueryClient (`query-client.ts` `OrgScopedQueryClientProvider` + `OrgScopeBoundary`
+  remounting the routes, since TanStack binds an observer to its creation-time client). The old
+  client is emptied after the commit, so a late org-A answer -- query OR mutation `onSuccess` /
+  optimistic rollback -- lands in a cache nobody reads (why not `clear()` on one client: it
+  cannot stop those closures). A 409 for a request that carried another pin is stale and ignored
+  (`notifyOrgSelectionChanged(sentPin)`); the SSE stream reconnects with the new pin and no old
+  cursor. A client that is not the shell's org-scoped one falls back to the hard reload.
   Same org re-chosen elsewhere (marker == server org): silent, F5 unchanged.
   **Server:** `resolve_effective_org(..., require_selection=True)` (the default — every
   gated path: base dep license gate, org dep, `resolve_org_membership`) answers staff on a
@@ -350,7 +362,7 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     `mcp/noctusai/tests/test_core_owner_grant_and_block_rules_on_replay.py`.
   - **Front end (S5, 2026-10-14).** No member-specific flow: `useOrgSelection` keys everything off
     `org_selection.available`, so a member with ≥2 eligible orgs gets the staff entry handshake
-    as-is (no marker ⇒ `DELETE /api/me/org-choice` ⇒ required picker ⇒ choice ⇒ marker + reload;
+    as-is (no marker ⇒ `DELETE /api/me/org-choice` ⇒ required picker ⇒ choice ⇒ marker + in-page swap;
     cross-tab rule 1A) — a pick lasts ONE visit, never the whole login. Member vs staff is only
     presentation, from `isMemberOrgPicker(sel)` (`available && manage_any_org === false`; absent on
     a pre-S4b backend = staff): `OrgPickerModal` keeps the server order (last-active first), names
