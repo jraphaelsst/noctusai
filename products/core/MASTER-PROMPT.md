@@ -30,6 +30,14 @@ Central auth and administration hub for the NoctusAI multi-product SaaS platform
 ### AI usage ledger
 - **ai_usage** (`public.ai_usage`, migration 091, roadmap D25) -- ONE append-only ledger of every LLM call of every product (core included), written by the seed `CentralUsageSink` (service role) with org / product / feature / user attribution, write-time price (`price_version`) and PTAX BRL. Trigger refuses UPDATE/DELETE/TRUNCATE except the wallet's single `charged_credits` NULL->value stamp; RLS = org members + platform admins read. Read by `/api/admin/llm-usage` (platform admin; `org_id/product/feature/from/to`), the seed `/api/llm/usage` and the budget guard. Pattern: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend/llm-usage.md` §0
 
+### AI credit wallet (prepaid)
+- **credit_pricing / credit_wallets / credit_entries / credit_purchases** (`public`, migration 093) -- per-org prepaid AI credits. Every movement (purchase, admin grant, adjustment, refund, usage debit) goes through ONE SECURITY DEFINER RPC `credit_apply_entry` (per-org advisory lock, dedup on `ai_usage_id` / `payment_ref`, appends the entry, moves the balance, advances the 50/80/100% alert state, stamps `ai_usage.charged_credits`); entries are append-only, balances writable only through that RPC (GUC carve-out), pricing insert-only + versioned. Probes: `noctus.dev.verify_db_guards` (credit_*).
+- **Pricing** (`app/services/credits/pricing.py`, the one formula): `price_BRL = cost_usd x (PTAX + fx_buffer) x (1 + IOF + import) / (1 - Simples - gateway_fee) x (1 + margin)`; credits = price / credit_unit_brl (seed v1: R$ 0,01, margin 1.0 -> about 48% usage gross margin).
+- **Debit** -- scheduler job `core_credits_debit` every minute (`services/credits/debit.py`): charges `ai_usage` rows with `charged_credits IS NULL` of orgs WITH a wallet, created at/after the wallet's `charge_from`; BYOK wallets are stamped 0 (`source='byok'`); idempotent. Orgs without a wallet are untouched (today's behaviour).
+- **Enforcement** -- seed `noctusai_lib.integrations.llm.budget.enforce_credits` (inside `enforce_budget`): `prepaid` at/below `-overdraft_limit` -> `LLMCreditsExhausted` 402 before the provider call; unreadable wallet of an unknown/prepaid org -> `LLMCreditsUnverifiable` 503 + platform-admin mark (fail-closed); 15 s TTL cache.
+- **Routes** -- org owner/admin/manager: `GET /api/credits/wallet`, `GET /api/credits/usage` (org -> product -> feature, credits + retail R$ + tokens; never cost/margin), `POST /api/credits/purchase` (one-off charge on the enabled gateway; `external_reference = credits:<id>`; the paid webhook credits via `credit_apply_entry`). Platform admin: `/api/admin/credits/wallets`, `/{org_id}`, `/{org_id}/grant` (GET history / POST credits or USD + reason, `kind=grant source=admin_grant`), `/{org_id}/adjustments`, `PUT /{org_id}/wallet` (mode `prepaid|postpaid_trusted|byok`, overdraft, thresholds), `/pricing` (GET / POST new version), `/margin`.
+- **Alerts** -- a crossed 50/80/100% threshold notifies the org's owners/admins and the platform admins in-app (seed `write_in_app`, kind `creditos_alerta`).
+
 ### Products and Licensing
 - **products** -- product registry, per-org product activation
 - **licenses** -- license provisioning, `on_license_change` trigger auto-provisions product defaults
@@ -74,7 +82,7 @@ audit, **audit_digest** (Phase 9 — weekly LLM narrative + multi-admin Resend f
 
 ## Frontend Pages
 
-AcceptInvite, AccountSettings, BillingSettings, BrandIdentity (`/org-settings/identidade` — Identidade visual: preview, upload, draft editor, activate, history), CheckoutCancel, CheckoutSuccess, Dashboard, Login, Onboarding, OrgSettings, Pricing, TeamManagement, admin/
+AcceptInvite, AccountSettings, BillingSettings, BrandIdentity (`/org-settings/identidade` — Identidade visual: preview, upload, draft editor, activate, history), CreditosUso (`/org-settings/creditos` — Créditos e uso: balance, usage per product/feature, buy credits), CheckoutCancel, CheckoutSuccess, Dashboard, Login, Onboarding, OrgSettings, Pricing, TeamManagement, admin/ (incl. AdminCreditos `/admin/creditos` — wallets, grant dialog, margin report, pricing editor)
 
 ## Development Guidelines
 

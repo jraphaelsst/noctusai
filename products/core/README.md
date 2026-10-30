@@ -27,6 +27,7 @@ cd products/core/frontend && npm run dev
 - User authentication and session handling (one cross-tab-locked refresh, `refreshCoreSession`; inactivity expiry ends only core's session via `POST /api/auth/logout?scope=local`, the "Sair" button ends every session)
 - SSO token exchange for product access
 - Stripe billing and subscription management
+- Prepaid AI credit wallet (migration 093; page `/org-settings/creditos` "Créditos e uso", admin `/admin/creditos`): per-org balance in credits (default R$ 0,01 each) debited every minute from `ai_usage` (`core_credits_debit` job), usage shown org → product → feature in credits, R$ and tokens; top-ups by PIX/boleto/card on the existing Asaas/Stripe gateway (`POST /api/credits/purchase`, credited by the verified paid webhook); admin grants in credits or US$ through the same ledger path; modes `prepaid` / `postpaid_trusted` / `byok`. A prepaid org at/below its overdraft floor is refused (HTTP 402) by the seed `enforce_budget` guard, fail-closed
 - Product licensing and provisioning
 - Admin dashboard with platform-wide controls
 - 7-role hierarchy (owner, admin, manager, member, viewer, dev, test)
