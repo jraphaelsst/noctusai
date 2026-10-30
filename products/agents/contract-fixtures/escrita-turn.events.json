@@ -1,5 +1,5 @@
 {
-  "description": "Canonical SSE stream published on agents:bia:conv:<id> for one Bia turn that proposes one escrita tool call which a human approves (contract §E.3 + §E.10). Both slices consume this file: the backend route test asserts its real published sequence matches it; the frontend useBiaChat tests replay it. Synthetic, neutral data only.",
+  "description": "Canonical SSE stream published on agents:conv:<id> for one Bia turn that proposes one escrita tool call which a human approves (contract §E.3 + §E.10). Both slices consume this file: the backend route test asserts its real published sequence matches it; the frontend useBiaChat tests replay it. Synthetic, neutral data only.",
   "comparison_rule": "Compare, in order: event names; payload key sets; message role/blocks (kind, status, decision); and id cross-references (every message_id equals the id of a message published earlier by message.new; approval.requested.id equals the approvalId in the following message.updated block and equals approval.resolved.approval_id; tool events share one tool_use_id). UUIDs, timestamps, texto, resumo, diff, tool_input values and sdk_session_id are compared by shape only (UUID string / ISO-8601 string / string / object), never literally.",
   "events": [
     {

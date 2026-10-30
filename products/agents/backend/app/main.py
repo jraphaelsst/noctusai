@@ -54,6 +54,7 @@ from app.rate_limit import limiter
 from app.routers.admin_credentials_router import router as admin_credentials_router
 from app.routers.agent_settings_router import router as agent_settings_router
 from app.routers.agent_packages_router import router as agent_packages_router
+from app.routers.agente_painel_router import router as agente_painel_router
 from app.routers.agents_router import router as agents_router
 from app.routers.catalogo_router import router as catalogo_router
 from app.routers.studio_padrao_router import router as studio_padrao_router
@@ -230,6 +231,9 @@ app = create_product_app(
     standard_routers=["health", "notificacoes", "team"],
     routers=[
         _auth_router,
+        # The unified agent model + painel (agents-unified CONTRACT): static `/api/agents/painel` and
+        # `/api/agents/{key}/painel[/interno]` + `/api/studio/modelo`.
+        agente_painel_router,
         # catalogo before agents_router: `/api/agents/catalogo` must not be read as a `/{key}` path.
         catalogo_router,
         agents_router,

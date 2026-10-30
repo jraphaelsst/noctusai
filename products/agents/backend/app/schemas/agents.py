@@ -129,8 +129,8 @@ class ConversationListOut(BaseModel):
 
 class ConversationCreateRequest(StrictHttpModel):
     titulo: str | None = None
-    # Agent Studio §D6: which agent; omitted ⇒ Bia (her page sends nothing).
-    agent_key: str = Field(default="bia", min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    # Agent Studio §D6: which agent; omitted ⇒ the org's legacy chat agent (derived from the rows, never a key).
+    agent_key: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
     #: Studio agents only; must belong to that agent AND be active.
     client_id: UUID | None = None
 
