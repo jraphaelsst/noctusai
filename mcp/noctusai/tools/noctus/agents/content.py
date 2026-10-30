@@ -52,7 +52,7 @@ Lifecycle actions (no payload, no ``kind``; ``agent`` = the key; dry-run unless 
 
 * ``criar_agente`` -- ``POST /api/studio/plataforma/agents``: the platform DEFINITION of ANY valid key (a DB row, never
   a code registry entry), as an EMPTY draft (an empty shell that grows over time; only publish is gated by
-  completeness). Idempotent. ``payload_path`` (a JSON file OUTSIDE git, optional) carries the rest of the body:
+  completeness). Idempotent (sends ``reutilizar=true``; the route alone answers 409 for an existing key). ``payload_path`` (a JSON file OUTSIDE git, optional) carries the rest of the body:
   ``{nome (required for a NEW key), descricao?, runtime?, owner_product?, escopo_qualificacao?, padrao_qualificacao?,
   rascunho_padrao? ({provider, model, effort, max_turns, idioma, tool_policy}), instanciavel?, papel?
   (gerador|exemplar), briefing?, limite_usd?}``; with ``briefing`` an AI generation of the draft starts right away.
@@ -741,7 +741,10 @@ def _lifecycle(
     reading = action in ("definicao", "geracao", "concessoes")
     body: Any = None
     if action == "criar_agente":
-        body = {"key": agent, **(_only(_load_payload(payload_path), _CRIAR_CAMPOS, "criar_agente") if payload_path else {})}
+        # ``reutilizar``: the route answers 409 ``agente_ja_existe`` for an existing key unless asked to reuse it;
+        # this action stays idempotent by design (re-running a lifecycle step must not fail).
+        body = {"key": agent, **(_only(_load_payload(payload_path), _CRIAR_CAMPOS, "criar_agente") if payload_path else {}),
+                "reutilizar": True}
         method, path = "POST", "/api/studio/plataforma/agents"
     elif action == "configurar_agente":
         body = _only(_load_payload(payload_path), _DEFINICAO_CAMPOS, "configurar_agente")

@@ -98,8 +98,10 @@ class TestPlatformDefinition:
         first = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
         assert first.status_code == 201
         assert first.json()["definition_scope"] == "plataforma" and first.json()["conteudo_modo"] == "linhas"
-        again = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
-        assert again.json()["id"] == first.json()["id"]
+        dup = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
+        assert dup.status_code == 409 and dup.json()["code"] == "agente_ja_existe"
+        again = studio.post(f"{PLAT}/agents", json={**JULIA_BODY, "reutilizar": True})
+        assert again.status_code == 201 and again.json()["id"] == first.json()["id"]
         draft = studio.store.get_draft(DEFAULT_ORG_ID, UUID(first.json()["id"]))
         assert draft.versao == 1 and studio.store.list_sections(DEFAULT_ORG_ID, draft.id) == []
 

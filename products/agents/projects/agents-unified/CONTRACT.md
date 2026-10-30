@@ -145,7 +145,7 @@ Served in `GET /api/studio/modelo` → `assistente.passos` (platform admins only
 | 9 | revisao | Revisão | fechamento | none (summary of the answers) | |
 | 10 | publicar | Publicar | fechamento | plataforma.instanciavel, plataforma.limite_usd | |
 
-Submit: `POST /api/studio/plataforma/agents` with `{key, nome, descricao, runtime, owner_product, escopo_qualificacao, padrao_qualificacao, instanciavel, limite_usd, briefing: {nome, objetivo, publico, canal, idioma, tom_de_voz, limites, exemplos}}`. The response is the definition (`PlataformaAgentOut`) plus the booked AI generation; the wizard then navigates to `/agentes/:key`. Creating makes a **draft**; publishing a version goes through the eval gate (`POST /draft/publish`), never through the wizard.
+Submit: `POST /api/studio/plataforma/agents` with `{key, nome, descricao, runtime, owner_product, escopo_qualificacao, padrao_qualificacao, instanciavel, limite_usd, briefing: {nome, objetivo, publico, canal, idioma, tom_de_voz, limites, exemplos}}`. The response is the definition (`PlataformaAgentOut`) plus the booked AI generation; the wizard then navigates to `/agentes/:key`. An existing key answers **409 `agente_ja_existe`** unless the body sends `reutilizar: true` (the MCP `criar_agente` does; the wizard never does and returns to the identity step). Field labels (`rotulo`) are the models' pt-BR `title=`. Creating makes a **draft**; publishing a version goes through the eval gate (`POST /draft/publish`), never through the wizard.
 
 Frontend: the wizard is rendered with the seed `JourneyWizard` organ (built in parallel; props `steps[{id, title, category, content}]`, `onComplete`, `progress`): `id`/`title`/`category` come straight from `assistente.passos`, `content` renders the step's `campos`.
 

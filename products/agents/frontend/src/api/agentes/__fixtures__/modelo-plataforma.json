@@ -107,7 +107,7 @@
     "campos": [
      {
       "chave": "key",
-      "rotulo": "Key",
+      "rotulo": "Chave",
       "tipo": "texto",
       "obrigatorio": true,
       "max_length": null,
@@ -137,7 +137,7 @@
      },
      {
       "chave": "descricao",
-      "rotulo": "Descricao",
+      "rotulo": "Descrição",
       "tipo": "texto",
       "obrigatorio": false,
       "max_length": 500,
@@ -178,7 +178,7 @@
      },
      {
       "chave": "publico",
-      "rotulo": "Publico",
+      "rotulo": "Público atendido",
       "tipo": "texto",
       "obrigatorio": true,
       "max_length": 300,
@@ -193,7 +193,7 @@
      },
      {
       "chave": "padrao_qualificacao",
-      "rotulo": "Padrao qualificacao",
+      "rotulo": "Padrão de qualificação",
       "tipo": "texto",
       "obrigatorio": false,
       "max_length": null,
@@ -208,7 +208,7 @@
      },
      {
       "chave": "escopo_qualificacao",
-      "rotulo": "Escopo qualificacao",
+      "rotulo": "Escopo de qualificação",
       "tipo": "texto",
       "obrigatorio": false,
       "max_length": null,
@@ -322,7 +322,7 @@
     "campos": [
      {
       "chave": "canal",
-      "rotulo": "Canal",
+      "rotulo": "Canal principal",
       "tipo": "escolha",
       "obrigatorio": true,
       "max_length": null,
@@ -341,7 +341,7 @@
      },
      {
       "chave": "runtime",
-      "rotulo": "Runtime",
+      "rotulo": "Motor de execução",
       "tipo": "escolha",
       "obrigatorio": false,
       "max_length": null,
@@ -359,7 +359,7 @@
      },
      {
       "chave": "owner_product",
-      "rotulo": "Owner product",
+      "rotulo": "Produto dono",
       "tipo": "texto",
       "obrigatorio": false,
       "max_length": 64,
@@ -438,7 +438,7 @@
     "campos": [
      {
       "chave": "instanciavel",
-      "rotulo": "Instanciavel",
+      "rotulo": "Disponível para as organizações",
       "tipo": "booleano",
       "obrigatorio": false,
       "max_length": null,
@@ -453,7 +453,7 @@
      },
      {
       "chave": "limite_usd",
-      "rotulo": "Limite usd",
+      "rotulo": "Limite de custo da geração (US$)",
       "tipo": "numero",
       "obrigatorio": false,
       "max_length": null,

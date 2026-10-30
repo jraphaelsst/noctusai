@@ -41,7 +41,7 @@ interface Apresentacao {
   opcoes?: Record<string, string>;
 }
 
-/** pt-BR presentation only. A field missing here still renders, with the server's `rotulo`. */
+/** pt-BR presentation only (labels here are a FALLBACK — see `apresentacao`). A field missing here still renders. */
 export const APRESENTACAO: Record<string, Apresentacao> = {
   "plataforma.key": { rotulo: "Chave", dica: "Identificador permanente, usado nas URLs.", placeholder: "ex.: estrategista-conteudo" },
   "plataforma.nome": { rotulo: "Nome", placeholder: "ex.: Estrategista de conteúdo" },
@@ -78,8 +78,11 @@ const SO_COM_BRIEFING = new Set(["plataforma.limite_usd"]);
 
 export const id = (c: CampoModelo): string => `${c.modelo ?? "plataforma"}.${c.chave}`;
 
+/** The label is the SERVER's (`title=` on the create models, served as `rotulo`); this table's `rotulo` is only
+ * the fallback when the server sends none. Hints, placeholders and option names are FE presentation. */
 export function apresentacao(c: CampoModelo): Apresentacao {
-  return APRESENTACAO[id(c)] ?? { rotulo: c.rotulo };
+  const local = APRESENTACAO[id(c)];
+  return { ...local, rotulo: c.rotulo?.trim() || local?.rotulo || c.chave };
 }
 
 export function opcaoRotulo(c: CampoModelo, opcao: string): string {

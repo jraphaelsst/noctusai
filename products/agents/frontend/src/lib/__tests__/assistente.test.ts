@@ -7,6 +7,7 @@ import type { AgenteModelo } from "@/api/agentes/types";
 import modeloJson from "@/api/agentes/__fixtures__/modelo-plataforma.json";
 import {
   RASCUNHO_STORAGE_KEY,
+  apresentacao,
   apagarRascunho,
   camposVisiveis,
   gravarRascunho,
@@ -60,6 +61,16 @@ describe("model-driven fields", () => {
   it("splits a step that mixes field groups into subtabs only when both are visible", () => {
     expect(gruposDoPasso(passo("papel"), "gerar").map((g) => g.grupo)).toEqual(["briefing", "plataforma"]);
     expect(gruposDoPasso(passo("papel"), "vazio").map((g) => g.grupo)).toEqual(["plataforma"]);
+  });
+});
+
+describe("labels", () => {
+  it("the server's title wins; the local table only fills a missing one", () => {
+    const campo = passo("papel").campos.find((c) => c.chave === "publico")!;
+    expect(campo.rotulo).toBe("Público atendido");
+    expect(apresentacao({ ...campo, rotulo: "Quem é atendido" }).rotulo).toBe("Quem é atendido");
+    expect(apresentacao({ ...campo, rotulo: "" }).rotulo).toBe("Público atendido");
+    expect(apresentacao({ ...campo, chave: "novo_campo", rotulo: "Novo campo", modelo: "briefing" }).rotulo).toBe("Novo campo");
   });
 });
 

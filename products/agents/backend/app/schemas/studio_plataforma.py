@@ -15,26 +15,30 @@ _ATRIBUTO_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,62}$"
 
 
 class PlataformaAgentCreateRequest(StrictHttpModel):
-    """Create the platform DEFINITION of any valid ``key`` (idempotent). Everything the old code registry carried is
-    DATA here: set it now or later through ``PATCH /plataforma/agents/{key}``."""
+    """Create the platform DEFINITION of any valid ``key``. Everything the old code registry carried is DATA here: set
+    it now or later through ``PATCH /plataforma/agents/{key}``. An EXISTING key answers 409 ``agente_ja_existe``
+    unless ``reutilizar=true`` (then the existing definition is returned unchanged -- the MCP ``criar_agente``
+    idempotent path). ``title`` = the pt-BR label forms show (`app.studio.modelo` serves it as ``rotulo``)."""
 
-    key: str = Field(..., pattern=PLATAFORMA_KEY_PATTERN)
+    key: str = Field(..., pattern=PLATAFORMA_KEY_PATTERN, title="Chave")
     #: Required for a NEW key (422 ``nome_obrigatorio``); ignored for an existing one.
-    nome: str | None = Field(default=None, min_length=1, max_length=80)
-    descricao: str | None = Field(default=None, max_length=500)
-    runtime: Literal["llm", "claude_sdk"] = "llm"
-    owner_product: str | None = Field(default=None, min_length=1, max_length=64)
-    escopo_qualificacao: str | None = Field(default=None, pattern=_ATRIBUTO_PATTERN)
-    padrao_qualificacao: str | None = Field(default=None, pattern=_ATRIBUTO_PATTERN)
+    nome: str | None = Field(default=None, min_length=1, max_length=80, title="Nome")
+    descricao: str | None = Field(default=None, max_length=500, title="Descrição")
+    runtime: Literal["llm", "claude_sdk"] = Field(default="llm", title="Motor de execução")
+    owner_product: str | None = Field(default=None, min_length=1, max_length=64, title="Produto dono")
+    escopo_qualificacao: str | None = Field(default=None, pattern=_ATRIBUTO_PATTERN, title="Escopo de qualificação")
+    padrao_qualificacao: str | None = Field(default=None, pattern=_ATRIBUTO_PATTERN, title="Padrão de qualificação")
     #: Settings the first draft starts with (provider / model / effort / max_turns / idioma / tool_policy).
-    rascunho_padrao: dict[str, Any] | None = None
+    rascunho_padrao: dict[str, Any] | None = Field(default=None, title="Configurações do primeiro rascunho")
     #: A published definition is instantiated in every org only when true (opt-in: an internal agent such as the
     #: draft generator must not appear in every org).
-    instanciavel: bool = False
-    papel: Literal["gerador", "exemplar"] | None = None
+    instanciavel: bool = Field(default=False, title="Disponível para as organizações")
+    papel: Literal["gerador", "exemplar"] | None = Field(default=None, title="Papel interno")
     #: When sent, an AI generation of the new draft starts right away (all areas, ``forcar=false``).
-    briefing: Briefing | None = None
-    limite_usd: float = Field(default=5.0, gt=0, le=5.0)
+    briefing: Briefing | None = Field(default=None, title="Briefing")
+    limite_usd: float = Field(default=5.0, gt=0, le=5.0, title="Limite de custo da geração (US$)")
+    #: Explicit opt-in to reuse an existing definition of ``key`` instead of the 409.
+    reutilizar: bool = Field(default=False, title="Reutilizar definição existente")
 
 
 class PlataformaAgentUpdateRequest(StrictHttpModel):

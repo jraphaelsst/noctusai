@@ -224,6 +224,28 @@ describe("NovoAgente — publish", () => {
     expect(screen.getByTestId("assistente-briefing-objetivo-erro").textContent).toMatch(/obrigatório/);
   });
 
+  it("a 409 agente_ja_existe sends the user back to the identity step with the refusal on the key", async () => {
+    post.mockRejectedValue(
+      new ApiError(409, "Erro HTTP 409", { code: "agente_ja_existe", message: "Já existe um agente com a chave 'estrategista'." }),
+    );
+    rascunho({ passo: "publicar", valores: { "plataforma.nome": "Estrategista", "plataforma.key": "estrategista" } });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Publicar" }));
+    expect(await screen.findByText("Etapa 1 de 10")).toBeTruthy();
+    expect(screen.getByTestId("assistente-plataforma-key-erro").textContent).toMatch(/Já existe/);
+    expect(navigate).not.toHaveBeenCalled();
+    // a new key clears it and the step proceeds
+    fireEvent.change(screen.getByTestId("assistente-plataforma-key"), { target: { value: "estrategista-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(await screen.findByText("Etapa 2 de 10")).toBeTruthy();
+  });
+
+  it("labels come from the server's titles", async () => {
+    renderPage();
+    expect(await screen.findByText("Descrição")).toBeTruthy();
+    expect(screen.getByText("Chave")).toBeTruthy();
+  });
+
   it("shows the server's refusal and keeps the draft", async () => {
     post.mockRejectedValue(new ApiError(422, "Erro HTTP 422", { code: "nome_obrigatorio", message: "Informe o nome." }));
     rascunho({ passo: "publicar", valores: { "plataforma.nome": "Estrategista", "plataforma.key": "estrategista" } });

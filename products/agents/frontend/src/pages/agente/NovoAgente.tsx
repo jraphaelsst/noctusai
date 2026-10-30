@@ -46,6 +46,9 @@ import { ApiError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import NotFound from "@/pages/NotFound";
 
+/** `POST /api/studio/plataforma/agents` refuses an existing key with this code (unless `reutilizar`). */
+export const CODIGO_CHAVE_EXISTENTE = "agente_ja_existe";
+
 /** CONTRACT §6 step 9: the step with no fields that summarises the answers. */
 export const PASSO_RESUMO = "revisao";
 
@@ -176,7 +179,13 @@ function Assistente({ passos, areas }: { passos: PassoAssistente[]; areas: AreaM
   const [tentou, setTentou] = useState<Record<string, boolean>>({});
   const [erroEnvio, setErroEnvio] = useState<string | null>(null);
 
-  const chavesExistentes = useMemo(() => new Set((painel.data ?? []).map((a) => a.key)), [painel.data]);
+  // Keys the server refused as existing (409 `agente_ja_existe`) count too: the org listing does not see every
+  // platform definition (a superadmin may be visiting another org).
+  const [chavesRecusadas, setChavesRecusadas] = useState<string[]>([]);
+  const chavesExistentes = useMemo(
+    () => new Set([...(painel.data ?? []).map((a) => a.key), ...chavesRecusadas]),
+    [painel.data, chavesRecusadas],
+  );
   const ctx = useMemo(() => ({ chavesExistentes }), [chavesExistentes]);
   const limite = limiteGeracao(passos) ?? 5;
   const passoAtual = passos.some((p) => p.id === r.passo) ? (r.passo as string) : passos[0].id;
@@ -227,6 +236,15 @@ function Assistente({ passos, areas }: { passos: PassoAssistente[]; areas: AreaM
       navigate(`/agentes/${encodeURIComponent(criado.key)}`);
     } catch (err) {
       const e = lifecycleError(err);
+      const passoChave = passos.find((p) => p.campos.some((c) => id(c) === "plataforma.key"));
+      if (e.code === CODIGO_CHAVE_EXISTENTE && passoChave) {
+        // Back to the step that owns the key, with the refusal on the field itself.
+        setChavesRecusadas((ks) => [...ks, corpo.key]);
+        setTentou((t) => ({ ...t, [passoChave.id]: true }));
+        r.setPasso(passoChave.id);
+        toast.error(e.message);
+        return;
+      }
       setErroEnvio(e.hint ? `${e.message} ${e.hint}` : e.message);
     }
   }

@@ -161,6 +161,17 @@ class TestModelo:
         limite = campos["plataforma.limite_usd"]
         assert (limite["minimo_exclusivo"], limite["maximo"], limite["padrao"]) == (0, 5.0, 5.0)
         assert campos["plataforma.instanciavel"]["padrao"] is False
+        # pt-BR labels come from the models' ``title=`` (the FE table is only a fallback)
+        assert campos["briefing.publico"]["rotulo"] == "Público atendido"
+        assert campos["plataforma.descricao"]["rotulo"] == "Descrição"
+
+    def test_every_wizard_field_carries_an_explicit_pt_br_title(self):
+        from app.schemas.studio_geracao import Briefing
+        from app.schemas.studio_plataforma import PlataformaAgentCreateRequest
+
+        modelos = {"plataforma": PlataformaAgentCreateRequest, "briefing": Briefing}
+        semtitulo = [(m, c) for p in PASSOS_ASSISTENTE for m, c in p.campos if not modelos[m].model_fields[c].title]
+        assert semtitulo == [], semtitulo
 
 
 class TestModelIsDerived:
