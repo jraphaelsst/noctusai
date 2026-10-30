@@ -186,7 +186,28 @@ in `?tab=<id>`. Section ids are the former Studio tab ids, so the content render
 renderer of `conversar` / `compilado` is chosen by the agent's origin, never its key. Agent internals
 (`/painel/interno`, the model's areas + wizard steps) answer 404 to anyone but a platform superadmin (D31).
 The former shells redirect, keeping the query: `/studio/:key`, `/agentes/:key/persona`, `/agentes/catalogo`, `/bia`.
-`/studio` stays as the create/import/delete console. `GET /api/agents/catalogo` (migration 040) still feeds the
+`/studio` redirects to `/agentes`: the former console's actions live on the listing — "Novo agente" (platform
+admins, from `modelo.tier`) opens the wizard, "Importar pacote" (org admins), and for platform admins the skills
+library link, a per-card "Excluir" (type-the-key confirm; not on legacy / external agents) and the MCP content-token
+card.
+
+#### New-agent wizard (`/agentes/novo` — `pages/agente/NovoAgente.tsx`, CONTRACT §6)
+
+Platform admins only: the page reads `GET /api/studio/modelo` and renders the standard not-found when the caller's
+tier is not `plataforma` (or `assistente` is null / the read is 403). The journey is the seed `JourneyWizard` organ
+(`@noctusai/lib/journey`) over `modelo.assistente.passos` — steps, order, categories and each step's fields come from
+the model; field widgets, required flags, limits (`min_length`, `max_length`, `pattern`, `minimo_exclusivo`,
+`maximo`), options and defaults (`padrao`) come from each `CampoModelo` (`lib/assistente.ts` holds only pt-BR
+labels plus three create-body facts the schema cannot express: a new key needs `nome`, `limite_usd` only matters
+with a briefing, `briefing.nome` = the agent's name). A step mixing `plataforma` and `briefing` fields splits into
+subtabs. Two start modes: "Começar vazio" (definition only, briefing fields hidden) or "Gerar com IA" (the briefing
+is sent and the server writes the first DRAFT, capped at the model's `limite_usd.maximo` = US$ 5, shown on screen).
+Answers live in a localStorage draft (`agents:novo-agente:rascunho:v1`, try/catch, a refused write is said on
+screen) with the seed `UnsavedChangesNotice` until "Publicar"; "Revisão" summarises them with per-step edit.
+"Publicar" re-validates every step (jumps to the first invalid one), POSTs the §6 body to
+`POST /api/studio/plataforma/agents` via `useCreatePlatformAgent` (cache-writes: the new card is committed into
+`["agents","painel"]` and `["agents","painel",key]`, plus the Studio list), then opens `/agentes/:key`. Creating
+makes a draft; publishing a version is the eval-gated `POST /draft/publish`, never the wizard. `GET /api/agents/catalogo` (migration 040) still feeds the
 cards' papel / description / capabilities.
 
 #### Studio, tier-aware (Julia v2 — `frontend/src/pages/studio/`)

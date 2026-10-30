@@ -1,0 +1,475 @@
+{
+ "versao": 1,
+ "tier": "plataforma",
+ "conteudo_modo": "linhas",
+ "origens": [
+  "legado",
+  "plataforma",
+  "instancia",
+  "org"
+ ],
+ "secoes": [],
+ "areas": [
+  {
+   "id": "secoes",
+   "titulo": "Prompt",
+   "descricao": "As seções do prompt: identidade, objetivo, conduta.",
+   "ordem": 0,
+   "multiplas_linhas": true,
+   "secoes": [
+    "prompt"
+   ],
+   "campos": [],
+   "enumeracao": null
+  },
+  {
+   "id": "textos",
+   "titulo": "Textos do sistema",
+   "descricao": "Toda frase que chega ao modelo ou ao lead fora do prompt.",
+   "ordem": 1,
+   "multiplas_linhas": true,
+   "secoes": [
+    "textos"
+   ],
+   "campos": [],
+   "enumeracao": null
+  },
+  {
+   "id": "ferramentas",
+   "titulo": "Ferramentas",
+   "descricao": "Quais ferramentas o agente usa e como cada uma é descrita.",
+   "ordem": 2,
+   "multiplas_linhas": true,
+   "secoes": [
+    "ferramentas"
+   ],
+   "campos": [],
+   "enumeracao": null
+  },
+  {
+   "id": "decisoes",
+   "titulo": "Decisões",
+   "descricao": "Regras de decisão com opções e um padrão.",
+   "ordem": 3,
+   "multiplas_linhas": true,
+   "secoes": [
+    "decisoes"
+   ],
+   "campos": [],
+   "enumeracao": null
+  },
+  {
+   "id": "specs",
+   "titulo": "Especificações declaradas",
+   "descricao": "Os dados que cada organização preenche ({{org.chave}}).",
+   "ordem": 4,
+   "multiplas_linhas": true,
+   "secoes": [
+    "especificacoes"
+   ],
+   "campos": [],
+   "enumeracao": null
+  },
+  {
+   "id": "skills",
+   "titulo": "Skills",
+   "descricao": "Procedimentos da biblioteca que o agente deve seguir.",
+   "ordem": 5,
+   "multiplas_linhas": true,
+   "secoes": [
+    "biblioteca",
+    "skills"
+   ],
+   "campos": [],
+   "enumeracao": null
+  },
+  {
+   "id": "configuracoes",
+   "titulo": "Configurações",
+   "descricao": "Modelo, esforço, idioma e política de ferramentas.",
+   "ordem": 6,
+   "multiplas_linhas": false,
+   "secoes": [
+    "configuracoes"
+   ],
+   "campos": [],
+   "enumeracao": null
+  }
+ ],
+ "assistente": {
+  "passos": [
+   {
+    "id": "identidade",
+    "titulo": "Identidade",
+    "categoria": "quem",
+    "descricao": "Nome, chave e uma linha sobre o agente.",
+    "ordem": 0,
+    "campos": [
+     {
+      "chave": "key",
+      "rotulo": "Key",
+      "tipo": "texto",
+      "obrigatorio": true,
+      "max_length": null,
+      "min_length": null,
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "plataforma"
+     },
+     {
+      "chave": "nome",
+      "rotulo": "Nome",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": 80,
+      "min_length": 1,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "plataforma"
+     },
+     {
+      "chave": "descricao",
+      "rotulo": "Descricao",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": 500,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "plataforma"
+     }
+    ],
+    "areas": [],
+    "nota": null
+   },
+   {
+    "id": "papel",
+    "titulo": "Papel",
+    "categoria": "quem",
+    "descricao": "Para que o agente existe e quem ele atende.",
+    "ordem": 1,
+    "campos": [
+     {
+      "chave": "objetivo",
+      "rotulo": "Objetivo",
+      "tipo": "texto",
+      "obrigatorio": true,
+      "max_length": 600,
+      "min_length": 10,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "briefing"
+     },
+     {
+      "chave": "publico",
+      "rotulo": "Publico",
+      "tipo": "texto",
+      "obrigatorio": true,
+      "max_length": 300,
+      "min_length": 3,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "briefing"
+     },
+     {
+      "chave": "padrao_qualificacao",
+      "rotulo": "Padrao qualificacao",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": null,
+      "min_length": null,
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "plataforma"
+     },
+     {
+      "chave": "escopo_qualificacao",
+      "rotulo": "Escopo qualificacao",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": null,
+      "min_length": null,
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "plataforma"
+     }
+    ],
+    "areas": [
+     "secoes",
+     "decisoes"
+    ],
+    "nota": null
+   },
+   {
+    "id": "personalidade",
+    "titulo": "Personalidade e tom",
+    "categoria": "quem",
+    "descricao": "Como o agente fala.",
+    "ordem": 2,
+    "campos": [
+     {
+      "chave": "tom_de_voz",
+      "rotulo": "Tom de voz",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": 300,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "briefing"
+     },
+     {
+      "chave": "idioma",
+      "rotulo": "Idioma",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": 20,
+      "min_length": 2,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": "pt-BR",
+      "opcoes": null,
+      "modelo": "briefing"
+     }
+    ],
+    "areas": [
+     "secoes",
+     "textos"
+    ],
+    "nota": null
+   },
+   {
+    "id": "conhecimento",
+    "titulo": "Conhecimento",
+    "categoria": "o_que",
+    "descricao": "Exemplos e material de referência.",
+    "ordem": 3,
+    "campos": [
+     {
+      "chave": "exemplos",
+      "rotulo": "Exemplos",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": 4000,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "briefing"
+     }
+    ],
+    "areas": [
+     "secoes",
+     "skills"
+    ],
+    "nota": "Arquivos de conhecimento são enviados na página do agente, depois de criado."
+   },
+   {
+    "id": "ferramentas",
+    "titulo": "Ferramentas",
+    "categoria": "o_que",
+    "descricao": "O que o agente pode fazer além de conversar.",
+    "ordem": 4,
+    "campos": [],
+    "areas": [
+     "ferramentas"
+    ],
+    "nota": "O rascunho gerado escolhe as ferramentas da lista conhecida; você revisa na página."
+   },
+   {
+    "id": "canais",
+    "titulo": "Canais",
+    "categoria": "como",
+    "descricao": "Onde o agente atende.",
+    "ordem": 5,
+    "campos": [
+     {
+      "chave": "canal",
+      "rotulo": "Canal",
+      "tipo": "escolha",
+      "obrigatorio": true,
+      "max_length": null,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": [
+       "whatsapp",
+       "web",
+       "interno"
+      ],
+      "modelo": "briefing"
+     },
+     {
+      "chave": "runtime",
+      "rotulo": "Runtime",
+      "tipo": "escolha",
+      "obrigatorio": false,
+      "max_length": null,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": "llm",
+      "opcoes": [
+       "llm",
+       "claude_sdk"
+      ],
+      "modelo": "plataforma"
+     },
+     {
+      "chave": "owner_product",
+      "rotulo": "Owner product",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": 64,
+      "min_length": 1,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "plataforma"
+     }
+    ],
+    "areas": [
+     "textos",
+     "configuracoes"
+    ],
+    "nota": null
+   },
+   {
+    "id": "regras",
+    "titulo": "Regras e limites",
+    "categoria": "como",
+    "descricao": "O que o agente nunca faz e quando passa para humano.",
+    "ordem": 6,
+    "campos": [
+     {
+      "chave": "limites",
+      "rotulo": "Limites",
+      "tipo": "texto",
+      "obrigatorio": false,
+      "max_length": 1000,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": null,
+      "opcoes": null,
+      "modelo": "briefing"
+     }
+    ],
+    "areas": [
+     "secoes",
+     "decisoes",
+     "textos"
+    ],
+    "nota": null
+   },
+   {
+    "id": "rotinas",
+    "titulo": "Rotinas",
+    "categoria": "como",
+    "descricao": "Retomadas, horários e encerramento.",
+    "ordem": 7,
+    "campos": [],
+    "areas": [],
+    "nota": "Rotinas são ligadas nos Controles da instância de cada organização, após publicar."
+   },
+   {
+    "id": "revisao",
+    "titulo": "Revisão",
+    "categoria": "fechamento",
+    "descricao": "Confira as respostas antes de criar.",
+    "ordem": 8,
+    "campos": [],
+    "areas": [],
+    "nota": null
+   },
+   {
+    "id": "publicar",
+    "titulo": "Publicar",
+    "categoria": "fechamento",
+    "descricao": "Disponibilizar para as organizações e gerar o rascunho.",
+    "ordem": 9,
+    "campos": [
+     {
+      "chave": "instanciavel",
+      "rotulo": "Instanciavel",
+      "tipo": "booleano",
+      "obrigatorio": false,
+      "max_length": null,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": null,
+      "maximo": null,
+      "padrao": false,
+      "opcoes": null,
+      "modelo": "plataforma"
+     },
+     {
+      "chave": "limite_usd",
+      "rotulo": "Limite usd",
+      "tipo": "numero",
+      "obrigatorio": false,
+      "max_length": null,
+      "min_length": null,
+      "pattern": null,
+      "minimo": null,
+      "minimo_exclusivo": 0,
+      "maximo": 5.0,
+      "padrao": 5.0,
+      "opcoes": null,
+      "modelo": "plataforma"
+     }
+    ],
+    "areas": [],
+    "nota": "Criar gera um RASCUNHO; publicar a versão passa pelo portão de avaliações."
+   }
+  ]
+ }
+}

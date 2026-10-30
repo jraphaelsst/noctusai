@@ -21,6 +21,14 @@ class CampoModeloOut(BaseModel):
     tipo: Literal["texto", "numero", "booleano", "escolha", "lista", "objeto"]
     obrigatorio: bool
     max_length: int | None = None
+    #: The limits a form needs to block what the create route would 422 (read from the Pydantic field).
+    min_length: int | None = None
+    pattern: str | None = None
+    minimo: float | None = None
+    minimo_exclusivo: float | None = None
+    maximo: float | None = None
+    #: The field's default (scalars only), so a form starts from what the server would use.
+    padrao: str | float | bool | None = None
     opcoes: list[str] | None = None
     #: wizard fields only: ``plataforma`` (create body) | ``briefing`` (its ``briefing``)
     modelo: Literal["plataforma", "briefing"] | None = None

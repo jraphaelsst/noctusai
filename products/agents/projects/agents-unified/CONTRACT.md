@@ -41,7 +41,10 @@ Auth: any org member (`require_member`); 401 unauthenticated, 403 for a non-memb
   "areas": [                       // [] unless tier == "plataforma"
     {"id": "ferramentas", "titulo": "Ferramentas", "descricao": "…", "ordem": 2, "multiplas_linhas": true,
      "campos": [{"chave": "ferramenta", "rotulo": "Ferramenta", "tipo": "texto|numero|booleano|escolha|lista|objeto",
-                 "obrigatorio": true, "max_length": null, "opcoes": null}],
+                 "obrigatorio": true, "max_length": null, "opcoes": null,
+                 // wizard slice: the limits a form needs to block a 422, and the server default
+                 "min_length": null, "pattern": null, "minimo": null, "minimo_exclusivo": null, "maximo": null,
+                 "padrao": null}],
      "enumeracao": {"tipo": "opcoes", "opcoes": ["abrir_skill", "…"]},     // textos: {"tipo":"chaves_por_categoria","grupos":[…]}
      "secoes": ["ferramentas"]}
   ],
@@ -152,7 +155,7 @@ Frontend: the wizard is rendered with the seed `JourneyWizard` organ (built in p
 - `/agentes/:key` — `AgentePage`: header from the painel; section nav = `painel.secoes`, titled by `modelo.secoes`; body = the section's renderer (a registry `section id → component`; the content-area renderers are the existing Studio tab components). Superadmin extras come from `/painel/interno`, fetched only when the page shows an internal section.
 - States: skeleton only while there is no data yet (`isPending && !data`), a refetch never unmounts the page, error and empty states are explicit; never `isLoading` (KB server-state family).
 - Redirects: `/bia`, `/julia` → `/agentes/bia?tab=conversar`; `/agentes/bia/persona`, `/agentes/julia/persona`, `/agentes/:key/persona` → `/agentes/:key?tab=persona`; `/studio/:key` → `/agentes/:key` (query kept); `/studio/lead-imob` → `/agentes/julia`; `/agentes/catalogo` → `/agentes`.
-- `/studio` (Agent Studio) stays as the create/import/delete console until the wizard slice; its rows link to `/agentes/:key`.
+- `/studio` (Agent Studio) stayed as the create/import/delete console until the wizard slice. **Wizard slice (done):** `/agentes/novo` (`NovoAgente.tsx`) renders `assistente.passos` on the seed `JourneyWizard`; `/studio` redirects to `/agentes`, whose header carries "Novo agente" / "Importar pacote" / the skills library, each card a platform-admin "Excluir", and the page the content-token card.
 
 ## 8 · What the next slices build
 

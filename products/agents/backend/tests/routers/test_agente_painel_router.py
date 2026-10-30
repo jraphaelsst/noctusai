@@ -7,6 +7,7 @@ import pytest
 from app.routers.catalogo_router import get_catalogo_store_dep
 from app.routers.studio_agents_router import get_studio_definition_store_dep
 from app.schemas.studio_conteudo import FerramentaIn
+from app.schemas.studio_plataforma import PLATAFORMA_KEY_PATTERN
 from app.stores.catalogo import CatalogoEntrada, FakeCatalogoStore
 from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.stores.studio_geracoes import AREAS
@@ -145,6 +146,21 @@ class TestModelo:
         ferramentas = next(a for a in body["areas"] if a["id"] == "ferramentas")
         assert [c["chave"] for c in ferramentas["campos"]] == list(FerramentaIn.model_fields)
         assert "handoff" in ferramentas["enumeracao"]["opcoes"]
+
+    def test_wizard_fields_carry_the_limits_a_form_needs_to_block_a_422(self, casa):
+        _papel(casa, org_role="owner", platform=True)
+        campos = {
+            f'{c["modelo"]}.{c["chave"]}': c
+            for p in casa.get(MODELO).json()["assistente"]["passos"]
+            for c in p["campos"]
+        }
+        assert campos["plataforma.key"]["pattern"] == PLATAFORMA_KEY_PATTERN
+        assert campos["briefing.objetivo"]["min_length"] == 10 and campos["briefing.objetivo"]["max_length"] == 600
+        assert campos["briefing.idioma"]["padrao"] == "pt-BR"
+        assert campos["briefing.canal"]["opcoes"] == ["whatsapp", "web", "interno"]
+        limite = campos["plataforma.limite_usd"]
+        assert (limite["minimo_exclusivo"], limite["maximo"], limite["padrao"]) == (0, 5.0, 5.0)
+        assert campos["plataforma.instanciavel"]["padrao"] is False
 
 
 class TestModelIsDerived:

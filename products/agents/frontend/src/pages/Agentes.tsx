@@ -6,16 +6,27 @@
  * painel DATA (`origem`, `papel`, `estado_externo`, `pode_alternar`) — never an agent key. The on/off switch is
  * offered only when the server says so (`pode_alternar`: a legacy agent + an org admin); a platform instance is
  * switched in its Controles section.
+ *
+ * The former `/studio` console's actions live here too (CONTRACT §8 "wizard slice"): "Novo agente" opens the
+ * wizard (`/agentes/novo`), "Importar pacote" (org admins), and for a platform admin the skills library, the
+ * per-card delete and the MCP content token. Who is a platform admin is the SERVER's answer (`modelo.tier`), and
+ * every action is re-enforced by its route.
  */
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Bot, ChevronRight, ShieldAlert } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Bot, ChevronRight, Library, Plus, ShieldAlert, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button } from "@noctusai/lib/design-system";
 import type { AgenteOrigem, AgentePainel } from "@/api/agentes/types";
-import { useAgentesPainel } from "@/hooks/useAgentesPainel";
+import { ContentTokenCard } from "@/components/studio/ContentTokenCard";
+import { ExcluirAgenteDialog } from "@/components/studio/ExcluirAgenteDialog";
+import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
+import { useAgenteModelo, useAgentesPainel } from "@/hooks/useAgentesPainel";
 import { useToggleAgent } from "@/hooks/useAgents";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
+import { SKILLS_BIBLIOTECA_HREF } from "@/pages/studio/skillsRoutes";
+import { studioTabHref } from "@/pages/studio/studioTabs";
 
 export const ORIGEM_LABEL: Record<AgenteOrigem, string> = {
   legado: "Agente legado",
@@ -100,7 +111,13 @@ export function AgenteResumo({ agente }: { agente: AgentePainel }) {
   return <p className="line-clamp-2 text-sm text-muted-foreground">{agente.descricao ?? "Sem descrição."}</p>;
 }
 
-function AgenteCard({ agente }: { agente: AgentePainel }) {
+/** A Studio-defined agent (not the legacy rows, not an external product's agent) can be deleted; the route
+ * still answers 409 with the reason when it cannot (published, has instances / conversations / a channel). */
+export function podeExcluir(agente: AgentePainel): boolean {
+  return agente.origem !== "legado" && agente.runtime !== "external";
+}
+
+function AgenteCard({ agente, onExcluir }: { agente: AgentePainel; onExcluir?: (a: AgentePainel) => void }) {
   return (
     <article className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4" data-testid={`agente-card-${agente.key}`}>
       <div className="flex items-start gap-3">
@@ -128,13 +145,22 @@ function AgenteCard({ agente }: { agente: AgentePainel }) {
           ))}
         </ul>
       )}
-      <Link
-        to={`/agentes/${encodeURIComponent(agente.key)}`}
-        className="mt-auto inline-flex items-center gap-1 self-end text-xs font-medium text-primary hover:underline"
-        data-testid={`agente-abrir-${agente.key}`}
-      >
-        Abrir <ChevronRight className="h-3.5 w-3.5" />
-      </Link>
+      <div className="mt-auto flex items-center justify-between gap-2">
+        {onExcluir && podeExcluir(agente) ? (
+          <Button size="sm" variant="ghost" onClick={() => onExcluir(agente)} data-testid={`agente-excluir-${agente.key}`}>
+            <Trash2 className="mr-1 h-3.5 w-3.5" /> Excluir
+          </Button>
+        ) : (
+          <span />
+        )}
+        <Link
+          to={`/agentes/${encodeURIComponent(agente.key)}`}
+          className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          data-testid={`agente-abrir-${agente.key}`}
+        >
+          Abrir <ChevronRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
     </article>
   );
 }
@@ -147,6 +173,11 @@ export default function Agentes() {
     [data],
   );
   const visiveis = useMemo(() => (data ?? []).filter((a) => papel === "todos" || a.papel === papel), [data, papel]);
+  const isAdmin = useIsAdmin();
+  const plataforma = useAgenteModelo().data?.tier === "plataforma";
+  const [importOpen, setImportOpen] = useState(false);
+  const [excluir, setExcluir] = useState<AgentePainel | null>(null);
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-6">
@@ -159,6 +190,29 @@ export default function Agentes() {
             {isRefreshing && <span className="ml-2 text-xs" data-testid="agentes-refreshing">Atualizando…</span>}
           </p>
         </div>
+        {(isAdmin || plataforma) && (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {isAdmin && (
+              <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="agentes-importar-pacote">
+                <Upload className="mr-1 h-4 w-4" /> Importar pacote
+              </Button>
+            )}
+            {plataforma && (
+              <Link to={SKILLS_BIBLIOTECA_HREF} data-testid="agentes-biblioteca-skills">
+                <Button variant="outline" type="button">
+                  <Library className="mr-1 h-4 w-4" /> Biblioteca de skills
+                </Button>
+              </Link>
+            )}
+            {plataforma && (
+              <Link to="/agentes/novo" data-testid="agentes-novo">
+                <Button variant="primary" type="button">
+                  <Plus className="mr-1 h-4 w-4" /> Novo agente
+                </Button>
+              </Link>
+            )}
+          </div>
+        )}
       </div>
 
       {showSkeleton ? (
@@ -202,10 +256,25 @@ export default function Agentes() {
           )}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="agentes-list">
             {visiveis.map((a) => (
-              <AgenteCard key={a.key} agente={a} />
+              <AgenteCard key={a.key} agente={a} onExcluir={plataforma ? setExcluir : undefined} />
             ))}
           </div>
         </>
+      )}
+
+      {plataforma && <ContentTokenCard />}
+      {plataforma && excluir && (
+        <ExcluirAgenteDialog agentKey={excluir.key} nome={excluir.nome} onClose={() => setExcluir(null)} />
+      )}
+      {isAdmin && importOpen && (
+        <ImportBundleDialog
+          onClose={() => setImportOpen(false)}
+          onImported={(key) => {
+            setImportOpen(false);
+            toast.success("Pacote importado.");
+            navigate(studioTabHref(key, "versoes"));
+          }}
+        />
       )}
     </div>
   );
