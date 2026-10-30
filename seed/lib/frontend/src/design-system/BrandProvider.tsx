@@ -4,7 +4,7 @@
  * product wear the selected org's identity, falling back to the NOC standard (`tokens.css`).
  *
  * - Fetches `GET /api/brand/current` on CORE (`coreApi`, same auth channel as `/api/me/access`);
- *   the query key carries the org id so org A's identity never survives under org B.
+ *   the query key (`brandCurrentQueryKey`) carries the org id so org A's identity never survives under org B.
  * - Applies ONLY client-validated values (`brand-tokens.ts`) through a generated override
  *   stylesheet (light `:root` + `.dark`), Google fonts via `<link>`, signed font URLs via
  *   `FontFace`, favicon via `<link rel=icon>`.
@@ -25,7 +25,8 @@ import {
   type BrandCurrent, type BrandTokens,
 } from './brand-tokens';
 
-export const BRAND_QUERY_KEY = (orgId: string | null) => ['brand', 'current', orgId ?? 'none'] as const;
+/** THE cache key of `GET /api/brand/current` (shared with core's "Identidade visual" page, which writes it on activate so a swap reskins live). */
+export const brandCurrentQueryKey = (orgId: string | null) => ['core', 'brand', orgId ?? 'none', 'current'] as const;
 const CACHE_PREFIX = 'noc:brand:';
 const LAST_ORG_KEY = 'noc:brand:last-org';
 const STYLE_ID = 'noc-brand-tokens';
@@ -156,7 +157,7 @@ export function BrandProvider({ children, authenticated = true }: BrandProviderP
   const orgId = access.data?.org?.id ?? null;
 
   const brand = useQuery<BrandCurrent>({
-    queryKey: BRAND_QUERY_KEY(orgId),
+    queryKey: brandCurrentQueryKey(orgId),
     queryFn: () => coreApi.get<BrandCurrent>('/api/brand/current'),
     enabled: authenticated && accessAnswered,
     staleTime: 5 * 60_000,

@@ -11,7 +11,7 @@ vi.mock('@noctusai/seed/infra', () => ({
   coreApi: { get: (...a: unknown[]) => coreGet(...a) },
 }));
 
-import { BrandProvider, useBrand } from './BrandProvider';
+import { BrandProvider, useBrand, brandCurrentQueryKey } from './BrandProvider';
 import { buildBrandCss, googleFontsHref, safeAssetUrl, sanitizeTokens } from './brand-tokens';
 
 // The token key list is DERIVED from tokens.css (never hand-maintained).
@@ -133,12 +133,13 @@ describe('BrandProvider', () => {
     coreGet.mockResolvedValue(brandOf('1 1% 1%'));
     mount(qc);
     await waitFor(() => expect(styleText()).toContain('--primary:1 1% 1%;'));
-    expect(qc.getQueryData(['brand', 'current', 'org-a'])).toBeDefined();
+    expect(brandCurrentQueryKey('org-a')).toEqual(['core', 'brand', 'org-a', 'current']);
+    expect(qc.getQueryData(brandCurrentQueryKey('org-a'))).toBeDefined();
 
     coreGet.mockResolvedValue(brandOf('2 2% 2%'));
     qc.setQueryData(['me', 'access'], accessOf('org-b'));
     await waitFor(() => expect(styleText()).toContain('--primary:2 2% 2%;'));
-    expect(qc.getQueryData(['brand', 'current', 'org-b'])).toBeDefined();
+    expect(qc.getQueryData(brandCurrentQueryKey('org-b'))).toBeDefined();
   });
 
   it('a platform answer drops the org cache and clears nothing but the override', async () => {

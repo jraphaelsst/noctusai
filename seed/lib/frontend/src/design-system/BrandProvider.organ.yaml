@@ -8,7 +8,7 @@ validation_status: emerging
 
 known_facts:
   - "Mounted once by createProductApp (inside AuthProvider, around AppRoutes): core and every product wear the selected org's identity by construction. Fallback is the NOC standard (tokens.css)."
-  - "Fetches GET /api/brand/current via coreApi (core owns identities); query key ['brand','current', orgId] with the org id from the shared /api/me/access cache entry, so a no-reload org swap refetches and org A's identity never stands in for org B (no placeholderData)."
+  - "Fetches GET /api/brand/current via coreApi (core owns identities); query key ['core','brand', orgId, 'current'] (exported helper brandCurrentQueryKey, shared with core's Identidade visual page) with the org id from the shared /api/me/access cache entry, so a no-reload org swap refetches and org A's identity never stands in for org B (no placeholderData)."
   - "Only client-validated values reach the DOM (brand-tokens.ts re-checks the contract regexes). Applied through one generated override stylesheet (:root light + .dark), not inline setProperty, because an inline :root value would beat the .dark class rule and break dark mode."
   - "Token key list is never hand-maintained: the test derives it from tokens.css."
   - "Last tokens per org cached in localStorage (signed asset URLs are NOT cached - they expire) and applied synchronously at boot via the last-org pointer."
