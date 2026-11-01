@@ -15,7 +15,7 @@ Read this first to resume. Then `01-EVALUATION.md` and `02-PLAN.md`.
 | Design system v2.1 | `projects/app/entre-sessoes/design-system/Design-System-Nos-no-Limiar.md` — byte-identical to the specs' `09-referencias/design-system-v2.1.md`. THE visual base (D4) |
 | Live web app (current) | https://claude.ai/artifact/VeCEaLoN3gFxYn18Abjcpu ("Diário entre sessões", published artifact template v21 — a template version, not the DS version) |
 | My study of it (outside git) | `~/Documents/repository/NoctusAI/_private-studies/diario-entre-sessoes/` — `MAP.md` (full map), `source/page.html`, `local/index.html` (isolated copy), `ui/screens-v2/` (47 states @3x + `INDEX.md`), `ui/shoot.cjs` (re-runnable Playwright capture: `node ui/shoot.cjs <url> <outDir>`, needs playwright from `noctusai/products/core/frontend/node_modules`) |
-| Target repo | `~/Documents/repository/NoctusAI/limiar-app` (Expo, GitHub `jraphaelsst/limiar-app`) |
+| App repo | `~/Documents/repository/NoctusAI/entre-sessoes` (Expo SDK 58, GitHub `jraphaelsst/entre-sessoes`, public; was `limiar-app`). Work branch `feat/entre-sessoes` |
 
 ## Done so far
 
@@ -34,6 +34,19 @@ Read this first to resume. Then `01-EVALUATION.md` and `02-PLAN.md`.
 - **D5** full rename (name, slug/scheme/bundle id, EAS project, GitHub repo → `entre-sessoes`).
 - **D6** Expo Go → EAS internal tracks **+ a hosted web link**. Open: where to host it (plan §5 #3).
 - Go given for P0.
+
+## P0 done (2026-11-01) — next: P1 (content + domain) ∥ P3 (UI kit)
+
+App repo `feat/entre-sessoes` @ ae9abad (pushed; `main` = SDK 58 @ a8effda, pushed): renamed (bundle id
+`br.com.entresessoes`, no EAS project yet), previous app deleted, one-screen shell with the safety text, DS v2.1
+theme (`src/theme/`, Bodoni Moda + Inter, contrast tests), CLAUDE.md/docs re-pointed, agent `entre-sessoes` 0.1.0
+(noc `products/agents/packages/entre-sessoes/`) replaces `nos-no-limiar`. tsc · lint · jest 94/94 · web export green;
+not yet run on a device.
+
+Carried into P3: no visible focus ring yet; `textSubtle` (brown 64%, 4.03:1) only for icons/large text; primitives to
+replace listed in the theme commit (fe419da). Open for Mônica: `products/agents/packages/entre-sessoes/knowledge/
+proposito-e-limites/precisa-da-monica.md` (11 items). Owner: git-ignored old `Nos-no-Limiar-Design-System/` (v1.0.0)
+still in the app folder — delete if unneeded.
 
 ## Side effects to remember
 

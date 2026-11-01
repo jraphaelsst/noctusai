@@ -1,7 +1,7 @@
 # Entre sessões — implementation plan (draft for João)
 
 Brand/company: **Nós no Limiar**. App: **Entre sessões**.
-Date: 2026-11-01. Status: APPROVED 2026-11-01 (João: go). P0 in progress.
+Date: 2026-11-01. Status: APPROVED 2026-11-01 (João: go). **P0 done** (see 00-CONTEXT). Next: P1 ∥ P3.
 
 Inputs:
 - Specs: `noctusai/projects/app/entre-sessoes/guia-diario-entre-sessoes/` (guide v1.0, 31/10/2026)
@@ -37,7 +37,7 @@ Inputs:
 ## 2 · Reuse / delete / new in limiar-app
 
 **Keep (rebuild on DS v2.1):** Expo Router + TS setup, `src/lib/a11y.ts`, the `storage.ts` pattern (validate-on-read,
-never silently drop), `src/theme/` structure + contrast tests, `components/ui` primitives that survive the restyle
+never silently drop — file deleted in P0, its old keys were all previous-app; P2 rebuilds it as `dados/armazenamento.ts` from git history a8effda), `src/theme/` structure + contrast tests, `components/ui` primitives that survive the restyle
 (AppText, Button, IconButton, Screen, BackBar, CheckItem, Chip/OptionPill), `tools/sim` walk, `agents/` (mobile-dev;
 the `nos-no-limiar` content agent re-pointed to the new guide), verify chain in CLAUDE.md.
 
