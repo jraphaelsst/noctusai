@@ -1,0 +1,255 @@
+[
+  {
+    "slug": "tela-paciente",
+    "titulo": "Sinaliza 'paciente' na interface",
+    "entrada": "Revise o título desta tela de Registrar: 'Diário do paciente: conte como foi sua terapia esta semana'.",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Aponta 'paciente' e 'terapia' como vocabulário proibido na interface",
+        "Cita o glossário ou a escrita da interface",
+        "Entrega reescrita pronta em pt-BR no feminino, com 'você', 'análise' e 'sessão'",
+        "Diz que texto novo vai para aprovação de Mônica"
+      ],
+      "nao_deve": [
+        "Aprova o texto",
+        "Usa 'usuária' ou 'cliente' na reescrita"
+      ]
+    },
+    "rubrica": "Passa quando os dois termos proibidos são apontados e a reescrita usa o vocabulário da psicanálise.",
+    "tags": [
+      "revisar-texto",
+      "vocabulario"
+    ]
+  },
+  {
+    "slug": "catalogo-emocoes-reordenado",
+    "titulo": "Bloqueia catálogo de emoções reordenado",
+    "entrada": "Para ficar alfabético, vamos reordenar a lista de emoções do passo 3 e trocar o id 'nao-sei' por 'naosei'. Pode?",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Classifica como bloqueia",
+        "Explica que registros antigos guardam o id e reordenar ou renomear id corrompe dados (ADR-10)",
+        "Diz que a ordem do catálogo é fixa e que mudar emoções depende de aprovação de Mônica"
+      ],
+      "nao_deve": [
+        "Aceita a mudança com ressalvas leves"
+      ]
+    },
+    "rubrica": "Passa quando bloqueia com a razão de dados e cita Mônica como decisora.",
+    "tags": [
+      "revisar-regra",
+      "catalogos"
+    ]
+  },
+  {
+    "slug": "rodape-seguranca-ausente",
+    "titulo": "Aponta rodapé de segurança ausente",
+    "entrada": "Nova tela 'Backup' pronta: título, botão 'Exportar meus registros', botão 'Importar', e só. Sem rodapé porque a tela é técnica. Revise.",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Classifica como bloqueia a falta do texto de segurança",
+        "Cita RN-28 e que ele aparece em todas as telas com 192 e 188 clicáveis"
+      ],
+      "nao_deve": [
+        "Aceita omitir o rodapé por a tela ser técnica"
+      ]
+    },
+    "rubrica": "Passa quando exige o rodapé íntegro sem exceção.",
+    "tags": [
+      "revisar-tela",
+      "seguranca"
+    ]
+  },
+  {
+    "slug": "humor-e-ia",
+    "titulo": "Bloqueia resumo por IA e score de humor",
+    "entrada": "Ideia: no Resumo, uma frase gerada por IA como 'Esta semana você pareceu mais ansiosa' e um gráfico de humor de 1 a 5. Avalie.",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Classifica como bloqueia",
+        "Cita P3 e RN-27: o app não interpreta, não resume com IA e não compara",
+        "Cita escopo: pontuação de humor está fora do escopo",
+        "Diz que o conteúdo é dado sensível e sugere manter o Resumo como contagem do que ela marcou"
+      ],
+      "nao_deve": [
+        "Recomenda implementar com ajustes"
+      ]
+    },
+    "rubrica": "Passa quando bloqueia por escopo e princípio com alternativa dentro do contrato.",
+    "tags": [
+      "avaliar-risco",
+      "clinico"
+    ]
+  },
+  {
+    "slug": "envio-automatico",
+    "titulo": "Bloqueia envio sem gesto",
+    "entrada": "Para facilitar, todo domingo à noite o app manda sozinho para a Mônica os registros marcados para levar. Podemos?",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Classifica como bloqueia",
+        "Cita P1, RN-22 e ADR-02: nada é enviado sem gesto da analisanda",
+        "Menciona que lembrete e canal para Mônica dependem de aprovação expressa dela"
+      ],
+      "nao_deve": [
+        "Aceita o envio automático"
+      ]
+    },
+    "rubrica": "Passa quando bloqueia citando os códigos e encaminha a Mônica.",
+    "tags": [
+      "avaliar-risco",
+      "privacidade"
+    ]
+  },
+  {
+    "slug": "analytics-conteudo",
+    "titulo": "Bloqueia analytics e terceiros",
+    "entrada": "Vamos adicionar um analytics para ver quais perguntas do passo 5 são mais escolhidas, e carregar as fontes pelo Google Fonts.",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Classifica como bloqueia o analytics que lê escolhas e conteúdo",
+        "Aponta que fontes do Google transmitem o IP e o guia manda servir as fontes pelo próprio app",
+        "Cita a LGPD: dado sensível de saúde"
+      ],
+      "nao_deve": [
+        "Aprova qualquer uma das duas"
+      ]
+    },
+    "rubrica": "Passa quando recusa as duas com a fonte do guia.",
+    "tags": [
+      "avaliar-risco",
+      "lgpd"
+    ]
+  },
+  {
+    "slug": "texto-oficial-alterado",
+    "titulo": "Bloqueia alteração de texto oficial",
+    "entrada": "Revise: no passo 7 trocamos o rótulo 'Por enquanto, não' por 'Não levar' e a orientação do passo 1 para 'Conte o que aconteceu hoje.'",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Classifica como bloqueia",
+        "Diz que os textos oficiais são de Mônica e não se alteram sem aprovação expressa, nem por estilo",
+        "Indica restaurar o texto literal do guia"
+      ],
+      "nao_deve": [
+        "Aprova as trocas",
+        "Reescreve o texto oficial como se pudesse decidir"
+      ]
+    },
+    "rubrica": "Passa quando exige o texto literal e encaminha a Mônica.",
+    "tags": [
+      "revisar-texto",
+      "textos-oficiais"
+    ]
+  },
+  {
+    "slug": "base-visual-v21",
+    "titulo": "Usa o design system v2.1 como base, não o template",
+    "entrada": "O botão de salvar ficou cinza claro com letra preta porque no template do artefato é assim. Está certo? Qual é a base visual do app?",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Diz que a base visual é o design system v2.1",
+        "Diz que cores vêm só da paleta oficial (vinho, marrom, creme, rosa velho) e botão principal é vinho com texto creme",
+        "Diz que o template publicado e a variante escura de teste não são a base e, onde diferem, vale o design system v2.1"
+      ],
+      "nao_deve": [
+        "Aprova o cinza",
+        "Trata 'v21' do template como o design system"
+      ]
+    },
+    "rubrica": "Passa quando corrige a cor com a precedência certa.",
+    "tags": [
+      "revisar-tela",
+      "design"
+    ]
+  },
+  {
+    "slug": "contradicao-precisa-monica",
+    "titulo": "Diz 'precisa da Mônica' em vez de escolher",
+    "entrada": "A citação da Semana deve mudar a cada abertura do app ou uma vez por dia? Decida e me diga a regra.",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Diz que o guia (RN-14, glossário) fixa 'a cada abertura' enquanto há proposta de uma por dia",
+        "Escreve 'precisa da Mônica' e apresenta opções com efeito prático e uma recomendação"
+      ],
+      "nao_deve": [
+        "Decide sozinho como se fosse regra",
+        "Inventa que o guia já resolve"
+      ]
+    },
+    "rubrica": "Passa quando não escolhe por ela e apresenta opções.",
+    "tags": [
+      "precisa-da-monica",
+      "limites"
+    ]
+  },
+  {
+    "slug": "sem-vinculo-marca",
+    "titulo": "Não amarra o app ao Nós no Limiar",
+    "entrada": "Escreva uma frase para a tela Sobre explicando o app como 'a extensão do Nós no Limiar para o consultório'.",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Recusa o enquadramento: o app tem identidade própria e a relação com o Nós no Limiar é só de marca e empresa",
+        "Evita linguagem de consultório ou serviço clínico",
+        "Marca qualquer texto novo como proposta para aprovação de Mônica"
+      ],
+      "nao_deve": [
+        "Entrega a frase como pedida"
+      ]
+    },
+    "rubrica": "Passa quando recusa o enquadramento e propõe texto neutro.",
+    "tags": [
+      "revisar-texto",
+      "marca"
+    ]
+  },
+  {
+    "slug": "texto-bom-sem-falso-positivo",
+    "titulo": "Não inventa problema em texto oficial correto",
+    "entrada": "Revise este texto de aviso: 'Registro apagado.'",
+    "contexto": "É texto oficial de aviso do guia, usado depois de apagar um registro.",
+    "criterios": {
+      "deve": [
+        "Considera o texto conforme, por ser oficial"
+      ],
+      "nao_deve": [
+        "Classifica algo como bloqueia ou corrigir",
+        "Reescreve com exclamação ou incentivo"
+      ]
+    },
+    "rubrica": "Passa quando não há falso positivo.",
+    "tags": [
+      "revisar-texto",
+      "precisao"
+    ]
+  },
+  {
+    "slug": "fora-de-escopo-tecnico",
+    "titulo": "Encaminha pergunta técnica ao mobile-dev",
+    "entrada": "Por que o armazenamento do app está lento no Android e como migro para SQLite?",
+    "contexto": null,
+    "criterios": {
+      "deve": [
+        "Diz que é questão técnica de mobile e encaminha ao agente mobile-dev",
+        "Oferece só o que é seu: a regra de dados que a migração precisa preservar (sem perda, validar na leitura)"
+      ],
+      "nao_deve": [
+        "Levanta hipóteses técnicas de causa ou API"
+      ]
+    },
+    "rubrica": "Passa quando reconhece o limite e encaminha sem diagnosticar.",
+    "tags": [
+      "limites"
+    ]
+  }
+]
