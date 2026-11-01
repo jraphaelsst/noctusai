@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nosnolimiar.app/schemas/backup.schema.json",
+  "title": "Arquivo de backup do diário (fase 1)",
+  "description": "Gerado por Exportar. Pode estar em claro ou cifrado com senha. Nome sugerido: diario-entre-sessoes-AAAA-MM-DD.json",
+  "oneOf": [{"$ref": "#/$defs/claro"}, {"$ref": "#/$defs/cifrado"}],
+  "$defs": {
+    "claro": {
+      "type": "object",
+      "required": ["formato", "versao", "exportadoEm", "registros", "config"],
+      "properties": {
+        "formato": {"const": "diario-entre-sessoes-backup"},
+        "versao": {"const": 2},
+        "exportadoEm": {"type": "string", "format": "date-time"},
+        "app": {"type": "string", "description": "Versão do app que exportou"},
+        "registros": {"type": "array", "items": {"$ref": "registro.v2.schema.json"}},
+        "config": {"type": "object", "properties": {"nome": {"type": "string"}, "sessao": {"type": "string"}}, "additionalProperties": false}
+      },
+      "additionalProperties": false
+    },
+    "cifrado": {
+      "type": "object",
+      "required": ["formato", "versao", "exportadoEm", "cifra"],
+      "properties": {
+        "formato": {"const": "diario-entre-sessoes-backup-cifrado"},
+        "versao": {"const": 2},
+        "exportadoEm": {"type": "string", "format": "date-time"},
+        "cifra": {
+          "type": "object",
+          "required": ["alg", "kdf", "iteracoes", "sal", "iv", "dados"],
+          "properties": {
+            "alg": {"const": "AES-GCM-256"},
+            "kdf": {"const": "PBKDF2-SHA256"},
+            "iteracoes": {"type": "integer", "minimum": 600000},
+            "sal": {"type": "string", "contentEncoding": "base64"},
+            "iv": {"type": "string", "contentEncoding": "base64"},
+            "dados": {"type": "string", "contentEncoding": "base64", "description": "JSON do formato claro, cifrado"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nosnolimiar.app/schemas/store-localstorage.v1.schema.json",
+  "title": "Valor da chave diario-entre-sessoes:v1",
+  "type": "object",
+  "required": ["records", "seeded"],
+  "properties": {
+    "records": {"type": "array", "items": {"$ref": "registro.v1.schema.json"}},
+    "seeded": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nosnolimiar.app/schemas/registro.v1.schema.json",
+  "title": "Registro v1 (formato gravado hoje no localStorage)",
+  "description": "Uma entrada do diário. Formato legado: pergunta e despertares são índices de lista.",
+  "type": "object",
+  "required": ["id", "ts", "happened", "emotions", "q", "awakened", "bring"],
+  "properties": {
+    "id": {"type": "string", "description": "r + Date.now em base36 + 4 caracteres aleatórios; exemplos usam exemplo-1..3", "minLength": 1, "maxLength": 40},
+    "example": {"type": "boolean", "description": "true só nos registros fictícios pré-carregados"},
+    "ts": {"type": "integer", "description": "Momento do salvamento em milissegundos desde 1970 (UTC)", "minimum": 0},
+    "happened": {"type": "string", "minLength": 1, "maxLength": 1500, "description": "Passo 1, obrigatório"},
+    "mind": {"type": "string", "maxLength": 1500, "description": "Passo 2"},
+    "emotions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/emocaoId"}, "description": "Passo 3"},
+    "did": {"type": "string", "maxLength": 1500, "description": "Passo 4"},
+    "q": {"type": "integer", "minimum": 0, "maximum": 4, "description": "Passo 5: índice em PERGUNTAS"},
+    "answer": {"type": "string", "maxLength": 2000, "description": "Passo 5: resposta opcional"},
+    "awakened": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 0, "maximum": 5}, "description": "Passo 6: índices em DESPERTOU"},
+    "extra": {"type": "string", "maxLength": 1500, "description": "Passo 6: texto extra"},
+    "bring": {"enum": ["sim", "talvez", "nao"], "description": "Passo 7: escolha original"},
+    "levar": {"type": "boolean", "description": "Marcação atual na aba Levar. Ausente significa bring === 'sim'"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "emocaoId": {"enum": ["ansiedade","tristeza","medo","vergonha","culpa","raiva","frustracao","solidao","alegria","paz","amor","carinho","gratidao","alivio","orgulho","nao-sei"]}
+  }
+}

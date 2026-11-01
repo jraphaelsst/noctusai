@@ -1,0 +1,1254 @@
+<title>Diário entre sessões</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,500;1,500&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: coluna de celular de 480px sobre papel creme com grão, logo no topo, colagem em recortes de papel rasgado, cartões areia com botão redondo vinho, abas fixas embaixo. */
+:root{
+  color-scheme:light;
+  --font-display:'Bodoni Moda',Didot,'Times New Roman',serif;
+  --font-body:'Inter',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;
+
+  --paper:#F5EFE5;
+  --outer:#F5EFE5;
+  --sand:rgba(75,41,29,.08);
+  --sand-2:rgba(75,41,29,.16);
+  --field:#F5EFE5;
+  --line:rgba(75,41,29,.16);
+  --ink:#4B291D;
+  --soft:rgba(75,41,29,.88);
+  --wine:#5C0003;
+  --on-wine:#F5EFE5;
+  --rose:#C9826C;
+  --focus:#5C0003;
+
+  --logo:url("data:image/webp;base64,{{LOGO}}");
+  --f1:url("data:image/webp;base64,{{G1}}");
+  --f2:url("data:image/webp;base64,{{G2}}");
+  --f3:url("data:image/webp;base64,{{G3}}");
+  --f4:url("data:image/webp;base64,{{G4}}");
+  --f5:url("data:image/webp;base64,{{G5}}");
+  --f7:url("data:image/webp;base64,{{G7}}");
+  --pa:url("data:image/webp;base64,{{PA}}");
+  --pb:url("data:image/webp;base64,{{PB}}");
+  --pc:url("data:image/webp;base64,{{PC}}");
+  --arr:url("data:image/webp;base64,{{ARR}}");
+  --rod:url("data:image/webp;base64,{{GROD}}");
+  --hero:var(--f7);
+  --w23:url("data:image/webp;base64,{{W23}}");
+  --f6:url("data:image/webp;base64,{{G6}}");
+  --c25:url("data:image/webp;base64,{{C25}}");
+  --torn:url("{{TORN}}");
+  --grain:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .3 0 0 0 0 .2 0 0 0 0 .12 0 0 0 .1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--outer);color:var(--ink);font:400 18px/1.55 var(--font-body)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:var(--paper);z-index:60}
+button,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+svg.i{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+.app{min-height:100%;max-width:480px;margin:0 auto;background-color:var(--paper);background-image:var(--grain);box-shadow:0 0 0 1px var(--line)}
+.pad{padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px))}
+.page{padding-bottom:110px}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* logo */
+.logo{display:block;width:168px;aspect-ratio:640/359;background:var(--logo) center/contain no-repeat}
+.top{display:flex;justify-content:center;padding-top:20px;padding-bottom:6px}
+
+/* tipografia */
+.eyebrow{display:inline-block;margin:10px 0 0;padding:4px 16px;border-radius:999px;background:var(--rose);color:var(--wine);font:700 14px/1.6 var(--font-body);letter-spacing:.08em;text-transform:uppercase}
+.greet{margin:14px 0 18px;font:500 34px/1.04 var(--font-display);text-wrap:balance}
+.sec{margin:0;font:500 25px/1.15 var(--font-display)}
+.sec-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:30px 0 14px}
+.count-note{font-size:15px;color:var(--soft)}
+.title{margin:0 0 10px;font:500 34px/1.04 var(--font-display);text-wrap:balance}
+.lede{margin:0 0 20px;color:var(--soft)}
+
+/* campos em pílula */
+.pillfield{display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 18px;border-radius:999px;background:var(--field);border:1px solid var(--line);margin-bottom:12px}
+.pillfield svg{color:var(--soft)}
+.pillfield input{flex:1;min-width:0;border:0;background:transparent;padding:8px 0;font-size:18px;outline:0}
+.pillfield:focus-within{outline:3px solid var(--focus);outline-offset:2px}
+.pillfield input::placeholder{color:var(--soft);opacity:.85}
+.pf-label{flex:none;font-weight:700;font-size:15px}
+.pillfield.session input{text-align:left}
+input[type="search"]{-webkit-appearance:none;appearance:none}
+
+/* filtros em quadradinhos */
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:20px 0 0}
+.tile{display:flex;flex-direction:column;align-items:center;gap:8px;padding:0;border:0;background:none;cursor:pointer;font-size:14px;line-height:1.25;text-align:center;color:var(--ink)}
+.tile .sq{display:grid;place-items:center;width:58px;height:58px;border-radius:16px;background:var(--sand);color:var(--wine)}
+.tile[aria-pressed="true"] .sq{background:var(--wine);color:var(--on-wine)}
+.tile[aria-pressed="true"]{font-weight:700}
+
+/* botões */
+.btn{display:flex;width:100%;align-items:center;justify-content:center;gap:10px;min-height:56px;padding:12px 24px;border-radius:999px;border:0;background:var(--wine);color:var(--on-wine);font:600 18px/1.25 var(--font-body);text-decoration:none;text-align:center;cursor:pointer}
+.btn svg{width:22px;height:22px;stroke-width:2}
+.btn.ghost{background:transparent;color:var(--wine);box-shadow:inset 0 0 0 1.5px var(--wine)}
+.btn.light{background:var(--paper);color:var(--ink)}
+.btn.sm{display:inline-flex;width:auto;min-height:46px;padding:8px 20px;font-size:20px}
+.btn[aria-disabled="true"],.btn:disabled{opacity:.5;cursor:not-allowed}
+.link{background:none;border:0;padding:8px 0;font-size:16px;font-weight:700;color:var(--wine);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+
+/* destaque */
+
+/* registros */
+.recs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
+details.rec{background:var(--sand);border-radius:24px}
+details.rec summary{list-style:none;cursor:pointer;display:grid;gap:10px;padding:18px 18px 16px;border-radius:24px;position:relative}
+details.rec summary::-webkit-details-marker{display:none}
+.rec-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.when{font-size:14px;font-weight:700;color:var(--soft);font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:2px 12px;border-radius:999px;font:700 14px/1.6 var(--font-body);letter-spacing:.06em;text-transform:uppercase;background:rgba(245,239,229,.7);border:1px solid rgba(75,41,29,.18);color:var(--ink)}
+.tag.wine{background:var(--wine);border-color:var(--wine);color:var(--on-wine)}
+.tag.out{background:transparent;border-color:var(--wine);color:var(--wine)}
+.rec-lead{margin:0;font:500 21px/1.14 var(--font-display);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+details[open] .rec-lead{display:block;overflow:visible}
+.chips-static{display:flex;flex-wrap:wrap;gap:8px;padding-right:56px;min-height:42px;align-items:center}
+.chip-s{display:inline-block;padding:3px 13px;border-radius:999px;background:rgba(245,239,229,.7);font-size:15px;line-height:1.45}
+.chip-s.muted{background:transparent;border:1.5px dashed var(--sand-2);color:var(--soft)}
+.go{position:absolute;right:14px;bottom:14px;display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:var(--wine);color:var(--on-wine)}
+.go svg{width:20px;height:20px;stroke-width:2;transition:transform .15s}
+details[open] .go svg{transform:rotate(90deg)}
+.rec-body{padding:4px 18px 18px;display:grid;gap:16px;border-top:1px solid var(--sand-2);margin:0 18px;padding-left:0;padding-right:0;padding-top:16px}
+.f-label{margin:0 0 2px;font:600 16px/1.3 var(--font-body)}
+.f-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);padding:12px 14px;border-radius:16px;background:var(--field);border:1px solid var(--line);border-left:5px solid var(--wine)}
+.f-label{color:var(--soft)}
+.qa-tag{display:block;margin:0 0 6px;font:700 14px/1 var(--font-body);letter-spacing:.14em;text-transform:uppercase}
+.qa-q{margin:0;padding:14px 16px;border-radius:16px;background:var(--sand);border-left:5px solid var(--rose)}
+.qa-q .qa-tag{color:var(--wine)}
+.qa-q p{margin:0;font:600 18px/1.35 var(--font-body);color:var(--ink)}
+.qa-a{margin-top:10px}
+.qa-a .qa-tag{color:var(--wine)}
+.qa-a .f-text{border-left-color:var(--wine)}
+#q-echo{margin-top:22px}
+#f-answer{border-left:5px solid var(--wine)}
+.del-row{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+.chips-static.plain{padding-right:0;min-height:0}
+.empty{background:var(--sand);border-radius:24px;padding:24px 20px;display:grid;gap:14px;justify-items:start}
+.empty p{margin:0}
+.banner,.ex-bar{background:var(--sand);border-radius:16px;padding:14px 16px;margin:0 0 14px;font-size:16px;line-height:1.45}
+.ex-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px}
+.ex-bar p{margin:0;flex:1 1 220px;min-width:0}
+.ex-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* faixa com a colagem */
+.step-art{position:relative;height:220px;margin-top:6px;background-image:var(--art,var(--f1));background-repeat:no-repeat;background-position:50% 100%;background-size:contain}
+.step-art[data-n="1"]{--art:var(--f1)}
+.step-art[data-n="2"]{--art:var(--f2)}
+.step-art[data-n="3"]{--art:var(--f3)}
+.step-art[data-n="4"]{--art:var(--f4)}
+.step-art[data-n="5"]{--art:var(--f5)}
+.step-art[data-n="6"]{--art:var(--f6)}
+.step-art[data-n="7"],.step-art.cover{--art:var(--f7);height:190px;margin-top:0;background-size:cover;background-position:62% 40%;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 14%);mask-image:linear-gradient(to bottom,transparent 0,#000 14%)}
+.step-art.cover{--art:var(--c25);height:210px;background-position:50% 40%}
+.foot-art{height:110px;background:var(--rod) 50% 100%/cover no-repeat;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 40%);mask-image:linear-gradient(to bottom,transparent 0,#000 40%)}
+.art-wrap{position:relative}
+.back{position:absolute;top:14px;left:max(14px,env(safe-area-inset-left,0px));z-index:2;display:grid;place-items:center;width:46px;height:46px;border-radius:50%;border:0;background:rgba(245,239,229,.9);color:var(--ink);cursor:pointer}
+
+/* passos */
+.prog-label{display:inline-block;margin:16px 0 12px;padding:4px 16px;border-radius:999px;background:var(--rose);color:var(--wine);font:700 14px/1.6 var(--font-body);letter-spacing:.08em;text-transform:uppercase;scroll-margin-top:12px}
+.prog{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;list-style:none;margin:0 0 20px;padding:0}
+.prog li{height:5px;border-radius:3px;background:var(--sand-2)}
+.prog li.done{background:var(--rose)}
+.prog li.now{background:var(--wine)}
+.step-title{margin:0 0 10px;font:500 30px/1.05 var(--font-display);text-wrap:balance}
+.step-title.long{font-size:31px;line-height:1.1}
+.hint{margin:0 0 18px;color:var(--soft)}
+.eg{margin:0 0 14px;padding:12px 14px;border-radius:16px;background:var(--sand);font-size:16px;line-height:1.45;color:var(--soft)}
+.eg b{display:block;margin-bottom:2px;font:700 14px/1.4 var(--font-body);letter-spacing:.14em;text-transform:uppercase;color:var(--wine)}
+.howto{list-style:none;margin:18px 0;padding:0;display:grid;gap:12px;counter-reset:h}
+.howto li{counter-increment:h;position:relative;padding:14px 16px 14px 62px;border-radius:16px;background:var(--sand)}
+.howto li::before{content:counter(h);position:absolute;left:14px;top:12px;width:36px;height:36px;border-radius:50%;background:var(--wine);color:var(--on-wine);display:grid;place-items:center;font:500 17px/1 var(--font-display)}
+.howto strong{display:block;margin-bottom:2px;font:600 18px/1.3 var(--font-body)}
+.howto span{font-size:16px;line-height:1.45;color:var(--soft)}
+.ex-bar{border:2px solid var(--wine);background:var(--field)}
+.ex-bar[hidden]{display:none}
+.pillfield[hidden]{display:none}
+.quote{position:relative;overflow:hidden;border-radius:24px;min-height:250px;display:flex;flex-direction:column;justify-content:center;padding:28px 24px 24px;background-color:var(--sand);background-image:radial-gradient(ellipse 85% 70% at 38% 50%,rgba(234,219,200,.96) 0,rgba(234,219,200,.82) 50%,rgba(234,219,200,0) 100%),var(--arr);background-size:auto,cover;background-position:0 0,50% 50%;background-repeat:no-repeat}
+.q-text{margin:0 0 6px;font:italic 500 24px/1.18 var(--font-display);color:var(--ink);text-wrap:balance}
+.quote.flowers{min-height:170px;background-image:var(--pa);background-size:cover;background-position:50% 50%}
+.quote.flowers.f-levar{background-image:var(--pb)}
+.quote.flowers.f-talvez{background-image:var(--pc)}
+.sec-row[hidden]{display:none}
+.q-text.long{font-size:24px}
+.q-foot{margin-top:6px}
+.q-by{font-size:15px;line-height:1.35;color:var(--soft)}
+.q-by b{display:block;font:700 14px/1.4 var(--font-body);letter-spacing:.14em;text-transform:uppercase;color:var(--wine)}
+.saved{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;margin:0 0 14px;padding:14px 16px;border-radius:16px;background:var(--wine);color:var(--on-wine);font-size:16px;line-height:1.4}
+.saved p{margin:0;flex:1 1 200px}
+.saved .btn{background:var(--paper);color:var(--wine)}
+.lv-list{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:10px}
+.lv{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;border-radius:16px;background:var(--sand);border:1.5px solid transparent;cursor:pointer}
+.lv .box{flex:none;width:26px;height:26px;margin-top:2px;border:2px solid var(--soft);border-radius:8px;display:grid;place-items:center;font-size:17px;font-weight:700;line-height:1;color:var(--on-wine)}
+.lv input:checked ~ .box{background:var(--wine);border-color:var(--wine)}
+.lv input:checked ~ .box::after{content:"\2713"}
+.lv:has(input:checked){background:var(--field);border-color:var(--wine)}
+.lv input:focus-visible ~ .box{outline:3px solid var(--focus);outline-offset:2px}
+.lv-body{display:grid;gap:3px;min-width:0}
+.lv-text{overflow-wrap:anywhere}
+.lv-count{margin:18px 0 0;font:700 14px/1.4 var(--font-body);letter-spacing:.12em;text-transform:uppercase;color:var(--soft)}
+.note-box{margin:0 0 14px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:var(--field);font-size:16px;line-height:1.45;color:var(--soft)}
+.hint.intro{color:var(--ink)}
+.mini-label{display:block;margin:22px 0 10px;font:600 18px/1.3 var(--font-body)}
+.field{display:block;width:100%;min-height:150px;padding:14px 16px;border:1.5px solid var(--line);border-radius:16px;background:var(--field);color:var(--ink);font-size:18px;line-height:1.5;resize:vertical}
+.field::placeholder{color:var(--soft);opacity:.8}
+.field:focus-visible{border-color:var(--wine);outline-offset:1px}
+.field.short{min-height:110px}
+.err{margin:14px 0 0;font-weight:700;color:var(--wine)}
+.actions{margin-top:24px}
+
+.sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.opt{position:relative}
+.pick:focus-visible + label{outline:3px solid var(--focus);outline-offset:2px}
+.chips{display:flex;flex-wrap:wrap;gap:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:50px;padding:10px 20px;border-radius:999px;border:1.5px solid transparent;background:var(--sand);cursor:pointer;line-height:1.2}
+.pick:checked + .chip{background:var(--wine);color:var(--on-wine);font-weight:700}
+.pick:checked + .chip::before{content:"\2713"}
+.choices{display:grid;gap:10px}
+.choice{display:flex;gap:14px;align-items:center;padding:13px 16px;border:1.5px solid transparent;border-radius:16px;background:var(--field);cursor:pointer;line-height:1.4;box-shadow:0 4px 16px rgba(75,41,29,.08)}
+.choice::before{content:"";flex:none;width:24px;height:24px;border:2px solid var(--soft);border-radius:7px;display:grid;place-items:center;text-align:center;line-height:20px;font-size:15px;font-weight:700}
+.choice.r::before{border-radius:50%}
+.ctext{display:block;min-width:0}
+.pick:checked + .choice{border-color:var(--wine);background:var(--sand)}
+.pick:checked + .choice::before{background:var(--wine);border-color:var(--wine);color:var(--on-wine)}
+.pick:checked + .choice.c::before{content:"\2713"}
+.pick:checked + .choice.r::before{box-shadow:inset 0 0 0 4px var(--sand)}
+.choice.q::before{display:none}
+.choice.q::after{content:"";flex:none;margin-left:auto;width:24px;height:24px;border:2px solid var(--soft);border-radius:50%}
+.pick:checked + .choice.q::after{background:var(--wine);border-color:var(--wine);box-shadow:inset 0 0 0 4px var(--sand)}
+.qicon{flex:none;display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:var(--sand);color:var(--wine)}
+.pick:checked + .choice .qicon{background:var(--paper)}
+.qn{display:block;font:700 14px/1.5 var(--font-body);letter-spacing:.06em;text-transform:uppercase;color:var(--soft);margin-bottom:2px}
+.qt{display:block;font:600 17px/1.3 var(--font-body)}
+
+/* resumo */
+.period{margin:0 0 6px;font:700 14px/1.5 var(--font-body);letter-spacing:.06em;text-transform:uppercase;color:var(--soft);font-variant-numeric:tabular-nums}
+.bignum{display:flex;align-items:baseline;gap:12px;margin:10px 0 0;font:500 21px/1 var(--font-display)}
+.bignum span{font:500 59px/1 var(--font-display);font-variant-numeric:lining-nums;color:var(--wine)}
+.block{margin-top:34px}
+.block h3{margin:0 0 14px;font:500 25px/1.1 var(--font-display)}
+.bars,.ranked,.takes{list-style:none;margin:0;padding:0;display:grid;gap:12px}
+.bar-row{display:grid;grid-template-columns:minmax(96px,32%) 1fr 2.4ch;gap:12px;align-items:center}
+.bar-label{min-width:0;overflow-wrap:anywhere;line-height:1.3}
+.bar-track{height:14px;border-radius:7px;background:var(--sand);overflow:hidden}
+.bar-fill{display:block;height:100%;border-radius:7px;background:var(--rose)}
+.bar-n{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.ranked li{display:flex;gap:12px;align-items:baseline}
+.count{flex:none;min-width:2.6ch;font:500 20px/1 var(--font-display);color:var(--wine)}
+.take{display:grid;gap:2px;background:var(--sand);border-radius:16px;padding:12px 16px}
+.take-date{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;font-size:14px;font-weight:700;color:var(--soft);font-variant-numeric:tabular-nums}
+.take-text{overflow-wrap:anywhere}
+.sub{margin:16px 0 8px;font:600 18px/1.3 var(--font-body)}
+.muted-p{margin:0;color:var(--soft)}
+.msg{display:block;width:100%;min-height:230px;padding:14px 16px;border:1.5px solid var(--line);border-radius:16px;background:var(--field);color:var(--ink);font-size:16px;line-height:1.5;resize:vertical}
+.send{display:grid;gap:12px;margin-top:14px}
+.small{margin:0;font-size:15px;color:var(--soft);line-height:1.45}
+
+/* rodapé */
+.foot{margin-top:0;padding-top:20px;display:grid;gap:12px;font-size:16px;line-height:1.5;color:var(--soft)}
+.foot p{margin:0}
+.foot .credit{font-size:15px}
+.foot a{color:var(--wine);font-weight:700}
+.foot .urgent{padding:16px;border-radius:16px;background:var(--sand);color:var(--ink);font-size:18px;font-weight:700;line-height:1.5;display:grid;gap:10px}
+
+/* abas */
+.tabbar{position:fixed;left:50%;transform:translateX(-50%);bottom:0;z-index:20;width:100%;max-width:480px;background-color:var(--paper);background-image:var(--grain);border-top:1px solid var(--line);padding-top:6px;padding-bottom:calc(6px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:2px}
+.tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:64px;padding:6px 0;border:0;background:transparent;color:var(--soft);font:500 13px/1.2 var(--font-body);white-space:nowrap;cursor:pointer}
+.tab svg.i{width:26px;height:26px}
+.tab[aria-selected="true"]{color:var(--wine);font-weight:700}
+.tab[aria-selected="true"] .fillable{fill:currentColor}
+.tab[aria-selected="true"] .plus{stroke:var(--paper)}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(90px + env(safe-area-inset-bottom,0px));width:max-content;max-width:min(440px,calc(100% - 32px));padding:12px 20px;border-radius:999px;background:var(--wine);color:var(--on-wine);font-weight:700;font-size:16px;line-height:1.35;text-align:center;z-index:70}
+
+/* abertura */
+.splash{position:fixed;inset:0;z-index:80;background-color:var(--paper);background-image:var(--grain);overflow-y:auto}
+.splash-in{max-width:480px;min-height:100%;margin:0 auto;display:flex;flex-direction:column}
+.splash .logo{width:230px;margin:24px auto 0}
+.hero{position:relative;margin-top:12px;height:clamp(260px,46vh,420px);background:var(--w23) 50% 38%/cover no-repeat;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 10%,#000 78%,transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 10%,#000 78%,transparent 100%)}
+.splash h2{margin:6px 0 12px;font:500 33px/1.04 var(--font-display);text-wrap:balance}
+.splash p{margin:0 0 22px;color:var(--soft)}
+.splash .by{margin:18px 0 0;font-size:14px;line-height:1.45;text-align:center}
+.splash-body{padding-bottom:max(28px,env(safe-area-inset-bottom,0px))}
+
+@media (prefers-reduced-motion: reduce){
+  .go svg{transition:none}
+}
+
+/* tema escuro com parcimônia: vinho e marrom só em quatro pontos */
+.bignum{padding:20px 24px;border-radius:24px;background:var(--wine);color:var(--on-wine)}
+.bignum span{color:var(--on-wine)}
+.foot .urgent{background:var(--rose);color:var(--wine);border-radius:24px;padding:20px}
+.foot .urgent a{color:var(--wine);text-decoration:underline;text-underline-offset:3px}
+.tab[aria-selected="true"]{position:relative}
+.tab[aria-selected="true"]::before{content:"";position:absolute;top:0;left:22%;right:22%;height:3px;border-radius:0 0 3px 3px;background:var(--wine)}
+.btn:active{opacity:.88;transform:translateY(1px)}
+.btn,.chip,.choice,.tile .sq,.go svg{transition:background-color .18s ease-out,opacity .12s ease-out,transform .12s ease-out}
+.btn.light:focus-visible,.saved .btn:focus-visible{outline-color:var(--on-wine)}
+.pillfield,.field,.msg,.choice,.chip{border-color:var(--line)}
+.field,.msg,.pillfield{background:var(--paper)}
+.hint,.lede{font-size:18px;line-height:1.55}
+@media (max-width:359px){
+  .pad{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .greet,.title{font-size:30px}
+}
+@media (prefers-reduced-motion: reduce){
+  *{transition:none!important;animation:none!important}
+  .btn:active{transform:none}
+}
+</style>
+
+<div class="app" id="app">
+  <header class="top pad">
+    <div class="logo" role="img" aria-label="Nós no Limiar, vida adulta contemporânea"></div>
+  </header>
+
+  <main class="page">
+    <h1 class="sr-only">Diário entre sessões</h1>
+    <div class="pad"><div id="aviso-storage" class="banner" hidden>Este navegador não está guardando dados agora, o que costuma acontecer em aba anônima. Os registros desta visita somem quando você fechar a página.</div></div>
+
+    <section id="panel-semana" role="tabpanel" aria-labelledby="tab-semana">
+      <div class="pad">
+        <p class="eyebrow">Diário entre sessões</p>
+        <h2 class="greet" id="greet">Olá,<br>que bom ter você aqui!</h2>
+
+        <label class="pillfield" for="nome" id="nome-pill">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 20c.6-3.7 3.6-5.8 7-5.8s6.4 2.1 7 5.8"/></svg>
+          <span class="pf-label">Meu nome</span>
+          <input id="nome" type="text" maxlength="30" autocomplete="given-name" placeholder="seu nome">
+        </label>
+
+        <label class="pillfield session" for="sessao">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14" rx="2.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></svg>
+          <span class="pf-label">Minha sessão</span>
+          <input id="sessao" type="text" maxlength="40" autocomplete="off" placeholder="ex.: quintas, 18h">
+        </label>
+        <div id="saved-note"></div>
+        <div id="ex-bar" class="ex-bar" hidden></div>
+
+        <div class="sec-row" id="quote-head"><h3 class="sec">Uma frase para hoje</h3></div>
+        <div id="feature"></div>
+
+        <div class="sec-row"><h3 class="sec">Seus registros</h3><span class="count-note" id="semana-count"></span></div>
+
+        <label class="pillfield" for="busca">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+          <input id="busca" type="search" autocomplete="off" placeholder="Buscar nos meus registros..." aria-label="Buscar nos meus registros">
+        </label>
+
+        <div class="tiles" id="tiles" role="group" aria-label="Filtrar registros"></div>
+
+        <ul id="lista" class="recs"></ul>
+      </div>
+    </section>
+
+    <section id="panel-novo" role="tabpanel" aria-labelledby="tab-novo" hidden>
+      <div class="art-wrap">
+        <div class="step-art" id="step-art" data-n="1"></div>
+        <button type="button" class="back" id="btn-back" aria-label="Voltar">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+      </div>
+      <form id="form" class="pad" novalidate autocomplete="off">
+        <p class="prog-label" id="prog-label">Passo 1 de 7</p>
+        <ol class="prog" id="prog" aria-hidden="true"><li></li><li></li><li></li><li></li><li></li><li></li><li></li></ol>
+
+        <div class="step" data-step="1">
+          <h2 class="step-title" id="s1-t">O que aconteceu?</h2>
+          <p class="hint" id="s1-h">Conte do seu jeito, em poucas linhas: o que te marcou nesse dia, o que você não quer esquecer. Pode ser algo grande ou um detalhe.</p>
+          <p class="eg"><b>Por exemplo</b>Minha mãe ligou e perguntou de novo quando eu ia visitar. Respondi que ia ver e desliguei rápido.</p>
+          <textarea id="f-happened" class="field" rows="5" maxlength="1500" placeholder="Escreva aqui o que aconteceu..." aria-labelledby="s1-t s1-h"></textarea>
+        </div>
+
+        <div class="step" data-step="2" hidden>
+          <h2 class="step-title" id="s2-t">O que veio à sua mente?</h2>
+          <p class="hint" id="s2-h">O primeiro pensamento, lembrança ou imagem que apareceu, sem filtrar. Pode parecer solto, contraditório ou sem sentido.</p>
+          <p class="eg"><b>Por exemplo</b>Lembrei dos almoços de domingo na casa dela. Senti o cheiro da panela de pressão.</p>
+          <textarea id="f-mind" class="field" rows="5" maxlength="1500" placeholder="Escreva o que veio à sua mente..." aria-labelledby="s2-t s2-h"></textarea>
+        </div>
+
+        <div class="step" data-step="3" hidden>
+          <h2 class="step-title" id="s3-t">Qual emoção veio junto?</h2>
+          <p class="hint">Toque nas emoções que reconhece, quantas quiser, ou nenhuma. Se não souber nomear, marque "não sei nomear".</p>
+          <div class="chips" id="emo-box" role="group" aria-labelledby="s3-t"></div>
+        </div>
+
+        <div class="step" data-step="4" hidden>
+          <h2 class="step-title" id="s4-t">O que você fez?</h2>
+          <p class="hint" id="s4-h">Opcional. O que você fez logo depois, ou deixou de fazer: um gesto, uma fala, um silêncio.</p>
+          <p class="eg"><b>Por exemplo</b>Fiquei olhando o telefone um tempo e depois lavei a louça.</p>
+          <textarea id="f-did" class="field short" rows="4" maxlength="1500" placeholder="Escreva o que você fez..." aria-labelledby="s4-t s4-h"></textarea>
+        </div>
+
+        <div class="step" data-step="5" hidden>
+          <h2 class="step-title" id="s5-t">Uma pergunta para hoje</h2>
+          <p class="hint intro">Você não precisa encontrar uma resposta imediatamente. Algumas perguntas nos fazem perceber coisas que nunca havíamos considerado. Escreva o que vier à sua mente, mesmo que pareça contraditório ou difícil de explicar.</p>
+          <p class="mini-label" id="q-legend" style="margin-top:0">Escolha a pergunta que mais chamar sua atenção.</p>
+          <div class="choices" id="q-box" role="radiogroup" aria-labelledby="q-legend"></div>
+          <div id="q-answer" hidden>
+            <div class="qa-q" id="q-echo"><span class="qa-tag">Pergunta escolhida</span><p id="q-echo-t"></p></div>
+            <label class="mini-label" for="f-answer" style="margin-top:16px;color:var(--wine)">Sua resposta</label>
+            <textarea id="f-answer" class="field" rows="5" maxlength="2000" placeholder="Escreva aqui, se quiser..."></textarea>
+          </div>
+        </div>
+
+        <div class="step" data-step="6" hidden>
+          <h2 class="step-title long" id="s6-t">O que essa pergunta despertou em você?</h2>
+          <p class="hint">Escolha as opções que mais combinam com sua experiência. Não existe resposta certa.</p>
+          <div class="choices" id="aw-box" role="group" aria-labelledby="s6-t"></div>
+          <label class="mini-label" for="f-extra">Quer guardar mais alguma coisa dessa reflexão?</label>
+          <textarea id="f-extra" class="field short" rows="4" maxlength="1500" placeholder="Por exemplo: uma frase que ficou, uma dúvida, algo que você quer lembrar..."></textarea>
+        </div>
+
+        <div class="step" data-step="7" hidden>
+          <h2 class="step-title long" id="s7-t">Tem alguma coisa sobre isso que você gostaria de conversar na sua próxima sessão?</h2>
+          <p class="hint">Se marcar Sim, o registro já vem marcado na aba Levar. Você pode mudar essa escolha depois, quando quiser, e só envia para a Mônica se decidir.</p>
+          <div class="choices" id="bring-box" role="radiogroup" aria-labelledby="s7-t"></div>
+        </div>
+
+        <p class="err" id="err" role="alert" hidden></p>
+        <div class="actions">
+          <button type="button" class="btn" id="btn-next">Continuar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="panel-como" role="tabpanel" aria-labelledby="tab-como" hidden>
+      <div class="art-wrap"><div class="step-art" data-n="7"></div></div>
+      <div class="pad">
+        <h2 class="title">Como usar o diário</h2>
+        <p class="hint intro">Este é um espaço seu para escrever o que acontece entre uma sessão e outra. Tudo fica guardado só neste aparelho, e a Mônica recebe apenas o que você decidir enviar.</p>
+        <ol class="howto">
+          <li><strong>Apague os exemplos</strong><span>Na aba Semana, toque em "Apagar os exemplos". Eles estão ali só para você ver como o diário fica.</span></li>
+          <li><strong>Escreva seu nome e o dia da sessão</strong><span>No alto da Semana, preencha "Meu nome" e "Minha sessão". Fica salvo.</span></li>
+          <li><strong>Faça um registro quando algo marcar seu dia</strong><span>Toque em "Registrar". São 7 passos curtos, e cada um traz um exemplo do que escrever.</span></li>
+          <li><strong>Escolha uma pergunta para hoje</strong><span>No passo 5 há cinco perguntas. Toque na que mais chamar sua atenção e escreva o que vier, mesmo que pareça contraditório. Escrever a resposta é opcional.</span></li>
+          <li><strong>Decida se quer levar para a análise</strong><span>No último passo, marque Sim, Talvez ou Por enquanto, não. Depois toque em "Salvar registro".</span></li>
+          <li><strong>Releia seus registros</strong><span>Na Semana, toque num cartão para abrir. Os botões redondos filtram a lista e a busca procura uma palavra. Na aba Resumo você vê o que mais apareceu nos últimos 7 dias.</span></li>
+          <li><strong>Escolha o que levar e mande para a Mônica</strong><span>Na aba Levar, marque os registros que quer levar, de qualquer data. Depois toque em "Copiar texto pra mandar pra Mônica", ou abra o WhatsApp com o texto pronto. Você confere e toca em enviar. Nada é enviado sozinho.</span></li>
+        </ol>
+        <p class="note-box">Seus registros ficam só neste aparelho e neste navegador. Se você limpar os dados do navegador ou trocar de aparelho, eles não vão junto.</p>
+      </div>
+    </section>
+
+    <section id="panel-levar" role="tabpanel" aria-labelledby="tab-levar" hidden>
+      <div class="art-wrap"><div class="step-art" data-n="4"></div></div>
+      <div class="pad">
+        <h2 class="title">Levar à análise</h2>
+        <p class="hint intro">Marque os registros que você quer levar para a Mônica. Os que você marcou "Sim" já vêm marcados. Os outros ficam aqui, de qualquer data, para você incluir quando quiser.</p>
+        <p class="lv-count" id="lv-count"></p>
+        <ul class="lv-list" id="lv-list"></ul>
+        <div id="lv-send"></div>
+      </div>
+    </section>
+
+    <section id="panel-resumo" role="tabpanel" aria-labelledby="tab-resumo" hidden>
+      <div class="art-wrap"><div class="step-art cover"></div></div>
+      <div class="pad">
+        <p class="period" id="res-periodo" style="margin-top:14px"></p>
+        <h2 class="title">Resumo dos últimos 7 dias</h2>
+        <div id="res-body"></div>
+      </div>
+    </section>
+
+    <div class="foot-art" aria-hidden="true"></div>
+    <footer class="foot pad">
+      <p class="credit">Mônica Tangerino, Psicanalista Clínica e Escritora do livro <i>Funcionar Não é Estar Bem</i></p>
+      <div class="urgent">
+        <p><strong>Este diário ajuda entre as sessões, mas não substitui a análise. Se estiver difícil agora, ou se sentir que pode se machucar ou que não consegue se manter segura, ligue para o SAMU <a href="tel:192">192</a> ou vá a um pronto atendimento. O CVV também atende pelo <a href="tel:188">188</a>, gratuitamente, 24 horas por dia.</strong></p>
+      </div>
+    </footer>
+  </main>
+
+  <nav class="tabbar" aria-label="Seções do diário">
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab" role="tab" id="tab-semana" aria-controls="panel-semana" aria-selected="true" data-tab="semana">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path class="fillable" d="M4 11l8-6.5L20 11v8.5a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>Semana
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-novo" aria-controls="panel-novo" aria-selected="false" tabindex="-1" data-tab="novo">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle class="fillable" cx="12" cy="12" r="8.5"/><path class="plus" d="M12 8v8M8 12h8"/></svg>Registrar
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-levar" aria-controls="panel-levar" aria-selected="false" tabindex="-1" data-tab="levar">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path class="fillable" d="M20.5 3.5L3.5 10.5l6.5 3 3 6.5z"/><path class="plus" d="M10 13.5l5-5"/></svg>Levar
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-resumo" aria-controls="panel-resumo" aria-selected="false" tabindex="-1" data-tab="resumo">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect class="fillable" x="5" y="11" width="3.5" height="8" rx="1"/><rect class="fillable" x="10.25" y="5" width="3.5" height="14" rx="1"/><rect class="fillable" x="15.5" y="9" width="3.5" height="10" rx="1"/></svg>Resumo
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-como" aria-controls="panel-como" aria-selected="false" tabindex="-1" data-tab="como">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle class="fillable" cx="12" cy="12" r="8.5"/><path class="plus" d="M9.8 9.6a2.3 2.3 0 1 1 3.4 2c-.8.5-1.2 1-1.2 1.9M12 16.6v.1"/></svg>Como usar
+      </button>
+    </div>
+  </nav>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<section id="splash" class="splash" aria-labelledby="splash-t" hidden>
+  <div class="splash-in">
+    <div class="logo" role="img" aria-label="Nós no Limiar, vida adulta contemporânea"></div>
+    <div class="hero" aria-hidden="true"></div>
+    <div class="pad splash-body">
+      <h2 id="splash-t">Um espaço seu entre uma sessão e outra.</h2>
+      <p>Escreva o que vier, do seu jeito. Os registros ficam só neste aparelho, e a Mônica só recebe o que você decidir enviar.</p>
+      <label class="pillfield splash-name" for="nome-inicial">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 20c.6-3.7 3.6-5.8 7-5.8s6.4 2.1 7 5.8"/></svg>
+        <span class="pf-label">Meu nome</span>
+        <input id="nome-inicial" type="text" maxlength="30" autocomplete="given-name" placeholder="seu nome" aria-describedby="nome-ajuda">
+      </label>
+      <p class="small" id="nome-ajuda" style="margin:0 0 6px">Você escreve uma vez só. Nas próximas vezes, o diário já abre com o seu nome.</p>
+      <p class="err" id="nome-erro" role="alert" hidden>Escreva seu nome para começar.</p>
+      <button type="button" class="btn" id="btn-start">Começar agora</button>
+      <p class="by">Mônica Tangerino<br>Psicanalista Clínica e Escritora do livro <i>Funcionar Não é Estar Bem</i></p>
+    </div>
+  </div>
+</section>
+
+<script>
+(function(){
+  'use strict';
+  document.documentElement.lang = 'pt-BR';
+
+  /* ---------- conteúdo fixo ---------- */
+  var WHATSAPP = '5511975518400';
+  var WHATSAPP_VISIVEL = '(11) 97551-8400';
+
+  var EMOCOES = [
+    ['ansiedade','Ansiedade'],['tristeza','Tristeza'],['medo','Medo'],['vergonha','Vergonha'],
+    ['culpa','Culpa'],['raiva','Raiva'],['frustracao','Frustração'],['solidao','Solidão'],
+    ['alegria','Alegria'],['paz','Paz'],['amor','Amor'],['carinho','Carinho'],
+    ['gratidao','Gratidão'],['alivio','Alívio'],['orgulho','Orgulho'],
+    ['nao-sei','Não sei nomear']
+  ];
+  var EMO_LABEL = {};
+  EMOCOES.forEach(function(e){ EMO_LABEL[e[0]] = e[1]; });
+
+  var PERGUNTAS = [
+    {icon:'heart', full:'O que você gosta de fazer simplesmente porque sente prazer, mesmo que isso não tenha nenhuma utilidade prática?'},
+    {icon:'star', full:'Quando foi a última vez que você se surpreendeu positivamente com alguma atitude sua? O que aconteceu?'},
+    {icon:'loop', full:'Existe alguma coisa que você faz por costume, mas que hoje talvez já não combine tanto com quem você é?'},
+    {icon:'user', full:'Em quais momentos do seu dia você sente que pode ser você mesma, sem se preocupar tanto com o que os outros vão pensar?'},
+    {icon:'sprout', full:'Se você pudesse dar um pouco mais de espaço para uma vontade sua nesta semana, qual seria?'}
+  ];
+
+  var DESPERTOU = [
+    'Lembrei de uma situação que vivi.',
+    'Percebi algo que ainda não tinha pensado.',
+    'Fiquei curiosa para entender melhor isso.',
+    'Senti vontade de escrever mais.',
+    'Não soube muito bem o que responder.',
+    'Foi bom dedicar um momento a mim.'
+  ];
+
+  var BRING = [['sim','Sim'],['talvez','Talvez'],['nao','Por enquanto, não']];
+  var BRING_LABEL = {sim:'Sim', talvez:'Talvez', nao:'Por enquanto, não'};
+
+  var ICONS = {
+    list:'<path d="M5 7h14M5 12h14M5 17h9"/>',
+    calendar:'<rect x="4" y="5.5" width="16" height="14" rx="2.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>',
+    heart:'<path d="M12 19.5s-7-4.3-7-9.6A3.9 3.9 0 0 1 12 7.6a3.9 3.9 0 0 1 7 2.3c0 5.3-7 9.6-7 9.6z"/>',
+    bookmark:'<path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-4-6 4V5.5a1 1 0 0 1 1-1z"/>',
+    arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>',
+    star:'<path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.2 7.2 18.9l1-5.4-4-3.8 5.4-.7z"/>',
+    loop:'<path d="M5 12a7 7 0 0 1 12-4.9L19 9M19 12a7 7 0 0 1-12 4.9L5 15"/><path d="M19 4v5h-5M5 20v-5h5"/>',
+    user:'<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-4 3.6-6 7-6s6.2 2 7 6"/>',
+    sprout:'<path d="M12 20v-8M12 12c0-4-3-6-7-6 0 4 3 6 7 6zM12 14c0-3 2.5-5 6-5 0 3-2.5 5-6 5z"/>'
+  };
+  function icon(name){
+    var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 24 24');
+    s.setAttribute('class', 'i');
+    s.setAttribute('aria-hidden', 'true');
+    s.innerHTML = ICONS[name] || '';
+    return s;
+  }
+
+  /* ---------- armazenamento (só no navegador) ---------- */
+  var STORE_KEY = 'diario-entre-sessoes:v1';
+  var SESSION_KEY = 'diario-entre-sessoes:sessao';
+  var NAME_KEY = 'diario-entre-sessoes:nome';
+  var SEEN_KEY = 'diario-entre-sessoes:abertura';
+  var storageOK = true;
+
+  function lsGet(k){
+    try { return window.localStorage.getItem(k); } catch(e){ storageOK = false; return null; }
+  }
+  function lsSet(k, v){
+    try { window.localStorage.setItem(k, v); return true; } catch(e){ storageOK = false; return false; }
+  }
+  lsSet('diario-entre-sessoes:teste', '1');
+
+  var store = {records: [], seeded: false};
+  (function load(){
+    var raw = lsGet(STORE_KEY);
+    if (!raw) return;
+    try {
+      var p = JSON.parse(raw);
+      if (p && Array.isArray(p.records)) store = {records: p.records, seeded: !!p.seeded};
+    } catch(e){}
+  })();
+  function persist(){ lsSet(STORE_KEY, JSON.stringify(store)); }
+
+  function seedExamples(){
+    var now = Date.now(), day = 86400000;
+    function at(daysAgo, h, m){
+      var d = new Date(now - daysAgo * day);
+      d.setHours(h, m, 0, 0);
+      return d.getTime();
+    }
+    store.records.push(
+      {id:'exemplo-1', example:true, ts:at(1,21,40),
+       happened:'Minha mãe ligou e perguntou, de novo, quando eu ia visitar. Respondi que ia ver e desliguei rápido.',
+       mind:'Lembrei dos almoços de domingo na casa dela. Senti o cheiro da panela de pressão.',
+       emotions:['culpa','frustracao'],
+       did:'Fiquei olhando o telefone um tempo e depois lavei a louça.',
+       q:2, answer:'Visitar todo domingo. Faço isso desde sempre e nunca perguntei se quero.',
+       awakened:[0,1,3], extra:'', bring:'sim'},
+      {id:'exemplo-2', example:true, ts:at(3,18,15),
+       happened:'Na reunião de segunda eu quase não falei. Voltei pra casa cansada.',
+       mind:'Pensei que era melhor ficar quieta. Depois me perguntei de quem era essa regra.',
+       emotions:['vergonha','solidao'],
+       did:'',
+       q:3, answer:'No carro, sozinha, com o rádio ligado.',
+       awakened:[2,3], extra:'Queria entender por que o carro é esse lugar.', bring:'talvez'},
+      {id:'exemplo-3', example:true, ts:at(5,9,20),
+       happened:'Sábado de manhã, sem compromisso. Fui a pé até a padaria só pelo passeio.',
+       mind:'Veio a lembrança de caminhar sem destino quando eu era mais nova.',
+       emotions:[],
+       did:'Voltei por outro caminho.',
+       q:0, answer:'Caminhar sem destino, ouvir música alta, ficar sem pressa.',
+       awakened:[5], extra:'', bring:'nao'}
+    );
+    store.seeded = true;
+    persist();
+  }
+  if (!store.seeded) seedExamples();
+
+  /* ---------- utilidades ---------- */
+  var DIAS = ['dom','seg','ter','qua','qui','sex','sáb'];
+  function p2(n){ return String(n).padStart(2,'0'); }
+  function fmtDM(d){ return p2(d.getDate()) + '/' + p2(d.getMonth()+1); }
+  function fmtWhen(ts){
+    var d = new Date(ts);
+    return DIAS[d.getDay()] + ' ' + fmtDM(d) + ' · ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+  function clip(s, n){
+    s = String(s || '').replace(/\s+/g,' ').trim();
+    if (s.length <= n) return s;
+    var c = s.slice(0, n), i = c.lastIndexOf(' ');
+    return (i > n * 0.6 ? c.slice(0, i) : c).replace(/[.,;:!?]+$/,'') + '…';
+  }
+  function norm(s){
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+  function weekRange(){
+    var now = new Date();
+    var start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+    return {start: start, startDate: new Date(start), endDate: now};
+  }
+  function $(s, r){ return (r || document).querySelector(s); }
+  function el(tag, attrs){
+    var n = document.createElement(tag);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function(k){
+      var v = attrs[k];
+      if (v == null || v === false) return;
+      if (k === 'class') n.className = v;
+      else if (k === 'text') n.textContent = v;
+      else if (k.indexOf('on') === 0) n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v === true ? '' : v);
+    });
+    for (var i = 2; i < arguments.length; i++){
+      var kids = [].concat(arguments[i]);
+      for (var j = 0; j < kids.length; j++){
+        var c = kids[j];
+        if (c == null || c === false) continue;
+        n.append(c.nodeType ? c : document.createTextNode(String(c)));
+      }
+    }
+    return n;
+  }
+  function byId(id){ return document.getElementById(id); }
+  function val(id){ return byId(id).value.trim(); }
+  function reduceMotion(){
+    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; }
+  }
+
+  var toastTimer = null;
+  function toast(msg){
+    var t = byId('toast');
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ t.hidden = true; }, 3200);
+  }
+
+  /* ---------- sessão editável ---------- */
+  var nomeInput = byId('nome');
+  function aplicarNome(){
+    var n = nomeInput.value.trim();
+    var g = byId('greet');
+    g.textContent = '';
+    g.append(n ? 'Olá, ' + n + ',' : 'Olá,', document.createElement('br'), 'que bom ter você aqui!');
+  }
+  var nomeSalvo = lsGet(NAME_KEY);
+  if (nomeSalvo) nomeInput.value = nomeSalvo;
+  function esconderNomeSeCadastrado(){ byId('nome-pill').hidden = !!(nomeInput.value || '').trim(); }
+  aplicarNome();
+  if (nomeSalvo && nomeSalvo.trim()) esconderNomeSeCadastrado();
+  nomeInput.addEventListener('input', function(){ lsSet(NAME_KEY, nomeInput.value); aplicarNome(); });
+  var sessaoInput = byId('sessao');
+  var sessaoSalva = lsGet(SESSION_KEY);
+  if (sessaoSalva) sessaoInput.value = sessaoSalva;
+  sessaoInput.addEventListener('input', function(){ lsSet(SESSION_KEY, sessaoInput.value); });
+
+  if (!storageOK) byId('aviso-storage').hidden = false;
+
+  /* ---------- abas ---------- */
+  var TABS = ['semana','novo','levar','resumo','como'];
+  var tabEls = TABS.map(function(t){ return byId('tab-' + t); });
+
+  function show(tab, noScroll){
+    TABS.forEach(function(t, i){
+      var on = t === tab;
+      byId('panel-' + t).hidden = !on;
+      tabEls[i].setAttribute('aria-selected', on ? 'true' : 'false');
+      tabEls[i].tabIndex = on ? 0 : -1;
+    });
+    if (tab !== 'semana') savedNote = false;
+    if (tab === 'semana') renderSemana();
+    if (tab === 'levar') renderLevar();
+    if (tab === 'resumo') renderResumo();
+    if (!noScroll) window.scrollTo(0, 0);
+  }
+  tabEls.forEach(function(b, i){
+    b.addEventListener('click', function(){ show(b.getAttribute('data-tab')); });
+    b.addEventListener('keydown', function(e){
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft'){
+        var j = (i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length;
+        tabEls[j].focus();
+        tabEls[j].click();
+        e.preventDefault();
+      }
+    });
+  });
+
+  /* ---------- aba SEMANA ---------- */
+  var filtro = 'todos';
+  var busca = '';
+  var exConfirm = false;
+
+  var savedNote = false;
+  function isLevar(r){ return typeof r.levar === 'boolean' ? r.levar : r.bring === 'sim'; }
+
+  var CITACOES = [["O eu não é senhor em sua própria casa.","Sigmund Freud","Uma dificuldade no caminho da psicanálise, 1917"],["O inconsciente é estruturado como uma linguagem.","Jacques Lacan","Seminário 11"],["Quem olha para fora sonha; quem olha para dentro desperta.","Carl Jung","carta a Fanny Bowditch, 1916"],["É uma alegria estar escondido, e um desastre não ser encontrado.","Donald Winnicott","Comunicação e não comunicação, 1963"],["O amor imaturo diz: eu te amo porque preciso de você. O amor maduro diz: eu preciso de você porque te amo.","Erich Fromm","A arte de amar, 1956"],["Onde estava o id, ali estará o eu.","Sigmund Freud","Novas conferências introdutórias, 1933"],["O desejo é o desejo do Outro.","Jacques Lacan",""],["Tudo o que nos irrita nos outros pode nos levar a uma compreensão de nós mesmas.","Carl Jung","Memórias, sonhos, reflexões"],["É no brincar, e somente no brincar, que a pessoa, criança ou adulta, pode ser criativa e usar sua personalidade inteira.","Donald Winnicott","O brincar e a realidade, 1971"],["O amor é principalmente dar, e não receber.","Erich Fromm","A arte de amar, 1956"],["Nunca estamos tão desprotegidos contra o sofrimento como quando amamos.","Sigmund Freud","O mal-estar na civilização, 1930"],["Amar é dar o que não se tem a alguém que não o quer.","Jacques Lacan",""],["O encontro de duas personalidades é como o contato de duas substâncias químicas: se alguma reação ocorre, ambas se transformam.","Carl Jung","Problemas da psicoterapia moderna, 1929"],["A capacidade de ficar só é um dos sinais mais importantes de maturidade no desenvolvimento emocional.","Donald Winnicott","A capacidade de ficar só, 1958"],["A tirania do deveria.","Karen Horney","Neurose e desenvolvimento humano, 1950"],["A interpretação dos sonhos é a via régia para o conhecimento do inconsciente.","Sigmund Freud","A interpretação dos sonhos, 1900"],["Só há causa daquilo que manca.","Jacques Lacan","Seminário 11"],["Onde o amor reina, não há desejo de poder; e onde o poder predomina, falta o amor.","Carl Jung","O eu e o inconsciente, 1928"],["Só o verdadeiro self pode ser criativo, e só o verdadeiro self pode se sentir real.","Donald Winnicott","Distorção do ego em termos de falso e verdadeiro self, 1960"],["Estrangeiros para nós mesmas.","Julia Kristeva","1988"],["Recordar, repetir e elaborar.","Sigmund Freud","1914"],["O inconsciente é o discurso do Outro.","Jacques Lacan","Escritos"],["Ninguém se ilumina imaginando figuras de luz, mas tornando consciente a escuridão.","Carl Jung","Obras completas, vol. 13"],["É a percepção criativa, mais do que qualquer outra coisa, que faz alguém sentir que a vida vale a pena ser vivida.","Donald Winnicott","O brincar e a realidade, 1971"],["O sonho é a realização disfarçada de um desejo recalcado.","Sigmund Freud","A interpretação dos sonhos, 1900"],["A angústia é o que não engana.","Jacques Lacan","Seminário 10"],["Não se pode viver a tarde da vida segundo o programa da manhã.","Carl Jung","As etapas da vida, 1930"],["Ao olhar o rosto da mãe, o bebê vê a si mesmo.","Donald Winnicott","O papel de espelho da mãe e da família, 1967"],["O inconsciente é o psíquico verdadeiramente real.","Sigmund Freud","A interpretação dos sonhos, 1900"],["A única coisa de que se pode ser culpada é de ter cedido de seu desejo.","Jacques Lacan","Seminário 7"],["Quando uma situação interna não se torna consciente, ela aparece do lado de fora como destino.","Carl Jung","Aion, 1951"],["O colapso que se teme é um colapso que já aconteceu.","Donald Winnicott","O medo do colapso, 1974"],["A voz do intelecto é baixa, mas não descansa até ser ouvida.","Sigmund Freud","O futuro de uma ilusão, 1927"],["Penso onde não sou, logo sou onde não penso.","Jacques Lacan","Escritos"],["A neurose é o sofrimento de uma alma que ainda não encontrou o seu sentido.","Carl Jung","Psicoterapeutas ou o clero, 1932"],["O sonho é o guardião do sono.","Sigmund Freud","A interpretação dos sonhos, 1900"],["A verdade tem estrutura de ficção.","Jacques Lacan","Seminário 7"],["A vida sempre me pareceu uma planta que vive do seu rizoma. Sua verdadeira vida é invisível.","Carl Jung","Memórias, sonhos, reflexões"],["Muito se ganha se conseguirmos transformar a miséria histérica em infelicidade comum.","Sigmund Freud","Estudos sobre a histeria, 1895"],["O sapato que serve a uma pessoa aperta outra; não há receita de vida que sirva para todas.","Carl Jung","Problemas da psicoterapia moderna, 1929"],["O estranho é aquilo que remonta ao que há muito é conhecido, ao familiar.","Sigmund Freud","O estranho, 1919"],["Em última instância, precisamos começar a amar para não adoecer.","Sigmund Freud","Sobre o narcisismo, 1914"],["A vida, tal como nos é imposta, é muito árdua para nós.","Sigmund Freud","O mal-estar na civilização, 1930"]];
+  var CITACAO_KEY = 'diario-entre-sessoes:citacao';
+  var citN = Number(lsGet(CITACAO_KEY));
+  if (!isFinite(citN) || lsGet(CITACAO_KEY) == null) citN = Math.floor(Math.random() * 1000);
+  lsSet(CITACAO_KEY, String(citN + 1));
+
+  function renderQuote(){
+    var box = byId('feature');
+    box.textContent = '';
+    var head = byId('quote-head');
+    if (filtro !== 'todos'){
+      head.hidden = true;
+      var fl = el('div', {class:'quote flowers f-' + filtro, 'aria-hidden':'true'});
+      box.append(fl);
+      return;
+    }
+    head.hidden = false;
+    var q = CITACOES[citN % CITACOES.length];
+    var by = el('div', {class:'q-by'}, el('b', {text:q[1]}), q[2] ? q[2] : null);
+    box.append(el('figure', {class:'quote', style:'margin:0'},
+      el('blockquote', {style:'margin:0'}, el('p', {class:'q-text' + (q[0].length > 100 ? ' long' : ''), text:'\u201C' + q[0] + '\u201D'})),
+      el('figcaption', {class:'q-foot'}, by)
+    ));
+  }
+
+  function renderSavedNote(){
+    var box = byId('saved-note');
+    box.textContent = '';
+    if (!savedNote) return;
+    box.append(el('div', {class:'saved'},
+      el('p', {text:'Registro salvo e marcado para levar à análise.'}),
+      el('button', {type:'button', class:'btn sm', onclick:function(){ show('levar'); }}, 'Ir para Levar à análise', icon('arrow'))
+    ));
+  }
+
+  var FILTROS = [
+    ['todos','Todos','list'],
+    ['semana','Esta semana','calendar'],
+    ['levar','Levar à análise','heart'],
+    ['talvez','Talvez levar','bookmark']
+  ];
+
+  function renderTiles(){
+    var box = byId('tiles');
+    box.textContent = '';
+    FILTROS.forEach(function(f){
+      var b = el('button', {type:'button', class:'tile', 'aria-pressed': filtro === f[0] ? 'true' : 'false', onclick:function(){
+        filtro = f[0];
+        renderSemana();
+      }}, el('span', {class:'sq'}, icon(f[2])), f[1]);
+      box.append(b);
+    });
+  }
+
+  function passa(r){
+    if (filtro === 'semana' && r.ts < weekRange().start) return false;
+    if (filtro === 'levar' && !isLevar(r)) return false;
+    if (filtro === 'talvez' && r.bring !== 'talvez') return false;
+    if (busca){
+      var hay = norm([r.happened, r.mind, r.did, r.answer, r.extra].concat((r.emotions || []).map(function(k){ return EMO_LABEL[k] || k; })).join(' '));
+      if (hay.indexOf(busca) < 0) return false;
+    }
+    return true;
+  }
+
+  function renderExBar(){
+    var bar = byId('ex-bar');
+    var n = store.records.filter(function(r){ return r.example; }).length;
+    bar.textContent = '';
+    if (!n){ bar.hidden = true; return; }
+    bar.hidden = false;
+    bar.append(el('p', {text: n === 1
+      ? 'Antes de começar: este registro é só um exemplo, para você ver como o diário fica. Apague-o para usar o diário com os seus.'
+      : 'Antes de começar: estes ' + n + ' registros são só exemplos, para você ver como o diário fica. Apague-os para usar o diário com os seus.'}));
+    var actions = el('div', {class:'ex-actions'});
+    if (!exConfirm){
+      actions.append(el('button', {type:'button', class:'btn ghost sm', text: n === 1 ? 'Apagar o exemplo' : 'Apagar os exemplos', onclick:function(){ exConfirm = true; renderExBar(); }}));
+    } else {
+      actions.append(
+        el('button', {type:'button', class:'btn sm', text:'Apagar mesmo', onclick:function(){
+          store.records = store.records.filter(function(r){ return !r.example; });
+          persist(); exConfirm = false; renderSemana(); toast('Exemplos apagados.');
+        }}),
+        el('button', {type:'button', class:'btn ghost sm', text:'Manter', onclick:function(){ exConfirm = false; renderExBar(); }})
+      );
+    }
+    bar.append(actions);
+  }
+
+  function field(label, text){
+    if (!text) return null;
+    return el('div', null, el('p', {class:'f-label', text:label}), el('p', {class:'f-text', text:text}));
+  }
+
+  function recCard(r){
+    var lead = r.happened || r.mind || '';
+    var tags = [];
+    if (r.example) tags.push(el('span', {class:'tag', text:'exemplo'}));
+    if (isLevar(r)) tags.push(el('span', {class:'tag wine', text:'Levar à análise'}));
+    else if (r.bring === 'talvez') tags.push(el('span', {class:'tag out', text:'Talvez levar'}));
+
+    var emo = (r.emotions || []).map(function(k){ return el('span', {class:'chip-s', text:EMO_LABEL[k] || k}); });
+    if (!emo.length) emo = [el('span', {class:'chip-s muted', text:'sem emoção marcada'})];
+
+    var q = PERGUNTAS[r.q];
+    var awk = (r.awakened || []).map(function(i){ return el('span', {class:'chip-s', text:DESPERTOU[i]}); });
+
+    var delState = false;
+    var delRow = el('div', {class:'del-row'});
+    function drawDel(){
+      delRow.textContent = '';
+      if (!delState){
+        delRow.append(el('button', {type:'button', class:'link', text:'Apagar este registro', onclick:function(){ delState = true; drawDel(); }}));
+      } else {
+        delRow.append(
+          el('button', {type:'button', class:'btn sm', text:'Apagar mesmo', onclick:function(){
+            store.records = store.records.filter(function(x){ return x.id !== r.id; });
+            persist(); renderSemana(); toast('Registro apagado.');
+          }}),
+          el('button', {type:'button', class:'link', text:'Manter', onclick:function(){ delState = false; drawDel(); }})
+        );
+      }
+    }
+    drawDel();
+
+    var go = el('span', {class:'go', 'aria-hidden':'true'}, icon('arrow'));
+    var summary = el('summary', null,
+      el('div', {class:'rec-meta'}, el('span', {class:'when', text:fmtWhen(r.ts)}), tags),
+      el('p', {class:'rec-lead', text:lead}),
+      el('div', {class:'chips-static'}, emo),
+      go
+    );
+
+    var body = el('div', {class:'rec-body'},
+      field('O que aconteceu', r.happened),
+      field('O que veio à mente', r.mind),
+      field('O que você fez', r.did),
+      q ? el('div', null,
+          el('div', {class:'qa-q'}, el('span', {class:'qa-tag', text:'Pergunta escolhida'}), el('p', {text:q.full})),
+          r.answer ? el('div', {class:'qa-a'}, el('span', {class:'qa-tag', text:'Sua resposta'}), el('p', {class:'f-text', text:r.answer})) : null
+        ) : null,
+      awk.length ? el('div', null, el('p', {class:'f-label', text:'O que a pergunta despertou'}), el('div', {class:'chips-static plain'}, awk)) : null,
+      field('Mais uma coisa sobre a reflexão', r.extra),
+      r.bring ? el('div', null, el('p', {class:'f-label', text:'Conversar na próxima sessão'}), el('p', {class:'f-text', text:BRING_LABEL[r.bring] || ''})) : null,
+      delRow
+    );
+
+    return el('li', null, el('details', {class:'rec', 'data-id':r.id}, summary, body));
+  }
+
+  function abrirRegistro(id){
+    filtro = 'todos';
+    busca = '';
+    byId('busca').value = '';
+    renderSemana();
+    var d = document.querySelector('details[data-id="' + id + '"]');
+    if (d){
+      d.open = true;
+      d.scrollIntoView({behavior: reduceMotion() ? 'auto' : 'smooth', block:'center'});
+    }
+  }
+
+  function renderSemana(){
+    renderTiles();
+    renderQuote();
+    renderSavedNote();
+    var all = store.records.slice().sort(function(a,b){ return b.ts - a.ts; });
+    var recs = all.filter(passa);
+    byId('semana-count').textContent = recs.length === 1 ? '1 registro' : recs.length + ' registros';
+    renderExBar();
+    var ul = byId('lista');
+    ul.textContent = '';
+    if (!all.length){
+      ul.append(el('li', null, el('div', {class:'empty'},
+        el('p', {text:'Nenhum registro ainda. Quando algo ficar na sua cabeça, anote aqui.'}),
+        el('button', {type:'button', class:'btn sm', onclick:function(){ show('novo'); }}, 'Fazer um registro', icon('arrow'))
+      )));
+      return;
+    }
+    if (!recs.length){
+      ul.append(el('li', null, el('div', {class:'empty'},
+        el('p', {text:'Nenhum registro encontrado com esse filtro ou essa busca.'}),
+        el('button', {type:'button', class:'btn ghost sm', text:'Ver todos', onclick:function(){
+          filtro = 'todos'; busca = ''; byId('busca').value = ''; renderSemana();
+        }})
+      )));
+      return;
+    }
+    recs.slice(0, 40).forEach(function(r){ ul.append(recCard(r)); });
+  }
+
+  byId('busca').addEventListener('input', function(e){
+    busca = norm(e.target.value.trim());
+    renderSemana();
+  });
+
+  /* ---------- aba NOVO REGISTRO ---------- */
+  var TOTAL = 7;
+  var step = 1;
+
+  EMOCOES.forEach(function(e){
+    byId('emo-box').append(el('span', {class:'opt'},
+      el('input', {type:'checkbox', class:'pick sr', id:'emo-' + e[0], name:'emo', value:e[0]}),
+      el('label', {class:'chip', for:'emo-' + e[0], text:e[1]})
+    ));
+  });
+  PERGUNTAS.forEach(function(q, i){
+    byId('q-box').append(el('div', {class:'opt'},
+      el('input', {type:'radio', class:'pick sr', id:'q-' + i, name:'q', value:String(i)}),
+      el('label', {class:'choice q', for:'q-' + i},
+        el('span', {class:'qicon'}, icon(q.icon)),
+        el('span', {class:'ctext'}, el('span', {class:'qn', text:'Pergunta ' + (i + 1)}), el('span', {class:'qt', text:q.full})))
+    ));
+  });
+  DESPERTOU.forEach(function(t, i){
+    byId('aw-box').append(el('div', {class:'opt'},
+      el('input', {type:'checkbox', class:'pick sr', id:'aw-' + i, name:'aw', value:String(i)}),
+      el('label', {class:'choice c', for:'aw-' + i}, el('span', {class:'ctext', text:t}))
+    ));
+  });
+  BRING.forEach(function(b){
+    byId('bring-box').append(el('div', {class:'opt'},
+      el('input', {type:'radio', class:'pick sr', id:'bring-' + b[0], name:'bring', value:b[0]}),
+      el('label', {class:'choice r', for:'bring-' + b[0]}, el('span', {class:'ctext', text:b[1]}))
+    ));
+  });
+
+  function checkedVals(name){
+    return [].slice.call(document.querySelectorAll('input[name="' + name + '"]:checked')).map(function(i){ return i.value; });
+  }
+  function selectedQ(){ var v = checkedVals('q'); return v.length ? v[0] : null; }
+  function selectedBring(){ var v = checkedVals('bring'); return v.length ? v[0] : null; }
+
+  [].slice.call(document.querySelectorAll('input[name="q"]')).forEach(function(i){
+    i.addEventListener('change', function(){ var sq = selectedQ(); byId('q-answer').hidden = sq === null; if (sq !== null) byId('q-echo-t').textContent = PERGUNTAS[sq].full; });
+  });
+
+  function validate(n){
+    if (n === 1 && !val('f-happened')) return 'Escreva ao menos uma frase para continuar.';
+    if (n === 5 && selectedQ() === null) return 'Escolha uma pergunta para continuar.';
+    if (n === 7 && !selectedBring()) return 'Escolha uma das três opções para salvar.';
+    return '';
+  }
+
+  function go(n, scroll){
+    step = n;
+    var art = byId('step-art'); if (art) art.setAttribute('data-n', String(n));
+    [].slice.call(document.querySelectorAll('.step')).forEach(function(s){
+      s.hidden = Number(s.getAttribute('data-step')) !== n;
+    });
+    byId('prog-label').textContent = 'Passo ' + n + ' de ' + TOTAL;
+    [].slice.call(byId('prog').children).forEach(function(li, i){
+      li.className = i + 1 < n ? 'done' : (i + 1 === n ? 'now' : '');
+    });
+    var nb = byId('btn-next');
+    nb.textContent = '';
+    nb.append(n === TOTAL ? 'Salvar registro' : 'Ir para o passo ' + (n + 1), icon('arrow'));
+    byId('err').hidden = true;
+    if (scroll) byId('prog-label').scrollIntoView({block:'start'});
+  }
+
+  byId('btn-next').addEventListener('click', function(){
+    var msg = validate(step);
+    var err = byId('err');
+    if (msg){ err.textContent = msg; err.hidden = false; return; }
+    err.hidden = true;
+    if (step < TOTAL) go(step + 1, true);
+    else saveRecord();
+  });
+  byId('btn-back').addEventListener('click', function(){
+    if (step > 1) go(step - 1, true);
+    else show('semana');
+  });
+  byId('form').addEventListener('submit', function(e){ e.preventDefault(); });
+
+  function saveRecord(){
+    var rec = {
+      id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      ts: Date.now(),
+      happened: val('f-happened'),
+      mind: val('f-mind'),
+      emotions: checkedVals('emo'),
+      did: val('f-did'),
+      q: Number(selectedQ()),
+      answer: val('f-answer'),
+      awakened: checkedVals('aw').map(Number),
+      extra: val('f-extra'),
+      bring: selectedBring()
+    };
+    store.records.push(rec);
+    persist();
+    byId('form').reset();
+    byId('q-answer').hidden = true;
+    go(1, false);
+    filtro = 'todos'; busca = ''; byId('busca').value = '';
+    savedNote = rec.bring === 'sim';
+    show('semana');
+    toast(storageOK ? 'Registro salvo.' : 'Registro salvo só nesta visita.');
+  }
+
+  /* ---------- aba RESUMO ---------- */
+  function countBy(recs, getKeys){
+    var m = {};
+    recs.forEach(function(r){ getKeys(r).forEach(function(k){ m[k] = (m[k] || 0) + 1; }); });
+    return m;
+  }
+  function sortedEntries(m, order){
+    return Object.keys(m).map(function(k){ return [k, m[k]]; }).sort(function(a, b){
+      return b[1] - a[1] || order.indexOf(a[0]) - order.indexOf(b[0]);
+    });
+  }
+  function excerpt(r){ return clip(r.happened || r.mind || '', 90); }
+
+  function buildLevarMsg(sel){
+    var linhas = [];
+    linhas.push('Oi, Mônica! Estes são os registros do meu diário que quero levar para a nossa análise.');
+    var nomeMsg = nomeInput.value.trim();
+    if (nomeMsg) linhas.push('Meu nome: ' + nomeMsg);
+    var sessao = sessaoInput.value.trim();
+    if (sessao) linhas.push('Minha sessão: ' + sessao);
+    sel.slice().sort(function(a, b){ return a.ts - b.ts; }).forEach(function(r){
+      linhas.push('');
+      linhas.push('*Registro de ' + fmtWhen(r.ts) + '*');
+      if (r.happened) linhas.push('O que aconteceu: ' + r.happened);
+      if (r.mind) linhas.push('O que veio à minha mente: ' + r.mind);
+      if ((r.emotions || []).length) linhas.push('Emoções: ' + r.emotions.map(function(k){ return (EMO_LABEL[k] || k).toLowerCase(); }).join(', '));
+      if (r.did) linhas.push('O que eu fiz: ' + r.did);
+      var q = PERGUNTAS[r.q];
+      if (q) linhas.push('Pergunta que escolhi: ' + q.full);
+      if (r.answer) linhas.push('Minha resposta: ' + r.answer);
+      if ((r.awakened || []).length) linhas.push('O que a pergunta despertou: ' + r.awakened.map(function(i){ return DESPERTOU[i].replace(/\.$/, '').replace(/^./, function(c){ return c.toLowerCase(); }); }).join('; '));
+      if (r.extra) linhas.push('Mais uma coisa: ' + r.extra);
+    });
+    return linhas.join('\n');
+  }
+
+  function renderLevar(){
+    var real = store.records.filter(function(r){ return !r.example; }).sort(function(a, b){ return b.ts - a.ts; });
+    var ul = byId('lv-list');
+    ul.textContent = '';
+    if (!real.length){
+      byId('lv-count').textContent = '';
+      ul.append(el('li', null, el('div', {class:'empty'},
+        el('p', {style:'margin:0', text:'Seus registros aparecem aqui, para você escolher o que levar. Faça o primeiro na aba Registrar.'}),
+        el('button', {type:'button', class:'btn', onclick:function(){ show('novo'); }}, 'Fazer um registro', icon('arrow'))
+      )));
+      renderLevarSend();
+      return;
+    }
+    real.forEach(function(r){
+      var cb = el('input', {type:'checkbox', class:'sr'});
+      cb.checked = isLevar(r);
+      cb.addEventListener('change', function(){
+        r.levar = cb.checked;
+        persist();
+        renderLevarSend();
+      });
+      var tag = r.bring === 'sim' ? el('span', {class:'tag wine', text:'Marquei Sim'}) : (r.bring === 'talvez' ? el('span', {class:'tag out', text:'Marquei Talvez'}) : null);
+      ul.append(el('li', null, el('label', {class:'lv'},
+        cb, el('span', {class:'box', 'aria-hidden':'true'}),
+        el('span', {class:'lv-body'},
+          el('span', {class:'take-date'}, fmtWhen(r.ts), tag),
+          el('span', {class:'lv-text', text:clip(r.happened || r.mind || '', 140)})
+        )
+      )));
+    });
+    renderLevarSend();
+  }
+
+  function renderLevarSend(){
+    var real = store.records.filter(function(r){ return !r.example; });
+    var sel = real.filter(isLevar);
+    var cnt = byId('lv-count');
+    cnt.textContent = real.length ? (sel.length === 1 ? '1 registro marcado' : sel.length + ' registros marcados') : '';
+    var box = byId('lv-send');
+    box.textContent = '';
+    if (!real.length) return;
+    var msg = sel.length ? buildLevarMsg(sel) : '';
+    var ta = el('textarea', {class:'msg', id:'msg', readonly:true, rows:'10', 'aria-label':'Texto para a Mônica'});
+    ta.value = msg || 'Marque ao menos um registro para montar o texto.';
+    var copyBtn = el('button', {type:'button', class:'btn', id:'btn-copy', text:'Copiar texto pra mandar pra Mônica'});
+    var wa = el('a', {class:'btn ghost', id:'btn-wa', href:'#', target:'_blank', rel:'noopener noreferrer', text:'Abrir o WhatsApp com o texto pronto'});
+    var longo = msg && encodeURIComponent(msg).length > 3500;
+    if (!sel.length){
+      copyBtn.disabled = true;
+    }
+    if (!sel.length || longo){
+      wa.setAttribute('aria-disabled', 'true');
+      wa.addEventListener('click', function(e){ e.preventDefault(); });
+    } else {
+      wa.href = 'https://wa.me/' + WHATSAPP + '?text=' + encodeURIComponent(msg);
+    }
+    if (sel.length){
+      copyBtn.addEventListener('click', function(){
+        var p;
+        try { p = navigator.clipboard.writeText(msg); } catch(e){ p = Promise.reject(e); }
+        p.then(function(){
+          toast('Texto copiado. Agora é só colar na conversa.');
+        }, function(){
+          ta.focus(); ta.select();
+          toast('Não consegui copiar automaticamente. O texto está selecionado, é só copiar.');
+        });
+      });
+    }
+    box.append(el('section', {class:'block'},
+      el('h3', {text:'Texto para a Mônica'}),
+      ta,
+      el('div', {class:'send'},
+        copyBtn,
+        wa,
+        el('p', {class:'small', text: (longo ? 'O texto ficou longo para abrir direto no WhatsApp. Toque em copiar e cole na conversa. ' : 'O WhatsApp abre com o texto pronto e você ainda precisa tocar em enviar. ') + 'WhatsApp da Mônica: ' + WHATSAPP_VISIVEL + '. Nada é enviado automaticamente.'})
+      )
+    ));
+  }
+
+  function renderResumo(){
+    var range = weekRange();
+    var inRange = store.records.filter(function(r){ return r.ts >= range.start; });
+    var real = inRange.filter(function(r){ return !r.example; });
+    var hasEx = inRange.length !== real.length;
+    byId('res-periodo').textContent = fmtDM(range.startDate) + ' a ' + fmtDM(range.endDate);
+
+    var root = byId('res-body');
+    root.textContent = '';
+
+    root.append(el('p', {class:'bignum'}, el('span', {text:String(inRange.length)}), inRange.length === 1 ? 'registro' : 'registros'));
+    if (hasEx){
+      root.append(el('p', {class:'small', style:'margin-top:8px', text:'Os exemplos aparecem aqui só para você ver como fica. Eles não entram no que você leva para a Mônica.'}));
+    }
+
+    var emo = sortedEntries(countBy(inRange, function(r){ return r.emotions || []; }), EMOCOES.map(function(e){ return e[0]; }));
+    var blkEmo = el('section', {class:'block'}, el('h3', {text:'Emoções que mais apareceram'}));
+    if (emo.length){
+      var max = emo[0][1];
+      var ul = el('ul', {class:'bars'});
+      emo.forEach(function(e){
+        ul.append(el('li', {class:'bar-row'},
+          el('span', {class:'bar-label', text:EMO_LABEL[e[0]] || e[0]}),
+          el('span', {class:'bar-track'}, el('span', {class:'bar-fill', style:'width:' + Math.round(e[1] / max * 100) + '%'})),
+          el('span', {class:'bar-n', text:String(e[1])})
+        ));
+      });
+      blkEmo.append(ul);
+    } else {
+      blkEmo.append(el('p', {class:'muted-p', text:'Nenhuma emoção marcada nesta semana.'}));
+    }
+    root.append(blkEmo);
+
+    var aw = sortedEntries(countBy(inRange, function(r){ return (r.awakened || []).map(String); }), ['0','1','2','3','4','5']);
+    var blkAw = el('section', {class:'block'}, el('h3', {text:'O que as perguntas despertaram'}));
+    if (aw.length){
+      var ol = el('ul', {class:'ranked'});
+      aw.slice(0, 3).forEach(function(a){
+        ol.append(el('li', null, el('span', {class:'count', text:a[1] + '×'}), el('span', {text:DESPERTOU[Number(a[0])]})));
+      });
+      blkAw.append(ol);
+    } else {
+      blkAw.append(el('p', {class:'muted-p', text:'Nenhuma opção marcada nesta semana.'}));
+    }
+    root.append(blkAw);
+
+    root.append(el('section', {class:'block'},
+      el('h3', {text:'Para mandar à Mônica'}),
+      el('p', {class:'muted-p', text:'Escolher quais registros levar e enviar o texto agora fica na aba Levar.'}),
+      el('button', {type:'button', class:'btn ghost', style:'margin-top:12px', onclick:function(){ show('levar'); }}, 'Ir para Levar à análise', icon('arrow'))
+    ));
+  }
+
+  /* ---------- abertura ---------- */
+  var splash = byId('splash');
+  var appEl = byId('app');
+  var nomeInicial = byId('nome-inicial');
+  function fecharAbertura(){
+    var n = nomeInicial.value.trim();
+    if (!n){
+      byId('nome-erro').hidden = false;
+      nomeInicial.focus();
+      return;
+    }
+    nomeInput.value = n;
+    lsSet(NAME_KEY, n);
+    aplicarNome();
+    esconderNomeSeCadastrado();
+    lsSet(SEEN_KEY, '1');
+    splash.hidden = true;
+    appEl.inert = false;
+    appEl.removeAttribute('aria-hidden');
+    window.scrollTo(0, 0);
+  }
+  byId('btn-start').addEventListener('click', fecharAbertura);
+  nomeInicial.addEventListener('input', function(){ byId('nome-erro').hidden = true; });
+  nomeInicial.addEventListener('keydown', function(e){ if (e.key === 'Enter'){ e.preventDefault(); fecharAbertura(); } });
+  if (!lsGet(SEEN_KEY) || !(lsGet(NAME_KEY) || '').trim()){
+    nomeInicial.value = (lsGet(NAME_KEY) || '').trim();
+    splash.hidden = false;
+    appEl.inert = true;
+    appEl.setAttribute('aria-hidden', 'true');
+    nomeInicial.focus({preventScroll:true});
+  }
+
+  /* ---------- início ---------- */
+  go(1, false);
+  show('semana', true);
+})();
+</script>

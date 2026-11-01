@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nosnolimiar.app/schemas/catalogos.schema.json",
+  "title": "Catálogos fixos do diário",
+  "type": "object",
+  "required": ["emocoes", "perguntas", "despertares", "levarOpcoes", "citacoes"],
+  "properties": {
+    "emocoes": {"type": "array", "items": {"$ref": "#/$defs/emocao"}, "minItems": 16, "maxItems": 16},
+    "perguntas": {"type": "array", "items": {"$ref": "#/$defs/pergunta"}, "minItems": 5, "maxItems": 5},
+    "despertares": {"type": "array", "items": {"$ref": "#/$defs/despertar"}, "minItems": 6, "maxItems": 6},
+    "levarOpcoes": {"type": "array", "items": {"$ref": "#/$defs/levarOpcao"}, "minItems": 3, "maxItems": 3},
+    "citacoes": {"type": "array", "items": {"$ref": "#/$defs/citacao"}}
+  },
+  "$defs": {
+    "emocaoId": {"enum": ["ansiedade","tristeza","medo","vergonha","culpa","raiva","frustracao","solidao","alegria","paz","amor","carinho","gratidao","alivio","orgulho","nao-sei"]},
+    "perguntaId": {"enum": ["p1","p2","p3","p4","p5"]},
+    "despertarId": {"enum": ["d1","d2","d3","d4","d5","d6"]},
+    "emocao": {"type": "object", "required": ["id","rotulo","ordem"], "properties": {"id": {"$ref": "#/$defs/emocaoId"}, "rotulo": {"type": "string"}, "ordem": {"type": "integer"}}, "additionalProperties": false},
+    "pergunta": {"type": "object", "required": ["id","indiceV1","icone","texto"], "properties": {"id": {"$ref": "#/$defs/perguntaId"}, "indiceV1": {"type": "integer", "minimum": 0, "maximum": 4}, "icone": {"enum": ["heart","star","loop","user","sprout"]}, "texto": {"type": "string"}}, "additionalProperties": false},
+    "despertar": {"type": "object", "required": ["id","indiceV1","texto"], "properties": {"id": {"$ref": "#/$defs/despertarId"}, "indiceV1": {"type": "integer", "minimum": 0, "maximum": 5}, "texto": {"type": "string"}}, "additionalProperties": false},
+    "levarOpcao": {"type": "object", "required": ["valor","rotulo"], "properties": {"valor": {"enum": ["sim","talvez","nao"]}, "rotulo": {"type": "string"}}, "additionalProperties": false},
+    "citacao": {"type": "object", "required": ["texto","autor","obra"], "properties": {"texto": {"type": "string", "maxLength": 200}, "autor": {"type": "string"}, "obra": {"type": "string", "description": "Obra e ano; string vazia só enquanto aguarda confirmação"}}, "additionalProperties": false}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nosnolimiar.app/schemas/config.schema.json",
+  "title": "Configuração local da analisanda",
+  "description": "Pares chave e valor guardados no aparelho. No v1 cada chave é uma entrada separada do localStorage.",
+  "type": "object",
+  "properties": {
+    "nome": {"type": "string", "maxLength": 30, "description": "v1: diario-entre-sessoes:nome"},
+    "sessao": {"type": "string", "maxLength": 40, "description": "v1: diario-entre-sessoes:sessao (texto livre, ex.: quintas, 18h)"},
+    "aberturaVista": {"type": "boolean", "description": "v1: diario-entre-sessoes:abertura = '1'"},
+    "citacaoN": {"type": "integer", "minimum": 0, "description": "v1: diario-entre-sessoes:citacao. Contador de rotação"},
+    "exemplosSemeados": {"type": "boolean", "description": "v1: campo seeded dentro de diario-entre-sessoes:v1"},
+    "schemaVersion": {"type": "integer", "description": "Versão dos dados locais. 1 = localStorage legado, 2 = IndexedDB"},
+    "persistenciaPedida": {"type": "boolean", "description": "Se navigator.storage.persist() já foi chamado"},
+    "ultimoBackupTs": {"type": "integer", "description": "Momento do último backup exportado, ms UTC"}
+  },
+  "additionalProperties": false
+}

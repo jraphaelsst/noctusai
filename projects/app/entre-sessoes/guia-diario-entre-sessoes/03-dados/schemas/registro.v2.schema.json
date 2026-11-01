@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nosnolimiar.app/schemas/registro.v2.schema.json",
+  "title": "Registro v2 (formato alvo da fase 1)",
+  "description": "Mantém os nomes de campo do v1 para reduzir risco. Muda: pergunta e despertares viram ids estáveis; levar passa a ser sempre explícito; entram schema e updatedTs. Apagar é exclusão definitiva no aparelho.",
+  "type": "object",
+  "required": ["schema", "id", "ts", "updatedTs", "example", "happened", "mind", "emotions", "did", "questionId", "answer", "awakenedIds", "extra", "bring", "levar"],
+  "properties": {
+    "schema": {"const": 2},
+    "id": {"type": "string", "description": "UUID v4 (crypto.randomUUID) para novos; ids v1 são mantidos na migração", "minLength": 1, "maxLength": 40},
+    "example": {"type": "boolean"},
+    "ts": {"type": "integer", "minimum": 0, "description": "Criação, ms UTC"},
+    "updatedTs": {"type": "integer", "minimum": 0, "description": "Última alteração (marcar levar também conta), ms UTC"},
+    "happened": {"type": "string", "minLength": 1, "maxLength": 1500},
+    "mind": {"type": "string", "maxLength": 1500},
+    "emotions": {"type": "array", "uniqueItems": true, "items": {"$ref": "catalogos.schema.json#/$defs/emocaoId"}},
+    "did": {"type": "string", "maxLength": 1500},
+    "questionId": {"$ref": "catalogos.schema.json#/$defs/perguntaId"},
+    "answer": {"type": "string", "maxLength": 2000},
+    "awakenedIds": {"type": "array", "uniqueItems": true, "items": {"$ref": "catalogos.schema.json#/$defs/despertarId"}},
+    "extra": {"type": "string", "maxLength": 1500},
+    "bring": {"enum": ["sim", "talvez", "nao"]},
+    "levar": {"type": "boolean"},
+    "questionText": {"type": "string", "description": "Cópia do texto da pergunta no momento do salvamento, para preservar o sentido se o catálogo mudar"}
+  },
+  "additionalProperties": false
+}

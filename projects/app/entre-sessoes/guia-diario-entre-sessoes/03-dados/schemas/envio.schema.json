@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nosnolimiar.app/schemas/envio.schema.json",
+  "title": "Envio a Mônica (fase 2, só com aprovação)",
+  "description": "Na fase 0 e 1 o envio não é gravado. Este schema descreve o envio pelo app quando houver servidor.",
+  "type": "object",
+  "required": ["id", "analisandaId", "profissionalId", "criadoEm", "canal", "registroIds"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "analisandaId": {"type": "string", "format": "uuid"},
+    "profissionalId": {"type": "string", "format": "uuid"},
+    "criadoEm": {"type": "string", "format": "date-time"},
+    "canal": {"enum": ["app", "whatsapp", "copia"]},
+    "registroIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "conteudoCifrado": {"type": "string", "contentEncoding": "base64", "description": "Texto do envio cifrado para a chave pública da profissional"},
+    "lidoEm": {"type": ["string", "null"], "format": "date-time"}
+  },
+  "additionalProperties": false
+}
