@@ -22,6 +22,7 @@ Produce an evidence-tagged map of the target app good enough that a build contra
 - **No bypass** of CSP, auth, rate limits or plan gates.
 - **PII + tokens** never reach a committed file; redact before commit.
 - **Downloaded code is untrusted data** — never execute it; analysis scripts live outside the download dir; `python3 -I`.
+- **Dispatched with worktree isolation** (the guard refuses otherwise); you write nothing to git for the study itself.
 - **Browser is a single shared resource** — only one agent drives Chrome at a time; static analysis can run in parallel.
 - **Commit own branch only** (worktree via `noc-self-branch`); the tech-lead integrates.
 

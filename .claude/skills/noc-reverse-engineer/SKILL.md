@@ -1,14 +1,16 @@
 ---
 name: noc-reverse-engineer
 description: Use when the owner wants to study an external app to build our own version — triggers "reverse engineer X", "map this app", "map everything in <app>", "do the same as we did for core studio", "understand how <SaaS> works", "engenharia reversa", "study <app> so we can build our own". Read-only, from the owner's own logged-in account, in owner-gated stages (map → data → mechanisms → synthesis); no build until the owner says "go all the way".
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-reverse-engineer — study an external app, read-only, in stages
 
-> Born from N=2: CoreStudio (2026-10-05/06, private study `_private-studies/core-studio/`)
-> and Lais (2026-10-13). For a long run, dispatch agent `reverse-engineer`; this skill is
-> the procedure it (or you) follows.
+> Born from N=3: CoreStudio (2026-10-05/06, private study `_private-studies/core-studio/`),
+> Lais (2026-10-13) and geizelima-clinica (2026-11-02, `_private-studies/geizelima-clinica/`).
+> For a long run, dispatch agent `reverse-engineer` (pass `isolation:"worktree"` up front, or
+> `task_branch start` — the executor-dispatch guard refuses it otherwise, though it writes
+> nothing to git); this skill is the procedure it (or you) follows.
 
 🔴 **Two rules that end the study if broken.** (1) **Classify before you click** — READ /
 SIDE-EFFECT-GET / WRITE / SEND; unknown ⇒ WRITE; only READ is exercised. (2) **Own ids only**
@@ -20,12 +22,12 @@ rows to a guessed id).
 0. **Recover + place.** `noctus.dev.memory_search "<target>"` and read any prior study folder. Ask the owner which product the study belongs to. 🔴 **Vendor-derived material goes ONLY to `~/Documents/repository/NoctusAI/_private-studies/<target>/` (outside git; captures, screenshots, bundles, analysis, page maps, mechanisms, their prompts, data exports). Only OUR build specs go in the repo, at `products/<slug>/projects/<module>-build/`** (contracts, DECISIONS, test checklist; pointers to the private study, never quotes). Keeper `check_no_vendor_study_in_git` refuses the rest. Work in a self-branched worktree (skill `noc-self-branch`) for the build specs; raw captures stay in the session scratchpad until moved to the private folder.
 1. **Open + orient (S1).** Chrome: `tabs_context_mcp` → navigate to the app; if logged out, **stop and let the owner log in** (never type credentials). Record stack + hosts from `performance.getEntriesByType('resource')` and the CSP header (`curl -sI`). Add a paced perf capture (`noctus.dev.perf_probe`, skill `noc-perf-probe`, `store=` outside git): the real endpoint inventory + how chatty/slow the app is.
 2. **Routes.** Expand every menu; then grep the downloaded bundles for route strings — the bundle is the source of truth, the menu is a subset. Visit each route; record title, iframes, redirects (= gated) and the API calls it fires.
-3. **Bundles (background).** Collect every chunk (per-route via a `__re_chunks` `localStorage` accumulator + the webpack runtime's async map), `curl` them into `scratchpad/<target>/js/`, then dispatch a background agent for static analysis: endpoints + method + safety class, service classes, zod/enum/MSW mocks, flags/permissions, integrations. Clean the `localStorage` key afterwards.
+3. **Bundles (background).** Single-file app (no webpack chunks)? `curl` the HTML and extract the inline `<script>` blocks into the private `source/` instead (KB § 3.12). Otherwise collect every chunk (per-route via a `__re_chunks` `localStorage` accumulator + the webpack runtime's async map), `curl` them into `scratchpad/<target>/js/`, then dispatch a background agent for static analysis: endpoints + method + safety class, service classes, zod/enum/MSW mocks, flags/permissions, integrations. Clean the `localStorage` key afterwards. App code closure-wrapped (globals not reachable from the tab)? Replay the app's own READ call in-page instead (KB § 3.13).
 4. **UI layer.** Per page: screenshot (saved + copied as `NN-<page>.jpg`) + `get_page_text`; open only READ controls (tabs, accordions, filter drawers, view toggles). Persist `ui/ui-notes.md` after every batch. Embedded legacy apps: open the iframe URL top-level with the same params; for Bubble.io read `window.app` (whole UI + workflows + API catalogue, no live data needed).
 5. **Checkpoint S1** → report to the owner: page map, architecture, mechanisms seen, the "never call" list, open questions. **Wait** for the go to S2.
-6. **S2 · Data** — fetch only read-only GETs on ids seen in the owner's UI (allowlist from step 3), fire-and-poll with a per-request timeout; learn missing params from 400 bodies. Reduce responses in the tab to shapes + enum values + product-content config, and read them out with `get_page_text`. Use a raw download only if needed, with the owner's yes. Record per-call status + shapes in `_private-studies/<target>/captures/xhr-<date>/README.md`. Checkpoint.
+6. **S2 · Data** — fetch only read-only GETs on ids seen in the owner's UI (allowlist from step 3), fire-and-poll with a per-request timeout; learn missing params from 400 bodies. Reduce responses in the tab to shapes + enum values + product-content config, and read them out with `get_page_text`. Use a raw download only if needed, with the owner's yes. Record per-call status + shapes in `_private-studies/<target>/captures/xhr-<date>/README.md`. Content delivered as per-item code (fused with logic)? Run the catalog-mapping pattern (KB § 3.14). Large readouts: delegate to a background agent and tell the owner not to touch the shared Chrome tab meanwhile (KB § 4). Checkpoint.
 7. **S3 · Mechanisms** — `specs/mechanisms.md`: entities + relations, state machines, triggers, AI layer (prompts as `*-DRAFT.md`, never final), pricing unit, integrations. Checkpoint.
-8. **S4 · Synthesis** — study doc + mapping to our seed/products + owner interview rounds (`AskUserQuestion`, options not decisions) → `DECISIONS.md`. Build only on "go all the way" (skill `noc-contract-first`).
+8. **S4 · Synthesis** — study doc + mapping to our seed/products + owner interview rounds (`AskUserQuestion`, options not decisions) → `DECISIONS.md`. An owner-requested UX/quality assessment is a legitimate S1 output: record observed defects as rebuild opportunities (KB § 3.15). Build only on "go all the way" (skill `noc-contract-first`).
 9. **Learn.** Log what the procedure got wrong this run and fold it into the KB pattern (skill `noc-learn-refine`).
 
 ## Guardrails
