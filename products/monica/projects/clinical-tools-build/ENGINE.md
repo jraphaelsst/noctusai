@@ -1,4 +1,4 @@
-# ENGINE — the tool engine contract (draft v0.1, 2026-11-02)
+# ENGINE — the tool engine contract (draft v0.2, 2026-11-02)
 
 > Design goal: **few concepts, each doing one thing, freely combined.** The reference app grew
 > a new special case for almost every tool: about 16 ad-hoc interaction shapes, flags kept in
@@ -67,48 +67,78 @@ blocks can preview live). **Nothing left over.**
 Blocks may carry a `when`. A new kind of picture means adding a chart type to the engine,
 reviewed once and available to every tool. There are no per-tool drawings.
 
-## 5 · Assignment lifecycle
+
+## 5 · Who is who (identity — DECISIONS D9/D10)
+
+| Actor | Account | Reaches | Through |
+|---|---|---|---|
+| **Clinician** (Mônica) | noc user, **member** of her org, clinician role | catalog, editor, every assignment + result of her org | monica staff UI |
+| **Staff** (future: secretary…) | noc user, org member, non-clinician role | assignment **status** only, never answers | monica staff UI |
+| **Patient** | noc user, **not** an org member; linked to one `clients` row per practice | only their own linked record's assignments, results, consents | Entre sessões area |
+
+The patient link is the seed organ **`client-portal`**: an invite issues a one-time token, then
+account creation or sign-in, then `client_portal_links (org_id, client_id, user_id)`. Every
+Entre sessões request resolves `user_id → (org_id, client_id)` server-side. A link from a
+message never authorizes anything by itself.
+
+## 6 · Assignment lifecycle
 
 ```
-sent ──open──▶ opened ──answer──▶ in_progress ──finish──▶ completed
-                                  │   ▲
-                         pause ◀──┘   └── resume (same step)
-                                  │
-                       quick exit ▼
-                               exited ──next open──▶ patient chooses:
-                                                      keep → in_progress
-                                                      discard → answers erased, starts fresh
-Mônica may: revoke (link dies) · resend (same assignment, new link)
+sent ──open (signed in)──▶ opened ──answer──▶ in_progress ──finish──▶ completed
+                                              │   ▲
+                                     pause ◀──┘   └── resume (same step)
+                                              │
+                                   quick exit ▼
+                                           exited ──next sign-in──▶ patient chooses:
+                                                                      keep → in_progress
+                                                                      discard → answers DELETEd, fresh start
+                                                     (no choice in 30 days → auto-discard)
+idle/unopened 30 days → expired (answers deleted, metadata kept)
+Mônica: revoke (closes it) · resend (same assignment, new notification)
 ```
 
-- **Pause.** Answers are saved on the server after every step, and pausing just closes the
-  page. Reopening the link resumes at the saved step. Available on every tool, not a per-tool flag.
-- **Quick exit** (on `sensitive` tools, as a button or the Esc key / double-tap) does these in order:
-  1. Instantly replace the page with a neutral screen.
-  2. `location.replace`, so Back doesn't return.
-  3. Clear every device-side trace (storage, cache keys).
-  4. Mark the assignment `exited` on the server.
+- **Pause.** Answers are saved on the server after every step. Pausing just closes the page,
+  and resume is at the saved step. Every tool has it.
+- **Quick exit**, on every tool (button, or Esc key / double-tap), runs in order:
+  1. Instant neutral screen.
+  2. `sendBeacon` marks the assignment `exited`.
+  3. The server responds with `Clear-Site-Data` and ends the session.
+  4. `location.replace` to a neutral site.
 
-  Answers stay on the server until the patient chooses keep or discard on the next open.
-- **Sensitivity** lives in one place, the tool's `sensitivity: normal | sensitive`. Sensitive adds:
-  - a gentle warning on the opening screen
-  - a confirmation for Mônica before sending
-  - the quick-exit control
+  Exited answers are **hidden from the clinician** until the patient chooses keep. What we
+  cannot erase (the WhatsApp message, notifications, keyboard learning, screenshots) is
+  disclosed honestly in the consent text.
+- **Sensitivity** has a single source, the tool's `sensitivity: normal | sensitive`.
+  Sensitive adds the opening warning and the clinician's confirmation before sending.
+- **The opening GET has no side effects** (preview crawlers must not mark `opened`). `opened`
+  is set by an authenticated POST.
 
-## 6 · Data model (seed organ; per-product schema, RLS by `org_id`)
+## 7 · Data model (seed organs; per-product schema; every table has `org_id`; service-role only + RLS)
 
 | Table | Key columns |
 |---|---|
-| `tool_definitions` | `id`, `org_id NULL` (null = shipped by us), `slug`, `version`, `status draft\|published\|retired`, `sensitivity`, `theme`, `definition jsonb` (validated), `clinician_guide jsonb` |
-| `tool_assignments` | `id`, `org_id`, `client_id` (→ `clients` organ), `tool_id`, `tool_version`, `token_hash`, `status`, `sent_via`, `sent_at`, `opened_at`, `completed_at`, `revoked_at` |
-| `tool_responses` | `assignment_id`, `answers jsonb` (ids only), `current_step`, `updated_at` |
+| `tool_definitions` | `id`, `org_id NULL` (null = shipped by us), `slug`, `version`, `status draft\|published\|retired`, `sensitivity`, `theme`, `definition jsonb` (validated), `clinician_guide jsonb`, `created_by` |
+| `tool_assignments` | `id`, `org_id`, `client_id`, `tool_id`, `tool_version`, `status`, `sent_via`, `sent_at`, `opened_at`, `last_activity_at`, `expires_at`, `exited_at`, `completed_at`, `revoked_at` |
+| `tool_responses` | `assignment_id`, `org_id`, `answers` (choice ids **and** free text; app-level encrypted), `current_step`, `updated_at` |
+| `tool_notes` | `assignment_id`, `org_id`, clinician private notes (encrypted) |
+| `tool_consents` | `org_id`, `client_id`, `user_id`, `consent_version`, `accepted_at` |
+| `tool_read_audit` | append-only: `org_id`, `actor_user_id`, `assignment_id`, `at` (never content) |
+| `client_portal_links` *(organ `client-portal`)* | `org_id`, `client_id`, `user_id`, `invited_at`, `accepted_at`, `revoked_at` |
 
-- The link carries an opaque random token. Only its hash is stored, and it can be revoked.
-- Results are rendered from `answers` + the pinned `version`, so old results always render exactly as they were.
-- The patient side never receives other patients' data, Mônica's clinician guide, or any executable content.
+- Results render from `answers` + the pinned `tool_version`, so an old result always looks exactly as it did.
+- Discard and patient deletion are real `DELETE`s, cascading through every table above.
+- Logs never contain answers. The patient side never receives other patients' data, the clinician guide or any executable content.
 
-## 7 · Surfaces
+## 8 · Surfaces
 
-- **monica (Mônica):** catalog (search by theme / patient moment / duration) · tool page with the clinician guide · "try it" preview (saves nothing) · send from the patient record via monica's WhatsApp · patient record tab "Ferramentas" (status + results) · result view with private notes.
-- **Entre sessões (patient, web, no login):** personal link → consent (first time) → tool runner → result → done. The diary lives in the same area later. The native app later consumes the same organ API.
-- **Seed organ:** schema + validators (Pydantic), runner + renderers (5 question components, 6 block components), assignment/token service, WhatsApp send via the product's existing adapter.
+- **monica (clinician):**
+  - catalog: search by theme / patient moment / duration
+  - tool page with the clinician guide
+  - **tool editor**: draft → preview → publish = new version
+  - "try it" preview (saves nothing)
+  - patient record: **Convidar para Entre sessões**, send a tool (WhatsApp/e-mail), tab "Ferramentas" (status + results), result view with private notes
+- **Entre sessões (patient, web, signed in):** invite → account → consent (first time) → home (my tools, my results) → tool runner → result. The diary arrives in release 2. The native app later uses the same organ APIs.
+- **Seed organs:**
+  - `guided-tools`: schema + validators (Pydantic), runner + renderers (5 question components, 6 block components), editor, assignment service.
+  - `client-portal`: invite, account link, external-user authorization, consent capture.
+  - Sending goes through the product's existing WhatsApp / e-mail adapters.
