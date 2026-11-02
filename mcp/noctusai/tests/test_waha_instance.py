@@ -18,8 +18,8 @@ engine: NOWEB
 mem_limit: 512m
 node_heap_mb: 384
 instances:
-  - name: monica
-    product: monica
+  - name: nosnolimiar
+    product: nosnolimiar
   - name: two-b
     product: other
 """
@@ -39,7 +39,7 @@ def _tree(tmp_path, data=DATA, compose="render"):
 class TestRender:
     def test_one_service_volume_and_key_set_per_instance(self):
         out = wi.render_compose(wi.parse_instances(DATA))
-        for n, up in (("monica", "MONICA"), ("two-b", "TWO_B")):
+        for n, up in (("nosnolimiar", "NOSNOLIMIAR"), ("two-b", "TWO_B")):
             assert f"  waha-{n}:" in out and f"container_name: noctus-waha-{n}" in out
             assert f"${{WAHA_{up}_API_KEY:?" in out and f"${{WAHA_{up}_HMAC_SECRET:?" in out
         assert out.count("expose:") == 2 and "ports:" not in out
@@ -51,8 +51,8 @@ class TestRender:
     def test_no_secret_value_is_ever_rendered(self):
         assert "openssl" not in wi.render_compose(wi.parse_instances(DATA))
 
-    @pytest.mark.parametrize("bad", [DATA.replace("noweb-2026.9.2", "latest"), DATA.replace("monica", "Bad Name", 1),
-                                     DATA + "  - name: monica\n    product: x\n"])
+    @pytest.mark.parametrize("bad", [DATA.replace("noweb-2026.9.2", "latest"), DATA.replace("nosnolimiar", "Bad Name", 1),
+                                     DATA + "  - name: nosnolimiar\n    product: x\n"])
     def test_invalid_declarations_raise(self, bad):
         with pytest.raises(ValueError):
             wi.parse_instances(bad)
@@ -78,22 +78,22 @@ class TestWahaInstancesRenderSync:
 class TestActions:
     def test_apply_dry_run_touches_no_ssh(self, tmp_path, monkeypatch):
         monkeypatch.setattr(wi, "run_remote", lambda *a, **k: pytest.fail("ssh in dry-run"))
-        r = wi.waha_instance("apply", name="monica", repo_root=str(_tree(tmp_path)))
-        assert r["status"] == "planned" and r["env_fleet_keys_to_generate_on_vps"][0] == "WAHA_MONICA_API_KEY"
+        r = wi.waha_instance("apply", name="nosnolimiar", repo_root=str(_tree(tmp_path)))
+        assert r["status"] == "planned" and r["env_fleet_keys_to_generate_on_vps"][0] == "WAHA_NOSNOLIMIAR_API_KEY"
 
     def test_apply_blocks_when_keys_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(wi, "run_remote", lambda *a, **k: (3, "MISSING:WAHA_MONICA_API_KEY", ""))
-        r = wi.waha_instance("apply", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
+        monkeypatch.setattr(wi, "run_remote", lambda *a, **k: (3, "MISSING:WAHA_NOSNOLIMIAR_API_KEY", ""))
+        r = wi.waha_instance("apply", name="nosnolimiar", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
     def test_remove_refuses_working_session(self, tmp_path, monkeypatch):
         monkeypatch.setattr(wi, "_session_status", lambda *a: "WORKING")
-        r = wi.waha_instance("remove", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
+        r = wi.waha_instance("remove", name="nosnolimiar", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
     def test_remove_dry_run_snapshots_volume_first(self, tmp_path, monkeypatch):
         monkeypatch.setattr(wi, "_session_status", lambda *a: "STOPPED")
-        r = wi.waha_instance("remove", name="monica", repo_root=str(_tree(tmp_path)))
+        r = wi.waha_instance("remove", name="nosnolimiar", repo_root=str(_tree(tmp_path)))
         assert r["status"] == "planned" and "tar czf" in r["steps"][0]
 
     def test_unknown_instance_errors(self, tmp_path):

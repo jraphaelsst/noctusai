@@ -39,7 +39,7 @@ def test_product_owned_definition_cannot_be_opened_to_every_org():
     st = FakeStudioDefinitionStore()
     st.mark_platform_org(PLAT)
     with pytest.raises(ValueError, match="product-owned"):
-        st.create_studio_agent(PLAT, "x", "X", None, definition_scope="plataforma", owner_product="monica", instanciavel=True)
+        st.create_studio_agent(PLAT, "x", "X", None, definition_scope="plataforma", owner_product="nosnolimiar", instanciavel=True)
     st, d = _world()
     with pytest.raises(ValueError, match="product-owned"):
         st.update_definicao(PLAT, d.key, {"instanciavel": True})

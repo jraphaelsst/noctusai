@@ -12,6 +12,6 @@ engine: NOWEB                      # chat list / history backfill; the store its
 mem_limit: 512m                    # measured ~208 MB RSS idle on the first instance; headroom for the NOWEB store
 node_heap_mb: 384
 instances:
-  - name: monica                   # -> service waha-monica, http://waha-monica:3000, volume noctus-waha-monica
-    product: monica
+  - name: nosnolimiar              # -> service waha-nosnolimiar, http://waha-nosnolimiar:3000, volume noctus-waha-nosnolimiar
+    product: nosnolimiar
     session: default               # CORE: always `default`

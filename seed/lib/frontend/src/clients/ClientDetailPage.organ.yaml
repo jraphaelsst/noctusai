@@ -8,7 +8,7 @@ validation_status: emerging
 
 known_facts:
   - "Router-agnostic client page: header (status, tags, next session, sessions done, open), tabs Sessões (upcoming/past, quick status switch, payment chip, SessionFormDialog) · Agenda fixa (weekly slots CRUD, pause/resume) · Financeiro (tiles, receivables, admin-only 'Registrar pagamento' with accounts from GET /api/finance/accounts) · Dados (ClientForm inline, admin delete; 409 CLIENTE_COM_FINANCEIRO -> offers the 'encerrado' status)."
-  - "Part of the clients organ (backend: noctusai_lib/domain/clients; contract: recurring-session clients + leads stage tags, 2026-10-29). Seed-generic (therapists, trainers, tutors); first consumer: product monica (Pacientes)."
+  - "Part of the clients organ (backend: noctusai_lib/domain/clients; contract: recurring-session clients + leads stage tags, 2026-10-29). Seed-generic (therapists, trainers, tutors); first consumer: product nosnolimiar (Pacientes)."
   - "Vocabulary is DATA: noun_singular / noun_plural, statuses, session statuses (with billable), payment methods and the org timezone come from GET /api/clients/config; the organ never names 'Paciente'. Colours are the pipeline STAGE_COLORS tokens rendered through stageTagClasses."
   - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); never isLoading. Personal reads keyed by id carry no placeholderData."
   - "Dates and times are shown and typed in the ORG zone (format.zonedParts / zonedIso), never the browser's; instants go to the API with the zone's offset."
