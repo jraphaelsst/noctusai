@@ -5,7 +5,7 @@
  *   GET {path(agentKey)}  → OrgSpecsData  (the FORM: label/help/type/required, the org's values, what is missing)
  *   PUT {path(agentKey)}  → { valores } → OrgSpecsData  (admin-only, enforced server-side; blank clears)
  *
- * The default `path` is agents' own Studio route. A product that is not agents (e.g. `monica`) passes
+ * The default `path` is agents' own Studio route. A product that is not agents (e.g. `nosnolimiar`) passes
  * its OWN backend proxy, which forwards the logged-in user's token to agents
  * (`noctusai_lib.integrations.agents.make_agents_org_specs_client`):
  *   createOrgSpecsHooks(api, { path: () => "/api/contexto" })

@@ -11,8 +11,8 @@ Mount it from a product:
         stages=[LeadStage("lead", "Lead"), LeadStage("atendimento", "Atendimento"), ...],
         origins=[LeadOrigin("whatsapp", "WhatsApp"), LeadOrigin("instagram", "Instagram"), ...],
     )
-    sql = leads_migration("monica")                                    # -> migrations/0NN_leads.sql
-    store = build_leads_store(admin_client, schema="monica")
+    sql = leads_migration("nosnolimiar")                                    # -> migrations/0NN_leads.sql
+    store = build_leads_store(admin_client, schema="nosnolimiar")
     service = LeadsService(store, config)
     app.include_router(create_leads_router(store_factory=lambda: store, get_current_user_org=auth, config=config))
     inbox_router = create_whatsapp_inbox_router(..., on_new_chat=service.upsert_from_whatsapp)

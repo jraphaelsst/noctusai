@@ -11,9 +11,9 @@ to the leads organ's `LeadsConfig.on_stage_entered` hook.
 Mount it from a product (`noctusai_seed.organs.mount_clients` does this binding):
 
     config = ClientsConfig(noun_singular="Paciente", noun_plural="Pacientes", timezone="America/Sao_Paulo")
-    sql = clients_migration("monica", config)                         # -> migrations/0NN_clients.sql
+    sql = clients_migration("nosnolimiar", config)                         # -> migrations/0NN_clients.sql
     store = build_clients_store(admin_client, config)
-    booking = SupabaseFinanceBooking(admin_client, FinanceConfig(schema="monica"))
+    booking = SupabaseFinanceBooking(admin_client, FinanceConfig(schema="nosnolimiar"))
     service = ClientsService(store, config, booking)
     app.include_router(create_clients_router(store_factory=..., get_current_user_org=auth,
                                              admin_dependency=admin, config=config, booking_factory=...))

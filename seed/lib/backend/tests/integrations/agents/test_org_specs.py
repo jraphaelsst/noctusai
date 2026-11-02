@@ -18,7 +18,7 @@ from noctusai_lib.integrations.agents import (
 )
 
 BODY = {
-    "agent_key": "monica", "version_id": None, "versao": 2,
+    "agent_key": "nosnolimiar", "version_id": None, "versao": 2,
     "declaradas": [{"chave": "tom", "rotulo": "Tom", "descricao": "d", "tipo": "texto_longo", "obrigatoria": True, "exemplo": "x"}],
     "valores": [{"chave": "tom", "valor": "calmo"}], "faltando": [],
 }
@@ -36,8 +36,8 @@ async def test_get_forwards_user_token_and_parses():
         seen["auth"], seen["url"] = req.headers["authorization"], str(req.url)
         return httpx.Response(200, json=BODY)
 
-    out = await _client(h).get_org_specs("monica", token="user-jwt")
-    assert seen == {"auth": "Bearer user-jwt", "url": "http://agents/api/studio/agents/monica/specs"}
+    out = await _client(h).get_org_specs("nosnolimiar", token="user-jwt")
+    assert seen == {"auth": "Bearer user-jwt", "url": "http://agents/api/studio/agents/nosnolimiar/specs"}
     assert out.valores == {"tom": "calmo"} and out.declaradas[0].tipo == "texto_longo" and out.versao == 2
 
 
@@ -48,7 +48,7 @@ async def test_put_sends_valores_and_maps_422_with_conflitos():
         return httpx.Response(422, json={"detail": {"detail": "tom: conflita", "code": "spec_conflita_com_regra_fixa", "conflitos": ["opt_out"]}})
 
     with pytest.raises(AgentsBadRequest) as ei:
-        await _client(h).put_org_specs("monica", {"tom": "x"}, token="t")
+        await _client(h).put_org_specs("nosnolimiar", {"tom": "x"}, token="t")
     assert ei.value.code == "spec_conflita_com_regra_fixa" and ei.value.fields == {"conflitos": ["opt_out"]}
 
 

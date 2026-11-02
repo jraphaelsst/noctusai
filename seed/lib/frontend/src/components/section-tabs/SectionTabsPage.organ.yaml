@@ -11,7 +11,7 @@ known_facts:
 - Owns the URL <-> tab sync (deep link, back button, redirect of the bare base / unknown / hidden segment to the
   first visible section). Only the ACTIVE section renders, so a section that fetches does not fetch in the background.
 - Built because ~15 products hand-roll a settings shell (social-wiring's Configuracoes is the cautionary tale);
-  first consumer is monica (Configuracoes > Conexoes, designed to grow by adding one entry).
+  first consumer is nosnolimiar (Configuracoes > Conexoes, designed to grow by adding one entry).
 - 'visible:false is a UX gate only; the server enforces the real one. All sections hidden renders nothing, never an
   empty shell.'
 - 'v1.1: the redirect to the first section keeps ?query and #hash (OAuth return links like ?calendar=connected).'

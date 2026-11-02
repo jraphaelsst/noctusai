@@ -3,7 +3,7 @@
 > **Purpose.** Consume-side reference for the org-owned agent context: `agents.agent_org_specs`, declared per
 > agent definition (`agent_version_specs`: label / help / `texto|texto_longo` / required), filled via
 > `GET|PUT /api/studio/agents/{key}/specs` (`require_admin`), read by prompts as `{{org.<chave>}}`.
-> Durable and self-contained. Consumers: `agents` Studio (tab "Especificações") and `monica` (page "Contexto").
+> Durable and self-contained. Consumers: `agents` Studio (tab "Especificações") and `nosnolimiar` (page "Contexto").
 
 ## What ships
 
@@ -24,7 +24,7 @@ The org-specs routes are user routes, not channel routes. The client takes the u
 forwards it unchanged, so agents' `require_admin` and RLS decide who may read/write. Never substitute a service
 token (a non-admin would then edit the org's context). A 401/403 from agents surfaces as `AgentsTokenInvalid`.
 
-## Product backend proxy (monica recipe)
+## Product backend proxy (nosnolimiar recipe)
 
 ```python
 from noctusai_lib.integrations.agents import (
@@ -47,7 +47,7 @@ async def put_contexto(body: ContextoIn, request: Request):
 ```
 Map `AgentsTokenInvalid` -> 403, `AgentsNotConfigured` -> 503, other `AgentsClientError` -> 502. Frontend:
 `const hooks = createOrgSpecsHooks(api, { path: () => "/api/contexto" })` and
-`<OrgSpecsForm hooks={hooks} agentKey="monica" canEdit={isAdmin} />`.
+`<OrgSpecsForm hooks={hooks} agentKey="nosnolimiar" canEdit={isAdmin} />`.
 
 ## Behavior of the form
 
@@ -82,5 +82,5 @@ operator's login:
 
 ## Gaps
 
-- `monica` must be the agent's org-side consumer: the agent definition must declare the specs (platform admin work).
+- `nosnolimiar` must be the agent's org-side consumer: the agent definition must declare the specs (platform admin work).
 - Tests: `seed/lib/backend/tests/integrations/agents/`, `seed/lib/frontend/src/components/org-specs/OrgSpecsForm.test.tsx`.

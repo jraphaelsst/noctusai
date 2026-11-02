@@ -17,7 +17,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 afterEach(cleanup);
 
 const DATA: OrgSpecsData = {
-  agent_key: 'monica',
+  agent_key: 'nosnolimiar',
   declaradas: [
     { chave: 'quem_sou', rotulo: 'Quem eu sou', descricao: 'Apresentação.', tipo: 'texto', obrigatoria: true, exemplo: 'Psicanalista' },
     { chave: 'servicos', rotulo: 'Serviços', descricao: '', tipo: 'texto_longo', obrigatoria: false, exemplo: null },
@@ -31,7 +31,7 @@ function setup(api: { get?: (...a: any[]) => any; put?: (...a: any[]) => any }, 
   const hooks = createOrgSpecsHooks(api as unknown as ApiClient, opts);
   render(
     <QueryClientProvider client={qc}>
-      <OrgSpecsForm hooks={hooks} agentKey="monica" {...props} />
+      <OrgSpecsForm hooks={hooks} agentKey="nosnolimiar" {...props} />
     </QueryClientProvider>,
   );
   return qc;
@@ -79,9 +79,9 @@ describe('OrgSpecsForm', () => {
     fireEvent.change(screen.getByLabelText(/Quem eu sou/), { target: { value: 'Mônica' } });
     expect(screen.getByTestId('unsaved-changes-notice')).toBeInTheDocument();
     fireEvent.click(save);
-    await waitFor(() => expect(put).toHaveBeenCalledWith('/api/studio/agents/monica/specs', { valores: { quem_sou: 'Mônica', servicos: 'Análise individual' } }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/api/studio/agents/nosnolimiar/specs', { valores: { quem_sou: 'Mônica', servicos: 'Análise individual' } }));
     await waitFor(() => expect(screen.queryByTestId('unsaved-changes-notice')).toBeNull());
-    expect(qc.getQueryData(['org-specs', 'monica'])).toEqual(saved);
+    expect(qc.getQueryData(['org-specs', 'nosnolimiar'])).toEqual(saved);
     expect(screen.getByText('Tudo preenchido')).toBeInTheDocument();
   });
 
@@ -98,7 +98,7 @@ describe('OrgSpecsForm', () => {
 
   it('is read-only without edit permission and uses a product proxy path', async () => {
     const get = vi.fn().mockResolvedValue(DATA);
-    setup({ get }, { path: () => '/api/contexto', queryKey: (k) => ['monica', k, 'ctx'] }, { canEdit: false });
+    setup({ get }, { path: () => '/api/contexto', queryKey: (k) => ['nosnolimiar', k, 'ctx'] }, { canEdit: false });
     expect(await screen.findByTestId('spec-org-quem_sou')).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/api/contexto');
     expect(screen.queryByTestId('specs-org-salvar')).toBeNull();
