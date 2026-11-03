@@ -12,6 +12,7 @@ Runs on the shared `igig` mock (`crm_api`): the router builds its own
 and the re-read see the same row, as in production.
 """
 import asyncio
+from datetime import date, timedelta
 
 import pytest
 from noctusai_lib.integrations.persistence import SupabaseRecordStore
@@ -21,6 +22,7 @@ from app.email_deps import get_email_sender_factory, get_email_settings, get_pdf
 from app.repositories import Repositorios
 from app.repositories.email import repositorios_email
 from app.services import email_config
+from app.services.orcamentos import hoje_local
 from tests.email_support import MAILBOX, ORG, SEM_GCP, SMTP, ConfigBox, Senders
 from noctusai_lib.testing import handler_status
 
@@ -77,10 +79,15 @@ def lead(repos) -> dict:
     return repos.lead.criar(ORG, {"nome": "Padaria Sol", "email": "contato@padariasol.com"})
 
 
+#: Still valid, from the SAME clock the service reads. A fixed date ("2026-10-31") turned every send into
+#: `orcamento_bloqueado` the day it passed (CI red 2026-11-03).
+_VALIDADE_ABERTA = (hoje_local() + timedelta(days=30)).isoformat()
+
+
 def _orcamento(repos, lead, **extra) -> dict:
     valores = {
         "lead_id": lead["id"], "titulo": "Gestão de Instagram", "status": "rascunho",
-        "total_mensal": 1500, "validade": "2026-10-31", "pdf_key": CHAVE_PDF, **extra,
+        "total_mensal": 1500, "validade": _VALIDADE_ABERTA, "pdf_key": CHAVE_PDF, **extra,
     }
     return repos.orcamento.criar(ORG, valores)
 
@@ -104,7 +111,7 @@ class TestEnviar:
         assert enviado.attachments[0].content == PDF
         assert enviado.attachments[0].mime_type == "application/pdf"
         assert "Padaria Sol" in enviado.html and "R$ 1.500,00" in enviado.html
-        assert "31/10/2026" in enviado.html
+        assert date.fromisoformat(_VALIDADE_ABERTA).strftime("%d/%m/%Y") in enviado.html
         assert data["message_id"] == "<fake-1@fake.noctus.test>"
         assert data["orcamento"]["id"] == orc["id"]
         assert data["orcamento"]["status"] == "enviado"
