@@ -352,7 +352,10 @@ model only records criterion values through tools; **score and stage are compute
   a scope's `avaliar_lead` only asks its own criteria, records are shared on the lead), `validade_dias`
   (older records stop counting), type `derivado` (system signals the model cannot record) and
   `identificacao`. Axis config (`parametros.eixos`): `max`, `multiplicadores` (rule x factor), `decaimento`
-  (factor after N days without a lead reply).
+  (factor after N days without a lead reply). `parametros.lote_ofertas` = 1 property per offer batch (owner's
+  rule; migration 054 column default; not shown in the editor).
+- **Store timestamps**: every Real-store row mapper parses `timestamptz` through `app.stores._util.db_ts`
+  (PostgREST returns ISO strings, the Fakes hold `datetime`; a passthrough 500'd every published-version read).
 - **Stages** are rules in a closed DSL (`todos/algum/nao`, `criterio`, `score` incl. `eixo`, `evento`,
   `contagem`, `identificacao: completa`); every node may carry an `id` (explainability: `regra_id` +
   per-axis `detalhe`). A `terminal` stage is only ever **suggested** (`descartado_sugerido`); a human
