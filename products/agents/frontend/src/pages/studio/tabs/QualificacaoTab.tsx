@@ -424,10 +424,6 @@ function ParametrosEditor({ parametros, versaoId, padrao, editavel }: { parametr
       {buf.conflict && <Conflito onReload={buf.reload} />}
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label htmlFor="par-lote" className="mb-1 block text-xs font-medium">Imóveis por lote (1 a 5)</label>
-          <input id="par-lote" type="number" min={1} max={5} className={INPUT_CLASS} disabled={!editavel} value={p.lote_ofertas} onChange={(e) => patch({ lote_ofertas: Number(e.target.value) })} />
-        </div>
-        <div>
           <label htmlFor="par-max" className="mb-1 block text-xs font-medium">Pontuação máxima</label>
           <input id="par-max" type="number" min={1} max={1000} className={INPUT_CLASS} disabled={!editavel} value={p.score_max} onChange={(e) => patch({ score_max: Number(e.target.value) })} />
         </div>

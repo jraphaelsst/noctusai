@@ -77,7 +77,9 @@ class ParametrosDef:
     """
 
     minimo_para_ofertar: dict[str, Any]
-    lote_ofertas: int = 3
+    #: Properties per offer batch. The owner's rule (2026-11-03): ONE property per batch, so 1 is the default and
+    #: the editor no longer exposes it; the field stays so the engine/tool contract keeps its single source.
+    lote_ofertas: int = 1
     score_max: int = 100
     eixos: dict[str, Any] = field(default_factory=dict)
     #: Rule: ask for the identity fields only when it is true (e.g. visit intent recorded). None = any time.

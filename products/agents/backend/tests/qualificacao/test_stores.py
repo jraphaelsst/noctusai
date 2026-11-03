@@ -250,3 +250,39 @@ def test_factories_return_fakes_without_a_service_key():
     s = SimpleNamespace(supabase_service_role_key=None)
     assert isinstance(get_padrao_store(s), FakePadraoStore)
     assert isinstance(get_lead_qualificacao_store(s), FakeLeadQualificacaoStore)
+
+
+# ── Real half: PostgREST hands timestamps back as ISO strings ────────────────
+# The Fake holds datetimes, so a mapper that passed the string through stayed green here while every read of a
+# PUBLISHED version 500'd in prod (`'str' object has no attribute 'isoformat'`, 2026-11-03). The rows below are
+# shaped exactly like PostgREST's JSON.
+
+_PG_TS = "2026-11-03T21:32:06.392721+00:00"
+
+
+def test_real_published_version_meta_parses_publicada_em():
+    pid, vid = uuid4(), uuid4()
+    row = {"id": str(vid), "padrao_id": str(pid), "versao": 1, "status": "publicada", "notas": None,
+           "publicada_em": _PG_TS, "publicada_por": str(ADMIN)}
+    (meta,) = SupabasePadraoStore(Scripted(_ans([row]))).listar_versoes(pid)
+    assert meta.publicada_em == datetime(2026, 11, 3, 21, 32, 6, 392721, tzinfo=timezone.utc)
+    assert meta.publicada_em.isoformat()  # what the router serializes
+
+
+def test_real_lead_rows_parse_their_timestamps():
+    row = {"id": str(uuid4()), "criterio_chave": "operacao", "valor": "compra", "fonte": "lead_informou",
+           "trecho": None, "created_at": _PG_TS, "versao_id": None, "agent_id": None, "thread_id": None, "message_id": None}
+    (reg,) = SupabaseLeadQualificacaoStore(Scripted(_ans([row]))).listar_registros(ORG, LEAD)
+    assert isinstance(reg.created_at, datetime) and reg.created_at.tzinfo is not None
+    estado = {"org_id": str(ORG), "lead_ref_id": str(LEAD), "versao_id": str(uuid4()), "valores": {}, "score": 0,
+              "estagio": "novo", "faltando": [], "hash": "h", "calculado_em": _PG_TS}
+    got = SupabaseLeadQualificacaoStore(Scripted(_ans([estado]))).obter_estado(ORG, LEAD)
+    assert isinstance(got.calculado_em, datetime)
+
+
+def test_db_ts_is_strict_and_keeps_none():
+    from app.stores._util import db_ts
+    assert db_ts(None) is None
+    assert db_ts("2026-11-03T21:32:06Z").tzinfo is not None
+    with pytest.raises(ValueError):
+        db_ts("not a timestamp")

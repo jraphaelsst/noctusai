@@ -17,7 +17,7 @@ from app.qualificacao.identificacao import (
     IdentRecord,
 )
 from app.stores._db_errors import exec_query, exec_rpc
-from app.stores._util import utcnow, utcnow_iso
+from app.stores._util import db_ts, utcnow, utcnow_iso
 
 _SCHEMA = "agents"
 _COLS = ("nome", "telefone", "email", "cpf_cifrado", "rg_cifrado", "rg_uf", "cpf_hash")
@@ -68,7 +68,7 @@ class SupabaseIdentificacaoStore:
         return IdentRecord(
             org_id=org_id, lead_ref_id=lead_ref_id, nome=r.get("nome"), telefone=r.get("telefone"),
             email=r.get("email"), cpf_cifrado=r.get("cpf_cifrado"), rg_cifrado=r.get("rg_cifrado"),
-            rg_uf=r.get("rg_uf"), cpf_hash=r.get("cpf_hash"), coletado_em=r.get("coletado_em"),
+            rg_uf=r.get("rg_uf"), cpf_hash=r.get("cpf_hash"), coletado_em=db_ts(r.get("coletado_em")),
             coletado_por_agent_id=UUID(str(r["coletado_por_agent_id"])) if r.get("coletado_por_agent_id") else None,
             origem_msg_id=UUID(str(r["origem_msg_id"])) if r.get("origem_msg_id") else None,
         )
@@ -94,7 +94,7 @@ class SupabaseIdentificacaoStore:
             .eq("lead_ref_id", str(lead_ref_id)).order("created_at").limit(1000).execute()
         )
         return [AcessoIdentificacao(org_id, lead_ref_id, UUID(str(r["ator_user_id"])), tuple(r["campos"]),
-                                    r.get("motivo"), r["created_at"]) for r in resp.data or []]
+                                    r.get("motivo"), db_ts(r["created_at"])) for r in resp.data or []]
 
     def apagar_por_lead(self, org_id, lead_ref_id):
         resp = exec_query(

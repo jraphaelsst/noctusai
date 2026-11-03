@@ -35,6 +35,8 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+
+from app.stores._util import db_ts
 from collections.abc import Mapping
 from typing import Any, Callable
 from uuid import UUID
@@ -88,11 +90,7 @@ def _as_datetime(value: Any) -> datetime | None:
     field; this handler is the one place that does arithmetic on it, so
     it normalizes here rather than pushing a parsing contract onto every
     store implementation."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return db_ts(value)
 
 
 def _leitura(

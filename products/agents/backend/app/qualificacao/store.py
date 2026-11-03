@@ -22,7 +22,7 @@ from app.qualificacao.models import (
     VersaoPadrao,
 )
 from app.stores._db_errors import StudioConflict, VersionImmutable, exec_query, exec_rpc
-from app.stores._util import utcnow, utcnow_iso
+from app.stores._util import db_ts, utcnow, utcnow_iso
 from app.stores.errors import NotFound
 
 __all__ = [
@@ -276,13 +276,13 @@ class SupabasePadraoStore:
 
     @staticmethod
     def _padrao(r: dict[str, Any]) -> PadraoRecord:
-        return PadraoRecord(UUID(str(r["id"])), r["chave"], r["nome"], r.get("descricao"), r["created_at"])
+        return PadraoRecord(UUID(str(r["id"])), r["chave"], r["nome"], r.get("descricao"), db_ts(r["created_at"]))
 
     @staticmethod
     def _meta_row(r: dict[str, Any]) -> VersaoMeta:
         return VersaoMeta(
             UUID(str(r["id"])), UUID(str(r["padrao_id"])), r["versao"], r["status"], r.get("notas"),
-            r.get("publicada_em"), UUID(str(r["publicada_por"])) if r.get("publicada_por") else None,
+            db_ts(r.get("publicada_em")), UUID(str(r["publicada_por"])) if r.get("publicada_por") else None,
         )
 
     def listar_padroes(self):
@@ -320,7 +320,7 @@ class SupabasePadraoStore:
         par = self._t("qualificacao_parametros").select("*").eq("versao_id", str(versao_id)).limit(1).execute()
         prow = (par.data or [None])[0]
         parametros = (
-            ParametrosDef(prow["minimo_para_ofertar"], prow.get("lote_ofertas", 3), prow.get("score_max", 100),
+            ParametrosDef(prow["minimo_para_ofertar"], prow.get("lote_ofertas", 1), prow.get("score_max", 100),
                           prow.get("eixos") or {}, prow.get("pedir_identificacao_quando"))
             if prow else ParametrosDef(minimo_para_ofertar={"todos": []})
         )

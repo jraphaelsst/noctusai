@@ -28,7 +28,7 @@ from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
 from app.stores._db_errors import exec_query, exec_rpc
-from app.stores._util import utcnow, utcnow_iso
+from app.stores._util import db_ts, utcnow, utcnow_iso
 from app.stores.errors import Conflict, NotFound
 
 __all__ = [
@@ -92,9 +92,10 @@ PAPEL_DONO_ORG = "dono_org"
 
 def _dt(v: Any) -> datetime:
     """A PostgREST timestamptz (ISO string) or an already-parsed datetime, as an aware datetime."""
-    if isinstance(v, datetime):
-        return v
-    return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    parsed = db_ts(v)
+    if parsed is None:
+        raise ValueError("timestamptz obrigatorio veio vazio")
+    return parsed
 
 
 def _codificar_cursor(e: OptOutEventoRecord) -> str:

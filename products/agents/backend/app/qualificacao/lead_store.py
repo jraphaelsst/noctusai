@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 from app.qualificacao.models import Confirmacao, EventoImovel, Registro
 from app.stores._db_errors import exec_query, exec_rpc
-from app.stores._util import utcnow
+from app.stores._util import db_ts, utcnow
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 __all__ = [
@@ -164,7 +164,7 @@ class SupabaseLeadQualificacaoStore:
     def _registro(r: dict[str, Any]) -> Registro:
         return Registro(
             id=UUID(str(r["id"])), criterio_chave=r["criterio_chave"], valor=r["valor"], fonte=r["fonte"],
-            trecho=r.get("trecho"), created_at=r.get("created_at"),
+            trecho=r.get("trecho"), created_at=db_ts(r.get("created_at")),
             versao_id=UUID(str(r["versao_id"])) if r.get("versao_id") else None,
             agent_id=UUID(str(r["agent_id"])) if r.get("agent_id") else None,
             thread_id=UUID(str(r["thread_id"])) if r.get("thread_id") else None,
@@ -175,7 +175,7 @@ class SupabaseLeadQualificacaoStore:
     def _evento(r: dict[str, Any]) -> EventoImovel:
         return EventoImovel(
             id=UUID(str(r["id"])), codigo_imovel=r["codigo_imovel"], evento=r["evento"], origem=r["origem"],
-            lote=r.get("lote"), motivo=r.get("motivo"), created_at=r.get("created_at"),
+            lote=r.get("lote"), motivo=r.get("motivo"), created_at=db_ts(r.get("created_at")),
             agent_id=UUID(str(r["agent_id"])) if r.get("agent_id") else None,
             thread_id=UUID(str(r["thread_id"])) if r.get("thread_id") else None,
         )
@@ -238,7 +238,7 @@ class SupabaseLeadQualificacaoStore:
             estagio=r["estagio"], faltando=tuple(r.get("faltando") or ()), hash=r["hash"],
             scores=r.get("scores") or {}, regra_id=r.get("regra_id"), detalhe=r.get("detalhe") or {},
             descartado_sugerido=r.get("descartado_sugerido"),
-            calculado_em=r["calculado_em"],
+            calculado_em=db_ts(r["calculado_em"]),
         )
 
     def salvar_estado(self, e):
@@ -265,7 +265,7 @@ class SupabaseLeadQualificacaoStore:
     @staticmethod
     def _confirmacao(r):
         return Confirmacao(estagio=r["estagio"], ator_user_id=UUID(str(r["ator_user_id"])), motivo=r.get("motivo"),
-                           created_at=r.get("created_at"), id=UUID(str(r["id"])))
+                           created_at=db_ts(r.get("created_at")), id=UUID(str(r["id"])))
 
     def apagar_por_lead(self, org_id, lead_ref_id):
         resp = exec_rpc(

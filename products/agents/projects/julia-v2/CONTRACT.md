@@ -340,7 +340,7 @@ agents.qualificacao_criterios    (id, versao_id, chave ~ ^[a-z][a-z0-9_]{1,63}$,
                                   pontuacao JSONB (deterministic map, §3.2), ordem INT, ativo BOOL, UNIQUE(versao_id, chave))
 agents.qualificacao_estagios     (id, versao_id, chave, rotulo, descricao, ordem INT, regra JSONB (predicate DSL §3.2),
                                   conclusivo BOOL (allows concluir_qualificacao), terminal BOOL, UNIQUE(versao_id, chave))
-agents.qualificacao_parametros   (versao_id PK, minimo_para_ofertar JSONB predicate, lote_ofertas INT DEFAULT 3 CHECK 1..5,
+agents.qualificacao_parametros   (versao_id PK, minimo_para_ofertar JSONB predicate, lote_ofertas INT DEFAULT 1 CHECK 1..5 (migration 054: one property per batch, owner 2026-11-03; not shown in the editor),
                                   score_max INT DEFAULT 100)
 ```
 

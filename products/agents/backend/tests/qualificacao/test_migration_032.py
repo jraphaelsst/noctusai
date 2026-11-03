@@ -185,3 +185,8 @@ def test_erasure_covers_identity_and_confirmations():
         body = body[: body.index("$$;", body.index("AS $$"))]
         assert "DELETE FROM agents.lead_identificacao " in body and "DELETE FROM agents.lead_qualificacao_confirmacoes" in body
         assert "lead_identificacao_acessos" not in body  # the audit survives erasure (no personal data in it)
+
+
+def test_one_property_per_batch_is_the_column_default():
+    sql = migration_sql(Path(__file__).resolve().parents[2], "qualificacao_lote_um")
+    assert "ALTER TABLE agents.qualificacao_parametros ALTER COLUMN lote_ofertas SET DEFAULT 1;" in sql
