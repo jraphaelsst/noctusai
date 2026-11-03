@@ -40,7 +40,9 @@ _SCHEMA = "agents"
 SKILL_CHAVE_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _MAX_OBRIGATORIA_PARA = 32
-_MAX = {"descricao_modelo": 1024, "corpo": 60_000, "notas": 2000, "arquivo": 120_000}
+# The tools that OPEN a skill can never be gated on one: gating them makes the skill unopenable (deadlock).
+FERRAMENTAS_DE_ABERTURA: frozenset[str] = frozenset({"abrir_skill", "ler_arquivo_skill"})
+_MAX ={"descricao_modelo": 1024, "corpo": 60_000, "notas": 2000, "arquivo": 120_000}
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,8 @@ def validar_obrigatoria_para(itens: list[str]) -> tuple[str, ...]:
     bad = [i for i in itens if not TOOL_NAME_RE.match(i)]
     if bad:
         raise ValueError("obrigatoria_para tem nome de ferramenta invalido")
+    if any(i in FERRAMENTAS_DE_ABERTURA for i in itens):
+        raise ValueError("obrigatoria_para nao pode incluir abrir_skill nem ler_arquivo_skill (a skill ficaria impossivel de abrir)")
     return tuple(dict.fromkeys(itens))
 
 

@@ -49,6 +49,7 @@ from app.qualificacao.models import LeadSinais, VersaoPadrao
 from app.qualificacao.service import ItemPerfil, QualificacaoService
 from app.runtime.llm_runtime import LlmToolset
 from app.studio.models import ConteudoBundle
+from app.stores.skills_biblioteca import FERRAMENTAS_DE_ABERTURA
 from app.stores.threads import OPT_OUT_MENSAGEM_MAX
 from app.studio.textos_registry import MOTIVOS_HANDOFF
 
@@ -338,6 +339,11 @@ def obrigatorias_por_ferramenta(
             out.setdefault(f.ferramenta, []).append(f.obrigatoria_skill)
     for skill, tools in (skill_obrigatoria_para or {}).items():
         for t in tools:
+            if t in FERRAMENTAS_DE_ABERTURA:
+                # Gating the skill-opening tools would make the skill unopenable; the PUT refuses them
+                # (422), this keeps a legacy row from ever deadlocking a live thread.
+                logger.warning("agents.channel.gate_ignorado skill=%s ferramenta=%s", skill, t)
+                continue
             if skill not in out.setdefault(t, []):
                 out[t].append(skill)
     return {k: tuple(v) for k, v in out.items()}
