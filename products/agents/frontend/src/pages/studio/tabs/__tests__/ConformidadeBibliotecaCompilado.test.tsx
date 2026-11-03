@@ -71,15 +71,39 @@ describe("BibliotecaTab", () => {
     expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ versao: 2, obrigatoria_para: [], ordem: 0 });
   });
 
-  it("sets obrigatoria_para from the version's tools", async () => {
-    const net = installFetch([
-      ...common,
-      { method: "PUT", path: `${A}/draft/skills-biblioteca/skill-um`, body: pins },
-    ]);
+  it("ticking only edits locally; Salvar sends ONE PUT with the full list; Descartar restores", async () => {
+    const net = installFetch([...common, { method: "PUT", path: `${A}/draft/skills-biblioteca/skill-um`, body: pins }]);
+    renderWith(<BibliotecaTab agentKey={KEY} />);
+    const box = (await screen.findByLabelText("ferramenta_um")) as HTMLInputElement;
+    fireEvent.click(box);
+    expect(box.checked).toBe(true);
+    expect(screen.getByTestId("pino-sujo-skill-um")).toBeTruthy();
+    expect(net.calls.some((c) => c.method === "PUT")).toBe(false);
+    fireEvent.click(screen.getByTestId("pino-descartar-skill-um"));
+    expect((screen.getByLabelText("ferramenta_um") as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByTestId("pino-sujo-skill-um")).toBeNull();
+    fireEvent.click(screen.getByLabelText("ferramenta_um"));
+    fireEvent.click(screen.getByTestId("pino-salvar-skill-um"));
+    await waitFor(() => expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(1));
+    expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ versao: 1, obrigatoria_para: ["ferramenta_um"], ordem: 0 });
+  });
+
+  it("keeps the local selection and shows the error when the save fails", async () => {
+    installFetch([...common, { method: "PUT", path: `${A}/draft/skills-biblioteca/skill-um`, status: 422, body: { detail: "recusado" } }]);
     renderWith(<BibliotecaTab agentKey={KEY} />);
     fireEvent.click(await screen.findByLabelText("ferramenta_um"));
-    await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
-    expect((net.calls.find((c) => c.method === "PUT")!.body as { obrigatoria_para: string[] }).obrigatoria_para).toEqual(["ferramenta_um"]);
+    fireEvent.click(screen.getByTestId("pino-salvar-skill-um"));
+    expect(await screen.findByTestId("pino-erro-skill-um")).toBeTruthy();
+    expect((screen.getByLabelText("ferramenta_um") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("renders the skill-opening tools disabled", async () => {
+    installFetch([
+      ...common.filter((c) => !c.path.endsWith("/ferramentas")),
+      { method: "GET", path: `${A}/versions/${DRAFT_ID}/ferramentas`, body: { version_id: DRAFT_ID, itens: [{ id: "f2", ferramenta: "abrir_skill", ativo: true, descricao: "d", parametros: {}, obrigatoria_skill: null }] } },
+    ]);
+    renderWith(<BibliotecaTab agentKey={KEY} />);
+    expect(((await screen.findByLabelText(/abrir_skill/)) as HTMLInputElement).disabled).toBe(true);
   });
 });
 
