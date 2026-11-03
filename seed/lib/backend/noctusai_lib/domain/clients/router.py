@@ -22,7 +22,7 @@ plain `def` (the store does blocking IO), so FastAPI runs them in its threadpool
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Callable, Optional
 from uuid import UUID
 
@@ -50,12 +50,15 @@ def create_clients_router(
     prefix: str = "/api/clients",
     tags: Optional[list[str]] = None,
     resolve_org_id: Callable[[Any], str] = str,
+    clock: Optional[Callable[[], datetime]] = None,
 ) -> APIRouter:
     router = APIRouter(prefix=prefix, tags=tags or ["clients"])
 
     def _ctx(auth: Any) -> tuple:
         user, _token, raw_org = auth
-        service = ClientsService(store_factory(), config, booking_factory() if booking_factory else None)
+        booking = booking_factory() if booking_factory else None
+        # The clock is the service's seam; the router forwards it so a test can pin "now" (default: wall clock).
+        service = ClientsService(store_factory(), config, booking, **({"clock": clock} if clock else {}))
         uid = str(getattr(user, "id", None) or "") or None
         return service, resolve_org_id(raw_org), uid, bool(getattr(auth, "is_admin", False))
 

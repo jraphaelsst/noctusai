@@ -129,7 +129,7 @@ class Harness:
 def build_harness(store, booking, clock) -> Harness:
     router = create_clients_router(
         store_factory=lambda: store, get_current_user_org=_auth, admin_dependency=_admin, config=CFG,
-        booking_factory=lambda: booking,
+        booking_factory=lambda: booking, clock=clock,
     )
     app = FastAPI()
     app.add_exception_handler(AppException, app_exception_handler)
