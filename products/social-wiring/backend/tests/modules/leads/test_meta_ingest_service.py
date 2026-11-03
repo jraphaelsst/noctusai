@@ -57,6 +57,11 @@ def _meta_lead(**overrides) -> dict:
 
 
 class TestMapMetaLeadToLeadPayload:
+    def test_carries_the_generic_external_key(self):
+        payload = map_meta_lead_to_lead_payload(_meta_lead(), origem_source_id="SRC1")
+        assert payload["external_source"] == "meta-lead-ads"
+        assert payload["external_lead_id"] == payload["meta_lead_id"] == "ml-1"
+
     def test_meta_lead_id_origem_and_tipo_lead(self):
         payload = map_meta_lead_to_lead_payload(_meta_lead(), origem_source_id="SRC1")
         assert payload["meta_lead_id"] == "ml-1"

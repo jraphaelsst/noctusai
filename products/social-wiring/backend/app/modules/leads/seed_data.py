@@ -108,6 +108,9 @@ CANONICAL_SOURCES: list[SourceSeed] = [
     # keeps `leadOrigin / leadType` so the splitter is buildable the
     # moment live traffic shows what actually distinguishes them.
     {"slug": "grupo-olx", "label": "Grupo OLX (ZAP/VivaReal)", "categoria": "portal", "cor": "#6E44FF", "ordem": 24},
+    # Assigned programmatically by Julia (`services/julia_origem_service.py`) to a contact whose first WhatsApp
+    # message carried a click-to-WhatsApp ad referral. No alias: nothing a human types resolves to it.
+    {"slug": "meta-ctwa", "label": "Meta — clique para WhatsApp", "categoria": "social", "cor": "#0081FB", "ordem": 25},
 ]
 
 # raw ORIGEM spelling (already normalize_alias'd below at import time) ->

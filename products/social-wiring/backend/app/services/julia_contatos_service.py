@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -60,14 +60,28 @@ def buscar_contato(client: Any, org_id: UUID | str, connection_id: UUID | str, c
     return rows[0] if rows else None
 
 
+_ORIGEM_CAMPOS = ("origem_slug", "campanha_origem", "anuncio_origem", "codigo_imovel_campanha", "lead_id")
+
+
+def _origem_campos(origem: "dict[str, Any] | Callable[[], dict[str, Any]] | None") -> dict[str, Any]:
+    dados = origem() if callable(origem) else (origem or {})
+    return {k: dados[k] for k in _ORIGEM_CAMPOS if dados.get(k)}
+
+
 def obter_ou_criar_contato(
     client: Any, *, org_id: UUID | str, connection_id: UUID | str, chat_id: str,
     telefone_e164: Optional[str] = None, nome: Optional[str] = None, canal: str = "whatsapp",
+    origem: "dict[str, Any] | Callable[[], dict[str, Any]] | None" = None,
 ) -> dict[str, Any]:
     """The contato for `(org, connection, chat)`; created on first sight. Phone/name fill in
-    when missing (never overwrite what an action or a human already set)."""
+    when missing (never overwrite what an action or a human already set).
+
+    `origem` (see `julia_origem_service.resolver_origem`) is a dict or a zero-arg callable returning one; the callable
+    runs only when it is needed (a new contato, or one whose `origem_slug` is still NULL), so the common turn on a known
+    contact costs no extra query. First write wins: an origin already stored is never replaced."""
     row = buscar_contato(client, org_id, connection_id, chat_id)
     if row is None:
+        dados_origem = _origem_campos(origem)
         # upsert + ignore_duplicates == INSERT ... ON CONFLICT DO NOTHING: two concurrent first
         # messages cannot both insert, and neither raises.
         client.table(T_CONTATOS).upsert(
@@ -77,6 +91,7 @@ def obter_ou_criar_contato(
                 # explicit, not left to column defaults: `gen` is a compare-and-set key and must exist
                 "gen": 0, "slots": {}, "status_envio": "nao_pronto", "email": None, "operacao": None,
                 "encerrado_at": None, "ultimo_inbound_at": None, "ultimo_outbound_at": None,
+                **dados_origem,
             },
             on_conflict="org_id,connection_id,chat_id", ignore_duplicates=True,
         ).execute()
@@ -89,6 +104,8 @@ def obter_ou_criar_contato(
         patch["telefone_e164"] = telefone_e164
     if nome and not row.get("nome"):
         patch["nome"] = nome
+    if not row.get("origem_slug"):
+        patch.update({k: v for k, v in _origem_campos(origem).items() if v is not None and not row.get(k)})
     if patch:
         patch["updated_at"] = _now(None).isoformat()
         client.table(T_CONTATOS).update(patch).eq("id", row["id"]).execute()

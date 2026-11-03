@@ -559,6 +559,22 @@ def delete_corretor_alias(client: Any, org_id: UUID, alias_id: UUID) -> bool:
     return True
 
 
+def get_or_create_canonical_source(client: Any, org_id: UUID, slug: str) -> dict:
+    """The ``lead_sources`` row ``slug`` for this org; a missing CANONICAL one is provisioned (the idempotent
+    ``ensure_default_dimensions``). An unknown slug is a programming error, never a silent create."""
+    for row in list_sources(client, org_id):
+        if row["slug"] == slug:
+            return row
+    ensure_default_dimensions(client, org_id)
+    for row in list_sources(client, org_id):
+        if row["slug"] == slug:
+            return row
+    raise RuntimeError(
+        f"dimensions_service: {slug!r} source missing after ensure_default_dimensions — "
+        "seed_data.CANONICAL_SOURCES drifted"
+    )
+
+
 # ─── default-dimension seeding (see module + migration docstrings) ─────
 
 def ensure_default_dimensions(client: Any, org_id: UUID) -> None:
@@ -672,5 +688,6 @@ __all__ = [
     "create_corretor_alias",
     "delete_corretor_alias",
     "ensure_default_dimensions",
+    "get_or_create_canonical_source",
     "build_resolution_maps",
 ]

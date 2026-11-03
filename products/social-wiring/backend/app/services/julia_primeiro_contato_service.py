@@ -39,6 +39,7 @@ from app.services import (
     julia_contatos_service as contatos,
     julia_disparos_service,
     julia_eventos_service as eventos,
+    julia_origem_service,
     julia_transporte,
 )
 
@@ -140,6 +141,7 @@ async def iniciar(
         nome = (lead.get("full_name") or "").strip() or None
         contato = contatos.obter_ou_criar_contato(
             client, org_id=org_id, connection_id=conexao.id, chat_id=chat_id, telefone_e164=telefone, nome=nome,
+            origem=lambda: julia_origem_service.resolver_origem(client, org_id, meta_lead=lead, telefone=telefone),
         )
         codigo = codigo_do_meta_lead(lead)
         if codigo:  # the campaign listing, as DATA for the agent (`contexto.operacional.origem.codigo_imovel_campanha`)

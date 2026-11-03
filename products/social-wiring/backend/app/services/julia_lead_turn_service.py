@@ -64,6 +64,7 @@ from app.config import settings as _default_settings
 from app.modules.supervisao import alertas as supervisao_alertas
 from app.services import julia_acoes_service, julia_conhecimento_service, julia_contatos_service, julia_contexto_service, julia_conversas_service
 from app.services.identidade_mascara import ref as ref_log
+from app.services import julia_origem_service
 from app.services import julia_protecao_service as protecao
 from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import julia_espelho_service, julia_thread_service
@@ -331,6 +332,7 @@ def _registrar_resposta_de_disparo(deps: LeadDeps, org_id: Any, contato: dict[st
 async def _preparar_julia(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, phone: Optional[str],
     display_name: Optional[str], state: Optional[dict[str, Any]], agents_client: Optional[AgentsClient],
+    referral: Optional[dict[str, Any]] = None,
 ) -> Optional[JuliaTurn]:
     """Upsert the contato, bump `gen` for this inbound, settle the episode (24 h of silence
     closes the old one with a summary, then a new one opens), render the `contexto`.
@@ -343,6 +345,7 @@ async def _preparar_julia(
         contato = julia_contatos_service.obter_ou_criar_contato(
             deps.scoped, org_id=org_id, connection_id=connection.id, chat_id=chat_id,
             telefone_e164=phone, nome=display_name,
+            origem=lambda: julia_origem_service.resolver_origem(deps.scoped, org_id, referral=referral, telefone=phone),
         )
         contato, anterior = julia_contatos_service.registrar_inbound(deps.scoped, contato)
         _registrar_resposta_de_disparo(deps, org_id, contato, phone)
@@ -534,6 +537,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     julia_turn = await _preparar_julia(
         deps, connection=connection, chat_id=chat_id, phone=phone,
         display_name=(meta.get("push_name") or None), state=state, agents_client=client,
+        referral=julia_origem_service.referral_do_lote(run),
     )
     if julia_turn is None:  # no lead identity => agents has nothing to attach the thread to: fail closed
         close_run(deps.buffer, key, run)

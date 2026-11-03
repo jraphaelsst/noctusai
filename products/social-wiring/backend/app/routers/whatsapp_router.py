@@ -100,7 +100,7 @@ from app.routers.whatsapp_connections_router import get_waha_client_factory
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services import julia_agente_service as julia
 from app.services.identidade_mascara import ref as ref_log
-from app.services import julia_conversas_service, julia_protecao_service, julia_staff_service, julia_thread_service
+from app.services import julia_conversas_service, julia_origem_service, julia_protecao_service, julia_staff_service, julia_thread_service
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
@@ -528,7 +528,7 @@ async def _lid_alias_phone(*, intake, connection, lid: str, cfg=None, waha_facto
 async def _handle_lead_message(
     *, connection, intake, chat_id: str, sender: str, message_body: str,
     provider_message_id: str, push_name: str | None, cfg, waha_factory=None,
-    midia: dict | None = None,
+    midia: dict | None = None, referral: dict | None = None,
 ) -> bool:
     """The lead path for ONE inbound. Returns True when the message was handled here
     (enqueued for Julia, or deliberately held because a human has the chat), False
@@ -583,7 +583,8 @@ async def _handle_lead_message(
             text=message_body,
             direction="inbound",
             provider_message_id=provider_message_id or f"sw-{uuid4().hex}",
-            metadata={"push_name": push_name, "sender": sender, **({"midia": midia} if midia else {})},
+            metadata={"push_name": push_name, "sender": sender, **({"midia": midia} if midia else {}),
+                      **({"referral": referral} if referral else {})},
         )
     )
     logger.info("Julia: lead message buffered chat=%s debounce=%ss", ref_log(chat_id), cfg.message_debounce_seconds)
@@ -1176,6 +1177,7 @@ async def _process_waha_body(
                 provider_message_id=provider_message_id,
                 push_name=getattr(payload, "pushName", None), cfg=cfg, waha_factory=waha_factory,
                 midia=midia_lead.para_agents() if midia_lead is not None else None,
+                referral=julia_origem_service.extrair_referral_ctwa(body),
             ):
                 return Response(status_code=status.HTTP_200_OK)
             # Not eligible (pre-existing chat): fall through to the unchanged

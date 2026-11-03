@@ -73,7 +73,8 @@ from app.services import clientes_service
 
 logger = logging.getLogger(__name__)
 
-_META_LEAD_ADS_SLUG = "meta-lead-ads"
+META_LEAD_ADS_SLUG = "meta-lead-ads"
+_META_LEAD_ADS_SLUG = META_LEAD_ADS_SLUG  # historical private name (same module + tests)
 
 #: Question TYPES ``app.modules.meta_ads.services.leads_sync_service``
 #: already promotes to a typed ``meta_ads_leads`` column
@@ -237,6 +238,10 @@ def map_meta_lead_to_lead_payload(
 
     return {
         "meta_lead_id": meta_lead_id,
+        # The generic cross-source key (migration 051), same pair every portal ingest writes: the
+        # live-ingested rows used to leave it NULL, so a lookup keyed on it missed them (migration 312 backfills).
+        "external_source": _META_LEAD_ADS_SLUG,
+        "external_lead_id": meta_lead_id,
         # Owner decision D1 (2026-10-01): the form answer `REF` IS the imóvel
         # código (100% of 1,895 rows). Migration 180 puts the same value on
         # `meta_ads_leads.codigo_imovel`; the canonical `leads` row carries it
@@ -282,22 +287,8 @@ def _find_existing_by_meta_lead_id(
 
 
 def _get_or_create_meta_lead_ads_source(client: Any, org_id: UUID) -> dict:
-    """The canonical ``meta-lead-ads`` ``lead_sources`` row for this org.
-    Provisioned the same idempotent way every other canonical source is
-    (``ensure_default_dimensions`` — see ``seed_data.py``); called here
-    too because this is a real write path (a lead insert), not a bare
-    GET, the same rule ``import_service.commit`` follows."""
-    for row in dimensions_service.list_sources(client, org_id):
-        if row["slug"] == _META_LEAD_ADS_SLUG:
-            return row
-    dimensions_service.ensure_default_dimensions(client, org_id)
-    for row in dimensions_service.list_sources(client, org_id):
-        if row["slug"] == _META_LEAD_ADS_SLUG:
-            return row
-    raise RuntimeError(
-        f"meta_ingest_service: {_META_LEAD_ADS_SLUG!r} source missing after "
-        "ensure_default_dimensions — seed_data.CANONICAL_SOURCES drifted"
-    )
+    """The canonical ``meta-lead-ads`` ``lead_sources`` row for this org (a real write path: a lead insert follows)."""
+    return dimensions_service.get_or_create_canonical_source(client, org_id, _META_LEAD_ADS_SLUG)
 
 
 def _form_question_maps(client: Any, form_id: Optional[str]) -> tuple[dict[str, str], dict[str, str]]:
