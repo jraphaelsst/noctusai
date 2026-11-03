@@ -112,4 +112,4 @@ CLAUDE.md, `CLAUDE/<topic>.md`, `.claude/skills/`, `.claude/agents/`, and `KB §
 
 Manual: `python mcp/noctusai/cli.py --verify-kb-sync` · `--check-claude-md-router` · `--update-kb-counts [--check]`. Fresh clone: `bash scripts/install-hooks.sh`. No bypass — `--no-verify` is never sanctioned (§1).
 
-> Throughout, `KB § X` = `KNOWLEDGE-BASE/X`.
+> Throughout, `KB § X` = `KNOWLEDGE-BASE/CONTEXT/X`.
