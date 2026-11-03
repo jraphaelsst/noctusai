@@ -236,7 +236,10 @@ Rules the screens keep: content lives only in DB rows (the bundle carries no pro
 text; tests use synthetic fixtures under `__tests__`; the build ships no sourcemaps); edits are
 draft-only and a replace-set `PUT` is preceded by a compare-before-write read (a moved server draft
 raises the conflict banner and nothing is written); a save always refetches, nothing is cached as
-truth; "Rascunho v{n} · editável" vs "Publicada v{n} · somente leitura" is always shown; loading uses
+truth; "Rascunho v{n} · editável" vs "Publicada v{n} · somente leitura" is always shown, and on an editable
+draft the header carries "Publicar rascunho" (admin only; the SAME `components/studio/PublishDraftDialog.tsx`
+Versões uses — blocking warnings, eval gate, limiar — disabled with "Salve as alterações antes de publicar"
+while the tab is dirty; it publishes the whole version, decisions included); loading uses
 `showSkeleton = isPending && !data` / `isRefreshing = isFetching && !!data` (computed in the hooks).
 Org-spec refusals (`spec_conflita_com_regra_fixa`) render inline on the offending field with the locked
 block's label only; qualification publish refusals (`regras_invalidas`) list every rule error with its
