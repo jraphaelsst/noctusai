@@ -69,7 +69,7 @@ export default function DecisoesTab({ agentKey }: { agentKey: string }) {
 
   return (
     <div className="space-y-4" data-testid="decisoes-tab">
-      <VersionBar agentKey={agentKey} rotulo="Decisões" />
+      <VersionBar agentKey={agentKey} rotulo="Decisões" dirty={ed.dirty} />
       {q.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
       {ed.serverMoved && <ConflictBanner onReload={ed.reload} />}
       {ed.rows.length === 0 && <EmptyState message="Esta versão ainda não tem decisões." />}

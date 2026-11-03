@@ -131,7 +131,7 @@ export default function TextosTab({ agentKey }: { agentKey: string }) {
 
   return (
     <div className="space-y-4" data-testid="textos-tab">
-      <VersionBar agentKey={agentKey} rotulo="Textos do sistema" />
+      <VersionBar agentKey={agentKey} rotulo="Textos do sistema" dirty={ed.dirty} />
       {q.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
       {ed.serverMoved && <ConflictBanner onReload={ed.reload} />}
 

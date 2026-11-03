@@ -15,6 +15,7 @@ import { SLUG_RE, type Section, type SectionInput } from "@/api/studio/types";
 import { estimateTokens } from "@/components/studio/compiledSegments";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
 import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { PublishDraftButton } from "@/components/studio/PublishDraftDialog";
 import { VersionStatusBadge } from "@/components/studio/VersionStatusBadge";
 import { useAgentVersionRefs, useCreateDraft, useSaveSections, useVersion } from "@/hooks/studio/useVersions";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
@@ -187,7 +188,8 @@ export default function PromptTab({ agentKey }: { agentKey: string }) {
         </span>
         {version.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
         {dirty && <Badge variant="outline">Alterações não salvas</Badge>}
-        <div className="ml-auto flex gap-2">
+        {editable && <PublishDraftButton agentKey={agentKey} dirty={dirty} />}
+        <div className={`${editable ? "" : "ml-auto "}flex gap-2`}>
           {draftCta}
           {editable && (
             <>

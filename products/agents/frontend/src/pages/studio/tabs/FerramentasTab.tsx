@@ -70,7 +70,7 @@ export default function FerramentasTab({ agentKey }: { agentKey: string }) {
 
   return (
     <div className="space-y-4" data-testid="ferramentas-tab">
-      <VersionBar agentKey={agentKey} rotulo="Ferramentas" />
+      <VersionBar agentKey={agentKey} rotulo="Ferramentas" dirty={ed.dirty} />
       {q.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
       {ed.serverMoved && <ConflictBanner onReload={ed.reload} />}
       {ed.rows.length === 0 && <EmptyState message="Esta versão ainda não tem ferramentas cadastradas." />}

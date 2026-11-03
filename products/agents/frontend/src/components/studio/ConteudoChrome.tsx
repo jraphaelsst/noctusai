@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Badge, Button } from "@noctusai/lib/design-system";
 import { useAgentVersionRefs, useCreateDraft } from "@/hooks/studio/useVersions";
 import { errorMessage } from "@/lib/errors";
+import { PublishDraftButton } from "@/components/studio/PublishDraftDialog";
 
 export function useContentTarget(agentKey: string) {
   const refs = useAgentVersionRefs(agentKey);
@@ -14,7 +15,8 @@ export function useContentTarget(agentKey: string) {
   return { refs, target, isDraft: !!refs.draft, versionId: target?.id ?? null };
 }
 
-export function VersionBar({ agentKey, rotulo }: { agentKey: string; rotulo?: string }) {
+/** `dirty` = the tab has unsaved local edits: publishing is disabled until they are saved into the draft. */
+export function VersionBar({ agentKey, rotulo, dirty = false }: { agentKey: string; rotulo?: string; dirty?: boolean }) {
   const { refs, target, isDraft } = useContentTarget(agentKey);
   const createDraft = useCreateDraft(agentKey);
 
@@ -35,6 +37,7 @@ export function VersionBar({ agentKey, rotulo }: { agentKey: string; rotulo?: st
         <>
           <Badge variant="default" data-testid="conteudo-estado">Rascunho v{target.versao} · editável</Badge>
           {refs.ativa && <span className="text-xs text-muted-foreground">Publicada em uso: v{refs.ativa.versao}. Mudanças só valem após publicar.</span>}
+          <PublishDraftButton agentKey={agentKey} dirty={dirty} />
         </>
       ) : (
         <>

@@ -67,7 +67,7 @@ export default function EspecificacoesTab({ agentKey }: { agentKey: string }) {
 
   return (
     <div className="space-y-4" data-testid="especificacoes-tab">
-      <VersionBar agentKey={agentKey} rotulo="Especificações declaradas" />
+      <VersionBar agentKey={agentKey} rotulo="Especificações declaradas" dirty={ed.dirty} />
       <p className="text-xs text-muted-foreground">
         Cada organização preenche estes campos em “Especificações da org”. O texto do agente os usa como {"{{org.chave}}"}.
       </p>
