@@ -179,7 +179,8 @@ class TestTheGeneratedContract:
     def test_every_status_the_route_can_answer_is_in_the_contract(self):
         statuses = set(json.loads(Path(channels_contract.CONTRACT_PATH).read_text(encoding="utf-8"))
                        ["ChannelTurnResponse"]["properties"]["status"]["enum"])
-        assert {"respondido", "silencio", "handoff", "encerrado", "concluido", "agente_desligado", "novo_lead_recusado",
+        assert {"respondido", "silencio", "handoff", "encerrado", "concluido", "agente_desligado", "agente_desligado_plataforma", "restrito_avaliacao",
+                "novo_lead_recusado",
                 "conversa_pausada", "conversa_com_outro_responsavel", "conversa_com_outro_agente",
                 "reengajamento_ignorado", "lead_opt_out", "limite_atingido", "limite_taxa", "novo_lead_limitado",
                 "loop_detectado"} == statuses

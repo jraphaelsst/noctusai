@@ -167,6 +167,7 @@ AUDIT_ACOES = (
     "modo_alterado", "conversa_pausada", "conversa_retomada", "padrao_publicado",
     "agente_excluido", "agente_criado", "agente_gerado",
     "historico_transferido", "agente_arquivado",
+    "plataforma_desligada", "plataforma_religada", "fase_testes_alterada", "modo_avaliacao_alterado",
 )
 #: 048 ``agents.excluir_agente`` guard codes (the 409 ``code`` of ``DELETE /api/studio/agents/{key}``).
 EXCLUSAO_CODIGOS = ("publicado", "tem_instancias", "tem_conversas", "tem_canal", "ativo")

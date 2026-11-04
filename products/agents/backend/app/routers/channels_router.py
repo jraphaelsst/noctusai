@@ -69,7 +69,10 @@ from app.dependencies import (
 )
 from app.qualificacao.service import QualificacaoService
 from app.realtime import publish_event
-from app.routers.channel_threads_router import get_agent_controle_store_dep, get_thread_store_dep
+from app.routers.channel_threads_router import (
+    get_agent_controle_store_dep, get_plataforma_controle_store_dep, get_thread_store_dep,
+    get_usuarios_avaliacao_dep,
+)
 from app.routers.conversations_router import INSTANCE_ID, _conversation_payload, _llm_http
 from app.routers.qualificacao_router import (
     get_identificacao_service_dep,
@@ -265,6 +268,8 @@ async def run_channel_turn(
     runtime: Any = Depends(get_channel_llm_runtime_dep),
     threads=Depends(get_thread_store_dep),
     controles=Depends(get_agent_controle_store_dep),
+    plataforma=Depends(get_plataforma_controle_store_dep),
+    usuarios_avaliacao=Depends(get_usuarios_avaliacao_dep),
     conformidade=Depends(get_conformidade_store_dep),
     qual: QualificacaoService = Depends(get_qualificacao_service_dep),
     padroes=Depends(get_padrao_store_dep),
@@ -296,12 +301,13 @@ async def run_channel_turn(
     # 2. The agent must be publishable BEFORE anything is persisted — unless it is off (it will not run).
     try:
         controle = controles.get(org_id, agent.id)
+        kill = bool(plataforma.get(agent.key).desligado)
     except Exception as exc:
         logger.exception("agents.channel.turn.controle_ilegivel org_id=%s", org_id)
         raise ControleIndisponivel().as_http_exception() from exc
     prep = None
     slot = None
-    if controle.modo != "desligado":
+    if controle.modo != "desligado" and not kill:
         try:
             prep = turno_mod.preparar(svc, org_id, agent)
         except turno_mod.TurnoRecusado as exc:
@@ -337,6 +343,7 @@ async def run_channel_turn(
             ctl = aplicar_controles(
                 org_id=org_id, agent_id=agent.id, gatilho=payload.gatilho, channel=payload.channel,
                 channel_ref=channel_ref, controles=controles, conversations=conv_store, threads=threads,
+                plataforma=plataforma, agent_key=agent.key, usuarios_avaliacao=usuarios_avaliacao,
                 lead=_lead_identidade(payload), contact=payload.contact.model_dump(mode="json"),
                 version_id=prep.r.versao.id if prep is not None else None, messages=msg_store, agora=agora,
                 admitir_novo_lead=lambda: admissao.motivo_novo_lead_limitado(
@@ -484,6 +491,7 @@ def channel_agent_status(
     catalog=Depends(get_knowledge_catalog_dep),
     key_resolver=Depends(get_org_llm_key_resolver_dep),
     controles=Depends(get_agent_controle_store_dep),
+    plataforma=Depends(get_plataforma_controle_store_dep),
     threads=Depends(get_thread_store_dep),
     conformidade=Depends(get_conformidade_store_dep),
     qual: QualificacaoService = Depends(get_qualificacao_service_dep),
@@ -497,6 +505,7 @@ def channel_agent_status(
     basis = active or studio_store.get_draft(r.definicao.org_id, r.definicao.id)
     configured = bool(basis is not None and key_resolver(basis.provider, ctx.org_id))
     controle = controles.get(ctx.org_id, agent.id)
+    desligado_plataforma = bool(plataforma.get(agent.key).desligado)
     svc = turno_mod.ServicosCanal(
         studio_store=studio_store, catalog=catalog, conversations=None, messages=None, threads=threads,
         controles=controles, conformidade=conformidade, qual=qual, padroes=padroes, ident=None, sw=None,
@@ -511,6 +520,8 @@ def channel_agent_status(
         llm_configurado=configured,
         modo=controle.modo,
         aceita_novos_leads=controle.aceita_novos_leads,
+        desligado_plataforma=desligado_plataforma,
+        modo_avaliacao=controle.modo_avaliacao,
         threads_abertas=len(threads.list_abertos(ctx.org_id, agent.id)),
         conteudo_completo=turno_mod.conteudo_completo(svc, ctx.org_id, agent),
     )

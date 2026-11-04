@@ -428,10 +428,15 @@ async def executar(
         rotulo_truncado=conteudo.texto("historico.rotulo_truncado")))
     eventos = await asyncio.to_thread(svc.qual.eventos, org_id, lead_ref_id)
     dossie = _dossie(padrao, estado0, eventos, ct.handoff)
+    try:
+        fase_testes = svc.controles.get(org_id, agent.id).fase_testes
+    except Exception:  # an unreadable switch: the line is left out (the prompt never claims a phase it cannot read)
+        logger.exception("agents.turno.fase_testes_ilegivel org_id=%s", org_id)
+        fase_testes = None
     contexto_system = render_contexto_system(
         conteudo, agora=(contexto.agora if contexto is not None else agora),
         fuso=(contexto.fuso if contexto is not None else "America/Sao_Paulo"), estado=estado_sw, dossie=dossie,
-        tag=tag,
+        tag=tag, fase_testes=fase_testes,
     )
     ctx = TurnContext(
         org_id=org_id, conversation_id=thread.id, requested_by=service_principal_id(agent.id),

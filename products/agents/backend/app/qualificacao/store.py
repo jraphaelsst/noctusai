@@ -320,7 +320,7 @@ class SupabasePadraoStore:
         par = self._t("qualificacao_parametros").select("*").eq("versao_id", str(versao_id)).limit(1).execute()
         prow = (par.data or [None])[0]
         parametros = (
-            ParametrosDef(prow["minimo_para_ofertar"], prow.get("lote_ofertas", 1), prow.get("score_max", 100),
+            ParametrosDef(prow["minimo_para_ofertar"], prow.get("lote_ofertas", 3), prow.get("score_max", 100),
                           prow.get("eixos") or {}, prow.get("pedir_identificacao_quando"))
             if prow else ParametrosDef(minimo_para_ofertar={"todos": []})
         )

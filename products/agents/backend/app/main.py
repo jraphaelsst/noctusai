@@ -69,6 +69,7 @@ from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.editorial_router import router as editorial_router
 from app.routers.persona_router import router as persona_router
+from app.routers.plataforma_controle_router import router as plataforma_controle_router
 from app.routers.qualificacao_router import router as qualificacao_router
 from app.routers.skills_biblioteca_router import router as skills_biblioteca_router
 from app.public_ask.router import BODY_LIMIT_PATTERN as PUBLIC_ASK_BODY_LIMIT_PATTERN
@@ -249,6 +250,7 @@ app = create_product_app(
         channel_tools_token_router,
         approvals_router,
         qualificacao_router,  # Julia v2 A-QUAL: the platform qualification standard + lead state
+        plataforma_controle_router,  # Julia v3 §12.1: the platform kill switch
         skills_biblioteca_router,  # Julia v2 A-SKILLS: the shared, versioned skill library + agent-draft pins
         admin_credentials_router,
         # Lais A1: per-org LLM provider keys (openai/anthropic), admin-only, with POST .../test.

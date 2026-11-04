@@ -15,6 +15,7 @@ from noctusai_lib.api import StrictHttpModel
 
 __all__ = [
     "AutorMensagem",
+    "AvaliacaoResolvidoOut",
     "ControleOut",
     "ControleUpdateRequest",
     "DrenagemOut",
@@ -268,11 +269,30 @@ class DrenagemOut(BaseModel):
     idades_dias: list[int]
 
 
+class AvaliacaoResolvidoOut(BaseModel):
+    """One allow-listed user as noc knows them. ``telefone`` is the full E.164 for an org admin and a masked form
+    (``+55 11 *****-3365``) for anyone else; ``None`` when noc has none (or could not be read)."""
+
+    usuario_id: UUID
+    nome: str | None = None
+    telefone: str | None = None
+
+
 class ControleOut(BaseModel):
     agent_key: str
     modo: Literal["ligado", "drenando", "desligado"]
     aceita_novos_leads: bool
     dreno_inatividade_dias: int
+    #: Julia v3 §12.2: the org's testing-phase switch (rendered into the turn state as ``controle.fase_testes``).
+    fase_testes: bool = True
+    #: Julia v3 §12.12 evaluation mode + its allow-list of noctus USER ids (never phones; Studio routes only, the
+    #: channel token read blanks it).
+    modo_avaliacao: bool = False
+    avaliacao_usuarios: list[UUID] = Field(default_factory=list)
+    #: The same users resolved from noc (name + phone, masked unless the caller is an org admin).
+    avaliacao_resolvidos: list[AvaliacaoResolvidoOut] = Field(default_factory=list)
+    #: The lookup in noc failed: ``avaliacao_resolvidos`` carries ``nome``/``telefone`` null per id.
+    avaliacao_resolucao_erro: bool = False
     threads_abertas: int
     drenagem: DrenagemOut
 
@@ -282,6 +302,14 @@ class ControleUpdateRequest(StrictHttpModel):
 
     modo: Literal["ligado", "drenando", "desligado"]
     dreno_inatividade_dias: int | None = Field(default=None, ge=1, le=365)
+    #: Optional: set the testing-phase switch alongside the (required) ``modo``. Changing only this field, with
+    #: ``modo`` equal to the current one, applies no mode transition and none of its 409 preconditions.
+    fase_testes: bool | None = None
+    #: Evaluation mode switch and its allow-list of noctus user ids (at most 20, each of this org; their phones come
+    #: from noc at gate time). ``modo_avaliacao=true`` needs at least one listed user with a phone. Like
+    #: ``fase_testes``, changing only these applies no mode transition.
+    modo_avaliacao: bool | None = None
+    avaliacao_usuarios: list[UUID] | None = Field(default=None, max_length=20)
 
 
 class MensagemThreadOut(BaseModel):

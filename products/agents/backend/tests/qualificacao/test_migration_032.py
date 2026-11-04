@@ -187,6 +187,17 @@ def test_erasure_covers_identity_and_confirmations():
         assert "lead_identificacao_acessos" not in body  # the audit survives erasure (no personal data in it)
 
 
-def test_one_property_per_batch_is_the_column_default():
-    sql = migration_sql(Path(__file__).resolve().parents[2], "qualificacao_lote_um")
-    assert "ALTER TABLE agents.qualificacao_parametros ALTER COLUMN lote_ofertas SET DEFAULT 1;" in sql
+def test_three_properties_per_run_is_the_column_default():
+    """Owner rule 2026-11-03: at most 3 per run. The latest migration touching the default wins (it supersedes the
+    one-per-batch interim)."""
+    sql = migration_sql(Path(__file__).resolve().parents[2], "qualificacao_lote_tres")
+    assert "ALTER TABLE agents.qualificacao_parametros ALTER COLUMN lote_ofertas SET DEFAULT 3;" in sql
+
+
+def test_code_defaults_match_the_column_default():
+    from app.qualificacao.models import ParametrosDef
+    from app.qualificacao.schemas import ParametrosIn
+
+    assert ParametrosDef(minimo_para_ofertar={}).lote_ofertas == 3
+    assert ParametrosIn(minimo_para_ofertar={}).lote_ofertas == 3
+    assert ParametrosIn(minimo_para_ofertar={}, lote_ofertas=5).lote_ofertas == 5

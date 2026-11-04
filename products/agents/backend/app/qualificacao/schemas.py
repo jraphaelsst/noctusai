@@ -64,7 +64,7 @@ class EstagioIn(StrictHttpModel):
 
 class ParametrosIn(StrictHttpModel):
     minimo_para_ofertar: dict[str, Any]
-    lote_ofertas: int = Field(default=1, ge=1, le=5)
+    lote_ofertas: int = Field(default=3, ge=1, le=5)
     score_max: int = Field(default=100, ge=1, le=1000)
     eixos: dict[str, Any] = Field(default_factory=dict)
     pedir_identificacao_quando: dict[str, Any] | None = None

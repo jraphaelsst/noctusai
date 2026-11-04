@@ -48,7 +48,10 @@ from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
 from app.qualificacao.lead_store import FakeLeadQualificacaoStore
 from app.qualificacao.service import QualificacaoService
 from app.qualificacao.store import FakePadraoStore
-from app.routers.channel_threads_router import get_agent_controle_store_dep, get_thread_store_dep
+from app.routers.channel_threads_router import (
+    get_agent_controle_store_dep, get_plataforma_controle_store_dep, get_thread_store_dep,
+    get_usuarios_avaliacao_dep,
+)
 from app.routers.qualificacao_router import (
     get_identificacao_service_dep,
     get_lead_qualificacao_store_dep,
@@ -56,6 +59,8 @@ from app.routers.qualificacao_router import (
 )
 from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, make_budget_guard
 from app.stores.agent_controles import FakeAgentControleStore
+from app.stores.plataforma_controles import FakePlataformaControleStore
+from app.stores.usuarios_avaliacao import FakeUsuariosAvaliacao
 from app.stores.channel_inbound import FakeChannelInboundStore
 from app.stores.conformidade import FakeConformidadeStore
 from app.stores.threads import FakeThreadStore
@@ -118,6 +123,8 @@ class ChannelHarness:
         self.inbound = FakeChannelInboundStore()
         self.threads = FakeThreadStore(rt_.stores.conversations)
         self.controles = FakeAgentControleStore()
+        self.plataforma = FakePlataformaControleStore()
+        self.usuarios = FakeUsuariosAvaliacao()
         self.conformidade = FakeConformidadeStore()
         self.padroes = FakePadraoStore()
         self.leads = FakeLeadQualificacaoStore()
@@ -223,6 +230,8 @@ def chan(rt):
         get_channel_retention_dep: lambda: h.retention,
         get_thread_store_dep: lambda: h.threads,
         get_agent_controle_store_dep: lambda: h.controles,
+        get_plataforma_controle_store_dep: lambda: h.plataforma,
+        get_usuarios_avaliacao_dep: lambda: h.usuarios,
         get_conformidade_store_dep: lambda: h.conformidade,
         get_padrao_store_dep: lambda: h.padroes,
         get_lead_qualificacao_store_dep: lambda: h.leads,

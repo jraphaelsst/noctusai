@@ -72,6 +72,8 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 | Isolation suite (no platform secrets in Bia's env; cross-product token denials) | M4 |
 | Julia (SDR) shared lead thread: one thread per lead across all agents, per-agent participants, hand-off notes, consent (opt-in / opt-out, with an auditable event + an in-app notice to the org's owners/admins when a lead asks to stop; the opt-out is a per-org setting owned by social-wiring, which reads the history, re-sends failed notices and reactivates a lead over token routes; a thread banner in the staff view), delete-by-lead | Julia v2 |
 | Julia controls: ligado / drenando / desligado per agent (decided by the agents app on every turn, fail closed) and a per-conversation pause / resume | Julia v2 |
+| Julia v3 controls: a **platform kill** per agent key (`GET|PUT /api/studio/plataforma/agentes/{key}/controle`, platform admin only; status `agente_desligado_plataforma` for every org, read first, fail closed) and the org's **fase de testes** flag (on the controle PUT / GET; rendered into the turn state as `controle.fase_testes`) | Julia v3 |
+| Julia v3 **evaluation mode** (`modo_avaliacao` + `avaliacao_usuarios`, per org instance, on the controle PUT / GET): while on the agent replies only to the phones of the listed noc users (read from noc per turn, never stored here); anyone else (or a contact without a phone) gets status `restrito_avaliacao` with no reply and no new thread; off = open to everybody | Julia v3 |
 | Julia channel turn v2 (`POST /api/channels/turns`): resolves the platform definition + the org's specs, applies the controls under the turn lock, reads the dossier + thread context, runs a skill-gated toolset (schemas in code, descriptions in `agent_version_ferramentas`), stamps every reply with the version tuple; JSON Schema in `backend/contracts/channels.v2.json` | Julia v2 |
 | Studio UI (tier-aware by the server's `definition_scope`): platform admins edit the definition (prompt sections, system texts, tool descriptions, decisions, the qualification standard, library skill pins, declared specs, conformance) and read the compiled view; org admins see only their specs form, controls (ligado / drenando / desligado with a confirmation dialog), conversations and results; members see none | Julia v2 |
 | Julia conformance + IP protection: post-turn detectors (offered-property, ends-with-question, profile-cited-without-record, fallback, repeated-question) and the prompt-leak detector (per-org canary + 12-token shingles; blocks by default, also on the studio test chat and eval outputs for non-platform-admins); per-chat turn/day/spend limits and refusal/error budgets, all data (`conformidade_*`, `canal_limites`) | Julia v2 |
@@ -104,8 +106,9 @@ model only records criterion values through tools; **score and stage are compute
   a scope's `avaliar_lead` only asks its own criteria, records are shared on the lead), `validade_dias`
   (older records stop counting), type `derivado` (system signals the model cannot record) and
   `identificacao`. Axis config (`parametros.eixos`): `max`, `multiplicadores` (rule x factor), `decaimento`
-  (factor after N days without a lead reply). `parametros.lote_ofertas` (properties per offer batch) is
-  fixed at **1** by the owner's rule (migration 054 default; not exposed in the Studio editor).
+  (factor after N days without a lead reply). `parametros.lote_ofertas` (properties per offer run) defaults to **3**
+  by the owner's rule (at most 3 per run, then Julia asks whether the lead wants more; migration 055 default, 1..5,
+  shown in the Studio editor).
 - **Timestamps** read back from the DB go through `app.stores._util.db_ts` (PostgREST returns ISO strings,
   the Fakes hold `datetime`); a mapper that passes the string through 500s the first `.isoformat()`.
 - **Stages** are rules in a closed DSL (`todos/algum/nao`, `criterio`, `score` incl. `eixo`, `evento`,
