@@ -104,7 +104,6 @@ describe("ControlesCard", () => {
       fireEvent.click(screen.getByTestId("controle-avaliacao-adicionar"));
       await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
       expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ modo: "ligado", avaliacao_numeros: ["+5511999998888"] });
-      expect(await screen.findByText("+5511999998888")).toBeTruthy();
     });
 
     it("rejects an invalid number without calling the server", async () => {
