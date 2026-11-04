@@ -931,3 +931,127 @@ Key files for the implementers:
   /api/studio/plataforma/content-token` (platform admin; server-stamped issuer `noctus-platform`, 30 days) and
   is deliberately outside `MINTABLE_TOKEN_SCOPES`: a token an org admin mints with that scope string through the
   generic route has no issuer and is refused (403 `issuer_not_allowed`).
+
+---
+
+## 12 · Julia v3 — evaluation-phase flow (owner brief 2026-11-03)
+
+Owner's rules, verbatim intent: Julia qualifies, sends up to 3 properties per run **to the lead** and asks if they
+want more; never repeats one; when nothing is left she says so and offers a human. She never schedules a visit:
+she gathers a few day/time options the lead is available for, says she will pass them to the responsible person and
+that a broker will get in touch. **She decides when to hand off** — not every datum has to be collected. At every
+handoff/conclusion a **report** (conversation summary + lead profile + offered/recommended properties) goes **by
+WhatsApp to a swappable number** (today: the owner; later: the lead's responsible) and is **saved on the lead card**.
+Unhappy lead / own mistake / drift ⇒ WhatsApp alert to the same destination; she apologizes, and **only while the
+org's "fase de testes" switch is on** says she is in a testing phase; then she offers a human. Properties are searched
+**live in Vista**. Two kill levels: **agents = platform-wide** (every org's Julia), **SW = that org only**.
+
+### 12.1 Switches (one per level, both trustworthy)
+
+- **Platform kill (agents) — NEW.** Table `agents.plataforma_controles(agent_key TEXT PK, desligado BOOL NOT NULL
+  DEFAULT false, motivo TEXT, alterado_por UUID, alterado_em TIMESTAMPTZ)`. Toggled only by a platform admin (reuse the
+  dependency that already guards platform-wide rows like `skills_biblioteca` / `qualificacao_padroes` publish).
+  Read **first** in `controles.decidir` (fail-closed: read error ⇒ 503 `controle_indisponivel`, as today):
+  `desligado` ⇒ status `agente_desligado_plataforma` for every gatilho, every org; inbound persisted only when a
+  thread exists (same as `desligado`); no LLM. `GET /api/channels/agents/{key}/status` adds
+  `desligado_plataforma: bool`. Audit `acao='plataforma_desligada'|'plataforma_religada'`.
+  API: `GET|PUT /api/studio/plataforma/agentes/{key}/controle {desligado, motivo}` (admin only, strict 401/403).
+- **Org switch (SW).** Stays `whatsapp_connections.agente_leads_ativo` (per line ⇒ per org). Already drops the batch
+  before `run_turn` and gate 1 re-reads it at send time. The SW UI must make it the one obvious "Julia on/off" control,
+  and show a banner when agents reports `desligado_plataforma` or the org `modo_operacao != ligado`. SW treats
+  `agente_desligado_plataforma` exactly like `agente_desligado` (nothing sent).
+- `modo_operacao` (per org, agents) is unchanged; `drenando` is not the "off" switch.
+
+### 12.2 Testing phase (per org)
+
+- `agents.agents.fase_testes BOOL NOT NULL DEFAULT true` (per org instance). `PATCH` on the existing controls
+  endpoint (`ControlesCard`). Rendered into the turn state as `controle.fase_testes` so the prompt can branch.
+
+### 12.3 New tool `sinalizar_alerta` (agents)
+
+- Args `{tipo: lead_insatisfeito|erro_agente|desvio|outro, descricao: str ≤500, trecho?: str}`. No skill gate.
+  Persists `agents.thread_alertas(id, org_id, thread_id, agent_id, tipo, descricao, trecho, created_at)` and emits
+  action `{"type":"alerta","tipo":…,"descricao":…,"alerta_id":…}`. Idempotent per turn (one alert per tipo per turn).
+- SW on `alerta`: WhatsApp to the report destination (§12.5) + in-app notice. Text (pt-BR):
+  `⚠️ Julia — {tipo legível}\nLead: {nome} ({telefone})\n{descricao}\nConversa: {deep link}`.
+
+### 12.4 Report (`relatorio`) on handoff / conclusion (agents)
+
+- `executar_handoff` and `finalizar_conclusao` build a `relatorio` with ONE extra LLM call reusing the
+  `/threads/{id}/resumo` generator, plus deterministic data:
+  `{ "texto": "<pt-BR, ready to send, ≤1500 chars>", "resumo_conversa": str, "perfil": {chave: valor legível},
+     "imoveis_oferecidos": [{codigo, link|null, reacao: gostou|nao_gostou|sem_reacao}],
+     "imoveis_recomendados": [codigo] /* liked or best-fit, ≤3 */,
+     "disponibilidade_visita": str|null /* the lead's own options, verbatim-ish */,
+     "identificacao": {cpf: bool, rg: bool, email: bool, documento_enviado: bool} /* flags only, never values */,
+     "motivo": str, "proximos_passos": str }`.
+  `texto` layout: header (lead name, phone, origem/campanha), Resumo, Perfil, Imóveis oferecidos (código + link +
+  reação), Recomendados, Disponibilidade para visita, Documentos recebidos (flags), Motivo do handoff.
+  Generation failure ⇒ `texto` built deterministically from the structured fields + `resumo_conversa:null`
+  and a `relatorio_degradado` audit row — never a silent skip, never blocks the handoff.
+- The `handoff` and `lead_pronto` actions carry `relatorio`. Stored on the handoff note (`registrar_handoff`).
+
+### 12.5 SW: report destination, delivery, lead card
+
+- Migration SW `313_julia_relatorios`:
+  - `julia_relatorio_destino(org_id PK, modo TEXT NOT NULL DEFAULT 'numero' CHECK IN ('numero','responsavel'),
+    numero_e164 TEXT NULL, updated_by, updated_at)`. `modo='responsavel'` resolves the lead's assigned responsavel's
+    `julia_staff.whatsapp`; unresolvable ⇒ falls to `numero_e164`; neither ⇒ refuse-not-null: in-app alert
+    `julia_relatorio_sem_destino` (never silent).
+  - `julia_relatorios(id, org_id, contato_id, lead_id NULL, thread_id, tipo handoff|conclusao|alerta, texto, dados
+    JSONB, destino_e164, envio_status pendente|enviado|falhou|sem_destino, envio_erro, created_at)`.
+  - `leads.imoveis_oferecidos TEXT[] NOT NULL DEFAULT '{}'` and `julia_contatos.imoveis_oferecidos TEXT[]` (same).
+- Delivery: new `julia_envio_gate` flow **`interno`** (staff notice, not a lead send): requires only that the line is
+  connected — NOT gate 1, so an alert still reaches the owner while Julia is being switched off. Sent from the org's
+  Julia line through `send_paragraphs`. Keeper `test_julia_envio_gate_keeper` stays green.
+- Settings API: `GET|PUT /api/julia/relatorio-destino {modo, numero_e164}` (org admin).
+- Lead card: `GET /api/julia/contatos/{id}/relatorios` (newest first) + the card renders the latest report and the
+  `imoveis_oferecidos` chips (código → link).
+
+### 12.6 Offers
+
+- `qualificacao_parametros.lote_ofertas` back to **3** (agents migration `055_qualificacao_lote_tres`: column default 3;
+  models/schemas default 3; the "Imóveis por lote" editor field restored, 1–5). Supersedes 054's owner rule.
+- Offers only when `avaliar_lead.pode_ofertar` (qualified). ≤ `lote_ofertas` per run. No repeats (already excluded
+  via `codigos_oferecidos`). After a run Julia asks if the lead wants to see more; `esgotado` ⇒ say none left + offer
+  a human.
+- Turn response `qualificacao` gains `imoveis_oferecidos: [codigo]` (all, ordered). SW mirrors it into
+  `julia_contatos.imoveis_oferecidos` and the linked `leads.imoveis_oferecidos` every turn (idempotent overwrite).
+
+### 12.7 Catalog: live Vista (SW)
+
+- `julia_ferramentas_service` reads through a `CatalogoImoveis` seam: `EspelhoCatalogo` (today's `imoveis` table) and
+  `VistaCatalogo` (live, seed `noctusai_lib.integrations.vista` client: `imoveis/listar` with mapped filters +
+  `imoveis/detalhes`). Per-org choice `julia_catalogo_config(org_id PK, fonte 'vista'|'espelho' DEFAULT 'espelho')`
+  in SW migration `314_julia_catalogo_fonte`; the One org is set to `vista` by the operator after deploy.
+  Same output `_item` shape and privacy allow-list; `exibir_no_site`-equivalent filter; `similar_a`,
+  `excluir_codigos`, widening (`relaxado`) and `esgotado` semantics unchanged. Vista error ⇒ tool error
+  `catalogo_indisponivel` (no silent fallback to the mirror).
+- Vista key is env-level today ⇒ `NOC-REMEDIATE[vista-key-per-org]` at the adapter construction.
+- Links unchanged: the org's `link_imovel` template (`{site}/imovel/{codigo}`).
+- Docs: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` gains the Julia field map (Vista field → `_item` key) and the
+  filter map (tool arg → Vista `filter`).
+
+### 12.8 Identification + documents
+
+- Required for a visit: **CPF only**. Desired (ask once, never block): RG, e-mail, full name. Any ID document
+  (RG, CPF, CIN, CNH) accepted as typed numbers OR as a photo/scan.
+- agents: `identificacao` required set default = `("cpf",)`; desired = `("nome","rg","email")`; `avaliar_lead`
+  returns `identificacao_faltando` (required) and `identificacao_desejada` (optional).
+- New tool `registrar_documento {provider_message_id, tipo_provavel: rg|cpf|cin|cnh|outro}`: the id must be an
+  inbound lead message in this thread carrying `midia` (imagem|documento). Marks `documento_enviado` and counts as
+  satisfying `cpf` pending extraction. Emits action `{"type":"documento_identificacao","provider_message_id",
+  "tipo_provavel"}`.
+- SW on `documento_identificacao`: find/create the lead's `clientes` card (by `chave_canonica` of the phone), then run
+  `documento_intake_service.processar_midia` on that media (classify → type → identity extractor fills
+  `clientes.extracao_*`). Failure ⇒ in-app alert + report flag, never silent.
+
+### 12.9 Contracts (SW contrato_gerador)
+
+- Signature block: under the name print `CPF x` and/or `RG y` — whichever exist, nothing when neither.
+- Qualification paragraph: omit the RG clause entirely when `p.rg` is empty (today it prints `RG ` / `RG -SSP`).
+
+### 12.10 Turn-status additions
+
+`agente_desligado_plataforma` (status). Actions: `alerta`, `documento_identificacao`; `handoff`/`lead_pronto` gain
+`relatorio`. SW's client schema and its fixtures move in the same change.
