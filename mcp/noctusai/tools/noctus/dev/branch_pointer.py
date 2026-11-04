@@ -172,8 +172,18 @@ def _resolve_session_id() -> str | None:
 
 
 def _run(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
-    """Run a subprocess command, return (rc, stdout, stderr)."""
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or str(REPO_ROOT))
+    """Run a subprocess command, return (rc, stdout, stderr).
+
+    🔴 Default cwd is LEDGER_ROOT (the PRIMARY checkout), never REPO_ROOT
+    (2026-11-04). A CLI started inside a worktree gets REPO_ROOT = that
+    worktree; `task_branch integrate`'s auto-cleanup removes it and THEN closes
+    the pointer, so `git show origin/dev:<ledger>` died with "[Errno 2] No such
+    file or directory: '<worktree>'" and the pointer stayed
+    integrated-worktree-live (the pre-push gate then refuses). 7b3473fa0 fixed
+    the process cwd; this explicit cwd was the second half. The ledger store
+    already resolves LEDGER_ROOT (`_ledger_store.default_store`)."""
+    import settings  # lazy: read at call time so a patched LEDGER_ROOT is honoured
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or str(settings.LEDGER_ROOT))
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 
 
