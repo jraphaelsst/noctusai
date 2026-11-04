@@ -101,12 +101,10 @@ class TestFooter:
         p = dtl.parse_footer("drift-found:\nnone\nscoped-improvement:\nnone\n")
         assert p == {"drifts": [], "improvements": []}
 
-    def test_logs_each_line_and_stores_ts(self, ledgers, monkeypatch):
+    def test_logs_each_line_and_stores_ts(self, ledgers):
         fake = _FakeAI()
-        import tools.noctus.dev.auto_improvement as ai
-        # swap the module-level seam used by build_score_row (external collaborator, not a guard)
-        monkeypatch.setattr(ai, "log_entry", fake.log_entry)
-        r = dtl.log_completion("s", "backend-engineer", 1, score=_score(), engineer_return=FOOTER)
+        r = dtl.log_completion("s", "backend-engineer", 1, score=_score(), engineer_return=FOOTER,
+                               ai_logger=fake.log_entry)
         assert r["ok"]
         assert len(fake.calls) == 3
         assert {c["kind"] for c in fake.calls} == {"drift", "improvement"}
@@ -160,3 +158,17 @@ class TestMetrics:
         out = am.rollup(rows, agent="be", by_week=True)
         assert [g["week"] for g in out["groups"]] == ["2026-W45", "2026-W46"]
         assert out["total_rows"] == 2
+
+
+class TestSupersede:
+    def test_latest_row_per_slug_sha_wins(self, tmp_path, monkeypatch):
+        import settings
+        from tools.noctus.dev._ledger_store import append_rows
+        monkeypatch.setattr(settings, "LEDGER_ROOT", tmp_path)
+        path = tmp_path / "project-history" / "slice-scores.ndjson"
+        path.parent.mkdir()
+        old = _row("fe", "m", None, slug="s", sha="x")
+        new = _row("fe", "m", 3.7, slug="s", sha="x", ts="2026-11-04T00:00:00+00:00")
+        append_rows(path.name, path, [old, new], message="t")
+        rows = am.load_rows()
+        assert len(rows) == 1 and rows[0]["q_weighted"] == 3.7

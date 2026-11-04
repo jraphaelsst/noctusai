@@ -72,6 +72,8 @@ After each dispatched-engineer return:
 - `scope_changes` = owner changes mid-flight; they are NOT rework and never lower Q7.
 - Validation: q within 0-4 or null, agent and model non-empty, no PII in any field.
 
+**Superseding**: the ledger is append-only; to correct a row append a new one with the same slug+sha (note `supersedes`) — `agent_metrics` keeps the latest per slug+sha. `publish=False` spools without pushing.
+
 **`engineer_return=`**: linted with `engineer_output_linter.lint_return`; a missing footer returns `{ok: False, refused: "missing-footer"}` and writes nothing. Each `drift-found:` / `scoped-improvement:` bullet becomes one `auto_improvement.log_entry` (agent, kind drift|improvement, `resolve_when="manual:engineer-footer triage"`); the returned ts is stored in `ai_ts` so a score row links to its triage entries.
 
 **Reading the trend**: `noctus.team.agent_metrics` (`name='*'` for all, `by_week=True` to bucket) groups by (agent, model): `n`, `mean_q_weighted`, `first_pass_yield`, `rework_rate` (blocker 3 / major 2 / minor 1, per slice), `tokens_per_accepted_slice`, `cost_usd_est`, `self_estimate_error_ratio` (self-reported / measured; >1 = overstates), `top_drifts`. Cost is an ESTIMATE: tokens are stored as one total, so a 90/10 in/out split is assumed (Opus 5.5 $4/$20, Sonnet 5.5 $2/$10 per MTok, `PRICES`). Read the trend over weeks, not single rows: n<5 per group is anecdote.

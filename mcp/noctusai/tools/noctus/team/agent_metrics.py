@@ -51,13 +51,17 @@ def load_rows() -> list[dict[str, Any]]:
     from tools.noctus.dev._ledger_store import read_ledger_text
     name = "slice-scores.ndjson"
     text, _err = read_ledger_text(name, LEDGER_ROOT / "project-history" / name)
-    rows = []
+    latest: dict[tuple, dict[str, Any]] = {}
     for ln in text.splitlines():
         try:
-            rows.append(json.loads(ln))
+            r = json.loads(ln)
         except json.JSONDecodeError:
             continue
-    return rows
+        # Append-only ledger: a later row with the same slug+sha supersedes.
+        key = (r.get("slug"), r.get("sha"))
+        if key not in latest or r.get("ts", "") >= latest[key].get("ts", ""):
+            latest[key] = r
+    return list(latest.values())
 
 
 def _mean(xs: list[float]) -> float | None:

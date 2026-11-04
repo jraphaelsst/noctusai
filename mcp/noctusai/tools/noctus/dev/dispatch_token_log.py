@@ -33,7 +33,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 VALID_OUTCOMES = frozenset({"landed", "drift-found", "failed", "escalated"})
@@ -90,6 +90,8 @@ def log_completion(
     notes: str | None = None,
     score: dict[str, Any] | None = None,
     engineer_return: str | None = None,
+    ai_logger: Callable[..., dict] | None = None,
+    publish: bool = True,
 ) -> dict[str, Any]:
     """Log a completed dispatch.
 
@@ -103,6 +105,10 @@ def log_completion(
       notes: optional free-form notes.
       score: optional slice-score payload (see `build_score_row`); also
         appends a row to `slice-scores.ndjson` (result key `score_row`).
+      ai_logger: injectable auto-improvement logger (default
+        `auto_improvement.log_entry`) used for footer lines.
+      publish: False spools the slice-score row locally (no push to
+        origin/ledgers) until `ledger_store action='flush'`.
       engineer_return: optional raw engineer return text. Linted for the
         two-leg footer (missing footer -> refusal result, nothing written);
         each `drift-found:` / `scoped-improvement:` line is logged to the
@@ -124,7 +130,8 @@ def log_completion(
     if score is not None or engineer_return is not None:
         if score is None:
             return {"ok": False, "error": "engineer_return requires score= (the row it enriches)"}
-        built = build_score_row(slug.strip(), agent, score, engineer_return=engineer_return)
+        built = build_score_row(slug.strip(), agent, score, engineer_return=engineer_return,
+                                ai_logger=ai_logger)
         if not built.get("ok"):
             return built
         score_row = built["row"]
@@ -158,7 +165,7 @@ def log_completion(
         try:
             sp = _slice_scores_path()
             result["score_store"] = append_rows(
-                sp.name, sp, [score_row], message=f"slice-score: {agent} on {slug}")
+                sp.name, sp, [score_row], message=f"slice-score: {agent} on {slug}", publish=publish)
             result["score_row"] = score_row
         except (OSError, ValueError) as e:
             return {**result, "ok": False, "error": f"score write failed: {str(e)[:200]}"}
@@ -230,6 +237,7 @@ def _validate_score(slug: str, agent: str, sc: dict[str, Any]) -> str | None:
 
 def build_score_row(
     slug: str, agent: str, sc: dict[str, Any], *, engineer_return: str | None = None,
+    ai_logger: Callable[..., dict] | None = None,
 ) -> dict[str, Any]:
     """Validate + assemble one `slice-scores.ndjson` row (no write).
 
@@ -252,10 +260,11 @@ def build_score_row(
             return {"ok": False, "refused": "missing-footer", "lint": lint,
                     "error": f"engineer return lacks footer section(s): {lint['missing']}"}
         parsed = parse_footer(engineer_return)
-        from . import auto_improvement  # noqa: PLC0415
+        if ai_logger is None:
+            from .auto_improvement import log_entry as ai_logger  # noqa: PLC0415
         for key, kind in (("drifts", "drift"), ("improvements", "improvement")):
             for item in parsed[key]:
-                r = auto_improvement.log_entry(
+                r = ai_logger(
                     scope="scoped", kind=kind, target=item["target"] or "*",
                     description=item["text"], agent=agent,
                     source_ref=f"slice:{slug}",
@@ -387,11 +396,13 @@ def register(server) -> None:
              outcome: str = "landed",
              notes: str | None = None,
              score: dict | None = None,
-             engineer_return: str | None = None) -> dict:
+             engineer_return: str | None = None,
+             publish: bool = True) -> dict:
         return log_completion(slug, agent, duration_minutes,
                               estimated_tokens=estimated_tokens,
                               outcome=outcome, notes=notes,
-                              score=score, engineer_return=engineer_return)
+                              score=score, engineer_return=engineer_return,
+                              publish=publish)
 
     # NOTE (2026-08-31, tool-name-uniqueness triage): this module and
     # `dispatch_budget.py` BOTH declared `name="noctus.dev.dispatch_budget_summary"`.
