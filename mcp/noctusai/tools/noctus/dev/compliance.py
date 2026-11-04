@@ -8462,6 +8462,87 @@ def check_migration_number_refs_in_tests(
     return issues
 
 
+# Metered seed LLM entry points: each records a `public.ai_usage` row whose agent_key / conversation_id come
+# ONLY from an enclosing `llm_usage_context(...)` scope (the HTTP middleware fills org/user/route, never the agent).
+_LLM_METERED_CALLS = frozenset({
+    "chat_with_tools", "chat_completion", "chat_completion_with_usage", "run_tool_loop",
+    "chat_stream", "analyze_image", "transcribe_audio",
+})
+#: files whose metered calls legitimately carry no agent (request-path / platform calls). Value = the reason.
+_NO_AGENT = "feature call with no agent identity; attributed by product + route feature (baseline 2026-11-04)"
+_LLM_USAGE_CONTEXT_ALLOWLIST: dict[str, str] = {
+    "orbity/backend/app/services/content_plan_ai_service.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/certidoes/cenprot.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/certidoes/service.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/email_marketing/services/ai_service.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/email_marketing/services/segmentation_service.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/imovel_hub/documentos_service.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/media_creation/services/biblioteca_ingestao.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/media_creation/services/cerebro_ai.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/media_creation/services/generation_service.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/media_creation/services/headline_pipeline.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/media_creation/services/pesquisa_service.py": _NO_AGENT,
+    "social-wiring/backend/app/modules/media_creation/services/roteiro_service.py": _NO_AGENT,
+    "social-wiring/backend/app/routers/chat_router.py": _NO_AGENT,
+    "social-wiring/backend/app/services/media_service.py": _NO_AGENT,
+    "agents/backend/app/studio/geracao.py": "Studio generator (platform-authored draft); attributed by route feature; train rewrites it",
+    "agents/backend/app/routers/channels_router.py": "passes agent_key to structured_extract once the Julia v3 train lands",
+    "social-wiring/backend/app/services/chatbot_service.py": "platform assistant chat, not a keyed agent",
+}
+
+
+def check_llm_usage_context_entry(repo_root: Path | None = None) -> list[dict]:
+    """A metered LLM call (`chat_with_tools` / `chat_completion*` / `run_tool_loop` ...) in
+    `products/<slug>/backend/app/` whose file never references `llm_usage_context` records
+    `public.ai_usage.agent_key = NULL` (2026-11-04: NULL on every row of 30 days — the scope had zero callers).
+    Per-agent / per-session cost needs the scope at the agent entry point. File-level heuristic; allowlist
+    (`_LLM_USAGE_CONTEXT_ALLOWLIST`, each entry a reason) for calls that legitimately have no agent.
+    Severity `warning`. See `KB § PATTERNS/backend/llm-usage.md`."""
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    products_dir = root / "products"
+    if not products_dir.is_dir():
+        return issues
+    for product_dir in _active_product_dirs(products_dir):
+        backend_app = product_dir / "backend" / "app"
+        if not backend_app.is_dir():
+            continue
+        for py_file in sorted(backend_app.rglob("*.py")):
+            rel_parts = py_file.relative_to(backend_app).parts
+            if any(part in ("tests", "migrations", "__pycache__") or part.startswith("test_") for part in rel_parts):
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+                tree = ast.parse(source, filename=str(py_file))
+            except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+                logger.debug("compliance: cannot parse %s (%s)", py_file, exc)
+                continue
+            if "llm_usage_context" in source:
+                continue
+            key = py_file.relative_to(products_dir).as_posix()
+            if key in _LLM_USAGE_CONTEXT_ALLOWLIST:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+                if name in _LLM_METERED_CALLS:
+                    issues.append({
+                        "product": product_dir.name,
+                        "file": f"{py_file.relative_to(root)}:{node.lineno}",
+                        "severity": "warning",
+                        "issue": (
+                            f"metered LLM call `{name}` in a file with no `llm_usage_context` scope — the ledger row "
+                            "lands with agent_key/conversation_id NULL. Wrap the agent entry point in "
+                            "`llm_usage_context(agent_key=..., conversation_id=...)` or add the file to "
+                            "`_LLM_USAGE_CONTEXT_ALLOWLIST` with a reason."
+                        ),
+                    })
+                    break
+    return issues
+
+
 def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict]:
     """Every `UploadFile`-declaring route under `products/<slug>/backend/app/`
     must have a matching entry in that product's `max_body_path_overrides`

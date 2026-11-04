@@ -61,6 +61,7 @@ from noctusai_lib.integrations.llm import (
     ToolSpec,
     chat_with_tools,
     enforce_budget,
+    llm_usage_context,
     run_tool_loop,
 )
 
@@ -346,14 +347,23 @@ class LlmToolRuntime:
 
         async def _run() -> None:
             try:
-                result = await run_tool_loop(
-                    messages,
-                    list(toolset.tools) if toolset else [],
-                    _handler if toolset else None,
-                    chat=_chat,
-                    max_iterations=min(self._max_iterations, max(1, spec.max_turns)),
-                    fallback_reply=ctx.resposta_fallback,
-                )
+                # Cost per agent / per session: scope entered INSIDE this task (the context is copied at
+                # create_task and the `with` opens and closes in the same task). An ephemeral (eval) turn has
+                # no conversation row -> conversation_id stays null, never a throwaway id.
+                with llm_usage_context(
+                    product="agents",
+                    agent_key=spec.key,
+                    conversation_id=None if ctx.ephemeral else str(ctx.conversation_id),
+                    org_id=str(ctx.org_id),
+                ):
+                    result = await run_tool_loop(
+                        messages,
+                        list(toolset.tools) if toolset else [],
+                        _handler if toolset else None,
+                        chat=_chat,
+                        max_iterations=min(self._max_iterations, max(1, spec.max_turns)),
+                        fallback_reply=ctx.resposta_fallback,
+                    )
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:  # noqa: BLE001 — handed to the generator, re-raised there
@@ -409,6 +419,8 @@ class LlmToolRuntime:
         system: str,
         user: str,
         tool: ToolSpec,
+        agent_key: str | None = None,
+        conversation_id: UUID | None = None,
     ) -> tuple[dict[str, Any], Any]:
         """One structured-output call (Lais F-AG ``/resumo``): the model is
         FORCED to call ``tool`` (the provider-neutral structured-output path of
@@ -418,13 +430,17 @@ class LlmToolRuntime:
         await self.preflight(provider, org_id)
         api_key = self._resolve_key(provider, org_id)
         try:
-            response = await chat_with_tools(
-                [ChatMessage.system(system), ChatMessage.user(user)],
-                [tool],
-                model=model, provider=provider, org_id=str(org_id), api_key=api_key,
-                require_explicit_key=True, temperature=0.0, max_tokens=self._max_tokens,
-                tool_choice=tool.name, provider_impl=self._provider_impl,
-            )
+            with llm_usage_context(
+                product="agents", agent_key=agent_key,
+                conversation_id=str(conversation_id) if conversation_id else None, org_id=str(org_id),
+            ):
+                response = await chat_with_tools(
+                    [ChatMessage.system(system), ChatMessage.user(user)],
+                    [tool],
+                    model=model, provider=provider, org_id=str(org_id), api_key=api_key,
+                    require_explicit_key=True, temperature=0.0, max_tokens=self._max_tokens,
+                    tool_choice=tool.name, provider_impl=self._provider_impl,
+                )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001 — mapped to the typed error or re-raised
