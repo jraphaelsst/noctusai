@@ -127,6 +127,20 @@ then change detection, then alerts.
   port is busy, the gate reports `HARNESS INVALID` (`webserver_port_free`, naming the pid),
   does not run, and is not counted. It also runs e2e with `CI=1`: reuse is off, and the config's
   CI settings apply (retries 2, github reporter), the same as CI.
+- **Waiters queue first-come, first-served; an integrate waits its turn instead of quitting.**
+  Before 2026-11-04 every waiter polled for a free slot independently, which is a race with no
+  fairness. noctusai-04's integrate 6 lost that race to another session's 9 predeploys, gave up
+  after `wait_s` (1800 s) as `waiting_for_slot`, and needed a human to relaunch it. Now:
+  - Every `heavy_slot` waiter drops a ticket in `~/.noctus/hw-queue/`. Only the oldest live
+    tickets (as many as there are free slots) may try a slot. Tickets of dead pids are swept.
+  - Each move in line writes a `queued` row to the capacity log, with `queue_position`, `ahead`
+    and `eta_s` (median recent run duration × rounds ahead). `status` lists the `queue`, and
+    `Admission.queue_position` lands on the `ran` and `not_admitted` rows.
+  - `task_branch` integrate's merged-tip gates queue against ONE shared deadline
+    (`hw_admission.shared_deadline_admit`): `NOCTUS_INTEGRATE_SLOT_WAIT_S`, default 4 h. Only
+    after that is the result `waiting_for_slot`.
+  - The queue is best-effort across code versions: a waiter on older code still races, but it
+    can only jump queued waiters, never an admitted job.
 - **A red under load re-runs its failing tests once, alone, before it counts.** At
   `max_heavy` 1, integrates 4 and 5 (2026-11-04) each failed on a DIFFERENT timing-sensitive
   test that passed in isolation: one vitest assertion at 2333 ms, and one pytest failure that

@@ -1523,12 +1523,34 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     from . import hw_admission as _hw
     res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, prepare_gates=_prepare,
                      run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts),
-                     admit=_hw.heavy_slot)
+                     admit=_hw.shared_deadline_admit(integrate_slot_wait_s()))
     if isinstance(res, dict):
         # per-gate attempt counts + durations/budgets, so wall-clock is visible
         res["gate_attempts"] = attempts
         res["frontend_env"] = res.get("env_prepared")
     return res
+
+
+#: How long an integrate's merged-tip gates may QUEUE for the machine-wide heavy
+#: slot, shared by all of them (2026-11-04, noctusai-04 integrate 6: each gate
+#: gave up after heavy_slot's own 1800 s while another session's 9 predeploys
+#: took turns, and the integrate ended `waiting_for_slot` for a human to
+#: relaunch). One generous wall-clock, FIFO by ticket: a sweep waits its turn
+#: instead of re-rolling. Override: NOCTUS_INTEGRATE_SLOT_WAIT_S.
+INTEGRATE_SLOT_WAIT_S_DEFAULT = 4 * 3600
+
+
+def integrate_slot_wait_s() -> float:
+    raw = os.environ.get("NOCTUS_INTEGRATE_SLOT_WAIT_S")
+    if raw is None or not raw.strip():
+        return float(INTEGRATE_SLOT_WAIT_S_DEFAULT)
+    try:
+        v = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"NOCTUS_INTEGRATE_SLOT_WAIT_S={raw!r} is not a number of seconds") from exc
+    if v <= 0:
+        raise ValueError(f"NOCTUS_INTEGRATE_SLOT_WAIT_S={raw!r} must be > 0")
+    return v
 
 
 class _ActiveClock:
@@ -1754,7 +1776,7 @@ def _default_merged_tip_baseline(
         if run_gates is None:
             from .gate_sweep import run_gates_named as run_gates  # lazy import
             from . import hw_admission as _hw
-            admit_kw["admit"] = _hw.heavy_slot   # real runner => machine-wide heavy slot
+            admit_kw["admit"] = _hw.shared_deadline_admit(integrate_slot_wait_s())  # real runner => queued heavy slot
         attempts: dict[str, dict[str, Any]] = {}
         res = run_gates(wt, list(gate_names),
                         run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts),
@@ -2939,9 +2961,11 @@ def task_branch(
                             "reason": (
                                 f"{branch} rebased onto {remote}/{dev_branch} cleanly, but the "
                                 f"hardware admission gate did not admit {len(waiting)} merged-tip "
-                                f"gate(s): {names_}. The machine is saturated — no verdict was "
-                                "produced. Re-run integrate when `noctus.dev.hw_admission` reports "
-                                "would_admit."),
+                                f"gate(s): {names_} within the shared queue window "
+                                f"({int(integrate_slot_wait_s())} s, FIFO; "
+                                "NOCTUS_INTEGRATE_SLOT_WAIT_S). The machine stayed saturated — no "
+                                "verdict was produced. Re-run integrate when "
+                                "`noctus.dev.hw_admission` reports would_admit."),
                             "message": (
                                 f"integrate of {branch} held: waiting_for_slot on {names_}. "
                                 "Not pushed.")}

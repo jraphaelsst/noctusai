@@ -43,6 +43,7 @@ import resource
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -468,6 +469,93 @@ def _try_slot(n: int, job: str) -> tuple[Any, Path] | None:
     return None
 
 
+# ── FIFO queue (2026-11-04) ───────────────────────────────────────────────
+# noctusai-04's integrate 6 gave up after wait_s while noctusai-3d's 9
+# predeploys took turns: a polling race has no fairness, so a long merged-tip
+# sweep loses to whoever polls at the right moment, then ends and needs a
+# human to relaunch it. Every waiter now drops a ticket; only the oldest live
+# tickets (as many as there are free slots) may try a slot. Tickets of dead
+# pids are swept. Best-effort across code versions: a waiter running code
+# without tickets still races - it cannot jump an admitted job, only a queue.
+
+_TICKET_SEQ = iter(range(1, 1 << 62))
+_TICKET_LOCK = threading.Lock()
+
+
+def _queue_dir() -> Path:
+    d = Path(os.environ.get("NOCTUS_HW_QUEUE_DIR") or Path.home() / ".noctus" / "hw-queue")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _enqueue(job: str) -> Path:
+    with _TICKET_LOCK:
+        seq = next(_TICKET_SEQ)
+    t = _queue_dir() / f"{time.time_ns():020d}-{os.getpid()}-{seq}.json"
+    t.write_text(json.dumps({"pid": os.getpid(), "job": job, "host": _host(),
+                             "since": datetime.now(timezone.utc).isoformat(timespec="seconds")}))
+    return t
+
+
+def queue() -> list[dict[str, Any]]:
+    """Live waiters, oldest first (dead-pid tickets are removed)."""
+    out = []
+    for t in sorted(_queue_dir().glob("*.json")):
+        try:
+            info = json.loads(t.read_text() or "{}")
+        except (OSError, json.JSONDecodeError):
+            continue                      # being written / just removed
+        pid = info.get("pid")
+        if not isinstance(pid, int) or not _pid_alive(pid):
+            t.unlink(missing_ok=True)
+            continue
+        out.append({"ticket": t.name, **info})
+    return out
+
+
+def _queue_position(ticket: Path) -> int:
+    """0-based count of live waiters ahead of `ticket`."""
+    return sum(1 for w in queue() if w["ticket"] < ticket.name)
+
+
+def _typical_run_s(default: float = 300.0, last_n: int = 2000) -> float:
+    """Median duration of recent `ran` rows - the ETA unit."""
+    p = _log_path()
+    if not p.exists():
+        return default
+    ds = []
+    for ln in p.read_text().splitlines()[-last_n:]:
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if r.get("event") == "ran" and isinstance(r.get("duration_s"), (int, float)):
+            ds.append(float(r["duration_s"]))
+    return sorted(ds)[len(ds) // 2] if ds else default
+
+
+def shared_deadline_admit(total_wait_s: float, now: Callable[[], float] = time.monotonic,
+                          slot: Callable[..., Any] | None = None):
+    """An `admit` for a multi-gate run (task_branch integrate): every gate queues
+    against ONE deadline instead of each giving up after its own wait_s, so a
+    sweep waits its turn for as long as the caller allows - and no longer."""
+    deadline = now() + total_wait_s
+
+    def admit(job: str, **kw: Any):
+        return (slot or heavy_slot)(job, wait_s=max(0.0, deadline - now()), **kw)
+    return admit
+
+
 @dataclass
 class Admission:
     job: str
@@ -479,6 +567,7 @@ class Admission:
     advisories: list[str] = field(default_factory=list)
     phase: str | None = None
     outcome: dict[str, Any] = field(default_factory=dict)   # set by the caller after the run (exit_code, ...)
+    queue_position: int | None = None   # 1-based place in line when last checked (None = never queued)
     # Internal fan-out cap this job runs with (vitest/playwright workers); None
     # = the job has no fan-out cap. Top-level on ran/not_admitted rows — a
     # schema contract with usage_eval (noctusai-3d), never parsed out of argv.
@@ -509,29 +598,48 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
     last: dict[str, Any] = {}
     why: list[str] = ["no free slot"]
     held = None
-    while True:
-        held = _try_slot(int(b["max_heavy"]), job)
-        if held:
-            last = probe_fn(b["cpu_sample_s"])
-            why = evaluate(last, b)
-            if not why:
-                why = memory_veto(job, last, b, max(0, len(holders()) - 1))
-            if not why:
-                break
-            held[0].close()
-            held = None
-        else:
-            why = ["no free slot: " + ", ".join(f"{h.get('job')}(pid {h.get('pid')})" for h in holders())]
-        if time.monotonic() >= deadline:
-            adm = Admission(job, False, "waiting_for_slot", round(time.monotonic() - t0, 1),
-                            last, why, advisories(last, b) if last else [], b["phase"],
-                            job_workers=jw)
-            _log({"event": "not_admitted", "host": b["host"], **adm.as_dict()})
-            yield adm
-            return
-        sleep(b["poll_s"])
+    ticket = _enqueue(job)
+    pos: int | None = None
+    unit = None
+    try:
+        while True:
+            ahead = _queue_position(ticket)
+            free = int(b["max_heavy"]) - len(holders())
+            if ahead + 1 != pos:      # log each move in line (only when behind someone), not each poll
+                pos = ahead + 1
+                if ahead > 0:
+                    unit = unit if unit is not None else _typical_run_s()
+                    _log({"event": "queued", "host": b["host"], "job": job, "phase": b["phase"],
+                          "queue_position": pos, "ahead": ahead,
+                          "eta_s": round(unit * (ahead // max(1, int(b["max_heavy"])) + 1), 1),
+                          "waited_s": round(time.monotonic() - t0, 1)})
+            if ahead < free:
+                held = _try_slot(int(b["max_heavy"]), job)
+            if held:
+                last = probe_fn(b["cpu_sample_s"])
+                why = evaluate(last, b)
+                if not why:
+                    why = memory_veto(job, last, b, max(0, len(holders()) - 1))
+                if not why:
+                    break
+                held[0].close()
+                held = None
+            elif ahead >= max(free, 0) and ahead > 0:
+                why = [f"queued: {ahead} waiter(s) ahead (FIFO)"]
+            else:
+                why = ["no free slot: " + ", ".join(f"{h.get('job')}(pid {h.get('pid')})" for h in holders())]
+            if time.monotonic() >= deadline:
+                adm = Admission(job, False, "waiting_for_slot", round(time.monotonic() - t0, 1),
+                                last, why, advisories(last, b) if last else [], b["phase"],
+                                queue_position=pos, job_workers=jw)
+                _log({"event": "not_admitted", "host": b["host"], **adm.as_dict()})
+                yield adm
+                return
+            sleep(b["poll_s"])
+    finally:
+        ticket.unlink(missing_ok=True)
     adm = Admission(job, True, "admitted", round(time.monotonic() - t0, 1), last, [],
-                    advisories(last, b), b["phase"], job_workers=jw)
+                    advisories(last, b), b["phase"], queue_position=pos, job_workers=jw)
     rss0 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     started = time.monotonic()
     prev = os.environ.get(_HELD_ENV)
@@ -679,7 +787,7 @@ def status(sample_s: float = 3.0) -> dict[str, Any]:
     free = int(b["max_heavy"]) - len(busy)
     return {"ok": True, "status": "would_admit" if (not why and free > 0) else "would_wait",
             "budget": b, "metrics": m, "blocked_by": why + ([] if free > 0 else ["no free slot"]),
-            "holders": busy, "advisories": advisories(m, b)}
+            "holders": busy, "queue": queue(), "advisories": advisories(m, b)}
 
 
 # ── shell entry: run any heavy command through the gate ──────────────────

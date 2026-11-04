@@ -28,6 +28,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("NOCTUS_HW_BUDGET_PATH", str(budget))
     monkeypatch.setenv("NOCTUS_HW_SLOT_DIR", str(tmp_path / "slots"))
     monkeypatch.setenv("NOCTUS_HW_LOG", str(tmp_path / "log.ndjson"))
+    monkeypatch.setenv("NOCTUS_HW_QUEUE_DIR", str(tmp_path / "queue"))
     monkeypatch.delenv("NOCTUS_HW_PHASE", raising=False)
     monkeypatch.delenv("NOCTUS_HW_SLOT_HELD", raising=False)
     return tmp_path
@@ -346,7 +347,8 @@ class TestExplicitAdmit:
         from tools.noctus.dev import task_branch as tb
         for fn in (tb._default_merged_tip_check, tb._default_merged_tip_baseline):
             src = inspect.getsource(fn)
-            assert "_hw.heavy_slot" in src, f"{fn.__name__} no longer admits its real runner"
+            # since 2026-11-04 through ONE shared FIFO deadline (hw_admission.shared_deadline_admit)
+            assert "_hw.shared_deadline_admit(" in src, f"{fn.__name__} no longer admits its real runner"
 
 
 class TestProbeV2:
@@ -512,3 +514,54 @@ class TestMemoryAwareAdmission:
             with hw.heavy_slot("gate:pytest:big", budget=b, probe_fn=lambda s: GOOD) as second:
                 assert not second.admitted
                 assert any(x.startswith("memory:") for x in second.blocked_by)
+
+
+class TestFifoQueue:
+    """2026-11-04: integrate 6 gave up after wait_s while another session's
+    predeploys took turns - a polling race has no fairness."""
+
+    def _ticket(self, env, name, pid):
+        d = env / "queue"
+        d.mkdir(exist_ok=True)
+        (d / name).write_text(json.dumps({"pid": pid, "job": "older"}))
+
+    def test_a_live_older_waiter_keeps_the_free_slot_for_itself(self, env):
+        self._ticket(env, "00000000000000000001-1-1.json", os.getpid())
+        with hw.heavy_slot("gate:x", wait_s=0, probe_fn=lambda s: GOOD) as adm:
+            assert not adm.admitted
+            assert any("queued: 1 waiter(s) ahead" in w for w in adm.blocked_by)
+            assert adm.queue_position == 2
+        q = [r for r in _rows(env) if r["event"] == "queued"]
+        assert q and q[0]["ahead"] == 1 and q[0]["eta_s"] > 0
+
+    def test_dead_pid_tickets_are_swept_and_do_not_block(self, env):
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        self._ticket(env, "00000000000000000001-1-1.json", dead.pid)
+        with hw.heavy_slot("gate:x", wait_s=0, probe_fn=lambda s: GOOD) as adm:
+            assert adm.admitted and adm.queue_position == 1
+        assert not list((env / "queue").glob("*.json"))
+
+    def test_own_ticket_is_removed_on_admit_and_on_give_up(self, env):
+        with hw.heavy_slot("gate:a", wait_s=0, probe_fn=lambda s: GOOD) as adm:
+            assert adm.admitted
+            assert hw.queue() == []
+        with hw.heavy_slot("gate:b", wait_s=0, probe_fn=lambda s: {**GOOD, "cpu_idle_pct": 1.0}) as adm:
+            assert not adm.admitted
+        assert hw.queue() == []
+
+    def test_queue_lists_live_waiters_oldest_first(self, env):
+        self._ticket(env, "00000000000000000002-1-1.json", os.getpid())
+        self._ticket(env, "00000000000000000001-1-1.json", os.getpid())
+        assert [w["ticket"][:20] for w in hw.queue()] == ["00000000000000000001", "00000000000000000002"]
+
+    def test_shared_deadline_spends_one_budget_across_gates(self):
+        clock = [100.0]
+        seen = []
+        admit = hw.shared_deadline_admit(50.0, now=lambda: clock[0],
+                                         slot=lambda job, wait_s, **kw: seen.append((job, wait_s)))
+        clock[0] = 140.0
+        admit("gate:x")
+        clock[0] = 200.0
+        admit("gate:y")
+        assert seen == [("gate:x", 10.0), ("gate:y", 0.0)]
