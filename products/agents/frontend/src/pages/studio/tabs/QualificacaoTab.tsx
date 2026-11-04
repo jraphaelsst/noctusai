@@ -393,6 +393,7 @@ function ParametrosEditor({ parametros, versaoId, padrao, editavel }: { parametr
   const p = buf.value;
   const patch = (x: Partial<QualParametros>) => buf.setValue({ ...p, ...x });
   const invalido = Object.values(jsonErr).some(Boolean);
+  const loteValido = Number.isInteger(p.lote_ofertas) && p.lote_ofertas >= 1 && p.lote_ofertas <= 5;
   const json = (id: keyof QualParametros, label: string, valor: unknown, rows = 4) => (
     <JsonField
       id={`par-${id}`}
@@ -427,6 +428,11 @@ function ParametrosEditor({ parametros, versaoId, padrao, editavel }: { parametr
           <label htmlFor="par-max" className="mb-1 block text-xs font-medium">Pontuação máxima</label>
           <input id="par-max" type="number" min={1} max={1000} className={INPUT_CLASS} disabled={!editavel} value={p.score_max} onChange={(e) => patch({ score_max: Number(e.target.value) })} />
         </div>
+        <div>
+          <label htmlFor="par-lote" className="mb-1 block text-xs font-medium">Imóveis por lote</label>
+          <input id="par-lote" type="number" min={1} max={5} className={INPUT_CLASS} disabled={!editavel} value={p.lote_ofertas} onChange={(e) => patch({ lote_ofertas: Number(e.target.value) })} />
+          <p className="mt-1 text-xs text-muted-foreground">Máximo de imóveis que a Julia envia por vez; ela pergunta se o lead quer ver mais.</p>
+        </div>
       </div>
       {json("minimo_para_ofertar", "Mínimo para ofertar imóveis (regra)", p.minimo_para_ofertar)}
       {json("pedir_identificacao_quando", "Quando pedir identificação (regra; vazio = a qualquer momento)", p.pedir_identificacao_quando, 3)}
@@ -434,7 +440,7 @@ function ParametrosEditor({ parametros, versaoId, padrao, editavel }: { parametr
       <SaveError message={erro} />
       {editavel && (
         <div className="flex justify-end">
-          <Button size="sm" variant="primary" disabled={!buf.dirty || invalido || buf.conflict || salvar.isPending} onClick={handleSave} data-testid="parametros-salvar">
+          <Button size="sm" variant="primary" disabled={!buf.dirty || invalido || !loteValido || buf.conflict || salvar.isPending} onClick={handleSave} data-testid="parametros-salvar">
             {salvar.isPending ? "Salvando..." : "Salvar parâmetros"}
           </Button>
         </div>

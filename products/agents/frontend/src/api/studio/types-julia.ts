@@ -263,9 +263,12 @@ export interface Controle {
   dreno_inatividade_dias: number;
   threads_abertas: number;
   drenagem: Drenagem;
+  /** Julia v3 §12.2: while on, the agent says it is in a testing phase when apologising. */
+  fase_testes?: boolean;
 }
 export interface ControleUpdate {
   modo: ModoOperacao;
+  fase_testes?: boolean;
   dreno_inatividade_dias?: number;
 }
 
@@ -358,4 +361,16 @@ export interface OptOutEvento {
   notificacao_status: OptOutNotificacaoStatus;
   notificacao_erro: string | null;
   notificado_em: string | null;
+}
+
+/** Julia v3 §12.1: the platform-wide kill switch (`/api/studio/plataforma/agentes/{key}/controle`). */
+export interface ControlePlataforma {
+  desligado: boolean;
+  motivo: string | null;
+  alterado_em: string | null;
+  alterado_por: string | null;
+}
+export interface ControlePlataformaUpdate {
+  desligado: boolean;
+  motivo: string | null;
 }

@@ -39,8 +39,8 @@ describe("QualificacaoTab", () => {
     expect(screen.getByTestId("qual-escopo-financeiro")).toBeTruthy();
     expect(screen.getByTestId("estagio-est_a")).toBeTruthy();
     expect(screen.getByTestId("qual-parametros")).toBeTruthy();
-    // One property per batch is fixed (owner, 2026-11-03): the batch size is not an editable parameter.
-    expect(document.getElementById("par-lote")).toBeNull();
+    // Julia v3 §12.6: the batch size is an editable parameter again (1-5).
+    expect((document.getElementById("par-lote") as HTMLInputElement).value).toBe(String(PADRAO_VERSAO.parametros.lote_ofertas));
     expect(screen.getByTestId("qual-estado").textContent).toContain("Rascunho v3");
   });
 

@@ -8,9 +8,10 @@
  * The turn endpoint is what DECIDES per message; this is only the switch and the drain progress.
  * The state shown is always the last server answer, never a local copy.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
-import type { Controle, ControleUpdate } from "@/api/studio/types-julia";
+import type { Controle, ControlePlataforma, ControlePlataformaUpdate, ControleUpdate } from "@/api/studio/types-julia";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
 
 export function useControle(key: string, enabled = true) {
@@ -25,14 +26,37 @@ export function useControle(key: string, enabled = true) {
 }
 
 export function useSetControle(key: string) {
-  const qc = useQueryClient();
-  return useMutation<Controle, unknown, ControleUpdate>({
+  return useCacheWriteMutation<Controle, ControleUpdate>({
     mutationFn: (payload) => api.put<Controle>(`/api/studio/agents/${seg(key)}/controle`, payload),
-    onSuccess: (controle) => {
-      qc.setQueryData(studioKeys.controle(key), controle);
-      void qc.invalidateQueries({ queryKey: studioKeys.controle(key) });
-      void qc.invalidateQueries({ queryKey: studioKeys.orgStatus(key) });
-      void qc.invalidateQueries({ queryKey: studioKeys.list() });
-    },
+    // The server's answer is the new state; the fase_testes flag is predictable, so it is drawn at once.
+    targets: [
+      {
+        queryKey: studioKeys.controle(key),
+        optimistic: (old: Controle | undefined, v: ControleUpdate) =>
+          old && v.fase_testes !== undefined && v.modo === old.modo ? { ...old, fase_testes: v.fase_testes } : old,
+        commit: (_old, saved) => saved,
+      },
+    ],
+    invalidate: [studioKeys.orgStatus(key), studioKeys.list()],
+  });
+}
+
+/** Platform kill switch (platform admin only; any other caller gets 403 -> error state, never shown). */
+export function useControlePlataforma(key: string, enabled: boolean) {
+  const q = useQuery<ControlePlataforma>({
+    queryKey: studioKeys.controlePlataforma(key),
+    queryFn: () => api.get<ControlePlataforma>(`/api/studio/plataforma/agentes/${seg(key)}/controle`),
+    enabled: !!key && enabled,
+    retry: false,
+    placeholderData: keepWithinAgent<ControlePlataforma>(key),
+  });
+  return toView(q);
+}
+
+export function useSetControlePlataforma(key: string) {
+  return useCacheWriteMutation<ControlePlataforma, ControlePlataformaUpdate>({
+    mutationFn: (payload) => api.put<ControlePlataforma>(`/api/studio/plataforma/agentes/${seg(key)}/controle`, payload),
+    targets: [{ queryKey: studioKeys.controlePlataforma(key), commit: (_old, saved) => saved }],
+    invalidate: [studioKeys.controle(key)],
   });
 }
