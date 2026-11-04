@@ -7,6 +7,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOTS = [resolve(__dirname, "."), resolve(__dirname, "../../components/julia")];
+// The Julia hooks carry user-facing sentences too (refusal messages) — scan them with the pages.
+const HOOKS_DIR = resolve(__dirname, "../../hooks");
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
@@ -17,11 +19,16 @@ function walk(dir: string): string[] {
 
 const FORBIDDEN: [string, RegExp][] = [
   ['"app de agentes"', /app de agentes/i],
-  ["a link to the agents product", /agents_url|agentsUrl|\/studio\/julia/i],
+  ["a link to the agents product", /agents_url|agentsUrl|urlConfigurarJulia|\/studio\/julia/i],
+  ["the retired One Chat bot", /\bOne Chat\b/],
 ];
 
 describe("Julia UI never points users at the agents app", () => {
-  const files = ROOTS.flatMap(walk).filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f));
+  const hooks = readdirSync(HOOKS_DIR)
+    .filter((n) => /^useJulia.*\.tsx?$/.test(n))
+    .map((n) => join(HOOKS_DIR, n));
+  const files = [...ROOTS.flatMap(walk), ...hooks].filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f));
+  it("scans the Julia hooks too", () => expect(files.some((f) => f.endsWith("useJuliaAgente.ts"))).toBe(true));
 
   it("scans a non-trivial set of files", () => expect(files.length).toBeGreaterThan(20));
 

@@ -185,13 +185,12 @@ describe("optimistic: the change is drawn while the request is in flight", () =>
   it("julia: roteamento — the line's switch flips at once", async () => {
     api.put.mockReturnValue(defer().promise);
     const { qc, result } = mount(() => useAtualizarLinha(), [
-      [JULIA_ROTEAMENTO_KEY, { linhas: [{ connection_id: "c1", alimenta: false }], agents_url: null }],
+      [JULIA_ROTEAMENTO_KEY, { linhas: [{ connection_id: "c1", alimenta: false }] }],
     ]);
     act(() => result.current.mutate({ connectionId: "c1", body: { alimenta: true } }));
     await waitFor(() =>
       expect(qc.getQueryData(JULIA_ROTEAMENTO_KEY)).toEqual({
         linhas: [{ connection_id: "c1", alimenta: true }],
-        agents_url: null,
       }),
     );
   });

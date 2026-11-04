@@ -1,60 +1,29 @@
-/** Julia › Agente card: the link with the Agents product (token + link health). STATUS only; behaviour is configured in agents. */
-import { useState } from "react";
-import { toast } from "sonner";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+/**
+ * Julia › Agente card: "Conexão com a plataforma" — READ-ONLY status of the grant that lets the WhatsApp talk to
+ * Julia (masked token, status, times, "Testar conexão"), plus which version of Julia is live. Nothing is pasted or
+ * configured here: the platform manages the connection and Julia's core (julia-line CONTRACT §0 / §D).
+ */
+import { AlertCircle } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { mensagemErroJulia, useSalvarTokenAgents, type JuliaAgente } from "@/hooks/useJuliaAgente";
+import type { JuliaAgente } from "@/hooks/useJuliaAgente";
+import { ConexaoPlataformaBody } from "./ConexaoPlataforma";
 
 export function AgentsLinkCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: boolean }) {
-  const salvar = useSalvarTokenAgents();
-  const [token, setToken] = useState("");
-  const [erro, setErro] = useState<string | null>(null);
   const st = data.status_agente;
-
-  function enviar() {
-    const valor = token.trim();
-    if (!valor) return;
-    setErro(null);
-    salvar.mutate(
-      { token: valor },
-      {
-        onSuccess: () => {
-          // Write-only: the secret leaves the page the moment it is stored.
-          setToken("");
-          toast.success("Token do Agents salvo");
-        },
-        onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível salvar o token.")),
-      },
-    );
-  }
-
   return (
-    <Card data-testid="agents-link-card">
+    <Card data-testid="agents-link-card" id="conexao-plataforma">
       <CardHeader>
-        <CardTitle className="text-base">Conexão com o Agents</CardTitle>
-        <CardDescription>A Julia roda no produto Agents; este token autoriza o WhatsApp a falar com ela.</CardDescription>
+        <CardTitle className="text-base">Conexão com a plataforma</CardTitle>
+        <CardDescription>
+          A conexão que deixa o WhatsApp falar com a Julia é gerenciada pela NoctusAI. Aqui você só acompanha se está funcionando.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center gap-2 text-sm" data-testid="token-status">
-          {data.token_configurado ? (
-            <>
-              <CheckCircle2 className="h-4 w-4 text-success" />
-              <span>Token configurado</span>
-            </>
-          ) : (
-            <>
-              <AlertCircle className="h-4 w-4 text-warning-foreground" />
-              <span>Token não configurado</span>
-            </>
-          )}
-        </div>
+        <ConexaoPlataformaBody conexao={data.conexao_plataforma} canTest={isAdmin} />
 
         {st && (
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4" data-testid="agent-status">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-3 text-sm sm:grid-cols-4" data-testid="agent-status">
             <div>
               <dt className="text-xs text-muted-foreground">Agente</dt>
               <dd>{st.nome} {st.ativo ? "(ativo)" : "(inativo)"}</dd>
@@ -79,33 +48,6 @@ export function AgentsLinkCard({ data, isAdmin }: { data: JuliaAgente; isAdmin: 
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{data.erro}</span>
           </p>
-        )}
-
-        {isAdmin ? (
-          <div className="space-y-2">
-            <Label htmlFor="agents-token">{data.token_configurado ? "Substituir token" : "Colar token do canal"}</Label>
-            <div className="flex gap-2">
-              <Input
-                id="agents-token"
-                type="password"
-                autoComplete="off"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Cole aqui o token do canal (não é exibido depois)"
-              />
-              <Button onClick={enviar} disabled={salvar.isPending || token.trim().length < 8} data-testid="salvar-token">
-                {salvar.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-                Salvar token
-              </Button>
-            </div>
-            {erro && (
-              <p role="alert" className="text-sm text-destructive" data-testid="token-erro">
-                {erro}
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">Somente owner ou admin da organização pode alterar o token.</p>
         )}
       </CardContent>
     </Card>

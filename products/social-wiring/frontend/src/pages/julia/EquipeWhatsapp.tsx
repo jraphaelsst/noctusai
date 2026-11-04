@@ -2,8 +2,8 @@
  * Julia › Equipe (`/julia/equipe-whatsapp`): THE per-org staff list of the WhatsApp lines (owner 2026-10-21: "staff will be set in-org.
  * only those registered on the sw are staff and their roles ... by default, if not in the staff list, it's an incoming lead").
  *
- * A number on this list is a colleague (never a lead); the role decides the route (admin / operador drive the One Chat agent from their
- * number; the others are noticed to the admins). Everything else that writes to a Julia line is a lead. Org-admin only.
+ * A number on this list is a colleague (never a lead); the role labels who they are (a message from their number on the public line is kept and the
+ * admins are noticed). Everything else that writes to a Julia line is a lead. Org-admin only.
  *
  * Loading = two signals off `data` (never `isLoading`); removal asks in a design-system AlertDialog, never a browser dialog.
  */

@@ -75,7 +75,7 @@ describe("adicionar / editar", () => {
     fireEvent.click(await screen.findByTestId("equipe-adicionar"));
     fireEvent.change(screen.getByTestId("membro-nome"), { target: { value: "  Carlos " } });
     fireEvent.change(screen.getByTestId("membro-papel"), { target: { value: "operador" } });
-    expect(screen.getByTestId("membro-papel-explicacao").textContent).toContain("One Chat");
+    expect(screen.getByTestId("membro-papel-explicacao").textContent).toContain("nunca é tratado como lead");
     fireEvent.change(screen.getByTestId("membro-telefone"), { target: { value: "+55 11 98888-0000" } });
     fireEvent.click(screen.getByTestId("membro-salvar"));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/julia/equipe-whatsapp", {

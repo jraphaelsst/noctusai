@@ -37,6 +37,7 @@ import {
   useSalvarDadosImobiliaria,
 } from "@/hooks/useDadosImobiliaria";
 import { TestemunhasSection } from "@/components/settings/TestemunhasSection";
+import { ConexaoPlataformaDoAgente } from "@/components/julia/ConexaoPlataforma";
 import { VistaCard } from "@/components/settings/VistaCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1145,6 +1146,36 @@ function ManagedApiKeyRow({
   );
 }
 
+/**
+ * A key the platform manages (`read_only`): status + masked hint, never an input. The "agents" key is Julia's
+ * platform connection, so it renders the same read-only card as the Agente page (status, times, "Testar conexão").
+ */
+function ManagedReadOnlyRow({ item, canEdit }: { item: ApiKeyStatus; canEdit: boolean }) {
+  return (
+    <div className="space-y-2 px-4 py-3" data-testid={`api-key-${item.key}`} data-read-only="true">
+      <div>
+        <p className="text-sm font-medium">{item.label}</p>
+        <p className="text-xs text-muted-foreground">{item.description}</p>
+      </div>
+      {item.key === "agents" ? (
+        <ConexaoPlataformaDoAgente canTest={canEdit} />
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <Badge variant={item.configured ? "default" : "secondary"} className="text-[11px]">
+            {item.configured ? "configurada" : "não configurada"}
+          </Badge>
+          {item.configured && item.hint && (
+            <code className="select-none rounded bg-muted px-2 py-1 font-mono" data-testid={`api-key-hint-${item.key}`}>
+              {item.hint}
+            </code>
+          )}
+          <span className="text-muted-foreground">Gerenciada pela plataforma NoctusAI.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ManagedApiKeysSection({ canEdit }: { canEdit: boolean }) {
   // 🔴 Two signals, never `isLoading`: the skeleton is for the FIRST load
   // only; a refetch over data already on screen shows a quiet indicator
@@ -1206,7 +1237,9 @@ function ManagedApiKeysSection({ canEdit }: { canEdit: boolean }) {
       </p>
       <div className="divide-y rounded-md border">
         {items.map((item) => (
-          apiKeyOptions(item).length > 0 ? (
+          item.read_only ? (
+            <ManagedReadOnlyRow key={item.key} item={item} canEdit={canEdit} />
+          ) : apiKeyOptions(item).length > 0 ? (
             <ManagedApiChoiceRow
               key={item.key}
               item={item}

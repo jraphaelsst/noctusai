@@ -174,7 +174,7 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
     expect(mutateAsync).toHaveBeenCalledWith({ text: "Oi" });
   });
 
-  it("exposes no auto-reply control (the One Chat operator bot is retired)", async () => {
+  it("exposes no auto-reply control (replies are manual, from the UI)", async () => {
     await renderWindow();
     expect(lastProps.adapter.useAutoReply).toBeUndefined();
   });

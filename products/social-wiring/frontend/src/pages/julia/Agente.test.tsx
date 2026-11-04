@@ -1,7 +1,7 @@
 /**
- * Julia › Agente (routing only) — states, the agents-link status, the line list (on/off + handoff target), every
- * refusal code's pt-BR message, the disabled-switch reason, handoff options (owner/admin only), the write-only token,
- * and the privacy notice. No behaviour is configured here.
+ * Julia › Agente — states, the WhatsApp card (#whatsapp), the read-only platform connection, the business specs card,
+ * the line list (on/off + handoff target), every refusal code's pt-BR message, handoff options (owner/admin only), and
+ * the privacy notice. No behaviour is configured here and nothing sends the user to the agents app.
  * `@/lib/api` is the seam (real hooks + real components); `useIsOrgAdmin` / the team list are the only other fakes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -28,14 +28,23 @@ const LINHA = {
 const ROTEAMENTO = {
   linhas: [LINHA],
   destino_handoff_padrao: { tipo: "dono_da_organizacao", user_id: "u1" },
-  agents_url: "https://agents.example.test/",
 };
+const CONEXAO = {
+  status: "ativa", conectada: true, motivo: null, token_prefix: "noc_ab12", token_mascarado: "noc_…9f3a",
+  conectada_em: "2026-11-04T17:50:00Z", agent_key: "julia", verificada_em: "2026-11-04T18:00:00Z",
+  ultima_falha_em: null, expires_at: null,
+};
+const ESPEC = {
+  agent_key: "julia", version_id: "v1", versao: 3,
+  declaradas: [{ id: "i1", chave: "nome_empresa", rotulo: "Nome da empresa", descricao: "Como a Julia se apresenta.", tipo: "texto_curto", obrigatoria: true, exemplo: "Lastro" }],
+  valores: [{ chave: "nome_empresa", valor: "Lastro", updated_at: null }], faltando: [], invalidas: [], modo_validacao: "bloquear",
+};
+const WA_STATUS = { connection_id: "c1", status: "SCAN_QR_CODE", paired: false, me_id: null, me_name: null, session: "default", error: null };
 const AGENTE = {
   conexoes: [],
-  token_configurado: true,
+  conexao_plataforma: CONEXAO,
   status_agente: { agent_key: "julia", nome: "Julia", ativo: true, versao_ativa: 4, provider: "anthropic", model: "claude-x", llm_configurado: true },
   erro: null,
-  agents_url: "https://agents.example.test/",
 };
 const AVISO = {
   slug: "empresa-x", titulo: "Aviso de privacidade", empresa_nome: "Empresa X", contato_email: "a@x.test",
@@ -48,11 +57,13 @@ function serverError(code: string, status = 409) {
   return Object.assign(new Error(`[${status}] x`), { status, body: { error: { code, message: "msg do servidor" } } });
 }
 
-function setup(agente: unknown = AGENTE, aviso: unknown = AVISO, roteamento: unknown = ROTEAMENTO) {
+function setup(agente: unknown = AGENTE, aviso: unknown = AVISO, roteamento: unknown = ROTEAMENTO, espec: unknown = ESPEC) {
   api.get.mockImplementation((url: string) => {
     if (url === "/api/julia/roteamento") return roteamento instanceof Error ? Promise.reject(roteamento) : Promise.resolve({ data: roteamento });
     if (url === "/api/julia/agente") return agente instanceof Error ? Promise.reject(agente) : Promise.resolve({ data: agente });
     if (url === "/api/julia/agente/aviso") return Promise.resolve({ data: aviso });
+    if (url === "/api/julia/especificacoes") return espec instanceof Error ? Promise.reject(espec) : Promise.resolve(espec);
+    if (url.startsWith("/api/whatsapp/connections/")) return Promise.resolve(url.endsWith("/qr") ? { connection_id: "c1", scannable: false, status: "SCAN_QR_CODE", png_base64: null } : WA_STATUS);
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -108,10 +119,11 @@ describe("Julia › Agente — states", () => {
   });
 });
 
-describe("Agents link — status + token", () => {
-  it("shows token state, Julia status and the Agents link", async () => {
+describe("Platform connection card — read-only", () => {
+  it("shows the masked token, the status badge and the agent status", async () => {
     setup();
-    expect((await screen.findByTestId("token-status")).textContent).toContain("Token configurado");
+    expect((await screen.findByTestId("conexao-token")).textContent).toBe("noc_…9f3a");
+    expect(screen.getByTestId("conexao-status").textContent).toContain("Conectada");
     const st = screen.getByTestId("agent-status").textContent!;
     expect(st).toContain("Julia");
     expect(st).toContain("4");
@@ -119,41 +131,44 @@ describe("Agents link — status + token", () => {
     expect(st).toContain("Configurada");
   });
 
-  it("shows the link error and a missing token", async () => {
-    setup({ ...AGENTE, token_configurado: false, status_agente: null, erro: "Token do Agents não configurado." });
-    expect((await screen.findByTestId("token-status")).textContent).toContain("Token não configurado");
-    expect(screen.getByTestId("link-erro").textContent).toContain("Token do Agents não configurado.");
+  it("not configured: says what to do and offers no token field", async () => {
+    setup({ ...AGENTE, conexao_plataforma: { ...CONEXAO, status: "nao_configurada", conectada: false, token_mascarado: null }, status_agente: null, erro: "Julia ainda não conectada." });
+    expect((await screen.findByTestId("conexao-ajuda")).textContent).toContain("suporte NoctusAI");
+    expect(screen.getByTestId("link-erro").textContent).toContain("Julia ainda não conectada.");
     expect(screen.queryByTestId("agent-status")).toBeNull();
+    expect(screen.queryByLabelText(/token/i)).toBeNull();
+    expect(screen.queryByTestId("salvar-token")).toBeNull();
   });
 
-  it("saves the token, never echoes it, and clears the input", async () => {
-    api.put.mockResolvedValue(null);
+  it("never offers to paste, replace or save a token, and never PUTs one", async () => {
     setup();
-    const input = (await screen.findByLabelText("Substituir token")) as HTMLInputElement;
-    expect(input.type).toBe("password");
-    fireEvent.change(input, { target: { value: "pk_super_secreto_123" } });
-    fireEvent.click(screen.getByTestId("salvar-token"));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/agente/token", { token: "pk_super_secreto_123" }));
-    await waitFor(() => expect(input.value).toBe(""));
-    expect(document.body.textContent).not.toContain("pk_super_secreto_123");
+    await screen.findByTestId("agents-link-card");
+    expect(screen.getByTestId("agents-link-card").querySelector("input")).toBeNull();
+    expect(api.put).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["token_invalido", 422, "O Agents recusou este token."],
-    ["agents_indisponivel", 502, "Não foi possível validar o token com o Agents agora."],
-  ])("token error %s -> pt-BR message", async (code, status, texto) => {
-    api.put.mockRejectedValue(serverError(code, status));
-    setup();
-    fireEvent.change(await screen.findByLabelText("Substituir token"), { target: { value: "token-comprido-1" } });
-    fireEvent.click(screen.getByTestId("salvar-token"));
-    expect((await screen.findByTestId("token-erro")).textContent).toContain(texto);
-  });
-
-  it("non-admin cannot edit the token", async () => {
+  it("Testar conexão is admin-only", async () => {
     h.admin = false;
     setup();
     await screen.findByTestId("agents-link-card");
-    expect(screen.queryByLabelText("Substituir token")).toBeNull();
+    expect(screen.queryByTestId("conexao-testar")).toBeNull();
+  });
+});
+
+describe("New cards on the page", () => {
+  it("WhatsApp da Julia is the #whatsapp anchor, and the specs card is present", async () => {
+    setup();
+    const card = await screen.findByTestId("whatsapp-julia-card");
+    expect(card.id).toBe("whatsapp");
+    expect(await screen.findByTestId("especificacoes-card")).toBeTruthy();
+    expect(await screen.findByTestId("espec-form")).toBeTruthy();
+  });
+
+  it("a failing specs read degrades that card only", async () => {
+    setup(AGENTE, AVISO, ROTEAMENTO, new Error("boom"));
+    expect(await screen.findByTestId("julia-roteamento-card")).toBeTruthy();
+    expect(await screen.findByTestId("espec-erro", {}, { timeout: 6000 })).toBeTruthy();
+    expect(screen.getByTestId("whatsapp-julia-card")).toBeTruthy();
   });
 });
 
@@ -172,16 +187,10 @@ describe("Line list — routing switch and handoff target", () => {
     expect((await screen.findByLabelText(/Esta linha atende leads com a Julia/)).getAttribute("role")).toBe("switch");
   });
 
-  it("disables the switch with the reason when there are no authorized numbers", async () => {
+  it("no authorized-numbers gate: a line with none can still be switched on", async () => {
     setup(AGENTE, AVISO, { ...ROTEAMENTO, linhas: [{ ...LINHA, numeros_autorizados: 0 }] });
-    const sw = (await screen.findByRole("switch")) as HTMLButtonElement;
-    expect(sw.disabled).toBe(true);
-    expect(screen.getByTestId("motivo-desabilitado").textContent).toContain("número autorizado");
-  });
-
-  it("an already-on switch stays turn-off-able even with an emptied list", async () => {
-    setup(AGENTE, AVISO, { ...ROTEAMENTO, linhas: [{ ...LINHA, alimenta: true, numeros_autorizados: 0 }] });
     expect(((await screen.findByRole("switch")) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByTestId("motivo-desabilitado")).toBeNull();
   });
 
   it("explains who gets whom (new chats / pre-existing; no One Chat)", async () => {
@@ -193,7 +202,6 @@ describe("Line list — routing switch and handoff target", () => {
   });
 
   it.each([
-    ["authorized_numbers_required", 409, "número autorizado"],
     ["webhook_hmac_required", 409, "HMAC"],
     ["aviso_incompleto", 409, "aviso de privacidade ainda está incompleto"],
     ["url_publica_indisponivel", 409, "link público"],

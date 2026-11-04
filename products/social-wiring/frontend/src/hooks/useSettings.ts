@@ -569,6 +569,12 @@ export interface ApiKeyStatus {
   placeholder: string;
   configured: boolean;
   /**
+   * Managed by the platform, not by this org: render the status/masked hint with NO input, no replace and no
+   * remove (the server answers 409 `gerenciada_pela_plataforma` to a PUT/DELETE). Optional for the same
+   * non-atomic-deploy reason as `options`.
+   */
+  read_only?: boolean;
+  /**
    * Non-empty makes this a CHOICE, not a free-text key: render a switch
    * over these instead of an input. Empty for every ordinary key, so this
    * array alone is the branch.

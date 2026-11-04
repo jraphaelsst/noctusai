@@ -2,7 +2,8 @@
  * Julia › Agente (`/julia/agente`) — LINE ROUTING only (julia-v2 CONTRACT Q4 / 0.3, white-label, any org).
  *
  * Julia's core is maintained by the platform; this page never configures her behaviour (no prompts, rules or texts here).
- * It shows: the agents link health (token + status), which WhatsApp
+ * It shows: the org's WhatsApp line (QR / status / reconnect, `#whatsapp`), the platform connection status (read-only,
+ * masked token, "Testar conexão"), the business specifications (the business's own validated data), which WhatsApp
  * lines feed her + the handoff notification target, and the privacy notice (legal, lives in SW).
  * Reads are for any org member; every write is core owner/admin (server-enforced — `useIsOrgAdmin` only decides what
  * the UI offers).
@@ -16,8 +17,10 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { AgentsLinkCard } from "@/components/julia/AgentsLinkCard";
 import { AvisoPrivacidadeCard } from "@/components/julia/AvisoPrivacidadeCard";
+import { EspecificacoesCard } from "@/components/julia/EspecificacoesCard";
 import { JuliaLigadaCard } from "@/components/julia/JuliaLigadaCard";
 import { CatalogoCard, RelatoriosCard } from "@/components/julia/RelatoriosCatalogoCards";
+import { WhatsAppJuliaCard } from "@/components/julia/WhatsAppJuliaCard";
 import { RoteamentoCard } from "@/components/julia/RoteamentoCard";
 import { useJuliaAgente } from "@/hooks/useJuliaAgente";
 import { useJuliaRoteamento } from "@/hooks/useJuliaRoteamento";
@@ -38,8 +41,8 @@ export default function JuliaAgente() {
             {JULIA_LABEL} · {JULIA_PAGES.agente.name}
           </h1>
           <p className="text-sm text-muted-foreground">
-            Aqui você escolhe quais números de WhatsApp atendem leads com a Julia e quem é avisado quando ela passa um
-            lead para uma pessoa.
+            Aqui você conecta o WhatsApp da Julia, acompanha a conexão dela com a plataforma, informa os dados do seu
+            negócio e escolhe quem é avisado quando ela passa um lead para uma pessoa.
           </p>
         </div>
         {isRefreshing && (
@@ -58,6 +61,7 @@ export default function JuliaAgente() {
       ) : rot.data ? (
         <>
           <JuliaLigadaCard linhas={rot.data.linhas} status={agente.data?.status_agente} isAdmin={isAdmin} />
+          <WhatsAppJuliaCard linha={rot.data.linhas[0]} isAdmin={isAdmin} />
           {agente.data ? (
             <AgentsLinkCard data={agente.data} isAdmin={isAdmin} />
           ) : agente.isPending ? (
@@ -67,6 +71,7 @@ export default function JuliaAgente() {
               Não foi possível consultar o estado da conexão da Julia.
             </p>
           )}
+          <EspecificacoesCard isAdmin={isAdmin} />
           <RoteamentoCard data={rot.data} isAdmin={isAdmin} />
           <RelatoriosCard isAdmin={isAdmin} />
           <CatalogoCard isAdmin={isAdmin} />
