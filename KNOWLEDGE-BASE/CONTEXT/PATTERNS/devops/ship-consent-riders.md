@@ -62,6 +62,15 @@ The fix reads `.gitattributes` — the SAME declarative surface `scripts/hooks/m
 
 A cut ships only a SUBSET of dev's riders, so whichever cherry-picked rider happens to carry the counts blocks leaves `main` with a snapshot from ITS branch, not a fresh recount of what actually shipped. After `cherry_pick_chain` builds the cut tip, `regenerate_kb_counts_commit` appends ONE bookkeeping commit (marked `(kb-counts regen on <tip>)` in its body) that rewrites every `merge=kb-counts`-declared file's marker blocks — still **no working tree**: a THROWAWAY `GIT_INDEX_FILE` (`git read-tree` the cut's tree → `git hash-object -w` the new blob(s) → `git update-index --add --cacheinfo` → `git write-tree` → `git commit-tree`), never the real index. A no-op (nothing changed) adds no commit. The rendering itself is DI'd (`render_kb_counts` on `noctus.dev.release`, default `kb_sync.render_kb_counts` bound against the ambient checkout — the best available signal, since the cut itself has no working tree to walk); `_bless_release_branch`'s foreign-commit re-check recognizes the regen mark and does not flag it foreign, the same trust boundary as the cherry-picked commits (both are built by the tool itself, as part of this same cut).
 
+## Concurrent sessions: one ship driver at a time (2026-11-04)
+
+Bless picks a sha off a shared `dev`, so with several sessions open, a second driver ships whatever happens to sit on dev at that moment. On 2026-11-04 three sessions were each about to drive a prod ship at the same time: a train, the Julia ship, and the monica→nosnolimiar rename. The fix was coordination, not tooling:
+
+1. **Announce before blessing.** Send the session that might also ship (`ListAgents`) the dev sha you will ship from. Whoever claims a ship first drives it. Everyone else integrates to dev as usual and rides the NEXT ship.
+2. **Pin around a maintenance cutover.** A change that needs an ordered runbook (schema rename + compose/tunnel, e.g. core 095 + product 020) must never ride a generic bless. Earlier ships bless with `--release-sha` pinned BEFORE that integrate's commit. If it lands first, its owner drives one ship and later riders go with it.
+3. **"Off prod" is an explicit message.** The next driver starts only on an explicit "deploy verified" from the previous one, never on silence.
+4. **Collapse competing integrates.** When session B builds on session A's unlanded branch, ONE integrate of B lands both. A's own integrate must stop, or B's rebase hits the same conflicts again. Before stopping A, verify that every non-merge commit of A is in B.
+
 ## Backmerge
 
 After a cut, `main` holds cherry-picks `dev` lacks, so the next bless cannot FF. `stage=backmerge` builds `Merge main into dev` (merge-tree + commit-tree, no checkout) and pushes it to `dev` (a race ⇒ re-run; a conflict ⇒ resolve on a `task_branch`). Riders already shipped read `on_main` in the meantime, so a second cut never re-picks them.

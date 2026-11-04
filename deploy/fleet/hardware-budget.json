@@ -4,13 +4,13 @@
   "phase": "build",
   "phases": {
     "build": {
-      "_approved": "owner 2026-11-04 (build/refine phase; spec relayed by session noctusai-04)",
-      "max_heavy": 1,
+      "_approved": "owner 2026-11-04 (build/refine phase; spec relayed by session noctusai-04). 2026-11-04 ~20:35Z owner: 'make the 2-slot the normal methodology' and 'lower the cpu limit to 15%, not 25%' — max_heavy 1->2, min_cpu_idle 50->15, min_reclaimable 1536->1024 (the trial-mh2-mem shape, 40.6 jobs/h vs 21.8 at 1 slot, fewer failures)",
+      "max_heavy": 2,
       "job_workers": 2,
       "_job_workers": "added 2026-11-04 by noctusai-86 (owner order: cap per-job fan-out); vitest/playwright workers per heavy job. Memory is the ceiling on this 8 GB M2 (trial-mh2 swap abort)",
-      "min_cpu_idle_pct": 50,
+      "min_cpu_idle_pct": 15,
       "cpu_sample_s": 10,
-      "min_reclaimable_mb": 1536,
+      "min_reclaimable_mb": 1024,
       "max_swapout_per_s": 50,
       "max_claude_sessions_advisory": 3,
       "wait_s": 1800,
@@ -71,6 +71,18 @@
       "poll_s": 20,
       "_experiment": "owner 2026-11-04 ~16:50Z 'go trial, i need more speed even tho its gonna overload a bit the machine': max_heavy 2 under memory-aware admission (adb5c4c04), job_workers 2, min_reclaimable 1536->1024 (box idles at 1.2-1.4 GB), aborts unchanged. Not a pure max_heavy A/B vs window A.",
       "job_workers": 2
+    },
+    "trial-mh3-mem": {
+      "max_heavy": 3,
+      "min_cpu_idle_pct": 15,
+      "cpu_sample_s": 10,
+      "min_reclaimable_mb": 1024,
+      "max_swapout_per_s": 50,
+      "max_claude_sessions_advisory": 3,
+      "wait_s": 1800,
+      "poll_s": 20,
+      "_experiment": "owner 2026-11-04 ~18:05Z: 'let's test that at 2.5, let me evaluate. 2x was kinda smooth' - slots are integers, so max_heavy 3 with memory-aware admission vetoing a 3rd job when memory is short (effective 2-3); job_workers 2, min_reclaimable 1024, aborts count GATED samples only (owner, same answer). | 2026-11-04 ~20:35Z owner: 'lower the cpu limit to 15%, not 25%' -> min_cpu_idle 25->15.",
+      "job_workers": 2
     }
   },
   "hosts": {
@@ -123,6 +135,20 @@
         "consecutive": 3
       },
       "why": "re-run of mh2 with memory-aware admission vs window A + post-abort 1-slot (06:30-16:52Z)"
+    },
+    {
+      "phase": "trial-mh3-mem",
+      "from": "2026-11-04T21:00:00Z",
+      "until": "2026-11-04T23:00:00Z",
+      "hosts": [
+        "raphas-macbook-pro"
+      ],
+      "abort": {
+        "reclaimable_mb_below": 500,
+        "swapout_at_least": 50,
+        "consecutive": 3
+      },
+      "why": "owner '2.5' after trial-mh2-mem (1.9x jobs/h, abort partly ungated); vs mh2-mem 17:10-17:57Z"
     }
   ]
 }

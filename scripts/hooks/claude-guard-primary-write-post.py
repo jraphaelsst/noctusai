@@ -76,7 +76,11 @@ def main() -> int:
     cwd = payload.get("cwd")
     try:
         guard = _load_guard()
-        warning = guard.measure_posttool_dirt(cwd)
+        # Same fallback as the Pre leg: a cwd outside the repo still measures
+        # the primary this hook guards (the baseline is per session, so the
+        # two legs pair on session_id, not on cwd).
+        ctx = (guard.discover_context(cwd) if cwd else None) or guard.discover_context(str(REPO_ROOT))
+        warning = guard.measure_posttool_dirt(cwd, ctx=ctx, session_id=payload.get("session_id"))
     except Exception as exc:  # fail open — see the module docstring
         print(
             f"claude-guard-primary-write-post: guard unavailable ({exc}) — not blocking",

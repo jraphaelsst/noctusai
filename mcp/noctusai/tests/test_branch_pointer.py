@@ -678,3 +678,32 @@ class TestUpdateRefusesAppendOnlyFields:
                            capture_output=True, text=True, timeout=120)
         assert p.returncode == 2, p.stdout + p.stderr
         assert "--bp-role" in p.stdout and "refused" in p.stdout
+
+
+def test_default_git_cwd_is_the_primary_not_a_removed_worktree(tmp_path, monkeypatch):
+    """2026-11-04: a CLI started inside a worktree has REPO_ROOT = that worktree.
+    task_branch's auto-cleanup removes it and THEN closes the pointer; `_run`
+    defaulted to REPO_ROOT, so the read died with "[Errno 2] No such file or
+    directory: '<worktree>'" and the pointer never reached `shipped`."""
+    import settings
+    import tools.noctus.dev.branch_pointer as bp
+
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    gone = tmp_path / "removed-worktree"          # never created: already torn down
+    monkeypatch.setattr(bp, "REPO_ROOT", gone)
+    monkeypatch.setattr(settings, "LEDGER_ROOT", primary)
+    seen = {}
+
+    def fake_run(cmd, capture_output, text, cwd):
+        seen["cwd"] = cwd
+
+        class R:
+            returncode, stdout, stderr = 0, "", ""
+        return R()
+
+    monkeypatch.setattr(bp.subprocess, "run", fake_run)
+    assert bp._run(["git", "status"])[0] == 0
+    assert seen["cwd"] == str(primary)
+    bp._run(["git", "status"], cwd="/explicit")
+    assert seen["cwd"] == "/explicit"

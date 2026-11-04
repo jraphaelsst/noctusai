@@ -26,13 +26,21 @@ capacity admits it.**
   `gate_sweep` leg, `task_branch` merged-tip gate and `predeploy_check` run.
 - Light work never takes a slot: git, single tests, keepers, MCP reads, editing.
 
-| Knob (phase `build`, owner-approved 2026-11-04) | Value |
+| Knob (phase `build`, owner-approved 2026-11-04; 2 slots since ~20:35Z) | Value |
 |---|---|
-| Heavy jobs at once, machine-wide | 1 |
+| Heavy jobs at once, machine-wide | 2 (was 1 until 2026-11-04 ~20:35Z) |
 | Workers inside one heavy job (`job_workers`) | 2 (vitest `--maxWorkers`, playwright `--workers`) |
-| Admit when | CPU idle ≥ 50 % over 10 s **and** free + reclaimable memory ≥ 1.5 GB **and** swap-out < 50 pages/s |
+| Admit when | CPU idle ≥ 15 % over 10 s **and** free + reclaimable memory ≥ 1 GB **and** swap-out < 50 pages/s; a 2nd job also needs memory left after the running job's expected peak (memory-aware veto) |
 | Claude sessions | ≤ 3 (advisory: surfaced, not enforced) |
 | Wait before giving up | 30 min, polling every 20 s |
+
+**Two slots is the normal shape (owner, 2026-11-04 ~20:35Z: "make the 2-slot the normal
+methodology" · "lower the cpu limit to 15%, not 25%").** Evidence: trial-mh2-mem
+(17:10–17:57Z) ran 40.6 jobs/h with 2 failed and 0 timeouts, against 21.8 jobs/h with 13 failed
++ 6 timeouts at one slot (06:30–16:52Z). Its auto-abort came from swap while ZERO slots were
+held — ungated load — which is why aborts now count gated samples only (§7). Memory stays the
+binding limit: the memory-aware veto refuses the 2nd job when free memory minus the running
+job's expected peak falls under the floor. Every session uses both slots; nothing to opt into.
 
 **The slot bounds how many jobs run; `job_workers` bounds how wide each one fans out.**
 With one slot, a single `vitest run` still started about 7 workers on the 8-core M2. The cap
@@ -220,6 +228,20 @@ or starts producing false-reds), raise the limit in **scheduled, measured steps*
   false-red rate stays near 0. Write it into the budget as a durable phase row, and record
   the rationale here.
 
+- **Only gated samples count toward an abort** (owner, 2026-11-04). trial-mh2-mem aborted at
+  17:57Z partly on a sample that held ZERO slots but swapped at 3023 pages/s from Chrome and
+  ungated sessions. That penalized the gate for load it never admitted. A sample with
+  `busy_slots == 0` now neither counts nor breaks the streak, and admission still refuses new
+  work on a swapping machine. Machine-wide counting comes back with `"count_ungated": true` in
+  the rule.
+- **Results so far (usage_eval, noctusai-3d).**
+  - 1 slot, 06:30–16:52Z: 21.8 jobs/h, 13 failed + 6 timeouts, swap max 396 MB/s.
+  - 2 slots + memory-aware admission (trial-mh2-mem), 17:10–17:57Z: 40.6 jobs/h, 2 failed,
+    0 timeouts, same average wait, swap max 144 MB/s.
+  - Next step: trial-mh3-mem (3 slots, memory veto, `job_workers` 2), 21:00–23:00Z (moved from 19:20Z: the stop-rule change could only land after the queue drained).
+
 ## 8 · Measured by
 
 Every admission and sample in the capacity log is joined with Claude usage (tokens, cost, chars per session) by `noctus.dev.usage_eval` — before/after any phase change, `action=compare`. → `KB § PATTERNS/devops/usage-evaluation.md`
+
+The CURRENT numbers, the process that produced them (`process_version`), every cycle's evidence and the deferred auto-tune + observability-organ phases live in the roadmap: `project-history/roadmaps/hw-capacity-calibration-2026-11.md`. Read it before sizing parallel work.

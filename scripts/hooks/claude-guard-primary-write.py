@@ -83,10 +83,21 @@ def _judge(payload: dict) -> dict | None:
             # A refused Edit/Write whose session claimed a worktree is rewritten
             # into it instead (visible: the allow carries the REDIRECTED note).
             verdict = guard.redirect_for(tool_name, tool_input, payload.get("session_id"), ctx, verdict) or verdict
-    if verdict is None and tool_name == "Bash" and ctx is not None and ctx.guarded:
+    if verdict is None and tool_name == "Bash":
         # The measurement net's baseline — see the module docstring. Best-effort
         # by construction; nothing here can turn an ALLOW into a refusal.
-        guard.capture_pretool_baseline(ctx)
+        # A call that STARTS outside the repo (`cd <repo> && …` from the
+        # scratchpad) has no ctx from its cwd, yet its Post leg runs inside the
+        # repo — so fall back to the primary this hook guards, and per session:
+        # capture when guarded, otherwise discard, so the Post leg never diffs
+        # against an older call's snapshot (2026-11-04 false "NEW DIRT").
+        base_ctx = ctx if ctx is not None else guard.discover_context(str(REPO_ROOT))
+        if base_ctx is not None:
+            sid = payload.get("session_id")
+            if base_ctx.guarded:
+                guard.capture_pretool_baseline(base_ctx, sid)
+            else:
+                guard.discard_pretool_baseline(base_ctx, sid)
     return verdict
 
 

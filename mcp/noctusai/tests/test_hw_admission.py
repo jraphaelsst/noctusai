@@ -301,6 +301,25 @@ class TestTrialSchedule:
         hw._log({"event": "sample", "phase": "trial", "metrics": GOOD})
         assert hw._check_trial_abort(b, bad) is None
 
+    def test_ungated_samples_neither_count_nor_break_the_streak(self, sched):
+        """2026-11-04 17:56Z: zero slots held, swap 3023/s from ungated load."""
+        b = hw.load_budget(host="box-b", now=self.at("2026-11-04T06:00:00Z"))
+        bad = {**GOOD, "swapout_per_s": 3000}
+        hw._log({"event": "sample", "phase": "trial", "busy_slots": 1, "metrics": bad})
+        hw._log({"event": "sample", "phase": "trial", "busy_slots": 0, "metrics": bad})
+        assert hw._check_trial_abort(b, bad, busy_slots=0) is None       # ungated: never aborts
+        hw._log({"event": "sample", "phase": "trial", "busy_slots": 2, "metrics": bad})
+        rec = hw._check_trial_abort(b, bad, busy_slots=1)                 # 3rd GATED breach
+        assert rec and rec["phase"] == "trial"
+
+    def test_count_ungated_opt_in_restores_machine_wide_counting(self, sched):
+        b = hw.load_budget(host="box-b", now=self.at("2026-11-04T06:00:00Z"))
+        b["trial"]["abort"] = {**b["trial"]["abort"], "count_ungated": True}
+        bad = {**GOOD, "swapout_per_s": 3000}
+        for _ in range(2):
+            hw._log({"event": "sample", "phase": "trial", "busy_slots": 0, "metrics": bad})
+        assert hw._check_trial_abort(b, bad, busy_slots=0)
+
     def test_report_splits_by_phase(self, sched):
         hw._log({"event": "sample", "phase": "build", "overloaded": False, "metrics": GOOD})
         hw._log({"event": "sample", "phase": "trial", "overloaded": True, "metrics": GOOD})
