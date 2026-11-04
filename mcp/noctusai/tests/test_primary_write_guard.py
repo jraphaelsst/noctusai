@@ -1442,3 +1442,29 @@ def test_chmod_on_a_primary_file_is_still_refused():
 
 def test_chmod_reference_form_keeps_every_operand_as_a_path():
     assert _decide("Bash", {"command": f"chmod --reference=/tmp/r {PRIMARY}/x.py"}, cwd=WT) is not None
+
+
+# ── per-segment cwd (2026-11-04) ─────────────────────────────────────────────
+# Every segment used to resolve against the LAST `cd` of the whole call.
+
+def test_a_worktree_commit_followed_by_a_cd_to_the_primary_is_not_a_primary_write():
+    """The incident: commit in the worktree, then cd to the primary to run a
+    read-only CLI. The commit belongs to the worktree."""
+    cmd = (f"cd {WT} && git add -A x.py && git commit -q -m msg; "
+           f"cd {PRIMARY} && venv/bin/python mcp/noctusai/cli.py --help")
+    assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None
+
+
+def test_a_primary_write_before_a_cd_to_the_worktree_is_still_refused():
+    """The reverse order used to be attributed to the worktree (the last cd) —
+    a MISSED primary write. Per-segment cwd catches it."""
+    cmd = f"cd {PRIMARY} && git commit -q -m msg; cd {WT} && git status"
+    verdict = _decide("Bash", {"command": cmd}, cwd=WT)
+    assert verdict is not None
+
+
+def test_a_cd_the_segment_walk_cannot_see_falls_back_to_the_old_rule():
+    from tools.noctus.dev.primary_write_guard import _segment_cwds
+    # quoting the walk cannot split -> None -> whole-command cwd as before
+    assert _segment_cwds("cd 'unterminated && git commit", PRIMARY) is None
+    assert _segment_cwds(f"cd {WT} && git commit; cd {PRIMARY} && ls", PRIMARY) == [PRIMARY, WT, WT, PRIMARY]
