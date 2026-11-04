@@ -199,3 +199,15 @@ def test_job_workers_unknown_vs_none_vs_capped(tmp_path: Path, claude_root: Path
     assert [j["metrics"]["job_workers"] for j in jobs] == ["unknown", "none", "2"]
     rep = ue.window_report(T0, T1, claude_root=claude_root, hw_log=p)
     assert rep["jobs"]["by_job_workers"] == {"2": 1, "none": 1, "unknown": 1}
+
+
+def test_memory_vetoes_count_apart_from_slot_waits(tmp_path: Path, claude_root: Path) -> None:
+    p = tmp_path / "hw.ndjson"
+    row = {"host": "h", "admitted": False, "waited_s": 1800.0, "phase": "trial-mh2", "metrics": {}, "job_workers": None}
+    _w(p, [
+        {**row, "ts": "2026-11-04T04:00:00+00:00", "event": "not_admitted", "job": "gate:pytest:sw",
+         "blocked_by": ["memory: reclaimable 1300 MB - expected peak 870 MB (kind) = 430 MB < 1536"]},
+        {**row, "ts": "2026-11-04T04:01:00+00:00", "event": "not_admitted", "job": "gate:pytest:core",
+         "blocked_by": ["no free slot"]},
+    ])
+    assert ue.window_report(T0, T1, claude_root=claude_root, hw_log=p)["jobs"]["memory_vetoed"] == 1

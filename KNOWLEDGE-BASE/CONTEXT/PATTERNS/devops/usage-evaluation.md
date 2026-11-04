@@ -49,6 +49,11 @@ playwright jobs are capped at the budget `job_workers` (2 in build). From `a58b8
 lack the field, and they read as **unknown**, never as none. The report's `jobs.by_job_workers` splits by it.
 Do not attribute a throughput change to the slot count when a window straddles the cap.
 
+**Memory-aware admission** (hw_admission `adb5c4c04`): a second heavy job is admitted only when reclaimable
+memory minus its expected peak still clears `min_reclaimable_mb`. A veto names `memory:` in `blocked_by`;
+the report counts these as `jobs.memory_vetoed`, separate from slot waits. `children_peak_rss_mb` is ru_maxrss,
+which is the largest single child, so vitest/playwright fan-out is under-counted. Read peaks as a floor.
+
 **Cost** is the API-list-price equivalent from the seed rate card (`price_usage`), because Claude Code
 runs on a subscription: comparable across windows, not an invoice. Cache-write cost is a lower bound
 until the seed prices 1-hour cache writes separately (`NOC-REMEDIATE[anthropic-cache-ttl-pricing]`).

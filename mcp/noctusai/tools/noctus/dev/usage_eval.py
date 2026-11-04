@@ -263,7 +263,10 @@ def scan_hw(since: datetime, until: datetime, path: Path = _HW_LOG) -> tuple[lis
                     # predates the field → "unknown"; null = the job has no fan-out cap → "none". Never conflated.
                     "metrics": {**m, "outcome": {"timed_out": bool(out.get("timed_out")),
                                                  "harness_suspect": bool(out.get("harness_suspect"))},
-                                "job_workers": _workers_key(d)},
+                                "job_workers": _workers_key(d),
+                                # hw_admission adb5c4c04: a memory veto reads "memory: reclaimable X MB - expected
+                                # peak Y MB (...)"; kept so memory-vetoes count apart from slot waits.
+                                "blocked_by": [str(b) for b in (d.get("blocked_by") or [])]},
                 })
     return samples, jobs
 
@@ -327,6 +330,8 @@ def window_report(since: datetime, until: datetime, *, claude_root: Path = _CLAU
             "peak_rss_mb_max": max(num(ran, "children_peak_rss_mb"), default=None),
             "by_kind": dict(sorted(_count(j["kind"] for j in ran).items())),
             "by_job_workers": dict(sorted(_count(j["metrics"]["job_workers"] for j in ran).items())),
+            # jobs whose wait or refusal named memory (expected peaks are a FLOOR: ru_maxrss = largest child only)
+            "memory_vetoed": sum(1 for j in jobs if any(b.startswith("memory:") for b in j["metrics"]["blocked_by"])),
         },
         "os": {
             "samples": len(samples),
@@ -358,6 +363,7 @@ def _count(items: Iterable[str]) -> dict[str, int]:
 _COMPARE_KEYS = (
     ("claude", "cost_usd_per_h"), ("claude", "output_tokens_per_h"), ("claude", "requests_per_h"),
     ("claude", "sessions_active"), ("jobs", "ran_per_h"), ("jobs", "failed"), ("jobs", "timed_out"), ("jobs", "not_admitted"),
+    ("jobs", "memory_vetoed"),
     ("jobs", "wait_s_max"), ("jobs", "peak_rss_mb_max"), ("os", "overloaded_pct"), ("os", "cpu_idle_pct_avg"),
     ("os", "reclaimable_mb_min"), ("os", "swapout_per_s_max"), ("os", "swapout_mb_per_s_max"),
     ("os", "claude_sessions_max"),
