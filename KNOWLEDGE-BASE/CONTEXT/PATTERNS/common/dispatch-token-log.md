@@ -60,3 +60,18 @@ After each dispatched-engineer return:
 - **DON'T** skip logging because "I'll remember." You won't; the trend is the value.
 - **DON'T** over-estimate tokens — best honest guess > inflated number.
 - **DON'T** wait for the harness auto-hook. Manual logs starting now build the dataset.
+
+## Slice scores — per-agent / per-model quality history
+
+`log_completion(..., score={...}, engineer_return="...")` also appends a row to `slice-scores.ndjson` (append-only, on `origin/ledgers` like the other ledgers) so the trend of each (agent, model) pair is readable over time.
+
+**Rubric `RUBRIC_V1`** (each criterion scored 0-4; `q_weighted = sum(weight*q)`, null if any criterion is null): Q1 correctness .25 · Q2 design .20 · Q3 tests .15 · Q4 maintainability .15 · Q5 security .10 · Q6 methodology .05 · Q7 integration-rework .10. A weight change ships as `RUBRIC_V2`; rows keep their `rubric_version`, never compare across versions.
+
+**Row**: `ts, slug, branch, sha, agent, model, planner_model, rubric_version, q{Q1..Q7}, q_weighted, tokens, tool_uses, wall_s_measured, wall_s_self_reported, first_pass, rework_commits, rework_severity{blocker,major,minor}, scope_changes, drifts[], improvements[] ({text,target,ai_ts}), notes`.
+- `wall_s_measured` is ONLY the harness FINAL-notification `duration_ms`; an interim notification is not a duration. `wall_s_self_reported` is the engineer's own claim (kept to measure its error).
+- `scope_changes` = owner changes mid-flight; they are NOT rework and never lower Q7.
+- Validation: q within 0-4 or null, agent and model non-empty, no PII in any field.
+
+**`engineer_return=`**: linted with `engineer_output_linter.lint_return`; a missing footer returns `{ok: False, refused: "missing-footer"}` and writes nothing. Each `drift-found:` / `scoped-improvement:` bullet becomes one `auto_improvement.log_entry` (agent, kind drift|improvement, `resolve_when="manual:engineer-footer triage"`); the returned ts is stored in `ai_ts` so a score row links to its triage entries.
+
+**Reading the trend**: `noctus.team.agent_metrics` (`name='*'` for all, `by_week=True` to bucket) groups by (agent, model): `n`, `mean_q_weighted`, `first_pass_yield`, `rework_rate` (blocker 3 / major 2 / minor 1, per slice), `tokens_per_accepted_slice`, `cost_usd_est`, `self_estimate_error_ratio` (self-reported / measured; >1 = overstates), `top_drifts`. Cost is an ESTIMATE: tokens are stored as one total, so a 90/10 in/out split is assumed (Opus 5.5 $4/$20, Sonnet 5.5 $2/$10 per MTok, `PRICES`). Read the trend over weeks, not single rows: n<5 per group is anecdote.
