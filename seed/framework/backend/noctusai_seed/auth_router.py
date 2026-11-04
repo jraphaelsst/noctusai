@@ -54,7 +54,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from noctusai_lib.api.auth import _resolve_trusted_membership
 from noctusai_lib.api.auth._blocking import run_blocking
@@ -67,11 +67,16 @@ from noctusai_lib.api.auth.session import (
     ADMIN_ORG_ROLES,
     ApiTokenResolver,
     AuthContext,
-    FakeApiTokenResolver,
     LegacyJwtResolver,
+    MfaRequiredError,
+    MintPolicy,
+    TOKEN_SCOPES,
+    TokenScopeAllowList,
+    UnknownTokenScopeError,
     SessionRevoker,
     SessionStore,
     build_api_token_row,
+    make_api_token_resolver,
     make_get_auth_context,
     make_session_revoker,
     make_session_store,
@@ -188,7 +193,10 @@ class ApiTokenCreateRequest(BaseModel):
     # is the class of finding that motivated this field. Validated
     # against "now + 90 days" in `create_api_token` (a Pydantic Field
     # constraint can't see the current time at declaration time).
-    expires_at: datetime
+    # ``None`` only with ``no_expiry=True`` (an explicit, audited choice —
+    # revocation and ``last_used_at`` still apply).
+    expires_at: Optional[datetime] = None
+    no_expiry: bool = False
     # SEED-1: the automation principal this token acts on behalf of
     # (e.g. an `agents` product agent id) — `None` for an ordinary
     # integration token with no bound principal.
@@ -201,7 +209,9 @@ class ApiTokenCreateRequest(BaseModel):
 
     @field_validator("expires_at")
     @classmethod
-    def _expires_at_within_90_days(cls, value: datetime) -> datetime:
+    def _expires_at_within_90_days(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return value
         limit = datetime.now(timezone.utc) + timedelta(
             days=_API_TOKEN_MAX_EXPIRY_DAYS
         )
@@ -217,17 +227,23 @@ class ApiTokenCreateRequest(BaseModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def _expiry_xor_no_expiry(self) -> "ApiTokenCreateRequest":
+        if self.no_expiry == (self.expires_at is not None):
+            raise ValueError("set exactly one of expires_at or no_expiry=true")
+        return self
+
 
 class ApiTokenCreatedDTO(BaseModel):
     """Returned ONCE at mint time — caller MUST persist the secret."""
 
     id: str
     label: str
-    token: str  # the raw pk_* secret, shown exactly once
+    token: str  # the raw noc_* secret, shown exactly once
     prefix: str
     scopes: list[str]
     created_at: str
-    expires_at: str
+    expires_at: str | None = None
     principal_agent_id: str | None = None
     human_personal: bool = False
 
@@ -330,6 +346,8 @@ def create_auth_router(
     api_token_resolver: Optional[ApiTokenResolver] = None,
     legacy_jwt_resolver: Optional[LegacyJwtResolver] = None,
     allow_customer: bool = False,
+    scope_allow_list: Optional[TokenScopeAllowList] = None,
+    mint_policy: Optional[MintPolicy] = None,
 ) -> APIRouter:
     """Build the combined ``/api/auth`` + ``/api/settings/api-tokens`` router.
 
@@ -365,6 +383,12 @@ def create_auth_router(
             legacy-JWT callers of ``/me``/``/logout``/the api-token
             endpoints working across the migration window.
 
+        scope_allow_list: server-side registry a minted token's scopes must
+            belong to (422 otherwise). Defaults to the process-global
+            ``TOKEN_SCOPES`` (permissive until a product ``.enforce()``s it).
+        mint_policy: ``MintPolicy`` — ``require_mfa(ctx) -> bool`` decides
+            per request whether minting needs an ``aal2`` caller (403
+            ``mfa_required``). Default: MFA NOT required.
         allow_customer: ``False`` (default) — ``/login`` refuses a customer
             ``org_role`` (403), like ``make_get_current_user_org``.
 
@@ -382,6 +406,8 @@ def create_auth_router(
         registration seam instead of opting into ``standard_routers=
         ["auth"]``.
     """
+    mint_gate = mint_policy or MintPolicy()
+    scopes_allowed = scope_allow_list if scope_allow_list is not None else TOKEN_SCOPES
     session_store = get_session_store(settings)
     session_revoker = get_session_revoker(settings)
 
@@ -392,7 +418,9 @@ def create_auth_router(
     # "pure new-scheme, cookie-only" shape this router shipped with.
     get_auth_context = make_get_auth_context(
         session_store=session_store,
-        api_token_resolver=api_token_resolver or FakeApiTokenResolver(),
+        api_token_resolver=(
+            api_token_resolver if api_token_resolver is not None else make_api_token_resolver()
+        ),
         legacy_jwt_resolver=legacy_jwt_resolver,
         session_cookie_name=_SESSION_COOKIE,
     )
@@ -548,12 +576,20 @@ def create_auth_router(
             )
 
         _require_org_admin(deps.get_core_client(), ctx, request)
+        try:
+            mint_gate.enforce(ctx)
+        except MfaRequiredError:
+            raise HTTPException(status_code=403, detail="mfa_required")
 
         raw_secret, prefix = _mint_secret()
         token_id = uuid4()
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
-        expires_at_iso = body.expires_at.isoformat()
+        expires_at_iso = body.expires_at.isoformat() if body.expires_at else None
+        try:
+            scopes = scopes_allowed.validate(body.scopes or [])
+        except UnknownTokenScopeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
         sb = deps.get_admin_client()
         # SEED-1 (contract §B.0) — every new token gets an expiry;
@@ -566,7 +602,7 @@ def create_auth_router(
             raw_secret=raw_secret,
             org_id=ctx.org_id,
             label=body.label,
-            scopes=list(body.scopes or []),
+            scopes=scopes,
             expires_at=body.expires_at,
             created_at=now,
             principal_agent_id=body.principal_agent_id,

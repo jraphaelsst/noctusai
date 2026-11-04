@@ -124,6 +124,10 @@ The bus retains (`maxlen`, default 1000) and replays on reconnect, so a value pu
 
 `resolve_credential(key_name, org_id=None)` — `org_settings` → `platform_settings` → env var. Lifted from ERP's local resolver in the LLM consolidation. `configure_credentials(url, anon_key, service_role_key)` is auto-called by `create_product_app()` from `settings.supabase_*` — products get tier 1+2 for free from the single root `.env`.
 
+### `api/auth/session/token_policy.py` + `api/auth/grants/` — M2M tokens and platform grants
+
+`mint_token_secret` mints `noc_*`; `TokenScopeAllowList`, `rotate_token`, `MintPolicy` (MFA seam, off by default), `make_api_token_resolver` (refuses the Fake in deploy); `GrantDelivery` (Protocol+Fake+Real+factory) with the seed receiver `noctusai_seed.platform_grants_router`. → `PATTERNS/backend/platform-grants.md`
+
 ### `security/` — Webhook signatures + (future) secret-redaction
 
 Top-level seed-lib layer for cross-product security primitives. Today it ships `webhook_signatures` (every inbound webhook in the monorepo verifies through this module) and `signed_tokens` (2026-10-10: purpose-bound HMAC tokens for public links — unsubscribe, email confirmation, click tracking. `sign(purpose, payload, secret, ttl_seconds=)` / `verify(purpose, token, secret) -> payload | None`. The purpose is inside the MAC, so a token never crosses purposes, and a signed redirect target cannot be edited: no open redirect. An empty secret refuses to sign). Future redaction / scrubbing helpers land here too.

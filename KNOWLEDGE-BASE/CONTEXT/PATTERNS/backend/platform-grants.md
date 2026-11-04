@@ -1,0 +1,33 @@
+# Platform grants and M2M API tokens
+
+> Origin: Julia-line project (`products/social-wiring/projects/julia-line/CONTRACT.md` D1-D6), slice S1. **Statement.** A control plane (agents) wires itself to a product by MINTING a credential and DELIVERING it over an authenticated one-shot call; nobody pastes a token. The seed ships the token primitives, the sender (`GrantDelivery`) and the receiver router.
+
+## Token primitives (`noctusai_lib.api.auth.session`)
+
+| Piece | Rule |
+|---|---|
+| `mint_token_secret()` | `noc_` + `token_hex(32)`; display prefix is the first 12 chars. Never mint `pk_`. |
+| Acceptance | Resolver, `make_get_auth_context` and `token_shape` accept `noc_` AND legacy `pk_` (`has_api_token_prefix`). Each `pk_` site carries `NOC-REMEDIATE[pk-prefix-cutoff]`; the cutoff ships last, after every live token is reissued. Stripe `pk_` keys are unrelated. |
+| Scope allow-list | `TokenScopeAllowList`; products `register(...)` their scopes; `ProductTokenAdmin.mint` and the seed mint route (`create_auth_router(scope_allow_list=)`) refuse others (`UnknownTokenScopeError` / 422). The process-global `TOKEN_SCOPES` is permissive until a product calls `.enforce()` (`NOC-REMEDIATE[scope-allowlist-strict]`). |
+| No expiry | `expires_at=None` on `ProductTokenAdmin.mint`; on the seed route `no_expiry=true` (exactly one of `expires_at` / `no_expiry`). Revocation and `last_used_at` still apply. |
+| Rotate | `rotate_token(admin, schema, old_id, org_id=...)`: mint a same-shape replacement, return it, revoke the old; a failed revoke revokes the new one and raises. |
+| Resolver factory | `make_api_token_resolver(admin_client, schema=)` returns the Real; with neither it returns the Fake outside deploy and RAISES in a deploy context. `create_auth_router` uses it (no silent Fake fallback). |
+| MFA seam | `MintPolicy(require_mfa=callable(ctx)->bool)`; default NOT required. The seed mint route enforces it (403 `mfa_required` unless `ctx.aal == "aal2"`). Core wires the callable to a platform setting. |
+
+Deferred to core/product slices: the `service_accounts` table and `service_account_id` principal (`CallerKind` `service`), the token card UI.
+
+## Grant delivery (`noctusai_lib.api.auth.grants`)
+
+`GrantDelivery` Protocol (`deliver(product_slug, issuer, GrantPayload, delivery_token=)` raises `GrantDeliveryError`; `revoke(...)` is best-effort, returns bool) + `FakeGrantDelivery` (records `calls`) + `HttpGrantDelivery` (URL via `resolve_product_url`, bearer = the delivery token) + `make_grant_delivery(real=True)`; the factory refuses the Fake in a deploy context.
+
+## Receiver (`noctusai_seed.platform_grants_router`)
+
+`create_platform_grants_router(get_auth_context=, on_grant=, on_revoke=, issuer="agents")` mounts `PUT/DELETE /api/platform/grants/{issuer}`.
+
+- The org comes from the delivery token (`ctx.org_id`); the body forbids extra fields, so a body `org_id` is 422.
+- No token: strict 401. Wrong scope (`platform:grant-receive`), wrong token issuer, other path issuer, or a user session: 403.
+- The sink gets `GrantReceived(org_id, issuer, credential, agent_id, metadata, delivery_token_id)`; the credential is a secret (encrypt at rest, never log).
+
+## Orchestration (control-plane side, per contract D2/D4)
+
+Mint channel token, mint product tools token, mint one-shot delivery token (5 min, scope `GRANT_RECEIVE_SCOPE`), `deliver`, revoke the delivery token. Any failure revokes every token of the attempt. Rotate = deliver the new pair, then revoke the old. Revoke = revoke both, then best-effort `revoke` delivery.

@@ -217,3 +217,80 @@ class TestLoginAndMint:
     def test_mint_ok_for_trusted_org_admin(self):
         rows = [{"id": USER_ID, "org_id": TRUSTED_ORG, "org_role": "owner"}]
         assert self._mint(TRUSTED_ORG, rows).token
+
+    def test_minted_secret_is_noc_prefixed(self):
+        rows = [{"id": USER_ID, "org_id": TRUSTED_ORG, "org_role": "owner"}]
+        assert self._mint(TRUSTED_ORG, rows).token.startswith("noc_")
+
+    def test_mint_no_expiry_is_explicit_and_stores_null(self):
+        from noctusai_seed.auth_router import ApiTokenCreateRequest
+
+        rows = [{"id": USER_ID, "org_id": TRUSTED_ORG, "org_role": "owner"}]
+        admin = MockSupabaseClient([], validate_schema=False)
+        router, _ = _router(_Core(rows), admin)
+        out = _run(_endpoint(router, "POST", "/api/settings/api-tokens")(
+            ApiTokenCreateRequest(label="t", no_expiry=True), ctx=_user_ctx(TRUSTED_ORG)))
+        assert out.expires_at is None
+
+    def test_expiry_and_no_expiry_are_mutually_exclusive_and_one_is_required(self):
+        from pydantic import ValidationError
+
+        from noctusai_seed.auth_router import ApiTokenCreateRequest
+
+        soon = datetime.now(timezone.utc) + timedelta(days=1)
+        with pytest.raises(ValidationError):
+            ApiTokenCreateRequest(label="t")
+        with pytest.raises(ValidationError):
+            ApiTokenCreateRequest(label="t", expires_at=soon, no_expiry=True)
+
+    def _mint_with_policy(self, policy, aal):
+        from noctusai_seed.auth_router import ApiTokenCreateRequest
+
+        rows = [{"id": USER_ID, "org_id": TRUSTED_ORG, "org_role": "owner"}]
+        deps = SimpleNamespace(
+            get_core_client=lambda: _Core(rows),
+            get_admin_client=lambda: MockSupabaseClient([], validate_schema=False),
+        )
+        settings = _router(_Core(rows), MockSupabaseClient([], validate_schema=False))[1]
+        router = create_auth_router(deps, settings, mint_policy=policy)
+        return _run(_endpoint(router, "POST", "/api/settings/api-tokens")(
+            ApiTokenCreateRequest(label="t", no_expiry=True),
+            ctx=_user_ctx(TRUSTED_ORG)._replace(aal=aal)))
+
+    def test_mfa_not_required_by_default(self):
+        assert self._mint_with_policy(None, aal="aal1").token
+
+    def test_mfa_policy_on_refuses_aal1_and_allows_aal2(self):
+        from noctusai_lib.api.auth.session import MintPolicy
+
+        policy = MintPolicy(require_mfa=lambda ctx: True)
+        with pytest.raises(HTTPException) as exc:
+            self._mint_with_policy(policy, aal="aal1")
+        assert exc.value.status_code == 403 and exc.value.detail == "mfa_required"
+        assert self._mint_with_policy(policy, aal="aal2").token
+
+    def test_mfa_policy_off_is_a_callback_not_a_constant(self):
+        from noctusai_lib.api.auth.session import MintPolicy
+
+        assert self._mint_with_policy(MintPolicy(require_mfa=lambda ctx: False), aal=None).token
+
+    def test_mint_refuses_scopes_outside_the_allow_list(self):
+        from noctusai_lib.api.auth.session import TokenScopeAllowList
+        from noctusai_seed.auth_router import ApiTokenCreateRequest
+
+        rows = [{"id": USER_ID, "org_id": TRUSTED_ORG, "org_role": "owner"}]
+        router = create_auth_router(
+            SimpleNamespace(
+                get_core_client=lambda: _Core(rows),
+                get_admin_client=lambda: MockSupabaseClient([], validate_schema=False),
+            ),
+            _router(_Core(rows), MockSupabaseClient([], validate_schema=False))[1],
+            scope_allow_list=TokenScopeAllowList(["ok:read"]),
+        )
+        endpoint = _endpoint(router, "POST", "/api/settings/api-tokens")
+        with pytest.raises(HTTPException) as exc:
+            _run(endpoint(ApiTokenCreateRequest(label="t", scopes=["evil:*"], no_expiry=True),
+                          ctx=_user_ctx(TRUSTED_ORG)))
+        assert exc.value.status_code == 422
+        assert _run(endpoint(ApiTokenCreateRequest(label="t", scopes=["ok:read"], no_expiry=True),
+                             ctx=_user_ctx(TRUSTED_ORG))).scopes == ["ok:read"]

@@ -12,6 +12,11 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
+from noctusai_lib.api.auth.session.api_tokens import (
+    ApiTokenResolver,
+    FakeApiTokenResolver,
+    SupabaseApiTokenResolver,
+)
 from noctusai_lib.api.auth.session.redis_store import RedisSessionStore
 from noctusai_lib.api.auth.session.store import FakeSessionStore, SessionStore
 
@@ -76,4 +81,40 @@ def make_session_store(
     return FakeSessionStore()
 
 
-__all__ = ["make_session_store"]
+def make_api_token_resolver(
+    admin_client: Any = None,
+    *,
+    schema: Optional[str] = None,
+    deploy_context: Optional[bool] = None,
+) -> ApiTokenResolver:
+    """Return the ``ApiTokenResolver`` for the environment.
+
+    ``admin_client`` + ``schema`` -> :class:`SupabaseApiTokenResolver`.
+    Neither -> the always-empty :class:`FakeApiTokenResolver`, which is only
+    legal outside a deploy context: in one it raises, because a Fake resolver
+    silently 401s every token (the ``auth_router`` fallback this replaces).
+
+    ``deploy_context`` overrides the env detection (tests); ``None`` asks
+    :func:`noctusai_lib.config.deploy_config.is_deploy_context`.
+
+    Raises:
+        RuntimeError: no real resolver inputs in a deploy context.
+        ValueError: ``admin_client`` without ``schema`` (or vice versa).
+    """
+    if (admin_client is None) != (schema is None):
+        raise ValueError("make_api_token_resolver: pass admin_client and schema together")
+    if admin_client is not None:
+        return SupabaseApiTokenResolver(admin_client, schema=schema)  # type: ignore[arg-type]
+    if deploy_context is None:
+        from noctusai_lib.config.deploy_config import is_deploy_context
+
+        deploy_context = is_deploy_context()
+    if deploy_context:
+        raise RuntimeError(
+            "make_api_token_resolver: refusing FakeApiTokenResolver in a deploy "
+            "context — pass a real api_token_resolver (admin_client + schema)."
+        )
+    return FakeApiTokenResolver()
+
+
+__all__ = ["make_api_token_resolver", "make_session_store"]

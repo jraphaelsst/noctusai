@@ -19,6 +19,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/pydantic-strict-http.md
   - CONTEXT/PATTERNS/backend/redis-auth-seam.md
   - CONTEXT/PATTERNS/backend/seed-fake-real-adapter.md
+  - CONTEXT/PATTERNS/backend/platform-grants.md
   - CONTEXT/PATTERNS/backend/di-test-seam.md
   - CONTEXT/PATTERNS/backend/llm-tool-audit.md
   - CONTEXT/PATTERNS/backend/llm-usage.md
@@ -92,6 +93,7 @@ Implement server-side slices to the architect's contracts — routers → servic
 - **Auth wiring via factory.** `make_get_current_user_org(...)`; `ProductDependencies.get_*` deps WITHOUT `Depends()` (the 422 trap). → `KB § backend/07-AUTH-SECURITY.md`
 - **Pydantic strict at HTTP boundary.** `StrictHttpModel` + `extra="forbid"` on inbound — Pydantic's silent-drop kills writes otherwise. → `KB § PATTERNS/backend/pydantic-strict-http.md`
 - **Redis clients via the seam.** Never `from_url`/`Redis(...)` directly; `noctusai_lib.integrations.redis` carries ACL creds + redaction. → `KB § PATTERNS/backend/redis-auth-seam.md`
+- **Platform grants / M2M tokens.** Mint `noc_`, deliver via `GrantDelivery`, receiver derives the org from the token. → `KB § PATTERNS/backend/platform-grants.md`
 - **Seed IO seam shape.** Protocol + Fake + Real + factory (`make_<adapter>`); verify the Real ships before consuming. → `KB § PATTERNS/backend/seed-fake-real-adapter.md`
 - **Migrations mirror the file.** DDL applied = file committed same change; numbered `products/<p>/backend/migrations/NNN_*.sql`; forward-safe. Use `noctus.dev.scaffold_migration`. → `KB § PATTERNS/backend/database-rls.md`
 - **RLS scopes per org.** Every data-access path scoped by org; admin-endpoints never bypass via service role. → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md`

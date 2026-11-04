@@ -27,7 +27,7 @@ Two independent detectors, either one is enough to flag a line:
 1. **Known token patterns** — literal prefixes/markers used by common
    secret shapes: Stripe publishable (``pk_``) / secret (``sk-``) keys
    — narrowed with a length guard so plain PT-BR words like
-   ``pesquisa`` never match — GitHub PATs (``ghp_``), AWS access key
+   ``pesquisa`` never match — noctusai API tokens (``noc_``), GitHub PATs (``ghp_``), AWS access key
    ids (``AKIA``), and PEM private-key headers (``-----BEGIN``).
 2. **Shannon-entropy heuristic** — any sufficiently long unbroken token
    of base64/hex/url-safe characters whose per-character entropy clears
@@ -55,6 +55,9 @@ from collections import Counter
 _KNOWN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("stripe_publishable_key", re.compile(r"pk_[A-Za-z0-9]{16,}")),
     ("stripe_secret_key", re.compile(r"sk-[A-Za-z0-9]{16,}")),
+    # Our own M2M API tokens (``mint_token_secret``: ``noc_`` + 64 hex). The
+    # 32+ length guard keeps identifiers like ``noc_probe`` from matching.
+    ("noc_api_token", re.compile(r"\bnoc_[A-Za-z0-9]{32,}")),
     # Stripe's REAL secret/restricted key prefixes. The `sk-` entry above
     # never matched them; they were caught only because they are mixed-case
     # (entropy) — named here so a lowercase-looking one cannot slip by.

@@ -102,14 +102,14 @@ def test_auth_context_is_named_tuple_with_expected_fields():
 
 def test_hash_token_is_sha256_hex():
     """hash_token returns the SHA-256 hex digest of the UTF-8-encoded secret."""
-    secret = "pk_abc123"
+    secret = "noc_abc123"
     assert hash_token(secret) == hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
 
 def test_hash_token_is_deterministic():
     """Repeated calls with the same input → identical digest."""
-    assert hash_token("pk_xyz") == hash_token("pk_xyz")
-    assert hash_token("pk_xyz") != hash_token("pk_zzz")
+    assert hash_token("noc_xyz") == hash_token("noc_xyz")
+    assert hash_token("noc_xyz") != hash_token("noc_zzz")
 
 
 # ── FakeSessionStore ─────────────────────────────────────────────────
@@ -201,10 +201,10 @@ def test_api_token_resolver_resolves_registered_token():
     resolver = FakeApiTokenResolver()
     org_id = uuid4()
     token_id = resolver.register(
-        "pk_secret_xxx", org_id=org_id, scopes=["posts:read"]
+        "noc_secret_xxx", org_id=org_id, scopes=["posts:read"]
     )
 
-    ctx = _run(resolver.resolve("pk_secret_xxx"))
+    ctx = _run(resolver.resolve("noc_secret_xxx"))
     assert ctx is not None
     assert ctx.caller_kind == "product"
     assert ctx.org_id == org_id
@@ -216,17 +216,17 @@ def test_api_token_resolver_resolves_registered_token():
 def test_api_token_resolver_returns_none_for_unknown_secret():
     """A secret never registered → None (not an exception)."""
     resolver = FakeApiTokenResolver()
-    assert _run(resolver.resolve("pk_never_minted")) is None
+    assert _run(resolver.resolve("noc_never_minted")) is None
 
 
 def test_api_token_resolver_revoked_token_returns_none():
     """revoke marks the row; resolve returns None thereafter."""
     resolver = FakeApiTokenResolver()
-    resolver.register("pk_revoke_me", org_id=uuid4(), scopes=[])
-    assert _run(resolver.resolve("pk_revoke_me")) is not None
+    resolver.register("noc_revoke_me", org_id=uuid4(), scopes=[])
+    assert _run(resolver.resolve("noc_revoke_me")) is not None
 
-    resolver.revoke("pk_revoke_me")
-    assert _run(resolver.resolve("pk_revoke_me")) is None
+    resolver.revoke("noc_revoke_me")
+    assert _run(resolver.resolve("noc_revoke_me")) is None
 
 
 # ── make_get_auth_context — dep behaviour ─────────────────────────────
@@ -258,16 +258,16 @@ def test_dep_returns_user_ctx_when_cookie_present():
 
 
 def test_dep_returns_product_ctx_when_bearer_pk_token():
-    """Bearer pk_* → product AuthContext (priority 2)."""
+    """Bearer noc_* → product AuthContext (priority 2)."""
     app, _store, resolver = _build_app()
     org_id = uuid4()
     token_id = resolver.register(
-        "pk_live_zzz", org_id=org_id, scopes=["posts:write"]
+        "noc_live_zzz", org_id=org_id, scopes=["posts:write"]
     )
     client = TestClient(app)
 
     resp = client.get(
-        "/whoami", headers={"Authorization": "Bearer pk_live_zzz"}
+        "/whoami", headers={"Authorization": "Bearer noc_live_zzz"}
     )
 
     assert resp.status_code == 200
@@ -292,13 +292,13 @@ def test_dep_cookie_wins_when_both_cookie_and_bearer_present():
             ttl_seconds=60,
         )
     )
-    resolver.register("pk_other_org", org_id=uuid4(), scopes=[])
+    resolver.register("noc_other_org", org_id=uuid4(), scopes=[])
     client = TestClient(app)
 
     resp = client.get(
         "/whoami",
         cookies={"nai_session": session_id},
-        headers={"Authorization": "Bearer pk_other_org"},
+        headers={"Authorization": "Bearer noc_other_org"},
     )
 
     assert resp.status_code == 200
@@ -319,12 +319,12 @@ def test_dep_returns_401_when_no_credential():
 
 
 def test_dep_returns_401_for_unknown_pk_bearer():
-    """Bearer pk_ that doesn't resolve → 401 with token-specific detail."""
+    """Bearer noc_ that doesn't resolve → 401 with token-specific detail."""
     app, _store, _resolver = _build_app()
     client = TestClient(app)
 
     resp = client.get(
-        "/whoami", headers={"Authorization": "Bearer pk_unknown"}
+        "/whoami", headers={"Authorization": "Bearer noc_unknown"}
     )
 
     assert resp.status_code == 401

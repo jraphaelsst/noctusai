@@ -13,17 +13,19 @@ from __future__ import annotations
 
 import logging
 
+from noctusai_lib.api.auth._token_prefixes import has_api_token_prefix
 from noctusai_lib.primitives._correlation import get_correlation_id
 
 logger = logging.getLogger("noctusai_lib.api.auth")
 
 
 def token_shape(token: str | None) -> str:
-    """Non-secret classification of a bearer value: ``empty`` / ``pk_*`` / ``jwt`` / ``opaque``."""
+    """Non-secret classification of a bearer value: ``empty`` / ``noc_*`` or legacy ``pk_*`` (``api_token``) / ``jwt`` / ``opaque``."""
     if not token:
         return "empty"
-    if token.startswith("pk_"):
-        return "pk_token"
+    # NOC-REMEDIATE[pk-prefix-cutoff]: accepts both noc_ and legacy pk_.
+    if has_api_token_prefix(token):
+        return "api_token"
     return "jwt" if token.count(".") == 2 else "opaque"
 
 
