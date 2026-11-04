@@ -141,6 +141,26 @@ then change detection, then alerts.
     after that is the result `waiting_for_slot`.
   - The queue is best-effort across code versions: a waiter on older code still races, but it
     can only jump queued waiters, never an admitted job.
+- **An integrate retry runs only what changed.** Before 2026-11-04 every retry re-ran all ~30
+  merged-tip gates from zero (~45 min), including gates already green on identical inputs. Each
+  retry was a new lottery against load, on a moving `dev`. Now `task_branch` integrate (the
+  merged-tip check and its baseline) turns on `gate_verdict_cache`, and a GREEN is reused when
+  its key is unchanged. The key combines:
+  - the gate's argv and cwd;
+  - the git tree ids at HEAD of its input closure, plus every root-level tracked file;
+  - a runner fingerprint: the `gate_sweep` and `harness_signatures` source, the interpreter and
+    `node` stamps, the e2e CI flag, and `job_workers`.
+
+  The input closure depends on the gate:
+  - product gates use `products/<slug>/`, `seed/`, `templates/` and `deploy/`;
+  - seed gates use `seed/` and `templates/`;
+  - mcp, keeper and contract gates read the whole repo, so they are never cached.
+
+  The cache only stores unambiguous greens: no harness flag, timeout, slot wait or `false_red`.
+  A dirty closure is never looked up or stored. A hit costs no slot. It carries `cached_from`
+  (tip, ts, original duration), and the sweep warns with the list of reused gates. The store is
+  `~/.noctus/gate-verdicts.ndjson` (machine-local); the kill switch is
+  `NOCTUS_GATE_VERDICT_CACHE=off`.
 - **A red under load re-runs its failing tests once, alone, before it counts.** At
   `max_heavy` 1, integrates 4 and 5 (2026-11-04) each failed on a DIFFERENT timing-sensitive
   test that passed in isolation: one vitest assertion at 2333 ms, and one pytest failure that

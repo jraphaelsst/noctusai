@@ -1523,7 +1523,8 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     from . import hw_admission as _hw
     res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, prepare_gates=_prepare,
                      run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts),
-                     admit=_hw.shared_deadline_admit(integrate_slot_wait_s()))
+                     admit=_hw.shared_deadline_admit(integrate_slot_wait_s()),
+                     verdict_cache=True)
     if isinstance(res, dict):
         # per-gate attempt counts + durations/budgets, so wall-clock is visible
         res["gate_attempts"] = attempts
@@ -1780,7 +1781,8 @@ def _default_merged_tip_baseline(
         attempts: dict[str, dict[str, Any]] = {}
         res = run_gates(wt, list(gate_names),
                         run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts),
-                        prepare_gates=_frontend_env_preparer(primary_root, fs), **admit_kw)
+                        prepare_gates=_frontend_env_preparer(primary_root, fs),
+                        **admit_kw, **({"verdict_cache": True} if "admit" in admit_kw else {}))
         out["frontend_env"] = res.get("env_prepared")
         out["gate_attempts"] = attempts
         by_name = {g["gate"]: g for g in res.get("gates", [])}

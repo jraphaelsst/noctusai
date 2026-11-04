@@ -117,6 +117,7 @@ from .harness_signatures import read_load_per_core as _read_load_per_core
 from .harness_signatures import LOAD_PER_CORE_SUSPECT as _LOAD_PER_CORE_SUSPECT
 from . import gate_budget as _gate_budget
 from . import hw_admission as _hw
+from . import gate_verdict_cache as _gvc
 from .migration_replay import products_for_paths
 from .migrate_product import (
     FakeGitRunner,  # noqa: F401  (re-exported for test convenience)
@@ -1723,6 +1724,7 @@ def _run_gates(
     env_residue: list[str] | None = None,
     max_workers: int = 1,
     admit: Callable[[str], Any] | None = None,
+    verdict_cache: "_gvc.GateVerdictCache | None" = None,
 ) -> list[dict[str, Any]]:
     """Preflight, then run, then classify — in that order.
 
@@ -1742,10 +1744,23 @@ def _run_gates(
     workers = max(1, min(max_workers, len(specs) or 1))
     if admit is not None:
         workers = min(workers, _heavy_cap())
+    # A green on identical inputs is reused BEFORE the slot wait (gate_verdict_cache).
+    jw = _hw.job_workers() if verdict_cache is not None else None
+
+    def one(sp: GateSpec) -> dict[str, Any]:
+        if verdict_cache is not None:
+            hit = verdict_cache.lookup(sp, jw)
+            if hit is not None:
+                return hit
+        entry = _run_one_gate(sp, run_gate, env_residue, admit)
+        if verdict_cache is not None:
+            verdict_cache.store(sp, entry, jw)
+        return entry
+
     if workers == 1:
-        return [_run_one_gate(spec, run_gate, env_residue, admit) for spec in specs]
+        return [one(spec) for spec in specs]
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda sp: _run_one_gate(sp, run_gate, env_residue, admit), specs))
+        return list(pool.map(one, specs))
 
 
 def _run_one_gate(
@@ -1980,6 +1995,7 @@ def run_gates_named(
     max_workers: int | None = None,
     prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
     admit: Any = _AUTO_ADMIT,
+    verdict_cache: bool = False,
 ) -> dict[str, Any]:
     """Run ONLY the named gates in `repo_root` (no diff, no scope derivation)
     and return `{gates, unknown}` with the sweep's own per-gate entry shape
@@ -1994,9 +2010,11 @@ def run_gates_named(
     prepared = prepare_gates(root, specs) if prepare_gates is not None else None
     env_residue = dotenv_residue(gate_subprocess_env(root), root)
     workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
+    cache = _gvc.make_cache(root) if verdict_cache else None
     return {"gates": _run_gates(specs, runner, env_residue, max_workers=workers,
-                                admit=_resolve_admit(admit, run_gate)),
-            "unknown": unknown, "env_prepared": prepared}
+                                admit=_resolve_admit(admit, run_gate), verdict_cache=cache),
+            "unknown": unknown, "env_prepared": prepared,
+            "verdict_cache_hits": cache.hits if cache else []}
 
 
 def _attach_delegation(gates: list[dict[str, Any]], tests: list[str], stand_in: str) -> None:
@@ -2065,6 +2083,7 @@ def gate_sweep(
     max_workers: int | None = None,
     prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
     admit: Any = _AUTO_ADMIT,
+    verdict_cache: bool = False,
 ) -> dict[str, Any]:
     """Run the canonical gate set for what actually changed vs. `base_ref`;
     return a structured, measured verdict. See module docstring.
@@ -2162,8 +2181,12 @@ def gate_sweep(
     workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
     # Real runs go through the machine-wide hardware admission gate; an
     # injected runner (tests) is not a heavy subprocess and is not gated.
+    cache = _gvc.make_cache(root) if verdict_cache else None
     gates = _run_gates(specs, runner, env_residue, max_workers=workers,
-                       admit=_resolve_admit(admit, run_gate))
+                       admit=_resolve_admit(admit, run_gate), verdict_cache=cache)
+    if cache is not None and cache.hits:
+        warnings.append(f"verdict cache: {len(cache.hits)} gate(s) reused a green on identical "
+                        f"inputs: {', '.join(cache.hits)}")
 
     fanout = scope.get("seed_fanout") or {}
     if fanout.get("mode") == "scoped":
