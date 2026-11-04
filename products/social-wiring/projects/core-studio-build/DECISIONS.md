@@ -122,6 +122,10 @@ Rule for this project: the owner is interviewed for every specification; nothing
 - **No animated/rotating gradient border** around the chat or the mention picker.
 - LGPD: the LIA re-assessment trigger "new data source" is hit; LIA + ROPA are updated with the source and Apify as sub-processor in the same build.
 
+- **Viral modal mirrors the reference layout** (owner 2026-11-04): profile pill + Gerar headline, video, Métricas (views, likes, comments, date + time), Transcrição (Ver post, link, Copiar), Nicho / Profissão / Formato. The structure (gancho, blueprint, `#codigo`) is NOT shown in the modal; it surfaces in the chat analysis. The captured metrics feed a future automatic "what is viral" definition.
+- **What counts as viral (Apify source, for now)** (owner 2026-11-04): views ≥ 200k ∧ (likes+comments)/views ≥ 2% ∧ (likes+comments)/followers ≥ 3% ∧ ≥ 48 h old. Both rates and the follower snapshot are stored per post. The 2% / 3% thresholds are tech-lead defaults in settings (`biblioteca_viral_min_*`), owner to validate. Hidden likes ⇒ not shown (data kept). `score_viral` ranks only.
+- **Several `@` mentions** (owner 2026-11-04): one `@post` alone is mandatory; any other mention set offers ONLY the mentioned structures and the agent reasons which to use or combines them, and explains why ("let the agent work his thing").
+
 ## Open — to ask before building
 
 - ~~Fill the headline blueprint `{{DB-SLUG}}` slots from approved Pesquisa items?~~ Tech-lead default D2 (round 9, `specs/geracao-contract.md` §5.3, with a worked example). The owner validates it while testing.
