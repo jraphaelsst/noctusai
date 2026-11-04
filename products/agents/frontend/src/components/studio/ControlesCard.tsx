@@ -5,11 +5,14 @@
  * server answer; the server decides every turn (this card is not a gate).
  */
 import { useState } from "react";
+import { env } from "@noctusai/lib";
 import { toast } from "sonner";
-import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
+import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader, Switch } from "@noctusai/lib/design-system";
 import type { Controle, ModoOperacao } from "@/api/studio/types-julia";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
-import { useControle, useSetControle } from "@/hooks/studio/useControle";
+import { useControle, useControlePlataforma, useSetControle, useSetControlePlataforma } from "@/hooks/studio/useControle";
+import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
+import { useOrgMembers } from "@/hooks/studio/useOrgMembers";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -61,6 +64,99 @@ function Drenagem({ c }: { c: Controle }) {
   );
 }
 
+const MOTIVO_MAX = 500;
+
+/**
+ * Julia v3 §12.1: the platform-wide kill switch. The banner is shown to everyone while it is off
+ * (a 403 for a non-admin just means "nothing to show"); the danger zone is platform-admin only.
+ */
+function ControlePlataformaSecao({ agentKey }: { agentKey: string }) {
+  const admin = useIsPlatformAdmin();
+  const q = useControlePlataforma(agentKey, true);
+  const set = useSetControlePlataforma(agentKey);
+  const [aberto, setAberto] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [erro, setErro] = useState<string | null>(null);
+  const cp = q.data;
+
+  if (q.showSkeleton) return admin ? <StudioLoading rows={1} testId="controle-plataforma-skeleton" /> : null;
+  if (q.isError && !cp) {
+    // Non-admins get 403 here by design: nothing to show. An admin must see the refusal.
+    return admin ? <StudioError error={q.error} onRetry={q.refetch} /> : null;
+  }
+  if (!cp) return null;
+
+  const desligado = cp.desligado;
+  const motivoOk = motivo.trim().length > 0 && motivo.length <= MOTIVO_MAX;
+
+  async function aplicar(alvo: boolean) {
+    setErro(null);
+    try {
+      await set.mutateAsync({ desligado: alvo, motivo: alvo ? motivo.trim() : null });
+      toast.success(alvo ? "Julia desligada em todas as empresas." : "Julia religada em todas as empresas.");
+      setAberto(false);
+      setMotivo("");
+    } catch (err) {
+      setErro(errorMessage(err));
+    }
+  }
+
+  return (
+    <>
+      {desligado && (
+        <div role="alert" className="rounded-md border border-red-600 bg-red-600 p-3 text-sm font-semibold text-white" data-testid="plataforma-banner">
+          Julia desligada na plataforma — nenhuma empresa recebe respostas.
+          {cp.motivo && <span className="block text-xs font-normal">Motivo: {cp.motivo}</span>}
+        </div>
+      )}
+      {admin && (
+        <div className="space-y-2 rounded-md border border-red-300 p-3" data-testid="plataforma-zona-perigo">
+          <h3 className="text-sm font-semibold text-red-700">Zona de perigo</h3>
+          <div className="flex items-center gap-2 text-sm">
+            <Switch
+              checked={desligado}
+              disabled={set.isPending}
+              aria-label="Desligar a Julia em TODAS as empresas"
+              data-testid="plataforma-switch"
+              onCheckedChange={(v) => {
+                setErro(null);
+                if (v) setAberto(true);
+                else void aplicar(false);
+              }}
+            />
+            Desligar a Julia em TODAS as empresas
+          </div>
+          {erro && !aberto && <p className="text-sm text-destructive" role="alert" data-testid="plataforma-erro">{erro}</p>}
+          <Dialog open={aberto} onClose={() => setAberto(false)} title="Desligar a Julia em todas as empresas" className="max-w-lg">
+            <DialogHeader><h2 className="text-base font-semibold">Desligar a Julia em TODAS as empresas?</h2></DialogHeader>
+            <DialogBody className="space-y-3">
+              <p className="text-sm">Nenhuma empresa receberá respostas da Julia até você religar. Informe o motivo.</p>
+              <div>
+                <label htmlFor="plataforma-motivo" className="mb-1 block text-xs font-medium">Motivo (obrigatório)</label>
+                <textarea
+                  id="plataforma-motivo"
+                  rows={3}
+                  maxLength={MOTIVO_MAX}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value)}
+                />
+              </div>
+              {erro && <p className="text-sm text-destructive" role="alert" data-testid="plataforma-erro-dialog">{erro}</p>}
+            </DialogBody>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" onClick={() => setAberto(false)}>Cancelar</Button>
+              <Button variant="primary" disabled={!motivoOk || set.isPending} onClick={() => aplicar(true)} data-testid="plataforma-confirmar">
+                {set.isPending ? "Desligando..." : "Desligar em todas as empresas"}
+              </Button>
+            </DialogFooter>
+          </Dialog>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function ControlesCard({ agentKey }: { agentKey: string }) {
   const isAdmin = useIsAdmin();
   const q = useControle(agentKey);
@@ -68,6 +164,8 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
   const [alvo, setAlvo] = useState<ModoOperacao | null>(null);
   const [dias, setDias] = useState<string>("");
   const [erro, setErro] = useState<string | null>(null);
+  const [novoMembro, setNovoMembro] = useState("");
+  const membros = useOrgMembers(isAdmin);
 
   if (q.showSkeleton) return <StudioLoading rows={2} testId="controles-skeleton" />;
   if (q.isError) return <StudioError error={q.error} onRetry={q.refetch} />;
@@ -90,6 +188,41 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
     }
   }
 
+  async function alternarFaseTestes(v: boolean) {
+    setErro(null);
+    try {
+      await set.mutateAsync({ modo: c!.modo, fase_testes: v });
+      toast.success(v ? "Fase de testes ligada." : "Fase de testes desligada.");
+    } catch (err) {
+      setErro(errorMessage(err));
+    }
+  }
+
+  const usuarios = c.avaliacao_usuarios ?? [];
+  const resolvidos = c.avaliacao_resolvidos ?? [];
+  const resolvidoPor = new Map(resolvidos.map((r) => [r.usuario_id, r]));
+  const comTelefone = resolvidos.filter((r) => usuarios.includes(r.usuario_id) && !!r.telefone);
+  const emAvaliacao = !!c.modo_avaliacao;
+  const nomeDe = (id: string) => resolvidoPor.get(id)?.nome ?? membros.data?.find((m) => m.id === id)?.nome ?? id;
+  const disponiveis = (membros.data ?? []).filter((m) => !usuarios.includes(m.id));
+
+  async function salvarAvaliacao(patch: { modo_avaliacao?: boolean; avaliacao_usuarios?: string[] }, ok: string) {
+    setErro(null);
+    try {
+      await set.mutateAsync({ modo: c!.modo, ...patch });
+      toast.success(ok);
+      return true;
+    } catch (err) {
+      setErro(errorMessage(err));
+      return false;
+    }
+  }
+
+  async function adicionarMembro() {
+    if (!novoMembro || usuarios.includes(novoMembro)) return;
+    if (await salvarAvaliacao({ avaliacao_usuarios: [...usuarios, novoMembro] }, "Membro adicionado.")) setNovoMembro("");
+  }
+
   async function salvarDias() {
     setErro(null);
     try {
@@ -103,11 +236,17 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
 
   return (
     <section className="space-y-4 rounded-lg border border-border bg-card p-4" data-testid="controles-card">
+      <ControlePlataformaSecao agentKey={agentKey} />
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">Controles</h2>
         <Badge variant={c.modo === "ligado" ? "default" : c.modo === "drenando" ? "outline" : "muted"} data-testid="controle-modo">
           {MODOS.find((m) => m.valor === c.modo)?.rotulo}
         </Badge>
+        {emAvaliacao && (
+          <span className="rounded-md border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900" data-testid="controle-avaliacao-badge">
+            Em avaliação — responde só a {comTelefone.length} número(s)
+          </span>
+        )}
         <span className="text-xs text-muted-foreground">{c.aceita_novos_leads ? "Aceita novos leads" : "Não aceita novos leads"}</span>
         {q.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
       </div>
@@ -138,6 +277,96 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
       {!isAdmin && <p className="text-xs text-muted-foreground">Somente administradores da organização alteram o modo.</p>}
 
       <Drenagem c={c} />
+
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={!!c.fase_testes}
+            disabled={!isAdmin || set.isPending}
+            aria-label="Fase de testes"
+            data-testid="controle-fase-testes"
+            onCheckedChange={alternarFaseTestes}
+          />
+          Fase de testes
+        </div>
+        <p className="text-xs text-muted-foreground">Quando ligada, a Julia avisa que está em fase de testes ao se desculpar por um erro ou insatisfação.</p>
+      </div>
+
+      <div className="space-y-2" data-testid="controle-avaliacao">
+        <div className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={emAvaliacao}
+            disabled={!isAdmin || set.isPending || (!emAvaliacao && comTelefone.length === 0)}
+            aria-label="Modo de avaliação"
+            data-testid="controle-avaliacao-switch"
+            onCheckedChange={(v) => void salvarAvaliacao({ modo_avaliacao: v, avaliacao_usuarios: usuarios }, v ? "Modo de avaliação ligado." : "Modo de avaliação desligado.")}
+          />
+          Modo de avaliação
+        </div>
+        <p className="text-xs text-muted-foreground">Com a Julia ligada, ela responde SÓ aos números abaixo. Os demais contatos não recebem resposta. Desligue quando o fluxo estiver validado.</p>
+        {!emAvaliacao && comTelefone.length === 0 && (
+          <p className="text-xs text-amber-700" data-testid="controle-avaliacao-dica">Escolha ao menos um membro com WhatsApp cadastrado no noc para ligar o modo de avaliação.</p>
+        )}
+        <ul className="space-y-1" data-testid="controle-avaliacao-lista">
+          {usuarios.map((id) => {
+            const r = resolvidoPor.get(id);
+            return (
+              <li key={id} className="flex flex-wrap items-center gap-2 text-sm" data-testid={`controle-avaliacao-membro-${id}`}>
+                <span>{nomeDe(id)}</span>
+                {r?.telefone && <span className="tabular-nums text-muted-foreground">{r.telefone}</span>}
+                {r && !r.telefone && (
+                  <a
+                    href={`${env.CORE_URL}/settings`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-md border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
+                    data-testid={`controle-avaliacao-sem-whatsapp-${id}`}
+                  >
+                    Sem WhatsApp — cadastre no noc
+                  </a>
+                )}
+                {isAdmin && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={set.isPending || (emAvaliacao && comTelefone.length === 1 && !!r?.telefone)}
+                    title={emAvaliacao && comTelefone.length === 1 && !!r?.telefone ? "Desligue o modo de avaliação para remover o último número." : undefined}
+                    aria-label={`Remover ${nomeDe(id)}`}
+                    onClick={() => void salvarAvaliacao({ avaliacao_usuarios: usuarios.filter((x) => x !== id) }, "Membro removido.")}
+                  >
+                    Remover
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {isAdmin && (
+          membros.showSkeleton ? (
+            <StudioLoading rows={1} testId="controle-avaliacao-membros-skeleton" />
+          ) : membros.isError && !membros.data ? (
+            <StudioError error={membros.error} onRetry={membros.refetch} />
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <div>
+                <label htmlFor="controle-avaliacao-membro" className="mb-1 block text-xs font-medium">Membro permitido</label>
+                <select
+                  id="controle-avaliacao-membro"
+                  className="h-9 w-64 rounded-md border border-input bg-background px-3 text-sm"
+                  value={novoMembro}
+                  onChange={(e) => setNovoMembro(e.target.value)}
+                >
+                  <option value="">{disponiveis.length ? "Escolha um membro…" : "Todos os membros já foram escolhidos"}</option>
+                  {disponiveis.map((m) => <option key={m.id} value={m.id}>{m.nome || m.email}</option>)}
+                </select>
+              </div>
+              <Button size="sm" variant="outline" disabled={!novoMembro || set.isPending} onClick={adicionarMembro} data-testid="controle-avaliacao-adicionar">
+                Adicionar
+              </Button>
+            </div>
+          )
+        )}
+      </div>
 
       {isAdmin && (
         <div className="flex flex-wrap items-end gap-2">

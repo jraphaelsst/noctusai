@@ -41,6 +41,7 @@ export const studioKeys = {
   orgStatus: (key: string) => ["studio", key, "org-status"] as const,
   compiladoOrg: (key: string, versao: string) => ["studio", key, "compilado-org", versao] as const,
   controle: (key: string) => ["studio", key, "controle"] as const,
+  controlePlataforma: (key: string) => ["studio", key, "controle-plataforma"] as const,
   canal: (key: string) => ["studio", key, "canal"] as const,
   threadMensagens: (key: string, threadId: string) => ["studio", key, "canal", "mensagens", threadId] as const,
   conformidade: (key: string) => ["studio", key, "conformidade"] as const,

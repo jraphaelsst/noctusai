@@ -83,4 +83,91 @@ describe("ControlesCard", () => {
   it("consequencia() names the drain days", () => {
     expect(consequencia("drenando", CONTROLE, 5)).toContain("5 dia(s)");
   });
+
+  describe("modo de avaliação", () => {
+    const M = `/api/team`;
+    const MEMBROS = { data: [
+      { id: "u1", nome: "Raphael", email: "r@x.com", org_role: "owner", created_at: "" },
+      { id: "u2", nome: "Maria", email: "m@x.com", org_role: "admin", created_at: "" },
+    ] };
+    const R1 = { usuario_id: "u1", nome: "Raphael", telefone: "+5511999998888" };
+    const R2 = { usuario_id: "u2", nome: "Maria", telefone: null };
+
+    it("disables the switch with a hint while no chosen member has a phone", async () => {
+      installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_usuarios: ["u2"], avaliacao_resolvidos: [R2] } },
+        { method: "GET", path: M, body: MEMBROS },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      const sw = await screen.findByTestId("controle-avaliacao-switch");
+      expect((sw as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByTestId("controle-avaliacao-dica")).toBeTruthy();
+      expect(screen.queryByTestId("controle-avaliacao-badge")).toBeNull();
+    });
+
+    it("shows the no-WhatsApp chip linking to the core account settings", async () => {
+      installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, avaliacao_usuarios: ["u1", "u2"], avaliacao_resolvidos: [R1, R2] } },
+        { method: "GET", path: M, body: MEMBROS },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      const chip = await screen.findByTestId("controle-avaliacao-sem-whatsapp-u2");
+      expect(chip.textContent).toBe("Sem WhatsApp — cadastre no noc");
+      expect(chip.getAttribute("href")).toMatch(/\/settings$/);
+      expect(screen.getByText("+5511999998888")).toBeTruthy();
+      expect((screen.getByTestId("controle-avaliacao-switch") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("adds a member from the picker (user id sent, current modo)", async () => {
+      const net = installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_usuarios: [], avaliacao_resolvidos: [] } },
+        { method: "GET", path: M, body: MEMBROS },
+        { method: "PUT", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_usuarios: ["u1"], avaliacao_resolvidos: [R1] } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      const sel = await screen.findByLabelText("Membro permitido");
+      await screen.findByText("Maria");
+      fireEvent.change(sel, { target: { value: "u1" } });
+      fireEvent.click(screen.getByTestId("controle-avaliacao-adicionar"));
+      await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ modo: "ligado", avaliacao_usuarios: ["u1"] });
+    });
+
+    it("removes a member", async () => {
+      const net = installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_usuarios: ["u1", "u2"], avaliacao_resolvidos: [R1, R2] } },
+        { method: "GET", path: M, body: MEMBROS },
+        { method: "PUT", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_usuarios: ["u2"], avaliacao_resolvidos: [R2] } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      fireEvent.click(await screen.findByLabelText("Remover Raphael"));
+      await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ modo: "ligado", avaliacao_usuarios: ["u2"] });
+    });
+
+    it("shows the amber badge counting members with a phone, and turns it off", async () => {
+      const on = { ...CONTROLE, modo_avaliacao: true, avaliacao_usuarios: ["u1", "u2"], avaliacao_resolvidos: [R1, R2] };
+      const net = installFetch([
+        { method: "GET", path: P, body: on },
+        { method: "GET", path: M, body: MEMBROS },
+        { method: "PUT", path: P, body: { ...on, modo_avaliacao: false } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      expect((await screen.findByTestId("controle-avaliacao-badge")).textContent).toBe("Em avaliação — responde só a 1 número(s)");
+      fireEvent.click(screen.getByTestId("controle-avaliacao-switch"));
+      await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ modo: "ligado", modo_avaliacao: false, avaliacao_usuarios: ["u1", "u2"] });
+    });
+
+    it("shows the server's avaliacao_sem_telefone refusal", async () => {
+      installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, avaliacao_usuarios: ["u1"], avaliacao_resolvidos: [R1] } },
+        { method: "GET", path: M, body: MEMBROS },
+        { method: "PUT", path: P, status: 422, body: { detail: "Nenhum membro escolhido tem WhatsApp cadastrado no noc.", code: "avaliacao_sem_telefone" } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      fireEvent.click(await screen.findByTestId("controle-avaliacao-switch"));
+      expect((await screen.findByTestId("controle-erro")).textContent).toContain("WhatsApp");
+    });
+  });
 });
