@@ -75,10 +75,56 @@ def _host() -> str:
     return socket.gethostname().split(".")[0].lower()
 
 
+def _aborts_path() -> Path:
+    p = Path(os.environ.get("NOCTUS_HW_ABORTS") or Path.home() / ".noctus" / "hw-trial-aborts.json")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _read_aborts() -> dict[str, str]:
+    p = _aborts_path()
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError as exc:
+        raise BudgetError(f"trial-abort marker is not valid JSON: {p}: {exc}") from exc
+
+
+def _iso(ts: str) -> float:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+
+
+def _abort_key(entry: dict[str, Any]) -> str:
+    return f"{entry['phase']}@{entry['from']}"
+
+
+def active_schedule_entry(doc: dict[str, Any], host: str, now: float) -> dict[str, Any] | None:
+    """The `schedule` entry covering `now` for this host, unless that trial was
+    aborted after it started (an abort sends the machine back to its normal
+    phase for the rest of that entry's window)."""
+    aborts = _read_aborts()
+    for e in doc.get("schedule") or []:
+        hosts = e.get("hosts")
+        if hosts and host not in [h.lower() for h in hosts]:
+            continue
+        if _iso(e["from"]) <= now < _iso(e["until"]):
+            # An abort is keyed to THIS window (phase + from), not to a clock
+            # comparison, so it can never be silently ignored by skew.
+            if _abort_key(e) in aborts:
+                return None
+            return e
+    return None
+
+
 def load_budget(path: Path | None = None, phase: str | None = None,
-                host: str | None = None) -> dict[str, Any]:
+                host: str | None = None, now: float | None = None) -> dict[str, Any]:
     """Resolve the effective budget for this host. Raises BudgetError — a
-    missing budget is a setup error, never a silent 'no gate'."""
+    missing budget is a setup error, never a silent 'no gate'.
+
+    Phase precedence: explicit `phase` > env NOCTUS_HW_PHASE > the active
+    `schedule` entry (a time-boxed, machine-wide trial) > hosts[host].phase >
+    top-level `phase`."""
     env_path = os.environ.get("NOCTUS_HW_BUDGET_PATH")
     p = Path(env_path) if env_path else (Path(path) if path else _default_budget())
     try:
@@ -89,7 +135,9 @@ def load_budget(path: Path | None = None, phase: str | None = None,
         raise BudgetError(f"hardware budget is not valid JSON: {p}: {exc}") from exc
     host = (host or _host()).lower()
     host_cfg = (doc.get("hosts") or {}).get(host, {})
-    chosen = phase or os.environ.get("NOCTUS_HW_PHASE") or host_cfg.get("phase") or doc.get("phase")
+    entry = active_schedule_entry(doc, host, now if now is not None else time.time())
+    chosen = (phase or os.environ.get("NOCTUS_HW_PHASE") or (entry or {}).get("phase")
+              or host_cfg.get("phase") or doc.get("phase"))
     phases = doc.get("phases") or {}
     if chosen not in phases:
         raise BudgetError(f"phase {chosen!r} not in {sorted(phases)} ({p})")
@@ -97,8 +145,39 @@ def load_budget(path: Path | None = None, phase: str | None = None,
     missing = [k for k in _REQUIRED_KNOBS if k not in eff]
     if missing:
         raise BudgetError(f"phase {chosen!r} lacks knob(s) {missing} ({p})")
-    eff.update(phase=chosen, host=host, budget_path=str(p))
+    eff.update(phase=chosen, host=host, budget_path=str(p),
+               trial=({"phase": entry["phase"], "from": entry["from"], "until": entry["until"],
+                       "abort": entry.get("abort")} if entry and chosen == entry["phase"] else None))
     return eff
+
+
+def _check_trial_abort(budget: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any] | None:
+    """Abort the active trial when the last `consecutive` samples of it (this
+    one included) all breach its abort limits. Writes the marker + returns
+    the abort record (None = no abort)."""
+    trial = budget.get("trial") or {}
+    rule = trial.get("abort") or {}
+    if not rule or "probe_error" in metrics:
+        return None
+
+    def breach(m: dict[str, Any]) -> bool:
+        return (m.get("reclaimable_mb", 1e12) < rule.get("reclaimable_mb_below", -1)
+                or m.get("swapout_per_s", 0) >= rule.get("swapout_at_least", 1e12))
+
+    n = int(rule.get("consecutive", 3))
+    p = _log_path()
+    prior = [json.loads(ln) for ln in p.read_text().splitlines()[-400:] if ln.strip()] if p.exists() else []
+    prior = [r for r in prior if r.get("event") == "sample" and r.get("phase") == trial["phase"]][-(n - 1):] if n > 1 else []
+    window = [r.get("metrics", {}) for r in prior] + [metrics]
+    if len(window) < n or not all(breach(m) for m in window):
+        return None
+    aborts = _read_aborts()
+    at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    aborts[_abort_key(trial)] = at
+    _aborts_path().write_text(json.dumps(aborts, indent=2))
+    rec = {"phase": trial["phase"], "window_from": trial["from"], "rule": rule, "metrics": metrics, "at": at}
+    _log({"event": "trial_aborted", "host": budget["host"], **rec})
+    return rec
 
 
 # ── probe ─────────────────────────────────────────────────────────────────
@@ -264,6 +343,7 @@ class Admission:
     blocked_by: list[str] = field(default_factory=list)
     advisories: list[str] = field(default_factory=list)
     phase: str | None = None
+    outcome: dict[str, Any] = field(default_factory=dict)   # set by the caller after the run (exit_code, ...)
 
     def as_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -349,11 +429,24 @@ def report(last_n: int = 5000, since: str | None = None, until: str | None = Non
         peak = r.get("children_peak_rss_mb")
         if peak is not None:
             j["max_peak_rss_mb"] = max(j["max_peak_rss_mb"] or 0, peak)
+    by_phase: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        ph = by_phase.setdefault(str(r.get("phase")), {"samples": 0, "overloaded": 0, "runs": 0,
+                                                        "not_admitted": 0, "failed_runs": 0})
+        ev = r.get("event")
+        if ev == "sample":
+            ph["samples"] += 1
+            ph["overloaded"] += bool(r.get("overloaded"))
+        elif ev == "ran":
+            ph["runs"] += 1
+            ph["failed_runs"] += (r.get("outcome") or {}).get("exit_code") not in (None, 0)
+        elif ev == "not_admitted":
+            ph["not_admitted"] += 1
     waits = [r["waited_s"] for r in ran]
     return {"log": str(p), "window": {"since": since, "until": until}, "rows": len(rows),
             "runs": len(ran),
             "not_admitted": sum(1 for r in rows if r.get("event") == "not_admitted"),
-            "max_wait_s": max(waits) if waits else 0, "by_job": by_job,
+            "max_wait_s": max(waits) if waits else 0, "by_job": by_job, "by_phase": by_phase,
             "samples": len(samples),
             "overloaded_pct": round(100 * sum(1 for r in samples if r.get("overloaded")) / len(samples), 1)
             if samples else None}
@@ -380,9 +473,10 @@ def sample(sample_s: float = 3.0) -> dict[str, Any]:
     if st.get("status") == "budget_error":
         return st
     overloaded = bool(evaluate(st["metrics"], st["budget"]))
-    _log({"event": "sample", "host": st["budget"]["host"], "overloaded": overloaded,
-          "busy_slots": len(st["holders"]), "metrics": st["metrics"]})
-    return {**st, "overloaded": overloaded, "timer": recheck_timer()}
+    aborted = _check_trial_abort(st["budget"], st["metrics"])
+    _log({"event": "sample", "host": st["budget"]["host"], "phase": st["budget"]["phase"],
+          "overloaded": overloaded, "busy_slots": len(st["holders"]), "metrics": st["metrics"]})
+    return {**st, "overloaded": overloaded, "trial_aborted": aborted, "timer": recheck_timer()}
 
 
 def _ts(row: dict[str, Any]) -> float:
@@ -452,7 +546,9 @@ def run_command(job: str, argv: list[str], wait_s: float | None = None) -> int:
         if not adm.admitted:
             print(json.dumps({"hw_admission": adm.as_dict()}), file=sys.stderr)
             return 75
-        return subprocess.call(argv)
+        code = subprocess.call(argv)
+        adm.outcome["exit_code"] = code
+        return code
 
 
 def register(server) -> None:

@@ -1698,7 +1698,15 @@ def _run_one_gate(
                 "duration_s": 0.0,
                 "waiting_for_slot": adm.as_dict(),
             }
-        return _run_admitted_gate(spec, run_gate)
+        entry = _run_admitted_gate(spec, run_gate)
+        # The capacity log's `ran` row carries the verdict (load experiments
+        # need the failure rate per phase, not only durations).
+        if hasattr(adm, "outcome"):
+            adm.outcome.update(exit_code=entry.get("exit_code"),
+                               harness_suspect=bool(entry.get("harness_suspect")),
+                               timed_out=bool(entry.get("timed_out")))
+        entry["hw_phase"] = getattr(adm, "phase", None)
+        return entry
 
 
 def _run_admitted_gate(

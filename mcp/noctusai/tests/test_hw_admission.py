@@ -250,3 +250,65 @@ class TestReportWindow:
         monkeypatch.delenv("NOCTUS_HW_BUDGET_PATH", raising=False)
         out = subprocess.run([sys.executable, str(dst), "status"], capture_output=True, text=True)
         assert out.returncode == 0 and "budget_error" in out.stdout and "NOCTUS_HW_BUDGET_PATH" in out.stdout
+
+
+class TestTrialSchedule:
+    T0 = "2026-11-04T05:45:00Z"
+
+    @pytest.fixture()
+    def sched(self, env, monkeypatch):
+        monkeypatch.setenv("NOCTUS_HW_ABORTS", str(env / "aborts.json"))
+        b = json.loads((env / "budget.json").read_text())
+        b["phases"]["trial"] = {**KNOBS, "max_heavy": 2, "min_cpu_idle_pct": 25}
+        b["schedule"] = [{"phase": "trial", "from": self.T0, "until": "2026-11-04T07:45:00Z",
+                          "hosts": ["box-b"],
+                          "abort": {"reclaimable_mb_below": 500, "swapout_at_least": 50, "consecutive": 3}}]
+        (env / "budget.json").write_text(json.dumps(b))
+        return env
+
+    def at(self, iso):
+        return hw._iso(iso)
+
+    def test_inside_window_selects_trial(self, sched):
+        b = hw.load_budget(host="box-b", now=self.at("2026-11-04T06:00:00Z"))
+        assert b["phase"] == "trial" and b["max_heavy"] == 2 and b["trial"]["phase"] == "trial"
+
+    def test_outside_window_and_other_host_unaffected(self, sched):
+        assert hw.load_budget(host="box-b", now=self.at("2026-11-04T05:44:59Z"))["phase"] == "build"
+        assert hw.load_budget(host="box-b", now=self.at("2026-11-04T07:45:00Z"))["phase"] == "build"
+        assert hw.load_budget(host="other", now=self.at("2026-11-04T06:00:00Z"))["phase"] == "build"
+
+    def test_env_phase_still_wins(self, sched, monkeypatch):
+        monkeypatch.setenv("NOCTUS_HW_PHASE", "build")
+        assert hw.load_budget(host="box-b", now=self.at("2026-11-04T06:00:00Z"))["phase"] == "build"
+
+    def test_abort_after_n_breaching_samples_falls_back(self, sched):
+        b = hw.load_budget(host="box-b", now=self.at("2026-11-04T06:00:00Z"))
+        bad = {**GOOD, "reclaimable_mb": 300}
+        hw._log({"event": "sample", "phase": "trial", "metrics": bad})
+        assert hw._check_trial_abort(b, bad) is None          # 2 of 3 — not yet
+        hw._log({"event": "sample", "phase": "trial", "metrics": bad})
+        rec = hw._check_trial_abort(b, bad)                    # 3 of 3 — abort
+        assert rec and rec["phase"] == "trial"
+        assert hw.load_budget(host="box-b", now=self.at("2026-11-04T06:30:00Z"))["phase"] == "build"
+        assert any(r["event"] == "trial_aborted" for r in _rows(sched))
+
+    def test_one_good_sample_resets_the_abort_count(self, sched):
+        b = hw.load_budget(host="box-b", now=self.at("2026-11-04T06:00:00Z"))
+        bad = {**GOOD, "swapout_per_s": 80}
+        hw._log({"event": "sample", "phase": "trial", "metrics": bad})
+        hw._log({"event": "sample", "phase": "trial", "metrics": GOOD})
+        assert hw._check_trial_abort(b, bad) is None
+
+    def test_report_splits_by_phase(self, sched):
+        hw._log({"event": "sample", "phase": "build", "overloaded": False, "metrics": GOOD})
+        hw._log({"event": "sample", "phase": "trial", "overloaded": True, "metrics": GOOD})
+        hw._log({"event": "ran", "phase": "trial", "job": "j", "waited_s": 1, "duration_s": 2,
+                 "outcome": {"exit_code": 1}})
+        r = hw.report()["by_phase"]
+        assert r["build"]["samples"] == 1 and r["trial"]["overloaded"] == 1 and r["trial"]["failed_runs"] == 1
+
+    def test_ran_row_carries_exit_code(self, env):
+        with hw.heavy_slot("x", probe_fn=lambda s: GOOD) as adm:
+            adm.outcome["exit_code"] = 3
+        assert _rows(env)[-1]["outcome"] == {"exit_code": 3}

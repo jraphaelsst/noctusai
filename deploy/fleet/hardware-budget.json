@@ -35,6 +35,28 @@
       "max_claude_sessions_advisory": 6,
       "wait_s": 1800,
       "poll_s": 20
+    },
+    "trial-mh2": {
+      "max_heavy": 2,
+      "min_cpu_idle_pct": 25,
+      "cpu_sample_s": 10,
+      "min_reclaimable_mb": 1536,
+      "max_swapout_per_s": 50,
+      "max_claude_sessions_advisory": 3,
+      "wait_s": 1800,
+      "poll_s": 20,
+      "_experiment": "owner 2026-11-04 '12→24': max_heavy 1→2, min_cpu_idle 50→25 (relayed by noctusai-3d); reds here are data points, re-run at build"
+    },
+    "trial-mh3": {
+      "max_heavy": 3,
+      "min_cpu_idle_pct": 25,
+      "cpu_sample_s": 10,
+      "min_reclaimable_mb": 1536,
+      "max_swapout_per_s": 50,
+      "max_claude_sessions_advisory": 3,
+      "wait_s": 1800,
+      "poll_s": 20,
+      "_experiment": "owner 2026-11-04 stepped load experiment (relayed by noctusai-04)"
     }
   },
   "hosts": {
@@ -43,5 +65,36 @@
       "phase": "build",
       "overrides": {}
     }
-  }
+  },
+  "_schedule_doc": "Time-boxed machine-wide trials. An active entry overrides hosts[].phase (env NOCTUS_HW_PHASE still wins). abort: N consecutive samples breaching a limit write ~/.noctus/hw-trial-aborts.json and fall back to the normal phase for the rest of that window.",
+  "schedule": [
+    {
+      "phase": "trial-mh2",
+      "from": "2026-11-04T05:45:00Z",
+      "until": "2026-11-04T07:45:00Z",
+      "hosts": [
+        "raphas-macbook-pro"
+      ],
+      "abort": {
+        "reclaimable_mb_below": 500,
+        "swapout_at_least": 50,
+        "consecutive": 3
+      },
+      "why": "window B vs baseline A 03:45Z–05:45Z"
+    },
+    {
+      "phase": "trial-mh3",
+      "from": "2026-11-04T07:45:00Z",
+      "until": "2026-11-04T08:25:00Z",
+      "hosts": [
+        "raphas-macbook-pro"
+      ],
+      "abort": {
+        "reclaimable_mb_below": 500,
+        "swapout_at_least": 50,
+        "consecutive": 3
+      },
+      "why": "step C"
+    }
+  ]
 }
