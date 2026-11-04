@@ -26,6 +26,8 @@ vi.mock("@/hooks/useVistaIntegracao", async () => {
   };
 });
 
+vi.mock("@/components/settings/DivergenciasAvisos", () => ({ DivergenciasAvisos: () => <div data-testid="divergencias-stub" /> }));
+
 const CONFIGURADA = {
   configurado: true,
   base_url: "https://acme-rest.vistahost.com.br",
