@@ -1499,8 +1499,30 @@ def redirect_for(
 #: guessing a target beforehand ever was.
 _BASELINE_CACHE_REL = os.path.join(".claude", "cache", "primary-write-guard-baseline.txt")
 
+#: 🔴 PER SESSION, CONSUMED ONCE (2026-11-04). The single shared file above
+#: produced false "NEW DIRT" reports naming the owner's PRE-EXISTING untracked
+#: files. Two routes to a stale baseline: (1) the PreToolUse leg captures only
+#: when ITS cwd resolves to a guarded checkout, so a call that starts outside
+#: the repo (`cd <repo> && …` from the scratchpad) skipped the capture while
+#: the PostToolUse leg — whose cwd is the repo by then — diffed against
+#: whatever an hours-old call left behind; (2) every session overwrote the same
+#: file, so one session's Post read another session's Pre. Now each session has
+#: its own file, the Pre leg captures against the primary even when its cwd is
+#: outside it (the hook passes the primary it guards), and the Post leg deletes
+#: the baseline as it reads it — a baseline can be diffed against at most once,
+#: so an old one can never be read again. No baseline ⇒ silent (unchanged
+#: contract). The legacy shared path is used only when no session id is known.
+_BASELINE_SESSION_DIR_REL = os.path.join(".claude", "cache", "primary-write-guard-baseline")
 
-def _baseline_cache_path(ctx: GuardContext) -> str:
+
+def _safe_session_id(session_id: str | None) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "", session_id or "")[:80]
+
+
+def _baseline_cache_path(ctx: GuardContext, session_id: str | None = None) -> str:
+    sid = _safe_session_id(session_id)
+    if sid:
+        return os.path.join(ctx.primary_root, _BASELINE_SESSION_DIR_REL, f"{sid}.txt")
     return os.path.join(ctx.primary_root, _BASELINE_CACHE_REL)
 
 
@@ -1515,7 +1537,7 @@ def primary_status_snapshot(ctx: GuardContext) -> str | None:
     return out if answered else None
 
 
-def capture_pretool_baseline(ctx: GuardContext) -> None:
+def capture_pretool_baseline(ctx: GuardContext, session_id: str | None = None) -> None:
     """Write the current primary status as the baseline the NEXT PostToolUse
     measurement diffs against.
 
@@ -1525,10 +1547,13 @@ def capture_pretool_baseline(ctx: GuardContext) -> None:
     direction, not an exception the PreToolUse hook now has to handle on a
     path that must never block the write it already decided to allow.
     """
+    path = _baseline_cache_path(ctx, session_id)
     snapshot = primary_status_snapshot(ctx)
     if snapshot is None:
+        # An unanswerable probe must not leave the PREVIOUS call's baseline
+        # in place for this call's Post leg to diff against.
+        discard_pretool_baseline(ctx, session_id)
         return
-    path = _baseline_cache_path(ctx)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
@@ -1537,12 +1562,29 @@ def capture_pretool_baseline(ctx: GuardContext) -> None:
         pass
 
 
-def _read_baseline(ctx: GuardContext) -> str | None:
+def discard_pretool_baseline(ctx: GuardContext, session_id: str | None = None) -> None:
+    """Remove this session's baseline — the Pre leg calls it when it will NOT
+    capture one (unguarded context), so the Post leg finds none and stays
+    silent instead of diffing against an older call's snapshot."""
     try:
-        with open(_baseline_cache_path(ctx), "r", encoding="utf-8") as fh:
-            return fh.read()
+        os.remove(_baseline_cache_path(ctx, session_id))
+    except OSError:
+        pass
+
+
+def _read_baseline(ctx: GuardContext, session_id: str | None = None, consume: bool = False) -> str | None:
+    path = _baseline_cache_path(ctx, session_id)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
     except OSError:
         return None
+    if consume:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return text
 
 
 def _porcelain_path(line: str) -> str:
@@ -1612,7 +1654,9 @@ def format_primary_dirt_warning(paths: Sequence[str], ctx: GuardContext) -> str:
     )
 
 
-def measure_posttool_dirt(cwd: str | None = None, ctx: GuardContext | None = None) -> str | None:
+def measure_posttool_dirt(
+    cwd: str | None = None, ctx: GuardContext | None = None, session_id: str | None = None,
+) -> str | None:
     """The PostToolUse entry point: None to say nothing, else warning text.
 
     NEVER refuses anything — there is nothing left to refuse, the Bash call
@@ -1633,7 +1677,7 @@ def measure_posttool_dirt(cwd: str | None = None, ctx: GuardContext | None = Non
     after = primary_status_snapshot(ctx)
     if after is None:
         return None
-    new_dirt = diff_new_primary_dirt(_read_baseline(ctx), after)
+    new_dirt = diff_new_primary_dirt(_read_baseline(ctx, session_id, consume=True), after)
     if not new_dirt:
         return None
     return format_primary_dirt_warning(new_dirt, ctx)

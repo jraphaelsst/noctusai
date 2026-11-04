@@ -1332,6 +1332,54 @@ def test_an_unparseable_write_is_allowed_and_the_post_measure_reports_it(tmp_pat
     assert "dev" in warning
 
 
+def test_a_stale_baseline_is_never_diffed_twice_or_across_sessions(tmp_path, monkeypatch):
+    """2026-11-04: the owner's PRE-EXISTING untracked files were reported as
+    NEW dirt. The single shared baseline was hours old — a call that started
+    outside the repo skipped the Pre capture, and other sessions overwrote it.
+    Now a baseline is per session and consumed by the Post leg that reads it."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    ctx = GuardContext(primary_root=str(tmp_path), branch="dev", worktrees=())
+    state = {"status": ""}
+    monkeypatch.setattr(guard, "primary_status_snapshot", lambda c: state["status"])
+
+    # Session A captures a clean baseline; dirt then appears that A's call did NOT make…
+    capture_pretool_baseline(ctx, "sess-A")
+    state["status"] = "?? owner_notes.xlsx\n"
+    # …and A's paired Post reports it once (it really is new since A's Pre).
+    assert "owner_notes.xlsx" in (measure_posttool_dirt(str(tmp_path), ctx=ctx, session_id="sess-A") or "")
+    # A LATER Post with no fresh Pre (the outside-repo shape) finds no baseline: silent.
+    assert measure_posttool_dirt(str(tmp_path), ctx=ctx, session_id="sess-A") is None
+
+    # Session B never captured: it must not read A's (or anyone's) snapshot.
+    assert measure_posttool_dirt(str(tmp_path), ctx=ctx, session_id="sess-B") is None
+
+
+def test_discard_leaves_the_post_leg_silent(tmp_path, monkeypatch):
+    import tools.noctus.dev.primary_write_guard as guard
+
+    ctx = GuardContext(primary_root=str(tmp_path), branch="dev", worktrees=())
+    state = {"status": ""}
+    monkeypatch.setattr(guard, "primary_status_snapshot", lambda c: state["status"])
+    capture_pretool_baseline(ctx, "sess-A")
+    guard.discard_pretool_baseline(ctx, "sess-A")
+    state["status"] = "?? preexisting.txt\n"
+    assert measure_posttool_dirt(str(tmp_path), ctx=ctx, session_id="sess-A") is None
+
+
+def test_an_unanswerable_pre_probe_drops_the_previous_baseline(tmp_path, monkeypatch):
+    import tools.noctus.dev.primary_write_guard as guard
+
+    ctx = GuardContext(primary_root=str(tmp_path), branch="dev", worktrees=())
+    state = {"status": ""}
+    monkeypatch.setattr(guard, "primary_status_snapshot", lambda c: state["status"])
+    capture_pretool_baseline(ctx, "sess-A")          # old, clean
+    state["status"] = None
+    capture_pretool_baseline(ctx, "sess-A")          # probe fails: old one must go
+    state["status"] = "?? preexisting.txt\n"
+    assert measure_posttool_dirt(str(tmp_path), ctx=ctx, session_id="sess-A") is None
+
+
 def test_ledger_ndjson_dirt_is_not_reported():
     """Ledger appends are legitimate primary-checkout writes by design (the
     same `LEDGER_PREFIXES` `decide()`'s own git leg exempts) — the
