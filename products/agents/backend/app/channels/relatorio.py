@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID
 
 from app.channels import extracao
+from app.channels.texto_seguro import ROTULO_RESUMO_IA, para_equipe
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,11 @@ __all__ = [
     "montar_relatorio",
     "reacao_de",
 ]
+
+#: Per-field caps of the free text that reaches the owner's phone.
+NOME_MAX = 80
+CAMPO_MAX = 200
+DISPONIBILIDADE_MAX = 240
 
 RELATORIO_TEXTO_MAX = 1500
 RESUMO_TIMEOUT_SECONDS = 25.0
@@ -156,7 +162,7 @@ def _texto(
         if origem:
             linhas.append(f"Origem: {origem}")
         if resumo_cortado:
-            linhas += ["", f"Resumo: {resumo_cortado}"]
+            linhas += ["", ROTULO_RESUMO_IA, resumo_cortado]
         if perfil:
             linhas += ["", "Perfil: " + "; ".join(f"{k}: {v}" for k, v in perfil.items())]
         if oferecidos:
@@ -211,29 +217,37 @@ async def montar_relatorio(t: Any, *, motivo: str, perfil: Mapping[str, Any], fa
     for a in t.actions:  # this turn's intent not yet read back from the records
         if a.get("type") == "intencao_visita" and a.get("preferencia_horario"):
             horarios[a["codigo"]] = a["preferencia_horario"]
+    # the ONLY links that may leave: the listing links a SW tool returned (this turn's, or stored on the offer event)
+    permitidos = list(links.values())
+
+    def limpo(valor: object, maximo: int) -> str:
+        return para_equipe(valor if isinstance(valor, str) else "", manter_links=permitidos, maximo=maximo)
+
     lista = [{"codigo": c, "link": links.get(c), "reacao": reacoes.get(c, "sem_reacao")} for c in oferecidos]
     gostados = [c for c in oferecidos if reacoes.get(c) == "gostou"]
     resto = [c for c in oferecidos if reacoes.get(c) == "sem_reacao"]
     recomendados = (gostados + resto)[:RECOMENDADOS_MAX]
-    disponibilidade = "; ".join(dict.fromkeys(horarios.values())) or None
+    disponibilidade = limpo("; ".join(dict.fromkeys(horarios.values())), DISPONIBILIDADE_MAX) or None
 
     lead = await asyncio.to_thread(t.threads.get_lead_ref, t.org_id, t.lead_ref_id)
     contato = (getattr(lead, "contato", None) or {})
     nome, telefone = contato.get("nome"), contato.get("telefone_e164")
+    # the lead's own phone is the report's header (SW's data, not the lead's text); every free-text field is shaped
     flags = {"cpf": False, "rg": False, "email": False, "documento_enviado": False}
     if t.ident is not None:
         flags.update(await asyncio.to_thread(t.ident.flags, t.org_id, t.lead_ref_id))
         registrado = await asyncio.to_thread(t.ident.nome_registrado, t.org_id, t.lead_ref_id)
         nome = registrado or nome  # the name the lead gave overrides the form's (it may be a business name)
+    nome = limpo(nome, NOME_MAX) or None
     origem_sw = getattr(t.estado_sw, "origem", None)
     codigo_camp = getattr(origem_sw, "codigo_imovel_campanha", None)
     partes_origem = [p for p in (getattr(origem_sw, "canal_origem", None), f"imóvel {codigo_camp}" if codigo_camp else None) if p]
-    origem = " — ".join(partes_origem) or None
+    origem = limpo(" — ".join(partes_origem), CAMPO_MAX) or None
 
     resumo: str | None = None
     if t.resumo_conversa is not None:
         try:
-            resumo = await t.resumo_conversa()
+            resumo = limpo(await t.resumo_conversa(), extracao.RESUMO_MAX_CHARS) or None
         except Exception as exc:  # noqa: BLE001 -- never blocks the hand-off: booked + deterministic text below
             logger.warning("agents.channel.relatorio_degradado thread_id=%s cause=%s", t.thread_id, type(exc).__name__)
             if t.auditar is not None:
@@ -241,7 +255,8 @@ async def montar_relatorio(t: Any, *, motivo: str, perfil: Mapping[str, Any], fa
                     t.auditar(AUDITORIA_DEGRADADO)
                 except Exception:  # noqa: BLE001 -- the second failure is logged too, still never raised
                     logger.exception("agents.channel.relatorio_degradado_nao_auditado thread_id=%s", t.thread_id)
-    perfil_leg = perfil_legivel(t.padrao, perfil.get("valores") or {})
+    perfil_leg = {limpo(k, CAMPO_MAX): limpo(v, CAMPO_MAX) for k, v in perfil_legivel(t.padrao, perfil.get("valores") or {}).items()}
+    motivo = limpo(motivo, CAMPO_MAX)
     proximos = _proximos_passos(
         intencoes=list(perfil.get("intencoes_visita") or []), disponibilidade=disponibilidade, faltando=list(faltando_ident))
     texto = _texto(

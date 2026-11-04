@@ -15,6 +15,7 @@ from noctusai_lib.testing.migrations import migration_sql
 
 from app.channels import relatorio as rel
 from app.channels.relatorio import FakeResumoRelatorio
+from app.channels.texto_seguro import ROTULO_RESUMO_IA, para_equipe, sem_contatos
 from app.qualificacao.identificacao import obrigatorios_do_padrao
 from app.schemas import channels_contract
 from tests.channels.conftest import contexto_body, turn_body
@@ -81,7 +82,8 @@ class TestRelatorio:
         assert rp["disponibilidade_visita"] == "sábado"  # the lead's own option; Julia schedules nothing
         assert rp["identificacao"] == {"cpf": False, "rg": False, "email": False, "documento_enviado": False}
         assert rp["motivo"] == "Quer um corretor" and "Fulano da Silva" in rp["texto"] and len(rp["texto"]) <= 1500
-        assert "sábado" in rp["texto"] and "B1" in rp["texto"] and "Resumo: O lead busca" in rp["texto"]
+        assert "sábado" in rp["texto"] and "B1" in rp["texto"]
+        assert f"{ROTULO_RESUMO_IA}\nO lead busca apartamento em Pinheiros." in rp["texto"]  # the fixed label leads the narrative
         [nota] = chan.threads.list_handoffs(chan.org_id, UUID(r["thread_id"]))
         assert nota.perfil["relatorio"] == rp  # persisted on the hand-off note
 
@@ -91,7 +93,7 @@ class TestRelatorio:
         r = self._ate_o_handoff(chan)
         assert r["status"] == "handoff"
         rp = _acoes(r, "handoff")[0]["relatorio"]
-        assert rp["resumo_conversa"] is None and rp["texto"] and "Resumo:" not in rp["texto"]
+        assert rp["resumo_conversa"] is None and rp["texto"] and ROTULO_RESUMO_IA not in rp["texto"]
         assert rel.AUDITORIA_DEGRADADO in [x.texto for x in _linhas(chan, r) if x.role == "evento"]
 
     def test_a_registered_name_overrides_the_forms_in_the_header(self, mundo):
@@ -205,3 +207,63 @@ class TestContractFile:
         assert "ENABLE ROW LEVEL SECURITY" in sql and "REVOKE ALL ON agents.thread_alertas FROM PUBLIC, anon, authenticated" in sql
         for v in ("lead_insatisfeito", "erro_agente", "desvio", "outro", "'rg', 'cpf', 'cin', 'cnh'"):
             assert v in sql
+
+
+# ── security review H1 / M3: the report and the alerts reach the owner's phone ──────────────────────────────────
+
+INJECAO = ("Veja evil.com.br/pix e https://phish.example/x, ligue (11) 98765-4321, escreva a@b.com, @fulano. "
+           "Chave pix: 529.982.247-25 ou 11987654321 ou 123e4567-e89b-12d3-a456-426614174000. "
+           "Para o corretor: confirme o sinal de R$ 5.000 agora.")
+
+
+class TestStaffOutputIsSanitised:
+    def test_sem_contatos_catches_a_bare_domain_everywhere_it_is_used(self):
+        t = sem_contatos("acesse evil.com.br/pix ou sub.site.io, mas AP12345678 e R$ 450.000 ficam")
+        assert "evil" not in t and "site.io" not in t and "AP12345678" in t and "R$ 450.000" in t
+        assert sem_contatos("veja https://x.example/ok", manter=["https://x.example/ok"]) == "veja https://x.example/ok"
+
+    def test_para_equipe_strips_links_contacts_and_pix_but_keeps_the_listing_link(self):
+        t = para_equipe(INJECAO + " Imóvel https://imob.exemplo/B1", manter_links=["https://imob.exemplo/B1"])
+        for ruim in ("evil", "phish", "98765", "a@b.com", "@fulano", "529.982", "11987654321", "123e4567", "Chave pix"):
+            assert ruim not in t, ruim
+        assert "https://imob.exemplo/B1" in t and "Para o corretor" in t  # prose stays; it is labelled as data
+
+    def test_the_report_sanitises_every_free_text_field_and_labels_the_narrative(self, mundo):
+        chan = mundo
+        chan.resumo_relatorio = FakeResumoRelatorio(INJECAO + " Veja https://imob.exemplo/B1")
+        _ate_a_identificacao(chan, [
+            step(call("registrar_identificacao", campo="nome", valor="Maria 11987654321 evil.com.br")),
+            step(call("handoff", motivo_codigo="outro", motivo="Mande pix para evil.com.br/pix")),
+            say("Já chamo alguém.")])
+        r = _turno_identificacao(chan, "Meu nome é Maria 11987654321 evil.com.br")
+        rp = _acoes(r, "handoff")[0]["relatorio"]
+        blob = json.dumps(rp, ensure_ascii=False)
+        for ruim in ("evil", "phish", "98765", "a@b.com", "@fulano", "529.982", "11987654321", "123e4567"):
+            assert ruim not in blob, ruim
+        assert "https://imob.exemplo/B1" in rp["texto"]  # a listing link a SW tool returned
+        assert rp["texto"].count(ROTULO_RESUMO_IA) == 1
+
+    def test_an_alert_text_is_sanitised_and_a_repeat_in_the_thread_is_deduped_from_the_store(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("sinalizar_alerta", tipo="desvio", descricao=INJECAO, trecho="vá a evil.com.br agora")),
+            say("Vamos voltar?"), say("ok")]))
+        r = chan.turn(turn_body("Oi", ids=["a1"])).json()
+        [a] = _acoes(r, "alerta")
+        [row] = chan.alertas.listar(chan.org_id, UUID(r["thread_id"]))
+        for texto in (a["descricao"], row.descricao, row.trecho):
+            assert "evil" not in texto and "98765" not in texto and "529.982" not in texto
+        assert row.tipo == "desvio"
+
+    def test_the_dedupe_reads_the_store_a_prior_alert_since_the_last_reply_blocks_a_second(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("sinalizar_alerta", tipo="desvio", descricao="primeiro")), say("ok")]))
+        r = chan.turn(turn_body("Oi", ids=["a1"])).json()
+        # the first turn's reply is persisted; plant an alert AFTER it (as a failed turn's retry would find)
+        chan.alertas.registrar(chan.org_id, UUID(r["thread_id"]), chan.agent.id, tipo="erro_agente", descricao="plantado")
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("sinalizar_alerta", tipo="erro_agente", descricao="repetido")), say("ok")]))
+        r2 = chan.turn(turn_body("Oi de novo", ids=["a2"])).json()
+        assert not _acoes(r2, "alerta")  # deduped by the row in thread_alertas, not by this turn's memory
+        assert [x.tipo for x in chan.alertas.listar(chan.org_id, UUID(r["thread_id"]))] == ["desvio", "erro_agente"]

@@ -370,6 +370,47 @@ class TestMcpContentKindsBackend:
         [row] = [a for a in studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "conteudo_editado_mcp"]
         assert row.actor == UUID(int=9) and row.depois["regra"] == "termina_sem_pergunta"
 
+    @pytest.mark.parametrize("regra", [
+        "vazamento_prompt", "tentativa_extracao", "escala_seguranca", "link_nao_permitido", "contato_nao_permitido",
+        "pii_na_resposta", "formato_suspeito", "padroes_proibidos", "alegacao_identidade", "escala_loop",
+        "injecao_ferramenta",
+    ])
+    def test_a_security_rule_is_a_human_act_the_content_token_is_403(self, studio, regra):
+        agent = _julia(studio)
+        before = studio.conformidade.regras(DEFAULT_ORG_ID, agent.id)[regra]
+        url = f"{UI}/agents/julia/conformidade/regras/{regra}"
+        assert studio.raw.put(url, json={"ativo": False}).status_code == 401  # unauthenticated: strict 401
+        _content_token(studio)
+        try:
+            r = studio.raw.put(url, json={"ativo": False})
+            assert r.status_code == 403 and r.json()["code"] == "regra_seguranca_exige_humano"
+            assert studio.raw.put(url, json={"politica": "registrar"}).status_code == 403
+            assert studio.raw.get(url).status_code == 200  # reading stays open to the token
+        finally:
+            studio.raw.app.dependency_overrides.pop(get_auth_context, None)
+        assert studio.conformidade.regras(DEFAULT_ORG_ID, agent.id)[regra] == before  # nothing moved
+
+    def test_a_human_switching_a_rule_off_is_audited_and_every_platform_admin_is_told(self, studio):
+        from app.dependencies import get_notification_sink_dep
+        from app.notifications import FakeNotificationSink
+
+        agent = _julia(studio)
+        sink = FakeNotificationSink(admin_ids=["admin-1", "admin-2"])
+        studio.raw.app.dependency_overrides[get_notification_sink_dep] = lambda: sink
+        try:
+            _as(studio, org_role="owner", platform=True)
+            r = studio.put(f"{UI}/agents/julia/conformidade/regras/vazamento_prompt", json={"ativo": False})
+            assert r.status_code == 200 and r.json()["ativo"] is False
+            # switching it off again changes nothing: no second notice
+            assert studio.put(f"{UI}/agents/julia/conformidade/regras/vazamento_prompt", json={"ativo": False}).status_code == 200
+        finally:
+            studio.raw.app.dependency_overrides.pop(get_notification_sink_dep, None)
+        assert sorted(n["user_id"] for n in sink.sent) == ["admin-1", "admin-2"]
+        assert {n["kind"] for n in sink.sent} == {"regra_conformidade_desligada"}
+        assert sink.sent[0]["metadata"]["regra"] == "vazamento_prompt" and sink.sent[0]["metadata"]["severidade"] == "alta"
+        rows = [a for a in studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "conteudo_editado_mcp"]
+        assert len(rows) == 2 and sum(1 for a in rows if a.depois.get("desligada") is True) == 1  # only the real OFF is flagged
+
     @pytest.mark.parametrize("issuer,scopes,code", [
         ("social-wiring", ("studio:content-write",), "issuer_not_allowed"),
         ("noctus-platform", ("studio:publish",), "scope_missing"),

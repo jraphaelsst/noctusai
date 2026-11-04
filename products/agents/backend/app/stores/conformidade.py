@@ -33,6 +33,7 @@ __all__ = [
     "POLITICAS",
     "POLITICA_PADRAO",
     "REGRAS",
+    "REGRAS_SEGURANCA",
     "ConformidadeStore",
     "FakeConformidadeStore",
     "Impressao",
@@ -61,6 +62,12 @@ REGRAS = (
 DETECTORES_BLOQUEANTES = (
     "vazamento_prompt", "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito",
     "padroes_proibidos",
+)
+#: SECURITY-class rules: switching one off (or loosening it) opens an attack path, so only a HUMAN platform admin may
+#: change them -- never the ``studio:content-write`` token (the MCP path) that an agent or a leaked secret can hold.
+REGRAS_SEGURANCA = (
+    *DETECTORES_BLOQUEANTES, "tentativa_extracao", "alegacao_identidade", "escala_seguranca", "escala_loop",
+    "injecao_ferramenta",
 )
 #: The input-side signals that count toward ``escala_seguranca`` (per thread, 24 h).
 SINAIS_SEGURANCA = ("tentativa_extracao", "alegacao_identidade")

@@ -615,7 +615,7 @@ class TestContentTokenUi:
         plat.as_org_admin_only()
         for resp in (
             plat.get(f"{PLAT}/content-tokens"),
-            plat.post(f"{PLAT}/content-token", json={"label": "x", "expira_em_dias": None}),
+            plat.post(f"{PLAT}/content-token", json={"label": "x", "expira_em_dias": 7}),
             plat.delete(f"{PLAT}/content-token/{UUID(int=1)}"),
         ):
             assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
@@ -630,13 +630,12 @@ class TestContentTokenUi:
         assert abs(datetime.fromisoformat(default["expires_at"]) - (now + timedelta(days=30))) < timedelta(minutes=5)
         assert abs(datetime.fromisoformat(week["expires_at"]) - (now + timedelta(days=7))) < timedelta(minutes=5)
 
-    def test_never_expires_is_a_null_expiry_not_a_far_date(self, wired):
+    def test_a_token_that_never_expires_is_not_mintable(self, wired):
         plat, admin, audit = wired
         out = plat.post(f"{PLAT}/content-token", json={"label": "perm", "expira_em_dias": None})
-        assert out.status_code == 201 and out.json()["expires_at"] is None
-        assert admin.rows["agents"][0]["expires_at"] is None and len(audit.rows) == 1
+        assert out.status_code == 422 and not admin.rows and not audit.rows
 
-    @pytest.mark.parametrize("dias", [0, -1, 366, 10_000, "x"])
+    @pytest.mark.parametrize("dias", [0, -1, 31, 366, 10_000, "x"])
     def test_out_of_range_days_are_422(self, wired, dias):
         plat, admin, _ = wired
         resp = plat.post(f"{PLAT}/content-token", json={"label": "a", "expira_em_dias": dias})
@@ -646,7 +645,7 @@ class TestContentTokenUi:
         from datetime import datetime, timedelta, timezone
 
         plat, admin, _ = wired
-        minted = plat.post(f"{PLAT}/content-token", json={"label": "mcp", "expira_em_dias": None}).json()
+        minted = plat.post(f"{PLAT}/content-token", json={"label": "mcp"}).json()
         # a same-org token of another scope/issuer must not appear
         admin.mint("agents", org_id=DEFAULT_ORG_ID, label="canal", scopes=["agents:ask"],
                    expires_at=datetime.now(timezone.utc) + timedelta(days=1), issuer="noctus-platform")
@@ -657,7 +656,7 @@ class TestContentTokenUi:
         assert len(itens) == 1
         item = itens[0]
         assert item["id"] == minted["id"] and item["prefix"] == minted["prefix"]
-        assert item["status"] == "ativo" and item["expires_at"] is None and item["created_by"] == str(DEFAULT_USER_ID)
+        assert item["status"] == "ativo" and item["expires_at"] is not None and item["created_by"] == str(DEFAULT_USER_ID)
 
     def test_revoke_is_idempotent_audited_and_the_token_is_then_refused(self, wired):
         from noctusai_lib.api.auth.session import SupabaseApiTokenResolver

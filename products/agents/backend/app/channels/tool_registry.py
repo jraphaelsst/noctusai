@@ -27,6 +27,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal, Protocol, Union
 from uuid import UUID
 
@@ -518,8 +519,12 @@ class JuliaTurno:
     resumo_conversa: Callable[[], Awaitable[str]] | None = None
     #: ``code -> None``: books a thread event (``area:codigo``), e.g. ``relatorio:degradado``.
     auditar: Callable[[str], None] | None = None
-    #: The alert types already raised this turn (one per tipo per turn).
+    #: The alert types already raised this turn (one per tipo per turn) -- the fast path of the store check.
     alertas_tipos: set[str] = field(default_factory=set)
+    #: A "turn" for the alert dedupe starts after the thread's last assistant message (``None`` = the thread has
+    #: none yet): an alert of the same tipo recorded in ``thread_alertas`` since then is a repeat, also when this
+    #: turn is a re-run of a failed one (a fresh ``JuliaTurno`` has an empty in-memory set).
+    alertas_desde: datetime | None = None
     #: property code -> the link SW's tool results carried this turn (the report prints it when known).
     links_por_codigo: dict[str, str] = field(default_factory=dict)
     #: The report built for this turn's hand-off / conclusion.
@@ -842,12 +847,17 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         assert t.alertas is not None
         if a.tipo in t.alertas_tipos:
             return _ok(inalterado=True, mensagem=t.texto("ferramenta.resultado.registrado"))
-        descricao = _limpo(a.descricao, ALERTA_DESCRICAO_MAX)
+        previos = await asyncio.to_thread(t.alertas.listar, t.org_id, t.thread_id)
+        if any(p.tipo == a.tipo and (t.alertas_desde is None or p.created_at >= t.alertas_desde) for p in previos):
+            t.alertas_tipos.add(a.tipo)
+            return _ok(inalterado=True, mensagem=t.texto("ferramenta.resultado.registrado"))
+        # staff-facing (WhatsApp to the owner): a second-order injection channel -- no link / PIX / contact survives
+        descricao = texto_seguro.para_equipe(a.descricao, maximo=ALERTA_DESCRICAO_MAX) or None
         if descricao is None:
             return _recusa(t, "valor_invalido")
         rec = await asyncio.to_thread(
             t.alertas.registrar, t.org_id, t.thread_id, t.agent_id, tipo=a.tipo, descricao=descricao,
-            trecho=_limpo(a.trecho, ALERTA_TRECHO_MAX))
+            trecho=texto_seguro.para_equipe(a.trecho or "", maximo=ALERTA_TRECHO_MAX) or None)
         t.alertas_tipos.add(a.tipo)
         t.acao(type="alerta", tipo=a.tipo, descricao=descricao, alerta_id=str(rec.id))
         return _ok(mensagem=t.texto("ferramenta.resultado.registrado"))

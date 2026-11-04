@@ -29,6 +29,7 @@ from app.dependencies import (
     get_conformidade_store_dep,
     get_conversation_store_dep,
     get_core_client,
+    get_notification_sink_dep,
     get_thread_store_dep,
     require_admin,
     require_member,
@@ -42,7 +43,7 @@ from app.routers.studio_agents_router import (
     http_error,
     resolve_agent,
 )
-from app.stores.conformidade import POLITICAS, REGRAS
+from app.stores.conformidade import POLITICAS, REGRAS, REGRAS_SEGURANCA
 from app.stores.errors import NotFound
 from app.stores.threads import mapa_agentes
 from app.studio.ferramentas_registry import FERRAMENTAS_CONHECIDAS
@@ -213,8 +214,14 @@ def definir_regra(
     key: str, regra: str, payload: RegraIn, org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep), conformidade=Depends(get_conformidade_store_dep),
+    notificacoes=Depends(get_notification_sink_dep),
 ) -> RegraOut:
     _regra_valida(regra)
+    if regra in REGRAS_SEGURANCA and ctx.caller_kind == "product":
+        # the content token (MCP path) is a bearer secret an agent or a leak can hold: it never loosens a security rule
+        raise http_error(
+            403, "regra_seguranca_exige_humano",
+            "Regras de segurança só podem ser alteradas por uma pessoa administradora da plataforma, no Studio.")
     if payload.politica is not None and payload.politica not in POLITICAS:
         raise http_error(422, "invalid_field", "Campo inválido: politica")
     if payload.parametros is not None:
@@ -232,9 +239,30 @@ def definir_regra(
     store.append_audit(
         agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
         {"o_que": "conformidade_regra", "regra": regra, "ativo": antes.ativo, "politica": antes.politica},
-        {"o_que": "conformidade_regra", "regra": regra, "ativo": novo.ativo, "politica": novo.politica},
+        {"o_que": "conformidade_regra", "regra": regra, "ativo": novo.ativo, "politica": novo.politica,
+         **({"desligada": True} if antes.ativo and not novo.ativo else {})},
     )
+    if antes.ativo and not novo.ativo:
+        _avisar_regra_desligada(notificacoes, ctx, alvo_org, agent, regra)
     return _regra_out(novo)
+
+
+def _avisar_regra_desligada(sink, ctx: AuthContext, alvo_org: UUID, agent, regra: str) -> None:
+    """A rule switched OFF is told to every platform admin (in-app). The audit row above is the durable record; a
+    failed notice is logged loudly, never a reason to undo the switch."""
+    if sink is None:
+        logger.error("agents.conformidade.regra_desligada_sem_sink regra=%s", regra)
+        return
+    try:
+        for admin in sink.platform_admin_ids():
+            sink.send(
+                admin, kind="regra_conformidade_desligada", title=f"Regra de conformidade desligada: {regra}",
+                message=f"A regra {regra} do agente {agent.key} foi desligada.",
+                metadata={"severidade": "alta" if regra in REGRAS_SEGURANCA else "media", "agent_key": agent.key,
+                          "regra": regra, "org_id": str(alvo_org), "por": str(actor_id(ctx))},
+                org_id=alvo_org)
+    except Exception:  # noqa: BLE001 -- the audit row is the durable record; the lost notice is seen here
+        logger.exception("agents.conformidade.regra_desligada_aviso_falhou regra=%s", regra)
 
 
 @router.get("/agents/{key}/conformidade/violacoes", response_model=ViolacoesOut)

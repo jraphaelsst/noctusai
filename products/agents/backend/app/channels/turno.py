@@ -414,6 +414,7 @@ async def executar(
     skills: SkillFonte | None = SkillsComSpecs(fonte, r.valores)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
+    historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
@@ -425,6 +426,9 @@ async def executar(
             svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
         modo_restrito=nivel != "normal",
         alertas=svc.alertas,
+        alertas_desde=max(
+            (r.created_at for r in historico_previo if r.role == "assistant" and r.created_at is not None),
+            default=None),
         midia_da_mensagem=lambda pmid: _midia_da_mensagem(svc.messages, org_id, thread.id, pmid),
         auditar=lambda codigo: svc.messages.add(
             org_id, thread.id, "evento", codigo, agent_id=agent.id, lead_ref_id=lead_ref_id),

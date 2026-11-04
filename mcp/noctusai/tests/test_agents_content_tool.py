@@ -419,25 +419,17 @@ class TestEvalAndConformanceKinds:
         out = run(srv, private, {"itens": [{"slug": "x", "titulo": "t"}]}, action="set", kind="evals_mecanismo", agent="julia")
         assert out["status"] == "error" and out["codigo"] == "caso_incompleto" and srv.writes() == []
 
-    def test_conformance_rules_dry_run_then_write_and_say_it_is_live(self, srv, private):
-        payload = {"itens": [{"regra": "termina_sem_pergunta", "ativo": False}]}
-        plan = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia")
-        assert plan["status"] == "planned" and plan["mudancas"][0]["op"] == "update" and srv.writes() == []
-        out = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia", confirm=True)
-        assert out["status"] == "written" and "próximo turno" in out["mensagem"]
-        assert srv.writes() == [("PUT", "/api/studio/agents/julia/conformidade/regras/termina_sem_pergunta")]
-        assert srv.regras["termina_sem_pergunta"]["ativo"] is False
-        got = run(srv, private, action="get", kind="conformidade_regras", agent="julia", chave="termina_sem_pergunta")
-        assert got["itens"] == {"termina_sem_pergunta": {"ativo": False, "politica": "registrar", "parametros": {}}}
+    @pytest.mark.parametrize("confirm", [False, True])
+    def test_conformance_rules_are_read_only_here_a_human_changes_them_in_the_studio(self, srv, private, confirm):
+        payload = {"itens": [{"regra": "vazamento_prompt", "ativo": False}]}
+        out = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia", confirm=confirm)
+        assert out["status"] == "error" and out["codigo"] == "regra_seguranca_exige_humano"
+        assert "Studio" in out["mensagem"] and srv.writes() == [] and srv.log == []  # no request at all
 
-    @pytest.mark.parametrize("payload,merge,codigo", [
-        ({"itens": [{"regra": "inventada", "ativo": True}]}, True, "regra_desconhecida"),
-        ({"itens": [{"regra": "vazamento_prompt", "texto": "x"}]}, True, "payload_invalido"),
-        ({"itens": [{"regra": "vazamento_prompt", "ativo": True}]}, False, "merge_invalido"),
-    ])
-    def test_conformance_rules_refuse_unknowns(self, srv, private, payload, merge, codigo):
-        out = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia", merge=merge)
-        assert out["status"] == "error" and out["codigo"] == codigo and srv.writes() == []
+    def test_conformance_rules_can_still_be_read(self, srv, private):
+        got = run(srv, private, action="get", kind="conformidade_regras", agent="julia", chave="termina_sem_pergunta")
+        assert got["itens"] == {"termina_sem_pergunta": {"ativo": True, "politica": "registrar", "parametros": {}}}
+        assert run(srv, private, action="list", kind="conformidade_regras", agent="julia")["status"] != "error"
 
     def test_both_kinds_need_an_agent_and_carry_the_token_only_as_a_header(self, srv, private):
         out = run(srv, private, action="list", kind="conformidade_regras")
