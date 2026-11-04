@@ -20,8 +20,13 @@ def _run(first, second, calls):
     return run_gate
 
 
-def _entry(run_gate):
-    return GS._run_one_gate(GS.GateSpec("vitest:p", ["npm", "test"], Path(".")), run_gate, None)
+def _quiet():
+    return (0.5, 8)
+
+
+def _entry(run_gate, load_reader=_quiet):
+    return GS._run_one_gate(GS.GateSpec("vitest:p", ["npm", "test"], Path(".")), run_gate, None,
+                            load_reader=load_reader)
 
 
 def test_timeout_shaped_failure_rerun_serially_on_failing_files_passes_is_not_red():

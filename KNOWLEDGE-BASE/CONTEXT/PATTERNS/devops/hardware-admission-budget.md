@@ -127,6 +127,21 @@ then change detection, then alerts.
   port is busy, the gate reports `HARNESS INVALID` (`webserver_port_free`, naming the pid),
   does not run, and is not counted. It also runs e2e with `CI=1`: reuse is off, and the config's
   CI settings apply (retries 2, github reporter), the same as CI.
+- **A red under load re-runs its failing tests once, alone, before it counts.** At
+  `max_heavy` 1, integrates 4 and 5 (2026-11-04) each failed on a DIFFERENT timing-sensitive
+  test that passed in isolation: one vitest assertion at 2333 ms, and one pytest failure that
+  nobody could name. `gate_sweep` now handles this in two ways:
+  - Pytest gates carry `failing_tests`, the node ids parsed from the `FAILED`/`ERROR` lines.
+  - When load/core is at least `LOAD_PER_CORE_SUSPECT` (1.5), a vitest or pytest red with at
+    most `RERUN_MAX_FAILING` (10) named failures re-runs ONLY those tests once, in the same slot.
+    - Green on the rerun: the gate is not red, and it is marked `false_red` plus
+      `flaky_under_load`. The `false_red` flag also lands on the capacity log's `ran` row
+      (`outcome.false_red`) for usage_eval.
+    - Red again: it is a real red, carrying the rerun's names.
+    - No verdict (usage error, nothing collected): the first red stands.
+
+  On a quiet host a red stays red with no rerun, because a failure there is signal. The vitest
+  timeout-shaped rerun (all failures are timeouts) is separate and fires on any host.
 - **Pin the tree for evidence runs.** Run predeploy against a tree nothing will
   fast-forward under it: `--predeploy-check <slug> --worktree-path <detached worktree>`.
   The result carries `tree.head_start` / `head_end` / `behind_origin_dev`. A HEAD that moves

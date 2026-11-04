@@ -114,6 +114,7 @@ from .build import _last_meaningful_line
 from .harness_signatures import HARNESS_SIGNATURES as _HARNESS_SIGNATURES
 from .harness_signatures import harness_suspect as _harness_suspect
 from .harness_signatures import read_load_per_core as _read_load_per_core
+from .harness_signatures import LOAD_PER_CORE_SUSPECT as _LOAD_PER_CORE_SUSPECT
 from . import gate_budget as _gate_budget
 from . import hw_admission as _hw
 from .migration_replay import products_for_paths
@@ -458,6 +459,26 @@ def vitest_failing_tests(output: str, limit: int = 40) -> list[str]:
     """Distinct failing test ids (`FAIL  file > suite > case`) from vitest output."""
     seen: list[str] = []
     for m in _VITEST_FAIL_RE.finditer(output or ""):
+        name = redact_secrets_in_text(m.group(1))
+        if name not in seen:
+            seen.append(name)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+# pytest's short test summary (`-q` reports `fE` by default):
+#   FAILED tests/test_x.py::TestY::test_z - AssertionError: ...
+#   ERROR tests/test_x.py::test_w - fixture 'db' not found
+# 2026-11-04: a core gate read "1 failed, 1797 passed" with no name - a red
+# nobody can name is half a verdict (noctusai-04, integrate 5).
+_PYTEST_FAIL_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+?)(?:\s+-\s.*)?\s*$", re.M)
+
+
+def pytest_failing_tests(output: str, limit: int = 40) -> list[str]:
+    """Distinct failing pytest node ids from the short test summary."""
+    seen: list[str] = []
+    for m in _PYTEST_FAIL_RE.finditer(output or ""):
         name = redact_secrets_in_text(m.group(1))
         if name not in seen:
             seen.append(name)
@@ -1733,6 +1754,7 @@ def _run_one_gate(
     env_residue: list[str] | None,
     admit: Callable[[str], Any] | None = None,
     port_holder: Callable[[int], str | None] = _port_holder,
+    load_reader: Callable[[], "tuple[float, int] | None"] = _read_load_per_core,
 ) -> dict[str, Any]:
     if env_residue:
         # The developer's `.env` is still in the gate env (2026-10-09:
@@ -1780,7 +1802,7 @@ def _run_one_gate(
     if busy:
         return busy
     if admit is None:
-        return _run_admitted_gate(spec, run_gate)
+        return _run_admitted_gate(spec, run_gate, load_reader)
     with admit(f"gate:{spec.gate}") as adm:
         if not adm.admitted:
             return {
@@ -1798,20 +1820,96 @@ def _run_one_gate(
         busy = _port_precondition_entry(spec, port_holder)   # taken during the wait?
         if busy:
             return busy
-        entry = _run_admitted_gate(spec, run_gate)
+        entry = _run_admitted_gate(spec, run_gate, load_reader)
         # The capacity log's `ran` row carries the verdict (load experiments
         # need the failure rate per phase, not only durations).
         if hasattr(adm, "outcome"):
             adm.outcome.update(exit_code=entry.get("exit_code"),
                                harness_suspect=bool(entry.get("harness_suspect")),
-                               timed_out=bool(entry.get("timed_out")))
+                               timed_out=bool(entry.get("timed_out")),
+                               false_red=bool(entry.get("false_red")))
         entry["hw_phase"] = getattr(adm, "phase", None)
         return entry
+
+
+# ---------------------------------------------------------------------------
+# Re-run-once-alone under load (2026-11-04, noctusai-04 integrates 4+5: every
+# integrate redded on a DIFFERENT timing-sensitive test that was green alone -
+# machine-load noise spread across suites, not test bugs). When the host is
+# saturated (load/core >= harness_signatures.LOAD_PER_CORE_SUSPECT) a red
+# vitest/pytest gate with a NAMED, small failing set re-runs ONLY those tests
+# once, inside the same hardware slot:
+#   green on rerun -> not red; `flaky_under_load` (+ `false_red`) with evidence
+#   red again      -> real red, failing_tests from the rerun, first run kept
+#   no verdict     -> stays red (the first run WAS a verdict), noted
+# On a quiet host a red stays red with no rerun - a failure there is signal.
+# Distinct from the timeout-shaped vitest path above, which also fires on a
+# quiet host because a timeout alone is not a verdict on the code.
+# ---------------------------------------------------------------------------
+RERUN_MAX_FAILING = 10
+
+
+def _host_saturated(load_reader: Callable[[], "tuple[float, int] | None"]) -> dict[str, Any] | None:
+    got = load_reader()
+    if got is None:
+        return None
+    load, cores = got
+    if load / cores < _LOAD_PER_CORE_SUSPECT:
+        return None
+    return {"load_1m": round(load, 2), "cpu_cores": cores,
+            "load_per_core": round(load / cores, 2), "threshold": _LOAD_PER_CORE_SUSPECT}
+
+
+def _rerun_argv(spec: GateSpec, failing: list[str]) -> tuple[list[str], list[str]] | None:
+    """(argv, targets) re-running only `failing`, or None when they cannot be
+    addressed from the gate's cwd (a nodeid printed relative to another
+    rootdir would make pytest exit 4 - a usage error, not a verdict)."""
+    if spec.gate.startswith("vitest:"):
+        files = _vitest_failing_files(failing)
+        return ([*spec.argv, "--", *files, "--no-file-parallelism"], files) if files else None
+    ids = [n for n in failing if (Path(spec.cwd) / n.split("::", 1)[0]).is_file()]
+    if len(ids) != len(failing):
+        return None
+    return [*spec.argv, *ids], ids
+
+
+def _rerun_failing_once(
+    spec: GateSpec,
+    run_gate: Callable[[GateSpec], GateRunResult],
+    entry: dict[str, Any],
+    failing: list[str],
+    load: dict[str, Any],
+) -> None:
+    """Mutate `entry` per the rerun verdict (see the section comment)."""
+    plan = _rerun_argv(spec, failing)
+    if plan is None:
+        entry["rerun_skipped"] = "failing tests not addressable from the gate cwd"
+        return
+    argv, targets = plan
+    raw = run_gate(GateSpec(spec.gate, argv, spec.cwd, spec.preconditions))
+    code, _summary, _duration, out = raw if len(raw) == 4 else (*raw, raw[1])
+    first = {"failing_tests": failing, "rerun": targets, **load}
+    if code == 0:
+        entry.update(ran=True, exit_code=0, false_red=True, flaky_under_load=first,
+                     summary=f"passed on isolated rerun ({len(failing)} failure(s) under load)")
+        entry.pop("failing_tests", None)
+        return
+    if code is None or code in (4, 5):     # pytest usage error / nothing collected
+        entry["rerun_no_verdict"] = {**first, "exit_code": code}
+        return
+    parse = vitest_failing_tests if spec.gate.startswith("vitest:") else pytest_failing_tests
+    again = parse(out or "")
+    entry["failing_tests"] = again or failing
+    entry["summary"] = redact_secrets_in_text(
+        f"{len(entry['failing_tests'])} failing test(s), red again on isolated rerun: "
+        + "; ".join(entry["failing_tests"][:8]))[:600]
+    entry["rerun_after_failure"] = first
 
 
 def _run_admitted_gate(
     spec: GateSpec,
     run_gate: Callable[[GateSpec], GateRunResult],
+    load_reader: Callable[[], "tuple[float, int] | None"] = _read_load_per_core,
 ) -> dict[str, Any]:
     """Run one gate whose preconditions passed (and, for real runs, that the
     hardware admission gate admitted) and classify its result."""
@@ -1828,17 +1926,22 @@ def _run_admitted_gate(
     if exit_code is None and _gate_budget.is_timeout_summary(summary):
         entry["timed_out"] = True
     if exit_code not in (0, None):
-        if spec.gate.startswith("vitest:"):
-            failing = vitest_failing_tests(output or "")
-            if failing:
-                entry["failing_tests"] = failing
-                entry["summary"] = redact_secrets_in_text(
-                    f"{len(failing)} failing test(s): " + "; ".join(failing[:8])
-                    + (" ..." if len(failing) > 8 else ""))[:600]
-                if vitest_failures_timeout_shaped(output or "", failing) and not _harness_suspect(output or "", exit_code):
-                    _rerun_timeout_shaped_vitest(spec, run_gate, entry, failing)
-                    if entry.get("exit_code") == 0:
-                        return entry
+        is_vitest = spec.gate.startswith("vitest:")
+        failing = (vitest_failing_tests(output or "") if is_vitest
+                   else pytest_failing_tests(output or "") if spec.gate.startswith("pytest:")
+                   else [])
+        if failing:
+            entry["failing_tests"] = failing
+            entry["summary"] = redact_secrets_in_text(
+                f"{len(failing)} failing test(s): " + "; ".join(failing[:8])
+                + (" ..." if len(failing) > 8 else ""))[:600]
+            if not _harness_suspect(output or "", exit_code):
+                if is_vitest and vitest_failures_timeout_shaped(output or "", failing):
+                    _rerun_timeout_shaped_vitest(spec, run_gate, entry, failing, load_reader)
+                elif len(failing) <= RERUN_MAX_FAILING and (load := _host_saturated(load_reader)):
+                    _rerun_failing_once(spec, run_gate, entry, failing, load)
+                if entry.get("exit_code") == 0:
+                    return entry
         suspect = _harness_suspect(output or "", exit_code)
         if suspect:
             # `matched_line` is sliced from the RAW combined stdout/
