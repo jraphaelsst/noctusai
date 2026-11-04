@@ -37,4 +37,5 @@ Findings ranked by severity (`high` / `warning` / `info`) + the concrete remedia
 **Adversarial domain** → `KB § PATTERNS/security/webhook-signatures.md` · `lgpd.md` · `llm-bot-security.md`.
 
 ## Composes-with (commons + cross-domain)
+For an LLM agent facing the public (injection, jailbreak, tool abuse, tenant specs, session takeover) defer to agent `agents-security`; you stay the general auth / webhook / LGPD lens.
 `KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `pydantic-strict-http.md` (backend-owned) · `database-rls.md` (backend-owned) · `environment.md` (devops-owned) · `ci-security-gates.md` (devops-owned) · `KB § backend/07-AUTH-SECURITY.md` (backend-owned).

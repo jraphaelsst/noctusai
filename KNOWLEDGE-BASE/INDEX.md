@@ -132,6 +132,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── live-state-alignment.md
 │   │   │   ├── lgpd-entry-keeper.md
 │   │   │   ├── lgpd.md
+│   │   │   ├── ai-agent-threat-model.md
 │   │   │   ├── llm-bot-security.md
 │   │   │   ├── llm-provider-selection.md
 │   │   │   ├── llm-tool-audit.md
@@ -386,6 +387,7 @@ KNOWLEDGE-BASE/
 | Seed workspace (sibling-of-noc consume-only workspace; symlinks all 8 noc surfaces; pre-commit hook + chmod + KB rule = three-layer "templates can't modify noc" defense; promotion manifest for additions; bootstrap script + workspace.py resolver + `noctus.dev.promote_from_seed_workspace` MCP tool) | `CONTEXT/PATTERNS/architect/seed-workspace.md` |
 | Audit trail — request history for every mutating call (`noctusai_lib.api.audit`: `AuditMiddleware` + `AuditSink` Fake/Real/factory, opt-in `audit_trail_enabled`, core `public.audit_logs` + migration 053, `card_hub` `historico` gatherer); non-obvious decisions (middleware inside CorrelationId, actor via `request.state.audit_actor`, `action_log` NOT redirected, lazy core-client lambda); 🔴 FastAPI footgun — an optional request injection must be `request: Request = None`, never `Optional[Request]` (breaks every route fleet-wide) | `CONTEXT/PATTERNS/backend/audit-trail.md` |
 | LLM tool-call audit (`tool_call_audits` per-product table; `noctusai_lib.domain.ai.tool_audit::AuditRecord` + `make_audit_writer`; best-effort write; LGPD redaction at consumer; common BI queries) | `CONTEXT/PATTERNS/backend/llm-tool-audit.md` |
+| AI agent threat model — canonical adversarial catalog for public, multi-tenant, tool-using LLM agents (Julia go-live audit 2026-11-04): threat classes ↔ required defense ↔ where it lives, must-have checklist before public, agent-creator template security must-haves, eval starter set, E2E connection checklist, sources; owned by agent `agents-security` | `CONTEXT/PATTERNS/security/ai-agent-threat-model.md` |
 | LLM bot security (defense trio: output sanitization + Pydantic-arg validation + rate-limit; confirm-then-execute for destructive tools; prompt-injection mitigation via instruction sandboxing + allowlists; baseline checklist) | `CONTEXT/PATTERNS/security/llm-bot-security.md` |
 | Digest service primitive (`noctusai_lib.domain.digest`: `BaseDigestService` template-method base + `DigestWindow`/`DigestResult` types; 4-adopter cluster — core/audit, daily-life/weekly-review, mailing/campaign-debrief, PF/monthly-narrative; non-fits: ERP/metas-digest + daily-life/daily-brief documented) | `CONTEXT/PATTERNS/backend/digest-seed.md` |
 | Scheduling primitive (`noctusai_lib.domain.scheduling`: engine + `TravelLookup`/`Conflict`/`Scorer` Protocols + `ZeroTravelLookup`/`DefaultConflict`/`DefaultScorer` defaults; wiring recipe; what stays consumer-side) | `CONTEXT/PATTERNS/backend/scheduling-seed.md` |

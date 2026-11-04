@@ -12,6 +12,8 @@
 
 ---
 
+> **Adversarial catalog lives elsewhere.** The full threat classes for public, multi-tenant, tool-using agents (injection variants, obfuscation, tenant-spec injection, session takeover, opt-out, agent-creator template must-haves, eval starter set) are in `KB § PATTERNS/security/ai-agent-threat-model.md` — not duplicated here. This doc stays the generic defense-trio baseline.
+
 ## 1. Threat model — what an LLM tool surface looks like to attackers
 
 Any LLM-tool wiring exposes three attack surfaces:
