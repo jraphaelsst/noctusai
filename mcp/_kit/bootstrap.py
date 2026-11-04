@@ -45,6 +45,7 @@ import logging
 import sys
 from pathlib import Path
 
+from .redact import redact_secret_fields
 from .seed_pin import pin_in_tree_seed
 
 
@@ -138,6 +139,9 @@ async def run_stdio_server(
             return [TextContent(type="text", text=json.dumps(msg))]
         try:
             result = await handler(arguments or {})
+            # Every result reaches a model's context: secret-named fields never do
+            # (WAHA echoed its webhook hmac.key in clear, 2026-11-04).
+            result = redact_secret_fields(result)
             return [
                 TextContent(
                     type="text",
