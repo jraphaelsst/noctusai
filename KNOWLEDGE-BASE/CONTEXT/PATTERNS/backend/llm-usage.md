@@ -69,6 +69,25 @@
     The marker is `NOC-REMEDIATE[ai-usage-image-edit-batch]` in
     `openai_adapter.py`.
 
+### 0.1 Per-agent / per-session attribution (2026-11-04)
+
+`agent_key` and `conversation_id` come ONLY from an enclosing `llm_usage_context(...)` scope
+(`attribution.py`); the HTTP middleware fills org, user and route, never the agent. Until 2026-11-04 the
+scope had zero callers, so both columns were NULL on every row.
+
+- **Where it is opened.** `LlmToolRuntime.run_turn` (inside the `_run` task) and `structured_extract`, the
+  studio eval judge, and `ClaudeAgentSdkRuntime` (each SDK `ResultMessage` becomes one `record_usage` row,
+  priced from the catalog; counts the SDK did not report stay NULL, the SDK's `total_cost_usd` rides in
+  `extra`). An ephemeral eval turn has no conversation row, so `conversation_id` stays null, never a
+  throwaway id.
+- **Keeper `check_llm_usage_context_entry`** (`--check-llm-usage-context-entry`, pre-commit): flags a
+  metered call (`chat_with_tools`, `chat_completion*`, `run_tool_loop`, `analyze_image`, `transcribe_audio`)
+  in `products/*/backend/app` whose file never references `llm_usage_context`.
+- **Allowlist-with-reason.** `_LLM_USAGE_CONTEXT_ALLOWLIST` in `compliance.py` maps file to reason; feature
+  calls with no agent identity are attributed by product + route feature. A deferral carries a named
+  `NOC-REMEDIATE[...]` marker in its reason: `llm-usage-structured-extract-agent-key` (`channels_router.py`
+  call sites) and `llm-usage-geracao-agent-key` (`geracao.py` `deps.chat`), both pending the Julia v3 train.
+
 ---
 
 ## 1. Architecture

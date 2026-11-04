@@ -2516,7 +2516,7 @@ def main():
         print(f"  {RED}✗ {len(issues)} llm-usage-context-entry issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
-        sys.exit(0)
+        sys.exit(1)
 
     elif args.check_upload_route_body_override:
         from tools.noctus.dev.compliance import check_upload_route_body_override
