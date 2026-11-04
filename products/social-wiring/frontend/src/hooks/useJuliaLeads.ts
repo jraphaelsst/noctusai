@@ -34,6 +34,8 @@ export interface LeadJulia {
   gatilho?: GatilhoEnvio | null;
   lead_id?: string | null;
   erro?: string | null;
+  imoveis_oferecidos?: string[];
+  imoveis_oferecidos_links?: { codigo: string; link: string | null }[];
 }
 export interface FiltrosLeads {
   de: string;

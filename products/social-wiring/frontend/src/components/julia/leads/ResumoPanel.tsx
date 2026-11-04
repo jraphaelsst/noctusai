@@ -1,4 +1,5 @@
 /** "Ver resumo" panel — the Julia summary + collected slots of one lead. */
+import { ImoveisOferecidosChips, RelatorioLeadSection } from "@/components/julia/RelatorioLeadSection";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useResumoLead, type LeadJulia } from "@/hooks/useJuliaLeads";
 import { SideDrawer } from "@noctusai/lib/components";
@@ -26,6 +27,8 @@ export function ResumoPanel({ lead, onClose }: { lead: LeadJulia; onClose: () =>
           )}
         </>
       )}
+      <ImoveisOferecidosChips payload={lead} />
+      <RelatorioLeadSection contatoId={lead.id} />
     </SideDrawer>
   );
 }

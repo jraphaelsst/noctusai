@@ -4,16 +4,11 @@
  */
 import { useState } from "react";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
 import { useAtualizarLinha, type LinhaRoteamento, type LinhaUpdate, type Roteamento } from "@/hooks/useJuliaRoteamento";
 import { useTeamMembers } from "@/hooks/useTeam";
-
-const SEM_NUMEROS =
-  "Cadastre ao menos um número autorizado nesta linha (Configurações) para poder ligar a Julia.";
 
 function LinhaRow({
   linha,
@@ -28,8 +23,6 @@ function LinhaRow({
 }) {
   const atualizar = useAtualizarLinha();
   const [erro, setErro] = useState<string | null>(null);
-  // Turning OFF must stay possible even if the list was emptied after switching on.
-  const bloqueadoLigar = linha.numeros_autorizados === 0 && !linha.alimenta;
   const alvo = linha.destino_handoff_user_id;
   const alvoForaDaLista = !!alvo && !admins.some((a) => a.id === alvo);
 
@@ -47,34 +40,12 @@ function LinhaRow({
   const switchId = `julia-${linha.connection_id}`;
   return (
     <li className="space-y-3 rounded-md border p-4" data-testid={`julia-linha-${linha.connection_id}`}>
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor={switchId} className="text-sm font-medium">
-          Esta linha atende leads com a Julia
-          <span className="ml-2 font-normal text-muted-foreground">({linha.label})</span>
-        </label>
-        <div className="flex items-center gap-2">
-          {atualizar.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-          <Switch
-            id={switchId}
-            checked={linha.alimenta}
-            disabled={!isAdmin || atualizar.isPending || bloqueadoLigar}
-            onCheckedChange={(v) =>
-              enviar({ alimenta: v }, v ? "Esta linha agora atende leads com a Julia" : "Esta linha não atende mais leads com a Julia")
-            }
-          />
-        </div>
-      </div>
-
-      {bloqueadoLigar && (
-        <p className="text-xs text-warning-foreground" data-testid="motivo-desabilitado">
-          {SEM_NUMEROS}
-        </p>
-      )}
-      {!isAdmin && (
-        <p className="text-xs text-muted-foreground">Somente owner ou admin da organização pode alterar.</p>
-      )}
+      <p className="text-sm font-medium">
+        {linha.label}
+        <span className="ml-2 font-normal text-muted-foreground">{linha.alimenta ? "(Julia ligada)" : "(Julia desligada)"}</span>
+      </p>
       {erro && (
-        <p role="alert" className="text-sm text-destructive" data-testid="linha-erro">
+        <p role="alert" className="text-sm text-destructive" data-testid="handoff-erro">
           {erro}
         </p>
       )}
