@@ -1077,6 +1077,12 @@ carried its 28 real photos with zero probe artifacts afterwards.
 
 #### Permission verdicts — the two keys DIFFER (production, 2026-09-11)
 
+> 🔴 **CORRECTION (2026-11-03, owner):** "we dont actually have a quinto andar key. they havent granted us one."
+> NoctusAI holds exactly **one** Vista key, `…644c` (full access since 2026-10-26, § 4.8). Every `…bced`
+> "Quinto Andar portal key" row below is a historical record of a 2026-09-11 probe and is **not a credential we hold**:
+> never search for, configure or test a second key. Kept for history only.
+
+
 | key | `/imoveis/fotos` write | owner data (§ 4.1 `proprietarios`) |
 |---|---|---|
 | `…644c` — **ours**, the ERP's key | ❌ **DENIED** (`Permissão Negada`) → ✅ **PERMITTED 2026-10-26** | ❌ 403 → ✅ **200 2026-10-26** |
@@ -2144,7 +2150,7 @@ technical detail.
    *the 401 response body contains the caller's API key in plaintext.* Any
    customer logging error bodies is persisting a credential. We redact on
    receipt (§ 3), but the fix belongs upstream.
-3a. **🔴 Scope the Quinto Andar key DOWN — the highest-value ask (added
+3a. **(VOID 2026-11-03 — we hold no Quinto Andar key; see the correction in § 4.7.)** **🔴 Scope the Quinto Andar key DOWN — the highest-value ask (added
    2026-09-11).** The portal key `…bced` was issued with full photo **write +
    DELETE** on live listings and full owner-PII read (§ 4.7). Neither is needed
    to receive a property feed, and our own key holds neither, so this is an
