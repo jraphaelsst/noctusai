@@ -749,9 +749,10 @@ returned in `meta`; the FE warns at ≥ 50 000):
    - `headline` → the headline text.
 4. Automatic retrieval (stands in for the reference app's profile-variable, research and brain lookups):
    - **HEADLINE:** up to 12 structures from the marca's allow-list pool (§5.1 pool, ranked by `score_viral`, narrowed to a profile if one was `@`-mentioned), each as `estrutura #<codigo>: <blueprint>`; plus approved research items (≤ 150 items / 8 000 chars).
-   - **ROTEIRO:** Núcleo + Método brains' "Elementos para conteúdo"; plus the cited viral's transcript.
+   - **ROTEIRO:** Núcleo + Método brains' "Elementos para conteúdo"; plus the cited viral's transcript; with no biblioteca mention, the same automatic structure pool as HEADLINE.
+   - **Selection mode** (trusted block `selecao_de_estrutura`, `modo=post|mencoes|auto`; owner 2026-11-04): exactly one `@post` and no other library mention ⇒ `post` — that structure is the only one offered and mandatory; any other set of library mentions (one `@perfil`, several `@post`, posts + profiles) ⇒ `mencoes` — ONLY the mentioned structures are offered (a profile brings its top virals) and the agent reasons which to use, may combine two or more, and explains the choice; no mention ⇒ `auto` (the automatic pool, both agents). The cited code(s) must be in `codigos_permitidos`.
 
-The system prompt tells HEADLINE to cite `(estrutura #<codigo>)` for each headline. The FE turns a
+The system prompt tells HEADLINE to deliver the count the user asked for (1–10, default 5) and to end each headline with `(estrutura #<codigo>)`, using different structures when the pool allows. ROTEIRO answers open with `### Análise da Estrutura Escolhida` (cited structure, hook, 1–2 reasons, beat line), then `### Roteiro — <tema>` with bold beat labels and `Total de palavras: N`; it models the rhetoric, never the source topic or sentences. The FE turns a
 citation into a link to the viral modal **only** if the code belongs to a viral returned in this
 context (`meta` carries the allowed codes). Any other code is rendered as plain text.
 

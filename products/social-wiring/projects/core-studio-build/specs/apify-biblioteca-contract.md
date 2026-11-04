@@ -128,10 +128,12 @@ existing literal `(estrutura #<codigo>)` that `citacoes.ts` already links, valid
   1–2 reasons it fits the request, and the beat progression as one line `Beat → Beat → …`; then
   `### Roteiro — <tema>` with each beat as a bold label `**(Headline)**`, `**(CTA de Salvar)**`…,
   then `Total de palavras: N`. It models rhetoric/beats, never copies topic or sentences.
-- **Selection rule** (`services/chat_contexto.py` + prompt): exactly one `@post` mention ⇒ only
-  that structure is offered and the agent must use it; one or more `@perfil` mentions ⇒ the
-  profile's top structures (by `score_viral`) are offered and the agent picks ONE and says why;
-  no mention ⇒ the automatic pool (as today). The chosen `#codigo` must be in `codigos_permitidos`.
+- **Selection rule** (`services/chat_contexto.py` + prompt): exactly one `@post` mention (and no
+  other library mention) ⇒ only that structure is offered and the agent must use it; any other set
+  of mentions (`@perfil`, several `@post`, mixed) ⇒ only the mentioned structures are offered (a
+  profile brings its top ones by `score_viral`) and the agent reasons which to use, may combine
+  them, and explains why (owner 2026-11-04: "let the agent work his thing"); no mention ⇒ the
+  automatic pool. The chosen `#codigo` must be in `codigos_permitidos`.
 - **Headline** (`prompts/chat_headline.py`): N = the number the user asked for (1–10), default 5
   (today fixed 3–5); each headline ends with `(estrutura #<codigo>)`, and different headlines use
   different structures when the pool has enough.

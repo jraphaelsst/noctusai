@@ -97,6 +97,20 @@ def _like(q: Optional[str]) -> str:
     return _LIKE_RE.sub(" ", q or "").strip()
 
 
+def modo_de_selecao(refs: list["ReferenciaResolvida"]) -> str:
+    """How the agent picks its structure (apify-biblioteca-contract section 3, owner 2026-11-04):
+    ``post`` = exactly one ``@post`` and no other library mention -> that structure, mandatory;
+    ``mencoes`` = any other set of library mentions (one ``@perfil``, several posts, posts + profiles)
+    -> the agent reasons over ONLY the mentioned structures and picks one or combines them;
+    ``auto`` = no library mention -> the agent picks from the automatic pool."""
+    bib = [r for r in refs if r.tipo == "biblioteca"]
+    if not bib:
+        return "auto"
+    if len(bib) == 1 and "viral" in bib[0].dados:
+        return "post"
+    return "mencoes"
+
+
 @dataclass
 class ReferenciaResolvida:
     tipo: str
@@ -285,9 +299,15 @@ class ChatContexto:
         # 3: explicit references, in the order the user attached them
         for ref in refs:
             orc.add(self._secao_referencia(ref, add_codigo))
-        # 4: automatic retrieval
-        if agente == "headline":
+        modo = modo_de_selecao(refs)
+        if agente in ("headline", "roteiro"):
+            orc.add(bloco("selecao_de_estrutura", f"modo: {modo}", modo=modo))
+        # 4: automatic retrieval (apify-biblioteca-contract section 3).
+        # Any library mention restricts the offer to what was mentioned (a profile's reference section already
+        # carries its top structures); only a mention-free turn gets the open automatic pool.
+        if modo == "auto":
             orc.add(self._secao_estruturas(marca_id, refs, add_codigo))
+        if agente == "headline":
             orc.add(self._secao_pesquisa(marca_id))
         else:
             orc.add(self._secao_roteiro_brains(marca_id))
@@ -521,5 +541,5 @@ def elementos_para_conteudo(content: str) -> str:
 
 __all__ = [
     "ChatContexto", "ChatError", "ContextoMontado", "MAX_CHARS_PESQUISA", "MAX_ESTRUTURAS",
-    "MAX_ITENS_PESQUISA", "ReferenciaResolvida", "bloco", "cerca", "eh_uuid", "elementos_para_conteudo",
+    "MAX_ITENS_PESQUISA", "ReferenciaResolvida", "modo_de_selecao", "bloco", "cerca", "eh_uuid", "elementos_para_conteudo",
 ]

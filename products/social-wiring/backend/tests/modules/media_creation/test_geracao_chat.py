@@ -498,6 +498,54 @@ def test_headline_sem_allowlist_cai_no_pool_do_nicho_e_depois_da_org(ch):
     assert _frames(_enviar(ch, c["id"]))[0]["meta"]["codigos_permitidos"] == [21]
 
 
+def _seed_pool_com_allow(ch):
+    p = _seed_perfil_monitorado(ch, "dentista")
+    _seed_allow(ch, modo="perfil", perfil_id=p["id"])
+    virais = [_seed_viral(ch, 31, p["id"], blueprint="Pare de {{DOR}}", score=50),
+              _seed_viral(ch, 32, p["id"], blueprint="Ninguém fala de {{DESEJO}}", score=20),
+              _seed_viral(ch, 33, p["id"], blueprint="Erro comum", score=5)]
+    return p, virais
+
+
+def test_um_unico_post_oferece_so_aquela_estrutura(ch):
+    _, v = _seed_pool_com_allow(ch)
+    for agente in ("headline", "roteiro"):
+        c = _conversa(ch, agente)
+        f = _frames(_enviar(ch, c["id"], "vai", [{"tipo": "biblioteca", "id": v[1]["id"]}]))
+        assert f[0]["meta"]["codigos_permitidos"] == [32]
+        sistema = _sistema(ch.fake, -1)
+        assert 'modo="post"' in sistema
+        assert "estrutura #31" not in sistema and "estrutura #33" not in sistema
+
+
+def test_perfil_oferece_as_top_estruturas_do_perfil(ch):
+    p, _ = _seed_pool_com_allow(ch)
+    for agente in ("headline", "roteiro"):
+        c = _conversa(ch, agente)
+        f = _frames(_enviar(ch, c["id"], "vai", [{"tipo": "biblioteca", "id": f"perfil:{p['id']}"}]))
+        assert sorted(f[0]["meta"]["codigos_permitidos"]) == [31, 32, 33]
+        assert 'modo="mencoes"' in _sistema(ch.fake, -1)
+
+
+def test_varios_posts_oferecem_so_os_mencionados(ch):
+    _, v = _seed_pool_com_allow(ch)
+    for agente in ("headline", "roteiro"):
+        c = _conversa(ch, agente)
+        refs = [{"tipo": "biblioteca", "id": v[0]["id"]}, {"tipo": "biblioteca", "id": v[2]["id"]}]
+        f = _frames(_enviar(ch, c["id"], "vai", refs))
+        assert sorted(f[0]["meta"]["codigos_permitidos"]) == [31, 33]
+        sistema = _sistema(ch.fake, -1)
+        assert 'modo="mencoes"' in sistema and "estrutura #32" not in sistema
+
+
+def test_sem_mencao_o_roteiro_recebe_o_pool_automatico(ch):
+    _seed_pool_com_allow(ch)
+    c = _conversa(ch, "roteiro")
+    f = _frames(_enviar(ch, c["id"], "vai"))
+    assert f[0]["meta"]["codigos_permitidos"] == [31, 32, 33]
+    assert 'modo="auto"' in _sistema(ch.fake, -1)
+
+
 def test_roteiro_usa_elementos_para_conteudo_dos_cerebros_de_sistema(ch):
     ch.mock_supabase.from_("cs_brains").insert({
         "id": str(uuid.uuid4()), "org_id": TEST_ORG_ID, "marca_id": MARCA, "name": "Núcleo de Influência",
@@ -632,3 +680,15 @@ def test_prompts_travam_a_cerca_e_exigem_citacao_do_codigo():
     assert "(estrutura #<código>)" in chat_headline.SYSTEM_PROMPT
     assert "{{DOR}}" in chat_headline.SYSTEM_PROMPT
     assert "NUNCA invente números" in chat_roteiro.SYSTEM_PROMPT
+
+
+def test_prompts_exigem_analise_da_estrutura_e_contagem_pedida():
+    from app.modules.media_creation.prompts import chat_headline, chat_roteiro
+
+    r, h = chat_roteiro.SYSTEM_PROMPT, chat_headline.SYSTEM_PROMPT
+    assert "### Análise da Estrutura Escolhida" in r and "### Roteiro — <tema>" in r
+    assert "Total de palavras: N" in r and "**(Headline)**" in r and "(estrutura #<código>)" in r
+    assert "NUNCA o assunto nem as frases" in r
+    assert "de 1 a 10" in h and "entregue 5" in h and "DIFERENTES" in h
+    assert "combine duas ou mais" in r and "SOMENTE as estruturas mencionadas" in h
+    assert "3 a 5" not in h
