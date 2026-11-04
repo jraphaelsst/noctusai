@@ -92,7 +92,6 @@ from app.schemas.whatsapp_connection import (
     MessageOut,
     MessagesPage,
     SendMessageRequest,
-    WhatsAppConnectionApiKeyOut,
     WhatsAppConnectionCreate,
     WhatsAppConnectionOut,
     WhatsAppConnectionQrOut,
@@ -547,33 +546,6 @@ async def get_connection_status(
         )
     return _status_from_session(
         payload, connection_id=connection_id, session=record.session_name
-    )
-
-
-@router.get("/{connection_id}/api-key", response_model=WhatsAppConnectionApiKeyOut)
-def reveal_connection_api_key(
-    connection_id: UUID,
-    auth: tuple = Depends(get_current_user_org),
-    store: WhatsAppConnectionStore = Depends(get_connection_store),
-) -> WhatsAppConnectionApiKeyOut:
-    """Reveal the decrypted API key for ONE owner-scoped line.
-
-    The single, deliberate place a stored secret leaves the backend — gated by
-    the same org scope as every live op (``org_id`` filter) and
-    driven only by an explicit user action (the eye toggle in the connection
-    modal). A decrypt failure (ENCRYPTION_KEY drift / tampered ciphertext)
-    surfaces as 503 via ``_require_record(decrypt=True)``; a non-owner / missing
-    line is 404. Reveal-only: never call this on a list/get path.
-    """
-    user, _token, raw_org = auth
-    record = _require_record(
-        store,
-        connection_id=connection_id,
-        org_id=coerce_org_uuid(raw_org),
-        decrypt=True,
-    )
-    return WhatsAppConnectionApiKeyOut(
-        connection_id=connection_id, api_key=record.api_key or ""
     )
 
 

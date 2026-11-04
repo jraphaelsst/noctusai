@@ -20,7 +20,7 @@ Contract v2 changes (social-waha-connect-backend):
   - Auto ``webhook_token`` + public ``webhook_url`` built from the resolver.
   - ``set_webhook`` is called on create with the token URL.
   - New POST /api/whatsapp/webhook/{token} route.
-  - GET /{id}/api-key reveals the decrypted key (owner-scoped, reveal-only).
+  - No route reveals the decrypted key (GET /{id}/api-key removed 2026-11-04).
 """
 from __future__ import annotations
 
@@ -150,24 +150,36 @@ class TestCrud:
         assert s1 == "default", f"expected configured 'default' session, got {s1!r}"
         assert s2 == "default", f"expected configured 'default' session, got {s2!r}"
 
-    def test_reveal_api_key_returns_decrypted_owner_scoped(self, connections_client):
-        """GET /{id}/api-key reveals the decrypted key (the one deliberate
-        secret-bearing path); a real Fernet round-trip through the store."""
+    def test_api_key_route_is_gone(self, connections_client):
+        """No route returns the decrypted key: GET /{id}/api-key is removed."""
         c, _ = connections_client
-        created = _create(c, label="Reveal me", api_key="super-secret-key").json()
+        created = _create(c, label="No reveal", api_key="super-secret-key").json()
         resp = c.get(f"/api/whatsapp/connections/{created['id']}/api-key")
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["connection_id"] == created["id"]
-        assert body["api_key"] == "super-secret-key"
-
-    def test_reveal_api_key_404_for_unknown_line(self, connections_client):
-        """A line the caller doesn't own (here: unknown id) is 404, never a leak."""
-        import uuid
-
-        c, _ = connections_client
-        resp = c.get(f"/api/whatsapp/connections/{uuid.uuid4()}/api-key")
         assert resp.status_code == 404, resp.text
+        assert "super-secret-key" not in resp.text
+
+    def test_planted_secret_never_in_any_response(self, connections_client):
+        """A known api_key never appears in any connections route response."""
+        c, _ = connections_client
+        secret = "PLANTED-SECRET-9f3a7c"
+        resp = _create(c, label="Planted", api_key=secret)
+        assert resp.status_code == 201, resp.text
+        bodies = [resp.text]
+        cid = resp.json()["id"]
+        base = "/api/whatsapp/connections"
+        bodies.append(c.get(base).text)
+        bodies.append(c.get(f"{base}/{cid}").text)
+        patched = c.patch(f"{base}/{cid}", json={"label": "Planted 2"})
+        assert patched.status_code == 200, patched.text
+        bodies.append(patched.text)
+        replaced = c.patch(f"{base}/{cid}", json={"api_key": "ANOTHER-SECRET-77"})
+        assert replaced.status_code == 200, replaced.text
+        bodies.append(replaced.text)
+        bodies.append(c.get(f"{base}/{cid}/status").text)
+        bodies.append(c.get(f"{base}/{cid}/qr").text)
+        for body in bodies:
+            assert secret not in body
+            assert "ANOTHER-SECRET-77" not in body
 
     def test_create_derives_webhook_url_from_resolver(self, connections_client):
         """webhook_url is built from resolve_product_url + /api/whatsapp/webhook/{token}."""

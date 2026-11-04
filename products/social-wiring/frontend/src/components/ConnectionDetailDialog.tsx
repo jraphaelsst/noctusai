@@ -15,8 +15,6 @@ import {
   CheckCircle2,
   CircleAlert,
   Clipboard,
-  Eye,
-  EyeOff,
   Hash,
   Loader2,
   MessageSquare,
@@ -56,9 +54,7 @@ import {
   useWhatsAppConnectionQr,
   useRecoverConnection,
   useWhatsAppConnectionActions,
-  useRevealApiKey,
   useConnectionChats,
-  useToggleAutoReply,
   type UpdateConnectionBody,
   type WhatsAppConnectionLine,
 } from "@/hooks/useWhatsAppConnections";
@@ -407,36 +403,14 @@ export function ConnectionSettingsPanel({
   const { data: status } = useWhatsAppConnectionStatus(line.id);
   const { start, restart, logout } = useWhatsAppConnectionActions();
   const { update } = useWhatsAppConnectionMutations();
-  const reveal = useRevealApiKey();
 
   const [editLabel, setEditLabel] = useState(line.label);
   const [editApiKey, setEditApiKey] = useState("");
-  const [keyMode, setKeyMode] = useState<"hidden" | "revealed" | "editing">(
-    "hidden",
-  );
-  const [revealedKey, setRevealedKey] = useState<string | null>(null);
-
-  const onToggleReveal = async () => {
-    if (keyMode === "revealed") {
-      setKeyMode("hidden");
-      return;
-    }
-    try {
-      const res =
-        revealedKey != null
-          ? { api_key: revealedKey }
-          : await reveal.mutateAsync(line.id);
-      setRevealedKey(res.api_key);
-      setKeyMode("revealed");
-    } catch (e: any) {
-      toast.error(e?.message ?? "Falha ao revelar a API key");
-    }
-  };
+  const [keyMode, setKeyMode] = useState<"hidden" | "editing">("hidden");
 
   const startEditingKey = () => {
     setKeyMode("editing");
     setEditApiKey("");
-    setRevealedKey(null);
   };
 
   const cancelEditingKey = () => {
@@ -607,8 +581,8 @@ export function ConnectionSettingsPanel({
                 API key{" "}
                 <span className="text-xs font-normal text-muted-foreground">
                   {keyMode === "editing"
-                    ? "(digite a nova chave)"
-                    : "(toque no lápis para trocar)"}
+                    ? "(substituir: digite a nova chave)"
+                    : "(configurada — toque no lápis para substituir)"}
                 </span>
               </Label>
               {keyMode === "editing" ? (
@@ -644,30 +618,10 @@ export function ConnectionSettingsPanel({
                     id="edit-apikey"
                     type="text"
                     readOnly
-                    value={keyMode === "revealed" ? revealedKey ?? "" : "••••••••"}
+                    value="••••••••"
                     className="font-mono"
                     data-testid="edit-conn-apikey-display"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 shrink-0"
-                    onClick={onToggleReveal}
-                    disabled={reveal.isPending}
-                    aria-label={
-                      keyMode === "revealed" ? "Ocultar API key" : "Mostrar API key"
-                    }
-                    data-testid="btn-apikey-reveal"
-                  >
-                    {reveal.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : keyMode === "revealed" ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
