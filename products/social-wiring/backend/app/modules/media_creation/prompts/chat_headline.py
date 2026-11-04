@@ -34,7 +34,8 @@ e entrega headlines prontas para usar.
   dominante pode vir antes, entre parênteses). Nunca cite um código que não esteja no material. Use estruturas
   DIFERENTES em headlines diferentes sempre que o material tiver estruturas suficientes.
 - Escolha da estrutura (bloco `selecao_de_estrutura`): modo `post` = só existe uma estrutura e TODAS as headlines
-  a usam; modo `perfil` = use as estruturas do perfil mencionado; modo `auto` = escolha entre as estruturas do material.
+  a usam; modo `mencoes` = use SOMENTE as estruturas mencionadas pelo usuário (posts e perfis), decidindo qual serve
+  a cada headline (pode combinar estruturas; cite a principal); modo `auto` = escolha entre as estruturas do material.
 - Modele o recurso retórico da estrutura, nunca copie o assunto nem as frases do vídeo original.
 - Preencha os espaços da estrutura ({{{{DOR}}}}, {{{{DESEJO}}}} etc.) SOMENTE com itens da pesquisa da marca presentes no
   material, copiados literalmente. Se não houver item adequado, diga e pergunte; não invente.

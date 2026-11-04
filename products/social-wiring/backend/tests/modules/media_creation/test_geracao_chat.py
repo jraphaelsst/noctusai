@@ -520,10 +520,22 @@ def test_um_unico_post_oferece_so_aquela_estrutura(ch):
 
 def test_perfil_oferece_as_top_estruturas_do_perfil(ch):
     p, _ = _seed_pool_com_allow(ch)
-    c = _conversa(ch, "roteiro")
-    f = _frames(_enviar(ch, c["id"], "vai", [{"tipo": "biblioteca", "id": f"perfil:{p['id']}"}]))
-    assert f[0]["meta"]["codigos_permitidos"] == [31, 32, 33]
-    assert 'modo="perfil"' in _sistema(ch.fake, -1)
+    for agente in ("headline", "roteiro"):
+        c = _conversa(ch, agente)
+        f = _frames(_enviar(ch, c["id"], "vai", [{"tipo": "biblioteca", "id": f"perfil:{p['id']}"}]))
+        assert sorted(f[0]["meta"]["codigos_permitidos"]) == [31, 32, 33]
+        assert 'modo="mencoes"' in _sistema(ch.fake, -1)
+
+
+def test_varios_posts_oferecem_so_os_mencionados(ch):
+    _, v = _seed_pool_com_allow(ch)
+    for agente in ("headline", "roteiro"):
+        c = _conversa(ch, agente)
+        refs = [{"tipo": "biblioteca", "id": v[0]["id"]}, {"tipo": "biblioteca", "id": v[2]["id"]}]
+        f = _frames(_enviar(ch, c["id"], "vai", refs))
+        assert sorted(f[0]["meta"]["codigos_permitidos"]) == [31, 33]
+        sistema = _sistema(ch.fake, -1)
+        assert 'modo="mencoes"' in sistema and "estrutura #32" not in sistema
 
 
 def test_sem_mencao_o_roteiro_recebe_o_pool_automatico(ch):
@@ -678,4 +690,5 @@ def test_prompts_exigem_analise_da_estrutura_e_contagem_pedida():
     assert "Total de palavras: N" in r and "**(Headline)**" in r and "(estrutura #<código>)" in r
     assert "NUNCA o assunto nem as frases" in r
     assert "de 1 a 10" in h and "entregue 5" in h and "DIFERENTES" in h
+    assert "combine duas ou mais" in r and "SOMENTE as estruturas mencionadas" in h
     assert "3 a 5" not in h
