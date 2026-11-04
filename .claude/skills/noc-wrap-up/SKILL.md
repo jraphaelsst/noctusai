@@ -1,7 +1,7 @@
 ---
 name: noc-wrap-up
 description: Use at end-of-task wrap moments — triggers "anything else?", "are we done?", "wrap up", "what's left?", "final check", "done?", "before we ship", "before I push". Honest 3-5 polish-item survey, never reflexive "all good". Born from the 2026-05-26 evening session that caught 11 silent test failures via this exact discipline.
-version: 1.1.0
+version: 1.2.0
 ---
 
 # noc-wrap-up — honest assessment before the wrap
@@ -17,6 +17,8 @@ version: 1.1.0
    - **Untracked + uncommitted drift** — `git status --porcelain` at the worktree AND the primary checkout. Untracked at root = drift-fix-on-contact precondition; uncommitted in a peer worktree = potential cross-tree pollution. → `KB § PATTERNS/common/drift-fix-on-contact.md`.
    - **Pending dispatches / orphan branches / stale caches** — `noctus.dev.cleanup_stale_worktrees dry_run=true` + `noctus.dev.orphan_branch_sweep` + `noctus.dev.detect_stale_caches`. Three single calls, ~5s total.
 
+   - **Every engineer slice scored** — each slice dispatched this session has a `slice-scores.ndjson` row (`noctus.dev.dispatch_log_completion` with `score=` on the rubric `RUBRIC_V1`, plus `engineer_return=` so its drift/improvement footer lands in the ledger). An unscored slice is invisible to `noctus.team.agent_metrics`, so the agent's progress over time can't be tracked. → `KB § PATTERNS/common/dispatch-token-log.md`.
+
    - **Org/product/state change — live-state alignment** — if this work changed an org, a product, or any state docs describe: run `noctus.dev.scan_live_state_claims`, fix every `mismatch`, and confirm the product guide, memory, KB and catalog row were updated in the SAME change (the commit-time keeper `check_product_guide_cochange` only proves the guide was *touched*, not that it is right). → `KB § PATTERNS/common/live-state-alignment.md`.
 
 2. **Name 3-5 polish items WITH rationale** — for each surfaced surface, write one line: `<item> — <why it matters now>`. If a survey returns clean, SAY SO ("no s2-memory entries opened this session") rather than skipping the survey line (silent-skip = silent-error shape).
@@ -29,7 +31,7 @@ version: 1.1.0
 4. **Present the survey, ask explicit go/no-go** — the user decides what's wrap-blocking vs ship-anyway. The survey is the gift; the decision stays the user's.
 
 ## Guardrails
-- "All good" is a **positive claim** that the 5 surveys ran clean — say WHICH surveys ran, not just the conclusion. Reflexive all-good without a survey = silent-error shape.
+- "All good" is a **positive claim** that the surveys ran clean — say WHICH surveys ran, not just the conclusion. Reflexive all-good without a survey = silent-error shape.
 - Wrap-up survey is NOT the same as the hygiene sweep (`noc-hygiene` runs hound/mole; `noc-wrap-up` checks session-specific debt). Both fire at end-of-work; this one is fast (~30s), `noc-hygiene` is slower.
 - Sibling discipline: when the user says "wrap up" + "ship to main" together, this skill runs FIRST, `noc-ship` runs after — the wrap survey is a pre-condition for the bless gate.
 - 🔴 **Surfacing ≠ resolving (the 2026-05-29 miss).** A wrap-up that *named* a markdown-corpus orphan-prune gap + a kb/code prune-duplication as "residuals" had already done the hard part (finding them) — both were clear-path and got delivered the next turn on request. That delivery should have happened IN the wrap, unprompted. Step 3 is not optional: deliver the clear-path ones before presenting the survey.
