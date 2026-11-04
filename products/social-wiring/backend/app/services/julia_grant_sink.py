@@ -215,6 +215,11 @@ class HealthRecordingAgentsClient:
     def __init__(self, inner: Any, org_id: UUID | str, store: Any = None):
         self._inner, self._org, self._store_ref = inner, str(org_id), store
 
+    @property
+    def inner(self) -> Any:
+        """The wrapped real client (read-only; for callers that must know which transport answers)."""
+        return self._inner
+
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
         if not inspect.iscoroutinefunction(attr):

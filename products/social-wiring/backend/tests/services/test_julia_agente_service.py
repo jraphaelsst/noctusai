@@ -416,7 +416,11 @@ class TestAgentsToken:
         monkeypatch.setenv("PRODUCT_URL_AGENTS", "https://agents.example.test")
         store = _store(world)
         api_keys_store.put_api_key(store, ORG_ID, "agents", "pk_org_a")
-        assert isinstance(julia.resolve_agents_client(ORG_ID, cfg=world.cfg, store=store), HttpAgentsClient)
+        from app.services.julia_grant_sink import HealthRecordingAgentsClient
+
+        client = julia.resolve_agents_client(ORG_ID, cfg=world.cfg, store=store)
+        # the real client, wrapped so every agents call records the connection health (S8)
+        assert isinstance(client, HealthRecordingAgentsClient) and isinstance(client.inner, HttpAgentsClient)
         assert julia.resolve_agents_client(OTHER_ORG_ID, cfg=world.cfg, store=store) is None  # prod: org B has none
 
     def test_dev_without_a_token_resolves_the_fake(self, world, monkeypatch):
