@@ -220,6 +220,18 @@ or starts producing false-reds), raise the limit in **scheduled, measured steps*
   false-red rate stays near 0. Write it into the budget as a durable phase row, and record
   the rationale here.
 
+- **Only gated samples count toward an abort** (owner, 2026-11-04). trial-mh2-mem aborted at
+  17:57Z partly on a sample that held ZERO slots but swapped at 3023 pages/s from Chrome and
+  ungated sessions. That penalized the gate for load it never admitted. A sample with
+  `busy_slots == 0` now neither counts nor breaks the streak, and admission still refuses new
+  work on a swapping machine. Machine-wide counting comes back with `"count_ungated": true` in
+  the rule.
+- **Results so far (usage_eval, noctusai-3d).**
+  - 1 slot, 06:30–16:52Z: 21.8 jobs/h, 13 failed + 6 timeouts, swap max 396 MB/s.
+  - 2 slots + memory-aware admission (trial-mh2-mem), 17:10–17:57Z: 40.6 jobs/h, 2 failed,
+    0 timeouts, same average wait, swap max 144 MB/s.
+  - Next step: trial-mh3-mem (3 slots, memory veto, `job_workers` 2), 21:00–23:00Z (moved from 19:20Z: the stop-rule change could only land after the queue drained).
+
 ## 8 · Measured by
 
 Every admission and sample in the capacity log is joined with Claude usage (tokens, cost, chars per session) by `noctus.dev.usage_eval` — before/after any phase change, `action=compare`. → `KB § PATTERNS/devops/usage-evaluation.md`

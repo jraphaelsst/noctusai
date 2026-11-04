@@ -152,13 +152,25 @@ def load_budget(path: Path | None = None, phase: str | None = None,
     return eff
 
 
-def _check_trial_abort(budget: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any] | None:
+def _check_trial_abort(budget: dict[str, Any], metrics: dict[str, Any],
+                       busy_slots: int | None = None) -> dict[str, Any] | None:
     """Abort the active trial when the last `consecutive` samples of it (this
     one included) all breach its abort limits. Writes the marker + returns
-    the abort record (None = no abort)."""
+    the abort record (None = no abort).
+
+    Only GATED samples count (owner, 2026-11-04): trial-mh2-mem aborted at
+    17:57Z partly on a sample with ZERO slots held that still swapped at
+    3023 pages/s - Chrome and ungated sessions, load the gate never admitted.
+    A sample with no slot held neither counts nor breaks the streak; admission
+    itself still refuses new work on a swapping machine. `busy_slots` None
+    (unknown) counts. Opt back into machine-wide counting with
+    `"count_ungated": true` in the abort rule."""
     trial = budget.get("trial") or {}
     rule = trial.get("abort") or {}
     if not rule or "probe_error" in metrics:
+        return None
+    gated_only = not rule.get("count_ungated", False)
+    if gated_only and busy_slots == 0:
         return None
 
     def breach(m: dict[str, Any]) -> bool:
@@ -168,7 +180,8 @@ def _check_trial_abort(budget: dict[str, Any], metrics: dict[str, Any]) -> dict[
     n = int(rule.get("consecutive", 3))
     p = _log_path()
     prior = [json.loads(ln) for ln in p.read_text().splitlines()[-400:] if ln.strip()] if p.exists() else []
-    prior = [r for r in prior if r.get("event") == "sample" and r.get("phase") == trial["phase"]][-(n - 1):] if n > 1 else []
+    prior = [r for r in prior if r.get("event") == "sample" and r.get("phase") == trial["phase"]
+             and not (gated_only and r.get("busy_slots") == 0)][-(n - 1):] if n > 1 else []
     window = [r.get("metrics", {}) for r in prior] + [metrics]
     if len(window) < n or not all(breach(m) for m in window):
         return None
@@ -725,7 +738,7 @@ def sample(sample_s: float = 3.0) -> dict[str, Any]:
     if st.get("status") == "budget_error":
         return st
     overloaded = bool(evaluate(st["metrics"], st["budget"]))
-    aborted = _check_trial_abort(st["budget"], st["metrics"])
+    aborted = _check_trial_abort(st["budget"], st["metrics"], len(st["holders"]))
     _log({"event": "sample", "host": st["budget"]["host"], "phase": st["budget"]["phase"],
           "overloaded": overloaded, "busy_slots": len(st["holders"]), "metrics": st["metrics"]})
     return {**st, "overloaded": overloaded, "trial_aborted": aborted, "timer": recheck_timer()}
