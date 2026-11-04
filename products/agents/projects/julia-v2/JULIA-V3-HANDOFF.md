@@ -26,8 +26,8 @@ Run skill `noc-contextualize`. Then read §12 of the contract. Then `memory/user
 - Any ID doc is accepted (rg/cpf/cin/cnh), as numbers or as a photo "with visible data and proper lights". A photo goes to the extractor.
 
 **Offers**
-- Offers go ON, sent to the LEAD, not to the owner.
-- At most 3 per batch. Ask whether the lead wants more. When there are none left, say so and offer a human.
+- Offers go ON, sent to the LEAD, not to the owner; the owner evaluates AFTERWARDS from the report (offered + reaction + recommended).
+- ALWAYS 3 per batch; each batch is appended to `imoveis_oferecidos`. Ask whether the lead wants more. When there are none left, say so and offer a human.
 - Never repeat a property. The offered codes go in the `imoveis_oferecidos` column.
 - Property link pattern: `https://oneconsultoriaimobiliaria.com.br/imovel/ONExxxx`. It's already set in `julia_conhecimento_secoes` perfil_whatsapp (One org).
 
@@ -185,7 +185,7 @@ Later entries SUPERSEDE earlier ones where they conflict. ⟲ marks a reversal.
 | 11-03 20:33 | "build the lead origin fix… then ship it all to prod" | shipped |
 | 11-03 20:44 | No publish button for "Decisões": publish it, then add the button | done, shipped |
 | 11-03 21:07–21:16 | imob-lead v1 standard drafted | v1 **published** (lote 3) |
-| 11-03 21:34 | 500 on publishing Julia: fix. Fill in the qualification parameters. **"imoveis no lote… we only deal with 1 imovel por lote… useless"**. "preencher parametros" on validate | 500 fixed; parameters filled. ⟲ superseded at 23:06/00:40: lote is back to **3** (migration 055) |
+| 11-03 21:34 | 500 on publishing Julia: fix. Fill in the qualification parameters. **"imoveis no lote… we only deal with 1 imovel por lote… useless"**. "preencher parametros" on validate | 500 fixed; parameters filled. **Offers are ALWAYS 3 per batch** (owner, 11-04): every batch is APPENDED to `imoveis_oferecidos`, so nothing repeats. There was never a 1-per-batch rule for offers; lote_ofertas=3 (migration 055) |
 | 11-03 22:57 | WAHA still says "One Chat": **refresh the session** after drafting evals | session restarted; WAHA's own label still showed "One Chat" (owner-visible name on the phone is Julia) |
 | 11-03 23:06 | ⟲ **"let's not ofertar imoveis yet"**: Julia gives US the recommendations first; max 3 per run; no repeats; an "offered imoveis" column on the lead with the refs; tell the lead when there are no more options and offer a human | superseded on the destination only (00:40) |
 | 11-04 00:40 | ⟲ **"make the offers on, but not sending the recommendations to me, she sends to the lead."** Lead handed to ME first; handoff number swappable, later → the responsável. Julia never schedules visits; she gathers options; she decides when to hand off; only essentials; CPF mandatory, RG + email nice-to-have; any ID doc, numbers or photo ("visible data and proper lights") → extractor. Vista: search their API; update the docs; "map everything so Julia knows exactly where she has to act"; "I still need to update our db so we can stop fetching from Vista and im not doing it now". Paragraph split on \n\n. Switch: agents = all orgs, SW = that org only ("building it to be scalable and sell it"). Contracts: RG + CPF, whichever exists, never empty. 3 per send, ask for more, none left → offer a human. Link pattern …/imovel/ONExxxx. Opening flow with "ideal". Unhappy lead / mistake / drift → WhatsApp alert to the owner, apologize, testing-phase mention, offer a human; testing-phase switch | CONTRACT §12 + all v3 branches |
@@ -198,8 +198,8 @@ Later entries SUPERSEDE earlier ones where they conflict. ⟲ marks a reversal.
 | 11-04 ~01:00 | "draft all. We'll use her as reference for future agents filling and AI generating (AI generating via ui)" | exemplar + referencia (agents-prontidao) |
 | 11-04 01:05 | Document the complete agent-creation process + update the code. SECURITY: no prompt injection into the system via Julia or into Julia via WhatsApp; "auth before editing"; research online | GUIDES/agent-creation.md, noc-new-agent; H1–H4, M1–M4, L1–L2 |
 | 11-04 01:09 | **Evaluation mode** (agents only): Julia on but replies ONLY to the owner, "not having leads replied before we actually validate her workflow" | ag-controles + ag-fe |
-| 11-04 ~01:10 | "My number is +5511974693365, update every location… editable via UI everywhere" | ⟲ refined at 01:11 |
-| 11-04 01:11 | ⟲ **"MY number must be set in noc's app. Everywhere that uses it consumes from noc"** | core noctus_users.telefone; consumers store user ids |
+| 11-04 ~01:10 | "My number is +5511974693365, update every location… editable via UI everywhere" | made precise at 01:11 (next row) |
+| 11-04 01:11 | **"MY number must be set in noc's app. Everywhere that uses it consumes from noc"**: the number is typed ONCE, in noc, and every product reads it from there. No product stores or types it. | core noctus_users.telefone; consumers store user ids |
 | 11-04 ~01:15 | **Julia doesn't access external links**; she tells the lead she can't | section links-externos + eval + static lock |
 | 11-04 01:26–01:38 | Vista: we have ONE key, `…644c` (full access); `…bced` was the owner's test key, "we never had a quinto andar key"; keys belong in the DB, not .env | → noctusai-04 (Vista) |
 | 11-04 01:39 | HMAC: "please fix what needs fixing" | WAHA scheme fix on sw-turno; enable runbook §4 |
