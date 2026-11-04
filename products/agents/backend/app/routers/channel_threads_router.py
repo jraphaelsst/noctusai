@@ -40,7 +40,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.channels.controles import ControleIndisponivel
 from app.channels.opt_out import OptOutService, evento_out, ultimo_evento_out
@@ -73,6 +73,7 @@ from app.realtime import publish_event
 from app.routers.conversations_router import INSTANCE_ID, _message_payload
 from app.routers.studio_agents_router import get_knowledge_catalog_dep, get_studio_definition_store_dep
 from app.schemas.channel_threads import (
+    AvaliacaoResolvidoOut,
     ControleOut,
     ControleUpdateRequest,
     DrenagemOut,
@@ -439,11 +440,43 @@ def studio_set_participant_state(
 # ── the agent's controls (mode + drain progress) ────────────────────────────
 
 
-def _controle_out(org_id: UUID, agent: Any, controles: Any, threads: Any, *, com_numeros: bool = True) -> ControleOut:
+def mascarar_telefone(telefone: str | None) -> str | None:
+    """``+5511999993365`` -> ``+55 11 *****-3365`` (country, area code and the last four digits only)."""
+    if not telefone:
+        return None
+    d = "".join(ch for ch in telefone if ch.isdigit())
+    return f"+{d[:2]} {d[2:4]} *****-{d[-4:]}" if len(d) >= 8 else "*****"
+
+
+def _resolvidos(org_id: UUID, ids: list[UUID], usuarios: Any, *, admin: bool) -> tuple[list[AvaliacaoResolvidoOut], bool]:
+    """The allow-list users resolved from noc. A failed lookup never fails the read: every id comes back with
+    ``nome``/``telefone`` null and the error flag set. The full phone goes to org admins only."""
+    if not ids:
+        return [], False
+    try:
+        achados = usuarios.da_org(org_id, ids)
+    except Exception:
+        logger.exception("agents.controle.avaliacao_resolucao_falhou org_id=%s", org_id)
+        return [AvaliacaoResolvidoOut(usuario_id=u) for u in ids], True
+    out = []
+    for u in ids:
+        a = achados.get(u)
+        tel = (a.telefone or None) if a is not None else None
+        out.append(AvaliacaoResolvidoOut(
+            usuario_id=u, nome=a.nome if a is not None else None, telefone=tel if admin else mascarar_telefone(tel)))
+    return out, False
+
+
+def _controle_out(
+    org_id: UUID, agent: Any, controles: Any, threads: Any, *, com_numeros: bool = True,
+    usuarios: Any = None, admin: bool = False,
+) -> ControleOut:
     controle = controles.get(org_id, agent.id)
     drenagem = progresso_dreno(
         threads.list_abertos(org_id, agent.id), controle.dreno_inatividade_dias, utcnow()
     )
+    ids = list(controle.avaliacao_usuarios) if com_numeros else []
+    resolvidos, erro = _resolvidos(org_id, ids, usuarios, admin=admin) if usuarios is not None else ([], False)
     return ControleOut(
         agent_key=agent.key,
         modo=controle.modo,
@@ -451,7 +484,9 @@ def _controle_out(org_id: UUID, agent: Any, controles: Any, threads: Any, *, com
         dreno_inatividade_dias=controle.dreno_inatividade_dias,
         fase_testes=controle.fase_testes,
         modo_avaliacao=controle.modo_avaliacao,
-        avaliacao_usuarios=list(controle.avaliacao_usuarios) if com_numeros else [],
+        avaliacao_usuarios=ids,
+        avaliacao_resolvidos=resolvidos,
+        avaliacao_resolucao_erro=erro,
         threads_abertas=drenagem["abertas"],
         drenagem=DrenagemOut(**drenagem),
     )
@@ -494,6 +529,17 @@ def _validar_avaliacao(org_id: UUID, atual: Any, payload: ControleUpdateRequest,
                 + (": " + ", ".join(sem) if sem else ". Adicione um usuário."))
 
 
+def _e_admin_da_org(ctx: AuthContext, request: Request) -> bool:
+    """Owner/admin of the selected org (or a platform admin). Fail closed: an unreadable role is NOT admin."""
+    from app.routers.agente_painel_router import tier_do_chamador
+
+    try:
+        return tier_do_chamador(ctx, request) in ("plataforma", "org_admin")
+    except Exception:
+        logger.exception("agents.controle.papel_ilegivel org_id=%s", ctx.org_id)
+        return False
+
+
 def _aplicar_flags(controles: Any, ctx: AuthContext, agent: Any, payload: ControleUpdateRequest) -> None:
     """The non-mode switches of the controle PUT: ``fase_testes`` and the evaluation mode + allow-list (each audited)."""
     if payload.fase_testes is not None:
@@ -522,13 +568,16 @@ def channel_agent_controle(
 @router.get("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
 def studio_agent_controle(
     agent_key: str,
+    request: Request,
     ctx: AuthContext = Depends(require_member),
     studio_store=Depends(get_studio_definition_store_dep),
     controles=Depends(get_agent_controle_store_dep),
     threads=Depends(get_thread_store_dep),
+    usuarios=Depends(get_usuarios_avaliacao_dep),
 ) -> ControleOut:
     agent = _agente_por_chave(studio_store, ctx.org_id, agent_key)
-    return _controle_out(ctx.org_id, agent, controles, threads)
+    return _controle_out(
+        ctx.org_id, agent, controles, threads, usuarios=usuarios, admin=_e_admin_da_org(ctx, request))
 
 
 @router.put("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
@@ -564,7 +613,7 @@ def studio_set_agent_controle(
     try:
         if so_flags:
             _aplicar_flags(controles, ctx, agent, payload)
-            return _controle_out(ctx.org_id, agent, controles, threads)
+            return _controle_out(ctx.org_id, agent, controles, threads, usuarios=usuarios, admin=True)
     except ValueError as exc:
         raise _err(422, "avaliacao_usuarios_invalido", str(exc)) from exc
     if payload.modo != "desligado":
@@ -596,7 +645,7 @@ def studio_set_agent_controle(
         raise _err(422, "avaliacao_usuarios_invalido", str(exc)) from exc
     except NotFound as exc:
         raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
-    return _controle_out(ctx.org_id, agent, controles, threads)
+    return _controle_out(ctx.org_id, agent, controles, threads, usuarios=usuarios, admin=True)
 
 
 # ── DELETE /api/channels/leads/{ref} (LGPD delete-by-lead) ──────────────────

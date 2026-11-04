@@ -1084,4 +1084,8 @@ from noc." Per org agent instance, agents-only (SW needs only the new status).
   `avaliacao_usuario_fora_da_org`; turning the mode on (or editing the list while on) without ≥1 listed user with a phone
   ⇒ 422 `avaliacao_sem_telefone`, the message naming the users without one; user table unreadable ⇒ 503
   `controle_indisponivel`. Nothing half-applies.
+- The org controle GET **and** PUT response also carry `avaliacao_resolvidos: [{usuario_id, nome, telefone|null}]` (the listed
+  users as noc knows them) and `avaliacao_resolucao_erro: bool`. `telefone` is the full E.164 for org admins/owners, a masked
+  `+55 11 *****-3365` for members (ids stay readable). A failed noc lookup never fails the read: every id comes back with
+  `nome`/`telefone` null and `avaliacao_resolucao_erro: true`.
 - TurnStatus gains `restrito_avaliacao` (SW treats it like `agente_desligado`: nothing sent).

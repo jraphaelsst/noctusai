@@ -67,7 +67,7 @@ products/agents/backend/app/
   telefone_e164=)`: after the kill and the mode (`desligado` keeps its status), a contact whose normalised
   `contact.phone_e164` is not among the resolved phones (or has none) ⇒ `restrito_avaliacao`, every trigger, no LLM,
   inbound stored only for an existing thread, never a new thread/participant. Unreadable flag ⇒ 503.
-  `GET /api/channels/agents/{key}/status` carries `modo_avaliacao` only.
+  `GET /api/channels/agents/{key}/status` carries `modo_avaliacao` only. The org controle GET/PUT add `avaliacao_resolvidos` (users from noc; full phone to org admins, masked to members) + `avaliacao_resolucao_erro` (lookup failed: null name/phone, never a 500).
 
 ### Julia v2 — the channel runtime (A-RT)
 

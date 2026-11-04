@@ -339,3 +339,65 @@ def test_the_fake_store_audits_counts_only():
     org, ag = uuid4(), uuid4()
     s.set_avaliacao(org, ag, modo_avaliacao=True, usuarios=[uuid4()])
     assert s.auditoria_avaliacao[0][2:] == ((False, 0), (True, 1))
+
+
+# ── avaliacao_resolvidos: the users as noc knows them (phone masked for non-admins) ──
+
+
+def _resolvidos_body(chan, *, admin: bool):
+    papel = "owner" if admin else "member"
+    chan.rt.client.mock_supabase.set_table_data("noctus_users", [{
+        "id": str(DEFAULT_USER_ID), "org_id": str(chan.org_id), "role": "user", "org_role": papel}])
+    return chan.rt.client.get(CTL)
+
+
+def test_mask_keeps_country_area_and_last_four_only():
+    from app.routers.channel_threads_router import mascarar_telefone
+
+    assert mascarar_telefone("+5511999993365") == "+55 11 *****-3365"
+    assert mascarar_telefone(None) is None and mascarar_telefone("") is None
+    assert mascarar_telefone("123") == "*****"
+
+
+def test_the_controle_get_resolves_users_full_phone_to_admins_masked_to_members(chan):
+    chan.seed_agent()
+    uid = chan.usuarios.add(chan.org_id, uuid4(), nome="Dono", telefone="+5511999993365")
+    semtel = chan.usuarios.add(chan.org_id, uuid4(), nome="Maria", telefone=None)
+    _avaliacao(chan, uid, semtel)
+    adm = _resolvidos_body(chan, admin=True)
+    assert adm.status_code == 200, adm.text
+    assert adm.json()["avaliacao_usuarios"] == [str(uid), str(semtel)] and adm.json()["avaliacao_resolucao_erro"] is False
+    assert adm.json()["avaliacao_resolvidos"] == [
+        {"usuario_id": str(uid), "nome": "Dono", "telefone": "+5511999993365"},
+        {"usuario_id": str(semtel), "nome": "Maria", "telefone": None}]
+    mem = _resolvidos_body(chan, admin=False)
+    assert mem.status_code == 200
+    assert mem.json()["avaliacao_usuarios"] == [str(uid), str(semtel)]  # ids stay readable
+    assert mem.json()["avaliacao_resolvidos"][0]["telefone"] == "+55 11 *****-3365"
+    assert "+5511999993365" not in mem.text
+
+
+def test_a_failed_lookup_still_renders_with_null_name_and_phone_and_the_error_flag(chan):
+    chan.seed_agent()
+    uid = _dono(chan)
+    _avaliacao(chan, uid)
+    chan.usuarios.falha = RuntimeError("core down")
+    resp = _resolvidos_body(chan, admin=True)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["avaliacao_resolucao_erro"] is True
+    assert body["avaliacao_resolvidos"] == [{"usuario_id": str(uid), "nome": None, "telefone": None}]
+
+
+def test_the_put_response_carries_the_resolved_users_with_the_full_phone(chan):
+    chan.seed_agent()
+    uid = _dono(chan)
+    resp = chan.rt.client.put(CTL, json={"modo": "ligado", "modo_avaliacao": True, "avaliacao_usuarios": [str(uid)]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["avaliacao_resolvidos"] == [{"usuario_id": str(uid), "nome": "Dono", "telefone": TEL_DONO}]
+
+
+def test_no_users_means_no_lookup_and_no_error(chan):
+    chan.seed_agent()
+    body = chan.rt.client.get(CTL).json()
+    assert (body["avaliacao_resolvidos"], body["avaliacao_resolucao_erro"], chan.usuarios.leituras) == ([], False, 0)

@@ -15,6 +15,7 @@ from noctusai_lib.api import StrictHttpModel
 
 __all__ = [
     "AutorMensagem",
+    "AvaliacaoResolvidoOut",
     "ControleOut",
     "ControleUpdateRequest",
     "DrenagemOut",
@@ -268,6 +269,15 @@ class DrenagemOut(BaseModel):
     idades_dias: list[int]
 
 
+class AvaliacaoResolvidoOut(BaseModel):
+    """One allow-listed user as noc knows them. ``telefone`` is the full E.164 for an org admin and a masked form
+    (``+55 11 *****-3365``) for anyone else; ``None`` when noc has none (or could not be read)."""
+
+    usuario_id: UUID
+    nome: str | None = None
+    telefone: str | None = None
+
+
 class ControleOut(BaseModel):
     agent_key: str
     modo: Literal["ligado", "drenando", "desligado"]
@@ -279,6 +289,10 @@ class ControleOut(BaseModel):
     #: channel token read blanks it).
     modo_avaliacao: bool = False
     avaliacao_usuarios: list[UUID] = Field(default_factory=list)
+    #: The same users resolved from noc (name + phone, masked unless the caller is an org admin).
+    avaliacao_resolvidos: list[AvaliacaoResolvidoOut] = Field(default_factory=list)
+    #: The lookup in noc failed: ``avaliacao_resolvidos`` carries ``nome``/``telefone`` null per id.
+    avaliacao_resolucao_erro: bool = False
     threads_abertas: int
     drenagem: DrenagemOut
 
