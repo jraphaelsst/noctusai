@@ -323,12 +323,6 @@ export function createProductApp(config: ProductAppConfig) {
     const location = useLocation();
     const reconnecting = useAuthReconnecting();
 
-    // A CUSTOM auth provider (core) never runs the seed providers that flip the global auth-ready signal, so
-    // every `useAuthReady()` gate (notifications, ...) stayed shut forever there. The shell bridges it.
-    useEffect(() => {
-      if (isInitialized) markAuthReady();
-    }, [isInitialized]);
-
     if (!isInitialized) {
       return (
         <>
@@ -487,6 +481,19 @@ export function createProductApp(config: ProductAppConfig) {
     );
   }
 
+  /**
+   * The auth seam for CUSTOM providers (core): the seed providers flip the global auth-ready signal themselves,
+   * a custom one never does, which left every `useAuthReady()`-gated query disabled forever. Sits inside the
+   * AuthProvider so any provider is covered once its session is initialized.
+   */
+  function AuthReadyBridge() {
+    const { isInitialized } = useAuth();
+    useEffect(() => {
+      if (isInitialized) markAuthReady();
+    }, [isInitialized]);
+    return null;
+  }
+
   // Org visual identity, mounted ONCE here so core + every product wear it by construction.
   // Inside AuthProvider (it reads the session); the identity is only fetched once signed in.
   function Brand({ children }: { children: React.ReactNode }) {
@@ -501,6 +508,7 @@ export function createProductApp(config: ProductAppConfig) {
           <ConfirmProvider>
             <BrowserRouter>
               <AuthProvider>
+                <AuthReadyBridge />
                 {/* Remounts the routes on an org swap so every query hook binds to the
                     new org's client (auth + router above it survive the swap). Brand sits
                     INSIDE the boundary so it reads the new org's client and reskins on swap. */}
