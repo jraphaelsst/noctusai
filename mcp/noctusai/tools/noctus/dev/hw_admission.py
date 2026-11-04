@@ -370,8 +370,16 @@ def memory_veto(job: str, metrics: dict[str, Any], budget: dict[str, Any], other
     """Memory-aware admission for a heavy job joining `others` running ones.
     trial-mh2 (2026-11-04): a slot count of 2 let two full suites in together
     and swapped the 8 GB M2. The slot count is now a ceiling; memory decides.
-    The first heavy job is judged by the plain thresholds alone."""
-    if others < 1:
+    The first heavy job is judged by the plain thresholds alone.
+
+    OPT-IN per phase (`"memory_veto": true`), off by default since 2026-11-04
+    ~23:15Z (owner: "all my shit is stopped because of the 2 slot rule with
+    63% cpu idle"). This box idles at 1.3-1.7 GB reclaimable while one job
+    peaks at 0.9-1.1 GB, so `reclaimable - peak >= min_reclaimable` held the
+    second slot empty almost always and the FIFO head blocked every waiter
+    behind it. The admission gates are CPU % + slot count; swapping is the
+    memory net (evaluate + the trial abort)."""
+    if others < 1 or not budget.get("memory_veto", False):
         return []
     peak, src = expected_peak_mb(job, rows, budget.get("default_job_peak_mb", 1024))
     left = metrics.get("reclaimable_mb", 0) - peak
@@ -380,6 +388,23 @@ def memory_veto(job: str, metrics: dict[str, Any], budget: dict[str, Any], other
     return [f"memory: reclaimable {metrics.get('reclaimable_mb')} MB - expected peak {peak:.0f} MB "
             f"({src}) = {left:.0f} MB < {budget['min_reclaimable_mb']} MB with {others} heavy "
             "job(s) already running"]
+
+
+def _suspend_path() -> Path:
+    return Path(os.environ.get("NOCTUS_HW_SUSPEND") or Path.home() / ".noctus" / "hw-admission-suspended")
+
+
+def suspended() -> str | None:
+    """The machine-wide OFF switch: while `~/.noctus/hw-admission-suspended`
+    exists, every heavy job is admitted at once (verdict `suspended`) and the
+    wait loop lets current waiters through too. The file's text is the reason
+    (who + when). Owner-only lever, for when the gate itself is the incident
+    (2026-11-04 ~23:15Z) - one file every copy of the code reads, instead of
+    an env var each agent must remember. Remove the file to re-arm."""
+    p = _suspend_path()
+    if not p.exists():
+        return None
+    return p.read_text().strip() or "suspended (no reason given)"
 
 
 def cap_worker_argv(argv: list[str], workers: int) -> list[str]:
@@ -573,7 +598,7 @@ def shared_deadline_admit(total_wait_s: float, now: Callable[[], float] = time.m
 class Admission:
     job: str
     admitted: bool
-    verdict: str                      # admitted | inherited | waiting_for_slot | budget_error
+    verdict: str                      # admitted | inherited | suspended | waiting_for_slot | budget_error
     waited_s: float = 0.0
     metrics: dict[str, Any] = field(default_factory=dict)
     blocked_by: list[str] = field(default_factory=list)
@@ -600,6 +625,10 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
     if os.environ.get(_HELD_ENV):
         yield Admission(job, True, "inherited")
         return
+    if suspended():
+        _log({"event": "suspended_admit", "job": job, "reason": suspended()})
+        yield Admission(job, True, "suspended")
+        return
     try:
         b = budget or load_budget()
     except BudgetError as exc:
@@ -612,10 +641,14 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
     why: list[str] = ["no free slot"]
     held = None
     ticket = _enqueue(job)
+    held_by_suspend = False
     pos: int | None = None
     unit = None
     try:
         while True:
+            if suspended():          # switched off while we waited: leave the line now
+                held_by_suspend = True
+                break
             ahead = _queue_position(ticket)
             free = int(b["max_heavy"]) - len(holders())
             if ahead + 1 != pos:      # log each move in line (only when behind someone), not each poll
@@ -651,6 +684,12 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
             sleep(b["poll_s"])
     finally:
         ticket.unlink(missing_ok=True)
+    if held_by_suspend:
+        _log({"event": "suspended_admit", "job": job, "reason": suspended(),
+              "waited_s": round(time.monotonic() - t0, 1)})
+        yield Admission(job, True, "suspended", round(time.monotonic() - t0, 1),
+                        last, [], [], b["phase"], job_workers=jw)
+        return
     adm = Admission(job, True, "admitted", round(time.monotonic() - t0, 1), last, [],
                     advisories(last, b), b["phase"], queue_position=pos, job_workers=jw)
     rss0 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss

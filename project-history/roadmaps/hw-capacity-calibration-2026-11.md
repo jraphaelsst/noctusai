@@ -61,7 +61,8 @@ it real.
 |---|---|---|---|---|
 | 1 | A 03:45–05:45 vs B 05:45–07:45, C 07:45–08:25 | 1 → 2 → 3 slots, CPU 25 % | B aborted on swap; probe v1 swap rates read ~10× high (fixed: probe_version 2) | stay at 1 slot; add the memory veto + `job_workers` |
 | 2 | 1 slot 06:30–16:52 vs trial-mh2-mem 17:10–17:57 | 2 slots, `job_workers` 2, reclaimable 1024 | 40.6 jobs/h, 2 failed, 0 timeouts vs 21.8 jobs/h, 13 failed + 6 timeouts; auto-aborted 17:57 on swap while ZERO slots were held | owner: "2x was kinda smooth" → abort counts gated samples only; then ~20:35 "make the 2-slot the normal methodology" + "lower the cpu limit to 15%" |
-| 3 | trial-mh3-mem 21:00–23:00 vs build (2 slots) from 20:49 | 3 slots, CPU 15 %, reclaimable 1024 | pending | pending (owner asked for "2.5"; 3 slots + the memory veto is the integer form) |
+| 3 | trial-mh3-mem 21:00–23:00 vs build (2 slots) from 20:49 | 3 slots, CPU 15 %, reclaimable 1024 | 42 runs, 0 failed; auto-aborted 21:38:20 on GATED swap (84.4 / 24.6 / 65.2 MB/s); reclaimable 1175–1373 MB | back to 2-slot build; 3 slots needs a looser swap limit (owner's call) |
+| 4 | build 2-slot 21:38–23:15 | 2 slots, CPU 15 %, reclaimable 1024 + memory veto | 2nd slot held EMPTY at 63–80 % CPU idle; FIFO head vetoed 36+ min, 5 waiters stuck | owner ~23:15: gate suspended, then gates = CPU % + slots only (memory floor 0, veto opt-in, swap stays the net) + `~/.noctus/hw-admission-suspended` switch |
 
 ## Trigger conditions
 
@@ -119,6 +120,9 @@ Design sketch, to verify against the tree before building (codebase is source of
 - 2026-11-04: trial aborts count gated samples only (owner: "Count gated samples only").
 - 2026-11-04 ~20:35Z: 2 slots + CPU idle ≥ 15 % + reclaimable ≥ 1024 MB is the normal `build`
   shape (owner). process_version 1 → 2 (gated-only abort changed step 2).
+- 2026-11-04 ~23:15Z: admission gates = CPU idle % + slot count; memory floor + memory veto OFF
+  (opt-in per phase); swap stays the memory net; machine-wide suspend file added (owner, after the
+  veto stalled every session at 63 % CPU idle).
 
 ## Changelog (process_version)
 

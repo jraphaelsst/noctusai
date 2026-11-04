@@ -29,6 +29,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("NOCTUS_HW_SLOT_DIR", str(tmp_path / "slots"))
     monkeypatch.setenv("NOCTUS_HW_LOG", str(tmp_path / "log.ndjson"))
     monkeypatch.setenv("NOCTUS_HW_QUEUE_DIR", str(tmp_path / "queue"))
+    monkeypatch.setenv("NOCTUS_HW_SUSPEND", str(tmp_path / "no-suspend-flag"))  # never the real ~/.noctus switch
     monkeypatch.delenv("NOCTUS_HW_PHASE", raising=False)
     monkeypatch.delenv("NOCTUS_HW_SLOT_HELD", raising=False)
     return tmp_path
@@ -513,20 +514,21 @@ class TestMemoryAwareAdmission:
 
     def test_first_heavy_job_is_never_vetoed_on_memory(self):
         assert hw.memory_veto("gate:pytest:social-wiring", {"reclaimable_mb": 1600},
-                              {**KNOBS}, others=0, rows=self.ROWS) == []
+                              {**KNOBS, "memory_veto": True}, others=0, rows=self.ROWS) == []
 
     def test_second_job_vetoed_when_its_peak_would_breach_the_floor(self):
         why = hw.memory_veto("gate:pytest:social-wiring", {"reclaimable_mb": 2500},
-                             {**KNOBS}, others=1, rows=self.ROWS)
+                             {**KNOBS, "memory_veto": True}, others=1, rows=self.ROWS)
         assert why and "expected peak 1600 MB (job)" in why[0]
 
     def test_second_job_admitted_when_it_fits(self):
         assert hw.memory_veto("gate:pytest:core", {"reclaimable_mb": 2500},
-                              {**KNOBS}, others=1, rows=self.ROWS) == []
+                              {**KNOBS, "memory_veto": True}, others=1, rows=self.ROWS) == []
 
     def test_heavy_slot_applies_the_veto_alongside_a_running_job(self, env, monkeypatch):
         hw._log({"event": "ran", "job": "gate:pytest:big", "children_peak_rss_mb": 3000})
-        b = {**KNOBS, "max_heavy": 2, "phase": "t", "host": "h", "budget_path": "x", "trial": None}
+        b = {**KNOBS, "memory_veto": True, "max_heavy": 2, "phase": "t", "host": "h",
+             "budget_path": "x", "trial": None}
         with hw.heavy_slot("other", budget=b, probe_fn=lambda s: GOOD) as first:
             assert first.admitted
             monkeypatch.delenv("NOCTUS_HW_SLOT_HELD")   # the next job is ANOTHER process
@@ -584,3 +586,50 @@ class TestFifoQueue:
         clock[0] = 200.0
         admit("gate:y")
         assert seen == [("gate:x", 10.0), ("gate:y", 0.0)]
+
+
+class TestCpuAndSlotGatesOnly:
+    """2026-11-04 ~23:15Z owner: the memory veto held the 2nd slot empty at
+    63-80% CPU idle and the FIFO head blocked everyone. Admission = CPU % +
+    slots; the veto is opt-in per phase; a suspend file is the OFF switch."""
+
+    ROWS = [{"event": "ran", "job": "gate:pytest:big", "children_peak_rss_mb": 3000}]
+
+    def test_memory_veto_is_off_unless_the_phase_opts_in(self):
+        assert hw.memory_veto("gate:pytest:big", {"reclaimable_mb": 1600},
+                              {**KNOBS, "memory_veto": False}, others=1, rows=self.ROWS) == []
+        assert hw.memory_veto("gate:pytest:big", {"reclaimable_mb": 1600},
+                              {k: v for k, v in KNOBS.items() if k != "memory_veto"},
+                              others=1, rows=self.ROWS) == []
+
+    def test_second_slot_is_used_when_cpu_allows(self, env, monkeypatch):
+        hw._log({"event": "ran", "job": "gate:pytest:big", "children_peak_rss_mb": 3000})
+        b = {**KNOBS, "memory_veto": False, "max_heavy": 2, "phase": "t", "host": "h",
+             "budget_path": "x", "trial": None}
+        with hw.heavy_slot("other", budget=b, probe_fn=lambda s: GOOD) as first:
+            assert first.admitted
+            monkeypatch.delenv("NOCTUS_HW_SLOT_HELD")
+            with hw.heavy_slot("gate:pytest:big", budget=b, probe_fn=lambda s: GOOD) as second:
+                assert second.admitted and second.verdict == "admitted"
+
+    def test_suspend_file_admits_at_once_and_logs_it(self, env, monkeypatch, tmp_path):
+        flag = tmp_path / "suspended"
+        flag.write_text("owner 2026-11-04 23:15Z: gate is the incident")
+        monkeypatch.setenv("NOCTUS_HW_SUSPEND", str(flag))
+        with hw.heavy_slot("gate:x", wait_s=0, probe_fn=lambda s: {**GOOD, "cpu_idle_pct": 0}) as adm:
+            assert adm.admitted and adm.verdict == "suspended"
+        assert any(r["event"] == "suspended_admit" and "incident" in r["reason"] for r in _rows(env))
+
+    def test_suspend_releases_a_waiter_already_in_line(self, env, monkeypatch, tmp_path):
+        flag = tmp_path / "suspended"
+        monkeypatch.setenv("NOCTUS_HW_SUSPEND", str(flag))
+        b = {**KNOBS, "max_heavy": 1, "phase": "t", "host": "h", "budget_path": "x",
+             "trial": None, "poll_s": 0, "wait_s": 30}
+
+        def sleep(_s):
+            flag.write_text("owner: off")      # the owner flips it while we wait
+
+        with hw.heavy_slot("gate:x", budget=b, sleep=sleep,
+                           probe_fn=lambda s: {**GOOD, "cpu_idle_pct": 0}) as adm:
+            assert adm.admitted and adm.verdict == "suspended"
+        assert not list((env / "queue").glob("*.json")) if (env / "queue").exists() else True

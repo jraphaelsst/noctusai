@@ -30,7 +30,7 @@ capacity admits it.**
 |---|---|
 | Heavy jobs at once, machine-wide | 2 (was 1 until 2026-11-04 ~20:35Z) |
 | Workers inside one heavy job (`job_workers`) | 2 (vitest `--maxWorkers`, playwright `--workers`) |
-| Admit when | CPU idle ≥ 15 % over 10 s **and** free + reclaimable memory ≥ 1 GB **and** swap-out < 50 pages/s; a 2nd job also needs memory left after the running job's expected peak (memory-aware veto) |
+| Admit when | a slot is free **and** CPU idle ≥ 15 % over 10 s **and** swap-out < 50 pages/s. No memory floor and no memory veto since 2026-11-04 ~23:15Z (both opt-in per phase: `min_reclaimable_mb`, `"memory_veto": true`) |
 | Claude sessions | ≤ 3 (advisory: surfaced, not enforced) |
 | Wait before giving up | 30 min, polling every 20 s |
 
@@ -39,8 +39,22 @@ methodology" · "lower the cpu limit to 15%, not 25%").** Evidence: trial-mh2-me
 (17:10–17:57Z) ran 40.6 jobs/h with 2 failed and 0 timeouts, against 21.8 jobs/h with 13 failed
 + 6 timeouts at one slot (06:30–16:52Z). Its auto-abort came from swap while ZERO slots were
 held — ungated load — which is why aborts now count gated samples only (§7). Memory stays the
-binding limit: the memory-aware veto refuses the 2nd job when free memory minus the running
-job's expected peak falls under the floor. Every session uses both slots; nothing to opt into.
+binding limit, but it is guarded by SWAP, not by a free-memory floor. Every session uses both
+slots; nothing to opt into.
+
+**The gates are CPU % + slot count (owner, 2026-11-04 ~23:15Z: "all my shit is stopped because
+of the 2 slot rule with 63% cpu idle … After setting % + number of slot gates, we set the rule
+back up").** The memory-aware veto required free memory − the job's expected peak ≥ 1 GB, i.e.
+~2 GB free; this box idles at 1.3–1.7 GB with 7 sessions and one job peaks at 0.9–1.1 GB, so
+the 2nd slot stayed empty at 63–80 % CPU idle and the FIFO head (vetoed) blocked every waiter
+behind it for 30+ min. Lesson: a gate whose threshold sits inside the machine's normal idle band
+is not a safety net, it is an outage — calibrate a floor against the idle distribution before it
+gates. Swap-out stays the memory net (admission + the trial abort).
+
+**Machine-wide OFF switch:** while `~/.noctus/hw-admission-suspended` exists, every heavy job is
+admitted at once (verdict `suspended`, logged as `suspended_admit`) and current waiters leave the
+line. Its text is the reason. Owner-only lever, for when the gate itself is the incident; remove
+the file to re-arm. Older code copies ignore it — they honor `NOCTUS_HW_SLOT_HELD=<reason>`.
 
 **The slot bounds how many jobs run; `job_workers` bounds how wide each one fans out.**
 With one slot, a single `vitest run` still started about 7 workers on the 8-core M2. The cap
