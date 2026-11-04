@@ -1,4 +1,4 @@
--- Migration: 095_rename_monica_to_nosnolimiar
+-- Migration: 098_rename_monica_to_nosnolimiar
 -- Schema: public (core)
 --
 -- WHY: owner decision 2026-11-02 -- the live product `monica` (clinic CRM/ERP) is renamed to

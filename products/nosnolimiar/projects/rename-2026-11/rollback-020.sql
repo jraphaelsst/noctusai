@@ -1,7 +1,7 @@
 -- ROLLBACK of product migration 020 (nosnolimiar -> monica). RUN ONLY during the cutover window, BEFORE the app serves
 -- traffic as `nosnolimiar` again. It is 020 with the two names swapped (same catalog-derived re-pointing of the
 -- functions / RLS policies / acting-audit triggers / exposed-schemas list, same convergence guard).
--- ORDER: reverse core 095 FIRST (products.db_schema = 'monica' -- the acting-audit helper needs it), then this file,
+-- ORDER: reverse core 098 FIRST (products.db_schema = 'monica' -- the acting-audit helper needs it), then this file,
 -- then the schema ledger lives in `monica.schema_migrations` again (the 020 row is harmless there).
 -- Not a migration: never place it under backend/migrations/.
 DO $mig$
@@ -54,7 +54,7 @@ BEGIN
     RAISE EXCEPTION 'rollback requires public.attach_acting_audit_triggers(text, text) (core 072) -- apply core first';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.products WHERE db_schema = v_new) THEN
-    RAISE EXCEPTION 'rollback: public.products has no row with db_schema = % -- reverse core 095 FIRST', v_new;
+    RAISE EXCEPTION 'rollback: public.products has no row with db_schema = % -- reverse core 098 FIRST', v_new;
   END IF;
   PERFORM public.attach_acting_audit_triggers(v_new);
 

@@ -12,9 +12,9 @@
 ## Milestones
 
 - **M0: owner consent to publish nosnolimiar** — owner, 2026-11-02 ✅ 2026-11-02
-- **M1: repo rename merged to dev** — directory, code, compose/ingress/CI wiring, generated artifacts, core 095, product 020, cutover scripts. Blocked on M0 for the wiring commit (`check_prod_exposure_consent`).
+- **M1: repo rename merged to dev** — directory, code, compose/ingress/CI wiring, generated artifacts, core 098, product 020, cutover scripts. Blocked on M0 for the wiring commit (`check_prod_exposure_consent`).
 - **M2: image built and promoted** — GHCR `noctus-nosnolimiar` built and pullable; `release` bless + promote; `deploy_pull`.
-- **M3: cutover window done** — `RUNBOOK.md` phases B and C (core 095, 020, `cutover.sql`, deploy, tunnel).
+- **M3: cutover window done** — `RUNBOOK.md` phases B and C (core 098, 020, `cutover.sql`, deploy, tunnel).
 - **M4: verified live** — `deploy_verify`, `spa_smoke`, `sso_cors_smoke`, `sso_smoke`, manual login lands in Nós no Limiar with 30 categories.
 - **M5: cleanup** — old container/image/WAHA volume, stale `.env`/`.env.fleet` keys, roadmap archived.
 
@@ -28,7 +28,7 @@ All phases are sequential on the owner's go; no deferred triggers. Phase C is ru
 |---|---|---|---|---|
 | P1.1 | `git mv products/monica products/nosnolimiar`; app identifiers, env names (`NOSNOLIMIAR_*`), agent key `nosnolimiar-leads`, UI branding "Nós no Limiar" | `products/nosnolimiar/**` | shipped (branch) | backend pytest 100, vitest, vite build |
 | P1.2 | Platform wiring: `start.sh`, root compose, prod compose service/image/container, ingress (new host + `retired: monica.noctusai.com`), tunnel template, WAHA instance `waha-nosnolimiar` (+ rendered compose, `env.fleet.keys`), scope files, CI matrix, dependabot | `deploy/**`, `.github/**` | shipped except consent-gated surfaces | `tunnel_config check`, `waha_instance render`, keepers |
-| P1.3 | Core 095 (catalog row renamed in place) and product 020 (schema rename + RLS/trigger/function/exposure re-pointing, catalog-derived, convergence guard) | `products/core/backend/migrations/095_*.sql`, `products/nosnolimiar/backend/migrations/020_*.sql` | shipped (branch) | `migration_replay`; prod dry-run |
+| P1.3 | Core 098 (catalog row renamed in place) and product 020 (schema rename + RLS/trigger/function/exposure re-pointing, catalog-derived, convergence guard) | `products/core/backend/migrations/098_*.sql`, `products/nosnolimiar/backend/migrations/020_*.sql` | shipped (branch) | `migration_replay`; prod dry-run |
 | P1.4 | `verify_db_guards` probe + `compliance.py` path | `mcp/noctusai/tools/noctus/dev/` | shipped | `verify_db_guards` after 020 |
 | P1.5 | Data move + org delete + rollback scripts + runbook | `products/nosnolimiar/projects/rename-2026-11/` | shipped | `cutover-dry-run.sql` on prod (ROLLBACK) |
 | P1.6 | KB landscape/INDEX/integrations, LGPD entry, seed docstrings/fixtures | `KNOWLEDGE-BASE/**`, `seed/**` | shipped | `kb_sync verify` |

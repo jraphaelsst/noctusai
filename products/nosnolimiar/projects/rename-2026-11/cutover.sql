@@ -7,7 +7,7 @@
 --   Nós no Limiar    fa80a1e0-1bcd-4c65-8a37-2162e8ffa688   KEEP  (target)
 --   Mônica Tangerino ad6ec2e2-b470-4044-884e-6345e4fe66d4   DELETE
 --
--- Preconditions (RUNBOOK.md): core 095 + product 020 applied (schema `nosnolimiar` exists). The old
+-- Preconditions (RUNBOOK.md): core 098 + product 020 applied (schema `nosnolimiar` exists). The old
 -- container is stopped. Run as service role / owner, ONE session, via the Supabase SQL editor or the MCP.
 -- Run cutover-dry-run.sql FIRST (identical, ends in ROLLBACK).
 -- Triggers stay ON for the user/org statements (the noctus_users -> org_memberships mirror + auth metadata
