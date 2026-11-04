@@ -617,7 +617,9 @@ class AgentsClient(Protocol):
 
     async def especificacoes(self, agent_key: str) -> EspecificacoesResposta: ...
 
-    async def salvar_especificacoes(self, agent_key: str, valores: dict[str, str]) -> EspecificacoesResposta: ...
+    async def salvar_especificacoes(
+        self, agent_key: str, valores: dict[str, str], ator: dict[str, str],
+    ) -> EspecificacoesResposta: ...
 
     async def uso(self, mes: str) -> AgentUso: ...
 
@@ -766,6 +768,7 @@ class FakeAgentsClient:
         self.especificacoes_valores: dict[str, str] = {}
         self.especificacoes_script: list[EspecificacoesResposta] = []
         self.especificacoes_salvas: list[tuple[str, dict[str, str]]] = []
+        self.especificacoes_atores: list[dict[str, str]] = []  # the attested acting user of each save
 
     def _maybe_fail(self, method: str) -> None:
         if method in self.errors:
@@ -852,10 +855,13 @@ class FakeAgentsClient:
         self._maybe_fail("especificacoes")
         return EspecificacoesResposta(200, self._especificacoes_corpo(agent_key))
 
-    async def salvar_especificacoes(self, agent_key: str, valores: dict[str, str]) -> EspecificacoesResposta:
+    async def salvar_especificacoes(
+        self, agent_key: str, valores: dict[str, str], ator: dict[str, str],
+    ) -> EspecificacoesResposta:
         """Scripted (``especificacoes_script``) or an in-memory echo of the declared keys; an undeclared key is agents' 422."""
         self._maybe_fail("salvar_especificacoes")
         self.especificacoes_salvas.append((agent_key, dict(valores)))
+        self.especificacoes_atores.append(dict(ator))
         if self.especificacoes_script:
             return self.especificacoes_script.pop(0)
         desconhecidas = sorted(set(valores) - set(self.especificacoes_declaradas))
@@ -878,7 +884,7 @@ class FakeAgentsClient:
         ]
         return {
             "agent_key": agent_key, "declaradas": declaradas,
-            "valores": [{"chave": c, "valor": v} for c, v in self.especificacoes_valores.items()],
+            "valores": [{"chave": c, "valor": v, "updated_by_nome": None} for c, v in self.especificacoes_valores.items()],
             "faltando": [c for c in self.especificacoes_declaradas if c not in self.especificacoes_valores],
             "invalidas": [], "modo_validacao": "report",
         }
@@ -1554,13 +1560,16 @@ class HttpAgentsClient(AgentsHttpTransport):
         body = await self._send("GET", f"/api/channels/agents/{quote(agent_key, safe='')}/specs")
         return EspecificacoesResposta(200, body if isinstance(body, dict) else {})
 
-    async def salvar_especificacoes(self, agent_key: str, valores: dict[str, str]) -> EspecificacoesResposta:
-        """`PUT /api/channels/agents/{key}/specs`: agents' 200 AND its 422 (the per-field violations) come back
+    async def salvar_especificacoes(
+        self, agent_key: str, valores: dict[str, str], ator: dict[str, str],
+    ) -> EspecificacoesResposta:
+        """`PUT /api/channels/agents/{key}/specs` with the ACTING USER (``ator`` = ``{user_id, nome?, email?}``, product-attested by
+        this client's channel token -- agents answers 422 ``ator_obrigatorio`` without it): agents' 200 AND its 422 (the per-field violations) come back
         verbatim -- anything else is the usual typed error."""
         path = f"/api/channels/agents/{quote(agent_key, safe='')}/specs"
         try:
             async with self._client() as client:
-                response = await client.request("PUT", path, json={"valores": valores})
+                response = await client.request("PUT", path, json={"valores": valores, "ator": ator})
         except httpx.HTTPError as exc:
             raise AgentsTimeout(f"agents unreachable: {type(exc).__name__}") from exc
         if response.status_code not in (200, 422):

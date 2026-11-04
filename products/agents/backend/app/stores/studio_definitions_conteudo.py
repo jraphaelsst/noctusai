@@ -160,6 +160,10 @@ class OrgSpecRecord:
     updated_by: UUID | None
     created_at: datetime
     updated_at: datetime
+    #: Product-attested display name of ``updated_by`` (a change made from social-wiring); ``None`` for a studio write.
+    updated_by_nome: str | None = None
+    #: The channel token that carried the write (which product / grant); ``None`` for a studio write.
+    updated_by_token: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -328,6 +332,7 @@ class ConteudoStore(Protocol):
     def list_org_specs(self, org_id: UUID, agent_key: str) -> list[OrgSpecRecord]: ...
     def upsert_org_specs(
         self, org_id: UUID, agent_key: str, valores: dict[str, str], *, actor: UUID | None = None,
+        actor_nome: str | None = None, actor_token: UUID | None = None,
     ) -> list[OrgSpecRecord]: ...
 
     # platform-wide texts
@@ -506,7 +511,7 @@ class FakeConteudoMixin:
             key=lambda r: r.chave,
         )
 
-    def upsert_org_specs(self, org_id, agent_key, valores, *, actor=None):
+    def upsert_org_specs(self, org_id, agent_key, valores, *, actor=None, actor_nome=None, actor_token=None):
         validar_org_specs(valores)
         now = self._now()
         for chave, valor in valores.items():
@@ -514,6 +519,7 @@ class FakeConteudoMixin:
             self._org_specs[(org_id, agent_key, chave)] = OrgSpecRecord(
                 id=cur.id if cur else uuid4(), org_id=org_id, agent_key=agent_key, chave=chave, valor=valor,
                 updated_by=actor, created_at=cur.created_at if cur else now, updated_at=now,
+                updated_by_nome=actor_nome, updated_by_token=actor_token,
             )
         return self.list_org_specs(org_id, agent_key)
 
@@ -700,11 +706,12 @@ class SupabaseConteudoMixin:
                 id=UUID(str(r["id"])), org_id=UUID(str(r["org_id"])), agent_key=r["agent_key"], chave=r["chave"],
                 valor=r.get("valor") or "", updated_by=_uuid(r.get("updated_by")),
                 created_at=r["created_at"], updated_at=r["updated_at"],
+                updated_by_nome=r.get("updated_by_nome"), updated_by_token=_uuid(r.get("updated_by_token")),
             )
             for r in rows
         ]
 
-    def upsert_org_specs(self, org_id, agent_key, valores, *, actor=None):
+    def upsert_org_specs(self, org_id, agent_key, valores, *, actor=None, actor_nome=None, actor_token=None):
         validar_org_specs(valores)
         if valores:
             self._exec(self._t("agent_org_specs").upsert(
@@ -712,6 +719,8 @@ class SupabaseConteudoMixin:
                     {
                         "org_id": str(org_id), "agent_key": agent_key, "chave": chave, "valor": valor,
                         "updated_by": str(actor) if actor else None,
+                        "updated_by_nome": actor_nome,
+                        "updated_by_token": str(actor_token) if actor_token else None,
                     }
                     for chave, valor in valores.items()
                 ],

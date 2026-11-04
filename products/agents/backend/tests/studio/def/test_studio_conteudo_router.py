@@ -24,6 +24,7 @@ from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID
 # same ids as the suite conftest (its package is named `def`: not importable)
 OTHER_ORG_ID = uuid5(NAMESPACE_OID, "studio-other-org")
 OTHER_USER_ID = uuid5(NAMESPACE_OID, "studio-other-user")
+OTHER_USER_ID = uuid5(NAMESPACE_OID, "studio-other-user")
 
 BASE = "/api/studio/agents"
 PLAT = "/api/studio/plataforma"
@@ -340,6 +341,11 @@ class TestOrgInstanceAndSpecs:
         assert body["faltando"] == [] and [(v["chave"], v["valor"]) for v in body["valores"]] == [
             ("agencia", "Imobiliária Aurora"),
         ]
+        # the studio path is unchanged: the signed-in human is the actor, no attested name / token, and no `ator` field
+        assert body["valores"][0]["updated_by_nome"] is None
+        [row] = plat.store.list_org_specs(OTHER_ORG_ID, "julia")
+        assert row.updated_by_token is None and row.updated_by == OTHER_USER_ID
+        assert plat.put(f"{BASE}/julia/specs", json={"valores": {"agencia": "x"}, "ator": {"user_id": str(OTHER_USER_ID)}}).status_code == 422
         undeclared = plat.put(f"{BASE}/julia/specs", json={"valores": {"outra": "x"}})
         assert undeclared.status_code == 422 and undeclared.json()["code"] == "spec_nao_declarada"
         # texto is capped at 1 000 characters, texto_longo at 4 000 (E1) -- refused in block mode

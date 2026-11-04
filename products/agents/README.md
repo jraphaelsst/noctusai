@@ -111,7 +111,7 @@ today) and so is the strict scope allow-list the grant token admin mints from.
 **Org business specs (Julia-line S9).** `GET|PUT /api/channels/agents/{key}/specs` (`routers/channel_specs_router.py`) is what
 social-wiring's editor calls with the granted channel token (scope `agents:channel-specs`, bound to the org instance; the org
 is the token's). It runs the studio PUT's own code (`aplicar_org_specs` / `ler_org_specs`): declared keys only,
-`especificacoes_service.validar`, 200 + `invalidas` in report mode, 422 + `violacoes` in block mode, 422 `spec_nao_declarada`.
+`especificacoes_service.validar`, the PUT's required, product-attested `ator {user_id, nome?, email?}` (422 `ator_obrigatorio`; stored as `updated_by*`, migration 062), 200 + `invalidas` in report mode, 422 + `violacoes` in block mode, 422 `spec_nao_declarada`.
 
 Create: (1) channel token in `agents.api_tokens` for the TARGET org (issuer = the transport `social-wiring`, scopes
 `agents:channel-turn|channel-status|channel-specs`, bound to the org's instance via `ensure_instancia`); (2) tools token

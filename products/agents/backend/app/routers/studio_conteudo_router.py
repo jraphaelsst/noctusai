@@ -55,6 +55,7 @@ from app.routers.studio_agents_router import (
 )
 from app.channels.token_audit import TokenAudit
 from app.schemas.studio_conteudo import (
+    AtorAtestado,
     ContentTokenCreateRequest,
     ContentTokenInfoOut,
     ContentTokenOut,
@@ -361,7 +362,12 @@ def _org_specs_out(key: str, r, config: ConfigValidacao) -> OrgSpecsOut:
         version_id=r.versao.id if r.versao else None,
         versao=r.versao.versao if r.versao else None,
         declaradas=[_spec_out(d) for d in r.specs_declaradas],
-        valores=[OrgSpecValorOut(chave=s.chave, valor=s.valor, updated_at=s.updated_at) for s in r.specs_org],
+        valores=[
+            OrgSpecValorOut(
+                chave=s.chave, valor=s.valor, updated_at=s.updated_at, updated_by=s.updated_by, updated_by_nome=s.updated_by_nome,
+            )
+            for s in r.specs_org
+        ],
         faltando=list(r.faltando),
         invalidas=[SpecInvalidaOut(**v.to_dict()) for v in invalidas],
         modo_validacao=config.modo,
@@ -397,9 +403,15 @@ def ler_org_specs(store, ctx: AuthContext, key: str, config: ConfigValidacao) ->
     return _org_specs_out(key, r, config)
 
 
-def aplicar_org_specs(store, ctx: AuthContext, key: str, valores: dict[str, str], config: ConfigValidacao) -> OrgSpecsOut:
+def aplicar_org_specs(
+    store, ctx: AuthContext, key: str, valores: dict[str, str], config: ConfigValidacao, *, ator: AtorAtestado | None = None,
+) -> OrgSpecsOut:
     """THE org-spec write path (Julia-line CONTRACT §E2): the studio PUT and the channel/SW PUT both land
-    here, so the declared-keys rule, :func:`validar_specs`, the report/block rollout and the audit never fork."""
+    here, so the declared-keys rule, :func:`validar_specs`, the report/block rollout and the audit never fork.
+
+    ``ator`` is the PRODUCT-ATTESTED person (channel path only; the channel token vouches for it). The row's
+    ``updated_by`` is that person and ``updated_by_token`` the channel token; the studio path records the signed-in
+    human and no token. The audit carries both."""
     payload = OrgSpecsUpdateRequest(valores=valores)
     agent = resolve_agent(store, ctx.org_id, key, allow_instancia=True)
     if agent.definition_scope == "instancia":
@@ -436,11 +448,18 @@ def aplicar_org_specs(store, ctx: AuthContext, key: str, valores: dict[str, str]
         )
     antes = set(antes_valores)
     with store_errors():
-        store.upsert_org_specs(ctx.org_id, key, dict(res.valores), actor=actor_id(ctx))
-    # keys only (values are the org's business data, not audit payload)
+        store.upsert_org_specs(
+            ctx.org_id, key, dict(res.valores), actor=ator.user_id if ator else actor_id(ctx),
+            actor_nome=(ator.nome or ator.email) if ator else None, actor_token=ctx.api_token_id if ator else None,
+        )
+    # keys only (values are the org's business data, not audit payload); a product write names BOTH the token and the person
+    depois: dict[str, Any] = {"chaves": sorted(payload.valores)}
+    if ator:
+        depois["token_id"] = str(ctx.api_token_id)
+        depois["ator"] = {k: v for k, v in (("user_id", str(ator.user_id)), ("nome", ator.nome), ("email", ator.email)) if v}
     store.append_audit(
-        ctx.org_id, agent.id, actor_id(ctx), "specs_org_editadas",
-        {"chaves": sorted(antes)}, {"chaves": sorted(payload.valores)},
+        ctx.org_id, agent.id, ator.user_id if ator else actor_id(ctx), "specs_org_editadas",
+        {"chaves": sorted(antes)}, depois,
     )
     _, r = _resolved(store, ctx, key)
     return _org_specs_out(key, r, config)

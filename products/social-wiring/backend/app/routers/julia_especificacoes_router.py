@@ -3,8 +3,9 @@ live and are validated in AGENTS -- SW is a faithful proxy, never a second valid
 
   GET /api/julia/especificacoes   org admin  -> agents' body verbatim:
         {agent_key, version_id, versao, declaradas[{chave,rotulo,descricao,tipo,obrigatoria,exemplo}],
-         valores[{chave,valor,updated_at}], faltando[], invalidas[{chave,codigo,motivo,mensagem}], modo_validacao}
-  PUT /api/julia/especificacoes   org admin  {"valores": {chave: texto}}
+         valores[{chave,valor,updated_at,updated_by,updated_by_nome}], faltando[], invalidas[{chave,codigo,motivo,mensagem}], modo_validacao}
+  PUT /api/julia/especificacoes   org admin  {"valores": {chave: texto}}   (the acting user -- id, name, e-mail -- is filled by
+        THIS route from the session and sent to agents as `ator`; a body `ator` is refused, the body is `valores` only)
         200 -> the same body (report mode lists `invalidas`; the write landed)
         422 -> agents' body verbatim: {code, detail, violacoes[{chave,codigo,motivo,mensagem}]} (block mode, or
                `spec_nao_declarada` for a key the definition does not declare)
@@ -41,6 +42,26 @@ class EspecificacoesIn(StrictHttpModel):
     """``valores``: ``{chave: texto}``; a blank value clears the spec. Nothing else is accepted (the org comes from the session)."""
 
     valores: dict[str, str]
+
+
+def _ator(auth: tuple, core: Any) -> dict[str, str]:
+    """The ACTING USER, from the authenticated session only (agents records it as who changed the specs): id, display
+    name (the org user row's ``nome``, else the session's own name) and e-mail. Never taken from the request body."""
+    user = auth[0]
+    ator: dict[str, str] = {"user_id": str(getattr(user, "id"))}
+    nome = None
+    try:
+        rows = core.table("noctus_users").select("nome").eq("id", ator["user_id"]).limit(1).execute().data or []
+        nome = (rows[0].get("nome") or "").strip() if rows else None
+    except Exception as exc:  # the name is a courtesy: a failed lookup falls back to the session's, never blocks the save
+        logger.warning("julia: could not read the acting user's name (%s)", type(exc).__name__)
+    meta = getattr(user, "user_metadata", None) or {}
+    nome = nome or (meta.get("nome") or meta.get("full_name") or meta.get("name") or "").strip() or None
+    email = (getattr(user, "email", None) or "").strip() or None
+    for chave, valor in (("nome", nome), ("email", email)):
+        if valor:
+            ator[chave] = valor
+    return ator
 
 
 def _agents(client_factory: Any, org_id: Any) -> AgentsClient:
@@ -83,10 +104,12 @@ async def salvar(
     auth: tuple = Depends(get_current_user_org),
     client_factory=Depends(get_agents_client_factory),
 ) -> JSONResponse:
-    await run_blocking(require_org_admin_for, get_core_client(), auth, request, _O_QUE)
+    core = get_core_client()
+    await run_blocking(require_org_admin_for, core, auth, request, _O_QUE)
     agents = await run_blocking(_agents, client_factory, coerce_org_uuid(auth[2]))
+    ator = await run_blocking(_ator, auth, core)
     try:
-        resposta = await agents.salvar_especificacoes(DEFAULT_AGENT_KEY, corpo.valores)
+        resposta = await agents.salvar_especificacoes(DEFAULT_AGENT_KEY, corpo.valores, ator)
     except AgentsClientError as exc:
         raise _traduzir(exc) from exc
     return JSONResponse(resposta.corpo, status_code=resposta.status)

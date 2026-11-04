@@ -5,6 +5,7 @@ patched. Strict `== 401` without a session; org admin only; agents' 200/422 bodi
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -19,6 +20,7 @@ from tests.support.julia_world import ADMIN_ID, CORRETOR_ID, MEMBER_ID, ORG_ID, 
 
 H = {"Authorization": "Bearer test-token"}
 URL = "/api/julia/especificacoes"
+ATOR = {"user_id": "00000000-0000-0000-0000-000000000001", "nome": "Chefe"}
 
 
 def _codigo(r):
@@ -92,7 +94,7 @@ def test_get_passes_agents_body_through(admin):
     admin.w.agents.especificacoes_valores["agencia"] = "Aurora"
     body = admin.req("get").json()
     assert [d["chave"] for d in body["declaradas"]] == ["agencia", "regioes"]
-    assert body["valores"] == [{"chave": "agencia", "valor": "Aurora"}]
+    assert body["valores"] == [{"chave": "agencia", "valor": "Aurora", "updated_by_nome": None}]
     assert body["faltando"] == ["regioes"] and body["invalidas"] == [] and body["modo_validacao"] == "report"
 
 
@@ -100,11 +102,21 @@ def test_put_sends_only_the_valores_to_the_julia_agent(admin):
     r = admin.req("put", {"valores": {"agencia": "Imobiliária Aurora"}})
     assert r.status_code == 200
     assert admin.w.agents.especificacoes_salvas == [("julia", {"agencia": "Imobiliária Aurora"})]
+    [ator] = admin.w.agents.especificacoes_atores
+    assert ator["user_id"] == TEST_USER_ID and ator["nome"] == "Chefe"
 
 
 def test_the_body_cannot_name_an_org_or_extra_fields(admin):
     assert admin.req("put", {"valores": {"agencia": "A"}, "org_id": "x"}).status_code == 422
     assert admin.w.agents.especificacoes_salvas == []
+
+
+def test_an_actor_in_the_body_is_refused_and_the_session_user_is_what_agents_gets(admin):
+    outro = "00000000-0000-0000-0000-0000000000aa"
+    r = admin.req("put", {"valores": {"agencia": "A"}, "ator": {"user_id": outro, "nome": "Impostor"}})
+    assert r.status_code == 422 and admin.w.agents.especificacoes_salvas == []
+    assert admin.req("put", {"valores": {"agencia": "A"}}).status_code == 200
+    assert admin.w.agents.especificacoes_atores[-1]["user_id"] == TEST_USER_ID != outro
 
 
 def test_an_agents_422_is_passed_through_faithfully(admin):
@@ -167,12 +179,13 @@ async def _http_client_wire():
         return httpx.Response(200, json={"agent_key": "julia", "valores": []})
 
     c = _http(handler)
-    ok = await c.salvar_especificacoes("julia", {"agencia": "bom"})
+    ok = await c.salvar_especificacoes("julia", {"agencia": "bom"}, ATOR)
     assert (ok.status, ok.corpo["agent_key"]) == (200, "julia")
-    ruim = await c.salvar_especificacoes("julia", {"agencia": "ruim"})
+    ruim = await c.salvar_especificacoes("julia", {"agencia": "ruim"}, ATOR)
     assert ruim.status == 422 and ruim.corpo["violacoes"] == [{"chave": "agencia"}]
     with pytest.raises(AgentsTokenInvalid):
-        await c.salvar_especificacoes("julia", {"agencia": "negado"})
+        await c.salvar_especificacoes("julia", {"agencia": "negado"}, ATOR)
     assert vistos[0][:3] == ("PUT", "/api/channels/agents/julia/specs", "Bearer noc_tok")
+    assert json.loads(vistos[0][3]) == {"valores": {"agencia": "bom"}, "ator": ATOR}
     got = await _http(lambda r: httpx.Response(200, json={"declaradas": []})).especificacoes("julia")
     assert got.status == 200 and got.corpo == {"declaradas": []}
