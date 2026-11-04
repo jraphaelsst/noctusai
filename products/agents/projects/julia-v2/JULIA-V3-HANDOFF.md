@@ -36,6 +36,7 @@ Run skill `noc-contextualize`. Then read §12 of the contract. Then `memory/user
 - Unhappy lead, her own mistake, or drift ⇒ alert the owner on WhatsApp, apologize, say she's in a testing phase if fase_testes is on, and offer a human.
 - The name comes from the campaign form. If it's clearly a business name, ask for the person's name; if it sounds like a real name, use it; if in doubt, ask.
 - Julia NEVER accesses external links. She says she can't open them. Done: section `links-externos` and eval `link-externo`; the mechanical lock is on the ag-ferramentas branch.
+- Julia avoids ANY political matter (owner, 2026-11-04: "julia is to avoid any political matters"): polite, neutral decline, no opinion, back to the property. Drafted: section `temas-proibidos-politica` (`content-v3/julia-v3-secao-politica.json`) and eval `politica-desvio` (`content-v3/evals/politica-desvio.json`); applied post-deploy with the rest of the content.
 
 **Switches and evaluation mode**
 - The agents platform switch stops every Julia in every org. The SW switch stops only that org's Julia. One business never affects another.
@@ -121,11 +122,11 @@ The content payloads are committed next to this file in `content-v3/` (ferrament
 - `qual_api.sh METHOD PATH [BODY]` drives eval cases (token from ~/.config/noctus/agents.env).
 - `julia-v3-secoes.json`, `-skills.json`, `-secao-erros.json`, `-secao-links.json` are already applied.
 - `imob-lead/v3_*.json` are already applied to the imob-lead DRAFT.
-- 20 eval cases exist (incl. `link-externo`).
+- 20 eval cases exist (incl. `link-externo`); `politica-desvio` makes 21 once applied.
 
 ## 6 · Evaluate + publish
 
-- Run Julia's 20 evals on the CURRENT draft hash (Studio).
+- Run Julia's 21 evals (20 + `politica-desvio`) on the CURRENT draft hash (Studio).
 - The publish modal must show no blocking items and a score ≥ 0.800 (now also via GET /prontidao).
 - Tell the owner exactly what to publish, IN ORDER: (1) the imob-lead standard **v3 draft `82e12707-0073-449e-9ccc-e142e6a5eb52`** (rascunho, lote_ofertas=3, v3 criteria); (2) Julia. NOTE: v2 `ce675a7a` is ALREADY PUBLISHED (2026-11-03 22:46) with lote_ofertas=1, so live offers go out 1 per batch until v3 is published. Migrations 054/055 change only the column DEFAULT. (Verified read-only in prod agents.qualificacao_versoes by noctusai-3d.)
 - Remind them to turn Julia on per line (SW switch), with evaluation mode ON first.
