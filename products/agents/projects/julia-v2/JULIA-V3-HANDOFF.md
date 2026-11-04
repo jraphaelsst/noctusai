@@ -120,9 +120,14 @@ agents + SW + core go together, because SW's contract test needs agents' channel
 
 The content payloads are committed next to this file in `content-v3/` (ferramentas, textos, secoes, skills, eval cases, imob-lead v3 edits). The eval helper `qual_api.sh METHOD PATH [BODY]` lives in the original scratchpad (`/private/tmp/claude-501/…/0b548c30-…/scratchpad/`); it only curls `https://agents.noctusai.com` with the token from `~/.config/noctus/agents.env`.
 - `qual_api.sh METHOD PATH [BODY]` drives eval cases (token from ~/.config/noctus/agents.env).
-- `julia-v3-secoes.json`, `-skills.json`, `-secao-erros.json`, `-secao-links.json` are already applied.
+- `julia-v3-secoes.json`, `-skills.json`, `-secao-erros.json`, `-secao-links.json` are already applied. Do NOT re-apply `julia-v3-secoes.json`: its `erros-e-insatisfacao` is older than `-secao-erros.json` and would revert it.
 - `imob-lead/v3_*.json` are already applied to the imob-lead DRAFT.
-- 20 eval cases exist (incl. `link-externo`); `politica-desvio` makes 21 once applied.
+
+**Applied 2026-11-04 ~16:30Z (noctusai-3d, after prod ship 322d6be1d):** `julia-v3-ferramentas.json` (2 create, 6 update), `julia-v3-textos.json` (3 create), `julia-v3-secao-politica.json` (secao `temas-proibidos-politica`), `julia-v3-secao-seguranca.json` (item 8 drops "política" and points at the politics secao, so the rule lives in one place), and eval case `politica-desvio` (21 cases now). Owner core phone set (noctus_users.telefone, E.164).
+**Still open:**
+- `atualizar_skills` has nothing to move until the owner publishes the library-skill drafts of ofertar-imoveis, intencao-de-visita and transferir-para-humano. Re-pin after that, then run the evals on the resulting hash.
+- The SW report destination, agents evaluation mode and the exemplar flag refuse service tokens (`user_required`). The owner sets them logged in.
+- `area-evals` is not written yet.
 
 ## 6 · Evaluate + publish
 
