@@ -643,6 +643,50 @@ def _resolve(token: str, cwd: str) -> str:
     return os.path.normpath(token if os.path.isabs(token) else os.path.join(cwd, token))
 
 
+def _cd_step(raw_target: str, current: str) -> str:
+    """One `cd <target>` applied to `current` — the same rules `_effective_cwd`
+    uses: a flag or empty target is no move, an unresolvable one (`$W`) keeps
+    the last cwd we DO know."""
+    target = raw_target.strip().strip("'\"")
+    if not target or target.startswith("-") or _is_unresolvable(target):
+        return current
+    return _resolve(target, current)
+
+
+def _segment_cwds(command: str, cwd: str) -> list[str] | None:
+    """The cwd EACH `_segments` entry runs in, or None when the walk cannot be
+    trusted.
+
+    🔴 2026-11-04: `bash_write_targets` resolved every segment against the
+    LAST `cd` of the whole call, so `cd <worktree> && git commit …; cd <primary>
+    && python cli.py …` charged the worktree commit to the primary (a false
+    refusal) — and the reverse order (`cd <primary> && sed -i … f; cd <wt>`)
+    would have attributed a real primary write to the worktree. Walking the
+    segments in order fixes both. A `cd` segment is one whose first token is
+    `cd`; `_CD_RE` anchors on the same separators `_segments` splits on, so the
+    two must agree on how many `cd`s there are — when they do not (a `cd` the
+    segment walk cannot see), return None and the caller keeps the old
+    whole-command cwd.
+    """
+    segs = _segments(command)
+    out: list[str] = []
+    current = cwd
+    seen_cd = 0
+    for seg in segs:
+        out.append(current)
+        try:
+            toks = shlex.split(seg, comments=True)
+        except ValueError:
+            return None
+        if toks and toks[0] == "cd":
+            seen_cd += 1
+            if len(toks) > 1:
+                current = _cd_step(toks[1], current)
+    if seen_cd != len(_CD_RE.findall(command)):
+        return None
+    return out
+
+
 def _effective_cwd(command: str, cwd: str) -> str:
     """The directory a relative path in `command` actually resolves against.
 
@@ -1130,10 +1174,14 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
     as a write against the effective cwd, because guessing wrong in the
     permissive direction is what this module exists to stop.
     """
+    session_cwd = cwd
     cwd = _effective_cwd(command, cwd)
     command = _normalize(command)
     targets: list[str] = []
     uncertain = False
+    # Per-segment cwd (see `_segment_cwds`); None ⇒ every segment uses the
+    # whole-command effective cwd, exactly as before.
+    seg_cwds = _segment_cwds(command, session_cwd)
 
     # Redirects are scanned over the WHOLE command, not per segment: `_segments`
     # splits on `|` and `;` without regard for quotes, which would cut a quoted
@@ -1151,7 +1199,9 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
             # inconsistency, not a decision.
             uncertain = True
 
-    for segment in _segments(command):
+    for seg_index, segment in enumerate(_segments(command)):
+        if seg_cwds is not None and seg_index < len(seg_cwds):
+            cwd = seg_cwds[seg_index]
         tokens = _tokens(segment)
         while tokens and "=" in tokens[0] and "/" not in tokens[0].split("=")[0]:
             tokens = tokens[1:]  # leading VAR=value assignments
