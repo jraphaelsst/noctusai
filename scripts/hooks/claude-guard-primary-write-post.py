@@ -43,25 +43,19 @@ ADVISORY BY CONSTRUCTION, same three properties as
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _guard_failclosed import load_module  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GUARD = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "primary_write_guard.py"
 
 
 def _load_guard():
-    spec = importlib.util.spec_from_file_location("noc_primary_write_guard", GUARD)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {GUARD}")
-    module = importlib.util.module_from_spec(spec)
-    # Registered before exec: @dataclass resolves annotations through
-    # sys.modules and raises without it.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_module(GUARD)
 
 
 def main() -> int:
