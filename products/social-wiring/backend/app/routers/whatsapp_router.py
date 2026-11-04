@@ -41,7 +41,7 @@ configured, else acknowledged but not acted on.
 Auth note: these endpoints do NOT use the standard JWT auth because
 WAHA's webhook calls carry no Authorization header. Signature verification
 is via ``noctusai_lib.security.webhook_signatures.webhook_endpoint`` (HMAC
-``sha256_hex`` scheme, ``X-Webhook-Hmac-SHA256`` header — WAHA's shape);
+``waha`` scheme: ``X-Webhook-Hmac`` + ``X-Webhook-Hmac-Algorithm``, sha512 by default — WAHA's real shape);
 sender validation is a SEPARATE, later gate: the phone number whitelist in
 settings / the per-connection ``authorized_numbers``.
 
@@ -1313,15 +1313,13 @@ async def _process_waha_body(
     return Response(status_code=status.HTTP_200_OK)
 
 
-def _exigir_assinatura_em_prod(cfg: Any, rota: str) -> None:
-    """L2: in a deploy context (prod / staging) an UNSIGNED webhook is refused whether or not Julia is on -- `bypass_when_unset` is a
-    dev convenience only. A prod without `WAHA_WEBHOOK_HMAC_SECRET` therefore refuses every inbound loudly (ERROR) instead of silently
-    accepting forged messages; predeploy parity must check the secret is set."""
-    from noctusai_lib.config.deploy_config import is_deploy_context
+def _avisar_assinatura_desativada(cfg: Any, rota: str) -> None:
+    """L2: with the HMAC secret SET the `webhook_endpoint` dependency already refuses an unsigned or badly signed call (strict 401).
+    With it UNSET in a deploy context the call is accepted -- the shared WAHA does not sign yet -- but loudly: ERROR once per process
+    (`webhook_hmac_desativado`) and `/api/health` `startup_hook_error`. → `app.webhook_hmac`, NOC-REMEDIATE[waha-hmac-prod]."""
+    from app import webhook_hmac
 
-    if is_deploy_context() and not (cfg.waha_webhook_hmac_secret or "").strip():
-        logger.error("%s: unsigned call refused -- production requires WAHA_WEBHOOK_HMAC_SECRET", rota)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="webhook secret not configured")
+    webhook_hmac.avisar_uma_vez(cfg, rota)
 
 
 async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
@@ -1351,7 +1349,7 @@ async def whatsapp_webhook(
     waha_factory=Depends(get_waha_client_factory),
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_waha_secret,
-        scheme="sha256_hex",
+        scheme="waha",
         bypass_when_unset=True,
         log_prefix="whatsapp-webhook",
     ),
@@ -1364,7 +1362,7 @@ async def whatsapp_webhook(
     path that DOES return non-200 is a signature mismatch (401, raised
     by ``webhook_endpoint`` before this body ever runs).
     """
-    _exigir_assinatura_em_prod(cfg, "whatsapp-webhook")
+    _avisar_assinatura_desativada(cfg, "whatsapp-webhook")
     # 🔴 H1 (contract 10.1): with Julia on anywhere, an UNSIGNED webhook is refused
     # even on the legacy route (an unset secret bypasses verification above). The
     # legacy route itself never enters the lead/operator split — it has no
@@ -1425,7 +1423,7 @@ async def whatsapp_webhook_by_token(
     agents_client_factory=Depends(get_agents_client_factory),
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_waha_secret,
-        scheme="sha256_hex",
+        scheme="waha",
         bypass_when_unset=True,
         log_prefix="whatsapp-webhook-token",
     ),
@@ -1465,7 +1463,7 @@ async def whatsapp_webhook_by_token(
         connection.session_name,
     )
 
-    _exigir_assinatura_em_prod(cfg, "whatsapp_webhook_by_token")
+    _avisar_assinatura_desativada(cfg, "whatsapp_webhook_by_token")
     # 🔴 H1 (contract 10.1): with Julia on for THIS connection a missing/invalid
     # signature is 401 before any routing. An invalid one already 401s in the
     # `webhook_endpoint` dependency; what is left is the unset-secret bypass.

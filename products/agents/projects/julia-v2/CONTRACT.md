@@ -1015,6 +1015,11 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
   Julia line through `send_paragraphs`. Keeper `test_julia_envio_gate_keeper` stays green.
 - Settings API: `GET|PUT /api/julia/relatorio-destino` — `GET` → `{modo, usuario_id, usuario_nome, telefone_resolvido|null}`;
   `PUT {modo: 'usuario'|'responsavel', usuario_id?}` (org admin, strict 401/403).
+- Webhook HMAC (security L2): in prod `WAHA_WEBHOOK_HMAC_SECRET` is unset and the shared WAHA does not sign, so SW enforces only when the
+  secret is configured (then strict 401 on an unsigned/bad call); unset in a deploy context it accepts but logs ERROR
+  `webhook_hmac_desativado` once per process and reports it in `/api/health` `startup_hook_error` (`NOC-REMEDIATE[waha-hmac-prod]`).
+  Enable runbook: SW README "Enabling the WAHA webhook HMAC" (generate secret, root `.env`, same `hmac.key` on the WAHA session,
+  recreate social-wiring, verify one signed inbound).
 - Lead card: `GET /api/julia/contatos/{id}/relatorios` (newest first) + the card renders the latest report and the
   `imoveis_oferecidos` chips (código → link).
 

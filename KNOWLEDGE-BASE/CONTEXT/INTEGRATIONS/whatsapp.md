@@ -374,7 +374,7 @@ The conversations pipeline `social-wiring` grew (chat list, thread, reply, unrea
 - **Unread is recomputed** (inbound messages newer than `last_read_at`), never incremented. Backfilled chats start read.
 - **Pagination.** Chats: opaque `next_cursor`. Messages: pages are chronological, `before` = `<iso>|<id>` of the oldest held (WAHA timestamps have 1 s resolution — a bare timestamp cursor loses ties).
 - **Send** goes through the `WahaClient`, which paces every request on the shared `"whatsapp"` token bucket (`integrations.rate_limit`); a connection with no `base_url` is refused (503) rather than handed the Fake client.
-- **Webhook auth.** Path token (unknown -> generic 404, never logged) + `X-Webhook-Hmac-SHA256` when `webhook_hmac_secret` is set. The seed `set_webhook` registers `hmac: None` per webhook, so WAHA only signs if it runs with a global `WHATSAPP_HOOK_HMAC_KEY` — set the same value on the product.
+- **Webhook auth.** Path token (unknown -> generic 404, never logged) + WAHA's `X-Webhook-Hmac` (+ `X-Webhook-Hmac-Algorithm`, default sha512; `scheme="waha"`) when `webhook_hmac_secret` is set. The seed `set_webhook` registers `hmac: None` per webhook, so WAHA only signs if it runs with a global `WHATSAPP_HOOK_HMAC_KEY` (or the session webhook's `hmac.key`) — set the same value on the product.
 
 **Traps**
 

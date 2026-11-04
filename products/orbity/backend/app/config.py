@@ -28,7 +28,7 @@ class SeedSettings(ProductSettings):
     waha_api_key: str = ""
     waha_session: str = "default"
     waha_external_base_url: str = ""
-    # Hex HMAC-SHA256 of the raw inbound body (header X-Webhook-Hmac-SHA256).
+    # WAHA's hex HMAC of the raw inbound body (headers X-Webhook-Hmac + X-Webhook-Hmac-Algorithm, sha512 default).
     # Unset => unsigned webhooks accepted (early-dev only), same as community.
     waha_webhook_hmac_secret: str = ""
 

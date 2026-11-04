@@ -40,7 +40,7 @@ from noctusai_lib.integrations.whatsapp.types import (
 )
 from noctusai_lib.security.webhook_signatures import (
     handle_unsigned_webhook,
-    verify_hmac_sha256_hex,
+    verify_waha_hmac,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,13 +52,13 @@ def create_whatsapp_webhook_router(
     settings: WhatsAppSettings,
     on_message: InboundHandler,
     *,
-    signature_header: str = "X-Webhook-Hmac-SHA256",
+    signature_header: str = "X-Webhook-Hmac",
     dedup: WebhookDedup | None = None,
 ) -> APIRouter:
     """Build a FastAPI APIRouter that accepts WAHA inbound webhooks.
 
     Behavior:
-    - Verifies HMAC-SHA256 hex signature when
+    - Verifies WAHA's HMAC signature (`X-Webhook-Hmac` + `X-Webhook-Hmac-Algorithm`, sha512 default) when
       `settings.webhook_hmac_secret` is set; rejects with 401 on mismatch.
     - **Persistent dedup pre-filter** (SESSION-NOTES §4.1): WAHA
       subscribes the webhook to BOTH ``message`` AND ``message.any``,
@@ -92,6 +92,7 @@ def create_whatsapp_webhook_router(
     async def waha_inbound(
         request: Request,
         x_webhook_hmac_sha256: str | None = Header(default=None, alias=signature_header),
+        x_webhook_hmac_algorithm: str | None = Header(default=None, alias="X-Webhook-Hmac-Algorithm"),
     ) -> dict[str, str]:
         body = await request.body()
 
@@ -104,10 +105,11 @@ def create_whatsapp_webhook_router(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Missing webhook signature header",
                 )
-            if not verify_hmac_sha256_hex(
+            if not verify_waha_hmac(
                 body,
                 signature_hex=x_webhook_hmac_sha256,
                 secret=settings.webhook_hmac_secret,
+                algorithm=x_webhook_hmac_algorithm,
             ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,

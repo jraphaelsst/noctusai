@@ -43,7 +43,7 @@ SECRET = "sekrit"
 
 
 def _sig(body: bytes, secret: str = SECRET) -> str:
-    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode(), body, hashlib.sha512).hexdigest()  # WAHA signs sha512 by default
 
 
 def _msg(
@@ -74,14 +74,14 @@ class Rt:
         raw = body if isinstance(body, bytes) else json.dumps(body).encode()
         headers = {"content-type": "application/json"}
         if signed:
-            headers["X-Webhook-Hmac-SHA256"] = _sig(raw, secret)
+            headers["X-Webhook-Hmac"] = _sig(raw, secret)
         return self.tc.post(f"/api/whatsapp/webhook/{token}", content=raw, headers=headers)
 
     def post_legacy(self, body: dict, *, signed: bool = False):
         raw = json.dumps(body).encode()
         headers = {"content-type": "application/json"}
         if signed:
-            headers["X-Webhook-Hmac-SHA256"] = _sig(raw)
+            headers["X-Webhook-Hmac"] = _sig(raw)
         return self.tc.post("/api/whatsapp/webhook", content=raw, headers=headers)
 
     def lead_memory(self, chat: str = LEAD_CHAT):
@@ -493,7 +493,7 @@ class TestSignedWebhooksOnly:
         _julia_scene(rt)
         raw = json.dumps(_msg()).encode()
         r = rt.tc.post(f"/api/whatsapp/webhook/{WEBHOOK_TOKEN}", content=raw.replace(b"oi", b"xx"),
-                       headers={"content-type": "application/json", "X-Webhook-Hmac-SHA256": _sig(raw)})
+                       headers={"content-type": "application/json", "X-Webhook-Hmac": _sig(raw)})
         assert r.status_code == 401
 
     def test_a_valid_signature_is_accepted(self, rt):
@@ -507,8 +507,7 @@ class TestSignedWebhooksOnly:
         status = {"event": "session.status", "session": "default", "payload": {"status": "WORKING"}}
         assert rt.post(status).status_code == 401
 
-    def test_with_julia_off_an_unset_secret_still_bypasses_as_today(self, rt, monkeypatch):
-        monkeypatch.delenv("PRODUCT_URL_SOCIAL_WIRING")  # the fixture's deploy marker: the dev bypass is for a NON-deploy context (L2)
+    def test_with_julia_off_an_unset_secret_still_bypasses_as_today(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
         rt.settings(waha_webhook_hmac_secret="")
         assert rt.post(_msg()).status_code == 200
@@ -525,8 +524,7 @@ class TestSignedWebhooksOnly:
         _julia_scene(rt)
         assert rt.post_legacy(_msg(), signed=False).status_code == 401
 
-    def test_the_legacy_route_with_no_julia_anywhere_and_no_secret_still_bypasses(self, rt, monkeypatch):
-        monkeypatch.delenv("PRODUCT_URL_SOCIAL_WIRING")  # the fixture's deploy marker: the dev bypass is for a NON-deploy context (L2)
+    def test_the_legacy_route_with_no_julia_anywhere_and_no_secret_still_bypasses(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
         rt.settings(waha_webhook_hmac_secret="")
         assert rt.post_legacy(_msg()).status_code == 200

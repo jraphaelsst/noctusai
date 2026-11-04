@@ -60,7 +60,7 @@ _CHAT_ID = "5511999990000@c.us"
 
 
 def _sig(body: bytes, secret: str) -> str:
-    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha512).hexdigest()  # WAHA signs sha512 by default
 
 
 def _message_payload(
@@ -301,7 +301,7 @@ class TestWebhookSignatureVerification:
             "/api/whatsapp/webhook",
             content=body,
             headers={
-                "X-Webhook-Hmac-SHA256": _sig(body, "sekrit"),
+                "X-Webhook-Hmac": _sig(body, "sekrit"),
                 "content-type": "application/json",
             },
         )
@@ -315,7 +315,7 @@ class TestWebhookSignatureVerification:
         resp = tc.post(
             "/api/whatsapp/webhook",
             content=b'{"event":"session.status","session":"default","payload":{"status":"B"}}',
-            headers={"X-Webhook-Hmac-SHA256": sig, "content-type": "application/json"},
+            headers={"X-Webhook-Hmac": sig, "content-type": "application/json"},
         )
         assert resp.status_code == 401
 
@@ -329,13 +329,34 @@ class TestWebhookSignatureVerification:
         )
         assert resp.status_code == 401
 
-    def test_production_refuses_an_unsigned_webhook_even_with_julia_off(self, client, monkeypatch, override_settings):
-        """L2: `bypass_when_unset` is a dev convenience. With the deploy marker set and no HMAC secret, the webhook is a strict 401."""
+    def test_production_with_a_secret_set_refuses_an_unsigned_webhook_strictly(self, client, monkeypatch, override_settings):
         monkeypatch.setenv("APP_ENV", "production")
         tc, _mock_sb, _db = client
-        override_settings(waha_webhook_hmac_secret="")
-        resp = tc.post("/api/whatsapp/webhook", content=b'{"event":"session.status","session":"default","payload":{}}', headers={"content-type": "application/json"})
+        override_settings(waha_webhook_hmac_secret="sekrit")
+        resp = tc.post("/api/whatsapp/webhook", content=b'{"event":"session.status","session":"default","payload":{}}',
+                       headers={"content-type": "application/json"})
         assert resp.status_code == 401
+
+    def test_production_with_no_secret_still_accepts_but_loudly_once_and_flags_health(self, client, monkeypatch, override_settings, caplog):
+        """L2 (2026-11-03): the shared WAHA does not sign yet -- refusing would make Julia and the inbox deaf. Accepted, NEVER silent."""
+        import logging
+
+        from app import webhook_hmac
+
+        monkeypatch.setenv("APP_ENV", "production")
+        webhook_hmac._resetar_para_testes()
+        tc, _mock_sb, _db = client
+        override_settings(waha_webhook_hmac_secret="")
+        body = b'{"event":"session.status","session":"default","payload":{}}'
+        with caplog.at_level(logging.ERROR):
+            assert tc.post("/api/whatsapp/webhook", content=body, headers={"content-type": "application/json"}).status_code == 200
+            assert tc.post("/api/whatsapp/webhook", content=body, headers={"content-type": "application/json"}).status_code == 200
+        assert len([r for r in caplog.records if webhook_hmac.CODIGO in r.getMessage()]) == 1  # once per process
+        from app.config import settings as _s
+
+        with pytest.raises(webhook_hmac.WebhookHmacDesativado):
+            webhook_hmac.sinalizar_na_saude(_s.model_copy(update={"waha_webhook_hmac_secret": ""}))
+        webhook_hmac.sinalizar_na_saude(_s.model_copy(update={"waha_webhook_hmac_secret": "sekrit"}))  # secret set: healthy
 
     def test_unset_secret_bypasses_with_warning(self, client, monkeypatch, caplog, override_settings):
         import logging
@@ -365,7 +386,7 @@ class TestWebhookSignatureVerification:
             "/api/whatsapp/webhook",
             content=body,
             headers={
-                "X-Webhook-Hmac-SHA256": _sig(body, "sekrit"),
+                "X-Webhook-Hmac": _sig(body, "sekrit"),
                 "content-type": "application/json",
             },
         )
@@ -391,7 +412,7 @@ class TestTokenRouteResolution:
             f"/api/whatsapp/webhook/{_WEBHOOK_TOKEN}",
             content=body,
             headers={
-                "X-Webhook-Hmac-SHA256": _sig(body, "sekrit"),
+                "X-Webhook-Hmac": _sig(body, "sekrit"),
                 "content-type": "application/json",
             },
         )
@@ -406,7 +427,7 @@ class TestTokenRouteResolution:
         resp = tc.post(
             f"/api/whatsapp/webhook/{_WEBHOOK_TOKEN}",
             content=b'{"event":"session.status","session":"default","payload":{"status":"B"}}',
-            headers={"X-Webhook-Hmac-SHA256": sig, "content-type": "application/json"},
+            headers={"X-Webhook-Hmac": sig, "content-type": "application/json"},
         )
         assert resp.status_code == 401
 

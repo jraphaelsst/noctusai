@@ -88,12 +88,18 @@ def handle_unsigned_webhook(log_prefix: str) -> None:
     )
 
 WebhookScheme = Literal[
-    "sha256_prefixed", "sha256_hex", "svix", "basic_shared_secret"
+    "sha256_prefixed", "sha256_hex", "svix", "basic_shared_secret", "waha"
 ]
+
+#: WAHA's REAL signing shape (verified in the WAHA container, `createHmac(algorithm, hmac.key)`): hex digest in `X-Webhook-Hmac`,
+#: the algorithm in `X-Webhook-Hmac-Algorithm` (default and WAHA's own default: sha512).
+WAHA_ALGORITHM_HEADER = "X-Webhook-Hmac-Algorithm"
+WAHA_ALGORITHMS = ("sha512", "sha256")
 
 _DEFAULT_SIGNATURE_HEADER: dict[str, str] = {
     "sha256_prefixed": "X-Hub-Signature-256",
     "sha256_hex": "X-Webhook-Hmac-SHA256",
+    "waha": "X-Webhook-Hmac",
     "svix": "svix-signature",
     "basic_shared_secret": "Authorization",
 }
@@ -165,6 +171,20 @@ def verify_hmac_sha256(
         return False
     expected = "sha256=" + compute_hmac_sha256_hex(body, secret)
     return hmac.compare_digest(expected, signature)
+
+
+def verify_waha_hmac(body: bytes, signature_hex: str, secret: str, algorithm: str | None = None) -> bool:
+    """Verify a WAHA webhook signature: hex HMAC of the raw `body` keyed with the session's `hmac.key`, digest `algorithm` from
+    `X-Webhook-Hmac-Algorithm` (allow-listed to `sha512` | `sha256`; missing means `sha512`, WAHA's default; anything else fails).
+    Constant-time compare. This is NOT `verify_hmac_sha256_hex`: WAHA never sends `X-Webhook-Hmac-SHA256` nor signs with sha256 by
+    default, so that scheme can never match a real WAHA call."""
+    if not signature_hex or not secret:
+        return False
+    algo = (algorithm or "sha512").strip().lower()
+    if algo not in WAHA_ALGORITHMS:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, algo).hexdigest()
+    return hmac.compare_digest(expected, signature_hex.strip().lower())
 
 
 def verify_hmac_sha256_hex(
@@ -415,7 +435,7 @@ def webhook_endpoint(
             have what they need. Return `None` / empty string to signal
             "no secret configured" — handled per `bypass_when_unset`.
         scheme: Which signature shape to verify. `sha256_prefixed` (Meta /
-            GitHub), `sha256_hex` (WAHA, internal), `svix` (Resend), or
+            GitHub), `sha256_hex` (internal NoctusAI senders), `waha` (WAHA: `X-Webhook-Hmac` + `X-Webhook-Hmac-Algorithm`), `svix` (Resend), or
             `basic_shared_secret` (Grupo OLX leads — read the caveat on
             `verify_basic_shared_secret` first; it does not bind the body).
         signature_header: Header to read the signature from. Defaults per
@@ -484,6 +504,13 @@ def webhook_endpoint(
                 secret,
                 timestamp_value=ts_value,
                 max_age_seconds=max_age_seconds,
+            )
+        elif scheme == "waha":
+            ok = verify_waha_hmac(
+                body,
+                request.headers.get(signature_header, ""),
+                secret,
+                request.headers.get(WAHA_ALGORITHM_HEADER),
             )
         elif scheme == "basic_shared_secret":
             ok = verify_basic_shared_secret(

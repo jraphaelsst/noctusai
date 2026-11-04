@@ -30,7 +30,7 @@ from noctusai_lib.integrations.whatsapp import (
     resolve_by_webhook_token,
 )
 from noctusai_lib.security.api_keys import EncryptionNotConfigured
-from noctusai_lib.security.webhook_signatures import verify_hmac_sha256_hex
+from noctusai_lib.security.webhook_signatures import verify_waha_hmac
 
 from app.config import settings
 from app.dependencies import get_admin_client
@@ -60,16 +60,18 @@ def _store_dep():
 async def whatsapp_webhook_by_token(
     token: str,
     request: Request,
-    x_webhook_hmac_sha256: str | None = Header(default=None, alias="X-Webhook-Hmac-SHA256"),
+    x_webhook_hmac: str | None = Header(default=None, alias="X-Webhook-Hmac"),
+    x_webhook_hmac_algorithm: str | None = Header(default=None, alias="X-Webhook-Hmac-Algorithm"),
     store=Depends(_store_dep),
 ) -> Response:
     body = await request.body()
 
     if settings.waha_webhook_hmac_secret:
-        if not x_webhook_hmac_sha256 or not verify_hmac_sha256_hex(
+        if not x_webhook_hmac or not verify_waha_hmac(
             body,
-            signature_hex=x_webhook_hmac_sha256,
+            signature_hex=x_webhook_hmac,
             secret=settings.waha_webhook_hmac_secret,
+            algorithm=x_webhook_hmac_algorithm,
         ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature"

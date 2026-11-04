@@ -124,7 +124,7 @@ class TestHmacRequired:
         tc, captured = self._build_app(secret="s3cret")
         resp = tc.post(
             "/webhook", json=_group_message_payload(),
-            headers={"X-Webhook-Hmac-SHA256": "0" * 64},
+            headers={"X-Webhook-Hmac": "0" * 64},
         )
         assert resp.status_code == 401
         assert captured == []
@@ -132,11 +132,11 @@ class TestHmacRequired:
     def test_valid_signature_200(self):
         tc, captured = self._build_app(secret="s3cret")
         body = json.dumps(_group_message_payload()).encode()
-        signature = hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
+        signature = hmac.new(b"s3cret", body, hashlib.sha512).hexdigest()
         resp = tc.post(
             "/webhook", content=body,
             headers={
-                "X-Webhook-Hmac-SHA256": signature,
+                "X-Webhook-Hmac": signature,
                 "Content-Type": "application/json",
             },
         )
