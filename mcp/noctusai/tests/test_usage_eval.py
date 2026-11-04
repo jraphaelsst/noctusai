@@ -159,3 +159,20 @@ def test_sync_upserts_on_the_natural_keys(claude_root: Path, hw_log: Path) -> No
 def test_window_rejects_inverted_range() -> None:
     with pytest.raises(ValueError):
         ue.usage_eval("report", since="2026-11-04T06:00:00Z", until="2026-11-04T05:00:00Z")
+
+
+def test_swap_out_is_split_by_probe_version(tmp_path: Path, claude_root: Path) -> None:
+    p = tmp_path / "hw.ndjson"
+    base = {"cpu_idle_pct": 60.0, "reclaimable_mb": 2000, "load_1m": 20.0, "cpu_cores": 8, "claude_sessions": 9}
+    _w(p, [
+        {"ts": "2026-11-04T04:00:00+00:00", "event": "sample", "host": "h", "metrics": {**base, "swapout_per_s": 35000.0}},
+        {"ts": "2026-11-04T05:00:00+00:00", "event": "sample", "host": "h", "probe_version": 2,
+         "metrics": {**base, "swapout_per_s": 400.0, "swapout_mb_per_s": 6.25, "elapsed_s": 3.67}},
+    ])
+    os_ = ue.window_report(T0, T1, claude_root=claude_root, hw_log=p)["os"]
+    assert os_["swapout_per_s_max"] == 400.0 and os_["swapout_mb_per_s_max"] == 6.25
+    assert os_["swapout_per_s_max_v1_upper_bound"] == 35000.0
+    assert os_["probe_versions"] == {"v1": 1, "v2": 1}
+    samples, _ = ue.scan_hw(T0, T1, p)
+    assert [s["extra"]["probe_version"] for s in samples] == [1, 2]
+    assert samples[1]["extra"]["elapsed_s"] == 3.67

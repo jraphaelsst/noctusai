@@ -239,8 +239,13 @@ def scan_hw(since: datetime, until: datetime, path: Path = _HW_LOG) -> tuple[lis
                     "cpu_idle_pct": m.get("cpu_idle_pct"), "reclaimable_mb": m.get("reclaimable_mb"),
                     "swapout_per_s": m.get("swapout_per_s"), "load_1m": m.get("load_1m"),
                     "cpu_cores": m.get("cpu_cores"), "claude_sessions": m.get("claude_sessions"),
-                    "extra": {k: v for k, v in m.items() if k not in {
-                        "cpu_idle_pct", "reclaimable_mb", "swapout_per_s", "load_1m", "cpu_cores", "claude_sessions"}},
+                    # probe_version (hw_admission sampler): v2 divides swap-out by the MEASURED interval
+                    # (metrics.elapsed_s) and adds swapout_mb_per_s; v1 (absent) divided by the nominal sample_s, so its
+                    # swap-out is an inflated UPPER BOUND under load. Kept in extra so 097 needs no column.
+                    "extra": {"probe_version": int(d.get("probe_version") or 1),
+                              **{k: v for k, v in m.items() if k not in {
+                                  "cpu_idle_pct", "reclaimable_mb", "swapout_per_s", "load_1m", "cpu_cores",
+                                  "claude_sessions"}}},
                 })
             elif d.get("event") in ("ran", "not_admitted"):
                 job = str(d.get("job") or "unknown")
@@ -283,6 +288,8 @@ def window_report(since: datetime, until: datetime, *, claude_root: Path = _CLAU
     ran = [j for j in jobs if j["event"] == "ran"]
     num = lambda rows, k: [float(x[k]) for x in rows if x.get(k) is not None]  # noqa: E731
     top = sorted(sessions.items(), key=lambda kv: -kv[1]["cost_usd"])[:10]
+    v1 = [s for s in samples if s["extra"]["probe_version"] < 2]
+    v2 = [s for s in samples if s["extra"]["probe_version"] >= 2]
     return {
         "window": {"since": since.isoformat(), "until": until.isoformat(), "hours": round(hours, 3)},
         "claude": {
@@ -309,7 +316,12 @@ def window_report(since: datetime, until: datetime, *, claude_root: Path = _CLAU
             "cpu_idle_pct_min": min(num(samples, "cpu_idle_pct"), default=None),
             "reclaimable_mb_min": min(num(samples, "reclaimable_mb"), default=None),
             "reclaimable_mb_avg": _avg(num(samples, "reclaimable_mb")),
-            "swapout_per_s_max": max(num(samples, "swapout_per_s"), default=None),
+            # swap-out (PAGES/s) only from v2 samples; v1 maxima reported apart as an upper bound, never mixed in.
+            "swapout_per_s_max": max(num(v2, "swapout_per_s"), default=None),
+            "swapout_mb_per_s_max": max((float(s["extra"]["swapout_mb_per_s"]) for s in v2
+                                         if s["extra"].get("swapout_mb_per_s") is not None), default=None),
+            "swapout_per_s_max_v1_upper_bound": max(num(v1, "swapout_per_s"), default=None),
+            "probe_versions": {"v1": len(v1), "v2": len(v2)},
             "load_1m_max": max(num(samples, "load_1m"), default=None),
             "claude_sessions_max": max(num(samples, "claude_sessions"), default=None),
             "source": str(hw_log) if hw_log.exists() else f"missing: {hw_log}",
@@ -328,7 +340,8 @@ _COMPARE_KEYS = (
     ("claude", "cost_usd_per_h"), ("claude", "output_tokens_per_h"), ("claude", "requests_per_h"),
     ("claude", "sessions_active"), ("jobs", "ran_per_h"), ("jobs", "failed"), ("jobs", "not_admitted"),
     ("jobs", "wait_s_max"), ("jobs", "peak_rss_mb_max"), ("os", "overloaded_pct"), ("os", "cpu_idle_pct_avg"),
-    ("os", "reclaimable_mb_min"), ("os", "swapout_per_s_max"), ("os", "claude_sessions_max"),
+    ("os", "reclaimable_mb_min"), ("os", "swapout_per_s_max"), ("os", "swapout_mb_per_s_max"),
+    ("os", "claude_sessions_max"),
 )
 
 

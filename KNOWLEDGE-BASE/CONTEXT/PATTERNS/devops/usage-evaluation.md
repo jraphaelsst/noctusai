@@ -31,6 +31,13 @@ fixes the overlap; this evaluation gives the numbers to tune it and to see what 
 | `~/.claude/projects/<project>/<session>.jsonl` + `<session>/subagents/agent-<id>.jsonl` | per-request usage, model, content blocks | one request = several entries with the SAME `message.id` → usage counted **once per message id**; chars and tool calls summed over its blocks; `isMeta` entries and `<synthetic>` model skipped |
 | `~/.noctus/hw-admission.ndjson` (owned by `noctus.dev.hw_admission`) | `sample` (OS, ~1/min), `ran` / `not_admitted` (heavy jobs) | name heavy jobs `<kind>:<target>` so jobs join cleanly |
 
+**Swap-out has two probe versions.** `probe_version` 2 (from 2026-11-04T06:06:34Z, hw_admission `fb1edc561`)
+divides the vm_stat delta by the measured interval (`metrics.elapsed_s`) and adds `swapout_mb_per_s`.
+Rows without it are v1: they divided by the nominal `sample_s`, so under load the rate is inflated, an
+UPPER BOUND only. The unit of `swapout_per_s` is PAGES/s (16 KB on Apple silicon). The report takes
+`swapout_*_max` from v2 samples only and gives v1 apart as `swapout_per_s_max_v1_upper_bound`; sync
+keeps the version in `dev_telemetry_os.extra.probe_version` (absent ⇒ 1).
+
 **Cost** is the API-list-price equivalent from the seed rate card (`price_usage`), because Claude Code
 runs on a subscription: comparable across windows, not an invoice. Cache-write cost is a lower bound
 until the seed prices 1-hour cache writes separately (`NOC-REMEDIATE[anthropic-cache-ttl-pricing]`).
