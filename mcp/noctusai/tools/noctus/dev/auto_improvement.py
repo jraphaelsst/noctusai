@@ -82,7 +82,15 @@ SCOPES = frozenset({"scoped", "broad"})
 # written `closed` so they never pollute the open/radar views; the head stays
 # `s1-emergent` and is dropped from `open_only` once a verdict row exists.
 TRIAL_KINDS = frozenset({"trial", "trial-obs", "trial-verdict"})
-KINDS = frozenset({"drift", "improvement"}) | TRIAL_KINDS
+# `phase-learning` (project phase enrichment) and `finding` (project findings.md)
+# rows follow the same precedent: they carry an optional `source={tool, ref}`
+# link back to where the learning came from.
+LEARNING_KINDS = frozenset({"phase-learning", "finding"})
+KINDS = frozenset({"drift", "improvement"}) | TRIAL_KINDS | LEARNING_KINDS
+# Aging: an s1 row older than this that sits in no radar cluster is `stale-s1`
+# (decide: promote, close or keep). Advisory only — never fails a gate.
+STALE_S1_DAYS = 14
+MANUAL_PREFIX = "manual:"
 
 
 def is_workable(row: dict, *, verdicted_refs=frozenset(), include_trial_heads: bool = True) -> bool:
@@ -224,7 +232,8 @@ CREATE TABLE IF NOT EXISTS auto_improvement (
   status      TEXT NOT NULL,
   source_ref  TEXT,
   cached_at   TEXT NOT NULL,
-  trial       TEXT
+  trial       TEXT,
+  source      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auto_target ON auto_improvement(target);
 CREATE INDEX IF NOT EXISTS idx_auto_status ON auto_improvement(status);
@@ -244,6 +253,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(auto_improvement)")}
     if "trial" not in cols:
         conn.execute("ALTER TABLE auto_improvement ADD COLUMN trial TEXT")
+    if "source" not in cols:
+        conn.execute("ALTER TABLE auto_improvement ADD COLUMN source TEXT")
     conn.commit()
 
 
@@ -254,6 +265,28 @@ def _validate(scope: str, kind: str, status: str) -> dict | None:
         return {"ok": False, "error": f"kind must be one of {sorted(KINDS)}; got {kind!r}"}
     if status not in STATUSES:
         return {"ok": False, "error": f"status must be one of {sorted(STATUSES)}; got {status!r}"}
+    return None
+
+
+def _check_drift_resolve_when(resolve_when) -> dict | None:
+    """Refusal for a drift row with no usable closure predicate (None = ok)."""
+    preds = [resolve_when] if isinstance(resolve_when, str) else list(resolve_when or [])
+    preds = [p for p in preds if isinstance(p, str) and p.strip()]
+    if not preds:
+        return {
+            "ok": False,
+            "refused": "drift_requires_resolve_when",
+            "error": (
+                "kind='drift' requires resolve_when (a closure predicate: keeper:<name> · "
+                "path_exists:<rel> · grep_present:<term>@<path> · grep_max:<n>:<term>@<path> · "
+                "superseded_by:<target_substr>). If it genuinely cannot be machine-checked, "
+                "pass resolve_when='manual:<reason>'."
+            ),
+        }
+    for p in preds:
+        if p.strip().startswith(MANUAL_PREFIX) and not p.strip()[len(MANUAL_PREFIX):].strip():
+            return {"ok": False, "refused": "manual_requires_reason",
+                    "error": "resolve_when='manual:' needs a reason: 'manual:<reason>'"}
     return None
 
 
@@ -270,6 +303,7 @@ def log_entry(
     resolve_when: str | list[str] | None = None,
     resolve_to: str | None = None,
     trial: dict | None = None,
+    source: dict | None = None,
 ) -> dict:
     """Append one entry to the ndjson + invalidate the cache.
 
@@ -287,10 +321,25 @@ def log_entry(
     grammar lives in `_eval_predicate`. Optional but STRONGLY recommended for
     every `s2-memory`+ entry (enforced advisory by
     `check_s2_drift_has_resolution_handle`).
+
+    **Closure predicate is REQUIRED for `kind="drift"`** — a drift row that can
+    never self-close is how 849 open rows accumulated. The refusal is a
+    structured result (`{ok: False, refused: "drift_requires_resolve_when"}`),
+    never a silent default. Escape hatch: `resolve_when="manual:<reason>"`
+    (closes only by an explicit promote/close; the reason is mandatory).
+
+    `source={tool, ref}` is an optional provenance link (used by the
+    `phase-learning` / `finding` kinds).
     """
     err = _validate(scope, kind, status)
     if err is not None:
         return err
+    if kind == "drift":
+        rw_err = _check_drift_resolve_when(resolve_when)
+        if rw_err is not None:
+            return rw_err
+    if source is not None and not (isinstance(source, dict) and source.get("tool") and source.get("ref")):
+        return {"ok": False, "error": "source must be {tool, ref} with both non-empty"}
     if resolve_to is not None and resolve_to not in STATUSES:
         return {"ok": False, "error": f"resolve_to must be one of {sorted(STATUSES)}; got {resolve_to!r}"}
     entry: dict = {
@@ -309,6 +358,8 @@ def log_entry(
         entry["resolve_to"] = resolve_to
     if trial is not None:
         entry["trial"] = trial
+    if source is not None:
+        entry["source"] = {"tool": source["tool"], "ref": source["ref"]}
     publish = _ledger().append(
         [json.dumps(entry, ensure_ascii=False)],
         message=f"auto-improvement {scope}/{kind} {status} — {target}"[:160],
@@ -396,11 +447,12 @@ def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
                 e.get("source_ref"),
                 now,
                 json.dumps(e["trial"], ensure_ascii=False) if e.get("trial") is not None else None,
+                json.dumps(e["source"], ensure_ascii=False) if e.get("source") is not None else None,
             ))
     if rows:
         conn.executemany(
-            "INSERT INTO auto_improvement(ts,agent,scope,kind,target,description,status,source_ref,cached_at,trial) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO auto_improvement(ts,agent,scope,kind,target,description,status,source_ref,cached_at,trial,source) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
     conn.execute(
@@ -506,11 +558,12 @@ def query(
         out = [r for r in out if is_workable(r, verdicted_refs=verdicted)][:limit]
     conn.close()
     for r in out:
-        if isinstance(r.get("trial"), str):
-            try:
-                r["trial"] = json.loads(r["trial"])
-            except json.JSONDecodeError:
-                pass  # leave the raw text; never drop the row
+        for col in ("trial", "source"):
+            if isinstance(r.get(col), str):
+                try:
+                    r[col] = json.loads(r[col])
+                except json.JSONDecodeError:
+                    pass  # leave the raw text; never drop the row
     if open_only and not skip_reconcile and out:
         # Heal-on-contact: drop entries whose resolve_when already passes, so a
         # landed fix is never re-surfaced as open even before the ledger row is
@@ -707,10 +760,83 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
                     and substr in e.get("target", "")):
                 return True, f"superseded by terminal entry target⊇'{substr}'"
         return False, f"no terminal superseding entry for '{substr}'"
+    if pred.startswith(MANUAL_PREFIX):
+        return False, f"manual closure ({pred[len(MANUAL_PREFIX):].strip()}) — closes only by explicit promote/close"
     return False, f"unknown predicate grammar: {pred!r}"
 
 
-def reconcile(dry_run: bool = True, repo_root: Path | None = None) -> dict:
+def _parse_ts(ts: str) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def stale_s1_rows(
+    entries: list[dict],
+    *,
+    now: datetime | None = None,
+    clustered_keys: set | None = None,
+    days: int = STALE_S1_DAYS,
+) -> list[dict]:
+    """Open `s1-emergent` rows older than ``days`` (strictly) that sit in no
+    radar cluster — the "promote, close or keep — decide" queue. Derived on
+    read, never persisted, never a gate failure. ``clustered_keys`` is a set of
+    ``_entry_key`` tuples the radar placed in a cluster (None = radar not
+    consulted: age-only candidates)."""
+    now = now or datetime.now(timezone.utc)
+    out: list[dict] = []
+    for e in entries:
+        if e.get("status") != "s1-emergent" or not is_workable(e, include_trial_heads=False):
+            continue
+        d = _parse_ts(e.get("ts", ""))
+        if d is None or (now - d).days <= days:
+            continue
+        if clustered_keys and _entry_key(e) in clustered_keys:
+            continue
+        out.append({"ts": e.get("ts"), "target": e.get("target"), "agent": e.get("agent"),
+                    "age_days": (now - d).days, "decide": "promote, close or keep"})
+    return out
+
+
+def _radar_keys() -> set | None:
+    """Entry keys the codification radar currently clusters (None = radar
+    unavailable). Costs embeddings — only called on explicit request."""
+    try:
+        from tools.noctus.dev import codification_radar as cr  # noqa: PLC0415
+        res = cr.cluster()
+    except Exception:  # noqa: BLE001 — advisory
+        return None
+    if not res.get("ok"):
+        return None
+    return {_entry_key(m) for c in res.get("clusters", []) for m in c.get("entries", [])}
+
+
+def summary(*, now: datetime | None = None, use_radar: bool = False) -> dict:
+    """Ledger health counts for harness_status / the query surface:
+    by-status, open, open-without-resolve_when, and `stale_s1`."""
+    entries = _load_entries()
+    open_rows = [e for e in entries
+                 if e.get("status") not in TERMINAL_STATUSES and is_workable(e, include_trial_heads=False)]
+    keys = _radar_keys() if use_radar else None
+    stale = stale_s1_rows(entries, now=now, clustered_keys=keys)
+    by_status: dict[str, int] = {}
+    for e in entries:
+        by_status[e.get("status", "?")] = by_status.get(e.get("status", "?"), 0) + 1
+    return {
+        "total": len(entries),
+        "by_status": by_status,
+        "open": len(open_rows),
+        "open_without_resolve_when": sum(1 for e in open_rows if not e.get("resolve_when")),
+        "stale_s1": len(stale),
+        "stale_s1_radar_checked": keys is not None,
+    }
+
+
+def reconcile(dry_run: bool = True, repo_root: Path | None = None, *,
+              now: datetime | None = None, use_radar: bool = False,
+              clustered_keys: set | None = None) -> dict:
     """Heal-on-contact: auto-advance every OPEN entry whose `resolve_when`
     predicate(s) are now satisfied by the live tree.
 
@@ -723,9 +849,17 @@ def reconcile(dry_run: bool = True, repo_root: Path | None = None) -> dict:
     unhandled:[{ts,target,status}], counts}`. `unhandled` = open entries WITH NO
     `resolve_when` (they cannot self-close — the resolution-handle keeper flags
     the s2-memory ones). Idempotent: a second run reconciles nothing new.
+
+    Also reports `stale_s1` (aging, advisory — never fails a gate): open s1 rows
+    older than 14 days in no radar cluster. By default the radar is NOT consulted
+    (it costs embeddings) so the list is age-only candidates; pass
+    `use_radar=True` (or `clustered_keys`) to exclude clustered rows.
     """
     root = repo_root or REPO_ROOT
     entries = _load_entries()
+    if clustered_keys is None and use_radar:
+        clustered_keys = _radar_keys()
+    stale_s1 = stale_s1_rows(entries, now=now, clustered_keys=clustered_keys)
     resolutions: dict[tuple, tuple[str, list[str]]] = {}
     reconciled: list[dict] = []
     still_open: list[dict] = []
@@ -778,12 +912,63 @@ def reconcile(dry_run: bool = True, repo_root: Path | None = None) -> dict:
         "reconciled": reconciled,
         "still_open": still_open,
         "unhandled": unhandled,
+        "stale_s1": stale_s1,
+        "stale_s1_count": len(stale_s1),  # kept out of `counts` (exact-shape consumers)
         "counts": {
             "reconciled": len(reconciled),
             "still_open": len(still_open),
             "unhandled": len(unhandled),
         },
     }
+
+
+def propose_resolve_when(*, apply: bool = False, repo_root: Path | None = None) -> dict:
+    """One-off backfill: propose `resolve_when` for OPEN rows that have none,
+    from signals already in the ledger/tree. DRY-RUN by default (the tech-lead
+    runs it with ``apply=True``). Never overwrites an existing resolve_when.
+
+    Signals:
+      · `superseded_by:<target>` — a LATER terminal row has the same target.
+      · `path_exists:<target>`   — target is a repo-relative path that does NOT
+        exist yet and the description says it is missing/absent (closes when it
+        is created).
+    Rows with no signal are counted under `no_signal` (need a human `manual:`).
+    """
+    import re  # noqa: PLC0415
+    root = repo_root or REPO_ROOT
+    entries = _load_entries()
+    missing_re = re.compile(r"\b(missing|absent|does not exist|doesn't exist|not found|no such)\b", re.I)
+    proposals: dict[tuple, str] = {}
+    out: list[dict] = []
+    no_signal = 0
+    for e in entries:
+        if (e.get("status") in TERMINAL_STATUSES or e.get("resolve_when")
+                or not is_workable(e, include_trial_heads=False)):
+            continue
+        tgt = e.get("target", "")
+        pred = None
+        if tgt and tgt != "*" and any(
+                x.get("status") in TERMINAL_STATUSES and x.get("ts", "") > e.get("ts", "")
+                and tgt in x.get("target", "") for x in entries):
+            pred = f"superseded_by:{tgt}"
+        elif (tgt and "/" in tgt and " " not in tgt and not tgt.startswith(("KB", "/"))
+              and not (root / tgt).exists() and missing_re.search(e.get("description", ""))):
+            pred = f"path_exists:{tgt}"
+        if pred is None:
+            no_signal += 1
+            continue
+        proposals[_entry_key(e)] = pred
+        out.append({"ts": e.get("ts"), "target": tgt, "resolve_when": pred})
+    applied = 0
+    if apply and proposals:
+        def _mutate(entry: dict) -> dict:
+            p = proposals.get(_entry_key(entry))
+            if p and not entry.get("resolve_when"):
+                entry["resolve_when"] = p
+            return entry
+        applied = _rewrite_ledger(_mutate)
+        refresh(force=True)
+    return {"ok": True, "dry_run": not apply, "proposals": out, "no_signal": no_signal, "applied": applied}
 
 
 # ── MCP registration (3 tools) ───────────────────────────────────────────────
@@ -795,6 +980,9 @@ def register(server) -> None:
             "(`project-history/auto-improvement.ndjson`). `scope` ∈ "
             "{'scoped','broad'} · `kind` ∈ {'drift','improvement'} · "
             "`status` ∈ {'s1-emergent','s2-memory','s3-kb','s4-keeper','closed'}. "
+            "kind='drift' REQUIRES resolve_when (escape: 'manual:<reason>'); "
+            "also accepts kind 'phase-learning'/'finding' with optional "
+            "source={tool, ref}. "
             "`target` is the doc/agent/file the surface is ABOUT (path or "
             "'*' for cross-cutting). The tech-lead's typical call after "
             "reading an engineer's `drift-found:` / `scoped-improvement:` "
@@ -812,11 +1000,12 @@ def register(server) -> None:
         source_ref: str | None = None,
         resolve_when: str | list[str] | None = None,
         resolve_to: str | None = None,
+        source: dict | None = None,
     ) -> dict:
         return log_entry(
             scope=scope, kind=kind, target=target, description=description,
             agent=agent, status=status, source_ref=source_ref,
-            resolve_when=resolve_when, resolve_to=resolve_to,
+            resolve_when=resolve_when, resolve_to=resolve_to, source=source,
         )
 
     @server.tool(
@@ -907,5 +1096,9 @@ __all__ = [
     "query",
     "list_targets",
     "reconcile",
+    "stale_s1_rows",
+    "summary",
+    "propose_resolve_when",
+    "LEARNING_KINDS",
     "register",
 ]

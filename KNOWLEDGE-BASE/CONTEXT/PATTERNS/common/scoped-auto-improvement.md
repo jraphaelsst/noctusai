@@ -47,13 +47,16 @@ The ndjson is a permanent ledger, observable in git history. Since 2026-09-24 th
   "ts":          "2026-05-26T...",        // ISO-8601 UTC
   "agent":       "backend-engineer",       // who surfaced (engineer name | 'tech-lead' | 'architect' | null)
   "scope":       "scoped",                 // 'scoped' (engineer-slice) | 'broad' (tech-lead cross-cutting)
-  "kind":        "drift",                  // 'drift' | 'improvement'
+  "kind":        "drift",                  // 'drift' | 'improvement' | 'phase-learning' | 'finding' (+ method_trial's trial kinds)
   "target":      ".claude/agents/<x>.md",  // the doc/agent/file the surface is ABOUT (path or '*' for cross-cutting)
   "description": "verbatim surface text",
   "status":      "s1-emergent",            // 's1-emergent' | 's2-memory' | 's3-kb' | 's4-keeper' | 'closed'
   "source_ref":  "commit:abc123 | session:...", // optional provenance
   "resolve_when": "keeper:check_x",         // OPTIONAL resolution handle (predicate, or list AND-combined)
-  "resolve_to":   "closed"                  // OPTIONAL target status when resolve_when passes (default 'closed')
+  "resolve_to":   "closed",                 // OPTIONAL target status when resolve_when passes (default 'closed')
+  "source":       {"tool": "noctus.dev.findings", "ref": "projects/x#3"}, // OPTIONAL link (phase-learning / finding rows)
+  "target_agent": "backend-engineer",       // set by promote(target_agent=…): the agent file the draft L1 line is for
+  "draft_l1":     "- One-line rule…"        // set by promote(target_agent=…); the tech-lead applies it, never the tool
 }
 ```
 
@@ -82,6 +85,18 @@ The ndjson is a permanent ledger, observable in git history. Since 2026-09-24 th
 
 **Discipline (gated).** Keeper `check_open_drift_has_resolution_handle` (severity `medium`) flags any OPEN entry past s1 — `s2-memory`, `s3-kb`, `s3-codified` — lacking a `resolve_when`; it cannot self-close/auto-promote and would rot (re-surface as hot drift or as a perpetual radar candidate). `s1-emergent` is exempt (too freshly-surfaced); `s4-keeper`/`closed` are terminal. So: log an open entry WITH its resolution handle, and reconcile retires/advances it for you when the work lands. (`check_s2_drift_has_resolution_handle` is a back-compat alias — the keeper was born s2-only on 2026-06-01 and widened to all gated statuses the same day.)
 
+## Closing the loop (2026-11) — the ledger must not only accumulate
+
+Audit evidence (2026-11-04): 896 of 1,028 rows still `s1-emergent`, 155 older than 30 days, 849 open rows with no `resolve_when` (so unable to self-close). Five mechanisms, all in `auto_improvement.py` / `codification_radar.py`:
+
+1. **Closure predicate required for `kind="drift"`.** `log_entry` refuses with a structured `{ok: False, refused: "drift_requires_resolve_when"}` — never a silent default. Escape hatch: `resolve_when="manual:<reason>"` (reason mandatory; `reconcile` reports it unmet by design — it closes only through an explicit promote/close). `improvement`/`finding`/`phase-learning` rows are not forced.
+2. **Aging (`stale-s1`).** `reconcile` returns `stale_s1` (+ `stale_s1_count`): open `s1-emergent` rows older than 14 days (strictly) that sit in no radar cluster, each tagged "promote, close or keep — decide". Derived on read, never persisted, never a gate failure. The radar costs embeddings, so it is consulted only with `reconcile(use_radar=True)`; otherwise the list is age-only candidates. `auto_improvement.summary()` gives `{total, by_status, open, open_without_resolve_when, stale_s1}` for `harness_status`.
+3. **New kinds `phase-learning` and `finding`**, with an optional `source={tool, ref}` link (stored in the row and the cache), following the method_trial precedent of sharing this ledger.
+4. **Per-agent views.** `query(agent=…)`; `codification_radar(group_by="agent")` clusters per agent type and, for every cluster of ≥2 entries from one agent, returns `agent_file` + a one-line `proposed_l1_rule` for `.claude/agents/<agent>.md`.
+5. **Promotion to an agent file.** `auto_improvement_promote(matches, "s3-codified", target_agent="<agent>")` writes `draft_l1` into the row and sets `resolve_when="grep_present:<phrase>@.claude/agents/<agent>.md"`; `reconcile` closes the row once the tech-lead has applied the line. The tool never edits agent files.
+
+**One-off backfill.** `auto_improvement.propose_resolve_when(apply=False)` proposes `resolve_when` for open rows lacking one, from `superseded_by` (a later terminal row with the same target) and `path_exists` (target path absent + description says missing) signals. Dry-run by default; the tech-lead runs it with `apply=True`; rows with no signal need a human `manual:<reason>`. (No CLI flag: `cli.py` is outside this module.)
+
 ## sqlite schema
 
 ```sql
@@ -107,7 +122,7 @@ CREATE TABLE cache_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 ## Public API
 
-- `noctus.dev.auto_improvement_log(scope, kind, target, description, agent?, status?, source_ref?)` — append one entry to the ndjson.
+- `noctus.dev.auto_improvement_log(scope, kind, target, description, agent?, status?, source_ref?, resolve_when?, resolve_to?, source?)` — append one entry to the ndjson (`kind="drift"` requires `resolve_when`).
 - `noctus.dev.auto_improvement_query(target?, agent?, kind?, status?, open_only?, limit?)` — consult the cache; most-recent-first.
 - `noctus.dev.auto_improvement_refresh(force?)` — re-populate cache; idempotent.
 - CLI: `python mcp/noctusai/cli.py --refresh-auto-improvement-cache [--force]` · `--auto-improvement-query <target>` · `--check-auto-improvement-cache-freshness`.
