@@ -663,3 +663,7 @@ Authored 2026-11-03 (Vista outage fallback). New table `imoveis_sync_execucoes`:
 
 Authored 2026-11-04 (TRANSITIONAL, removable). `imovel_campo_conflitos.notas JSONB` (the drift note) + `vista_divergencias_config(org_id, ativa, destino_user_id)` (per-org flag `divergencia_vista_ativa`, missing row = OFF; the One org seeded ON). Additive, idempotent. Apply BEFORE deploying the image: the sync reads the flag row (an un-migrated DB logs the failure and skips divergences — the sync itself is unaffected).
 
+## 318 — julia_linha_roteamento — NOT APPLIED
+
+Authored 2026-11-04 (CONTRACT julia-line SW-A). `conversation_messages.origem` (lead|julia|humano|interno, NULLABLE, no backfill), `whatsapp_chats.categoria` (lead|equipe, default `lead`), and DROP of CHECK `whatsapp_connections_agente_exige_autorizados` (Julia no longer needs `authorized_numbers`). Additive/idempotent. Apply BEFORE deploying the image: the webhook writes `origem` / `categoria` (an un-migrated DB fails the inbound insert, which is logged and processed anyway, but the staff/echo rules need the columns).
+

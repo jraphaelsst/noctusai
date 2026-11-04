@@ -15559,6 +15559,14 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Vocabulary-only CHECK re-created with 'sem_credencial'/'sem_orcamento'; migration unapplied (file-only), "
         "so there is no live constraint to probe; values are written from fixed literals in biblioteca_ingestao.py.",
     ),
+    # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
+    # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
+    (
+        "products/social-wiring/backend/migrations/258_lais_agente_roteamento.sql",
+        "whatsapp_connections_agente_exige_autorizados",
+        "Dropped by migration 318_julia_linha_roteamento.sql (the One Chat operator bot is retired; Julia needs no authorized "
+        "number). The guard no longer exists in the schema, so there is nothing left to probe.",
+    ),
     # Julia v2 A-polish #12: every other 031-040 entry became a real GuardProbe (verify_db_guards
     # `_AGENTS_JULIA_V2_PROBES`). This one cannot be probed without fabricating a SECOND platform org.
     (

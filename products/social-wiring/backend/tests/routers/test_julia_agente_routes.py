@@ -397,31 +397,31 @@ class TestHandoffTargetRoute:
 class TestAuthorizedNumbersPatch:
     URL = f"/api/whatsapp/connections/{CONNECTION_ID}"
 
-    def test_emptying_the_list_while_julia_is_on_is_409(self, admin):
+    def test_emptying_the_list_while_julia_is_on_is_fine_julia_needs_no_authorized_numbers(self, admin):
+        """The One Chat operator bot is retired (2026-11-04): `authorized_numbers` is a dead column and Julia never reads it."""
         admin.w.seed_connection()
         r = admin.tc.patch(self.URL, json={"authorized_numbers": []}, headers=H)
-        assert r.status_code == 409 and "authorized_numbers_required" in r.text
-        assert admin.conn()["authorized_numbers"] == ["+5511999990000"]
+        assert r.status_code == 200 and admin.conn()["authorized_numbers"] == []
+        assert admin.conn()["agente_leads_ativo"] is True
 
-    def test_blank_entries_count_as_empty(self, admin):
+    def test_blank_entries_are_just_stored(self, admin):
         admin.w.seed_connection()
-        assert admin.tc.patch(self.URL, json={"authorized_numbers": [" "]}, headers=H).status_code == 409
+        assert admin.tc.patch(self.URL, json={"authorized_numbers": [" "]}, headers=H).status_code == 200
 
     def test_a_non_empty_replacement_is_fine_while_julia_is_on(self, admin):
         admin.w.seed_connection()
         r = admin.tc.patch(self.URL, json={"authorized_numbers": ["+5511977770000"]}, headers=H)
         assert r.status_code == 200 and admin.conn()["authorized_numbers"] == ["+5511977770000"]
 
-    def test_the_patch_is_written_through_the_org_staff_list(self, admin):
-        """Owner 2026-10-21: staff is THE per-org list; `authorized_numbers` is its mirror, not a second list to edit."""
+    def test_the_patch_no_longer_touches_the_org_staff_list(self, admin):
+        """Staff is THE per-org list, edited in /julia/equipe; the legacy column is no longer a mirror of it (nor it of the column)."""
         admin.w.seed_connection()
         admin.w.sw.set_table_data("julia_staff", [])
         admin.w.sw.set_table_data("julia_numeros_bloqueados", [])
         r = admin.tc.patch(self.URL, json={"authorized_numbers": ["+55 11 97777-0000"]}, headers=H)
         assert r.status_code == 200
-        linhas = admin.w.rows("julia_staff")
-        assert [(x["telefone"], x["papel"], x["ativo"]) for x in linhas] == [("5511977770000", "operador", True)]
-        assert admin.conn()["authorized_numbers"] == ["+5511977770000"]
+        assert admin.w.rows("julia_staff") == []
+        assert admin.conn()["authorized_numbers"] == ["+55 11 97777-0000"]
 
     def test_with_julia_off_an_empty_list_is_still_writable_it_means_nobody(self, admin):
         _off_connection(admin.w)
@@ -439,14 +439,10 @@ class TestAuthorizedNumbersPatch:
         row.update(over)
         return row
 
-    def test_the_DB_check_refuses_julia_on_over_an_empty_authorized_list(self, admin):
-        """Migration 258's CHECK, enforced by the mock from the migration file itself
-        (INSERT judges the whole row; a partial UPDATE is not judged by the mock)."""
-        from noctusai_lib.testing.mocks import MockRowCheckViolation
-
-        with pytest.raises(MockRowCheckViolation) as ei:
-            admin.w.sw.table("whatsapp_connections").insert(self._row(authorized_numbers=[])).execute()
-        assert "agente_exige_autorizados" in str(ei.value)
+    def test_the_DB_check_on_authorized_numbers_was_dropped_by_migration_318(self, admin):
+        """Migration 258's `agente_exige_autorizados` CHECK is gone (318): Julia on over an empty list is a valid row. The mock enforces
+        the CHECKs of the migration CHAIN, so this fails if 318 stops dropping it."""
+        admin.w.sw.table("whatsapp_connections").insert(self._row(authorized_numbers=[])).execute()
 
     def test_the_DB_check_refuses_julia_on_without_ativado_em_or_key(self, admin):
         from noctusai_lib.testing.mocks import MockRowCheckViolation

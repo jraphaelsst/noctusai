@@ -99,17 +99,15 @@ class TestAuth:
 
 
 class TestEquipe:
-    def test_create_list_update_delete_roundtrip_and_the_mirror(self, admin):
+    def test_create_list_update_delete_roundtrip(self, admin):
         r = admin.req("post", EQUIPE, {"nome": "Bia", "papel": "operador", "telefone": "+55 11 97777-0009"})
         assert r.status_code == 201 and r.json()["data"]["telefone"] == "5511977770009"
         sid = r.json()["data"]["id"]
         listado = admin.req("get", EQUIPE).json()["data"]
         assert [i["nome"] for i in listado["items"]] == ["Bia"] and "corretor" in listado["papeis"]
-        assert "+5511977770009" in admin.w.rows("whatsapp_connections")[0]["authorized_numbers"]
         admin.req("post", EQUIPE, {"nome": "Op2", "papel": "admin", "telefone": "5511977770008"})
         r = admin.req("patch", f"{EQUIPE}/{sid}", {"papel": "corretor"})
         assert r.status_code == 200 and r.json()["data"]["papel"] == "corretor"
-        assert "+5511977770009" not in admin.w.rows("whatsapp_connections")[0]["authorized_numbers"]
         assert admin.req("delete", f"{EQUIPE}/{sid}").status_code == 204
 
     def test_typed_errors(self, admin):
@@ -121,7 +119,7 @@ class TestEquipe:
         r = admin.req("post", EQUIPE, {"nome": "Dup", "papel": "outro", "telefone": "5511977770009"})
         assert r.status_code == 409
         sid = admin.req("get", EQUIPE).json()["data"]["items"][0]["id"]
-        assert admin.req("delete", f"{EQUIPE}/{sid}").status_code == 409  # the last operator of a Julia-on line
+        assert admin.req("delete", f"{EQUIPE}/{sid}").status_code == 204  # no "last operator" rule: the operator bot is retired
         assert admin.req("patch", f"{EQUIPE}/00000000-0000-4000-8000-000000000001", {"nome": "Y"}).status_code == 404
 
     def test_unknown_body_keys_are_rejected(self, admin):

@@ -77,17 +77,11 @@ class Rt:
             headers["X-Webhook-Hmac"] = _sig(raw, secret)
         return self.tc.post(f"/api/whatsapp/webhook/{token}", content=raw, headers=headers)
 
-    def post_legacy(self, body: dict, *, signed: bool = False):
-        raw = json.dumps(body).encode()
-        headers = {"content-type": "application/json"}
-        if signed:
-            headers["X-Webhook-Hmac"] = _sig(raw)
-        return self.tc.post("/api/whatsapp/webhook", content=raw, headers=headers)
-
     def lead_memory(self, chat: str = LEAD_CHAT):
         return self.module.buffer.memory_for(julia.lead_key(CONNECTION_ID, chat))
 
     def operator_memory(self):
+        """The retired One Chat path's buffer key: nothing is ever written there any more (kept to ASSERT that)."""
         return self.module.buffer.memory_for("+5511999990000")
 
     def lead_keys_buffered(self) -> bool:
@@ -187,41 +181,35 @@ class TestRoutingTable:
         assert item["metadata"]["push_name"] == "Ana"
         assert rt.operator_memory() == []
 
-    def test_an_authorized_sender_stays_on_the_operator_path_and_never_reaches_julia(self, rt):
+    def test_a_number_on_the_old_authorized_list_is_just_a_lead_now_the_operator_bot_is_retired(self, rt):
+        # `authorized_numbers` is a dead column (One Chat retired, 2026-11-04): being on it confers nothing.
         _julia_scene(rt, auto_reply_enabled=True)
         rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
         rt.post(_msg(chat=OPERATOR_CHAT, mid="op-1", body="ONE1234"), signed=True)
-        assert rt.operator_memory(), "the operator's text went to One Chat (the seed buffer)"
-        assert rt.lead_memory(OPERATOR_CHAT) == [] and not any(
-            k.startswith("lead:") for k in rt.module.buffer.redis.zrangebyscore(rt.module.buffer.due_set_key, "-inf", "+inf"))
+        assert rt.operator_memory() == [], "nothing is ever buffered on the retired One Chat key"
+        assert len(rt.lead_memory(OPERATOR_CHAT)) == 1
 
-    def test_the_operator_path_is_unchanged_with_julia_off(self, rt):
+    def test_with_julia_off_nothing_is_routed_to_anyone_the_message_is_only_stored(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None, auto_reply_enabled=True)
         rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
         rt.post(_msg(chat=OPERATOR_CHAT, mid="op-1", body="ONE1234"), signed=True)
-        assert rt.operator_memory()
+        assert rt.operator_memory() == [] and rt.lead_memory(OPERATOR_CHAT) == []
+        assert len(rt.w.messages(OPERATOR_CHAT)) == 1
 
-    def test_with_julia_off_a_stranger_gets_todays_denial_once_and_never_a_turn(self, rt):
+    def test_with_julia_off_a_stranger_gets_no_reply_no_denial_and_never_a_turn(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
         rt.post(_msg(), signed=True)
         rt.post(_msg(mid="wamid.2"), signed=True)
-        assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") == "1"
+        assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") is None, "the 'not on the authorized list' denial was deleted"
+        assert rt.w.waha.sent_messages == []
         assert rt.lead_memory() == [] and rt.w.agents.turns == []
-
-    def test_with_julia_off_a_stranger_gets_exactly_one_denial_reply_when_the_list_is_non_empty(self, rt):
-        rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
-        with patch("app.services.whatsapp_intake_service.get_whatsapp_client", lambda **_kw: rt.w.waha):
-            rt.post(_msg(), signed=True)
-            rt.post(_msg(mid="wamid.2"), signed=True)
-        denials = [t for t in rt.w.sent_texts() if "não está na lista de autorizados" in t]
-        assert len(denials) == 1
+        assert len(rt.w.messages()) == 2, "still stored"
 
     def test_with_julia_off_and_an_empty_list_a_stranger_is_dropped_silently_no_reply_no_turn(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None, authorized_numbers=[],
                              auto_reply_enabled=True)
         rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        with patch("app.services.whatsapp_intake_service.get_whatsapp_client", lambda **_kw: rt.w.waha):
-            assert rt.post(_msg(), signed=True).status_code == 200
+        assert rt.post(_msg(), signed=True).status_code == 200
         assert rt.w.waha.sent_messages == []
         assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") is None
         assert rt.lead_memory() == [] and rt.operator_memory() == [] and rt.w.agents.turns == []
@@ -256,19 +244,11 @@ class TestRoutingTable:
         rt.post(_msg(), signed=True)
         assert rt.w.messages()[0]["org_id"] == "00000000-0000-4000-8000-0000000000e1"
 
-    def test_a_lid_sender_that_is_not_a_known_operator_goes_to_julia(self, rt):
-        # H3: an uncached operator LID falls to Julia -- documented, and safe (no operator tools).
+    def test_a_lid_sender_that_is_not_known_staff_goes_to_julia(self, rt):
         _julia_scene(rt)
         lid = "99887766@lid"
         rt.post(_msg(chat=lid, mid="lid-1"), signed=True)
         assert len(rt.lead_memory(lid)) == 1
-
-    def test_a_raw_lid_listed_by_the_operator_is_authorized(self, rt):
-        lid = "55443322@lid"
-        _julia_scene(rt, authorized_numbers=[lid], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        rt.post(_msg(chat=lid, mid="lid-op", body="ONE1234"), signed=True)
-        assert rt.lead_memory(lid) == []
 
     def test_a_message_with_no_text_and_no_media_is_dropped_before_routing(self, rt):
         _julia_scene(rt)
@@ -342,12 +322,40 @@ class TestFromMe:
         rt.post(_msg(mid="wamid.2", body="e então?"), signed=True)
         assert len(rt.lead_memory()) == 1  # buffered: SW holds no pause gate; agents answers `conversa_pausada`
 
-    def test_L3_Julias_own_echo_matched_by_provider_id_does_not_pause(self, rt):
+    def _row(self, rt, mid, origem):
+        rt.w.sw.table("conversation_messages").insert({
+            "id": "00000000-0000-4000-8000-0000000000ab", "org_id": ORG_ID, "session_id": LEAD_CHAT,
+            "raw_sender": LEAD_CHAT, "direction": "outbound", "body": "bolha", "provider_message_id": mid, "authorized": True,
+            "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "origem": origem,
+        }).execute()
+
+    def test_L3_Julias_own_echo_is_recognised_by_the_durable_origem_not_by_a_redis_key(self, rt):
         _julia_scene(rt)
         rt.w.seed_chat()
-        julia.registrar_envio_proprio(rt.w.redis, "wamid.julia")
-        self._human(rt, mid="wamid.julia")
-        assert rt.w.chat_row()["agente_pausado"] is False
+        _servida(rt)
+        self._row(rt, "wamid.julia", "julia")
+        self._human(rt, mid="wamid.julia")  # DuplicateMessage branch -> origem=julia -> no takeover
+        assert rt.w.chat_row()["agente_pausado"] is False and rt.w.agents.participante_calls == []
+
+    def test_L3_Julias_own_echo_is_not_a_takeover_even_with_redis_down(self, rt):
+        """B2: the old 1-hour Redis key is gone; Redis is OPTIONAL for the echo rule."""
+        _julia_scene(rt)
+        rt.w.seed_chat()
+        _servida(rt)
+        self._row(rt, "wamid.julia", "julia")
+        with patch("redis.Redis.from_url", side_effect=ConnectionError("redis down")):
+            assert self._human(rt, mid="wamid.julia").status_code == 200
+        assert rt.w.chat_row()["agente_pausado"] is False and rt.w.agents.participante_calls == []
+
+    def test_a_human_typing_from_the_phone_is_a_takeover_even_with_redis_down(self, rt):
+        _julia_scene(rt)
+        rt.w.seed_chat()
+        _servida(rt)
+        with patch("redis.Redis.from_url", side_effect=ConnectionError("redis down")):
+            assert self._human(rt, mid="wamid.person").status_code == 200
+        assert rt.w.chat_row()["agente_pausado"] is True and rt.w.agents.participante_calls
+        (row,) = [m for m in rt.w.messages() if m["provider_message_id"] == "wamid.person"]
+        assert row["origem"] == "humano"
 
     def test_L3_an_echo_beating_our_bookkeeping_is_covered_by_the_in_flight_flag(self, rt):
         _julia_scene(rt)
@@ -368,11 +376,13 @@ class TestFromMe:
         self._human(rt, mid="wamid.ui")  # DuplicateMessage branch
         assert rt.w.chat_row()["agente_pausado"] is True and rt.w.agents.participante_calls
 
-    def test_an_operators_own_chat_is_never_taken_over_the_bot_echoes_there(self, rt):
+    def test_a_staff_chat_is_never_taken_over(self, rt):
         _julia_scene(rt)
-        rt.w.seed_chat(OPERATOR_CHAT)
-        rt.post(_msg(chat=OPERATOR_CHAT, to=OPERATOR_CHAT, from_me=True, mid="bot-echo"), signed=True)
-        assert rt.w.chat_row(OPERATOR_CHAT)["agente_pausado"] is False
+        rt.w.sw.table("julia_staff").insert({"id": "00000000-0000-4000-8000-0000000000d1", "org_id": ORG_ID, "nome": "Op",
+                                            "papel": "operador", "telefone": "5511999990000", "ativo": True}).execute()
+        rt.w.seed_chat(OPERATOR_CHAT, categoria="equipe")
+        rt.post(_msg(chat=OPERATOR_CHAT, to=OPERATOR_CHAT, from_me=True, mid="staff-out"), signed=True)
+        assert rt.w.chat_row(OPERATOR_CHAT)["agente_pausado"] is False and rt.w.agents.participante_calls == []
 
     def test_a_group_fromMe_never_pauses(self, rt):
         _julia_scene(rt)
@@ -385,11 +395,6 @@ class TestFromMe:
         rt.w.seed_chat()
         self._human(rt)
         assert rt.w.chat_row()["agente_pausado"] is False
-
-    def test_the_legacy_global_route_still_drops_fromMe(self, rt):
-        _julia_scene(rt)
-        rt.post_legacy(_msg(from_me=True, mid="legacy-out"), signed=True)
-        assert rt.w.messages() == []
 
     def test_an_already_paused_chat_stays_paused_without_a_second_event(self, rt):
         _julia_scene(rt)
@@ -409,44 +414,13 @@ class TestGroups:
         assert rt.lead_memory(GROUP) == [] and rt.w.agents.turns == []
         assert not rt.lead_keys_buffered()
 
-    def test_H2_an_unauthorized_member_of_a_bound_group_cannot_reach_One_Chat(self, rt):
-        _julia_scene(rt, bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
+    def test_a_group_never_reaches_julia_whoever_the_participant_is_and_whatever_the_old_lists_say(self, rt):
+        _julia_scene(rt, authorized_numbers=[GROUP, OPERATOR], bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
         rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        rt.post(_msg(chat=GROUP, frm=GROUP, participant="5511900002222@c.us", mid="g1", body="ONE1234"), signed=True)
-        assert rt.module.buffer.memory_for(GROUP) == [] and rt.operator_memory() == []
-
-    def test_H2_an_authorized_member_of_a_BOUND_group_does_reach_One_Chat(self, rt):
-        _julia_scene(rt, bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        rt.post(_msg(chat=GROUP, frm=GROUP, participant=OPERATOR_CHAT, mid="g2", body="ONE1234"), signed=True)
-        assert rt.module.buffer.memory_for(GROUP), "replies and memory stay per CHAT (the group)"
-
-    def test_H2_an_authorized_member_of_an_UNBOUND_group_is_not_routed(self, rt):
-        _julia_scene(rt, bound_chats=[], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        rt.post(_msg(chat=GROUP, frm=GROUP, participant=OPERATOR_CHAT, mid="g3", body="ONE1234"), signed=True)
-        assert rt.module.buffer.memory_for(GROUP) == []
-
-    def test_H2_a_group_message_without_a_participant_is_not_routed(self, rt):
-        _julia_scene(rt, bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        rt.post(_msg(chat=GROUP, frm=GROUP, mid="g4", body="ONE1234"), signed=True)
-        assert rt.module.buffer.memory_for(GROUP) == []
-
-    def test_H2_the_group_id_listed_as_authorized_does_not_authorize_its_members(self, rt):
-        _julia_scene(rt, authorized_numbers=[GROUP], bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        rt.post(_msg(chat=GROUP, frm=GROUP, participant="5511900002222@c.us", mid="g5", body="ONE1234"), signed=True)
-        assert rt.module.buffer.memory_for(GROUP) == []
-
-    def test_a_group_with_julia_off_and_an_empty_list_authorizes_no_participant(self, rt):
-        rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None, authorized_numbers=[],
-                             bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
-        rt.post(_msg(chat=GROUP, frm=GROUP, participant="5511900002222@c.us", mid="g6", body="ONE1234"), signed=True)
-        # empty list = nobody authorized: not even inside an explicitly bound group.
-        assert rt.module.buffer.memory_for(GROUP) == []
-        assert rt.w.waha.sent_messages == []
+        for i, who in enumerate(("5511900002222@c.us", OPERATOR_CHAT)):
+            rt.post(_msg(chat=GROUP, frm=GROUP, participant=who, mid=f"g{i}", body="ONE1234"), signed=True)
+        assert rt.module.buffer.memory_for(GROUP) == [] and rt.operator_memory() == [] and rt.lead_memory(GROUP) == []
+        assert rt.w.agents.turns == [] and rt.w.waha.sent_messages == []
 
     def test_no_denial_text_is_ever_posted_into_a_group(self, rt):
         _julia_scene(rt)
@@ -454,20 +428,20 @@ class TestGroups:
         assert rt.w.waha.sent_messages == [] and rt.w.redis.get(f"whatsapp:denied:{GROUP}") is None
 
 
-# ── H3 at routing time ──────────────────────────────────────────────────────
-class TestH3AtRouting:
-    def test_julia_on_with_an_empty_authorized_list_fails_closed_no_reply_nothing_routed(self, rt):
-        # Seeded past the DB CHECK on purpose: the routing re-check must hold on its own.
-        _julia_scene(rt, authorized_numbers=[], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+# ── Julia needs NO authorized numbers (One Chat retired, 2026-11-04) ───────────
+class TestNoAuthorizedNumbersNeeded:
+    @pytest.mark.parametrize("lista", [[], ["", "  "]])
+    def test_julia_on_with_an_empty_authorized_list_still_routes_the_lead(self, rt, lista):
+        _julia_scene(rt, authorized_numbers=lista, auto_reply_enabled=True)
         assert rt.post(_msg(), signed=True).status_code == 200
-        assert rt.lead_memory() == [] and rt.operator_memory() == []
-        assert rt.w.waha.sent_messages == [] and rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") is None
+        assert len(rt.lead_memory()) == 1 and rt.operator_memory() == []
 
-    def test_blank_entries_do_not_count_as_authorized_numbers(self, rt):
-        _julia_scene(rt, authorized_numbers=["", "  "])
-        rt.post(_msg(), signed=True)
-        assert rt.lead_memory() == []
+    def test_the_worker_answers_the_lead_with_an_empty_authorized_list(self, rt):
+        _julia_scene(rt, authorized_numbers=[])
+        rt.w.seed_chat(created_at="2026-10-10T00:00:00+00:00")
+        rt.post(_msg(mid="na-1"), signed=True)
+        asyncio.run(process_lead_batch(LEAD_KEY, rt.lead_memory(), deps=rt.w.deps(buffer=rt.module.buffer)))
+        assert rt.w.agents.turns and rt.w.waha.sent_messages
 
 
 # ── H1 ──────────────────────────────────────────────────────────────────────
@@ -515,26 +489,14 @@ class TestSignedWebhooksOnly:
     def test_an_unknown_token_is_still_a_generic_404(self, rt):
         assert rt.post(_msg(), token="nope", signed=True).status_code == 404
 
-    def test_the_legacy_route_with_julia_on_somewhere_and_no_secret_is_401(self, rt):
+    @pytest.mark.parametrize("signed", [False, True])
+    def test_the_legacy_global_route_is_deleted_signed_or_not(self, rt, signed):
+        """B3: no connection, no line, no org -- it is gone, so it cannot be 200 (a signed call included)."""
         _julia_scene(rt)
-        rt.settings(waha_webhook_hmac_secret="")
-        assert rt.post_legacy(_msg()).status_code == 401
-
-    def test_the_legacy_route_with_julia_on_and_a_bad_signature_is_401(self, rt):
-        _julia_scene(rt)
-        assert rt.post_legacy(_msg(), signed=False).status_code == 401
-
-    def test_the_legacy_route_with_no_julia_anywhere_and_no_secret_still_bypasses(self, rt):
-        rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
-        rt.settings(waha_webhook_hmac_secret="")
-        assert rt.post_legacy(_msg()).status_code == 200
-
-    def test_the_legacy_route_never_enters_the_lead_split(self, rt):
-        _julia_scene(rt)
-        stranger = "5511900003333@c.us"
-        assert rt.post_legacy(_msg(chat=stranger, mid="leg-1"), signed=True).status_code == 200
-        assert rt.lead_memory(stranger) == [] and rt.w.agents.turns == []
-        assert not rt.lead_keys_buffered()
+        raw = json.dumps(_msg(chat="5511900003333@c.us", mid="leg-1")).encode()
+        headers = {"content-type": "application/json", **({"X-Webhook-Hmac": _sig(raw)} if signed else {})}
+        assert rt.tc.post("/api/whatsapp/webhook", content=raw, headers=headers).status_code in (404, 405)
+        assert rt.w.messages("5511900003333@c.us") == [] and rt.w.agents.turns == [] and not rt.lead_keys_buffered()
 
     def test_the_legacy_route_fails_closed_when_it_cannot_tell_whether_julia_is_on(self, rt):
         rt.settings(waha_webhook_hmac_secret="")
@@ -548,12 +510,12 @@ class TestSignedWebhooksOnly:
 
 # ── 11.1 eligibility through the webhook ────────────────────────────────────
 class TestChatsThatStartAfterJulia:
-    def test_a_chat_in_the_snapshot_never_reaches_julia_and_keeps_todays_behaviour(self, rt):
+    def test_a_chat_in_the_snapshot_never_reaches_julia_it_is_only_stored(self, rt):
         _julia_scene(rt)
         julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
         rt.post(_msg(), signed=True)
         assert rt.lead_memory() == [] and rt.w.agents.turns == []
-        assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") == "1", "falls through to today's denial path"
+        assert rt.w.waha.sent_messages == [], "no denial / no reply of any kind"
         assert len(rt.w.messages()) == 1, "still stored"
 
     def test_a_brand_new_chat_reaches_julia(self, rt):

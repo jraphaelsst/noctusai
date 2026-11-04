@@ -249,8 +249,8 @@ def _as_datetime(ts: Any) -> datetime:
 class LeadSender:
     """`send_paragraphs`' `intake` seam for the lead path: sends via the CONNECTION's
     WAHA credentials (the operator intake is bound to the global WAHA session),
-    records the outbound, publishes realtime, and registers the message id as
-    Julia's own so its `fromMe` echo is never mistaken for a human (L3)."""
+    records the outbound with `origem='julia'` (so its `fromMe` echo dedups and is never
+    mistaken for a human, L3), publishes realtime."""
 
     def __init__(self, *, connection: WhatsAppConnectionRecord, waha: Any, deps: LeadDeps, liberacao: julia_envio_gate.Liberacao):
         self._c = connection
@@ -264,7 +264,6 @@ class LeadSender:
         julia_envio_gate.conferir(self._liberacao, self._c.id)  # the outbound gate (two gates) passed for this line
         result = await self._waha.send_text(sender, text)
         provider_message_id = extract_waha_message_id(result) if isinstance(result, dict) else None
-        julia.registrar_envio_proprio(self._d.redis, provider_message_id)
         now = datetime.now(timezone.utc).isoformat()
         stored = None
         try:
@@ -272,7 +271,7 @@ class LeadSender:
                 session_id=sender, raw_sender=sender, direction="outbound", body=text,
                 provider_message_id=provider_message_id, authorized=True,
                 structured_payload={"origem": "julia"},
-                connection_id=self._c.id, chat_id=sender,
+                connection_id=self._c.id, chat_id=sender, origem="julia",  # the durable own-echo marker (no takeover on its echo)
             )
         except DuplicateMessage:
             logger.info("julia: outbound echo already recorded (id=%s)", provider_message_id)
@@ -494,12 +493,6 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
     org_id = connection.org_id
     chat_store = deps.chat_store_factory(org_id)
     agent_key = connection.agente_leads_key or julia.DEFAULT_AGENT_KEY
-
-    # H3 re-check at routing time: fail closed, no reply.
-    if not [n for n in (connection.authorized_numbers or []) if str(n).strip()]:
-        logger.error("julia: connection %s has Julia on with no authorized_numbers -- fail closed", connection.id)
-        close_run(deps.buffer, key, run)
-        return
 
     # Conversas v2: a blocked number never gets a turn (defence in depth -- the webhook already drops it);
     # an archived contato is handed back to Julia (un-archived + un-paused) before the pause check below.

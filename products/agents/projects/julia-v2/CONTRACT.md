@@ -1057,6 +1057,11 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
 - Delivery: new `julia_envio_gate` flow **`interno`** (staff notice, not a lead send): requires only that the line exists and is a WAHA
   line — NOT gate 1, so an alert still reaches the owner while Julia is being switched off. Sent from the org's
   Julia line through `send_paragraphs`. Keeper `test_julia_envio_gate_keeper` stays green.
+- **One line, staff routing (owner 2026-11-04; SW CONTRACT julia-line §B).** The "One Chat" operator bot is retired: Julia's number carries leads and staff notices only, and **SW** (not agents) routes by sender before any agent call.
+  - Staff = active `julia_staff` rows ∪ phones of active members of the line-owning org (core `noctus_users.telefone`). A staff or member message is stored (chat `categoria='equipe'`, message `origem='interno'`), the admins get an in-app notice, and it **never reaches agents** — no turn, no thread append, no participant.
+  - `authorized_numbers` plays no part: Julia is switched on without it. A staff chat is never eligible for Julia and a `fromMe` message in it is never a takeover.
+  - SW-sent staff notices (reports, alerts) are written with `origem='interno'` keyed by `provider_message_id`, so WAHA's `fromMe` echo is a duplicate and is never mistaken for a human taking over (durable; no Redis key).
+  - What agents sees on the channel is unchanged: lead turns (`POST /api/channels/leads/...`) and the human-takeover append/pause for a **lead** chat only.
 - Settings API: `GET|PUT /api/julia/relatorio-destino` — `GET` → `{modo, usuario_id, usuario_nome, telefone_resolvido|null}`;
   `PUT {modo: 'usuario'|'responsavel', usuario_id?}` (org admin, strict 401/403).
 - Webhook HMAC (security L2): in prod `WAHA_WEBHOOK_HMAC_SECRET` is unset and the shared WAHA does not sign, so SW enforces only when the

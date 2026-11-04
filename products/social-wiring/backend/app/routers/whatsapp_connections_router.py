@@ -68,7 +68,6 @@ from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
     get_whatsapp_client,
 )
-from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.realtime import create_sse_router
 
 from app.config import SocialWiringSettings, settings
@@ -122,8 +121,6 @@ from app.services.whatsapp_realtime import (
 )
 
 from app.services import chat_cliente_link
-from app.services import julia_agente_service as julia
-from app.services import julia_staff_service
 
 logger = logging.getLogger(__name__)
 
@@ -475,32 +472,13 @@ def update_connection(
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     # 404 early if the line isn't the caller's.
-    current = _require_record(store, connection_id=connection_id, org_id=org_id)
+    _require_record(store, connection_id=connection_id, org_id=org_id)
 
-    # 🔴 H3 (contract 10.1): with Julia on, an EMPTY authorized list would mean
-    # "everyone is authorized" — every lead would reach the operator bot. The list
-    # PUT is one of the three places the invariant is enforced (switch · this ·
-    # the DB CHECK, migration 258).
-    if (
-        current.agente_leads_ativo
-        and "authorized_numbers" in body.model_fields_set
-        and body.authorized_numbers is not None
-    ):
-        julia.exigir_autorizados(body.authorized_numbers)
-
-    # Use model_fields_set to distinguish "field absent from request" (keep
-    # current value) from "field supplied as []" (clear → means allow-all /
-    # listen-to-all).  We must NOT treat an explicit [] as "not supplied".
+    # `authorized_numbers` is LEGACY (the One Chat operator bot is retired, 2026-11-04): nothing reads it any more and Julia needs no
+    # authorized number to be on. The column is still writable until SW-B drops it (S12, after deploy).
     _extra: dict = {}
     if "authorized_numbers" in body.model_fields_set and body.authorized_numbers is not None:
-        # The org STAFF list is where operators are edited now (owner 2026-10-21): the numbers sent here become (or stay) operator
-        # staff and the connection's `authorized_numbers` is written back as the MIRROR of that list. Staff is a privilege, so this
-        # is an org-admin action.
-        require_org_admin_for(get_core_client(), auth, None, "Alterar os números autorizados (One Chat)")
-        espelho = julia_staff_service.sincronizar_de_lista(
-            get_scoped_admin_client("social_wiring"), get_core_client(), org_id, str(user.id), body.authorized_numbers,
-        )
-        _extra["authorized_numbers"] = espelho.get(str(connection_id), current.authorized_numbers)
+        _extra["authorized_numbers"] = list(body.authorized_numbers)
     if "bound_chats" in body.model_fields_set and body.bound_chats is not None:
         _extra["bound_chats"] = [bc.model_dump(mode="json") for bc in body.bound_chats]
     # Migration 017 — marca_id three-state via _UNSET sentinel.
@@ -1144,6 +1122,7 @@ async def send_message(
         # the user just sent is invisible in its own thread permanently, not
         # merely until the echo lands.
         chat_id=chat_id,
+        origem="humano",  # typed by a person in Conversas; its `fromMe` echo is a duplicate of THIS row
     )
 
     # Fold the send into the conversation row + push it to subscribers, exactly

@@ -270,8 +270,9 @@ def exigir_hmac_configurado(cfg: Any) -> None:
 
 
 def exigir_autorizados(authorized_numbers: list[str] | None) -> None:
-    """H3: today an empty list means 'everyone is authorized' -- Julia on over an
-    empty list would hand every lead to the operator bot and its tools."""
+    """DEPRECATED, REMOVE WITH S8: the One Chat operator bot is retired (2026-11-04) so Julia no longer needs an authorized number to
+    be switched on (migration 318 drops the DB CHECK). Its only caller is `julia_agente_router` (S8's file); once that call is gone
+    this function is deleted. Nothing in the routing reads `authorized_numbers` any more."""
     if not [n for n in (authorized_numbers or []) if str(n).strip()]:
         raise AppException(
             "authorized_numbers_required",
@@ -584,7 +585,7 @@ def _ts(value: Any) -> Optional[datetime]:
 @dataclass(frozen=True)
 class Elegibilidade:
     elegivel: bool
-    motivo: str  # owned | new | snapshot | chat_anterior | sem_ativado_em
+    motivo: str  # owned | new | snapshot | chat_anterior | sem_ativado_em | equipe
 
 
 async def avaliar_elegibilidade(
@@ -597,12 +598,16 @@ async def avaliar_elegibilidade(
 ) -> Elegibilidade:
     """Is this chat Julia's? (contract 11.1)
 
+    * a STAFF chat (`categoria='equipe'`, migration 318) is never Julia's -- refused before anything else, even if it somehow owns
+      a conversation;
     * a chat Julia already owns (`agente_conversation_id`) stays eligible;
     * not in the snapshot (by ANY of its identifier forms, including the phone a
       `@lid` resolves to) AND
     * its `whatsapp_chats` row was not created before `agente_leads_ativado_em`.
     Anything uncertain (no `ativado_em`) is NOT eligible -- fail closed.
     """
+    if chat_state and chat_state.get("categoria") == "equipe":
+        return Elegibilidade(False, "equipe")
     if chat_state and chat_state.get("agente_conversation_id"):
         return Elegibilidade(True, "owned")
     ativado = _ts(connection.agente_leads_ativado_em)
@@ -663,9 +668,13 @@ def permitir_turno(redis: Any, *, connection_id: UUID, chat_id: str, cfg: Any) -
 
 
 # ── 10.1 L3 / 10.2 B4: Julia's own echo vs a human typing from the phone ────
+# The DURABLE answer is the `origem` stamped on the row SW wrote at send time (migration 318; UNIQUE(provider_message_id) turns the
+# echo into a duplicate, and `origem_do_eco_e_nosso` reads it). Redis is only the SHORT in-flight flag for the race where WAHA's echo
+# beats our bookkeeping -- optional: a missing/failed Redis reads as "not sending", never as an error.
 _SENDING_TTL_S = 120
 _SENDING_GRACE_S = 15
-_OWN_ID_TTL_S = 3600
+#: `origem` values that are never a human typing: Julia's own bubble and a system-sent staff notice.
+ORIGENS_QUE_NAO_SAO_TOMADA = ("julia", "interno")
 
 
 def _sending_key(connection_id: UUID | str, chat_id: str) -> str:
@@ -682,14 +691,28 @@ def encerrar_envio(r: Any, connection_id: UUID | str, chat_id: str) -> None:
 
 
 def registrar_envio_proprio(r: Any, provider_message_id: str | None) -> None:
+    """DEPRECATED (writes the old 1-hour Redis key that NOTHING reads any more -- the durable `origem` replaced it). Kept only until
+    `julia_relatorio_service.InternoSender` (S6) switches to `MessageStore.registrar_interno_enviado`, its last caller; then deleted."""
     if provider_message_id:
-        r.set(f"julia:julia_out:{provider_message_id}", "1", ex=_OWN_ID_TTL_S)
+        r.set(f"julia:julia_out:{provider_message_id}", "1", ex=3600)
 
 
-def eh_eco_proprio(r: Any, *, connection_id: UUID | str, chat_id: str, provider_message_id: str | None) -> bool:
-    if provider_message_id and r.get(f"julia:julia_out:{provider_message_id}"):
-        return True
-    return bool(r.get(_sending_key(connection_id, chat_id)))
+def origem_e_eco_proprio(origem: str | None) -> bool:
+    """Is a stored message's `origem` one that SW itself produced (Julia's bubble / a system staff notice)? Its `fromMe` echo is
+    never a human takeover."""
+    return origem in ORIGENS_QUE_NAO_SAO_TOMADA
+
+
+def envio_em_curso(r: Any, *, connection_id: UUID | str, chat_id: str) -> bool:
+    """The short in-flight flag. Redis is OPTIONAL: no client, or a Redis that errors, answers False (the durable `origem` check
+    is the one that matters)."""
+    if r is None:
+        return False
+    try:
+        return bool(r.get(_sending_key(connection_id, chat_id)))
+    except Exception as exc:
+        logger.warning("julia: in-flight send flag unreadable (%s) -- relying on the durable origem", type(exc).__name__)
+        return False
 
 
 # ── 10.1 M5: deletion on request (SW side) ──────────────────────────────────
@@ -795,11 +818,11 @@ __all__ = [
     "DEFAULT_AGENT_KEY", "Elegibilidade", "HANDOFF_KIND", "LEAD_PREFIX", "MOTIVOS_HANDOFF",
     "ResultadoApagar", "SlidingWindowLimiter", "SnapshotFalhou",
     "agents_token_for_org", "apagar_dados_do_chat", "avaliar_elegibilidade", "chat_aliases",
-    "destinatario_do_handoff", "eh_eco_proprio", "encerrar_envio", "exigir_autorizados",
+    "destinatario_do_handoff", "encerrar_envio", "envio_em_curso", "exigir_autorizados",
     "exigir_aviso_completo", "exigir_destinatario_valido", "exigir_hmac_configurado",
     "expandir_aliases", "gravar_snapshot", "is_group_chat", "is_lid",
     "lead_key", "limpar_erro_link", "listar_todos_os_chats", "ler_erro_link",
-    "marcar_envio_em_curso", "mensagem_inicial_pronta", "motivo_codigo_do_handoff", "notificar_handoff", "parse_lead_key",
+    "marcar_envio_em_curso", "mensagem_inicial_pronta", "motivo_codigo_do_handoff", "notificar_handoff", "origem_e_eco_proprio", "parse_lead_key",
     "permitir_turno", "phone_digits", "public_privacy_link", "registrar_envio_proprio",
     "registrar_erro_link", "resolve_agents_client", "sanitize_motivo", "snapshot_contem",
     "usuario_e_admin_da_org",

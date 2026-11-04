@@ -1372,37 +1372,55 @@ _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
 )
 
 
-_JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE = GuardProbe(
-    id="whatsapp_connections.agente_leads_ativo.exige_autorizados",
+# NOTE: the 258 `whatsapp_connections_agente_exige_autorizados` CHECK (and its probe) were retired by SW migration 318 -- the
+# One Chat operator bot is gone, so Julia needs no authorized number (CONTRACT julia-line B3). A probe for a dropped guard
+# would report `permitted` forever, so it is deleted, not kept.
+
+_JULIA_MENSAGEM_ORIGEM_PROBE = GuardProbe(
+    id="conversation_messages.origem.valores",
     product="social-wiring",
     schema=_SW_SCHEMA,
-    guard_name="whatsapp_connections_agente_exige_autorizados",
+    guard_name="conversation_messages_origem_check",
     kind="write_refusal",
-    migrations=("258_lais_agente_roteamento.sql",),
+    migrations=("318_julia_linha_roteamento.sql",),
     rationale=(
-        "Julia (the lead agent) on a line whose `authorized_numbers` is EMPTY would hand every "
-        "lead to the operator bot and its tools: an empty list means 'everyone is authorized' "
-        "to the One Chat gate. The invariant `agente_leads_ativo => authorized_numbers "
-        "non-empty` is enforced on every write by this CHECK (it spans both columns, so "
-        "emptying the list while Julia is on is refused too). CHECK fires before the unique "
-        "indexes, so a throwaway row borrowing an existing (org_id, user_id) is safe."
+        "`origem` (lead | julia | humano | interno) is what the human-takeover rule reads to tell SW's own echo "
+        "(Julia's bubble, a system staff notice) from a person typing: an unknown value would be read as 'not mine' and "
+        "pause a lead's chat, or the reverse. CHECK fires before any FK/unique, so a throwaway row borrowing an existing "
+        "org_id is safe."
     ),
     sql=_insert_check_probe(
         schema=_SW_SCHEMA,
-        table="whatsapp_connections",
-        columns_sql=(
-            "org_id, user_id, label, base_url, encrypted_api_key, webhook_token, "
-            "authorized_numbers, agente_leads_ativo, agente_leads_ativado_em, agente_leads_key"
-        ),
-        values_sql=(
-            "org_id, user_id, 'noc-probe', 'https://noc-probe.invalid', 'x', 'noc-probe-token', "
-            "'[]'::jsonb, true, now(), 'lead-imob'"
-        ),
+        table="conversation_messages",
+        columns_sql="org_id, session_id, direction, body, origem",
+        values_sql="org_id, 'noc-probe', 'inbound', 'noc-probe', 'bogus'",
         fixture_from=f"{_SW_SCHEMA}.whatsapp_connections",
-        fixture_description=(
-            f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (org_id, user_id) from"
-        ),
-        guard_fragment='constraint "whatsapp_connections_agente_exige_autorizados"',
+        fixture_description=f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an org_id from",
+        guard_fragment='constraint "conversation_messages_origem_check"',
+    ),
+)
+
+
+_JULIA_CHAT_CATEGORIA_PROBE = GuardProbe(
+    id="whatsapp_chats.categoria.valores",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="whatsapp_chats_categoria_check",
+    kind="write_refusal",
+    migrations=("318_julia_linha_roteamento.sql",),
+    rationale=(
+        "`categoria` (lead | equipe) is the privacy gate that keeps a colleague's chat away from Julia "
+        "(`avaliar_elegibilidade` refuses `equipe`): an unknown value would be read as neither and fall through to the lead "
+        "path. CHECK fires before the (connection_id, chat_id) key, so a throwaway row borrowing an existing connection is safe."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="whatsapp_chats",
+        columns_sql="connection_id, org_id, chat_id, categoria",
+        values_sql="id, org_id, 'noc-probe', 'bogus'",
+        fixture_from=f"{_SW_SCHEMA}.whatsapp_connections",
+        fixture_description=f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (id, org_id) from",
+        guard_fragment='constraint "whatsapp_chats_categoria_check"',
     ),
 )
 
@@ -11474,7 +11492,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _JULIA_RELATORIO_CHAVE_UNIQUE_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
     _NOCTUS_USERS_TELEFONE_E164_PROBE,
-    _JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE,
+    _JULIA_MENSAGEM_ORIGEM_PROBE,
+    _JULIA_CHAT_CATEGORIA_PROBE,
     _JULIA_AGENTE_EXIGE_ATIVADO_EM_PROBE,
     _JULIA_CONEXAO_TRANSPORTE_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,

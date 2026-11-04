@@ -1,23 +1,21 @@
 """WhatsApp inbound webhook — WAHA forwards messages here.
 
-This router handles incoming WhatsApp events from WAHA. It validates the
-sender against the authorized whitelist, then routes the message through
-the :class:`WhatsAppIntakeService` conversation state machine. Postgres
-(``social_wiring.conversation_messages`` + ``whatsapp_chats``, migration
-040) is the read source of truth for the chat inbox — every event this
-router handles that changes what a client should see is persisted BEFORE
-it is published on the realtime bus.
+This router handles incoming WhatsApp events from WAHA on Julia's ONE line (the "One Chat" operator bot is retired, 2026-11-04).
+Every event it handles is persisted (``social_wiring.conversation_messages`` + ``whatsapp_chats``, migration 040) BEFORE it is
+published on the realtime bus; then the sender is CLASSIFIED (``julia_staff_service.classificar_remetente``): staff (julia_staff
+rows + the org members' core phones) is stored with the chat ``categoria='equipe'``, noticed to the admins and never routed;
+anyone else is a lead and goes through triage and, when the switch is on and the chat is eligible, to Julia.
 
 Events handled (WAHA webhook subscription list, wired at connection-create
 time by ``whatsapp_connections_router.py``):
 
   ``message`` / ``message.any``
-      Inbound text (+ media, resolved to text). Persisted, folded into
+      Inbound text (+ media, resolved to text). Persisted with its ``origem`` (migration 318), folded into
       ``whatsapp_chats`` via ``WhatsAppChatStore.record_message``, and
       published as ``message.new`` + ``chat.upsert``. WAHA fires both
       ``message`` and ``message.any`` for the same inbound — the Redis
       SETNX pre-filter plus the ``UNIQUE(provider_message_id)`` constraint
-      guard the race; keep both.
+      guard the race; keep both. The same constraint dedups the ``fromMe`` echo of a message SW wrote itself.
   ``message.ack``
       Delivery/read receipt for a message we sent or received. Applied to
       the matching row by ``provider_message_id`` (globally unique — no
@@ -34,30 +32,19 @@ time by ``whatsapp_connections_router.py``):
       live instead of polling ``GET /connections/{id}/status`` (a ~13s
       live WAHA round-trip).
 
-Only text messages are processed for the chatbot/intake flow; media
-messages are resolved to text via ``media_service`` when an Anthropic key is
-configured, else acknowledged but not acted on.
-
-Auth note: these endpoints do NOT use the standard JWT auth because
+Auth note: this endpoint does NOT use the standard JWT auth because
 WAHA's webhook calls carry no Authorization header. Signature verification
 is via ``noctusai_lib.security.webhook_signatures.webhook_endpoint`` (HMAC
-``waha`` scheme: ``X-Webhook-Hmac`` + ``X-Webhook-Hmac-Algorithm``, sha512 by default — WAHA's real shape);
-sender validation is a SEPARATE, later gate: the phone number whitelist in
-settings / the per-connection ``authorized_numbers``.
+``waha`` scheme: ``X-Webhook-Hmac`` + ``X-Webhook-Hmac-Algorithm``, sha512 by default — WAHA's real shape).
 
-Two receiver routes are provided:
-
-  POST /api/whatsapp/webhook
-      Legacy global route (back-compat). Uses the product-level HMAC
-      secret from settings when set; bypasses (with a WARNING) when unset.
+One receiver route:
 
   POST /api/whatsapp/webhook/{token}
       Per-connection token-scoped route. The token is an opaque secret
       minted on connection create; it resolves to a specific connection
       record (org / user / session). Unknown token → generic 404 (no
-      token enumeration). HMAC check uses the same global HMAC secret
-      when configured. Processing delegates to the shared
-      ``_process_waha_body`` helper — identical pipeline, no forked logic.
+      token enumeration). The legacy global ``/webhook`` route was deleted (CONTRACT julia-line A2/B3): it had no connection, so
+      no line, no org and no routing to speak of.
 """
 import anyio
 # 🔴 NO `from __future__ import annotations` IN THIS FILE — deliberate.
@@ -80,7 +67,6 @@ from typing import Any
 import logging
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.redis import make_redis_client
@@ -103,18 +89,15 @@ from app.services import julia_agente_service as julia
 from app.services.identidade_mascara import ref as ref_log
 from app.services import julia_conversas_service, julia_origem_service, julia_protecao_service, julia_staff_service, julia_thread_service
 from app.services.conversation_module import get_conversation_module
-from app.services.credential_vault import EncryptionNotConfigured
-from app.services.account_credentials import build_youtube_service_for_org
-from app.services import vista_credenciais
 from app.services.media_service import MidiaLead, ResolvedMedia, make_media_service, midia_recusada
 from app.services.message_store import DuplicateMessage, MessageStore, StoredMessage
 from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.waha_response_registry import record_waha_sample
 from app.services.whatsapp_chat_store import WhatsAppChatStore
-from app.services.whatsapp_chatbot_service import WhatsAppChatbotService
 from app.services.whatsapp_identity import resolve_identity
-from app.services.whatsapp_intake_service import WhatsAppIntakeService
+from app.services.whatsapp_entrada import EntradaDaLinha, entrada_da_conexao
 from app.services.whatsapp_connection_store import build_whatsapp_connection_store
+from app.services.credential_vault import EncryptionNotConfigured
 from app.services.whatsapp_realtime import (
     EVENT_CHAT_UPSERT,
     EVENT_MESSAGE_ACK,
@@ -123,7 +106,6 @@ from app.services.whatsapp_realtime import (
     get_whatsapp_bus,
     publish_whatsapp_event,
 )
-from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -245,145 +227,6 @@ async def _register_contact_bg(
         )
 
 
-_UPLOAD_DIR = Path("/tmp/uploads")
-
-
-def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService | None:
-    """Wire the intake service. Returns None when critical config is
-    missing — the webhook will 200-ack but not process messages.
-
-    When ``connection`` is a :class:`WhatsAppConnectionRecord` (per-connection
-    token-scoped route, migration 016):
-      - ``authorized_numbers`` comes from the connection record.
-        Empty list = NOBODY is authorized (operator-only bot, 2026-10-20); the
-        legacy global env var path with an empty list is DISABLED (returns None).
-      - ``bound_chats`` comes from the connection record.
-      - ``connection_id`` is derived from ``connection.id``.
-
-    When ``connection`` is None (legacy global route):
-      - ``authorized_numbers`` comes from ``settings.whatsapp_authorized_numbers``
-        (comma-separated env var).  Empty = DISABLED → returns None.
-      - ``bound_chats`` is None (all chats listened to).
-      - ``connection_id`` is None.
-    """
-    cfg = cfg or settings
-    if connection is not None:
-        # Per-connection route: empty list = nobody authorized (operator-only bot).
-        authorized = list(connection.authorized_numbers or [])
-        bound_chats: list[dict] | None = list(connection.bound_chats or [])
-        _connection_id = connection.id
-    else:
-        # Legacy global route: empty = disabled.
-        authorized = [
-            n.strip()
-            for n in cfg.whatsapp_authorized_numbers.split(",")
-            if n.strip()
-        ]
-        bound_chats = None
-        _connection_id = None
-        if not authorized:
-            logger.warning(
-                "whatsapp_authorized_numbers is empty — WhatsApp inbound disabled"
-            )
-            return None
-
-    admin_supabase = get_admin_client()
-
-    # Redis for conversation state
-    try:
-        redis_client = make_redis_client(cfg.redis_url, decode_responses=True)
-        redis_client.ping()
-    except Exception as exc:
-        logger.error("Redis unavailable for WhatsApp state: %s", exc)
-        return None
-
-    # YouTube service (required only when an upload is confirmed). Keep chat
-    # online so the assistant can tell the user what is missing.
-    youtube: YouTubeService | None = None
-    try:
-        youtube = build_youtube_service_for_org(admin_supabase, settings)
-    except (EncryptionNotConfigured, YouTubeServiceError) as exc:
-        logger.warning("YouTube service unavailable for WhatsApp upload confirmation: %s", exc)
-
-    # Org ID — for WhatsApp uploads we use a default org since there's no
-    # JWT context. The first org that connected YouTube is used.
-    # In a single-tenant deployment this is the only org.
-    org_id = _resolve_default_org(admin_supabase)
-    if org_id is None:
-        logger.warning(
-            "No YouTube credentials found; WhatsApp chat remains enabled, "
-            "but upload confirmation will be blocked until YouTube is connected"
-        )
-        org_id = UUID(cfg.local_dev_org_id)
-
-    # CRM (optional — degrades to manual title): THAT org's own Vista credential, never an env key.
-    crm = vista_credenciais.adapter_ou_none(org_id)
-
-    return WhatsAppIntakeService(
-        waha_base_url=cfg.waha_base_url,
-        waha_api_key=cfg.waha_api_key,
-        waha_session=cfg.waha_session,
-        redis_client=redis_client,
-        authorized_numbers=authorized,
-        crm_service=crm,
-        admin_supabase=admin_supabase,
-        youtube_service=youtube,
-        upload_dir=_UPLOAD_DIR,
-        org_id=org_id,
-        connection_id=_connection_id,
-        bound_chats=bound_chats,
-    )
-
-
-async def build_intake_service_for_processor(
-    *,
-    admin_supabase: object | None = None,
-    org_id: UUID | None = None,
-    connection=None,
-    cfg=None,
-) -> WhatsAppIntakeService | None:
-    """Async public alias of ``_build_intake_service`` for the
-    conversation worker's processor.
-
-    The processor runs in a worker thread but dispatches into the main
-    asyncio loop via ``run_coroutine_threadsafe`` — once on the loop, it
-    can call this normally. Args are accepted for forward-compat with a
-    future refactor that passes the lifespan-resolved admin client + org
-    id directly; today the underlying ``_build_intake_service`` resolves
-    both on its own.
-
-    ``connection`` (migration 016): optional :class:`WhatsAppConnectionRecord`
-    to forward per-connection ``authorized_numbers`` / ``bound_chats`` config.
-    """
-    # admin_supabase + org_id reserved for a future signature; pass-through
-    # is intentional so callers don't break when we tighten the contract.
-    del admin_supabase, org_id
-    return _build_intake_service(connection=connection, cfg=cfg)
-
-
-def _resolve_default_org(admin_supabase) -> UUID | None:
-    """Find the first org that has YouTube credentials connected.
-
-    In the single-channel setup this returns the only org. Multi-tenant
-    would need a mapping table or a WhatsApp-to-org lookup.
-    """
-    try:
-        response = (
-            admin_supabase
-            .schema("social_wiring")
-            .table("credentials")
-            .select("org_id")
-            .eq("provider", "youtube")
-            .limit(1)
-            .execute()
-        )
-        if response.data:
-            return UUID(response.data[0]["org_id"])
-    except Exception as exc:
-        logger.error("failed to resolve default org: %s", exc)
-    return None
-
-
 async def _handle_session_status(envelope: WAHAMessagePayload, *, connection, cfg=None) -> None:
     """Persist + publish a ``session.status`` event.
 
@@ -433,8 +276,7 @@ async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection, cfg=N
     ``org_id`` is required to construct a :class:`MessageStore` but is NOT
     used to scope the update (see ``MessageStore.apply_ack``'s docstring —
     ``provider_message_id`` is globally unique): the connection's org when
-    known, else the dev-fallback org, exactly as ``_build_intake_service``
-    falls back for the legacy route.
+    known, else the dev-fallback org.
     """
     cfg = cfg or settings
     payload = envelope.payload
@@ -486,39 +328,30 @@ async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection, cfg=N
         )
 
 
-async def _lid_alias_phone(*, intake, connection, lid: str, cfg=None, waha_factory=None) -> str | None:
-    """Phone digits behind an ``@lid`` — the intake's LID cache first, then WAHA
-    (``get_lid_phone`` never raises). Used only to check a chat against the 11.1
-    snapshot by its OTHER identifier form."""
+def _redis_opcional(cfg):
+    """A Redis client for the OPTIONAL paths (LID cache, in-flight send flag, notice dedupe), or None. Never raises."""
     try:
-        cached = intake._lid_to_phone(lid)
-    except Exception:
-        logger.exception("LID cache lookup failed for %s", lid)
-        cached = None
-    if cached:
-        digits = str(cached).replace("@c.us", "").replace("@s.whatsapp.net", "").lstrip("+")
-        if digits.isdigit():
-            return digits
-    try:
-        store = _build_token_webhook_store(cfg)
-        record = store.get_connection(connection_id=connection.id, org_id=connection.org_id, decrypt=True) if store else None
-        if record is None or not record.api_key:
-            return None
-        from noctusai_lib.integrations.whatsapp import get_whatsapp_client
-
-        waha = (waha_factory or get_whatsapp_client)(
-            base_url=record.base_url or None, api_key=record.api_key, session=record.session_name
-        )
-        phone = await waha.get_lid_phone(lid)
-    except Exception:
-        logger.warning("WAHA LID→phone lookup failed for %s", lid, exc_info=True)
+        return make_redis_client(cfg.redis_url, decode_responses=True)
+    except Exception as exc:
+        logger.warning("whatsapp: Redis client unavailable (%s) -- continuing without it", type(exc).__name__)
         return None
-    return julia.phone_digits(phone) if phone else None
+
+
+def _entrada_da_linha(connection, *, cfg=None, waha_factory=None) -> EntradaDaLinha:
+    """The slim inbound helper of the line (canonical id, LID cache, `get_lid_phone`), from the connection record. Redis is optional;
+    the decrypted key is read only when a LID has to be resolved or a contact registered."""
+    cfg = cfg or settings
+
+    def _registro():
+        store = _build_token_webhook_store(cfg)
+        return store.get_connection(connection_id=connection.id, org_id=connection.org_id, decrypt=True) if store is not None else None
+
+    return entrada_da_conexao(connection, redis=_redis_opcional(cfg), registro_provider=_registro, waha_factory=waha_factory)
 
 
 async def _handle_lead_message(
-    *, connection, intake, chat_id: str, sender: str, message_body: str,
-    provider_message_id: str, push_name: str | None, cfg, waha_factory=None,
+    *, connection, entrada, chat_id: str, sender: str, message_body: str,
+    provider_message_id: str, push_name: str | None, cfg,
     midia: dict | None = None, referral: dict | None = None,
 ) -> bool:
     """The lead path for ONE inbound. Returns True when the message was handled here
@@ -537,9 +370,7 @@ async def _handle_lead_message(
         elegibilidade = await julia.avaliar_elegibilidade(
             client=get_scoped_admin_client("social_wiring"), connection=connection,
             chat_id=chat_id, chat_state=state,
-            resolver_alias=lambda lid: _lid_alias_phone(
-                intake=intake, connection=connection, lid=lid, cfg=cfg, waha_factory=waha_factory
-            ),
+            resolver_alias=entrada.phone_do_lid,
         )
     except Exception as exc:
         # Eligibility is a PRIVACY decision (11.1): when it cannot be made, the chat is
@@ -582,17 +413,11 @@ async def _handle_lead_message(
     return True
 
 
-async def _triar_remetente(connection, *, chat_id: str, sender: str, cfg):
-    """GUARDRAILS B5: the first question about an inbound on a Julia line, asked BEFORE any media AI call or agents call. Returns
-    a `Triagem`: `equipe` for a person on the org staff list (they skip the lead limits and every media AI call; the routing
-    split below decides what happens to their message), else the blocklist / per-number rate-limit verdict."""
+async def _triar_lead(connection, *, chat_id: str, sender: str, cfg):
+    """GUARDRAILS B5: the first question about a LEAD inbound on a Julia line, asked BEFORE any media AI call or agents call: the
+    blocklist / per-number rate-limit verdict (`Triagem`). Staff never get here (`_classificar_remetente` decides that first)."""
     client = get_scoped_admin_client("social_wiring")
     try:
-        formas = julia_staff_service.formas_do_remetente(chat_id, sender)
-        if formas and julia_staff_service.buscar_por_telefone(client, connection.org_id, formas) is not None:
-            # a colleague, not a stranger: no lead limits, but NO media AI either (they are never a lead; the routing split below
-            # stores the message and notices the admins)
-            return julia_protecao_service.Triagem("equipe", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
         redis = make_redis_client(cfg.redis_url, decode_responses=True)
         return julia_protecao_service.triar_entrada(client, redis, get_core_client(), connection, chat_id=chat_id, sender=sender)
     except Exception as exc:
@@ -600,15 +425,9 @@ async def _triar_remetente(connection, *, chat_id: str, sender: str, cfg):
         return julia_protecao_service.Triagem("erro", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
 
 
-def _org_da_midia(connection) -> UUID | None:
-    """Whose Anthropic key reads this inbound media: the connection's own org, else the process default org."""
-    if connection is not None:
-        return connection.org_id
-    try:
-        return _resolve_default_org(get_admin_client())
-    except Exception as exc:
-        logger.warning("media org resolution failed (%s)", type(exc).__name__)
-        return None
+def _org_da_midia(connection) -> UUID:
+    """Whose Anthropic key reads this inbound media: the org that owns the line."""
+    return connection.org_id
 
 
 async def _resolver_midia_do_lead(
@@ -632,39 +451,40 @@ async def _resolver_midia_do_lead(
         return midia_recusada(mimetype, filename, "falhou", legenda=legenda)
 
 
-async def _staff_na_linha(*, connection, intake, chat_id: str, sender: str, cfg, waha_factory=None):
-    """The org STAFF row of whoever wrote on a Julia line, or None (=> a lead, always). Decided by the sender's NUMBER only, against
-    the staff list (never by anything the message says); a LID is resolved to its phone first."""
+async def _classificar_remetente(connection, *, entrada, chat_id: str, sender: str):
+    """B1 (CONTRACT julia-line): is whoever wrote on the line STAFF of the org that owns it? Staff = active `julia_staff` rows plus the
+    phones of the org's active members (core `noctus_users.telefone`); a `Remetente` for staff, None for a lead. Decided by the NUMBER
+    only (a LID is resolved to its phone first, and only when the org has any staff number at all), never by what the message says.
+    A failed lookup treats the sender as a lead (never staff -- it is logged, ids only)."""
     client = get_scoped_admin_client("social_wiring")
-    extras = [chat_id, sender]
-    # a LID costs a WAHA round-trip to resolve: only worth it when the org has staff with a number at all
-    if (julia.is_lid(sender) or julia.is_lid(chat_id)) and julia_staff_service.existe_staff_com_telefone(client, connection.org_id):
-        resolvido = await _lid_alias_phone(intake=intake, connection=connection, lid=chat_id if julia.is_lid(chat_id) else sender,
-                                           cfg=cfg, waha_factory=waha_factory)
-        if resolvido:
-            extras.append(resolvido)
     try:
-        return julia_staff_service.buscar_por_telefone(client, connection.org_id, julia_staff_service.formas_do_remetente(*extras))
+        core = get_core_client()
+        extras = [chat_id, sender]
+        if (julia.is_lid(sender) or julia.is_lid(chat_id)) and julia_staff_service.existe_equipe_com_telefone(client, core, connection.org_id):
+            resolvido = await entrada.phone_do_lid(chat_id if julia.is_lid(chat_id) else sender)
+            if resolvido:
+                extras.append(resolvido)
+        return julia_staff_service.classificar_remetente(client, core, connection.org_id, julia_staff_service.formas_do_remetente(*extras))
     except Exception as exc:
-        # cannot tell staff from a stranger: the safe reading is "a lead" (never operator tools), and it is logged
         logger.error("Julia: staff lookup failed conn=%s (%s) -- the sender is treated as a lead", connection.id, type(exc).__name__)
         return None
 
 
-def _avisar_staff_na_linha_publica(*, connection, staff_row, cfg) -> None:
-    """A staff member wrote on Julia's PUBLIC line and is not an operator (or could not be resolved as one): the message is
-    stored in the inbox, never enters the lead flow, and the org admins get ONE in-app notice an hour per person. Never raises."""
+def _avisar_equipe_na_linha(*, connection, remetente, cfg) -> None:
+    """A staff member wrote on Julia's line: the message is stored in the inbox, never enters the lead flow, and the org admins get ONE
+    in-app notice an hour per person. Never raises."""
     from noctusai_lib.domain.notifications import write_in_app
 
     from app.services.julia_notificacoes_service import admins_da_org
 
-    logger.info("Julia: staff message on the public line org=%s role=%s -- not a lead, not an operator", connection.org_id, staff_row.get("papel"))
-    try:
-        redis = make_redis_client(cfg.redis_url, decode_responses=True)
-        if not redis.set(f"julia:staff_linha:{connection.org_id}:{staff_row['id']}", "1", nx=True, ex=3600):
-            return
-    except Exception as exc:
-        logger.error("Julia: staff notice dedupe unavailable (%s) -- notifying", type(exc).__name__)
+    logger.info("Julia: staff message on the line org=%s role=%s origem=%s -- not a lead", connection.org_id, remetente.papel, remetente.origem)
+    redis = _redis_opcional(cfg)
+    if redis is not None:
+        try:
+            if not redis.set(f"julia:staff_linha:{connection.org_id}:{remetente.chave}", "1", nx=True, ex=3600):
+                return
+        except Exception as exc:
+            logger.error("Julia: staff notice dedupe unavailable (%s) -- notifying", type(exc).__name__)
     try:
         core = get_core_client()
         admins = admins_da_org(core, connection.org_id)
@@ -672,42 +492,39 @@ def _avisar_staff_na_linha_publica(*, connection, staff_row, cfg) -> None:
             raise RuntimeError("sem_destinatarios")
         write_in_app(
             core, user_ids=admins, kind="julia_staff_na_linha_publica", org_id=connection.org_id,
-            title="Mensagem da equipe na linha pública da Julia",
-            message=f"{staff_row.get('nome')} ({staff_row.get('papel')}) escreveu para a linha pública. A mensagem não entrou no atendimento da Julia; ela está na conversa.",
-            metadata={"product": "social-wiring", "link": "/julia/conversas", "staff_id": str(staff_row["id"])},
+            title="Mensagem da equipe na linha da Julia",
+            message=f"{remetente.nome} ({remetente.papel}) escreveu para a linha. A mensagem não entrou no atendimento da Julia; ela está na conversa.",
+            metadata={"product": "social-wiring", "link": "/julia/conversas", "staff_id": remetente.chave},
         )
     except Exception as exc:
         logger.error("Julia: staff notice failed org=%s (%s)", connection.org_id, type(exc).__name__)
 
 
-
 async def _apply_human_takeover(
-    *, connection, chat_id: str, is_group: bool, provider_message_id: str, cfg, intake=None, texto: str = "",
-    agents_client_factory=None,
+    *, connection, chat_id: str, is_group: bool, provider_message_id: str, cfg, texto: str = "",
+    equipe: bool = False, agents_client_factory=None,
 ) -> None:
-    """L3 (contract 10.1): a ``fromMe`` message that is NOT Julia's own echo means a human is typing. julia-v2: the
+    """L3 (contract 10.1): a ``fromMe`` message that is NOT SW's own echo means a human is typing. julia-v2: the
     pause lives in AGENTS -- the human's message is appended to the shared thread (Q5) and the agent is paused in that
     conversation through ``PATCH participantes`` (the attendant recorded as the actor); SW sets no local flag, then
-    mirrors agents' answer onto the chat and tells Conversas. Julia's own sends are recognised by the provider id we
-    registered, or by the in-flight send flag (WAHA's echo can beat our own bookkeeping)."""
-    if connection is None or not connection.agente_leads_ativo or is_group:
-        return
-    if intake is not None and intake.is_authorized(chat_id):
-        # An operator's own chat (One Chat): the bot's replies echo back as `fromMe`
-        # there, and Julia never owns that chat -- nothing to take over.
+    mirrors agents' answer onto the chat and tells Conversas.
+
+    What is NOT a takeover (CONTRACT julia-line B2): a STAFF chat (`equipe`); a row whose durable `origem` is `julia` (her bubble) or
+    `interno` (a system-sent staff notice, pre-written by its sender so this echo deduplicated); and, while a Julia send is in
+    flight, WAHA's echo that beat our bookkeeping (the short Redis flag -- OPTIONAL: with Redis down the durable `origem` decides)."""
+    if connection is None or not connection.agente_leads_ativo or is_group or equipe:
         return
     try:
-        redis = make_redis_client(cfg.redis_url, decode_responses=True)
-        if julia.eh_eco_proprio(
-            redis, connection_id=connection.id, chat_id=chat_id,
-            provider_message_id=provider_message_id or None,
-        ):
-            logger.debug("Julia: fromMe echo of her own bubble (id=%s) — no takeover", provider_message_id)
-            return
+        origem = MessageStore(admin_supabase=get_admin_client(), org_id=connection.org_id).origem_por_provider_id(provider_message_id or None)
     except Exception as exc:
-        # Cannot tell her echo from a human: do NOT pause (a wrongly-paused chat
-        # silences a lead; agents re-checks on every turn anyway).
+        # Cannot tell SW's own echo from a human: do NOT pause (a wrongly-paused chat silences a lead; agents re-checks every turn).
         logger.error("Julia: own-echo check failed — takeover skipped for chat=%s (%s)", ref_log(chat_id), type(exc).__name__)
+        return
+    if julia.origem_e_eco_proprio(origem):
+        logger.debug("Julia: fromMe echo of SW's own message (origem=%s id=%s) — no takeover", origem, provider_message_id)
+        return
+    if julia.envio_em_curso(_redis_opcional(cfg), connection_id=connection.id, chat_id=chat_id):
+        logger.debug("Julia: fromMe echo while a Julia send is in flight (id=%s) — no takeover", provider_message_id)
         return
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
@@ -744,33 +561,25 @@ async def _apply_human_takeover(
 async def _process_waha_body(
     body: dict,
     *,
+    connection,
     event_source: str = "webhook",
-    connection=None,
     cfg=None,
     waha_factory=None,
     agents_client_factory=None,
 ) -> Response:
-    """Shared WAHA envelope processor.
+    """Shared WAHA envelope processor for the per-connection route (``POST /api/whatsapp/webhook/{token}``).
 
-    Handles envelope validation, event routing, dedup (Redis SETNX + DB),
-    media resolution, auth check, and message dispatch. Called by both the
-    legacy global route and the per-connection token-scoped route so the
-    logic is not forked.
+    Handles envelope validation, event routing, dedup (Redis SETNX + DB), media resolution, storage and routing on Julia's ONE
+    line: ``connection`` is the :class:`WhatsAppConnectionRecord` the token resolved. Routing (CONTRACT julia-line B1/B2):
 
-    ``event_source`` is used for WAHA sample recording / log context only
-    (e.g. ``"webhook"`` or ``"webhook/token"``).
+    * ``fromMe`` -> recorded (``origem`` ``humano``; a duplicate of a row SW wrote is Julia's / an internal send's own echo), then
+      the human-takeover rule;
+    * a STAFF sender (`julia_staff` rows + org members' core phones, ``classificar_remetente``) -> stored with the chat
+      ``categoria='equipe'``, never sent to an agent, the org admins get an in-app notice;
+    * anyone else is a lead: triage (blocklist / rate limit), then Julia when the switch is on and the chat is eligible.
 
-    ``connection`` is a :class:`WhatsAppConnectionRecord` resolved from the
-    per-connection token-scoped route.  When present:
-      - Inbound messages are tagged ``connection_id=connection.id``.
-      - The chatbot auto-reply fires ONLY when ``connection.auto_reply_enabled``
-        is True (default OFF — locked product decision for manual chat testing).
-    When absent (legacy global route) the old behaviour is preserved: inbound
-    messages are stored without connection_id and auto-reply is gated only on
-    ``cfg.whatsapp_chatbot_enabled``.
-
-    Always returns a ``200 OK`` Response (WAHA doesn't understand our errors
-    and would retry indefinitely on non-200; processing failures are logged).
+    Always returns a ``200 OK`` Response (WAHA doesn't understand our errors and would retry indefinitely on non-200; processing
+    failures are logged).
     """
     cfg = cfg or settings
     record_waha_sample(
@@ -830,10 +639,7 @@ async def _process_waha_body(
         # 🔴 B4 (contract 10.2): a message the line's owner sent from the phone
         # (or that SW itself sent) is RECORDED and then handled by the human-takeover
         # rule (L3) — it never triggers a turn. For `fromMe` the chat is `to`;
-        # `from` is our own number. The legacy global route has no connection to
-        # key a chat by, so it keeps dropping them.
-        if connection is None:
-            return Response(status_code=status.HTTP_200_OK)
+        # `from` is our own number.
         sender = payload.to or payload.chat_id
     else:
         sender = payload.from_ or payload.chat_id
@@ -841,18 +647,16 @@ async def _process_waha_body(
     if not sender:
         return Response(status_code=status.HTTP_200_OK)
 
-    # 🔴 H2 (contract 10.1): the routing identity of a GROUP message is the
-    # `participant`, never the group id. `sender` stays the chat (replies, session
-    # and memory are per chat — unchanged); `auth_sender` is who is authorized.
+    # 🔴 H2 (contract 10.1): a GROUP never reaches Julia; `sender` stays the chat (replies, session and memory are per chat).
     is_group = julia.is_group_chat(payload.chat_id or sender)
-    auth_sender = (payload.participant or "").strip() if is_group else sender
+    chat_id = (sender if from_me else (payload.chat_id or sender))
 
     # Fast dedup pre-filter — Redis SETNX on the provider_message_id
     # so the SECOND of (message, message.any) doesn't pay the OpenAI
     # cost. Uses its own short-lived Redis connection so we can run
-    # this BEFORE building the heavy intake service. The
-    # conversation_messages UNIQUE constraint is the durable backstop
-    # for restart-survival; this SETNX is purely for cost + latency.
+    # this BEFORE any heavy work. The conversation_messages UNIQUE
+    # constraint is the durable backstop for restart-survival; this SETNX
+    # is purely for cost + latency (Redis is optional here: a failure falls through).
     provider_message_id = (payload.id or "").strip()
     if provider_message_id:
         try:
@@ -869,11 +673,18 @@ async def _process_waha_body(
         except Exception:
             logger.exception("SETNX dedup check failed; falling through to DB dedup")
 
+    entrada = _entrada_da_linha(connection, cfg=cfg, waha_factory=waha_factory)
+
+    # 🔴 B1 (CONTRACT julia-line): who wrote on the line, asked BEFORE any media AI call or agents call. Staff is decided by the
+    # NUMBER only (a LID is resolved to its phone first), against the julia_staff rows + the org members' core phones.
+    remetente = None
+    if not is_group:
+        remetente = await _classificar_remetente(connection, entrada=entrada, chat_id=chat_id, sender=sender)
+    equipe = remetente is not None
+
     # Media-aware inbound: if the payload carries media (audio note,
     # photo, video, document), resolve it to enriched text BEFORE the
-    # chatbot ever sees the message. This is the difference between
-    # "audio recebido — não suportado" and "[Audio transcrito] ola tudo
-    # bem? gostaria de saber sobre o ONE5555".
+    # chatbot ever sees the message.
     resolved_media: ResolvedMedia | None = None
     midia_lead: MidiaLead | None = None
     triagem = None
@@ -893,16 +704,17 @@ async def _process_waha_body(
         media_filename = getattr(payload.media, "filename", None) or (
             payload.media.get("filename") if isinstance(payload.media, dict) else None
         )
-    # GUARDRAILS B5/B8: on a Julia line a stranger's media is triaged (blocklist, per-number rate limit) BEFORE any AI call and
-    # resolved under the LEAD caps; a staff / operator sender keeps the operator path below unchanged.
-    if (
-        not from_me and not is_group and connection is not None and connection.agente_leads_ativo
-        and not julia_protecao_service.eh_numero_da_lista(connection.authorized_numbers, sender)
-    ):
-        triagem = await _triar_remetente(connection, chat_id=payload.chat_id or sender, sender=sender, cfg=cfg)
+    # GUARDRAILS B5/B8: staff never get a media AI call (they are never a lead); on a Julia line a stranger's media is triaged
+    # (blocklist, per-number rate limit) BEFORE any AI call and resolved under the LEAD caps.
+    if not from_me and not is_group:
+        if equipe:
+            triagem = julia_protecao_service.Triagem(
+                "equipe", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
+        elif connection.agente_leads_ativo:
+            triagem = await _triar_lead(connection, chat_id=chat_id, sender=sender, cfg=cfg)
     if media_url and not from_me and triagem is not None and triagem.estado != "equipe":
         midia_lead = await _resolver_midia_do_lead(
-            triagem, chat_id=payload.chat_id or sender, url=media_url, mimetype=media_mimetype, filename=media_filename,
+            triagem, chat_id=chat_id, url=media_url, mimetype=media_mimetype, filename=media_filename,
             legenda=legenda_original, cfg=cfg,
         )
         message_body = midia_lead.exibicao()  # SW's own inbox line (masked); agents gets `midia`, never this string
@@ -930,15 +742,7 @@ async def _process_waha_body(
         message_body = "[Anexo recebido]"
 
     if not message_body:
-        # No text, no resolvable media → nothing meaningful for the
-        # chatbot to react to. ACK and move on.
-        return Response(status_code=status.HTTP_200_OK)
-
-    # Build the intake service — pass the full connection record so per-connection
-    # authorized_numbers and bound_chats config (migration 016) is wired in.
-    intake = _build_intake_service(connection=connection, cfg=cfg)
-    if intake is None:
-        logger.debug("WhatsApp intake not configured — dropping message")
+        # No text, no resolvable media → nothing meaningful to react to. ACK and move on.
         return Response(status_code=status.HTTP_200_OK)
 
     # Durable dedup oracle — the SETNX pre-filter above caught the
@@ -947,18 +751,15 @@ async def _process_waha_body(
     # passes SETNX also passes this in 99.9% of cases; the one
     # exception is a 5-minute SETNX TTL expiring before a delayed
     # WAHA retry, in which case the DB catch fires.
-    # The connection's OWN org when there is one — `intake._org_id` is the process's
-    # default org (first org with YouTube credentials), wrong for any second tenant.
-    message_store = MessageStore(
-        admin_supabase=get_admin_client(),
-        org_id=connection.org_id if connection is not None else intake._org_id,
-    )
-    chat_id = (sender if from_me else (payload.chat_id or sender))
+    message_store = MessageStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     direction = "outbound" if from_me else "inbound"
+    # `origem` (migration 318): a lead's inbound is `lead`, a staff member's is `interno` (the team channel), a `fromMe` row that
+    # was not already written by SW is a person typing (`humano`).
+    origem = "humano" if from_me else ("interno" if equipe else "lead")
     stored_message: StoredMessage | None = None
     try:
         stored_message = message_store.record(
-            session_id=intake.canonical_session_id(sender),
+            session_id=entrada.canonical_session_id(sender),
             raw_sender=sender,
             direction=direction,
             body=message_body,
@@ -968,8 +769,9 @@ async def _process_waha_body(
                 resolved_media.structured_payload if resolved_media else (midia_lead.structured_payload if midia_lead else None),
                 media_url=media_url, mimetype=media_mimetype, filename=media_filename,
             ),
-            connection_id=connection.id if connection is not None else None,
+            connection_id=connection.id,
             chat_id=chat_id,
+            origem=origem,
         )
     except DuplicateMessage:
         logger.info(
@@ -978,33 +780,25 @@ async def _process_waha_body(
             provider_message_id,
         )
         if from_me:
-            # The echo of a message SW already recorded (a send from the Conversas
-            # UI, an operator-bot reply, or Julia's own bubble). Julia's own is
-            # recognised by id/flag inside `_apply_human_takeover`; the rest IS a
-            # human typing — L3 still applies.
+            # The echo of a message SW already recorded (Julia's bubble, a system staff notice, a send from the Conversas UI). The
+            # takeover rule reads the stored `origem`: Julia's own / internal is no takeover; the rest IS a human typing.
             await _apply_human_takeover(
-                connection=connection, chat_id=chat_id, is_group=is_group,
-                provider_message_id=provider_message_id, cfg=cfg, intake=intake, texto=message_body,
+                connection=connection, chat_id=chat_id, is_group=is_group, equipe=equipe,
+                provider_message_id=provider_message_id, cfg=cfg, texto=message_body,
                 agents_client_factory=agents_client_factory,
             )
         return Response(status_code=status.HTTP_200_OK)
     except Exception:
-        # A persistence error must NOT block the bot from replying — log
-        # loudly and proceed. The Redis memory list still carries recall.
+        # A persistence error must NOT block the line — log loudly and proceed.
         # `stored_message` stays None: there is nothing durable to fold
         # into the chats table or announce on the bus below (never publish
         # a write that didn't happen).
         logger.exception("conversation_messages insert failed; processing anyway")
 
     # ── Maintain the chats table + publish realtime events ──────────────────
-    # Gated on `connection is not None`: WhatsAppChatStore rows are keyed by
-    # (connection_id, chat_id) and connection_id is NOT NULL on that table
-    # (migration 040) — the legacy global route has no connection to key by,
-    # the same limitation the per-connection inbox already has for message
-    # storage. Runs AFTER the DB write above — never before, a client must
-    # never be told about a message that isn't durable yet — and only when
-    # the write actually happened (`stored_message is not None`).
-    if stored_message is not None and connection is not None:
+    # Runs AFTER the DB write above — never before, a client must never be told about a message that isn't durable yet — and
+    # only when the write actually happened (`stored_message is not None`).
+    if stored_message is not None:
         try:
             chat_summary = WhatsAppChatStore(
                 admin_supabase=get_admin_client(), org_id=connection.org_id
@@ -1021,6 +815,8 @@ async def _process_waha_body(
                 # message it is OUR name, never the chat's title.
                 title=None if from_me else (getattr(payload, "pushName", None) or None),
                 has_media=bool(resolved_media) or payload.has_media,
+                # the category follows the CURRENT staff list on every 1:1 message (a person removed from staff stops being `equipe`)
+                categoria=None if is_group else ("equipe" if equipe else "lead"),
             )
         except Exception:
             logger.exception(
@@ -1053,253 +849,55 @@ async def _process_waha_body(
 
     if from_me:
         await _apply_human_takeover(
-            connection=connection, chat_id=chat_id, is_group=is_group,
-            provider_message_id=provider_message_id, cfg=cfg, intake=intake, texto=message_body,
+            connection=connection, chat_id=chat_id, is_group=is_group, equipe=equipe,
+            provider_message_id=provider_message_id, cfg=cfg, texto=message_body,
             agents_client_factory=agents_client_factory,
         )
         return Response(status_code=status.HTTP_200_OK)
 
+    # 🔴 B1: a staff message is stored (above) and NOTICED, never routed -- no contact registration, no triage, no agent.
+    if equipe:
+        _avisar_equipe_na_linha(connection=connection, remetente=remetente, cfg=cfg)
+        return Response(status_code=status.HTTP_200_OK)
+
     # ── Best-effort contact auto-registration ────────────────────────────────
-    # For every inbound message, resolve the sender's identity and upsert
-    # it into social_wiring.contacts.  Failure NEVER blocks message ingestion.
-    # We need the WahaClient bound to this connection's credentials to call
-    # the WAHA identity endpoints.
-    # Fire-and-forget: resolve identity + upsert contact AFTER the reply path,
-    # never blocking it (see _register_contact_bg). Decrypt is cheap + local;
-    # the WAHA calls happen inside the backgrounded coroutine.
-    if connection is not None:
-        try:
-            # drift-found (pre-existing, fixed on contact — 2 stacked bugs):
-            # (1) this block used to read `connection.encrypted_api_key` —
-            # a field WhatsAppConnectionRecord never carries (only the
-            # store's raw row does). (2) it read `payload.pushName`
-            # directly — Pydantic v2's `extra="allow"` does NOT synthesize
-            # a `None` for an absent extra field; a payload with no
-            # `pushName` key raises AttributeError on access, same as (1).
-            # Both raised on effectively every real inbound, were swallowed
-            # by this same `except Exception`, and logged a misleading
-            # "scheduling failed" warning — contact auto-registration has
-            # therefore never actually fired via the per-connection route.
-            # Fixed by (1) re-resolving the connection through the store
-            # with `decrypt=True` (the sanctioned way to get a live
-            # api_key) and (2) `getattr(..., None)` for the optional field.
-            _store = _build_token_webhook_store(cfg)
-            _decrypted = (
-                _store.get_connection(
-                    connection_id=connection.id,
-                    org_id=connection.org_id,
-                    decrypt=True,
-                )
-                if _store is not None
-                else None
-            )
-            if _decrypted is not None and _decrypted.api_key:
-                _fire_and_forget(
-                    _register_contact_bg(
-                        base_url=connection.base_url,
-                        api_key=_decrypted.api_key,
-                        session=connection.session_name,
-                        sender=sender,
-                        push_name=getattr(payload, "pushName", None),
-                        org_id=str(intake._org_id),
-                    )
-                )
-        except Exception:
-            logger.warning(
-                "WhatsApp contact auto-register scheduling failed for sender=%s — continuing",
-                sender,
-                exc_info=True,
-            )
-
-    # ── Group gate (contract 10.1 H2) ───────────────────────────────────────────
-    # A group message reaches the operator path ONLY when the group is EXPLICITLY
-    # bound AND the real sender (`participant`) is authorized — never because the
-    # group id happened to pass an allow-all list. Everything else is stored (above)
-    # and dropped silently: no denial text is ever posted into a group, and a group
-    # never reaches Julia.
-    if is_group:
-        explicitly_bound = connection is None or intake.is_chat_explicitly_bound(chat_id)
-        if not (explicitly_bound and auth_sender and intake.is_authorized(auth_sender)):
-            logger.info(
-                "WhatsApp group message not routable (bound=%s, participant=%s) — stored only",
-                explicitly_bound, bool(auth_sender),
-            )
-            return Response(status_code=status.HTTP_200_OK)
-
-    # ── Julia routing split (contract section 5, 10.1 H3, 10.2 B3, 11.1) ────────
-    # AFTER dedup / media→text / record (above), BEFORE the bound + authorized gates:
-    #   1. authorized sender  → operator path, unchanged (falls through);
-    #   2. otherwise, Julia on → lead path (eligible chats only) and return;
-    #   3. otherwise          → today's behaviour (denial reply once per 24 h).
-    # The legacy global route has no connection, so it never enters the split.
-    if connection is not None and connection.agente_leads_ativo and not is_group:
-        # H3 re-check at routing time. With Julia on, an empty list can never be
-        # routed to the operator bot nor to Julia. Fail closed: no reply, nothing routed.
-        if not [n for n in (connection.authorized_numbers or []) if str(n).strip()]:
-            logger.error(
-                "Julia is ON for connection=%s but authorized_numbers is empty — failing closed",
-                connection.id,
-            )
-            return Response(status_code=status.HTTP_200_OK)
-        # B3: `intake.is_authorized` (phone/LID-aware), not raw list membership. An
-        # uncached operator LID falls to Julia — safe: she has no operator tools.
-        if not intake.is_authorized(sender):
-            # Owner 2026-10-21: only a number on the org STAFF list is staff; anyone else is a lead, always. A staff member on
-            # the public line never enters the lead flow: an operator-role person goes to the One Chat path, every other
-            # role is stored + logged + noticed. Decided by the NUMBER (LIDs resolved), never by what the message says.
-            lead = True
-            staff_row = await _staff_na_linha(
-                connection=connection, intake=intake, chat_id=chat_id, sender=sender, cfg=cfg, waha_factory=waha_factory)
-            if staff_row is not None:
-                lead = False
-                if julia_staff_service.e_operador(staff_row.get("papel")):
-                    digitos = staff_row.get("telefone")
-                    if digitos and julia.is_lid(sender):  # an operator's LID was not cached yet: teach it, then the normal path works
-                        intake.remember_lid_for_phone(sender, f"+{digitos}")
-                if not (julia_staff_service.e_operador(staff_row.get("papel")) and intake.is_authorized(sender)):
-                    _avisar_staff_na_linha_publica(connection=connection, staff_row=staff_row, cfg=cfg)
-                    return Response(status_code=status.HTTP_200_OK)
-            elif triagem is not None and triagem.estado in ("bloqueado", "limitado"):
-                # recorded above (it is in the inbox); never reaches agents or an AI call (GUARDRAILS B5)
-                return Response(status_code=status.HTTP_200_OK)
-            if lead and await _handle_lead_message(
-                connection=connection, intake=intake, chat_id=chat_id, sender=sender,
-                message_body=legenda_original if midia_lead is not None else message_body,
-                provider_message_id=provider_message_id,
-                push_name=getattr(payload, "pushName", None), cfg=cfg, waha_factory=waha_factory,
-                midia=midia_lead.para_agents() if midia_lead is not None else None,
-                referral=julia_origem_service.extrair_referral_ctwa(body),
-            ):
-                return Response(status_code=status.HTTP_200_OK)
-            # Not eligible (pre-existing chat): fall through to the unchanged
-            # bound/denial behaviour below — and NEVER to agents.
-
-    # ── Bound-chat gate (migration 016) ─────────────────────────────────────────
-    # For per-connection routes: if the connection has a non-empty bound_chats
-    # list, drop messages from chats not in that list — silently, no reply.
-    # The message was already stored to the inbox above (operators can still
-    # see it), but the agent takes no action on an unbound chat.
-    # This gate fires BEFORE is_authorized so unbound chats never get even the
-    # "unauthorized number" reply.
-    if connection is not None and not intake.is_chat_bound(payload.chat_id or sender):
-        logger.debug(
-            "WhatsApp inbound from unbound chat %s (connection=%s) — dropping agent action",
-            payload.chat_id or sender,
-            connection.id,
-        )
-        return Response(status_code=status.HTTP_200_OK)
-
-    # Auth check — unauthorized senders get a polite reply (not silent drop).
-    # Once-per-conversation guard via Redis so we don't spam a denial loop
-    # against a stranger blasting messages; first contact gets the reply,
-    # subsequent inbounds in a 24h window are quietly logged.
-    # H2: a group message was already gated above on its PARTICIPANT; judge the real
-    # sender here too, never the group id.
-    if not intake.is_authorized(auth_sender):
-        if not intake.has_authorized_numbers:
-            # Operator-only bot: a line with NO authorized numbers is a lead line, and
-            # leads must never receive the "not on the authorized list" denial. Drop silently.
-            logger.info(
-                "WhatsApp message from %s dropped — connection has no authorized numbers",
-                sender,
-            )
-            return Response(status_code=status.HTTP_200_OK)
-        already_notified = False
-        try:
-            denied_key = f"whatsapp:denied:{sender}"
-            already_notified = intake.redis_client.get(denied_key) is not None
-            if not already_notified:
-                intake.redis_client.set(denied_key, "1", ex=24 * 3600)
-        except Exception:
-            logger.exception("failed to read/set denied marker for %s", sender)
-        logger.info(
-            "WhatsApp message from unauthorized number %s — replying=%s",
-            sender,
-            not already_notified,
-        )
-        if not already_notified:
-            try:
-                await intake.send_reply(
-                    sender,
-                    (
-                        "Olá! 👋 Este número não está na lista de autorizados "
-                        "para usar o agente da NoctusAI.\n\n"
-                        "Se você acredita que deveria ter acesso, fale com a "
-                        "equipe NoctusAI para incluir seu número.\n\n"
-                        "Até mais!"
-                    ),
-                )
-            except Exception:
-                logger.exception("failed to send unauthorized reply to %s", sender)
-        return Response(status_code=status.HTTP_200_OK)
-
-    # Normalize the sender to a canonical session id (phone-form when we
-    # know the LID→phone mapping, raw otherwise). One conversation, one
-    # memory key — see WhatsAppIntakeService.canonical_session_id for why.
-    canonical_session = intake.canonical_session_id(sender)
-
-    # Process the message.
-    # Operator-only bot: empty authorized_numbers = nobody (owner order 2026-10-20), so only
-    # authorized operators ever reach this point.
-    # When a per-connection record is present, the auto_reply_enabled toggle
-    # gates the chatbot.  Default is OFF — operators can chat manually without
-    # the bot interfering.  The legacy global route preserves the old gate
-    # (cfg.whatsapp_chatbot_enabled only, no connection context).
-    _auto_reply_allowed = (
-        connection.auto_reply_enabled if connection is not None
-        else True  # legacy route: respect only the settings gate below
-    )
+    # For every LEAD inbound, resolve the sender's identity and upsert it into social_wiring.contacts. Failure NEVER blocks message
+    # ingestion. Fire-and-forget: the WAHA calls happen inside the backgrounded coroutine, never on the reply path.
     try:
-        if cfg.whatsapp_chatbot_enabled and _auto_reply_allowed:
-            # Buffer the inbound into the seed conversation buffer; the
-            # ConversationWorker drains the queue after the debounce
-            # window (settings.message_debounce_seconds, default 8s).
-            # Multi-message intents — code in one msg, drive URL in the
-            # next — accumulate naturally and get processed in a single
-            # worker tick. The processor decides regex-fast-path vs
-            # LLM fallback based on what's in the buffer.
-            module = get_conversation_module()
-            if module is not None:
-                module.buffer.buffer_inbound(
-                    QueuedConversationMessage(
-                        conversation_id=canonical_session,
-                        text=message_body,
-                        direction="inbound",
-                        provider_message_id=provider_message_id or None,
-                        metadata={"raw_sender": sender},
-                    )
+        _record = entrada.registro_da_conexao()
+        if _record is not None and _record.api_key:
+            _fire_and_forget(
+                _register_contact_bg(
+                    base_url=connection.base_url,
+                    api_key=_record.api_key,
+                    session=connection.session_name,
+                    sender=sender,
+                    push_name=getattr(payload, "pushName", None),
+                    org_id=str(connection.org_id),
                 )
-                logger.info(
-                    "WhatsApp inbound buffered: sender=%s conv=%s debounce=%ss",
-                    sender,
-                    canonical_session,
-                    cfg.message_debounce_seconds,
-                )
-            else:
-                # Conversation module not wired (lifespan startup
-                # short-circuited — likely missing admin client). Fall
-                # back to the legacy inline path so the bot still replies,
-                # just without multi-message accumulation.
-                logger.warning(
-                    "Conversation module unavailable; using inline chatbot for sender=%s",
-                    sender,
-                )
-                chatbot = WhatsAppChatbotService(
-                    redis_client=intake.redis_client,
-                    intake_service=intake,
-                    session_id=canonical_session,
-                    model=cfg.chatbot_llm_model,
-                )
-                reply = await chatbot.reply(message_body)
-                if reply:
-                    await intake.send_reply(sender, reply)
-        else:
-            await intake.handle_message(sender, message_body)
+            )
     except Exception:
-        logger.exception(
-            "WhatsApp intake failed for sender=%s", sender
+        logger.warning(
+            "WhatsApp contact auto-register scheduling failed for sender=%s — continuing",
+            sender,
+            exc_info=True,
         )
 
+    # ── Julia routing (contract section 5, 10.1 H3, 10.2 B3, 11.1) ──────────────
+    # AFTER dedup / media→text / record, a LEAD only: blocked / over-limit senders stop here; otherwise Julia answers when the
+    # switch is on and the chat is eligible. Anything else is stored and left alone (the One Chat operator bot is retired).
+    if connection.agente_leads_ativo and not is_group:
+        if triagem is not None and triagem.estado in ("bloqueado", "limitado"):
+            # recorded above (it is in the inbox); never reaches agents or an AI call (GUARDRAILS B5)
+            return Response(status_code=status.HTTP_200_OK)
+        await _handle_lead_message(
+            connection=connection, entrada=entrada, chat_id=chat_id, sender=sender,
+            message_body=legenda_original if midia_lead is not None else message_body,
+            provider_message_id=provider_message_id,
+            push_name=getattr(payload, "pushName", None), cfg=cfg,
+            midia=midia_lead.para_agents() if midia_lead is not None else None,
+            referral=julia_origem_service.extrair_referral_ctwa(body),
+        )
     return Response(status_code=status.HTTP_200_OK)
 
 
@@ -1325,51 +923,6 @@ async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
     """
     cfg = _cfg_for_request(request)
     return ResolvedSecret(secret=cfg.waha_webhook_hmac_secret or None)
-
-
-@router.post("/webhook")
-# NOTE: `settings` (not `cfg`) is correct here and cannot be changed —
-# a decorator is evaluated at IMPORT time, before any request exists
-# and before dependency_overrides could apply. The other 14 reads in
-# this module now flow through `Depends(get_settings)`.
-@limiter.limit(settings.webhook_rate_limit)
-async def whatsapp_webhook(
-    request: Request,
-    cfg=Depends(get_settings),
-    waha_factory=Depends(get_waha_client_factory),
-    verified: VerifiedWebhook = webhook_endpoint(
-        secret_resolver=_resolve_waha_secret,
-        scheme="waha",
-        bypass_when_unset=True,
-        log_prefix="whatsapp-webhook",
-    ),
-) -> Response:
-    """WAHA webhook endpoint (legacy global route).
-
-    Always returns 200 to prevent WAHA from retrying. Processing
-    failures are logged but never surfaced as HTTP errors — WAHA
-    doesn't understand them and would just retry indefinitely. The one
-    path that DOES return non-200 is a signature mismatch (401, raised
-    by ``webhook_endpoint`` before this body ever runs).
-    """
-    _avisar_assinatura_desativada(cfg, "whatsapp-webhook")
-    # 🔴 H1 (contract 10.1): with Julia on anywhere, an UNSIGNED webhook is refused
-    # even on the legacy route (an unset secret bypasses verification above). The
-    # legacy route itself never enters the lead/operator split — it has no
-    # connection to split on.
-    if not (cfg.waha_webhook_hmac_secret or "").strip():
-        from app.dependencies import get_scoped_admin_client
-
-        if (await anyio.to_thread.run_sync(lambda: julia.julia_ativa_em_alguma_conexao(get_scoped_admin_client("social_wiring")))):
-            logger.error("whatsapp-webhook: unsigned call refused — Julia is on and no HMAC secret is set")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="webhook secret not configured")
-
-    try:
-        body = json.loads(verified.body.decode("utf-8")) if verified.body else {}
-    except Exception:
-        return Response(status_code=status.HTTP_200_OK)
-
-    return await _process_waha_body(body, event_source="webhook", cfg=cfg, waha_factory=waha_factory)
 
 
 def _build_token_webhook_store(cfg=None):

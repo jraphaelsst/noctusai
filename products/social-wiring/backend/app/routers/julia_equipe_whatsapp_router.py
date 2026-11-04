@@ -7,9 +7,9 @@ an incoming lead").
   PATCH  /api/julia/equipe-whatsapp/{id}          admin  {nome?,papel?,telefone?,user_id?,ativo?}
   DELETE /api/julia/equipe-whatsapp/{id}          admin  (the person's next message is a lead)
 
-Staff is a privilege (an operator role drives the One Chat agent from the person's number), so every route is an org-admin action.
+Staff is a privilege (a staff number is never routed to Julia and gets the admin notice), so every route is an org-admin action.
 Typed errors: 422 `papel_invalido` / `telefone_invalido` / `nome_invalido` / `identificacao_obrigatoria` / `usuario_fora_da_org`, 409
-`telefone_ja_cadastrado` / `numero_bloqueado` / `ultimo_operador`, 404 `staff_nao_encontrado`.
+`telefone_ja_cadastrado` / `numero_bloqueado`, 404 `staff_nao_encontrado`.
 """
 # No `from __future__ import annotations`: FastAPI body/param models are resolved from the signature.
 import logging
