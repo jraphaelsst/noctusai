@@ -108,7 +108,17 @@ Clean slate: on 2026-11-04 at 17:43–17:47Z the old Julia tokens were revoked. 
 - **D5.**
   - `PUT /api/julia/agente/token` (`julia_agente_router.py:338-382`) returns 410 for one release, then is deleted along with `_entregar_token_ferramentas` (`:401-433`).
   - Agents' paste UI (`ChannelTokenCard.tsx`, `ChannelsTab.tsx:89`) and `PUT /ferramentas-token` are deleted.
-- **D6.** The M2M token rework (service accounts, `noc_` prefix, no-expiry option, rotate) is folded into this project (owner, 2026-11-04). The resolver keeps accepting `pk_` until every grant is rotated.
+- **D6.** The M2M token rework is folded into this project (handed over by noctusai-86, 2026-11-04; no code existed). Owner decisions:
+  - A new `service_accounts` table plus an `api_tokens.service_account_id` FK ("noc-agent", for automation; not Julia).
+  - MFA is required to mint, and there is a rotate endpoint.
+  - A no-expiry option, with revocation and `last_used_at` kept.
+  - Scopes come from a server-side allow-list.
+  - The resolver factory refuses the Fake in deploy (`auth_router.py:395` silent fallback).
+  - **Every token becomes `noc_`, and `pk_` is REFUSED afterwards.** Sequence: (1) the resolver accepts both; (2) all live tokens are reissued as `noc_`, starting with the grants; (3) the `pk_` cutoff ships last.
+  - The token card moves into `@noctusai/lib` (masked first 4 + last 4, with delete).
+  - The SW Configurações "Token do agente (agents)" paste card (`api_keys_store.py:423`) is removed, leaving one entry point (D5).
+
+  The `pk_` sites are mapped in the security audit: seed `token_admin.py:68`, `api_tokens.py:162`, `dep.py:110,164`, `_reasons.py:25-26`, plus the tests. Stripe `pk_` sites are NOT ours. Core then mounts the seed auth router, a single `get_auth_context` and the audit middleware.
 
 ## E · Spec safety (in agents, so every product gets it)
 
