@@ -54,7 +54,7 @@ _TABLE = "whatsapp_connections"
 
 class SessaoJaVinculada(Exception):
     """A WAHA transport line already owns this (base_url, session_name) -- in ANY org. Two orgs on one session would read each
-    other's chats and send as each other's number (migration 320: UNIQUE (base_url, session_name) for the WAHA transport)."""
+    other's chats and send as each other's number (migration 321: UNIQUE (base_url, session_name) for the WAHA transport)."""
 
 
 # Sentinel so update() can distinguish "clear webhook_url to NULL" from "leave

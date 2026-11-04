@@ -13,7 +13,7 @@ Auth + the 503-on-config-gap path come from the shared ``client`` fixture
 ``KB § PATTERNS/di-test-seam.md`` (Class-B).
 
 Contract v2 changes (social-waha-connect-backend):
-  - Create payload shrinks to {label} (+ marca_id): the WAHA key is the SERVER's (go-live hardening, migration 320).
+  - Create payload shrinks to {label} (+ marca_id): the WAHA key is the SERVER's (go-live hardening, migration 321).
   - ``base_url`` / ``session_name`` / ``webhook_url`` are server-derived.
   - ``session_name`` is the configured WAHA session (``"default"``) — WAHA Core
     permits only the single ``default`` session.

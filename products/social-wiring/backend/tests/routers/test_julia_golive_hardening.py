@@ -28,7 +28,7 @@ from tests.services.test_media_service_lead import FakeAI, serve
 from tests.support.julia_world import CONNECTION_ID, ORG_ID, OTHER_ORG_ID, OWNER_ID
 
 CONN = f"/api/whatsapp/connections/{CONNECTION_ID}"
-MIGRATION = next((Path(__file__).resolve().parents[2] / "migrations").glob("320_*.sql"))
+MIGRATION = next((Path(__file__).resolve().parents[2] / "migrations").glob("321_*.sql"))
 
 
 # ═════════════════════════ H1 — every mutation of a line is org-admin only ═════════════════════════
@@ -111,7 +111,7 @@ CREATE TABLE whatsapp_connections (
 class TestProvisioning:
     @pytest.fixture
     def platform(self, admin, tmp_path):
-        """The scene's admin as a PLATFORM admin, a real (SQLite) connection store carrying the migration-320 UNIQUE, and a
+        """The scene's admin as a PLATFORM admin, a real (SQLite) connection store carrying the migration-321 UNIQUE, and a
         WAHA factory that records what key it was handed."""
         import sqlite3
 

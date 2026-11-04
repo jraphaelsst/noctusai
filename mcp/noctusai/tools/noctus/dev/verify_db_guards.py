@@ -1491,7 +1491,7 @@ _JULIA_CONEXAO_SESSAO_UNICA_PROBE = GuardProbe(
     schema=_SW_SCHEMA,
     guard_name="uq_sw_whatsapp_connections_waha_session",
     kind="write_refusal",
-    migrations=("320_whatsapp_connections_session_unique_hide_secrets.sql",),
+    migrations=("321_whatsapp_connections_session_unique_hide_secrets.sql",),
     rationale=(
         "One WAHA session = one line across ALL orgs: two lines on the same (base_url, session_name) read each other's chats and send "
         "as each other's number. The create route pre-checks (409 `sessao_ja_vinculada`); this partial UNIQUE index is the backstop "

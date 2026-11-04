@@ -380,7 +380,7 @@ async def create_connection(
                           ``WAHA_SESSION`` at a per-tenant value to isolate
                           accounts.)
     - ``api_key``       — ``cfg.waha_api_key``. Empty → 503.
-    - ``(base_url, session_name)`` is UNIQUE across orgs (migration 320): a session already bound to a line → 409
+    - ``(base_url, session_name)`` is UNIQUE across orgs (migration 321): a session already bound to a line → 409
                           ``sessao_ja_vinculada``.
     - ``webhook_token`` — ``secrets.token_urlsafe(24)`` opaque routing token.
     - ``webhook_url``   — ``resolve_product_url('social-wiring') + /api/whatsapp/webhook/{token}``.
@@ -429,7 +429,7 @@ async def create_connection(
 
     # ── 4. Persist ─────────────────────────────────────────────────────
     # One WAHA session = one line, across ALL orgs: a second org on the same session would read the first one's chats and send
-    # as its number. Checked here (the friendly 409) and enforced by the migration-320 UNIQUE index (the race).
+    # as its number. Checked here (the friendly 409) and enforced by the migration-321 UNIQUE index (the race).
     conflito = HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail="sessao_ja_vinculada",

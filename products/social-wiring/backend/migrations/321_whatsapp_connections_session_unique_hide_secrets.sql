@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 320 -- whatsapp_connections: one WAHA session = one line; the browser never reads the secrets (Julia go-live hardening)
+-- Migration 321 -- whatsapp_connections: one WAHA session = one line; the browser never reads the secrets (Julia go-live hardening)
 -- ============================================================================
 -- WHY (1/2): every org's line points at the shared WAHA server on the `default` session. Nothing stopped a second org from creating a
 -- line on a session another org already owns -- it then reads that org's chats and sends as its number. The create route now refuses
@@ -24,7 +24,7 @@ BEGIN
     GROUP BY base_url, session_name HAVING count(*) > 1
   ) d;
   IF _dup > 0 THEN
-    RAISE EXCEPTION 'migration 320: % WAHA session(s) are bound to more than one line -- resolve social_wiring.whatsapp_connections duplicates on (base_url, session_name) first', _dup;
+    RAISE EXCEPTION 'migration 321: % WAHA session(s) are bound to more than one line -- resolve social_wiring.whatsapp_connections duplicates on (base_url, session_name) first', _dup;
   END IF;
 END
 $$;
