@@ -23,7 +23,7 @@ clients.
 **Heavy work runs only when a machine-wide slot is free and the machine's measured
 capacity admits it.**
 - Heavy means: product pytest suites, vitest, playwright/e2e, vite build, and every
-  `gate_sweep` leg and `task_branch` merged-tip gate.
+  `gate_sweep` leg, `task_branch` merged-tip gate and `predeploy_check` run.
 - Light work never takes a slot: git, single tests, keepers, MCP reads, editing.
 
 | Knob (phase `build`, owner-approved 2026-11-04) | Value |
@@ -95,6 +95,16 @@ then change detection, then alerts.
 - **Status:** `noctus.dev.hw_admission` (or `python mcp/noctusai/tools/noctus/dev/hw_admission.py status`).
 - **Any heavy shell run:**
   `python mcp/noctusai/tools/noctus/dev/hw_admission.py run --job <kind:target> -- <cmd…>`
+- **Self-gating tools — don't wrap them.** `gate_sweep`, `task_branch` integrate and
+  `predeploy_check` take the slot themselves, and they do it AFTER their cheap preconditions
+  (stale tree, measured tree identity). An outer `hw_admission.py run` wrapper waits first and
+  checks second: on 2026-11-04 a wrapped `gate_sweep` waited 57 min, then was refused as
+  `refused_stale_tree`. A wrapper is harmless (the inner call inherits the slot) but costs
+  the wait.
+- **Pin the tree for evidence runs.** Run predeploy against a tree nothing will
+  fast-forward under it: `--predeploy-check <slug> --worktree-path <detached worktree>`.
+  The result carries `tree.head_start` / `head_end` / `behind_origin_dev`. A HEAD that moves
+  mid-run makes it `inconclusive` (`tree_moved`), because a straddled run judges neither tree.
 - **Before dispatching agents:** check status. If the result is `would_wait`, hold and
   re-check on the timer instead of dispatching.
 

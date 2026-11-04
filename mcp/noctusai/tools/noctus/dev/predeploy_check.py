@@ -29,6 +29,7 @@ pattern). The default `run_check` shells out (mirrors `noctus.dev.vite_build`
 from __future__ import annotations
 
 import ast
+import contextlib
 import datetime as _dt
 import functools
 import os
@@ -42,6 +43,8 @@ from node_env import node_deps_ready, prune_dangling_node_modules_links
 from env_bootstrap import gate_subprocess_env
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
+
+from . import hw_admission as _hw
 
 from . import check_framework_deps as _cfd
 from . import phase_learnings as _pl
@@ -1134,9 +1137,35 @@ def _default_fix_framework_deps(root: pathlib.Path, product: str) -> bool:
     return not fix_result["unresolved"]
 
 
-def _render_report(product: str, unknowns: list[dict], when: str) -> str:
+def _git_out(root: pathlib.Path, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(["git", *args], cwd=str(root), capture_output=True,
+                              text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def tree_identity(root: pathlib.Path) -> dict[str, Any]:
+    """Which tree is being measured: HEAD sha + how far it is behind origin/dev
+    (local refs only, no fetch). 2026-11-04: an SW predeploy ran across a
+    primary-checkout fast-forward (709a62d31 -> fb5b288de) and reported two
+    reds that existed on neither tree; nothing in the result said which tree
+    it had measured. ``head`` None = not a git tree / git unavailable."""
+    behind = _git_out(root, "rev-list", "--count", "HEAD..origin/dev")
+    return {"head": _git_out(root, "rev-parse", "HEAD"),
+            "behind_origin_dev": int(behind) if behind and behind.isdigit() else None}
+
+
+_AUTO_ADMIT = object()
+
+
+def _render_report(product: str, unknowns: list[dict], when: str,
+                   head: str | None = None) -> str:
     lines = [
         f"# pre-deploy report — {product} — {when}",
+        "",
+        f"Measured tree: `{head or 'unknown'}`",
         "",
         "Unknown pre-deploy failure(s) — no known boundary-contract class matched.",
         "Logged to phase_learnings (s1). If this recurs, graduate it to a keeper",
@@ -1188,13 +1217,23 @@ def predeploy_check(
     schema_drift_check: Callable[..., dict[str, Any]] | None = None,
     schema_exposure_check: Callable[..., dict[str, Any]] | None = None,
     now: Callable[[], _dt.datetime] | None = None,
+    tree_probe: Callable[[pathlib.Path], dict[str, Any]] | None = None,
+    admit: Any = _AUTO_ADMIT,
 ) -> dict[str, Any]:
     """Run the deploy-relevant checks for `product`; classify + (auto_fix the
     safe class) + report/learn unknowns. status='ready' (all pass) |
     'inconclusive' (the only failures were unmeasurable — the harness could
     not run them, so they are no verdict on the product) | 'blocked' (≥1
     real fail). Both non-ready statuses exit 1: inconclusive is not a pass.
-    Never raises on a check failure — it returns it."""
+    Never raises on a check failure — it returns it.
+
+    The result names the tree it measured (``tree``: head sha at start and
+    end + commits behind origin/dev). A tree whose HEAD moved during the run
+    is ``inconclusive`` (``tree_moved``): the checks straddled two trees and
+    judge neither. Real runs (``run_check`` None) take the machine-wide heavy
+    slot themselves, AFTER the cheap tree read — no outer wrapper needed; a
+    caller already holding a slot passes it down via NOCTUS_HW_SLOT_HELD.
+    Not admitted ⇒ ``inconclusive`` with ``waiting_for_slot`` (not run)."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "error": "product required", "exit_code": 1}
     # default runner threads the resolved prod env + env-fleet paths; injected
@@ -1213,6 +1252,42 @@ def predeploy_check(
     else:
         root = pathlib.Path(REPO_ROOT)
 
+    probe_tree = tree_probe or tree_identity
+    tree_start = probe_tree(root)
+    if admit is _AUTO_ADMIT:
+        admit = _hw.heavy_slot if run_check is None else None
+    admission = admit(f"predeploy:{product}") if admit else contextlib.nullcontext(None)
+    with admission as adm:
+        if adm is not None and not adm.admitted:
+            return {
+                "ok": True, "product": product, "status": "inconclusive", "exit_code": 1,
+                "unmeasurable": [{"check": "*", "reason": "waiting_for_slot"}],
+                "waiting_for_slot": adm.as_dict(),
+                "tree": {"head_start": tree_start["head"], "head_end": tree_start["head"],
+                         "behind_origin_dev": tree_start["behind_origin_dev"], "moved": False},
+                "checks": [], "classified": [], "auto_fixed": [], "unknown_count": 0,
+                "report_path": None,
+            }
+        result = _run_checks(product, checks, auto_fix, runner, logger, fixer, clock,
+                             root, write_report, tree_start)
+        if adm is not None:
+            adm.outcome["exit_code"] = result["exit_code"]
+    tree_end = probe_tree(root)
+    moved = bool(tree_start["head"] and tree_end["head"] and tree_start["head"] != tree_end["head"])
+    result["tree"] = {"head_start": tree_start["head"], "head_end": tree_end["head"],
+                      "behind_origin_dev": tree_start["behind_origin_dev"], "moved": moved}
+    if moved:
+        result["status"] = "inconclusive"
+        result["exit_code"] = 1
+        result["unmeasurable"] = [*result["unmeasurable"], {
+            "check": "*", "reason": (f"tree_moved: HEAD {tree_start['head'][:9]} -> "
+                                     f"{tree_end['head'][:9]} during the run — re-run on a "
+                                     "pinned tree (worktree_path)")}]
+    return result
+
+
+def _run_checks(product, checks, auto_fix, runner, logger, fixer, clock, root,
+                write_report, tree_start) -> dict[str, Any]:
     check_set = checks or DEFAULT_CHECKS
     results: list[dict[str, Any]] = []
     classified: list[dict[str, Any]] = []
@@ -1255,7 +1330,7 @@ def predeploy_check(
     report_path: str | None = None
     if unknowns:
         when = clock().strftime("%Y%m%dT%H%M%SZ")
-        report_md = _render_report(product, unknowns, when)
+        report_md = _render_report(product, unknowns, when, tree_start["head"])
         if write_report is not None:
             report_path = write_report(f"{when}-{product}.md", report_md)
         else:

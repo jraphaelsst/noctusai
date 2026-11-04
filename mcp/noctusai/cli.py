@@ -3481,7 +3481,10 @@ def main():
 
     elif args.predeploy_check:
         from tools.noctus.dev.predeploy_check import predeploy_check
-        r = predeploy_check(args.predeploy_check, auto_fix=bool(getattr(args, "fix", False)))
+        # worktree_path was silently dropped here until 2026-11-04 — a "pinned"
+        # run measured the CLI's own tree instead of the one named.
+        r = predeploy_check(args.predeploy_check, auto_fix=bool(getattr(args, "fix", False)),
+                            worktree_path=getattr(args, "worktree_path", None))
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
 

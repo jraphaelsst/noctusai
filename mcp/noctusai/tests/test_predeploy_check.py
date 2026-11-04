@@ -1350,3 +1350,93 @@ class TestFailureExcerpt:
         from tools.noctus.dev import predeploy_check as pc
         src = __import__("inspect").getsource(pc)
         assert 'u["output"].strip()[:4000]' not in src and "failure_excerpt(u[\"output\"])" in src
+
+
+class TestMeasuredTree:
+    """2026-11-04: an SW predeploy straddled a primary fast-forward
+    (709a62d31 -> fb5b288de) and reported 2 reds that existed on neither tree.
+    The result must name the tree it measured and refuse to judge a moving one."""
+
+    @staticmethod
+    def _seq(*heads):
+        it = iter(heads)
+        return lambda root: {"head": next(it), "behind_origin_dev": 0}
+
+    def test_stable_tree_is_recorded(self):
+        r = PC.predeploy_check("core", run_check=lambda c, p, root: (True, "ok"),
+                               repo_root="/tmp", now=_now, tree_probe=self._seq("abc", "abc"))
+        assert r["status"] == "ready"
+        assert r["tree"] == {"head_start": "abc", "head_end": "abc",
+                             "behind_origin_dev": 0, "moved": False}
+
+    def test_tree_moved_mid_run_is_inconclusive_even_if_green(self):
+        r = PC.predeploy_check("core", run_check=lambda c, p, root: (True, "ok"),
+                               repo_root="/tmp", now=_now,
+                               tree_probe=self._seq("709a62d31aaa", "fb5b288deaaa"))
+        assert r["status"] == "inconclusive" and r["exit_code"] == 1
+        assert r["tree"]["moved"] is True
+        assert any("tree_moved" in u["reason"] for u in r["unmeasurable"])
+
+    def test_tree_moved_overrides_blocked(self):
+        r = PC.predeploy_check("core",
+                               run_check=lambda c, p, root: (False, "novel boom")
+                               if c == "backend_tests" else (True, "ok"),
+                               repo_root="/tmp", now=_now, write_report=lambda n, t: n,
+                               log_fn=lambda *a, **k: 0, tree_probe=self._seq("a1", "b2"))
+        assert r["status"] == "inconclusive"   # a red from a straddled tree judges nothing
+
+    def test_report_names_the_measured_tree(self):
+        seen = {}
+        PC.predeploy_check("core",
+                           run_check=lambda c, p, root: (False, "novel boom")
+                           if c == "backend_tests" else (True, "ok"),
+                           repo_root="/tmp", now=_now,
+                           write_report=lambda n, t: seen.setdefault("md", t) and n,
+                           log_fn=lambda *a, **k: 0, tree_probe=self._seq("deadbeef", "deadbeef"))
+        assert "Measured tree: `deadbeef`" in seen["md"]
+
+    def test_real_git_identity_on_this_repo(self):
+        t = PC.tree_identity(Path(__file__).resolve().parents[3])
+        assert t["head"] and len(t["head"]) == 40
+
+
+class TestSelfAdmission:
+    def test_not_admitted_runs_nothing_and_is_inconclusive(self):
+        import contextlib
+        from tools.noctus.dev.hw_admission import Admission
+        ran = []
+
+        @contextlib.contextmanager
+        def refuse(job):
+            yield Admission(job, False, "waiting_for_slot")
+
+        r = PC.predeploy_check("core", run_check=lambda c, p, root: ran.append(c) or (True, "ok"),
+                               repo_root="/tmp", now=_now, admit=refuse,
+                               tree_probe=lambda root: {"head": "x", "behind_origin_dev": 3})
+        assert ran == []
+        assert r["status"] == "inconclusive" and r["exit_code"] == 1
+        assert r["waiting_for_slot"]["job"] == "predeploy:core"
+        assert r["tree"]["behind_origin_dev"] == 3
+
+    def test_admitted_records_exit_code_on_the_admission(self):
+        import contextlib
+        from tools.noctus.dev.hw_admission import Admission
+        box = {}
+
+        @contextlib.contextmanager
+        def allow(job):
+            box["adm"] = Admission(job, True, "admitted")
+            yield box["adm"]
+
+        PC.predeploy_check("core", run_check=lambda c, p, root: (True, "ok"), repo_root="/tmp",
+                           now=_now, admit=allow, tree_probe=self._seq())
+        assert box["adm"].outcome["exit_code"] == 0
+
+    @staticmethod
+    def _seq():
+        return lambda root: {"head": "h", "behind_origin_dev": 0}
+
+    def test_injected_runner_is_not_gated_by_default(self):
+        r = PC.predeploy_check("core", run_check=lambda c, p, root: (True, "ok"),
+                               repo_root="/tmp", now=_now)
+        assert r["status"] == "ready" and "waiting_for_slot" not in r
