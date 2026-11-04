@@ -12,6 +12,7 @@ import ReactDOM from 'react-dom/client';
 import { createProductApp } from '@noctusai/seed';
 import { coreAuthProvider } from './lib/seed-auth-adapter';
 import { CoreLayout } from './components/layout/CoreLayout';
+import { notificationHooks, openInProduct } from './components/NotificationBell';
 import './index.css';
 
 // Pages — lazy-wrapped so the framework's Suspense fallback renders.
@@ -56,6 +57,7 @@ const FleetControl = lazy(() => import('./pages/FleetControl').then(m => ({ defa
 
 const App = createProductApp({
   authProvider: coreAuthProvider,
+  notifications: { hooks: notificationHooks, onNavigateProduct: openInProduct },
   Layout: CoreLayout,
   Login,
   Landing,

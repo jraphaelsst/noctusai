@@ -14,6 +14,7 @@
 // @consumes-organ NotificationBell@1.0 +seam=hooks-binding
 import { NotificationBell as SharedNotificationBell } from '@noctusai/lib/design-system';
 import { createNotificationHooks } from '@noctusai/lib/notifications';
+import { createOpenInProduct, env } from '@noctusai/lib';
 import { useNavigate } from 'react-router-dom';
 
 import { api } from '../lib/api';
@@ -26,14 +27,23 @@ const useAuthStore = () => {
   return { user };
 };
 
-const hooks = createNotificationHooks(api, useAuthStore);
+/** ONE hooks object: the header bell and the shell's live pop-ups (main.tsx) share the same query cache. */
+export const notificationHooks = createNotificationHooks(api, useAuthStore);
+
+/** Open a notice's link in another product: core mints the SSO launch URL (licence + known-product check). */
+export const openInProduct = createOpenInProduct(async (product) => {
+  const res = await api.post('/api/sso/token', { product_slug: product });
+  return res.redirect_url as string;
+});
 
 export function NotificationBell() {
   const navigate = useNavigate();
   return (
     <SharedNotificationBell
-      hooks={hooks}
-      onViewAll={() => navigate('/notifications')}
+      hooks={notificationHooks}
+      onNavigate={(link) => navigate(link)}
+      currentProduct={env.PRODUCT_SLUG}
+      onNavigateProduct={openInProduct}
     />
   );
 }

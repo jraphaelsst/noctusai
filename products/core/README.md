@@ -35,4 +35,4 @@ cd products/core/frontend && npm run dev
 - Admin dashboard with platform-wide controls
 - 7-role hierarchy (owner, admin, manager, member, viewer, dev, test)
 - Team invitations and role assignment
-- Notification system (platform-wide)
+- Notification system (platform-wide): bell on every authenticated page, live neutral pop-ups for new operational notices (seed shell; `components/NotificationBell.tsx` exports the hooks + `openInProduct` it feeds)

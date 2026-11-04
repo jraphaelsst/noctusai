@@ -13,7 +13,7 @@
  *     viewAllPath="/notificacoes"  // optional
  *   />
  */
-import { useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { Bell, Check, CheckCheck, Clock } from "lucide-react";
 import type { Notificacao } from "../../notifications";
 
@@ -30,8 +30,8 @@ interface MutationResult<TVariables = void> {
 }
 
 export interface NotificationHooks {
-  useNotificacoes: (page?: number, pageSize?: number) => { data: PaginatedResponse | undefined };
-  useContagemNaoLidas: () => { data: { nao_lidas: number } | undefined };
+  useNotificacoes: (page?: number, pageSize?: number) => { data: PaginatedResponse | undefined; refetch?: () => unknown; isError?: boolean };
+  useContagemNaoLidas: () => { data: { nao_lidas: number } | undefined; refetch?: () => unknown };
   useMarcarComoLida: () => MutationResult<string>;
   useMarcarTodasComoLidas: () => MutationResult<void>;
 }
@@ -61,11 +61,27 @@ export interface NotificationBellProps {
   onNavigateProduct?: (product: string, link: string) => void | Promise<void>;
 }
 
+// How many bells are mounted right now. The shell shows a floating fallback bell only when this is zero, so
+// a page without a header of its own (core's /settings, /security, ...) still has the bell, by construction.
+let mountedBells = 0;
+const bellListeners = new Set<() => void>();
+const emitBells = () => bellListeners.forEach((fn) => fn());
+/** True while at least one NotificationBell is mounted. */
+export function useNotificationBellMounted(): boolean {
+  return useSyncExternalStore(
+    (cb) => { bellListeners.add(cb); return () => { bellListeners.delete(cb); }; },
+    () => mountedBells > 0,
+    () => false,
+  );
+}
+
 const PRODUCT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 /** The product a notice belongs to (`metadata.product`), only when it is a well-formed slug; else `null`. */
 export function notificationProduct(n: Pick<Notificacao, "metadata">): string | null {
-  const raw = n.metadata && typeof n.metadata === "object" ? (n.metadata as { product?: unknown }).product : null;
+  const meta = n.metadata && typeof n.metadata === "object" ? (n.metadata as { product?: unknown; produto?: unknown }) : null;
+  // Backends write `produto` (pt-BR row contract); `product` is the older spelling. Both are read.
+  const raw = meta?.produto ?? meta?.product ?? null;
   return typeof raw === "string" && PRODUCT_SLUG_RE.test(raw) ? raw : null;
 }
 
@@ -119,8 +135,21 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavi
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const { data: notificacoesResp } = hooks.useNotificacoes(1, 10);
-  const { data: contagem } = hooks.useContagemNaoLidas();
+  const { data: notificacoesResp, refetch: refetchLista, isError: listaErro } = hooks.useNotificacoes(1, 10);
+  const { data: contagem, refetch: refetchContagem } = hooks.useContagemNaoLidas();
+
+  useEffect(() => {
+    mountedBells += 1;
+    emitBells();
+    return () => { mountedBells -= 1; emitBells(); };
+  }, []);
+
+  // Opening always shows what the server has NOW, not what the last poll saw.
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next) { void refetchLista?.(); void refetchContagem?.(); }
+  }
   const marcarLida = hooks.useMarcarComoLida();
   const marcarTodas = hooks.useMarcarTodasComoLidas();
 
@@ -143,9 +172,10 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavi
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         className="relative p-2 rounded-md hover:bg-accent transition-colors"
         aria-label="Notificacoes"
+        aria-expanded={open}
       >
         <Bell className="h-5 w-5" />
         {naoLidas > 0 && (
@@ -172,7 +202,12 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavi
           </div>
 
           <div className="max-h-[320px] overflow-y-auto">
-            {notificacoes.length === 0 ? (
+            {listaErro && !notificacoesResp ? (
+              <div className="py-8 text-center" role="alert">
+                <p className="text-sm text-muted-foreground">Não foi possível carregar as notificações.</p>
+                <button className="mt-2 text-xs underline" onClick={() => void refetchLista?.()}>Tentar de novo</button>
+              </div>
+            ) : notificacoes.length === 0 ? (
               <div className="py-8 text-center">
                 <Bell className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
                 <p className="text-sm text-muted-foreground">Nenhuma notificacao</p>

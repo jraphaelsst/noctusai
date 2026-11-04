@@ -57,7 +57,8 @@ type AnySupabaseClient = { auth: any };
 let _authReady = false;
 const _authReadyListeners = new Set<(ready: boolean) => void>();
 
-function markAuthReady(): void {
+/** Flip the global auth-ready signal. Called by the seed providers; a CUSTOM auth provider (core) is bridged by `createProductApp`. */
+export function markAuthReady(): void {
   if (_authReady) return;
   _authReady = true;
   _authReadyListeners.forEach((fn) => fn(true));

@@ -5,13 +5,14 @@
  * Supports both flat routing (most products) and role-based routing
  * (products like Therapy with admin/therapist/patient roles).
  */
-import { Suspense, type LazyExoticComponent } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Suspense, useEffect, useState, type LazyExoticComponent } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { ErrorBoundary, ConfirmProvider, createAuthProvider, useAuthReconnecting, SSOCallback, env } from "@noctusai/lib";
+import { ErrorBoundary, ConfirmProvider, createAuthProvider, useAuthReconnecting, SSOCallback, env, markAuthReady, useLiveNotifications } from "@noctusai/lib";
 import { OrgScopeBoundary, OrgScopedQueryClientProvider, getOrgScopedQueryClient, initOrgScopedQueryClient } from "@noctusai/lib/query-client";
-import { PageSkeleton, BrandProvider } from "@noctusai/lib/design-system";
+import { PageSkeleton, BrandProvider, NotificationBell, useNotificationBellMounted, useOrgEntryPending } from "@noctusai/lib/design-system";
+import type { NotificationHooks } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
 import { SemAcessoPage } from "./pages/SemAcessoPage";
 import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
@@ -64,7 +65,19 @@ export interface CustomAuthProvider {
   useAuth: () => { user: unknown; isInitialized: boolean };
 }
 
+/**
+ * Notification wiring for the shell (`infra.appConfig.notifications` fills it). Optional: without it the
+ * product simply gets no live pop-ups and no fallback bell (its own layout bell still works).
+ */
+export interface ShellNotificationsConfig {
+  hooks: NotificationHooks;
+  /** Open a link inside ANOTHER product (see `createOpenInProduct`). */
+  onNavigateProduct?: (product: string, link: string) => void | Promise<void>;
+}
+
 export interface ProductAppConfig {
+  /** Live operational pop-ups + floating fallback bell, mounted ONCE for every authenticated page. */
+  notifications?: ShellNotificationsConfig;
   /** Flat routes — for products with a single role/layout */
   routes?: ProductRoute[];
   /** Layout for flat routing */
@@ -186,6 +199,7 @@ export function createProductApp(config: ProductAppConfig) {
     defaultRedirect,
     unauthRedirect = "/",
     unwrappedRoutes = [],
+    notifications,
   } = config;
 
   if (!authProvider && (!supabase || !useAuthStore)) {
@@ -269,10 +283,50 @@ export function createProductApp(config: ProductAppConfig) {
     );
   }
 
+  /**
+   * Mounted ONCE, authenticated only: (1) turns a new backend notice into a neutral operational pop-up;
+   * (2) renders a floating bell when the page mounts none of its own (a page without a header, e.g. core's
+   * /settings), so the bell exists on EVERY authenticated page by construction. Renders nothing otherwise.
+   */
+  function ShellNotifications({ hooks, onNavigateProduct }: ShellNotificationsConfig) {
+    const navigate = useNavigate();
+    const hasBell = useNotificationBellMounted();
+    const orgEntryPending = useOrgEntryPending();
+    // The page's own header bell mounts a tick after this component; wait before declaring "none".
+    const [settled, setSettled] = useState(false);
+    useEffect(() => {
+      const t = setTimeout(() => setSettled(true), 400);
+      return () => clearTimeout(t);
+    }, []);
+    useLiveNotifications({
+      hooks,
+      onNavigate: (link) => navigate(link),
+      currentProduct: env.PRODUCT_SLUG,
+      onNavigateProduct,
+    });
+    if (hasBell || !settled || orgEntryPending) return null;
+    return (
+      <div className="fixed right-3 top-3 z-40 rounded-full border border-border bg-card shadow-sm" data-testid="notification-bell-fallback">
+        <NotificationBell
+          hooks={hooks}
+          onNavigate={(link) => navigate(link)}
+          currentProduct={env.PRODUCT_SLUG}
+          onNavigateProduct={onNavigateProduct}
+        />
+      </div>
+    );
+  }
+
   function AppContent() {
     const { user, isInitialized } = useAuth();
     const location = useLocation();
     const reconnecting = useAuthReconnecting();
+
+    // A CUSTOM auth provider (core) never runs the seed providers that flip the global auth-ready signal, so
+    // every `useAuthReady()` gate (notifications, ...) stayed shut forever there. The shell bridges it.
+    useEffect(() => {
+      if (isInitialized) markAuthReady();
+    }, [isInitialized]);
 
     if (!isInitialized) {
       return (
@@ -338,6 +392,8 @@ export function createProductApp(config: ProductAppConfig) {
       : "/");
 
     return (
+      <>
+      {notifications && <ShellNotifications {...notifications} />}
       <Routes>
         {/* Unwrapped routes (no Layout — e.g. full-screen video sessions) */}
         {unwrappedRoutes.map(({ path, component: Component }) => (
@@ -362,6 +418,7 @@ export function createProductApp(config: ProductAppConfig) {
         {/* Catch-all for role routing without prefix */}
         {roleRoutes && !routes && <Route path="/*" element={<RoleContent />} />}
       </Routes>
+      </>
     );
   }
 
@@ -454,7 +511,9 @@ export function createProductApp(config: ProductAppConfig) {
               </AuthProvider>
             </BrowserRouter>
           </ConfirmProvider>
-          <Toaster richColors position="top-right" />
+          {/* Feedback toasts (success/error) keep richColors green/red; `closeButton` gives every one an X.
+              Operational notices use `toastOperacional` (neutral) instead. */}
+          <Toaster richColors closeButton position="top-right" />
         </TooltipProvider>
       </OrgScopedQueryClientProvider>
     );
