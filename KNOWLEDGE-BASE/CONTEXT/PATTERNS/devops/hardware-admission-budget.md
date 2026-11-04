@@ -118,6 +118,15 @@ then change detection, then alerts.
   Once gates had to wait for the slot, a ~25-gate integrate at `max_heavy` 1 timed out with 6
   gates never run. Admission must never turn a runaway guard into a guaranteed timeout: wait
   limits belong to `heavy_slot` (`wait_s`), run limits to the ceiling.
+- **An e2e gate must serve its OWN tree.** Every `playwright.config.ts` here uses a fixed
+  `webServer.port` with `reuseExistingServer: !process.env.CI`. When something already listens
+  on that port (another worktree's dev server, a baseline run, another session's e2e),
+  Playwright silently reuses it and the spec tests a different tree. That gives a false red
+  (e2e:core, two integrates in a row, 2026-11-04), or a false green for code never served.
+  `gate_sweep` therefore checks the port before the slot wait AND right before launch. If the
+  port is busy, the gate reports `HARNESS INVALID` (`webserver_port_free`, naming the pid),
+  does not run, and is not counted. It also runs e2e with `CI=1`: reuse is off, and the config's
+  CI settings apply (retries 2, github reporter), the same as CI.
 - **Pin the tree for evidence runs.** Run predeploy against a tree nothing will
   fast-forward under it: `--predeploy-check <slug> --worktree-path <detached worktree>`.
   The result carries `tree.head_start` / `head_end` / `behind_origin_dev`. A HEAD that moves

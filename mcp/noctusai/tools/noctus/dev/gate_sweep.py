@@ -98,6 +98,7 @@ import functools
 import json
 import os
 import re
+import socket
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -420,6 +421,9 @@ class GateSpec:
     argv: list[str]
     cwd: Path
     preconditions: tuple[Precondition, ...] = ()
+    # e2e only: the Playwright webServer port that must be FREE when the gate
+    # starts (`_port_holder`). None = no live-port precondition.
+    server_port: int | None = None
 
 
 def _all_product_slugs(root: Path) -> list[str]:
@@ -490,9 +494,73 @@ def _product_gate_specs(root: Path, slug: str, py: str, with_vitest: bool = Fals
                 GateSpec(
                     f"e2e:{slug}", ["npx", "playwright", "test"], frontend,
                     _node_preconditions(frontend, playwright=True),
+                    server_port=_playwright_server_port(frontend),
                 )
             )
     return specs
+
+
+_PW_PORT_RE = re.compile(r"webServer\s*:\s*\{[^}]*?\bport\s*:\s*(\d+)", re.S)
+
+
+def _playwright_server_port(frontend: Path) -> int | None:
+    """The webServer `port:` declared in the product's playwright.config.ts."""
+    try:
+        m = _PW_PORT_RE.search((frontend / "playwright.config.ts").read_text())
+    except OSError:
+        return None
+    return int(m.group(1)) if m else None
+
+
+def _port_holder(port: int) -> str | None:
+    """None when nothing listens on localhost:`port`; else who holds it.
+
+    2026-11-04 (noctusai-04): e2e:core red in two integrates in a row, green
+    alone. Every product's playwright.config sets `reuseExistingServer:
+    !process.env.CI` on a FIXED port, so a vite already on it (another
+    worktree's dev server, a baseline run, another session's e2e) was silently
+    reused, and the spec tested THAT tree. That gives a false red, or worse,
+    a false green for code never served."""
+    for family, addr in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex((addr, port)) != 0:
+                    continue
+            except OSError:
+                continue
+        try:
+            pids = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                                  capture_output=True, text=True, timeout=5).stdout.split()
+        except (OSError, subprocess.SubprocessError):
+            pids = []
+        return f"pid {', '.join(pids)}" if pids else "an unidentified process"
+    return None
+
+
+def _port_precondition_entry(spec: GateSpec,
+                             holder_fn: Callable[[int], str | None]) -> dict[str, Any] | None:
+    if spec.server_port is None:
+        return None
+    holder = holder_fn(spec.server_port)
+    if holder is None:
+        return None
+    return {
+        "gate": spec.gate,
+        "ran": False,
+        "exit_code": None,
+        "summary": (
+            f"HARNESS INVALID — gate NOT run: port {spec.server_port} is already held by "
+            f"{holder}; Playwright would reuse that server and test ANOTHER tree"
+        ),
+        "duration_s": 0.0,
+        "harness_invalid": [{
+            "precondition": "webserver_port_free",
+            "missing_path": f"localhost:{spec.server_port} (held by {holder})",
+            "remedy": (f"stop whatever serves localhost:{spec.server_port} (a dev server or "
+                       "another worktree's e2e), then re-run"),
+        }],
+    }
 
 
 def _seed_gate_specs(root: Path, py: str) -> list[GateSpec]:
@@ -1514,10 +1582,16 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
     # Per-job fan-out cap from the hardware budget (vitest --maxWorkers,
     # playwright --workers): the slot bounds how many jobs, this how wide.
     argv = _hw.cap_worker_argv(spec.argv, _hw.job_workers())
+    env = gate_subprocess_env(Path(spec.cwd))
+    if spec.gate.startswith("e2e:"):
+        # Every playwright.config sets `reuseExistingServer: !process.env.CI`:
+        # CI=1 makes a busy port fail LOUDLY instead of silently serving a
+        # foreign tree (backstop to the webserver_port_free precondition).
+        env["CI"] = "1"
     try:
         proc = subprocess.run(
             argv, cwd=str(spec.cwd), capture_output=True, text=True, timeout=timeout,
-            env=gate_subprocess_env(Path(spec.cwd)),
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return None, f"timeout after {timeout}s", time.time() - start
@@ -1658,6 +1732,7 @@ def _run_one_gate(
     run_gate: Callable[[GateSpec], GateRunResult],
     env_residue: list[str] | None,
     admit: Callable[[str], Any] | None = None,
+    port_holder: Callable[[int], str | None] = _port_holder,
 ) -> dict[str, Any]:
     if env_residue:
         # The developer's `.env` is still in the gate env (2026-10-09:
@@ -1699,6 +1774,11 @@ def _run_one_gate(
                 for p in unmet
             ],
         }
+    # Live precondition, checked BEFORE the slot wait (fail fast) and again
+    # right before launch (the port can be taken during the wait).
+    busy = _port_precondition_entry(spec, port_holder)
+    if busy:
+        return busy
     if admit is None:
         return _run_admitted_gate(spec, run_gate)
     with admit(f"gate:{spec.gate}") as adm:
@@ -1715,6 +1795,9 @@ def _run_one_gate(
                 "duration_s": 0.0,
                 "waiting_for_slot": adm.as_dict(),
             }
+        busy = _port_precondition_entry(spec, port_holder)   # taken during the wait?
+        if busy:
+            return busy
         entry = _run_admitted_gate(spec, run_gate)
         # The capacity log's `ran` row carries the verdict (load experiments
         # need the failure rate per phase, not only durations).

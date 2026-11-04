@@ -1539,3 +1539,68 @@ def test_vitest_gate_red_carries_failing_tests(tmp_path):
     entry = GS._run_one_gate(spec, lambda sp: (1, "x", 1.0, " FAIL  a.test.tsx > boom\n"), None)
     assert entry["failing_tests"] == ["a.test.tsx > boom"]
     assert "boom" in entry["summary"]
+
+
+class TestE2EPortIsolation:
+    """2026-11-04 (noctusai-04): e2e:core red in two integrates, green alone.
+    reuseExistingServer + a fixed port meant a foreign vite on 5173 was
+    silently reused, so the spec tested ANOTHER tree."""
+
+    def _spec(self, tmp_path, port=5173):
+        return GS.GateSpec("e2e:core", ["npx", "playwright", "test"], tmp_path, server_port=port)
+
+    def test_port_parsed_from_playwright_config(self, tmp_path):
+        (tmp_path / "playwright.config.ts").write_text(
+            "export default defineConfig({ use: { baseURL: 'http://localhost:5173' },\n"
+            "  webServer: { command: 'npm run dev', port: 8160, reuseExistingServer: !process.env.CI } })")
+        assert GS._playwright_server_port(tmp_path) == 8160
+
+    def test_busy_port_is_harness_invalid_and_never_runs(self, tmp_path):
+        ran = []
+        entry = GS._run_one_gate(self._spec(tmp_path), lambda sp: ran.append(1) or (0, "ok", 1.0),
+                                 None, admit=None, port_holder=lambda p: "pid 4242")
+        assert ran == [] and entry["ran"] is False and entry["exit_code"] is None
+        assert entry["harness_invalid"][0]["precondition"] == "webserver_port_free"
+        assert "4242" in entry["summary"]
+
+    def test_port_taken_during_the_slot_wait_is_caught_after_admission(self, tmp_path):
+        import contextlib
+        from tools.noctus.dev.hw_admission import Admission
+        calls = iter([None, "pid 7"])        # free before the wait, taken after it
+        ran = []
+
+        @contextlib.contextmanager
+        def admit(job):
+            yield Admission(job, True, "admitted")
+
+        entry = GS._run_one_gate(self._spec(tmp_path), lambda sp: ran.append(1) or (0, "ok", 1.0),
+                                 None, admit=admit, port_holder=lambda p: next(calls))
+        assert ran == [] and entry["harness_invalid"][0]["precondition"] == "webserver_port_free"
+
+    def test_free_port_runs_normally(self, tmp_path):
+        entry = GS._run_one_gate(self._spec(tmp_path), lambda sp: (0, "ok", 1.0), None,
+                                 admit=None, port_holder=lambda p: None)
+        assert entry["ran"] is True and entry["exit_code"] == 0
+
+    def test_real_holder_detects_a_listening_socket(self):
+        import socket
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        try:
+            assert GS._port_holder(srv.getsockname()[1]) is not None
+        finally:
+            srv.close()
+
+    def test_e2e_gate_subprocess_runs_with_ci_set(self, tmp_path, monkeypatch):
+        import os, stat
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        npx = bin_dir / "npx"
+        npx.write_text('#!/bin/sh\necho "CI=$CI ARGV: $*"\n')
+        npx.chmod(npx.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        monkeypatch.delenv("CI", raising=False)
+        res = GS._default_run_gate(GS.GateSpec("e2e:x", ["npx", "playwright", "test"], tmp_path),
+                                   timeout=30)
+        assert res[0] == 0 and "CI=1 " in res[1]
