@@ -8,6 +8,7 @@ import { ClipboardList, Star } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ImoveisOferecidosChips, RelatorioLeadSection } from "@/components/julia/RelatorioLeadSection";
 import { useJuliaContato, useJuliaPerguntas } from "@/hooks/useJuliaPerguntas";
 
 const OPERACAO: Record<string, string> = {
@@ -63,6 +64,8 @@ export function PainelLeadConteudo({ connectionId, chatId }: { connectionId: str
           </div>
         );
       })}
+      <ImoveisOferecidosChips payload={d?.contato} />
+      <RelatorioLeadSection contatoId={typeof d?.contato?.id === "string" ? d.contato.id : null} />
     </dl>
   );
 }
@@ -76,7 +79,7 @@ export function PainelLead({ connectionId, chatId }: { connectionId: string | nu
           <ClipboardList className="mr-1 h-3 w-3" /> Dados do lead
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-80" align="end">
+      <PopoverContent className="w-96" align="end">
         <PainelLeadConteudo connectionId={connectionId} chatId={chatId} />
       </PopoverContent>
     </Popover>

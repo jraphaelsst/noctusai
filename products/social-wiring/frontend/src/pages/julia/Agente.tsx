@@ -17,6 +17,8 @@ import { Button } from "@/components/ui/button";
 import { AgentsLinkCard } from "@/components/julia/AgentsLinkCard";
 import { AvisoPrivacidadeCard } from "@/components/julia/AvisoPrivacidadeCard";
 import { ConfigurarNoAgentes } from "@/components/julia/ConfigurarNoAgentes";
+import { JuliaLigadaCard } from "@/components/julia/JuliaLigadaCard";
+import { CatalogoCard, RelatoriosCard } from "@/components/julia/RelatoriosCatalogoCards";
 import { RoteamentoCard } from "@/components/julia/RoteamentoCard";
 import { useJuliaAgente } from "@/hooks/useJuliaAgente";
 import { useJuliaRoteamento } from "@/hooks/useJuliaRoteamento";
@@ -57,6 +59,7 @@ export default function JuliaAgente() {
         </div>
       ) : rot.data ? (
         <>
+          <JuliaLigadaCard linhas={rot.data.linhas} status={agente.data?.status_agente} isAdmin={isAdmin} />
           {agente.data ? (
             <AgentsLinkCard data={agente.data} isAdmin={isAdmin} />
           ) : agente.isPending ? (
@@ -67,6 +70,8 @@ export default function JuliaAgente() {
             </p>
           )}
           <RoteamentoCard data={rot.data} isAdmin={isAdmin} />
+          <RelatoriosCard isAdmin={isAdmin} />
+          <CatalogoCard isAdmin={isAdmin} />
           <AvisoPrivacidadeCard isAdmin={isAdmin} />
         </>
       ) : (

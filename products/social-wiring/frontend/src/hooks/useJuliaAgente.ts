@@ -33,6 +33,10 @@ export interface JuliaStatusAgente {
   provider: string | null;
   model: string | null;
   llm_configurado: boolean;
+  /** Platform-wide kill (agents). Julia answers nobody in any org while true. */
+  desligado_plataforma?: boolean;
+  /** Per-org operating mode (agents); anything but `ligado` means she is not answering. */
+  modo?: string | null;
 }
 
 export interface JuliaAgente {
