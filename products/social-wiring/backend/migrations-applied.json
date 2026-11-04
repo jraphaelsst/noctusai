@@ -57,6 +57,7 @@
     "308_contrato_especificacoes.sql": "af4fc4895274a2c922dff78e5ced190f6cbfacd443175aa77ed0c5ad4e451cdb",
     "310_permuta_matches_motivo_rejeicao.sql": "d15d5dfd46f3e29f8c179fff0f012f7a8c4936cf0ea7dc26087f4aeb4d2ba8e0",
     "311_status_pagina_leftovers.sql": "ed85f17f0f9f7649a09210747a05ae1635a0fbf919ba5b9d0f0301591e1015bb",
-    "312_leads_meta_external_key_backfill.sql": "b0c742c07a4ea1e00b04e11a91e183bc845025658fb0fc431d464ff9e61299c6"
+    "312_leads_meta_external_key_backfill.sql": "b0c742c07a4ea1e00b04e11a91e183bc845025658fb0fc431d464ff9e61299c6",
+    "313_julia_relatorios.sql": "69dbd5ab478358b291d510ae7ba4161f29030c7e63470a4bf1738e00661f9219"
   }
 }
