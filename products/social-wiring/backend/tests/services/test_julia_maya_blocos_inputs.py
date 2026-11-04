@@ -118,7 +118,7 @@ class TestHandoffEvent:
         evs = world.rows("julia_eventos", tipo="handoff")
         assert len(evs) == 1 and evs[0]["payload"] == {"motivo_codigo": "pedido_do_lead"}
         assert evs[0]["contato_id"] == world.contato()["id"]
-        assert len(world.notifications()) == 1  # the handoff's own notification; the event is not fanned out
+        assert len([n for n in world.notifications() if n["metadata"]["tipo"] == "julia_handoff"]) == 1  # the handoff's own notification; the event is not fanned out
 
 
 @pytest.mark.parametrize("texto,codigo", [

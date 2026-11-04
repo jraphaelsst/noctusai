@@ -507,7 +507,8 @@ class TestSignedWebhooksOnly:
         status = {"event": "session.status", "session": "default", "payload": {"status": "WORKING"}}
         assert rt.post(status).status_code == 401
 
-    def test_with_julia_off_an_unset_secret_still_bypasses_as_today(self, rt):
+    def test_with_julia_off_an_unset_secret_still_bypasses_as_today(self, rt, monkeypatch):
+        monkeypatch.delenv("PRODUCT_URL_SOCIAL_WIRING")  # the fixture's deploy marker: the dev bypass is for a NON-deploy context (L2)
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
         rt.settings(waha_webhook_hmac_secret="")
         assert rt.post(_msg()).status_code == 200
@@ -524,7 +525,8 @@ class TestSignedWebhooksOnly:
         _julia_scene(rt)
         assert rt.post_legacy(_msg(), signed=False).status_code == 401
 
-    def test_the_legacy_route_with_no_julia_anywhere_and_no_secret_still_bypasses(self, rt):
+    def test_the_legacy_route_with_no_julia_anywhere_and_no_secret_still_bypasses(self, rt, monkeypatch):
+        monkeypatch.delenv("PRODUCT_URL_SOCIAL_WIRING")  # the fixture's deploy marker: the dev bypass is for a NON-deploy context (L2)
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None)
         rt.settings(waha_webhook_hmac_secret="")
         assert rt.post_legacy(_msg()).status_code == 200

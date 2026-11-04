@@ -846,10 +846,10 @@ class MediaService:
             text[:12000],
         )
 
-    async def download(self, url: str) -> bytes:
+    async def download(self, url: str, *, max_bytes: int = MAX_BYTES_PADRAO) -> bytes:
         """Public WAHA media download (same rewrite + API key as the chatbot
-        path) — the document intake's downloader (CONTRACT §2.3)."""
-        return await self._download(url)
+        path) — the document intake's downloader (CONTRACT §2.3). `max_bytes`: a LEAD's file uses the lead caps."""
+        return await self._download(url, max_bytes=max_bytes)
 
     async def _download(self, url: str, *, max_bytes: int = MAX_BYTES_PADRAO) -> bytes:
         """Download media bytes from WAHA, STREAMED and capped.

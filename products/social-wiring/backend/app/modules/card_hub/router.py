@@ -810,11 +810,15 @@ def confirmar_extracao_route(
     document row.
     """
     user, org_id = _auth_parts(auth)
-    return identidade_svc.confirmar_sugestao(
+    resultado = identidade_svc.confirmar_sugestao(
         client, org_id, cliente_id, documento_id,
         item_key=body.item_key if body else None,
         user_id=getattr(user, "id", None),
     )
+    from app.services import documento_intake_service
+
+    documento_intake_service.marcar_verificado(client, org_id, cliente_id, documento_id)  # a person vouched: no longer a bare WhatsApp read
+    return resultado
 
 
 @router.post("/{cliente_id}/documentos/{documento_id}/extracao/descartar")

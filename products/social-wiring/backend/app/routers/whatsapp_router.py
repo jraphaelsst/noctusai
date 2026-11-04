@@ -76,6 +76,7 @@ import anyio
 # products/adconnect .../financial.py both carry no future-import).
 
 import asyncio
+from typing import Any
 import logging
 import json
 from datetime import datetime, timezone
@@ -1312,6 +1313,17 @@ async def _process_waha_body(
     return Response(status_code=status.HTTP_200_OK)
 
 
+def _exigir_assinatura_em_prod(cfg: Any, rota: str) -> None:
+    """L2: in a deploy context (prod / staging) an UNSIGNED webhook is refused whether or not Julia is on -- `bypass_when_unset` is a
+    dev convenience only. A prod without `WAHA_WEBHOOK_HMAC_SECRET` therefore refuses every inbound loudly (ERROR) instead of silently
+    accepting forged messages; predeploy parity must check the secret is set."""
+    from noctusai_lib.config.deploy_config import is_deploy_context
+
+    if is_deploy_context() and not (cfg.waha_webhook_hmac_secret or "").strip():
+        logger.error("%s: unsigned call refused -- production requires WAHA_WEBHOOK_HMAC_SECRET", rota)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="webhook secret not configured")
+
+
 async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
     """Per-request lookup of the WAHA webhook HMAC secret.
 
@@ -1352,6 +1364,7 @@ async def whatsapp_webhook(
     path that DOES return non-200 is a signature mismatch (401, raised
     by ``webhook_endpoint`` before this body ever runs).
     """
+    _exigir_assinatura_em_prod(cfg, "whatsapp-webhook")
     # 🔴 H1 (contract 10.1): with Julia on anywhere, an UNSIGNED webhook is refused
     # even on the legacy route (an unset secret bypasses verification above). The
     # legacy route itself never enters the lead/operator split — it has no
@@ -1452,6 +1465,7 @@ async def whatsapp_webhook_by_token(
         connection.session_name,
     )
 
+    _exigir_assinatura_em_prod(cfg, "whatsapp_webhook_by_token")
     # 🔴 H1 (contract 10.1): with Julia on for THIS connection a missing/invalid
     # signature is 401 before any routing. An invalid one already 401s in the
     # `webhook_endpoint` dependency; what is left is the unset-secret bypass.

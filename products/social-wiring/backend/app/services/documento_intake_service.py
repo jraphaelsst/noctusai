@@ -113,7 +113,7 @@ def a_classificar(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
     """The card's triage list: live documents still waiting for a type."""
     rows = (
         client.table("cliente_documentos")
-        .select("id,nome_original,mime_type,tamanho_bytes,created_at,origem_entrada,"
+        .select("id,nome_original,mime_type,tamanho_bytes,created_at,origem_entrada,verificado,"
                 "classificacao_tipo_provavel,classificacao_confianca")
         .eq("org_id", str(org_id)).eq("cliente_id", str(cliente_id))
         .eq("tipo_documento", TIPO_A_CLASSIFICAR).is_("deleted_at", "null")
@@ -216,7 +216,8 @@ async def processar_midia(
         documento_id = UUID(documento["id"])
         resultado["documento_id"] = str(documento_id)
         client.table("cliente_documentos").update(
-            {"origem_entrada": ORIGEM_WHATSAPP}
+            # a model read of a WhatsApp file is a SUGGESTION: not verified until a person confirms the extraction
+            {"origem_entrada": ORIGEM_WHATSAPP, "verificado": False}
         ).eq("id", str(documento_id)).execute()
         await _anexo(str(documento_id), None)
 
@@ -250,6 +251,41 @@ async def processar_midia(
         return resultado
 
 
+def _downloader(media_service: Any, max_bytes: Optional[int]) -> Downloader:
+    if max_bytes is None:
+        return media_service.download
+
+    async def baixar(url: str) -> bytes:
+        return await media_service.download(url, max_bytes=max_bytes)
+
+    return baixar
+
+
+def marcar_verificado(client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID) -> None:
+    """A person confirmed the extraction of this document: it is no longer a bare model read (`verificado=true`)."""
+    client.table("cliente_documentos").update({"verificado": True}).eq("org_id", str(org_id)).eq(
+        "cliente_id", str(cliente_id)).eq("id", str(documento_id)).execute()
+
+
+async def processar_midia_do_lead(
+    org_id: UUID,
+    cliente_id: UUID,
+    *,
+    mensagem_id: Optional[Any],
+    media_url: Optional[str],
+    mimetype: Optional[str],
+    filename: Optional[str],
+) -> dict:
+    """The intake for an ID document a LEAD sent (julia-v3 section 12.8): the webhook intake with the LEAD download caps (image 8 MB,
+    PDF 10 MB -- GUARDRAILS B8.2), never the 64 MB operator ceiling."""
+    from app.services import media_service
+
+    mime = (mimetype or "").split(";")[0].strip().lower()
+    limite = media_service.LEAD_PDF_BYTES if mime == "application/pdf" else media_service.LEAD_IMAGEM_BYTES
+    return await processar_midia_do_webhook(
+        org_id, cliente_id, mensagem_id=mensagem_id, media_url=media_url, mimetype=mimetype, filename=filename, max_bytes=limite)
+
+
 async def processar_midia_do_webhook(
     org_id: UUID,
     cliente_id: UUID,
@@ -258,6 +294,7 @@ async def processar_midia_do_webhook(
     media_url: Optional[str],
     mimetype: Optional[str],
     filename: Optional[str],
+    max_bytes: Optional[int] = None,
 ) -> dict:
     """Webhook entry: wires the production collaborators and runs the intake.
     Detached from the request (fire-and-forget) -- never raises."""
@@ -269,7 +306,7 @@ async def processar_midia_do_webhook(
             deps.get_card_hub_client(), deps.get_storage_backend(), org_id, cliente_id,
             mensagem_id=mensagem_id, media_url=media_url, mimetype=mimetype,
             filename=filename,
-            downloader=make_media_service(org_id=org_id).download,
+            downloader=_downloader(make_media_service(org_id=org_id), max_bytes),
             extractor_factory=deps.get_identity_extractor_factory(),
             notification_service=deps.get_conflict_notification_service(),
             cep_lookup=deps.get_cep_lookup_adapter(),

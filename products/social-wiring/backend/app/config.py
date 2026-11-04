@@ -135,6 +135,8 @@ class SocialWiringSettings(ProductSettings):
     waha_dashboard_url: str = "http://localhost:3000/dashboard"
     waha_webhook_url: str = ""
     waha_webhook_hmac_secret: str = ""
+    #: julia-v3 (CONTRACT §12.5): per-org cap on staff WhatsApp sends (reports + alerts) per hour; over it the report is stored `limitado`.
+    julia_staff_envios_por_hora: int = 30
 
     # ─── WhatsApp inbox history backfill (whatsapp-realtime-inbox W4.6) ──
     # Walks every connection's chats via the WAHA NOWEB store and persists

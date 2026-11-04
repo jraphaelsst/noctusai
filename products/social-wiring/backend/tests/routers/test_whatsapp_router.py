@@ -329,6 +329,14 @@ class TestWebhookSignatureVerification:
         )
         assert resp.status_code == 401
 
+    def test_production_refuses_an_unsigned_webhook_even_with_julia_off(self, client, monkeypatch, override_settings):
+        """L2: `bypass_when_unset` is a dev convenience. With the deploy marker set and no HMAC secret, the webhook is a strict 401."""
+        monkeypatch.setenv("APP_ENV", "production")
+        tc, _mock_sb, _db = client
+        override_settings(waha_webhook_hmac_secret="")
+        resp = tc.post("/api/whatsapp/webhook", content=b'{"event":"session.status","session":"default","payload":{}}', headers={"content-type": "application/json"})
+        assert resp.status_code == 401
+
     def test_unset_secret_bypasses_with_warning(self, client, monkeypatch, caplog, override_settings):
         import logging
 

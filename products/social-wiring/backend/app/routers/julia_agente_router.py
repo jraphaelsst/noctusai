@@ -208,6 +208,20 @@ def _record_or_404(store: WhatsAppConnectionStore, connection_id: UUID, org_id: 
     return record
 
 
+def banner_do_status(status_agente: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """julia-v3 (CONTRACT §12.1): the UI banner for "Julia is not answering for a reason that is not this org's own
+    switch" -- the PLATFORM kill (`desligado_plataforma`) wins over the org's `modo_operacao` (`drenando` / `desligado`).
+    None = nothing to show (or an older agents build that reports neither)."""
+    if not status_agente:
+        return None
+    if status_agente.get("desligado_plataforma") is True:
+        return {"tipo": "plataforma_desligada", "modo": status_agente.get("modo")}
+    modo = status_agente.get("modo")
+    if modo is not None and modo != "ligado":
+        return {"tipo": "modo_operacao", "modo": modo}
+    return None
+
+
 @router.get("/api/julia/agente")
 async def get_agente(
     auth: tuple = Depends(get_current_user_org),
@@ -246,6 +260,7 @@ async def get_agente(
     return {"data": {
         "token_configurado": token_configurado,
         "status_agente": status_agente, "erro": erro,
+        "banner": banner_do_status(status_agente),
         # Where "Editar Julia no Agents" points (resolved server-side from the
         # product-URL registry, never hard-coded in the FE). Null = unresolvable.
         "agents_url": julia.agents_base_url(),

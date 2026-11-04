@@ -189,6 +189,9 @@ def test_the_scan_sees_the_gated_senders():
         ("services/julia_reengajamento_service.py", "_enviar_template"),
         ("services/julia_disparos_service.py", "primeiro_contato_meta"),
         ("services/julia_avaliacoes_service.py", "enviador_padrao.enviar"),
+        # julia-v3: the staff report / alert (flow `interno`) is a send too -- gated, and NOT exempt from the gate
+        ("services/julia_relatorio_service.py", "InternoSender.send_reply"),
+        ("services/julia_relatorio_service.py", "_enviar_texto"),
     ]:
         assert esperado in vistos, esperado
 
@@ -273,3 +276,13 @@ class TestTheDetectorItself:
         assert _imports_julia(ast.parse("from app.services import julia_agente_service as julia\n"))
         assert _imports_julia(ast.parse("def f():\n    from app.services.julia_lead_turn_service import LeadDeps\n"))
         assert not _imports_julia(ast.parse("from app.services import whatsapp_outbound\n"))
+
+
+def test_the_staff_report_sender_is_gated_with_the_interno_flow_and_is_not_a_listed_exception():
+    """julia-v3 (CONTRACT §12.5): the report / alert send goes through `exigir(..., Fluxo.INTERNO)` -- never gate 1 -- and is in scope
+    of the scan without an entry in `FORA_DO_PORTAO`."""
+    assert not [k for k in FORA_DO_PORTAO if k[0] == "services/julia_relatorio_service.py"]
+    fonte = (APP / "services" / "julia_relatorio_service.py").read_text()
+    assert "julia_envio_gate.Fluxo.INTERNO" in fonte and "Fluxo.RESPOSTA" not in fonte
+    arquivos = {rel for rel, _ in _arquivos()}
+    assert "services/julia_relatorio_service.py" in arquivos

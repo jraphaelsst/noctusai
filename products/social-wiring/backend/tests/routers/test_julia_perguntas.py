@@ -242,9 +242,18 @@ class TestContato:
         c = self._seed(member.w)
         member.w.sw.table("julia_contatos").update({"responsavel_user_id": TEST_USER_ID}).eq("id", c["id"]).execute()  # A7: owner
         d = member.get(CONTATO_URL).json()["data"]
-        assert set(d) == {"contato", "slots", "interacao_atual", "qualificacao", "dados_lead"}
+        assert set(d) == {"contato", "imoveis_oferecidos", "slots", "interacao_atual", "qualificacao", "dados_lead"}
         assert d["contato"]["nome"] == "Ana" and d["interacao_atual"]["operacao"] == "compra"
         assert d["slots"] == {}  # neither slot is an active question (only objetivo is)
+
+    def test_the_offered_listings_come_with_the_link_of_the_orgs_template(self, admin):
+        c = self._seed(admin.w)
+        admin.w.sw.set_table_data("julia_conhecimento_secoes", [{
+            "org_id": ORG_ID, "secao": "perfil_whatsapp", "versao": 1, "dados": {"site": "https://site.example", "link_imovel": "{site}/imovel/{codigo}"}}])
+        assert admin.get(CONTATO_URL).json()["data"]["imoveis_oferecidos"] == []
+        admin.w.sw.table("julia_contatos").update({"imoveis_oferecidos": ["AP0042", "CA7"]}).eq("id", c["id"]).execute()
+        assert admin.get(CONTATO_URL).json()["data"]["imoveis_oferecidos"] == [
+            {"codigo": "AP0042", "link": "https://site.example/imovel/AP0042"}, {"codigo": "CA7", "link": "https://site.example/imovel/CA7"}]
 
     def test_only_active_questions_show_their_values(self, admin):
         self._seed(admin.w)
