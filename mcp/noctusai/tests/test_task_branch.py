@@ -4068,3 +4068,31 @@ class TestMergedTipEnvRealRepo:
                       run_gate=lambda sp: (ran.append(sp.gate), (0, "ok", 0.1))[1],
                       allow_stale_tree=True)
         assert ran == ["pytest:alpha"]
+
+
+# Verbatim shape of the 2026-11-04 09:59Z push: every keeper passed, GitHub 500'd.
+_GITHUB_500 = (
+    "[pre-push] ledger-drain keeper...\n"
+    "[pre-push] doc-staleness keeper (317c29052..ef4d275e4)...\n"
+    "remote: Internal Server Error        \n"
+    "remote: Request ID F5A9:F8B66:F6841A:1B78C6B:6AEB0200        \n"
+    "To https://github.com/jraphaelsst/noctusai.git\n"
+    " ! [remote rejected]     HEAD -> dev (Internal Server Error)\n"
+    "error: failed to push some refs to 'https://github.com/jraphaelsst/noctusai.git'")
+
+
+def test_integrate_github_5xx_is_remote_error_not_hook_rejected():
+    fake = _push_fake(push_rcs=[1, 1, 1, 1, 1], push_err=_GITHUB_500)
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+    assert res["status"] == "blocked"
+    assert res["push_failure"] == "remote_error"
+    assert "by the REMOTE" in res["reason"] and "re-run integrate" in res["reason"]
+    assert "pre-push hook" not in res["reason"]
+
+
+def test_pre_push_banner_alone_is_not_a_hook_rejection():
+    from tools.noctus.dev._push_verdict import classify_push_failure
+    git = lambda *a, **k: (0, "d0", "")
+    v = classify_push_failure(git, "origin", "dev", "d0",
+                              "", "[pre-push] keeper ok\nfatal: something unrelated")
+    assert v["kind"] == "push_failed"

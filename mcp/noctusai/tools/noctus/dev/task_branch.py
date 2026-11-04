@@ -200,6 +200,12 @@ def _git(runner, *args, cwd: str | None = None, dev_branch: str = "dev") -> tupl
 
 from tools.noctus.dev._push_verdict import classify_push_failure as _classify_push_failure  # noqa: E402
 
+_PUSH_FAILURE_WHY = {
+    "hook_rejected": "by the pre-push hook",
+    "remote_error": ("by the REMOTE (server/transport error; our hooks passed). Transient: "
+                     "re-run integrate"),
+}
+
 
 def _resolve(git, ref: str) -> str | None:
     rc, out, _e = git("rev-parse", ref)
@@ -2966,7 +2972,7 @@ def task_branch(
                             "hook_output": pf["tail"],
                             "reason": (
                                 f"push of {branch} to {remote}/{dev_branch} was rejected "
-                                f"({'by the pre-push hook' if pf['kind'] == 'hook_rejected' else 'for a non-race reason'}); "
+                                f"({_PUSH_FAILURE_WHY.get(pf['kind'], 'for a non-race reason')}); "
                                 f"{remote}/{dev_branch} did not move, so this is not a "
                                 f"concurrent-push race and was not retried. Output tail:\n{pf['tail']}"),
                             "message": (
