@@ -533,6 +533,21 @@ def get_conformidade_store_dep():
     return get_conformidade_store(settings)
 
 
+def get_thread_alerta_store_dep():
+    """``agents.thread_alertas`` -- what ``sinalizar_alerta`` records (migration 057)."""
+    from app.stores.thread_alertas import get_thread_alerta_store
+
+    return get_thread_alerta_store(settings)
+
+
+def get_relatorio_resumo_factory_dep():
+    """The narrative generator of a hand-off report (CONTRACT §12.4): the ``/resumo`` LLM call. A test overrides
+    this seam with a Fake (never a patch)."""
+    from app.channels.relatorio import gerador_resumo_llm
+
+    return gerador_resumo_llm
+
+
 def get_julia_tools_client_dep():
     """The SW client the channel tools read the CRM through (the org's own tools token, per call)."""
     from app.clients.social_wiring import get_julia_tools_client
@@ -640,6 +655,8 @@ __all__ = [
     "get_channel_llm_runtime_dep",
     "get_channel_retention_dep",
     "get_conformidade_store_dep",
+    "get_thread_alerta_store_dep",
+    "get_relatorio_resumo_factory_dep",
     "get_julia_tools_client_dep",
     "get_skills_factory_dep",
     "get_org_llm_key_resolver_dep",

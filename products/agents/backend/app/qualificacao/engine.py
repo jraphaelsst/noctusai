@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 from typing import Any, Iterable, Sequence
 
+from app.qualificacao.identificacao import DESEJADOS_PADRAO, obrigatorios_do_padrao
 from app.qualificacao.models import (
     DERIVADOS,
     EVENTOS_IMOVEL,
@@ -313,10 +314,14 @@ def calcular(
     sinais = sinais or LeadSinais()
     valores = _ultimos_validos(versao, registros, agora)
     valores.update(valores_derivados(eventos_imovel, sinais, agora))
-    ident_chaves = [c.chave for c in versao.criterios if c.ativo and c.tipo == "identificacao"]
-    for k in ident_chaves:  # the FLAG that it was collected, never the value
+    ident_todas = [c.chave for c in versao.criterios if c.ativo and c.tipo == "identificacao"]
+    for k in ident_todas:  # the FLAG that it was collected, never the value
         if k in sinais.identificacao:
             valores[k] = True
+    # Julia v3: only the REQUIRED identity fields gate a stage / count as "missing"; the rest is desired (asked
+    # once, never a blocker) -- the CPF alone unless a criterion says otherwise (``obrigatorios_do_padrao``).
+    obrig = obrigatorios_do_padrao(versao.criterios)
+    ident_chaves = [k for k in ident_todas if k in obrig]
     ident_completa = bool(ident_chaves) and all(k in sinais.identificacao for k in ident_chaves)
     contagens = contagens_de_eventos(eventos_imovel, sinais)
     ativos_ev = frozenset(k for k, n in contagens.items() if n > 0)
@@ -384,6 +389,8 @@ def calcular(
     if versao.parametros.pedir_identificacao_quando is not None:
         pedir = avaliar_regra(versao.parametros.pedir_identificacao_quando, ctx)
     ident_faltando = [k for k in ident_chaves if k not in sinais.identificacao]
+    ident_desejada = [k for k in dict.fromkeys([*DESEJADOS_PADRAO, *ident_todas])
+                      if k not in obrig and k not in sinais.identificacao]
 
     proximo = None if atual.terminal else next(
         (e for e in ordenados if e.ordem > atual.ordem and not e.terminal), None)
@@ -426,6 +433,7 @@ def calcular(
         descartado_sugerido=sugerido,
         detalhe=detalhe,
         identificacao_faltando=tuple(ident_faltando),
+        identificacao_desejada=tuple(ident_desejada),
         pedir_identificacao=pedir,
     )
 

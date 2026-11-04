@@ -591,6 +591,48 @@
   },
   "ChannelTurnResponse": {
     "$defs": {
+      "AlertaActionOut": {
+        "description": "Julia flagged an unhappy lead / her own mistake / a drift (``sinalizar_alerta``, CONTRACT §12.3): SW notifies\nthe report destination. One per ``tipo`` per turn.",
+        "properties": {
+          "alerta_id": {
+            "title": "Alerta Id",
+            "type": "string"
+          },
+          "descricao": {
+            "title": "Descricao",
+            "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "tipo": {
+            "enum": [
+              "lead_insatisfeito",
+              "erro_agente",
+              "desvio",
+              "outro"
+            ],
+            "title": "Tipo",
+            "type": "string"
+          },
+          "type": {
+            "const": "alerta",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "tipo",
+          "descricao",
+          "alerta_id"
+        ],
+        "title": "AlertaActionOut",
+        "type": "object"
+      },
       "CaptacaoActionOut": {
         "properties": {
           "descricao": {
@@ -752,6 +794,44 @@
         "title": "ConsentimentoCreditoActionOut",
         "type": "object"
       },
+      "DocumentoIdentificacaoActionOut": {
+        "description": "The lead sent an ID document as media (``registrar_documento``): SW finds/creates the lead's card and runs\nits document intake on that media. ``provider_message_id`` is the inbound message that carried it.",
+        "properties": {
+          "provider_message_id": {
+            "title": "Provider Message Id",
+            "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "tipo_provavel": {
+            "enum": [
+              "rg",
+              "cpf",
+              "cin",
+              "cnh",
+              "outro"
+            ],
+            "title": "Tipo Provavel",
+            "type": "string"
+          },
+          "type": {
+            "const": "documento_identificacao",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "provider_message_id",
+          "tipo_provavel"
+        ],
+        "title": "DocumentoIdentificacaoActionOut",
+        "type": "object"
+      },
       "EncerrarActionOut": {
         "properties": {
           "lead_opt_out": {
@@ -798,6 +878,17 @@
           "motivo_codigo": {
             "title": "Motivo Codigo",
             "type": "string"
+          },
+          "relatorio": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RelatorioOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "seq": {
             "default": 0,
@@ -878,6 +969,17 @@
             "title": "Intencoes Visita",
             "type": "array"
           },
+          "relatorio": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RelatorioOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "score": {
             "title": "Score",
             "type": "integer"
@@ -956,6 +1058,13 @@
             "title": "Faltando",
             "type": "array"
           },
+          "imoveis_oferecidos": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Imoveis Oferecidos",
+            "type": "array"
+          },
           "score": {
             "title": "Score",
             "type": "integer"
@@ -979,6 +1088,140 @@
           "faltando"
         ],
         "title": "QualificacaoOut",
+        "type": "object"
+      },
+      "RelatorioIdentificacaoOut": {
+        "description": "FLAGS only -- never a value.",
+        "properties": {
+          "cpf": {
+            "default": false,
+            "title": "Cpf",
+            "type": "boolean"
+          },
+          "documento_enviado": {
+            "default": false,
+            "title": "Documento Enviado",
+            "type": "boolean"
+          },
+          "email": {
+            "default": false,
+            "title": "Email",
+            "type": "boolean"
+          },
+          "rg": {
+            "default": false,
+            "title": "Rg",
+            "type": "boolean"
+          }
+        },
+        "title": "RelatorioIdentificacaoOut",
+        "type": "object"
+      },
+      "RelatorioImovelOut": {
+        "properties": {
+          "codigo": {
+            "title": "Codigo",
+            "type": "string"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Link"
+          },
+          "reacao": {
+            "enum": [
+              "gostou",
+              "nao_gostou",
+              "sem_reacao"
+            ],
+            "title": "Reacao",
+            "type": "string"
+          }
+        },
+        "required": [
+          "codigo",
+          "reacao"
+        ],
+        "title": "RelatorioImovelOut",
+        "type": "object"
+      },
+      "RelatorioOut": {
+        "description": "The report of a hand-off / conclusion (Julia v3, CONTRACT §12.4): ready-to-send text plus its parts.",
+        "properties": {
+          "disponibilidade_visita": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Disponibilidade Visita"
+          },
+          "identificacao": {
+            "$ref": "#/$defs/RelatorioIdentificacaoOut"
+          },
+          "imoveis_oferecidos": {
+            "items": {
+              "$ref": "#/$defs/RelatorioImovelOut"
+            },
+            "title": "Imoveis Oferecidos",
+            "type": "array"
+          },
+          "imoveis_recomendados": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Imoveis Recomendados",
+            "type": "array"
+          },
+          "motivo": {
+            "title": "Motivo",
+            "type": "string"
+          },
+          "perfil": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Perfil",
+            "type": "object"
+          },
+          "proximos_passos": {
+            "title": "Proximos Passos",
+            "type": "string"
+          },
+          "resumo_conversa": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resumo Conversa"
+          },
+          "texto": {
+            "title": "Texto",
+            "type": "string"
+          }
+        },
+        "required": [
+          "texto",
+          "motivo",
+          "proximos_passos"
+        ],
+        "title": "RelatorioOut",
         "type": "object"
       },
       "SolicitacaoTitularActionOut": {
@@ -1069,8 +1312,10 @@
         "items": {
           "discriminator": {
             "mapping": {
+              "alerta": "#/$defs/AlertaActionOut",
               "captacao": "#/$defs/CaptacaoActionOut",
               "consentimento_credito": "#/$defs/ConsentimentoCreditoActionOut",
+              "documento_identificacao": "#/$defs/DocumentoIdentificacaoActionOut",
               "encerrar": "#/$defs/EncerrarActionOut",
               "handoff": "#/$defs/HandoffActionOut",
               "intencao_visita": "#/$defs/IntencaoVisitaActionOut",
@@ -1100,6 +1345,12 @@
             },
             {
               "$ref": "#/$defs/SolicitacaoTitularActionOut"
+            },
+            {
+              "$ref": "#/$defs/AlertaActionOut"
+            },
+            {
+              "$ref": "#/$defs/DocumentoIdentificacaoActionOut"
             }
           ]
         },

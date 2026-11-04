@@ -22,6 +22,7 @@ from cryptography.fernet import Fernet
 from noctusai_lib.api.auth.session import AuthContext, FakeProductTokenAdmin
 from noctusai_lib.integrations.llm import FakeProvider
 
+from app.channels.relatorio import FakeResumoRelatorio
 from app.channels.retention import FakeChannelRetention
 from app.channels.token_audit import FakeTokenAudit
 from app.channels.tool_registry import make_channel_tools_factory
@@ -39,6 +40,8 @@ from app.dependencies import (
     get_org_llm_key_resolver_dep,
     get_product_token_admin_dep,
     get_notification_sink_dep,
+    get_relatorio_resumo_factory_dep,
+    get_thread_alerta_store_dep,
     get_skills_factory_dep,
     get_token_audit_dep,
 )
@@ -58,6 +61,7 @@ from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, make_budget_
 from app.stores.agent_controles import FakeAgentControleStore
 from app.stores.channel_inbound import FakeChannelInboundStore
 from app.stores.conformidade import FakeConformidadeStore
+from app.stores.thread_alertas import FakeThreadAlertaStore
 from app.stores.threads import FakeThreadStore
 from app.studio.catalog import StoreKnowledgeCatalog
 from tests.channels.julia_v2 import JULIA_KEY, montar_julia_v2, publicar_padrao
@@ -127,6 +131,9 @@ class ChannelHarness:
             rt_.stores.conversations, rt_.stores.messages, self.inbound, self.threads, self.qual)
         #: the org's owner/admin the lead opt-out notice goes to (the Fake sink; never the real core)
         self.notificacoes = FakeNotificationSink(org_admins={rt_.org_id: [str(UUID(int=0xA11CE))]})
+        self.alertas = FakeThreadAlertaStore()
+        #: the hand-off report's narrative generator (the ``/resumo`` LLM call) -- a Fake: it never touches ``provider``
+        self.resumo_relatorio = FakeResumoRelatorio()
         self.sw = FakeSocialWiringClient()
         self.sw.julia_token_orgs.add(rt_.org_id)
         self.skills_factory: Any = None
@@ -230,6 +237,8 @@ def chan(rt):
         get_julia_tools_client_dep: lambda: h.sw,
         get_skills_factory_dep: lambda: h.skills_factory,
         get_notification_sink_dep: lambda: h.notificacoes,
+        get_thread_alerta_store_dep: lambda: h.alertas,
+        get_relatorio_resumo_factory_dep: lambda: h.resumo_relatorio,
         get_org_llm_key_resolver_dep: lambda: (lambda provider, org: h.keys.get((provider, org))),
         get_product_token_admin_dep: lambda: h.token_admin,
         get_token_audit_dep: lambda: h.audit,

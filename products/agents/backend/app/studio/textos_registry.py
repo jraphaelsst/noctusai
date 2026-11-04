@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 __all__ = [
     "CODIGOS_RECUSA",
+    "CODIGOS_RECUSA_OPCIONAIS",
     "MOTIVOS_HANDOFF",
     "MOTIVOS_HANDOFF_SERVIDOR",
     "APLICA_A",
@@ -122,6 +123,9 @@ CODIGOS_RECUSA: tuple[str, ...] = (
     # guardrails B6: consent / opt-out need the lead's words from THIS batch; per-turn tool-call caps
     "consentimento_sem_evidencia", "opt_out_sem_evidencia", "limite_ferramentas",
 )
+#: Julia v3 refusal codes whose row is OPTIONAL: a published version written before they existed keeps running
+#: (the tool answers with the bare code -- never prose from code) until its content gains the row.
+CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = ("documento_nao_encontrado", "documento_sem_midia")
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
     "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
@@ -179,6 +183,10 @@ TEXTOS.update({
     **{
         f"ferramenta.resultado.recusa.{c}": _canal("ferramenta", *(("skill",) if c == "skill_nao_aberta" else ()))
         for c in CODIGOS_RECUSA
+    },
+    **{
+        f"ferramenta.resultado.recusa.{c}": _canal("ferramenta", obrigatoria=False)
+        for c in CODIGOS_RECUSA_OPCIONAIS
     },
     # runtime ----------------------------------------------------------------------------------
     "runtime.ferramenta_falhou": _canal("runtime"),

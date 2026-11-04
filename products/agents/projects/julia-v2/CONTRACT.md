@@ -1055,3 +1055,21 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
 
 `agente_desligado_plataforma` (status). Actions: `alerta`, `documento_identificacao`; `handoff`/`lead_pronto` gain
 `relatorio`. SW's client schema and its fixtures move in the same change.
+
+#### 12.11 Implementation notes (agents, Julia v3 tools slice)
+
+Deviations / precisions from §12.3-§12.10, all in the agents half:
+
+- `identificacao_desejada` is computed by the engine (`EstadoQualificacao.identificacao_desejada`); the tool layer drops
+  `nome` when the lead's contact already has a name. `registrar_identificacao` with `campo=nome` is NOT gated on
+  `pedir_identificacao` (owner, 2026-11-03: a form name may be a business name; Julia decides); cpf/rg/email stay gated.
+- The engine's identity gating now covers the REQUIRED fields only (`obrigatorios_do_padrao`: a `tipo=identificacao`
+  criterion is required when it carries `obrigatorio`, default only `cpf`) -- so the CPF alone completes `identificacao: completa`.
+  The `obrigatorio` attribute is not yet a column of `CriterioDef`; until it is, the default (cpf) applies.
+- Offer links and the lead's visit options are persisted on the property events (`oferecido.motivo` = listing link,
+  `quer_visitar.motivo` = `preferencia_horario`) so a report built turns later can print them.
+- The two new refusal codes (`documento_nao_encontrado`, `documento_sem_midia`) are OPTIONAL
+  text rows (`CODIGOS_RECUSA_OPCIONAIS`): a published version without the row answers with the bare code, so deploying this
+  slice does not 409 live Julia before its content gains the rows.
+- `provider_message_id` is now stored in the lead message row's `meta` (the idempotency ledger has no message id).
+- Skill gate of `registrar_documento` = the tool row's `obrigatoria_skill` (content, same value as `registrar_identificacao`).

@@ -152,7 +152,7 @@ class TestFailureIsVisible:
         store.redigir_identificacao = quebra
         with caplog.at_level(logging.ERROR):
             r = _turno_identificacao(chan, f"CPF {CPF}")
-        assert r["status"] == "respondido" and r["identificacao_registrada"] is True
+        assert r["status"] == "concluido" and r["identificacao_registrada"] is True  # CPF alone completes the identity
         log = "\n".join(rec.getMessage() for rec in caplog.records)
         assert "identificacao_redacao_falhou" in log and "RuntimeError" in log
         assert CPF not in log and CPF_DIGITOS not in log and "db down" not in log
@@ -228,7 +228,7 @@ class TestRealtimeStreamIsPurged:
         chan.rt.stores.bus.redact = quebra
         with caplog.at_level(logging.ERROR):
             r = _turno_identificacao(chan, f"Meu CPF é {CPF}")
-        assert r["status"] == "respondido" and r["identificacao_registrada"] is True
+        assert r["status"] == "concluido" and r["identificacao_registrada"] is True  # CPF alone completes the identity
         log = "\n".join(rec.getMessage() for rec in caplog.records)
         assert "realtime.redact_failed" in log and "RuntimeError" in log and CPF_DIGITOS not in log
         assert CPF not in _blob(_linhas(chan, r))  # the store was still masked

@@ -27,6 +27,22 @@ from noctusai_lib.security.encrypted_tokens import decrypt, encrypt
 
 CAMPOS = ("nome", "email", "cpf", "rg")  # asked; the phone comes from the channel ref
 CAMPOS_TODOS = (*CAMPOS, "telefone")
+#: Julia v3 (CONTRACT §12.8): what a visit REQUIRES is the CPF alone; the rest is DESIRED -- asked once, never a
+#: blocker. A standard's ``tipo=identificacao`` criterion can override (see :func:`obrigatorios_do_padrao`).
+OBRIGATORIOS_PADRAO = ("cpf",)
+DESEJADOS_PADRAO = ("rg", "email", "nome")
+#: What the lead may send as a photo / scan instead of typing it (``registrar_documento``).
+TIPOS_DOCUMENTO = ("rg", "cpf", "cin", "cnh", "outro")
+
+
+def obrigatorios_do_padrao(criterios: Sequence[Any]) -> tuple[str, ...]:
+    """The identity fields a standard REQUIRES. Its ``tipo=identificacao`` criteria are the vocabulary; one is
+    required when it carries ``obrigatorio`` (default: only the CPF is). A standard with no identity criterion
+    requires :data:`OBRIGATORIOS_PADRAO`."""
+    ident = [c for c in criterios if getattr(c, "ativo", True) and getattr(c, "tipo", None) == "identificacao"]
+    if not ident:
+        return OBRIGATORIOS_PADRAO
+    return tuple(c.chave for c in ident if getattr(c, "obrigatorio", c.chave in OBRIGATORIOS_PADRAO))
 _UFS = frozenset(
     "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split())
 _EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$")
@@ -150,11 +166,19 @@ class IdentRecord:
     coletado_em: datetime | None = None
     coletado_por_agent_id: UUID | None = None
     origem_msg_id: UUID | None = None
+    #: The lead sent a photo / scan of an ID document (``registrar_documento``): the CPF counts as satisfied
+    #: pending extraction on SW's side. Flags only -- the media itself never lives here.
+    documento_enviado: bool = False
+    documento_tipo: str | None = None
+    documento_provider_message_id: str | None = None
 
     def campos(self) -> frozenset[str]:
         pares = {"nome": self.nome, "email": self.email, "cpf": self.cpf_cifrado, "rg": self.rg_cifrado,
                  "telefone": self.telefone}
-        return frozenset(k for k, v in pares.items() if v)
+        tem = {k for k, v in pares.items() if v}
+        if self.documento_enviado:
+            tem.add("cpf")
+        return frozenset(tem)
 
 
 @dataclass(frozen=True)
@@ -260,12 +284,43 @@ class IdentificacaoService:
         self._store.salvar_campos(org_id, lead_ref_id, cols, agent_id=agent_id, origem_msg_id=message_id)
         return res("registrado", registrado=norm if campo in ("cpf", "rg") else None)
 
+    def registrar_documento(
+        self, org_id: UUID, lead_ref_id: UUID, *, agent_id: UUID, tipo_provavel: str, provider_message_id: str,
+    ) -> None:
+        """The lead sent an ID document as media: remember THAT (flag + probable type + the message id), nothing
+        of its content. Counts as the CPF pending extraction (:meth:`IdentRecord.campos`)."""
+        if tipo_provavel not in TIPOS_DOCUMENTO:
+            raise ValueError("tipo_provavel invalido")
+        self._store.salvar_campos(
+            org_id, lead_ref_id,
+            {"documento_enviado": True, "documento_tipo": tipo_provavel,
+             "documento_provider_message_id": provider_message_id},
+            agent_id=agent_id, origem_msg_id=None)
+
+    def flags(self, org_id: UUID, lead_ref_id: UUID) -> dict[str, bool]:
+        """What was collected, as FLAGS only (never a value): cpf / rg / email typed, and ``documento_enviado``."""
+        rec = self._store.obter(org_id, lead_ref_id)
+        if rec is None:
+            return {"cpf": False, "rg": False, "email": False, "documento_enviado": False}
+        return {"cpf": bool(rec.cpf_cifrado), "rg": bool(rec.rg_cifrado), "email": bool(rec.email),
+                "documento_enviado": rec.documento_enviado}
+
+    def nome_registrado(self, org_id: UUID, lead_ref_id: UUID) -> str | None:
+        """The name the lead gave (``registrar_identificacao`` campo=nome); not sensitive."""
+        rec = self._store.obter(org_id, lead_ref_id)
+        return rec.nome if rec and rec.nome else None
+
+    def documento_enviado(self, org_id: UUID, lead_ref_id: UUID) -> bool:
+        rec = self._store.obter(org_id, lead_ref_id)
+        return bool(rec and rec.documento_enviado)
+
     def mascarado(self, org_id: UUID, lead_ref_id: UUID) -> dict[str, Any] | None:
         """The default display: CPF ***.***.***-12, RG masked, e-mail/phone partly hidden. Needs no key."""
         rec = self._store.obter(org_id, lead_ref_id)
         if rec is None:
             return None
-        out: dict[str, Any] = {"nome": rec.nome, "coletados": sorted(rec.campos())}
+        out: dict[str, Any] = {
+            "nome": rec.nome, "coletados": sorted(rec.campos()), "documento_enviado": rec.documento_enviado}
         if rec.email:
             out["email"] = mascarar_email(rec.email)
         if rec.telefone:

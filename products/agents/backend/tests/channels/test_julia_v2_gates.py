@@ -236,10 +236,18 @@ class TestOtherGates:
     def test_identity_is_asked_only_once_the_standard_says_so(self, gated):
         chan = gated
         chan.use_provider(FakeProvider(tool_responses=[
-            step(call("registrar_identificacao", campo="nome", valor="Maria Souza")), say("Qual o bairro?")]))
-        chan.turn(turn_body("Meu nome é Maria Souza"))
+            step(call("registrar_identificacao", campo="cpf", valor="529.982.247-25")), say("Qual o bairro?")]))
+        chan.turn(turn_body("Meu CPF é 529.982.247-25"))
         assert tool_results(chan.provider)[0]["codigo"] == "identificacao_nao_devida"
         assert chan.ident.coletados(chan.org_id, chan.lead_ref().id) == frozenset()
+
+    def test_the_name_is_registrable_at_any_point_it_is_not_sensitive(self, gated):
+        chan = gated
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("registrar_identificacao", campo="nome", valor="Maria Souza")), say("Qual o bairro?")]))
+        chan.turn(turn_body("Meu nome é Maria Souza"))
+        assert tool_results(chan.provider)[0]["status"] == "registrado"
+        assert chan.ident.coletados(chan.org_id, chan.lead_ref().id) == frozenset({"nome"})
 
     def test_an_identity_value_not_in_the_leads_words_is_refused(self, gated):
         chan = gated

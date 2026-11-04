@@ -238,13 +238,15 @@ def test_complete_identification_atom_gates_pronto_para_corretor():
     regs = [Registro(k, val) for k, val in dict(operacao="compra", tipo_imovel="casa", faixa_preco={"max": 4},
             regioes=["a"], prazo_decisao="imediato", forma_pagamento="a_vista").items()]
     ev = [EventoImovel("A", "oferecido", lote=1), EventoImovel("A", "quer_visitar")]
-    sem = engine.calcular(v, regs, ev, AGORA, sinais=LeadSinais(identificacao=frozenset({"nome", "email", "cpf"})))
+    sem = engine.calcular(v, regs, ev, AGORA, sinais=LeadSinais(identificacao=frozenset({"nome", "email", "rg"})))
     assert sem.estagio == "qualificado" and not sem.pode_concluir
-    assert sem.identificacao_faltando == ("rg",)
-    assert sem.faltando == ("rg",) and sem.proximo_criterio.chave == "rg"  # the next stage's atom pulls them in
-    com = engine.calcular(v, regs, ev, AGORA, sinais=LeadSinais(identificacao=frozenset(CAMPOS)))
+    # Julia v3: the CPF alone is REQUIRED; the rest is desired and never blocks the stage
+    assert sem.identificacao_faltando == ("cpf",)
+    assert sem.faltando == ("cpf",) and sem.proximo_criterio.chave == "cpf"  # the next stage's atom pulls it in
+    com = engine.calcular(v, regs, ev, AGORA, sinais=LeadSinais(identificacao=frozenset({"cpf"})))
     assert com.estagio == "pronto_para_corretor" and com.pode_concluir and com.identificacao_faltando == ()
-    assert com.valores["rg"] is True  # the FLAG, never the value
+    assert com.identificacao_desejada == ("rg", "email", "nome")  # still desired, not blocking
+    assert com.valores["cpf"] is True  # the FLAG, never the value
     assert "52998224725" not in str(com.valores)
 
 
@@ -259,8 +261,9 @@ def test_identification_is_only_suggested_after_visit_intent():
     assert not (set(antes.faltando) & set(CAMPOS))
     depois = engine.calcular(v, regs, [EventoImovel("A", "oferecido", lote=1), EventoImovel("A", "quer_visitar")], AGORA)
     assert depois.pedir_identificacao is True
-    assert depois.avaliar_payload()["identificacao_faltando"] == ["nome", "email", "cpf", "rg"]
-    assert depois.faltando[0] == "nome"
+    assert depois.avaliar_payload()["identificacao_faltando"] == ["cpf"]
+    assert depois.avaliar_payload()["identificacao_desejada"] == ["rg", "email", "nome"]
+    assert depois.faltando[0] == "cpf"
 
 
 def test_registrar_perfil_refuses_identification_criteria_and_service_feeds_the_engine():
@@ -281,4 +284,4 @@ def test_registrar_perfil_refuses_identification_criteria_and_service_feeds_the_
     assert [(x.criterio, x.codigo) for x in r.recusados] == [("cpf", "usar_identificacao")]
     reg(ident, "cpf", CPF, [CPF])
     e = q.avaliar(ORG, LEAD, nv)
-    assert e.valores["cpf"] is True and "cpf" not in e.identificacao_faltando and "nome" in e.identificacao_faltando
+    assert e.valores["cpf"] is True and "cpf" not in e.identificacao_faltando and "nome" in e.identificacao_desejada
