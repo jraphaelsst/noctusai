@@ -273,6 +273,8 @@ class ControleOut(BaseModel):
     modo: Literal["ligado", "drenando", "desligado"]
     aceita_novos_leads: bool
     dreno_inatividade_dias: int
+    #: Julia v3 §12.2: the org's testing-phase switch (rendered into the turn state as ``controle.fase_testes``).
+    fase_testes: bool = True
     threads_abertas: int
     drenagem: DrenagemOut
 
@@ -282,6 +284,9 @@ class ControleUpdateRequest(StrictHttpModel):
 
     modo: Literal["ligado", "drenando", "desligado"]
     dreno_inatividade_dias: int | None = Field(default=None, ge=1, le=365)
+    #: Optional: set the testing-phase switch alongside the (required) ``modo``. Changing only this field, with
+    #: ``modo`` equal to the current one, applies no mode transition and none of its 409 preconditions.
+    fase_testes: bool | None = None
 
 
 class MensagemThreadOut(BaseModel):

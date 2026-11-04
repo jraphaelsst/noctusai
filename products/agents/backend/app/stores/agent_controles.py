@@ -15,7 +15,7 @@ Seed IO shape: ``AgentControleStore`` Protocol + ``FakeAgentControleStore`` +
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -46,6 +46,8 @@ class ControleRecord:
     org_id: UUID
     modo: str
     dreno_inatividade_dias: int
+    #: 056: the org's testing-phase switch (Julia v3 §12.2) — the prompt may say "we are in a testing phase" only while on.
+    fase_testes: bool = True
 
     @property
     def aceita_novos_leads(self) -> bool:
@@ -66,6 +68,13 @@ class AgentControleStore(Protocol):
         (unknown mode / days outside 1..365)."""
         ...
 
+    def set_fase_testes(
+        self, org_id: UUID, agent_id: UUID, valor: bool, *, actor: UUID | None = None
+    ) -> ControleRecord:
+        """Switch the org's testing-phase flag with an attributed audit row (``fase_testes_alterada``; an unchanged
+        value writes nothing). Raises :class:`NotFound`."""
+        ...
+
 
 def _validate(modo: str, dias: int | None) -> None:
     if modo not in MODOS:
@@ -84,6 +93,8 @@ class FakeAgentControleStore:
         self.auditoria: list[tuple[UUID, UUID | None, dict[str, Any], dict[str, Any]]] = []
         #: Set to an exception to simulate the control being unreadable (fail-closed tests).
         self.falha: Exception | None = None
+        #: ``(agent_id, actor, antes, depois)`` per ``fase_testes`` change.
+        self.auditoria_fase_testes: list[tuple[UUID, UUID | None, bool, bool]] = []
 
     def get(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
         if self.falha is not None:
@@ -101,6 +112,7 @@ class FakeAgentControleStore:
         rec = ControleRecord(
             agent_id, org_id, modo,
             dreno_inatividade_dias if dreno_inatividade_dias is not None else before.dreno_inatividade_dias,
+            before.fase_testes,
         )
         self._rows[(org_id, agent_id)] = rec
         if (rec.modo, rec.dreno_inatividade_dias) != (before.modo, before.dreno_inatividade_dias):
@@ -109,6 +121,16 @@ class FakeAgentControleStore:
                 {"modo_operacao": before.modo, "dreno_inatividade_dias": before.dreno_inatividade_dias},
                 {"modo_operacao": rec.modo, "dreno_inatividade_dias": rec.dreno_inatividade_dias},
             ))
+        return rec
+
+    def set_fase_testes(
+        self, org_id: UUID, agent_id: UUID, valor: bool, *, actor: UUID | None = None
+    ) -> ControleRecord:
+        before = self.get(org_id, agent_id)
+        rec = replace(before, fase_testes=bool(valor))
+        self._rows[(org_id, agent_id)] = rec
+        if before.fase_testes != rec.fase_testes:
+            self.auditoria_fase_testes.append((agent_id, actor, before.fase_testes, rec.fase_testes))
         return rec
 
 
@@ -121,7 +143,7 @@ class SupabaseAgentControleStore:
     def get(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
         rows = (
             self._client.schema(_SCHEMA).table("agents")
-            .select("id, org_id, modo_operacao, dreno_inatividade_dias")
+            .select("id, org_id, modo_operacao, dreno_inatividade_dias, fase_testes")
             .eq("id", str(agent_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
         )
         if not rows:
@@ -139,11 +161,21 @@ class SupabaseAgentControleStore:
         })
         return self.get(org_id, agent_id)
 
+    def set_fase_testes(
+        self, org_id: UUID, agent_id: UUID, valor: bool, *, actor: UUID | None = None
+    ) -> ControleRecord:
+        exec_rpc(self._client, _SCHEMA, "set_agent_fase_testes", {
+            "p_org_id": str(org_id), "p_agent_id": str(agent_id), "p_fase_testes": bool(valor),
+            "p_actor": str(actor) if actor else None,
+        })
+        return self.get(org_id, agent_id)
+
     @staticmethod
     def _record(row: dict[str, Any]) -> ControleRecord:
         return ControleRecord(
             agent_id=UUID(str(row["id"])), org_id=UUID(str(row["org_id"])),
             modo=row["modo_operacao"], dreno_inatividade_dias=int(row["dreno_inatividade_dias"]),
+            fase_testes=bool(row.get("fase_testes", True)),
         )
 
 

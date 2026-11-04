@@ -56,6 +56,7 @@ __all__ = [
     "CICLO_NOVO_APOS",
     "GATILHOS",
     "STATUS_AGENTE_DESLIGADO",
+    "STATUS_AGENTE_DESLIGADO_PLATAFORMA",
     "STATUS_CONTROLE_INDISPONIVEL",
     "STATUS_CONVERSA_COM_OUTRO_AGENTE",
     "STATUS_CONVERSA_COM_OUTRO_RESPONSAVEL",
@@ -82,6 +83,8 @@ GATILHOS = ("mensagem", "reengajamento")
 #: the response ``status`` the turn route answers (nothing is sent to the lead).
 STATUS_NORMAL = "normal"
 STATUS_AGENTE_DESLIGADO = "agente_desligado"
+#: The PLATFORM kill (Julia v3 §12.1): the agent is off for every org. Same effect as ``agente_desligado``.
+STATUS_AGENTE_DESLIGADO_PLATAFORMA = "agente_desligado_plataforma"
 STATUS_NOVO_LEAD_RECUSADO = "novo_lead_recusado"
 #: The agent is on, but the new-lead admission limit (per hour / per day / the day's budget share) is spent:
 #: SW routes the lead to a human queue, not to silence.
@@ -188,6 +191,7 @@ def decidir(
     agora: datetime,
     *,
     dreno_inatividade_dias: int = DRENO_DIAS_PADRAO,
+    desligado_plataforma: bool | None = False,
 ) -> Decisao:
     """The §5.2 decision table (see the module docstring). Pure.
 
@@ -197,6 +201,15 @@ def decidir(
     """
     if gatilho not in GATILHOS:
         raise ValueError(f"gatilho must be one of {GATILHOS}; got {gatilho!r}")
+    # The platform kill (Julia v3 §12.1) is decided FIRST, whatever the org's mode: ``True`` ->
+    # ``agente_desligado_plataforma`` for every trigger (the lead's message is stored only when the thread exists;
+    # never the model); ``None`` (the switch could not be read) -> 503, fail closed.
+    if desligado_plataforma is None:
+        return Decisao(
+            status=STATUS_CONTROLE_INDISPONIVEL, persistir_inbound=False, executar_llm=False, http_status=503
+        )
+    if desligado_plataforma:
+        return _recusa(STATUS_AGENTE_DESLIGADO_PLATAFORMA, persistir=thread is not None and gatilho == "mensagem")
     if modo not in MODOS:
         return Decisao(
             status=STATUS_CONTROLE_INDISPONIVEL, persistir_inbound=False, executar_llm=False, http_status=503
@@ -333,6 +346,8 @@ def aplicar_controles(
     messages: Any = None,
     agora: datetime | None = None,
     admitir_novo_lead: Callable[[], bool] | None = None,
+    plataforma: Any = None,
+    agent_key: str | None = None,
 ) -> ControleResultado:
     """Read the controls, decide, and apply what the decision implies.
 
@@ -360,6 +375,9 @@ def aplicar_controles(
     for _ in range(_MAX_TENTATIVAS):
         # 1. READ — fail closed: an unreadable control never becomes a reply.
         try:
+            # The platform kill is read FIRST (Julia v3 §12.1); a caller without the store (the Studio eval
+            # driver) is not subject to it.
+            kill = bool(plataforma.get(agent_key).desligado) if plataforma is not None and agent_key else False
             controle = controles.get(org_id, agent_id)
             thread = conversations.find_thread(org_id, channel, channel_ref)
             participantes = threads.list_participantes(org_id, thread.id) if thread is not None else []
@@ -386,6 +404,7 @@ def aplicar_controles(
             gatilho,
             agora,
             dreno_inatividade_dias=controle.dreno_inatividade_dias,
+            desligado_plataforma=kill,
         )
         if decisao.http_status == 503:
             raise ControleIndisponivel()

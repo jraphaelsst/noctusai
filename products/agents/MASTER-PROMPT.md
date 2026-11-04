@@ -50,6 +50,15 @@ products/agents/backend/app/
   controls (SW reads, Studio admin writes; turning ON also needs complete content via `conteudo_status`), hand-off
   notes, opt-in / opt-out, delete-by-lead, and an org-admin thread read that strips system rows, tool results and stamps.
 - Migrations 033 (threads), 034 (controls), 035 (constraint swap — apply only after the backfill is verified).
+- Julia v3 controls (migration 056): `stores/plataforma_controles.py` (`agents.plataforma_controles`, service-role only,
+  one row per agent key) is the PLATFORM kill, toggled by `GET|PUT /api/studio/plataforma/agentes/{key}/controle`
+  (`routers/plataforma_controle_router.py`, `require_platform_admin`, audited `plataforma_desligada|religada`).
+  `decidir(..., desligado_plataforma=)` reads it FIRST: `True` -> status `agente_desligado_plataforma` for every
+  trigger and org (inbound stored only for an existing thread; the turn route skips key/budget/LLM), `None`
+  (unreadable) -> 503 `controle_indisponivel`. `GET /api/channels/agents/{key}/status` adds `desligado_plataforma`.
+  `agents.agents.fase_testes` (default true) rides the org controle GET/PUT (`fase_testes` optional beside `modo`;
+  changing only it applies no mode transition or 409 precondition; audited `fase_testes_alterada`) and renders into
+  the turn state as `controle.fase_testes` via the optional text `contexto.rotulo_fase_testes` (blank = no line).
 
 ### Julia v2 — the channel runtime (A-RT)
 
@@ -352,8 +361,8 @@ model only records criterion values through tools; **score and stage are compute
   a scope's `avaliar_lead` only asks its own criteria, records are shared on the lead), `validade_dias`
   (older records stop counting), type `derivado` (system signals the model cannot record) and
   `identificacao`. Axis config (`parametros.eixos`): `max`, `multiplicadores` (rule x factor), `decaimento`
-  (factor after N days without a lead reply). `parametros.lote_ofertas` = 1 property per offer batch (owner's
-  rule; migration 054 column default; not shown in the editor).
+  (factor after N days without a lead reply). `parametros.lote_ofertas` = up to 3 properties per offer run (owner's
+  rule 2026-11-03; migration 055 column default; 1..5, shown in the editor).
 - **Store timestamps**: every Real-store row mapper parses `timestamptz` through `app.stores._util.db_ts`
   (PostgREST returns ISO strings, the Fakes hold `datetime`; a passthrough 500'd every published-version read).
 - **Stages** are rules in a closed DSL (`todos/algum/nao`, `criterio`, `score` incl. `eixo`, `evento`,

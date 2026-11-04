@@ -428,7 +428,7 @@ class ConformidadeOut(BaseModel):
 #: the model ran; every other value is a control or limit that answered WITHOUT running it (nothing is sent).
 TurnStatus = Literal[
     "respondido", "silencio", "handoff", "encerrado", "concluido",
-    "agente_desligado", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
+    "agente_desligado", "agente_desligado_plataforma", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
     "conversa_com_outro_agente", "reengajamento_ignorado", "lead_opt_out", "limite_atingido",
     # abuse protection (guardrails B5): SW routes each to a human, never to silence
     "limite_taxa", "novo_lead_limitado", "loop_detectado",
@@ -463,6 +463,8 @@ class ChannelAgentStatusOut(BaseModel):
     llm_configurado: bool
     modo: Literal["ligado", "drenando", "desligado"] = "desligado"
     aceita_novos_leads: bool = False
+    #: The platform kill (Julia v3 §12.1): the agent is off for every org, whatever ``modo`` says.
+    desligado_plataforma: bool = False
     threads_abertas: int = 0
     #: Every required text/spec is filled: a turn would not answer 409 ``conteudo_incompleto``.
     conteudo_completo: bool = False

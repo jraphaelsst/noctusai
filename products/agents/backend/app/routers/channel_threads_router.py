@@ -106,7 +106,7 @@ from noctusai_lib.api.auth.session import AuthContext
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["router", "get_thread_store_dep", "get_agent_controle_store_dep"]
+__all__ = ["router", "get_thread_store_dep", "get_agent_controle_store_dep", "get_plataforma_controle_store_dep"]
 
 #: Only an agent on the provider-neutral runtime has the channel controls (same rule as the turn API).
 _CHANNEL_RUNTIME = "llm"
@@ -119,6 +119,13 @@ router = APIRouter(tags=["channel-threads"])
 
 def get_agent_controle_store_dep():
     return get_agent_controle_store(settings)
+
+
+def get_plataforma_controle_store_dep():
+    """DI seam over the platform kill switch store (Julia v3 §12.1)."""
+    from app.stores.plataforma_controles import get_plataforma_controle_store
+
+    return get_plataforma_controle_store(settings)
 
 
 def _err(status_code: int, code: str, detail: str) -> HTTPException:
@@ -434,6 +441,7 @@ def _controle_out(org_id: UUID, agent: Any, controles: Any, threads: Any) -> Con
         modo=controle.modo,
         aceita_novos_leads=controle.aceita_novos_leads,
         dreno_inatividade_dias=controle.dreno_inatividade_dias,
+        fase_testes=controle.fase_testes,
         threads_abertas=drenagem["abertas"],
         drenagem=DrenagemOut(**drenagem),
     )
@@ -481,6 +489,19 @@ def studio_set_agent_controle(
     required org spec filled, no blocking compile warning) -- 409 otherwise;
     turning it OFF never needs anything. Audited with the actor (``modo_alterado``)."""
     agent = _agente_por_chave(studio_store, ctx.org_id, agent_key)
+    try:
+        atual = controles.get(ctx.org_id, agent.id)
+    except NotFound as exc:
+        raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
+    # Only the testing-phase switch changes (modo equal to the current one, no new drain days): no mode
+    # transition, so none of its preconditions apply either.
+    so_fase_testes = (
+        payload.fase_testes is not None and payload.modo == atual.modo
+        and payload.dreno_inatividade_dias in (None, atual.dreno_inatividade_dias)
+    )
+    if so_fase_testes:
+        controles.set_fase_testes(ctx.org_id, agent.id, payload.fase_testes, actor=ctx.user_id)
+        return _controle_out(ctx.org_id, agent, controles, threads)
     if payload.modo != "desligado":
         # The agent resolves through its platform definition (A-CONT): the published version, the org's
         # specs and the compiled content decide whether it may take leads.
@@ -505,6 +526,8 @@ def studio_set_agent_controle(
             ctx.org_id, agent.id, modo=payload.modo,
             dreno_inatividade_dias=payload.dreno_inatividade_dias, actor=ctx.user_id,
         )
+        if payload.fase_testes is not None:
+            controles.set_fase_testes(ctx.org_id, agent.id, payload.fase_testes, actor=ctx.user_id)
     except NotFound as exc:
         raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
     return _controle_out(ctx.org_id, agent, controles, threads)
