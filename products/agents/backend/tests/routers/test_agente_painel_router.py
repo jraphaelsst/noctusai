@@ -10,7 +10,7 @@ from app.schemas.studio_conteudo import FerramentaIn
 from app.schemas.studio_plataforma import PLATAFORMA_KEY_PATTERN
 from app.stores.catalogo import CatalogoEntrada, FakeCatalogoStore
 from app.stores.studio_definitions import FakeStudioDefinitionStore
-from app.stores.studio_geracoes import AREAS
+from app.stores.studio_geracoes import AREAS_CONTEUDO as AREAS
 from app.studio.modelo import AREA_ROTULOS, PASSOS_ASSISTENTE, SECOES_PAGINA
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, seed_org_role
 

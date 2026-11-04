@@ -4,7 +4,7 @@ One house, one model. Every agent (role agents such as Julia / Bia / Renata and 
 the listing and ONE page whose sections come from here -- never a per-key shell. The model is DERIVED, not
 hand-duplicated:
 
-* the 7 content AREAS are :data:`app.stores.studio_geracoes.AREAS` (the Julia v2 canonical model, CONTRACT §2.6) and
+* the 7 content AREAS are :data:`app.stores.studio_geracoes.AREAS_CONTEUDO` (the Julia v2 canonical model, CONTRACT §2.6) and
   each area's fields are read from the item model the generator AND the draft routers validate with
   (:data:`app.schemas.studio_geracao.SAIDAS` -> ``FerramentaIn`` / ``DecisaoIn`` / ``SpecDefIn`` / ...);
 * the ``textos`` area lists the keys of :data:`app.studio.textos_registry.TEXTOS` (keys and categories only, no text);
@@ -29,7 +29,7 @@ from pydantic.fields import FieldInfo
 
 from app.schemas.studio_geracao import SAIDAS, Briefing
 from app.schemas.studio_plataforma import PlataformaAgentCreateRequest
-from app.stores.studio_geracoes import AREAS
+from app.stores.studio_geracoes import AREAS_CONTEUDO
 from app.studio.ferramentas_registry import FERRAMENTAS_CONHECIDAS
 from app.studio.textos_registry import TEXTOS
 
@@ -58,7 +58,7 @@ ORIGENS: tuple[str, ...] = get_args(Origem)
 Tier = Literal["membro", "org_admin", "plataforma"]
 _TIER_ORDEM = {"membro": 0, "org_admin": 1, "plataforma": 2}
 
-#: pt-BR presentation of the canonical areas -- keys MUST equal :data:`AREAS` (test-guarded).
+#: pt-BR presentation of the canonical areas -- keys MUST equal :data:`AREAS_CONTEUDO` (test-guarded).
 AREA_ROTULOS: dict[str, tuple[str, str]] = {
     "secoes": ("Prompt", "As seções do prompt: identidade, objetivo, conduta."),
     "textos": ("Textos do sistema", "Toda frase que chega ao modelo ou ao lead fora do prompt."),
@@ -256,7 +256,7 @@ def _enumeracao(area: str) -> dict[str, Any] | None:
 
 def areas() -> list[dict[str, Any]]:
     out = []
-    for ordem, area in enumerate(AREAS):
+    for ordem, area in enumerate(AREAS_CONTEUDO):
         item, multiplas = _item_da_area(area)
         titulo, descricao = AREA_ROTULOS[area]
         out.append({

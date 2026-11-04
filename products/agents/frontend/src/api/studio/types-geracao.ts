@@ -2,8 +2,8 @@
  * Agent Studio — AI-generated first draft (S3a CONTRACT §1/§2). Shapes mirror the backend contract
  * exactly; `datetime` fields travel as ISO strings.
  */
-export type GeracaoArea = "secoes" | "textos" | "ferramentas" | "decisoes" | "specs" | "skills" | "configuracoes";
-export const GERACAO_AREAS: GeracaoArea[] = ["secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes"];
+export type GeracaoArea = "secoes" | "textos" | "ferramentas" | "decisoes" | "specs" | "skills" | "configuracoes" | "evals";
+export const GERACAO_AREAS: GeracaoArea[] = ["secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes", "evals"];
 export const GERACAO_AREA_LABEL: Record<GeracaoArea, string> = {
   secoes: "Seções do prompt",
   textos: "Textos do sistema",
@@ -12,6 +12,7 @@ export const GERACAO_AREA_LABEL: Record<GeracaoArea, string> = {
   specs: "Especificações",
   skills: "Skills",
   configuracoes: "Configurações",
+  evals: "Casos de avaliação",
 };
 
 export type BriefingCanal = "whatsapp" | "web" | "interno";
@@ -65,6 +66,8 @@ export interface GeracaoOut {
   concluido_em: string | null;
   erro: string | null;
   areas: GeracaoAreaOut[];
+  /** The exemplar agent the run imitates (`null` = every exemplar). */
+  referencia?: string | null;
 }
 
 export interface GeracoesList {
@@ -77,6 +80,8 @@ export interface GeracaoCreateInput {
   areas?: GeracaoArea[];
   forcar?: boolean;
   limite_usd?: number;
+  /** Key of an EXEMPLAR agent to imitate instead of every exemplar (422 `referencia_invalida` otherwise). */
+  referencia?: string;
 }
 
 /** `GET /agents/{key}` completeness signal (null for legado agents). */

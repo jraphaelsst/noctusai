@@ -18,7 +18,7 @@ from app.schemas.studio_conteudo import CHAVE_TEXTO_PATTERN, DecisaoIn, Ferramen
 from app.studio.models import LIMITS
 from noctusai_lib.api import StrictHttpModel
 
-Area = Literal["secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes"]
+Area = Literal["secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes", "evals"]
 GeracaoStatus = Literal["pendente", "executando", "concluida", "parcial", "falhou", "cancelada"]
 AreaStatus = Literal["pendente", "executando", "concluida", "falhou", "pulado", "cancelada"]
 Canal = Literal["whatsapp", "web", "interno"]
@@ -38,10 +38,17 @@ class Briefing(StrictHttpModel):
     exemplos: str | None = Field(default=None, max_length=4000, title="Exemplos")
 
 
+#: A platform definition key (``PLATAFORMA_KEY_PATTERN``; repeated here because the platform schemas import this module).
+REFERENCIA_PATTERN = r"^[a-z0-9][a-z0-9-]{1,62}$"
+
+
 class GeracaoCreateRequest(StrictHttpModel):
     briefing: Briefing
     areas: list[Area] | None = None
     forcar: bool = False
+    #: The key of an EXEMPLAR agent (``agents.exemplar``) the run imitates, instead of every exemplar. 422
+    #: ``referencia_invalida`` when it is not one.
+    referencia: str | None = Field(default=None, pattern=REFERENCIA_PATTERN, title="Agente de referência")
     limite_usd: float = Field(default=LIMITE_USD_PADRAO, gt=0, le=LIMITE_USD_PADRAO)
 
 
@@ -82,6 +89,8 @@ class GeracaoOut(BaseModel):
     concluido_em: datetime | None
     erro: str | None
     areas: list[AreaOut]
+    #: The exemplar the run imitates (``null`` = every exemplar).
+    referencia: str | None = None
 
 
 class GeracoesOut(BaseModel):
@@ -141,6 +150,29 @@ class SaidaSpecs(_Saida):
     specs: list[SpecDefIn] = Field(..., max_length=40)
 
 
+class CriteriosGerados(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    deve: list[str] = Field(default_factory=list, max_length=12)
+    nao_deve: list[str] = Field(default_factory=list, max_length=12)
+
+
+class EvalGerado(BaseModel):
+    """One behaviour eval case drafted by the generator (same fields as ``EvalCaseCreateRequest`` for a
+    ``comportamento`` case). Fixtures are synthetic: ``geracao_itens`` refuses personal data per case."""
+
+    model_config = ConfigDict(extra="ignore")
+    slug: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    titulo: str = Field(..., min_length=1, max_length=200)
+    entrada: str = Field(..., min_length=1, max_length=2000)
+    contexto: str | None = Field(default=None, max_length=2000)
+    criterios: CriteriosGerados
+    tags: list[str] = Field(default_factory=list, max_length=10)
+
+
+class SaidaEvals(_Saida):
+    evals: list[EvalGerado] = Field(..., min_length=1, max_length=40)
+
+
 class SkillEscolhida(BaseModel):
     model_config = ConfigDict(extra="ignore")
     chave: str = Field(..., max_length=64, pattern=SLUG_PATTERN)
@@ -165,5 +197,5 @@ class SaidaConfiguracoes(_Saida):
 #: Area -> the model with its output schema (``model_json_schema()`` is handed to the generator as DATA).
 SAIDAS: dict[str, type[_Saida]] = {
     "secoes": SaidaSecoes, "textos": SaidaTextos, "ferramentas": SaidaFerramentas, "decisoes": SaidaDecisoes,
-    "specs": SaidaSpecs, "skills": SaidaSkills, "configuracoes": SaidaConfiguracoes,
+    "specs": SaidaSpecs, "skills": SaidaSkills, "configuracoes": SaidaConfiguracoes, "evals": SaidaEvals,
 }

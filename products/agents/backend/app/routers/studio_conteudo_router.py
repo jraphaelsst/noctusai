@@ -101,6 +101,7 @@ from app.routers.studio_geracoes_router import get_geracao_agendador_dep, get_ge
 from app.studio import geracao as engine
 from app.studio.plataforma import ensure_definicao
 from app.studio.resolucao import compile_for_org, conteudo_status, resolve_agent_for_org
+from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.api.auth.session import AuthContext, ProductTokenAdmin, require_scopes
 
@@ -614,7 +615,7 @@ def _definicao_out(agent, geracao=None) -> PlataformaAgentOut:
         definition_scope=agent.definition_scope, conteudo_modo=agent.conteudo_modo, runtime=agent.runtime,
         owner_product=agent.owner_product, usa_canais=agent.usa_canais,
         escopo_qualificacao=agent.escopo_qualificacao, padrao_qualificacao=agent.padrao_qualificacao,
-        rascunho_padrao=agent.rascunho_padrao, instanciavel=agent.instanciavel, papel=agent.papel, geracao=geracao,
+        rascunho_padrao=agent.rascunho_padrao, instanciavel=agent.instanciavel, papel=agent.papel, exemplar=agent.exemplar, geracao=geracao,
     )
 
 
@@ -712,6 +713,37 @@ def update_platform_definition_config(
             agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
             {"kind": "definicao", "campos": sorted(fields)}, {"kind": "definicao", "campos": sorted(fields)},
         )
+    return _definicao_out(updated)
+
+
+class ExemplarRequest(StrictHttpModel):
+    exemplar: bool
+
+
+@router.put("/plataforma/agentes/{key}/exemplar", response_model=PlataformaAgentOut)
+def set_platform_definition_exemplar(
+    key: str, payload: ExemplarRequest, ctx: AuthContext = Depends(require_platform_admin),
+    store=Depends(get_studio_definition_store_dep),
+) -> PlataformaAgentOut:
+    """Mark (or unmark) a platform definition as an EXEMPLAR the AI generator may imitate (``referencia`` of a
+    generation). A platform ADMIN session only -- never the content token: an exemplar's text is platform IP that
+    the generator reads, so who decides which agents are exemplars is a human platform decision. The generator
+    itself cannot be an exemplar. Idempotent; audited when it changes."""
+    agent = _definicao_ou_404(store, key)
+    if payload.exemplar and agent.papel == "gerador":
+        raise _flat(409, "gerador_nao_pode_ser_exemplar", "O agente gerador não pode ser exemplar.")
+    if agent.exemplar == payload.exemplar:
+        return _definicao_out(agent)
+    try:
+        updated = store.update_definicao(agent.org_id, key, {"exemplar": payload.exemplar})
+    except StudioConflict as exc:
+        raise _conflict_flat(exc) from exc
+    except ValueError as exc:
+        raise _flat(422, "invalid_field", str(exc)) from exc
+    store.append_audit(
+        agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
+        {"kind": "exemplar", "exemplar": agent.exemplar}, {"kind": "exemplar", "exemplar": updated.exemplar},
+    )
     return _definicao_out(updated)
 
 

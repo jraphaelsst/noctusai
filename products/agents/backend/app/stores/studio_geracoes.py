@@ -19,6 +19,7 @@ from app.stores.errors import NotFound
 
 __all__ = [
     "AREAS",
+    "AREAS_CONTEUDO",
     "ACTIVE_STATUSES",
     "TERMINAL_STATUSES",
     "LIMITE_USD_MAX",
@@ -31,7 +32,11 @@ __all__ = [
 ]
 
 _SCHEMA = "agents"
-AREAS = ("secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes")
+#: The areas that are rows of the DRAFT VERSION (the Studio content model, ``app.studio.modelo``).
+AREAS_CONTEUDO = ("secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes")
+#: Everything the AI generator can draft: the content areas + the agent's behaviour eval cases (058), which belong to
+#: the AGENT, not to a version.
+AREAS = (*AREAS_CONTEUDO, "evals")
 ACTIVE_STATUSES = ("pendente", "executando")
 TERMINAL_STATUSES = ("concluida", "parcial", "falhou", "cancelada")
 LIMITE_USD_MAX = 5.0
@@ -65,6 +70,8 @@ class GeracaoRecord:
     concluido_em: datetime | None
     created_at: datetime
     updated_at: datetime
+    #: 058: the exemplar (key) the run imitates; ``None`` = every exemplar.
+    referencia: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,7 @@ class GeracaoStore(Protocol):
     def create_geracao(
         self, org_id: UUID, agent_id: UUID, *, briefing: dict[str, Any], areas: list[str], forcar: bool,
         modelo: str, provider: str, limite_usd: float, versao_gerador: int | None, criado_por: UUID,
+        referencia: str | None = None,
     ) -> GeracaoRecord:
         """The run (``pendente``) + one ``pendente`` row per area. ``StudioConflict('geracao_em_andamento')`` when the
         agent already has a ``pendente|executando`` run; ``ValueError`` for a bad area / a cap above US$ 5."""
@@ -146,6 +154,7 @@ class FakeGeracaoStore:
 
     def create_geracao(
         self, org_id, agent_id, *, briefing, areas, forcar, modelo, provider, limite_usd, versao_gerador, criado_por,
+        referencia=None,
     ):
         _check_create(areas, limite_usd)
         if any(g.agent_id == agent_id and g.status in ACTIVE_STATUSES for g in self._geracoes.values()):
@@ -156,7 +165,7 @@ class FakeGeracaoStore:
             areas_solicitadas=tuple(areas), forcar=forcar, versao_gerador=versao_gerador, modelo=modelo,
             provider=provider, plano=None, custo_usd=0.0, limite_usd=float(limite_usd), erro=None,
             aprendizado=None, criado_por=criado_por, iniciado_em=None, concluido_em=None, created_at=now,
-            updated_at=now,
+            updated_at=now, referencia=referencia,
         )
         self._geracoes[rec.id] = rec
         for a in areas:
@@ -249,6 +258,7 @@ class SupabaseGeracaoStore:
             limite_usd=_float(r["limite_usd"]), erro=r.get("erro"), aprendizado=r.get("aprendizado"),
             criado_por=UUID(str(r["criado_por"])), iniciado_em=r.get("iniciado_em"),
             concluido_em=r.get("concluido_em"), created_at=r["created_at"], updated_at=r["updated_at"],
+            referencia=r.get("referencia"),
         )
 
     @staticmethod
@@ -262,12 +272,14 @@ class SupabaseGeracaoStore:
 
     def create_geracao(
         self, org_id, agent_id, *, briefing, areas, forcar, modelo, provider, limite_usd, versao_gerador, criado_por,
+        referencia=None,
     ):
         _check_create(areas, limite_usd)
         resp = exec_query(self._t("geracoes").insert({
             "org_id": str(org_id), "agent_id": str(agent_id), "status": "pendente", "briefing": briefing,
             "areas_solicitadas": list(areas), "forcar": forcar, "versao_gerador": versao_gerador, "modelo": modelo,
             "provider": provider, "limite_usd": float(limite_usd), "criado_por": str(criado_por),
+            "referencia": referencia,
         }), unique_code="geracao_em_andamento")
         rec = self._geracao(resp.data[0])
         exec_query(self._t("geracao_areas").insert([
@@ -290,7 +302,7 @@ class SupabaseGeracaoStore:
         return [self._geracao(r) for r in resp.data or []]
 
     def list_areas(self, org_id, geracao_id):
-        # postgrest-unbounded-ok: at most len(AREAS)=7 rows per run (UNIQUE geracao_id, area).
+        # postgrest-unbounded-ok: at most len(AREAS)=8 rows per run (UNIQUE geracao_id, area).
         resp = (
             self._t("geracao_areas").select("*").eq("org_id", str(org_id)).eq("geracao_id", str(geracao_id)).execute()
         )

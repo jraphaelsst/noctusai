@@ -24,7 +24,9 @@ export interface PlatformAgentCreated {
   owner_product?: string | null;
   usa_canais?: boolean;
   instanciavel?: boolean;
-  papel?: "gerador" | "exemplar" | null;
+  papel?: "gerador" | null;
+  /** The AI generator may imitate this definition (a platform admin toggles it). */
+  exemplar?: boolean;
   /** S3a: non-null iff a briefing was sent. */
   geracao?: GeracaoOut | null;
 }

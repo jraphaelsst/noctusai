@@ -80,6 +80,9 @@ CONTENT_WRITE_ROUTES = {
     ("GET", "/api/studio/agents/{key}/geracoes/{geracao_id}"),
     ("POST", "/api/studio/agents/{key}/geracoes/{geracao_id}/areas/{area}/repetir"),
     ("POST", "/api/studio/agents/{key}/geracoes/{geracao_id}/cancelar"),
+    # the complete-agent recipe (agent-creation guide): the readiness read and the explicit skill re-pin
+    ("GET", "/api/studio/agents/{key}/prontidao"),
+    ("POST", "/api/studio/agents/{key}/draft/skills-biblioteca/atualizar"),
 }
 
 #: Deleting an agent: reachable ONLY with the dedicated `studio:agent-delete` scope (minted with

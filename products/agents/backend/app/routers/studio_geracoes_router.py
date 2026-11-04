@@ -23,6 +23,7 @@ from app.dependencies import (
 )
 from app.routers.studio_agents_router import (
     actor_id,
+    get_eval_store_dep,
     get_knowledge_catalog_dep,
     get_studio_definition_store_dep,
 )
@@ -57,9 +58,9 @@ def get_geracao_agendador_dep(request: Request) -> Callable[[Any], None]:
 def get_geracao_deps_dep(
     store=Depends(get_studio_definition_store_dep), geracoes=Depends(get_geracao_store_dep),
     skills=Depends(get_skills_store_dep), catalog=Depends(get_knowledge_catalog_dep),
-    chat=Depends(get_geracao_chat_dep),
+    chat=Depends(get_geracao_chat_dep), evals=Depends(get_eval_store_dep),
 ) -> engine.Dependencias:
-    return engine.Dependencias(studio=store, geracoes=geracoes, skills=skills, catalog=catalog, chat=chat)
+    return engine.Dependencias(studio=store, geracoes=geracoes, skills=skills, catalog=catalog, chat=chat, evals=evals)
 
 
 def _http(exc: engine.GeracaoErro) -> HTTPException:
@@ -92,7 +93,7 @@ async def criar_geracao(
     ator = actor_id(ctx)
     rec, agent, areas = await _sync(lambda: engine.iniciar(
         deps, org_id=ctx.org_id, key=key, briefing=payload.briefing, areas=payload.areas, forcar=payload.forcar,
-        limite_usd=payload.limite_usd, ator=ator))
+        limite_usd=payload.limite_usd, ator=ator, referencia=payload.referencia))
     _agendar(schedule, deps, rec, agent, areas)
     return (await _sync(lambda: engine.montar_saida(deps, agent, [rec])))[0]
 

@@ -97,7 +97,7 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
-from app.studio.compiler import CONTEUDO_CODIGOS
+from app.studio.prontidao import avaliar as avaliar_prontidao, juiz_aprovado, recusa_de_compilacao
 from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
 from app.studio.eval_mecanismo_service import (
@@ -162,6 +162,22 @@ def get_mecanismo_resumo_dep(mecanismo=Depends(get_mecanismo_store_dep)):
             orcamento_excedido=run.orcamento_excedido, casos_total=run.total_casos, casos_aprovados=run.casos_aprovados)
 
     return _ler
+
+
+def get_eval_store_dep():
+    """Seam over ``get_eval_store`` (the eval cases/runs). Lives HERE -- not in ``studio_evals_router``, which imports
+    this module -- because publish + the readiness view count the cases too; ``studio_evals_router`` re-exports the
+    same function object, so one ``dependency_overrides`` key reaches every consumer."""
+    from app.stores.studio_evals import get_eval_store
+
+    return get_eval_store(settings)
+
+
+def get_prontidao_controles_dep():
+    """Seam over the agent-controls store (``ligado|drenando|desligado``), which the readiness view reads."""
+    from app.stores.agent_controles import get_agent_controle_store
+
+    return get_agent_controle_store(settings)
 
 
 def get_eval_gate_dep() -> EvalGate:
@@ -950,6 +966,8 @@ def publish_draft(
     padroes=Depends(get_padrao_store_dep),
     geracoes=Depends(get_geracao_store_dep),
     skills=Depends(get_skills_store_dep),
+    evals=Depends(get_eval_store_dep),
+    controles=Depends(get_prontidao_controles_dep),
 ) -> VersionDetailOut:
     """§D1 publish + §J2.1 gate: pass ⇔ a run exists ∧ status='concluida' ∧
     completa (covered every active case, H1) ∧ total >= 1 ∧
@@ -959,7 +977,21 @@ def publish_draft(
     The DB function re-checks all of it (plus "the agent still has an
     active case"), refuses ``draft_changed`` if the draft moved since the
     hash below was stamped (M1), and stores the proof-of-use prompt in the
-    same transaction as the flip."""
+    same transaction as the flip.
+
+    Every refusal below carries ``prontidao`` -- the same item list ``GET .../prontidao`` returns -- so the author sees
+    EVERYTHING still owed, not only the first refusal. The decisions are the readiness module's own predicates
+    (``recusa_de_compilacao`` / ``juiz_aprovado`` / ``decidir_portao``): one definition, two readers."""
+
+    def prontidao(compiled_: Any = None) -> list[dict[str, Any]] | None:
+        try:
+            return [i.to_dict() for i in avaliar_prontidao(
+                store=store, catalog=catalog, org_id=ctx.org_id, agent=agent, draft=draft, gate=gate, padroes=padroes,
+                skills=skills, geracoes=geracoes, evals=evals, controles=controles, compiled=compiled_).itens]
+        except Exception:  # noqa: BLE001 -- the refusal itself must still be delivered
+            logger.exception("agents.studio.publish.prontidao_indisponivel agent_id=%s", agent.id)
+            return None
+
     agent = resolve_agent(store, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent)
     if ctx.caller_kind == "product" and payload.override_reason is not None:
@@ -973,16 +1005,22 @@ def publish_draft(
     # hash is judged: the pin is part of what the hash covers.
     from app.routers.studio_padrao_router import estampar_padrao_no_rascunho
 
-    draft = estampar_padrao_no_rascunho(store, padroes, ctx.org_id, agent, draft)
+    try:
+        draft = estampar_padrao_no_rascunho(store, padroes, ctx.org_id, agent, draft)
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and exc.detail.get("code") == "qualificacao_indisponivel":
+            raise http_error(409, "qualificacao_indisponivel", exc.detail["detail"], prontidao=prontidao()) from exc
+        raise
     draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id, strict=True)
-    if compiled.bloqueado:
+    recusa = recusa_de_compilacao(compiled)
+    if recusa is not None:
         # Missing content (a required text, a tool/decision/spec hole) is its own code: the author
         # fills a row; nothing in code ever substitutes a default.
-        incompleto = any(w.bloqueante and w.codigo in CONTEUDO_CODIGOS for w in compiled.avisos)
+        incompleto = recusa == "conteudo_incompleto"
         raise http_error(
-            409, "conteudo_incompleto" if incompleto else "compile_blocked",
+            409, recusa,
             "O conteúdo do agente está incompleto." if incompleto else "O prompt compilado tem avisos bloqueantes.",
-            avisos=[w.to_dict() for w in compiled.avisos],
+            avisos=[w.to_dict() for w in compiled.avisos], prontidao=prontidao(compiled),
         )
 
     # Julia v2 A-EVAL (CONTRACT 3.5 E4): the mechanism suite is a HARD gate with NO override. It runs ahead of
@@ -993,22 +1031,13 @@ def publish_draft(
         raise http_error(
             409, "mecanismo_reprovado",
             "Publicar exige a suíte de mecanismo aprovada (100% pass^k, modelo real) para o prompt atual.",
-            motivo=portao.codigo, hash_atual=compiled.hash,
+            motivo=portao.codigo, hash_atual=compiled.hash, prontidao=prontidao(compiled),
         )
     # The judge suite is advisory for an agent under the mechanism gate unless it opted in to blocking.
     comportamento_consultivo = mecanismo.exigido and not mecanismo.comportamento_bloqueia
 
     run = gate.latest_concluded_run(ctx.org_id, draft.id)
-    passes = (
-        run is not None
-        and run.status == "concluida"
-        and run.completa
-        and run.total >= 1
-        and run.compiled_hash == compiled.hash
-        and run.score is not None
-        and run.score >= agent.publicacao_limiar
-    )
-    if passes:
+    if juiz_aprovado(run, compiled.hash, agent.publicacao_limiar):
         eval_run_id, override_reason = run.id, None
     elif comportamento_consultivo:
         # Audited as `publicado_override` with the mechanism run as the reason (the DB function's only
@@ -1029,6 +1058,7 @@ def publish_draft(
                 if run is not None
                 else None
             ),
+            prontidao=prontidao(compiled),
         )
 
     with store_errors():
@@ -1054,7 +1084,7 @@ def publish_draft(
         from app.studio.geracao import Dependencias, registrar_aprendizado
 
         registrar_aprendizado(
-            Dependencias(studio=store, geracoes=geracoes, skills=skills, catalog=catalog, chat=None), agent, published)
+            Dependencias(studio=store, geracoes=geracoes, skills=skills, catalog=catalog, chat=None, evals=evals), agent, published)
     except Exception:  # noqa: BLE001 -- learning is advisory; the failure must be seen
         logger.exception("agents.studio.publish.aprendizado_nao_registrado version_id=%s", published.id)
     return _version_detail(store, gate, ctx.org_id, published)

@@ -142,4 +142,4 @@ class TestFakeAgreesWithTheReal:
         assert fake.update_area(ORG, rec.id, "secoes", {"status": "executando"}, only_if_status=("cancelada",)) is None
         with pytest.raises(NotFound):
             fake.get_geracao(uuid4(), rec.id)
-        assert set(AREAS) == {"secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes"}
+        assert set(AREAS) == {"secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes", "evals"}

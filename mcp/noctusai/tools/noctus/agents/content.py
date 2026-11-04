@@ -55,15 +55,26 @@ Lifecycle actions (no payload, no ``kind``; ``agent`` = the key; dry-run unless 
   completeness). Idempotent (sends ``reutilizar=true``; the route alone answers 409 for an existing key). ``payload_path`` (a JSON file OUTSIDE git, optional) carries the rest of the body:
   ``{nome (required for a NEW key), descricao?, runtime?, owner_product?, escopo_qualificacao?, padrao_qualificacao?,
   rascunho_padrao? ({provider, model, effort, max_turns, idioma, tool_policy}), instanciavel?, papel?
-  (gerador|exemplar), briefing?, limite_usd?}``; with ``briefing`` an AI generation of the draft starts right away.
+  (gerador), briefing?, limite_usd?}``; with ``briefing`` an AI generation of the draft starts right away. (Whether an
+  agent is an EXEMPLAR the generator may imitate is a platform-ADMIN decision -- ``PUT /api/studio/plataforma/agentes/{key}/exemplar``
+  in the UI/API; this token cannot flip it.)
 * ``configurar_agente`` -- ``PATCH /api/studio/plataforma/agents/{key}`` with the same data fields as a payload
   (runtime, owner product, qualification scope/standard, first-draft settings, role, instantiability); ``definicao``
   reads them back. Everything the old code registry carried is DATA here, set the way the UI sets it.
 * ``gerar`` -- ``POST /api/studio/agents/{key}/geracoes``: an AI-generated first DRAFT from a briefing
-  (``payload_path`` = ``{briefing, areas?, forcar?, limite_usd?}``; at most US$ 5 per run; the generator is the
-  platform agent whose ``papel`` is ``gerador``). Dry-run makes NO request. Runs in the background; never publishes.
+  (``payload_path`` = ``{briefing, areas?, forcar?, limite_usd?, referencia?}``; ``areas`` may include ``evals`` -- the
+  generator drafts behaviour eval cases too; ``referencia`` = the key of an EXEMPLAR agent to imitate instead of all of
+  them; at most US$ 5 per run; the generator is the platform agent whose ``papel`` is ``gerador``). Dry-run makes NO request. Runs in the background; never publishes.
   ``geracao`` (``chave`` = the run id, empty = the list of runs) reads progress: per-area status, cost, lacunas, and
   which generated items are still ``gerado`` vs ``editado`` by the author.
+* ``prontidao`` -- ``GET /api/studio/agents/{key}/prontidao`` (read): everything the DRAFT still owes before it can be
+  published, as items ``{codigo, grupo, severidade (bloqueante|aviso|ok), mensagem, acao_sugerida, recusa_publicacao,
+  detalhe}`` plus ``pronto_para_publicar`` (true iff publish would not refuse it; the eval run on the current hash
+  included). The same list rides in every publish 409. Run it before asking a human to publish.
+* ``atualizar_skills`` -- ``POST /api/studio/agents/{key}/draft/skills-biblioteca/atualizar``: re-pin EVERY library skill
+  of the draft to its newest PUBLISHED version (the explicit action behind the "new version available" indicator).
+  Dry-run (default) READS the pins and returns what would move (``atualizaria``); ``confirm=True`` writes and returns
+  the diff (``atualizadas``). Pins keep their gates/order; the draft hash changes, so evaluate again. Draft only.
 * ``conceder`` -- ``POST /api/studio/plataforma/agents/{key}/grants`` with ``payload_path`` = ``{"org_id": "<uuid>"}``:
   the ONLY sanctioned way to give ONE org an instance of a closed (non-``instanciavel``) definition -- org/app
   configuration never reaches another org by default. Idempotent, audited; ``concessoes`` lists the granted orgs.
@@ -99,13 +110,14 @@ _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 ACTIONS = ("list", "get", "set")
 LIFECYCLE_ACTIONS = (
     "criar_agente", "excluir_agente", "configurar_agente", "definicao", "gerar", "geracao", "conceder", "concessoes",
+    "prontidao", "atualizar_skills",
 )
 _DEFINICAO_CAMPOS = (
     "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao", "rascunho_padrao",
     "instanciavel", "papel",
 )
 _CRIAR_CAMPOS = (*_DEFINICAO_CAMPOS, "briefing", "limite_usd")
-_GERAR_CAMPOS = ("briefing", "areas", "forcar", "limite_usd")
+_GERAR_CAMPOS = ("briefing", "areas", "forcar", "limite_usd", "referencia")
 _AGENT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
@@ -738,7 +750,7 @@ def _lifecycle(
     confirmed call, so a pre-read here would only be a second, stale opinion."""
     if not agent or not _AGENT_KEY_RE.match(agent):
         raise ContentError("agent_invalido", "Informe 'agent' (a chave do agente: letras, digitos, '_', '-', '.').")
-    reading = action in ("definicao", "geracao", "concessoes")
+    reading = action in ("definicao", "geracao", "concessoes", "prontidao")
     body: Any = None
     if action == "criar_agente":
         # ``reutilizar``: the route answers 409 ``agente_ja_existe`` for an existing key unless asked to reuse it;
@@ -756,6 +768,10 @@ def _lifecycle(
         if not isinstance(body.get("briefing"), dict):
             raise ContentError("payload_invalido", "O payload de gerar precisa de 'briefing' (objeto).")
         method, path = "POST", f"/api/studio/agents/{_q(agent)}/geracoes"
+    elif action == "prontidao":
+        method, path = "GET", f"/api/studio/agents/{_q(agent)}/prontidao"
+    elif action == "atualizar_skills":
+        method, path = "POST", f"/api/studio/agents/{_q(agent)}/draft/skills-biblioteca/atualizar"
     elif action == "conceder":
         body = _only(_load_payload(payload_path), ("org_id",), "conceder")
         if not isinstance(body.get("org_id"), str) or not re.fullmatch(r"[0-9a-fA-F-]{36}", body["org_id"]):
@@ -772,6 +788,19 @@ def _lifecycle(
     base = _base_url(base_url)
     token = _token()
     head = {"action": action, "agent": agent, "alvo": base, "requisicao": f"{method} {path}"}
+    if action == "atualizar_skills" and not confirm:
+        # The one dry-run that READS: the diff is cheap and exact (a pin moves iff it carries ``nova_versao``).
+        api = _Api(base, token, transport)
+        try:
+            pins = api.call("GET", f"/api/studio/agents/{_q(agent)}/draft/skills-biblioteca")
+        finally:
+            api.close()
+        mover = [{"skill": i["skill"], "de": i["versao"], "para": i["nova_versao"]}
+                 for i in pins["items"] if i.get("nova_versao") is not None]
+        return {"status": "planned", **head, "dry_run": True, "atualizaria": mover,
+                "ja_atuais": [i["skill"] for i in pins["items"] if i.get("nova_versao") is None],
+                "mensagem": "Nada foi feito. Repita com confirm=True para fixar cada skill na versão publicada mais nova "
+                            "(muda o hash do rascunho: avalie de novo antes de publicar)."}
     if not reading and not confirm:
         planned = {
             "criar_agente": "Cria a definição vazia (rascunho sem texto); com briefing no payload, também inicia a geração.",
@@ -797,6 +826,10 @@ def _lifecycle(
     if action == "configurar_agente":
         return {"status": "updated", **head, "dry_run": False, "agente": result,
                 "mensagem": "Dados da definição atualizados. Instâncias já criadas mantêm o runtime/produto com que nasceram."}
+    if action == "atualizar_skills":
+        return {"status": "updated", **head, "dry_run": False, "atualizadas": result["atualizadas"],
+                "ja_atuais": result["ja_atuais"],
+                "mensagem": "Pins atualizados no rascunho (o hash mudou: rode a avaliação de novo). Nada foi publicado."}
     if action == "conceder":
         return {"status": "granted", **head, "dry_run": False, "concessoes": result,
                 "mensagem": "Concessão registrada. A organização passa a poder ter uma instância (criada no primeiro uso)."}
@@ -857,9 +890,11 @@ def register(server) -> None:
             "action=criar_agente (agent=<any valid key>: creates the EMPTY platform definition; optional payload_path with nome, "
             "runtime, owner_product, escopo/padrao_qualificacao, rascunho_padrao, instanciavel, papel and a briefing that "
             "also starts an AI generation) | configurar_agente (payload_path: the same data fields, PATCH) | definicao "
-            "(reads them) | gerar (payload_path = {briefing, areas?, forcar?, limite_usd? <= 5}: AI-generated first DRAFT, "
-            "background, never publishes) | geracao (chave = run id, empty = list: progress, cost, lacunas, gerado vs "
-            "editado) | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
+            "(reads them) | gerar (payload_path = {briefing, areas? (incl. evals), forcar?, limite_usd? <= 5, referencia? = "
+            "an exemplar agent key}: AI-generated first DRAFT, background, never publishes) | geracao (chave = run id, "
+            "empty = list: progress, cost, lacunas, gerado vs editado) | prontidao (reads what the draft still owes before "
+            "publish: blocking items + advisories + pronto_para_publicar) | atualizar_skills (re-pin every library skill "
+            "of the draft to its newest published version; dry-run lists what would move) | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
             "refuses published/in-use/on agents) - writes are dry-run unless confirm=True. set reads a JSON payload from payload_path (a file "
             "OUTSIDE git) and is a DRY-RUN returning a unified diff unless confirm=True. Token from "
             "NOCTUS_AGENTS_CONTENT_TOKEN (studio:content-write), never echoed. base_url = the target environment "

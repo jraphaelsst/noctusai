@@ -16,6 +16,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.dependencies import get_auth_context, get_geracao_chat_dep, get_geracao_store_dep, get_skills_store_dep
+from app.routers.studio_agents_router import get_eval_store_dep
+from app.stores.studio_definitions_conteudo import DecisaoInput, FerramentaInput
+from app.stores.studio_evals import EvalCaseInput, FakeEvalStore
 from app.routers.studio_geracoes_router import get_geracao_agendador_dep
 from app.stores.skills_biblioteca import FakeSkillsBibliotecaStore
 from app.stores.studio_definitions import SectionInput
@@ -31,7 +34,7 @@ from tests.studio.rt.fakes import publish
 
 PLAT = "/api/studio/plataforma"
 AGENTS = "/api/studio/agents"
-AREAS = ("secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes")
+AREAS = ("secoes", "textos", "ferramentas", "decisoes", "specs", "skills", "configuracoes", "evals")
 BRIEFING = {
     "nome": "Atendente Teste", "objetivo": "Atender clientes de uma loja de bicicletas.", "publico": "Ciclistas urbanos",
     "canal": "web",
@@ -56,6 +59,13 @@ SAIDAS: dict[str, Any] = {
     "skills": {"skills": [
         {"chave": "qualificar", "obrigatoria_para": [], "racional": "r"}, {"chave": "faltante", "racional": "r2"}]},
     "configuracoes": {"effort": "low", "max_turns": 12, "idioma": "pt-BR"},
+    "evals": {"evals": [
+        {"slug": "cliente-pede-preco", "titulo": "Cliente pede preço", "entrada": "Quanto custa a bicicleta aro 29?",
+         "criterios": {"deve": ["informa que consulta o preço antes de responder"], "nao_deve": ["inventa um valor"]},
+         "tags": ["preco"]},
+        {"slug": "cliente-com-dados", "titulo": "Com telefone", "entrada": "Meu zap é (11) 91234-5678",
+         "criterios": {"deve": ["x"], "nao_deve": []}},
+    ]},
 }
 
 
@@ -106,12 +116,14 @@ def gen(studio):
     saved_cfg = llm_client._active_config
     configure_llm(LLMConfig(key_provider=lambda *_a, **_k: "test-key"))
     geracoes, skills, chat, pending = FakeGeracaoStore(), FakeSkillsBibliotecaStore(), ScriptedChat(), []
+    evals = FakeEvalStore()
     app = studio.raw.app
     app.dependency_overrides[get_geracao_store_dep] = lambda: geracoes
     app.dependency_overrides[get_skills_store_dep] = lambda: skills
     app.dependency_overrides[get_geracao_chat_dep] = lambda: chat
+    app.dependency_overrides[get_eval_store_dep] = lambda: evals
     app.dependency_overrides[get_geracao_agendador_dep] = lambda: pending.append
-    w = SimpleNamespace(studio=studio, geracoes=geracoes, skills=skills, chat=chat, pending=pending)
+    w = SimpleNamespace(studio=studio, geracoes=geracoes, skills=skills, chat=chat, pending=pending, evals=evals)
 
     def rodar() -> None:
         jobs, pending[:] = list(pending), []
@@ -119,7 +131,7 @@ def gen(studio):
             asyncio.run(coro)
 
     w.rodar = rodar
-    w.deps = engine.Dependencias(studio=studio.store, geracoes=geracoes, skills=skills, catalog=studio.catalog, chat=chat)
+    w.deps = engine.Dependencias(studio=studio.store, geracoes=geracoes, skills=skills, catalog=studio.catalog, chat=chat, evals=evals)
     _gerador(w)
     _exemplar(w)
     sk = skills.criar_skill("qualificar", "Qualificar", None)
@@ -155,7 +167,8 @@ def _gerador(w, *, sem: tuple[str, ...] = (), publicar: bool = True, key: str = 
 
 def _exemplar(w):
     s = w.studio
-    s.post(f"{PLAT}/agents", json={"key": "modelo", "nome": "Modelo", "papel": "exemplar"})
+    s.post(f"{PLAT}/agents", json={"key": "modelo", "nome": "Modelo"})
+    assert s.put(f"{PLAT}/agentes/modelo/exemplar", json={"exemplar": True}).status_code == 200
     agent = s.store.get_agent(DEFAULT_ORG_ID, "modelo")
     draft = s.store.get_draft(DEFAULT_ORG_ID, agent.id)
     s.store.replace_sections(DEFAULT_ORG_ID, draft.id, [SectionInput("persona", "Persona", 1, "texto do exemplar " * 40)])
@@ -270,7 +283,7 @@ class TestHappyPath:
         done = _tudo(gen)
         por_chamada = (1000 * 5.0 + 500 * 25.0) / 1_000_000  # opus 5: 5/1M in, 25/1M out
         assert _area(done, "secoes")["custo_usd"] == pytest.approx(por_chamada, abs=1e-4)
-        assert done["custo_usd"] == pytest.approx(8 * por_chamada, abs=1e-3)  # planning + 7 areas
+        assert done["custo_usd"] == pytest.approx((1 + len(AREAS)) * por_chamada, abs=1e-3)  # planning + every area
 
     def test_an_area_replaces_only_its_own_rows_and_keeps_the_authors(self, gen):
         alvo = gen.studio.store.get_agent(DEFAULT_ORG_ID, "alvo")
@@ -602,7 +615,7 @@ class TestCreateWithBriefing:
         r = gen.studio.post(f"{PLAT}/agents", json={"key": "novo-agente", "nome": "Novo", "briefing": BRIEFING})
         assert r.status_code == 201, r.text
         g = r.json()["geracao"]
-        assert g["status"] == "pendente" and g["agent_key"] == "novo-agente" and len(g["areas"]) == 7
+        assert g["status"] == "pendente" and g["agent_key"] == "novo-agente" and len(g["areas"]) == len(AREAS)
         gen.rodar()
         novo = gen.studio.store.get_agent(DEFAULT_ORG_ID, "novo-agente")
         draft = gen.studio.store.get_draft(DEFAULT_ORG_ID, novo.id)
@@ -626,3 +639,196 @@ def test_hashes_are_the_single_identity_of_an_item(gen):
     draft = gen.studio.store.get_draft(DEFAULT_ORG_ID, alvo.id)
     h = hashes_atuais("specs", store=gen.studio.store, skills=gen.skills, org_id=DEFAULT_ORG_ID, version=draft)
     assert set(h) == {"agencia"} and len(h["agencia"]) == 32
+
+
+# ── the evals area ──────────────────────────────────────────────────────────
+
+
+class TestEvalsArea:
+    def test_the_generator_writes_behaviour_cases_and_a_case_with_personal_data_becomes_a_gap(self, gen):
+        done = _tudo(gen, areas=["evals"])
+        area = _area(done, "evals")
+        assert area["status"] == "concluida" and area["itens_escritos"] == 1
+        assert area["lacunas"] == ["eval_com_pii:cliente-com-dados:telefone"], "kind of PII only, never the value"
+        alvo = gen.studio.store.get_agent(DEFAULT_ORG_ID, "alvo")
+        casos = gen.evals.list_cases(DEFAULT_ORG_ID, alvo.id)
+        assert [(c.slug, c.suite, c.ativo) for c in casos] == [("cliente-pede-preco", "comportamento", True)]
+        assert casos[0].criterios == {"deve": ["informa que consulta o preço antes de responder"], "nao_deve": ["inventa um valor"]}
+        assert casos[0].tags == ("preco",)
+
+    def test_an_invalid_case_is_a_gap_not_a_failed_area(self, gen):
+        gen.chat.respostas[instr("evals")] = {"evals": [
+            {"slug": "sem-criterio", "titulo": "t", "entrada": "e", "criterios": {"deve": [" "], "nao_deve": []}},
+            {"slug": "ok", "titulo": "t", "entrada": "e", "criterios": {"deve": ["x"], "nao_deve": []}},
+        ]}
+        area = _area(_tudo(gen, areas=["evals"]), "evals")
+        assert area["status"] == "concluida" and area["lacunas"] == ["eval_sem_criterios:sem-criterio"]
+
+    def test_a_malformed_slug_fails_the_area_with_a_fixed_code(self, gen):
+        gen.chat.respostas[instr("evals")] = {"evals": [
+            {"slug": "Slug Invalido", "titulo": "t", "entrada": "e", "criterios": {"deve": ["x"], "nao_deve": []}}]}
+        area = _area(_tudo(gen, areas=["evals"]), "evals")
+        assert area["status"] == "falhou" and area["erro"] == "saida_invalida"
+
+    def test_a_case_the_author_typed_is_never_overwritten(self, gen):
+        alvo = gen.studio.store.get_agent(DEFAULT_ORG_ID, "alvo")
+        gen.evals.create_case(DEFAULT_ORG_ID, alvo.id, EvalCaseInput(
+            slug="cliente-pede-preco", titulo="do autor", entrada="e", criterios={"deve": ["x"], "nao_deve": []}))
+        area = _area(_tudo(gen, areas=["evals"]), "evals")
+        assert "slug_ocupado:cliente-pede-preco" in area["lacunas"] and area["itens_escritos"] == 0
+        assert gen.evals.list_cases(DEFAULT_ORG_ID, alvo.id)[0].titulo == "do autor"
+
+    def test_an_edited_generated_case_blocks_a_new_run_until_forced_and_forcing_replaces_it(self, gen):
+        _tudo(gen, areas=["evals"])
+        alvo = gen.studio.store.get_agent(DEFAULT_ORG_ID, "alvo")
+        caso = gen.evals.list_cases(DEFAULT_ORG_ID, alvo.id)[0]
+        gen.evals.update_case(DEFAULT_ORG_ID, alvo.id, caso.id, titulo="editado pelo autor")
+        r = _post(gen, areas=["evals"])
+        assert r.status_code == 409 and r.json()["code"] == "conteudo_editado"
+        done = _tudo(gen, areas=["evals"], forcar=True)
+        assert _area(done, "evals")["status"] == "concluida"
+        assert gen.evals.list_cases(DEFAULT_ORG_ID, alvo.id)[0].titulo == "Cliente pede preço"
+
+    def test_a_case_that_a_previous_run_wrote_and_the_new_output_dropped_is_removed(self, gen):
+        _tudo(gen, areas=["evals"])
+        gen.chat.respostas[instr("evals")] = {"evals": [
+            {"slug": "outro-caso", "titulo": "t", "entrada": "e", "criterios": {"deve": ["x"], "nao_deve": []}}]}
+        _tudo(gen, areas=["evals"], forcar=True)
+        alvo = gen.studio.store.get_agent(DEFAULT_ORG_ID, "alvo")
+        assert [c.slug for c in gen.evals.list_cases(DEFAULT_ORG_ID, alvo.id)] == ["outro-caso"]
+
+    def test_the_evals_never_ride_in_the_draft_hash_but_do_count_for_the_learning_signal(self, gen):
+        done = _tudo(gen, areas=["evals"])
+        assert [i["estado"] for i in _area(done, "evals")["itens"]] == ["gerado"]
+
+
+# ── the per-run reference + the exemplar flag ───────────────────────────────
+
+
+def _segundo_exemplar(w):
+    s = w.studio
+    s.post(f"{PLAT}/agents", json={"key": "outro-modelo", "nome": "Outro", "padrao_qualificacao": "imob-lead"})
+    assert s.put(f"{PLAT}/agentes/outro-modelo/exemplar", json={"exemplar": True}).status_code == 200
+    agent = s.store.get_agent(DEFAULT_ORG_ID, "outro-modelo")
+    draft = s.store.get_draft(DEFAULT_ORG_ID, agent.id)
+    s.store.replace_sections(DEFAULT_ORG_ID, draft.id, [SectionInput("outra", "Outra", 1, "segundo texto " * 30)])
+    s.store.replace_ferramentas(DEFAULT_ORG_ID, draft.id, [FerramentaInput(
+        ferramenta="handoff", descricao="Passa a conversa.", ativo=True, parametros={"motivo": "Por quê passa."})], expected_hash=None)
+    s.store.replace_decisoes(DEFAULT_ORG_ID, draft.id, [DecisaoInput(
+        chave="abordagem", titulo="Abordagem", regra="Escolha uma.", opcoes=[
+            {"valor": "a", "rotulo": "Opção A", "padrao": True}, {"valor": "b", "rotulo": "Opção B", "padrao": False}])],
+        expected_hash=None)
+    w.evals.create_case(DEFAULT_ORG_ID, agent.id, EvalCaseInput(
+        slug="caso-exemplar", titulo="Título do caso exemplar", entrada="Entrada do caso",
+        criterios={"deve": ["responde com cortesia"], "nao_deve": ["promete prazo"]}, tags=("tom",)))
+    publish(s.store, DEFAULT_ORG_ID, agent, draft.id, DEFAULT_USER_ID, catalog=s.catalog)
+
+
+class TestReferencia:
+    def test_without_a_reference_every_exemplar_is_shown(self, gen):
+        _segundo_exemplar(gen)
+        _tudo(gen, areas=["specs"])
+        _, entrada = next(c for c in gen.chat.calls if c[0] == instr("specs"))
+        assert {e["chave"] for e in entrada["exemplar"]} == {"modelo", "outro-modelo"}
+
+    def test_with_a_reference_only_that_exemplar_is_used_and_it_carries_the_richer_structure(self, gen):
+        _segundo_exemplar(gen)
+        r = _post(gen, areas=["specs"], referencia="outro-modelo")
+        assert r.status_code == 202 and r.json()["referencia"] == "outro-modelo"
+        gen.rodar()
+        _, entrada = next(c for c in gen.chat.calls if c[0] == instr("specs"))
+        assert [e["chave"] for e in entrada["exemplar"]] == ["outro-modelo"]
+        e = entrada["exemplar"][0]
+        assert e["padrao_qualificacao"] == "imob-lead"
+        ferr = e["ferramentas"][0]
+        assert ferr["parametros"] == ["motivo"] and ferr["rotulos_parametros"] == {"motivo": "Por quê passa."}
+        assert e["decisoes"][0]["opcoes_detalhe"][0]["rotulo"] == "Opção A"
+        caso = e["evals"][0]
+        assert caso["titulo"] == "Título do caso exemplar" and caso["n_deve"] == 1 and caso["n_nao_deve"] == 1
+        assert caso["criterios"]["deve"] == ["responde com cortesia"] and caso["tags"] == ["tom"]
+
+    @pytest.mark.parametrize("referencia", ["alvo", "nao-existe", "criador"])
+    def test_a_reference_that_is_not_an_exemplar_is_422_and_books_nothing(self, gen, referencia):
+        r = _post(gen, referencia=referencia)
+        assert r.status_code == 422 and r.json()["code"] == "referencia_invalida"
+        assert gen.studio.get(f"{AGENTS}/alvo/geracoes").json()["items"] == []
+
+    def test_an_exemplar_without_a_published_version_is_not_a_valid_reference(self, gen):
+        s = gen.studio
+        s.post(f"{PLAT}/agents", json={"key": "rascunho-so", "nome": "R"})
+        s.put(f"{PLAT}/agentes/rascunho-so/exemplar", json={"exemplar": True})
+        r = _post(gen, referencia="rascunho-so")
+        assert r.status_code == 422 and r.json()["code"] == "referencia_invalida"
+
+    def test_a_malformed_reference_is_a_validation_error(self, gen):
+        assert _post(gen, referencia="Nome Inválido").status_code == 422
+
+    def test_an_exemplar_withdrawn_before_the_job_runs_fails_the_run_visibly(self, gen):
+        _segundo_exemplar(gen)
+        r = _post(gen, areas=["specs"], referencia="outro-modelo")
+        assert r.status_code == 202
+        assert gen.studio.put(f"{PLAT}/agentes/outro-modelo/exemplar", json={"exemplar": False}).status_code == 200
+        gen.rodar()
+        done = _get(gen, r.json()["id"])
+        assert done["status"] == "falhou" and _area(done, "specs")["erro"] == "referencia_indisponivel"
+        assert gen.chat.chamadas("specs") == 0 and gen.chat.chamadas("planejamento") == 0
+
+    def test_the_reference_does_not_widen_what_a_non_platform_target_sees(self, gen):
+        _segundo_exemplar(gen)
+        outra = UUID(int=778)
+        alvo = gen.studio.store.seed_agent(
+            outra, "externo2", conteudo_modo="linhas", definition_scope="plataforma", definition_mode="studio")
+        gen.studio.store.create_draft(outra, alvo.id, None, DEFAULT_USER_ID)
+        rec = gen.geracoes.create_geracao(
+            outra, alvo.id, briefing=BRIEFING, areas=["specs"], forcar=False, modelo="claude-opus-5",
+            provider="anthropic", limite_usd=5.0, versao_gerador=1, criado_por=DEFAULT_USER_ID, referencia="outro-modelo")
+        asyncio.run(engine.executar(gen.deps, org_id=outra, geracao_id=rec.id, agent_id=alvo.id, areas=["specs"]))
+        _, entrada = next(c for c in gen.chat.calls if c[0] == instr("specs"))
+        e = entrada["exemplar"][0]
+        assert "conteudo" not in e["secoes"][0] and "rotulos_parametros" not in e["ferramentas"][0]
+        assert "opcoes_detalhe" not in e["decisoes"][0] and "criterios" not in e["evals"][0]
+        assert e["evals"][0]["n_deve"] == 1, "the shape is shared, the text is not"
+
+
+class TestExemplarFlag:
+    URL = f"{PLAT}/agentes/modelo/exemplar"
+
+    def test_unauthenticated_is_strict_401(self, gen):
+        assert gen.studio.raw.put(self.URL, json={"exemplar": False}).status_code == 401
+
+    def test_an_org_admin_that_is_not_a_platform_admin_is_403(self, gen):
+        gen.studio.as_org_admin_only()
+        r = gen.studio.put(self.URL, json={"exemplar": False})
+        assert r.status_code == 403 and r.json()["code"] == "platform_admin_required"
+
+    def test_the_content_token_cannot_flip_it(self, gen):
+        gen.studio.raw.app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+            org_id=DEFAULT_ORG_ID, caller_kind="product", user_id=None, scopes=["studio:content-write"], raw_token="t",
+            api_token_id=UUID(int=9), issuer="noctus-platform")
+        r = gen.studio.raw.put(self.URL, json={"exemplar": False})
+        assert r.status_code in (401, 403), r.text
+        assert gen.studio.store.get_platform_definition("modelo").exemplar is True
+
+    def test_toggle_is_idempotent_audited_and_reflected_in_the_definition(self, gen):
+        r = gen.studio.put(self.URL, json={"exemplar": False})
+        assert r.status_code == 200 and r.json()["exemplar"] is False and r.json()["papel"] is None
+        assert gen.studio.get(f"{PLAT}/agents/modelo").json()["exemplar"] is False
+        again = gen.studio.put(self.URL, json={"exemplar": False})
+        assert again.status_code == 200
+        agent = gen.studio.store.get_platform_definition("modelo")
+        mudancas = [a for a in gen.studio.store.list_audit_log(DEFAULT_ORG_ID, agent.id)
+                    if (a.depois or {}).get("kind") == "exemplar"]
+        assert sorted(a.depois["exemplar"] for a in mudancas) == [False, True], "idempotent: a no-op writes no audit row"
+
+    def test_the_generator_cannot_be_an_exemplar_and_an_unknown_key_is_404(self, gen):
+        r = gen.studio.put(f"{PLAT}/agentes/criador/exemplar", json={"exemplar": True})
+        assert r.status_code == 409 and r.json()["code"] == "gerador_nao_pode_ser_exemplar"
+        assert gen.studio.put(f"{PLAT}/agentes/nao-existe/exemplar", json={"exemplar": True}).status_code == 404
+
+    def test_it_is_not_settable_through_create_or_patch_only_through_this_route(self, gen):
+        assert gen.studio.post(f"{PLAT}/agents", json={"key": "tentativa", "nome": "T", "exemplar": True}).status_code == 422
+        assert gen.studio.patch(f"{PLAT}/agents/alvo", json={"exemplar": True}).status_code == 422
+        assert gen.studio.put(self.URL, json={"exemplar": "talvez", "extra": 1}).status_code == 422
+
+    def test_the_legacy_exemplar_role_is_no_longer_a_role(self, gen):
+        assert gen.studio.post(f"{PLAT}/agents", json={"key": "antigo", "nome": "A", "papel": "exemplar"}).status_code == 422
