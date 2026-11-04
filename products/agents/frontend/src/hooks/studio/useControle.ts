@@ -35,7 +35,12 @@ export function useSetControle(key: string) {
         optimistic: (old: Controle | undefined, v: ControleUpdate) => {
           if (!old || v.modo !== old.modo) return old;
           const { modo: _modo, dreno_inatividade_dias: _d, ...resto } = v as ControleUpdate & { dreno_inatividade_dias?: number };
-          return { ...old, ...resto };
+          const next = { ...old, ...resto };
+          // Only the ids are predictable; names/phones come from the server's answer (commit below).
+          if (v.avaliacao_usuarios) {
+            next.avaliacao_resolvidos = (old.avaliacao_resolvidos ?? []).filter((r) => v.avaliacao_usuarios!.includes(r.usuario_id));
+          }
+          return next;
         },
         commit: (_old, saved) => saved,
       },
