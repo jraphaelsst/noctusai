@@ -287,6 +287,9 @@ def harness_event(payload: Any) -> dict:
             kind="improvement" if kind in ("note", "compaction_capture") else "drift",
             target=payload["target"], description=desc, agent=source,
             status="s1-emergent",
+            # A harness friction event has no mechanical closure signal: it is triaged by the stale-s1 aging
+            # pass (decide promote/close/keep), never silently left open forever.
+            resolve_when=payload.get("resolve_when") or "manual:harness friction triage",
             source_ref=(f"session:{payload['session_id']}" if payload.get("session_id") else source),
         )
     except Exception as exc:  # noqa: BLE001 — reported, exit 1 by the CLI

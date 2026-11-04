@@ -34,7 +34,7 @@ class TestLogEntry:
             scope="scoped", kind="drift",
             target=".claude/agents/backend-engineer.md",
             description="Pydantic silent-drop in routers.example",
-            agent="backend-engineer",
+            agent="backend-engineer", resolve_when="manual:test",
         )
         assert r["ok"] is True
         text = ai.LEDGER_PATH.read_text(encoding="utf-8")
@@ -46,7 +46,7 @@ class TestLogEntry:
         assert e["status"] == "s1-emergent"  # default
 
     def test_invalid_scope_rejected(self, tmp_repo):
-        r = ai.log_entry(scope="invalid", kind="drift", target="*", description="x")
+        r = ai.log_entry(scope="invalid", kind="improvement", target="*", description="x")
         assert r["ok"] is False
         assert "scope must be one of" in r["error"]
 
@@ -56,7 +56,7 @@ class TestLogEntry:
         assert "kind must be one of" in r["error"]
 
     def test_invalid_status_rejected(self, tmp_repo):
-        r = ai.log_entry(scope="scoped", kind="drift", target="*", description="x", status="bogus")
+        r = ai.log_entry(scope="scoped", kind="improvement", target="*", description="x", status="bogus")
         assert r["ok"] is False
         assert "status must be one of" in r["error"]
 
@@ -64,7 +64,7 @@ class TestLogEntry:
 class TestRefreshAndQuery:
     def test_refresh_populates_cache(self, tmp_repo):
         ai.log_entry(scope="broad", kind="improvement", target="*", description="A pattern", agent="tech-lead")
-        ai.log_entry(scope="scoped", kind="drift", target=".claude/agents/x.md", description="B drift", agent="alpha")
+        ai.log_entry(scope="scoped", kind="improvement", target=".claude/agents/x.md", description="B drift", agent="alpha")
         r = ai.refresh(force=True)
         assert r["status"] == "rebuilt"
         assert r["rows_written"] == 2
@@ -76,17 +76,17 @@ class TestRefreshAndQuery:
         assert r2["status"] == "in-sync"
 
     def test_lazy_rebuild_on_sha_mismatch(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="t1", description="first", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target="t1", description="first", agent="tl")
         ai.refresh(force=True)
         # Add a new entry — sha drifts; next query rebuilds.
-        ai.log_entry(scope="broad", kind="drift", target="t2", description="second", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target="t2", description="second", agent="tl")
         rows = ai.query()
         assert len(rows) == 2
 
     def test_query_filters_by_target(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target=".claude/agents/a.md", description="x", agent="tl")
-        ai.log_entry(scope="broad", kind="drift", target=".claude/agents/b.md", description="y", agent="tl")
-        ai.log_entry(scope="broad", kind="drift", target="KB § PATTERNS/z.md", description="z", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target=".claude/agents/a.md", description="x", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target=".claude/agents/b.md", description="y", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target="KB § PATTERNS/z.md", description="z", agent="tl")
         ai.refresh(force=True)
         rows_a = ai.query(target=".claude/agents/a.md")
         assert len(rows_a) == 1
@@ -98,10 +98,10 @@ class TestRefreshAndQuery:
     def test_query_open_only_excludes_terminal(self, tmp_repo):
         # "open" = still-needs-work = NOT terminal. Terminal = closed ∪ s4-keeper
         # (a keeper now guards it). s1/s2/s3 are returned; closed + s4 are not.
-        ai.log_entry(scope="broad", kind="drift", target="t1", description="x", agent="tl", status="s1-emergent")
-        ai.log_entry(scope="broad", kind="drift", target="t2", description="y", agent="tl", status="closed")
-        ai.log_entry(scope="broad", kind="drift", target="t3", description="z", agent="tl", status="s4-keeper")
-        ai.log_entry(scope="broad", kind="drift", target="t4", description="w", agent="tl", status="s3-codified")
+        ai.log_entry(scope="broad", kind="improvement", target="t1", description="x", agent="tl", status="s1-emergent")
+        ai.log_entry(scope="broad", kind="improvement", target="t2", description="y", agent="tl", status="closed")
+        ai.log_entry(scope="broad", kind="improvement", target="t3", description="z", agent="tl", status="s4-keeper")
+        ai.log_entry(scope="broad", kind="improvement", target="t4", description="w", agent="tl", status="s3-codified")
         ai.refresh(force=True)
         targets = {r["target"] for r in ai.query(open_only=True, skip_reconcile=True)}
         assert targets == {"t1", "t4"}      # s1 + s3 surface
@@ -109,18 +109,19 @@ class TestRefreshAndQuery:
         assert "t3" not in targets          # s4-keeper — terminal (the fix)
 
     def test_query_filter_by_kind(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="t1", description="x", agent="tl")
+        ai.log_entry(scope="broad", kind="drift", target="t1", description="x", agent="tl",
+                     resolve_when="manual:test")
         ai.log_entry(scope="broad", kind="improvement", target="t1", description="y", agent="tl")
         ai.refresh(force=True)
         assert len(ai.query(kind="drift")) == 1
         assert len(ai.query(kind="improvement")) == 1
 
     def test_malformed_ndjson_line_skipped(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="t1", description="x", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target="t1", description="x", agent="tl")
         # Write a malformed line directly.
         with ai.LEDGER_PATH.open("a", encoding="utf-8") as f:
             f.write("not valid json at all\n")
-        ai.log_entry(scope="broad", kind="drift", target="t2", description="y", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target="t2", description="y", agent="tl")
         ai.refresh(force=True)
         rows = ai.query()
         # Two valid entries; the malformed line was silently skipped.
@@ -251,12 +252,12 @@ class TestLogResolveFields:
         assert e["resolve_to"] == "s4-keeper"
 
     def test_omitted_resolve_fields_absent(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="t", description="d", agent="tl")
+        ai.log_entry(scope="broad", kind="improvement", target="t", description="d", agent="tl")
         e = json.loads(ai.LEDGER_PATH.read_text(encoding="utf-8").strip())
         assert "resolve_when" not in e and "resolve_to" not in e
 
     def test_invalid_resolve_to_rejected(self, tmp_repo):
-        r = ai.log_entry(scope="broad", kind="drift", target="t", description="d",
+        r = ai.log_entry(scope="broad", kind="improvement", target="t", description="d",
                          resolve_to="bogus")
         assert r["ok"] is False
         assert "resolve_to must be one of" in r["error"]
@@ -271,7 +272,7 @@ class TestLogResolveFields:
         r = ai.refresh()
         assert r["status"] == "in-sync", f"expected eager-refreshed mirror, got {r}"
         # A second append also stays compliant immediately.
-        ai.log_entry(scope="broad", kind="drift", target="y", description="second")
+        ai.log_entry(scope="broad", kind="improvement", target="y", description="second")
         assert ai.refresh()["status"] == "in-sync"
 
 
@@ -351,7 +352,7 @@ class TestReconcile:
         assert any(x["target"] == "old-drift" for x in r["reconciled"])
 
     def test_entry_without_handle_is_unhandled_not_touched(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="no-handle", description="d",
+        ai.log_entry(scope="broad", kind="improvement", target="no-handle", description="d",
                      status="s2-memory")
         r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
         assert r["counts"]["reconciled"] == 0
@@ -379,7 +380,7 @@ class TestPromoteSharesRewriter:
     """codification_radar.promote now routes through ai._rewrite_ledger."""
 
     def test_promote_updates_and_counts(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="t1", description="x",
+        ai.log_entry(scope="broad", kind="improvement", target="t1", description="x",
                      status="s1-emergent")
         ai.refresh(force=True)
         rows = ai.query()
@@ -391,7 +392,7 @@ class TestPromoteSharesRewriter:
         assert r2["updated"] == 0 and r2["no_match"] == 1
 
     def test_promote_preserves_malformed(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="t1", description="x")
+        ai.log_entry(scope="broad", kind="improvement", target="t1", description="x")
         with ai.LEDGER_PATH.open("a", encoding="utf-8") as f:
             f.write("garbage line\n")
         ai.refresh(force=True)
@@ -401,7 +402,7 @@ class TestPromoteSharesRewriter:
 
 class TestResolutionHandleKeeper:
     def test_s2_without_handle_flagged(self, tmp_repo):
-        ai.log_entry(scope="broad", kind="drift", target="lingering", description="d",
+        ai.log_entry(scope="broad", kind="improvement", target="lingering", description="d",
                      status="s2-memory")
         issues = check_open_drift_has_resolution_handle(repo_root=tmp_repo)
         assert any(i["symbol"] == "open-drift-no-resolution-handle" for i in issues)
@@ -410,7 +411,7 @@ class TestResolutionHandleKeeper:
         # Residual-2: s3-kb / s3-codified are now gated too (they linger as radar
         # promotion candidates if they can't auto-promote).
         for st in ("s3-kb", "s3-codified"):
-            ai.log_entry(scope="broad", kind="drift", target=f"t-{st}", description="d", status=st)
+            ai.log_entry(scope="broad", kind="improvement", target=f"t-{st}", description="d", status=st)
         issues = check_open_drift_has_resolution_handle(repo_root=tmp_repo)
         flagged = {i["issue"].split("`")[1] for i in issues}
         assert "t-s3-kb" in flagged and "t-s3-codified" in flagged
@@ -427,7 +428,7 @@ class TestResolutionHandleKeeper:
 
     def test_s1_without_handle_not_flagged(self, tmp_repo):
         # s1-emergent is too freshly-surfaced to demand a handle.
-        ai.log_entry(scope="broad", kind="drift", target="fresh", description="d",
+        ai.log_entry(scope="broad", kind="improvement", target="fresh", description="d",
                      status="s1-emergent")
         assert check_open_drift_has_resolution_handle(repo_root=tmp_repo) == []
 
@@ -525,7 +526,7 @@ class TestLedgerStoreRealMode:
 
     def test_log_publishes_to_ledgers_branch_not_dev(self, real):
         dev_copy, show = real
-        r = ai.log_entry(scope="broad", kind="drift", target="t/real", description="d1")
+        r = ai.log_entry(scope="broad", kind="improvement", target="t/real", description="d1")
         assert r["ok"] and r["publish"]["status"] == "pushed", r
         assert not dev_copy.exists()                      # the dev copy is never written
         row = json.loads(show("auto-improvement.ndjson").strip())
@@ -537,7 +538,7 @@ class TestLedgerStoreRealMode:
         dev_copy.write_text(json.dumps({"ts": "2026-09-01T00:00:00Z", "scope": "broad",
                                         "kind": "drift", "target": "t/dev-only",
                                         "description": "old writer", "status": "s1-emergent"}) + "\n")
-        ai.log_entry(scope="broad", kind="drift", target="t/new", description="d2")
+        ai.log_entry(scope="broad", kind="improvement", target="t/new", description="d2")
         assert {x["target"] for x in ai.query()} == {"t/dev-only", "t/new"}
         # the keeper and refresh agree on the merged sha
         assert ai.source_sha_for_root(dev_copy.parents[1]) == ai._source_sha()
@@ -553,3 +554,169 @@ class TestLedgerStoreRealMode:
         assert branch[0]["status"] == "s2-memory"
         # the stale dev row does NOT undo the promotion on read (branch wins by key)
         assert [x["status"] for x in ai.query()] == ["s2-memory"]
+
+
+# ── Learning-loop closure (2026-11) ──────────────────────────────────────────
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+
+def _row(ts, target="t", desc="d", status="s1-emergent", agent="backend-engineer", **kw):
+    return {"ts": ts, "agent": agent, "scope": "scoped", "kind": "improvement",
+            "target": target, "description": desc, "status": status, **kw}
+
+
+def _write(ledger, rows):
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+class TestDriftRequiresResolveWhen:
+    def test_refused_without_resolve_when(self, tmp_repo):
+        r = ai.log_entry(scope="scoped", kind="drift", target="x", description="d")
+        assert r["ok"] is False and r["refused"] == "drift_requires_resolve_when"
+        assert not ai.LEDGER_PATH.exists() or ai.LEDGER_PATH.read_text() == ""
+
+    def test_empty_list_refused(self, tmp_repo):
+        r = ai.log_entry(scope="scoped", kind="drift", target="x", description="d", resolve_when=[" "])
+        assert r["refused"] == "drift_requires_resolve_when"
+
+    def test_manual_escape_accepted(self, tmp_repo):
+        r = ai.log_entry(scope="scoped", kind="drift", target="x", description="d",
+                         agent="backend-engineer", resolve_when="manual:engineer-footer triage")
+        assert r["ok"] is True
+        assert r["entry"]["resolve_when"] == "manual:engineer-footer triage"
+
+    def test_manual_without_reason_refused(self, tmp_repo):
+        r = ai.log_entry(scope="scoped", kind="drift", target="x", description="d", resolve_when="manual:")
+        assert r["refused"] == "manual_requires_reason"
+
+    def test_improvement_needs_no_predicate(self, tmp_repo):
+        assert ai.log_entry(scope="scoped", kind="improvement", target="x", description="d")["ok"]
+
+    def test_manual_never_auto_closes(self, tmp_repo):
+        ai.log_entry(scope="scoped", kind="drift", target="x", description="d", resolve_when="manual:why")
+        rec = ai.reconcile(dry_run=True, repo_root=tmp_repo)
+        assert rec["counts"]["reconciled"] == 0 and rec["counts"]["still_open"] == 1
+
+
+class TestStaleS1Aging:
+    NOW = datetime(2026, 11, 4, tzinfo=timezone.utc)
+
+    def _ts(self, days):
+        return (self.NOW - timedelta(days=days)).isoformat()
+
+    def test_boundary_13_vs_15_days(self, tmp_repo):
+        _write(ai.LEDGER_PATH, [_row(self._ts(13), "young"), _row(self._ts(15), "old")])
+        rec = ai.reconcile(dry_run=True, repo_root=tmp_repo, now=self.NOW)
+        assert [s["target"] for s in rec["stale_s1"]] == ["old"]
+        assert rec["stale_s1_count"] == 1
+        assert rec["stale_s1"][0]["decide"] == "promote, close or keep"
+
+    def test_clustered_rows_excluded_and_non_s1_ignored(self, tmp_repo):
+        old, mid = _row(self._ts(30), "clustered"), _row(self._ts(30), "mem", status="s2-memory")
+        _write(ai.LEDGER_PATH, [old, mid])
+        rec = ai.reconcile(dry_run=True, repo_root=tmp_repo, now=self.NOW,
+                           clustered_keys={ai._entry_key(old)})
+        assert rec["stale_s1"] == []
+
+    def test_aging_never_mutates_ledger(self, tmp_repo):
+        _write(ai.LEDGER_PATH, [_row(self._ts(40))])
+        before = ai.LEDGER_PATH.read_text()
+        ai.reconcile(dry_run=False, repo_root=tmp_repo, now=self.NOW)
+        assert ai.LEDGER_PATH.read_text() == before
+
+    def test_summary_exposes_count(self, tmp_repo):
+        _write(ai.LEDGER_PATH, [_row(self._ts(20)), _row(self._ts(1))])
+        s = ai.summary(now=self.NOW)
+        assert s["stale_s1"] == 1 and s["open"] == 2 and s["open_without_resolve_when"] == 2
+
+
+class TestNewKinds:
+    @pytest.mark.parametrize("kind", ["phase-learning", "finding"])
+    def test_kind_with_source(self, tmp_repo, kind):
+        r = ai.log_entry(scope="scoped", kind=kind, target="projects/x", description="learned",
+                         source={"tool": "noctus.dev.findings", "ref": "projects/x#3"})
+        assert r["ok"] and r["entry"]["source"] == {"tool": "noctus.dev.findings", "ref": "projects/x#3"}
+        row = [x for x in ai.query() if x["kind"] == kind][0]
+        assert row["source"]["ref"] == "projects/x#3"
+
+    def test_bad_source_refused(self, tmp_repo):
+        r = ai.log_entry(scope="scoped", kind="finding", target="x", description="d", source={"tool": "t"})
+        assert r["ok"] is False
+
+
+class TestAgentFilter:
+    def test_query_agent_filter(self, tmp_repo):
+        ai.log_entry(scope="scoped", kind="improvement", target="a", description="1", agent="backend-engineer")
+        ai.log_entry(scope="scoped", kind="improvement", target="b", description="2", agent="frontend-engineer")
+        assert [r["target"] for r in ai.query(agent="frontend-engineer")] == ["b"]
+
+
+class TestRadarGroupByAgent:
+    def test_per_agent_clusters_and_l1_proposal(self, tmp_repo):
+        from unittest.mock import patch
+        rows = [
+            _row("2026-11-01T00:00:00+00:00", "a", "Always scope the query by org. More text", agent="backend-engineer"),
+            _row("2026-11-02T00:00:00+00:00", "b", "Scope every query by org id", agent="backend-engineer"),
+            _row("2026-11-02T00:00:00+00:00", "c", "Scope the query by org too", agent="frontend-engineer"),
+        ]
+        _write(ai.LEDGER_PATH, rows)
+        with patch("tools.noctus.dev.vectorize.embed_text", return_value={"ok": True, "vector": [1.0, 0.0]}):
+            res = cr.cluster(group_by="agent")
+        assert res["ok"] and res["group_by"] == "agent"
+        assert len(res["clusters"]) == 1  # frontend has a single entry: no cluster
+        c = res["clusters"][0]
+        assert c["agent"] == "backend-engineer" and c["size"] == 2
+        assert c["agent_file"] == ".claude/agents/backend-engineer.md"
+        assert c["proposed_l1_rule"].startswith("- Scope every query by org id")
+
+    def test_bad_group_by(self, tmp_repo):
+        from unittest.mock import patch
+        _write(ai.LEDGER_PATH, [_row("2026-11-01T00:00:00+00:00")])
+        with patch("tools.noctus.dev.vectorize.embed_text", return_value={"ok": True, "vector": [1.0]}):
+            assert cr.cluster(group_by="kind")["ok"] is False
+
+
+class TestPromoteToAgentFile:
+    def test_promote_sets_predicate_and_reconcile_closes(self, tmp_repo):
+        _write(ai.LEDGER_PATH, [_row("2026-10-01T00:00:00+00:00", "KB § PATTERNS/x.md",
+                                     "Never bind the client at import time. Details follow.")])
+        ai.refresh(force=True)
+        r = cr.promote(ai.query(), "s3-codified", target_agent="backend-engineer")
+        assert r["ok"] and r["updated"] == 1
+        row = json.loads(ai.LEDGER_PATH.read_text().strip())
+        assert row["status"] == "s3-codified" and row["target_agent"] == "backend-engineer"
+        assert row["draft_l1"] == "- Never bind the client at import time. → `KB § PATTERNS/x.md`"
+        assert row["resolve_when"] == "grep_present:Never bind the client at import time@.claude/agents/backend-engineer.md"
+
+        # Not applied yet → stays open.
+        agents = tmp_repo / ".claude" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "backend-engineer.md").write_text("# agent\n")
+        assert ai.reconcile(dry_run=True, repo_root=tmp_repo)["counts"]["reconciled"] == 0
+        # Tech-lead applies the line → reconcile closes it.
+        (agents / "backend-engineer.md").write_text("# agent\n" + row["draft_l1"] + "\n")
+        rec = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert rec["counts"]["reconciled"] == 1
+        assert json.loads(ai.LEDGER_PATH.read_text().strip())["status"] == "closed"
+
+    def test_target_agent_requires_s3(self, tmp_repo):
+        assert cr.promote([], "s2-memory", target_agent="backend-engineer")["ok"] is False
+        assert cr.promote([], "s3-codified", target_agent="../evil")["ok"] is False
+
+
+class TestBackfill:
+    def test_proposes_superseded_by_and_path_exists_dry_run_default(self, tmp_repo):
+        a = _row("2026-09-01T00:00:00+00:00", "mcp/x/foo.py", "old drift")
+        b = _row("2026-10-01T00:00:00+00:00", "mcp/x/foo.py", "fixed", status="closed")
+        c = _row("2026-09-02T00:00:00+00:00", "mcp/x/missing.py", "helper is missing here")
+        d = _row("2026-09-03T00:00:00+00:00", "*", "no signal")
+        _write(ai.LEDGER_PATH, [a, b, c, d])
+        res = ai.propose_resolve_when(repo_root=tmp_repo)
+        assert res["dry_run"] and res["applied"] == 0 and res["no_signal"] == 1
+        assert {p["resolve_when"] for p in res["proposals"]} == {
+            "superseded_by:mcp/x/foo.py", "path_exists:mcp/x/missing.py"}
+        assert "resolve_when" not in json.loads(ai.LEDGER_PATH.read_text().splitlines()[0])
+        res = ai.propose_resolve_when(apply=True, repo_root=tmp_repo)
+        assert res["applied"] == 2
+        assert json.loads(ai.LEDGER_PATH.read_text().splitlines()[0])["resolve_when"] == "superseded_by:mcp/x/foo.py"
