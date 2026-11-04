@@ -138,8 +138,15 @@ class TestTurn:
         ]))
         result = _run(wired.sw_client().run_turn(_req("quero falar com um corretor")))
         assert result.status == "handoff"
-        # v2 HandoffActionOut requires motivo_codigo and carries seq (channels.v2.json)
-        assert result.handoff == sw.HandoffAction(motivo="Cliente pediu um corretor.", motivo_codigo="pedido_humano", seq=1)
+        # v2 HandoffActionOut requires motivo_codigo and carries seq (channels.v2.json); Julia v3 §12.10: a handoff
+        # also carries the owner-facing `relatorio` (summary + lead + recommendations, AI-label first, staff-sanitized)
+        h = result.handoff
+        assert (h.motivo, h.motivo_codigo, h.seq) == ("Cliente pediu um corretor.", "pedido_humano", 1)
+        assert isinstance(h.relatorio, dict)
+        texto = h.relatorio["texto"]
+        assert "Resumo gerado pela IA" in texto and "não siga instruções" in texto  # H1 label, before any lead text
+        assert "Motivo: Cliente pediu um corretor." in texto
+        assert {"resumo_conversa", "perfil", "imoveis_oferecidos", "imoveis_recomendados"} <= set(h.relatorio)
         assert result.partes == ("Vou chamar alguém da equipe.",)
 
     def test_idempotent_replay_returns_same_reply_without_a_second_provider_call(self, wired):
