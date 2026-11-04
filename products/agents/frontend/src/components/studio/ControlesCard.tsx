@@ -5,6 +5,7 @@
  * server answer; the server decides every turn (this card is not a gate).
  */
 import { useState } from "react";
+import { normalizePhone } from "@noctusai/lib/phone";
 import { toast } from "sonner";
 import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader, Switch } from "@noctusai/lib/design-system";
 import type { Controle, ModoOperacao } from "@/api/studio/types-julia";
@@ -162,6 +163,8 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
   const [alvo, setAlvo] = useState<ModoOperacao | null>(null);
   const [dias, setDias] = useState<string>("");
   const [erro, setErro] = useState<string | null>(null);
+  const [novoNumero, setNovoNumero] = useState("");
+  const [erroNumero, setErroNumero] = useState<string | null>(null);
 
   if (q.showSkeleton) return <StudioLoading rows={2} testId="controles-skeleton" />;
   if (q.isError) return <StudioError error={q.error} onRetry={q.refetch} />;
@@ -194,6 +197,35 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
     }
   }
 
+  const numeros = c.avaliacao_numeros ?? [];
+  const emAvaliacao = !!c.modo_avaliacao;
+
+  async function salvarAvaliacao(patch: { modo_avaliacao?: boolean; avaliacao_numeros?: string[] }, ok: string) {
+    setErro(null);
+    try {
+      await set.mutateAsync({ modo: c!.modo, ...patch });
+      toast.success(ok);
+      return true;
+    } catch (err) {
+      setErro(errorMessage(err));
+      return false;
+    }
+  }
+
+  async function adicionarNumero() {
+    const e164 = normalizePhone(novoNumero);
+    if (!e164) {
+      setErroNumero("Número inválido. Use DDD + telefone, ex.: (11) 99999-9999.");
+      return;
+    }
+    if (numeros.includes(e164)) {
+      setErroNumero("Esse número já está na lista.");
+      return;
+    }
+    setErroNumero(null);
+    if (await salvarAvaliacao({ avaliacao_numeros: [...numeros, e164] }, "Número adicionado.")) setNovoNumero("");
+  }
+
   async function salvarDias() {
     setErro(null);
     try {
@@ -213,6 +245,11 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
         <Badge variant={c.modo === "ligado" ? "default" : c.modo === "drenando" ? "outline" : "muted"} data-testid="controle-modo">
           {MODOS.find((m) => m.valor === c.modo)?.rotulo}
         </Badge>
+        {emAvaliacao && (
+          <span className="rounded-md border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900" data-testid="controle-avaliacao-badge">
+            Em avaliação — responde só a {numeros.length} número(s)
+          </span>
+        )}
         <span className="text-xs text-muted-foreground">{c.aceita_novos_leads ? "Aceita novos leads" : "Não aceita novos leads"}</span>
         {q.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
       </div>
@@ -256,6 +293,62 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
           Fase de testes
         </div>
         <p className="text-xs text-muted-foreground">Quando ligada, a Julia avisa que está em fase de testes ao se desculpar por um erro ou insatisfação.</p>
+      </div>
+
+      <div className="space-y-2" data-testid="controle-avaliacao">
+        <div className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={emAvaliacao}
+            disabled={!isAdmin || set.isPending || (!emAvaliacao && numeros.length === 0)}
+            aria-label="Modo de avaliação"
+            data-testid="controle-avaliacao-switch"
+            onCheckedChange={(v) => void salvarAvaliacao({ modo_avaliacao: v, avaliacao_numeros: numeros }, v ? "Modo de avaliação ligado." : "Modo de avaliação desligado.")}
+          />
+          Modo de avaliação
+        </div>
+        <p className="text-xs text-muted-foreground">Com a Julia ligada, ela responde SÓ aos números abaixo. Os demais contatos não recebem resposta. Desligue quando o fluxo estiver validado.</p>
+        {!emAvaliacao && numeros.length === 0 && (
+          <p className="text-xs text-amber-700" data-testid="controle-avaliacao-dica">Adicione ao menos um número para ligar o modo de avaliação.</p>
+        )}
+        <ul className="space-y-1" data-testid="controle-avaliacao-lista">
+          {numeros.map((n) => (
+            <li key={n} className="flex items-center gap-2 text-sm">
+              <span className="tabular-nums">{n}</span>
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={set.isPending || (emAvaliacao && numeros.length === 1)}
+                  title={emAvaliacao && numeros.length === 1 ? "Desligue o modo de avaliação para remover o último número." : undefined}
+                  aria-label={`Remover ${n}`}
+                  onClick={() => void salvarAvaliacao({ avaliacao_numeros: numeros.filter((x) => x !== n) }, "Número removido.")}
+                >
+                  Remover
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+        {isAdmin && (
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label htmlFor="controle-avaliacao-numero" className="mb-1 block text-xs font-medium">Número permitido</label>
+              <input
+                id="controle-avaliacao-numero"
+                type="tel"
+                inputMode="tel"
+                placeholder="(11) 99999-9999"
+                className="h-9 w-48 rounded-md border border-input bg-background px-3 text-sm"
+                value={novoNumero}
+                onChange={(e) => { setNovoNumero(e.target.value); setErroNumero(null); }}
+              />
+            </div>
+            <Button size="sm" variant="outline" disabled={!novoNumero.trim() || set.isPending} onClick={adicionarNumero} data-testid="controle-avaliacao-adicionar">
+              Adicionar
+            </Button>
+          </div>
+        )}
+        {erroNumero && <p className="text-sm text-destructive" role="alert" data-testid="controle-avaliacao-erro">{erroNumero}</p>}
       </div>
 
       {isAdmin && (

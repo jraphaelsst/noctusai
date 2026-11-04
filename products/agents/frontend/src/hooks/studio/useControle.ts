@@ -32,8 +32,11 @@ export function useSetControle(key: string) {
     targets: [
       {
         queryKey: studioKeys.controle(key),
-        optimistic: (old: Controle | undefined, v: ControleUpdate) =>
-          old && v.fase_testes !== undefined && v.modo === old.modo ? { ...old, fase_testes: v.fase_testes } : old,
+        optimistic: (old: Controle | undefined, v: ControleUpdate) => {
+          if (!old || v.modo !== old.modo) return old;
+          const { modo: _modo, dreno_inatividade_dias: _d, ...resto } = v as ControleUpdate & { dreno_inatividade_dias?: number };
+          return { ...old, ...resto };
+        },
         commit: (_old, saved) => saved,
       },
     ],

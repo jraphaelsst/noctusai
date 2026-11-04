@@ -83,4 +83,71 @@ describe("ControlesCard", () => {
   it("consequencia() names the drain days", () => {
     expect(consequencia("drenando", CONTROLE, 5)).toContain("5 dia(s)");
   });
+
+  describe("modo de avaliação", () => {
+    it("disables the switch with a hint while the list is empty", async () => {
+      installFetch([{ method: "GET", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_numeros: [] } }]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      const sw = await screen.findByTestId("controle-avaliacao-switch");
+      expect((sw as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByTestId("controle-avaliacao-dica")).toBeTruthy();
+      expect(screen.queryByTestId("controle-avaliacao-badge")).toBeNull();
+    });
+
+    it("adds a number as E.164 (current modo sent), then shows it", async () => {
+      const net = installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_numeros: [] } },
+        { method: "PUT", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_numeros: ["+5511999998888"] } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      fireEvent.change(await screen.findByLabelText("Número permitido"), { target: { value: "(11) 99999-8888" } });
+      fireEvent.click(screen.getByTestId("controle-avaliacao-adicionar"));
+      await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ modo: "ligado", avaliacao_numeros: ["+5511999998888"] });
+      expect(await screen.findByText("+5511999998888")).toBeTruthy();
+    });
+
+    it("rejects an invalid number without calling the server", async () => {
+      const net = installFetch([{ method: "GET", path: P, body: { ...CONTROLE, avaliacao_numeros: [] } }]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      fireEvent.change(await screen.findByLabelText("Número permitido"), { target: { value: "123" } });
+      fireEvent.click(screen.getByTestId("controle-avaliacao-adicionar"));
+      expect((await screen.findByTestId("controle-avaliacao-erro")).textContent).toContain("inválido");
+      expect(net.calls.some((c) => c.method === "PUT")).toBe(false);
+    });
+
+    it("removes a number", async () => {
+      const net = installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_numeros: ["+5511999998888", "+5511988887777"] } },
+        { method: "PUT", path: P, body: { ...CONTROLE, modo_avaliacao: false, avaliacao_numeros: ["+5511988887777"] } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      fireEvent.click(await screen.findByLabelText("Remover +5511999998888"));
+      await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ modo: "ligado", avaliacao_numeros: ["+5511988887777"] });
+    });
+
+    it("shows the amber badge with the count when on, and turns it off", async () => {
+      const on = { ...CONTROLE, modo_avaliacao: true, avaliacao_numeros: ["+5511999998888"] };
+      const net = installFetch([
+        { method: "GET", path: P, body: on },
+        { method: "PUT", path: P, body: { ...on, modo_avaliacao: false } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      expect((await screen.findByTestId("controle-avaliacao-badge")).textContent).toBe("Em avaliação — responde só a 1 número(s)");
+      fireEvent.click(screen.getByTestId("controle-avaliacao-switch"));
+      await waitFor(() => expect(net.calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(net.calls.find((c) => c.method === "PUT")!.body).toEqual({ modo: "ligado", modo_avaliacao: false, avaliacao_numeros: ["+5511999998888"] });
+    });
+
+    it("shows the server's refusal", async () => {
+      installFetch([
+        { method: "GET", path: P, body: { ...CONTROLE, avaliacao_numeros: ["+5511999998888"] } },
+        { method: "PUT", path: P, status: 422, body: { detail: "Número inválido para avaliação." } },
+      ]);
+      renderWith(<ControlesCard agentKey={KEY} />);
+      fireEvent.click(await screen.findByTestId("controle-avaliacao-switch"));
+      expect((await screen.findByTestId("controle-erro")).textContent).toContain("Número inválido");
+    });
+  });
 });

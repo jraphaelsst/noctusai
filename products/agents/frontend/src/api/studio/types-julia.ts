@@ -102,6 +102,7 @@ export interface OrgSpecs {
   faltando: string[];
 }
 export interface OrgStatus {
+  modo_avaliacao?: boolean;
   agent_key: string;
   completo: boolean;
   sem_versao: boolean;
@@ -265,10 +266,15 @@ export interface Controle {
   drenagem: Drenagem;
   /** Julia v3 §12.2: while on, the agent says it is in a testing phase when apologising. */
   fase_testes?: boolean;
+  /** Evaluation mode: with the agent on, it answers ONLY `avaliacao_numeros` (E.164). */
+  modo_avaliacao?: boolean;
+  avaliacao_numeros?: string[];
 }
 export interface ControleUpdate {
   modo: ModoOperacao;
   fase_testes?: boolean;
+  modo_avaliacao?: boolean;
+  avaliacao_numeros?: string[];
   dreno_inatividade_dias?: number;
 }
 
