@@ -8,6 +8,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/consent-routes-mandate.md
   - CONTEXT/PATTERNS/frontend/core-url-routing.md
   - CONTEXT/PATTERNS/frontend/product-internal-wiring.md
+  - CONTEXT/PATTERNS/frontend/prototype-on-real-data.md
   - CONTEXT/PATTERNS/frontend/product-icon-registry.md
   - CONTEXT/PATTERNS/frontend/lying-loading-state.md
   - CONTEXT/PATTERNS/frontend/mutation-cache-writes.md
@@ -35,6 +36,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 - **Build via seed factories.** `createProductApp({ routes, Layout, ...infra.appConfig })` · `createProductLayout(...)` · `createViteConfig({ port })` — NEVER hand-wire AuthProvider / Router / QueryClient / ErrorBoundary; the seed/infra provides them. → `KB § PATTERNS/frontend/frontend.md` · `KB § 03-SEED-ARCHITECTURE.md`
 - **Hooks in dedicated files.** One `hooks/useEntity.ts` per entity; NEVER inline `useQuery` / `useMutation` in page components. → `KB § PATTERNS/frontend/frontend.md`
 - **Wired to real data + page-scoped CRUD.** Every UI surface (a) hits a real endpoint that returns real data ∧ (b) owns its CRUD on the same page. Ship all four states (loading / empty / error / success). Run `noctus.dev.scan_wiring` before claiming done. → `KB § PATTERNS/frontend/product-internal-wiring.md`
+- **New page ⇒ prototype on REAL data first.** Real tables (normal migration) → private prototype page reading them through the owner's Supabase connector → owner validates on real numbers → contract-first code where the prototype's queries become the endpoint. Never mock data. → `KB § PATTERNS/frontend/prototype-on-real-data.md`
 - **Core URL resolution via env.** `env.CORE_URL` / `env.CORE_API_URL` — NEVER hand-roll `import.meta.env.VITE_CORE_* || "literal"` (the `check_handrolled_core_url` keeper fires). → `KB § PATTERNS/frontend/core-url-routing.md`
 - **Cross-product nav.** Core dashboard tiles env-driven via `resolve_product_url`; product `url_base = HOUSE port` (not the vestigial frontend port). → `KB § PATTERNS/frontend/core-url-routing.md`
 - **Status_pagina-gated nav.** A nav entry needs a `status_pagina` row OR it's silently HIDDEN by `filterNavByPageStatus` / `isPageVisible`. → `KB § PATTERNS/frontend/product-internal-wiring.md`

@@ -116,3 +116,7 @@ or starts producing false-reds), raise the limit in **scheduled, measured steps*
 - **The output.** The knee: the highest concurrency where throughput still rises and the
   false-red rate stays near 0. Write it into the budget as a durable phase row, and record
   the rationale here.
+
+## 8 · Measured by
+
+Every admission and sample in the capacity log is joined with Claude usage (tokens, cost, chars per session) by `noctus.dev.usage_eval` — before/after any phase change, `action=compare`. → `KB § PATTERNS/devops/usage-evaluation.md`

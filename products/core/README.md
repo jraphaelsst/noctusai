@@ -6,7 +6,7 @@ Central platform for authentication, organization management, billing, licensing
 
 - **Backend**: FastAPI (port 8000)
 - **Frontend**: React + TypeScript + Vite (port 5173)
-- **Database**: Supabase (schema: `public`). `org_settings` (vendor credentials), `webhook_endpoints`, `webhook_deliveries` and `api_keys` are **service-role only** (migration 086): no anon/authenticated grant or policy; every access goes through the API's admin-gated routes. `ai_usage` (migration 091) is the central append-only LLM usage ledger of every product -- service-role insert, member/platform-admin read, read by `/api/admin/llm-usage`
+- **Database**: Supabase (schema: `public`). `org_settings` (vendor credentials), `webhook_endpoints`, `webhook_deliveries` and `api_keys` are **service-role only** (migration 086): no anon/authenticated grant or policy; every access goes through the API's admin-gated routes. `ai_usage` (migration 091) is the central append-only LLM usage ledger of every product -- service-role insert, member/platform-admin read, read by `/api/admin/llm-usage`. `dev_telemetry_claude` / `_os` / `_jobs` / `_marks` (migration 097) are **dev telemetry**, not product data: how our own development work uses Claude (tokens, API-equivalent cost, chars per session/agent) and the dev machine (heavy jobs, OS samples), written by `noctus.dev.usage_eval` (service role, counts only), RLS on with no policies, read by the usage dashboard (`KNOWLEDGE-BASE/CONTEXT/PATTERNS/devops/usage-evaluation.md`)
 - **Tenant key**: `org_id`
 - **Auth**: Custom REST API
 
