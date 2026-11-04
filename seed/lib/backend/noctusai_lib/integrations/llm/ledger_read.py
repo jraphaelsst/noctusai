@@ -23,15 +23,17 @@ from .ledger import AI_USAGE_TABLE
 __all__ = [
     "AI_USAGE_COLUMNS",
     "AiUsageWindowTooLarge",
+    "NO_AGENT_FILTER",
     "aggregate_ai_usage",
     "read_ai_usage_rows",
 ]
 
 AI_USAGE_COLUMNS = (
-    "id,created_at,org_id,product,feature,purpose,user_id,agent_key,provider,model,operation,"
+    "id,created_at,org_id,product,feature,purpose,user_id,conversation_id,agent_key,provider,model,operation,"
     "input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,image_input_tokens,"
     "image_output_tokens,cost_usd,cost_brl,status"
 )
+NO_AGENT_FILTER = "none"
 _DEFAULT_MAX_PAGES = 200  # 200 000 rows
 
 
@@ -47,6 +49,8 @@ def read_ai_usage_rows(
     org_id: Optional[str] = None,
     product: Optional[str] = None,
     feature: Optional[str] = None,
+    agent_key: Optional[str] = None,
+    conversation_id: Optional[str] = None,
     columns: str = AI_USAGE_COLUMNS,
     max_pages: int = _DEFAULT_MAX_PAGES,
 ) -> list[dict]:
@@ -70,6 +74,11 @@ def read_ai_usage_rows(
             q = q.eq("product", product)
         if feature:
             q = q.eq("feature", feature)
+        if agent_key:
+            # The literal ``none`` selects the rows with no agent attribution.
+            q = q.is_("agent_key", "null") if agent_key == NO_AGENT_FILTER else q.eq("agent_key", agent_key)
+        if conversation_id:
+            q = q.eq("conversation_id", conversation_id)
         return q.order("id").range(lo, hi).execute().data
 
     return list(
@@ -129,23 +138,78 @@ def _sorted_children(children: dict[str, dict[str, Any]], key_name: str) -> list
     return out
 
 
+def _agent_node(node: dict[str, Any], row: dict) -> None:
+    """Fold one row into a per-agent bucket (its ``_convs`` set counts conversations)."""
+    _add(node, row)
+    if row.get("conversation_id"):
+        node["_convs"].add(row["conversation_id"])
+
+
+def _finish_agents(agents: dict[Any, dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for key, node in agents.items():
+        convs = node.pop("_convs")
+        out.append({
+            "agent_key": key,
+            "calls": node["calls"], "cost_usd": node["cost_usd"], "cost_brl": node["cost_brl"],
+            "input_tokens": node["input_tokens"], "output_tokens": node["output_tokens"],
+            "conversations": len(convs),
+        })
+    for a in out:
+        a["cost_usd"] = round(a["cost_usd"], 6)
+        a["cost_brl"] = round(a["cost_brl"], 6)
+    out.sort(key=lambda a: a["cost_usd"], reverse=True)
+    return out
+
+
+_MAX_SESSIONS = 200
+
+
 def aggregate_ai_usage(rows: Iterable[dict]) -> dict[str, Any]:
-    """Roll rows up: ``totals`` + ``per_org[] → per_product[] → per_feature[]``
-    (+ ``by_model[]`` per product), each level sorted by cost desc."""
+    """Roll rows up: ``totals`` + ``per_org[] -> per_product[] -> per_feature[]``
+    (+ ``by_model[]`` and ``per_agent[]`` per product), each level sorted by cost desc.
+
+    Also: ``per_product`` (slug -> totals + ``per_agent[]`` summed across orgs),
+    ``attribution`` (calls with / without an ``agent_key``) and ``per_session``
+    (top 200 conversations by cost). A null ``agent_key`` is grouped honestly as
+    ``agent_key: null`` -- never invented."""
     totals = _bucket()
     orgs: dict[str, dict[str, Any]] = {}
+    global_products: dict[str, dict[str, Any]] = {}
+    sessions: dict[tuple, dict[str, Any]] = {}
+    with_agent = without_agent = 0
     for row in rows:
         _add(totals, row)
+        agent = row.get("agent_key") or None
+        if agent:
+            with_agent += 1
+        else:
+            without_agent += 1
         org_key = str(row.get("org_id") or "")
+        prod_key = row.get("product") or "unattributed"
         org = orgs.setdefault(org_key, {**_bucket(), "_products": {}})
         _add(org, row)
-        prod_key = row.get("product") or "unattributed"
-        prod = org["_products"].setdefault(prod_key, {**_bucket(), "_features": {}, "_models": {}})
+        prod = org["_products"].setdefault(
+            prod_key, {**_bucket(), "_features": {}, "_models": {}, "_agents": {}}
+        )
         _add(prod, row)
         feat = prod["_features"].setdefault(row.get("feature") or "(sem feature)", _bucket())
         _add(feat, row)
         model = prod["_models"].setdefault(f"{row.get('provider') or ''}\x00{row.get('model') or ''}", _bucket())
         _add(model, row)
+        _agent_node(prod["_agents"].setdefault(agent, {**_bucket(), "_convs": set()}), row)
+
+        gprod = global_products.setdefault(prod_key, {**_bucket(), "_agents": {}})
+        _add(gprod, row)
+        _agent_node(gprod["_agents"].setdefault(agent, {**_bucket(), "_convs": set()}), row)
+
+        skey = (row.get("conversation_id") or None, prod_key, agent, org_key)
+        sess = sessions.setdefault(skey, {**_bucket(), "first": None, "last": None})
+        _add(sess, row)
+        ts = row.get("created_at")
+        if ts:
+            sess["first"] = ts if sess["first"] is None or ts < sess["first"] else sess["first"]
+            sess["last"] = ts if sess["last"] is None or ts > sess["last"] else sess["last"]
 
     per_org = []
     for org_key, org in orgs.items():
@@ -157,8 +221,32 @@ def aggregate_ai_usage(rows: Iterable[dict]) -> dict[str, Any]:
                 provider, model = mk.split("\x00", 1)
                 models.append({"provider": provider, "model": model, **_round(m)})
             models.sort(key=lambda m: m["cost_usd"], reverse=True)
-            products.append({"product": prod_key, **_round(prod), "per_feature": features, "by_model": models})
+            agents = _finish_agents(prod.pop("_agents"))
+            products.append({
+                "product": prod_key, **_round(prod), "per_feature": features, "by_model": models,
+                "per_agent": agents,
+            })
         products.sort(key=lambda p: p["cost_usd"], reverse=True)
         per_org.append({"org_id": org_key or None, **_round(org), "per_product": products})
     per_org.sort(key=lambda o: o["cost_usd"], reverse=True)
-    return {"totals": _round(totals), "per_org": per_org}
+
+    per_product = {}
+    for prod_key, gprod in global_products.items():
+        agents = _finish_agents(gprod.pop("_agents"))
+        per_product[prod_key] = {**_round(gprod), "per_agent": agents}
+
+    per_session = sorted(sessions.items(), key=lambda kv: kv[1]["cost_usd"], reverse=True)[:_MAX_SESSIONS]
+    return {
+        "totals": _round(totals),
+        "per_org": per_org,
+        "per_product": per_product,
+        "attribution": {"calls_with_agent": with_agent, "calls_without_agent": without_agent},
+        "per_session": [
+            {
+                "conversation_id": conv, "product": prod, "agent_key": agent, "org_id": org or None,
+                "calls": node["calls"], "cost_usd": round(node["cost_usd"], 6),
+                "cost_brl": round(node["cost_brl"], 6), "first": node["first"], "last": node["last"],
+            }
+            for (conv, prod, agent, org), node in per_session
+        ],
+    }
