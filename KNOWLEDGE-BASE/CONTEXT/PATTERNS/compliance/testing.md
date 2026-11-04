@@ -19,6 +19,7 @@ Every product must have all five test layers. No product ships without them.
 - **Regression tests:** name the case. Every regression test must reference the incident in its docstring or filename — date, project that surfaced it, or original ticket. Without that reference, it's just a unit test that may decay into noise. See `§ Regression tests in practice` below.
 - **Deterministic:** no hardcoded dates (use `date.today()` / `date.today() - timedelta(days=N)`), no external API calls, no network.
 - **Auth boundary:** every product must verify that unauthenticated requests return 401 for all protected endpoints.
+- **An owner decision reversed ⇒ grep the tests that pin the old policy, in the same commit.** A test written to an earlier decision (e.g. RG required for contract parties) stays green on its own branch and only reds on the merged tip, after the reversal lands from another branch. That cost a full fleet integrate on 2026-11-04. When you implement a reversal, search the tests for the old policy's identifiers and rewrite each one to the new decision, naming the decision and its date in the docstring.
 - **No self-monkeypatching:** never `monkeypatch.setattr(<our_module>, "<our_fn>", _noop)` or `patch.object(<our_module>, "<our_fn>", ...)`. If you find yourself reaching for it, the test is asking you to wire a seam differently. See `§ No self-monkeypatching — refactor playbook` for the three legitimate patterns.
 
 ## Running
