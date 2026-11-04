@@ -367,7 +367,7 @@ export const PRIVACY_POLICY: ConsentDoc = {
         },
         {
           ul: [
-            "Dados tratados: dados públicos das publicações do perfil cadastrado (legenda, métricas de desempenho, miniatura) e a transcrição da fala dos Reels, obtidos pela API oficial do Instagram (Graph API, Business Discovery).",
+            "Dados tratados: dados públicos das publicações do perfil cadastrado (legenda, métricas de desempenho, miniatura) e a transcrição da fala dos Reels, obtidos de forma pública, por serviço de leitura de perfis públicos do Instagram (Apify) ou, quando configurado, pela API oficial do Instagram (Graph API, Business Discovery).",
             "Finalidade: estudar a estrutura do conteúdo. Não republicamos o material e não construímos perfis dos criadores.",
             "Base legal: legítimo interesse (LGPD, art. 7º, IX), com avaliação de impacto documentada e salvaguardas de minimização.",
             "Retenção: os dados são eliminados 90 dias após o perfil ser pausado ou deixar de ser usado; em caso de oposição do criador, a eliminação é imediata.",

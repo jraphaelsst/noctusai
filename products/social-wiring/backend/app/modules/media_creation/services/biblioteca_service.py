@@ -60,8 +60,12 @@ CARD_COLS = (
 )
 DETALHE_COLS = (
     CARD_COLS + ",transcricao_texto,transcricao_status,classificacao_status,formato_ids,nicho_ids,"
-    "profissao_ids,gatilho,blueprint"
+    "profissao_ids,gatilho,blueprint,video_url,video_url_em"
 )
+#: How long a scraper video URL is served to the FE (Instagram CDN URLs carry a signed expiry; ~24 h is
+#: the conservative window). Past it ``video_url`` is null and the FE falls back to the Instagram embed.
+#: Also the window the transcription job may reuse the stored URL (``biblioteca_ingestao.VIDEO_URL_TTL``).
+VIDEO_URL_FRESCA = timedelta(hours=24)
 
 _NICHO = dict(NICHOS)
 _PROFISSAO = dict(PROFISSOES)
@@ -307,6 +311,7 @@ class BibliotecaService:
         contato: Optional[Callable[[], str]] = None,
         max_perfis_org: int = 30,
         sync_manual_dia_org: int = 20,
+        fonte: Optional[Callable[[], str]] = None,
     ) -> None:
         self.db = db
         self.org_id = str(org_id)
@@ -317,8 +322,14 @@ class BibliotecaService:
         self._contato = contato
         self.max_perfis_org = max_perfis_org
         self.sync_manual_dia_org = sync_manual_dia_org
+        #: ``biblioteca_fonte`` reader; ``None`` = Business Discovery (the service's original behaviour).
+        self._fonte = fonte
 
     # ── guards ──────────────────────────────────────────────────────────
+
+    def usa_apify(self) -> bool:
+        """True when profiles are read through Apify -- no connected Meta account is needed then."""
+        return self._fonte is not None and self._fonte() == "apify"
 
     def ingestao_ativa(self) -> bool:
         return bool(self._switch())
@@ -512,6 +523,10 @@ class BibliotecaService:
             gatilho=row.get("gatilho"),
             estrutura_utilizavel=bool(row.get("blueprint")) and row["classificacao_status"] == "concluida",
         )
+        em = _parse_dt(row.get("video_url_em"))
+        out["video_url"] = (
+            row["video_url"] if row.get("video_url") and em is not None and _now() - em < VIDEO_URL_FRESCA else None
+        )
         if incluir_blueprint:
             out["blueprint"] = row.get("blueprint")
         return out
@@ -587,7 +602,7 @@ class BibliotecaService:
             if marca_id and self._marca_ref_perfil(marca_id, str(row["id"])):
                 return {"status": "na_minha_biblioteca", "perfil": perfil}
             return {"status": "ja_monitorado", "perfil": perfil}
-        if not self.contas_descoberta():
+        if not self.usa_apify() and not self.contas_descoberta():
             return {"status": "sem_conta_descoberta"}
         return {"status": "disponivel"}
 
@@ -629,17 +644,19 @@ class BibliotecaService:
             return (await self.perfis_out([existing]))[0]
         if len(self._org_perfis()) >= self.max_perfis_org:
             raise BibliotecaError(409, f"Sua organização já monitora {self.max_perfis_org} perfis (limite).")
-        conta = self._conta_valida(conta_descoberta_id)
+        apify = self.usa_apify()
+        conta = None if apify else self._conta_valida(conta_descoberta_id)
+        pronto = bool(conta) or apify
         payload = {
             "org_id": self.org_id, "rede": "instagram", "handle": handle, "conta_descoberta_id": conta,
-            "status": "aguardando" if conta else "sem_conta", "created_by": self.user_id,
+            "status": "aguardando" if pronto else "sem_conta", "created_by": self.user_id,
         }
-        if not conta:
+        if not pronto:
             payload["erro_codigo"] = "sem_conta"
             payload["erro_mensagem"] = MSG_SEM_CONTA
         row = self.db.table(PERFIS).insert(payload).execute().data[0]
         self._add_ref_perfil(marca_id, str(row["id"]), True)
-        if conta:
+        if pronto:
             await self._enqueue_sync(str(row["id"]))
         return (await self.perfis_out([row]))[0]
 
@@ -677,7 +694,7 @@ class BibliotecaService:
         await self._enqueue_sync(str(row["id"]), suffix=f":manual:{now.strftime('%H')}:{self.org_id}")
         self.db.table(PERFIS).update({"proxima_sync_em": now.isoformat()}).eq("id", row["id"]).eq(
             "org_id", self.org_id).execute()
-        if row["status"] in ("sem_conta", "erro", "nao_encontrado"):
+        if row["status"] in ("sem_conta", "erro", "nao_encontrado", "sem_credencial", "sem_orcamento"):
             self.db.table(PERFIS).update({"status": "aguardando", "erro_codigo": None, "erro_mensagem": None}).eq(
                 "id", row["id"]).eq("org_id", self.org_id).execute()
         return {"perfil_id": row["id"], "enfileirado": True, "ingestao_ativa": self.ingestao_ativa()}

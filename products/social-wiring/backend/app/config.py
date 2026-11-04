@@ -369,6 +369,19 @@ class SocialWiringSettings(ProductSettings):
     # as costing 0 and silently disarms the budget.
     geracao_llm_model: str = "claude-opus-5"
     biblioteca_llm_model: str = "claude-haiku-4-5"
+    # Ingestion source of the Biblioteca de virais (owner decision 2026-11-04, transitional): "apify"
+    # (public profiles via apify/instagram-scraper) or "business_discovery" (Meta; default again after Meta
+    # verification). Read DB first then env (`biblioteca_fonte`) by `biblioteca_fonte.read_biblioteca_fonte`.
+    biblioteca_fonte: str = "apify"
+    # Apify spend caps: posts per scrape (first sync / later syncs) and billed results per org per UTC day.
+    biblioteca_apify_max_posts_primeira_sync: int = 60
+    biblioteca_apify_max_posts_sync: int = 24
+    biblioteca_apify_resultados_dia_org: int = 600
+    # "Viral" (Apify source; owner decision 2026-11-04): views floor AND both engagement rates
+    # ((likes+comments)/views and (likes+comments)/followers-at-fetch). score_viral only ranks.
+    biblioteca_viral_min_views: int = 200_000
+    biblioteca_viral_min_er_views: float = 0.02
+    biblioteca_viral_min_er_seguidores: float = 0.03
     # LGPD data-subject channel for creators who ask not to be monitored (LIA 6). Swappable via
     # platform_settings / env BIBLIOTECA_OPTOUT_CONTATO; the privacy policy mirrors this default.
     biblioteca_optout_contato: str = "joaoraphaelsst@gmail.com"

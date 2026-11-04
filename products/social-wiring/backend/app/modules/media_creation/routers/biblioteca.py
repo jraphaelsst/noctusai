@@ -36,7 +36,7 @@ from app.modules.media_creation.schemas.biblioteca import (
     ReferenciasPerfil,
 )
 from app.modules.media_creation.services import geracao_jobs
-from app.modules.media_creation.services import biblioteca_optout
+from app.modules.media_creation.services import biblioteca_fonte, biblioteca_optout
 from app.modules.media_creation.services.biblioteca_service import (
     BibliotecaError,
     BibliotecaService,
@@ -66,12 +66,18 @@ def get_ingestao_switch() -> Callable[[], bool]:
     return geracao_jobs.read_ingestao_habilitada
 
 
+def get_biblioteca_fonte() -> Callable[[], str]:
+    """The ``biblioteca_fonte`` reader (``apify`` | ``business_discovery``). Tests override it."""
+    return lambda: biblioteca_fonte.read_biblioteca_fonte(default=settings.biblioteca_fonte)
+
+
 def _svc(auth, storage: StorageBackend, jobs: JobRepository, switch: Callable[[], bool]) -> BibliotecaService:
     user, _, org_id = auth
     return BibliotecaService(
         get_admin_client(), str(org_id), str(getattr(user, "id", "") or "") or None,
         storage=storage, jobs=jobs, switch=switch, max_perfis_org=int(settings.biblioteca_max_perfis_org),
         sync_manual_dia_org=int(settings.biblioteca_sync_manual_dia_org),
+        fonte=get_biblioteca_fonte(),
     )
 
 

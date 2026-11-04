@@ -116,6 +116,7 @@ def _ports(db, *, adapter=None, fetcher=None, llm=None, transcricao=None, jobs=N
         db=db, jobs=jobs or FakeJobRepository(), storage=storage or FakeStorageBackend(),
         fetcher=fetcher or FakeSafeFetcher(), llm=llm or no_llm, adapter_factory=make_adapter,
         transcricao_factory=lambda org, user: transcricao or FakeTranscricao(), cfg=cfg, clock=lambda: NOW,
+        fonte_reader=lambda: "business_discovery",
     )
 
 

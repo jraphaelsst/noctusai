@@ -1,0 +1,7 @@
+{"id":"111","username":"perfil.publico","fullName":"Perfil Público","biography":"bio","followersCount":1200,"followsCount":10,"postsCount":50,"profilePicUrlHD":"https://scontent.cdninstagram.com/pic.jpg","private":false,"isBusinessAccount":true,"verified":false,
+"latestPosts":[
+{"id":"p1","shortCode":"AAA","url":"https://www.instagram.com/p/AAA/","type":"Video","productType":"clips","caption":"gancho forte","timestamp":"2026-10-01T12:00:00.000Z","likesCount":10,"commentsCount":2,"videoPlayCount":500,"videoViewCount":300,"videoDuration":20.5,"displayUrl":"https://scontent.cdninstagram.com/d.jpg","videoUrl":"https://scontent.cdninstagram.com/v.mp4","ownerUsername":"perfil.publico"},
+{"id":"p2","shortCode":"BBB","url":"https://www.instagram.com/p/BBB/","type":"Image","caption":"foto","timestamp":"2026-09-20T08:00:00.000Z","likesCount":-1,"commentsCount":0,"displayUrl":"https://scontent.cdninstagram.com/i.jpg","ownerUsername":"perfil.publico"},
+{"id":"p3","shortCode":"CCC","url":"https://www.instagram.com/p/CCC/","type":"Video","productType":"clips","timestamp":"2026-09-10T08:00:00.000Z","likesCount":5,"commentsCount":1,"videoViewCount":90,"videoUrl":"https://scontent.cdninstagram.com/w.mp4","ownerUsername":"perfil.publico"},
+{"id":"p4","shortCode":"DDD","url":"https://www.instagram.com/p/DDD/","type":"Sidecar","timestamp":"2026-09-01T08:00:00.000Z","likesCount":3,"commentsCount":1,"ownerUsername":"perfil.publico"}
+]}

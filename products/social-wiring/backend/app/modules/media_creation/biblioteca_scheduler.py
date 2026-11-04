@@ -78,7 +78,7 @@ async def enqueue_daily_syncs(db: Any, repo: JobRepository, *, now: Optional[dat
     perfil_ids = sorted({str(r["perfil_id"]) for r in refs if r.get("perfil_id")})
     targeted = 0
     for chunk in batched(perfil_ids):
-        rows = db.table(PERFIS).select("id").eq("status", "ativo").in_("id", chunk).execute().data or []
+        rows = db.table(PERFIS).select("id").in_("status", ["ativo", "sem_orcamento", "sem_credencial"]).in_("id", chunk).execute().data or []
         for r in rows:
             await repo.enqueue(
                 type="biblioteca.sync_perfil", payload={"perfil_id": str(r["id"])}, max_retries=2,

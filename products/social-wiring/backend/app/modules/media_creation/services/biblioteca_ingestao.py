@@ -31,6 +31,13 @@ from typing import Any, Awaitable, Callable, Optional, Sequence
 
 from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository
 from noctusai_lib.domain.jobs.repo import RescheduleLater
+from noctusai_lib.integrations.apify import (
+    ApifyNotConfigured,
+    ApifyProfileNotFound,
+    ApifyRateLimited,
+    ApifyRunFailed,
+    InstagramScraper,
+)
 from noctusai_lib.integrations.media.safe_fetch import (
     MAGIC_JPEG,
     MAGIC_MP4,
@@ -55,11 +62,12 @@ from app.modules.media_creation.prompts.biblioteca_classificador import (
     build_user_message,
     parse_classificador_output,
 )
-from app.modules.media_creation.services import biblioteca_optout, geracao_jobs
+from app.modules.media_creation.services import biblioteca_fonte, biblioteca_optout, geracao_jobs
 from app.modules.media_creation.services.biblioteca_service import (
     BUCKET,
     PERFIS,
     SYNC_MIN_INTERVAL,
+    VIDEO_URL_FRESCA,
     VIRAIS,
     purgar_perfil,
 )
@@ -178,6 +186,30 @@ def calcular_virais(
     return base, mediana, out
 
 
+def avaliar_viral_absoluto(
+    row: dict[str, Any], seguidores: Any, cfg: Any, now: datetime
+) -> tuple[Optional[float], Optional[float], bool]:
+    """``(er_views, er_seguidores, e_viral)`` -- the Apify-era viral rule (owner decision 2026-11-04).
+
+    ``e_viral`` = views >= ``biblioteca_viral_min_views`` AND er_views >= ``..._min_er_views`` AND
+    er_seguidores >= ``..._min_er_seguidores`` AND the post is >= 48 h old. Hidden likes / missing views /
+    missing or zero followers make the corresponding rate ``None`` and ``e_viral`` False -- unknown is
+    never read as 0. ``er_views = (likes + comments) / views``; ``er_seguidores`` divides by followers."""
+    likes, comments, views = row.get("likes"), row.get("comments"), row.get("views")
+    engaj = None if likes is None or comments is None else float(likes) + float(comments)
+    er_views = engaj / float(views) if engaj is not None and views else None
+    er_seg = engaj / float(seguidores) if engaj is not None and seguidores else None
+    published = _parse_dt(row.get("publicado_em"))
+    viral = bool(
+        er_views is not None and er_seg is not None and views is not None
+        and views >= int(cfg.biblioteca_viral_min_views)
+        and er_views >= float(cfg.biblioteca_viral_min_er_views)
+        and er_seg >= float(cfg.biblioteca_viral_min_er_seguidores)
+        and published is not None and now - published >= VIRAL_MIN_AGE
+    )
+    return er_views, er_seg, viral
+
+
 # ── ports ───────────────────────────────────────────────────────────────────
 
 
@@ -194,6 +226,13 @@ class IngestaoPorts:
     transcricao_factory: Callable[[Any, str, str], Any]
     cfg: Any
     clock: Callable[[], datetime] = _now
+    #: ``org_id -> InstagramScraper`` (token from ``resolve_api_key("apify_api_token", org_id)``); raises
+    #: ``ApifyNotConfigured`` when the org has no token. Only used when the source is ``apify``.
+    scraper_factory: Optional[Callable[[str], InstagramScraper]] = None
+    #: ``() -> "apify" | "business_discovery"`` -- the ``biblioteca_fonte`` setting, read per sync.
+    fonte_reader: Callable[[], str] = biblioteca_fonte.read_biblioteca_fonte
+    #: ``() -> public client`` for ``cost_ledger`` (best-effort; ``None`` = not booked, logged).
+    ledger_factory: Optional[Callable[[], Any]] = None
 
 
 async def _chat_llm(system: str, user: str, org_id: Optional[str]) -> str:
@@ -246,7 +285,24 @@ def default_ports() -> IngestaoPorts:
         adapter_factory=lambda account_id, org_id: get_meta_adapter_for_account(account_id, org_id),
         transcricao_factory=lambda org_id, user_id: _transcricao_service(db, org_id, user_id),
         cfg=settings,
+        scraper_factory=_apify_scraper,
+        fonte_reader=lambda: biblioteca_fonte.read_biblioteca_fonte(default=settings.biblioteca_fonte),
+        ledger_factory=_ledger_client,
     )
+
+
+def _apify_scraper(org_id: str) -> InstagramScraper:
+    from noctusai_lib.integrations.apify import get_instagram_scraper
+
+    from app.services.api_keys_store import resolve_api_key
+
+    return get_instagram_scraper(token=resolve_api_key("apify_api_token", org_id))
+
+
+def _ledger_client() -> Any:
+    from app.database import get_core_client
+
+    return get_core_client()
 
 
 # ── small helpers ───────────────────────────────────────────────────────────
@@ -345,25 +401,32 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
         logger.info("biblioteca: perfil=%s sincronizado há menos de 1 h; ignorado", pid)
         return
 
-    conta = perfil.get("conta_descoberta_id") or _default_conta(ports, org_id)
-    if not conta:
-        _set_perfil(ports, pid, status="sem_conta", erro_codigo="sem_conta", erro_mensagem=MSG_SEM_CONTA)
-        return
-    try:
-        adapter = ports.adapter_factory(str(conta), org_id)
-        contas_ig = await asyncio.to_thread(adapter.list_instagram_accounts)
-    except (IntegrationAccountNotFound, ValueError) as exc:  # gone, or not a provider='meta' row
-        logger.info("biblioteca: conta de descoberta inválida perfil=%s (%s)", pid, type(exc).__name__)
-        _set_perfil(ports, pid, status="sem_conta", erro_codigo="sem_conta", erro_mensagem=MSG_SEM_CONTA)
-        return
-    except MetaGraphError as exc:
-        if _meta_blocked(ports, pid, exc):
+    fonte = ports.fonte_reader()
+    apify = fonte == biblioteca_fonte.FONTE_APIFY
+    conta: Optional[str] = None
+    adapter: Any = None
+    caller_ig: Optional[str] = None
+    if not apify:
+        # Business Discovery runs on the org's own Meta (Facebook Login) connection; Apify needs none.
+        conta = perfil.get("conta_descoberta_id") or _default_conta(ports, org_id)
+        if not conta:
+            _set_perfil(ports, pid, status="sem_conta", erro_codigo="sem_conta", erro_mensagem=MSG_SEM_CONTA)
             return
-        raise
-    if not contas_ig:
-        _set_perfil(ports, pid, status="sem_conta", erro_codigo="sem_conta", erro_mensagem=MSG_SEM_CONTA)
-        return
-    caller_ig = contas_ig[0].id
+        try:
+            adapter = ports.adapter_factory(str(conta), org_id)
+            contas_ig = await asyncio.to_thread(adapter.list_instagram_accounts)
+        except (IntegrationAccountNotFound, ValueError) as exc:  # gone, or not a provider='meta' row
+            logger.info("biblioteca: conta de descoberta inválida perfil=%s (%s)", pid, type(exc).__name__)
+            _set_perfil(ports, pid, status="sem_conta", erro_codigo="sem_conta", erro_mensagem=MSG_SEM_CONTA)
+            return
+        except MetaGraphError as exc:
+            if _meta_blocked(ports, pid, exc):
+                return
+            raise
+        if not contas_ig:
+            _set_perfil(ports, pid, status="sem_conta", erro_codigo="sem_conta", erro_mensagem=MSG_SEM_CONTA)
+            return
+        caller_ig = contas_ig[0].id
 
     stored = list(
         iter_paged_rows(
@@ -378,6 +441,121 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
     cap = FIRST_SYNC_POSTS if first else LATER_SYNC_MAX_POSTS
     cutoff = now - timedelta(days=REFRESH_WINDOW_DAYS)
 
+    if apify:
+        fetched = await _buscar_apify(ports, perfil, first=first)
+    else:
+        fetched = await _buscar_business_discovery(
+            ports, adapter, caller_ig, perfil, cap=cap, first=first, by_media=by_media, cutoff=cutoff
+        )
+    if fetched is None:
+        return  # the profile's status was already set (not found / no credential / budget / blocked)
+    header, media = fetched
+
+    try:
+        header_patch: dict[str, Any] = {}
+        if header is not None:
+            header_patch = {
+                "ig_user_id": header.ig_user_id, "nome": header.name, "seguidores": header.followers_count,
+                "media_count": header.media_count,
+            }
+            if header.profile_picture_url and not perfil.get("foto_path"):
+                _assert_perfil_vivo(ports, pid)
+                foto = await _put_image(ports, header.profile_picture_url, f"{org_id}/{pid}/foto")
+                if foto:
+                    header_patch["foto_path"] = foto
+
+        stamp = _iso(now)
+        for m in media:
+            base = {
+                "permalink": m.permalink, "media_type": m.media_type, "media_product_type": m.media_product_type,
+                "caption": (m.caption or "")[:5000] or None,
+                "publicado_em": _iso(m.timestamp) if m.timestamp else None,
+                "likes": m.like_count, "comments": m.comments_count, "views": m.views, "metricas_em": stamp,
+            }
+            if getattr(m, "from_apify", False):
+                base["duracao_s"] = m.duracao_s
+                if m.media_url and _is_video(m):
+                    base["video_url"], base["video_url_em"] = m.media_url, stamp
+            existing = by_media.get(str(m.id))
+            if existing is None:
+                _assert_perfil_vivo(ports, pid)
+                row = ports.db.table(VIRAIS).insert({
+                    **base, "org_id": org_id, "perfil_id": pid, "ig_media_id": str(m.id),
+                    "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente", "e_viral": False,
+                }).execute().data[0]
+                thumb = m.thumbnail_url or (m.media_url if not _is_video(m) else None)
+                if thumb:
+                    path = await _put_image(ports, thumb, f"{org_id}/{pid}/{row['id']}")
+                    if path:
+                        _set_viral(ports, row["id"], thumbnail_path=path)
+            else:
+                _set_viral(ports, existing["id"], **base)
+    except _PerfilRemovido:
+        logger.info("biblioteca: perfil=%s removido durante a sincronização; nada mais é gravado", pid)
+        return
+    media_urls = {str(m.id): m.media_url for m in media if _is_video(m)}
+
+    # Recompute the viral metric over EVERYTHING stored for the profile.
+    rows = list(
+        iter_paged_rows(
+            lambda s, e: ports.db.table(VIRAIS)
+            .select("id,ig_media_id,publicado_em,likes,comments,views,score_viral,e_viral,"
+                    "transcricao_status,classificacao_status,er_views,er_seguidores,seguidores_no_fetch")
+            .eq("perfil_id", pid).order("id").range(s, e).execute().data
+        )
+    )
+    base_metric, mediana, scores = calcular_virais(rows, ratio=float(ports.cfg.biblioteca_viral_ratio), now=now)
+    seguidores = header.followers_count if header is not None and header.followers_count is not None \
+        else perfil.get("seguidores")
+    day = _day(ports)
+    for r in rows:
+        score, viral = scores[str(r["id"])]
+        was_viral = bool(r.get("e_viral"))
+        prev_score = float(r["score_viral"]) if r.get("score_viral") is not None else None
+        extra: dict[str, Any] = {}
+        if apify:
+            # Owner decision 2026-11-04: with real views, "viral" is absolute (views floor + two engagement
+            # rates); the median-ratio score_viral stays as the RANKING signal only.
+            er_v, er_s, viral = avaliar_viral_absoluto(r, seguidores, ports.cfg, now)
+            extra = {"er_views": er_v, "er_seguidores": er_s, "seguidores_no_fetch": seguidores}
+            if any(r.get(k) != v for k, v in extra.items()):
+                _set_viral(ports, r["id"], **extra)
+        if score != prev_score or viral != was_viral:
+            _set_viral(ports, r["id"], score_viral=score, e_viral=viral)
+        if not viral:
+            continue
+        rid = str(r["id"])
+        status_t, classif = r.get("transcricao_status"), r.get("classificacao_status")
+        url = media_urls.get(str(r["ig_media_id"]))
+        if status_t == "sem_orcamento":
+            # Out of library budget earlier: retry with a fresh URL when this sync saw the post.
+            if url:
+                _set_viral(ports, rid, transcricao_status="pendente")
+                await _enqueue(ports, "biblioteca.transcrever", {"viral_id": rid, "media_url": url},
+                               f"transcrever:{rid}:{day}")
+        elif not was_viral and classif == "pendente" and status_t not in ("pendente", "na_fila"):
+            if url and status_t == "nao_aplicavel":
+                _set_viral(ports, rid, transcricao_status="pendente")
+                await _enqueue(ports, "biblioteca.transcrever", {"viral_id": rid, "media_url": url},
+                               f"transcrever:{rid}:{day}")
+            else:
+                await _enqueue(ports, "biblioteca.classificar", {"viral_id": rid}, f"classificar:{rid}:{day}")
+        elif classif == "falhou":
+            await _enqueue(ports, "biblioteca.classificar", {"viral_id": rid}, f"classificar:{rid}:{day}")
+
+    _set_perfil(
+        ports, pid, status="ativo", erro_codigo=None, erro_mensagem=None, ultima_sync_em=stamp,
+        proxima_sync_em=_iso(now + SYNC_INTERVAL), metrica_base=base_metric, mediana_metrica=mediana,
+        **({"conta_descoberta_id": str(conta)} if conta else {}), **header_patch,
+    )
+
+
+async def _buscar_business_discovery(
+    ports: IngestaoPorts, adapter: Any, caller_ig: Optional[str], perfil: dict[str, Any], *, cap: int,
+    first: bool, by_media: dict[str, Any], cutoff: datetime,
+) -> Optional[tuple[Any, list[Any]]]:
+    """The original Meta path: ``(header, media)``, or ``None`` after setting the profile's status."""
+    pid = str(perfil["id"])
     header = None
     media: list[Any] = []
     after: Optional[str] = None
@@ -414,91 +592,60 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
             return
         logger.error("biblioteca: Business Discovery falhou perfil=%s code=%s", pid, exc.code)
         raise
-    media = media[:cap]
+    return header, media[:cap]
 
+
+async def _buscar_apify(
+    ports: IngestaoPorts, perfil: dict[str, Any], *, first: bool
+) -> Optional[tuple[Any, list[Any]]]:
+    """Apify path: ONE ``scrape_profile`` call -> ``(header, media)`` in the shared shape, or ``None``
+    after setting a visible status (``sem_credencial`` / ``sem_orcamento`` / ``nao_encontrado``)."""
+    pid, org_id = str(perfil["id"]), str(perfil["org_id"])
+    now = ports.clock()
+    cfg = ports.cfg
+    teto_dia = int(cfg.biblioteca_apify_resultados_dia_org)
+    if biblioteca_fonte.resultados_hoje(ports.db, org_id, now) >= teto_dia:
+        _set_perfil(ports, pid, status="sem_orcamento", erro_codigo="sem_orcamento",
+                    erro_mensagem=biblioteca_fonte.MSG_SEM_ORCAMENTO)
+        return None
     try:
-        header_patch: dict[str, Any] = {}
-        if header is not None:
-            header_patch = {
-                "ig_user_id": header.ig_user_id, "nome": header.name, "seguidores": header.followers_count,
-                "media_count": header.media_count,
-            }
-            if header.profile_picture_url and not perfil.get("foto_path"):
-                _assert_perfil_vivo(ports, pid)
-                foto = await _put_image(ports, header.profile_picture_url, f"{org_id}/{pid}/foto")
-                if foto:
-                    header_patch["foto_path"] = foto
-
-        stamp = _iso(now)
-        for m in media:
-            base = {
-                "permalink": m.permalink, "media_type": m.media_type, "media_product_type": m.media_product_type,
-                "caption": (m.caption or "")[:5000] or None,
-                "publicado_em": _iso(m.timestamp) if m.timestamp else None,
-                "likes": m.like_count, "comments": m.comments_count, "views": m.views, "metricas_em": stamp,
-            }
-            existing = by_media.get(str(m.id))
-            if existing is None:
-                _assert_perfil_vivo(ports, pid)
-                row = ports.db.table(VIRAIS).insert({
-                    **base, "org_id": org_id, "perfil_id": pid, "ig_media_id": str(m.id),
-                    "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente", "e_viral": False,
-                }).execute().data[0]
-                thumb = m.thumbnail_url or (m.media_url if not _is_video(m) else None)
-                if thumb:
-                    path = await _put_image(ports, thumb, f"{org_id}/{pid}/{row['id']}")
-                    if path:
-                        _set_viral(ports, row["id"], thumbnail_path=path)
-            else:
-                _set_viral(ports, existing["id"], **base)
-    except _PerfilRemovido:
-        logger.info("biblioteca: perfil=%s removido durante a sincronização; nada mais é gravado", pid)
-        return
-    media_urls = {str(m.id): m.media_url for m in media if _is_video(m)}
-
-    # Recompute the viral metric over EVERYTHING stored for the profile.
-    rows = list(
-        iter_paged_rows(
-            lambda s, e: ports.db.table(VIRAIS)
-            .select("id,ig_media_id,publicado_em,likes,comments,views,score_viral,e_viral,"
-                    "transcricao_status,classificacao_status")
-            .eq("perfil_id", pid).order("id").range(s, e).execute().data
+        if ports.scraper_factory is None:
+            raise ApifyNotConfigured("scraper not wired")
+        scraper = ports.scraper_factory(org_id)
+    except ApifyNotConfigured:
+        _set_perfil(ports, pid, status="sem_credencial", erro_codigo="sem_credencial",
+                    erro_mensagem=biblioteca_fonte.MSG_SEM_CREDENCIAL)
+        return None
+    max_posts = int(cfg.biblioteca_apify_max_posts_primeira_sync if first else cfg.biblioteca_apify_max_posts_sync)
+    newer = None if first else (now - timedelta(days=REFRESH_WINDOW_DAYS)).date()
+    try:
+        scrape = await asyncio.to_thread(
+            scraper.scrape_profile, str(perfil["handle"]), max_posts=max_posts, newer_than=newer
         )
+    except ApifyProfileNotFound as exc:
+        privado = exc.reason == "privado"
+        _set_perfil(
+            ports, pid, status="nao_encontrado", erro_codigo="privado" if privado else "nao_encontrado",
+            erro_mensagem=biblioteca_fonte.MSG_PRIVADO if privado else biblioteca_fonte.MSG_NAO_ENCONTRADO_APIFY,
+        )
+        return None
+    except ApifyRateLimited as exc:
+        raise RescheduleLater(float(exc.retry_after_s or RATE_LIMIT_DELAY_S), "apify rate limit") from None
+    except ApifyRunFailed as exc:
+        logger.error("biblioteca: Apify falhou perfil=%s (%s)", pid, exc)  # message carries no token / raw body
+        raise
+    ledger_db = None
+    if ports.ledger_factory is not None:
+        try:
+            ledger_db = ports.ledger_factory()
+        except Exception as exc:  # noqa: BLE001 - booking is best-effort
+            logger.warning("biblioteca: cliente do cost_ledger indisponível (%s)", type(exc).__name__)
+    biblioteca_fonte.registrar_uso(
+        ports.db, ledger_db, org_id=org_id, perfil_id=pid, results=scrape.cost.results, usd=scrape.cost.usd,
+        run_id=scrape.cost.run_id, now=now,
     )
-    base_metric, mediana, scores = calcular_virais(rows, ratio=float(ports.cfg.biblioteca_viral_ratio), now=now)
-    day = _day(ports)
-    for r in rows:
-        score, viral = scores[str(r["id"])]
-        was_viral = bool(r.get("e_viral"))
-        prev_score = float(r["score_viral"]) if r.get("score_viral") is not None else None
-        if score != prev_score or viral != was_viral:
-            _set_viral(ports, r["id"], score_viral=score, e_viral=viral)
-        if not viral:
-            continue
-        rid = str(r["id"])
-        status_t, classif = r.get("transcricao_status"), r.get("classificacao_status")
-        url = media_urls.get(str(r["ig_media_id"]))
-        if status_t == "sem_orcamento":
-            # Out of library budget earlier: retry with a fresh URL when this sync saw the post.
-            if url:
-                _set_viral(ports, rid, transcricao_status="pendente")
-                await _enqueue(ports, "biblioteca.transcrever", {"viral_id": rid, "media_url": url},
-                               f"transcrever:{rid}:{day}")
-        elif not was_viral and classif == "pendente" and status_t not in ("pendente", "na_fila"):
-            if url and status_t == "nao_aplicavel":
-                _set_viral(ports, rid, transcricao_status="pendente")
-                await _enqueue(ports, "biblioteca.transcrever", {"viral_id": rid, "media_url": url},
-                               f"transcrever:{rid}:{day}")
-            else:
-                await _enqueue(ports, "biblioteca.classificar", {"viral_id": rid}, f"classificar:{rid}:{day}")
-        elif classif == "falhou":
-            await _enqueue(ports, "biblioteca.classificar", {"viral_id": rid}, f"classificar:{rid}:{day}")
-
-    _set_perfil(
-        ports, pid, status="ativo", erro_codigo=None, erro_mensagem=None, ultima_sync_em=stamp,
-        proxima_sync_em=_iso(now + SYNC_INTERVAL), metrica_base=base_metric, mediana_metrica=mediana,
-        conta_descoberta_id=str(conta), **header_patch,
-    )
+    header, media = biblioteca_fonte.normalizar(scrape)
+    return header, media
 
 
 def _meta_blocked(ports: IngestaoPorts, pid: str, exc: MetaGraphError) -> bool:
@@ -524,6 +671,17 @@ def _default_conta(ports: IngestaoPorts, org_id: str) -> Optional[str]:
 
 # ── biblioteca.transcrever ──────────────────────────────────────────────────
 
+VIDEO_URL_TTL = VIDEO_URL_FRESCA
+
+
+def _video_url_vigente(viral: dict[str, Any], now: datetime) -> Optional[str]:
+    """The persisted scraper video URL while it is still fresh (CDN URLs expire; past the TTL the
+    job fails ``falhou`` and the next sync re-scrapes)."""
+    em = _parse_dt(viral.get("video_url_em"))
+    if viral.get("video_url") and em is not None and now - em < VIDEO_URL_TTL:
+        return str(viral["video_url"])
+    return None
+
 
 async def transcrever(ports: IngestaoPorts, job: Job) -> None:
     payload = job.payload or {}
@@ -546,7 +704,7 @@ async def transcrever(ports: IngestaoPorts, job: Job) -> None:
         _set_viral(ports, vid, transcricao_status=status)
         await _enqueue(ports, "biblioteca.classificar", {"viral_id": vid}, f"classificar:{vid}:{day}")
 
-    url = payload.get("media_url")
+    url = payload.get("media_url") or _video_url_vigente(viral, ports.clock())
     perfil = _load_perfil(ports, str(viral["perfil_id"]))
     user_id = perfil.get("created_by")
     if not url or not user_id:
