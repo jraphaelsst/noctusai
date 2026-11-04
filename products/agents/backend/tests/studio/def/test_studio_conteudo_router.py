@@ -546,7 +546,7 @@ class TestContentTokenMint:
         plat.as_role("owner")
         ok = plat.post(f"{PLAT}/content-token", json={"label": "mcp"})
         assert ok.status_code == 201 and ok.headers["Cache-Control"] == "no-store"
-        assert ok.json()["token"].startswith("pk_") and ok.json()["scopes"] == ["studio:content-write"]
+        assert ok.json()["token"].startswith("noc_") and ok.json()["scopes"] == ["studio:content-write"]
         row = admin.rows["agents"][0]
         assert row["issuer"] == "noctus-platform" and row["scopes"] == ["studio:content-write"]
         assert row["org_id"] == str(DEFAULT_ORG_ID) and len(audit.rows) == 1

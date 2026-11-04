@@ -109,8 +109,8 @@ class TestApiTokensCreate:
         assert resp.status_code == 201, resp.text
         body = resp.json()
         assert body["label"] == "n8n webhook"
-        assert body["token"].startswith("pk_")
-        assert body["prefix"].startswith("pk_")
+        assert body["token"].startswith("noc_")
+        assert body["prefix"].startswith("noc_")
         assert body["scopes"] == ["publish"]
         assert body["expires_at"]
         assert body["human_personal"] is False

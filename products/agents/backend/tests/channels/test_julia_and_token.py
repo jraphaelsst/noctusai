@@ -140,7 +140,7 @@ class TestChannelTokenMint:
         assert resp.status_code == 201, resp.text
         assert resp.headers["Cache-Control"] == "no-store"
         body = resp.json()
-        assert body["token"].startswith("pk_") and body["prefix"] == body["token"][:11]
+        assert body["token"].startswith("noc_") and body["token"].startswith(body["prefix"])
         assert sorted(body["scopes"]) == sorted(CHANNEL_TOKEN_SCOPES)
         expires = datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00"))
         assert abs((expires - (datetime.now(timezone.utc) + timedelta(days=30))).total_seconds()) < 120

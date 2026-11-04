@@ -684,7 +684,7 @@ class TestToolsToken:
         # the secret handed to agents is the one whose hash is stored -- and is never stored itself
         assert len(fake.ferramentas_tokens) == 1
         secret = fake.ferramentas_tokens[0]
-        assert secret.startswith("pk_") and secret not in str(row)
+        assert secret.startswith("noc_") and secret not in str(row)
         assert admin.token_admin.find_by_secret("social_wiring", secret) is not None
         assert admin.get(BASE).json()["data"]["erro"] is None
 
