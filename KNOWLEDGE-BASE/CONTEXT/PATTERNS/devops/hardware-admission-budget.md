@@ -101,6 +101,12 @@ then change detection, then alerts.
   checks second: on 2026-11-04 a wrapped `gate_sweep` waited 57 min, then was refused as
   `refused_stale_tree`. A wrapper is harmless (the inner call inherits the slot) but costs
   the wait.
+- **Time-boxes count running time, never slot-wait.** The `task_branch` merged-tip ceiling
+  (`NOCTUS_GATE_OVERALL_CEILING_S`, default 3600 s) runs on an active clock that advances only
+  while one of the sweep's gates is running. Before 2026-11-04 it was a wall-clock deadline.
+  Once gates had to wait for the slot, a ~25-gate integrate at `max_heavy` 1 timed out with 6
+  gates never run. Admission must never turn a runaway guard into a guaranteed timeout: wait
+  limits belong to `heavy_slot` (`wait_s`), run limits to the ceiling.
 - **Pin the tree for evidence runs.** Run predeploy against a tree nothing will
   fast-forward under it: `--predeploy-check <slug> --worktree-path <detached worktree>`.
   The result carries `tree.head_start` / `head_end` / `behind_origin_dev`. A HEAD that moves

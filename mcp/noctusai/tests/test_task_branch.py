@@ -3793,6 +3793,36 @@ class TestMergedTipGateBudgets:
         run(NS(gate="pytest:core"))
         assert all(c <= 60 for c in calls)
 
+    def test_slot_wait_is_not_charged_to_the_ceiling(self, monkeypatch):
+        """2026-11-04: a fleet-wide integrate at max_heavy=1 hit the 3600 s
+        ceiling while gates WAITED for the hardware slot; 6 gates never ran."""
+        import tools.noctus.dev.gate_sweep as gs
+        from types import SimpleNamespace as NS
+        t = {"now": 0.0}
+        clock = T._ActiveClock(now=lambda: t["now"])
+
+        def fake(spec, timeout=300):
+            t["now"] += 50.0                  # each gate RUNS 50 s
+            return (0, "ok", 50.0)
+        monkeypatch.setattr(gs, "_default_run_gate", fake)
+        run = T._deadline_boxed_run_gate(120, clock=clock)
+        for _ in range(4):
+            t["now"] += 10_000.0              # an hour+ waiting for the slot: not running
+            assert run(NS(gate="kb_sync_verify"))[0] == 0 or clock.elapsed() > 120
+        # 2 gates x 50 s fit in 120 s of RUNNING time; the 3rd ran with 20 s
+        # left (still allowed), the 4th found the box spent — despite ~40000 s
+        # of wall-clock, nearly all of it slot-wait.
+        assert clock.elapsed() == 150.0
+        assert run(NS(gate="kb_sync_verify"))[1].startswith("merged-tip verification time-box exceeded")
+
+    def test_active_clock_counts_overlap_once(self):
+        t = {"now": 0.0}
+        c = T._ActiveClock(now=lambda: t["now"])
+        c.start(); t["now"] = 10; c.start(); t["now"] = 30; c.stop(); t["now"] = 40; c.stop()
+        assert c.elapsed() == 40.0            # parallel gates: wall time while ANY ran
+        t["now"] = 1000                       # idle (waiting): no advance
+        assert c.elapsed() == 40.0
+
     def test_default_ceiling_is_not_the_old_flat_90s(self):
         import inspect
         sig = inspect.signature(T.task_branch)

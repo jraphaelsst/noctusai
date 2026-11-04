@@ -1525,8 +1525,49 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     return res
 
 
+class _ActiveClock:
+    """Seconds during which at least one of this sweep's gates was RUNNING.
+
+    2026-11-04 (noctusai-04, a fleet-wide train integrate came back
+    gate_timeout with 6 gates never run): the overall ceiling was a plain
+    wall-clock deadline set when the runner was built. Since 3685d3126 every
+    gate waits for the machine-wide heavy slot BEFORE this runner is called,
+    so slot-WAIT time was charged to the ceiling. At max_heavy=1 a
+    ~25-gate integrate could not fit in 3600 s, and admission turned the
+    ceiling into a guaranteed timeout. The ceiling exists to stop RUNAWAY
+    work, so it counts only running time. Slot waiting is bounded by
+    heavy_slot's own wait_s, and a gate never admitted reports
+    waiting_for_slot (inconclusive), never "time-box exceeded"."""
+
+    def __init__(self, now=None):
+        import threading
+        import time as _time
+        self._now = now or _time.monotonic
+        self._lock = threading.Lock()
+        self._running = 0
+        self._since = 0.0
+        self._acc = 0.0
+
+    def elapsed(self) -> float:
+        with self._lock:
+            return self._acc + ((self._now() - self._since) if self._running else 0.0)
+
+    def start(self) -> None:
+        with self._lock:
+            if self._running == 0:
+                self._since = self._now()
+            self._running += 1
+
+    def stop(self) -> None:
+        with self._lock:
+            self._running -= 1
+            if self._running == 0:
+                self._acc += self._now() - self._since
+
+
 def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None,
-                             attempts_log: dict[str, dict[str, Any]] | None = None):
+                             attempts_log: dict[str, dict[str, Any]] | None = None,
+                             clock: "_ActiveClock | None" = None):
     """gate_sweep `run_gate` seam: per-gate budget (`resolve_gate_budget`,
     capped by what is left of the overall ceiling `timeout`). A gate that
     would start after the ceiling reports `exit_code=None` (never ran)
@@ -1536,30 +1577,36 @@ def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None
     (`gate_budget.retry_budget`, still capped by the remaining ceiling); a gate
     that FAILED (non-zero exit) is never retried. Two timeouts stay a timeout
     (`exit_code=None`) - never green. Per-gate attempts are recorded in
-    `attempts_log[gate] = {attempts, durations_s, budgets_s, timed_out_final}`."""
-    import time as _time
+    `attempts_log[gate] = {attempts, durations_s, budgets_s, timed_out_final}`.
 
+    The ceiling runs on an `_ActiveClock`: it only advances while ≥1 gate of
+    this sweep is running, never while gates wait for the hardware slot."""
     from .gate_sweep import _default_run_gate  # lazy import
 
-    deadline = _time.time() + max(1, timeout)
+    active = clock or _ActiveClock()
+    ceiling = max(1, timeout)
 
     def _boxed_run_gate(spec):
         rec = {"attempts": 0, "durations_s": [], "budgets_s": []}
         if attempts_log is not None:
             attempts_log[spec.gate] = rec
-        remaining = deadline - _time.time()
+        remaining = ceiling - active.elapsed()
         if remaining <= 0:
             return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
         budget = _gate_budget.resolve_gate_budget(spec.gate, budgets)
         res = None
         for attempt in (1, 2):
             if attempt == 2:
-                remaining = deadline - _time.time()
+                remaining = ceiling - active.elapsed()
                 if remaining < 1:
                     break
                 budget = _gate_budget.retry_budget(budget)
             limit = max(1, int(min(budget, remaining)))
-            res = _default_run_gate(spec, timeout=limit)
+            active.start()
+            try:
+                res = _default_run_gate(spec, timeout=limit)
+            finally:
+                active.stop()
             rec["attempts"] += 1
             rec["durations_s"].append(round(float(res[2]), 2))
             rec["budgets_s"].append(limit)
