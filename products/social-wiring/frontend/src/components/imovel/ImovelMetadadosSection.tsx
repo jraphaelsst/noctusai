@@ -34,7 +34,6 @@ export default function ImovelMetadadosSection({
   return (
     <SectionCard
       title="Metadados"
-      editLabel="Editar metadados"
       contentClassName="space-y-2 text-xs text-muted-foreground"
     >
       {dataCadastro && (

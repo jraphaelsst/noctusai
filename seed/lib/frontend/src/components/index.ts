@@ -45,6 +45,9 @@ export type {
 
 // Org specs — the org's own context for an agent (lifted from agents' Studio EspecificacoesOrgTab).
 export { createOrgSpecsHooks, OrgSpecsForm } from './org-specs';
+// Provenance — read-only source badge + "Vista: X · Nosso: Y" (mirror + owned overlay).
+export { SourceBadge, MirrorOverrideValue, formatSyncedAgo } from './provenance';
+export type { SourceBadgeProps, MirrorOverrideValueProps } from './provenance';
 // Section tabs — a settings-style page whose sections are tabs AND sub-routes (URL-synced).
 export { SectionTabsPage } from './section-tabs';
 export type { SectionTab, SectionTabsPageProps } from './section-tabs';

@@ -10,7 +10,7 @@
 import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { listOps, optimisticId, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api, supabase } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 
@@ -316,6 +316,7 @@ const FAMILY_KEY = (codigo: string) => ["sw", "imovel-dados", codigo] as const;
 const DADOS_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "dados"] as const;
 const DOCUMENTOS_KEY = (codigo: string) =>
   [...FAMILY_KEY(codigo), "documentos"] as const;
+const NOTAS_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "notas"] as const;
 const ENDERECO_MANUAL_HISTORICO_KEY = (codigo: string) =>
   [...FAMILY_KEY(codigo), "endereco-manual-historico"] as const;
 
@@ -727,4 +728,81 @@ export function formatBytes(n: number): string {
   const mb = n / (1024 * 1024);
   if (mb >= 1) return `${mb.toFixed(1)} MB`;
   return `${Math.round(n / 1024)} KB`;
+}
+
+
+// ─── Internal notes (migration 315) — OWNED, full CRUD ──────────────────────
+//
+// Ours by definition: Vista has no such field and the sync never touches the
+// table. → KB § PATTERNS/frontend/mirror-owned-overlay.md
+
+export interface ImovelNota {
+  id: string;
+  codigo: string;
+  texto: string;
+  created_at: string | null;
+  created_by: { id: string; nome: string | null } | null;
+  updated_at: string | null;
+  updated_by: { id: string; nome: string | null } | null;
+}
+
+export function useImovelNotas(codigo: string | null) {
+  return useQuery({
+    queryKey: NOTAS_KEY(codigo ?? "__none__"),
+    queryFn: async () => {
+      const res = await api.get<ItemsEnvelope<ImovelNota>>(`${base(codigo as string)}/notas`);
+      return res?.items ?? [];
+    },
+    enabled: !!codigo,
+    // Keep the list on screen across a refetch (never an empty flash).
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useImovelNotaMutations(codigo: string) {
+  const criar = useCacheWriteMutation<ImovelNota, { texto: string }>({
+    mutationFn: ({ texto }) => api.post<ImovelNota>(`${base(codigo)}/notas`, { texto }),
+    targets: [
+      {
+        queryKey: NOTAS_KEY(codigo),
+        optimistic: (old: ImovelNota[] | undefined, { texto }, ctx) =>
+          listOps.prepend(old, {
+            id: ctx.tempId,
+            codigo,
+            texto: texto.trim(),
+            created_at: new Date().toISOString(),
+            created_by: null,
+            updated_at: null,
+            updated_by: null,
+          }),
+        commit: (old: ImovelNota[] | undefined, saved, _vars, ctx) =>
+          listOps.replace(old, ctx.tempId, saved, "prepend"),
+      },
+    ],
+  });
+
+  const atualizar = useCacheWriteMutation<ImovelNota, { id: string; texto: string }>({
+    mutationFn: ({ id, texto }) =>
+      api.patch<ImovelNota>(`${base(codigo)}/notas/${encodeURIComponent(id)}`, { texto }),
+    targets: [
+      {
+        queryKey: NOTAS_KEY(codigo),
+        optimistic: (old: ImovelNota[] | undefined, { id, texto }) =>
+          listOps.patch(old, id, { texto: texto.trim() }),
+        commit: (old: ImovelNota[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+      },
+    ],
+  });
+
+  const remover = useCacheWriteMutation<unknown, { id: string }>({
+    mutationFn: ({ id }) => api.delete(`${base(codigo)}/notas/${encodeURIComponent(id)}`),
+    targets: [
+      {
+        queryKey: NOTAS_KEY(codigo),
+        optimistic: (old: ImovelNota[] | undefined, { id }) => listOps.remove(old, id),
+      },
+    ],
+  });
+
+  return { criar, atualizar, remover };
 }

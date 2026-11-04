@@ -43,7 +43,7 @@ export default function ImovelComodosSection({
   if (nada) return null;
 
   return (
-    <SectionCard title="Cômodos" editLabel="Editar cômodos">
+    <SectionCard title="Cômodos">
       {dormitorios !== null && (
         <Fact icon={<BedDouble className="h-4 w-4" />} label="Dormitórios" value={formatCount(dormitorios)} />
       )}

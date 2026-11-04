@@ -41,7 +41,6 @@ export default function ImovelComodidadesSection({
   return (
     <SectionCard
       title="Comodidades"
-      editLabel="Editar comodidades"
       contentClassName="space-y-4"
     >
       {caracteristicas.length > 0 && (

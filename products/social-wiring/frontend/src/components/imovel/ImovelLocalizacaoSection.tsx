@@ -52,7 +52,7 @@ export default function ImovelLocalizacaoSection({
   if (nada) return null;
 
   return (
-    <SectionCard title="Localização" editLabel="Editar localização" contentClassName="space-y-3">
+    <SectionCard title="Localização" contentClassName="space-y-3">
       <div className="space-y-1 text-sm">
         {endereco && <p>{endereco}</p>}
         {(bairro || cidade || uf) && (

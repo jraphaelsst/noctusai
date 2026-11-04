@@ -251,6 +251,8 @@ def seed(
     scoped.set_table_data("imovel_documentos", documentos or [])
     # Migration 306 — typed certidões (no file). Reset every time.
     scoped.set_table_data("imovel_certidoes_manuais", [])
+    # Migration 315 — internal notes. Reset every time.
+    scoped.set_table_data("imovel_notas", [])
     # Migration 154 — D1 conflicts. Reset every time: a conflict left by an
     # earlier test would read as "already pending" and suppress a new one.
     scoped.set_table_data("imovel_campo_conflitos", conflitos or [])

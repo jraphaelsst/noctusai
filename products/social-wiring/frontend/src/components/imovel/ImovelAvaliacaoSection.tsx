@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import type { ImovelDados, ImovelDadosPatch } from "@/hooks/useImovelDados";
-import { UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
+import { MirrorOverrideValue, UnsavedChangesNotice, useUnsavedChanges } from "@noctusai/lib/components";
 
 export const PADRAO_OPCOES = [
   { value: "simples", label: "Simples", help: "Acabamento econômico, materiais básicos, sem áreas de lazer." },
@@ -65,6 +65,12 @@ interface Props {
   saving: boolean;
   error: string | null;
   onSave: (patch: ImovelDadosPatch) => void;
+  /** What Vista lists for the same facts — shown beside ours when they differ
+   *  ("Vista: X · Nosso: Y"). Read-only; this card never writes it. */
+  mirror?: { area_terreno?: number | null; area_construida?: number | null };
+  /** Optional per-row marker slot (pending divergence count), keyed by the
+   *  `imovel_dados` column name. Absent ⇒ no markers. */
+  rowBadge?: (campo: string) => React.ReactNode;
 }
 
 interface Draft {
@@ -106,12 +112,32 @@ function parseNum(s: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : NaN;
 }
 
-function Linha({ label, value, testid }: { label: string; value: string | null; testid: string }) {
+function Linha({
+  label,
+  value,
+  testid,
+  vista,
+  badge,
+}: {
+  label: string;
+  value: string | null;
+  testid: string;
+  /** Vista's value for the same fact (formatted), when the mirror carries one. */
+  vista?: string | null;
+  badge?: React.ReactNode;
+}) {
   return (
     <div className="space-y-0.5">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dt className="text-xs text-muted-foreground">
+        {label}
+        {badge}
+      </dt>
       <dd className="text-sm" data-testid={testid}>
-        {value ?? <span className="text-muted-foreground">Não informado</span>}
+        {value || vista ? (
+          <MirrorOverrideValue mirror={vista} owned={value} />
+        ) : (
+          <span className="text-muted-foreground">Não informado</span>
+        )}
       </dd>
     </div>
   );
@@ -159,7 +185,7 @@ function CampoSelect({
   );
 }
 
-export default function ImovelAvaliacaoSection({ dados, categoria, loading, saving, error, onSave }: Props) {
+export default function ImovelAvaliacaoSection({ dados, categoria, loading, saving, error, onSave, mirror, rowBadge }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Draft>(() => toDraft(dados));
   const [invalid, setInvalid] = useState<string | null>(null);
@@ -356,8 +382,8 @@ export default function ImovelAvaliacaoSection({ dados, categoria, loading, savi
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Linha label="Padrão construtivo (IBAPE)" value={labelDe(PADRAO_OPCOES, dados.padrao_construtivo)} testid="v-padrao" />
               <Linha label="Estado de conservação" value={labelDe(CONSERVACAO_OPCOES, dados.estado_conservacao)} testid="v-conservacao" />
-              <Linha label="Área do terreno" value={fmtNum(dados.area_terreno_m2, "m²")} testid="v-area-terreno" />
-              <Linha label="Área construída" value={fmtNum(dados.area_construida_m2, "m²")} testid="v-area-construida" />
+              <Linha label="Área do terreno" value={fmtNum(dados.area_terreno_m2, "m²")} testid="v-area-terreno" vista={fmtNum(mirror?.area_terreno, "m²")} badge={rowBadge?.("area_terreno_m2")} />
+              <Linha label="Área construída" value={fmtNum(dados.area_construida_m2, "m²")} testid="v-area-construida" vista={fmtNum(mirror?.area_construida, "m²")} badge={rowBadge?.("area_construida_m2")} />
               {lote && (
                 <>
                   <Linha label="Testada" value={fmtNum(dados.testada_m, "m")} testid="v-testada" />

@@ -26,7 +26,7 @@ export default function ImovelRegistroSection({
   if (nada) return null;
 
   return (
-    <SectionCard title="Registro" editLabel="Editar registro" contentClassName="space-y-2">
+    <SectionCard title="Registro" contentClassName="space-y-2">
       {matriculaVista && (
         <Fact icon={<FileText className="h-4 w-4" />} label="Matrícula (Vista)" value={matriculaVista} />
       )}

@@ -121,4 +121,17 @@ describe("ImovelAvaliacaoSection", () => {
     fireEvent.click(screen.getByTestId("imovel-avaliacao-editar"));
     expect(screen.getByTestId("imovel-avaliacao-msg-erro").textContent).toBe("falhou");
   });
+
+  it("shows both values when ours differs from Vista's (Vista: X · Nosso: Y)", async () => {
+    const { screen } = await render({
+      dados: dados({ area_terreno_m2: 300 }),
+      mirror: { area_terreno: 280, area_construida: 150 },
+    });
+    const terreno = screen.getByTestId("v-area-terreno");
+    expect(terreno.textContent).toMatch(/Vista:\s*280/);
+    expect(terreno.textContent).toMatch(/Nosso:\s*300/);
+    // We hold nothing for the built area: Vista's value is shown alone.
+    expect(screen.getByTestId("v-area-construida").textContent).toMatch(/150/);
+    expect(screen.getByTestId("v-area-construida").textContent).not.toMatch(/Nosso/);
+  });
 });

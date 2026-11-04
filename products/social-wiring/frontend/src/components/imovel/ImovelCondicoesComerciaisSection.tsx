@@ -53,7 +53,7 @@ export default function ImovelCondicoesComerciaisSection({
   if (nada) return null;
 
   return (
-    <SectionCard title="Condições comerciais" editLabel="Editar condições comerciais">
+    <SectionCard title="Condições comerciais">
       {finalidades.length > 0 && (
         <div className="col-span-full flex flex-wrap items-center gap-2">
           {finalidades.map((f) => (
