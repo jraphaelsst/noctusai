@@ -667,3 +667,7 @@ Authored 2026-11-04 (TRANSITIONAL, removable). `imovel_campo_conflitos.notas JSO
 
 Authored 2026-11-04 (CONTRACT julia-line SW-A). `conversation_messages.origem` (lead|julia|humano|interno, NULLABLE, no backfill), `whatsapp_chats.categoria` (lead|equipe, default `lead`), and DROP of CHECK `whatsapp_connections_agente_exige_autorizados` (Julia no longer needs `authorized_numbers`). Additive/idempotent. Apply BEFORE deploying the image: the webhook writes `origem` / `categoria` (an un-migrated DB fails the inbound insert, which is logged and processed anyway, but the staff/echo rules need the columns).
 
+## 319 — credentials_hide_encrypted_tokens — NOT APPLIED
+
+Authored 2026-11-04 (Julia-line S8, owner: the platform-delivered agents token must be unreachable from the browser). Revokes the table-wide SELECT on `social_wiring.credentials` from anon/authenticated and re-grants only the non-secret columns, so `encrypted_tokens` is service-role only. Idempotent; no schema change. Safe before or after the image (the backend reads through the service-role client).
+

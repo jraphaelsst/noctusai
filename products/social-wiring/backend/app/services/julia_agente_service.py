@@ -39,7 +39,7 @@ from noctusai_lib.integrations.redis import make_redis_client
 from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.clients.agents import AgentsClient, make_agents_client
+from app.clients.agents import AgentsClient, HttpAgentsClient, make_agents_client
 from app.services import julia_aviso_service, julia_contatos_service
 
 logger = logging.getLogger(__name__)
@@ -177,11 +177,17 @@ def agents_base_url() -> Optional[str]:
 def resolve_agents_client(org_id: UUID | str, *, cfg: Any = None, store: Any = None) -> Optional[AgentsClient]:
     """The org's `AgentsClient`: real when token + URL exist; the Fake in a dev
     process (no deploy markers); `None` in prod when not configured."""
-    return make_agents_client(
+    client = make_agents_client(
         token=agents_token_for_org(org_id, cfg=cfg, store=store),
         base_url=agents_base_url(),
         allow_fake=not is_deploy_context(),
     )
+    if isinstance(client, HttpAgentsClient):
+        # Julia-line: every real call records its outcome in the grant's health record (Agente page status).
+        from app.services.julia_grant_sink import HealthRecordingAgentsClient
+
+        return HealthRecordingAgentsClient(client, org_id, store)
+    return client
 
 
 async def nome_do_agente(client: Optional[AgentsClient], agent_key: str = DEFAULT_AGENT_KEY) -> Optional[str]:
@@ -265,18 +271,6 @@ def exigir_hmac_configurado(cfg: Any) -> None:
         raise AppException(
             "webhook_hmac_required",
             "Configure o segredo HMAC do webhook do WAHA antes de ligar a Julia.",
-            status_code=409,
-        )
-
-
-def exigir_autorizados(authorized_numbers: list[str] | None) -> None:
-    """DEPRECATED, REMOVE WITH S8: the One Chat operator bot is retired (2026-11-04) so Julia no longer needs an authorized number to
-    be switched on (migration 318 drops the DB CHECK). Its only caller is `julia_agente_router` (S8's file); once that call is gone
-    this function is deleted. Nothing in the routing reads `authorized_numbers` any more."""
-    if not [n for n in (authorized_numbers or []) if str(n).strip()]:
-        raise AppException(
-            "authorized_numbers_required",
-            "Informe ao menos um número autorizado (One Chat) antes de ligar a Julia.",
             status_code=409,
         )
 
@@ -811,7 +805,7 @@ __all__ = [
     "DEFAULT_AGENT_KEY", "Elegibilidade", "HANDOFF_KIND", "LEAD_PREFIX", "MOTIVOS_HANDOFF",
     "ResultadoApagar", "SlidingWindowLimiter", "SnapshotFalhou",
     "agents_token_for_org", "apagar_dados_do_chat", "avaliar_elegibilidade", "chat_aliases",
-    "destinatario_do_handoff", "encerrar_envio", "envio_em_curso", "exigir_autorizados",
+    "destinatario_do_handoff", "encerrar_envio", "envio_em_curso",
     "exigir_aviso_completo", "exigir_destinatario_valido", "exigir_hmac_configurado",
     "expandir_aliases", "gravar_snapshot", "is_group_chat", "is_lid",
     "lead_key", "limpar_erro_link", "listar_todos_os_chats", "ler_erro_link",

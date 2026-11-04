@@ -216,16 +216,6 @@ class TestEligibility:
 
 # ── H3 / H1 / 11.3 switch preconditions ─────────────────────────────────────
 class TestSwitchPreconditions:
-    @pytest.mark.parametrize("numbers", [[], None, ["", "  "]])
-    def test_empty_authorized_numbers_is_a_409(self, numbers):
-        with pytest.raises(AppException) as ei:
-            julia.exigir_autorizados(numbers)
-        assert (ei.value.status_code, ei.value.code) == (409, "authorized_numbers_required")
-
-    def test_a_listed_number_passes(self):
-        julia.exigir_autorizados(["+5511999990000"])
-        julia.exigir_autorizados(["123@lid"])  # operators may list raw @lid ids
-
     @pytest.mark.parametrize("secret", ["", "   ", None])
     def test_no_hmac_secret_is_a_409(self, world, secret):
         cfg = world.cfg.model_copy(update={"waha_webhook_hmac_secret": secret or ""})

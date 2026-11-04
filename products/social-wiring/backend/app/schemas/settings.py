@@ -338,6 +338,9 @@ class ApiKeyStatus(StrictHttpModel):
     input_type: str
     placeholder: str
     configured: bool
+    #: True = managed by the platform (a delivered grant): show masked, no paste
+    #: field; PUT/DELETE answer 409 ``gerenciada_pela_plataforma``.
+    read_only: bool = False
     #: Non-empty makes this a CHOICE, not a free-text field: the UI renders
     #: a switch over these and the write path refuses anything else. Empty
     #: for every ordinary key, so the frontend can branch on it alone.

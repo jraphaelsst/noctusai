@@ -1010,6 +1010,16 @@ def _api_key_spec_or_404(key: str) -> ApiKeySpec:
     return spec
 
 
+def _recusar_se_gerenciada(spec: ApiKeySpec) -> None:
+    """Julia-line D5: a platform-managed key (`agents`) is delivered, never pasted or removed here."""
+    if spec.read_only:
+        raise AppException(
+            "gerenciada_pela_plataforma",
+            "Esta chave é gerenciada pela plataforma e não pode ser alterada aqui.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+
 def _api_key_status(spec: ApiKeySpec, org_id, store) -> ApiKeyStatus:
     """Resolve one key and project it onto the wire shape — value out,
     only a masked hint in."""
@@ -1023,6 +1033,7 @@ def _api_key_status(spec: ApiKeySpec, org_id, store) -> ApiKeyStatus:
         input_type=spec.input_type,
         placeholder=spec.placeholder,
         configured=resolution.configured,
+        read_only=spec.read_only,
         options=[
             ApiKeyOptionOut(
                 value=option.value,
@@ -1073,6 +1084,7 @@ def update_api_key(
     user, _token, raw_org = auth
     _require_admin(auth, request, "Chaves de API")
     spec = _api_key_spec_or_404(key)
+    _recusar_se_gerenciada(spec)
     org_id = coerce_org_uuid(raw_org)
 
     value = payload.value.strip()
@@ -1120,6 +1132,7 @@ def remove_api_key(
     user, _token, raw_org = auth
     _require_admin(auth, request, "Chaves de API")
     spec = _api_key_spec_or_404(key)
+    _recusar_se_gerenciada(spec)
     org_id = coerce_org_uuid(raw_org)
 
     removed = delete_api_key(store, str(org_id), spec.name)

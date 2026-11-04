@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional, Union
 from uuid import UUID
 
@@ -54,7 +54,7 @@ class GrantReceived:
 
     org_id: UUID
     issuer: str
-    credential: str
+    credential: str = field(repr=False)  # a secret: never in a repr / log line / traceback
     agent_id: Optional[str]
     metadata: dict[str, Any]
     delivery_token_id: Optional[UUID]
@@ -67,9 +67,10 @@ class GrantRevoked:
 
 
 class _GrantBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # hide_input_in_errors: a 422 must not echo the body (the credential) back or into a log
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    credential: str = Field(min_length=8, max_length=4096)
+    credential: str = Field(min_length=8, max_length=4096, repr=False)
     agent_id: Optional[str] = Field(default=None, max_length=128)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

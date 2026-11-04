@@ -2,28 +2,28 @@
 pause + the authorized-numbers PATCH invariant. Strict `== 401` on every auth boundary.
 
 Seams: mock DB, seed `FakeWahaClient`, `FakeAgentsClient` -- injected through the routes' own
-`Depends` factories (`get_agents_client_factory`, `get_agents_token_client_builder`,
-`get_waha_client_factory`), never by patching our own code.
+`Depends` factories (`get_agents_client_factory`, `get_waha_client_factory`) and the grant sink's
+`configure_grant_sink` store slot, never by patching our own code.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from noctusai_lib.api.auth.session import FakeProductTokenAdmin
+from noctusai_lib.api.auth.session import AuthContext
 from noctusai_lib.testing import handler_status, TEST_USER_ID, MockUser, MockUserResponse, bind_consent_module_to_mock
 
 from app.clients.agents import (
     AgentNotFound,
     AgentsTimeout,
     AgentsTokenInvalid,
-    AgentsUpstreamError,
     AgentStatus,
     FakeAgentsClient,
 )
 from app.services import julia_agente_service as julia
+from app.services.api_keys_store import build_api_key_store
+from app.services.julia_grant_sink import configure_grant_sink
 from app.services.whatsapp_realtime import get_whatsapp_bus, reset_bus_cache, whatsapp_scope
 
 from tests.support.julia_world import (
@@ -48,9 +48,6 @@ H = {"Authorization": "Bearer test-token"}
 class Scene:
     def __init__(self, tc, world):
         self.tc, self.w = tc, world
-        self.token_builder_agents: FakeAgentsClient | None = None
-        self.token_builds: list[str] = []
-        self.token_admin = FakeProductTokenAdmin()
 
     def get(self, url, **kw):
         return self.tc.get(url, headers=H, **kw)
@@ -85,31 +82,22 @@ def _scene(monkeypatch, override_settings_factory, *, role: str | None):
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=world.admin),
     ):
         from app.main import app
-        from app.routers.julia_agente_router import (
-            get_agents_client_factory, get_agents_token_client_builder, get_julia_token_admin,
-        )
+        from app.routers.julia_agente_router import get_agents_client_factory
         from app.routers.whatsapp_connections_router import get_waha_client_factory
 
         bind_consent_module_to_mock(world.root)
         scene = Scene(TestClient(app), world)
         scene.override = override_settings_factory
 
-        def builder():
-            def build(token: str):
-                scene.token_builds.append(token)
-                return scene.token_builder_agents or FakeAgentsClient()
-
-            return build
-
         app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: world.agents)
-        app.dependency_overrides[get_agents_token_client_builder] = builder
         app.dependency_overrides[get_waha_client_factory] = lambda: (lambda **kw: world.waha)
-        app.dependency_overrides[get_julia_token_admin] = lambda: scene.token_admin
         override_settings_factory(
             encryption_key=ENCRYPTION_KEY, waha_webhook_hmac_secret="sekrit", redis_url="redis://fake:6379/0",
         )
+        configure_grant_sink(lambda: build_api_key_store(encryption_key=ENCRYPTION_KEY))
         yield scene
-        for dep in (get_agents_client_factory, get_agents_token_client_builder, get_waha_client_factory, get_julia_token_admin):
+        configure_grant_sink(None)
+        for dep in (get_agents_client_factory, get_waha_client_factory):
             app.dependency_overrides.pop(dep, None)
     reset_bus_cache()
 
@@ -168,7 +156,6 @@ class TestAuth:
 
     @pytest.mark.parametrize("method,url,body", [
         ("put", ROT_URL, {"alimenta": True}),
-        ("put", f"{BASE}/token", {"token": "pk_12345678"}),
         ("patch", f"/api/whatsapp/connections/{CONNECTION_ID}/chats/{LEAD_CHAT}/agente", {"pausado": True}),
         ("post", f"{CONN_URL}/chats/{LEAD_CHAT}/apagar-dados", None),
     ])
@@ -188,7 +175,7 @@ class TestGetAgente:
         admin.w.seed_connection(authorized_numbers=["+5511999990000", "+5511999991111"])
         data = admin.get(BASE).json()["data"]
         # the lines moved to GET /api/julia/roteamento
-        assert set(data) == {"token_configurado", "status_agente", "erro", "banner", "agents_url"}
+        assert set(data) == {"token_configurado", "status_agente", "erro", "banner", "conexao_plataforma"}
 
     def test_status_agente_is_the_3_2_shape(self, admin):
         admin.w.seed_connection()
@@ -206,7 +193,7 @@ class TestGetAgente:
 
     def test_token_configurado_reflects_the_org_token_and_never_echoes_it(self, admin):
         assert admin.get(BASE).json()["data"]["token_configurado"] is False
-        assert admin.put(f"{BASE}/token", {"token": "pk_secret_value"}).status_code == 204
+        _entregar(admin, "pk_secret_value")
         r = admin.get(BASE)
         assert r.json()["data"]["token_configurado"] is True
         assert "pk_secret_value" not in r.text
@@ -268,11 +255,11 @@ class TestSwitchOn:
         assert self._on(admin).status_code == 200
         assert admin.snapshot_ids() >= {"5511988887777@c.us", "5511988887777@s.whatsapp.net", "123456@lid"}
 
-    def test_H3_empty_authorized_numbers_is_409_and_nothing_is_written(self, admin):
+    def test_julia_line_D5_empty_authorized_numbers_no_longer_blocks_turning_it_on(self, admin):
         _off_connection(admin.w, authorized_numbers=[])
         r = self._on(admin)
-        assert r.status_code == 409 and "authorized_numbers_required" in r.text
-        assert admin.conn()["agente_leads_ativo"] is False and admin.snapshot_ids() == set()
+        assert r.status_code == 200
+        assert admin.conn()["agente_leads_ativo"] is True
 
     def test_H1_without_a_webhook_hmac_secret_it_is_409(self, admin, override_settings_factory):
         _off_connection(admin.w)
@@ -460,55 +447,127 @@ class TestAuthorizedNumbersPatch:
         ).execute()
 
 
-# ── PUT /token ──────────────────────────────────────────────────────────────
-class TestToken:
-    def test_a_valid_token_is_validated_against_the_status_route_then_stored_encrypted(self, admin):
-        r = admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert r.status_code == 204 and r.content == b""
-        assert admin.token_builds == ["pk_live_abcdef"]
-        assert admin.token_builder_agents is None or admin.token_builder_agents.status_calls == ["julia"]
-        # production's admin client is schema-pinned to social_wiring; the mock's is not, so the
-        # row sits on the root client's `credentials` table here.
-        row = admin.w.admin.table("credentials").select("*").eq("provider", "api_key:agents").execute().data[0]
-        assert row["org_id"] == ORG_ID
-        assert "pk_live_abcdef" not in str(row), "stored encrypted, never plaintext"
-        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "pk_live_abcdef"
+# ── the platform grant (Julia-line D2-D5): agents DELIVERS the channel token, nobody pastes it ──
+GRANT_URL = "/api/platform/grants/agents"
+SCOPE = "platform:grant-receive"
+SECRET = "noc_channel_secret_value_0123456789"
 
-    def test_a_token_agents_refuses_is_422_token_invalido_and_is_not_stored(self, admin):
-        admin.token_builder_agents = FakeAgentsClient(status_error=AgentsTokenInvalid(code="issuer_not_allowed"))
-        r = admin.put(f"{BASE}/token", {"token": "pk_wrong_token"})
-        assert r.status_code == 422 and "token_invalido" in r.text
-        assert admin.w.admin.table("credentials").select("*").execute().data == []
 
-    def test_a_token_agents_accepts_but_whose_agent_does_not_exist_yet_is_stored(self, admin):
-        admin.token_builder_agents = FakeAgentsClient(status_error=AgentNotFound(code="agent_not_found"))
-        assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
+CONEXAO_KEYS = {"status", "conectada", "motivo", "token_prefix", "token_mascarado", "conectada_em", "agent_key",
+                "verificada_em", "ultima_falha_em", "expires_at"}
+VERIFICAR = f"{BASE}/conexao-plataforma/verificar"
 
-    def test_agents_being_down_is_502_and_nothing_is_stored(self, admin):
-        admin.token_builder_agents = FakeAgentsClient(status_error=AgentsTimeout("down"))
-        r = admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert handler_status(r) == 502 and "agents_indisponivel" in r.text
-        assert admin.w.admin.table("credentials").select("*").execute().data == []
 
-    @pytest.mark.parametrize("body", [{"token": "short"}, {"token": ""}, {}, {"token": "x" * 600}])
-    def test_malformed_bodies_are_422(self, admin, body):
-        assert admin.put(f"{BASE}/token", body).status_code == 422
+def _delivery_ctx(*, scopes=(SCOPE,), issuer="agents", org=ORG_ID):
+    from uuid import UUID, uuid4
 
-    def test_the_token_never_reaches_the_logs_or_any_response(self, admin, caplog):
-        with caplog.at_level("DEBUG"):
-            r = admin.put(f"{BASE}/token", {"token": "pk_super_secret_value"})
-            admin.get(BASE)
-        assert "pk_super_secret_value" not in r.text
-        assert all("pk_super_secret_value" not in rec.getMessage() for rec in caplog.records)
+    return AuthContext(org_id=UUID(org), caller_kind="product", user_id=None, scopes=list(scopes),
+                       raw_token="t", api_token_id=uuid4(), issuer=issuer)
 
-    def test_replacing_a_token_clears_a_stale_link_error(self, admin):
-        julia.registrar_erro_link(ORG_ID, "token_invalido", cfg=admin.w.cfg)
-        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert julia.ler_erro_link(ORG_ID, cfg=admin.w.cfg) is None
 
-    def test_a_token_is_per_org_org_B_does_not_see_org_As(self, admin):
-        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+def _body(credential=SECRET, **meta):
+    return {"credential": credential, "agent_id": "agent-inst-1",
+            "metadata": {"grant_id": "g-1", "agent_key": "julia", "token_prefix": "noc_channel_",
+                         "scopes": ["agents:channel-turn"], "expires_at": None, **meta}}
+
+
+def _entregar(scene, credential=SECRET, *, org=ORG_ID, **kw):
+    """Deliver a grant through the REAL receiver, authenticated as agents' one-shot delivery token."""
+    from app.dependencies import get_auth_context
+    from app.main import app
+
+    app.dependency_overrides[get_auth_context] = lambda: _delivery_ctx(org=org)
+    try:
+        r = scene.tc.put(GRANT_URL, json=_body(credential, **kw))
+    finally:
+        app.dependency_overrides.pop(get_auth_context, None)
+    assert r.status_code == 204, r.text
+    return r
+
+
+class TestPlatformGrantReceiver:
+    def test_no_token_is_401_on_both_verbs(self, admin):
+        assert admin.tc.put(GRANT_URL, json=_body()).status_code == 401
+        assert admin.tc.delete(GRANT_URL).status_code == 401
+
+    @pytest.mark.parametrize("kw", [{"scopes": ("agents:channel-turn",)}, {"issuer": "social-wiring"}])
+    def test_a_wrong_scope_or_issuer_is_403_and_stores_nothing(self, admin, kw):
+        from app.dependencies import get_auth_context
+        from app.main import app
+
+        app.dependency_overrides[get_auth_context] = lambda: _delivery_ctx(**kw)
+        try:
+            assert admin.tc.put(GRANT_URL, json=_body()).status_code == 403
+            assert admin.tc.delete(GRANT_URL).status_code == 403
+        finally:
+            app.dependency_overrides.pop(get_auth_context, None)
+        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) is None
+
+    def test_an_org_id_in_the_body_is_422_the_org_comes_from_the_token(self, admin):
+        from app.dependencies import get_auth_context
+        from app.main import app
+
+        app.dependency_overrides[get_auth_context] = lambda: _delivery_ctx()
+        try:
+            r = admin.tc.put(GRANT_URL, json={**_body(), "org_id": OTHER_ORG_ID})
+        finally:
+            app.dependency_overrides.pop(get_auth_context, None)
+        assert r.status_code == 422
         assert julia.agents_token_for_org(OTHER_ORG_ID, cfg=admin.w.cfg) is None
+
+    def test_a_grant_makes_agents_token_for_org_return_the_credential(self, admin):
+        assert admin.get(BASE).json()["data"]["conexao_plataforma"]["conectada"] is False
+        _entregar(admin)
+        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == SECRET
+        assert julia.agents_token_for_org(OTHER_ORG_ID, cfg=admin.w.cfg) is None  # per org
+        r = admin.get(BASE)
+        data = r.json()["data"]
+        assert data["token_configurado"] is True
+        con = data["conexao_plataforma"]
+        assert set(con) == CONEXAO_KEYS
+        assert (con["status"], con["conectada"], con["token_prefix"], con["agent_key"]) == (
+            "ativa", True, "noc_channel_", "julia")
+        assert con["conectada_em"] and con["verificada_em"] is None and con["motivo"] is None
+        assert con["token_mascarado"] == "noc_...6789"
+        assert SECRET not in r.text and "agents_url" not in data
+
+    def test_a_regrant_replaces_the_credential(self, admin):
+        _entregar(admin)
+        _entregar(admin, "noc_rotated_secret_value_987654321", grant_id="g-2")
+        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "noc_rotated_secret_value_987654321"
+
+    def test_a_revoke_deletes_the_token_and_the_status(self, admin):
+        from app.dependencies import get_auth_context
+        from app.main import app
+
+        _entregar(admin)
+        app.dependency_overrides[get_auth_context] = lambda: _delivery_ctx()
+        try:
+            assert admin.tc.delete(GRANT_URL).status_code == 204
+            assert admin.tc.delete(GRANT_URL).status_code == 204  # idempotent
+        finally:
+            app.dependency_overrides.pop(get_auth_context, None)
+        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) is None
+        con = admin.get(BASE).json()["data"]["conexao_plataforma"]
+        assert (con["status"], con["conectada"], con["token_mascarado"]) == ("revogada", False, None)
+
+    def test_the_credential_never_reaches_the_logs(self, admin, caplog):
+        with caplog.at_level("DEBUG"):
+            _entregar(admin)
+            admin.get(BASE)
+        assert all(SECRET not in rec.getMessage() for rec in caplog.records)
+
+
+class TestPasteRouteRetired:
+    def test_put_token_is_410_gerenciado_pela_plataforma_and_stores_nothing(self, admin):
+        r = admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
+        assert r.status_code == 410 and "gerenciado_pela_plataforma" in r.text
+        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) is None
+
+    def test_the_tools_token_is_not_minted_by_social_wiring_any_more(self):
+        from app.routers import julia_agente_router as router
+
+        assert not hasattr(router, "_entregar_token_ferramentas")
 
 
 # ── PATCH chat pause (julia-v2: the control lives in AGENTS) ────────────────
@@ -662,75 +721,116 @@ class TestDeletionRoute:
         assert r.status_code == 404
 
 
-# ── PUT /token also mints + pushes the Julia tools token (lais-build-contract 2.2) ──
-class TestToolsToken:
-    ROWS = lambda self, admin: admin.token_admin.rows.get("social_wiring", [])  # noqa: E731
+# ── the status of the platform connection (owner: "configured / working / broken / not set up") ──
+def _conexao(scene):
+    return scene.get(BASE).json()["data"]["conexao_plataforma"]
 
-    def test_a_valid_token_mints_the_scoped_tools_token_and_pushes_it_to_agents(self, admin):
-        fake = FakeAgentsClient()
-        admin.token_builder_agents = fake
-        assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
-        rows = self.ROWS(admin)
-        assert len(rows) == 1
-        row = rows[0]
-        assert (row["org_id"], row["label"], row["issuer"]) == (ORG_ID, "agents · ferramentas julia", "agents")
-        assert row["scopes"] == ["social-wiring:lais-tools"] and row["revoked_at"] is None
-        exp = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
-        assert timedelta(days=89) < exp - datetime.now(timezone.utc) <= timedelta(days=90, minutes=1)
-        # the secret handed to agents is the one whose hash is stored -- and is never stored itself
-        assert len(fake.ferramentas_tokens) == 1
-        secret = fake.ferramentas_tokens[0]
-        assert secret.startswith("noc_") and secret not in str(row)
-        assert admin.token_admin.find_by_secret("social_wiring", secret) is not None
-        assert admin.get(BASE).json()["data"]["erro"] is None
 
-    def test_the_tools_token_never_reaches_the_response_or_the_logs(self, admin, caplog):
-        fake = FakeAgentsClient()
-        admin.token_builder_agents = fake
+class TestConexaoStatus:
+    @pytest.fixture(autouse=True)
+    def _fresh_throttle(self):
+        from app.services.julia_grant_sink import reset_health_throttle
+
+        reset_health_throttle()
+        yield
+        reset_health_throttle()
+
+    def test_nao_configurada_before_any_grant(self, admin):
+        con = _conexao(admin)
+        assert set(con) == CONEXAO_KEYS
+        assert (con["status"], con["conectada"], con["token_mascarado"]) == ("nao_configurada", False, None)
+
+    def test_ativa_after_a_grant_with_no_verification_yet(self, admin):
+        _entregar(admin)
+        con = _conexao(admin)
+        assert (con["status"], con["verificada_em"], con["motivo"]) == ("ativa", None, None)
+
+    def test_expirada_when_expires_at_is_in_the_past(self, admin):
+        _entregar(admin, expires_at="2020-01-01T00:00:00+00:00")
+        con = _conexao(admin)
+        assert (con["status"], con["conectada"]) == ("expirada", False)
+        assert con["expires_at"] == "2020-01-01T00:00:00+00:00" and con["token_mascarado"] == "noc_...6789"
+
+    def test_a_future_expiry_stays_ativa(self, admin):
+        _entregar(admin, expires_at="2999-01-01T00:00:00+00:00")
+        assert _conexao(admin)["status"] == "ativa"
+
+    def test_verificar_ok_stamps_verificada_em(self, admin):
+        _entregar(admin)
+        r = admin.tc.post(VERIFICAR, headers=H)
+        con = r.json()["data"]
+        assert r.status_code == 200 and (con["status"], con["motivo"]) == ("ativa", None)
+        assert con["verificada_em"] and con["ultima_falha_em"] is None
+        assert admin.w.agents.status_calls == ["julia"]
+
+    def test_verificar_a_rejected_token_is_com_falha_token_rejeitado(self, admin):
+        _entregar(admin)
+        admin.w.agents = FakeAgentsClient(status_error=AgentsTokenInvalid())
+        con = admin.tc.post(VERIFICAR, headers=H).json()["data"]
+        assert (con["status"], con["motivo"], con["conectada"]) == ("com_falha", "token_rejeitado", True)
+        assert con["ultima_falha_em"] and con["token_mascarado"] == "noc_...6789"
+        assert _conexao(admin)["status"] == "com_falha"  # persisted, the page reads it later
+
+    def test_verificar_an_outage_is_com_falha_agents_indisponivel_then_recovers(self, admin):
+        _entregar(admin)
+        admin.w.agents = FakeAgentsClient(status_error=AgentsTimeout("down"))
+        assert admin.tc.post(VERIFICAR, headers=H).json()["data"]["motivo"] == "agents_indisponivel"
+        admin.w.agents = FakeAgentsClient()
+        con = admin.tc.post(VERIFICAR, headers=H).json()["data"]
+        assert (con["status"], con["motivo"]) == ("ativa", None) and con["verificada_em"] and con["ultima_falha_em"]
+
+    def test_verificar_a_missing_agent_still_proves_the_token_works(self, admin):
+        _entregar(admin)
+        admin.w.agents = FakeAgentsClient(status_error=AgentNotFound(code="agent_not_found"))
+        assert admin.tc.post(VERIFICAR, headers=H).json()["data"]["status"] == "ativa"
+
+    def test_verificar_on_a_revoked_or_absent_grant_does_not_call_agents(self, admin):
+        assert admin.tc.post(VERIFICAR, headers=H).json()["data"]["status"] == "nao_configurada"
+        _entregar(admin)
+        from app.dependencies import get_auth_context
+        from app.main import app
+
+        app.dependency_overrides[get_auth_context] = lambda: _delivery_ctx()
+        try:
+            admin.tc.delete(GRANT_URL)
+        finally:
+            app.dependency_overrides.pop(get_auth_context, None)
+        assert admin.tc.post(VERIFICAR, headers=H).json()["data"]["status"] == "revogada"
+        assert admin.w.agents.status_calls == []
+
+    def test_a_regrant_after_a_failure_resets_the_health(self, admin):
+        _entregar(admin)
+        admin.w.agents = FakeAgentsClient(status_error=AgentsTokenInvalid())
+        admin.tc.post(VERIFICAR, headers=H)
+        _entregar(admin, "noc_new_channel_token_value_55")
+        con = _conexao(admin)
+        assert (con["status"], con["ultima_falha_em"]) == ("ativa", None) and con["token_mascarado"] == "noc_...e_55"
+
+    def test_a_real_client_call_records_its_outcome(self, admin):
+        """The proxy `resolve_agents_client` wraps around a REAL client records every awaited call."""
+        import anyio
+
+        from app.services.julia_grant_sink import HealthRecordingAgentsClient
+
+        _entregar(admin)
+        ok = HealthRecordingAgentsClient(FakeAgentsClient(), ORG_ID)
+        anyio.run(ok.agent_status, "julia")
+        assert _conexao(admin)["verificada_em"]
+        bad = HealthRecordingAgentsClient(FakeAgentsClient(status_error=AgentsTokenInvalid()), ORG_ID)
+        with pytest.raises(AgentsTokenInvalid):
+            anyio.run(bad.agent_status, "julia")
+        con = _conexao(admin)
+        assert (con["status"], con["motivo"]) == ("com_falha", "token_rejeitado")
+
+    def test_the_token_never_appears_in_responses_or_logs(self, admin, caplog):
+        _entregar(admin)
+        admin.w.agents = FakeAgentsClient(status_error=AgentsTokenInvalid())
         with caplog.at_level("DEBUG"):
-            r = admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-            body = admin.get(BASE).text
-        secret = fake.ferramentas_tokens[0]
-        assert secret not in r.text and secret not in body
-        assert all(secret not in rec.getMessage() for rec in caplog.records)
+            r = admin.tc.post(VERIFICAR, headers=H)
+            r2 = admin.get(BASE)
+        assert SECRET not in r.text + r2.text
+        assert all(SECRET not in rec.getMessage() and "noc_...6789" not in rec.getMessage() for rec in caplog.records)
 
-    def test_a_push_failure_is_still_204_records_the_new_erro_and_revokes_the_undelivered_token(self, admin):
-        admin.token_builder_agents = FakeAgentsClient(ferramentas_token_error=AgentsUpstreamError(code="encryption_not_configured"))
-        assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
-        assert julia.agents_token_for_org(ORG_ID, cfg=admin.w.cfg) == "pk_live_abcdef"  # channel token IS stored
-        assert admin.get(BASE).json()["data"]["erro"] == "Ferramentas da Julia indisponíveis — reenvie o token."
-        assert [r["revoked_at"] is not None for r in self.ROWS(admin)] == [True]  # no orphan secret stays valid
-
-    def test_a_mint_failure_is_still_204_with_the_same_erro(self, admin):
-        admin.token_admin.fail_mint = True
-        assert admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"}).status_code == 204
-        assert admin.get(BASE).json()["data"]["erro"] == "Ferramentas da Julia indisponíveis — reenvie o token."
-        assert self.ROWS(admin) == []
-
-    def test_a_later_good_paste_clears_the_erro(self, admin):
-        admin.token_builder_agents = FakeAgentsClient(ferramentas_token_error=AgentsUpstreamError())
-        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        admin.token_builder_agents = FakeAgentsClient()
-        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert admin.get(BASE).json()["data"]["erro"] is None
-
-    def test_a_refused_channel_token_mints_nothing(self, admin):
-        admin.token_builder_agents = FakeAgentsClient(status_error=AgentsTokenInvalid())
-        assert admin.put(f"{BASE}/token", {"token": "pk_wrong_token"}).status_code == 422
-        assert self.ROWS(admin) == []
-
-    def test_repasting_retires_the_previous_tools_token_only_after_the_new_one_is_delivered(self, admin):
-        admin.token_builder_agents = FakeAgentsClient()
-        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        old_id = self.ROWS(admin)[0]["id"]
-        # the scoped client reads `api_tokens`: mirror the fake's row there (production: same table)
-        admin.w.sw.table("api_tokens").insert(dict(self.ROWS(admin)[0])).execute()
-        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        by_id = {r["id"]: r for r in self.ROWS(admin)}
-        assert len(by_id) == 2 and by_id[old_id]["revoked_at"] is not None
-        assert [r for i, r in by_id.items() if i != old_id][0]["revoked_at"] is None
-
-    def test_the_tools_token_is_per_org(self, admin):
-        admin.token_builder_agents = FakeAgentsClient()
-        admin.put(f"{BASE}/token", {"token": "pk_live_abcdef"})
-        assert {r["org_id"] for r in self.ROWS(admin)} == {ORG_ID}
+    def test_verificar_auth_matrix(self, admin, member):
+        assert admin.tc.post(VERIFICAR).status_code == 401
+        assert member.tc.post(VERIFICAR, headers=H).status_code == 403

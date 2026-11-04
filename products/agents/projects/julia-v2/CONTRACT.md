@@ -85,6 +85,8 @@
 | Q6 | **Envio.** Retire the slot-criteria groups in `julia_envio_regras` (`lais_envio_criterios.py`, a second, parallel qualification rubric) and replace them with "send when the computed stage ≥ X"? | Yes. Two rubrics would contradict D4. Frio, captação, inválido and manual triggers stay. |
 | Q7 | **Bia's base prompt.** Bia runs on the Claude Code preset system prompt (`claude_runtime.py:283`, `prompt_mode="preset_append"`). It is Anthropic-authored and not editable, so it is a background instruction. Keep it, shown read-only in Studio, or switch Bia to `custom` mode with all text in the DB? | Switch to `custom`. It is the only way to satisfy B fully. It needs a Bia eval run before publish. |
 
+> **Julia-line S8 note (Q4, 2026-11):** the SW "paste the agents token" step this section assumed is replaced by a platform grant: agents mints the channel + tools tokens and delivers the channel token to SW (`PUT /api/platform/grants/agents`); SW's `PUT /api/julia/agente/token` answers 410 and the Agente page shows `conexao_plataforma` read-only. Routing (Q4) is unchanged, and turning a line on no longer requires authorized numbers.
+
 ### 0.3 Owner answers (2026-10-19) — BINDING, they override §0.1/§0.2 where they differ
 
 | # | Answer | Effect on this contract |

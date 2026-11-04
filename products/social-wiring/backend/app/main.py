@@ -111,6 +111,7 @@ def _register_media_wiring() -> ModuleRegistration:
         _LazyApiTokenResolver,
         _legacy_jwt_resolver,
         auth_router_deps,
+        get_auth_context,
     )
     from app.routers.calendar_router import router as calendar_router
     from app.routers.chat_router import router as chat_router
@@ -125,6 +126,7 @@ def _register_media_wiring() -> ModuleRegistration:
         router as assinatura_webhook_router,
     )
     from app.routers.julia_agente_router import router as julia_agente_router
+    from app.services.julia_grant_sink import build_router as build_julia_grant_router
     from app.routers.julia_roteamento_router import router as julia_roteamento_router
     from app.routers.julia_ferramentas_router import router as julia_ferramentas_router
     from app.routers.julia_conhecimento_router import router as julia_conhecimento_router
@@ -264,6 +266,7 @@ def _register_media_wiring() -> ModuleRegistration:
             auth_router,
             settings_router,
             julia_agente_router,
+            build_julia_grant_router(get_auth_context),  # PUT/DELETE /api/platform/grants/agents (Julia-line D2-D5)
             julia_roteamento_router,
             julia_ferramentas_router,
             julia_conhecimento_router,
