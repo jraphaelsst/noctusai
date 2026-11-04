@@ -61,7 +61,6 @@ from app.routers.catalogo_router import router as catalogo_router
 from app.routers.studio_padrao_router import router as studio_padrao_router
 from app.routers.studio_ui_router import router as studio_ui_router
 from app.routers.api_keys_router import router as api_keys_router
-from app.routers.channel_token_router import router as channel_token_router
 from app.routers.channel_tools_token_router import router as channel_tools_token_router
 from app.routers.channel_threads_router import router as channel_threads_router
 from app.routers.channels_router import router as channels_router
@@ -248,7 +247,6 @@ app = create_product_app(
         # Lais A2: the product-to-product channel turn API (+ its token mint).
         channels_router,
         channel_threads_router,
-        channel_token_router,
         channel_tools_token_router,
         approvals_router,
         qualificacao_router,  # Julia v2 A-QUAL: the platform qualification standard + lead state

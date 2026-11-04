@@ -1,20 +1,15 @@
-"""The ``julia`` seed (§7, §11.3) and the channel-token mint (§4, §10.1 M1,
-§10.2 "reuses existing minting")."""
+"""The ``julia`` seed (§7, §11.3) and the channel token a platform grant mints (the human mint route is gone)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from noctusai_lib.api.auth.session import hash_token
 
-from app.config import settings
 from app.dependencies import CHANNEL_TOKEN_SCOPES, MINTABLE_TOKEN_SCOPES
 from app.stores.studio_definitions import MODELS_BY_PROVIDER
 from app.studio.plataforma import ensure_definicao, ensure_instancia, ensure_instancias
 from tests.channels.conftest import OTHER_ORG
-from tests.routers.conftest import DEFAULT_USER_ID, seed_org_role
-from noctusai_lib.testing import handler_status
+from tests.routers.conftest import DEFAULT_USER_ID
 
 PLATFORM_ORG = UUID(int=900001)
 
@@ -124,133 +119,29 @@ class TestTheV2World:
         assert chan.rt.studio.list_versions(chan.org_id, agent.id) == []  # an instance owns no versions
 
 
-def _mint(chan, agent_key="julia", **body):
-    payload = {"product": "social-wiring", "label": "WhatsApp One Consultoria", **body}
-    return chan.client.post(f"/api/agents/{agent_key}/channel-token", json=payload)
+class TestMintedChannelTokenWorks:
+    """There is no human mint route (Julia-line S5): a channel token comes from a platform grant. What stays tested
+    here is that a token with the grant's issuer / principal / scopes drives the channel guards."""
 
-
-class TestChannelTokenMint:
-    @pytest.fixture(autouse=True)
-    def _per_org_agent(self, chan):
-        """The org's `julia` instance of the platform definition: the mint no longer seeds a row."""
-        chan.seed_agent(ativo=False)
-
-    def test_admin_mints_a_token_shown_once_with_the_contracted_row(self, chan):
-        resp = _mint(chan)
-        assert resp.status_code == 201, resp.text
-        assert resp.headers["Cache-Control"] == "no-store"
-        body = resp.json()
-        assert body["token"].startswith("noc_") and body["token"].startswith(body["prefix"])
-        assert sorted(body["scopes"]) == sorted(CHANNEL_TOKEN_SCOPES)
-        expires = datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00"))
-        assert abs((expires - (datetime.now(timezone.utc) + timedelta(days=30))).total_seconds()) < 120
-        assert settings.channel_token_ttl_days == 30
-
-        agent = chan.rt.studio.get_agent(chan.org_id, "julia")  # the per-org agent the mint binds to
+    def test_a_token_bound_to_the_agent_works_on_the_channel_routes(self, chan):
+        agent = chan.seed_agent(ativo=False)
+        minted = chan.token_admin.mint(
+            "agents", org_id=chan.org_id, label="grant", scopes=sorted(CHANNEL_TOKEN_SCOPES),
+            expires_at=None, principal_agent_id=agent.id, issuer="social-wiring",
+        )
         row = chan.token_admin.rows["agents"][0]
-        assert row["org_id"] == str(chan.org_id)
-        assert row["issuer"] == "social-wiring"
-        assert row["principal_agent_id"] == str(agent.id)
-        assert set(row["scopes"]) == set(CHANNEL_TOKEN_SCOPES) and set(row["scopes"]) <= MINTABLE_TOKEN_SCOPES
-        assert row["minted_by"] == str(DEFAULT_USER_ID)
-        assert row["human_personal"] is False and row["revoked_at"] is None
-        assert datetime.fromisoformat(row["expires_at"]) == expires
-
-    def test_only_a_hash_of_the_secret_is_stored(self, chan):
-        body = _mint(chan).json()
-        row = chan.token_admin.rows["agents"][0]
-        assert row["token_hash"] == hash_token(body["token"])
-        assert body["token"] not in repr(chan.token_admin.rows)
-        assert body["token"] not in repr(chan.audit.rows)
-
-    def test_the_minted_token_is_bound_to_the_agent_and_works_on_the_channel_routes(self, chan):
-        """The mint output is what SW holds: the row's issuer/principal/scopes drive the guards."""
-        body = _mint(chan).json()
-        row = chan.token_admin.rows["agents"][0]
-        # Resolve through the SAME seed row mapper the SupabaseApiTokenResolver uses.
+        assert minted.secret not in repr(chan.token_admin.rows)  # only a hash is stored
+        assert set(row["scopes"]) <= MINTABLE_TOKEN_SCOPES
         with chan.as_token(*row["scopes"], issuer=row["issuer"], principal=UUID(row["principal_agent_id"])):
             assert chan.request("GET", "/api/channels/agents/julia/status").status_code == 200
             # NOC-REMEDIATE[drop-lead-imob-alias]: social-wiring still sends the pre-rename key
             # for one release; it resolves to the very same agent.
             old = chan.request("GET", "/api/channels/agents/lead-imob/status")
             assert old.status_code == 200 and old.json()["agent_key"] == "julia"
-            assert body["scopes"]
 
-    def test_mint_is_audit_logged(self, chan):
-        body = _mint(chan).json()
-        [row] = chan.audit.rows
-        assert (row.method, row.status, row.org_id) == ("MINT", 201, chan.org_id)
-        assert row.api_token_id == UUID(body["id"])
-        assert "julia" in row.path and str(DEFAULT_USER_ID) in row.path
-
-    def test_rotation_overlaps_minting_never_revokes_the_old_token(self, chan):
-        first, second = _mint(chan).json(), _mint(chan, label="rotação").json()
-        assert first["token"] != second["token"]
-        rows = chan.token_admin.rows["agents"]
-        assert len(rows) == 2 and all(r["revoked_at"] is None for r in rows)
-
-    def test_revoke_stamps_the_row_and_is_audit_logged(self, chan):
-        first, second = _mint(chan).json(), _mint(chan, label="rotação").json()
-        resp = chan.client.delete(f"/api/agents/julia/channel-token/{first['id']}")
-        assert resp.status_code == 204
-        rows = {r["id"]: r for r in chan.token_admin.rows["agents"]}
-        assert rows[first["id"]]["revoked_at"] is not None and rows[second["id"]]["revoked_at"] is None
-        assert [(a.method, a.status) for a in chan.audit.rows] == [("MINT", 201), ("MINT", 201), ("REVOKE", 204)]
-
-    def test_revoking_another_orgs_token_is_404_and_changes_nothing(self, chan):
-        other = chan.token_admin.mint(
-            "agents", org_id=OTHER_ORG, label="x", scopes=["agents:channel-turn"],
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1), issuer="social-wiring",
-        )
-        _mint(chan)
-        resp = chan.client.delete(f"/api/agents/julia/channel-token/{other.info.id}")
-        assert resp.status_code == 404 and resp.json()["code"] == "token_not_found"
-        assert all(r["revoked_at"] is None for r in chan.token_admin.rows["agents"])
-
-    def test_a_member_cannot_mint_or_revoke(self, chan):
-        seed_org_role(chan.client, role="member")
-        assert _mint(chan).status_code == 403
-        assert chan.client.delete(f"/api/agents/julia/channel-token/{uuid4()}").status_code == 403
+    def test_the_human_mint_route_is_gone(self, chan):
+        chan.seed_agent(ativo=False)
+        body = {"product": "social-wiring", "label": "x"}
+        assert chan.client.post("/api/agents/julia/channel-token", json=body).status_code in (404, 405)
+        assert chan.client.delete(f"/api/agents/julia/channel-token/{uuid4()}").status_code in (404, 405)
         assert chan.token_admin.rows == {}
-
-    def test_a_product_token_can_never_mint(self, chan):
-        with chan.as_token("agents:channel-turn", "agents:channel-status"):
-            resp = chan.request("POST", "/api/agents/julia/channel-token",
-                                json={"product": "social-wiring", "label": "x"})
-        assert resp.status_code == 403 and resp.json()["code"] == "user_required"
-        assert chan.token_admin.rows == {}
-
-    def test_unauthenticated_mint_is_401(self, chan):
-        resp = chan.request("POST", "/api/agents/julia/channel-token",
-                            json={"product": "social-wiring", "label": "x"})
-        assert resp.status_code == 401
-
-    @pytest.mark.parametrize("body", [
-        {"product": "other", "label": "x"},
-        {"product": "social-wiring"},
-        {"product": "social-wiring", "label": ""},
-        {"product": "social-wiring", "label": "x", "scopes": ["agents:channel-turn", "studio:publish"]},
-        {"product": "social-wiring", "label": "x", "issuer": "agents"},
-        {"product": "social-wiring", "label": "x", "expires_at": "2099-01-01T00:00:00Z"},
-    ])
-    def test_the_request_cannot_choose_scopes_issuer_or_ttl(self, chan, body):
-        resp = chan.client.post("/api/agents/julia/channel-token", json=body)
-        assert resp.status_code == 422
-        assert chan.token_admin.rows == {}
-
-    def test_unknown_or_non_llm_agent_is_404(self, chan):
-        chan.rt.make_agent("isa", publish=False)
-        assert _mint(chan, "isa").status_code == 404
-        assert _mint(chan, "nope").status_code == 404
-
-    def test_an_unaudited_mint_is_revoked_and_fails(self, chan):
-        chan.audit.fail = True
-        resp = _mint(chan)
-        assert handler_status(resp) == 502 and resp.json()["code"] == "audit_failed"
-        assert all(r["revoked_at"] is not None for r in chan.token_admin.rows["agents"])
-        assert "pk_" not in resp.text
-
-    def test_a_mint_failure_is_a_clean_502(self, chan):
-        chan.token_admin.fail_mint = True
-        resp = _mint(chan)
-        assert handler_status(resp) == 502 and resp.json()["code"] == "mint_failed"

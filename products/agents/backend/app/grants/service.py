@@ -117,6 +117,23 @@ class GrantService:
         names = {org_id: self.org_name(org_id) for org_id in {g.org_id for g in grants}}
         return [(g, names[g.org_id]) for g in grants]
 
+    def channel_prefixes(self, grants: list[Grant]) -> dict[UUID, str]:
+        """``channel_token_id`` -> the token's stored prefix (``agents.api_tokens.token_prefix``), one lookup per
+        distinct org. The prefix is all agents can honestly show (only the hash of the secret is stored); a failed
+        lookup just leaves the prefix out."""
+        wanted = {g.channel_token_id for g in grants if g.channel_token_id}
+        found: dict[UUID, str] = {}
+        if not wanted:
+            return found
+        for org_id in {g.org_id for g in grants if g.channel_token_id}:
+            try:
+                infos = self._admin.list_tokens("agents", org_id=org_id)
+            except Exception as exc:
+                logger.warning("agents.grants.prefix_lookup_failed org_id=%s error=%s", org_id, type(exc).__name__)
+                continue
+            found.update({i.id: i.prefix for i in infos if i.id in wanted and i.prefix})
+        return found
+
     def org_name(self, org_id: UUID) -> str | None:
         try:
             ref = self._orgs.get(org_id)

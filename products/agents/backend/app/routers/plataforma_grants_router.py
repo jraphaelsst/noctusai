@@ -63,6 +63,8 @@ class GrantOut(BaseModel):
     product: str
     status: str  # pendente | ativo | revogado | falhou
     channel_token_id: UUID | None = None
+    #: The channel token's stored prefix (``noc_ab12``): agents keeps only the hash, so this is the whole honest display.
+    token_prefix: str | None = None
     product_token_id: UUID | None = None
     expires_at: datetime | None = None
     created_by: UUID | None = None
@@ -95,8 +97,12 @@ class GrantOpcoesOut(BaseModel):
     orgs: list[OrgOut]
 
 
-def _out(grant: Grant, org_nome: str | None = None) -> GrantOut:
-    return GrantOut(org_nome=org_nome, **grant.__dict__)
+def _out(grant: Grant, org_nome: str | None = None, token_prefix: str | None = None) -> GrantOut:
+    return GrantOut(org_nome=org_nome, token_prefix=token_prefix, **grant.__dict__)
+
+
+def _prefix_of(service: GrantService, grant: Grant) -> str | None:
+    return service.channel_prefixes([grant]).get(grant.channel_token_id) if grant.channel_token_id else None
 
 
 def get_grant_service_dep(
@@ -123,7 +129,9 @@ def list_grants(
     ctx: AuthContext = Depends(require_platform_admin),
     service: GrantService = Depends(get_grant_service_dep),
 ) -> GrantListOut:
-    items = [_out(g, nome) for g, nome in service.list()]
+    rows = service.list()
+    prefixes = service.channel_prefixes([g for g, _ in rows])
+    items = [_out(g, nome, prefixes.get(g.channel_token_id)) for g, nome in rows]
     return GrantListOut(items=items, total=len(items))
 
 
@@ -160,7 +168,7 @@ def create_grant(
     except GrantError as exc:
         raise _http(exc) from exc
     response.headers["Cache-Control"] = "no-store"
-    return _out(grant, service.org_name(grant.org_id))
+    return _out(grant, service.org_name(grant.org_id), _prefix_of(service, grant))
 
 
 @router.post(f"{_BASE}/{{grant_id}}/rotate", response_model=GrantOut)
@@ -175,7 +183,7 @@ def rotate_grant(
     except GrantError as exc:
         raise _http(exc) from exc
     response.headers["Cache-Control"] = "no-store"
-    return _out(grant, service.org_name(grant.org_id))
+    return _out(grant, service.org_name(grant.org_id), _prefix_of(service, grant))
 
 
 @router.delete(f"{_BASE}/{{grant_id}}", status_code=status.HTTP_204_NO_CONTENT)

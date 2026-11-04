@@ -106,6 +106,22 @@ def _create(client, **kw):
     return client.post(URL, json=_body(**kw))
 
 
+def _all_values(obj) -> str:
+    return " ".join(str(v) for v in obj.values())
+
+
+def assert_no_secret_in(k: Kit, *haystacks: str) -> None:
+    """Planted-secret check: every real secret the Fakes saw (delivered credentials, delivery tokens, the stored
+    tools secrets) is absent from the given response text and from every field value of it."""
+    secrets = {c.payload.credential for c in k.delivery.calls if c.method == "PUT"}
+    secrets |= {c.delivery_token for c in k.delivery.calls}
+    secrets |= {sec for org in (TARGET_ORG, OTHER_ORG) if (sec := k.tools_secret(org))}
+    assert secrets, "no secret was planted: the assertion would be vacuous"
+    for secret in secrets:
+        for hay in haystacks:
+            assert secret not in hay
+
+
 class TestBoundary:
     ROUTES = [
         ("get", URL, None), ("get", f"{URL}/opcoes", None), ("post", URL, _body()),
@@ -184,6 +200,10 @@ class TestCreate:
         # a secret is never in a response body or a log line
         for s in (secret, call.payload.credential, call.delivery_token):
             assert s not in resp.text and s not in caplog.text
+        # the response carries the stored prefix (what the UI shows), a strict prefix of the real credential
+        assert out["token_prefix"] == channel["token_prefix"]
+        assert call.payload.credential.startswith(out["token_prefix"]) and out["token_prefix"] != call.payload.credential
+        assert_no_secret_in(k, resp.text, _all_values(out))
 
     def test_optional_expiry_applies_to_the_tokens(self, kit):
         _platform_admin(kit)
@@ -307,6 +327,8 @@ class TestRotate:
         assert len(puts) == 2 and puts[0].payload.credential != puts[1].payload.credential
         assert k.admin.find_by_secret("agents", puts[1].payload.credential).id == UUID(out["channel_token_id"])
         assert k.admin.find_by_secret("agents", puts[0].payload.credential).revoked_at is not None
+        assert out["token_prefix"] == channel["token_prefix"] and puts[1].payload.credential.startswith(out["token_prefix"])
+        assert_no_secret_in(k, resp.text, _all_values(out))
         new_secret = k.tools_secret(TARGET_ORG)
         assert new_secret != old_secret and k.admin.find_by_secret("social_wiring", new_secret).id == UUID(out["product_token_id"])
 
@@ -384,7 +406,13 @@ class TestListAndOptions:
         body = resp.json()
         assert body["total"] == 2 and [i["id"] for i in body["items"]] == [second["id"], first["id"]]
         assert {i["org_nome"] for i in body["items"]} == {"Imobiliária Alfa", "Beta Imóveis"}
-        assert "noc_" not in resp.text and "secret" not in resp.text and "token_hash" not in resp.text
+        assert "secret" not in resp.text and "token_hash" not in resp.text
+        # the prefix (stored, non-secret) is carried for every grant; no field holds a full secret
+        by_id = {i["id"]: i for i in body["items"]}
+        for g in (first, second):
+            row = next(r for r in kit.kit.all("agents") if r["id"] == g["channel_token_id"])
+            assert by_id[g["id"]]["token_prefix"] == row["token_prefix"] and row["token_prefix"].startswith("noc_")
+        assert_no_secret_in(kit.kit, resp.text, *[_all_values(i) for i in body["items"]])
 
     def test_options_list_the_server_registry_and_search_orgs(self, kit):
         _platform_admin(kit)

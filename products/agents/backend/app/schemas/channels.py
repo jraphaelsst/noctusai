@@ -46,8 +46,6 @@ __all__ = [
     "ChannelLead",
     "ChannelRef",
     "ChannelReplyOut",
-    "ChannelTokenCreateRequest",
-    "ChannelTokenOut",
     "ChannelTurnRequest",
     "ChannelTurnResponse",
     "ChannelUsageOut",
@@ -546,21 +544,6 @@ class ChannelDeleteRequest(StrictHttpModel):
     agent_key: str = Field(..., min_length=1, max_length=64)
     channel: Channel
     channel_ref: ChannelRef
-
-
-class ChannelTokenCreateRequest(StrictHttpModel):
-    product: Literal["social-wiring"]
-    label: str = Field(..., min_length=1, max_length=120)
-
-
-class ChannelTokenOut(BaseModel):
-    """Returned ONCE at mint. ``token`` is never retrievable again."""
-
-    id: UUID
-    token: str
-    prefix: str
-    expires_at: datetime
-    scopes: list[str]
 
 
 class ChannelResumoRequest(StrictHttpModel):

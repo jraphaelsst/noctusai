@@ -115,11 +115,13 @@ store; (3) a 5-minute one-shot delivery token (`platform:grant-receive`); (4) th
 credential to `{product}/api/platform/grants/agents`; (5) the delivery token is revoked. Any failure revokes every token
 of that attempt, restores the stored tools secret, marks the grant `falhou` with `last_error` (stage + error class, no
 secrets). MFA is not required to mint (seed `MintPolicy` default); secrets are shown to nobody and never logged.
-The former `PUT /api/channels/ferramentas-token` paste intake is retired (405); `DELETE` stays. The human
-`POST /api/agents/{key}/channel-token` mint is superseded by grants; its paste UI (`ChannelTokenCard`) is gone (S5) and the
-backend route is slated for removal (see S5 handoff). The UI is `/conexoes-plataforma` ("Conexões da plataforma", platform
+The former `PUT /api/channels/ferramentas-token` paste intake is retired (it is gone, 404); `DELETE` stays. The human
+`POST|DELETE /api/agents/{key}/channel-token` mint/revoke routes are deleted (Julia-line S5): a channel token exists only
+through a grant. The channel-token AUTH dependency (turns / status / specs) is unchanged. Responses carry `token_prefix`
+(the stored `noc_ab12`-style prefix, from `agents.api_tokens.token_prefix`); agents keeps only the hash, so the prefix is
+the whole display. The UI is `/conexoes-plataforma` ("Conexões da plataforma", platform
 admin only, nav item + `status_pagina` row `conexoes-plataforma`, migration 061): pick agente → produto → organização →
-confirmar; the list shows status, masked credential id (first 4 + last 4), expiry, last delivery and last error; rotate and
+confirmar; the list shows status, the stored credential prefix (`noc_ab12…`), expiry, last delivery and last error; rotate and
 revoke ask for confirmation. The Canais tab of an agent only links there.
 
 ## Creating a complete agent (Julia as the reference)

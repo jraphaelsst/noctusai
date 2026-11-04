@@ -23,11 +23,11 @@ vi.mock("@noctusai/lib/components", async (orig) => ({ ...(await orig<object>())
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import ConexoesPlataforma from "../ConexoesPlataforma";
-import { maskToken } from "@/hooks/useGrants";
+import { showPrefix } from "@/hooks/useGrants";
 
 const grant = (over: object = {}) => ({
   id: "g1", org_id: "o1", org_nome: "One", agent_id: "a1", agent_key: "julia", product: "social-wiring", status: "ativo",
-  channel_token_id: "abcd1234-0000-0000-0000-wxyz98765432", product_token_id: null, expires_at: null, created_at: null,
+  channel_token_id: "c1", token_prefix: "noc_ab12", product_token_id: null, expires_at: null, created_at: null,
   revoked_at: null, last_delivered_at: "2026-11-01T10:00:00Z", last_error: null, ...over,
 });
 
@@ -42,21 +42,21 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("maskToken", () => {
-  it("shows first 4 + last 4", () => {
-    expect(maskToken("abcd1234-0000-wxyz98765432")).toBe("abcd••••5432");
-    expect(maskToken(null)).toBe("—");
+describe("showPrefix", () => {
+  it("shows the stored prefix plus an ellipsis, never a fake tail", () => {
+    expect(showPrefix("noc_ab12")).toBe("noc_ab12…");
+    expect(showPrefix(null)).toBe("—");
   });
 });
 
 describe("ConexoesPlataforma", () => {
-  it("lists grants with status, masked credential, delivery and error", () => {
+  it("lists grants with status, credential prefix, delivery and error", () => {
     mockGrants.mockReturnValue(view({ data: { items: [grant(), grant({ id: "g2", status: "falhou", last_error: "delivery_failed:Timeout" })], total: 2 } }));
     const { container } = render(<ConexoesPlataforma />);
     const q = within(container);
     expect(q.getByText("Ativo")).toBeTruthy();
     expect(q.getByText("Falhou")).toBeTruthy();
-    expect(q.getAllByText("abcd••••5432").length).toBe(2);
+    expect(q.getAllByText("noc_ab12…").length).toBe(2);
     expect(q.getByTestId("grant-error-g2").textContent).toContain("delivery_failed");
   });
 

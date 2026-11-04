@@ -25,6 +25,8 @@ export interface Grant {
   product: string;
   status: GrantStatus;
   channel_token_id: string | null;
+  /** The stored prefix of the channel token (`noc_ab12`); the full secret is never held by agents. */
+  token_prefix: string | null;
   product_token_id: string | null;
   expires_at: string | null;
   created_at: string | null;
@@ -70,11 +72,9 @@ export const grantKeys = {
   opcoes: (q: string) => ["agents", "plataforma", "grants-opcoes", q] as const,
 };
 
-/** First 4 + last 4 of a token prefix, the middle masked. The API sends no secret; this masks what is shown. */
-export function maskToken(value: string | null | undefined): string {
-  if (!value) return "—";
-  if (value.length <= 8) return `${value.slice(0, 4)}••••`;
-  return `${value.slice(0, 4)}••••${value.slice(-4)}`;
+/** `noc_ab12…` — the stored prefix plus an ellipsis; never a made-up tail (agents keeps only the hash). */
+export function showPrefix(prefix: string | null | undefined): string {
+  return prefix ? `${prefix}…` : "—";
 }
 
 export function useGrants() {

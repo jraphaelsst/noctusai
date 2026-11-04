@@ -15,7 +15,7 @@ import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader, EmptySta
 import { useConfirm } from "@noctusai/lib/components";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import {
-  maskToken,
+  showPrefix,
   useCreateGrant,
   useGrantOpcoes,
   useGrants,
@@ -238,7 +238,7 @@ function GrantRow({ grant }: { grant: Grant }) {
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        Credencial <span className="font-mono">{maskToken(grant.channel_token_id)}</span> · expira {grant.expires_at ? fmt(grant.expires_at) : "nunca"} ·
+        Credencial <span className="font-mono">{showPrefix(grant.token_prefix)}</span> · expira {grant.expires_at ? fmt(grant.expires_at) : "nunca"} ·
         última entrega {fmt(grant.last_delivered_at)}
       </p>
       {grant.last_error && (
