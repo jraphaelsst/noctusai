@@ -86,6 +86,14 @@ free boolean (`em_condominio` is legacy read-only; read the derived value). The 
 (`carregador._empreendimento` / `_em_condominio`, `derivacao._condominio_do_imovel`) reads the link. A new Julia page needs its
 `status_pagina` row in a migration, its entry in `JULIA_PAGES`, and its route in `App.tsx`.
 
+## Imóvel = Vista mirror + owned overlay (KB `INTEGRATIONS/vista.md`)
+
+- The imóvel detail is the Vista MIRROR (`imoveis`, disposable cache, refreshed from Vista) plus an overlay WE own: notas CRUD (`modules/imovel_hub/notas_service.py`, `GET|POST /api/imoveis/{codigo}/notas`, `PATCH|DELETE .../{nota_id}`, migration 315) and per-field provenance (which value is Vista's, which is ours).
+- **Vista refresh every 2h** (`services/imoveis_sync_scheduler.py`) with a per-code fallback when the bulk list misses an imóvel (`imoveis_atualizacao_service.py`, discovery in `imoveis_descoberta.py`); each run is logged (`imoveis_sync_execucoes`, migration 316).
+- **Vista-vs-ours divergences** (TRANSITIONAL, until Vista is retired): `vista_divergencias.py` detects them, `routers/imovel_divergencias_router.py` serves `GET|PUT /api/imoveis/divergencias/config`, `GET /api/imoveis/{codigo}/divergencias` and `POST .../{conflito_id}/resolver` (migration 317); a WhatsApp digest and an alert block in Settings surface the open ones.
+- **Per-org Vista key** lives in the encrypted `CredentialStore` (`vista_credenciais.py`, `routers/integracao_vista_router.py`: `GET|PUT|DELETE /api/integracoes/vista`, `POST .../testar`); never in `.env`.
+- **Julia catalog source per org** (`routers/julia_catalogo_router.py`, `GET|PUT /api/julia/catalogo-fonte`, migration 314): which catalog the Julia tools read for the org.
+
 ## Seed seams consumed (do NOT re-implement product-locally)
 
 - Chatbot buffer / message store — `noctusai_lib.domain.chatbot`; WhatsApp WAHA + Meta Cloud connector — `noctusai_lib.integrations.whatsapp`
@@ -103,6 +111,8 @@ free boolean (`em_condominio` is legacy read-only; read the derived value). The 
 - pt-BR UI copy.
 
 ## Contract parties (matrícula-driven)
+
+**Contract RG is optional, CPF is mandatory (julia-v3, 2026-11-03).** An absent RG omits the RG clause and the party is qualified by CPF alone; an incomplete RG only warns. Under a signature name the document line is CPF and/or RG (`frases.documentos_assinatura`). `carregador.identidade_nao_verificada` blocks generation while a CPF/RG came from a WhatsApp document nobody confirmed.
 
 **Contract parties follow the matrícula.** A vendedor typed `proprietário` who is not among the matrícula's current owners (adquirentes of the last transfer act, `titulo_service.titularidade_atual`) blocks generation with `VENDEDOR_NAO_PROPRIETARIO` and the readiness names the right papel (cônjuge of an owner → anuente; doador in the chain → anuente); owners unknown checks nothing. When the sellers hold the imóvel by **doação** (adiantamento de legítima) the doadores are `anuente`s worded as such (`derivacao.doador_anuente`, no extra column); a spouse-anuente keeps its own wording. A CNH-only RG completes itself from the matrícula averbação (`card_hub/rg_matricula_service.py`, `rg_origem='matricula_averbacao'`), nacionalidade is inflected by gênero, and a certidão de casamento hands the linked cônjuge the couple's estado civil/regime/data.
 

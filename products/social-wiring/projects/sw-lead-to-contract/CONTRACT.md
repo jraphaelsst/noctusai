@@ -402,6 +402,12 @@ Action: **LINK, don't move.**
 ### 9.3 Party identity
 - The card checklist's identity row edits `cpf`, `rg`, `rg_orgao_expedidor` in place through the existing `PATCH` of `DadosPessoais` (one field per save).
 
+### 9.4 Identity: RG optional, CPF mandatory (julia-v3, owner 2026-11-03)
+- RG is optional for EVERY party: absent RG => `frases` omits the identity clause entirely (never "RG -SSP") and `texto_pessoa` qualifies by the CPF alone; an incomplete RG (e.g. missing órgão) only warns, it does not block. CPF stays mandatory.
+- Under a signer's name the document line is `frases.documentos_assinatura(cpf, identidade)`: CPF and/or RG (`identidade_assinatura`: "RG n ÓRGÃO", "RNE/RNM n" for a foreigner), `""` when neither. Witnesses still print CPF only (`Testemunha.rg` is never filled).
+- `carregador.identidade_nao_verificada` (`DadosContrato.identidade_nao_verificada`) lists the cpf/rg/orgão fields that came from a document sent over WhatsApp (`cliente_documentos.origem_entrada='whatsapp'`) and that no human confirmed; generation is BLOCKED while it is non-empty.
+- `notas_service` (imóvel notas, migration 315) is outside this contract's generation path; the notas are an imóvel-hub overlay, not read by the generator.
+
 ## §10 · Contract specifications are selectable (owner 2026-10-24)
 
 > Real deals have no reference contract: what kind of contract this is must be a stated choice, and it scopes what the readiness asks for.
