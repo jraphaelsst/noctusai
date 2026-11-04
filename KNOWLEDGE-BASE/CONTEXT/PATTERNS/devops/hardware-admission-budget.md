@@ -243,3 +243,5 @@ or starts producing false-reds), raise the limit in **scheduled, measured steps*
 ## 8 · Measured by
 
 Every admission and sample in the capacity log is joined with Claude usage (tokens, cost, chars per session) by `noctus.dev.usage_eval` — before/after any phase change, `action=compare`. → `KB § PATTERNS/devops/usage-evaluation.md`
+
+The CURRENT numbers, the process that produced them (`process_version`), every cycle's evidence and the deferred auto-tune + observability-organ phases live in the roadmap: `project-history/roadmaps/hw-capacity-calibration-2026-11.md`. Read it before sizing parallel work.
