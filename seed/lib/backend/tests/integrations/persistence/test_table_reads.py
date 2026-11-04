@@ -76,6 +76,26 @@ class TestActors:
     def test_no_ids_no_query(self):
         assert tr.resolve_actors(None, set()) == {}
 
+    def test_user_phones_resolve_set_unset_and_unknown(self):
+        core = MockSupabaseClient(validate_schema=False, schema="public")
+        core.set_table_data("noctus_users", [
+            {"id": "u1", "telefone": "+5511994573387"},
+            {"id": "u2", "telefone": None},
+            {"id": "u3", "telefone": ""},
+        ])
+        got = tr.resolve_user_phones(core, ["u1", "u2", "u3", "u9", None, ""])
+        assert got == {"u1": "+5511994573387", "u2": None, "u3": None, "u9": None}
+
+    def test_user_phones_no_ids_no_query(self):
+        assert tr.resolve_user_phones(None, []) == {}
+
+    def test_user_phones_batches_past_the_in_filter_limit(self):
+        core = MockSupabaseClient(validate_schema=False, schema="public")
+        ids = [f"u{i:04d}" for i in range(tr.IN_FILTER_BATCH * 2 + 5)]
+        core.set_table_data("noctus_users", [{"id": i, "telefone": "+5511994573387"} for i in ids])
+        got = tr.resolve_user_phones(core, ids)
+        assert len(got) == len(ids) and set(got.values()) == {"+5511994573387"}
+
     def test_actor_of_an_unresolved_id_keeps_the_id(self):
         assert tr.actor({}, "u9") == {"id": "u9", "nome": None}
         assert tr.actor({}, None) is None

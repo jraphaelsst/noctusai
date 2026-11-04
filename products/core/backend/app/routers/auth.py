@@ -21,6 +21,7 @@ from app.schemas.products import PRODUCT_PUBLIC_KEYS as _PUBLIC_PRODUCT_KEYS
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
 from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_token_rejection
 from noctusai_lib.api.auth.org_selection import make_org_selection_store
+from noctusai_lib.primitives.phone import normalize_phone
 from noctusai_lib.config.product_urls import resolve_product_url
 
 logger = logging.getLogger(__name__)
@@ -397,6 +398,20 @@ async def update_profile(
     db = get_admin_client()
 
     update_data = {k: v for k, v in body.model_dump(mode="json").items() if v is not None}
+    if "telefone" in update_data:
+        # Canonical platform phone format (E.164); "" clears. Never invent digits:
+        # an unparseable number is refused, not stored.
+        raw_phone = update_data["telefone"].strip()
+        if not raw_phone:
+            update_data["telefone"] = None
+        else:
+            normalized = normalize_phone(raw_phone)
+            if normalized is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Telefone inválido. Use o formato com DDD, ex.: (11) 99999-9999 ou +5511999999999.",
+                )
+            update_data["telefone"] = normalized
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

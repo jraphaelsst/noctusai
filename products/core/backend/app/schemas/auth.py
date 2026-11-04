@@ -40,6 +40,8 @@ class LoginRequest(StrictHttpModel):
 class ProfileUpdate(StrictHttpModel):
     nome: Optional[str] = None
     avatar_url: Optional[str] = None
+    # WhatsApp number (any spelling; normalized to E.164 by the router). "" clears it.
+    telefone: Optional[str] = None
 
 
 class PasswordChange(StrictHttpModel):

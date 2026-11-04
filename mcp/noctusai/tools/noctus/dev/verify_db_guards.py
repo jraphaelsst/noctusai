@@ -1417,6 +1417,42 @@ _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE = GuardProbe(
 )
 
 
+_NOCTUS_USERS_TELEFONE_E164_PROBE = GuardProbe(
+    id="noctus_users.telefone.e164",
+    product="core",
+    schema="public",
+    guard_name="noctus_users_telefone_e164",
+    kind="write_refusal",
+    migrations=("096_noctus_users_telefone.sql",),
+    rationale=(
+        "The platform user's WhatsApp number (public.noctus_users.telefone) is the single source "
+        "of truth every product resolves a user id against. The backend normalizes to E.164 "
+        "before writing; the CHECK is the backstop so no other writer can store a spelling that "
+        "never matches or dials. Proven by UPDATE-ing an existing profile to a non-E.164 value."
+    ),
+    sql=_do_block("""
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.noctus_users) THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in public.noctus_users to probe telefone on';
+  END IF;
+  BEGIN
+    UPDATE public.noctus_users SET telefone = '(11) 99457-3387'
+     WHERE id = (SELECT id FROM public.noctus_users LIMIT 1);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE of noctus_users.telefone succeeded — the CHECK did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%constraint "noctus_users_telefone_e164"%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE = GuardProbe(
     id="roteiros.feedback_status.allowed_values",
     product="social-wiring",
@@ -11250,6 +11286,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CS_GERACAO_PROBES,
     _VISITA_MOTIVO_CHECK_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
+    _NOCTUS_USERS_TELEFONE_E164_PROBE,
     _JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE,
     _JULIA_AGENTE_EXIGE_ATIVADO_EM_PROBE,
     _JULIA_CONEXAO_TRANSPORTE_PROBE,
