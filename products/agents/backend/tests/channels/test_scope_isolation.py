@@ -39,6 +39,7 @@ def test_the_channel_route_set_is_exactly_the_documented_ones(chan):
         ("DELETE", "/api/channels/leads/{ref}"),
         ("GET", "/api/channels/agents/{agent_key}/controle"),
         ("GET", "/api/channels/agents/{agent_key}/qualificacao/estagios"),
+        ("GET", "/api/channels/agents/{agent_key}/specs"),
         ("GET", "/api/channels/agents/{agent_key}/status"),
         ("GET", "/api/channels/handoffs/{handoff_id}"),
         ("GET", "/api/channels/leads/{lead_ref}/identificacao"),
@@ -60,6 +61,7 @@ def test_the_channel_route_set_is_exactly_the_documented_ones(chan):
         ("POST", "/api/channels/threads/{thread_id}/mensagens"),
         ("POST", "/api/channels/threads/{thread_id}/resumo"),
         ("POST", "/api/channels/turns"),
+        ("PUT", "/api/channels/agents/{agent_key}/specs"),
         ("PUT", "/api/channels/leads/{ref}/opt-in"),
     ]
 

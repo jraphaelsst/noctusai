@@ -81,6 +81,7 @@ Clean slate: on 2026-11-04 at 17:43–17:47Z the old Julia tokens were revoked. 
 - **C4. Business-specs editor.**
   - `EspecificacoesCard` renders agents' spec declarations generically.
   - The SW proxy `GET/PUT /api/julia/especificacoes` (org admin) calls agents `GET/PUT /api/channels/agents/{key}/specs` with the grant token and passes the actor id.
+  - **S9 built:** `GET|PUT /api/julia/especificacoes` (org admin) passes agents' 200/422 bodies verbatim; 409 `agente_nao_conectado` without the `api_key:agents` credential. Agents side: `GET|PUT /api/channels/agents/{key}/specs` (`channel_specs_router`, scope `agents:channel-specs`), sharing `aplicar_org_specs` with the studio PUT. Actor id: agents records the token id as actor (body is `valores` only, strict); a per-user actor is deferred. `julia_aviso_service` is untouched (the notice URL stays SW-derived and read-only; no S9 change was needed).
   - `aviso_privacidade_url` is SW-derived (`julia_agente_router.py:117`) and read-only in the form.
 
 ## D · Platform grant (clean slate)

@@ -377,8 +377,7 @@ def get_org_specs(
 ) -> OrgSpecsOut:
     """Org admin only: which org specs the definition asks for (label + help — the FORM, never a
     prompt), this org's values and what is still missing."""
-    _, r = _resolved(store, ctx, key, "ativa")
-    return _org_specs_out(key, r, config)
+    return ler_org_specs(store, ctx, key, config)
 
 
 @router.put("/agents/{key}/specs", response_model=OrgSpecsOut)
@@ -389,6 +388,19 @@ def update_org_specs(
 ) -> OrgSpecsOut:
     """The org owner/admin sets ITS values. Keys must be declared by the definition (the active or the
     draft version); each value is capped by its declaration's type. A blank value clears the spec."""
+    return aplicar_org_specs(store, ctx, key, payload.valores, config)
+
+
+def ler_org_specs(store, ctx: AuthContext, key: str, config: ConfigValidacao) -> OrgSpecsOut:
+    """The org's specs view -- shared by the studio GET and the channel (SW) GET."""
+    _, r = _resolved(store, ctx, key, "ativa")
+    return _org_specs_out(key, r, config)
+
+
+def aplicar_org_specs(store, ctx: AuthContext, key: str, valores: dict[str, str], config: ConfigValidacao) -> OrgSpecsOut:
+    """THE org-spec write path (Julia-line CONTRACT §E2): the studio PUT and the channel/SW PUT both land
+    here, so the declared-keys rule, :func:`validar_specs`, the report/block rollout and the audit never fork."""
+    payload = OrgSpecsUpdateRequest(valores=valores)
     agent = resolve_agent(store, ctx.org_id, key, allow_instancia=True)
     if agent.definition_scope == "instancia":
         definition = store.get_agent_by_id(agent.definition_agent_id)
@@ -786,4 +798,6 @@ def grant_platform_definition_org(
     )
 
 
-__all__ = ["router", "require_content_write", "SCOPE_STUDIO_CONTENT_WRITE"]
+__all__ = [
+    "router", "require_content_write", "SCOPE_STUDIO_CONTENT_WRITE", "aplicar_org_specs", "ler_org_specs", "get_spec_validacao_dep",
+]
