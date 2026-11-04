@@ -89,7 +89,7 @@ def resolve_agent_for_org(
 
 def compile_for_org(
     store, catalog: KnowledgeCatalog, r: AgenteResolvido, client: ClientBundle | None = None, *,
-    extras: dict | None = None, qualificacao=None,
+    extras: dict | None = None, qualificacao=None, spec_validacao=None,
 ) -> CompiledPrompt:
     """The definition compiled FOR this org: every ``{{org.chave}}`` replaced by the org's value,
     the hash covering exactly what the model receives. Requires a resolved version."""
@@ -97,7 +97,7 @@ def compile_for_org(
         raise NotFound(f"agent {r.instancia.key!r} has no published version")
     return compile_version(
         store, catalog, r.definicao.org_id, r.definicao, r.versao, client,
-        org_specs=r.valores, extras=extras, qualificacao=qualificacao,
+        org_specs=r.valores, extras=extras, qualificacao=qualificacao, spec_validacao=spec_validacao,
     )
 
 

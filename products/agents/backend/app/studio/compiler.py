@@ -42,6 +42,8 @@ from dataclasses import replace
 from typing import Any
 
 from app.studio.especificacoes import placeholders_org, resolver_texto
+from app.studio.especificacoes_service import preparar as preparar_valores
+from app.studio.spec_formatos import dividir_itens
 from app.studio.ferramentas_registry import ferramenta_conhecida, ferramenta_da_conversa, nome_no_modelo
 from app.studio.models import (
     ClientBundle,
@@ -121,7 +123,7 @@ _KNOWLEDGE_INTRO = (
 CONTEUDO_CODIGOS = frozenset({
     "texto_ausente", "placeholder_desconhecido", "ferramenta_desconhecida",
     "skill_exigida_inexistente", "decisao_sem_opcao_padrao", "decisao_em_secao",
-    "spec_nao_declarada", "spec_org_faltando",
+    "spec_nao_declarada", "spec_org_faltando", "spec_org_invalida",
 })
 
 
@@ -291,9 +293,9 @@ def _client_block(client: ClientBundle, S: _Strings) -> str:
 # ── org specs: compile the definition FOR an org ────────────────────────────
 
 
-def _resolver_conteudo(c: ConteudoBundle, valores: dict[str, str]) -> ConteudoBundle:
+def _resolver_conteudo(c: ConteudoBundle, valores: dict[str, str], fenced: frozenset[str]) -> ConteudoBundle:
     def r(t: str) -> str:
-        return resolver_texto(t, valores)
+        return resolver_texto(t, valores, fenced)
 
     return ConteudoBundle(
         textos=tuple(replace(t, conteudo=r(t.conteudo)) for t in c.textos),
@@ -315,9 +317,9 @@ def _resolver_conteudo(c: ConteudoBundle, valores: dict[str, str]) -> ConteudoBu
     )
 
 
-def _resolver_versao(v: VersionBundle, valores: dict[str, str]) -> VersionBundle:
+def _resolver_versao(v: VersionBundle, valores: dict[str, str], fenced: frozenset[str]) -> VersionBundle:
     def r(t: str) -> str:
-        return resolver_texto(t, valores)
+        return resolver_texto(t, valores, fenced)
 
     return replace(
         v,
@@ -325,7 +327,7 @@ def _resolver_versao(v: VersionBundle, valores: dict[str, str]) -> VersionBundle
         skills=tuple(replace(sk, descricao=r(sk.descricao), corpo=r(sk.corpo)) for sk in v.skills),
         # a pinned library skill's index line is model-visible too (its body is resolved when opened)
         skill_refs=tuple(replace(ref, descricao=r(ref.descricao)) for ref in v.skill_refs),
-        conteudo=_resolver_conteudo(v.conteudo, valores) if v.conteudo is not None else None,
+        conteudo=_resolver_conteudo(v.conteudo, valores, fenced) if v.conteudo is not None else None,
     )
 
 
@@ -353,7 +355,7 @@ def _textos_de_conteudo(v: VersionBundle, cont: ConteudoBundle):
 
 def _avisos_conteudo(
     inp: CompileInput, cont: ConteudoBundle, S: _Strings, skills: list[SkillData], com_cliente: bool,
-    refs: list[SkillRef] = (), autorada: VersionBundle | None = None,
+    refs: list[SkillRef] = (), autorada: VersionBundle | None = None, com_dados_org: bool = False,
 ) -> list[CompileWarning]:
     """Completeness of a content-mode compile (blocking — CONTEUDO_CODIGOS)."""
     out: list[CompileWarning] = []
@@ -361,7 +363,7 @@ def _avisos_conteudo(
 
     exigidas = chaves_exigidas(
         tool_policy=inp.tool_policy, tem_skills=bool(skills) or bool(refs), com_cliente=com_cliente, canal=inp.canal,
-        com_qualificacao=inp.qualificacao is not None,
+        com_qualificacao=inp.qualificacao is not None, com_dados_org=com_dados_org,
     )
     preenchidas = {t.chave for t in cont.textos if t.conteudo.strip()}
     faltam = sorted((exigidas - preenchidas) | S.ausentes)
@@ -556,11 +558,24 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
     #: no ``{{org.x}}`` left and every declared spec would read as unused.
     autorada = inp.version
     faltando_specs: tuple[str, ...] = ()
+    dados_org: dict[str, Any] = {}
 
     # ── org specs: replace the {{org.x}} placeholders BEFORE composing, so the text, the rows
     # and the hash are exactly what this org's model receives.
     if inp.org_specs is not None and version.conteudo is not None:
-        valores = {k: v for k, v in inp.org_specs.items() if isinstance(v, str)}
+        tipos = {sp.chave: sp.tipo for sp in version.conteudo.specs}
+        # E2: the compiler RE-validates what is stored. Report mode warns and still compiles (as fenced data);
+        # block mode drops the invalid value, so it is neither inlined nor fenced -- and says so (blocking).
+        prep = preparar_valores(tipos, inp.org_specs, inp.spec_validacao)
+        valores, fenced = prep.valores, prep.fenced  # canonical (NFKC, normalized): the hash is stable across spellings
+        if prep.invalidas:
+            bloqueia = inp.spec_validacao.bloqueia
+            avisos.append(CompileWarning(
+                "spec_org_invalida",
+                "Especificações da organização inválidas" + (" (descartadas do prompt)" if bloqueia else " (modo report)")
+                + ": " + "; ".join(f"{k} ({', '.join(sorted({v.motivo for v in vs}))})" for k, vs in sorted(prep.invalidas.items())) + ".",
+                bloqueia,
+            ))
         faltam = sorted(
             sp.chave for sp in version.conteudo.specs
             if sp.obrigatoria and not valores.get(sp.chave, "").strip()
@@ -572,7 +587,12 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
                 "A organização não preencheu especificações obrigatórias: " + ", ".join(faltam) + ".",
                 True,
             ))
-        version = _resolver_versao(version, valores)
+        # every non-empty free-text value travels in the data section (a skill file opened later may reference any key)
+        dados_org = {
+            k: (dividir_itens(valores[k]) if tipos.get(k) == "lista" else valores[k])
+            for k in sorted(fenced) if valores.get(k, "").strip()
+        }
+        version = _resolver_versao(version, valores, fenced)
         inp = replace(inp, version=version)
 
     cont = version.conteudo
@@ -634,6 +654,14 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
             continue
         blocks.append((
             s.chave, titulo, ManifestOrigin("secao", s.id, "conteudo"), f"# {titulo}\n\n{conteudo}",
+        ))
+
+    # ── 1a. org data fence (E3): the org's free-text values, as JSON data -- never instructions
+    if dados_org:
+        blocks.append((
+            "dados-da-organizacao", S.peek("compilador.titulo_dados_org", ""), ManifestOrigin("auto", None, "dados_organizacao"),
+            f"# {S('compilador.titulo_dados_org', '')}\n\n{S('compilador.dados_org_intro', '')}\n\n"
+            f"{json.dumps(dados_org, ensure_ascii=False, sort_keys=True, indent=2)}",
         ))
 
     # ── 1b. qualification standard (static, data-generated; before skills)
@@ -699,7 +727,8 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
     # ── content-mode completeness (blocking; CONTEUDO_CODIGOS)
     if cont is not None:
         avisos += _avisos_conteudo(
-            inp, cont, S, skills, com_cliente=inp.client is not None, refs=refs, autorada=autorada)
+            inp, cont, S, skills, com_cliente=inp.client is not None, refs=refs, autorada=autorada,
+            com_dados_org=bool(dados_org))
 
     # ── assemble with exact offsets
     manifest: list[ManifestSection] = []

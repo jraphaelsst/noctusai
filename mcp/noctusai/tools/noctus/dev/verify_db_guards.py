@@ -4564,6 +4564,23 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "(and bill it) instead of replaying the stored reply."
         ),
     ),
+    _agents_studio_probe(
+        probe_id="agent_version_specs.tipo_is_a_typed_format",
+        guard_name="agent_version_specs_tipo_check",
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_version_specs (org_id, version_id, chave, rotulo, tipo) "
+            "VALUES (v_org, v_version, 'noc_probe', 'NOC probe', 'instrucao');"
+        ),
+        guard_fragment="agent_version_specs_tipo_check",
+        what="an org-spec declaration with a tipo outside the typed formats",
+        migrations=("012_agent_studio_definitions.sql", "031_julia_v2_conteudo.sql", "059_spec_tipos_tipados.sql"),
+        requires_table="agent_version_specs",
+        rationale=(
+            "Julia-line E1 (migration 059): an org's spec value is validated by its declared tipo; a tipo the validator "
+            "(app/studio/spec_formatos.py) does not know would be stored unchecked and compiled as free text."
+        ),
+    ),
 )
 
 

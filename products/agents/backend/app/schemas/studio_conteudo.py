@@ -170,6 +170,15 @@ class OrgSpecValorOut(BaseModel):
     updated_at: datetime | None = None
 
 
+class SpecInvalidaOut(BaseModel):
+    """A stored org-spec value that fails the typed/safety rules (CONTRACT §E2) -- never carries the value."""
+
+    chave: str
+    codigo: str
+    motivo: str
+    mensagem: str
+
+
 class OrgSpecsOut(BaseModel):
     """The org's view: what the definition asks for, what the org filled, what is still missing."""
 
@@ -180,6 +189,9 @@ class OrgSpecsOut(BaseModel):
     declaradas: list[SpecDefOut]
     valores: list[OrgSpecValorOut]
     faltando: list[str]
+    #: Stored values that fail validation (report mode lists them; block mode refuses new ones).
+    invalidas: list[SpecInvalidaOut] = []
+    modo_validacao: str = "report"
 
 
 class OrgStatusOut(BaseModel):

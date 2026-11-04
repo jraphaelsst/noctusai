@@ -50,6 +50,7 @@ from app.stores.errors import NotFound
 from app.stores.marcadores import get_marcador_store
 from app.stores.studio_definitions_conteudo import OrgSpecRecord
 from app.stores.threads import HandoffDestino, contexto_thread, mapa_agentes, rotular_historico
+from app.studio.especificacoes_service import config_atual, preparar as preparar_valores
 from app.studio.plataforma import escopo_de, padrao_de
 from app.studio.resolucao import AgenteResolvido, Carimbo, carimbo, compile_for_org, conteudo_status, resolve_agent_for_org
 from app.studio.spec import MAX_COMPILED_PROMPT_CHARS
@@ -411,7 +412,8 @@ async def executar(
         else SkillsDaVersao(svc.studio_store, r.definicao.org_id, r.definicao.id, r.versao.id)
     )
     # skill texts resolved FOR THIS ORG ({{org.chave}}), the same resolver the compiled sections went through
-    skills: SkillFonte | None = SkillsComSpecs(fonte, r.valores)
+    prep_specs = preparar_valores({d.chave: d.tipo for d in r.specs_declaradas}, r.valores, config_atual())
+    skills: SkillFonte | None = SkillsComSpecs(fonte, prep_specs.valores, prep_specs.fenced)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
     historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))

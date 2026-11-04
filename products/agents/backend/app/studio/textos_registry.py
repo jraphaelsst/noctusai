@@ -41,7 +41,7 @@ __all__ = [
 ]
 
 APLICA_A = ("todas", "canal", "runtime")
-CONDICOES = ("web_search", "!web_search", "knowledge", "!knowledge", "skills", "cliente", "qualificacao")
+CONDICOES = ("web_search", "!web_search", "knowledge", "!knowledge", "skills", "cliente", "qualificacao", "dados_org")
 #: Same pattern as the migration 031 CHECK on ``agent_version_textos.chave``.
 CHAVE_RE = re.compile(r"^[a-z0-9]+(\.[a-z0-9_]+)+$")
 
@@ -96,6 +96,10 @@ TEXTOS: dict[str, TextoSpec] = {
             "qualificacao_rotulo_identidade",
         )
     },
+    # the org-data fence (Julia-line E3): the one section carrying an org's free-text spec values as inert JSON data.
+    # Platform-locked: it is the sentence that makes the values data, not instructions.
+    "compilador.titulo_dados_org": _compilador(condicao="dados_org", fixo_plataforma=True),
+    "compilador.dados_org_intro": _compilador(condicao="dados_org", fixo_plataforma=True),
     "compilador.titulo_cliente": _compilador(condicao="cliente"),
     **{
         f"compilador.cliente_rotulo.{tipo}": _compilador(condicao="cliente")
@@ -216,7 +220,7 @@ TEXTOS.update({
 
 
 def chaves_exigidas(
-    *, tool_policy: dict, tem_skills: bool, com_cliente: bool, canal: bool, com_qualificacao: bool = False,
+    *, tool_policy: dict, tem_skills: bool, com_cliente: bool, canal: bool, com_qualificacao: bool = False, com_dados_org: bool = False,
     registro: dict[str, TextoSpec] | None = None,
 ) -> set[str]:
     """The registry keys that are REQUIRED for this compile: ``obrigatoria``, applicable to the
@@ -227,7 +231,7 @@ def chaves_exigidas(
     ativas = {
         "web_search": web, "!web_search": not web,
         "knowledge": kb, "!knowledge": not kb,
-        "skills": tem_skills, "cliente": com_cliente, "qualificacao": com_qualificacao,
+        "skills": tem_skills, "cliente": com_cliente, "qualificacao": com_qualificacao, "dados_org": com_dados_org,
     }
     out: set[str] = set()
     for chave, spec in registro.items():

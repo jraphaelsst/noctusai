@@ -16,11 +16,13 @@ from uuid import UUID
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
 from app.studio.compiler import compile_prompt
+from app.studio.especificacoes_service import config_atual
 from app.studio.models import (
     ClientBundle,
     ClientEntryData,
     CompiledPrompt,
     CompileInput,
+    ConfigValidacao,
     ConteudoBundle,
     DecisaoData,
     FerramentaData,
@@ -185,6 +187,7 @@ def compile_version(
     store, catalog: KnowledgeCatalog, org_id: UUID, agent: StudioAgentRecord,
     version: VersionRecord, client: ClientBundle | None = None, *,
     org_specs: dict[str, str] | None = None, extras: dict | None = None, qualificacao=None,
+    spec_validacao: ConfigValidacao | None = None,
 ) -> CompiledPrompt:
     """THE one compile call site. ``org_id`` is the org that OWNS ``version``'s rows (the
     definition's org for a platform-defined agent). ``agent.conteudo_modo == 'linhas'`` selects
@@ -204,4 +207,5 @@ def compile_version(
         extras=extras,
         canal=agent.owner_product is not None,
         qualificacao=qualificacao,
+        spec_validacao=spec_validacao or config_atual(),
     ))

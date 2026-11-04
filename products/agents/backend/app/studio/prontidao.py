@@ -31,7 +31,8 @@ from app.stores.errors import NotFound
 from app.stores.studio_geracoes import ACTIVE_STATUSES
 from app.studio.compiler import CONTEUDO_CODIGOS
 from app.studio.eval_mecanismo import MecanismoRequisito, PortaoMecanismo, decidir_portao
-from app.studio.models import CompiledPrompt, GateRun
+from app.studio.especificacoes_service import config_atual, violacoes_armazenadas
+from app.studio.models import CompiledPrompt, ConfigValidacao, GateRun
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,10 @@ class Entrada:
     rotulos_ausentes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     # org specs / generation / controls
     specs_org_faltando: tuple[str, ...] = ()
+    #: ``((chave, codigo, motivo, mensagem), ...)`` -- stored org-spec values that fail the typed/safety rules (E2).
+    specs_org_invalidas: tuple[tuple[str, str, str, str], ...] = ()
+    #: ``SPEC_VALIDATION_MODE == 'block'``: an invalid stored value is a ``bloqueante``; ``report``: an ``aviso``.
+    spec_bloqueia: bool = False
     geracao_status: str | None = None
     geracao_areas: tuple[AreaGeracao, ...] = ()
     controle_modo: str | None = None
@@ -268,6 +273,7 @@ _COMPILE_ACAO = {
     "decisao_em_secao": "Mova a decisão para Decisões (regra e opções tipadas).",
     "spec_nao_declarada": "Declare a especificação em Especificações da organização (PUT .../draft/specs).",
     "spec_org_faltando": "A organização precisa preencher as especificações obrigatórias.",
+    "spec_org_invalida": "Corrija o valor da especificação (PUT .../specs): texto livre descreve a organização, não dá instruções.",
     "secao_vazia": "Escreva o conteúdo da seção ou desative-a.",
     "sem_secoes": "Crie ao menos uma seção ativa (PUT .../draft/sections).",
 }
@@ -424,6 +430,15 @@ def _periferia(e: Entrada) -> list[Item]:
             "Preencha em PUT /api/studio/agents/{key}/specs (cada organização preenche as suas).",
             detalhe={"chaves": list(e.specs_org_faltando)},
         ))
+    for chave, codigo, motivo, mensagem in e.specs_org_invalidas:
+        itens.append(Item(
+            "spec_org_invalida", "especificacoes", "bloqueante" if e.spec_bloqueia else "aviso",
+            f"Especificação da organização '{chave}' inválida ({codigo}/{motivo}): {mensagem}"
+            + ("" if e.spec_bloqueia else " (modo report: o valor ainda é usado, como dado.)"),
+            "Corrija o valor em PUT /api/studio/agents/{key}/specs; texto livre descreve a organização, não dá instruções.",
+            detalhe={"chave": chave, "codigo": codigo, "motivo": motivo, "modo": "block" if e.spec_bloqueia else "report"},
+            recusa_publicacao="compile_blocked" if e.spec_bloqueia else None,
+        ))
     if e.geracao_status in ACTIVE_STATUSES:
         itens.append(Item(
             "geracao_em_andamento", "geracao", "aviso", "Uma geração por IA está em andamento: o rascunho ainda pode mudar.",
@@ -476,6 +491,7 @@ def compor(e: Entrada) -> Prontidao:
 def coletar(
     *, store: Any, catalog: Any, org_id: UUID, agent: Any, draft: Any, gate: Any, padroes: Any, skills: Any,
     geracoes: Any, evals: Any, controles: Any | None, compiled: CompiledPrompt | None = None,
+    spec_validacao: ConfigValidacao | None = None,
 ) -> Entrada:
     """Read everything the composer needs for ``draft`` of ``agent`` (``org_id`` owns the definition). ``compiled``:
     the prompt the caller already compiled (publish) -- otherwise compiled here, read-only (nothing is stamped)."""
@@ -502,8 +518,15 @@ def coletar(
     linhas = tuple(FerramentaLinha(f.ferramenta, f.ativo, f.descricao, dict(f.parametros)) for f in rows)
     tem_skills = bool(refs) or any(s.ativo for s in store.list_skills(org_id, draft.id))
 
+    cfg = spec_validacao or config_atual()
+    invalidas: tuple[tuple[str, str, str, str], ...] = ()
     try:
-        faltando = resolve_agent_for_org(store, org_id, agent.key, versao="rascunho").faltando
+        r_org = resolve_agent_for_org(store, org_id, agent.key, versao="rascunho")
+        faltando = r_org.faltando
+        invalidas = tuple(
+            (v.chave, v.codigo, v.motivo, v.mensagem)
+            for v in violacoes_armazenadas({d.chave: d.tipo for d in r_org.specs_declaradas}, r_org.valores, config=cfg)
+        )
     except NotFound:
         faltando = ()
 
@@ -536,6 +559,8 @@ def coletar(
             usa_canais=agent.usa_canais, tem_skills=tem_skills, tool_policy=dict(draft.tool_policy), com_padrao=chave is not None),
         rotulos_ausentes=rotulos_ausentes(linhas),
         specs_org_faltando=tuple(faltando),
+        specs_org_invalidas=invalidas,
+        spec_bloqueia=cfg.bloqueia,
         geracao_status=ultima.status if ultima is not None else None,
         geracao_areas=areas,
         controle_modo=modo,

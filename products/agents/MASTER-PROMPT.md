@@ -132,6 +132,13 @@ products/agents/backend/app/
 - Skill texts are org-resolved: the turn wraps its `SkillFonte` in `SkillsComSpecs`, so `abrir_skill` /
   `ler_arquivo_skill` return the index line, body and files with every `{{org.chave}}` replaced by the org's value -
   the same `especificacoes.resolver_texto` the prompt sections go through (own and pinned library skills).
+- Org specs are UNTRUSTED DATA (Julia-line E1-E3): every value is validated by its declared `tipo`
+  (`spec_formatos.py`: texto_curto/texto/texto_longo(4000)/url/dominios/contatos/cnpj/creci/horario/duracao/lista) through
+  the one `especificacoes_service.validar` (studio PUT, readiness, compiler). `SPEC_VALIDATION_MODE=report|block`
+  (default report: accept + `spec_org_invalida` aviso; block: 422 + bloqueante). Free-text values are never inlined -
+  prompt text AND opened skills show `[dado: chave]`; one section "Dados da organização" (rows
+  `compilador.titulo_dados_org` / `compilador.dados_org_intro`) carries them as JSON. Never add a path that inlines a
+  free-text spec value. Details: `projects/julia-v2/CONTRACT.md` §2.6.
 - Optional enum parameters (`Literal[...] | None`, `anyOf [enum, null]` in the schema) get their value labels from the
   row too (`enriquecer_schema`), like required ones. The extraction-only tools (`registrar_resumo` /
   `registrar_escolha`, `ferramentas_registry.FERRAMENTAS_DE_EXTRACAO`) are never offered on a turn and are not listed in

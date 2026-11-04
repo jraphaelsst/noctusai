@@ -22,7 +22,8 @@ platform admins** (Studio / `noctus.agents.content`); each org has an *instance*
 (`definition_scope='instancia'`: on/off, LLM key, budget) plus its **org specs** (`agent_org_specs`: agency
 name, regions, knowledge, ...) that the definition references as `{{org.chave}}`. An org admin sees and edits
 only its own specs and a readiness status — never the prompt, hashes, tool descriptions or rules. No prompt
-text lives in code (keeper `check_agent_prompt_text_in_code`). Design: `projects/julia-v2/CONTRACT.md` §2.6.
+text lives in code (keeper `check_agent_prompt_text_in_code`). Org specs are untrusted data: typed, validated
+(`SPEC_VALIDATION_MODE=report|block`) and fenced in the compiled prompt (`projects/julia-v2/CONTRACT.md` §2.6). Design: `projects/julia-v2/CONTRACT.md` §2.6.
 No agent KEY lives in code either (migration 049): a platform definition is any `plataforma` row, created
 with any key by `POST /api/studio/plataforma/agents` and configured by `GET/PATCH
 /api/studio/plataforma/agents/{key}` — `escopo_qualificacao`, `padrao_qualificacao`, `rascunho_padrao`

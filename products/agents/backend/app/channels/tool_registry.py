@@ -25,7 +25,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol, Union
@@ -418,16 +418,18 @@ class SkillsComSpecs:
 
     _CAMPOS = ("descricao", "corpo", "conteudo", "titulo")
 
-    def __init__(self, inner: SkillFonte, valores: Mapping[str, str]) -> None:
+    def __init__(self, inner: SkillFonte, valores: Mapping[str, str], fenced: Collection[str] = ()) -> None:
         self._inner = inner
         self._valores = dict(valores)
+        #: free-text keys: ``[dado: chave]`` here, the value only in the prompt's data section (Julia-line E3)
+        self._fenced = frozenset(fenced)
 
     def _resolver(self, out: dict[str, Any]) -> dict[str, Any]:
         from app.studio.especificacoes import resolver_texto
 
         if out.get("erro"):
             return out
-        return {k: (resolver_texto(v, self._valores) if k in self._CAMPOS and isinstance(v, str) else v)
+        return {k: (resolver_texto(v, self._valores, self._fenced) if k in self._CAMPOS and isinstance(v, str) else v)
                 for k, v in out.items()}
 
     async def abrir(self, nome: str) -> dict[str, Any]:

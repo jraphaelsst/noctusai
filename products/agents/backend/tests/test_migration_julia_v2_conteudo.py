@@ -40,8 +40,9 @@ def test_size_caps_match_models_limits():
     assert f"length(conteudo) <= {LIMITS['texto.conteudo']}" in SQL
     assert f"BETWEEN 1 AND {LIMITS['ferramenta.descricao']}" in SQL
     assert f"length(regra) <= {LIMITS['decisao.regra']}" in SQL
-    assert f"length(valor) <= {LIMITS['org_spec.valor.texto_longo']}" in SQL
-    assert SPEC_TIPOS == ("texto", "texto_longo") and "IN ('texto', 'texto_longo')" in SQL
+    assert f"length(valor) <= {LIMITS['org_spec.valor.backstop']}" in SQL
+    # 031 shipped the two original tipos; the typed formats widen the CHECK in 059 (test_migration_059_spec_tipos).
+    assert "IN ('texto', 'texto_longo')" in SQL and {"texto", "texto_longo"} <= set(SPEC_TIPOS)
 
 
 def test_a_new_draft_copies_the_content_through_a_trigger_not_a_third_create_agent_draft():

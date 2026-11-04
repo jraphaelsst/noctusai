@@ -264,7 +264,7 @@ def validar_org_specs(valores: dict[str, str]) -> None:
             raise ValueError(f"invalid spec chave {chave!r}")
         if not isinstance(valor, str):
             raise ValueError(f"spec {chave!r} value must be a string")
-        _cap(valor, "org_spec.valor.texto_longo", f"spec {chave!r} valor")
+        _cap(valor, "org_spec.valor.backstop", f"spec {chave!r} valor")
 
 
 def validar_textos_plataforma(itens: dict[str, str]) -> None:
