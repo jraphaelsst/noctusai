@@ -16,3 +16,11 @@ The **learning posture** rules (safety nets · friction on both axes · always-h
 
 These 5 rules shared one framework, and a session that needs one of them typically needs the rest — so a single router hop costs a lookup and returns 4 always-on lines of budget. The forcing function is the router keeper's rule-COUNT ceiling; the procedure is `/gc` step 5. → `KB § PATTERNS/common/claude-md-router-discipline.md`
 
+## One ledger, four islands merged (2026-11-04)
+
+The learning writers now share the auto-improvement ledger as their durable copy (injectable `ai_logger` seam, default `auto_improvement.log_entry`; a logger failure is surfaced in the return, never swallowed):
+
+- `noctus.dev.phase_learning_log` -> also `kind=phase-learning`, `source={tool:phase_learnings, ref:<sqlite id>}`; SQLite stays the local cache. Return is `{id, ledger}`.
+- `noctus.dev.brief_ledger_append` -> `outcome` of `miss`/`rework` also writes `kind=drift` (with `resolve_when`) attributed to the agent; successes are not logged there. Return carries `ai`.
+- `noctus.dev.findings` -> also `kind=finding`, `source={tool:findings, ref:<slug>:<category>:<sha8>}`. Return carries `ledger` + `finding_ref`.
+- `noctus.dev.archive` (project mode) -> learn-before-archive no longer trusts `learnings_absorbed`: every `kind=finding` row for the project must be closed or promoted (status != `s1-emergent`), else it refuses listing the open rows. Escape `accept_open_findings="<reason>"` (reason echoed in the return). A `findings.md` with no ledger rows (pre-merge project) still falls back to `learnings_absorbed=True`.

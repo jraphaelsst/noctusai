@@ -8,7 +8,9 @@ findings.md under the right of the five standard sections.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from typing import Callable
 
 from settings import REPO_ROOT
 
@@ -29,11 +31,17 @@ def _locate(project_slug: str) -> Path | None:
 
 
 def findings_append(
-    project_slug: str, category: str, entry: str, provenance: str | None = None
+    project_slug: str, category: str, entry: str, provenance: str | None = None,
+    ai_logger: Callable[..., dict] | None = None,
 ) -> dict:
     """Append `entry` under `## <category>` in the project's findings.md.
     `category` must be one of the five standard sections. `provenance`
-    (e.g. 'W2-META-S1' / 'architect') is bolded as the entry lead."""
+    (e.g. 'W2-META-S1' / 'architect') is bolded as the entry lead.
+
+    Also writes `kind="finding"` to the auto-improvement ledger with
+    `source={tool:"findings", ref:"<slug>:<category>:<sha8>"}`; the logger
+    result is returned as `ledger` (failure surfaced, never swallowed).
+    `ai_logger` defaults to `auto_improvement.log_entry`."""
     if category not in _CATEGORIES:
         return {"ok": False, "error": f"category must be one of {_CATEGORIES}"}
     path = _locate(project_slug)
@@ -69,7 +77,19 @@ def findings_append(
     else:
         text = text.rstrip() + f"\n\n{header}\n{line}\n"
     path.write_text(text)
-    return {"ok": True, "path": str(path.relative_to(REPO_ROOT)), "category": category, "appended": line}
+    if ai_logger is None:
+        from .auto_improvement import log_entry as ai_logger  # noqa: PLC0415
+    ref = f"{project_slug}:{category}:{hashlib.sha256(entry.encode()).hexdigest()[:8]}"
+    try:
+        ledger = ai_logger(
+            scope="scoped", kind="finding",
+            target=f"projects/{project_slug}/findings.md",
+            description=f"[{category}] {entry}"[:1000], agent=provenance,
+            source={"tool": "findings", "ref": ref})
+    except Exception as exc:  # noqa: BLE001 — surfaced, not swallowed
+        ledger = {"ok": False, "error": f"ai_logger raised: {exc}"[:300]}
+    return {"ok": True, "path": str(path.relative_to(REPO_ROOT)), "category": category,
+            "appended": line, "ledger": ledger, "finding_ref": ref}
 
 
 def register(server) -> None:

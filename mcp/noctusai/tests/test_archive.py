@@ -690,6 +690,55 @@ class TestArchiveCleanMcpRegistration:
         assert "noctus.dev.archive_clean" in s._tool_manager._tools
 
 
+@pytest.fixture(autouse=True)
+def _no_real_findings_ledger(monkeypatch):
+    """Default findings-ledger reader -> empty (tests inject their own rows)."""
+    from tools.noctus.dev import auto_improvement as ai
+    monkeypatch.setattr(ai, "_load_entries", lambda: [])
+
+
+def _frow(slug, status, n=1):
+    return {"kind": "finding", "status": status, "description": f"lesson {n}",
+            "source": {"tool": "findings", "ref": f"{slug}:Lessons:abc{n}"}}
+
+
+class TestFindingsLedgerGate:
+    def test_open_finding_refuses_with_list(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-open")
+        with pytest.raises(ValueError, match="fl-open:Lessons:abc1"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True,
+                    finding_rows_fn=lambda: [_frow("fl-open", "s1-emergent")])
+        assert proj.exists()
+
+    def test_open_finding_not_bypassed_by_learnings_absorbed(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-flag")
+        with pytest.raises(ValueError, match="still open"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True, learnings_absorbed=True,
+                    finding_rows_fn=lambda: [_frow("fl-flag", "s1-emergent")])
+
+    def test_promoted_and_closed_pass(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-done")
+        r = archive(str(proj), repo_root=tmp_repo, skip_history=True,
+                    finding_rows_fn=lambda: [_frow("fl-done", "s3-kb"), _frow("fl-done", "closed", 2),
+                                             _frow("other", "s1-emergent")])
+        assert r["accepted_open_findings"] == []
+
+    def test_accept_open_findings_escape_is_recorded(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-esc")
+        r = archive(str(proj), repo_root=tmp_repo, skip_history=True,
+                    accept_open_findings="owner accepted",
+                    finding_rows_fn=lambda: [_frow("fl-esc", "s1-emergent")])
+        assert r["accept_open_findings_reason"] == "owner accepted"
+        assert r["accepted_open_findings"] == ["fl-esc:Lessons:abc1"]
+
+    def test_reader_failure_refuses(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-err")
+        def boom():
+            raise RuntimeError("ledger down")
+        with pytest.raises(ValueError, match="cannot read"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=boom)
+
+
 class TestLearnBeforeArchiveGate:
     """archive() refuses to archive a PROJECT until learnings_absorbed=True —
     the lesson must outlive the folder (KB § "Durable docs are self-contained")."""

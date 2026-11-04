@@ -104,3 +104,7 @@ Do NOT fire for:
   artifacts (caches/builds/node_modules) are explicitly excluded.
 - **2026-05-30:** Salvage-log requirement gated into `delete_integrated_engineer_remote`
   as a guard — dry_run=True default prevents accidental bypass.
+
+## Archive gate is ledger-backed (2026-11-04)
+
+`noctus.dev.archive` (project mode) checks the auto-improvement ledger instead of a self-declared flag: any `kind=finding` row for the project still `s1-emergent` refuses the archive with the list; promote/close them, or pass `accept_open_findings="<reason>"`. See the family index for the full four-tool merge.

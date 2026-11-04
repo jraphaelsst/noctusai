@@ -34,3 +34,7 @@ brief_similarity_radar.route_to_agent(description, target_files=None) -> dict
 
 - **DON'T** auto-skip a brief because the radar found a match. The match is a HINT (review past work); a fresh brief may still be appropriate.
 - **DON'T** auto-route to the suggested agent. The suggestion is a STARTING POINT; architect judgment trumps.
+
+## Miss/rework outcomes feed the ledger (2026-11-04)
+
+`brief_ledger.append(..., outcome='miss'|'rework')` also writes `kind=drift` (with a `resolve_when`) to the auto-improvement ledger, attributed to the agent. Successes are not logged there.

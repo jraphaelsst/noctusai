@@ -925,7 +925,7 @@ Doc-backed by `CLAUDE.md` rule "Apply proposals inline, then delete — every de
 
 **A project's lessons must OUTLIVE its folder.** `archive/` is not persisted long-term and durable docs MUST NOT link to `projects/`/`archive/` paths (`KB § 01-PHILOSOPHY.md § Durable docs are self-contained`). So **before** a project is archived, every useful lesson is absorbed into a durable doc (KB / CLAUDE.md / memory) — the lesson persists even after the folder is gone or later deleted. **Learn before archiving.**
 
-`noctus.dev.archive(mode="project")` **enforces** this: when the project carries a `findings.md` (the captured-lessons artifact), it refuses unless `learnings_absorbed=True`, returning a checklist (no `findings.md` ⇒ no captured lessons ⇒ no gate; learn-before-archive stays the behavioral rule regardless):
+`noctus.dev.archive(mode="project")` **enforces** this: when the project carries a `findings.md` (the captured-lessons artifact), it refuses while any `kind=finding` ledger row for the project is open (escape `accept_open_findings="<reason>"`; a findings.md with no ledger rows falls back to `learnings_absorbed=True`), returning a checklist (no `findings.md` ⇒ no captured lessons ⇒ no gate; learn-before-archive stays the behavioral rule regardless):
 1. Read `findings.md` + PROJECT.md §11 (lessons / slips / knowledge).
 2. Confirm each DURABLE lesson persists in KB / CLAUDE.md / memory (eight-way sync) — not only inside the folder.
 3. Verify no durable doc links to this `projects/<slug>` path (inline the substance; cite code/dated facts, never the slug/archive path).

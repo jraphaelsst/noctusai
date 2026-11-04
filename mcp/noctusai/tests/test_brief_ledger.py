@@ -75,3 +75,27 @@ class TestListRecent:
         for i in range(15):
             bl.append(f"s{i}", "agent", None, f"d{i}")
         assert len(bl.list_recent(limit=5)) == 5
+
+
+class TestMissOutcomeDrift:
+    def test_miss_writes_drift_with_resolve_when(self, tmp_ledger):
+        calls = []
+        def fake(**kw):
+            calls.append(kw)
+            return {"ok": True, "entry": {"ts": "t"}}
+        r = bl.append("s1", "backend-engineer", None, "desc", outcome="miss", ai_logger=fake)
+        assert r["ok"] and r["ai"]["ok"]
+        assert calls[0]["kind"] == "drift" and calls[0]["agent"] == "backend-engineer"
+        assert calls[0]["resolve_when"]
+
+    def test_success_not_logged(self, tmp_ledger):
+        calls = []
+        bl.append("s2", "a", None, "d", outcome="landed", ai_logger=lambda **k: calls.append(k))
+        bl.append("s3", "a", None, "d", ai_logger=lambda **k: calls.append(k))
+        assert calls == []
+
+    def test_logger_failure_surfaced(self, tmp_ledger):
+        def boom(**kw):
+            raise RuntimeError("x")
+        r = bl.append("s4", "a", None, "d", outcome="rework", ai_logger=boom)
+        assert r["ok"] and r["ai"]["ok"] is False and "x" in r["ai"]["error"]

@@ -32,7 +32,7 @@ import hashlib
 import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ._pii_guard import assert_no_pii
 
@@ -51,6 +51,9 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+MISS_OUTCOMES = frozenset({"miss", "rework"})
+
+
 def append(
     slug: str,
     agent: str,
@@ -58,8 +61,16 @@ def append(
     description: str,
     full_brief: str | None = None,
     meta: dict | None = None,
+    outcome: str | None = None,
+    ai_logger: Callable[..., dict] | None = None,
 ) -> dict[str, Any]:
     """Append a brief entry to the ledger.
+
+    `outcome` in {"miss","rework"} also writes `kind="drift"` (with a
+    `resolve_when`) to the auto-improvement ledger, attributed to `agent`;
+    successes are not logged there. The logger result rides on the return
+    as `ai` (failure -> `ai.ok False`, never swallowed). `ai_logger`
+    defaults to `auto_improvement.log_entry`.
 
     Args:
       slug: worktree/branch slug (e.g. "w2-e3-code-embeddings").
@@ -84,6 +95,8 @@ def append(
             "content_hash": _content_hash(full_brief or description),
             "meta": meta or {},
         }
+        if outcome:
+            entry["outcome"] = outcome
         if full_brief:
             entry["full_brief_excerpt"] = full_brief[:1000]
         assert_no_pii(entry, field="brief_ledger")
@@ -94,7 +107,19 @@ def append(
             rel = str(path.relative_to(REPO_ROOT))
         except (ImportError, ValueError):
             rel = str(path)
-        return {"ok": True, "entry": entry, "ledger_path": rel}
+        result: dict[str, Any] = {"ok": True, "entry": entry, "ledger_path": rel}
+        if outcome in MISS_OUTCOMES:
+            if ai_logger is None:
+                from .auto_improvement import log_entry as ai_logger  # noqa: PLC0415
+            try:
+                result["ai"] = ai_logger(
+                    scope="scoped", kind="drift", target=f"brief:{slug}",
+                    description=f"brief outcome {outcome}: {description}"[:500],
+                    agent=agent, source_ref=f"brief:{slug}",
+                    resolve_when="manual:brief miss/rework triage")
+            except Exception as exc:  # noqa: BLE001 — surfaced, not swallowed
+                result["ai"] = {"ok": False, "error": f"ai_logger raised: {exc}"[:300]}
+        return result
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:200]}
 
@@ -170,8 +195,9 @@ def register(server) -> None:
     def _append(slug: str, agent: str, description: str,
                 target_files: list[str] | None = None,
                 full_brief: str | None = None,
-                meta: dict | None = None) -> dict:
-        return append(slug, agent, target_files, description, full_brief, meta)
+                meta: dict | None = None, outcome: str | None = None) -> dict:
+        return append(slug, agent, target_files, description, full_brief, meta,
+                      outcome=outcome)
 
     @server.tool(
         name="noctus.dev.brief_ledger_query",

@@ -190,6 +190,8 @@ def archive(
     outcome_signals: list[str] | None = None,
     learnings_absorbed: bool = False,
     allow_durable_refs: bool = False,
+    accept_open_findings: str | None = None,
+    finding_rows_fn=None,
 ) -> dict:
     """Move target to the archive folder per `KB § PATTERNS/project-execution.md § 11.2`.
 
@@ -319,21 +321,45 @@ def archive(
     # affirms `learnings_absorbed=True`. (Learn-before-archive is the standing
     # BEHAVIORAL rule for every close; the gate enforces the detectable case.)
     findings_md = target / "findings.md"
-    if resolved_mode == "project" and findings_md.exists() and not learnings_absorbed:
-        checklist = [
-            "Read findings.md + PROJECT.md §11 (lessons / slips / knowledge).",
-            "Confirm each DURABLE lesson persists in KB / CLAUDE.md / memory "
-            "(three-way sync) — not only inside this project folder.",
-            "Verify no durable doc links to this `projects/<slug>` path "
-            "(self-contained rule — inline the substance, cite code/dated facts).",
-            "Then re-call: archive(..., learnings_absorbed=True).",
-        ]
-        raise ValueError(
-            f"learn-before-archive gate: refusing to archive project '{slug}' — "
-            f"it carries findings.md ({findings_md}) whose lessons must be "
-            "absorbed into durable docs first (the lesson must persist after the "
-            "folder is gone).\nChecklist:\n  - " + "\n  - ".join(checklist)
-        )
+    if resolved_mode == "project":
+        # Ledger-backed check (replaces trust in a self-declared flag): every
+        # `kind=finding` row for this project must be closed or promoted
+        # (status != s1-emergent). Escape: accept_open_findings="<reason>".
+        if finding_rows_fn is None:
+            from .auto_improvement import _load_entries as finding_rows_fn  # noqa: PLC0415
+        try:
+            rows = [
+                r for r in finding_rows_fn()
+                if r.get("kind") == "finding"
+                and isinstance(r.get("source"), dict)
+                and r["source"].get("tool") == "findings"
+                and str(r["source"].get("ref", "")).split(":")[0] == slug
+            ]
+        except Exception as exc:  # noqa: BLE001 — refuse loudly, never assume clean
+            raise ValueError(
+                f"learn-before-archive gate: cannot read the findings ledger ({exc}); "
+                "refusing rather than assuming clean."
+            ) from exc
+        open_rows = [r for r in rows if r.get("status", "s1-emergent") == "s1-emergent"]
+        if open_rows and not (accept_open_findings and accept_open_findings.strip()):
+            listing = "\n  - ".join(
+                f"{r['source']['ref']}: {str(r.get('description', ''))[:120]}" for r in open_rows)
+            raise ValueError(
+                f"learn-before-archive gate: refusing to archive project '{slug}' — "
+                f"{len(open_rows)} finding row(s) in the ledger are still open "
+                "(promote each to s2+ via auto_improvement_promote, or close it).\n"
+                f"Open findings:\n  - {listing}\n"
+                "Escape (recorded): archive(..., accept_open_findings=\"<reason>\")."
+            )
+        # Legacy fallback: findings.md exists but never reached the ledger
+        # (pre-merge projects) -> the old affirm-by-flag checklist still applies.
+        if findings_md.exists() and not rows and not learnings_absorbed:
+            raise ValueError(
+                f"learn-before-archive gate: refusing to archive project '{slug}' — "
+                f"it carries findings.md ({findings_md}) with no ledger rows; its "
+                "lessons must be absorbed into durable docs first (KB / CLAUDE.md / "
+                "memory), then re-call with learnings_absorbed=True."
+            )
 
     # Durable-refs gate (project mode only). The recurring "durable config
     # anchored to a `projects/` path" class: a PERMANENT surface (CI workflow,
@@ -428,6 +454,11 @@ def archive(
         "mode": resolved_mode,
         "next_NN": nn,
         "history": history_result,
+        "accepted_open_findings": (
+            [r["source"]["ref"] for r in open_rows] if resolved_mode == "project"
+            and open_rows else []),
+        "accept_open_findings_reason": accept_open_findings if resolved_mode == "project"
+        and open_rows else None,
     }
 _ARCHIVE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -629,9 +660,10 @@ def register(server) -> None:
             "stamped into project-history/ledger.ndjson via noctus.dev.history_record BEFORE the "
             "git mv (status_at_close default 'shipped'; summary/review derived from PROJECT.md "
             "when not supplied). LEARN-BEFORE-ARCHIVE GATE: when mode=project and the folder has a "
-            "findings.md, the call REFUSES unless learnings_absorbed=True — first absorb every "
-            "durable lesson into KB/CLAUDE/memory (it must outlive the folder), then re-call with "
-            "learnings_absorbed=True. DURABLE-REFS GATE: when mode=project, the call also REFUSES "
+            "findings, the call REFUSES while any kind=finding row for the project in the "
+            "auto-improvement ledger is still open (s1-emergent) — promote/close each (it must outlive "
+            "the folder), or pass accept_open_findings='<reason>'. A findings.md with no ledger rows "
+            "falls back to learnings_absorbed=True. DURABLE-REFS GATE: when mode=project, the call also REFUSES "
             "(deterministically) if any tracked file OUTSIDE projects/+archive/ still references "
             "projects/<slug>/ — a CI workflow / scripts/ entry / .mcp.json / compose / KB doc that "
             "would BREAK on archive (the recurring 'config anchored to a projects/ path' class, e.g. "
@@ -652,6 +684,7 @@ def register(server) -> None:
         outcome_signals: list[str] | None = None,
         learnings_absorbed: bool = False,
         allow_durable_refs: bool = False,
+        accept_open_findings: str | None = None,
     ) -> dict:
         return archive(
             target_path=target_path,
@@ -665,6 +698,7 @@ def register(server) -> None:
             outcome_signals=outcome_signals,
             learnings_absorbed=learnings_absorbed,
             allow_durable_refs=allow_durable_refs,
+            accept_open_findings=accept_open_findings,
         )
     @server.tool(
         name="noctus.dev.archive_clean",
