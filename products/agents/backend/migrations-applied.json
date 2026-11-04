@@ -31,6 +31,10 @@
     "051_status_pagina_agentes_unificado.sql": "e1ff77cc149c7d57774b3f97638a9c5c80c154990f721882ab8242f6fbeaf03f",
     "052_status_pagina_studio_drop.sql": "2c19dba0bd5a2fc9c0cc185559ca3bf1374485f54da9401025b27c9d462f55d4",
     "053_renata_cutover.sql": "12292040e302b5b6dd72d4b4039e87200c4c2bd7aefa2efdbf9e99f26fd66e54",
-    "054_qualificacao_lote_um.sql": "e11d1bec8dc136da6a83d908e2d2c56159f9b632e0a1d6f9f03cddcea707a2ce"
+    "054_qualificacao_lote_um.sql": "e11d1bec8dc136da6a83d908e2d2c56159f9b632e0a1d6f9f03cddcea707a2ce",
+    "055_qualificacao_lote_tres.sql": "4fb83fb61bdcd3f60faf186681072a9da8da71c3e64a02711d41286b6651888a",
+    "056_julia_v3_controles.sql": "65b228da1317c983308221238d340708c2929cdbafc4a7a67bbdab397e2f476f",
+    "057_julia_v3_alertas_documentos.sql": "80e72a2aa742acf6f8557635629d25348c6a916ed80e46c6e1088a031f783196",
+    "058_agent_exemplar_referencia.sql": "a7d652277cfc7c59bd3286bdb66f3f3d5e315f8a1b5ca58f524dfed26c8bd392"
   }
 }
