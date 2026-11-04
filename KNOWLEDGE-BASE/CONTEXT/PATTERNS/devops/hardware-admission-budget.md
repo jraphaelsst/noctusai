@@ -26,13 +26,21 @@ capacity admits it.**
   `gate_sweep` leg, `task_branch` merged-tip gate and `predeploy_check` run.
 - Light work never takes a slot: git, single tests, keepers, MCP reads, editing.
 
-| Knob (phase `build`, owner-approved 2026-11-04) | Value |
+| Knob (phase `build`, owner-approved 2026-11-04; 2 slots since ~20:35Z) | Value |
 |---|---|
-| Heavy jobs at once, machine-wide | 1 |
+| Heavy jobs at once, machine-wide | 2 (was 1 until 2026-11-04 ~20:35Z) |
 | Workers inside one heavy job (`job_workers`) | 2 (vitest `--maxWorkers`, playwright `--workers`) |
-| Admit when | CPU idle ≥ 50 % over 10 s **and** free + reclaimable memory ≥ 1.5 GB **and** swap-out < 50 pages/s |
+| Admit when | CPU idle ≥ 15 % over 10 s **and** free + reclaimable memory ≥ 1 GB **and** swap-out < 50 pages/s; a 2nd job also needs memory left after the running job's expected peak (memory-aware veto) |
 | Claude sessions | ≤ 3 (advisory: surfaced, not enforced) |
 | Wait before giving up | 30 min, polling every 20 s |
+
+**Two slots is the normal shape (owner, 2026-11-04 ~20:35Z: "make the 2-slot the normal
+methodology" · "lower the cpu limit to 15%, not 25%").** Evidence: trial-mh2-mem
+(17:10–17:57Z) ran 40.6 jobs/h with 2 failed and 0 timeouts, against 21.8 jobs/h with 13 failed
++ 6 timeouts at one slot (06:30–16:52Z). Its auto-abort came from swap while ZERO slots were
+held — ungated load — which is why aborts now count gated samples only (§7). Memory stays the
+binding limit: the memory-aware veto refuses the 2nd job when free memory minus the running
+job's expected peak falls under the floor. Every session uses both slots; nothing to opt into.
 
 **The slot bounds how many jobs run; `job_workers` bounds how wide each one fans out.**
 With one slot, a single `vitest run` still started about 7 workers on the 8-core M2. The cap

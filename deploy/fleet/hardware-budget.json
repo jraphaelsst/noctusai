@@ -4,13 +4,13 @@
   "phase": "build",
   "phases": {
     "build": {
-      "_approved": "owner 2026-11-04 (build/refine phase; spec relayed by session noctusai-04)",
-      "max_heavy": 1,
+      "_approved": "owner 2026-11-04 (build/refine phase; spec relayed by session noctusai-04). 2026-11-04 ~20:35Z owner: 'make the 2-slot the normal methodology' and 'lower the cpu limit to 15%, not 25%' — max_heavy 1->2, min_cpu_idle 50->15, min_reclaimable 1536->1024 (the trial-mh2-mem shape, 40.6 jobs/h vs 21.8 at 1 slot, fewer failures)",
+      "max_heavy": 2,
       "job_workers": 2,
       "_job_workers": "added 2026-11-04 by noctusai-86 (owner order: cap per-job fan-out); vitest/playwright workers per heavy job. Memory is the ceiling on this 8 GB M2 (trial-mh2 swap abort)",
-      "min_cpu_idle_pct": 50,
+      "min_cpu_idle_pct": 15,
       "cpu_sample_s": 10,
-      "min_reclaimable_mb": 1536,
+      "min_reclaimable_mb": 1024,
       "max_swapout_per_s": 50,
       "max_claude_sessions_advisory": 3,
       "wait_s": 1800,
