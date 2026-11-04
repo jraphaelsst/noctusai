@@ -153,7 +153,16 @@ or starts producing false-reds), raise the limit in **scheduled, measured steps*
 - **Automatic abort.** If `consecutive` samples in a row breach the limits (reclaimable
   memory under 500 MB, or swap-out at or above 50 pages/s), the trial is aborted. The abort is
   stored in `~/.noctus/hw-trial-aborts.json`, keyed to that step (`phase@from`), and the
-  machine goes back to its normal phase for the rest of that window.
+  machine goes back to its normal phase for the rest of that window. **Every later step chained
+  to it** (its `from` equals the previous step's `until`) is cancelled with it, by construction
+  (`cancelled_steps` on the `trial_aborted` row). A stepped experiment never climbs past a
+  failed step: on 2026-11-04, `trial-mh3` had to be cancelled by hand after `trial-mh2` swapped.
+- **The slot count is a ceiling; memory decides the second job.** A heavy job joining others
+  is admitted only if `reclaimable − expected peak ≥ min_reclaimable_mb`. The expected peak is
+  the p90 of that job's measured `children_peak_rss_mb`, else its kind's (`gate:pytest`), else
+  `default_job_peak_mb` (1024). The measure is the largest single child, so multi-process jobs
+  are under-counted: treat it as a floor. The first heavy job is judged by the plain
+  thresholds only.
 - **How to read verdicts during a trial.** A red under `trial-*` is a data point. It still
   blocks the integrate, because reds always block. Re-run it at `build` before trusting it or
   fixing anything. A green under load can be trusted: overlap produces false-reds, not

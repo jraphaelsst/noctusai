@@ -174,10 +174,35 @@ def _check_trial_abort(budget: dict[str, Any], metrics: dict[str, Any]) -> dict[
     aborts = _read_aborts()
     at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     aborts[_abort_key(trial)] = at
+    # A stepped experiment never climbs past a failed step. 2026-11-04:
+    # trial-mh2 aborted on swap, and trial-mh3 (chained right after it) had to
+    # be cancelled by hand. Every later step chained to this one (its `from` ==
+    # the previous step's `until`) is cancelled with it, by construction.
+    cancelled = _chained_later_steps(budget, trial)
+    for e in cancelled:
+        aborts[_abort_key(e)] = at
     _aborts_path().write_text(json.dumps(aborts, indent=2))
-    rec = {"phase": trial["phase"], "window_from": trial["from"], "rule": rule, "metrics": metrics, "at": at}
+    rec = {"phase": trial["phase"], "window_from": trial["from"], "rule": rule, "metrics": metrics,
+           "at": at, "cancelled_steps": [_abort_key(e) for e in cancelled]}
     _log({"event": "trial_aborted", "host": budget["host"], **rec})
     return rec
+
+
+def _chained_later_steps(budget: dict[str, Any], trial: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        doc = json.loads(Path(budget["budget_path"]).read_text())
+    except (KeyError, OSError, json.JSONDecodeError):
+        return []
+    host = budget.get("host", "")
+    steps = sorted((e for e in doc.get("schedule") or []
+                    if not e.get("hosts") or host in [h.lower() for h in e["hosts"]]),
+                   key=lambda e: _iso(e["from"]))
+    out, until = [], _iso(trial["until"])
+    for e in steps:
+        if _iso(e["from"]) == until:
+            out.append(e)
+            until = _iso(e["until"])
+    return out
 
 
 # ── probe ─────────────────────────────────────────────────────────────────
@@ -291,6 +316,56 @@ def fanout_cap(job: str, budget: dict[str, Any] | None = None) -> int | None:
     gate jobs `gate:kind:target`, so any `vitest` / `e2e` / `playwright`
     segment marks a capped job: the same commands cap_worker_argv caps."""
     return job_workers(budget) if _FANOUT_KINDS & set(job.split(":")) else None
+
+
+def _job_kind(job: str) -> str:
+    """`gate:pytest:social-wiring` -> `gate:pytest`; `predeploy:core` -> `predeploy`."""
+    parts = job.split(":")
+    return ":".join(parts[:-1]) if len(parts) > 1 else job
+
+
+def expected_peak_mb(job: str, rows: list[dict[str, Any]] | None = None,
+                     default: float = 1024.0) -> tuple[float, str]:
+    """p90 of this job's measured `children_peak_rss_mb` (nearest rank), else
+    its kind's, else `default`; with the source used. CAVEAT: the measure is
+    the largest single reaped child (ru_maxrss), so a multi-process job
+    (vitest workers) is UNDER-counted. Treat it as a floor, which is why the
+    default stays conservative."""
+    if rows is None:
+        p = _log_path()
+        rows = [json.loads(ln) for ln in p.read_text().splitlines()[-5000:] if ln.strip()] \
+            if p.exists() else []
+    ran = [r for r in rows if r.get("event") == "ran" and r.get("children_peak_rss_mb")]
+
+    def p90(vals: list[float]) -> float:
+        v = sorted(vals)
+        return float(v[max(0, -(-9 * len(v) // 10) - 1)])
+
+    exact = [r["children_peak_rss_mb"] for r in ran if r.get("job") == job]
+    if exact:
+        return p90(exact), "job"
+    kind = _job_kind(job)
+    same = [r["children_peak_rss_mb"] for r in ran if _job_kind(str(r.get("job", ""))) == kind]
+    if same:
+        return p90(same), "kind"
+    return float(default), "default"
+
+
+def memory_veto(job: str, metrics: dict[str, Any], budget: dict[str, Any], others: int,
+                rows: list[dict[str, Any]] | None = None) -> list[str]:
+    """Memory-aware admission for a heavy job joining `others` running ones.
+    trial-mh2 (2026-11-04): a slot count of 2 let two full suites in together
+    and swapped the 8 GB M2. The slot count is now a ceiling; memory decides.
+    The first heavy job is judged by the plain thresholds alone."""
+    if others < 1:
+        return []
+    peak, src = expected_peak_mb(job, rows, budget.get("default_job_peak_mb", 1024))
+    left = metrics.get("reclaimable_mb", 0) - peak
+    if left >= budget["min_reclaimable_mb"]:
+        return []
+    return [f"memory: reclaimable {metrics.get('reclaimable_mb')} MB - expected peak {peak:.0f} MB "
+            f"({src}) = {left:.0f} MB < {budget['min_reclaimable_mb']} MB with {others} heavy "
+            "job(s) already running"]
 
 
 def cap_worker_argv(argv: list[str], workers: int) -> list[str]:
@@ -439,6 +514,8 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
         if held:
             last = probe_fn(b["cpu_sample_s"])
             why = evaluate(last, b)
+            if not why:
+                why = memory_veto(job, last, b, max(0, len(holders()) - 1))
             if not why:
                 break
             held[0].close()

@@ -455,3 +455,60 @@ class TestJobWorkersOnRows:
         monkeypatch.setenv("NOCTUS_HW_SLOT_HELD", "/outer/slot")
         assert hw.run_command("tests-for-sw", ["npm", "test"], wait_s=0) == 0
         assert out.read_text().strip() == f"test -- --maxWorkers={hw.job_workers()}"
+
+
+class TestChainedStepCancel:
+    def test_abort_cancels_every_chained_later_step(self, env, monkeypatch):
+        monkeypatch.setenv("NOCTUS_HW_ABORTS", str(env / "aborts.json"))
+        b = json.loads((env / "budget.json").read_text())
+        b["phases"]["t2"] = {**KNOBS, "max_heavy": 2}
+        b["phases"]["t3"] = {**KNOBS, "max_heavy": 3}
+        rule = {"reclaimable_mb_below": 500, "consecutive": 1}
+        b["schedule"] = [
+            {"phase": "t2", "from": "2026-11-04T05:45:00Z", "until": "2026-11-04T07:45:00Z", "abort": rule},
+            {"phase": "t3", "from": "2026-11-04T07:45:00Z", "until": "2026-11-04T08:25:00Z", "abort": rule},
+            {"phase": "t2", "from": "2026-11-05T05:45:00Z", "until": "2026-11-05T07:45:00Z", "abort": rule},
+        ]
+        (env / "budget.json").write_text(json.dumps(b))
+        eff = hw.load_budget(host="box-b", now=hw._iso("2026-11-04T06:00:00Z"))
+        rec = hw._check_trial_abort(eff, {**GOOD, "reclaimable_mb": 100})
+        assert rec["cancelled_steps"] == ["t3@2026-11-04T07:45:00Z"]       # chained step only
+        assert hw.load_budget(host="box-b", now=hw._iso("2026-11-04T08:00:00Z"))["phase"] == "build"
+        # an unchained later run (next day) is a separate experiment: untouched
+        assert hw.load_budget(host="box-b", now=hw._iso("2026-11-05T06:00:00Z"))["phase"] == "t2"
+
+
+class TestMemoryAwareAdmission:
+    ROWS = [
+        {"event": "ran", "job": "gate:pytest:social-wiring", "children_peak_rss_mb": m}
+        for m in (800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 2000)
+    ] + [{"event": "ran", "job": "gate:pytest:core", "children_peak_rss_mb": 700},
+         {"event": "ran", "job": "gate:vitest:igig", "children_peak_rss_mb": None}]
+
+    def test_peak_lookup_prefers_job_then_kind_then_default(self):
+        assert hw.expected_peak_mb("gate:pytest:social-wiring", self.ROWS) == (1600.0, "job")  # p90 nearest-rank
+        assert hw.expected_peak_mb("gate:pytest:orbity", self.ROWS)[1] == "kind"
+        assert hw.expected_peak_mb("gate:vitest:igig", self.ROWS, default=1234) == (1234.0, "default")
+
+    def test_first_heavy_job_is_never_vetoed_on_memory(self):
+        assert hw.memory_veto("gate:pytest:social-wiring", {"reclaimable_mb": 1600},
+                              {**KNOBS}, others=0, rows=self.ROWS) == []
+
+    def test_second_job_vetoed_when_its_peak_would_breach_the_floor(self):
+        why = hw.memory_veto("gate:pytest:social-wiring", {"reclaimable_mb": 2500},
+                             {**KNOBS}, others=1, rows=self.ROWS)
+        assert why and "expected peak 1600 MB (job)" in why[0]
+
+    def test_second_job_admitted_when_it_fits(self):
+        assert hw.memory_veto("gate:pytest:core", {"reclaimable_mb": 2500},
+                              {**KNOBS}, others=1, rows=self.ROWS) == []
+
+    def test_heavy_slot_applies_the_veto_alongside_a_running_job(self, env, monkeypatch):
+        hw._log({"event": "ran", "job": "gate:pytest:big", "children_peak_rss_mb": 3000})
+        b = {**KNOBS, "max_heavy": 2, "phase": "t", "host": "h", "budget_path": "x", "trial": None}
+        with hw.heavy_slot("other", budget=b, probe_fn=lambda s: GOOD) as first:
+            assert first.admitted
+            monkeypatch.delenv("NOCTUS_HW_SLOT_HELD")   # the next job is ANOTHER process
+            with hw.heavy_slot("gate:pytest:big", budget=b, probe_fn=lambda s: GOOD) as second:
+                assert not second.admitted
+                assert any(x.startswith("memory:") for x in second.blocked_by)
