@@ -109,11 +109,22 @@ class ValoresOrg:
     #: Keys whose value is free text (or undeclared): NEVER inlined -- ``[dado: chave]`` + the data section (E3).
     fenced: frozenset[str]
     invalidas: dict[str, tuple[Violacao, ...]]
+    #: ``{chave: canonical value}`` of ONLY the values that passed validation, in EVERY mode (``report`` included).
+    #: Anything that BUILDS A RULE from a value (link/contact allowlists, the compiler's inlined typed values)
+    #: reads this, never ``valores``: report mode keeps an invalid text as fenced data, it never trusts it.
+    limpos: Mapping[str, str] = None  # type: ignore[assignment]
 
 
 def preparar(declaradas: Mapping[str, str], armazenados: Mapping[str, str], config: ConfigValidacao) -> ValoresOrg:
     res = validar(declaradas, {k: v for k, v in armazenados.items() if isinstance(v, str)}, config=config)
     invalidas = res.invalidas
-    valores = {k: v for k, v in res.valores.items() if not (config.bloqueia and k in invalidas)}
-    fenced = frozenset(k for k in valores if declaradas.get(k) is None or declaradas[k] in SPEC_TIPOS_TEXTO_LIVRE)
-    return ValoresOrg(valores, fenced, invalidas)
+    fenced_tipo = lambda k: declaradas.get(k) is None or declaradas[k] in SPEC_TIPOS_TEXTO_LIVRE  # noqa: E731
+    # an invalid TYPED value (dominios, contatos, cnpj, url...) is inlined raw by the compiler, so it is dropped in
+    # every mode; an invalid FREE-TEXT value survives in report mode only as fenced data (never inlined).
+    valores = {
+        k: v for k, v in res.valores.items()
+        if not (k in invalidas and (config.bloqueia or not fenced_tipo(k)))
+    }
+    fenced = frozenset(k for k in valores if fenced_tipo(k))
+    limpos = {k: v for k, v in res.valores.items() if k not in invalidas and k in declaradas}
+    return ValoresOrg(valores, fenced, invalidas, limpos)

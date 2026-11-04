@@ -167,6 +167,8 @@ TEXTOS.update({
     # only the media object a lead message carried needs a label (guardrails B2) -----------------
     "historico.rotulo_midia": _canal("historico"),
     "historico.rotulo_truncado": _canal("historico"),
+    # optional (a missing row falls back to the bare data key "encaminhada"): marks a message the lead FORWARDED
+    "historico.rotulo_encaminhada": _canal("historico", obrigatoria=False),
     # provenance: the section that tells the model which envelopes are platform data, and the honeytoken line
     # appended to the system prompt (guardrails B2/B7) ---------------------------------------------------
     "contexto.titulo_proveniencia": _canal("contexto"),
@@ -198,6 +200,8 @@ TEXTOS.update({
     "runtime.ferramenta_falhou": _canal("runtime"),
     "runtime.resposta_fallback": _canal("runtime", obrigatoria=False),
     "runtime.parada_segura": _canal("runtime", obrigatoria=False),
+    # the standard confirmation of the deterministic STOP backstop (the opt-out stands even if the row is missing; it is logged)
+    "runtime.confirmacao_opt_out": _canal("runtime"),
     # extraction calls (episode summary + transport decisions) -------------------------------
     "resumo.sistema": _canal("resumo"),
     "resumo.rotulo_cliente": _canal("resumo"),
@@ -213,6 +217,7 @@ TEXTOS.update({
         "imovel_sem_ferramenta", "termina_sem_pergunta", "perfil_citado_sem_registro", "fallback_enviado",
         "pergunta_repetida", "vazamento_prompt",
         "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito", "padroes_proibidos",
+        "valor_sem_ferramenta",
     )},
     "conformidade.handoff_resumo": _canal("conformidade", "regra"),
     "escalonamento.resumo": _canal("escalonamento", "motivo_codigo"),

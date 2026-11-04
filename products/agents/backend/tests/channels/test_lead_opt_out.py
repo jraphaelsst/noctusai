@@ -63,7 +63,7 @@ class TestEncerrarLeadPediuParar:
         on.threads.add_participante(on.org_id, t2.id, outro)
         on.threads.transicionar(on.org_id, t2.id, outro, de=("ativo",), para="pausado", ator_tipo="usuario")
         body = on.turn(turn_body(PEDIDO, ids=["b"])).json()
-        assert [a["type"] for a in body["actions"]] == ["encerrar"] and body["actions"][0]["lead_opt_out"] is True
+        assert [a["type"] for a in body["actions"]] == ["encerrar", "opt_out"] and body["actions"][0]["lead_opt_out"] is True
         assert on.threads.get_participante(on.org_id, UUID(primeiro["thread_id"]), on.agent.id).estado == "encerrado"
         assert on.threads.get_participante(on.org_id, t2.id, outro).estado == "encerrado"
         [ev] = _eventos(on)
@@ -113,7 +113,8 @@ class TestEncerrarLeadPediuParar:
         on.use_provider(FakeProvider(tool_responses=[step(call("encerrar", motivo="sem_interesse")), say("Ok"),
                                                      *[say("R?")] * 5]))
         body = on.turn(turn_body("Sem interesse, obrigado", ids=["a"])).json()
-        assert body["actions"][0] == {"type": "encerrar", "motivo": "sem_interesse", "lead_opt_out": False, "seq": 1}
+        assert body["actions"][0] == {"type": "encerrar", "motivo": "sem_interesse", "lead_opt_out": False, "seq": 1,
+                                      "opt_out_origem": None, "trecho": None}
         assert on.lead_ref().opt_out_ativo is False and _eventos(on) == [] and on.notificacoes.sent == []
 
     def test_an_earlier_encerrar_does_not_swallow_the_request_to_stop(self, on):
@@ -123,7 +124,9 @@ class TestEncerrarLeadPediuParar:
                                                                        trecho="não me mande mais mensagens")),
             say("Ok"), *[say("R?")] * 5]))
         body = on.turn(turn_body(PEDIDO, ids=["a"])).json()
-        assert body["actions"] == [{"type": "encerrar", "motivo": "lead_pediu_parar", "lead_opt_out": True, "seq": 1}]
+        assert [{k: v for k, v in a.items() if k not in ("opt_out_origem", "trecho")} for a in body["actions"][:1]] == [
+            {"type": "encerrar", "motivo": "lead_pediu_parar", "lead_opt_out": True, "seq": 1}]
+        assert body["actions"][0]["opt_out_origem"] == "pedido_do_lead"
         assert on.lead_ref().opt_out_ativo is True and len(_eventos(on)) == 1 and len(on.notificacoes.sent) == 1
 
 

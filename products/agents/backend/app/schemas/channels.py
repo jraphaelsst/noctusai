@@ -16,6 +16,7 @@ is v2 either way. The JSON Schema of the request/response is generated to
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 from uuid import UUID
@@ -23,6 +24,11 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from noctusai_lib.api import StrictHttpModel
+
+from app.studio.spec_formatos import SpecInvalida, validar_texto_externo
+from app.studio.normalizador_texto import limpar
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ChannelUsoOut",
@@ -56,6 +62,7 @@ __all__ = [
     "ContextoEstado",
     "ContextoPergunta",
     "EncerrarActionOut",
+    "OptOutActionOut",
     "HandoffActionOut",
     "IntencaoVisitaActionOut",
     "AlertaActionOut",
@@ -109,6 +116,14 @@ class ChannelMidia(StrictHttpModel):
     texto_extraido: str = Field(default="", max_length=MIDIA_TEXTO_MAX)
     legenda: str | None = Field(default=None, max_length=MIDIA_LEGENDA_MAX)
 
+    @model_validator(mode="after")
+    def _sem_caracteres_ocultos(self) -> "ChannelMidia":
+        # media-derived text is lead-influenced too (an OCR'd image can carry anything): same normalizer as the text
+        self.texto_extraido = limpar(self.texto_extraido)
+        if self.legenda is not None:
+            self.legenda = limpar(self.legenda)
+        return self
+
     def canonical(self) -> dict[str, str]:
         return {k: v for k, v in (("tipo", self.tipo), ("texto_extraido", self.texto_extraido), ("legenda", self.legenda)) if v}
 
@@ -127,9 +142,16 @@ class ChannelInboundMessage(StrictHttpModel):
     #: wording (``historico.rotulo_truncado``), that this message is incomplete. Set by the truncation, not trusted
     #: from the sender: a sent ``true`` only adds the label.
     truncado: bool = False
+    #: ``True`` when the lead FORWARDED this message (or it quotes someone else's). Its text is the lead's words only
+    #: in the transport sense: it is never evidence for a consent / opt-out / data-subject tool, and the model sees it
+    #: marked as forwarded. Sent by SW; absent = a message the lead typed.
+    encaminhada: bool = False
 
     @model_validator(mode="after")
     def _not_blank(self) -> "ChannelInboundMessage":
+        # THE inbound normalizer (P1-1): invisible characters (zero-width, bidi, the U+E0000 tag block, selectors,
+        # controls) are removed BEFORE the size cap, the idempotency signature, the signals and the detectors read it.
+        self.texto = limpar(self.texto)
         if not self.texto.strip() and self.midia is None:
             raise ValueError("texto must not be blank")
         if len(self.texto) > MESSAGE_MAX_CHARS:
@@ -147,6 +169,8 @@ class ChannelInboundMessage(StrictHttpModel):
     def falas_do_lead(self) -> list[str]:
         """The texts the turn's detectors read as the lead's: the typed text and an AUDIO's transcription (spoken by
         the lead), plus any other media text for the injection / extraction signals only via :meth:`textos_de_entrada`."""
+        if self.encaminhada:  # forwarded: someone else's words -- never evidence, never the lead's answer
+            return []
         out = [self.texto] if self.texto.strip() else []
         if self.midia is not None and self.midia.tipo == "audio" and self.midia.texto_extraido.strip():
             out.append(self.midia.texto_extraido)
@@ -222,6 +246,24 @@ class ContextoEstado(StrictHttpModel):
     texto_base: str | None = Field(default=None, min_length=1, max_length=2000)
     tentativa: int | None = Field(default=None, ge=1, le=100)
     origem: ContextoOrigem | None = None
+
+    @model_validator(mode="after")
+    def _texto_do_parceiro_valido(self) -> "ContextoEstado":
+        """``texto_base`` / ``atendente_nome`` are tenant-authored text that rides in the SYSTEM context. They pass the
+        same validator as an org spec (universal character + markup rules, instruction-likeness); an invalid value is
+        DROPPED (never inlined) and logged with its reason -- the turn still runs without it."""
+        for campo, quebra in (("texto_base", True), ("atendente_nome", False)):
+            valor = getattr(self, campo)
+            if valor is None:
+                continue
+            try:
+                setattr(self, campo, validar_texto_externo(valor, permite_quebra=quebra))
+            except SpecInvalida as exc:
+                logger.warning(
+                    "agents.canal.contexto_texto_descartado campo=%s codigo=%s motivos=%s",
+                    campo, exc.codigo, ",".join(sorted({v.motivo for v in exc.violacoes})))
+                setattr(self, campo, None)
+        return self
 
 
 class ContextoCapacidades(StrictHttpModel):
@@ -384,6 +426,22 @@ class EncerrarActionOut(_ActionOut):
     motivo: Literal["lead_encerrou", "sem_interesse", "invalido", "outro", "lead_pediu_parar"]
     #: The lead asked to stop: a lead-level opt-out was recorded (every agent stops, the owner was notified).
     lead_opt_out: bool = False
+    #: Only with ``lead_opt_out``: why the opt-out happened -- ``palavra_chave`` (the deterministic STOP backstop: an exact
+    #: PARAR / SAIR / ... with no model) or ``pedido_do_lead`` (the model's ``encerrar`` on the lead's words). SW tells the
+    #: owner, in-app and on WhatsApp, with this reason.
+    opt_out_origem: Literal["palavra_chave", "pedido_do_lead"] | None = None
+    #: Only with ``lead_opt_out``: the lead's words behind it (sanitized, <= 200 chars).
+    trecho: str | None = Field(default=None, max_length=200)
+
+
+class OptOutActionOut(_ActionOut):
+    """The lead opted out (STOP backstop or the model's ``encerrar(lead_pediu_parar)``): emitted ALONGSIDE the
+    ``encerrar`` action so SW can tell the owner, in-app and on WhatsApp, with the reason."""
+
+    type: Literal["opt_out"]
+    motivo: Literal["palavra_chave", "pedido_do_lead"]
+    #: The lead's words behind it (sanitized, <= 200 chars).
+    trecho: str | None = Field(default=None, max_length=200)
 
 
 class ConsentimentoCreditoActionOut(_ActionOut):
@@ -430,7 +488,7 @@ class SolicitacaoTitularActionOut(_ActionOut):
 ChannelActionOut = Annotated[
     Union[
         HandoffActionOut, LeadProntoActionOut, IntencaoVisitaActionOut, CaptacaoActionOut, EncerrarActionOut,
-        ConsentimentoCreditoActionOut, SolicitacaoTitularActionOut, AlertaActionOut,
+        OptOutActionOut, ConsentimentoCreditoActionOut, SolicitacaoTitularActionOut, AlertaActionOut,
         DocumentoIdentificacaoActionOut,
     ],
     Field(discriminator="type"),

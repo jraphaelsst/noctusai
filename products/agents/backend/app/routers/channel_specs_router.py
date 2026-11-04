@@ -24,11 +24,22 @@ from app.schemas.studio_conteudo import OrgSpecsChannelUpdateRequest, OrgSpecsOu
 from app.studio.especificacoes_service import ConfigValidacao
 from noctusai_lib.api.auth.session import AuthContext
 
-__all__ = ["router", "require_channel_specs"]
+__all__ = ["get_channel_specs_write_enabled_dep", "router", "require_channel_specs"]
 
 require_channel_specs = _require_channel(SCOPE_CHANNEL_SPECS)
 
 router = APIRouter(tags=["channel-specs"])
+
+
+
+def get_channel_specs_write_enabled_dep() -> bool:
+    """Owner decision (go-live hardening): the business specs of an org are edited by the NoctusAI team in agents Studio,
+    not by a channel token. Re-enabling the SW write is flipping this one value (``aplicar_org_specs`` and the ``ator``
+    plumbing stay). A DI seam so a test can open it without patching the route.
+
+    NOC-REMEDIATE[channel-specs-write]: return True when social-wiring may edit its org's specs again (S9).
+    """
+    return False
 
 
 @router.get("/api/channels/agents/{agent_key}/specs", response_model=OrgSpecsOut)
@@ -49,8 +60,11 @@ def channel_put_specs(
     ctx: AuthContext = Depends(require_channel_specs),
     store=Depends(get_studio_definition_store_dep),
     config: ConfigValidacao = Depends(get_spec_validacao_dep),
+    escrita_habilitada: bool = Depends(get_channel_specs_write_enabled_dep),
 ) -> OrgSpecsOut:
     _agente_do_token(store, ctx, agent_key)
+    if not escrita_habilitada:
+        raise http_error(403, "edicao_restrita_plataforma", "As especificações são editadas pela equipe NoctusAI.")
     if payload.ator is None:
         raise http_error(422, "ator_obrigatorio", "Informe o usuário que está alterando (ator): não há escrita anônima de produto.")
     return aplicar_org_specs(store, ctx, agent_key, payload.valores, config, ator=payload.ator)

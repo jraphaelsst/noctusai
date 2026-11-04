@@ -230,6 +230,7 @@ def _persistir_lote(
             meta={
                 **({"midia": msg.midia.canonical()} if msg.midia is not None else {}),
                 **({"truncado": True} if msg.truncado else {}),
+                **({"encaminhada": True} if msg.encaminhada else {}),
                 "provider_message_id": msg.provider_message_id,
             },
         ))

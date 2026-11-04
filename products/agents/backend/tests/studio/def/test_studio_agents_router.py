@@ -94,7 +94,7 @@ class TestAuthBoundary:
         studio.as_role("member")
         resp = getattr(studio, method)(path, **({"json": body} if body is not None else {}))
         assert resp.status_code == 403
-        assert resp.json()["code"] == "role_missing"
+        assert resp.json()["code"] in ("role_missing", "platform_admin_required")
 
     def test_member_can_read(self, studio):
         _create(studio)

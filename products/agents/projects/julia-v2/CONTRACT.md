@@ -465,6 +465,13 @@ The labels and descriptions for each enum value come from DB rows. The enums the
   - with `politica=bloquear`, the reply is suppressed, **one** corrective re-run happens with the DB correction text as a visible system message (stored in the thread as role `evento`), and if it still violates → silence + handoff + an owner alert
 
   Default: `registrar` for every rule in v1; owner flips per rule.
+
+  **Go-live hardening (migration 063; `projects/julia-v2/GUARDRAILS.md` B12).**
+  - Pattern rules (`padroes_proibidos`, `alegacao_identidade`) run a code-side floor merged under the stored patterns; a missing row still has it; readiness `regras_seguranca_sem_parametros` blocks publish while an instance has no row.
+  - New blocking detector `valor_sem_ferramenta` (an R$ / % no tool, lead text or earlier reply backs) and rule `opt_out_palavras` (exact `PARAR|SAIR|STOP|CANCELAR|NÃO QUERO MAIS` opts out without the model; text `runtime.confirmacao_opt_out`).
+  - Inbound lead text is normalised at the schema boundary (invisible/tag characters stripped); detectors also read a de-obfuscated skeleton; a reply carrying invisible characters is blocked (`formato_suspeito`).
+  - Allowlists are built from VALIDATED org specs only (report mode never trusts a failing value); `texto_base` / `atendente_nome` are validated like a spec and dropped when invalid.
+  - A turn message may carry `encaminhada: true`: forwarded text is marked for the model and is never evidence for consent / opt-out / data-subject tools.
 - **E4 evals as the publish gate.** `eval_cases` gains:
   - `roteiro JSONB` (multi-turn lead messages + fixture catalogue/estado)
   - `asserts JSONB`, deterministic and code-checked: `ferramentas_incluem`, `ferramentas_proibidas`, `estagio_final`, `criterios_registrados`, `ofertas_por_lote<=n`, `sem_violacoes`

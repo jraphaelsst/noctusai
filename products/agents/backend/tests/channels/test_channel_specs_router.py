@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.dependencies import SCOPE_CHANNEL_SPECS, SCOPE_CHANNEL_STATUS, SCOPE_CHANNEL_TURN
+from app.routers.channel_specs_router import get_channel_specs_write_enabled_dep
 from app.routers.studio_conteudo_router import get_spec_validacao_dep
 from app.stores.studio_definitions_conteudo import SpecDefInput
 from app.studio.especificacoes_service import ConfigValidacao
@@ -29,7 +30,14 @@ def specs(chan):
     draft = studio.get_draft(PLAT_ORG, d.id)
     studio.replace_spec_defs(PLAT_ORG, draft.id, [SpecDefInput("agencia", "Agência", "Nome da imobiliária")])
     publish(studio, PLAT_ORG, d, draft.id, UUID(int=7))
-    return chan
+    # the S9 write is closed by owner decision (`edicao_restrita_plataforma`); this file exercises the plumbing behind it
+    from app.main import app
+
+    app.dependency_overrides[get_channel_specs_write_enabled_dep] = lambda: True
+    try:
+        yield chan
+    finally:
+        app.dependency_overrides.pop(get_channel_specs_write_enabled_dep, None)
 
 
 def call(c, method, scope=SCOPE_CHANNEL_SPECS, url=URL, **kw):

@@ -156,6 +156,9 @@ class Entrada:
     specs_org_invalidas: tuple[tuple[str, str, str, str], ...] = ()
     #: ``SPEC_VALIDATION_MODE == 'block'``: an invalid stored value is a ``bloqueante``; ``report``: an ``aviso``.
     spec_bloqueia: bool = False
+    #: The pattern rules (``padroes_proibidos`` / ``alegacao_identidade``) with no STORED row on THIS
+    #: instance: the code-side floor protects the runtime, but the instance's data is incomplete (blocking).
+    regras_seguranca_sem_parametros: tuple[str, ...] = ()
     geracao_status: str | None = None
     geracao_areas: tuple[AreaGeracao, ...] = ()
     controle_modo: str | None = None
@@ -434,10 +437,20 @@ def _periferia(e: Entrada) -> list[Item]:
         itens.append(Item(
             "spec_org_invalida", "especificacoes", "bloqueante" if e.spec_bloqueia else "aviso",
             f"Especificação da organização '{chave}' inválida ({codigo}/{motivo}): {mensagem}"
-            + ("" if e.spec_bloqueia else " (modo report: o valor ainda é usado, como dado.)"),
-            "Corrija o valor em PUT /api/studio/agents/{key}/specs; texto livre descreve a organização, não dá instruções.",
+            + ("" if e.spec_bloqueia else " (modo report: um valor tipado NÃO é usado no prompt nem nas listas de links/contatos; texto livre vai só como dado.)"),
+            f"Corrija a chave '{chave}' em PUT /api/studio/agents/{{key}}/specs ({motivo}); texto livre descreve a organização, não dá instruções.",
             detalhe={"chave": chave, "codigo": codigo, "motivo": motivo, "modo": "block" if e.spec_bloqueia else "report"},
             recusa_publicacao="compile_blocked" if e.spec_bloqueia else None,
+        ))
+    if e.regras_seguranca_sem_parametros:
+        itens.append(Item(
+            "regras_seguranca_sem_parametros", "seguranca", "bloqueante",
+            "As regras de segurança desta instância estão sem linha gravada: "
+            + ", ".join(e.regras_seguranca_sem_parametros)
+            + ". (O piso da plataforma continua valendo em cada turno, mas a instância precisa das linhas.)",
+            "Aplique a migração 063 (cria as linhas de toda instância) ou grave a regra em PUT .../conformidade/regras/{regra}.",
+            detalhe={"regras": list(e.regras_seguranca_sem_parametros)},
+            recusa_publicacao="compile_blocked",
         ))
     if e.geracao_status in ACTIVE_STATUSES:
         itens.append(Item(
@@ -491,7 +504,7 @@ def compor(e: Entrada) -> Prontidao:
 def coletar(
     *, store: Any, catalog: Any, org_id: UUID, agent: Any, draft: Any, gate: Any, padroes: Any, skills: Any,
     geracoes: Any, evals: Any, controles: Any | None, compiled: CompiledPrompt | None = None,
-    spec_validacao: ConfigValidacao | None = None,
+    spec_validacao: ConfigValidacao | None = None, conformidade: Any | None = None,
 ) -> Entrada:
     """Read everything the composer needs for ``draft`` of ``agent`` (``org_id`` owns the definition). ``compiled``:
     the prompt the caller already compiled (publish) -- otherwise compiled here, read-only (nothing is stamped)."""
@@ -544,6 +557,10 @@ def coletar(
         except NotFound:
             modo = None
 
+    sem_regras: tuple[str, ...] = ()
+    if conformidade is not None and agent.usa_canais and getattr(agent, "definition_scope", None) == "instancia":
+        sem_regras = tuple(conformidade.regras_sem_parametros(org_id, agent.id))
+
     return Entrada(
         agent_key=agent.key, version_id=draft.id, compiled=compiled, limiar=float(agent.publicacao_limiar),
         usa_canais=agent.usa_canais, conteudo=conteudo_status(store, skills, agent),
@@ -561,6 +578,7 @@ def coletar(
         specs_org_faltando=tuple(faltando),
         specs_org_invalidas=invalidas,
         spec_bloqueia=cfg.bloqueia,
+        regras_seguranca_sem_parametros=sem_regras,
         geracao_status=ultima.status if ultima is not None else None,
         geracao_areas=areas,
         controle_modo=modo,

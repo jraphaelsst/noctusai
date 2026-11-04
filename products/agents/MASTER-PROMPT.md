@@ -120,6 +120,13 @@ products/agents/backend/app/
   `cnpj_oficial`); `proteger_args` scans the staff-facing tool args for prompt text; `alegacao_identidade` +
   extraction signals feed `escala_seguranca` (24h per thread: restricted tool set, then handoff `seguranca`).
   Invariant (keeper-tested): a detector or a claim can only REMOVE capabilities, never add one.
+- Go-live hardening (migration 063; GUARDRAILS B12): the `padroes_proibidos` / `alegacao_identidade` patterns are a
+  code-side floor (`stores/conformidade.py`) merged under the stored rows (a missing row still has it; readiness
+  `regras_seguranca_sem_parametros` blocks publish); allowlists come from `ValoresOrg.limpos` (validated specs only);
+  `studio/normalizador_texto.py` is the one invisible-character / de-obfuscation module (schema boundary + detectors +
+  `spec_formatos`); `valor_sem_ferramenta` blocks an unbacked R$ / %; `opt_out_palavras` opts a lead out on an exact
+  `PARAR|SAIR|STOP|CANCELAR|NÃO QUERO MAIS` with no model call; `contexto.estado.texto_base` / `atendente_nome` are
+  validated like a spec; `encaminhada: true` messages are marked for the model and never evidence.
 - Provenance + leak tripwires (migration 046, `channels/proveniencia.py`, `stores/marcadores.py`; GUARDRAILS B2/B7):
   authorship is structural, never inferred from text. Lead lines stay one plain `user` message; human / other-agent /
   event lines are `system` JSON envelopes keyed `plataforma_<tag>` (tag random per turn, told to the model in DB text

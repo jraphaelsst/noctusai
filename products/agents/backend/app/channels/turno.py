@@ -31,10 +31,13 @@ from app.channels.contexto import Dossie, render_contexto_system
 from app.channels import proveniencia as prov
 from app.channels.opt_out import OptOutService
 from app.channels.tool_registry import (
+    MOTIVO_LEAD_PEDIU_PARAR,
+    OPT_OUT_PALAVRA_CHAVE,
     JuliaTurno,
     SkillFonte,
     SkillsComSpecs,
     SkillsDaVersao,
+    aplicar_encerramento,
     executar_handoff,
     finalizar_conclusao,
 )
@@ -262,6 +265,8 @@ def _falas_do_lead(r: Any) -> list[str]:
     """What a stored lead row says in the lead's OWN words: the typed text, plus an AUDIO's transcription (the lead
     spoke it). An image / document / video text is not the lead speaking, so it never counts as their words."""
     meta = getattr(r, "meta", None) or {}
+    if meta.get("encaminhada"):  # forwarded: not the lead's own words (no evidence, no qualification answer)
+        return []
     midia = meta.get("midia") or {}
     falas = [r.texto] if r.texto else []
     if midia.get("tipo") == "audio" and midia.get("texto_extraido"):
@@ -320,6 +325,27 @@ def status_do_limite(limite: str) -> str:
 
 
 # ── execution ───────────────────────────────────────────────────────────────
+
+
+async def _parar_pelo_lead(turno: JuliaTurno, palavra: str) -> _Tentativa:
+    """The STOP backstop (P1-3): end the participant and record the lead-wide opt-out EXACTLY as the ``encerrar`` tool
+    does (one implementation), and answer with the standard confirmation (a DB text). No model call."""
+    await aplicar_encerramento(
+        turno, MOTIVO_LEAD_PEDIU_PARAR, opt_out=True, motivo_texto=f'"{palavra}"', origem_opt_out=OPT_OUT_PALAVRA_CHAVE,
+        trecho=palavra)
+    confirmacao = turno.conteudo.texto("runtime.confirmacao_opt_out").strip()
+    if not confirmacao:  # the opt-out stands; a missing confirmation is seen, never invented in code
+        logger.error("agents.channel.opt_out.confirmacao_ausente thread_id=%s", turno.thread_id)
+    return _Tentativa(textos=[confirmacao] if confirmacao else [])
+
+
+def _textos_com_valor(turno: JuliaTurno, ct: Any, estado: Any, lote_lead: list[str], mensagens_lead: list[str]) -> list[str]:
+    """Where a figure of a reply may come from (``valor_sem_ferramenta``): this turn's tool results, the lead's own
+    words (never a forwarded message or media text), the agent's earlier replies in this thread, the dossier."""
+    proprias = [i.texto for i in ct.mensagens if i.origem == "proprio"]
+    do_lead = [i.texto for i in ct.mensagens if i.origem == "lead" and not getattr(i, "encaminhada", False)]
+    dossie = [str(v) for v in getattr(estado, "valores", {}).values()]
+    return [*turno.resultados_texto, *lote_lead, *mensagens_lead, *do_lead, *proprias, *dossie]
 
 
 async def _rodar(runtime: Any, spec: AgentSpec, ctx: TurnContext, slot: Any, nome_evento: Any) -> _Tentativa:
@@ -399,7 +425,6 @@ async def executar(
         violacoes.append(Violacao("escala_seguranca", "registrar", {"nivel": nivel, "sinais": previos + len(violacoes)}))
     # leak tripwires on the input side (provenance tag echoed, canary / prompt run / honeytoken received)
     violacoes += _sinais_de_entrada(svc, prep, org_id, agent, thread, lote_entrada, tag, tags_anteriores)
-    valores = r.valores
 
     pediu_humano = _pediu_humano(svc, regras, org_id, thread.id, lote_lead)
     sinais = LeadSinais(
@@ -413,6 +438,9 @@ async def executar(
     )
     # skill texts resolved FOR THIS ORG ({{org.chave}}), the same resolver the compiled sections went through
     prep_specs = preparar_valores({d.chave: d.tipo for d in r.specs_declaradas}, r.valores, config_atual())
+    #: allowlists are RULES: built only from values that passed the validator (report mode keeps an invalid value as
+    #: data, it never lets it widen what a reply may link or cite)
+    valores = prep_specs.limpos
     skills: SkillFonte | None = SkillsComSpecs(fonte, prep_specs.valores, prep_specs.fenced)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
@@ -443,8 +471,13 @@ async def executar(
             (lambda texto: conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None)
             if leak is not None and leak.ativo else None),
     )
+    # deterministic STOP backstop (P1-3): a message that IS exactly "PARAR" / "SAIR" / ... opts the lead out WITHOUT the
+    # model -- it must not depend on the model calling ``encerrar`` (nor be swallowed by the flood breaker below)
+    parada = (
+        conf.palavra_de_parar(lote_lead, regras.get("opt_out_palavras"))
+        if gatilho == "mensagem" and turno.opt_out is not None else None)
     # loop / flood / echo breaker (guardrails B5): no model call -- the participant is paused, a person is told
-    if gatilho == "mensagem":
+    if gatilho == "mensagem" and parada is None:
         sinal_loop = await asyncio.to_thread(_loop_detectado, svc, org_id, thread.id, lote_lead, limites)
         if sinal_loop is not None:
             return await _parar_por_loop(svc, turno, prep, agent, org_id, thread, lead_ref_id, sinal_loop)
@@ -455,7 +488,8 @@ async def executar(
     ct = contexto_thread(svc.messages, svc.threads, mapa_agentes(svc.studio_store, org_id), org_id, thread.id, agent.id, n=n)
     historico = tuple(rotular_historico(
         ct.mensagens, tag=tag, rotulo_midia=conteudo.texto("historico.rotulo_midia"),
-        rotulo_truncado=conteudo.texto("historico.rotulo_truncado")))
+        rotulo_truncado=conteudo.texto("historico.rotulo_truncado"),
+        rotulo_encaminhada=conteudo.texto("historico.rotulo_encaminhada")))
     eventos = await asyncio.to_thread(svc.qual.eventos, org_id, lead_ref_id)
     dossie = _dossie(padrao, estado0, eventos, ct.handoff)
     try:
@@ -504,15 +538,20 @@ async def executar(
             dominios_permitidos=conf.lista_de_spec(valores.get(conf.SPEC_DOMINIOS)),
             contatos_permitidos=conf.lista_de_spec(valores.get(conf.SPEC_CONTATOS)),
             cnpjs_proprios=conf.lista_de_spec(valores.get(conf.SPEC_CNPJ)),
+            textos_com_valor=_textos_com_valor(turno, ct, estado0, lote_lead, mensagens_lead),
         ))
 
     try:
         async with asyncio.timeout(settings.channel_turn_timeout_seconds):
             await publish_event(thread.id, "session.status", {"status": "pensando"}, bus=bus)
-            t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
+            if parada is not None:
+                t1 = await _parar_pelo_lead(turno, parada)
+                violacoes.append(Violacao("opt_out_palavras", "registrar", {"palavra": parada}))
+            else:
+                t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
             tentativas.append(t1)
             violacoes += [Violacao(r, "sinal", d) for r, d in turno.sinais_ferramenta]
-            achados = [] if turno.parar else _avaliar(t1)
+            achados = [] if (turno.parar or parada is not None) else _avaliar(t1)
             bl = conf.violacoes_bloqueantes(achados)
             violacoes += [replace(v, bloqueada=v in bl) for v in achados]
             texto_final = "\n\n".join(x for x in t1.textos if x and x.strip())

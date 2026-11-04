@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DETECTORES_BLOQUEANTES",
     "LIMITES_PADRAO",
+    "PADROES_ALEGACAO_PISO",
+    "PADROES_PROIBIDOS_PISO",
+    "PALAVRAS_PARAR_PISO",
+    "PISO_DE_PADROES",
     "SINAIS_SEGURANCA",
     "POLITICAS",
     "POLITICA_PADRAO",
@@ -41,6 +45,7 @@ __all__ = [
     "RegraConfig",
     "SupabaseConformidadeStore",
     "Violacao",
+    "aplicar_piso",
     "get_conformidade_store",
 ]
 
@@ -56,24 +61,87 @@ REGRAS = (
     "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito", "padroes_proibidos",
     "alegacao_identidade", "escala_seguranca",
     "escala_loop", "injecao_ferramenta",
+    # P1-2 / P1-3 (Julia go-live hardening): an R$ / % in a reply that no tool or lead produced; the deterministic STOP
+    "valor_sem_ferramenta", "opt_out_palavras",
 )
 #: The detectors that block by default: a reply that leaks the prompt or carries an unvetted link, contact,
 #: identity number, encoded/structured payload or a forbidden pattern never reaches the lead.
 DETECTORES_BLOQUEANTES = (
     "vazamento_prompt", "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito",
-    "padroes_proibidos",
+    "padroes_proibidos", "valor_sem_ferramenta",
 )
 #: SECURITY-class rules: switching one off (or loosening it) opens an attack path, so only a HUMAN platform admin may
 #: change them -- never the ``studio:content-write`` token (the MCP path) that an agent or a leaked secret can hold.
 REGRAS_SEGURANCA = (
     *DETECTORES_BLOQUEANTES, "tentativa_extracao", "alegacao_identidade", "escala_seguranca", "escala_loop",
-    "injecao_ferramenta",
+    "injecao_ferramenta", "opt_out_palavras",
 )
 #: The input-side signals that count toward ``escala_seguranca`` (per thread, 24 h).
 SINAIS_SEGURANCA = ("tentativa_extracao", "alegacao_identidade")
 #: Code-side default policy of a rule with no row (the contract: ``registrar`` everywhere; the owner's IP
 #: mandate: the leak detector blocks by default).
 POLITICA_PADRAO: dict[str, str] = {r: "registrar" for r in REGRAS} | {r: "bloquear" for r in DETECTORES_BLOQUEANTES}
+
+
+# ── the platform FLOOR of the pattern rules (code, merged UNDER the DB rows) ───────────────────────────────────
+#: Detection regexes, not prompt text (nothing here is ever read by a model): the minimum a public-facing agent
+#: ALWAYS runs, whatever ``conformidade_regras`` holds -- no row (migration 044 seeded the first instances once;
+#: an instance created later by ``ensure_instancia`` had none, and prod's table was EMPTY), a row with ``padroes: []``
+#: or one edited down. The DB can ADD patterns (``parametros.padroes``); it can never remove these.
+PADROES_PROIBIDOS_PISO: tuple[str, ...] = (
+    r"financiamento\s+(j[aá]\s+)?(est[aá]\s+)?aprovad",
+    r"aprova(c[aã]o|do)?\s+garantid",
+    r"sem\s+consulta\s+(ao\s+)?(spc|serasa|cr[eé]dito)",
+    r"\bpix\b",
+    r"\bboleto\b",
+    r"taxa\s+de\s+reserva",
+    r"sinal\s+de\s+r\$",
+    r"transfer[eê]ncia\s+(banc[aá]ria|para|pra)",
+    r"c[oó]digo\s+de\s+(verifica|confirma|seguran)",
+    r"c[oó]digo\s+(que\s+(chegou|recebeu)|de\s+6)",
+    # P1-2: promises the model must never make (a person confirms them)
+    r"\b(dou|damos|te\s+dou|ofere[cç]o|oferecemos|consigo|conseguimos|fa[cç]o|fazemos|garanto|garantimos)\b.{0,40}\bdescont",
+    r"\bdescont[oa]s?\s+(especial|exclusiv|garantid|de\s+\d)|\d\s*%\s*(de\s+)?descont",
+    r"\bgaranto\b|\bgarantimos\b|\bgarantid[oa]\b",
+    r"\b(neg[oó]cio|acordo|combinado)\s+fechad[oa]|\bfechamos\b|\bfechou\b|\best[aá]\s+fechad[oa]\b",
+    r"\breservad[oa]\s+(pra|para)\s+(voc[eê]|vc|ti|o\s+senhor|a\s+senhora)|\breservei\s+(pra|para)\s+(voc[eê]|vc)",
+)
+#: A lead CLAIMING to be someone with authority (signal only -- a claim never grants anything).
+PADROES_ALEGACAO_PISO: tuple[str, ...] = (
+    r"\b(sou|aqui\s+[eé])\b.{0,30}\b(o\s+|a\s+)?(dono|dona|propriet[aá]ri[oa]|diretor|diretora|gerente)\b.{0,30}\b(da|do|de)\b",
+    r"\b(sou|aqui\s+[eé])\b.{0,20}\b(corretor|corretora|atendente|funcion[aá]ri[oa])\b",
+    r"\b(suporte|equipe|time)\s+(da\s+)?noctus",
+    r"\b(sou|aqui\s+[eé])\b.{0,20}\b(policial|delegad[oa]|pol[ií]cia|promotor|juiz|ju[ií]za)\b",
+    r"\b(sou|aqui\s+[eé])\b.{0,20}\b(advogad[oa]|oficial\s+de\s+justi[cç]a)\b",
+    r"\bsou\s+da\s+imobili[aá]ria\b",
+)
+#: Rule -> its code-side floor. ``regras()`` of EVERY store merges these under the stored ``parametros.padroes``.
+PISO_DE_PADROES: dict[str, tuple[str, ...]] = {
+    "padroes_proibidos": PADROES_PROIBIDOS_PISO,
+    "alegacao_identidade": PADROES_ALEGACAO_PISO,
+}
+#: Exact (normalised) messages that opt the lead out WITHOUT the model (P1-3); ``opt_out_palavras.parametros.palavras``
+#: extends it.
+PALAVRAS_PARAR_PISO: tuple[str, ...] = ("parar", "sair", "stop", "cancelar", "nao quero mais")
+
+
+def aplicar_piso(regras: dict[str, "RegraConfig"]) -> dict[str, "RegraConfig"]:
+    """``regras`` with the floor merged UNDER the stored patterns (floor first, then the stored ones not already in it)."""
+    for nome, piso in PISO_DE_PADROES.items():
+        cfg = regras.get(nome)
+        if cfg is None:
+            continue
+        guardados = [p for p in (cfg.parametros or {}).get("padroes") or [] if isinstance(p, str) and p not in piso]
+        regras[nome] = replace(cfg, parametros={**(cfg.parametros or {}), "padroes": [*piso, *guardados]})
+    return regras
+
+
+def sem_piso(regra: str, parametros: dict[str, Any]) -> dict[str, Any]:
+    """``parametros`` as STORED: the floor patterns are code, never copied into a row by an unrelated edit."""
+    piso = PISO_DE_PADROES.get(regra)
+    if not piso or "padroes" not in (parametros or {}):
+        return dict(parametros or {})
+    return {**parametros, "padroes": [p for p in parametros["padroes"] if p not in piso]}
 
 
 @dataclass(frozen=True)
@@ -150,6 +218,11 @@ class ConformidadeStore(Protocol):
         (a rule with no row is active under :data:`POLITICA_PADRAO`)."""
         ...
 
+    def regras_sem_parametros(self, org_id: UUID, agent_id: UUID) -> tuple[str, ...]:
+        """The pattern rules (:data:`PISO_DE_PADROES`) with no STORED row -- what
+        readiness reports (``regras_seguranca_sem_parametros``); the code-side floor protects the runtime meanwhile."""
+        ...
+
     def definir_regra(
         self, org_id: UUID, agent_id: UUID, regra: str, *, ativo: bool | None = None,
         politica: str | None = None, mensagem_correcao_texto_chave: str | None = None,
@@ -199,7 +272,11 @@ class FakeConformidadeStore:
         for (aid, regra), cfg in self._regras.items():
             if aid == agent_id:
                 out[regra] = cfg
-        return out
+        return aplicar_piso(out)
+
+    def regras_sem_parametros(self, org_id: UUID, agent_id: UUID) -> tuple[str, ...]:
+        """The pattern rules with NO stored row (the runtime floor still protects every turn)."""
+        return tuple(nome for nome in PISO_DE_PADROES if (agent_id, nome) not in self._regras)
 
     def definir_regra(
         self, org_id: UUID, agent_id: UUID, regra: str, *, ativo: bool | None = None,
@@ -219,7 +296,7 @@ class FakeConformidadeStore:
                 atual.mensagem_correcao_texto_chave if mensagem_correcao_texto_chave is None
                 else mensagem_correcao_texto_chave
             ),
-            parametros=atual.parametros if parametros is None else dict(parametros),
+            parametros=sem_piso(regra, atual.parametros) if parametros is None else dict(parametros),
         )
         self._regras[(agent_id, regra)] = novo
         return novo
@@ -284,7 +361,13 @@ class SupabaseConformidadeStore:
                     r["regra"], bool(r["ativo"]), r["politica"], r.get("mensagem_correcao_texto_chave"),
                     dict(r.get("parametros") or {}),
                 )
-        return out
+        return aplicar_piso(out)
+
+    def regras_sem_parametros(self, org_id: UUID, agent_id: UUID) -> tuple[str, ...]:
+        rows = self._t("conformidade_regras").select("regra").eq("org_id", str(org_id)).eq(
+            "agent_id", str(agent_id)).in_("regra", list(PISO_DE_PADROES)).execute().data or []
+        com = {r["regra"] for r in rows}
+        return tuple(nome for nome in PISO_DE_PADROES if nome not in com)
 
     def definir_regra(
         self, org_id: UUID, agent_id: UUID, regra: str, *, ativo: bool | None = None,
@@ -302,7 +385,7 @@ class SupabaseConformidadeStore:
             atual.politica if politica is None else politica,
             atual.mensagem_correcao_texto_chave if mensagem_correcao_texto_chave is None
             else mensagem_correcao_texto_chave,
-            atual.parametros if parametros is None else dict(parametros),
+            sem_piso(regra, atual.parametros) if parametros is None else dict(parametros),
         )
         self._t("conformidade_regras").upsert({
             "org_id": str(org_id), "agent_id": str(agent_id), "regra": regra, "ativo": novo.ativo,

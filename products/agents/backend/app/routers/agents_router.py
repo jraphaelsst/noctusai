@@ -18,7 +18,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.clients.social_wiring import SocialWiringUnreachable
-from app.dependencies import get_agent_store_dep, get_social_wiring_client_dep, require_admin, require_member
+from app.dependencies import (
+    get_agent_store_dep,
+    get_social_wiring_client_dep,
+    require_member,
+    require_platform_content_admin,
+)
 from app.schemas.agents import AgentListOut, AgentOut, AgentToggleRequest, EstadoExternoOut
 from app.stores.errors import NotFound
 from noctusai_lib.api.auth.session import AuthContext
@@ -78,7 +83,7 @@ async def list_agents(
 async def toggle_agent(
     key: str,
     payload: AgentToggleRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_agent_store_dep),
     social_wiring_client=Depends(get_social_wiring_client_dep),
 ) -> AgentOut:

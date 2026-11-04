@@ -1,7 +1,7 @@
 """``/api/studio/agents`` + ``/api/studio/prompts`` — Agent Studio agents,
 versions, sections, skills, compile, diff and publish (contract §D1).
 
-Auth: ``require_member`` for reads, ``require_admin`` for writes. Every route
+Auth: ``require_member`` for reads, ``require_platform_content_admin`` (NoctusAI platform admin or the platform content token) for writes. Every route
 resolves the agent by ``(ctx.org_id, key)`` → 404 ``agent_not_found``; a
 legacy agent on a studio route → 409 ``not_studio_agent`` (the list is the
 one exception — it includes legacy agents, read-only). Every child id
@@ -47,8 +47,6 @@ from app.dependencies import (
     get_conformidade_store_dep,
     get_geracao_store_dep,
     get_skills_store_dep,
-    require_admin,
-    require_admin_or_content_token,
     require_agent_delete,
     require_member,
     require_platform_admin,
@@ -492,7 +490,7 @@ def list_studio_agents(
 @router.post("/agents", response_model=AgentSummaryOut, status_code=status.HTTP_201_CREATED)
 def create_studio_agent(
     payload: StudioAgentCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> AgentSummaryOut:
@@ -579,7 +577,7 @@ def delete_studio_agent(
 def update_studio_agent(
     key: str,
     payload: StudioAgentUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> AgentSummaryOut:
     resolve_agent(store, ctx.org_id, key)
@@ -633,7 +631,7 @@ def get_draft(
 def create_draft(
     key: str,
     payload: DraftCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
     catalog=Depends(get_knowledge_catalog_dep),
@@ -653,7 +651,7 @@ def create_draft(
 @router.delete("/agents/{key}/draft", status_code=status.HTTP_204_NO_CONTENT)
 def discard_draft(
     key: str,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
 ) -> Response:
     agent = resolve_agent(store, ctx.org_id, key)
@@ -667,7 +665,7 @@ def discard_draft(
 def update_draft(
     key: str,
     payload: DraftUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
     catalog=Depends(get_knowledge_catalog_dep),
@@ -685,7 +683,7 @@ def update_draft(
 def replace_draft_sections(
     key: str,
     payload: SectionsReplaceRequest,
-    ctx: AuthContext = Depends(require_admin_or_content_token),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
     catalog=Depends(get_knowledge_catalog_dep),
@@ -720,7 +718,7 @@ def replace_draft_sections(
 def create_draft_skill(
     key: str,
     payload: SkillCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> SkillOut:
@@ -740,7 +738,7 @@ def update_draft_skill(
     key: str,
     skill_id: UUID,
     payload: SkillUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> SkillOut:
@@ -759,7 +757,7 @@ def update_draft_skill(
 def delete_draft_skill(
     key: str,
     skill_id: UUID,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> Response:
@@ -776,7 +774,7 @@ def upsert_draft_skill_file(
     key: str,
     skill_id: UUID,
     payload: SkillFileUpsertRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> SkillFileMetaOut:
@@ -797,7 +795,7 @@ def upsert_draft_skill_files_batch(
     key: str,
     skill_id: UUID,
     payload: SkillFilesBatchUpsertRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> SkillFilesBatchResultOut:
@@ -859,7 +857,7 @@ def delete_draft_skill_file(
     key: str,
     skill_id: UUID,
     file_id: UUID,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> Response:
@@ -987,7 +985,8 @@ def publish_draft(
         try:
             return [i.to_dict() for i in avaliar_prontidao(
                 store=store, catalog=catalog, org_id=ctx.org_id, agent=agent, draft=draft, gate=gate, padroes=padroes,
-                skills=skills, geracoes=geracoes, evals=evals, controles=controles, compiled=compiled_).itens]
+                skills=skills, geracoes=geracoes, evals=evals, controles=controles, compiled=compiled_,
+                conformidade=conformidade).itens]
         except Exception:  # noqa: BLE001 -- the refusal itself must still be delivered
             logger.exception("agents.studio.publish.prontidao_indisponivel agent_id=%s", agent.id)
             return None
@@ -1031,6 +1030,11 @@ def publish_draft(
     ):
         raise http_error(
             409, "compile_blocked", "Há especificações da organização inválidas (SPEC_VALIDATION_MODE=block).",
+            prontidao=itens_prontidao,
+        )
+    if itens_prontidao and any(i["codigo"] == "regras_seguranca_sem_parametros" for i in itens_prontidao):
+        raise http_error(
+            409, "compile_blocked", "As regras de segurança desta instância estão sem parâmetros (migração 063).",
             prontidao=itens_prontidao,
         )
 

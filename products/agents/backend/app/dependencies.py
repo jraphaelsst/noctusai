@@ -300,13 +300,23 @@ require_learnings_read = require_scopes(
     restrict="any",
 )
 
-require_publish_write = require_scopes(
+_publish_write_base = require_scopes(
     SCOPE_STUDIO_PUBLISH,
     user_roles=ADMIN_ROLES,
     get_auth_context=get_auth_context,
     get_core_client=get_core_client,
     restrict="any",
 )
+
+
+async def require_publish_write(
+    ctx: AuthContext = Depends(_publish_write_base), request: Request = None, response: Response = None,
+) -> AuthContext:
+    """Publish / eval-run / import: a NoctusAI PLATFORM admin (403 ``platform_admin_required`` for a tenant org's
+    owner/admin) or a ``studio:publish`` product token (dev-advisor agents only, enforced by the route)."""
+    if ctx.caller_kind == "product":
+        return ctx
+    return await require_platform_admin(ctx=ctx, request=request, response=response)
 
 require_publish_read = require_scopes(
     SCOPE_STUDIO_PUBLISH,

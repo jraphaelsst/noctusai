@@ -388,7 +388,7 @@ def get_org_specs(
 
 @router.put("/agents/{key}/specs", response_model=OrgSpecsOut)
 def update_org_specs(
-    key: str, payload: OrgSpecsUpdateRequest, ctx: AuthContext = Depends(require_admin),
+    key: str, payload: OrgSpecsUpdateRequest, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
     config: ConfigValidacao = Depends(get_spec_validacao_dep),
 ) -> OrgSpecsOut:

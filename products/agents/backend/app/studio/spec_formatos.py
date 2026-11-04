@@ -29,9 +29,11 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 from app.studio.models import LIMITS, SPEC_TIPOS, SPEC_TIPOS_TEXTO_LIVRE
+from app.studio.normalizador_texto import caractere_proibido
 
 __all__ = [
-    "ContextoSpec", "SpecInvalida", "Violacao", "dividir_itens", "e_texto_livre", "itens_da_lista", "validar_valor",
+    "ContextoSpec", "SpecInvalida", "Violacao", "dividir_itens", "e_texto_livre", "itens_da_lista", "validar_texto_externo",
+    "validar_valor",
 ]
 
 # ── model ───────────────────────────────────────────────────────────────────
@@ -72,7 +74,6 @@ def e_texto_livre(tipo: str) -> bool:
 
 # ── universal rules (every type) ────────────────────────────────────────────
 
-_CATEGORIAS_PROIBIDAS = frozenset({"Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"})
 _TEMPLATE = re.compile(r"\{\{|\}\}|\{%|%\}|\$\{|<%|%>")
 _TAG = re.compile(r"<\s*[A-Za-z/!?|]|\[/?(?:INST|SYS|SYSTEM)\]|<\|")
 _FENCE = re.compile(r"```|~~~")
@@ -88,10 +89,8 @@ def _normalizar(valor: str) -> str:
 def _universais(valor: str, *, permite_quebra: bool) -> list[Violacao]:
     out: list[Violacao] = []
     for ch in valor:
-        if ch == "\n" and permite_quebra:
-            continue
-        cat = unicodedata.category(ch)
-        if cat in _CATEGORIAS_PROIBIDAS:
+        cat = caractere_proibido(ch, permite_quebra=permite_quebra)  # THE invisible-character rule (normalizador_texto)
+        if cat:
             out.append(Violacao(
                 "spec_caractere_proibido", "caractere_de_controle",
                 f"caractere não permitido (U+{ord(ch):04X}, {cat}): controle, largura-zero, bidirecional e separadores são recusados.",
@@ -452,3 +451,19 @@ def validar_valor(tipo: str, valor: str, contexto: ContextoSpec | None = None) -
         raise SpecInvalida(viol)
     return norm
 
+
+
+def validar_texto_externo(valor: str, *, permite_quebra: bool = False, limite: int = 2000) -> str:
+    """The checks for a TEXT a partner system (SW) hands the turn that ends up in the model's system context -- a
+    regua template, an attendant name: size, the universal character/markup rules, free-text markup and the
+    instruction-likeness lint. (No URL/phone check: a template legitimately carries a link; the reply detectors
+    police what is SENT.) Returns the normalized text or raises :class:`SpecInvalida`."""
+    if not isinstance(valor, str):
+        raise SpecInvalida([_invalido("nao_texto", "o valor precisa ser um texto.")])
+    norm = _normalizar(valor)
+    if len(norm) > limite:
+        raise SpecInvalida([Violacao("spec_tamanho_excedido", "tamanho", f"o valor excede {limite} caracteres ({len(norm)}).")])
+    viol = _universais(norm, permite_quebra=permite_quebra) or (_marcacao_texto(norm) + _parece_instrucao(norm))
+    if viol:
+        raise SpecInvalida(viol)
+    return norm

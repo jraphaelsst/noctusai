@@ -14,7 +14,7 @@ from uuid import UUID
 from app.channels.tool_registry import TOOLS
 from app.qualificacao.models import CriterioDef
 from app.stores.studio_definitions import SectionInput
-from app.stores.studio_definitions_conteudo import DecisaoInput, FerramentaInput, TextoInput
+from app.stores.studio_definitions_conteudo import DecisaoInput, FerramentaInput, SpecDefInput, TextoInput
 from app.studio.textos_registry import TEXTOS, chaves_exigidas
 from tests.qualificacao.fixture_v1 import versao_v1
 from tests.qualificacao.harness import ADMIN
@@ -96,6 +96,7 @@ def montar_julia_v2(
     studio, catalog, org_id: UUID, user_id: UUID, *, ativo_modo: str = "ligado", controles=None,
     obrigatoria: dict[str, str] | None = None, textos_extra: list[TextoInput] | None = None,
     sem_ferramentas: tuple[str, ...] = (), com_decisao: bool | str = False, publicar: bool = True,
+    specs_declaradas: tuple[tuple[str, str, str], ...] = (),
 ) -> MundoJulia:
     """Platform definition (published) + the org's instance. ``obrigatoria`` maps tool -> skill that gates it."""
     from tests.studio.rt.fakes import publish
@@ -117,6 +118,8 @@ def montar_julia_v2(
         FerramentaInput(n, f"desc:{n}", parametros=dict(_PARAMETROS.get(n, {})), obrigatoria_skill=obrig.get(n))
         for n in [*TOOLS, "registrar_resumo", "registrar_escolha"] if n not in sem_ferramentas
     ])
+    if specs_declaradas:  # (chave, rotulo, tipo): the declared org specs the allowlists are built from
+        studio.replace_spec_defs(PLAT_ORG, draft.id, [SpecDefInput(c, r, tipo=t, obrigatoria=False) for c, r, t in specs_declaradas])
     if com_decisao:
         studio.replace_decisoes(PLAT_ORG, draft.id, [DecisaoInput(
             "abordagem-meta", "Abordagem", "" if com_decisao == "sem_regra" else "regra: escolha por origem",
