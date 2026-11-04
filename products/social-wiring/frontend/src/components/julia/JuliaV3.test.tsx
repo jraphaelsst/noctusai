@@ -5,10 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
+vi.mock("@/hooks/useTeam", () => ({ useTeamMembers: () => ({ data: [{ id: "u1", nome: "Raphael", email: "r@x.test" }], isError: false }) }));
+vi.mock("@noctusai/lib", () => ({ env: { CORE_URL: "https://core.example.test/" } }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { JuliaLigadaBanner } from "./JuliaLigadaCard";
-import { RelatoriosCard, CatalogoCard, mascaraBR, mascaraParaE164 } from "./RelatoriosCatalogoCards";
+import { RelatoriosCard, CatalogoCard } from "./RelatoriosCatalogoCards";
 import { ImoveisOferecidosChips, RelatorioLeadSection } from "./RelatorioLeadSection";
 import { imoveisOferecidos } from "@/hooks/useJuliaRelatorioLead";
 
@@ -31,21 +33,26 @@ describe("Julia v3", () => {
     expect(screen.queryByTestId("julia-banner-desligada")).toBeNull();
   });
 
-  it("phone mask and E.164", () => {
-    expect(mascaraBR("11987654321")).toBe("(11) 98765-4321");
-    expect(mascaraParaE164("(11) 98765-4321")).toBe("+5511987654321");
-    expect(mascaraParaE164("(11) 9876")).toBeNull();
+  it("picks a member, shows the noc WhatsApp, and surfaces a refusal", async () => {
+    api.get.mockResolvedValue({ data: { modo: "usuario", usuario_id: null, usuario_nome: null, telefone_resolvido: null } });
+    api.put.mockRejectedValue(Object.assign(new Error("x"), { status: 422, body: { error: { code: "x", message: "Recusado no servidor" } } }));
+    wrap(<RelatoriosCard isAdmin />);
+    fireEvent.change(await screen.findByLabelText("Quem recebe os relatórios"), { target: { value: "u1" } });
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/relatorio-destino", { modo: "usuario", usuario_id: "u1" }));
+    expect(await screen.findByTestId("relatorios-salvar-erro")).toBeTruthy();
   });
 
-  it("saves the report destination and surfaces a refusal", async () => {
-    api.get.mockResolvedValue({ data: { modo: "numero", numero_e164: null } });
-    api.put.mockRejectedValue(Object.assign(new Error("x"), { status: 422, body: { error: { code: "x", message: "Número inválido no servidor" } } }));
+  it("no WhatsApp: amber notice with link to core settings; with WhatsApp: shows it", async () => {
+    api.get.mockResolvedValue({ data: { modo: "usuario", usuario_id: "u1", usuario_nome: "Raphael", telefone_resolvido: null } });
     wrap(<RelatoriosCard isAdmin />);
-    const input = await screen.findByLabelText(/WhatsApp que recebe/);
-    fireEvent.change(input, { target: { value: "11987654321" } });
-    fireEvent.click(screen.getByTestId("relatorios-salvar"));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/relatorio-destino", { modo: "numero", numero_e164: "+5511987654321" }));
-    expect(await screen.findByTestId("relatorios-salvar-erro")).toBeTruthy();
+    const aviso = await screen.findByTestId("rel-sem-whatsapp");
+    expect(aviso.textContent).toContain("Sem WhatsApp — cadastre no noc");
+    expect(aviso.querySelector("a")?.getAttribute("href")).toBe("https://core.example.test/settings");
+    cleanup();
+    api.get.mockResolvedValue({ data: { modo: "usuario", usuario_id: "u1", usuario_nome: "Raphael", telefone_resolvido: "+5511987654321" } });
+    wrap(<RelatoriosCard isAdmin={false} />);
+    expect((await screen.findByTestId("rel-telefone")).textContent).toContain("+5511987654321");
+    expect((screen.getByLabelText("Quem recebe os relatórios") as HTMLSelectElement).disabled).toBe(true);
   });
 
   it("catalog source writes the chosen fonte", async () => {

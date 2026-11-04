@@ -1,7 +1,7 @@
 /**
  * Julia v3 (CONTRACT §12.5/§12.7) — report destination, catalog source, and the per-lead reports.
  *
- *   GET|PUT /api/julia/relatorio-destino    org admin write: {modo: numero|responsavel, numero_e164}
+ *   GET|PUT /api/julia/relatorio-destino    org admin write: PUT {modo: usuario|responsavel, usuario_id}
  *   GET|PUT /api/julia/catalogo-fonte       org admin write: {fonte: vista|espelho}
  *   GET     /api/julia/contatos/{id}/relatorios   newest first
  *
@@ -13,10 +13,17 @@ import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
-export type ModoRelatorioDestino = "numero" | "responsavel";
+export type ModoRelatorioDestino = "usuario" | "responsavel";
 export interface RelatorioDestino {
   modo: ModoRelatorioDestino;
-  numero_e164: string | null;
+  usuario_id: string | null;
+  usuario_nome: string | null;
+  /** The chosen user's WhatsApp, read from noc (core). Null = the user has none registered. */
+  telefone_resolvido: string | null;
+}
+export interface RelatorioDestinoUpdate {
+  modo: ModoRelatorioDestino;
+  usuario_id: string | null;
 }
 export type FonteCatalogo = "vista" | "espelho";
 export interface CatalogoFonte {
@@ -69,9 +76,17 @@ export function useRelatorioDestino() {
 }
 
 export function useSalvarRelatorioDestino() {
-  return useCacheWriteMutation<{ data: RelatorioDestino }, RelatorioDestino>({
-    mutationFn: (body) => api.put<{ data: RelatorioDestino }>("/api/julia/relatorio-destino", body),
-    targets: (body) => [{ queryKey: RELATORIO_DESTINO_KEY, optimistic: () => body, commit: (_old: RelatorioDestino | undefined, res: { data: RelatorioDestino }) => res.data }],
+  return useCacheWriteMutation<{ data: RelatorioDestino }, RelatorioDestinoUpdate & { usuario_nome?: string | null }>({
+    mutationFn: ({ modo, usuario_id }) => api.put<{ data: RelatorioDestino }>("/api/julia/relatorio-destino", { modo, usuario_id }),
+    // Draw the choice at once; the resolved WhatsApp is noc's answer (commit/settle), never guessed here.
+    targets: (v) => [
+      {
+        queryKey: RELATORIO_DESTINO_KEY,
+        optimistic: (old: RelatorioDestino | undefined) =>
+          old ? { ...old, modo: v.modo, usuario_id: v.usuario_id, usuario_nome: v.usuario_nome ?? old.usuario_nome } : old,
+        commit: (_old: RelatorioDestino | undefined, res: { data: RelatorioDestino }) => res.data,
+      },
+    ],
   });
 }
 
