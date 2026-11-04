@@ -95,7 +95,7 @@ Audit evidence (2026-11-04): 896 of 1,028 rows still `s1-emergent`, 155 older th
 4. **Per-agent views.** `query(agent=…)`; `codification_radar(group_by="agent")` clusters per agent type and, for every cluster of ≥2 entries from one agent, returns `agent_file` + a one-line `proposed_l1_rule` for `.claude/agents/<agent>.md`.
 5. **Promotion to an agent file.** `auto_improvement_promote(matches, "s3-codified", target_agent="<agent>")` writes `draft_l1` into the row and sets `resolve_when="grep_present:<phrase>@.claude/agents/<agent>.md"`; `reconcile` closes the row once the tech-lead has applied the line. The tool never edits agent files.
 
-**One-off backfill.** `auto_improvement.propose_resolve_when(apply=False)` proposes `resolve_when` for open rows lacking one, from `superseded_by` (a later terminal row with the same target) and `path_exists` (target path absent + description says missing) signals. Dry-run by default; the tech-lead runs it with `apply=True`; rows with no signal need a human `manual:<reason>`. (No CLI flag: `cli.py` is outside this module.)
+**One-off backfill.** `auto_improvement.propose_resolve_when(apply=False)` proposes `resolve_when` for open rows lacking one, from `superseded_by` (a later terminal row with the same target) and `path_exists` (target path absent + description says missing) signals. Dry-run by default; the tech-lead runs it with `apply=True`; rows with no signal need a human `manual:<reason>`. CLI: `python mcp/noctusai/cli.py --auto-improvement-propose-resolve-when [--apply]` (dry-run prints counts + 10 samples). `harness_status --full` now surfaces `stale_s1_count` + the 5 oldest stale s1 rows.
 
 ## sqlite schema
 

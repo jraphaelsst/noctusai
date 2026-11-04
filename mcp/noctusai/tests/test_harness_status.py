@@ -237,3 +237,13 @@ class TestRoute:
 
     def test_bad_input(self):
         assert hs.harness_route({})["errors"]
+
+
+class TestStaleS1Section:
+    def test_section_surfaces_stale_count_and_top5_oldest(self, monkeypatch):
+        stale = [{"target": f"t{i}", "age_days": 10 + i} for i in range(7)]
+        monkeypatch.setattr(ai, "query", lambda **kw: [])
+        monkeypatch.setattr(ai, "reconcile", lambda **kw: {"stale_s1": stale})
+        out = hs._section_auto_improvement()
+        assert out["stale_s1_count"] == 7
+        assert [r["target"] for r in out["stale_s1_oldest"]] == ["t6", "t5", "t4", "t3", "t2"]

@@ -200,6 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent", metavar="AGENT_NAME", help="(scope flag) Limit --refresh-agent-context-cache to a single agent. No-op without --refresh-agent-context-cache.")
     parser.add_argument("--check-agent-context-cache-freshness", action="store_true", help="Keeper: the agent-context cache must mirror each agent's bundle_sha = sha256(agent.md ∪ owned_kb files). Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-agent-context-cache to fix.")
     parser.add_argument("--refresh-auto-improvement-cache", action="store_true", help="Refresh the local auto-improvement cache (.claude/cache/auto-improvement.sqlite) from project-history/auto-improvement.ndjson. The scoped-auto-improvement system's mirror leg. Tech-leads / agents consult this cache BEFORE editing a doc/agent to surface relevant past observations. Auto-run by pre-commit on ndjson change. KB § PATTERNS/scoped-auto-improvement.md.")
+    parser.add_argument("--auto-improvement-propose-resolve-when", action="store_true", help="One-off backfill: propose resolve_when for OPEN auto-improvement rows that have none (superseded_by / path_exists signals). Dry-run by default: prints counts + 10 samples. Add --apply to rewrite the ledger (tech-lead only). KB § PATTERNS/common/scoped-auto-improvement.md.")
     parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
     parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
     parser.add_argument("--check-codification-pipeline-health", action="store_true", help="Meta-keeper: verify the codification pipeline (s1→s2→s3→s4) is FLOWING. Surfaces warning when no s2/s3/s4 entries have landed within configured silence thresholds. Severity warning (advisory). KB § PATTERNS/common/scoped-auto-improvement.md.")
@@ -295,7 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh-migration-number-refs-baseline", action="store_true", help="Shrink-only refresh of the --check-migration-number-refs-in-tests baseline (first run records current offenders; later runs only lower counts / drop fixed files, never add).")
     parser.add_argument("--lower-mutation-invalidate-only-baseline", action="store_true", help="Re-derive mcp/noctusai/tests/mutation_invalidate_only_baseline.json DOWNWARD from the tree (min(baseline, current) per file; never raises). Run after migrating mutations to useCacheWriteMutation, and to resolve a baseline merge conflict between parallel slices. KB § PATTERNS/frontend/mutation-cache-writes.md.")
     parser.add_argument("--async-handlers-to-def", metavar="PRODUCT", help="libcst codemod: convert PRODUCT's awaitless `async def` route handlers to plain `def` (threadpooled, no event-loop blocking). DRY-RUN unless --apply. MCP: noctus.dev.async_handlers_to_def. KB § PATTERNS/backend/request-path-latency.md.")
-    parser.add_argument("--apply", action="store_true", help="With --async-handlers-to-def: write the conversion (default is a dry-run plan).")
+    parser.add_argument("--apply", action="store_true", help="With --async-handlers-to-def or --auto-improvement-propose-resolve-when: write the change (default is a dry-run plan).")
     parser.add_argument("--check-async-handler-sync-db", action="store_true", help="Keeper (2026-10-21): an async def route handler that calls the SYNC supabase client directly (.execute() / .auth.* / .storage ops, not awaited) blocks the event loop for the whole round-trip, so concurrent requests serialize (orbity staircase 985/1524/2081 ms). RATCHET against mcp/noctusai/tests/async_handler_sync_db_baseline.json (per file; may only go down). Fix: plain `def` when the handler awaits nothing, else `await anyio.to_thread.run_sync(...)`. Escape: '# noc-allow: sync-in-async — why' on the async def line. Severity high. KB § PATTERNS/backend/request-path-latency.md.")
     parser.add_argument("--lower-async-handler-sync-db-baseline", action="store_true", help="Lower mcp/noctusai/tests/async_handler_sync_db_baseline.json to min(current, baseline) per file after converting handlers (never raises a count).")
     parser.add_argument("--check-silent-refusal", action="store_true", help="Keeper (2026-10-24, N=4: F75b F76 F78 F86): a refusal the user never sees — a query's empty branch (rows.length === 0 / isEmpty=) reachable while the query is in ERROR (a failed search read as 'Nenhum … encontrado' + 'Cadastrar novo'), or an upload whose failure nobody observes (mutate with no onError and an unread error, a fire-and-forget onUpload, useUploadDocumento whose erro is never rendered). ts-morph AST scan (mcp/noctusai/node/silent_refusal_scan.mjs) over active products + seed frontends. Fix: QueryErrorState / !q.isError guard; useUploadDocumento + <UploadErro> from @noctusai/lib/upload-refusal. Escape: '// noc-allow: silent-refusal — why'. Severity high. KB § PATTERNS/frontend/silent-refusal.md.")
@@ -899,6 +900,14 @@ def main():
             print(f"  {GREEN}✓ auto-improvement cache in-sync (source_sha={r['source_sha'][:12]}; --force to rebuild).{RESET}")
         else:
             print(f"  {GREEN}✓ auto-improvement cache rebuilt — {r['rows_written']} rows (source_sha={r['source_sha'][:12]}).{RESET}")
+        sys.exit(0)
+    elif args.auto_improvement_propose_resolve_when:
+        from tools.noctus.dev import auto_improvement as ai
+        res = ai.propose_resolve_when(apply=args.apply)
+        mode = "DRY-RUN" if res["dry_run"] else "APPLIED"
+        print(f"  {GREEN}{mode}: {len(res['proposals'])} proposal(s), {res['no_signal']} with no signal, {res['applied']} rewritten.{RESET}")
+        for p_ in res["proposals"][:10]:
+            print(f"    {p_['target']}  ->  {p_['resolve_when']}  (ts={p_['ts']})")
         sys.exit(0)
     elif args.auto_improvement_query:
         from tools.noctus.dev import auto_improvement as ai
