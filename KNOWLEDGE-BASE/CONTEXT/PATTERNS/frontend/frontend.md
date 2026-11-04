@@ -26,6 +26,7 @@ State split:
 - Use `sonner` only. Never `react-hot-toast`, never custom toast systems.
 - Error toasts: concrete message. No "Something went wrong." Say what went wrong.
 - Success toasts: confirm the action ("Cliente cadastrado").
+- Toasts are FEEDBACK only (green/red, X close). Events the user did not trigger (new lead, sync) are operational notifications - bell + neutral pop-up: `KB § PATTERNS/backend/notifications.md`.
 
 ## Constants & utils
 
