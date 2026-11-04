@@ -68,7 +68,10 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Informações do Viral</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              Informações do Viral
+              {v && <Badge variant="secondary">#{v.codigo}</Badge>}
+            </DialogTitle>
             <DialogDescription>{v ? `@${v.perfil.handle}` : "Carregando..."}</DialogDescription>
           </DialogHeader>
 
@@ -137,11 +140,24 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
                 </div>
 
                 <div className="flex flex-col gap-4 text-sm">
+                  {v.gancho && (
+                    <section>
+                      <h3 className="mb-1 font-semibold">Gancho</h3>
+                      <blockquote className="border-l-2 pl-3 italic">“{v.gancho}”</blockquote>
+                    </section>
+                  )}
+
+                  {v.blueprint && <EstruturaBloco blueprint={v.blueprint} />}
+
                   <section>
                     <h3 className="mb-1 font-semibold">Métricas</h3>
                     <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-                      <dt className="text-muted-foreground">Visualizações</dt>
-                      <dd>{compactoPtBr(v.views)}</dd>
+                      {v.views != null && (
+                        <>
+                          <dt className="text-muted-foreground">Visualizações</dt>
+                          <dd>{compactoPtBr(v.views)}</dd>
+                        </>
+                      )}
                       <dt className="text-muted-foreground">Curtidas</dt>
                       <dd>{compactoPtBr(v.likes)}</dd>
                       <dt className="text-muted-foreground">Comentários</dt>
@@ -224,5 +240,33 @@ function BadgeGrupo({ rotulo, itens }: { rotulo: string; itens: string[] }) {
         ))
       )}
     </div>
+  );
+}
+
+/** Beat labels of a blueprint: bold `**(Label)**` / `(Label)` markers or the first words of each line. */
+export function beatsDoBlueprint(blueprint: string): string[] {
+  const out: string[] = [];
+  for (const linha of blueprint.split("\n")) {
+    const l = linha.trim();
+    if (!l) continue;
+    const m =
+      /^(?:[-*•]\s*|\d+[.)]\s*)?\**\(([^()*]{2,40})\)\**/.exec(l) ??
+      /^(?:[-*•]\s*|\d+[.)]\s*)?\**([^()*:—]{2,40}?)\**\s*(?::|—)/.exec(l);
+    if (m) out.push(m[1].trim());
+  }
+  return out;
+}
+
+function EstruturaBloco({ blueprint }: { blueprint: string }) {
+  const beats = beatsDoBlueprint(blueprint);
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="font-semibold">Estrutura</h3>
+      {beats.length > 1 && <p>{beats.join(" → ")}</p>}
+      <details>
+        <summary className="cursor-pointer text-muted-foreground">Ver estrutura completa</summary>
+        <p className="mt-1 whitespace-pre-wrap">{blueprint}</p>
+      </details>
+    </section>
   );
 }

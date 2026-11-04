@@ -44,6 +44,9 @@ export const PERFIL_STATUS_ROTULO: Record<PerfilStatus, string> = {
   pausado: "Pausado",
   nao_encontrado: "Não encontrado",
   sem_conta: "Sem conta",
+  sem_credencial: "Sem credencial",
+  sem_orcamento: "Sem orçamento",
+  privado: "Perfil privado",
   erro: "Erro",
 };
 

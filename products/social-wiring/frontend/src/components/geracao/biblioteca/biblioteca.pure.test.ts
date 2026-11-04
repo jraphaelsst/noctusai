@@ -89,3 +89,17 @@ describe("normalizarHandle", () => {
     expect(normalizarHandle("@" + "a".repeat(31)).ok).toBe(false);
   });
 });
+
+import { beatsDoBlueprint } from "./ViralModal";
+describe("beatsDoBlueprint", () => {
+  it("lists the beat labels in order", () => {
+    expect(beatsDoBlueprint("**(Headline)** texto\n**(CTA de Salvar)**: x\n- Prova: y")).toEqual([
+      "Headline",
+      "CTA de Salvar",
+      "Prova",
+    ]);
+  });
+  it("is empty for blank input", () => {
+    expect(beatsDoBlueprint("  \n")).toEqual([]);
+  });
+});

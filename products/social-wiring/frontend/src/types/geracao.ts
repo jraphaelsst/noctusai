@@ -14,7 +14,7 @@ export type Taxonomias = { nichos: Taxon[]; profissoes: Taxon[]; formatos: (Taxo
 export type PerfilCriacao = { marca_id: string; bio: string; nichos: number[]; profissoes: number[];
                        apresentacao_magnetica: string; ctas: string; updated_at: string | null }
 export type Treinamento = { id: string; ordem: number; titulo: string; descricao: string; video_url: string | null; ativo: boolean }
-export type PerfilStatus = 'aguardando'|'ativo'|'pausado'|'nao_encontrado'|'sem_conta'|'erro'
+export type PerfilStatus = 'aguardando'|'ativo'|'pausado'|'nao_encontrado'|'sem_conta'|'sem_credencial'|'sem_orcamento'|'privado'|'erro'
 export type PerfilMonitorado = { id: string; handle: string; nome: string | null; foto_url: string | null; seguidores: number | null;
                           status: PerfilStatus; erro_mensagem: string | null; ultima_sync_em: string | null;
                           metrica_base: 'views' | 'engajamento' | null; mediana_metrica: number | null;
