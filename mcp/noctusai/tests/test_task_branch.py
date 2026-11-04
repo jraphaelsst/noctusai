@@ -3036,7 +3036,7 @@ def test_integrate_records_post_rebase_commit_as_integrated_worktree_live():
         logs={"d0..b0": "c1 x", "b0..d0": ""},
         head_sha="b0",
     )
-    ops = FakePointerOps(latest={"feat/x": {"status": "on_going", "commit": "pre-rebase"}})
+    ops = FakePointerOps(latest={"feat/x": {"status": "on_going", "commit": "pre-rebase", "agent": "tech-lead"}})
     res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake, pointer_ops=ops)
     assert res["status"] == "integrated"
     assert res["pointer"]["status"] == "updated"

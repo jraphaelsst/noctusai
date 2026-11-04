@@ -2147,6 +2147,76 @@ def _auto_cleanup_after_integrate(
     return out
 
 
+# Pointer agents that mean "no dispatched engineer" (tech-lead inline work):
+# `_pointer_claim` defaults agent to "self-branch"; the orchestrator/tech-lead
+# claim under their own names. Any other pointer agent (backend-engineer, ...)
+# is a dispatched engineer and its slice MUST be scored before it lands.
+_INLINE_POINTER_AGENTS = frozenset({"self-branch", "tech-lead", "orchestrator", "orchestrator-operator"})
+
+
+def _default_slice_scores_reader() -> list[dict]:
+    """Rows of slice-scores.ndjson (dev copy U origin/ledgers). Raises on a
+    store error so an unreadable ledger is never read as 'nothing scored'."""
+    from tools.noctus.dev._ledger_store import read_ledger_text
+    from tools.noctus.dev.dispatch_token_log import _slice_scores_path
+    path = _slice_scores_path()
+    text, err = read_ledger_text(path.name, path)
+    if err:
+        raise RuntimeError(f"slice-scores ledger unreadable: {err}")
+    rows: list[dict] = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if ln:
+            try:
+                rows.append(json.loads(ln))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
+def slice_unscored_riders(
+    slugs: list[str], *, ops: "PointerOps | None", branch_prefix: str,
+    reader: "Callable[[], list[dict]] | None" = None,
+) -> list[dict[str, str]]:
+    """Slugs that are engineer slices (pointer agent is not inline) with no
+    slice-scores row. Refuse-not-null: no pointer or an unreadable pointer
+    store is NOT an exemption - an unknown author is treated as an engineer.
+    `ops is None` means an injected test/custom runner (no pointer store at all,
+    same convention as `_pointer_transition`): the gate is skipped there."""
+    if ops is None:
+        return []
+    scored: set[str] | None = None
+    missing: list[dict[str, str]] = []
+    for s in slugs:
+        agent = None
+        try:
+            ptr = ops.latest(f"{branch_prefix}{s}") if ops is not None else None
+            agent = (ptr or {}).get("agent")
+        except Exception as e:  # noqa: BLE001 - unknown => not exempt
+            logger.warning("slice-score gate: pointer read for %s failed: %s", s, e)
+        if agent in _INLINE_POINTER_AGENTS:
+            continue
+        if scored is None:
+            rows = (reader or _default_slice_scores_reader)()
+            scored = {str(r.get("slug")) for r in rows} | {
+                str(r.get("branch", "")).removeprefix(branch_prefix) for r in rows if r.get("branch")}
+        if s not in scored:
+            missing.append({"slug": s, "agent": str(agent or "unknown")})
+    return missing
+
+
+def _slice_unscored_refusal(missing: list[dict[str, str]]) -> dict[str, Any]:
+    calls = [
+        f"noctus.dev.dispatch_log_completion(slug={m['slug']!r}, agent={m['agent']!r}, "
+        f"duration_minutes=<n>, outcome='landed', score={{model, q:{{Q1..Q7}}, branch, sha, "
+        f"first_pass, ...}}, engineer_return=<return text>)" for m in missing]
+    return {"status": "blocked", "exit_code": 1, "refused": "slice_unscored",
+            "unscored": missing, "log_completion_calls": calls,
+            "error": ("engineer slice(s) have no row in slice-scores.ndjson: "
+                      f"{[m['slug'] for m in missing]}. Score them via log_completion(score=...) "
+                      "(see log_completion_calls), or pass accept_unscored='<reason>'.")}
+
+
 def _train_riders_after_integrate(
     git, task_branch_fn, dev_before: str | None, new_head: str | None,
     auto_cleanup: bool, kwargs: dict[str, Any],
@@ -2210,6 +2280,8 @@ def task_branch(
     merged_tip_timeout: int = _gate_budget.DEFAULT_OVERALL_CEILING_S,
     accept_unmeasured: list[str] | None = None,
     accept_unmeasured_reason: str | None = None,
+    accept_unscored: str | None = None,
+    slice_scores_reader: "Callable[[], list[dict]] | None" = None,
     merged_tip_baseline: Callable[[list[str], str], dict[str, Any]] | None = None,
     doc_staleness_check: Callable[[str, str], list[dict]] | None = None,
     regenerate_kb_counts_at_integrate: bool = True,
@@ -2571,9 +2643,27 @@ def task_branch(
         if not ahead and _is_ancestor(git, head, dev):
             return {**base, "status": "up_to_date", "exit_code": 0, "dev_sha": dev,
                     "message": f"{branch} has nothing {remote}/{dev_branch} lacks — nothing to integrate."}
+        # Slice-score gate (engineer slices must be measured before they land).
+        # Train: each rider is checked, not just the train branch.
+        _rc_m, _m_out, _e = git("log", "--merges", "--format=%s", f"{dev}..{head}")
+        _riders = _train.parse_train_riders(_m_out.splitlines() if _rc_m == 0 else []) if slug and slug.startswith("train-") else []
+        try:
+            _unscored = slice_unscored_riders(
+                _riders or [slug], ops=pointer_fn, branch_prefix=branch_prefix,
+                reader=slice_scores_reader)
+        except Exception as e:  # noqa: BLE001 - unreadable ledger must not pass
+            return {**base, "status": "blocked", "exit_code": 1, "refused": "slice_scores_unreadable",
+                    "error": f"cannot verify slice scores: {type(e).__name__}: {e}"}
+        _unscored_accept: dict[str, Any] | None = None
+        if _unscored:
+            _why = (accept_unscored or "").strip()
+            if len(_why) < 10:
+                return {**base, **_slice_unscored_refusal(_unscored), "dev_sha": dev}
+            _unscored_accept = {"reason": _why, "slugs": [m["slug"] for m in _unscored]}
         behind = _commits(git, head, dev)
         plan = {**base, "dev_sha": dev, "branch_sha": head,
-                "ahead": len(ahead), "behind": len(behind), "incoming_commits": ahead[:20]}
+                "ahead": len(ahead), "behind": len(behind), "incoming_commits": ahead[:20],
+                **({"accepted_unscored": _unscored_accept} if _unscored_accept else {})}
         if not confirm:
             return {**plan, "status": "planned", "exit_code": 0,
                     "message": (f"will rebase {branch} onto {remote}/{dev_branch} "
@@ -3386,7 +3476,7 @@ def register(server) -> None:
             "machine-wide heavy slot (noctus.dev.hw_admission); a gate not admitted is NOT run "
             "and the integrate returns status 'waiting_for_slot' (not pushed, no accept-anyway). "
             "status: status|planned|started|integrated|conflict|up_to_date|"
-            "cleaned|partial|blocked|gate_timeout|waiting_for_slot|refused_stale_toolkit|error."
+            "cleaned|partial|blocked|gate_timeout|waiting_for_slot|refused_stale_toolkit|error. SLICE-SCORE GATE: integrate (and each train rider) of an engineer slice with no slice-scores.ndjson row is refused (blocked, refused='slice_unscored', with the exact log_completion call); accept_unscored='<reason>' (>=10 chars) overrides, recorded as accepted_unscored."
         ),
     )
     def _task_branch(
@@ -3406,11 +3496,12 @@ def register(server) -> None:
         wire_products: list[str] | None = None,
         accept_unmeasured: list[str] | None = None,
         accept_unmeasured_reason: str | None = None,
+        accept_unscored: str | None = None,
         slugs: list[str] | None = None,
         order: str = "given",
     ) -> dict:
         return task_branch(accept_unmeasured=accept_unmeasured, slugs=slugs, order=order,
-                           accept_unmeasured_reason=accept_unmeasured_reason,action=action, slug=slug, confirm=confirm,
+                           accept_unmeasured_reason=accept_unmeasured_reason, accept_unscored=accept_unscored, action=action, slug=slug, confirm=confirm,
                            keep_worktree=keep_worktree,
                            wire_env=wire_env, verbose=verbose,
                            wire_products=wire_products,
