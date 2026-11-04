@@ -1,6 +1,6 @@
 /**
- * Agent Studio — "Canais" (Julia page-0 agent `julia`): the channel token
- * social-wiring uses, the LLM-key status hint for the version's provider, and
+ * Agent Studio — "Canais" (Julia page-0 agent `julia`): the pointer to
+ * Conexões da plataforma (where the channel credential is granted), the LLM-key status hint for the version's provider, and
  * the READ-ONLY list of channel conversations (leads on WhatsApp etc.). There
  * is deliberately no composer: a channel conversation is driven by the
  * transport, never typed into from here.
@@ -11,7 +11,6 @@ import { ptBR } from "date-fns/locale";
 import { Link } from "react-router-dom";
 import { MessageSquare } from "lucide-react";
 import { Badge, EmptyState } from "@noctusai/lib/design-system";
-import { ChannelTokenCard } from "@/components/studio/ChannelTokenCard";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { useChannelConversations, useChannelMessages } from "@/hooks/useChannel";
 import { isProviderKeyConfigured, orgApiKeysHooks } from "@/hooks/useOrgApiKeys";
@@ -52,6 +51,17 @@ function KeyHint({ agentKey }: { agentKey: string }) {
   );
 }
 
+function ConexoesHint() {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 text-sm" data-testid="channel-grants-hint">
+      A credencial do canal é gerada e entregue ao produto automaticamente.{" "}
+      <Link to="/conexoes-plataforma" className="text-primary hover:underline">
+        Gerenciar em Conexões da plataforma
+      </Link>
+    </div>
+  );
+}
+
 function ConversationViewer({ conversationId }: { conversationId: string }) {
   const messages = useChannelMessages(conversationId);
   if (messages.showSkeleton) return <StudioLoading rows={3} testId="channel-messages-skeleton" />;
@@ -86,7 +96,7 @@ export default function ChannelsTab({ agentKey }: { agentKey: string }) {
   return (
     <div className="space-y-4" data-testid="channels-tab">
       <KeyHint agentKey={agentKey} />
-      <ChannelTokenCard agentKey={agentKey} isAdmin={isAdmin} />
+      <ConexoesHint />
 
       <section className="space-y-3 rounded-lg border border-border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

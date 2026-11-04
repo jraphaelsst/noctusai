@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, CheckCircle2, KeyRound, SlidersHorizontal, Sparkles, Wallet } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, CheckCircle2, KeyRound, SlidersHorizontal, Sparkles, Wallet, Link2 } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -42,6 +42,7 @@ const RedirectLeadImobStudioToJulia = redirect("RedirectLeadImobStudioToJulia");
 // Platform-admin pages (server-enforced by `require_platform_admin`).
 const Credenciais = lazy(() => import("@/pages/Credenciais"));
 const ChavesIA = lazy(() => import("@/pages/ChavesIA"));
+const ConexoesPlataforma = lazy(() => import("@/pages/ConexoesPlataforma"));
 const ConfiguracoesAgente = lazy(() => import("@/pages/ConfiguracoesAgente"));
 // Agent Studio leftovers — `products/agents/projects/agent-studio-isaia/CONTRACT.md` §G. The `/studio` console
 // itself folded into `/agentes` (create = the wizard, import / delete / content token = the listing).
@@ -71,6 +72,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal, route: "configuracoes-agente" },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound, route: "credenciais" },
       { name: "Chaves de IA", href: "/chaves-ia", icon: Sparkles, route: "chaves-ia" },
+      { name: "Conexões da plataforma", href: "/conexoes-plataforma", icon: Link2, route: "conexoes-plataforma" },
     ],
   },
 ];
@@ -96,6 +98,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound },
       { name: "Chaves de IA", href: "/chaves-ia", icon: Sparkles },
+      { name: "Conexões da plataforma", href: "/conexoes-plataforma", icon: Link2 },
     ],
   },
 ];
@@ -128,6 +131,7 @@ export default createProductApp({
     { path: "/financeiro/*", component: Financeiro },
     { path: "/credenciais", component: Credenciais },
     { path: "/chaves-ia", component: ChavesIA },
+    { path: "/conexoes-plataforma", component: ConexoesPlataforma },
     { path: "/configuracoes-agente", component: ConfiguracoesAgente },
     { path: "/studio", component: RedirectStudio },
     // Declared before `/studio/:key` for readability; react-router ranks the

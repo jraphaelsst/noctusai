@@ -116,7 +116,11 @@ credential to `{product}/api/platform/grants/agents`; (5) the delivery token is 
 of that attempt, restores the stored tools secret, marks the grant `falhou` with `last_error` (stage + error class, no
 secrets). MFA is not required to mint (seed `MintPolicy` default); secrets are shown to nobody and never logged.
 The former `PUT /api/channels/ferramentas-token` paste intake is retired (405); `DELETE` stays. The human
-`POST /api/agents/{key}/channel-token` mint is superseded by grants and goes with the paste UI (S5).
+`POST /api/agents/{key}/channel-token` mint is superseded by grants; its paste UI (`ChannelTokenCard`) is gone (S5) and the
+backend route is slated for removal (see S5 handoff). The UI is `/conexoes-plataforma` ("Conexões da plataforma", platform
+admin only, nav item + `status_pagina` row `conexoes-plataforma`, migration 061): pick agente → produto → organização →
+confirmar; the list shows status, masked credential id (first 4 + last 4), expiry, last delivery and last error; rotate and
+revoke ask for confirmation. The Canais tab of an agent only links there.
 
 ## Creating a complete agent (Julia as the reference)
 

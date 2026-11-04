@@ -77,7 +77,8 @@ products/agents/backend/app/
   per-org encrypted store) + a 5-minute delivery token, `GrantDelivery.deliver`, revoke the delivery token; any failure
   revokes everything minted and leaves the grant `falhou`. Rotate overlaps; revoke kills both and tells the product.
   Nobody pastes a token: `PUT /api/channels/ferramentas-token` is gone. Never log or return a secret. README section
-  "Platform grants" has the routes.
+  "Platform grants" has the routes. UI: `/conexoes-plataforma` (`pages/ConexoesPlataforma.tsx`, `hooks/useGrants.ts`), platform
+  admin only; the old channel-token paste card is deleted and `ChannelsTab` links to the page.
 
 ### Julia v2 — the channel runtime (A-RT)
 

@@ -21,7 +21,6 @@ vi.mock("@/hooks/studio/useVersions", () => ({
   useAgentVersionRefs: () => ({ showSkeleton: false, draft: { versao: 2, provider: "openai" }, ativa: null }),
 }));
 vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => true }));
-vi.mock("@/components/studio/ChannelTokenCard", () => ({ ChannelTokenCard: () => <div data-testid="token-card-stub" /> }));
 
 import ChannelsTab from "../ChannelsTab";
 
@@ -39,7 +38,8 @@ describe("ChannelsTab", () => {
     renderTab();
     expect(screen.getByText("Não configurada")).toBeTruthy();
     expect(screen.getByText("Nenhuma conversa de canal ainda.")).toBeTruthy();
-    expect(screen.getByTestId("token-card-stub")).toBeTruthy();
+    expect(screen.getByTestId("channel-grants-hint").querySelector("a")?.getAttribute("href")).toBe("/conexoes-plataforma");
+    expect(screen.queryByTestId("channel-token-card")).toBeNull();
   });
 
   it("lists conversations and opens one read-only (no composer)", () => {
