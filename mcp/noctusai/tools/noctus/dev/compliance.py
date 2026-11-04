@@ -20837,7 +20837,10 @@ def _run_composed_keeper(
             }]
         for i in sub_issues:
             tagged = dict(i)
-            tagged["symbol"] = f"{composition_name}-{sub_name}::{i.get('symbol', '?')}"
+            # A sub-keeper that emits no `symbol` (e.g. agent-kb) used to tag as
+            # `<sub>::?` — a blocker nobody could trace. Fall back to the file.
+            orig = i.get("symbol") or Path(str(i.get("file") or "?")).name or "?"
+            tagged["symbol"] = f"{composition_name}-{sub_name}::{orig}"
             issues.append(tagged)
     return issues
 

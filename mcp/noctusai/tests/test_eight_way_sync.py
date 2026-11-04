@@ -274,3 +274,18 @@ class TestAllCacheFreshness:
         monkeypatch.setattr(_r, "settle_structural_caches", _boom)
         result = check_all_cache_freshness(tmp_path)  # must NOT raise
         assert isinstance(result, list)
+
+
+def test_a_symbol_less_sub_issue_is_tagged_with_its_file_not_a_question_mark():
+    """2026-11-04: a blocking agent-kb issue (which carries no `symbol`)
+    surfaced only as `eight-way-sync-agent-kb::?` — untraceable."""
+    from tools.noctus.dev.compliance import _run_composed_keeper
+
+    out = _run_composed_keeper("eight-way-sync", [
+        ("agent-kb", lambda: [{"file": ".claude/agents/architect.md", "issue": "x", "severity": "high"}]),
+        ("kb-sync", lambda: [{"file": "KB/x.md", "issue": "y", "severity": "high", "symbol": "dangling"}]),
+    ])
+    assert [i["symbol"] for i in out] == [
+        "eight-way-sync-agent-kb::architect.md",
+        "eight-way-sync-kb-sync::dangling",
+    ]

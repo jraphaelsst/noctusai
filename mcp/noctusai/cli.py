@@ -1222,8 +1222,12 @@ def main():
         n_high = sum(1 for i in issues if i.get("severity") == "high")
         n_warn = len(issues) - n_high
         if any_high:
-            blockers = "; ".join(i.get("symbol", "?") for i in issues if i.get("severity") == "high")
-            print(f"  {RED}✗ BLOCKED by {n_high} high-severity issue(s):{RESET} {blockers}")
+            # Name WHAT failed and WHERE on the line people read — the symbol
+            # alone (`eight-way-sync-agent-kb::?`) sent operators digging.
+            blockers = "\n".join(
+                f"      {i.get('symbol', '?')} — {i.get('file', '?')}: {str(i.get('issue', ''))[:200]}"
+                for i in issues if i.get("severity") == "high")
+            print(f"  {RED}✗ BLOCKED by {n_high} high-severity issue(s):{RESET}\n{blockers}")
             if n_warn:
                 print(f"  {YELLOW}  ({n_warn} advisory warning(s) — NOT blocking; embeddings refresh at push, don't manually refresh){RESET}")
         elif detail:  # all-collapsed ⇒ the summary line above already said it
