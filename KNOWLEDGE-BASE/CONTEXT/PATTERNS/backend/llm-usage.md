@@ -85,8 +85,9 @@ scope had zero callers, so both columns were NULL on every row.
   in `products/*/backend/app` whose file never references `llm_usage_context`.
 - **Allowlist-with-reason.** `_LLM_USAGE_CONTEXT_ALLOWLIST` in `compliance.py` maps file to reason; feature
   calls with no agent identity are attributed by product + route feature. A deferral carries a named
-  `NOC-REMEDIATE[...]` marker in its reason: `llm-usage-structured-extract-agent-key` (`channels_router.py`
-  call sites) and `llm-usage-geracao-agent-key` (`geracao.py` `deps.chat`), both pending the Julia v3 train.
+  `NOC-REMEDIATE[...]` marker in its reason. A caller that passes `agent_key`/`conversation_id` as kwargs to a
+  runtime method that opens the scope itself (`channels_router.py` → `structured_extract`) is allowlisted with that
+  reason; the Studio generator (`geracao.py`) opens the scope directly.
 
 ---
 

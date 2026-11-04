@@ -8485,8 +8485,7 @@ _LLM_USAGE_CONTEXT_ALLOWLIST: dict[str, str] = {
     "social-wiring/backend/app/modules/media_creation/services/roteiro_service.py": _NO_AGENT,
     "social-wiring/backend/app/routers/chat_router.py": _NO_AGENT,
     "social-wiring/backend/app/services/media_service.py": _NO_AGENT,
-    "agents/backend/app/studio/geracao.py": "NOC-REMEDIATE[llm-usage-geracao-agent-key]: wrap deps.chat with llm_usage_context(agent_key=agent.key) after the Julia v3 train lands (it rewrites this file) — 2026-11-04",
-    "agents/backend/app/routers/channels_router.py": "NOC-REMEDIATE[llm-usage-structured-extract-agent-key]: pass agent_key=agent.key + conversation_id to runtime.structured_extract at the /resumo and /decisoes call sites after the Julia v3 train lands — 2026-11-04",
+    "agents/backend/app/routers/channels_router.py": "attribution is passed as agent_key/conversation_id kwargs to LlmToolRuntime.structured_extract, which opens the llm_usage_context scope itself (/resumo, /decisoes) — 2026-11-04",
     "social-wiring/backend/app/services/chatbot_service.py": "platform assistant chat, not a keyed agent",
 }
 

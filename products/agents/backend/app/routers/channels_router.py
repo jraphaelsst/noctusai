@@ -701,6 +701,7 @@ async def _resumir(
                 raw, usage = await runtime.structured_extract(
                     provider=active.provider, model=active.model, org_id=org_id,
                     system=system, user=user, tool=tool,
+                    agent_key=agent.key, conversation_id=conversation_id,
                 )
             shaped = extracao.shape_resumo(raw)
         except LlmRuntimeError as exc:
@@ -835,6 +836,7 @@ async def decide_channel_choice(
                 raw, usage = await runtime.structured_extract(
                     provider=active.provider, model=active.model, org_id=org_id,
                     system=system, user=user, tool=tool,
+                    agent_key=agent.key,
                 )
             escolha = raw.get("escolha")
             if escolha not in efetivas:
