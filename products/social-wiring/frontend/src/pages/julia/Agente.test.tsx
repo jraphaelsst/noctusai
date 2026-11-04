@@ -1,7 +1,7 @@
 /**
  * Julia › Agente (routing only) — states, the agents-link status, the line list (on/off + handoff target), every
  * refusal code's pt-BR message, the disabled-switch reason, handoff options (owner/admin only), the write-only token,
- * the "Configurar a Julia no app de agentes" link, and the privacy notice. No behaviour is configured here.
+ * and the privacy notice. No behaviour is configured here.
  * `@/lib/api` is the seam (real hooks + real components); `useIsOrgAdmin` / the team list are the only other fakes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -100,16 +100,11 @@ describe("Julia › Agente — states", () => {
     for (const w of ["prompt", "instruç", "persona", "tom de voz", "dica"]) expect(t).not.toContain(w);
   });
 
-  it("links to configure Julia in the agents app", async () => {
+  it("never sends the user to the agents app", async () => {
     setup();
-    const a = (await screen.findByTestId("configurar-julia-link")) as HTMLAnchorElement;
-    expect(a.textContent).toContain("Configurar a Julia no app de agentes");
-    expect(a.href).toBe("https://agents.example.test/studio/julia");
-  });
-
-  it("says so when the agents URL is unresolvable", async () => {
-    setup({ ...AGENTE, agents_url: null }, AVISO, { ...ROTEAMENTO, agents_url: null });
-    expect(await screen.findByTestId("configurar-julia-indisponivel")).toBeTruthy();
+    await screen.findByTestId("julia-roteamento-card");
+    expect(screen.queryByTestId("configurar-julia-link")).toBeNull();
+    expect(screen.queryByTestId("configurar-julia-indisponivel")).toBeNull();
   });
 });
 
@@ -189,10 +184,10 @@ describe("Line list — routing switch and handoff target", () => {
     expect(((await screen.findByRole("switch")) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("explains who gets whom (One Chat / new chats / pre-existing)", async () => {
+  it("explains who gets whom (new chats / pre-existing; no One Chat)", async () => {
     setup();
     const t = (await screen.findByTestId("julia-roteamento-card")).textContent!;
-    expect(t).toContain("One Chat");
+    expect(t).not.toContain("One Chat");
     expect(t).toContain("NOVAS");
     expect(t).toContain("já existiam");
   });

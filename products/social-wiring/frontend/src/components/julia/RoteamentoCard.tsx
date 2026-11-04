@@ -96,17 +96,16 @@ export function RoteamentoCard({ data, isAdmin }: { data: Roteamento; isAdmin: b
       <CardHeader>
         <CardTitle className="text-base">Linhas de WhatsApp</CardTitle>
         <CardDescription>
-          Escolha quais números do WhatsApp da sua organização alimentam a Julia. Números da lista de autorizados
-          continuam no One Chat. Conversas NOVAS de qualquer outra pessoa são atendidas pela Julia; conversas que já
+          Escolha quais números do WhatsApp da sua organização alimentam a Julia. Conversas NOVAS de qualquer outra pessoa são atendidas pela Julia; conversas que já
           existiam quando você liga a linha nunca são respondidas por ela.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {data.linhas.length === 0 ? (
           <p className="text-sm text-muted-foreground" data-testid="sem-linhas">
-            Nenhuma linha de WhatsApp. Adicione uma em{" "}
-            <a href="/conexoes" className="text-primary underline">
-              Conexões
+            Nenhuma linha de WhatsApp. Pareie o WhatsApp da Julia em{" "}
+            <a href="/julia/agente#whatsapp" className="text-primary underline">
+              Agente
             </a>
             .
           </p>

@@ -1,8 +1,8 @@
 /**
  * Julia › Agente (`/julia/agente`) — LINE ROUTING only (julia-v2 CONTRACT Q4 / 0.3, white-label, any org).
  *
- * Julia lives in the agents app; this page never configures her behaviour (no prompts, rules or texts here — IP stays
- * in agents). It shows: the link to configure her there, the agents link health (token + status), which WhatsApp
+ * Julia's core is maintained by the platform; this page never configures her behaviour (no prompts, rules or texts here).
+ * It shows: the agents link health (token + status), which WhatsApp
  * lines feed her + the handoff notification target, and the privacy notice (legal, lives in SW).
  * Reads are for any org member; every write is core owner/admin (server-enforced — `useIsOrgAdmin` only decides what
  * the UI offers).
@@ -16,7 +16,6 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { AgentsLinkCard } from "@/components/julia/AgentsLinkCard";
 import { AvisoPrivacidadeCard } from "@/components/julia/AvisoPrivacidadeCard";
-import { ConfigurarNoAgentes } from "@/components/julia/ConfigurarNoAgentes";
 import { JuliaLigadaCard } from "@/components/julia/JuliaLigadaCard";
 import { CatalogoCard, RelatoriosCard } from "@/components/julia/RelatoriosCatalogoCards";
 import { RoteamentoCard } from "@/components/julia/RoteamentoCard";
@@ -40,9 +39,8 @@ export default function JuliaAgente() {
           </h1>
           <p className="text-sm text-muted-foreground">
             Aqui você escolhe quais números de WhatsApp atendem leads com a Julia e quem é avisado quando ela passa um
-            lead para uma pessoa. O comportamento da Julia (conteúdo, perguntas, regras) é configurado no app de agentes.
+            lead para uma pessoa.
           </p>
-          <ConfigurarNoAgentes agentsUrl={rot.data?.agents_url ?? agente.data?.agents_url} />
         </div>
         {isRefreshing && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="agente-refreshing">
@@ -66,7 +64,7 @@ export default function JuliaAgente() {
             <div className="h-24 animate-pulse rounded-lg bg-muted" data-testid="agents-link-skeleton" />
           ) : (
             <p role="alert" className="text-sm text-destructive" data-testid="agents-link-erro">
-              Não foi possível consultar o estado da conexão com o app de agentes.
+              Não foi possível consultar o estado da conexão da Julia.
             </p>
           )}
           <RoteamentoCard data={rot.data} isAdmin={isAdmin} />

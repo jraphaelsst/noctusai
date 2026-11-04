@@ -1137,7 +1137,6 @@ function ChatTab({ client }: { client: Marca }) {
       {selectedLine ? (
         <WhatsAppChatWindow
           connectionId={selectedLine.id}
-          autoReplyEnabled={selectedLine.auto_reply_enabled}
           className="mt-1"
         />
       ) : (
