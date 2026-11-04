@@ -174,6 +174,17 @@ def _reset_core_client_seams():
 
 
 @pytest.fixture(autouse=True)
+def _reset_echo_window():
+    """The Julia echo window (`julia.envio_em_curso`) is process-local; a send made by one test must not read as "Julia just
+    sent here" in the next (it would swallow that test's takeover)."""
+    from app.services import julia_agente_service as julia
+
+    julia.reiniciar_janela_de_eco()
+    yield
+    julia.reiniciar_janela_de_eco()
+
+
+@pytest.fixture(autouse=True)
 def _simulate_product_rpcs(monkeypatch):
     """`MockSupabaseClient.rpc` cannot execute SQL; route the product RPCs the
     services call to their contract fakes (`tests/support/rpc_fakes.py`, each

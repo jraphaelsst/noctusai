@@ -66,6 +66,7 @@ STATUS_ENVIO = ("pendente", "enviado", "falhou", "sem_destino", "limitado")
 
 KIND_SEM_DESTINO = "julia_relatorio_sem_destino"
 KIND_ALERTA = "julia_alerta"
+KIND_OPT_OUT = "julia_opt_out"
 KIND_RELATORIO_FALHOU = "julia_relatorio_falhou"
 KIND_DOCUMENTO_FALHOU = "julia_documento_falhou"
 
@@ -82,6 +83,8 @@ ALERTA_ROTULOS = {
     "desvio": "desvio de conduta",
     "outro": "alerta",
 }
+#: `opt_out.motivo` (agents' closed enum) as the human reason of the notices.
+OPT_OUT_MOTIVOS = {"palavra_chave": "palavra-chave de parada", "pedido_do_lead": "pedido do próprio lead"}
 IDENTIFICACAO_ROTULOS = {"cpf": "CPF", "rg": "RG", "email": "e-mail", "documento_enviado": "documento enviado"}
 REACOES = {"gostou": "gostou", "nao_gostou": "não gostou", "sem_reacao": "sem reação"}
 
@@ -725,7 +728,7 @@ async def processar_acoes(
     recorded as an `acao_falhou` event, never raised, never stopping the next."""
     novas = {a["seq"] for a in resumo_acoes if a.get("estado") != "repetida"}
     for acao in result.julia_actions:
-        if acao.seq not in novas or acao.type not in ("lead_pronto", "alerta", "documento_identificacao"):
+        if acao.seq not in novas or acao.type not in ("lead_pronto", "alerta", "documento_identificacao", "opt_out"):
             continue
         try:
             contato = _contato_do_chat(servicos.scoped, connection, chat_id)
@@ -736,6 +739,8 @@ async def processar_acoes(
                 await _conclusao(servicos, connection, contato, acao, result, lote_hash)
             elif acao.type == "alerta":
                 await _alerta(servicos, connection, contato, chat_id, acao, result, lote_hash)
+            elif acao.type == "opt_out":
+                await _opt_out(servicos, connection, contato, chat_id, acao, result, lote_hash)
             else:
                 await processar_documento(servicos, connection=connection, contato=contato, chat_id=chat_id, payload=acao.payload)
         except Exception as exc:
@@ -771,6 +776,62 @@ async def _alerta(servicos: Any, connection: Any, contato: dict[str, Any], chat_
         servicos, connection=connection, contato=contato, tipo=TIPO_ALERTA, texto=texto, dados=dados,
         thread_id=result.thread, chave=f"{lote_hash}:{acao.seq}",
     )
+
+
+def mascarar_nome(nome: Any) -> str:
+    """`Maria Souza` -> `Maria S.`: the first name and the initial of the rest (the staff recognises the lead, the notice carries no full name)."""
+    partes = _limpar_nome(nome).split()
+    if not partes:
+        return "sem nome"
+    return partes[0] if len(partes) == 1 else f"{partes[0]} {partes[-1][0]}."
+
+
+def mascarar_telefone(telefone: Any) -> str:
+    """`+5511988887777` -> `+5511*****7777`: country + area code and the last 4 digits only."""
+    bruto = str(telefone or "").strip()
+    digitos = re.sub(r"\D", "", bruto)
+    if len(digitos) < 8:
+        return "sem telefone"
+    return f"+{digitos[:4]}{'*' * (len(digitos) - 8)}{digitos[-4:]}"
+
+
+async def _opt_out(servicos: Any, connection: Any, contato: dict[str, Any], chat_id: str, acao: Any, result: Any, lote_hash: str) -> None:
+    """The lead asked to stop being contacted (agents recorded the opt-out and sends the `opt_out` action): tell the org ADMINS in-app
+    and the report destination by WhatsApp (outbound flow `interno`) -- ONE notice per opt-out action (the ledger makes a replay
+    `repetida`, and the report row's `chave` makes the WhatsApp one idempotent). Every skipped leg is a named, logged reason."""
+    motivo = acao.payload.get("motivo")
+    motivo_txt = OPT_OUT_MOTIVOS.get(motivo, "não informado")
+    trecho = _s(acao.payload.get("trecho"), 300)
+    quem = f"{mascarar_nome(contato.get('nome'))} ({mascarar_telefone(contato.get('telefone_e164'))})"
+    org_id = connection.org_id
+    titulo = "Lead pediu para não receber mais mensagens"
+    mensagem = f"Lead {quem} pediu para não receber mais mensagens — motivo: {motivo_txt}."
+    try:
+        admins = notificacoes.admins_da_org(servicos.core_client, org_id)
+        if not admins:
+            logger.error("julia: opt-out in-app notice not written org=%s: sem_destinatarios", org_id)
+        else:
+            write_in_app(
+                servicos.core_client, user_ids=admins, kind=KIND_OPT_OUT, title=titulo, message=mensagem[:500],
+                metadata={"link": f"/julia/conversas?chat={quote(chat_id, safe='')}", "contato_id": str(contato["id"]), "chat_id": chat_id, "julia": True},
+                org_id=org_id,
+            )
+    except Exception as exc:
+        logger.error("julia: opt-out in-app notice failed org=%s (%s)", org_id, type(exc).__name__)
+    linhas = [f"🚫 Julia — pedido para parar de receber mensagens", f"Lead: {quem}", f"Motivo: {motivo_txt}"]
+    if trecho:
+        linhas.append(f"O lead disse: “{trecho}”")
+    link = link_da_conversa(chat_id)
+    if link:
+        linhas.append(f"Conversa: {link}")
+    dados = {"tipo_alerta": "opt_out", "motivo": motivo, "descricao": mensagem, "trecho": trecho or None}
+    row = await _gerar_e_entregar(
+        servicos, connection=connection, contato=contato, tipo=TIPO_ALERTA, texto="\n".join(linhas), dados=dados,
+        thread_id=result.thread, chave=f"opt_out:{lote_hash}:{acao.seq}",
+    )
+    if row is not None and row.get("envio_status") == "sem_destino":
+        logger.error("julia: opt-out WhatsApp notice has no destination org=%s: sem_destino", org_id)
+    eventos.emitir(servicos.scoped, org_id, "opt_out_notificado", contato["id"], {"motivo": motivo})
 
 
 # ── identification document ─────────────────────────────────────────────────

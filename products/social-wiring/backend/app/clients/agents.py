@@ -77,6 +77,9 @@ class TurnMessage:
     #: The extraction NEVER rides inside `texto` (a typed "[Audio transcrito] ..." is just lead text). `texto` may be empty when
     #: `midia` is set. None = a plain text message.
     midia: Optional[dict[str, Any]] = None
+    #: P1-8: WhatsApp marked this message as FORWARDED. The lead did not write it, so agents treats its text as quoted material
+    #: (never as the lead's own words / instructions).
+    encaminhada: bool = False
 
 
 #: `gatilho` of a turn: a lead message, or a re-engagement the SW timers fire (no lead message).
@@ -131,6 +134,10 @@ class TurnRequest:
 
 def _mensagem_wire(m: "TurnMessage") -> dict[str, Any]:
     out: dict[str, Any] = {"texto": m.texto, "provider_message_id": m.provider_message_id, "at": m.at.isoformat()}
+    if m.encaminhada:
+        # Sent only when true (absent = false on agents): an agents build that does not know the field yet (strict schema) keeps
+        # accepting every ordinary turn during the deploy window; only a forwarded message needs the new agents.
+        out["encaminhada"] = True
     if m.midia:
         out["midia"] = dict(m.midia)
     return out
@@ -1572,10 +1579,19 @@ class HttpAgentsClient(AgentsHttpTransport):
                 response = await client.request("PUT", path, json={"valores": valores, "ator": ator})
         except httpx.HTTPError as exc:
             raise AgentsTimeout(f"agents unreachable: {type(exc).__name__}") from exc
-        if response.status_code not in (200, 422):
+        corpo_403 = None
+        if response.status_code == 403:
+            # agents refuses channel-token writes of Julia's content (`edicao_restrita_plataforma`): that is an ANSWER to pass through,
+            # not a rejected token (any other 403 is).
+            try:
+                corpo_403 = response.json()
+            except ValueError:
+                corpo_403 = None
+            corpo_403 = corpo_403 if isinstance(corpo_403, dict) and "edicao_restrita_plataforma" in str(corpo_403) else None
+        if response.status_code not in (200, 422) and corpo_403 is None:
             self._raise_for_status(response)
         try:
-            corpo = response.json()
+            corpo = corpo_403 if corpo_403 is not None else response.json()
         except ValueError as exc:
             raise AgentsUpstreamError("agents returned a non-JSON body") from exc
         return EspecificacoesResposta(response.status_code, corpo if isinstance(corpo, dict) else {})

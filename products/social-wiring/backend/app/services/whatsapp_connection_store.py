@@ -41,6 +41,7 @@ from app.services.credential_vault import (
 )
 
 __all__ = [
+    "SessaoJaVinculada",
     "WhatsAppConnectionRecord",
     "WhatsAppConnectionStore",
     "build_whatsapp_connection_store",
@@ -48,6 +49,13 @@ __all__ = [
 
 _SCHEMA = "social_wiring"
 _TABLE = "whatsapp_connections"
+
+
+
+class SessaoJaVinculada(Exception):
+    """A WAHA transport line already owns this (base_url, session_name) -- in ANY org. Two orgs on one session would read each
+    other's chats and send as each other's number (migration 320: UNIQUE (base_url, session_name) for the WAHA transport)."""
+
 
 # Sentinel so update() can distinguish "clear webhook_url to NULL" from "leave
 # webhook_url untouched" (both differ from passing a new value).
@@ -241,9 +249,29 @@ class WhatsAppConnectionStore:
         }
         if marca_id is not None:
             payload["marca_id"] = str(marca_id)
-        resp = self._table().insert(payload).execute()
+        try:
+            resp = self._table().insert(payload).execute()
+        except Exception as exc:
+            msg = str(exc).lower()
+            if ("23505" in msg or "unique" in msg or "duplicate key" in msg) and (
+                "base_url" in msg or "session_name" in msg or "session" in msg
+            ):
+                raise SessaoJaVinculada(payload["session_name"]) from exc
+            raise
         rows = list(resp.data or [])
         return self._record(rows[0] if rows else payload)
+
+    def session_is_bound(self, *, base_url: str, session_name: str) -> bool:
+        """Is this WAHA (base_url, session_name) already a line, in ANY org? Cross-org on purpose (service-role read): the answer
+        is never shown to the caller beyond a 409."""
+        resp = (
+            self._table()
+            .select("*")
+            .eq("base_url", base_url.rstrip("/"))
+            .eq("session_name", session_name or "default")
+            .execute()
+        )
+        return any((r.get("transporte") or "waha") == "waha" for r in (resp.data or []))
 
     def get_by_webhook_token(
         self, token: str

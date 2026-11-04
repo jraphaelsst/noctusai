@@ -251,6 +251,7 @@ HANDLERS: dict[str, Handler] = {
     "intencao_visita": _h_intencao_visita,
     "alerta": _h_tratada_pelo_worker,  # julia-v3 §12.3: delivered by `julia_relatorio_service.processar_acoes`
     "documento_identificacao": _h_tratada_pelo_worker,  # julia-v3 §12.8: same
+    "opt_out": _h_tratada_pelo_worker,  # go-live: the lead asked to stop; the notices are `julia_relatorio_service._opt_out`
 }
 
 

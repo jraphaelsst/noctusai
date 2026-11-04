@@ -36,7 +36,7 @@ class Scene:
         return getattr(self.tc, m)(URL, headers=H, **({"json": json} if json is not None else {}))
 
 
-def _scene(role, *, agents="fake"):
+def _scene(role, *, agents="fake", plataforma=True):
     w = World()
     w.seed_connection(user_id=OWNER_ID)
     w.core.set_table_data("noctus_users", [
@@ -57,9 +57,13 @@ def _scene(role, *, agents="fake"):
 
         bind_consent_module_to_mock(w.root)
         w.agents = FakeAgentsClient() if agents == "fake" else agents
+        from app.dependencies import get_platform_admin_check
+
         app.dependency_overrides[get_agents_client_factory] = lambda: (lambda org_id: w.agents)
+        app.dependency_overrides[get_platform_admin_check] = lambda: (lambda uid: plataforma)
         yield Scene(TestClient(app), w)
         app.dependency_overrides.pop(get_agents_client_factory, None)
+        app.dependency_overrides.pop(get_platform_admin_check, None)
 
 
 @pytest.fixture
@@ -68,8 +72,14 @@ def admin():
 
 
 @pytest.fixture
+def org_admin():
+    """An org owner who is NOT a platform admin: reads the specs, cannot write them."""
+    yield from _scene("owner", plataforma=False)
+
+
+@pytest.fixture
 def member():
-    yield from _scene("member")
+    yield from _scene("member", plataforma=False)
 
 
 @pytest.fixture
@@ -88,6 +98,19 @@ def test_a_member_is_refused_and_agents_is_never_called(member, metodo):
     r = member.req(metodo, {"valores": {"agencia": "x"}} if metodo == "put" else None)
     assert r.status_code == 403
     assert member.w.agents.especificacoes_salvas == []
+
+
+def test_an_org_admin_who_is_not_a_platform_admin_cannot_write_403(org_admin):
+    r = org_admin.req("put", {"valores": {"agencia": "x"}})
+    assert r.status_code == 403 and _codigo(r) == "edicao_restrita_plataforma"
+    assert org_admin.w.agents.especificacoes_salvas == []
+    assert org_admin.req("get").status_code == 200  # reading stays available to the org admin
+
+
+def test_agents_edicao_restrita_403_is_passed_through_not_read_as_a_bad_token(admin):
+    admin.w.agents.especificacoes_script.append(EspecificacoesResposta(403, {"code": "edicao_restrita_plataforma", "detail": "restrito"}))
+    r = admin.req("put", {"valores": {"agencia": "x"}})
+    assert r.status_code == 403 and r.json()["code"] == "edicao_restrita_plataforma"
 
 
 def test_get_passes_agents_body_through(admin):
@@ -176,6 +199,8 @@ async def _http_client_wire():
             return httpx.Response(422, json={"code": "spec_parece_instrucao", "violacoes": [{"chave": "agencia"}]})
         if b"negado" in request.content:
             return httpx.Response(403, json={"code": "scope_missing"})
+        if b"restrito" in request.content:
+            return httpx.Response(403, json={"code": "edicao_restrita_plataforma"})
         return httpx.Response(200, json={"agent_key": "julia", "valores": []})
 
     c = _http(handler)
@@ -185,6 +210,8 @@ async def _http_client_wire():
     assert ruim.status == 422 and ruim.corpo["violacoes"] == [{"chave": "agencia"}]
     with pytest.raises(AgentsTokenInvalid):
         await c.salvar_especificacoes("julia", {"agencia": "negado"}, ATOR)
+    restrito = await c.salvar_especificacoes("julia", {"agencia": "restrito"}, ATOR)
+    assert restrito.status == 403 and restrito.corpo["code"] == "edicao_restrita_plataforma"
     assert vistos[0][:3] == ("PUT", "/api/channels/agents/julia/specs", "Bearer noc_tok")
     assert json.loads(vistos[0][3]) == {"valores": {"agencia": "bom"}, "ator": ATOR}
     got = await _http(lambda r: httpx.Response(200, json={"declaradas": []})).especificacoes("julia")

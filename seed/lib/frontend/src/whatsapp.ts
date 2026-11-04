@@ -76,11 +76,13 @@ export interface WhatsAppPurgeResult {
 
 /**
  * Create payload — the backend derives `base_url` / `session_name` /
- * `webhook_url` server-side. Only `label` + `api_key` are user-supplied.
+ * `webhook_url` server-side. `label` is always user-supplied; `api_key` only for a backend that still takes the WAHA key
+ * from the operator (the seed router). A backend that provisions with its own server key (social-wiring) takes NO key and
+ * 422s one -- omit it.
  */
 export interface CreateWhatsAppConnectionBody {
   label: string;
-  api_key: string;
+  api_key?: string;
   /** `borrower` registers a line on a session another app owns (test phases). Default `owner`. */
   session_role?: 'owner' | 'borrower';
 }

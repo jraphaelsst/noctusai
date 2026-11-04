@@ -28,6 +28,7 @@ function CriarLinha() {
         Criar linha
       </Button>
       <CreateConnectionDialog
+        askApiKey={false}
         open={aberto}
         onClose={() => setAberto(false)}
         mutations={mutations}
@@ -66,7 +67,7 @@ export function WhatsAppJuliaCard({ linha, isAdmin }: { linha: LinhaRoteamento |
             hooks={juliaLinhaHooks}
             canManage={isAdmin}
             onLogoutConfirmText={LOGOUT_TEXT}
-            emptyAction={isAdmin ? <CriarLinha /> : <p className="text-xs">Peça a um owner ou admin da organização para criar a linha.</p>}
+            emptyAction={isAdmin ? <CriarLinha /> : <p className="text-xs">Peça à equipe NoctusAI para criar a linha.</p>}
           />
         </ConfirmProvider>
         {!isAdmin && !!linha && (

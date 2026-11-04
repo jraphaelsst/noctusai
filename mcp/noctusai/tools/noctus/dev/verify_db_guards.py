@@ -1485,6 +1485,48 @@ _JULIA_CONEXAO_TRANSPORTE_PROBE = GuardProbe(
 )
 
 
+_JULIA_CONEXAO_SESSAO_UNICA_PROBE = GuardProbe(
+    id="whatsapp_connections.waha_session.unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_sw_whatsapp_connections_waha_session",
+    kind="write_refusal",
+    migrations=("320_whatsapp_connections_session_unique_hide_secrets.sql",),
+    rationale=(
+        "One WAHA session = one line across ALL orgs: two lines on the same (base_url, session_name) read each other's chats and send "
+        "as each other's number. The create route pre-checks (409 `sessao_ja_vinculada`); this partial UNIQUE index is the backstop "
+        "under a race. Two throwaway WAHA rows (distinct label + webhook_token, so no OTHER unique fires first) borrow an "
+        "existing (org_id, user_id)."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_user_id uuid;
+BEGIN
+  SELECT org_id, user_id INTO v_org_id, v_user_id FROM {_SW_SCHEMA}.whatsapp_connections LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (org_id, user_id) from';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, session_name, encrypted_api_key, webhook_token, transporte)
+    VALUES (v_org_id, v_user_id, 'noc-probe-a', 'https://noc-probe.invalid', 'noc-probe-session', 'x', 'noc-probe-token-a', 'waha');
+    INSERT INTO {_SW_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, session_name, encrypted_api_key, webhook_token, transporte)
+    VALUES (v_org_id, v_user_id, 'noc-probe-b', 'https://noc-probe.invalid', 'noc-probe-session', 'x', 'noc-probe-token-b', 'waha');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: two WAHA lines on one session succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%uq_sw_whatsapp_connections_waha_session%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE = GuardProbe(
     id="org_memberships.ended_at.iff_removed",
     product="core",
@@ -11496,6 +11538,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _JULIA_CHAT_CATEGORIA_PROBE,
     _JULIA_AGENTE_EXIGE_ATIVADO_EM_PROBE,
     _JULIA_CONEXAO_TRANSPORTE_PROBE,
+    _JULIA_CONEXAO_SESSAO_UNICA_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,

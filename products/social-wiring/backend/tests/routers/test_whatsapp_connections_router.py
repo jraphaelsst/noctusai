@@ -13,7 +13,7 @@ Auth + the 503-on-config-gap path come from the shared ``client`` fixture
 ``KB § PATTERNS/di-test-seam.md`` (Class-B).
 
 Contract v2 changes (social-waha-connect-backend):
-  - Create payload shrinks to {label, api_key}.
+  - Create payload shrinks to {label} (+ marca_id): the WAHA key is the SERVER's (go-live hardening, migration 320).
   - ``base_url`` / ``session_name`` / ``webhook_url`` are server-derived.
   - ``session_name`` is the configured WAHA session (``"default"``) — WAHA Core
     permits only the single ``default`` session.
@@ -33,6 +33,7 @@ from cryptography.fernet import Fernet
 
 from noctusai_lib.integrations.whatsapp import FakeWahaClient
 
+from app.dependencies import get_platform_admin_check
 from app.services.whatsapp_connection_store import WhatsAppConnectionStore
 from app.sqlite_client import SQLiteClient
 
@@ -75,7 +76,7 @@ def connections_client(client, tmp_path: Path, override_settings, monkeypatch):
     )
 
     # ── Settings: configure waha_base_url so create can resolve the server ──
-    override_settings(waha_base_url="https://waha.example.com")
+    override_settings(waha_base_url="https://waha.example.com", waha_api_key="server-waha-key")
 
     # ── Product URL: deterministic via env var (no network / no DB) ──────────
     monkeypatch.setenv("PRODUCT_URL_SOCIAL_WIRING", _PRODUCT_BASE)
@@ -93,16 +94,26 @@ def connections_client(client, tmp_path: Path, override_settings, monkeypatch):
         # One Fake per session so state (start/logout) persists across requests.
         return fakes.setdefault(session, FakeWahaClient(session=session))
 
+    # The caller is an owner of its org AND a platform admin (provisioning a line is platform-admin only; the mutations are
+    # org-admin only). The role boundaries have their own tests in test_julia_golive_hardening.py.
+    from noctusai_lib.testing.clients import TEST_USER_ID
+
+    client.mock_supabase.set_table_data(
+        "noctus_users", [{"id": TEST_USER_ID, "org_id": "test-org-123", "org_role": "owner"}]
+    )
     _prev_store = app.dependency_overrides.get(get_connection_store)
     _prev_factory = app.dependency_overrides.get(get_waha_client_factory)
+    _prev_platform = app.dependency_overrides.get(get_platform_admin_check)
     app.dependency_overrides[get_connection_store] = lambda: store
     app.dependency_overrides[get_waha_client_factory] = lambda: fake_factory
+    app.dependency_overrides[get_platform_admin_check] = lambda: (lambda uid: True)
 
     yield client, fakes
 
     for dep, prev in (
         (get_connection_store, _prev_store),
         (get_waha_client_factory, _prev_factory),
+        (get_platform_admin_check, _prev_platform),
     ):
         if prev is None:
             app.dependency_overrides.pop(dep, None)
@@ -110,9 +121,9 @@ def connections_client(client, tmp_path: Path, override_settings, monkeypatch):
             app.dependency_overrides[dep] = prev
 
 
-def _create(c, *, label="Atendimento SP", api_key="k"):
-    """Create a connection via the v2 contract: only label + api_key."""
-    body = {"label": label, "api_key": api_key}
+def _create(c, *, label="Atendimento SP"):
+    """Create a connection: the body is the label only (the WAHA key is the server's)."""
+    body = {"label": label}
     return c.post("/api/whatsapp/connections", json=body)
 
 
@@ -137,32 +148,28 @@ class TestCrud:
         assert resp.json()["base_url"] == "https://waha.example.com"
 
     def test_create_uses_configured_session_name(self, connections_client):
-        """session_name is the configured WAHA session ("default") — WAHA Core
-        permits only the single 'default' session, so every line drives it."""
+        """session_name is the configured WAHA session ("default"); that session is then BOUND: a second line on it (any org)
+        is a 409 -- one WAHA session, one line."""
         c, _ = connections_client
         resp1 = _create(c, label="Line 1")
         resp2 = _create(c, label="Line 2")
         assert resp1.status_code == 201, resp1.text
-        assert resp2.status_code == 201, resp2.text
-
-        s1 = resp1.json()["session_name"]
-        s2 = resp2.json()["session_name"]
-        assert s1 == "default", f"expected configured 'default' session, got {s1!r}"
-        assert s2 == "default", f"expected configured 'default' session, got {s2!r}"
+        assert resp1.json()["session_name"] == "default"
+        assert resp2.status_code == 409, resp2.text
 
     def test_api_key_route_is_gone(self, connections_client):
         """No route returns the decrypted key: GET /{id}/api-key is removed."""
         c, _ = connections_client
-        created = _create(c, label="No reveal", api_key="super-secret-key").json()
+        created = _create(c, label="No reveal").json()
         resp = c.get(f"/api/whatsapp/connections/{created['id']}/api-key")
         assert resp.status_code == 404, resp.text
-        assert "super-secret-key" not in resp.text
+        assert "server-waha-key" not in resp.text
 
     def test_planted_secret_never_in_any_response(self, connections_client):
         """A known api_key never appears in any connections route response."""
         c, _ = connections_client
-        secret = "PLANTED-SECRET-9f3a7c"
-        resp = _create(c, label="Planted", api_key=secret)
+        secret = "server-waha-key"
+        resp = _create(c, label="Planted")
         assert resp.status_code == 201, resp.text
         bodies = [resp.text]
         cid = resp.json()["id"]
@@ -172,9 +179,9 @@ class TestCrud:
         patched = c.patch(f"{base}/{cid}", json={"label": "Planted 2"})
         assert patched.status_code == 200, patched.text
         bodies.append(patched.text)
-        replaced = c.patch(f"{base}/{cid}", json={"api_key": "ANOTHER-SECRET-77"})
-        assert replaced.status_code == 200, replaced.text
-        bodies.append(replaced.text)
+        rejected = c.patch(f"{base}/{cid}", json={"api_key": "ANOTHER-SECRET-77"})
+        assert rejected.status_code == 422, rejected.text  # there is no key replacement any more
+        bodies.append(rejected.text)
         bodies.append(c.get(f"{base}/{cid}/status").text)
         bodies.append(c.get(f"{base}/{cid}/qr").text)
         for body in bodies:
@@ -283,16 +290,15 @@ class TestLiveOps:
 
     def test_webhook_persists_url(self, connections_client):
         c, _ = connections_client
-        cid = _create(c).json()["id"]
-        resp = c.post(
-            f"/api/whatsapp/connections/{cid}/webhook",
-            json={"url": "https://app/api/whatsapp/webhook"},
-        )
+        created = _create(c).json()
+        cid = created["id"]
+        resp = c.post(f"/api/whatsapp/connections/{cid}/webhook", json={})
         assert resp.status_code == 200, resp.text
         assert resp.json()["ok"] is True
-        # The line remembers the last-wired webhook.
+        # The URL is the line's own (server-derived); the line remembers it.
+        assert resp.json()["url"] == created["webhook_url"]
         listed = c.get("/api/whatsapp/connections").json()
-        assert listed[0]["webhook_url"] == "https://app/api/whatsapp/webhook"
+        assert listed[0]["webhook_url"] == created["webhook_url"]
 
 
 class TestConfigGap:
@@ -307,7 +313,7 @@ class TestConfigGap:
         """Empty waha_base_url → 503 (no silent fallback)."""
         c, _ = connections_client
         override_settings(waha_base_url="")
-        resp = c.post("/api/whatsapp/connections", json={"label": "X", "api_key": "k"})
+        resp = c.post("/api/whatsapp/connections", json={"label": "X"})
         assert resp.status_code == 503, resp.text
 
     def test_missing_product_url_503(self, connections_client, monkeypatch):
@@ -316,7 +322,7 @@ class TestConfigGap:
         # Remove the env var so resolve_product_url raises ValueError.
         monkeypatch.delenv("PRODUCT_URL_SOCIAL_WIRING", raising=False)
         monkeypatch.delenv("PRODUCT_URL_PATTERN", raising=False)
-        resp = c.post("/api/whatsapp/connections", json={"label": "X", "api_key": "k"})
+        resp = c.post("/api/whatsapp/connections", json={"label": "X"})
         assert resp.status_code == 503, resp.text
 
 
@@ -438,7 +444,7 @@ class TestClientId:
         c, _ = connections_client
         resp = c.post(
             "/api/whatsapp/connections",
-            json={"label": "ClienteA", "api_key": "k", "marca_id": _FAKE_CLIENT_ID},
+            json={"label": "ClienteA", "marca_id": _FAKE_CLIENT_ID},
         )
         assert resp.status_code == 201, resp.text
         assert resp.json()["marca_id"] == _FAKE_CLIENT_ID
@@ -448,7 +454,7 @@ class TestClientId:
         c, _ = connections_client
         resp = c.post(
             "/api/whatsapp/connections",
-            json={"label": "NoCliente", "api_key": "k"},
+            json={"label": "NoCliente"},
         )
         assert resp.status_code == 201, resp.text
         assert resp.json()["marca_id"] is None
@@ -458,21 +464,29 @@ class TestClientId:
         c, _ = connections_client
         other_client_id = "22222222-2222-4222-8222-222222222222"
 
+        from app.main import app
+        from app.routers.whatsapp_connections_router import get_connection_store
+        from uuid import UUID
+
         r1 = c.post(
             "/api/whatsapp/connections",
-            json={"label": "Conn Linked", "api_key": "k", "marca_id": _FAKE_CLIENT_ID},
+            json={"label": "Conn Linked", "marca_id": _FAKE_CLIENT_ID},
         )
-        r2 = c.post(
-            "/api/whatsapp/connections",
-            json={"label": "Conn Other", "api_key": "k", "marca_id": other_client_id},
+        assert r1.status_code == 201
+        # a second line cannot be provisioned on the same WAHA session (409), so the other cliente's line is seeded on its own session
+        store = app.dependency_overrides[get_connection_store]()
+        other = store.create_connection(
+            org_id=store.get_by_id(UUID(r1.json()["id"])).org_id,
+            user_id=UUID("00000000-0000-4000-8000-0000000000aa"), label="Conn Other", base_url="https://waha.example.com",
+            api_key="k", session_name="outra", marca_id=UUID(other_client_id),
         )
-        assert r1.status_code == 201 and r2.status_code == 201
+        r2_id = str(other.id)
 
         resp = c.get(f"/api/whatsapp/connections?marca_id={_FAKE_CLIENT_ID}")
         assert resp.status_code == 200, resp.text
         ids = [r["id"] for r in resp.json()]
         assert r1.json()["id"] in ids
-        assert r2.json()["id"] not in ids
+        assert r2_id not in ids
 
     def test_update_assigns_client_id(self, connections_client):
         """PATCH with marca_id assigns the link."""
@@ -491,7 +505,7 @@ class TestClientId:
         c, _ = connections_client
         cid = c.post(
             "/api/whatsapp/connections",
-            json={"label": "ClearMe", "api_key": "k", "marca_id": _FAKE_CLIENT_ID},
+            json={"label": "ClearMe", "marca_id": _FAKE_CLIENT_ID},
         ).json()["id"]
 
         resp = c.patch(
@@ -506,7 +520,7 @@ class TestClientId:
         c, _ = connections_client
         cid = c.post(
             "/api/whatsapp/connections",
-            json={"label": "KeepClient", "api_key": "k", "marca_id": _FAKE_CLIENT_ID},
+            json={"label": "KeepClient", "marca_id": _FAKE_CLIENT_ID},
         ).json()["id"]
 
         resp = c.patch(

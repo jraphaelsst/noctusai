@@ -70,6 +70,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.redis import make_redis_client
+from noctusai_lib.integrations.whatsapp.inbox.ingest import is_non_conversation_jid
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from noctusai_lib.domain.chatbot import QueuedConversationMessage
@@ -84,12 +85,12 @@ from app.dependencies import get_admin_client, get_core_client, get_scoped_admin
 from app.rate_limit import limiter
 from app.routers.julia_agente_router import get_agents_client_factory
 from app.routers.whatsapp_connections_router import get_waha_client_factory
-from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
+from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload, mensagem_encaminhada
 from app.services import julia_agente_service as julia
 from app.services.identidade_mascara import ref as ref_log
 from app.services import julia_conversas_service, julia_origem_service, julia_protecao_service, julia_staff_service, julia_thread_service
 from app.services.conversation_module import get_conversation_module
-from app.services.media_service import MidiaLead, ResolvedMedia, make_media_service, midia_recusada
+from app.services.media_service import MidiaLead, make_media_service, midia_recusada
 from app.services.message_store import DuplicateMessage, MessageStore, StoredMessage
 from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.waha_response_registry import record_waha_sample
@@ -222,7 +223,7 @@ async def _register_contact_bg(
     except Exception:
         logger.warning(
             "WhatsApp contact auto-register failed for sender=%s — continuing",
-            sender,
+            ref_log(sender),
             exc_info=True,
         )
 
@@ -352,7 +353,7 @@ def _entrada_da_linha(connection, *, cfg=None, waha_factory=None) -> EntradaDaLi
 async def _handle_lead_message(
     *, connection, entrada, chat_id: str, sender: str, message_body: str,
     provider_message_id: str, push_name: str | None, cfg,
-    midia: dict | None = None, referral: dict | None = None,
+    midia: dict | None = None, referral: dict | None = None, encaminhada: bool = False,
 ) -> bool:
     """The lead path for ONE inbound. Returns True when the message was handled here
     (enqueued for Julia, or deliberately held because a human has the chat), False
@@ -406,7 +407,7 @@ async def _handle_lead_message(
             direction="inbound",
             provider_message_id=provider_message_id or f"sw-{uuid4().hex}",
             metadata={"push_name": push_name, "sender": sender, **({"midia": midia} if midia else {}),
-                      **({"referral": referral} if referral else {})},
+                      **({"referral": referral} if referral else {}), "encaminhada": bool(encaminhada)},
         )
     )
     logger.info("Julia: lead message buffered chat=%s debounce=%ss", ref_log(chat_id), cfg.message_debounce_seconds)
@@ -423,11 +424,6 @@ async def _triar_lead(connection, *, chat_id: str, sender: str, cfg):
     except Exception as exc:
         logger.error("Julia: inbound triage unavailable conn=%s (%s) -- media AI refused for this inbound", connection.id, type(exc).__name__)
         return julia_protecao_service.Triagem("erro", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
-
-
-def _org_da_midia(connection) -> UUID:
-    """Whose Anthropic key reads this inbound media: the org that owns the line."""
-    return connection.org_id
 
 
 async def _resolver_midia_do_lead(
@@ -511,7 +507,7 @@ async def _apply_human_takeover(
 
     What is NOT a takeover (CONTRACT julia-line B2): a STAFF chat (`equipe`); a row whose durable `origem` is `julia` (her bubble) or
     `interno` (a system-sent staff notice, pre-written by its sender so this echo deduplicated); and, while a Julia send is in
-    flight, WAHA's echo that beat our bookkeeping (the short Redis flag -- OPTIONAL: with Redis down the durable `origem` decides)."""
+    flight, WAHA's echo that beat our bookkeeping (the 30 s local echo window + the short Redis flag -- Redis is OPTIONAL: with it down the local window and the durable `origem` decide)."""
     if connection is None or not connection.agente_leads_ativo or is_group or equipe:
         return
     try:
@@ -558,6 +554,41 @@ async def _apply_human_takeover(
     )
 
 
+#: H5: a SIGNED message event older than this (or further in the future than the skew) is a replay of a captured body, not live traffic.
+WEBHOOK_MAX_AGE_S = 300
+WEBHOOK_MAX_FUTURE_S = 60
+
+
+def _epoch_s(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return number / 1000.0 if number > 1e11 else number  # WAHA emits seconds or milliseconds depending on the field
+
+
+def _motivo_envelope_fora_da_janela(body: Any, envelope, *, agora: float | None = None) -> str | None:
+    """Why a signed message envelope is outside the freshness window, or None when it is live. The envelope's own `timestamp` (when
+    WAHA emitted the event) wins over the message's (when the person sent it): a phone that was offline delivers an old message
+    in a fresh event. No timestamp at all on a signed event is refused (`timestamp_ausente`)."""
+    import time
+
+    bruto = body.get("timestamp") if isinstance(body, dict) else None
+    ts = _epoch_s(bruto)
+    if ts is None and isinstance(envelope.payload, WAHAMessage):
+        ts = _epoch_s(envelope.payload.timestamp)
+    if ts is None:
+        return "timestamp_ausente"
+    delta = (agora if agora is not None else time.time()) - ts
+    if delta > WEBHOOK_MAX_AGE_S:
+        return "timestamp_antigo"
+    if delta < -WEBHOOK_MAX_FUTURE_S:
+        return "timestamp_futuro"
+    return None
+
+
 async def _process_waha_body(
     body: dict,
     *,
@@ -566,6 +597,7 @@ async def _process_waha_body(
     cfg=None,
     waha_factory=None,
     agents_client_factory=None,
+    signed: bool = False,
 ) -> Response:
     """Shared WAHA envelope processor for the per-connection route (``POST /api/whatsapp/webhook/{token}``).
 
@@ -605,6 +637,20 @@ async def _process_waha_body(
     # below rather than silently misrouting into one of these.
     event = envelope.event
 
+    # H5: the envelope must belong to THIS line's WAHA session. A body replayed or forged onto another line's token is refused
+    # (the call is still a 200 no-op to WAHA: it would only retry).
+    if (envelope.session or "") != (connection.session_name or ""):
+        logger.warning(
+            "WhatsApp webhook refused: reason=session_divergente conn=%s event=%s", connection.id, event,
+        )
+        return Response(status_code=status.HTTP_200_OK)
+
+    if event in {"message", "message.any"} and signed:
+        motivo = _motivo_envelope_fora_da_janela(body, envelope)
+        if motivo is not None:
+            logger.warning("WhatsApp webhook refused: reason=%s conn=%s event=%s", motivo, connection.id, event)
+            return Response(status_code=status.HTTP_200_OK)
+
     if event == "session.status":
         await _handle_session_status(envelope, connection=connection, cfg=cfg)
         return Response(status_code=status.HTTP_200_OK)
@@ -629,6 +675,11 @@ async def _process_waha_body(
 
     payload = envelope.payload
     if not isinstance(payload, WAHAMessage):
+        return Response(status_code=status.HTTP_200_OK)
+
+    # H6: Status posts, broadcast lists and channels are not conversations: nothing is stored, routed or read by an AI call.
+    if any(is_non_conversation_jid(j) for j in (payload.chat_id, payload.from_, payload.to)):
+        logger.debug("WhatsApp webhook ignored: reason=broadcast_ou_canal conn=%s", connection.id)
         return Response(status_code=status.HTTP_200_OK)
 
     # Extract sender and message body
@@ -658,6 +709,11 @@ async def _process_waha_body(
     # constraint is the durable backstop for restart-survival; this SETNX
     # is purely for cost + latency (Redis is optional here: a failure falls through).
     provider_message_id = (payload.id or "").strip()
+    if not provider_message_id and connection.agente_leads_ativo:
+        # H5: a message with no id cannot be deduplicated (a replay would run twice) and its fromMe echo cannot be matched to
+        # SW's own send (a fake takeover). On Julia's line it is dropped, loudly.
+        logger.warning("WhatsApp webhook refused: reason=id_vazio conn=%s event=%s", connection.id, event)
+        return Response(status_code=status.HTTP_200_OK)
     if provider_message_id:
         try:
             _setnx_client = make_redis_client(cfg.redis_url, decode_responses=True)
@@ -685,7 +741,6 @@ async def _process_waha_body(
     # Media-aware inbound: if the payload carries media (audio note,
     # photo, video, document), resolve it to enriched text BEFORE the
     # chatbot ever sees the message.
-    resolved_media: ResolvedMedia | None = None
     midia_lead: MidiaLead | None = None
     triagem = None
     legenda_original = message_body
@@ -704,13 +759,14 @@ async def _process_waha_body(
         media_filename = getattr(payload.media, "filename", None) or (
             payload.media.get("filename") if isinstance(payload.media, dict) else None
         )
-    # GUARDRAILS B5/B8: staff never get a media AI call (they are never a lead); on a Julia line a stranger's media is triaged
-    # (blocklist, per-number rate limit) BEFORE any AI call and resolved under the LEAD caps.
+    # GUARDRAILS B5/B8: staff never get a media AI call (they are never a lead); a stranger's media on ANY line (Julia's or not) is
+    # triaged (blocklist, per-number rate limit) BEFORE any AI call and resolved under the LEAD caps + the media budget (P1-4).
+    # A group / broadcast never gets a media AI call at all.
     if not from_me and not is_group:
         if equipe:
             triagem = julia_protecao_service.Triagem(
                 "equipe", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
-        elif connection.agente_leads_ativo:
+        else:
             triagem = await _triar_lead(connection, chat_id=chat_id, sender=sender, cfg=cfg)
     if media_url and not from_me and triagem is not None and triagem.estado != "equipe":
         midia_lead = await _resolver_midia_do_lead(
@@ -718,22 +774,8 @@ async def _process_waha_body(
             legenda=legenda_original, cfg=cfg,
         )
         message_body = midia_lead.exibicao()  # SW's own inbox line (masked); agents gets `midia`, never this string
-    elif media_url and not from_me and triagem is None:
-        try:
-            media_service = make_media_service(org_id=_org_da_midia(connection))
-            resolved_media = await media_service.resolve_inbound(
-                url=media_url,
-                mimetype=media_mimetype,
-                filename=media_filename,
-                fallback_text=message_body,
-            )
-            # Merge any caption text the user typed alongside the media.
-            if message_body and resolved_media.text:
-                message_body = f"{resolved_media.text}\n\nLegenda do usuario: {message_body}"
-            else:
-                message_body = resolved_media.text or message_body
-        except Exception as exc:
-            logger.error("media resolution failed (%s)", type(exc).__name__)
+    elif media_url and not from_me and is_group:
+        logger.info("WhatsApp: group media stored without reading it (no AI call for a group) conn=%s", connection.id)
 
     if not message_body and media_url:
         # Media with no caption and no resolvable text (e.g. no Anthropic key):
@@ -766,7 +808,7 @@ async def _process_waha_body(
             provider_message_id=provider_message_id or None,
             authorized=True,
             structured_payload=_payload_com_anexo(
-                resolved_media.structured_payload if resolved_media else (midia_lead.structured_payload if midia_lead else None),
+                midia_lead.structured_payload if midia_lead else None,
                 media_url=media_url, mimetype=media_mimetype, filename=media_filename,
             ),
             connection_id=connection.id,
@@ -814,7 +856,7 @@ async def _process_waha_body(
                 # docstring) — safe to pass on every message. On a `fromMe`
                 # message it is OUR name, never the chat's title.
                 title=None if from_me else (getattr(payload, "pushName", None) or None),
-                has_media=bool(resolved_media) or payload.has_media,
+                has_media=payload.has_media,
                 # the category follows the CURRENT staff list on every 1:1 message (a person removed from staff stops being `equipe`)
                 categoria=None if is_group else ("equipe" if equipe else "lead"),
             )
@@ -879,7 +921,7 @@ async def _process_waha_body(
     except Exception:
         logger.warning(
             "WhatsApp contact auto-register scheduling failed for sender=%s — continuing",
-            sender,
+            ref_log(sender),
             exc_info=True,
         )
 
@@ -897,6 +939,7 @@ async def _process_waha_body(
             push_name=getattr(payload, "pushName", None), cfg=cfg,
             midia=midia_lead.para_agents() if midia_lead is not None else None,
             referral=julia_origem_service.extrair_referral_ctwa(body),
+            encaminhada=mensagem_encaminhada(payload),
         )
     return Response(status_code=status.HTTP_200_OK)
 
@@ -1029,6 +1072,7 @@ async def whatsapp_webhook_by_token(
         connection=connection,
         waha_factory=waha_factory,
         agents_client_factory=agents_client_factory,
+        signed=bool((cfg.waha_webhook_hmac_secret or "").strip()),
     )
 
 

@@ -3,15 +3,14 @@
  * declared by the agent's active version, filled in by SW users, validated server-side. They are DATA, never
  * instructions; Julia's core stays managed by NoctusAI.
  *
- *   GET /api/julia/especificacoes   org member: declarations + current values + what is missing / invalid
- *   PUT /api/julia/especificacoes   org admin:  {"valores": {chave: texto}} — a blank value clears that key
+ *   GET /api/julia/especificacoes   org admin: declarations + current values + what is missing / invalid
+ *   (READ-ONLY here: the PUT is NoctusAI-only, an org admin gets 403 `edicao_restrita_plataforma`; there is no save hook)
  *
- * Refusals (all typed): 422 (block mode) `{code, detail, violacoes[]}`; 409 `agente_nao_conectado`;
+ * Refusals (all typed): 409 `agente_nao_conectado`;
  * 502/503 `agents_indisponivel` | `agents_token_invalido`. Where the code sits in the body varies with how the server
  * raised it, so `leituraErroEspec` reads all the known places.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { api } from "@/lib/api";
 
@@ -111,14 +110,5 @@ export function useJuliaEspecificacoes() {
       const s = leituraErroEspec(err).status;
       return (s === null || s >= 500) && n < 2;
     },
-  });
-}
-
-export function useSalvarEspecificacoes() {
-  return useCacheWriteMutation<Especificacoes, { valores: Record<string, string> }>({
-    mutationFn: async (body) => desembrulhar(await api.put<Especificacoes | { data: Especificacoes }>(URL, body)),
-    // The server validates and normalises: the draft is not a prediction of the answer, so there is no optimistic
-    // draw; the answer replaces the cached read.
-    targets: [{ queryKey: JULIA_ESPECIFICACOES_KEY, commit: (_old: Especificacoes | undefined, saved) => saved }],
   });
 }

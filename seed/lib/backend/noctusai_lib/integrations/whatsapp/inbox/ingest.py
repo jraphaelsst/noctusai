@@ -66,6 +66,14 @@ OnMessage = Callable[[UUID, UUID, InboxChat, InboxMessage], Awaitable[None]]
 WahaClientFactory = Callable[[WhatsAppConnectionRecord], Any]
 
 _IGNORED_SUFFIXES = ("@broadcast", "@newsletter")
+
+
+def is_non_conversation_jid(jid: Optional[str]) -> bool:
+    """True for a WhatsApp jid that is a broadcast surface, never a conversation: `status@broadcast` (Status posts), any
+    `@broadcast` list and any `@newsletter` channel. The ONE classifier -- consumers (the inbox ingest, a product's webhook)
+    call this rather than keep a second suffix list."""
+    value = (jid or "").strip().lower()
+    return bool(value) and value.endswith(_IGNORED_SUFFIXES)
 _PHONE_SUFFIXES = ("@c.us", "@s.whatsapp.net")
 
 
@@ -140,7 +148,7 @@ def parse_waha_message(
         return None
     from_me = bool(payload.get("fromMe"))
     jid = chat_jid or first_text(payload, "chatId") or first_text(payload, "to" if from_me else "from")
-    if not jid or jid.endswith(_IGNORED_SUFFIXES) or jid == "status@broadcast":
+    if not jid or is_non_conversation_jid(jid):
         return None
     body = payload.get("body")
     body = body if isinstance(body, str) else ""

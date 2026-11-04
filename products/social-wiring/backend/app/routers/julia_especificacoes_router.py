@@ -4,7 +4,9 @@ live and are validated in AGENTS -- SW is a faithful proxy, never a second valid
   GET /api/julia/especificacoes   org admin  -> agents' body verbatim:
         {agent_key, version_id, versao, declaradas[{chave,rotulo,descricao,tipo,obrigatoria,exemplo}],
          valores[{chave,valor,updated_at,updated_by,updated_by_nome}], faltando[], invalidas[{chave,codigo,motivo,mensagem}], modo_validacao}
-  PUT /api/julia/especificacoes   org admin  {"valores": {chave: texto}}   (the acting user -- id, name, e-mail -- is filled by
+  PUT /api/julia/especificacoes   PLATFORM ADMIN only (owner 2026-11-04: SW users do not edit Julia's content for now -- an org admin gets
+        a strict 403 `edicao_restrita_plataforma`; agents refuses channel-token writes with the same code and its body passes through)
+        {"valores": {chave: texto}}   (the acting user -- id, name, e-mail -- is filled by
         THIS route from the session and sent to agents as `ator`; a body `ator` is refused, the body is `valores` only)
         200 -> the same body (report mode lists `invalidas`; the write landed)
         422 -> agents' body verbatim: {code, detail, violacoes[{chave,codigo,motivo,mensagem}]} (block mode, or
@@ -27,7 +29,7 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import AgentNotFound, AgentsClient, AgentsClientError, AgentsTokenInvalid
-from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_platform_admin_check
 from app.routers.whatsapp_connections_router import get_agents_client_factory
 from app.services.julia_agente_service import DEFAULT_AGENT_KEY
 
@@ -103,9 +105,16 @@ async def salvar(
     request: Request = None,
     auth: tuple = Depends(get_current_user_org),
     client_factory=Depends(get_agents_client_factory),
+    e_admin_da_plataforma=Depends(get_platform_admin_check),
 ) -> JSONResponse:
     core = get_core_client()
-    await run_blocking(require_org_admin_for, core, auth, request, _O_QUE)
+    if not await run_blocking(e_admin_da_plataforma, str(getattr(auth[0], "id", "") or "")):
+        logger.warning("julia: specs write refused -- not a platform admin (edicao_restrita_plataforma)")
+        raise AppException(
+            "edicao_restrita_plataforma",
+            "As especificações da Julia são configuradas pela equipe NoctusAI. Para alterar, fale com o suporte.",
+            status_code=403,
+        )
     agents = await run_blocking(_agents, client_factory, coerce_org_uuid(auth[2]))
     ator = await run_blocking(_ator, auth, core)
     try:

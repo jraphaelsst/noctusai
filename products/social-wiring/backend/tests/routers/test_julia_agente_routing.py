@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import time
 from typing import Any
 from unittest.mock import patch
 from uuid import UUID
@@ -51,7 +52,7 @@ def _msg(
     from_me: bool = False, participant: str | None = None, to: str | None = None, event: str = "message",
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "id": mid, "timestamp": 1760000000, "from": frm if frm is not None else chat, "chatId": chat,
+        "id": mid, "timestamp": int(time.time()), "from": frm if frm is not None else chat, "chatId": chat,
         "body": body, "fromMe": from_me, "pushName": "Ana",
     }
     if participant:

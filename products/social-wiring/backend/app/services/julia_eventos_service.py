@@ -61,7 +61,7 @@ TIPOS_ALERTA_DONO: frozenset[str] = frozenset({"agents_contrato_invalido", "supe
 #: not notifiable (each failure raises its own in-app alert).
 TIPOS_JULIA_V2: frozenset[str] = frozenset({
     "lead_pronto", "intencao_visita", "agente_nao_atendeu", "handoff_recebido", "lead_opt_out", "limite_para_humano",
-    "relatorio_entregue", "alerta_julia", "documento_identificacao",
+    "relatorio_entregue", "alerta_julia", "documento_identificacao", "opt_out_notificado",
 })
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA

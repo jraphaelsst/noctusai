@@ -234,3 +234,13 @@ def test_on_message_fires_per_newly_stored_message_and_a_raising_consumer_never_
         waha_message(mid="m2", ts=1_790_000_100), connection=record, chat_store=store, on_message=on_message
     ))
     assert seen == [(CHAT, "m1", False), (CHAT, "m2", False)]
+
+
+def test_is_non_conversation_jid_is_the_one_broadcast_classifier():
+    """Status posts, broadcast lists and channels are not conversations; consumers (the inbox ingest, a product's webhook) share this."""
+    from noctusai_lib.integrations.whatsapp.inbox.ingest import is_non_conversation_jid
+
+    for jid in ("status@broadcast", "5511999990000@broadcast", "120363000000000009@newsletter", " STATUS@BROADCAST "):
+        assert is_non_conversation_jid(jid) is True
+    for jid in ("5511999990000@c.us", "120363000000000001@g.us", "123@lid", "", None):
+        assert is_non_conversation_jid(jid) is False

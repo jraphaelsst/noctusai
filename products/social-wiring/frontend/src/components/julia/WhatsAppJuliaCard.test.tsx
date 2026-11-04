@@ -79,6 +79,6 @@ describe("WhatsAppJuliaCard", () => {
     cleanup();
     setup(undefined, false);
     expect(screen.queryByTestId("whatsapp-criar-linha")).toBeNull();
-    await waitFor(() => expect(screen.getByText(/Peça a um owner ou admin/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Peça à equipe NoctusAI/)).toBeTruthy());
   });
 });

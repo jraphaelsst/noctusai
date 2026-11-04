@@ -36,6 +36,7 @@ from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.integrations.redis import make_redis_client
+from noctusai_lib.integrations.whatsapp.inbox.ingest import is_non_conversation_jid
 from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import AppException
 
@@ -80,7 +81,10 @@ def parse_lead_key(key: str) -> Optional[tuple[UUID, str]]:
 
 
 def is_group_chat(chat_id: str | None) -> bool:
-    return (chat_id or "").strip().lower().endswith("@g.us")
+    """A GROUP, or a broadcast surface (`status@broadcast`, `@broadcast`, `@newsletter`): a chat that is never one lead's
+    conversation. It is stored at most -- never routed to Julia, never read by an AI call (H2 / H6). The broadcast half is the
+    seed inbox's own classifier (one list, not two)."""
+    return (chat_id or "").strip().lower().endswith("@g.us") or is_non_conversation_jid(chat_id)
 
 
 def is_lid(chat_id: str) -> bool:
@@ -675,13 +679,45 @@ def _sending_key(connection_id: UUID | str, chat_id: str) -> str:
     return f"julia:julia_sending:{connection_id}:{chat_id}"
 
 
+#: P1-9: the echo window that does NOT depend on Redis. A `fromMe` message with no durable `origem` yet, on a chat SW sent to within
+#: this many seconds, is SW's own echo that beat its bookkeeping -- never a human taking over. Process-local (the send and the
+#: webhook that sees its echo share the app process); Redis stays the cross-process complement.
+_ECO_JANELA_S = 30
+_ULTIMO_ENVIO: dict[tuple[str, str], float] = {}
+
+
+def _registrar_envio_local(connection_id: UUID | str, chat_id: str) -> None:
+    agora = time.monotonic()
+    _ULTIMO_ENVIO[(str(connection_id), chat_id)] = agora
+    if len(_ULTIMO_ENVIO) > 2048:  # bounded: drop what is already out of the window
+        for k in [k for k, t in _ULTIMO_ENVIO.items() if agora - t > _ECO_JANELA_S]:
+            _ULTIMO_ENVIO.pop(k, None)
+
+
+def reiniciar_janela_de_eco() -> None:
+    """Forget every recorded send (the local echo window). For tests / a process re-init; production never calls it."""
+    _ULTIMO_ENVIO.clear()
+
+
 def marcar_envio_em_curso(r: Any, connection_id: UUID | str, chat_id: str) -> None:
-    r.set(_sending_key(connection_id, chat_id), "1", ex=_SENDING_TTL_S)
+    _registrar_envio_local(connection_id, chat_id)
+    if r is None:
+        return
+    try:
+        r.set(_sending_key(connection_id, chat_id), "1", ex=_SENDING_TTL_S)
+    except Exception as exc:  # Redis down must not stop the send: the local window already covers the echo
+        logger.warning("julia: in-flight send flag not written (%s) -- relying on the local echo window", type(exc).__name__)
 
 
 def encerrar_envio(r: Any, connection_id: UUID | str, chat_id: str) -> None:
-    """Keep the flag alive a few seconds: WAHA's `fromMe` echo can trail the send."""
-    r.expire(_sending_key(connection_id, chat_id), _SENDING_GRACE_S)
+    """Keep the flag alive a few seconds: WAHA's `fromMe` echo can trail the send. The local window restarts at the END of the send."""
+    _registrar_envio_local(connection_id, chat_id)
+    if r is None:
+        return
+    try:
+        r.expire(_sending_key(connection_id, chat_id), _SENDING_GRACE_S)
+    except Exception as exc:
+        logger.warning("julia: in-flight send flag not extended (%s) -- relying on the local echo window", type(exc).__name__)
 
 
 def origem_e_eco_proprio(origem: str | None) -> bool:
@@ -691,14 +727,17 @@ def origem_e_eco_proprio(origem: str | None) -> bool:
 
 
 def envio_em_curso(r: Any, *, connection_id: UUID | str, chat_id: str) -> bool:
-    """The short in-flight flag. Redis is OPTIONAL: no client, or a Redis that errors, answers False (the durable `origem` check
-    is the one that matters)."""
+    """Is SW sending to (or just finished sending to) this chat? True inside the local 30 s echo window, or while the Redis flag
+    is up. Redis is OPTIONAL: no client / an erroring Redis falls back to the local window alone (never an error)."""
+    ultimo = _ULTIMO_ENVIO.get((str(connection_id), chat_id))
+    if ultimo is not None and time.monotonic() - ultimo <= _ECO_JANELA_S:
+        return True
     if r is None:
         return False
     try:
         return bool(r.get(_sending_key(connection_id, chat_id)))
     except Exception as exc:
-        logger.warning("julia: in-flight send flag unreadable (%s) -- relying on the durable origem", type(exc).__name__)
+        logger.warning("julia: in-flight send flag unreadable (%s) -- relying on the local echo window", type(exc).__name__)
         return False
 
 
@@ -809,7 +848,7 @@ __all__ = [
     "exigir_aviso_completo", "exigir_destinatario_valido", "exigir_hmac_configurado",
     "expandir_aliases", "gravar_snapshot", "is_group_chat", "is_lid",
     "lead_key", "limpar_erro_link", "listar_todos_os_chats", "ler_erro_link",
-    "marcar_envio_em_curso", "mensagem_inicial_pronta", "motivo_codigo_do_handoff", "notificar_handoff", "origem_e_eco_proprio", "parse_lead_key",
+    "marcar_envio_em_curso", "mensagem_inicial_pronta", "reiniciar_janela_de_eco", "motivo_codigo_do_handoff", "notificar_handoff", "origem_e_eco_proprio", "parse_lead_key",
     "permitir_turno", "phone_digits", "public_privacy_link",
     "registrar_erro_link", "resolve_agents_client", "sanitize_motivo", "snapshot_contem",
     "usuario_e_admin_da_org",

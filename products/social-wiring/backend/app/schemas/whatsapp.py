@@ -138,6 +138,36 @@ class WAHAMessage(BaseModel):
     # and in ``to`` for outgoing. We normalise in the router.
 
 
+def _truthy_forward(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value > 0  # `forwardingScore`: > 0 = forwarded
+    return isinstance(value, str) and value.strip().lower() in {"true", "1"}
+
+
+def mensagem_encaminhada(payload: "WAHAMessage") -> bool:
+    """P1-8: did WhatsApp mark this message as FORWARDED? WAHA exposes it per engine: a top-level `isForwarded` (WEBJS), `_data.isForwarded`
+    / `forwardingScore`, or `contextInfo.isForwarded` / `forwardingScore` under `_data.message.<kind>` (NOWEB / GOWS). Any of them
+    means the lead did not write the text. A forwarded message is passed to agents flagged (`encaminhada`), never silently as the
+    lead's own words."""
+    extra = payload.model_extra or {}
+    if _truthy_forward(extra.get("isForwarded")) or _truthy_forward(extra.get("forwardingScore")):
+        return True
+    data = extra.get("_data")
+    if not isinstance(data, dict):
+        return False
+    if _truthy_forward(data.get("isForwarded")) or _truthy_forward(data.get("forwardingScore")):
+        return True
+    message = data.get("message")
+    if isinstance(message, dict):
+        for kind in message.values():
+            ctx = kind.get("contextInfo") if isinstance(kind, dict) else None
+            if isinstance(ctx, dict) and (_truthy_forward(ctx.get("isForwarded")) or _truthy_forward(ctx.get("forwardingScore"))):
+                return True
+    return False
+
+
 class WAHASendTextResponse(BaseModel):
     """Known variants from POST /api/sendText.
 

@@ -18,7 +18,6 @@ import {
   Hash,
   Loader2,
   MessageSquare,
-  Pencil,
   Plus,
   Power,
   RefreshCw,
@@ -405,19 +404,6 @@ export function ConnectionSettingsPanel({
   const { update } = useWhatsAppConnectionMutations();
 
   const [editLabel, setEditLabel] = useState(line.label);
-  const [editApiKey, setEditApiKey] = useState("");
-  const [keyMode, setKeyMode] = useState<"hidden" | "editing">("hidden");
-
-  const startEditingKey = () => {
-    setKeyMode("editing");
-    setEditApiKey("");
-  };
-
-  const cancelEditingKey = () => {
-    setKeyMode("hidden");
-    setEditApiKey("");
-  };
-
   const recover = useRecoverConnection();
 
   const paired = !!status?.paired;
@@ -461,7 +447,6 @@ export function ConnectionSettingsPanel({
 
   const onSave = () => {
     const body: UpdateConnectionBody = { label: editLabel.trim() };
-    if (editApiKey.trim()) body.api_key = editApiKey.trim();
     update.mutate(
       { id: line.id, body },
       {
@@ -575,66 +560,6 @@ export function ConnectionSettingsPanel({
                 disabled={update.isPending}
                 data-testid="edit-conn-label"
               />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="edit-apikey">
-                API key{" "}
-                <span className="text-xs font-normal text-muted-foreground">
-                  {keyMode === "editing"
-                    ? "(substituir: digite a nova chave)"
-                    : "(configurada — toque no lápis para substituir)"}
-                </span>
-              </Label>
-              {keyMode === "editing" ? (
-                <div className="flex items-center gap-1.5">
-                  <Input
-                    id="edit-apikey"
-                    type="text"
-                    value={editApiKey}
-                    onChange={(e) => setEditApiKey(e.target.value)}
-                    placeholder="Nova API key (X-Api-Key da instância WAHA)"
-                    disabled={update.isPending}
-                    autoComplete="off"
-                    autoFocus
-                    className="font-mono"
-                    data-testid="edit-conn-apikey"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 shrink-0"
-                    onClick={cancelEditingKey}
-                    disabled={update.isPending}
-                    aria-label="Cancelar edição da API key"
-                    data-testid="btn-apikey-cancel"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <Input
-                    id="edit-apikey"
-                    type="text"
-                    readOnly
-                    value="••••••••"
-                    className="font-mono"
-                    data-testid="edit-conn-apikey-display"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 shrink-0"
-                    onClick={startEditingKey}
-                    aria-label="Editar API key"
-                    data-testid="btn-apikey-edit"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
             </div>
           </div>
 

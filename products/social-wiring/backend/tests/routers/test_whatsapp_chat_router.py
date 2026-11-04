@@ -325,6 +325,7 @@ def chat_client(client, tmp_path: Path, override_settings, monkeypatch):
       - FakeWahaClient for the send / recover / read-receipt paths
       - waha_base_url + PRODUCT_URL_SOCIAL_WIRING env
     """
+    from app.dependencies import get_platform_admin_check
     from app.main import app
     from app.routers.whatsapp_connections_router import (
         _ChatMessagesReader,
@@ -335,7 +336,12 @@ def chat_client(client, tmp_path: Path, override_settings, monkeypatch):
         get_waha_client_factory,
     )
 
-    override_settings(waha_base_url="https://waha.example.com")
+    override_settings(waha_base_url="https://waha.example.com", waha_api_key="server-waha-key")
+    from noctusai_lib.testing.clients import TEST_USER_ID
+
+    client.mock_supabase.set_table_data(
+        "noctus_users", [{"id": TEST_USER_ID, "org_id": "test-org-123", "org_role": "owner"}]
+    )
     monkeypatch.setenv("PRODUCT_URL_SOCIAL_WIRING", _PRODUCT_BASE)
 
     # Shared db_path used by every store so cross-table reads see the same data.
@@ -368,6 +374,7 @@ def chat_client(client, tmp_path: Path, override_settings, monkeypatch):
         get_chat_store_factory: lambda: _make_chat_store,
         get_chat_messages_reader_factory: lambda: _make_chat_messages_reader,
         get_waha_client_factory: lambda: _fake_factory,
+        get_platform_admin_check: lambda: (lambda uid: True),  # provisioning is platform-admin only
     }
     _prev = {dep: app.dependency_overrides.get(dep) for dep in overrides}
     app.dependency_overrides.update(overrides)
@@ -381,8 +388,8 @@ def chat_client(client, tmp_path: Path, override_settings, monkeypatch):
             app.dependency_overrides[dep] = prev
 
 
-def _create_connection(c, *, label="Test Line", api_key="k") -> dict:
-    resp = c.post("/api/whatsapp/connections", json={"label": label, "api_key": api_key})
+def _create_connection(c, *, label="Test Line") -> dict:
+    resp = c.post("/api/whatsapp/connections", json={"label": label})
     assert resp.status_code == 201, resp.text
     return resp.json()
 

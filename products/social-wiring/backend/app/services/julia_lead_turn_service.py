@@ -226,6 +226,7 @@ def mensagem_do_turno(item: dict[str, Any]) -> TurnMessage:
     return TurnMessage(
         texto=item["text"], provider_message_id=str(item["provider_message_id"]), at=_as_datetime(item.get("timestamp")),
         midia=dict(midia) if isinstance(midia, dict) and midia else None,
+        encaminhada=bool((item.get("metadata") or {}).get("encaminhada")),
     )
 
 

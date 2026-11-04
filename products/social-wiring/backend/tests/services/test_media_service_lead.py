@@ -8,7 +8,7 @@ import pytest
 
 from app.services import media_service as ms
 from app.services.media_service import (
-    LEAD_AUDIO_BYTES, LEAD_IMAGEM_BYTES, LEAD_PDF_BYTES, PLACEHOLDERS_MIDIA, MediaService, MediaTooLarge, midia_recusada,
+    LEAD_AUDIO_BYTES, LEAD_IMAGEM_BYTES, LEAD_PDF_BYTES, PLACEHOLDERS_MIDIA, MediaHostRefused, MediaService, MediaTooLarge, midia_recusada,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -85,15 +85,16 @@ class TestDownloadGuards:
         r = await lead(svc, "image/jpeg")
         assert r.estado == "falhou" and svc.ai_calls == [] and len(seen) == 1 and "evil" not in seen[0]
 
-    async def test_the_waha_key_goes_only_to_the_waha_host(self):
+    async def test_the_waha_key_goes_only_to_the_waha_host_and_no_other_host_is_fetched(self):
         seen = []
         svc = FakeAI(serve(seen=seen))
         await svc._download(URL)  # rewritten onto the WAHA base host
         assert seen[-1].headers.get("x-api-key") == "waha-secret" and seen[-1].url.host == "waha.internal"
-        await svc._download("https://cdn.example.com/file.jpg")
-        assert "x-api-key" not in seen[-1].headers and seen[-1].url.host == "cdn.example.com"
-        await svc._download("http://waha.internal.evil.example:3000/x.jpg")
-        assert "x-api-key" not in seen[-1].headers
+        n = len(seen)
+        for hostile in ("https://cdn.example.com/file.jpg", "http://waha.internal.evil.example:3000/x.jpg"):
+            with pytest.raises(MediaHostRefused):  # P1-4: a host the sender chose is never fetched, key or no key
+                await svc._download(hostile)
+        assert len(seen) == n
 
 
 class TestLeadResolution:
