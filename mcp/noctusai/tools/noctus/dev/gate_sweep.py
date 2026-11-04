@@ -114,6 +114,7 @@ from .harness_signatures import HARNESS_SIGNATURES as _HARNESS_SIGNATURES
 from .harness_signatures import harness_suspect as _harness_suspect
 from .harness_signatures import read_load_per_core as _read_load_per_core
 from . import gate_budget as _gate_budget
+from . import hw_admission as _hw
 from .migration_replay import products_for_paths
 from .migrate_product import (
     FakeGitRunner,  # noqa: F401  (re-exported for test convenience)
@@ -1595,11 +1596,35 @@ def _rerun_timeout_shaped_vitest(
     entry["rerun_after_timeouts"] = first
 
 
+_AUTO_ADMIT = object()
+
+
+def _resolve_admit(admit: Any, run_gate: Any) -> Any:
+    """`admit` explicit (a callable or None) wins. Left at the sentinel, real
+    subprocess runs (run_gate is None) are admitted through the machine-wide
+    heavy slot and an injected runner is not. A caller that injects a REAL
+    runner (task_branch's deadline-boxed one) MUST pass admit explicitly —
+    2026-11-04: it didn't, so every merged-tip gate bypassed the slot."""
+    if admit is not _AUTO_ADMIT:
+        return admit
+    return _hw.heavy_slot if run_gate is None else None
+
+
+def _heavy_cap() -> int:
+    """`max_heavy` from the hardware budget; 1 when the budget is unreadable
+    (heavy_slot itself then refuses with `budget_error`, so nothing runs)."""
+    try:
+        return int(_hw.load_budget()["max_heavy"])
+    except _hw.BudgetError:
+        return 1
+
+
 def _run_gates(
     specs: list[GateSpec],
     run_gate: Callable[[GateSpec], GateRunResult],
     env_residue: list[str] | None = None,
     max_workers: int = 1,
+    admit: Callable[[str], Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Preflight, then run, then classify — in that order.
 
@@ -1608,19 +1633,28 @@ def _run_gates(
     code. It is recorded `ran=False` with `harness_invalid` naming what is
     missing and how to fix it.
 
+    `admit` (the hardware admission gate, `hw_admission.heavy_slot`) wraps
+    every REAL gate run in a machine-wide heavy slot; a gate it does not
+    admit is NOT RUN and recorded `waiting_for_slot` (inconclusive, never a
+    verdict). With `admit`, threads are capped at the budget's `max_heavy`
+    so no worker waits on a slot it can never get.
+
     Gates run on up to `max_workers` threads (each is its own subprocess, so
     threads only wait); results are returned in SPEC ORDER regardless."""
     workers = max(1, min(max_workers, len(specs) or 1))
+    if admit is not None:
+        workers = min(workers, _heavy_cap())
     if workers == 1:
-        return [_run_one_gate(spec, run_gate, env_residue) for spec in specs]
+        return [_run_one_gate(spec, run_gate, env_residue, admit) for spec in specs]
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda sp: _run_one_gate(sp, run_gate, env_residue), specs))
+        return list(pool.map(lambda sp: _run_one_gate(sp, run_gate, env_residue, admit), specs))
 
 
 def _run_one_gate(
     spec: GateSpec,
     run_gate: Callable[[GateSpec], GateRunResult],
     env_residue: list[str] | None,
+    admit: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     if env_residue:
         # The developer's `.env` is still in the gate env (2026-10-09:
@@ -1662,7 +1696,39 @@ def _run_one_gate(
                 for p in unmet
             ],
         }
+    if admit is None:
+        return _run_admitted_gate(spec, run_gate)
+    with admit(f"gate:{spec.gate}") as adm:
+        if not adm.admitted:
+            return {
+                "gate": spec.gate,
+                "ran": False,
+                "exit_code": None,
+                "summary": (
+                    "NOT RUN — waiting_for_slot: the hardware admission gate did not "
+                    "admit this heavy gate (" + "; ".join(adm.blocked_by) + "); "
+                    "inconclusive, not a verdict on the code"
+                ),
+                "duration_s": 0.0,
+                "waiting_for_slot": adm.as_dict(),
+            }
+        entry = _run_admitted_gate(spec, run_gate)
+        # The capacity log's `ran` row carries the verdict (load experiments
+        # need the failure rate per phase, not only durations).
+        if hasattr(adm, "outcome"):
+            adm.outcome.update(exit_code=entry.get("exit_code"),
+                               harness_suspect=bool(entry.get("harness_suspect")),
+                               timed_out=bool(entry.get("timed_out")))
+        entry["hw_phase"] = getattr(adm, "phase", None)
+        return entry
 
+
+def _run_admitted_gate(
+    spec: GateSpec,
+    run_gate: Callable[[GateSpec], GateRunResult],
+) -> dict[str, Any]:
+    """Run one gate whose preconditions passed (and, for real runs, that the
+    hardware admission gate admitted) and classify its result."""
     raw = run_gate(spec)
     # 3-tuple seams stay supported; see GateRunResult.
     exit_code, summary, duration, output = raw if len(raw) == 4 else (*raw, raw[1])
@@ -1724,6 +1790,7 @@ def run_gates_named(
     run_gate: Callable[[GateSpec], GateRunResult] | None = None,
     max_workers: int | None = None,
     prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
+    admit: Any = _AUTO_ADMIT,
 ) -> dict[str, Any]:
     """Run ONLY the named gates in `repo_root` (no diff, no scope derivation)
     and return `{gates, unknown}` with the sweep's own per-gate entry shape
@@ -1738,7 +1805,8 @@ def run_gates_named(
     prepared = prepare_gates(root, specs) if prepare_gates is not None else None
     env_residue = dotenv_residue(gate_subprocess_env(root), root)
     workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
-    return {"gates": _run_gates(specs, runner, env_residue, max_workers=workers),
+    return {"gates": _run_gates(specs, runner, env_residue, max_workers=workers,
+                                admit=_resolve_admit(admit, run_gate)),
             "unknown": unknown, "env_prepared": prepared}
 
 
@@ -1784,8 +1852,11 @@ def _verdict(gates: list[dict[str, Any]]) -> str:
     failed = [g for g in gates if g["ran"] and g["exit_code"] != 0]
     if any(not g.get("harness_suspect") for g in failed):
         return "red"
-    if failed or any(g.get("harness_invalid") or g.get("timed_out") for g in gates):
-        return "inconclusive"  # a timed-out gate produced no verdict: unmeasured, never red/green
+    if failed or any(g.get("harness_invalid") or g.get("timed_out") or g.get("waiting_for_slot")
+                     for g in gates):
+        # a timed-out gate, or one the hardware admission gate never admitted
+        # (`waiting_for_slot`), produced no verdict: unmeasured, never red/green
+        return "inconclusive"
     if any(not g["ran"] for g in gates):
         return "incomplete"
     return "green"
@@ -1804,6 +1875,7 @@ def gate_sweep(
     git_runner: GitRunner | None = None,
     max_workers: int | None = None,
     prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
+    admit: Any = _AUTO_ADMIT,
 ) -> dict[str, Any]:
     """Run the canonical gate set for what actually changed vs. `base_ref`;
     return a structured, measured verdict. See module docstring.
@@ -1899,7 +1971,10 @@ def gate_sweep(
     # scrub ever regresses; the scrub itself makes it empty by construction.
     env_residue = dotenv_residue(gate_subprocess_env(root), root)
     workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
-    gates = _run_gates(specs, runner, env_residue, max_workers=workers)
+    # Real runs go through the machine-wide hardware admission gate; an
+    # injected runner (tests) is not a heavy subprocess and is not gated.
+    gates = _run_gates(specs, runner, env_residue, max_workers=workers,
+                       admit=_resolve_admit(admit, run_gate))
 
     fanout = scope.get("seed_fanout") or {}
     if fanout.get("mode") == "scoped":

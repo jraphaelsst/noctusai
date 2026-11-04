@@ -1144,8 +1144,32 @@ def _render_report(product: str, unknowns: list[dict], when: str) -> str:
         "",
     ]
     for u in unknowns:
-        lines += [f"## check: {u['check']}", "", "```", u["output"].strip()[:4000], "```", ""]
+        lines += [f"## check: {u['check']}", "", "```", failure_excerpt(u["output"]), "```", ""]
     return "\n".join(lines)
+
+
+_EXCERPT_LIMIT = 12000
+_FAILURE_MARKERS = ("= FAILURES =", "= ERRORS =", "FAIL ", "Error:", "Traceback (most recent call last)")
+
+
+def failure_excerpt(output: str, limit: int = _EXCERPT_LIMIT) -> str:
+    """The part of a failing check's output that carries the VERDICT.
+
+    pytest / vitest / vite print the failure (assertion, traceback, summary)
+    at the END, after pages of progress and log lines. The report used to keep
+    the FIRST 4000 chars, so it always ended just before the assertion
+    (2026-11-04: core test_invite_success — the only evidence of a flake under
+    load was cut at the test body). Keep from the first failure marker on;
+    if that is still too long, keep its head and the closing summary."""
+    text = (output or "").strip()
+    if len(text) <= limit:
+        return text
+    starts = [text.find(m) for m in _FAILURE_MARKERS if text.find(m) >= 0]
+    body = text[min(starts):] if starts else text
+    if len(body) <= limit:
+        return body
+    head, tail = limit * 2 // 3, limit // 3
+    return body[:head] + "\n\n[… truncated: middle of failure output omitted …]\n\n" + body[-tail:]
 
 
 @_toolkit_freshness.warn_gate("predeploy_check")
