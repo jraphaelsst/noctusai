@@ -12,6 +12,8 @@ import type { VersionSummary } from "@/api/studio/types";
 import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
 import { CompletudeCard } from "@/components/studio/CompletudeCard";
 import { GeracaoPanel } from "@/components/studio/GeracaoPanel";
+import { ProntidaoPanel } from "@/components/studio/ProntidaoPanel";
+import { ExemplarSwitch } from "@/components/studio/ExemplarSwitch";
 import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
 import { ControlesCard } from "@/components/studio/ControlesCard";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
@@ -133,6 +135,7 @@ export default function OverviewTab({ agentKey }: { agentKey: string }) {
       </div>
 
       <CompletudeCard status={agent.conteudo_status} />
+      {draft && <ProntidaoPanel agentKey={agentKey} />}
       {isPlatformAdmin && agent.definition_scope === "plataforma" && agent.conteudo_modo === "linhas" && (
         <GeracaoPanel agentKey={agentKey} />
       )}
@@ -167,6 +170,7 @@ export default function OverviewTab({ agentKey }: { agentKey: string }) {
       </div>
 
       {agent.definition_scope === "plataforma" && <ControlesCard agentKey={agentKey} />}
+      {isPlatformAdmin && <ExemplarSwitch agentKey={agentKey} exemplar={!!agent.exemplar} />}
 
       {isAdmin && importOpen && (
         <ImportBundleDialog

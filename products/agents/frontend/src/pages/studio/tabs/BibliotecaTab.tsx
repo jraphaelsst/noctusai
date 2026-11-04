@@ -7,6 +7,7 @@
  *
  * The routes live on branch `feat/julia-v2-a-skills`; this tab is built against that router.
  */
+import { useConfirm } from "@noctusai/lib/components";
 import { useState } from "react";
 import { ArrowUpCircle, Pin, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -15,7 +16,14 @@ import { Badge, Button, EmptyState, Select } from "@noctusai/lib/design-system";
 import type { BibliotecaRef } from "@/api/studio/types-julia";
 import { RestrictedNotice, SaveError, VersionBar, useContentTarget } from "@/components/studio/ConteudoChrome";
 import { StudioLoading } from "@/components/studio/StudioStates";
-import { useBibliotecaRefs, useBibliotecaSkills, useFixarSkill, useRemoverSkillFixada } from "@/hooks/studio/useBiblioteca";
+import type { SkillsAtualizadas } from "@/api/studio/types-prontidao";
+import {
+  useAtualizarSkillsBiblioteca,
+  useBibliotecaRefs,
+  useBibliotecaSkills,
+  useFixarSkill,
+  useRemoverSkillFixada,
+} from "@/hooks/studio/useBiblioteca";
 import { useVersionContent } from "@/hooks/studio/useConteudo";
 import { errorMessage } from "@/lib/errors";
 import { SKILLS_BIBLIOTECA_HREF, skillHref } from "../skillsRoutes";
@@ -124,6 +132,9 @@ export default function BibliotecaTab({ agentKey }: { agentKey: string }) {
   const ferr = useVersionContent(agentKey, "ferramentas", versionId);
   const fixar = useFixarSkill(agentKey);
   const remover = useRemoverSkillFixada(agentKey);
+  const atualizarTodas = useAtualizarSkillsBiblioteca(agentKey);
+  const confirm = useConfirm();
+  const [resultado, setResultado] = useState<SkillsAtualizadas | null>(null);
   const [escolhida, setEscolhida] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   // Local pending selection per skill (key present = the card was edited). Ticking never hits the network.
@@ -190,6 +201,25 @@ export default function BibliotecaTab({ agentKey }: { agentKey: string }) {
     }
   }
 
+  async function atualizarTudo() {
+    setErro(null);
+    setResultado(null);
+    const ok = await confirm({
+      title: "Atualizar skills para a versão mais nova?",
+      description:
+        "Isso altera o rascunho: cada skill fixada passa para a versão publicada mais recente. As avaliações do rascunho ficam desatualizadas e precisam ser rodadas de novo antes de publicar.",
+      confirmLabel: "Atualizar skills",
+    });
+    if (!ok) return;
+    try {
+      const r = await atualizarTodas.mutateAsync();
+      setResultado(r);
+      toast.success(r.atualizadas.length ? `${r.atualizadas.length} skill(s) atualizada(s).` : "Nenhuma skill precisava de atualização.");
+    } catch (err) {
+      setErro(errorMessage(err));
+    }
+  }
+
   async function desafixar(skill: string) {
     setErro(null);
     try {
@@ -218,6 +248,41 @@ export default function BibliotecaTab({ agentKey }: { agentKey: string }) {
     <div className="space-y-4" data-testid="biblioteca-tab">
       <VersionBar agentKey={agentKey} rotulo="Skills fixadas" />
       {pins.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
+      {isDraft && fixadas.length > 0 && (
+        <div className="space-y-2" data-testid="biblioteca-atualizar">
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={atualizarTodas.isPending || sujas.length > 0} onClick={() => void atualizarTudo()} data-testid="biblioteca-atualizar-btn">
+              <ArrowUpCircle className="mr-1 h-3.5 w-3.5" />
+              {atualizarTodas.isPending ? "Atualizando…" : "Atualizar skills para a versão mais nova"}
+            </Button>
+            {sujas.length > 0 && <span className="text-xs text-muted-foreground">Salve as alterações pendentes antes.</span>}
+          </div>
+          {resultado && (
+            <div className="rounded-md border border-border bg-card p-3 text-sm" data-testid="biblioteca-atualizar-resultado">
+              {resultado.atualizadas.length === 0 ? (
+                <p>Todas as skills já estavam na versão mais nova.</p>
+              ) : (
+                <>
+                  <p className="font-medium">Atualizadas:</p>
+                  <ul className="ml-5 list-disc text-xs">
+                    {resultado.atualizadas.map((a) => (
+                      <li key={a.skill}>
+                        <span className="font-mono">{a.skill}</span>: v{a.de} → v{a.para}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-xs text-amber-700">Rode as avaliações de novo: o rascunho mudou.</p>
+                </>
+              )}
+              {resultado.sem_mudanca.length > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Sem mudança: <span className="font-mono">{resultado.sem_mudanca.join(", ")}</span>
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {isDraft && sujas.length >= 2 && (
         <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm" data-testid="biblioteca-salvar-tudo-barra">
           <span>{sujas.length} skills com alterações não salvas.</span>

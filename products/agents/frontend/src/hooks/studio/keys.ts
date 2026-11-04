@@ -30,6 +30,7 @@ export const studioKeys = {
   diff: (key: string, a: string, b: string) => ["studio", key, "diff", a, b] as const,
   geracoes: (key: string) => ["studio", key, "geracoes"] as const,
   geracao: (key: string, id: string) => ["studio", key, "geracoes", id] as const,
+  prontidao: (key: string) => ["studio", key, "prontidao"] as const,
   clients: (key: string) => ["studio", key, "clients"] as const,
   client: (key: string, clientId: string) => ["studio", key, "clients", clientId] as const,
   prompt: (hash: string) => ["studio-prompt", hash] as const,

@@ -11,6 +11,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
+import type { SkillsAtualizadas } from "@/api/studio/types-prontidao";
 import type { BibliotecaRefInput, BibliotecaRefs, BibliotecaSkill, SkillVersao, SkillVersaoMeta } from "@/api/studio/types-julia";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
 
@@ -55,6 +56,7 @@ function pinTargets(key: string) {
 
 const pinInvalidate = (key: string) => [
   studioKeys.detail(key),
+  studioKeys.prontidao(key),
   studioKeys.compiledAll(key),
   ["studio", key, "payload"],
 ];
@@ -64,6 +66,21 @@ export function useFixarSkill(key: string) {
     mutationFn: ({ skill, ref }) => api.put<BibliotecaRefs>(`${base(key)}/draft/skills-biblioteca/${seg(skill)}`, ref),
     targets: pinTargets(key),
     invalidate: pinInvalidate(key),
+  });
+}
+
+/** Bumps every draft pin to the newest published library version; the result is the diff to show. */
+export function useAtualizarSkillsBiblioteca(key: string) {
+  return useCacheWriteMutation<SkillsAtualizadas, void>({
+    mutationFn: () => api.post<SkillsAtualizadas>(`${base(key)}/draft/skills-biblioteca/atualizar`, {}),
+    // The answer is a diff, not the pin list: the pin entries are refetched in the background
+    // (the evals of the draft are stale after this — the prontidao read says so).
+    targets: [],
+    invalidate: [
+      ["studio", key, "biblioteca-refs"],
+      ...pinInvalidate(key),
+      studioKeys.versions(key),
+    ],
   });
 }
 

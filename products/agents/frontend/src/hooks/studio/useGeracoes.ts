@@ -79,6 +79,7 @@ export function useUltimaGeracao(key: string) {
     if (eraAtiva.current && !ativaAgora) {
       void qc.invalidateQueries({ queryKey: studioKeys.conteudoAll(key) });
       void qc.invalidateQueries({ queryKey: studioKeys.detail(key) });
+      void qc.invalidateQueries({ queryKey: studioKeys.prontidao(key) });
     }
     eraAtiva.current = ativaAgora;
   }, [ativaAgora, qc, key]);
@@ -116,7 +117,7 @@ function useWriteRun(key: string) {
       },
     ],
     // A run writes the DRAFT: every content editor of the agent refreshes in the background.
-    invalidate: [studioKeys.conteudoAll(key), studioKeys.detail(key)],
+    invalidate: [studioKeys.conteudoAll(key), studioKeys.detail(key), studioKeys.prontidao(key)],
     onSuccess: (g: GeracaoOut) => {
       qc.setQueryData(studioKeys.geracao(key, g.id), g);
     },

@@ -77,6 +77,8 @@ export interface GeracaoCreateInput {
   areas?: GeracaoArea[];
   forcar?: boolean;
   limite_usd?: number;
+  /** Chave de um agente `exemplar`: a IA usa a estrutura dele como modelo. */
+  referencia?: string;
 }
 
 /** `GET /agents/{key}` completeness signal (null for legado agents). */

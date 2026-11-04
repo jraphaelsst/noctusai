@@ -20,6 +20,7 @@ import {
 import { lifecycleError } from "@/lib/agentLifecycle";
 import { BRIEFING_VAZIO, validarBriefing, type BriefingDraft, type BriefingErrors } from "@/lib/briefing";
 import { BriefingForm } from "./BriefingForm";
+import { useStudioAgents } from "@/hooks/studio/useStudioAgents";
 
 export const STATUS_GERACAO_LABEL: Record<GeracaoStatus, string> = {
   pendente: "Na fila",
@@ -200,6 +201,9 @@ function NovaGeracao({ agentKey, onDone }: { agentKey: string; onDone: () => voi
   const [draft, setDraft] = useState<BriefingDraft>(BRIEFING_VAZIO);
   const [errors, setErrors] = useState<BriefingErrors>({});
   const [falha, setFalha] = useState<FalhaAcao | null>(null);
+  const [referencia, setReferencia] = useState("");
+  const agentes = useStudioAgents();
+  const exemplares = (agentes.data ?? []).filter((a) => a.exemplar && a.key !== agentKey);
 
   async function enviar(forcar: boolean) {
     setFalha(null);
@@ -207,7 +211,11 @@ function NovaGeracao({ agentKey, onDone }: { agentKey: string; onDone: () => voi
     setErrors(v.errors);
     if (!v.briefing) return;
     try {
-      await create.mutateAsync({ briefing: v.briefing, ...(forcar ? { forcar: true } : {}) });
+      await create.mutateAsync({
+        briefing: v.briefing,
+        ...(referencia ? { referencia } : {}),
+        ...(forcar ? { forcar: true } : {}),
+      });
       toast.success("Geração iniciada. O resultado é um rascunho para revisar.");
       onDone();
     } catch (err) {
@@ -226,6 +234,36 @@ function NovaGeracao({ agentKey, onDone }: { agentKey: string; onDone: () => voi
       data-testid="geracao-form"
     >
       <BriefingForm value={draft} onChange={setDraft} errors={errors} idPrefix="geracao-briefing" />
+      <div data-testid="geracao-referencia">
+        <label htmlFor="geracao-referencia-select" className="mb-1 block text-sm font-medium">
+          Agente de referência
+        </label>
+        <select
+          id="geracao-referencia-select"
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+          value={referencia}
+          onChange={(e) => setReferencia(e.target.value)}
+          disabled={agentes.showSkeleton}
+        >
+          <option value="">Nenhum</option>
+          {exemplares.map((a) => (
+            <option key={a.key} value={a.key}>
+              {a.nome}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          A IA usa a estrutura desse agente como modelo (seções, skills, ferramentas, avaliações).
+        </p>
+        {agentes.isError && (
+          <p className="mt-1 text-xs text-destructive" role="alert">
+            Não foi possível carregar os agentes de referência.
+          </p>
+        )}
+        {!agentes.showSkeleton && !agentes.isError && exemplares.length === 0 && (
+          <p className="mt-1 text-xs text-muted-foreground">Nenhum agente marcado como referência ainda.</p>
+        )}
+      </div>
       <p className="text-xs text-muted-foreground">
         Custo máximo de {usd(LIMITE_USD_MAX)} por geração. O resultado é um rascunho: revise antes de publicar.
       </p>

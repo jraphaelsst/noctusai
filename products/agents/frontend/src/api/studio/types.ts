@@ -18,6 +18,7 @@
  *   - Timestamps are ISO-8601 strings; UUIDs are strings.
  */
 import type { ConteudoStatusDetail } from "./types-geracao";
+import type { Prontidao } from "./types-prontidao";
 
 
 // ── Enumerations (contract §B1 CHECKs / §A10 allowlist) ───────────────────────
@@ -100,6 +101,8 @@ export interface AgentSummary {
   conteudo_modo?: "linhas" | "legado";
   /** Data-driven platform definition facts (S3a). Optional so legacy payloads still type. */
   usa_canais?: boolean;
+  /** Agente usado como modelo ("referência") pela geração com IA. Absent = false. */
+  exemplar?: boolean;
   runtime?: string;
   owner_product?: string | null;
 }
@@ -378,6 +381,8 @@ export interface PublishErrorBody {
   hash_atual?: string;
   ultima_execucao?: GateLastRun | null;
   avisos?: CompileWarning[];
+  /** Publish 409s may carry the readiness checklist (same shape as `GET .../prontidao`). */
+  prontidao?: Prontidao;
 }
 
 // ── §D2 · Clients ─────────────────────────────────────────────────────────────
