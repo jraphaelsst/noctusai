@@ -38,7 +38,10 @@ capacity admits it.**
 With one slot, a single `vitest run` still started about 7 workers on the 8-core M2. The cap
 is applied where real gate subprocesses launch (`gate_sweep._default_run_gate` via
 `hw_admission.cap_worker_argv`). An explicit cap already in the command wins. Without the knob
-the default is cores / (2 × `max_heavy`), and an unreadable budget gives 1. Pytest runs
+the default is cores / (2 × `max_heavy`), and an unreadable budget gives 1. `hw_admission.py run`
+caps a known fan-out command too. Every `ran` / `not_admitted` row carries a top-level
+`job_workers`: the cap the job ran with, or null for a job with no fan-out. That field is the
+contract `usage_eval` reads; never parse it out of argv. Pytest runs
 single-process here (no xdist), so it needs no cap.
 
 **Don't gate on load average alone on macOS.** It counts threads blocked on I/O and memory,

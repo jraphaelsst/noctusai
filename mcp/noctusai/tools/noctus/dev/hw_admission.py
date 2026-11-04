@@ -281,6 +281,18 @@ def job_workers(budget: dict[str, Any] | None = None) -> int:
     return max(1, int(v))
 
 
+_FANOUT_KINDS = frozenset({"vitest", "e2e", "playwright"})
+_AUTO = object()
+
+
+def fanout_cap(job: str, budget: dict[str, Any] | None = None) -> int | None:
+    """The worker cap a job of this NAME runs with, or None for a job with no
+    fan-out (pytest, vite build, keepers). Job names are `kind:target`, and
+    gate jobs `gate:kind:target`, so any `vitest` / `e2e` / `playwright`
+    segment marks a capped job: the same commands cap_worker_argv caps."""
+    return job_workers(budget) if _FANOUT_KINDS & set(job.split(":")) else None
+
+
 def cap_worker_argv(argv: list[str], workers: int) -> list[str]:
     """Add the worker cap to a known fan-out command; anything else (and any
     command that already sets its own cap) is returned unchanged."""
@@ -392,6 +404,10 @@ class Admission:
     advisories: list[str] = field(default_factory=list)
     phase: str | None = None
     outcome: dict[str, Any] = field(default_factory=dict)   # set by the caller after the run (exit_code, ...)
+    # Internal fan-out cap this job runs with (vitest/playwright workers); None
+    # = the job has no fan-out cap. Top-level on ran/not_admitted rows — a
+    # schema contract with usage_eval (noctusai-3d), never parsed out of argv.
+    job_workers: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -400,7 +416,8 @@ class Admission:
 @contextlib.contextmanager
 def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] | None = None,
                probe_fn: Callable[[float], dict[str, Any]] = probe,
-               sleep: Callable[[float], None] = time.sleep) -> Iterator[Admission]:
+               sleep: Callable[[float], None] = time.sleep,
+               job_workers: Any = _AUTO) -> Iterator[Admission]:
     """Admit one heavy job. Yields an Admission; the caller MUST NOT run the job
     when ``admitted`` is False (report it as waiting_for_slot / inconclusive)."""
     if os.environ.get(_HELD_ENV):
@@ -411,6 +428,7 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
     except BudgetError as exc:
         yield Admission(job, False, "budget_error", blocked_by=[str(exc)])
         return
+    jw = fanout_cap(job, b) if job_workers is _AUTO else job_workers
     deadline = time.monotonic() + (b["wait_s"] if wait_s is None else wait_s)
     t0 = time.monotonic()
     last: dict[str, Any] = {}
@@ -429,13 +447,14 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
             why = ["no free slot: " + ", ".join(f"{h.get('job')}(pid {h.get('pid')})" for h in holders())]
         if time.monotonic() >= deadline:
             adm = Admission(job, False, "waiting_for_slot", round(time.monotonic() - t0, 1),
-                            last, why, advisories(last, b) if last else [], b["phase"])
+                            last, why, advisories(last, b) if last else [], b["phase"],
+                            job_workers=jw)
             _log({"event": "not_admitted", "host": b["host"], **adm.as_dict()})
             yield adm
             return
         sleep(b["poll_s"])
     adm = Admission(job, True, "admitted", round(time.monotonic() - t0, 1), last, [],
-                    advisories(last, b), b["phase"])
+                    advisories(last, b), b["phase"], job_workers=jw)
     rss0 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     started = time.monotonic()
     prev = os.environ.get(_HELD_ENV)
@@ -589,12 +608,17 @@ def status(sample_s: float = 3.0) -> dict[str, Any]:
 # ── shell entry: run any heavy command through the gate ──────────────────
 
 def run_command(job: str, argv: list[str], wait_s: float | None = None) -> int:
-    """Exit 75 (EX_TEMPFAIL) when not admitted — never runs the command then."""
-    with heavy_slot(job, wait_s=wait_s) as adm:
+    """Exit 75 (EX_TEMPFAIL) when not admitted — never runs the command then.
+    A known fan-out command (`npm test`, `npx playwright test`) gets the budget's
+    worker cap here too, and the row records it whatever the job is named."""
+    n = job_workers()          # an unreadable budget already yields 1
+    capped = cap_worker_argv(argv, n)
+    jw = n if capped != list(argv) else _AUTO
+    with heavy_slot(job, wait_s=wait_s, job_workers=jw) as adm:
         if not adm.admitted:
             print(json.dumps({"hw_admission": adm.as_dict()}), file=sys.stderr)
             return 75
-        code = subprocess.call(argv)
+        code = subprocess.call(capped)
         adm.outcome["exit_code"] = code
         return code
 

@@ -414,3 +414,44 @@ class TestGateRunnerAppliesCap:
         res = gs._default_run_gate(gs.GateSpec("vitest:x", ["npm", "test"], tmp_path), timeout=30)
         assert res[0] == 0
         assert "ARGV: test -- --maxWorkers=2" in res[1]
+
+
+class TestJobWorkersOnRows:
+    """Contract with usage_eval (noctusai-3d, 2026-11-04): `job_workers` is a
+    TOP-LEVEL int on ran / not_admitted rows; null when the job has no fan-out."""
+
+    def _rows(self, env):
+        return [json.loads(ln) for ln in (env / "log.ndjson").read_text().splitlines()]
+
+    def test_gate_vitest_row_carries_the_cap(self, env):
+        with hw.heavy_slot("gate:vitest:sw", probe_fn=lambda s: GOOD):
+            pass
+        row = [r for r in self._rows(env) if r["event"] == "ran"][-1]
+        assert row["job_workers"] == hw.job_workers() and isinstance(row["job_workers"], int)
+
+    def test_pytest_row_is_null(self, env):
+        with hw.heavy_slot("gate:pytest:core", probe_fn=lambda s: GOOD):
+            pass
+        assert [r for r in self._rows(env) if r["event"] == "ran"][-1]["job_workers"] is None
+
+    def test_not_admitted_row_carries_it_too(self, env):
+        with hw.heavy_slot("e2e:sw", wait_s=0, probe_fn=lambda s: {**GOOD, "reclaimable_mb": 1},
+                           sleep=lambda s: None) as adm:
+            assert not adm.admitted
+        row = [r for r in self._rows(env) if r["event"] == "not_admitted"][-1]
+        assert row["job_workers"] == hw.job_workers()
+
+    def test_run_command_caps_and_records_whatever_the_job_name(self, env, tmp_path, monkeypatch):
+        import stat
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        npm = bin_dir / "npm"
+        out = tmp_path / "argv.txt"
+        npm.write_text(f'#!/bin/sh\necho "$*" > {out}\n')
+        npm.chmod(npm.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        # run_command probes the real machine; admit deterministically by holding
+        # an outer slot (the child inherits it, verdict 'inherited').
+        monkeypatch.setenv("NOCTUS_HW_SLOT_HELD", "/outer/slot")
+        assert hw.run_command("tests-for-sw", ["npm", "test"], wait_s=0) == 0
+        assert out.read_text().strip() == f"test -- --maxWorkers={hw.job_workers()}"
