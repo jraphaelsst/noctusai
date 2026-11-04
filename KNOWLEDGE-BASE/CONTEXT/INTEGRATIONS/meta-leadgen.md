@@ -1,12 +1,12 @@
-# META-LEADGEN-UPDATE.md — Meta AI-agent lead qualification
+# Meta lead-gen update — Meta AI-agent lead qualification
 
 > **Status: SHELL SHIPPED, PROCESSOR DELIBERATELY UNFINISHED.** Everything here
 > is captured from the wire on **2026-08-04**, because Meta documents none of it.
 > Read §4 before writing a line of the processor — it is the whole point of this file.
 >
 > Durable pattern home: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md § leadgen_update`.
-> Sibling trackers: `META-LEADS-CHECKLIST.md` (the ingestion feature) ·
-> `META-APP-VERIFICATION.md` §10 (dashboard runbook).
+> Sibling trackers: `meta-leads-checklist.md` (the ingestion feature) ·
+> `meta-app-verification.md` §10 (dashboard runbook).
 
 ---
 

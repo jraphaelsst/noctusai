@@ -314,7 +314,7 @@ lead-ads guide; four searches across StackOverflow, GitHub and vendor blogs on
 from Meta's own **"Teste"** sample payload in the App Dashboard — from the wire,
 not from prose.
 
-**Full runbook + the unfinished-processor contract: `/META-LEADGEN-UPDATE.md`.**
+**Full runbook + the unfinished-processor contract: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta-leadgen.md`.**
 
 ### The distinction that matters
 
@@ -355,5 +355,5 @@ vocabulary, never an enum — an unrecognised pair is preserved and surfaced.
 idempotent). **Applying the qualification to the lead or funnel is deliberately
 NOT built** — the Graph response shape has never been observed, and guessing it
 yields silently-wrong qualification rather than a visible failure. The trigger to
-finish is one real non-test event; `/META-LEADGEN-UPDATE.md` §4 has the query,
+finish is one real non-test event; `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta-leadgen.md` §4 has the query,
 the log marker, and the ordered next steps.

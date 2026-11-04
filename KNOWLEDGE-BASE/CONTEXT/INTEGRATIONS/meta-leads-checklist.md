@@ -1,4 +1,4 @@
-# META-LEADS-CHECKLIST.md — campaign-lead ingestion, end to end
+# Meta leads checklist — campaign-lead ingestion, end to end
 
 > **Working tracker** for the Meta Lead-Ads ingestion initiative started 2026-08-03.
 > Tick items as they land; every line names the file it touches so progress is auditable.
@@ -87,7 +87,7 @@ can perform, or (c) **Slice 7**, conditional on whether off-platform lead export
       (unreachable Redis ⇒ proceed, since layers 2+3 still guarantee idempotency)
 - [x] 18 status-pinned receiver tests + 6 auth-boundary tests. Full suite **1565 passed**
 - [x] `.env.example` `META_*` block; webhook-signatures adopter list corrected
-- [x] `META-APP-VERIFICATION.md` §10 rewritten as the configuration runbook (was "optional / later")
+- [x] `meta-app-verification.md` §10 rewritten as the configuration runbook (was "optional / later")
 - [ ] **Verify live:** Lead Ads Testing Tool → inbox `processed` + lead row + one funnel card
 
 ## Slice 3 — Unified leads base (C2) — ✅ integrated `ce985fdd`

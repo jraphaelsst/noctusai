@@ -111,6 +111,6 @@ OAuth consent screen → **Audience / Test users** → **+ ADD USERS** → add y
   providers (YouTube · Calendar · Gmail · Drive). Don't create a second client.
 - **Maps & Gemini use API keys, not OAuth** — no redirect URI; the key just goes in `.env`.
 - **Meta is a *separate* app** (developers.facebook.com, not this GCP client) — see
-  `docs/integrations/META-APP-VERIFICATION.md`.
+  `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta-app-verification.md`.
 - Related in-repo: `GCC-OAUTH-SETUP.md` (the fuller YouTube scratch), `KB § INTEGRATIONS/oauth-patterns.md`,
   `KB § GUIDES/google-oauth-setup.md`, and the per-cliente model in `project_clientes_own_connections` (memory).

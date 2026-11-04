@@ -5,7 +5,7 @@
 > A stale handoff is worse than none — it sends the reader to solve a problem that is already
 > solved. Everything below is the state as of the integrated `dev`.
 >
-> Companion: `META-LEADS-CHECKLIST.md` (what shipped) ·
+> Companion: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta-leads-checklist.md` (what shipped) ·
 > `project-history/roadmaps/meta-ads-console-2026-07.md` (durable roadmap).
 
 ---
@@ -78,7 +78,7 @@ the wrong tree.
    the slug is already on all three gated surfaces.
 4. 🔴 **ONLY THEN: operator configures the Meta App Dashboard.** Meta issues the verification GET
    **synchronously** and refuses to save the subscription if it fails, so the receiver must already
-   be live. Runbook: `META-APP-VERIFICATION.md` §10.
+   be live. Runbook: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta-app-verification.md` §10.
    Callback URL: `https://social.noctusai.com/api/meta/leadgen/webhook`
 5. **Subscribe the Pages** in-product: Meta → Anúncios → Leads → "Assinar páginas".
    ⚠️ App-level (dashboard, step 4) and Page-level (this) are **both** required — either alone
