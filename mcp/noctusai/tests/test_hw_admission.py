@@ -312,3 +312,38 @@ class TestTrialSchedule:
         with hw.heavy_slot("x", probe_fn=lambda s: GOOD) as adm:
             adm.outcome["exit_code"] = 3
         assert _rows(env)[-1]["outcome"] == {"exit_code": 3}
+
+
+class TestExplicitAdmit:
+    """2026-11-04 bypass: task_branch injects a REAL runner, so the 'injected
+    runner => ungated' default silently skipped the heavy slot for every
+    merged-tip gate. An explicit `admit` must win, and task_branch must pass it."""
+
+    def test_explicit_admit_wins_over_injected_runner(self):
+        from tools.noctus.dev import gate_sweep as gs
+        sentinel = object()
+        assert gs._resolve_admit(sentinel, run_gate=lambda sp: None) is sentinel
+        assert gs._resolve_admit(None, run_gate=None) is None
+        assert gs._resolve_admit(gs._AUTO_ADMIT, run_gate=None) is hw.heavy_slot
+        assert gs._resolve_admit(gs._AUTO_ADMIT, run_gate=lambda sp: None) is None
+
+    def test_run_gates_named_honours_explicit_admit(self, tmp_path):
+        import contextlib
+        from tools.noctus.dev import gate_sweep as gs
+        seen = []
+
+        @contextlib.contextmanager
+        def admit(job):
+            seen.append(job)
+            yield hw.Admission(job, False, "waiting_for_slot", blocked_by=["test"])
+
+        spec = gs.GateSpec("pytest:x", ["true"], tmp_path, [])
+        out = gs._run_gates([spec], lambda sp: (0, "ok", 1.0), admit=gs._resolve_admit(admit, lambda sp: None))
+        assert seen == ["gate:pytest:x"] and out[0]["ran"] is False
+
+    def test_task_branch_merged_tip_paths_pass_the_heavy_slot(self):
+        import inspect
+        from tools.noctus.dev import task_branch as tb
+        for fn in (tb._default_merged_tip_check, tb._default_merged_tip_baseline):
+            src = inspect.getsource(fn)
+            assert "_hw.heavy_slot" in src, f"{fn.__name__} no longer admits its real runner"

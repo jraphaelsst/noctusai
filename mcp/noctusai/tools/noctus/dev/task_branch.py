@@ -1511,8 +1511,13 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str,
     _prepare = _frontend_env_preparer(primary_root, fs)
 
     attempts: dict[str, dict[str, Any]] = {}
+    # The deadline-boxed runner is a REAL subprocess runner: admit it through
+    # the machine-wide heavy slot explicitly (an injected runner is otherwise
+    # ungated — the 2026-11-04 bypass). KB § PATTERNS/devops/hardware-admission-budget.md
+    from . import hw_admission as _hw
     res = gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, prepare_gates=_prepare,
-                     run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts))
+                     run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts),
+                     admit=_hw.heavy_slot)
     if isinstance(res, dict):
         # per-gate attempt counts + durations/budgets, so wall-clock is visible
         res["gate_attempts"] = attempts
@@ -1692,12 +1697,15 @@ def _default_merged_tip_baseline(
         created, failed = _apply_env_wiring(would, fs)
         out["wired"] = len(created)
         out["wire_skipped"] = len(skipped) + len(failed)
+        admit_kw: dict[str, Any] = {}
         if run_gates is None:
             from .gate_sweep import run_gates_named as run_gates  # lazy import
+            from . import hw_admission as _hw
+            admit_kw["admit"] = _hw.heavy_slot   # real runner => machine-wide heavy slot
         attempts: dict[str, dict[str, Any]] = {}
         res = run_gates(wt, list(gate_names),
                         run_gate=_deadline_boxed_run_gate(timeout, attempts_log=attempts),
-                        prepare_gates=_frontend_env_preparer(primary_root, fs))
+                        prepare_gates=_frontend_env_preparer(primary_root, fs), **admit_kw)
         out["frontend_env"] = res.get("env_prepared")
         out["gate_attempts"] = attempts
         by_name = {g["gate"]: g for g in res.get("gates", [])}

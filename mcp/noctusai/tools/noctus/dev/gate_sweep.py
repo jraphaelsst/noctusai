@@ -1596,6 +1596,20 @@ def _rerun_timeout_shaped_vitest(
     entry["rerun_after_timeouts"] = first
 
 
+_AUTO_ADMIT = object()
+
+
+def _resolve_admit(admit: Any, run_gate: Any) -> Any:
+    """`admit` explicit (a callable or None) wins. Left at the sentinel, real
+    subprocess runs (run_gate is None) are admitted through the machine-wide
+    heavy slot and an injected runner is not. A caller that injects a REAL
+    runner (task_branch's deadline-boxed one) MUST pass admit explicitly —
+    2026-11-04: it didn't, so every merged-tip gate bypassed the slot."""
+    if admit is not _AUTO_ADMIT:
+        return admit
+    return _hw.heavy_slot if run_gate is None else None
+
+
 def _heavy_cap() -> int:
     """`max_heavy` from the hardware budget; 1 when the budget is unreadable
     (heavy_slot itself then refuses with `budget_error`, so nothing runs)."""
@@ -1776,6 +1790,7 @@ def run_gates_named(
     run_gate: Callable[[GateSpec], GateRunResult] | None = None,
     max_workers: int | None = None,
     prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
+    admit: Any = _AUTO_ADMIT,
 ) -> dict[str, Any]:
     """Run ONLY the named gates in `repo_root` (no diff, no scope derivation)
     and return `{gates, unknown}` with the sweep's own per-gate entry shape
@@ -1791,7 +1806,7 @@ def run_gates_named(
     env_residue = dotenv_residue(gate_subprocess_env(root), root)
     workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
     return {"gates": _run_gates(specs, runner, env_residue, max_workers=workers,
-                                admit=_hw.heavy_slot if run_gate is None else None),
+                                admit=_resolve_admit(admit, run_gate)),
             "unknown": unknown, "env_prepared": prepared}
 
 
@@ -1860,6 +1875,7 @@ def gate_sweep(
     git_runner: GitRunner | None = None,
     max_workers: int | None = None,
     prepare_gates: Callable[[Path, list[GateSpec]], Any] | None = None,
+    admit: Any = _AUTO_ADMIT,
 ) -> dict[str, Any]:
     """Run the canonical gate set for what actually changed vs. `base_ref`;
     return a structured, measured verdict. See module docstring.
@@ -1958,7 +1974,7 @@ def gate_sweep(
     # Real runs go through the machine-wide hardware admission gate; an
     # injected runner (tests) is not a heavy subprocess and is not gated.
     gates = _run_gates(specs, runner, env_residue, max_workers=workers,
-                       admit=_hw.heavy_slot if run_gate is None else None)
+                       admit=_resolve_admit(admit, run_gate))
 
     fanout = scope.get("seed_fanout") or {}
     if fanout.get("mode") == "scoped":
