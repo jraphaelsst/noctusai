@@ -212,8 +212,6 @@ const KEYS_STATUS_FIXTURE = {
   waha_base_url: keyEntry("WAHA base URL"),
   waha_api_key: keyEntry("WAHA API key"),
   waha_webhook_hmac_secret: keyEntry("WAHA webhook HMAC secret"),
-  vista_base_url: keyEntry("Vista base URL"),
-  vista_api_key: keyEntry("Vista API key"),
   database_backend: keyEntry("Database backend"),
   supabase_url: keyEntry("Supabase URL"),
   supabase_service_role_key: keyEntry("Supabase service role key"),

@@ -190,15 +190,16 @@ def get_painel_client() -> Any:
     return get_scoped_admin_client("social_wiring")
 
 
-def get_vista_photo_source(cfg: Any = Depends(get_settings)) -> VistaPhotoSource:
-    """The product's EXISTING Vista credentials (`VISTA_API_KEY` →
-    `crm_api_key`). Missing → 503, never a fallback."""
-    from noctusai_lib.integrations.vista import VistaNotConfigured, VistaRESTAdapter
+def get_vista_photo_source(actor: Actor = Depends(get_actor)) -> VistaPhotoSource:
+    """THIS org's own Vista credential (encrypted store, provider "vista"). Missing → 503, never an env fallback."""
+    from noctusai_lib.integrations.vista import VistaNotConfigured
+
+    from app.services import vista_credenciais
 
     try:
-        adapter = VistaRESTAdapter(base_url=cfg.crm_base_url, api_key=cfg.crm_api_key)
+        adapter = vista_credenciais.adapter_da_org(actor.org_id)
     except VistaNotConfigured as exc:
-        raise api_error(503, "vista_nao_configurado", f"Vista não configurado: {exc}") from exc
+        raise api_error(503, "vista_nao_configurado", str(exc)) from exc
     return RealVistaPhotoSource(adapter)
 
 

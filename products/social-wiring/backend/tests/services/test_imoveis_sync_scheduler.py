@@ -185,18 +185,39 @@ def test_orgs_with_catalog_skips_null_org_ids():
 # ─── The cron path ──────────────────────────────────────────────────────
 
 
-def test_job_skips_entirely_when_vista_unconfigured():
-    discovery = MagicMock()
+def test_an_org_without_a_vista_credential_is_skipped_and_the_others_still_sync():
+    """Credentials are per org: no record -> that org is skipped (logged), the rest are refreshed."""
+    synced: list[str] = []
 
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: None, discover_fn=discovery))
+    class _Svc:
+        async def sync(self, org_id, with_detalhes):
+            synced.append(str(org_id))
+            return MagicMock(complete=True, upserted=0, detalhes_fetched=0, page_failures=[], detalhes_failed=[], duration_seconds=0.0)
 
-    discovery.assert_not_called()
+    asyncio.run(sched.daily_imoveis_sync_job(
+        admin_factory=lambda: MagicMock(),
+        adapter_factory=lambda org: None if org == _ORG_A else MagicMock(),
+        discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc(),
+    ))
+
+    assert synced == [_ORG_B]
+
+
+def test_the_default_adapter_factory_is_per_org_and_refuses_without_a_record():
+    from app.services import vista_credenciais
+    from noctusai_lib.security.token_store import FakeCredentialStore
+
+    vista_credenciais.configure_store(lambda: FakeCredentialStore())
+    try:
+        assert sched._build_adapter(_ORG_A) is None
+    finally:
+        vista_credenciais.configure_store(None)
 
 
 def test_job_skips_when_no_org_has_a_catalog():
     build = MagicMock()
 
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [], sync_service_factory=build))
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [], sync_service_factory=build))
 
     build.assert_not_called()
 
@@ -215,7 +236,7 @@ def test_cron_path_does_not_filter_by_overdue():
 
     overdue = MagicMock()
 
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc(), overdue_fn=overdue))
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc(), overdue_fn=overdue))
 
     assert synced == [_ORG_A, _ORG_B]
     overdue.assert_not_called()
@@ -238,7 +259,7 @@ def test_job_isolates_a_failing_org_and_still_syncs_the_rest():
             )
 
 
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
 
     assert synced == [_ORG_B], "org A's failure swallowed org B's refresh"
 
@@ -250,7 +271,7 @@ def test_job_survives_a_discovery_failure():
 
     build = MagicMock()
 
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=_boom, sync_service_factory=build))
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=_boom, sync_service_factory=build))
     build.assert_not_called()
 
 
@@ -265,7 +286,7 @@ def test_job_warns_rather_than_claiming_clean_on_a_degraded_run(caplog):
 
 
     with caplog.at_level("INFO"):
-        asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A], sync_service_factory=lambda _a, _b: _Svc()))
+        asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [_ORG_A], sync_service_factory=lambda _a, _b: _Svc()))
 
     levels = {r.levelname for r in caplog.records if "imoveis_vista_sync" in r.message}
     assert "WARNING" in levels, "a partial pull logged as a clean run"
@@ -287,7 +308,7 @@ def test_catch_up_runs_the_missed_slot():
             )
 
 
-    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A], overdue_fn=lambda _a, orgs, _now: orgs, sync_service_factory=lambda _a, _b: _Svc()))
+    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [_ORG_A], overdue_fn=lambda _a, orgs, _now: orgs, sync_service_factory=lambda _a, _b: _Svc()))
 
     assert synced == [_ORG_A]
 
@@ -296,7 +317,7 @@ def test_catch_up_is_a_no_op_when_nothing_is_overdue():
     """The normal boot: must not trigger a 4-6 minute pull for nothing."""
     build = MagicMock()
 
-    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [], sync_service_factory=build))
+    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [], sync_service_factory=build))
 
     build.assert_not_called()
 
@@ -313,7 +334,7 @@ def test_catch_up_syncs_only_the_overdue_org():
             )
 
 
-    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [_ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
+    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [_ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
 
     assert synced == [_ORG_B]
 
@@ -368,7 +389,7 @@ def test_cron_and_catch_up_cannot_run_concurrently():
 
     seams = dict(
         admin_factory=lambda: MagicMock(),
-        adapter_factory=lambda: MagicMock(),
+        adapter_factory=lambda _org: MagicMock(),
         discover_fn=lambda _a: [_ORG_A],
         overdue_fn=lambda _a, orgs, _now: orgs,
         sync_service_factory=lambda _a, _b: _Svc(),
@@ -415,7 +436,7 @@ class TestCrossProcessLease:
                 motivo="cron",
                 only_overdue=False,
                 admin_factory=lambda: MagicMock(),
-                adapter_factory=lambda: MagicMock(),
+                adapter_factory=lambda _org: MagicMock(),
                 discover_fn=lambda _a: [_ORG_A],
                 sync_service_factory=build,
                 lease_fn=_denied,
@@ -446,7 +467,7 @@ class TestCrossProcessLease:
                 motivo="cron",
                 only_overdue=False,
                 admin_factory=lambda: MagicMock(),
-                adapter_factory=lambda: MagicMock(),
+                adapter_factory=lambda _org: MagicMock(),
                 discover_fn=lambda _a: [_ORG_A],
                 sync_service_factory=lambda _a, _b: _Svc(),
                 lease_fn=_granted,

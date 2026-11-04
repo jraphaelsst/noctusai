@@ -113,8 +113,6 @@ class KeysStatus(BaseModel):
     waha_dashboard_url: KeyStatusEntry
     waha_webhook_url: KeyStatusEntry
     waha_webhook_hmac_secret: KeyStatusEntry
-    vista_base_url: KeyStatusEntry
-    vista_api_key: KeyStatusEntry
     database_backend: KeyStatusEntry
     supabase_url: KeyStatusEntry
     supabase_service_role_key: KeyStatusEntry

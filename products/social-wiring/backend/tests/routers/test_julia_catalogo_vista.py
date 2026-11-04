@@ -165,13 +165,20 @@ class TestFerramentasNaVista:
         r = vista.post("buscar_imoveis", {"operacao": "compra"})
         assert r.status_code == 503 and r.json()["error"]["code"] == "catalogo_indisponivel"
 
-    def test_the_real_adapter_without_credentials_is_catalogo_indisponivel(self, vista):
-        from app.config import settings
+    def test_an_org_with_no_vista_record_is_catalogo_indisponivel_never_an_env_key(self, vista):
+        from noctusai_lib.security.token_store import FakeCredentialStore
 
-        assert not (settings.crm_base_url and settings.crm_api_key), "this test needs a credential-less environment"
+        from app.services import vista_credenciais
+
         cat.configure_vista_adapter(None)
-        r = vista.post("detalhes_imovel", {"codigo": "VIZ"})
-        assert r.status_code == 503 and r.json()["error"]["code"] == "catalogo_indisponivel"
+        vista_credenciais.configure_store(lambda: FakeCredentialStore())
+        try:
+            for nome, corpo in [("detalhes_imovel", {"codigo": "VIZ"}), ("buscar_imoveis", {"operacao": "compra"}),
+                                ("imovel_campanha", {"codigo": "VIZ"})]:
+                r = vista.post(nome, corpo)
+                assert r.status_code == 503 and r.json()["error"]["code"] == "catalogo_indisponivel", (nome, r.text)
+        finally:
+            vista_credenciais.configure_store(None)
 
 
 class TestEspelhoContinuaIgual:

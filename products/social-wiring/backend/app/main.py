@@ -147,6 +147,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_equipe_whatsapp_router import router as julia_equipe_whatsapp_router
     from app.routers.julia_protecao_router import router as julia_protecao_router
     from app.routers.julia_catalogo_router import router as julia_catalogo_router
+    from app.routers.integracao_vista_router import router as integracao_vista_router
     from app.services import julia_reengajamento_worker
     from app.routers.settings_router import router as settings_router
     from app.routers.whatsapp_router import router as whatsapp_router
@@ -283,6 +284,7 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_equipe_whatsapp_router,
             julia_protecao_router,
             julia_catalogo_router,
+            integracao_vista_router,
             whatsapp_router,
             assinatura_webhook_router,
             whatsapp_connections_router,

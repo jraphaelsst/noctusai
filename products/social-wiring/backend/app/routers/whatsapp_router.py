@@ -105,10 +105,7 @@ from app.services import julia_conversas_service, julia_origem_service, julia_pr
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
-from noctusai_lib.integrations.vista import (
-    VistaNotConfigured as CRMNotConfigured,
-    VistaRESTAdapter as CRMService,
-)
+from app.services import vista_credenciais
 from app.services.media_service import MidiaLead, ResolvedMedia, make_media_service, midia_recusada
 from app.services.message_store import DuplicateMessage, MessageStore, StoredMessage
 from app.modules.email_marketing.services.contact_service import ContactService
@@ -308,16 +305,6 @@ def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService
     except (EncryptionNotConfigured, YouTubeServiceError) as exc:
         logger.warning("YouTube service unavailable for WhatsApp upload confirmation: %s", exc)
 
-    # CRM (optional — degrades to manual title)
-    crm: CRMService | None = None
-    try:
-        crm = CRMService(
-            base_url=cfg.crm_base_url,
-            api_key=cfg.crm_api_key,
-        )
-    except CRMNotConfigured:
-        logger.info("CRM not configured — WhatsApp uploads will use manual titles")
-
     # Org ID — for WhatsApp uploads we use a default org since there's no
     # JWT context. The first org that connected YouTube is used.
     # In a single-tenant deployment this is the only org.
@@ -328,6 +315,9 @@ def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService
             "but upload confirmation will be blocked until YouTube is connected"
         )
         org_id = UUID(cfg.local_dev_org_id)
+
+    # CRM (optional — degrades to manual title): THAT org's own Vista credential, never an env key.
+    crm = vista_credenciais.adapter_ou_none(org_id)
 
     return WhatsAppIntakeService(
         waha_base_url=cfg.waha_base_url,

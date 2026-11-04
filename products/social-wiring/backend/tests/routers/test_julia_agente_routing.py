@@ -128,7 +128,7 @@ def rt(monkeypatch, override_settings_factory):
         scene = Rt(TestClient(app), world, module, override_settings_factory, app)
         scene.settings(
             encryption_key=ENCRYPTION_KEY, waha_webhook_hmac_secret=SECRET, whatsapp_chatbot_enabled=False,
-            openai_api_key="", crm_base_url="", crm_api_key="", whatsapp_authorized_numbers=OPERATOR,
+            openai_api_key="", whatsapp_authorized_numbers=OPERATOR,
             redis_url="",
         )
         yield scene

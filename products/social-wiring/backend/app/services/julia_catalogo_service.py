@@ -244,21 +244,16 @@ def configure_vista_adapter(factory: Optional[Callable[[], Any]]) -> None:
     _adapter_factory = factory
 
 
-def _adapter_vista() -> Any:
-    from noctusai_lib.integrations.vista import VistaError, VistaNotConfigured, VistaRESTAdapter
+def _adapter_vista(org_id: UUID) -> Any:
+    """THIS org's Vista adapter: its own encrypted credential (`vista_credenciais`), never an environment key. A test
+    installs a Fake through `configure_vista_adapter`."""
+    from noctusai_lib.integrations.vista import VistaError
 
-    from app.config import settings
+    from app.services import vista_credenciais
 
-    if _adapter_factory is not None:
-        try:
-            return _adapter_factory()
-        except VistaError as exc:
-            raise indisponivel(exc) from exc
-    # NOC-REMEDIATE[vista-key-per-org]: the Vista key is env-level (`VISTA_API_KEY`) -- one tenant for every org. Per-org
-    # keys (`integration_accounts`) are needed before a second org can pick `vista` for ITS own Vista account -- 2026-11-03
     try:
-        return VistaRESTAdapter(base_url=settings.crm_base_url, api_key=settings.crm_api_key)
-    except VistaNotConfigured as exc:
+        return _adapter_factory() if _adapter_factory is not None else vista_credenciais.adapter_da_org(org_id)
+    except VistaError as exc:
         raise indisponivel(exc) from exc
 
 
@@ -271,7 +266,7 @@ def fonte_da_org(client: Any, org_id: UUID | str) -> str:
 def catalogo_da_org(client: Any, org_id: UUID) -> CatalogoImoveis:
     """The catalog this org's Julia reads. An unreadable config is an error, never a silent default."""
     if fonte_da_org(client, org_id) == "vista":
-        return VistaCatalogo(_adapter_vista())
+        return VistaCatalogo(_adapter_vista(org_id))
     return EspelhoCatalogo(client, org_id)
 
 

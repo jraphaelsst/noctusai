@@ -175,8 +175,6 @@ def _webhook_settings(override_settings):
         waha_webhook_hmac_secret="",
         whatsapp_chatbot_enabled=False,
         openai_api_key="",
-        crm_base_url="",
-        crm_api_key="",
         whatsapp_authorized_numbers=_AUTHORIZED_SENDER,
     )
 

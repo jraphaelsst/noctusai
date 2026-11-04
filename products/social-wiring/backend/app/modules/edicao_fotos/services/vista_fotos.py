@@ -2,8 +2,8 @@
 
 Reads through the EXISTING seed Vista adapter (`VistaRESTAdapter.
 list_imovel_fotos`, proven live 2026-09-16 — `Foto` on `/imoveis/detalhes`,
-dict-keyed payload normalized by the seed) with the product's existing
-`VISTA_API_KEY` (`settings.crm_api_key`). No new credential: reads do not
+dict-keyed payload normalized by the seed) with the ORG's own Vista
+credential (encrypted store, provider "vista" -- `vista_credenciais`). Reads do not
 need the portal key (PROJECT.md §C5).
 
 Order: the `Destaque` photo first, then by Vista photo code (contract §10).

@@ -37,7 +37,7 @@ Public surface:
 """
 from noctusai_lib.domain.real_estate import PropertyData
 
-from .adapter_factory import get_vista_adapter
+from .adapter_factory import VistaOrgCredentials, get_vista_adapter, get_vista_adapter_for_org
 from .calibration import (
     CANDIDATE_AGENCIA_FIELDS,
     CANDIDATE_CONTEUDO_FIELDS,
@@ -209,7 +209,9 @@ __all__ = [
     "VistaCRMAdapter",
     "FakeVistaAdapter",
     "VistaRESTAdapter",
+    "VistaOrgCredentials",
     "get_vista_adapter",
+    "get_vista_adapter_for_org",
     "VistaNotConfigured",
     # Re-exported for ergonomics — callers building a Fake or asserting on
     # `get_property` results don't need a second import.

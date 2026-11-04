@@ -1042,7 +1042,7 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
   Same output `_item` shape and privacy allow-list; `exibir_no_site`-equivalent filter; `similar_a`,
   `excluir_codigos`, widening (`relaxado`) and `esgotado` semantics unchanged. Vista error ⇒ tool error
   `catalogo_indisponivel` (no silent fallback to the mirror).
-- Vista key is env-level today ⇒ `NOC-REMEDIATE[vista-key-per-org]` at the adapter construction.
+- Vista credentials are **per org, in the encrypted `CredentialStore`** (provider `vista`, bundle `{base_url, api_key}`; owner 2026-11-03: keys live in the DB, not `.env`), set by an org admin via `PUT /api/integracoes/vista` (Settings › Chaves API › Vista CRM); no `.env` fallback — an org without a record gets `catalogo_indisponivel`. Resolves `NOC-REMEDIATE[vista-key-per-org]`.
 - Links unchanged: the org's `link_imovel` template (`{site}/imovel/{codigo}`).
 - Docs: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` gains the Julia field map (Vista field → `_item` key) and the
   filter map (tool arg → Vista `filter`).

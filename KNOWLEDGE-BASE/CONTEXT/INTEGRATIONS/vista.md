@@ -68,8 +68,9 @@
 
 Where the key lives in NoctusAI:
 
-- Backend `.env` (root, gitignored): `VISTA_BASE_URL`, `VISTA_API_KEY`.
-- Read into Python at startup via `ERPSettings.vista_base_url` / `vista_api_key`.
+- **social-wiring (since 2026-11-03): the database, per org — NOT `.env`.** Owner: "our keys are to be stored in the db, not .env". The credential is a record in the seed `CredentialStore` (Fernet-encrypted; SW backs it with `social_wiring.credentials (org_id, provider)`), provider `"vista"` (`credential_resolvers.VISTA_PROVIDER`), bundle `{base_url, api_key}` plus the non-secret `chave_final` (last 4), `verificado_em`, `verificado_por` (they ride inside the encrypted bundle: that table has no free-form metadata column). Every adapter is built per org through `VistaCredentialResolver` → `get_vista_adapter_for_org`; **there is no `.env` fallback** — an org with no record gets 503 `Vista não configurada para esta empresa`. The settings screen (Settings › Chaves API › “Vista CRM”, org admin) and `GET|PUT|DELETE /api/integracoes/vista` + `POST …/testar` manage it; the key is write-only (never returned or logged; only `chave_final`), the base URL must match `^[a-z0-9-]+\.vistahost\.com\.br$` (https, no port/path — SSRF guard) and the key is live-checked (`/corretores/listar`, one row) before it is stored. We hold exactly ONE Vista key (`…644c`).
+- **One-time move after deploy (no migration copies env secrets):** an org admin opens Settings › Chaves API › Vista CRM, enters the tenant address + the key, and saves; “Testar conexão” confirms. Until then the nightly sync skips the org (logged) and the listing tools answer `catalogo_indisponivel`. After storing it, `VISTA_BASE_URL` / `VISTA_API_KEY` can be removed from the product's environment (social-wiring no longer reads them; `deploy/fleet/env.fleet.keys` never listed them).
+- Other consumers (`mcp/vista`, the dev MCP server; `erp-imobiliario`, asleep): backend `.env` (root, gitignored): `VISTA_BASE_URL`, `VISTA_API_KEY`, read via `ERPSettings.vista_base_url` / `vista_api_key`.
 - **Never** prefixed with `VITE_` — the browser must never see the key. The
   frontend calls `/api/vista-showcase/*` and the ERP backend proxies upstream.
 
@@ -1794,7 +1795,7 @@ The new adapter and §5's `VistaClient` co-exist. The adapter is consumer-facing
 
 **Error semantics.** Any Vista failure (not configured, 401/permission, per-field 400, 5xx, timeout, malformed payload) is the tool error `catalogo_indisponivel` (HTTP 503 `{"error": {"code": "catalogo_indisponivel"}}`); it is logged by type and **never** falls back to the mirror (a stale answer that looks fresh is worse than an honest "unavailable"). An empty match is a normal empty result; an unpublished / unknown code is `encontrado: false` (detalhes) or `[]` (campanha).
 
-**Credentials.** The key is env-level (`VISTA_API_KEY`, one tenant for every org): `NOC-REMEDIATE[vista-key-per-org]` at the adapter construction.
+**Credentials.** Per org, from the encrypted `CredentialStore` (§ 1) — `VistaCatalogo` builds its adapter with `vista_credenciais.adapter_da_org(org_id)`; an org with no record gets `catalogo_indisponivel`. (`NOC-REMEDIATE[vista-key-per-org]` is resolved.)
 
 **Live verification status.** Filter operators (`Status` list, ranges, `[">=", n]`, `like`) are the ones §2 documents; `Bairro like` and the multi-value `Status` list were NOT re-probed live for this feature (the 2026-11-03 attempt returned empty pages for every filter incl. a bare listing, and the follow-up probe was blocked) — re-probe (a read-only `imoveis/listar` with each filter) before the One org is flipped to `vista`.
 

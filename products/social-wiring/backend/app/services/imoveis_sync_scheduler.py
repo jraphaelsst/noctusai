@@ -191,30 +191,14 @@ def _overdue_orgs(admin: Any, org_ids: list[str], now: datetime) -> list[str]:
 # ─── Adapter ────────────────────────────────────────────────────────────
 
 
-def _build_adapter() -> Any:
-    """Construct the Vista adapter, or None when Vista is unwired.
+def _build_adapter(org_id: str) -> Any:
+    """THIS org's Vista adapter (its own encrypted credential), or None when the org has none.
 
-    Imported inside the function: the adapter raises when unconfigured, and
-    an import-time raise would take the whole app down on a deploy where
-    Vista simply isn't wired yet. Same reasoning as
-    `imoveis_router.sync_imoveis`.
-    """
-    from noctusai_lib.integrations.vista import (
-        VistaNotConfigured,
-        VistaRESTAdapter,
-    )
+    Per org on purpose: the credential is per org (`vista_credenciais`), there is no environment key to fall back to,
+    and an org without a record is skipped (logged) without costing the others their refresh."""
+    from app.services import vista_credenciais
 
-    try:
-        return VistaRESTAdapter(
-            base_url=settings.crm_base_url,
-            api_key=settings.crm_api_key,
-        )
-    except VistaNotConfigured as exc:
-        logger.warning(
-            "%s: Vista not configured (%s) — skipping. The manual sync "
-            "button reports the same condition as a 503.", _JOB_NAME, exc,
-        )
-        return None
+    return vista_credenciais.adapter_ou_none(org_id)
 
 
 # ─── The shared runner ──────────────────────────────────────────────────
@@ -222,7 +206,7 @@ def _build_adapter() -> Any:
 
 async def _sync_orgs(
     admin: Any,
-    adapter: Any,
+    adapter_factory: Any,
     org_ids: list[str],
     *,
     motivo: str,
@@ -240,6 +224,13 @@ async def _sync_orgs(
     shape this logs its way out of.
     """
     for org_id in org_ids:
+        adapter = adapter_factory(org_id)
+        if adapter is None:
+            logger.warning(
+                "%s [%s]: org=%s has no Vista credential (Settings > Chaves de API > Vista CRM) — skipped.",
+                _JOB_NAME, motivo, org_id,
+            )
+            continue
         try:
             build = sync_service_factory or build_sync_service
             report = await build(admin, adapter).sync(
@@ -292,9 +283,7 @@ async def _run(
         logger.error("%s [%s]: no admin client — skipping.", _JOB_NAME, motivo)
         return
 
-    adapter = (adapter_factory or _build_adapter)()
-    if adapter is None:
-        return
+    adapter_factory = adapter_factory or _build_adapter
 
     try:
         org_ids = await asyncio.to_thread(discover_fn or _orgs_with_catalog, admin)
@@ -351,7 +340,7 @@ async def _run(
                 )
                 return
             await _sync_orgs(
-                admin, adapter, org_ids,
+                admin, adapter_factory, org_ids,
                 motivo=motivo,
                 sync_service_factory=sync_service_factory,
             )

@@ -34,10 +34,7 @@ from app.services.chatbot_service import ChatbotService, append_memory
 from app.services.conversation_module import route_inbound
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
-from noctusai_lib.integrations.vista import (
-    VistaNotConfigured as CRMNotConfigured,
-    VistaRESTAdapter as CRMService,
-)
+from app.services import vista_credenciais
 from app.services.media_service import make_media_service
 from app.modules.youtube.services.upload import stage_browser_upload
 from app.services.whatsapp_intake_service import WhatsAppIntakeService, web_reply_sink
@@ -104,19 +101,13 @@ def _build_intake() -> WhatsAppIntakeService:
     except (EncryptionNotConfigured, YouTubeServiceError) as exc:
         logger.warning("YouTube service unavailable for chat: %s", exc)
 
-    crm: CRMService | None = None
-    try:
-        crm = CRMService(
-            base_url=settings.crm_base_url,
-            api_key=settings.crm_api_key,
-        )
-    except CRMNotConfigured:
-        logger.info("CRM not configured — platform chat will use manual titles")
-
     # No JWT context, so the chat surface uses the seed default org
     # (the local-dev org in SQLite mode; the first connected YouTube
     # org in Supabase mode — same shape as the WhatsApp router).
     org_id = _resolve_default_org(admin_supabase) or UUID(settings.local_dev_org_id)
+
+    # That org's own Vista credential; none -> manual titles (never an env key).
+    crm = vista_credenciais.adapter_ou_none(org_id)
 
     return WhatsAppIntakeService(
         waha_base_url=settings.waha_base_url,

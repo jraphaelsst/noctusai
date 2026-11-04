@@ -97,8 +97,8 @@ from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
     VistaNotConfigured as CRMNotConfigured,
-    VistaRESTAdapter as CRMService,
 )
+from app.services import vista_credenciais
 from app.services.api_keys_store import (
     API_KEY_SPECS,
     MANAGED_API_KEYS,
@@ -329,14 +329,6 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> KeysStatus:
             cfg.waha_webhook_hmac_secret, "WAHA Webhook Secret",
             "Optional shared secret for webhook hardening. Empty in local dev is allowed.",
         ),
-        vista_base_url=_entry(
-            cfg.crm_base_url or cfg.vista_base_url, "Vista Base URL",
-            "Vista tenant REST base URL. Server-side only.",
-        ),
-        vista_api_key=_entry(
-            cfg.crm_api_key or cfg.vista_api_key, "Vista API Key",
-            "Vista API key. Server-side only; never expose as VITE_*.",
-        ),
         database_backend=_entry(
             cfg.database_backend, "Database Backend",
             "sqlite for local development, supabase for production.",
@@ -355,17 +347,14 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> KeysStatus:
 @router.get("/vista/status", response_model=VistaStatus)
 async def get_vista_status(
     product_code: str = Query(default="ONE5555", min_length=6, max_length=9),
-    _user=Depends(get_current_user),
+    auth=Depends(get_current_user_org),
 ) -> VistaStatus:
-    """Live Vista smoke check using a property code.
+    """Live Vista smoke check of THIS org's stored credential, using a property code.
 
     Returns a sanitized property summary only. It never echoes the Vista key.
     """
     try:
-        crm = CRMService(
-            base_url=settings.crm_base_url,
-            api_key=settings.crm_api_key,
-        )
+        crm = vista_credenciais.adapter_da_org(coerce_org_uuid(auth[2]))
     except CRMNotConfigured as exc:
         return VistaStatus(
             configured=False,

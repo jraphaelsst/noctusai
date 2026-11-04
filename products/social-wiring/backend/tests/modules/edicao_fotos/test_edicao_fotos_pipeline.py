@@ -232,13 +232,22 @@ def test_vista_pull_with_no_gallery_is_404(edicao) -> None:
 def test_vista_unconfigured_is_503(edicao, override_settings) -> None:
     from app.modules.edicao_fotos.deps import get_vista_photo_source
 
+    from noctusai_lib.security.token_store import FakeCredentialStore
+
+    from app.services import vista_credenciais
+
     edicao.app.dependency_overrides.pop(get_vista_photo_source)
-    override_settings(crm_base_url="", crm_api_key="")
-    lote = edicao.make_batch("corretor")
-    resp = edicao.as_user("corretor").http.post(
-        f"/api/edicao-fotos/lotes/{lote}/vista", json={"codigo": "CA1"}
-    )
-    assert resp.status_code == 503 and resp.json()["code"] == "vista_nao_configurado"
+    vista_credenciais.configure_store(lambda: FakeCredentialStore())  # the org has NO Vista record
+    try:
+        lote = edicao.make_batch("corretor")
+        resp = edicao.as_user("corretor").http.post(
+            f"/api/edicao-fotos/lotes/{lote}/vista", json={"codigo": "CA1"}
+        )
+    finally:
+        vista_credenciais.configure_store(None)
+    body = resp.json()
+    assert resp.status_code == 503 and body["code"] == "vista_nao_configurado"
+    assert "Vista não configurada para esta empresa" in str(body)
 
 
 # --- submit + full pipeline + review + zip -------------------------------

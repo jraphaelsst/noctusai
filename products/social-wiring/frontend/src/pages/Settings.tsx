@@ -37,6 +37,7 @@ import {
   useSalvarDadosImobiliaria,
 } from "@/hooks/useDadosImobiliaria";
 import { TestemunhasSection } from "@/components/settings/TestemunhasSection";
+import { VistaCard } from "@/components/settings/VistaCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1290,6 +1291,7 @@ function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
         </CardContent>
       </Card>
 
+      {isAdminOrDev && <VistaCard />}
       {isAdminOrDev && <MetaAppSection />}
       {isAdminOrDev && <InstagramAppSection />}
     </div>

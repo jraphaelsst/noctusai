@@ -286,14 +286,10 @@ class SocialWiringSettings(ProductSettings):
     local_dev_org_id: str = "00000000-0000-4000-8000-000000000001"
     local_dev_user_id: str = "00000000-0000-4000-8000-000000000001"
 
-    # ─── CRM (real estate property lookup, Phase 5) ────────────────────
-    crm_base_url: str = ""
-    crm_api_key: str = ""
-    # Vista aliases. In local/dev deployments these are copied from the
-    # NoctusAI root .env; CRMService consumes crm_* after model_post_init
-    # maps the aliases.
-    vista_base_url: str = ""
-    vista_api_key: str = ""
+    # ─── Vista CRM ──────────────────────────────────────────────────────
+    # Deliberately NO base_url / api_key settings: the Vista credential is PER ORG, stored encrypted in
+    # `social_wiring.credentials` (provider "vista") and set from Settings (`/api/integracoes/vista`). See
+    # `app/services/vista_credenciais.py`.
 
     # ─── Edição de Fotos (app/modules/edicao_fotos) ─────────────────────
     # The photo-editing job worker (seed `domain.jobs.Worker` over the
@@ -644,10 +640,6 @@ class SocialWiringSettings(ProductSettings):
             tunnel = self.tunnel_hostname.rstrip("/")
             if tunnel not in self.cors_origins:
                 self.cors_origins = f"{self.cors_origins},{tunnel}"
-        if not self.crm_base_url and self.vista_base_url:
-            self.crm_base_url = self.vista_base_url
-        if not self.crm_api_key and self.vista_api_key:
-            self.crm_api_key = self.vista_api_key
         # OAuth redirect URIs — derive from oauth_redirect_base_url (or
         # tunnel_hostname fallback) when set; preserves today's behavior
         # otherwise (per-URI defaults / env vars). The derivation always

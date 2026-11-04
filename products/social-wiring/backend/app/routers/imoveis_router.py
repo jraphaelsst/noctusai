@@ -38,6 +38,7 @@ from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub import duplicatas_service as duplicatas_svc
 from app.modules.imovel_hub import vinculo_service as vinculo_svc
 from app.modules.imovel_hub.deps import get_imovel_hub_client
+from app.services import vista_credenciais
 from app.services.imoveis_service import (
     build_imoveis_service,
     build_sync_service,
@@ -253,24 +254,8 @@ async def sync_imoveis(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    # Import here, not at module scope: the adapter raises when Vista is
-    # unconfigured, and an import-time raise would take the whole app down
-    # on a deploy where Vista simply isn't wired yet.
-    from noctusai_lib.integrations.vista import (
-        VistaNotConfigured,
-        VistaRESTAdapter,
-    )
-
-    try:
-        adapter = VistaRESTAdapter(
-            base_url=settings.crm_base_url,
-            api_key=settings.crm_api_key,
-        )
-    except VistaNotConfigured as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Vista não configurado: {exc}",
-        ) from exc
+    # THIS org's own credential (encrypted store); an org with none is a 503, never an env fallback.
+    adapter = vista_credenciais.adapter_ou_503(org_id)
 
     report = await build_sync_service(db, adapter).sync(
         org_id, with_detalhes=with_detalhes
