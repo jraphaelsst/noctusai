@@ -2,7 +2,6 @@
  "_doc": "Ratchet of doc-staleness findings that existed when the gate shipped (2026-10-19). It may only SHRINK: fix a doc, then `--doc-baseline shrink`. New staleness fails CI. KB § PATTERNS/common/doc-staleness-gate.md.",
  "entries": {
   "migration_state::products/social-wiring/projects/maya-blocks/CONTRACT.md::286_atendimento_blocos_supervisao.sql": "`products/social-wiring/projects/maya-blocks/CONTRACT.md` says migration `286_atendimento_blocos_supervisao.sql` is \"NOT applied\" but it is recorded in a produc",
-  "migration_state::products/social-wiring/projects/maya-blocks/README.md::286_atendimento_blocos_supervisao.sql": "`products/social-wiring/projects/maya-blocks/README.md` says migration `286_atendimento_blocos_supervisao.sql` is \"not applied\" but it is recorded in a product'",
   "missing_path::CLAUDE/frontend.md::core/frontend/src/lib/product-icon.tsx": "`CLAUDE/frontend.md` cites `core/frontend/src/lib/product-icon.tsx`, which does not exist in the tree (renamed/deleted?). Fix the reference.",
   "missing_path::CLAUDE/projects.md::mcp/noctusai/data/phase_learnings.db": "`CLAUDE/projects.md` cites `mcp/noctusai/data/phase_learnings.db`, which does not exist in the tree (renamed/deleted?). Fix the reference.",
   "missing_path::KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md::.claude/cache": "`KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md` cites `.claude/cache`, which does not exist in the tree (renamed/deleted?). Fix the reference.",

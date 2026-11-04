@@ -166,5 +166,5 @@ declared and filled by the org · skills pinned at their newest version · stand
 written and passing on the current hash · (channel agent) mechanism suite green on the current hash · conformance rules set ·
 generator gaps resolved · controls set after publish.
 
-Composes with: `KB § GUIDES/new-product.md` (a *product*, not an agent), `projects/julia-v2/CONTRACT.md` (the design),
+Composes with: `KB § GUIDES/new-product.md` (a *product*, not an agent), `products/agents/projects/julia-v2/CONTRACT.md` (the design),
 `products/agents/README.md`, `.claude/skills/noc-new-agent/SKILL.md`.
