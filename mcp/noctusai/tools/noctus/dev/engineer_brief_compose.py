@@ -7,10 +7,20 @@ Queries three keeper-mirror caches to enrich briefs with semantic context:
   3. agent-context    — vector-pick the best-matched agent when `agent`
                         is omitted (cosine vs each agent's owned-KB centroid).
 
-All three caches are advisory — when the embedding provider is unreachable
-or a cache is empty the tool gracefully degrades: `kb_references` and
-`auto_improvement_context` become `[]`, `suggested_agent` falls back to
-`"backend-engineer"` (safest default for code-level work).
+Plus the agent's own track record (closes the learning loop):
+  4. recent misses    — open auto-improvement entries the agent itself
+                        surfaced + its weakest RUBRIC_V1 dimensions from
+                        the latest `slice-scores.ndjson` rows, rendered as a
+                        `### Your recent misses (do not repeat)` block.
+
+All caches are advisory — when the embedding provider is unreachable or a
+cache is empty the tool degrades: `kb_references` /
+`auto_improvement_context` / `recent_misses` become `[]`,
+`suggested_agent` falls back to `"backend-engineer"`. A degradation is
+NEVER silent: every swallowed failure appends a reason to `degraded`.
+
+Every cache source is an injectable parameter of `compose_brief` (tests pass
+fakes; nothing patches this module).
 
 Output shape:
   {
@@ -18,6 +28,8 @@ Output shape:
     suggested_agent: str,            # agent slug (picked or passed)
     auto_improvement_context: list,  # [{ts, kind, target, description, status}]
     kb_references: list,             # [{path, chunk_text, score}]
+    recent_misses: list,             # [{ts, source, kind, target, text}]
+    degraded: list[str],             # one reason per swallowed failure ([] = clean)
   }
 
 Render shape (dispatch-engineer-tuning §4d):
@@ -26,6 +38,8 @@ Render shape (dispatch-engineer-tuning §4d):
   <description>
   ### Reference
   <top-kb-chunk links / titles>
+  ### Your recent misses (do not repeat)   ← omitted when there are none
+  <agent's own open drifts + weakest rubric dims>
   ### Scope
   <target_files list>
   ### Acceptance
@@ -39,12 +53,26 @@ KB § PATTERNS/architect/dispatch-engineer-tuning.md.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+import logging
 from typing import Any
 
 # Canonical cosine — single source at _embedding_corpus (N=7 consolidation).
 from . import _embedding_corpus as _ec
 
 _cosine = _ec.cosine
+logger = logging.getLogger(__name__)
+
+#: Signature of `auto_improvement.query` as used here (keyword-only args).
+AiQuery = Callable[..., list[dict]]
+
+
+def _note(degraded: list[str] | None, source: str, exc: BaseException | str) -> None:
+    """Record a degradation reason — the non-silent half of every guarded call."""
+    reason = exc if isinstance(exc, str) else f"{type(exc).__name__}: {exc}"
+    logger.warning("engineer_brief_compose degraded — %s: %s", source, reason)
+    if degraded is not None:
+        degraded.append(f"{source}: {reason}")
 
 
 def _centroid(vecs: list[list[float]]) -> list[float]:
@@ -61,29 +89,53 @@ def _centroid(vecs: list[list[float]]) -> list[float]:
 
 
 # ── Embedding call (delegates to vectorize.embed_text) ───────────────────────
-def _embed(text: str) -> list[float]:
-    """Return the embedding vector for `text`, or [] on any failure."""
+def _embed(
+    text: str,
+    *,
+    embed_text: Callable[[str], dict] | None = None,
+    degraded: list[str] | None = None,
+) -> list[float]:
+    """Return the embedding vector for `text`, or [] (reason noted) on failure."""
     try:
-        from tools.noctus.dev.vectorize import embed_text
+        if embed_text is None:
+            from tools.noctus.dev.vectorize import embed_text
         result = embed_text(text)
-        if result.get("ok") and result.get("vector"):
-            return result["vector"]
+    except Exception as exc:  # noqa: BLE001 — advisory layer; reason surfaced below
+        _note(degraded, "embedding", exc)
         return []
-    except Exception:  # noqa: BLE001 — graceful degrade
-        return []
+    if result.get("ok") and result.get("vector"):
+        return result["vector"]
+    _note(degraded, "embedding", str(result.get("error") or "provider returned no vector"))
+    return []
 
 
 # ── Auto-improvement query ────────────────────────────────────────────────────
-def _query_auto_improvement(description: str, target_files: list[str]) -> list[dict]:
+def _load_ai_query(degraded: list[str] | None) -> AiQuery | None:
+    try:
+        from tools.noctus.dev.auto_improvement import query
+    except ImportError as exc:
+        _note(degraded, "auto-improvement", exc)
+        return None
+    return query
+
+
+def _query_auto_improvement(
+    description: str,
+    target_files: list[str],
+    *,
+    ai_query: AiQuery | None = None,
+    degraded: list[str] | None = None,
+) -> list[dict]:
     """Return top-3 open auto-improvement entries related to this task.
 
     Scores by text substring overlap across target_files + description;
     falls back to a simple recency-first fetch when the cache is empty.
+    Each failed sub-query appends a reason to `degraded` (never swallowed).
     """
-    try:
-        from tools.noctus.dev.auto_improvement import query as ai_query
-    except ImportError:
-        return []
+    if ai_query is None:
+        ai_query = _load_ai_query(degraded)
+        if ai_query is None:
+            return []
 
     # Collect candidate entries — search by each target file path, deduplicate.
     seen_ids: set[int] = set()
@@ -96,7 +148,8 @@ def _query_auto_improvement(description: str, target_files: list[str]) -> list[d
                 if rid not in seen_ids:
                     seen_ids.add(rid)
                     candidates.append(r)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — per-target; reason surfaced
+            _note(degraded, f"auto-improvement query(target={tf!r})", exc)
             continue
 
     # Also fetch by description keywords (first 60 chars as a broad target search).
@@ -108,14 +161,15 @@ def _query_auto_improvement(description: str, target_files: list[str]) -> list[d
             if rid not in seen_ids:
                 seen_ids.add(rid)
                 candidates.append(r)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 — keyword leg; reason surfaced
+        _note(degraded, "auto-improvement query(keyword)", exc)
 
     # If no candidates, return a recency-first sample.
     if not candidates:
         try:
             candidates = ai_query(open_only=True, limit=20)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — recency fallback; reason surfaced
+            _note(degraded, "auto-improvement query(recency)", exc)
             return []
 
     # Score by description-overlap (simple term count, no embedding needed here —
@@ -151,10 +205,16 @@ def _query_auto_improvement(description: str, target_files: list[str]) -> list[d
 
 
 # ── KB search ────────────────────────────────────────────────────────────────
-def _query_kb(description: str) -> list[dict]:
+def _query_kb(
+    description: str,
+    *,
+    kb_search: Callable[..., list[dict]] | None = None,
+    degraded: list[str] | None = None,
+) -> list[dict]:
     """Return top-3 KB chunks most semantically relevant to `description`."""
     try:
-        from tools.noctus.dev.kb_embeddings import search as kb_search
+        if kb_search is None:
+            from tools.noctus.dev.kb_embeddings import search as kb_search
         hits = kb_search(description, top_k=3)
         return [
             {
@@ -164,14 +224,124 @@ def _query_kb(description: str) -> list[dict]:
             }
             for h in hits
         ]
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — advisory layer; reason surfaced
+        _note(degraded, "kb-embeddings", exc)
         return []
+
+
+# ── Recent misses (the agent's own track record) ─────────────────────────────
+#: auto-improvement kinds that describe something the agent got wrong / left.
+MISS_KINDS = frozenset({"drift", "improvement", "finding", "phase-learning"})
+#: How many of the agent's latest scored slices feed the rubric leg.
+RUBRIC_WINDOW = 5
+#: A dimension whose mean is below this (0-4 scale) counts as a miss.
+RUBRIC_MISS_BELOW = 3.0
+#: At most this many weak rubric dimensions are reported.
+RUBRIC_MAX_DIMS = 2
+
+
+def _norm(text: str) -> str:
+    return " ".join((text or "").lower().split())
+
+
+def _weak_rubric_dims(agent: str, rows: list[dict]) -> list[dict]:
+    """The agent's weakest RUBRIC_V1 dimensions over its latest scored slices."""
+    from tools.noctus.dev.dispatch_token_log import RUBRIC_V1
+
+    mine = sorted(
+        (r for r in rows if r.get("agent") == agent and isinstance(r.get("q"), dict)),
+        key=lambda r: r.get("ts") or "",
+        reverse=True,
+    )[:RUBRIC_WINDOW]
+    if not mine:
+        return []
+    latest_ts = mine[0].get("ts") or ""
+    weak: list[tuple[float, str, int]] = []
+    for dim in RUBRIC_V1["weights"]:
+        vals = [float(r["q"][dim]) for r in mine if r["q"].get(dim) is not None]
+        if vals and (mean := sum(vals) / len(vals)) < RUBRIC_MISS_BELOW:
+            weak.append((mean, dim, len(vals)))
+    weak.sort()
+    hi = RUBRIC_V1["scale"][1]
+    return [
+        {
+            "ts": latest_ts,
+            "source": "rubric",
+            "kind": "rubric",
+            "target": f"{dim} {RUBRIC_V1['names'][dim]}",
+            "text": (
+                f"{RUBRIC_V1['names'][dim]} scored {mean:.1f}/{hi} on average "
+                f"over your last {n} scored slice(s)"
+            ),
+        }
+        for mean, dim, n in weak[:RUBRIC_MAX_DIMS]
+    ]
+
+
+def _recent_misses(
+    agent: str,
+    *,
+    limit: int = 5,
+    ai_query: AiQuery | None = None,
+    score_rows: Callable[[], list[dict]] | None = None,
+    degraded: list[str] | None = None,
+) -> list[dict]:
+    """The agent's own recent misses — newest first, deduplicated, bounded.
+
+    Two legs: (a) open auto-improvement entries the agent itself surfaced
+    (kinds in MISS_KINDS); (b) its weakest RUBRIC_V1 dimensions from the
+    latest slice-scores rows (`noctus.team.agent_metrics.load_rows`).
+    Returns `[{ts, source, kind, target, text}]`; a failing leg notes a
+    reason in `degraded` and the other leg still contributes.
+    """
+    if not agent or limit <= 0:
+        return []
+    found: list[dict] = []
+
+    if ai_query is None:
+        ai_query = _load_ai_query(degraded)
+    if ai_query is not None:
+        try:
+            rows = ai_query(agent=agent, open_only=True, limit=50)
+        except Exception as exc:  # noqa: BLE001 — advisory leg; reason surfaced
+            _note(degraded, "recent-misses auto-improvement", exc)
+            rows = []
+        for r in rows:
+            if r.get("kind") not in MISS_KINDS or not (r.get("description") or "").strip():
+                continue
+            found.append({
+                "ts": r.get("ts") or "",
+                "source": "auto-improvement",
+                "kind": r.get("kind", ""),
+                "target": r.get("target") or "*",
+                "text": r["description"].strip(),
+            })
+
+    try:
+        if score_rows is None:
+            from tools.noctus.team.agent_metrics import load_rows as score_rows
+        found += _weak_rubric_dims(agent, score_rows())
+    except Exception as exc:  # noqa: BLE001 — advisory leg; reason surfaced
+        _note(degraded, "recent-misses slice-scores", exc)
+
+    found.sort(key=lambda m: m["ts"], reverse=True)
+    seen: set[str] = set()
+    out: list[dict] = []
+    for m in found:
+        key = _norm(m["text"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(m)
+        if len(out) >= limit:
+            break
+    return out
 
 
 # ── Agent routing ─────────────────────────────────────────────────────────────
 _FALLBACK_AGENT = "backend-engineer"
 
-def _pick_agent(query_vec: list[float]) -> str:
+def _pick_agent(query_vec: list[float], *, degraded: list[str] | None = None) -> str:
     """Pick the best-matched agent by cosine vs each agent's owned-KB centroid.
 
     Returns the agent slug. Falls back to _FALLBACK_AGENT if:
@@ -180,12 +350,14 @@ def _pick_agent(query_vec: list[float]) -> str:
       - no agent has owned KB chunks in the kb-embeddings cache
     """
     if not query_vec:
+        _note(degraded, "agent-routing", f"no query embedding; fell back to {_FALLBACK_AGENT}")
         return _FALLBACK_AGENT
 
     try:
         from tools.noctus.dev.agent_context_cache import list_agents, lookup
         from tools.noctus.dev.kb_embeddings import _load_all_chunk_vectors  # internal
-    except ImportError:
+    except ImportError as exc:
+        _note(degraded, "agent-routing", exc)
         return _FALLBACK_AGENT
 
     try:
@@ -206,7 +378,8 @@ def _pick_agent(query_vec: list[float]) -> str:
                 if not bundle.get("ok"):
                     continue
                 owned_paths = {o["path"] for o in bundle.get("owned_kb", [])}
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — per-agent; reason surfaced
+                _note(degraded, f"agent-routing lookup({agent_name})", exc)
                 continue
 
             if not owned_paths:
@@ -228,7 +401,8 @@ def _pick_agent(query_vec: list[float]) -> str:
 
         return best_agent
 
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — advisory layer; reason surfaced
+        _note(degraded, "agent-routing", exc)
         return _FALLBACK_AGENT
 
 
@@ -262,6 +436,7 @@ def _render_brief(
     agent: str,
     kb_references: list[dict],
     auto_improvement_context: list[dict],
+    recent_misses: list[dict] | None = None,
 ) -> str:
     """Render the brief in dispatch-engineer-tuning §4d shape."""
     title_slug = description[:60].rstrip()
@@ -283,6 +458,14 @@ def _render_brief(
             lines.append(f"- `KB § {path}` (score={score:.3f}) — {first_line}")
     else:
         lines.append("- (KB embeddings cache empty or embedding provider unreachable — use `KB § INDEX.md` + grep)")
+
+    # The agent's own recent misses — omitted entirely when there are none.
+    if recent_misses:
+        lines += ["", "### Your recent misses (do not repeat)"]
+        for m in recent_misses:
+            short = (m.get("text") or "")[:160].replace("\n", " ")
+            day = (m.get("ts") or "")[:10] or "?"
+            lines.append(f"- [{m.get('kind', '?')}] {m.get('target', '*')} — {short} ({day})")
 
     # Auto-improvement context block.
     if auto_improvement_context:
@@ -328,6 +511,13 @@ def compose_brief(
     target_files: list[str],
     description: str,
     agent: str | None = None,
+    *,
+    embed_text: Callable[[str], dict] | None = None,
+    ai_query: AiQuery | None = None,
+    kb_search: Callable[..., list[dict]] | None = None,
+    pick_agent: Callable[[list[float]], str] | None = None,
+    score_rows: Callable[[], list[dict]] | None = None,
+    misses_limit: int = 5,
 ) -> dict[str, Any]:
     """Auto-compose an engineer dispatch brief.
 
@@ -336,11 +526,12 @@ def compose_brief(
       2. Query auto-improvement.ndjson cache for related open surfaces.
       3. Query kb-embeddings cache for top-3 related KB chunks.
       4. If `agent` is None, cosine-pick best agent from agent-context cache.
-      5. Render the brief in dispatch-engineer-tuning §4d shape.
+      5. Collect the agent's own recent misses (open drifts + weak rubric dims).
+      6. Render the brief in dispatch-engineer-tuning §4d shape.
 
-    Graceful-degrade: if the embedding provider is unreachable or any cache
-    is missing, returns the brief with `kb_references=[]` and/or
-    `auto_improvement_context=[]`.
+    Every source is injectable (`embed_text`, `ai_query`, `kb_search`,
+    `pick_agent`, `score_rows`); None = the live cache. Degrade is never
+    silent: each swallowed failure appends a reason to `degraded`.
 
     Returns:
       {
@@ -348,30 +539,45 @@ def compose_brief(
         suggested_agent: str,
         auto_improvement_context: list[dict],
         kb_references: list[dict],
+        recent_misses: list[dict],
+        degraded: list[str],
       }
     """
+    degraded: list[str] = []
+
     # Step 1: embed the description.
-    query_vec = _embed(description)
+    query_vec = _embed(description, embed_text=embed_text, degraded=degraded)
 
     # Step 2: auto-improvement context.
-    ai_ctx = _query_auto_improvement(description, target_files)
+    ai_ctx = _query_auto_improvement(
+        description, target_files, ai_query=ai_query, degraded=degraded,
+    )
 
     # Step 3: KB references.
-    kb_refs = _query_kb(description)
+    kb_refs = _query_kb(description, kb_search=kb_search, degraded=degraded)
 
     # Step 4: agent selection.
-    if agent is None:
-        suggested_agent = _pick_agent(query_vec)
-    else:
+    if agent is not None:
         suggested_agent = agent
+    elif pick_agent is not None:
+        suggested_agent = pick_agent(query_vec)
+    else:
+        suggested_agent = _pick_agent(query_vec, degraded=degraded)
 
-    # Step 5: render.
+    # Step 5: the agent's own recent misses.
+    misses = _recent_misses(
+        suggested_agent, limit=misses_limit, ai_query=ai_query,
+        score_rows=score_rows, degraded=degraded,
+    )
+
+    # Step 6: render.
     brief = _render_brief(
         description=description,
         target_files=target_files,
         agent=suggested_agent,
         kb_references=kb_refs,
         auto_improvement_context=ai_ctx,
+        recent_misses=misses,
     )
 
     return {
@@ -379,6 +585,8 @@ def compose_brief(
         "suggested_agent": suggested_agent,
         "auto_improvement_context": ai_ctx,
         "kb_references": kb_refs,
+        "recent_misses": misses,
+        "degraded": degraded,
     }
 
 
@@ -389,8 +597,11 @@ def register(server) -> None:
         description=(
             "Auto-compose a dispatch brief for an engineer by querying the "
             "keeper-mirror caches (kb-embeddings, auto-improvement, agent-context). "
-            "Returns {brief, suggested_agent, auto_improvement_context, kb_references}. "
-            "Graceful-degrade when embedding provider is unreachable. "
+            "Returns {brief, suggested_agent, auto_improvement_context, kb_references, "
+            "recent_misses, degraded}. The brief carries a 'Your recent misses (do not "
+            "repeat)' block: the agent's own open drifts + weakest rubric dimensions. "
+            "Degrades (never silently) when a cache/provider is unreachable — each "
+            "reason lands in `degraded`. "
             "KB § PATTERNS/architect/dispatch-engineer-tuning.md."
         ),
     )
