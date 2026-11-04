@@ -305,12 +305,14 @@ class TestDocumentosDeAssinaturaEQualificacao:
         texto = frases.texto_pessoa(self._p(), em_nucleo=False)
         assert "da cédula de identidade RG 12.345.678-9-SSP-SP e " in texto and "no CPF/MF 111.444.777-35" in texto
 
-    def test_readiness_still_asks_the_party_for_an_rg_only_where_the_checklist_does(self):
-        """The omission is a render-time safety: readiness policy for a contract party is unchanged (RG + órgão stay in
-        `_CAMPOS_QUALIFICACAO_CONTRATO`); a witness needs the CPF alone."""
+    def test_readiness_asks_a_party_for_the_cpf_never_the_rg(self):
+        """[Owner decision, 2026-11-04] RG is optional for every contract party: readiness asks for the CPF and never
+        for the RG / órgão (absent RG => clause omitted, qualification by CPF); a witness needs the CPF alone."""
         from app.modules.card_hub import documento_checklist_service as dc
 
-        assert {"rg", "rg_orgao_expedidor", "cpf"} <= set(dc._CAMPOS_QUALIFICACAO_CONTRATO)
+        campos = set(dc._CAMPOS_QUALIFICACAO_CONTRATO)
+        assert "cpf" in campos
+        assert not ({"rg", "rg_orgao_expedidor"} & campos)
         d = fx.variante(1)
         t1, t2 = d.testemunhas
         av = _avaliar(1, replace(d, testemunhas=[replace(t1, rg=None), replace(t2, rg=None)]))
