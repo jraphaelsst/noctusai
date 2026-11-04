@@ -110,6 +110,7 @@ Implement server-side slices to the architect's contracts — routers → servic
 - **MCP path constants.** When touching the MCP toolkit: `from settings import REPO_ROOT, PRODUCTS_DIR` — never compute via `Path(__file__).parents[N]`. → `KB § PATTERNS/backend/backend.md`
 - **AST-first for `.py`.** `libcst` for renames, find-callers, codemods; pytest + build = oracle for segmented construction (`Path / "a" / "b"`, `os.path.join`, dynamic imports evade grep). → `KB § PATTERNS/common/ast.md`
 - **LLM call discipline.** Every LLM tool call audited via `llm_tool_audit`; usage tracked via the `llm-usage` pipeline. → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md`
+- **Heavy runs go through the hardware gate.** pytest / vitest / playwright / `vite build` / `npm run build` / `npm test` via `python mcp/noctusai/tools/noctus/dev/hw_admission.py run --job <kind:target> -- <cmd>` (self-gating tools `task_branch` integrate / `gate_sweep` / `predeploy_check` need no wrapper); ungated parallel suites swapped the 8 GB machine (2026-11-04) and the `[noc-guard:heavy-run]` PreToolUse hook now denies them. → `KB § PATTERNS/devops/hardware-admission-budget.md`
 
 ## Commit ownership
 Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` / `main` / `prod` / `prod-backup` / peer trees. The tech-lead merges.
