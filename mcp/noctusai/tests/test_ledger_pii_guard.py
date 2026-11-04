@@ -96,7 +96,7 @@ class TestLedgerWriters:
         from tools.noctus.dev import auto_improvement as ai
         monkeypatch.setattr(ai, "LEDGER_PATH", tmp_path / "ai.ndjson")
         with pytest.raises(g.PiiLedgerError):
-            ai.log_entry(scope="scoped", kind="drift", target="t",
+            ai.log_entry(scope="scoped", kind="drift", target="t", resolve_when="manual:pii probe",
                          description=f"probe phone {PHONE}")
 
     def test_branch_pointer_row_refuses(self, tmp_path, monkeypatch):
