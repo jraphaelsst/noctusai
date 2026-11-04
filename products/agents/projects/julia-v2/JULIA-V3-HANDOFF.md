@@ -127,7 +127,7 @@ The content payloads are committed next to this file in `content-v3/` (ferrament
 
 - Run Julia's 20 evals on the CURRENT draft hash (Studio).
 - The publish modal must show no blocking items and a score ≥ 0.800 (now also via GET /prontidao).
-- Tell the owner exactly what to publish, IN ORDER: (1) the imob-lead standard v2 draft (ce675a7a-…); (2) Julia.
+- Tell the owner exactly what to publish, IN ORDER: (1) the imob-lead standard **v3 draft `82e12707-0073-449e-9ccc-e142e6a5eb52`** (rascunho, lote_ofertas=3, v3 criteria); (2) Julia. NOTE: v2 `ce675a7a` is ALREADY PUBLISHED (2026-11-03 22:46) with lote_ofertas=1, so live offers go out 1 per batch until v3 is published. Migrations 054/055 change only the column DEFAULT. (Verified read-only in prod agents.qualificacao_versoes by noctusai-3d.)
 - Remind them to turn Julia on per line (SW switch), with evaluation mode ON first.
 
 ## 7 · Owner actions still open
@@ -168,7 +168,7 @@ The content payloads are committed next to this file in `content-v3/` (ferrament
    - 500-on-publish fixed.
    - WhatsApp renamed to Julia in the UI.
    - Skills-tab lag + publish button.
-   - Qualification parameters filled (imob-lead v3 parameters/criterion edits are in the v2 DRAFT).
+   - Qualification parameters filled (imob-lead v3 parameters/criterion edits are in the v3 DRAFT 82e12707; v2 ce675a7a is published with lote 1).
 9. **Agent-creation process documentation.**
    - Owner: "Document this complete-agent creation process and update our code, so future agents get built properly and mostly complete."
    - It lives in agents-prontidao (KB GUIDES/agent-creation.md + skill noc-new-agent).
@@ -189,7 +189,7 @@ Later entries SUPERSEDE earlier ones where they conflict. ⟲ marks a reversal.
 | 11-03 22:57 | WAHA still says "One Chat": **refresh the session** after drafting evals | session restarted; WAHA's own label still showed "One Chat" (owner-visible name on the phone is Julia) |
 | 11-03 23:06 | ⟲ **"let's not ofertar imoveis yet"**: Julia gives US the recommendations first; max 3 per run; no repeats; an "offered imoveis" column on the lead with the refs; tell the lead when there are no more options and offer a human | superseded on the destination only (00:40) |
 | 11-04 00:40 | ⟲ **"make the offers on, but not sending the recommendations to me, she sends to the lead."** Lead handed to ME first; handoff number swappable, later → the responsável. Julia never schedules visits; she gathers options; she decides when to hand off; only essentials; CPF mandatory, RG + email nice-to-have; any ID doc, numbers or photo ("visible data and proper lights") → extractor. Vista: search their API; update the docs; "map everything so Julia knows exactly where she has to act"; "I still need to update our db so we can stop fetching from Vista and im not doing it now". Paragraph split on \n\n. Switch: agents = all orgs, SW = that org only ("building it to be scalable and sell it"). Contracts: RG + CPF, whichever exists, never empty. 3 per send, ask for more, none left → offer a human. Link pattern …/imovel/ONExxxx. Opening flow with "ideal". Unhappy lead / mistake / drift → WhatsApp alert to the owner, apologize, testing-phase mention, offer a human; testing-phase switch | CONTRACT §12 + all v3 branches |
-| 11-04 ~00:45 | "draft everything and tell me when to publish and what to publish" | drafts written (sections, skills, evals, imob-lead v2 draft) |
+| 11-04 ~00:45 | "draft everything and tell me when to publish and what to publish" | drafts written (sections, skills, evals, imob-lead v3 draft 82e12707) |
 | 11-04 ~00:47 | The doc-photo drop is real; **"name comes from the campaign form"** | name rules in section `identificacao` |
 | 11-04 ~00:48 | The form name may be a business: if clearly a business, ask for the person's name; if it sounds real, use it; if in doubt, ask | in section + eval `nome-empresa` |
 | 11-04 ~00:50 | Link pattern `https://oneconsultoriaimobiliaria.com.br/imovel/ONExxxx` | — |
