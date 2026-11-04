@@ -52,6 +52,7 @@ const WebsiteSettings = lazy(() => import('./pages/admin/website/Settings').then
 const WebsiteLeads = lazy(() => import('./pages/admin/website/Leads').then(m => ({ default: m.Leads })));
 const WebsiteLeadDetail = lazy(() => import('./pages/admin/website/LeadDetail').then(m => ({ default: m.LeadDetail })));
 const AdminFinanceiro = lazy(() => import('./pages/admin/AdminFinanceiro').then(m => ({ default: m.AdminFinanceiro })));
+const AdminUsoCustos = lazy(() => import('./pages/admin/AdminUsoCustos').then(m => ({ default: m.AdminUsoCustos })));
 const AdminOperacao = lazy(() => import('./pages/admin/AdminOperacao').then(m => ({ default: m.AdminOperacao })));
 const FleetControl = lazy(() => import('./pages/FleetControl').then(m => ({ default: m.FleetControl })));
 
@@ -102,6 +103,7 @@ const App = createProductApp({
     { path: '/admin/operacao/*', component: AdminOperacao },
     { path: '/admin/financeiro/*', component: AdminFinanceiro },
     { path: '/admin/creditos', component: AdminCreditos },
+    { path: '/admin/uso', component: AdminUsoCustos },
   ],
 });
 
