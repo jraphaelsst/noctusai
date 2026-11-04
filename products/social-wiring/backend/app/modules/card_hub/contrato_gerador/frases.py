@@ -278,6 +278,10 @@ def identidade_texto(p: Pessoa) -> str:
     signed contracts' wording). The RNE/RNM's issuing body (DIREX, CGPI/
     DIREX/DPF — the Polícia Federal) is NEVER part of the number and is not
     printed: appending it produced "RNE W-573.678-Z DIREX"."""
+    if not (p.rg or "").strip():
+        # [julia-v3, owner 2026-11-03] No identity number on file: the clause is OMITTED entirely
+        # (never "RG " / "RG -SSP"); `texto_pessoa` then qualifies by the CPF alone.
+        return ""
     portador = _g(p, "portador", "portadora")
     sigla = IDENTIDADES_ESTRANGEIRO.get((p.identidade_tipo or "").strip().lower())
     if sigla is None:
@@ -312,10 +316,9 @@ def texto_pessoa(p: Pessoa, *, em_nucleo: bool, avulso: bool = False) -> str:
     if profissao:
         partes.append(profissao)
     texto = ", ".join(partes)
-    texto += (
-        f", {identidade_texto(p)}"
-        f" e {_g(p, 'inscrito', 'inscrita')} no CPF/MF {documento(p.cpf)[1]}"
-    )
+    cpf_frase = f"{_g(p, 'inscrito', 'inscrita')} no CPF/MF {documento(p.cpf)[1]}"
+    identidade = identidade_texto(p)
+    texto += f", {identidade} e {cpf_frase}" if identidade else f", {cpf_frase}"
     if p.email:
         texto += f", com endereço eletrônico: {p.email.strip().lower()}"
     return texto

@@ -405,6 +405,7 @@ def _pessoa(
         data_casamento=_data(row.get("data_casamento")),
         certidao_estado_civil_emitida_em=_data(certidao_ec.get("emitida_em")),
         faltando_qualificacao=list(completude.get("faltando") or []),
+        avisos_qualificacao=list(completude.get("avisos") or []),
         certidoes=[_certidao(r) for r in brutas],
         # Migration 193.
         identidade_tipo=row.get("identidade_tipo"),

@@ -261,10 +261,10 @@ class TestIdentidadeItem:
         )
         item = self._itens(client, cid)["identidade"]
         assert item["concluido"] is False
-        assert item["faltando"] == ["nome_oficial", "rg", "rg_orgao_expedidor", "cpf"]
-        assert item["faltando_rotulos"] == [
-            "Nome oficial", "RG", "Órgão expedidor do RG", "CPF",
-        ]
+        # [Owner decision 2026-11-04] RG / órgão are optional, never "faltando".
+        assert item["faltando"] == ["nome_oficial", "cpf"]
+        assert item["faltando_rotulos"] == ["Nome oficial", "CPF"]
+        assert item["opcionais"] == ["rg", "rg_orgao_expedidor"]
         assert item["ressalvas"] == {}
         assert item["faltando_com_sugestao"] == []
 
@@ -272,12 +272,23 @@ class TestIdentidadeItem:
         cid = _seed(scoped)
         scoped.set_table_data(
             "clientes",
-            [cliente_row(cid, **{k: v for k, v in _IDENTIDADE.items() if k != "rg_orgao_expedidor"})],
+            [cliente_row(cid, **{k: v for k, v in _IDENTIDADE.items() if k != "cpf"})],
         )
         scoped.set_table_data("cliente_documentos", [])
         item = self._itens(client, cid)["identidade"]
         assert item["concluido"] is False
-        assert item["faltando"] == ["rg_orgao_expedidor"]
+        assert item["faltando"] == ["cpf"]
+
+    def test_rg_orgao_missing_does_not_block_the_item(self, client, scoped):
+        cid = _seed(scoped)
+        scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, **{k: v for k, v in _IDENTIDADE.items() if k != "rg_orgao_expedidor"})],
+        )
+        scoped.set_table_data("cliente_documentos", [])
+        item = self._itens(client, cid)["identidade"]
+        assert item["concluido"] is True
+        assert item["faltando"] == []
 
     def test_the_complete_identity_data_satisfies_it(self, client, scoped):
         cid = _seed(scoped)
@@ -288,27 +299,27 @@ class TestIdentidadeItem:
         assert item["faltando"] == []
 
     def test_a_missing_field_with_a_pending_reading_is_flagged(self, client, scoped):
-        """The órgão was read off the uploaded RG card but awaits a decision
+        """The CPF was read off the uploaded RG card but awaits a decision
         — the line says so, so the operator confirms instead of hunting for
         another document."""
         cid = _seed(scoped)
         scoped.set_table_data(
             "clientes",
-            [cliente_row(cid, **{k: v for k, v in _IDENTIDADE.items() if k != "rg_orgao_expedidor"})],
+            [cliente_row(cid, **{k: v for k, v in _IDENTIDADE.items() if k != "cpf"})],
         )
         scoped.set_table_data(
             "cliente_documentos",
             [
                 documento_row(
                     str(uuid4()), cid, tipo_documento="rg",
-                    extracao_rg="52.179.965-X", extracao_rg_orgao="SSP-SP",
+                    extracao_cpf="412.954.238-98",
                     extracao_em="2026-09-30T00:00:00+00:00",
                 )
             ],
         )
         item = self._itens(client, cid)["identidade"]
-        assert item["faltando"] == ["rg_orgao_expedidor"]
-        assert item["faltando_com_sugestao"] == ["rg_orgao_expedidor"]
+        assert item["faltando"] == ["cpf"]
+        assert item["faltando_com_sugestao"] == ["cpf"]
 
     def test_a_cin_whose_rg_equals_its_cpf_is_satisfied(self, client, scoped):
         """A CIN prints the CPF as the identity number — valid, never flagged."""
@@ -402,7 +413,7 @@ class TestIdentidadeItem:
         assert resp.status_code == 200, resp.text
         slots = {s["tipo_documento"]: s for s in resp.json()["documentos"]}
         assert slots["cin"]["documento"]["id"] == did
-        assert resp.json()["faltando"] == ["nome_oficial", "rg", "rg_orgao_expedidor", "cpf"]
+        assert resp.json()["faltando"] == ["nome_oficial", "cpf"]
         assert resp.json()["faltando_com_sugestao"] == []
         assert resp.json()["ressalvas"] == {}
 

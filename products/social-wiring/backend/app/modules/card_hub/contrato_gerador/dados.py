@@ -182,6 +182,8 @@ class Pessoa:
     certidao_estado_civil_emitida_em: Optional[date] = None
     #: Keys from `documento_checklist_service.completude_contratual`.
     faltando_qualificacao: list[str] = field(default_factory=list)
+    #: Non-blocking keys from the same call (`completude_contratual["avisos"]`).
+    avisos_qualificacao: list[str] = field(default_factory=list)
     #: Migration 116 closed spec §6.1 #18: certidões are reachable for EVERY
     #: party, the titular included (`certidoes_por_cliente`). An empty list is
     #: therefore "none issued yet" — a real, nameable gap — never "unreachable".

@@ -416,7 +416,8 @@ class TestDerivedTickFollowsForFree:
         # now in its RG/CPF upload slot (2026-09-30).
         identidade = by_key["identidade"]
         assert identidade["concluido"] is False
-        assert {"rg", "cpf"} <= set(identidade["faltando"])
+        # [Owner decision 2026-11-04] RG is optional: only the CPF is named.
+        assert "cpf" in set(identidade["faltando"]) and "rg" not in set(identidade["faltando"])
         slots = {s["tipo_documento"]: s for s in identidade["documentos"]}
         assert slots["rg"]["documento"]["id"] == did
 
