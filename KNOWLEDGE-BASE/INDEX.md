@@ -154,6 +154,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── notifications.md
 │   │   │   ├── org-admin-ux-gate.md
 │   │   │   ├── orchestration-family-index.md
+│   │   │   ├── owner-questionnaire.md
 │   │   │   ├── orphan-branch-sweeper.md
 │   │   │   ├── outbound-rate-limiting.md
 │   │   │   ├── parallelization-first-orchestration.md
@@ -368,6 +369,7 @@ KNOWLEDGE-BASE/
 | Agent reading & research discipline (narrow-read first; Explore delegation rule forthcoming) | `CONTEXT/PATTERNS/common/agent-reading-discipline.md` |
 | Webhook signature verification (the four shapes: Hub-Signature / hex HMAC / Svix / Stripe SDK; constant-time compare; helper module in `noctusai_lib.security.webhook_signatures`) | `CONTEXT/PATTERNS/security/webhook-signatures.md` |
 | Accept-with-rationale catalog (durable home for every legitimate divergence on the platform — survives project folder deletion; how to add / retire entries) | `CONTEXT/PATTERNS/common/accept-with-rationale.md` |
+| Owner questionnaire — reduce every owner ask to the simplest human decision (yes/no > pick-one, recommended first, default-on-silence), batch ≤4, local chat or WhatsApp, record durably; skill `noc-questionnaire` | `CONTEXT/PATTERNS/common/owner-questionnaire.md` |
 | Canonical identifiers — the PUNCTUATED form is canonical for every document number/id/protocol (owner rule 2026-10-01); unpunctuated values are checked against the punctuated shape (DV decides). One registry (`primitives.identificador` · `@noctusai/lib/identificador` · `seed/lib/sql/identificador.sql`) asserted against ONE case table `seed/lib/shared/identificador.cases.json`; never invents (only a SP RG missing its DV is arithmetically completed); search key + display seam; sibling of the phone canon | `CONTEXT/PATTERNS/common/canonical-identifiers.md` |
 | Outbound rate limiting — pace every third-party call + back off on throttle, via the shared `noctusai_lib.integrations.rate_limit` primitive (token-bucket pacing keyed per provider + exponential-backoff-with-jitter honoring `Retry-After`; sync `acquire`/`retry_with_backoff` AND async `acquire_async`/`retry_with_backoff_async`). Root-level: one primitive, every integration adopts it — never a per-integration reinvented backoff. Motivated by the Meta ads-backfill throttle (2026-07-23) + the CF-MCP burst before it. Wired: Meta (sync) + Mailchimp (async); Vista/WAHA/YouTube/Google carry `NOC-REMEDIATE[rate-limit]` markers. Distinct from the INBOUND `api.rate_limit_policies` (slowapi, protects our endpoints). Tests inject a `VirtualClock` (autouse in the seed conftest) so pacing logic runs without wall-clock waits. | `CONTEXT/PATTERNS/common/outbound-rate-limiting.md` |
 | Instagram content analysis — post mode (transcript + every comment → value report, risk scan first) and profile mode (N reels → transcripts → reusable structures classified in the Biblioteca de virais taxonomy); endpoints, transcription caps, LGPD handling, report shape, run history. Procedure: skill `noc-ig-analysis` | `CONTEXT/PATTERNS/common/instagram-content-analysis.md` |
