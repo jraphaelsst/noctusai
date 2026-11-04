@@ -34,7 +34,7 @@ PATTERNS/backend/postgrest-row-cap.md``.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 from uuid import UUID
 
 from .paging import iter_paged_rows
@@ -186,6 +186,37 @@ def resolve_actors(core_client: Any, ids: set) -> dict[str, dict]:
     return out
 
 
+def resolve_user_phones(core_client: Any, user_ids: Iterable) -> dict[str, Optional[str]]:
+    """``{user_id: telefone}`` (E.164 or ``None``) for every id in ``user_ids``.
+
+    ``public.noctus_users.telefone`` is the platform's SINGLE source of truth for a
+    user's WhatsApp number (owner decision 2026-11-03): a product that needs to
+    message a user stores the USER ID and resolves the phone here at use time --
+    it never keeps its own copy. Same trusted-read contract as
+    :func:`resolve_actors`: ``core_client`` is the ``public``-schema client.
+
+    Every requested id is present in the result; an unknown id or a user who has
+    not set a number maps to ``None`` (the caller decides whether that is an
+    error -- a missing number is not one here).
+    """
+    clean_ids = {str(i) for i in user_ids if i}
+    if not clean_ids:
+        return {}
+    out: dict[str, Optional[str]] = {i: None for i in clean_ids}
+    for batch in batched(sorted(clean_ids)):
+        rows = (
+            core_client.table("noctus_users")
+            .select("id,telefone")
+            .in_("id", batch)
+            .execute()
+            .data
+            or []
+        )
+        for row in rows:
+            out[str(row["id"])] = row.get("telefone") or None
+    return out
+
+
 def actor_resolver(get_core_client: Callable[[], Any]) -> ActorResolver:
     """Bind :func:`resolve_actors` to a product's core-client accessor.
 
@@ -217,5 +248,6 @@ __all__ = [
     "in_batched_rows",
     "paged_rows",
     "resolve_actors",
+    "resolve_user_phones",
     "table",
 ]

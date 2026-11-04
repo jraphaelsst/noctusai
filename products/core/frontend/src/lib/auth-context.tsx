@@ -11,6 +11,8 @@ interface User {
   role: string;
   org_id: string;
   avatar_url?: string;
+  /** WhatsApp number, E.164 -- the platform's single source of truth (public.noctus_users.telefone). */
+  telefone?: string | null;
 }
 
 interface Organization {
@@ -56,6 +58,12 @@ interface AuthContextType extends AuthState {
    */
   endLocally: () => void;
   refresh: () => Promise<void>;
+  /**
+   * Cache write for the signed-in user: merge the server's saved profile row into
+   * `user` so every consumer (header, settings) shows it at once -- a profile save
+   * puts its answer here instead of throwing it away and refetching `/me`.
+   */
+  updateUser: (patch: Partial<User>) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -68,6 +76,7 @@ const AuthContext = createContext<AuthContextType>({
   logout: async () => {},
   endLocally: () => {},
   refresh: async () => {},
+  updateUser: () => {},
 });
 
 /** Backoff while `/api/auth/me` is unreachable (~30 s covers a redeploy). */
@@ -178,6 +187,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearLocalSession();
   }
 
+  function updateUser(patch: Partial<User>) {
+    setState((s) => (s.user ? { ...s, user: { ...s.user, ...patch } } : s));
+  }
+
   // Proactive token refresh while user is active (every 5 min)
   // Same single, cross-tab-locked refresh the api client uses (lib/api.ts).
   const handleTokenRefresh = useCallback(async () => {
@@ -194,7 +207,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   return (
-    <AuthContext.Provider value={{ ...state, logout, endLocally, refresh: fetchProfile }}>
+    <AuthContext.Provider value={{ ...state, logout, endLocally, refresh: fetchProfile, updateUser }}>
       {children}
       {/* Step-up dialog for `403 mfa_required` from the api client (platform-admin-mfa). */}
       <MfaChallengeHost />
