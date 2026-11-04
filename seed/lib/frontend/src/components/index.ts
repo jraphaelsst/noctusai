@@ -83,6 +83,7 @@ export {
   WhatsAppConnectionsPage,
   CreateConnectionDialog,
   ConnectionDetailDialog as WhatsAppConnectionDetailDialog,
+  ConnectionPairingPanel,
 } from './whatsapp-connections';
 export type {
   WhatsAppConnectionsHooks,
@@ -96,6 +97,7 @@ export type {
   UpdateWhatsAppConnectionBody,
   ConfigureWhatsAppConnectionWebhookBody,
   WhatsAppConnectionsPageProps,
+  ConnectionPairingPanelProps,
 } from './whatsapp-connections';
 
 // WhatsApp inbox — "Conversas": chat list + thread + reply on the seed ChatWindow

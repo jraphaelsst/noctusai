@@ -352,6 +352,8 @@ BR mobiles exist on WhatsApp with or without the 9th digit (older accounts: `55 
 
 ## 4d. Inbox organ — read + reply conversations (2026-10-26)
 
+**Pairing panel (2026-11).** `ConnectionPairingPanel` (`@noctusai/lib/components`, `seed/lib/frontend/src/components/whatsapp-connections/`) is the shared pairing half of a line — status, QR polled until `WORKING`, start/restart/logout/recover — driven by `createWhatsAppConnectionsHooks(api)`; `ConnectionDetailDialog` consumes it. Props: `connectionId` (null = empty state + `emptyAction` slot), `hooks`, `canManage` (admin-only QR + actions), `onLogoutConfirmText` (logout always confirms), `borrowed`, `enabled`. Needs a `ConfirmProvider`.
+
 The conversations pipeline `social-wiring` grew (chat list, thread, reply, unread, backfill, realtime) lifted to the seed WITHOUT its Julia / chatbot / auto-reply / lead-intake behaviour. First consumer: `monica` (pilot #1). Sits on top of the QR organ (§4: `whatsapp_connections_router` + `connection_store`) — one connection = one WAHA line.
 
 | Piece | Where | What |
