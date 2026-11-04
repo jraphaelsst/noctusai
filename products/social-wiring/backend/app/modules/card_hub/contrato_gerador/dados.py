@@ -196,6 +196,10 @@ class Pessoa:
     #: [Migration 193] `atendimento_partes.representa_parte_id` — the PJ
     #: party (its `parte_id`) this person signs for (papel 'representante').
     representa_parte_id: Optional[str] = None
+    #: [Security M1] Identity fields (`cpf` / `rg` / `rg_orgao_expedidor`) that a WhatsApp-origin document extraction
+    #: wrote and no human has confirmed yet -- they must not print in a contract (`derivacao._identidade_verificada`
+    #: blocks). Empty = every identity field is typed, confirmed, or from a non-WhatsApp source.
+    identidade_nao_verificada: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -1744,6 +1744,18 @@ def _identidade(av: Avaliacao, p: Pessoa) -> None:
         )
 
 
+def _identidade_verificada(av: Avaliacao, p: Pessoa) -> None:
+    """[Security M1] Identity read from a document the lead sent over WhatsApp is machine data from an unauthenticated
+    channel: it is not printed in a contract until a human confirms it (the card's confirm action stamps
+    `<campo>_confirmado_por`)."""
+    if p.identidade_nao_verificada:
+        campos = ", ".join(ROTULO_QUALIFICACAO.get(c, c) for c in p.identidade_nao_verificada)
+        av.bloqueia(
+            "IDENTIDADE_NAO_VERIFICADA",
+            f"{_nome(p)}: {campos} veio de um documento enviado pelo WhatsApp e ainda não foi confirmado por uma pessoa.",
+        )
+
+
 def _render_qualificacao(av: Avaliacao, p: Pessoa) -> None:
     """Render guards on values the qualificação prints AS STORED — each one
     surfaced for a human, never silently rewritten:
@@ -1862,6 +1874,7 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRA
         ids_lado = {p.cliente_id: p for p in lado_pessoas}
         for p in lado_pessoas:
             _identidade(av, p)
+            _identidade_verificada(av, p)
             _render_qualificacao(av, p)
             # [Owner decision, 2026-10-03] a missing BAIRRO warns, never blocks
             # (the other address fields still gate via `faltando_qualificacao`).
