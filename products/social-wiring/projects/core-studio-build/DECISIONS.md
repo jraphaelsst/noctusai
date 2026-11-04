@@ -113,6 +113,15 @@ Rule for this project: the owner is interviewed for every specification; nothing
   - the kill switch.
 - Before `biblioteca_ingestao_habilitada` is turned on, the owner provides the opt-out contact, adds the Biblioteca section to the privacy notice, and records the processing plus Anthropic (US) as sub-processor in the ROPA (LIA §6).
 
+## Round 10 — 2026-11-04 (Biblioteca via Apify)
+
+- **Viral library source = Apify scraping** (`apify/instagram-scraper`) of public Instagram profiles, because Business Discovery needs Meta verification we don't have yet. **Transitional:** the Business Discovery path stays in the code behind `biblioteca_fonte` and returns after Meta verifies noc. Contract: `specs/apify-biblioteca-contract.md`.
+- Evidence it is the reference app's method: their viral rows carry `plays`, `shares=0`, an Instagram CDN `video_url` and `post_date` in the `…000Z` format, none of which the official API returns for third-party reels.
+- **Scope: Core Studio side only.** `/meta` and its subtabs (DMs, comments, publish, ads, leadgen, snapshots) are not touched.
+- The chat follows the reference workflow: `@perfil` → the agent picks that profile's best structure and says why; `@post` → that post's structure is mandatory; roteiro answers open with "Análise da Estrutura Escolhida"; every structure cited as `estrutura #N` opens the viral.
+- **No animated/rotating gradient border** around the chat or the mention picker.
+- LGPD: the LIA re-assessment trigger "new data source" is hit; LIA + ROPA are updated with the source and Apify as sub-processor in the same build.
+
 ## Open — to ask before building
 
 - ~~Fill the headline blueprint `{{DB-SLUG}}` slots from approved Pesquisa items?~~ Tech-lead default D2 (round 9, `specs/geracao-contract.md` §5.3, with a worked example). The owner validates it while testing.
