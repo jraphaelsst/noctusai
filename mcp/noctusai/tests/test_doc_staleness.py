@@ -311,3 +311,25 @@ def test_cli_doc_staged_exit_codes(repo, tmp_path):
     assert run("feat: b") == 1
     assert run("feat: b\n\nDocs-Reviewed: products/acme/README.md — x\n"
                "Docs-Reviewed: KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md — y") == 0
+
+
+def test_commit_msg_hook_in_an_old_base_worktree_uses_the_primary_cli(tmp_path):
+    """A worktree whose cli.py predates --doc-staged must not abort every commit (noctusai-59, 2026-11-04)."""
+    hook = Path(__file__).resolve().parents[3] / "scripts" / "hooks" / "commit-msg"
+    primary, wt = tmp_path / "primary", tmp_path / "wt"
+    stub = ("import sys, pathlib\n"
+            "pathlib.Path(sys.argv[0]).with_name('CALLED').write_text(' '.join(sys.argv[1:]))\n"
+            "sys.exit(0)\n")
+    _git(primary.parent, "init", "-q", str(primary))
+    _write(primary, "mcp/noctusai/cli.py", "# old cli: no doc-staged flag\nimport sys; sys.exit(0)\n")
+    _git(primary, "add", "-A")
+    _git(primary, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "old")
+    _git(primary, "worktree", "add", "-q", "-b", "feat/x", str(wt))
+    _write(primary, "mcp/noctusai/cli.py", "# knows --doc-staged\n" + stub)  # primary moved on (uncommitted is fine)
+    msg = tmp_path / "MSG"
+    msg.write_text("feat: x\n", encoding="utf-8")
+    r = subprocess.run(["bash", str(hook), str(msg)], cwd=wt, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "predates the doc-staleness commit leg" in r.stderr
+    called = (primary / "mcp/noctusai/CALLED").read_text()
+    assert "--doc-staged" in called and str(wt) in called

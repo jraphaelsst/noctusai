@@ -96,8 +96,26 @@ if [ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" ]; then
             _py3="python3"
             [ -n "$_common3" ] && [ -x "$(dirname "$_common3")/venv/bin/python" ] && _py3="$(dirname "$_common3")/venv/bin/python"
         fi
-        if [ -f "$_root3/mcp/noctusai/cli.py" ] && { command -v "$_py3" >/dev/null 2>&1 || [ -x "$_py3" ]; }; then
-            if ! "$_py3" "$_root3/mcp/noctusai/cli.py" --check-doc-staleness --doc-staged \
+        # The hook file is the PRIMARY checkout's (symlinked .git/hooks), but a worktree based before the
+        # commit leg landed (fb5b288de) ships a cli.py without --doc-staged: calling it aborted EVERY commit
+        # there (noctusai-59, 2026-11-04). Use the worktree's CLI when it knows the flag; otherwise the
+        # primary checkout's CLI against this worktree (the rule that is live today), and say so.
+        _cli3="$_root3/mcp/noctusai/cli.py"
+        if [ -f "$_cli3" ] && ! grep -q -- "--doc-staged" "$_cli3" 2>/dev/null; then
+            _common3b="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+            _pcli3="${_common3b:+$(dirname "$_common3b")/mcp/noctusai/cli.py}"
+            if [ -n "$_pcli3" ] && grep -q -- "--doc-staged" "$_pcli3" 2>/dev/null; then
+                echo "commit-msg: this worktree's cli.py predates the doc-staleness commit leg — checking with" \
+                     "the primary checkout's CLI ($_pcli3). Rebase onto origin/dev to use your own." >&2
+                _cli3="$_pcli3"
+            else
+                echo "commit-msg: doc-staleness commit leg unavailable (no cli.py here or in the primary checkout" \
+                     "knows --doc-staged); pre-push and CI still check the range. Rebase onto origin/dev." >&2
+                _cli3=""
+            fi
+        fi
+        if [ -n "$_cli3" ] && [ -f "$_cli3" ] && { command -v "$_py3" >/dev/null 2>&1 || [ -x "$_py3" ]; }; then
+            if ! "$_py3" "$_cli3" --check-doc-staleness --doc-staged \
                     --commit-msg-file "$msg_file" --worktree-path "$_root3"; then
                 echo "commit-msg: DOC-STALENESS check FAILED — update + stage the listed docs, or add the" \
                      "'Docs-Reviewed: <doc> — <why still accurate>' trailer. Commit aborted." >&2
