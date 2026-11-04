@@ -188,6 +188,21 @@ def _handler(state: FakeAgents):
             if mo and m == "PUT" and mo.group(1) in state.regras:
                 state.regras[mo.group(1)].update({k: v for k, v in b.items() if v is not None})
                 return self._send(200, state.regras[mo.group(1)])
+            # readiness + re-pin (the agents API: GET .../prontidao, POST .../draft/skills-biblioteca/atualizar)
+            if m == "GET" and path == f"{A}/prontidao":
+                return self._send(200, {
+                    "agent_key": "julia", "version_id": state.draft_id, "hash": "sha256:x", "pronto_para_publicar": False,
+                    "bloqueantes": 1, "avisos": 0, "itens": [{
+                        "codigo": "eval_juiz_sem_execucao", "grupo": "avaliacao", "severidade": "bloqueante",
+                        "mensagem": "Nenhuma avaliação.", "acao_sugerida": "Rode.", "recusa_publicacao": "eval_required",
+                        "detalhe": None}]})
+            if m == "POST" and path == f"{A}/draft/skills-biblioteca/atualizar":
+                movidas = [{"skill": k, "de": p["versao"], "para": p["nova_versao"]} for k, p in state.pins.items() if p.get("nova_versao")]
+                for mv in movidas:
+                    state.pins[mv["skill"]].update({"versao": mv["para"], "nova_versao": None})
+                return self._send(200, {"version_id": state.draft_id, "atualizadas": movidas,
+                                        "ja_atuais": [k for k in state.pins if k not in {mv["skill"] for mv in movidas}],
+                                        "items": list(state.pins.values())})
             # pins
             if m == "GET" and path == f"{A}/draft/skills-biblioteca":
                 return self._send(200, {"version_id": state.draft_id, "items": list(state.pins.values())})
@@ -633,10 +648,63 @@ class TestGeracao:
         assert run(srv, private, {"nome": "x", "inventado": 1}, action="criar_agente", agent="k")["codigo"] == "payload_invalido"
 
     def test_configurar_agente_patches_and_definicao_reads(self, srv, private):
-        plan = run(srv, private, {"papel": "exemplar"}, action="configurar_agente", agent="novo")
+        plan = run(srv, private, {"papel": "gerador"}, action="configurar_agente", agent="novo")
         assert plan["status"] == "planned" and srv.log == []
-        out = run(srv, private, {"papel": "exemplar"}, action="configurar_agente", agent="novo", confirm=True)
-        assert out["status"] == "updated" and out["agente"]["papel"] == "exemplar"
-        assert srv.log[-1][:3] == ("PATCH", "/api/studio/plataforma/agents/novo", {"papel": "exemplar"})
+        out = run(srv, private, {"papel": "gerador"}, action="configurar_agente", agent="novo", confirm=True)
+        assert out["status"] == "updated" and out["agente"]["papel"] == "gerador"
+        assert srv.log[-1][:3] == ("PATCH", "/api/studio/plataforma/agents/novo", {"papel": "gerador"})
         got = C.content("definicao", agent="novo", base_url=srv.url)
         assert got["status"] == "ok" and got["resultado"]["key"] == "novo"
+
+
+class TestProntidaoEAtualizarSkills:
+    """The complete-agent recipe's two new actions (agent-creation guide): the readiness read and the explicit re-pin."""
+
+    def test_prontidao_reads_the_readiness_list_and_never_writes(self, srv):
+        out = C.content("prontidao", agent="julia", base_url=srv.url)
+        assert out["status"] == "ok" and out["requisicao"] == "GET /api/studio/agents/julia/prontidao"
+        assert out["resultado"]["pronto_para_publicar"] is False
+        assert out["resultado"]["itens"][0]["recusa_publicacao"] == "eval_required"
+        assert srv.writes() == [] and TOKEN not in json.dumps(out)
+
+    def test_prontidao_needs_a_valid_agent_key(self, srv):
+        assert C.content("prontidao", agent="../x", base_url=srv.url)["codigo"] == "agent_invalido"
+        assert C.content("prontidao", base_url=srv.url)["codigo"] == "agent_invalido"
+        assert srv.log == []
+
+    def test_atualizar_skills_dry_run_reads_the_pins_and_lists_what_would_move_without_writing(self, srv):
+        srv.pins = {
+            "qualificar": {"skill": "qualificar", "versao": 1, "nova_versao": 2, "obrigatoria_para": [], "ordem": 0},
+            "fechar": {"skill": "fechar", "versao": 3, "nova_versao": None, "obrigatoria_para": [], "ordem": 1},
+        }
+        out = C.content("atualizar_skills", agent="julia", base_url=srv.url)
+        assert out["status"] == "planned" and out["dry_run"] is True
+        assert out["atualizaria"] == [{"skill": "qualificar", "de": 1, "para": 2}] and out["ja_atuais"] == ["fechar"]
+        assert out["requisicao"] == "POST /api/studio/agents/julia/draft/skills-biblioteca/atualizar"
+        assert srv.writes() == [] and srv.pins["qualificar"]["versao"] == 1
+
+    def test_atualizar_skills_posts_when_confirmed_and_returns_the_diff(self, srv):
+        srv.pins = {"qualificar": {"skill": "qualificar", "versao": 1, "nova_versao": 2, "obrigatoria_para": [], "ordem": 0}}
+        out = C.content("atualizar_skills", agent="julia", base_url=srv.url, confirm=True)
+        assert out["status"] == "updated" and out["atualizadas"] == [{"skill": "qualificar", "de": 1, "para": 2}]
+        assert srv.writes() == [("POST", "/api/studio/agents/julia/draft/skills-biblioteca/atualizar")]
+        assert srv.pins["qualificar"]["versao"] == 2
+        assert not [p for _m, p, _b, _a in srv.log if p.endswith(("/publish", "/publicar"))]
+
+    def test_gerar_accepts_a_referencia_and_the_evals_area(self, srv, private):
+        out = run(srv, private, {"briefing": BRIEFING, "areas": ["evals"], "referencia": "julia"}, action="gerar", agent="julia", confirm=True)
+        assert out["status"] == "started"
+        assert srv.log[0][2] == {"briefing": BRIEFING, "areas": ["evals"], "referencia": "julia"}
+
+    def test_the_description_names_the_new_actions(self):
+        from tools.noctus.agents import content as mod
+
+        captured = {}
+
+        class _Srv:
+            def tool(self, name, description):
+                captured["d"] = description
+                return lambda fn: fn
+
+        mod.register(_Srv())
+        assert "prontidao" in captured["d"] and "atualizar_skills" in captured["d"]

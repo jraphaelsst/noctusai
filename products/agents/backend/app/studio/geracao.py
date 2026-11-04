@@ -68,7 +68,7 @@ ORFA_ERRO = "interrompida"
 #: Output budget per call (the Anthropic SDK refuses a non-streaming call above ~21k output tokens).
 MAX_TOKENS: dict[str, int] = {
     "planejamento": 4000, "secoes": 16000, "textos": 20000, "ferramentas": 12000, "decisoes": 8000,
-    "specs": 6000, "skills": 4000, "configuracoes": 2000,
+    "specs": 6000, "skills": 4000, "configuracoes": 2000, "evals": 16000,
 }
 #: Worst-case chars per token used to estimate the INPUT of a call before it is made (pt-BR JSON is ~3.5-4).
 _CHARS_POR_TOKEN = 2.5
@@ -96,6 +96,9 @@ class Dependencias:
     catalog: Any
     #: ``chat_completion_with_usage``-shaped coroutine (the seed's); tests inject a wrapper over the seed Fake.
     chat: ChatFn
+    #: The agent's eval-case store (the ``evals`` area writes behaviour cases; the exemplar's case shapes inform the
+    #: structure). ``None`` = the area cannot run (``evals_indisponivel``).
+    evals: Any = None
 
 
 @dataclass(frozen=True)
@@ -146,16 +149,59 @@ def carregar_gerador(studio: Any) -> Gerador:
 # ── exemplar + registry facts (structured context, no prose) ────────────────
 
 
-def estrutura_exemplar(studio: Any, skills: Any, *, verbatim: bool) -> tuple[list[dict[str, Any]], str, list[tuple[UUID, UUID]]]:
-    """The structure of every ``papel='exemplar'`` platform definition's published version: which slots are filled,
-    lengths, section layout. The verbatim text rides along only when ``verbatim`` (the target lives in the platform
-    org). Also returns the exemplars' full text (the leak-check source) and their ``(org, version)`` ids."""
+def _exemplares(studio: Any, referencia: str | None) -> list[Any]:
+    """The platform definitions the generator may imitate: every ``exemplar`` one, or just ``referencia`` (which must be
+    one -- ``referencia_invalida`` 422 otherwise -- and have a published version)."""
+    todos = [d for d in studio.list_platform_definitions() if d.exemplar]
+    if referencia is None:
+        return todos
+    alvo = next((d for d in todos if d.key == referencia), None)
+    if alvo is None:
+        raise GeracaoErro(422, "referencia_invalida", "O agente de referência não existe ou não é um exemplar.", detail=referencia)
+    if studio.get_active_version(alvo.org_id, alvo.id) is None:
+        raise GeracaoErro(
+            422, "referencia_invalida", "O agente de referência ainda não tem versão publicada.", detail=referencia)
+    return [alvo]
+
+
+def _casos_do_exemplar(evals: Any, d: Any, verbatim: bool) -> tuple[list[dict[str, Any]], list[str]]:
+    """The exemplar's behaviour eval cases as SHAPES (slug, title, how many criteria, tags); the criteria text only when
+    ``verbatim``. A case whose text carries personal data is described by shape alone. Returns ``(shapes, leak-source
+    texts)``."""
+    if evals is None:
+        return [], []
+    formas: list[dict[str, Any]] = []
+    fonte: list[str] = []
+    for c in evals.list_cases(d.org_id, d.id):
+        if c.suite != "comportamento" or not c.ativo:
+            continue
+        deve, nao_deve = list(c.criterios.get("deve") or []), list(c.criterios.get("nao_deve") or [])
+        limpo = not any(achar_pii(t) for t in (c.titulo, c.entrada, c.contexto or "", *deve, *nao_deve))
+        forma: dict[str, Any] = {
+            "slug": c.slug, "tags": list(c.tags), "n_deve": len(deve), "n_nao_deve": len(nao_deve),
+        }
+        if limpo:
+            forma["titulo"] = c.titulo
+            fonte += [c.titulo, c.entrada, *deve, *nao_deve]
+            if verbatim:
+                forma |= {"entrada": c.entrada[:_MAX_TEXTO_EXEMPLAR], "criterios": {"deve": deve, "nao_deve": nao_deve}}
+        else:
+            forma["pii_omitido"] = True
+        formas.append(forma)
+    return formas, fonte
+
+
+def estrutura_exemplar(
+    studio: Any, skills: Any, *, verbatim: bool, referencia: str | None = None, evals: Any = None,
+) -> tuple[list[dict[str, Any]], str, list[tuple[UUID, UUID]]]:
+    """The structure of every ``exemplar`` platform definition's published version (or only ``referencia``): which
+    slots are filled, lengths, section layout, the tools' parameter labels, the decisions' options, the eval-case shapes
+    and the qualification standard key. The verbatim text rides along only when ``verbatim`` (the target lives in the
+    platform org). Also returns the exemplars' full text (the leak-check source) and their ``(org, version)`` ids."""
     saida: list[dict[str, Any]] = []
     fonte: list[str] = []
     versoes: list[tuple[UUID, UUID]] = []
-    for d in studio.list_platform_definitions():
-        if d.papel != "exemplar":
-            continue
+    for d in _exemplares(studio, referencia):
         v = studio.get_active_version(d.org_id, d.id)
         if v is None:
             continue
@@ -163,8 +209,14 @@ def estrutura_exemplar(studio: Any, skills: Any, *, verbatim: bool) -> tuple[lis
         secoes = studio.list_sections(d.org_id, v.id)
         textos = studio.list_textos(d.org_id, v.id)
         ferr = studio.list_ferramentas(d.org_id, v.id)
-        fonte += [s.conteudo for s in secoes] + [t.conteudo for t in textos] + [f.descricao for f in ferr]
+        decisoes = studio.list_decisoes(d.org_id, v.id)
+        casos, fonte_casos = _casos_do_exemplar(evals, d, verbatim)
+        fonte += [s.conteudo for s in secoes] + [t.conteudo for t in textos] + [f.descricao for f in ferr] + fonte_casos
+        fonte += [str(x) for f in ferr for x in f.parametros.values() if isinstance(x, str)]
+        fonte += [x.regra for x in decisoes] + [o["rotulo"] for x in decisoes for o in x.opcoes]
         item: dict[str, Any] = {
+            "chave": d.key,
+            "padrao_qualificacao": d.padrao_qualificacao,
             "secoes": [
                 {"chave": s.chave, "titulo": s.titulo, "ordem": s.ordem, "tamanho": len(s.conteudo)}
                 | ({"conteudo": s.conteudo[:_MAX_TEXTO_EXEMPLAR]} if verbatim else {})
@@ -176,11 +228,19 @@ def estrutura_exemplar(studio: Any, skills: Any, *, verbatim: bool) -> tuple[lis
                 for t in textos if t.conteudo.strip()
             ],
             "ferramentas": [
-                {"ferramenta": f.ferramenta, "ativo": f.ativo, "tamanho": len(f.descricao)}
-                | ({"descricao": f.descricao[:_MAX_TEXTO_EXEMPLAR]} if verbatim else {})
+                {"ferramenta": f.ferramenta, "ativo": f.ativo, "tamanho": len(f.descricao),
+                 "parametros": sorted(f.parametros)}
+                | ({"descricao": f.descricao[:_MAX_TEXTO_EXEMPLAR],
+                    "rotulos_parametros": {k: x[:500] for k, x in f.parametros.items() if isinstance(x, str)}}
+                   if verbatim else {})
                 for f in ferr
             ],
-            "decisoes": [{"chave": x.chave, "opcoes": len(x.opcoes)} for x in studio.list_decisoes(d.org_id, v.id)],
+            "decisoes": [
+                {"chave": x.chave, "opcoes": len(x.opcoes)}
+                | ({"opcoes_detalhe": [dict(o) for o in x.opcoes]} if verbatim else {})
+                for x in decisoes
+            ],
+            "evals": casos,
             "specs": [
                 {"chave": x.chave, "tipo": x.tipo, "obrigatoria": x.obrigatoria}
                 for x in studio.list_spec_defs(d.org_id, v.id)
@@ -238,6 +298,14 @@ def _contexto_da_area(area: str, *, deps: Dependencias, agent: StudioAgentRecord
                 continue
             biblioteca.append({"chave": s.chave, "nome": s.nome, "descricao": v.descricao_modelo or s.descricao})
         return {"biblioteca": biblioteca, "fixadas": [r.skill_chave for r in deps.skills.listar_refs(draft.id)]}
+    if area == "evals":
+        casos = deps.evals.list_cases(org, agent.id) if deps.evals is not None else []
+        return {
+            "existentes": [{"slug": c.slug, "titulo": c.titulo, "suite": c.suite} for c in casos],
+            "ferramentas_ativas": sorted(f.ferramenta for f in deps.studio.list_ferramentas(org, draft.id) if f.ativo),
+            "padrao_qualificacao": agent.padrao_qualificacao,
+            "limites": {"max_casos": 40, "criterios_por_lista": 12, "tags": 10},
+        }
     if area == "configuracoes":
         return {
             "providers": list(PROVIDERS), "modelos": {p: list(m) for p, m in MODELS_BY_PROVIDER.items()},
@@ -280,7 +348,8 @@ def _estimar(mensagens: list[dict], max_tokens: int, g: Gerador) -> float:
 def _hashes_do_agente(deps: Dependencias, agent: StudioAgentRecord, area: str, version: Any, cache: dict) -> dict[str, str]:
     chave = (version.id, area)
     if chave not in cache:
-        cache[chave] = hashes_atuais(area, store=deps.studio, skills=deps.skills, org_id=agent.org_id, version=version)
+        cache[chave] = hashes_atuais(
+            area, store=deps.studio, skills=deps.skills, org_id=agent.org_id, version=version, evals=deps.evals)
     return cache[chave]
 
 
@@ -360,12 +429,14 @@ def _pii_no_briefing(briefing: Briefing) -> None:
 
 def iniciar(
     deps: Dependencias, *, org_id: UUID, key: str, briefing: Briefing, areas: list[str] | None, forcar: bool,
-    limite_usd: float, ator: UUID,
+    limite_usd: float, ator: UUID, referencia: str | None = None,
 ) -> tuple[GeracaoRecord, StudioAgentRecord, list[str]]:
     """Validate + book a run (``pendente``) and return it with the target and the areas to execute. Nothing is
     called on the LLM here."""
     agent = _resolver_alvo(deps, org_id, key)
     _pii_no_briefing(briefing)
+    if referencia is not None:
+        _exemplares(deps.studio, referencia)  # 422 referencia_invalida before anything is booked
     pedidas = [a for a in AREAS if a in set(areas or AREAS)]
     if any(g.status in ACTIVE_STATUSES for g in deps.geracoes.list_geracoes(org_id, agent.id, 20)):
         raise GeracaoErro(409, "geracao_em_andamento", "Já existe uma geração em andamento para este agente.")
@@ -381,7 +452,7 @@ def iniciar(
         rec = deps.geracoes.create_geracao(
             org_id, agent.id, briefing=briefing.model_dump(mode="json"), areas=pedidas, forcar=forcar,
             modelo=gerador.version.model, provider=gerador.version.provider, limite_usd=limite_usd,
-            versao_gerador=gerador.version.versao, criado_por=ator,
+            versao_gerador=gerador.version.versao, criado_por=ator, referencia=referencia,
         )
     except Exception as exc:
         if getattr(exc, "code", None) == "geracao_em_andamento":
@@ -390,7 +461,7 @@ def iniciar(
     deps.studio.append_audit(
         org_id, agent.id, ator, "agente_gerado", None,
         {"geracao_id": str(rec.id), "areas": pedidas, "modelo": rec.modelo, "versao_gerador": rec.versao_gerador,
-         "limite_usd": limite_usd},
+         "limite_usd": limite_usd, "referencia": referencia},
     )
     return rec, agent, pedidas
 
@@ -505,7 +576,13 @@ async def _executar(deps: Dependencias, *, org_id: UUID, geracao_id: UUID, agent
         return
     draft = await _t(garantir_rascunho, deps, agent, ger.criado_por)
     platform = await _t(deps.studio.is_platform_org, agent.org_id)
-    exemplar, fonte_vazamento, _versoes = await _t(estrutura_exemplar, deps.studio, deps.skills, verbatim=platform)
+    try:
+        exemplar, fonte_vazamento, _versoes = await _t(
+            estrutura_exemplar, deps.studio, deps.skills, verbatim=platform, referencia=ger.referencia, evals=deps.evals)
+    except GeracaoErro:
+        # the reference stopped being a (published) exemplar between booking and running
+        await _falhar_tudo(deps, org_id, geracao_id, areas, "referencia_indisponivel")
+        return
     guarda = None
     if not platform and fonte_vazamento.strip():
         from app.channels.conformidade import GuardaVazamento
@@ -616,10 +693,12 @@ async def _executar(deps: Dependencias, *, org_id: UUID, geracao_id: UUID, agent
             version = await _t(garantir_rascunho, deps, agent, ger.criado_por)
             escritas, lacunas = await _t(
                 escrever_area, area, saida, store=deps.studio, skills=deps.skills, org_id=agent.org_id,
-                draft=version, anteriores=anteriores, textos_aplicaveis=aplicaveis,
+                draft=version, anteriores=anteriores, textos_aplicaveis=aplicaveis, evals=deps.evals,
             )
             version = await _t(deps.studio.get_version, agent.org_id, version.id)
-            atuais = await _t(hashes_atuais, area, store=deps.studio, skills=deps.skills, org_id=agent.org_id, version=version)
+            atuais = await _t(
+                hashes_atuais, area, store=deps.studio, skills=deps.skills, org_id=agent.org_id, version=version,
+                evals=deps.evals)
             itens = [{"chave": k, "hash": atuais[k]} for k in escritas if k in atuais]
         except ErroEscrita as exc:
             await _fechar_area(deps, org_id, geracao_id, area, {**base, "status": "falhou", "erro": exc.codigo})
@@ -704,6 +783,7 @@ def montar_saida(deps: Dependencias, agent: StudioAgentRecord, geracoes: list[Ge
             id=g.id, agent_key=agent.key, status=g.status, versao_gerador=g.versao_gerador, modelo=g.modelo,
             briefing=Briefing(**g.briefing), custo_usd=g.custo_usd, limite_usd=g.limite_usd, criado_em=g.created_at,
             iniciado_em=g.iniciado_em, concluido_em=g.concluido_em, erro=g.erro, areas=areas,
+            referencia=g.referencia,
         ))
     return out
 

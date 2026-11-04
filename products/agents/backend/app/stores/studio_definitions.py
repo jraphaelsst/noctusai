@@ -136,9 +136,10 @@ _AGENT_FIELDS = ("nome", "descricao", "ativo", "publicacao_limiar")
 #: :meth:`StudioDefinitionStore.update_definicao` only -- never through the org-scope ``update_agent``.
 _DEFINICAO_FIELDS = (
     "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao",
-    "rascunho_padrao", "instanciavel", "papel",
+    "rascunho_padrao", "instanciavel", "papel", "exemplar",
 )
-PAPEIS = ("gerador", "exemplar")
+#: 049/058: the one platform ROLE (the generator). "Exemplar" is its own flag (:attr:`StudioAgentRecord.exemplar`).
+PAPEIS = ("gerador",)
 _SLUG_ATTR_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 #: The draft settings a definition's ``rascunho_padrao`` may carry (the version columns a fresh draft starts with).
 _RASCUNHO_PADRAO_FIELDS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy")
@@ -222,8 +223,10 @@ class StudioAgentRecord:
     #: 049/050: a PUBLISHED definition is instantiated in every org only when this is true (closed by default;
     #: a product-owned definition is never true; the exception is an explicit ``definition_org_grants`` row).
     instanciavel: bool = False
-    #: 049: ``gerador`` | ``exemplar`` | ``None`` -- the role a platform definition plays for a mechanism.
+    #: 049: ``gerador`` | ``None`` -- the role a platform definition plays for a mechanism.
     papel: str | None = None
+    #: 058: the AI generator may imitate this platform definition (its structure; its text only inside the platform org).
+    exemplar: bool = False
 
     @property
     def usa_canais(self) -> bool:
@@ -432,6 +435,8 @@ def _validate_definicao_fields(fields: dict[str, Any]) -> None:
         raise ValueError(f"papel must be one of {PAPEIS}")
     if "instanciavel" in fields and not isinstance(fields["instanciavel"], bool):
         raise ValueError("instanciavel must be a boolean")
+    if "exemplar" in fields and not isinstance(fields["exemplar"], bool):
+        raise ValueError("exemplar must be a boolean")
 
 
 def _check_not_owned_and_open(owner_product: str | None, instanciavel: bool) -> None:
@@ -585,6 +590,7 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
         rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
+        exemplar: bool = False,
     ) -> StudioAgentRecord:
         """``definition_mode='studio'``, ``ativo=false``, ``runtime`` (default
         ``claude_sdk`` — the studio UI's only choice; ``llm`` is created by the
@@ -892,6 +898,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
         rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
+        exemplar: bool = False,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
@@ -900,10 +907,10 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         modo = _validate_scope(definition_scope, definition_agent_id)
         attrs = {
             "escopo_qualificacao": escopo_qualificacao, "padrao_qualificacao": padrao_qualificacao,
-            "rascunho_padrao": rascunho_padrao, "papel": papel,
+            "rascunho_padrao": rascunho_padrao, "papel": papel, "exemplar": exemplar or None,
         }
         if definition_scope != "plataforma" and any(v is not None for v in attrs.values()):
-            raise ValueError("escopo/padrao de qualificação and rascunho_padrao belong to a platform definition")
+            raise ValueError("escopo/padrao de qualificação, rascunho_padrao, papel and exemplar belong to a platform definition")
         _validate_definicao_fields({k: v for k, v in attrs.items() if v is not None})
         if (org_id, key) in self._agents:
             raise StudioConflict("key_taken", f"agent key {key!r} already exists")
@@ -931,7 +938,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             definition_agent_id=definition_agent_id, conteudo_modo=modo,
             escopo_qualificacao=escopo_qualificacao, padrao_qualificacao=padrao_qualificacao,
             rascunho_padrao=dict(rascunho_padrao) if rascunho_padrao is not None else None,
-            instanciavel=instanciavel, papel=papel,
+            instanciavel=instanciavel, papel=papel, exemplar=exemplar,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -1573,6 +1580,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             padrao_qualificacao=row.get("padrao_qualificacao"),
             rascunho_padrao=dict(row["rascunho_padrao"]) if row.get("rascunho_padrao") is not None else None,
             instanciavel=bool(row.get("instanciavel", False)), papel=row.get("papel"),
+            exemplar=bool(row.get("exemplar", False)),
         )
 
     @staticmethod
@@ -1668,6 +1676,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
         rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
+        exemplar: bool = False,
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
@@ -1676,10 +1685,10 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         modo = _validate_scope(definition_scope, definition_agent_id)
         attrs = {
             "escopo_qualificacao": escopo_qualificacao, "padrao_qualificacao": padrao_qualificacao,
-            "rascunho_padrao": rascunho_padrao, "papel": papel,
+            "rascunho_padrao": rascunho_padrao, "papel": papel, "exemplar": exemplar or None,
         }
         if definition_scope != "plataforma" and any(v is not None for v in attrs.values()):
-            raise ValueError("escopo/padrao de qualificação and rascunho_padrao belong to a platform definition")
+            raise ValueError("escopo/padrao de qualificação, rascunho_padrao, papel and exemplar belong to a platform definition")
         _validate_definicao_fields({k: v for k, v in attrs.items() if v is not None})
         if definition_scope == "plataforma":
             _check_not_owned_and_open(owner_product, instanciavel)
@@ -1690,7 +1699,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             "definition_agent_id": str(definition_agent_id) if definition_agent_id else None,
             "conteudo_modo": modo, "escopo_qualificacao": escopo_qualificacao,
             "padrao_qualificacao": padrao_qualificacao, "rascunho_padrao": rascunho_padrao,
-            "instanciavel": instanciavel, "papel": papel,
+            "instanciavel": instanciavel, "papel": papel, "exemplar": exemplar,
         }
         resp = self._exec(self._t("agents").insert(payload), unique_code="key_taken")
         return self._agent(self._one(resp, f"agent {key!r}"))

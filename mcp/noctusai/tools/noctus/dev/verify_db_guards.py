@@ -4672,6 +4672,60 @@ _AGENTS_GERACAO_PROBES: tuple[GuardProbe, ...] = (
             "read by a mechanism that must find them on the definition."
         ),
     ),
+    # 058: the exemplar flag is a platform-definition attribute too.
+    _agents_studio_probe(
+        probe_id="agents.exemplar_only_on_platform_definitions",
+        guard_name="agents_definicao_atributos_check",
+        migrations=("049_agent_geracao.sql", "058_agent_exemplar_referencia.sql"),
+        requires_table="geracoes",
+        attack_sql=(
+            f"    UPDATE {_AGENTS_SCHEMA}.agents SET exemplar = true WHERE id = v_agent;"
+        ),
+        guard_fragment="agents_definicao_atributos_check",
+        what="the exemplar flag on an org-scope agent",
+        rationale=(
+            "Only a platform definition can be an exemplar the AI generator imitates (and only a platform admin flips "
+            "it): an org agent or an instance carrying the flag would feed its text to the generator."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="geracoes.referencia_is_a_definition_key",
+        guard_name="geracoes_referencia_check",
+        migrations=("049_agent_geracao.sql", "058_agent_exemplar_referencia.sql"),
+        requires_table="geracoes",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.geracoes (org_id, agent_id, status, briefing, areas_solicitadas, modelo, "
+            "provider, limite_usd, criado_por, referencia) "
+            "VALUES (v_org, v_agent, 'pendente', '{}'::jsonb, ARRAY['secoes']::text[], 'claude-opus-5', 'anthropic', 1, v_org, "
+            "'Nome Inválido; DROP');"
+        ),
+        guard_fragment="geracoes_referencia_check",
+        what="a generation run whose reference is not a definition key",
+        rationale=(
+            "The reference of a generation run (the exemplar it imitates) is a platform-definition key; the database "
+            "refuses any other shape so a free-text value can never reach the exemplar lookup."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="geracao_areas.area_is_a_known_area",
+        guard_name="geracao_areas_area_check",
+        migrations=("049_agent_geracao.sql", "058_agent_exemplar_referencia.sql"),
+        requires_table="geracoes",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.geracoes (org_id, agent_id, status, briefing, areas_solicitadas, modelo, "
+            "provider, limite_usd, criado_por) "
+            "VALUES (v_org, v_agent, 'pendente', '{}'::jsonb, ARRAY['secoes']::text[], 'claude-opus-5', 'anthropic', 1, v_org) "
+            "RETURNING id INTO v_run;\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.geracao_areas (org_id, geracao_id, area, status) "
+            "VALUES (v_org, v_run, 'area_inexistente', 'pendente');"
+        ),
+        guard_fragment="geracao_areas_area_check",
+        what="a generation area outside the generator's closed list",
+        rationale=(
+            "A generation area is one of the generator's closed list (the content areas and the behaviour eval cases): "
+            "the database refuses any other name, so a run can never book an area no writer knows."
+        ),
+    ),
 )
 
 

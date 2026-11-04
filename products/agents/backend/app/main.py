@@ -83,6 +83,7 @@ from app.routers.studio_agents_router import router as studio_agents_router
 from app.routers.studio_clients_router import router as studio_clients_router
 from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_geracoes_router import router as studio_geracoes_router
+from app.routers.studio_prontidao_router import router as studio_prontidao_router
 from app.routers.studio_evals_router import router as studio_evals_router
 from app.routers.studio_import_router import IMPORT_BODY_LIMIT_PATTERN
 from app.routers.studio_import_router import router as studio_import_router
@@ -261,6 +262,7 @@ app = create_product_app(
         studio_clients_router,
         studio_conteudo_router,
         studio_geracoes_router,  # S3a: AI-generated first drafts
+        studio_prontidao_router,  # readiness of the draft (agent-creation guide)
         studio_padrao_router,
         studio_ui_router,
         studio_knowledge_router,

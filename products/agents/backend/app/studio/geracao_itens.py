@@ -19,6 +19,7 @@ from uuid import UUID
 from app.schemas.studio_geracao import (
     SaidaConfiguracoes,
     SaidaDecisoes,
+    SaidaEvals,
     SaidaFerramentas,
     SaidaSecoes,
     SaidaSkills,
@@ -29,6 +30,8 @@ from app.stores.errors import NotFound
 from app.stores.skills_biblioteca import validar_obrigatoria_para
 from app.stores.studio_definitions import SectionInput
 from app.stores.studio_definitions_conteudo import DecisaoInput, FerramentaInput, SpecDefInput, TextoInput
+from app.stores.studio_evals import EvalCaseInput
+from app.studio.eval_pii import EvalFixtureComPii, recusar_pii
 from app.studio.ferramentas_registry import ferramenta_conhecida
 from app.studio.textos_registry import TEXTOS, placeholders_de
 
@@ -58,8 +61,11 @@ def _h(*parts: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
-def hashes_atuais(area: str, *, store: Any, skills: Any, org_id: UUID, version: Any) -> dict[str, str]:
-    """``{item key: hash}`` of the area's rows in ``version`` right now."""
+def hashes_atuais(
+    area: str, *, store: Any, skills: Any, org_id: UUID, version: Any, evals: Any = None,
+) -> dict[str, str]:
+    """``{item key: hash}`` of the area's rows in ``version`` right now (``evals``: the agent's behaviour cases, which
+    belong to the AGENT, not to a version)."""
     vid = version.id
     if area == "secoes":
         return {s.chave: _h(s.titulo, s.conteudo, s.ativo) for s in store.list_sections(org_id, vid)}
@@ -84,6 +90,13 @@ def hashes_atuais(area: str, *, store: Any, skills: Any, org_id: UUID, version: 
         }
     if area == "configuracoes":
         return {c: _h(getattr(version, c, None)) for c in CAMPOS_CONFIGURACAO}
+    if area == "evals":
+        if evals is None:
+            return {}
+        return {
+            c.slug: _h(c.titulo, c.entrada, c.contexto, dict(c.criterios), list(c.tags), c.ativo)
+            for c in evals.list_cases(org_id, version.agent_id) if c.suite == "comportamento"
+        }
     raise ValueError(f"unknown area {area!r}")
 
 
@@ -120,7 +133,7 @@ def _guard(call):
 
 def escrever_area(
     area: str, saida: Any, *, store: Any, skills: Any, org_id: UUID, draft: Any, anteriores: set[str],
-    textos_aplicaveis: dict[str, bool],
+    textos_aplicaveis: dict[str, bool], evals: Any = None,
 ) -> tuple[list[str], list[str]]:
     """Merge the validated ``saida`` of ``area`` into ``draft``. ``anteriores`` = keys a previous generation wrote
     for this area (replaced by the new output); ``textos_aplicaveis`` = ``{chave: obrigatoria}`` of the registry slots
@@ -236,9 +249,64 @@ def escrever_area(
             raise ErroEscrita("saida_vazia")
         _guard(lambda: store.update_draft(org_id, draft.id, campos))
         escritas = list(campos)
+    elif area == "evals":
+        assert isinstance(saida, SaidaEvals)
+        escritas = _escrever_evals(
+            saida, evals=evals, org_id=org_id, agent_id=draft.agent_id, anteriores=anteriores, lacunas=lacunas)
     else:  # pragma: no cover -- Area is a closed Literal
         raise ValueError(f"unknown area {area!r}")
     return escritas, lacunas
+
+
+def _escrever_evals(
+    saida: SaidaEvals, *, evals: Any, org_id: UUID, agent_id: UUID, anteriores: set[str], lacunas: list[str],
+) -> list[str]:
+    """Behaviour eval cases of the AGENT (not of a version). A case a previous generation wrote is replaced by the new
+    output (or removed -- deactivated when a run already used it); a case the author typed is never overwritten
+    (``slug_ocupado``). Personal data in a fixture refuses THAT case (fixtures are synthetic, Meta 4.7)."""
+    if evals is None:
+        raise ErroEscrita("evals_indisponivel")
+    existentes = {c.slug: c for c in evals.list_cases(org_id, agent_id)}
+    novos: dict[str, Any] = {}
+    for e in saida.evals:
+        if e.slug in novos:
+            lacunas.append(f"eval_duplicado:{e.slug}")
+            continue
+        if e.slug in existentes and (e.slug not in anteriores or existentes[e.slug].suite != "comportamento"):
+            lacunas.append(f"slug_ocupado:{e.slug}")
+            continue
+        if not any(c.strip() for c in (*e.criterios.deve, *e.criterios.nao_deve)):
+            lacunas.append(f"eval_sem_criterios:{e.slug}")
+            continue
+        try:
+            recusar_pii(titulo=e.titulo, entrada=e.entrada, contexto=e.contexto, criterios=e.criterios.model_dump(), tags=e.tags)
+        except EvalFixtureComPii as exc:
+            lacunas.append(f"eval_com_pii:{e.slug}:{exc.tipo}")
+            continue
+        novos[e.slug] = e
+    for slug in sorted(anteriores - set(novos)):
+        antigo = existentes.get(slug)
+        if antigo is None or antigo.suite != "comportamento":
+            continue
+        try:
+            evals.delete_case(org_id, agent_id, antigo.id)
+        except Exception as exc:  # noqa: BLE001 -- 'case_in_use' (a run has results for it): deactivate instead
+            if type(exc).__name__ != "StudioConflict":
+                raise
+            _guard(lambda: evals.update_case(org_id, agent_id, antigo.id, ativo=False))
+    escritas: list[str] = []
+    for slug, e in novos.items():
+        criterios = {"deve": [c for c in e.criterios.deve if c.strip()], "nao_deve": [c for c in e.criterios.nao_deve if c.strip()]}
+        if slug in existentes:
+            _guard(lambda: evals.update_case(
+                org_id, agent_id, existentes[slug].id, titulo=e.titulo, entrada=e.entrada, contexto=e.contexto,
+                criterios=criterios, tags=tuple(e.tags), ativo=True))
+        else:
+            _guard(lambda: evals.create_case(org_id, agent_id, EvalCaseInput(
+                slug=slug, titulo=e.titulo, entrada=e.entrada, criterios=criterios, contexto=e.contexto,
+                tags=tuple(e.tags), ativo=True, suite="comportamento")))
+        escritas.append(slug)
+    return escritas
 
 
 def _escrever_skills(saida: SaidaSkills, *, skills: Any, org_id: UUID, draft: Any, anteriores: set[str], lacunas: list[str]) -> list[str]:

@@ -208,6 +208,59 @@ class TestPins:
         item = lib.put(f"{AGENT}/julia/draft/skills-biblioteca/qualificar", json={"versao": 1}).json()["items"][0]
         assert item["versao"] == 1 and item["nova_versao"] == 2
 
+    def test_atualizar_repins_every_stale_skill_keeps_gates_and_order_and_returns_the_diff(self, lib):
+        v1 = _publicar_skill(lib)
+        _publicar_skill(lib, chave="fechar")
+        lib.put(f"{AGENT}/julia/draft/skills-biblioteca/qualificar", json={"obrigatoria_para": ["handoff"], "ordem": 3})
+        lib.put(f"{AGENT}/julia/draft/skills-biblioteca/fechar", json={})
+        v2 = lib.post(f"{LIB}/qualificar/versoes", json={"copiar_de": str(v1)}).json()["id"]
+        lib.patch(f"{LIB}/versoes/{v2}", json={"corpo": "nova"})
+        lib.post(f"{LIB}/versoes/{v2}/publicar")
+        antes = _draft(lib).compiled_hash
+        resp = lib.post(f"{AGENT}/julia/draft/skills-biblioteca/atualizar")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body) == {"version_id", "atualizadas", "ja_atuais", "items"}
+        assert body["atualizadas"] == [{"skill": "qualificar", "de": 1, "para": 2}] and body["ja_atuais"] == ["fechar"]
+        por_skill = {i["skill"]: i for i in body["items"]}
+        assert por_skill["qualificar"]["versao"] == 2 and por_skill["qualificar"]["nova_versao"] is None
+        assert por_skill["qualificar"]["obrigatoria_para"] == ["handoff"] and por_skill["qualificar"]["ordem"] == 3
+        assert _draft(lib).compiled_hash != antes, "the pins are hash-covered: the eval must run again"
+        agent = lib.store.get_agent(DEFAULT_ORG_ID, "julia")
+        auditoria = [a for a in lib.store.list_audit_log(DEFAULT_ORG_ID, agent.id)
+                     if (a.depois or {}).get("kind") == "skill_ref_atualizar"]
+        assert len(auditoria) == 1 and auditoria[0].antes["skills"] == {"qualificar": 1} and auditoria[0].depois["skills"] == {"qualificar": 2}
+
+    def test_atualizar_with_nothing_stale_changes_and_audits_nothing(self, lib):
+        _publicar_skill(lib)
+        lib.put(f"{AGENT}/julia/draft/skills-biblioteca/qualificar", json={})
+        antes = _draft(lib).compiled_hash
+        body = lib.post(f"{AGENT}/julia/draft/skills-biblioteca/atualizar").json()
+        assert body["atualizadas"] == [] and body["ja_atuais"] == ["qualificar"]
+        assert _draft(lib).compiled_hash == antes
+        agent = lib.store.get_agent(DEFAULT_ORG_ID, "julia")
+        assert not [a for a in lib.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if (a.depois or {}).get("kind") == "skill_ref_atualizar"]
+
+    def test_atualizar_is_platform_only_and_needs_a_draft(self, lib):
+        assert lib.raw.post(f"{AGENT}/julia/draft/skills-biblioteca/atualizar").status_code == 401
+        lib.as_org_admin_only("owner")
+        resp = lib.post(f"{AGENT}/julia/draft/skills-biblioteca/atualizar")
+        assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
+
+    def test_atualizar_works_with_the_content_token_and_a_stale_pin_shows_in_the_readiness(self, lib):
+        v1 = _publicar_skill(lib)
+        lib.put(f"{AGENT}/julia/draft/skills-biblioteca/qualificar", json={})
+        v2 = lib.post(f"{LIB}/qualificar/versoes", json={"copiar_de": str(v1)}).json()["id"]
+        lib.patch(f"{LIB}/versoes/{v2}", json={"corpo": "nova"})
+        lib.post(f"{LIB}/versoes/{v2}/publicar")
+        pronto = lib.get(f"{AGENT}/julia/prontidao").json()
+        assert [i["detalhe"]["skill"] for i in pronto["itens"] if i["codigo"] == "skill_desatualizada"] == ["qualificar"]
+        lib.raw.app.dependency_overrides[get_auth_context] = _token_ctx()
+        assert lib.raw.post(f"{AGENT}/julia/draft/skills-biblioteca/atualizar").status_code == 200
+        lib.raw.app.dependency_overrides.pop(get_auth_context)
+        depois = lib.get(f"{AGENT}/julia/prontidao").json()
+        assert "skill_desatualizada" not in {i["codigo"] for i in depois["itens"]}
+
     def test_a_draft_skill_version_cannot_be_pinned(self, lib):
         lib.post(LIB, json={"chave": "rasc", "nome": "R"})
         lib.post(f"{LIB}/rasc/versoes", json={})

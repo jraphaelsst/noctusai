@@ -27,7 +27,7 @@ No agent KEY lives in code either (migration 049): a platform definition is any 
 with any key by `POST /api/studio/plataforma/agents` and configured by `GET/PATCH
 /api/studio/plataforma/agents/{key}` — `escopo_qualificacao`, `padrao_qualificacao`, `rascunho_padrao`
 (first-draft settings), `instanciavel` (published ⇒ instantiated in every org; DEFAULT false, never true for an `owner_product` definition — a closed one reaches only orgs granted via `definition_org_grants` / `noctus.agents.content action=conceder`; KB § PATTERNS/compliance/org-config-isolation.md), `papel`
-(`gerador`/`exemplar`). `usa_canais` (derived: `owner_product` set and `runtime='llm'`) gates channel UI.
+(`gerador`) and `exemplar` (migration 058: the AI generator may imitate this definition; toggled ONLY by a platform-admin session via `PUT /api/studio/plataforma/agentes/{key}/exemplar`). `usa_canais` (derived: `owner_product` set and `runtime='llm'`) gates channel UI.
 The only key literal left is the `lead-imob`→`julia` token alias (`app/channels/chaves_legadas.py`,
 `NOC-REMEDIATE[drop-lead-imob-alias]`).
 
@@ -91,6 +91,20 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 | New-agent wizard (`/agentes/novo`, platform admins; everyone else gets the standard not-found): the seed `JourneyWizard` over `GET /api/studio/modelo` → `assistente.passos` (steps and fields from the model, limits/defaults per field), start empty or "Gerar com IA" (AI draft capped at US$ 5), local unsaved draft, "Revisão" summary, "Publicar" → `POST /api/studio/plataforma/agents` → `/agentes/:key`; the former `/studio` console (create, import, delete, content token) folded into `/agentes` | agents-unified |
 | Publish from any content tab: the draft header of Prompt, Textos, Ferramentas, Decisões, Especificações and Skills fixadas carries "Publicar rascunho" (admin only), opening the shared `PublishDraftDialog` that Versões uses (blocking warnings + eval gate); disabled while the tab has unsaved edits. Decisions are rows of the draft version — there is no per-decision publish | Julia v2 |
 | Shared skill library: one standardised, versioned set of skills every agent opens the same way; agent versions pin library versions (`obrigatoria_para` gates tools), Studio shows "new version available"; platform-only authoring in the Studio Skills library page (`/studio/biblioteca-skills`: create, edit the draft body and reference files, publish) and the `noctus.agents.content` MCP tool (drafts only) | Julia v2 |
+
+## Creating a complete agent (Julia as the reference)
+
+`KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md` (skill `noc-new-agent`) is the recipe: the artifacts a production agent has and
+where Julia's live, the step order (`criar_agente` → `gerar` with `referencia=<exemplar>` → read the `lacunas` → standard → specs →
+evals → readiness → eval run → **human** publish), the gate table, the generator's cost cap and what never comes from AI.
+
+| Surface | What |
+|---|---|
+| `GET /api/studio/agents/{key}/prontidao` (platform admin or content token; `app/studio/prontidao.py`) | What the DRAFT still owes: items `{codigo, grupo, severidade bloqueante\|aviso\|ok, mensagem, acao_sugerida, recusa_publicacao, detalhe}` + `pronto_para_publicar` (true iff publish would not refuse it — blocking items name the publish 409 code they stand for; a parity test keeps gate and view in lock-step). The same list rides in every publish 409 (`prontidao`) |
+| `POST /api/studio/agents/{key}/geracoes {briefing, areas?, forcar?, limite_usd?, referencia?}` | AI first draft; new area `evals` (behaviour eval cases, PII-guarded, drafts only); `referencia` = an exemplar agent key (422 `referencia_invalida`), else every exemplar. The reference's tool parameter labels, decision options, eval-case shapes and standard key reach the generator (verbatim text only inside the platform org; leak guard on) |
+| `PUT /api/studio/plataforma/agentes/{key}/exemplar {exemplar}` | Mark/unmark an exemplar — platform ADMIN session only (not the content token, not PATCH) |
+| `POST /api/studio/agents/{key}/draft/skills-biblioteca/atualizar` | Explicit re-pin of EVERY pinned library skill to its newest published version; returns the diff; audited; re-stamps the draft hash |
+| MCP `noctus.agents.content action=prontidao \| atualizar_skills` | The read and the (dry-run-first) re-pin from the chat |
 
 ## Lead qualification standard (Julia v2, `app/qualificacao/`)
 

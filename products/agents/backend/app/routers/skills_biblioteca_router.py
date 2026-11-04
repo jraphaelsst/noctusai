@@ -150,6 +150,22 @@ class RefsOut(StrictHttpModel):
     items: list[RefOut]
 
 
+class SkillAtualizadaOut(StrictHttpModel):
+    skill: str
+    #: The pinned library version before / after (the newest PUBLISHED one).
+    de: int
+    para: int
+
+
+class AtualizarRefsOut(StrictHttpModel):
+    """The diff of "pin every skill to its newest published version": what moved, what already was current."""
+
+    version_id: UUID
+    atualizadas: list[SkillAtualizadaOut]
+    ja_atuais: list[str]
+    items: list[RefOut]
+
+
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 
@@ -418,6 +434,42 @@ def fixar_ref(
     _audit_pin(store, ctx, agent, draft.id, antes, depois)
     _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return RefsOut(version_id=draft.id, items=[_ref_out(r) for r in skills.listar_refs(draft.id)])
+
+
+@router.post("/api/studio/agents/{key}/draft/skills-biblioteca/atualizar", response_model=AtualizarRefsOut)
+def atualizar_refs(
+    key: str, ctx: AuthContext = Depends(require_platform_content_admin),
+    skills: SkillsBibliotecaStore = Depends(get_skills_store_dep),
+    store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
+) -> AtualizarRefsOut:
+    """Re-pin EVERY skill of the draft to its newest PUBLISHED library version (the explicit action behind the "new
+    version available" indicator -- a pin never moves by itself, a published agent version stays immutable). Each
+    pin keeps its ``obrigatoria_para`` and ``ordem``. Returns the diff; audited (``conteudo_editado_mcp``, human or
+    token alike); the draft's ``compiled_hash`` is re-stamped (the pins are hash-covered), so the eval must run again."""
+    agent = resolve_agent(store, ctx.org_id, key)
+    draft = resolve_draft(store, ctx.org_id, agent)
+    antes = skills.listar_refs(draft.id)
+    atualizadas: list[SkillAtualizadaOut] = []
+    with _Mapped():
+        for r in antes:
+            if r.nova_versao_id is None or r.nova_versao is None:
+                continue
+            skills.fixar_ref(draft.org_id, draft.id, r.nova_versao_id, list(r.obrigatoria_para), r.ordem)
+            atualizadas.append(SkillAtualizadaOut(skill=r.skill_chave, de=r.versao, para=r.nova_versao))
+    depois = skills.listar_refs(draft.id)
+    if atualizadas:
+        store.append_audit(
+            agent.org_id, agent.id, actor_id(ctx), "conteudo_editado_mcp",
+            {"kind": "skill_ref_atualizar", "version_id": str(draft.id), "skills": {a.skill: a.de for a in atualizadas}},
+            {"kind": "skill_ref_atualizar", "version_id": str(draft.id), "skills": {a.skill: a.para for a in atualizadas}},
+        )
+        _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
+    movidas = {a.skill for a in atualizadas}
+    return AtualizarRefsOut(
+        version_id=draft.id, atualizadas=atualizadas,
+        ja_atuais=[r.skill_chave for r in antes if r.skill_chave not in movidas],
+        items=[_ref_out(r) for r in depois],
+    )
 
 
 @router.delete("/api/studio/agents/{key}/draft/skills-biblioteca/{skill}", response_model=RefsOut)

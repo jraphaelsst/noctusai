@@ -52,6 +52,7 @@ owns_kb:
   - CONTEXT/backend/08-DAILY-LIFE.md
   - CONTEXT/GUIDES/google-oauth-setup.md
   - CONTEXT/GUIDES/matricula-source-recovery.md
+  - CONTEXT/GUIDES/agent-creation.md
   - CONTEXT/INTEGRATIONS/google.md
   - CONTEXT/INTEGRATIONS/meta.md
   - CONTEXT/INTEGRATIONS/whatsapp.md
@@ -123,6 +124,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md` · `KB § PATTERNS/backend/leads-organ.md` (WhatsApp-fed leads funnel organ).
 **Tests** → `KB § PATTERNS/backend/boundary-contract-tests.md`.
 **Realtime** → `KB § PATTERNS/common/realtime-sse-bus.md`.
+**Agent creation (the complete-agent recipe, Julia as the reference)** → `KB § GUIDES/agent-creation.md` (readiness `GET /api/studio/agents/{key}/prontidao` ↔ the publish gates; skill `noc-new-agent`).
 **Performance (client view)** → `KB § PATTERNS/common/performance-analysis.md` (`noctus.dev.perf_probe`; skill `noc-perf-probe`).
 **Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/infosimples-certidoes.md` · `KB § INTEGRATIONS/payments.md` · `KB § INTEGRATIONS/invoices.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § INTEGRATIONS/risk-classifier.md` · `KB § INTEGRATIONS/agents-org-specs.md` · `KB § GUIDES/google-oauth-setup.md` · `KB § GUIDES/matricula-source-recovery.md`.
 

@@ -46,6 +46,7 @@ from app.dependencies import (
 )
 from app.routers.studio_agents_router import (
     actor_id,
+    get_eval_store_dep,  # defined in studio_agents_router (publish/readiness read the cases too); re-exported here
     require_user_or_dev_advisor,
     get_studio_definition_store_dep,
     http_error,
@@ -81,13 +82,6 @@ class EvalSchedulerUnavailable(RuntimeError):
     """Raised by the default (fail-closed) :func:`get_eval_scheduler_dep`
     binding — no real eval runner is registered yet (contract §J2.2; BE-RT
     binds the production runner)."""
-
-
-def get_eval_store_dep():
-    from app.config import settings
-    from app.stores.studio_evals import get_eval_store
-
-    return get_eval_store(settings)
 
 
 def get_eval_scheduler_dep():

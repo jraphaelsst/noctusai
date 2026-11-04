@@ -22,9 +22,14 @@ def _step(name: str, sql: str) -> dict:
 def test_the_probes_are_registered():
     by_id = {p.id: p for p in vdg.DEFAULT_REGISTRY}
     assert {p.guard_name for p in _PROBES} == {
-        "geracoes_limite_check", "geracoes_one_active_idx", "agents_definicao_atributos_check"}
+        "geracoes_limite_check", "geracoes_one_active_idx", "agents_definicao_atributos_check",
+        "geracoes_referencia_check", "geracao_areas_area_check"}
     for p in _PROBES:
-        assert by_id[p.id] is p and p.product == "agents" and p.migrations == ("049_agent_geracao.sql",)
+        assert by_id[p.id] is p and p.product == "agents" and p.migrations[0] == "049_agent_geracao.sql"
+    # 058 adds the exemplar flag probe on top of 049
+    assert {p.id for p in _PROBES if "058_agent_exemplar_referencia.sql" in p.migrations} == {
+        "agents.exemplar_only_on_platform_definitions", "geracoes.referencia_is_a_definition_key",
+        "geracao_areas.area_is_a_known_area"}
 
 
 def test_every_geracao_probe_is_refused_and_the_tables_stay_private_on_the_real_chain(pglite):
@@ -37,8 +42,14 @@ DO $t$ BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'agents.geracoes'::regclass) THEN
     RAISE EXCEPTION 'ASSERT RLS must be on';
   END IF;
-  IF EXISTS (SELECT 1 FROM agents.agents WHERE padrao_qualificacao IS NOT NULL OR escopo_qualificacao IS NOT NULL OR papel IS NOT NULL) THEN
-    RAISE EXCEPTION 'ASSERT no key-specific backfill: existing rows keep NULL';
+  IF EXISTS (SELECT 1 FROM agents.agents WHERE padrao_qualificacao IS NOT NULL OR escopo_qualificacao IS NOT NULL OR papel IS NOT NULL OR exemplar) THEN
+    RAISE EXCEPTION 'ASSERT no key-specific backfill: existing rows keep NULL / false';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'agents.geracao_areas'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%evals%') THEN
+    RAISE EXCEPTION 'ASSERT 058 must admit the evals area';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'agents' AND table_name = 'geracoes' AND column_name = 'referencia') THEN
+    RAISE EXCEPTION 'ASSERT 058 must add geracoes.referencia';
   END IF;
 END $t$;"""))
     for p in _PROBES:

@@ -39,6 +39,7 @@ from app.routers.studio_geracoes_router import router as studio_geracoes_router
 from app.routers.studio_knowledge_router import router as studio_knowledge_router
 from app.routers.studio_package_sync_router import router as studio_package_sync_router
 from app.routers.studio_padrao_router import router as studio_padrao_router
+from app.routers.studio_prontidao_router import router as studio_prontidao_router
 from app.routers.studio_ui_router import router as studio_ui_router
 from app.routers.qualificacao_router import get_padrao_store_dep
 from app.qualificacao.store import FakePadraoStore
@@ -121,6 +122,7 @@ def _build_app() -> FastAPI:
     app.include_router(studio_clients_router)
     app.include_router(studio_conteudo_router)
     app.include_router(studio_geracoes_router)
+    app.include_router(studio_prontidao_router)
     app.include_router(skills_biblioteca_router)
 
     app.include_router(studio_padrao_router)

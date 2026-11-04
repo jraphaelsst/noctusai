@@ -33,7 +33,7 @@ class PlataformaAgentCreateRequest(StrictHttpModel):
     #: A published definition is instantiated in every org only when true (opt-in: an internal agent such as the
     #: draft generator must not appear in every org).
     instanciavel: bool = Field(default=False, title="Disponível para as organizações")
-    papel: Literal["gerador", "exemplar"] | None = Field(default=None, title="Papel interno")
+    papel: Literal["gerador"] | None = Field(default=None, title="Papel interno")
     #: When sent, an AI generation of the new draft starts right away (all areas, ``forcar=false``).
     briefing: Briefing | None = Field(default=None, title="Briefing")
     limite_usd: float = Field(default=5.0, gt=0, le=5.0, title="Limite de custo da geração (US$)")
@@ -52,7 +52,7 @@ class PlataformaAgentUpdateRequest(StrictHttpModel):
     padrao_qualificacao: str | None = Field(default=None, pattern=_ATRIBUTO_PATTERN)
     rascunho_padrao: dict[str, Any] | None = None
     instanciavel: bool | None = None
-    papel: Literal["gerador", "exemplar"] | None = None
+    papel: Literal["gerador"] | None = None
 
 
 class PlataformaAgentOut(BaseModel):
@@ -71,6 +71,9 @@ class PlataformaAgentOut(BaseModel):
     rascunho_padrao: dict[str, Any] | None
     instanciavel: bool
     papel: str | None
+    #: The AI generator may imitate this definition. NOT settable through create/PATCH: only a platform ADMIN
+    #: session toggles it (``PUT /plataforma/agentes/{key}/exemplar``).
+    exemplar: bool = False
     #: The generation started by ``briefing`` (``null`` when none was sent).
     geracao: GeracaoOut | None = None
 

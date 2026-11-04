@@ -274,13 +274,19 @@ path; the Controles dialog states what happens to the open conversations before 
 Open gaps are marked `NOC-REMEDIATE[...]` in `types-julia.ts` and the `use*` hooks (conformidade
 routes, studio thread state/results).
 
+### Creating a complete agent (Julia as the reference — `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md`, skill `noc-new-agent`)
+- The recipe, the artifact map (what Julia has, where it lives), the publish-gate table and "what never comes from AI" live in that guide; read it before building or generating an agent.
+- `app/studio/prontidao.py` + `GET /api/studio/agents/{key}/prontidao`: the draft's readiness. `compor` is pure (`Entrada` -> items `{codigo, grupo, severidade, mensagem, acao_sugerida, recusa_publicacao, detalhe}`), `coletar` reads. A BLOCKING item names the publish 409 code it stands for (`RECUSAS_PUBLICACAO`); the publish route and the view share the predicates (`recusa_de_compilacao`, `juiz_aprovado`, `decidir_portao`) and `tests/studio/def/test_prontidao.py` publishes a draft in every refusal state to keep them in lock-step. Every publish 409 carries the same `prontidao` list. Advisory (never blocking): stale skill pins, tools the configuration expects without a description row, tool parameters without a label (`rotulo_parametro_ausente`), unfilled org specs, generator gaps, controls off.
+- Generation: area `evals` (behaviour eval cases through `EvalCaseInput`; per-case PII guard -> `lacunas`; an author-typed slug is never overwritten); `referencia` on `POST .../geracoes` = an exemplar agent key (`agents.agents.exemplar`, migration 058; toggled ONLY by `PUT /api/studio/plataforma/agentes/{key}/exemplar`, platform-admin session). `estrutura_exemplar` adds tool parameter labels, decision options, eval-case shapes and the standard key; verbatim text only inside the platform org, the leak guard covers all of it. The per-area instruction text is DATA (generator agent's `area-<area>` sections), never code.
+- `POST .../draft/skills-biblioteca/atualizar`: explicit re-pin of every pinned skill to its newest PUBLISHED version (keeps `obrigatoria_para`/`ordem`; audited; re-stamps the hash). MCP: `noctus.agents.content action=prontidao | atualizar_skills`.
+
 ### Platform-defined agents and org specs (Julia v2 — `app/studio/`)
 
 - `definition_scope`: `org` (default — owns its versions) · `plataforma` (THE definition of a key, in the
   platform org, one per key) · `instancia` (an org's instance: no versions). A platform definition is ANY
   `definition_scope='plataforma'` row — there is NO code registry and no agent key is known to the code (migration
   049): what a registry used to carry is DATA on the row (`runtime`, `owner_product`, `escopo_qualificacao`,
-  `padrao_qualificacao`, `rascunho_padrao` = the first draft's settings, `instanciavel`, `papel`), written through
+  `padrao_qualificacao`, `rascunho_padrao` = the first draft's settings, `instanciavel`, `papel` = `gerador`, `exemplar`), written through
   `POST/PATCH /api/studio/plataforma/agents[/{key}]` (platform admin or the content token; `GET` reads it) and read by
   every mechanism from the definition record (`plataforma.escopo_de/padrao_de`, compile, the channel turn, org-instance
   creation). `usa_canais` (on the agent summary/detail) is DERIVED from that data (`owner_product` set on an `llm`
