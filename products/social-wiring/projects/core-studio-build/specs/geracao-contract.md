@@ -357,7 +357,7 @@ pode levar 1–2 minutos." No percentage is shown unless it comes from the count
 
 ### 3.3 Library ingestion (`biblioteca.sync_perfil`, BE-2)
 
-1. Business Discovery through `conta_descoberta_id`, using the S0a adapter. Page size is 25. The
+1. Source per setting `biblioteca_fonte` (**apify** by default since 2026-11-04 — see `apify-biblioteca-contract.md`; no Meta account needed) or **business_discovery**: Business Discovery through `conta_descoberta_id`, using the S0a adapter. Page size is 25. The
    first sync reads up to **50** posts. Later syncs read until the newest stored `ig_media_id`, and
    re-read the last 30 days for fresh metrics.
    - Unknown handle (error 100/110) → `nao_encontrado`.

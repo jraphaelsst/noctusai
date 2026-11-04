@@ -101,7 +101,14 @@ timeout, token absent from every exception string and log record.
   results, usd). Caps (settings, defaults): `biblioteca_apify_max_posts_primeira_sync=60`,
   `…_max_posts_sync=24`, `biblioteca_apify_resultados_dia_org=600`; reaching the daily cap parks
   the profile as `sem_orcamento` with a visible message, never silently.
-- `views` now real → `score_viral` uses the views base (existing ≥80% rule; no change needed).
+- `views` now real → `score_viral` uses the views base (existing ≥80% rule; no change needed) and is the
+  RANKING signal only.
+- **Viral rule (owner decision 2026-11-04, Apify source):** `e_viral` = views ≥ `biblioteca_viral_min_views`
+  (200 000) AND `er_views` = (likes+comments)/views ≥ `biblioteca_viral_min_er_views` (0.02) AND
+  `er_seguidores` = (likes+comments)/followers-at-fetch ≥ `biblioteca_viral_min_er_seguidores` (0.03) AND
+  the post is ≥48 h old. Hidden likes / missing views / missing-or-zero followers ⇒ rate NULL, `e_viral`
+  false. Persisted per viral: `er_views`, `er_seguidores`, `seguidores_no_fetch` (migration 320). The
+  Business Discovery path keeps the median-ratio rule (its tests stay green).
 - Docs same commit: README (Criação de Mídia line), `specs/biblioteca-lia.md` + `ROPA-biblioteca.md`
   (source = Apify scraping of public profiles, Apify as sub-processor (Czech Republic/EU, servers
   in US), owner decision 2026-11-04, transitional; re-assessment trigger "new data source" hit),

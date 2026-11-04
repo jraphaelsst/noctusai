@@ -8,7 +8,7 @@
 
 | Data | Source | Kept |
 |---|---|---|
-| Handle, display name, profile photo, follower count of a **monitored profile** | Instagram Graph API Business Discovery (public business/creator accounts only) | While monitored; purged 90 days after the profile is paused or referenced by no marca; at once when deleted or opted out |
+| Handle, display name, profile photo, follower count of a **monitored profile** | Apify scraping of the PUBLIC profile (`apify/instagram-scraper`; owner decision 2026-11-04, transitional until Meta verification) or, when `biblioteca_fonte=business_discovery`, Instagram Graph API Business Discovery (public business/creator accounts only) | While monitored; purged 90 days after the profile is paused or referenced by no marca; at once when deleted or opted out |
 | Per post: caption, permalink, timestamp, likes, comments, media type, thumbnail | Same | Same |
 | Transcript of a Reel's speech | Our self-hosted transcriber (audio deleted right after transcription) | Transcript on the viral row: same as above. Copy in the transcription layer: 7 days |
 | Classification (niche, profession, format, attention trigger, hook, structure blueprint) | LLM (Anthropic) over caption + transcript | Same as the viral |
@@ -28,7 +28,7 @@ Not processed: private accounts, stories, comments' authors, DMs, follower lists
 
 ## 3. Necessity test
 
-- The purpose cannot be met without reading the posts. We only take what Business Discovery already returns publicly, plus the speech transcript, because the hook is usually spoken.
+- The purpose cannot be met without reading the posts. We only take what the public profile already shows (Apify scraping, or Business Discovery when selected), plus the speech transcript, because the hook is usually spoken.
 - **Minimisation (built):**
   - only accounts the org registers (max 30 per org);
   - only public business/creator accounts;
@@ -78,7 +78,7 @@ Not processed: private accounts, stories, comments' authors, DMs, follower lists
 
 Re-assess if:
 - the purpose changes (e.g. sharing across orgs, training);
-- a new data source is added (TikTok, YouTube);
+- a new data source is added (TikTok, YouTube) — **triggered 2026-11-04: Apify public-profile scraping added as the transitional source (Apify = sub-processor, see ROPA); owner decision, re-assess when Meta verification lands and Business Discovery becomes the default again**;
 - complaints or opt-outs show expectations were misjudged.
 
 Otherwise re-assess every 12 months. Next review: 2027-10-10.

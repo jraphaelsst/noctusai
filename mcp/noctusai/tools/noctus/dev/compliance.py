@@ -15470,6 +15470,15 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # Biblioteca/Apify 320 is NOT APPLIED (file-only until the tech-lead runs migrate_product): it re-creates the
+    # existing status vocabulary CHECK with two more values. A pure vocabulary list (no cross-column logic), written
+    # only by our own ingestion handler through fixed literals; the widened constraint does not exist in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/320_biblioteca_apify.sql",
+        "cs_perfis_monitorados_status_check",
+        "Vocabulary-only CHECK re-created with 'sem_credencial'/'sem_orcamento'; migration unapplied (file-only), "
+        "so there is no live constraint to probe; values are written from fixed literals in biblioteca_ingestao.py.",
+    ),
     # Julia v2 A-polish #12: every other 031-040 entry became a real GuardProbe (verify_db_guards
     # `_AGENTS_JULIA_V2_PROBES`). This one cannot be probed without fabricating a SECOND platform org.
     (

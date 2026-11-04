@@ -378,6 +378,19 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         default="on",
     ),
     ApiKeySpec(
+        name="apify_api_token",
+        label="Apify API Token",
+        description=(
+            "Token do Apify usado pela Biblioteca de virais (Criação de Mídia) "
+            "para ler posts públicos dos perfis monitorados. Sem ele, os perfis "
+            "ficam em 'sem credencial'."
+        ),
+        is_secret=True,
+        testable=False,
+        input_type="password",
+        placeholder="apify_api_...",
+    ),
+    ApiKeySpec(
         name="infosimples_token",
         label="InfoSimples Token",
         description=(

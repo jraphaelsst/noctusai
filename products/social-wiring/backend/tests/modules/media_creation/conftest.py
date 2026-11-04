@@ -54,6 +54,17 @@ def _unconfigured_meta(monkeypatch):
     monkeypatch.delenv("META_SYSTEM_USER_TOKEN", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _fonte_business_discovery(monkeypatch):
+    """The pre-Apify module tests exercise the Business Discovery path (and its ``sem_conta`` state);
+    the product default is now ``apify`` (owner decision 2026-11-04), so pin the source explicitly.
+    Apify behaviour is covered in ``test_biblioteca_apify.py`` with an injected ``fonte_reader``."""
+    from app.config import settings
+
+    monkeypatch.delenv("BIBLIOTECA_FONTE", raising=False)
+    monkeypatch.setattr(settings, "biblioteca_fonte", "business_discovery")
+
+
 @pytest.fixture
 def client():
     mock_sb = MockSupabaseClient()
