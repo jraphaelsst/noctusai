@@ -14,7 +14,18 @@
 | Resolver factory | `make_api_token_resolver(admin_client, schema=)` returns the Real; with neither it returns the Fake outside deploy and RAISES in a deploy context. `create_auth_router` uses it (no silent Fake fallback). |
 | MFA seam | `MintPolicy(require_mfa=callable(ctx)->bool)`; default NOT required. The seed mint route enforces it (403 `mfa_required` unless `ctx.aal == "aal2"`). Core wires the callable to a platform setting. |
 
-Deferred to core/product slices: the `service_accounts` table and `service_account_id` principal (`CallerKind` `service`), the token card UI.
+| Token routes (`create_auth_router`) | `POST/GET /api/settings/api-tokens`, `GET /scopes` (the allow-list, for a mint UI), `POST /{id}/rotate`, `DELETE /{id}`. List carries `expires_at` and (when `service_account_check=` is wired) `service_account_id`. `include_session_routes=False` mounts ONLY these (a product that owns `/api/auth/login|me|logout`); `get_auth_context=` makes the routes use the product's single dependency. |
+| Service accounts | `ApiTokenCreateRequest.service_account_id` + `build_api_token_row(service_account_id=)`; only a product whose `api_tokens` has the column wires `service_account_check`, else a mint naming one is 422 `service_accounts_unsupported`. |
+
+## Core wiring (`products/core`, migration 099)
+
+- `service_accounts` ("noc-agent") + nullable `api_tokens.service_account_id`; RLS like `api_tokens` (service role only).
+- `app/auth_context.py`: the ONE `get_auth_context` (cookie, `noc_`/legacy `pk_` bearer, trusted JWT); the transcription API and the token routes use it; `ApiTokenAuditMiddleware` writes `api_token_audit`. Token management is platform admins only (`get_token_admin_context`) because core scopes (`reminders:write`) are platform-level.
+- **MFA to mint is a platform setting, default OFF**: `platform_settings.exigir_mfa_para_tokens` (`'false'`), toggled by `PUT /api/admin/tokens/settings` (platform admins) and read per request into `MintPolicy`. Off: no MFA. On: an unmet `aal2` is the named refusal 403 `mfa_required` (mint and rotate). Row absent = off; unparseable value = ON (fail closed).
+- Allow-list: `app/services/api_tokens.py::CORE_TOKEN_SCOPES` (`transcription:read|write`, `reminders:read|write`). Register a new scope there.
+- UI: `/admin/tokens` (`AdminTokens`) = the MFA switch + the shared `ApiTokensPanel` / `createApiTokensHooks` from `@noctusai/lib/components` (masked prefix first 4 + last 4 of the stored 12-char prefix, scopes from the server list, secret shown once).
+
+Still deferred: the `CallerKind` `service` principal in `AuthContext` (the FK is stored; the resolver still reports `product`), and the `pk_` cutoff (`NOC-REMEDIATE[pk-prefix-cutoff]`, last step).
 
 ## Grant delivery (`noctusai_lib.api.auth.grants`)
 

@@ -20,6 +20,7 @@ Central auth and administration hub for the NoctusAI multi-product SaaS platform
 - **oauth** -- third-party OAuth provider flows
 - **sso** -- SSO token creation/verification for cross-product access (5-min short-lived JWT)
 - **onboarding** -- first-time org setup wizard
+- **M2M API tokens** (migration 099, page `/admin/tokens`, platform admins only) -- machine access for our own automation. The seed token routes are mounted in `app/auth_context.py::build_tokens_router` (`/api/settings/api-tokens`: mint, list, `GET /scopes`, `POST /{id}/rotate`, `DELETE /{id}`); tokens mint as `noc_<64 hex>` (legacy `pk_` still accepted until the cutoff, `NOC-REMEDIATE[pk-prefix-cutoff]`), with an expiry or an explicit no-expiry, revocation and `last_used_at`. Scopes come from the server allow-list `app/services/api_tokens.py::CORE_TOKEN_SCOPES` (`transcription:read|write`, `reminders:read|write`), never free text. `public.service_accounts` ("noc-agent") + nullable `api_tokens.service_account_id`. ONE `get_auth_context` (`app/auth_context.py`) serves the transcription API and the token routes; `ApiTokenAuditMiddleware` writes `api_token_audit`. **MFA to mint is a platform setting, OFF by default** (`platform_settings.exigir_mfa_para_tokens`; `GET/PUT /api/admin/tokens/settings`, platform admins): off = no MFA to mint/rotate; on = an unmet MFA is refused by name (403 `mfa_required`). KB: `PATTERNS/backend/platform-grants.md`.
 
 ### Organization and Team
 - **organizations** -- CRUD for orgs, org settings

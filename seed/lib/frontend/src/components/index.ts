@@ -76,6 +76,19 @@ export type {
   ApiKeysPanelProps,
 } from './api-keys';
 
+// API tokens — machine-to-machine `noc_` tokens (list / mint with server scope allow-list / rotate / revoke).
+export { createApiTokensHooks, ApiTokensPanel, maskTokenPrefix, tokenRefusalMessage } from './api-tokens';
+export type {
+  ApiTokensHooks,
+  CreateApiTokensHooksOptions,
+  ApiTokenItem,
+  MintedApiToken,
+  MintTokenInput,
+  TokenScopes,
+  ApiTokensPanelProps,
+  ApiTokenServiceAccount,
+} from './api-tokens';
+
 // WhatsApp connections — multi-line WAHA connection management (lifted from
 // social-wiring's Conexoes/Conexao pages as a pure addition).
 export {

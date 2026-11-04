@@ -88,10 +88,11 @@ def build_api_token_row(
     human_personal: bool = False,
     minted_by: Optional[UUID] = None,
     issuer: Optional[str] = None,
+    service_account_id: Optional[UUID] = None,
 ) -> dict[str, Any]:
     """The ``api_tokens`` insert payload (SEED-1 columns, contract §B.0).
 
-    ``issuer`` is only included when set — the column exists on every
+    ``issuer`` / ``service_account_id`` are only included when set — the column exists on every
     SEED-1 table, but the seed route never set it, and omitting a ``None``
     keeps that route's payload byte-identical to before.
     """
@@ -114,6 +115,10 @@ def build_api_token_row(
     }
     if issuer is not None:
         row["issuer"] = issuer
+    # Only a product whose ``api_tokens`` has the column (core: ``service_account_id``)
+    # may pass this; omitted otherwise so every other schema's payload is unchanged.
+    if service_account_id is not None:
+        row["service_account_id"] = str(service_account_id)
     return row
 
 

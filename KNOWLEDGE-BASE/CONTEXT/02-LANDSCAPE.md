@@ -49,25 +49,25 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 52 | 111 | 266 | 217 | 673 | 10,325 |
+| Social Wiring | 53 | 111 | 266 | 217 | 674 | 10,337 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 14 | 22 | 28 | 23 | 53 | 899 |
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 10 | 25 | 191 |
-| Agents | 30 | 1 | 73 | 44 | 172 | 2,617 |
+| Agents | 31 | 1 | 75 | 45 | 175 | 2,641 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Monica | 2 | 1 | 15 | 0 | 8 | 37 |
-| **Total** | **349** | **418** | **871** | **528** | **1526** | **21,736** |
+| **Total** | **351** | **418** | **873** | **529** | **1530** | **21,772** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (19):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 1067** declared across those schemas.
+- **Tables: 1068** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or

@@ -28,6 +28,7 @@ const AccountSettings = lazy(() => import('./pages/AccountSettings').then(m => (
 const Security = lazy(() => import('./pages/Security').then(m => ({ default: m.Security })));
 const BrandIdentity = lazy(() => import('./pages/BrandIdentity').then(m => ({ default: m.BrandIdentity })));
 const CreditosUso = lazy(() => import('./pages/credits/CreditosUso').then(m => ({ default: m.CreditosUso })));
+const AdminTokens = lazy(() => import('./pages/admin/AdminTokens').then(m => ({ default: m.AdminTokens })));
 const AdminCreditos = lazy(() => import('./pages/admin/AdminCreditos').then(m => ({ default: m.AdminCreditos })));
 const OrgSettings = lazy(() => import('./pages/OrgSettings').then(m => ({ default: m.OrgSettings })));
 const APIKeys = lazy(() => import('./pages/APIKeys').then(m => ({ default: m.APIKeys })));
@@ -104,6 +105,7 @@ const App = createProductApp({
     { path: '/admin/financeiro/*', component: AdminFinanceiro },
     { path: '/admin/creditos', component: AdminCreditos },
     { path: '/admin/uso', component: AdminUsoCustos },
+    { path: '/admin/tokens', component: AdminTokens },
   ],
 });
 

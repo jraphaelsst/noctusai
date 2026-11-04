@@ -1,7 +1,7 @@
 """Auth for the transcription API (CONTRACT §1) — seed session dependency.
 
 Two caller kinds through ONE dependency (``make_get_auth_context``): a
-``pk_*`` product token resolved against ``public.api_tokens`` (needs scope
+``noc_*`` (legacy ``pk_*``) product token resolved against ``public.api_tokens`` (needs scope
 ``transcription:write`` to submit/cancel, ``transcription:read`` to read) or a
 normal platform session (Bearer JWT / session cookie), same quotas.
 
@@ -16,9 +16,7 @@ from fastapi import HTTPException, Request, Response
 from noctusai_lib.api.auth.platform import require_platform_admin
 from noctusai_lib.api.auth.session import (
     AuthContext,
-    SupabaseApiTokenResolver,
     make_get_auth_context,
-    make_trusted_legacy_jwt_resolver,
     require_scopes,
 )
 from noctusai_lib.primitives.roles import ORG_ROLES
@@ -69,20 +67,24 @@ class TranscricaoAuth:
 
 def build_auth(
     *,
-    session_store: Any,
-    api_token_resolver: Any,
-    legacy_jwt_resolver: Any,
+    session_store: Any = None,
+    api_token_resolver: Any = None,
+    legacy_jwt_resolver: Any = None,
     get_core_client: Callable[[], Any],
     session_cookie_name: str = "nai_session",
+    get_auth_context: Optional[Callable[..., Awaitable[AuthContext]]] = None,
 ) -> TranscricaoAuth:
-    """Compose the seed pieces. Production passes the Supabase/Redis adapters;
-    tests pass the seed Fakes — the composition is identical."""
-    get_auth_context = make_get_auth_context(
-        session_store=session_store,
-        api_token_resolver=api_token_resolver,
-        legacy_jwt_resolver=legacy_jwt_resolver,
-        session_cookie_name=session_cookie_name,
-    )
+    """Compose the guards over ONE auth-context dependency.
+
+    Production passes core's shared ``app.auth_context.get_auth_context`` (``build_default_auth``);
+    tests pass the seed Fakes and a dependency is composed from them -- the composition is identical."""
+    if get_auth_context is None:
+        get_auth_context = make_get_auth_context(
+            session_store=session_store,
+            api_token_resolver=api_token_resolver,
+            legacy_jwt_resolver=legacy_jwt_resolver,
+            session_cookie_name=session_cookie_name,
+        )
     roles = frozenset(ORG_ROLES)
 
     def scoped(scope: str) -> Guard:
@@ -101,33 +103,9 @@ def build_auth(
 
 
 def build_default_auth() -> TranscricaoAuth:
-    """Production composition for core: ``public.api_tokens`` resolver, the
-    seed process-local session store, trusted legacy-JWT bridge."""
-    from noctusai_seed.auth_router import get_session_store
+    """Production composition for core: the shared ``app.auth_context.get_auth_context``
+    (``public.api_tokens`` resolver, process session store, trusted legacy-JWT bridge)."""
+    from app.auth_context import get_auth_context
+    from app.dependencies import deps
 
-    from app.config import settings
-    from app.dependencies import deps, get_current_user
-
-    class _LazySessionStore:
-        """Resolved on first use: the Redis store needs live settings."""
-
-        async def lookup(self, session_id):
-            return await get_session_store(settings).lookup(session_id)
-
-    class _LazyTokenResolver:
-        _real: Optional[SupabaseApiTokenResolver] = None
-
-        async def resolve(self, token_secret):
-            if self._real is None:
-                self._real = SupabaseApiTokenResolver(deps.get_admin_client(), schema="public")
-            return await self._real.resolve(token_secret)
-
-    return build_auth(
-        session_store=_LazySessionStore(),
-        api_token_resolver=_LazyTokenResolver(),
-        legacy_jwt_resolver=make_trusted_legacy_jwt_resolver(
-            lambda authorization: get_current_user(authorization=authorization),
-            lambda: deps.get_core_client(),
-        ),
-        get_core_client=lambda: deps.get_core_client(),
-    )
+    return build_auth(get_auth_context=get_auth_context, get_core_client=lambda: deps.get_core_client())

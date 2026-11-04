@@ -177,3 +177,22 @@ class TestResolverFactory:
         monkeypatch.setenv("APP_ENV", "production")
         with pytest.raises(RuntimeError):
             make_api_token_resolver()
+
+
+def test_allow_list_scopes_are_listed_sorted():
+    from noctusai_lib.api.auth.session import TokenScopeAllowList
+
+    assert TokenScopeAllowList(["b:write", "a:read", "a:read"]).scopes() == ["a:read", "b:write"]
+
+
+def test_token_row_carries_service_account_only_when_set():
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    from noctusai_lib.api.auth.session.token_admin import build_api_token_row
+
+    base = dict(token_id=uuid4(), raw_secret="noc_x", org_id=uuid4(), label="l", scopes=[],
+                expires_at=None, created_at=datetime.now(timezone.utc))
+    assert "service_account_id" not in build_api_token_row(**base)
+    sa = uuid4()
+    assert build_api_token_row(**base, service_account_id=sa)["service_account_id"] == str(sa)

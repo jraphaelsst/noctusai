@@ -82,6 +82,10 @@ class TokenScopeAllowList:
     def strict(self) -> bool:
         return self._strict
 
+    def scopes(self) -> list[str]:
+        """The registered scopes, sorted (what a mint UI offers as choices)."""
+        return sorted(self._scopes)
+
     def __contains__(self, scope: object) -> bool:
         return scope in self._scopes
 

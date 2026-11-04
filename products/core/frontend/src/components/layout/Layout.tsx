@@ -81,6 +81,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Settings,
         items: [
           { name: 'Chaves API', href: '/admin/api-keys', icon: KeyRound },
+          { name: 'Tokens de API', href: '/admin/tokens', icon: KeyRound },
           { name: 'Chaves LLM', href: '/api-keys', icon: Brain },
           { name: 'Webhooks', href: '/admin/webhooks', icon: Webhook },
           { name: 'Logout Behavior', href: '/admin/logout-behavior', icon: LogOut },

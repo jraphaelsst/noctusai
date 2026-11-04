@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
@@ -206,6 +206,9 @@ class ApiTokenCreateRequest(BaseModel):
     # via `minted_by`) rather than a control-plane token acting for an
     # agent. Defaults False (an ordinary integration/agent token).
     human_personal: bool = False
+    # The non-human principal ("noc-agent") this token belongs to. Needs the
+    # product to wire ``service_account_check``; refused (422) otherwise.
+    service_account_id: Optional[UUID] = None
 
     @field_validator("expires_at")
     @classmethod
@@ -246,6 +249,14 @@ class ApiTokenCreatedDTO(BaseModel):
     expires_at: str | None = None
     principal_agent_id: str | None = None
     human_personal: bool = False
+    service_account_id: str | None = None
+
+
+class TokenScopesDTO(BaseModel):
+    """The server-side scope allow-list a mint UI offers as choices."""
+
+    scopes: list[str]
+    strict: bool
 
 
 class ApiTokenListItem(BaseModel):
@@ -256,6 +267,10 @@ class ApiTokenListItem(BaseModel):
     created_at: str
     last_used_at: str | None = None
     revoked_at: str | None = None
+    expires_at: str | None = None
+    # Only products that opt into service accounts (``service_account_check``)
+    # select this column; ``None`` everywhere else.
+    service_account_id: str | None = None
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
@@ -339,6 +354,15 @@ def _require_org_admin(core_client: Any, ctx: AuthContext, request: Any = None) 
         )
 
 
+def _parse_ts(value: Any) -> Optional[datetime]:
+    """An ``api_tokens`` timestamp column (ISO string or ``None``) as a datetime."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
 def create_auth_router(
     deps,
     settings,
@@ -348,6 +372,9 @@ def create_auth_router(
     allow_customer: bool = False,
     scope_allow_list: Optional[TokenScopeAllowList] = None,
     mint_policy: Optional[MintPolicy] = None,
+    service_account_check: Optional[Callable[[UUID], bool]] = None,
+    get_auth_context: Optional[Callable[..., Any]] = None,
+    include_session_routes: bool = True,
 ) -> APIRouter:
     """Build the combined ``/api/auth`` + ``/api/settings/api-tokens`` router.
 
@@ -389,6 +416,16 @@ def create_auth_router(
         mint_policy: ``MintPolicy`` — ``require_mfa(ctx) -> bool`` decides
             per request whether minting needs an ``aal2`` caller (403
             ``mfa_required``). Default: MFA NOT required.
+        service_account_check: ``(service_account_id) -> bool`` — True when the
+            service account exists and is active. Wiring it opts the product's
+            ``api_tokens`` table into the nullable ``service_account_id`` column
+            (list selects it, mint/rotate write it). Omitted: a mint naming a
+            service account is refused (422 ``service_accounts_unsupported``).
+        get_auth_context: the product's ONE auth-context dependency. Passing it
+            makes every route here authenticate through it (instead of a private
+            composition), so the product has a single resolver.
+        include_session_routes: ``False`` mounts ONLY the api-token routes — for a
+            product that already owns ``/api/auth/login|me|logout`` (core).
         allow_customer: ``False`` (default) — ``/login`` refuses a customer
             ``org_role`` (403), like ``make_get_current_user_org``.
 
@@ -408,22 +445,35 @@ def create_auth_router(
     """
     mint_gate = mint_policy or MintPolicy()
     scopes_allowed = scope_allow_list if scope_allow_list is not None else TOKEN_SCOPES
-    session_store = get_session_store(settings)
-    session_revoker = get_session_revoker(settings)
+    session_store = get_session_store(settings) if include_session_routes else None
+    session_revoker = get_session_revoker(settings) if include_session_routes else None
 
     # This router's OWN identity resolver — cookie sessions + `pk_*` bearer
     # (Fake by default; Real when the caller passes one) + an optional
     # legacy-JWT bridge. See the kwarg docstrings above for the by-
     # construction reasoning; the bare default (no overrides) stays the
     # "pure new-scheme, cookie-only" shape this router shipped with.
-    get_auth_context = make_get_auth_context(
-        session_store=session_store,
-        api_token_resolver=(
-            api_token_resolver if api_token_resolver is not None else make_api_token_resolver()
-        ),
-        legacy_jwt_resolver=legacy_jwt_resolver,
-        session_cookie_name=_SESSION_COOKIE,
-    )
+    if get_auth_context is None:
+        get_auth_context = make_get_auth_context(
+            session_store=session_store or get_session_store(settings),
+            api_token_resolver=(
+                api_token_resolver if api_token_resolver is not None else make_api_token_resolver()
+            ),
+            legacy_jwt_resolver=legacy_jwt_resolver,
+            session_cookie_name=_SESSION_COOKIE,
+        )
+
+    list_columns = "id, label, token_prefix, scopes, created_at, last_used_at, revoked_at, expires_at"
+    if service_account_check is not None:
+        list_columns += ", service_account_id"
+
+    def _check_service_account(service_account_id: Optional[UUID]) -> None:
+        if service_account_id is None:
+            return
+        if service_account_check is None:
+            raise HTTPException(status_code=422, detail="service_accounts_unsupported")
+        if not service_account_check(service_account_id):
+            raise HTTPException(status_code=422, detail="service_account_not_found")
 
     auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
     api_tokens_router = APIRouter(prefix="/api/settings/api-tokens", tags=["auth"])
@@ -590,6 +640,7 @@ def create_auth_router(
             scopes = scopes_allowed.validate(body.scopes or [])
         except UnknownTokenScopeError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+        _check_service_account(body.service_account_id)
 
         sb = deps.get_admin_client()
         # SEED-1 (contract §B.0) — every new token gets an expiry;
@@ -608,6 +659,7 @@ def create_auth_router(
             principal_agent_id=body.principal_agent_id,
             human_personal=body.human_personal,
             minted_by=ctx.user_id,
+            service_account_id=body.service_account_id,
         )
         try:
             sb.table(_TOKENS_TABLE).insert(insert_payload).execute()
@@ -629,7 +681,20 @@ def create_auth_router(
                 str(body.principal_agent_id) if body.principal_agent_id else None
             ),
             human_personal=body.human_personal,
+            service_account_id=(
+                str(body.service_account_id) if body.service_account_id else None
+            ),
         )
+
+    @api_tokens_router.get("/scopes", response_model=TokenScopesDTO)
+    def list_token_scopes(
+        ctx: AuthContext = Depends(get_auth_context),
+    ) -> TokenScopesDTO:
+        """The scopes a token may carry (the server-side allow-list) — a mint UI
+        offers these as choices, never free text."""
+        if ctx.caller_kind != "user":
+            raise HTTPException(status_code=403, detail="Restricted to human users")
+        return TokenScopesDTO(scopes=scopes_allowed.scopes(), strict=scopes_allowed.strict)
 
     @api_tokens_router.get("", response_model=list[ApiTokenListItem])
     def list_api_tokens(
@@ -643,7 +708,7 @@ def create_auth_router(
         sb = deps.get_admin_client()
         response = (
             sb.table(_TOKENS_TABLE)
-            .select("id, label, token_prefix, scopes, created_at, last_used_at, revoked_at")
+            .select(list_columns)
             .eq("org_id", str(ctx.org_id))
             .order("created_at", desc=True)
             .execute()
@@ -658,9 +723,102 @@ def create_auth_router(
                 created_at=str(r.get("created_at") or ""),
                 last_used_at=str(r["last_used_at"]) if r.get("last_used_at") else None,
                 revoked_at=str(r["revoked_at"]) if r.get("revoked_at") else None,
+                expires_at=str(r["expires_at"]) if r.get("expires_at") else None,
+                service_account_id=(
+                    str(r["service_account_id"]) if r.get("service_account_id") else None
+                ),
             )
             for r in rows
         ]
+
+    @api_tokens_router.post(
+        "/{token_id}/rotate",
+        response_model=ApiTokenCreatedDTO,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def rotate_api_token(
+        token_id: UUID,
+        ctx: AuthContext = Depends(get_auth_context),
+        request: Request = None,
+    ) -> ApiTokenCreatedDTO:
+        """Replace a live token: mint a successor with the same label / scopes /
+        expiry / principal / service account, then revoke the old one. The new
+        raw secret is returned once. Same gates as mint (human owner/admin,
+        MFA policy); a failed revoke un-mints the successor, so a rotation never
+        leaves two live tokens."""
+        if ctx.caller_kind != "user":
+            raise HTTPException(status_code=403, detail="Only human users can rotate API tokens")
+        _require_org_admin(deps.get_core_client(), ctx, request)
+        try:
+            mint_gate.enforce(ctx)
+        except MfaRequiredError:
+            raise HTTPException(status_code=403, detail="mfa_required")
+
+        sb = deps.get_admin_client()
+        found = (
+            sb.table(_TOKENS_TABLE)
+            .select("*")
+            .eq("id", str(token_id))
+            .eq("org_id", str(ctx.org_id))
+            .execute()
+        )
+        old = (found.data or [None])[0]
+        if old is None or old.get("revoked_at"):
+            raise HTTPException(status_code=404, detail="Token not found")
+
+        raw_secret, prefix = _mint_secret()
+        new_id = uuid4()
+        now = datetime.now(timezone.utc)
+        principal = old.get("principal_agent_id")
+        sa_id = old.get("service_account_id")
+        payload = build_api_token_row(
+            token_id=new_id,
+            raw_secret=raw_secret,
+            org_id=ctx.org_id,
+            label=old.get("label") or "",
+            scopes=list(old.get("scopes") or []),
+            expires_at=_parse_ts(old.get("expires_at")),
+            created_at=now,
+            principal_agent_id=UUID(str(principal)) if principal else None,
+            human_personal=bool(old.get("human_personal")),
+            minted_by=ctx.user_id,
+            issuer=old.get("issuer"),
+            service_account_id=UUID(str(sa_id)) if sa_id else None,
+        )
+        try:
+            sb.table(_TOKENS_TABLE).insert(payload).execute()
+        except Exception as exc:
+            logger.exception("api_token_rotate_insert_failed org=%s err=%s", ctx.org_id, type(exc).__name__)
+            raise HTTPException(status_code=500, detail="Failed to rotate API token")
+        try:
+            revoked = (
+                sb.table(_TOKENS_TABLE)
+                .update({"revoked_at": now.isoformat()})
+                .eq("id", str(token_id))
+                .eq("org_id", str(ctx.org_id))
+                .execute()
+            )
+            if not (revoked.data or []):
+                raise RuntimeError("old token not revoked")
+        except Exception as exc:
+            logger.exception("api_token_rotate_revoke_failed org=%s err=%s", ctx.org_id, type(exc).__name__)
+            sb.table(_TOKENS_TABLE).update({"revoked_at": now.isoformat()}).eq(
+                "id", str(new_id)
+            ).execute()
+            raise HTTPException(status_code=500, detail="Failed to rotate API token")
+
+        return ApiTokenCreatedDTO(
+            id=str(new_id),
+            label=payload["label"],
+            token=raw_secret,
+            prefix=prefix,
+            scopes=list(payload["scopes"]),
+            created_at=now.isoformat(),
+            expires_at=payload["expires_at"],
+            principal_agent_id=str(principal) if principal else None,
+            human_personal=payload["human_personal"],
+            service_account_id=str(sa_id) if sa_id else None,
+        )
 
     @api_tokens_router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
     def revoke_api_token(
@@ -692,7 +850,8 @@ def create_auth_router(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     router = APIRouter()
-    router.include_router(auth_router)
+    if include_session_routes:
+        router.include_router(auth_router)
     router.include_router(api_tokens_router)
     return router
 
