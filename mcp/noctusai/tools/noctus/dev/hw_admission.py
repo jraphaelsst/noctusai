@@ -1,0 +1,477 @@
+"""noctus.dev.hw_admission — machine-wide hardware admission gate for heavy runs.
+
+WHY (2026-11-04): an 8-core / 8 GB laptop shared by many Claude sessions. Two
+heavy suites overlapping starved each other (RG integrate: 40 vitest timeouts in
+untouched tests + an e2e page.goto timeout at load 52) -> false-reds, and the
+box paged 5+ GB of swap. Every heavy run that ran ALONE was green. The owner
+asked for a safety gate that preserves the hardware, pushes it to its MEASURED
+capacity, and is re-tunable per machine ("dinamicizable").
+
+WHAT IS HEAVY: product pytest suites, vitest, playwright/e2e, vite build, every
+gate_sweep leg and task_branch merged-tip gate. Light (no slot): git, single
+tests, keepers, MCP reads.
+
+MECHANISM
+- Budget: ``deploy/fleet/hardware-budget.json`` keyed by PHASE, with per-HOST
+  overrides (``hosts[<hostname>]``) so each machine carries its own profile.
+  Phase resolution: env ``NOCTUS_HW_PHASE`` > ``hosts[host].phase`` > ``phase``.
+- Slots: ``max_heavy`` lock files under ``~/.noctus/hw-slots`` (``fcntl.flock``),
+  machine-wide across sessions and worktrees; the OS frees a slot when its
+  holder dies, so a crash never wedges the box. A child process inherits its
+  parent's slot via ``NOCTUS_HW_SLOT_HELD`` (no self-deadlock when task_branch
+  shells out to a gate).
+- Probe (NOT load average — on macOS it counts I/O/memory-blocked threads and
+  decays slowly; measured load 21-29 at 89% CPU idle): CPU idle over a window,
+  free+reclaimable memory, swap-out rate. All three must pass to admit.
+- No silent start: on timeout the verdict is ``waiting_for_slot`` and the job
+  is NOT run; the caller reports it as not-run/inconclusive, never a pass/fail.
+- Capacity log: every admission + run lands in ``~/.noctus/hw-admission.ndjson``
+  (machine-local by design: capacity is a property of THIS machine); ``report``
+  summarizes it so later phases are set from data, not guesses.
+
+KB § PATTERNS/devops/hardware-admission-budget.md
+"""
+from __future__ import annotations
+
+import contextlib
+import fcntl
+import json
+import os
+import platform
+import re
+import resource
+import socket
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Iterator
+
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+_DEFAULT_BUDGET = _REPO_ROOT / "deploy" / "fleet" / "hardware-budget.json"
+_HELD_ENV = "NOCTUS_HW_SLOT_HELD"
+_REQUIRED_KNOBS = ("max_heavy", "min_cpu_idle_pct", "cpu_sample_s",
+                   "min_reclaimable_mb", "max_swapout_per_s", "wait_s", "poll_s")
+
+
+class BudgetError(RuntimeError):
+    """The budget file is missing / malformed / names an unknown phase."""
+
+
+# ── budget ────────────────────────────────────────────────────────────────
+
+def _host() -> str:
+    return socket.gethostname().split(".")[0].lower()
+
+
+def load_budget(path: Path | None = None, phase: str | None = None,
+                host: str | None = None) -> dict[str, Any]:
+    """Resolve the effective budget for this host. Raises BudgetError — a
+    missing budget is a setup error, never a silent 'no gate'."""
+    p = Path(os.environ.get("NOCTUS_HW_BUDGET_PATH") or path or _DEFAULT_BUDGET)
+    try:
+        doc = json.loads(p.read_text())
+    except FileNotFoundError as exc:
+        raise BudgetError(f"hardware budget not found: {p}") from exc
+    except json.JSONDecodeError as exc:
+        raise BudgetError(f"hardware budget is not valid JSON: {p}: {exc}") from exc
+    host = (host or _host()).lower()
+    host_cfg = (doc.get("hosts") or {}).get(host, {})
+    chosen = phase or os.environ.get("NOCTUS_HW_PHASE") or host_cfg.get("phase") or doc.get("phase")
+    phases = doc.get("phases") or {}
+    if chosen not in phases:
+        raise BudgetError(f"phase {chosen!r} not in {sorted(phases)} ({p})")
+    eff = {**phases[chosen], **(host_cfg.get("overrides") or {})}
+    missing = [k for k in _REQUIRED_KNOBS if k not in eff]
+    if missing:
+        raise BudgetError(f"phase {chosen!r} lacks knob(s) {missing} ({p})")
+    eff.update(phase=chosen, host=host, budget_path=str(p))
+    return eff
+
+
+# ── probe ─────────────────────────────────────────────────────────────────
+
+def _run(cmd: list[str], timeout: float = 30) -> str:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True).stdout
+
+
+def _darwin_vm() -> dict[str, int]:
+    out = _run(["vm_stat"])
+    page = int(re.search(r"page size of (\d+)", out).group(1))
+    vals = {m.group(1).strip(): int(m.group(2))
+            for m in re.finditer(r"^([^:\n]+):\s+(\d+)\.?$", out, re.M)}
+    vals["_page"] = page
+    return vals
+
+
+def _linux_meminfo() -> dict[str, int]:
+    vals: dict[str, int] = {}
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        k, v = line.split(":", 1)
+        vals[k] = int(v.split()[0]) * 1024
+    return vals
+
+
+def _linux_pswpout() -> int:
+    for line in Path("/proc/vmstat").read_text().splitlines():
+        if line.startswith("pswpout "):
+            return int(line.split()[1])
+    return 0
+
+
+def _linux_cpu() -> tuple[int, int]:
+    f = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:]]
+    return f[3] + (f[4] if len(f) > 4 else 0), sum(f)
+
+
+def _claude_sessions() -> int:
+    out = _run(["ps", "-Ao", "comm="])
+    return sum(1 for ln in out.splitlines() if ln.strip().rsplit("/", 1)[-1] == "claude")
+
+
+def probe(sample_s: float = 10.0) -> dict[str, Any]:
+    """Sample CPU idle, reclaimable memory and swap-out over `sample_s`.
+    Errors are returned as ``probe_error`` (caller treats as NOT admitted)."""
+    sample_s = max(1.0, float(sample_s))
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            v0 = _darwin_vm()
+            top = _run(["top", "-l", "2", "-s", str(int(sample_s)), "-n", "0"], timeout=sample_s + 30)
+            v1 = _darwin_vm()
+            idles = re.findall(r"CPU usage:.*?([\d.]+)% idle", top)
+            cpu_idle = float(idles[-1])
+            pg = v1["_page"]
+            reclaim = sum(v1.get(k, 0) for k in
+                          ("Pages free", "Pages inactive", "Pages purgeable", "Pages speculative")) * pg
+            swapout = (v1.get("Swapouts", 0) - v0.get("Swapouts", 0)) / sample_s
+        elif system == "Linux":
+            s0, c0 = _linux_pswpout(), _linux_cpu()
+            time.sleep(sample_s)
+            s1, c1 = _linux_pswpout(), _linux_cpu()
+            cpu_idle = 100.0 * (c1[0] - c0[0]) / max(1, c1[1] - c0[1])
+            reclaim = _linux_meminfo().get("MemAvailable", 0)
+            swapout = (s1 - s0) / sample_s
+        else:
+            return {"probe_error": f"unsupported platform {system}"}
+        sessions = _claude_sessions()
+    except (subprocess.SubprocessError, OSError, AttributeError, IndexError, ValueError) as exc:
+        return {"probe_error": f"{type(exc).__name__}: {exc}"}
+    return {"cpu_idle_pct": round(cpu_idle, 1), "reclaimable_mb": round(reclaim / 2**20),
+            "swapout_per_s": round(swapout, 1), "claude_sessions": sessions,
+            "load_1m": round(os.getloadavg()[0], 2), "cpu_cores": os.cpu_count(),
+            "sample_s": sample_s}
+
+
+def evaluate(metrics: dict[str, Any], budget: dict[str, Any]) -> list[str]:
+    """Return the list of failed admission conditions (empty = admit)."""
+    if "probe_error" in metrics:
+        return [f"probe_error: {metrics['probe_error']}"]
+    why = []
+    if metrics["cpu_idle_pct"] < budget["min_cpu_idle_pct"]:
+        why.append(f"cpu_idle {metrics['cpu_idle_pct']}% < {budget['min_cpu_idle_pct']}%")
+    if metrics["reclaimable_mb"] < budget["min_reclaimable_mb"]:
+        why.append(f"reclaimable {metrics['reclaimable_mb']}MB < {budget['min_reclaimable_mb']}MB")
+    if metrics["swapout_per_s"] >= budget["max_swapout_per_s"]:
+        why.append(f"swapout {metrics['swapout_per_s']}/s >= {budget['max_swapout_per_s']}/s")
+    return why
+
+
+def advisories(metrics: dict[str, Any], budget: dict[str, Any]) -> list[str]:
+    cap = budget.get("max_claude_sessions_advisory")
+    n = metrics.get("claude_sessions")
+    if cap is not None and n is not None and n > cap:
+        return [f"{n} claude processes running (advisory cap {cap}) - close idle sessions"]
+    return []
+
+
+# ── slots ─────────────────────────────────────────────────────────────────
+
+def _slot_dir() -> Path:
+    d = Path(os.environ.get("NOCTUS_HW_SLOT_DIR") or Path.home() / ".noctus" / "hw-slots")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _log_path() -> Path:
+    p = Path(os.environ.get("NOCTUS_HW_LOG") or Path.home() / ".noctus" / "hw-admission.ndjson")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _log(row: dict[str, Any]) -> None:
+    row = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **row}
+    with _log_path().open("a") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def holders() -> list[dict[str, Any]]:
+    """Who holds each slot right now (a slot is held iff its flock is taken)."""
+    out = []
+    for f in sorted(_slot_dir().glob("slot-*.lock")):
+        with f.open("a+") as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                fh.seek(0)
+                try:
+                    info = json.loads(fh.read() or "{}")
+                except json.JSONDecodeError:
+                    info = {}
+                out.append({"slot": f.name, **info})
+            else:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+    return out
+
+
+def _try_slot(n: int, job: str) -> tuple[Any, Path] | None:
+    for i in range(n):
+        f = _slot_dir() / f"slot-{i}.lock"
+        fh = f.open("a+")
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fh.close()
+            continue
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps({"pid": os.getpid(), "job": job, "host": _host(),
+                             "since": datetime.now(timezone.utc).isoformat(timespec="seconds")}))
+        fh.flush()
+        return fh, f
+    return None
+
+
+@dataclass
+class Admission:
+    job: str
+    admitted: bool
+    verdict: str                      # admitted | inherited | waiting_for_slot | budget_error
+    waited_s: float = 0.0
+    metrics: dict[str, Any] = field(default_factory=dict)
+    blocked_by: list[str] = field(default_factory=list)
+    advisories: list[str] = field(default_factory=list)
+    phase: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return dict(self.__dict__)
+
+
+@contextlib.contextmanager
+def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] | None = None,
+               probe_fn: Callable[[float], dict[str, Any]] = probe,
+               sleep: Callable[[float], None] = time.sleep) -> Iterator[Admission]:
+    """Admit one heavy job. Yields an Admission; the caller MUST NOT run the job
+    when ``admitted`` is False (report it as waiting_for_slot / inconclusive)."""
+    if os.environ.get(_HELD_ENV):
+        yield Admission(job, True, "inherited")
+        return
+    try:
+        b = budget or load_budget()
+    except BudgetError as exc:
+        yield Admission(job, False, "budget_error", blocked_by=[str(exc)])
+        return
+    deadline = time.monotonic() + (b["wait_s"] if wait_s is None else wait_s)
+    t0 = time.monotonic()
+    last: dict[str, Any] = {}
+    why: list[str] = ["no free slot"]
+    held = None
+    while True:
+        held = _try_slot(int(b["max_heavy"]), job)
+        if held:
+            last = probe_fn(b["cpu_sample_s"])
+            why = evaluate(last, b)
+            if not why:
+                break
+            held[0].close()
+            held = None
+        else:
+            why = ["no free slot: " + ", ".join(f"{h.get('job')}(pid {h.get('pid')})" for h in holders())]
+        if time.monotonic() >= deadline:
+            adm = Admission(job, False, "waiting_for_slot", round(time.monotonic() - t0, 1),
+                            last, why, advisories(last, b) if last else [], b["phase"])
+            _log({"event": "not_admitted", "host": b["host"], **adm.as_dict()})
+            yield adm
+            return
+        sleep(b["poll_s"])
+    adm = Admission(job, True, "admitted", round(time.monotonic() - t0, 1), last, [],
+                    advisories(last, b), b["phase"])
+    rss0 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    started = time.monotonic()
+    prev = os.environ.get(_HELD_ENV)
+    os.environ[_HELD_ENV] = str(held[1])
+    try:
+        yield adm
+    finally:
+        if prev is None:
+            os.environ.pop(_HELD_ENV, None)
+        else:
+            os.environ[_HELD_ENV] = prev
+        # ru_maxrss(CHILDREN) = largest single reaped child so far (darwin: bytes,
+        # linux: KiB). Only reported when THIS job raised it, else None (unknown).
+        rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+        to_mb = (1 / 2**20) if sys.platform == "darwin" else (1 / 1024)
+        _log({"event": "ran", "host": b["host"], **adm.as_dict(),
+              "duration_s": round(time.monotonic() - started, 1),
+              "children_peak_rss_mb": round(rss * to_mb, 1) if rss > rss0 else None})
+        held[0].close()
+
+
+# ── report ────────────────────────────────────────────────────────────────
+
+def report(last_n: int = 500) -> dict[str, Any]:
+    p = _log_path()
+    rows = [json.loads(ln) for ln in p.read_text().splitlines()[-last_n:] if ln.strip()] if p.exists() else []
+    ran = [r for r in rows if r.get("event") == "ran"]
+    by_job: dict[str, dict[str, Any]] = {}
+    for r in ran:
+        j = by_job.setdefault(r["job"], {"runs": 0, "max_duration_s": 0.0, "max_peak_rss_mb": None})
+        j["runs"] += 1
+        j["max_duration_s"] = max(j["max_duration_s"], r.get("duration_s") or 0)
+        peak = r.get("children_peak_rss_mb")
+        if peak is not None:
+            j["max_peak_rss_mb"] = max(j["max_peak_rss_mb"] or 0, peak)
+    waits = [r["waited_s"] for r in ran]
+    return {"log": str(p), "rows": len(rows), "runs": len(ran),
+            "not_admitted": sum(1 for r in rows if r.get("event") == "not_admitted"),
+            "max_wait_s": max(waits) if waits else 0, "by_job": by_job}
+
+
+# ── adaptive re-check timer + pattern-change detection ───────────────────
+# Owner 2026-11-04: "measure and evaluate timing to refine our timer — wait just
+# a bit more than the measured period; monitor frequently and detect patterns
+# and changes of those patterns". Window = 7 days (covers the daily AND weekday
+# rhythm, still adapts within a week). Re-check = median overload-episode
+# length x 1.1, clamped [60 s, 1800 s]. A pattern change = the last 24 h median
+# episode differs from the 7-day baseline by more than 30%.
+WINDOW_S = 7 * 86400
+RECENT_S = 86400
+RECHECK_MARGIN = 1.1
+RECHECK_MIN_S, RECHECK_MAX_S = 60, 1800
+CHANGE_RATIO = 0.30
+
+
+def sample(sample_s: float = 3.0) -> dict[str, Any]:
+    """One monitoring tick: probe, judge against the budget, log an
+    ``event=sample`` row (the series the adaptive timer learns from)."""
+    st = status(sample_s)
+    if st.get("status") == "budget_error":
+        return st
+    overloaded = bool(evaluate(st["metrics"], st["budget"]))
+    _log({"event": "sample", "host": st["budget"]["host"], "overloaded": overloaded,
+          "busy_slots": len(st["holders"]), "metrics": st["metrics"]})
+    return {**st, "overloaded": overloaded, "timer": recheck_timer()}
+
+
+def _ts(row: dict[str, Any]) -> float:
+    return datetime.fromisoformat(row["ts"]).timestamp()
+
+
+def _episodes(samples: list[dict[str, Any]]) -> list[tuple[float, float]]:
+    """(start_ts, duration_s) of each run of consecutive overloaded samples;
+    an episode ends at the first non-overloaded sample after it."""
+    out, start = [], None
+    for r in samples:
+        t = _ts(r)
+        if r.get("overloaded") and start is None:
+            start = t
+        elif not r.get("overloaded") and start is not None:
+            out.append((start, t - start))
+            start = None
+    return out
+
+
+def _median(xs: list[float]) -> float | None:
+    xs = sorted(xs)
+    return None if not xs else (xs[len(xs) // 2] if len(xs) % 2 else (xs[len(xs) // 2 - 1] + xs[len(xs) // 2]) / 2)
+
+
+def recheck_timer(now: float | None = None, rows: list[dict[str, Any]] | None = None,
+                  default_s: float = 900) -> dict[str, Any]:
+    """Recommend the next re-check interval from measured overload episodes."""
+    now = now or time.time()
+    if rows is None:
+        p = _log_path()
+        rows = [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()] if p.exists() else []
+    samples = [r for r in rows if r.get("event") == "sample" and now - _ts(r) <= WINDOW_S]
+    eps = _episodes(samples)
+    base = _median([d for _, d in eps])
+    recent = _median([d for s, d in eps if now - s <= RECENT_S])
+    if base is None:
+        return {"recheck_s": default_s, "basis": "default (no completed overload episode in 7 d yet)",
+                "episodes_7d": 0, "samples_7d": len(samples), "pattern_changed": False}
+    rec = max(RECHECK_MIN_S, min(RECHECK_MAX_S, round(base * RECHECK_MARGIN)))
+    changed = recent is not None and abs(recent - base) / base > CHANGE_RATIO
+    return {"recheck_s": rec, "basis": f"median 7 d overload episode {round(base)} s x {RECHECK_MARGIN}",
+            "episodes_7d": len(eps), "samples_7d": len(samples), "median_episode_7d_s": round(base),
+            "median_episode_24h_s": None if recent is None else round(recent),
+            "pattern_changed": changed}
+
+
+def status(sample_s: float = 3.0) -> dict[str, Any]:
+    try:
+        b = load_budget()
+    except BudgetError as exc:
+        return {"ok": False, "status": "budget_error", "error": str(exc)}
+    m = probe(sample_s)
+    why = evaluate(m, b)
+    busy = holders()
+    free = int(b["max_heavy"]) - len(busy)
+    return {"ok": True, "status": "would_admit" if (not why and free > 0) else "would_wait",
+            "budget": b, "metrics": m, "blocked_by": why + ([] if free > 0 else ["no free slot"]),
+            "holders": busy, "advisories": advisories(m, b)}
+
+
+# ── shell entry: run any heavy command through the gate ──────────────────
+
+def run_command(job: str, argv: list[str], wait_s: float | None = None) -> int:
+    """Exit 75 (EX_TEMPFAIL) when not admitted — never runs the command then."""
+    with heavy_slot(job, wait_s=wait_s) as adm:
+        if not adm.admitted:
+            print(json.dumps({"hw_admission": adm.as_dict()}), file=sys.stderr)
+            return 75
+        return subprocess.call(argv)
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctus.dev.hw_admission",
+        description=(
+            "Machine-wide hardware admission gate for HEAVY runs (pytest suites, vitest, e2e, vite build, "
+            "gate_sweep / merged-tip legs). action='status' (default): effective per-host/phase budget "
+            "(deploy/fleet/hardware-budget.json), live probe (cpu idle, reclaimable MB, swap-out/s, claude "
+            "sessions), slot holders, would_admit|would_wait. action='report': capacity log summary "
+            "(~/.noctus/hw-admission.ndjson) to re-tune phases from data. Shell runners use "
+            "`python mcp/noctusai/tools/noctus/dev/hw_admission.py run --job <name> -- <cmd>` (exit 75 = "
+            "waiting_for_slot, command not run). Load average is deliberately NOT a gate on macOS."
+        ),
+    )
+    def _hw_admission(action: str = "status", sample_s: float = 3.0) -> dict:
+        if action == "report":
+            return {**report(), "timer": recheck_timer()}
+        if action == "status":
+            return status(sample_s)
+        if action == "sample":
+            return sample(sample_s)
+        return {"ok": False, "status": "error", "error": f"unknown action {action!r} (status|sample|report)"}
+
+
+if __name__ == "__main__":  # pragma: no cover - thin shell entry
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="hw_admission")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run")
+    r.add_argument("--job", required=True)
+    r.add_argument("--wait-s", type=float)
+    r.add_argument("argv", nargs=argparse.REMAINDER)
+    for name in ("status", "sample", "report"):
+        sub.add_parser(name)
+    a = ap.parse_args()
+    if a.cmd == "run":
+        cmd = a.argv[1:] if a.argv[:1] == ["--"] else a.argv
+        sys.exit(run_command(a.job, cmd, a.wait_s))
+    out = {"status": status, "sample": sample}.get(a.cmd, lambda: {**report(), "timer": recheck_timer()})()
+    print(json.dumps(out, indent=2, default=str))

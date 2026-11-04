@@ -2856,6 +2856,34 @@ def task_branch(
                                     "Not pushed.")}
                     accepted_unmeasured = {
                         "gates": [t["gate"] for t in timed_out], "reason": reason_txt}
+            # ── Hardware admission (2026-11-04): a merged-tip gate the machine-wide
+            # admission gate never admitted was NOT RUN — the box was saturated.
+            # That is no verdict; never integrate on it, and there is no
+            # accept-anyway path (retry when a slot frees). KB § PATTERNS/devops/
+            # hardware-admission-budget.md
+            if verify_merged_tip and merged_tip_result is not None:
+                waiting = [{"gate": str(g.get("gate", "?")),
+                            "blocked_by": (g.get("waiting_for_slot") or {}).get("blocked_by", [])}
+                           for g in (merged_tip_result.get("gates") or [])
+                           if g.get("waiting_for_slot")]
+                if waiting:
+                    if benign_stashed:
+                        _pop_stash(runner, wt_path, benign_stashed, verbose)
+                        benign_stashed = False
+                    names_ = ", ".join(w["gate"] for w in waiting)
+                    return {**plan, "status": "waiting_for_slot", "exit_code": 1,
+                            "introduced_migrations": introduced_migrations,
+                            "merged_tip_check": merged_tip_result,
+                            "merged_tip_waiting_for_slot": waiting,
+                            "reason": (
+                                f"{branch} rebased onto {remote}/{dev_branch} cleanly, but the "
+                                f"hardware admission gate did not admit {len(waiting)} merged-tip "
+                                f"gate(s): {names_}. The machine is saturated — no verdict was "
+                                "produced. Re-run integrate when `noctus.dev.hw_admission` reports "
+                                "would_admit."),
+                            "message": (
+                                f"integrate of {branch} held: waiting_for_slot on {names_}. "
+                                "Not pushed.")}
             # ── KB-counts regeneration — ONCE, here, not per feature commit
             # (see the module comment above `_default_regenerate_kb_counts`
             # and `scripts/hooks/pre-commit` § 2). Best-effort: a failure is
@@ -3267,8 +3295,11 @@ def register(server) -> None:
             "(status 'gate_timeout') unless accept_unmeasured=[gate...] plus "
             "accept_unmeasured_reason (>=10 chars) is passed - recorded in "
             "result['merged_tip_accepted_unmeasured'] and the branch pointer. "
+            "HARDWARE ADMISSION (2026-11-04): every real merged-tip gate runs through the "
+            "machine-wide heavy slot (noctus.dev.hw_admission); a gate not admitted is NOT run "
+            "and the integrate returns status 'waiting_for_slot' (not pushed, no accept-anyway). "
             "status: status|planned|started|integrated|conflict|up_to_date|"
-            "cleaned|partial|blocked|gate_timeout|refused_stale_toolkit|error."
+            "cleaned|partial|blocked|gate_timeout|waiting_for_slot|refused_stale_toolkit|error."
         ),
     )
     def _task_branch(

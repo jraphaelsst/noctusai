@@ -16,6 +16,7 @@ Git-workflow rules stay standalone in §1 — **branching**, **self-branching mo
 - **Lenses-applied commit trailer (optional).** Inline-deved commits carry a `Lenses: <name>` trailer → auditable via `git log --grep "Lenses:"`. → `KB § PATTERNS/common/lenses-applied-trailer.md`
 - **Wave-based dispatch + collision-class.** Merge cleanliness is decided at DISPATCH (C1/C2/C3), not at merge. → `KB § PATTERNS/architect/branching-and-merging.md §18/§21`
 - **Dispatch with PROJECT — return with notes.** Tech-lead writes PROJECT.md §4a routing before dispatch; engineer/inline-lens returns a `delivery` note, or a `surface` note + BLOCK when re-routing mid-flight. → `KB § PATTERNS/common/dispatch-with-project-and-notes.md`
+- **Hardware admission bounds parallel-by-default.** Heavy runs (suites/vitest/e2e/vite build/merged-tip gates) take a machine-wide slot admitted on MEASURED capacity (CPU idle ∧ reclaimable memory ∧ swap-out, per-host phase in `deploy/fleet/hardware-budget.json`); not admitted ⇒ not run (`waiting_for_slot`, never start-anyway); overloaded ⇒ hold, re-check on the adaptive timer. → `KB § PATTERNS/devops/hardware-admission-budget.md`
 
 ## Why a family line
 

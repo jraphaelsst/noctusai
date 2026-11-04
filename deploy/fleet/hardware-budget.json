@@ -1,0 +1,47 @@
+{
+  "_doc": "Machine-wide hardware admission budget for HEAVY runs. Read by mcp/noctusai/tools/noctus/dev/hw_admission.py. Phase resolution: env NOCTUS_HW_PHASE > hosts[<short hostname, lowercased>].phase > phase. hosts[].overrides replace individual knobs for one machine. Set placeholder phases from `noctus.dev.hw_admission action=report` data, never by guess. Becomes the owner-editable setting in the noc UI (core admin). KB § PATTERNS/devops/hardware-admission-budget.md",
+  "version": 1,
+  "phase": "build",
+  "phases": {
+    "build": {
+      "_approved": "owner 2026-11-04 (build/refine phase; spec relayed by session noctusai-04)",
+      "max_heavy": 1,
+      "min_cpu_idle_pct": 50,
+      "cpu_sample_s": 10,
+      "min_reclaimable_mb": 1536,
+      "max_swapout_per_s": 50,
+      "max_claude_sessions_advisory": 3,
+      "wait_s": 1800,
+      "poll_s": 20
+    },
+    "stable": {
+      "_placeholder": "1 heavy + light alongside; tune from the capacity log before use",
+      "max_heavy": 1,
+      "min_cpu_idle_pct": 40,
+      "cpu_sample_s": 10,
+      "min_reclaimable_mb": 1536,
+      "max_swapout_per_s": 50,
+      "max_claude_sessions_advisory": 4,
+      "wait_s": 1800,
+      "poll_s": 20
+    },
+    "big-box": {
+      "_placeholder": "bigger machine / CI offload: 2-3 heavy; tune from the capacity log before use",
+      "max_heavy": 2,
+      "min_cpu_idle_pct": 40,
+      "cpu_sample_s": 10,
+      "min_reclaimable_mb": 3072,
+      "max_swapout_per_s": 50,
+      "max_claude_sessions_advisory": 6,
+      "wait_s": 1800,
+      "poll_s": 20
+    }
+  },
+  "hosts": {
+    "raphas-macbook-pro": {
+      "_profile": "Apple M2, 8 cores, 8 GB RAM, 6 GB swap — measured 2026-11-04: memory is the binding limit, not CPU",
+      "phase": "build",
+      "overrides": {}
+    }
+  }
+}
