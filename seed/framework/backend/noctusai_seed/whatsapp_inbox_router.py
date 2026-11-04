@@ -30,10 +30,10 @@ Security notes:
 
 * The webhook is public by design (WAHA cannot send a JWT). Its credential is
   the unguessable per-connection token in the path (unknown token -> generic
-  404, never logged) PLUS an HMAC (``X-Webhook-Hmac-SHA256``) when
+  404, never logged) PLUS an HMAC (WAHA's ``X-Webhook-Hmac`` + ``X-Webhook-Hmac-Algorithm``, sha512 default) when
   ``webhook_hmac_secret`` is set. ``set_webhook`` in the seed client registers
   ``hmac: None`` per webhook, so signing only happens if WAHA itself is run
-  with a global ``WHATSAPP_HOOK_HMAC_KEY`` - set the same value here.
+  with a global ``WHATSAPP_HOOK_HMAC_KEY`` (or the session's ``hmac.key``) - set the same value here.
 * **Per-app switch**: a connection with ``app_enabled=False`` answers the webhook ``200 {"status":"disabled"}``
   (nothing stored, no ``on_new_chat`` / ``on_message``) and refuses sends with 409 ``app_disabled``. A
   ``session_role='borrower'`` line cannot backfill (409 ``session_borrowed``).
@@ -401,7 +401,7 @@ def create_whatsapp_inbox_router(
         token: str,
         verified: Any = webhook_endpoint(
             secret_resolver=static_secret_resolver(webhook_hmac_secret),
-            scheme="sha256_hex",
+            scheme="waha",
             bypass_when_unset=True,
             log_prefix="whatsapp-inbox-webhook",
         ),

@@ -23,7 +23,7 @@ from noctusai_lib.integrations.whatsapp import (
 
 
 def _hex_sig(body: bytes, secret: str) -> str:
-    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode(), body, hashlib.sha512).hexdigest()
 
 
 def _build_app(settings: WhatsAppSettings, captured: list[WhatsAppInboundMessage]):
@@ -184,7 +184,7 @@ def test_router_401_on_invalid_signature() -> None:
     response = client.post(
         "/webhooks/whatsapp",
         json=_valid_payload("m-1"),
-        headers={"X-Webhook-Hmac-SHA256": "abc123notvalid"},
+        headers={"X-Webhook-Hmac": "abc123notvalid"},
     )
 
     assert response.status_code == 401
@@ -209,7 +209,7 @@ def test_router_accepts_valid_signature() -> None:
         content=body_bytes,
         headers={
             "Content-Type": "application/json",
-            "X-Webhook-Hmac-SHA256": sig,
+            "X-Webhook-Hmac": sig,
         },
     )
 

@@ -1268,6 +1268,82 @@ END;
 )
 
 
+_JULIA_RELATORIO_DESTINO_USUARIO_PROBE = GuardProbe(
+    id="julia_relatorio_destino.usuario_obrigatorio.check",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="julia_relatorio_destino_usuario",
+    kind="write_refusal",
+    migrations=("313_julia_relatorios.sql",),
+    rationale=(
+        "The report destination is a USER of the org (its phone is read from noc at send time): `modo = 'usuario'` with no "
+        "`usuario_id` would be a destination nobody can resolve, so every report would silently skip its send."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe destination';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.julia_relatorio_destino (org_id, modo, usuario_id) VALUES (v_org_id, 'usuario', NULL);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a usuario destination with no usuario_id was accepted — the check did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%julia_relatorio_destino_usuario%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
+_JULIA_RELATORIO_CHAVE_UNIQUE_PROBE = GuardProbe(
+    id="julia_relatorios.org_chave.unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="julia_relatorios_org_chave_uk",
+    kind="write_refusal",
+    migrations=("313_julia_relatorios.sql",),
+    rationale=(
+        "`chave` is the idempotency key of the action that produced a report/alert: a replayed turn must not store (and send) it "
+        "twice; the service pre-checks, this index is the backstop under a race."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_contato_id uuid;
+BEGIN
+  SELECT org_id, id INTO v_org_id, v_contato_id FROM {_SW_SCHEMA}.julia_contatos LIMIT 1;
+  IF v_contato_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in {_SW_SCHEMA}.julia_contatos to own a probe report';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.julia_relatorios (org_id, contato_id, tipo, texto, chave)
+    VALUES (v_org_id, v_contato_id, 'alerta', 'noc-probe-a', 'noc-probe-chave');
+    INSERT INTO {_SW_SCHEMA}.julia_relatorios (org_id, contato_id, tipo, texto, chave)
+    VALUES (v_org_id, v_contato_id, 'alerta', 'noc-probe-b', 'noc-probe-chave');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: duplicate (org, chave) insert succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%julia_relatorios_org_chave_uk%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
     id="visitas.nao_realizada_motivo.allowed_values",
     product="social-wiring",
@@ -11339,6 +11415,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CS_WAVE2_PROBES,
     *_CS_GERACAO_PROBES,
     _VISITA_MOTIVO_CHECK_PROBE,
+    _JULIA_RELATORIO_DESTINO_USUARIO_PROBE,
+    _JULIA_RELATORIO_CHAVE_UNIQUE_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
     _NOCTUS_USERS_TELEFONE_E164_PROBE,
     _JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE,

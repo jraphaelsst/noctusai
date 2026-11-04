@@ -55,7 +55,14 @@ TIPOS_ALERTA_DONO: frozenset[str] = frozenset({"agents_contrato_invalido", "supe
 #: `loop_detectado`) and SW routed it to the org's operators (payload `{status, motivo_codigo, notificado}`; once per lead/hour).
 #: `lead_opt_out` = the lead asked to stop and agents recorded the lead-level opt-out (payload `{origem, motivo,
 #: interacao_id}`): SW's own timeline record -- agents notifies the org admins itself, so it is NOT notifiable here.
-TIPOS_JULIA_V2: frozenset[str] = frozenset({"lead_pronto", "intencao_visita", "agente_nao_atendeu", "handoff_recebido", "lead_opt_out", "limite_para_humano"})
+#: julia-v3 (CONTRACT §12): `relatorio_entregue` = a hand-off / conclusion report or an alert was delivered to the org's destination
+#: (`{relatorio_id, tipo, status}`: enviado | falhou | sem_destino); `alerta_julia` = agents raised an alert (`{tipo, alerta_id}`);
+#: `documento_identificacao` = the lead's ID document went to the intake (`{status, tipo_provavel, motivo?}`). Ids and statuses only;
+#: not notifiable (each failure raises its own in-app alert).
+TIPOS_JULIA_V2: frozenset[str] = frozenset({
+    "lead_pronto", "intencao_visita", "agente_nao_atendeu", "handoff_recebido", "lead_opt_out", "limite_para_humano",
+    "relatorio_entregue", "alerta_julia", "documento_identificacao",
+})
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA
     | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO | TIPOS_JULIA_V2

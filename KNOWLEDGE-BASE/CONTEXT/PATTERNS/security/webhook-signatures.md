@@ -39,8 +39,8 @@ if not verify_hmac_sha256(body, sig, settings.meta_webhook_secret):
 
 ### 2. HMAC-SHA256 hex (no algorithm prefix)
 
-**Used by:** WAHA (`X-Webhook-Hmac-SHA256`), internal NoctusAI-to-NoctusAI
-webhooks, simple shared-secret schemes.
+**Used by:** internal NoctusAI-to-NoctusAI webhooks (`X-Webhook-Hmac-SHA256`), simple shared-secret schemes. **NOT WAHA** — see
+§2b.
 
 **Helper:** `compute_hmac_sha256_hex(body, secret)` (compute then
 `hmac.compare_digest` against the header).
@@ -56,6 +56,16 @@ expected = compute_hmac_sha256_hex(body, settings.waha_webhook_hmac_secret)
 if not hmac.compare_digest(expected, provided.strip()):
     raise HTTPException(401, "invalid signature")
 ```
+
+### 2b. WAHA (`scheme="waha"`)
+
+**Used by:** every WAHA consumer (SW, orbity, community, the seed WhatsApp inbox router). WAHA signs with
+`createHmac(algorithm, hmac.key)` over the raw body and sends the hex digest in **`X-Webhook-Hmac`** plus the algorithm in
+**`X-Webhook-Hmac-Algorithm`** (default **sha512**). The `sha256_hex` scheme (`X-Webhook-Hmac-SHA256`, sha256) can therefore never
+match a real WAHA call — the old claim that it was "WAHA's shape" was wrong (2026-11-03).
+
+**Helper:** `verify_waha_hmac(body, signature_hex, secret, algorithm)` / `webhook_endpoint(scheme="waha")`: algorithm allow-listed to
+`sha512 | sha256` (missing = sha512, anything else fails), `hmac.compare_digest`.
 
 ### 3. Svix protocol
 

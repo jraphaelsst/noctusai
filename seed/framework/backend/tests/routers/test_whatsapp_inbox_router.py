@@ -166,7 +166,7 @@ class _Harness:
         raw = json.dumps(body).encode()
         headers = {"content-type": "application/json"}
         if secret:
-            headers["X-Webhook-Hmac-SHA256"] = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+            headers["X-Webhook-Hmac"] = hmac.new(secret.encode(), raw, hashlib.sha512).hexdigest()
         return self.client.post(path, content=raw, headers=headers)
 
 
@@ -215,7 +215,7 @@ def test_webhook_rejects_missing_and_bad_signature_with_401_when_secret_set():
     _id, path = h.create_connection()
     assert h.post_event(path, _msg()).status_code == 401  # no signature
     raw = json.dumps(_msg()).encode()
-    bad = h.client.post(path, content=raw, headers={"X-Webhook-Hmac-SHA256": "00" * 32})
+    bad = h.client.post(path, content=raw, headers={"X-Webhook-Hmac": "00" * 64})
     assert bad.status_code == 401
     assert h.post_event(path, _msg(), secret=SECRET).status_code == 200
 

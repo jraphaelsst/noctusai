@@ -34,7 +34,7 @@ class WhatsAppSettings(BaseModel):
     emitted host differs from the host the app can reach (the docker
     deployment shape). See SESSION-NOTES §4.3 / workspace ``fedd4cf``."""
     webhook_hmac_secret: str | None = None
-    """When set, inbound webhook router requires HMAC-SHA256 hex
-    signature in `X-Webhook-Hmac-SHA256`. When None, the router
+    """When set, inbound webhook router requires WAHA's HMAC
+    signature in `X-Webhook-Hmac` (+ `X-Webhook-Hmac-Algorithm`, sha512 by default). When None, the router
     skips signature verification (e.g. local dev, tunneled
     development WAHA without secrets configured)."""

@@ -20,6 +20,9 @@ lead-form first contact, the Google review ask) passes `exigir` BEFORE it reache
             primeiro_contato      -- an APPROVED `primeiro_contato` modelo exists (none until the org submits one
                                      and Meta approves it)
             avaliacao             -- `julia_avaliacao_config.google_review_url` is set (default NULL)
+            interno               -- NOT a lead send (a report / alert to the org's own staff, CONTRACT julia-v2 §12.5):
+                                     requires only that the line exists and is a WAHA line -- NOT gate 1 (an alert must
+                                     still reach the owner while Julia is being switched off) and no gate 2
 
 Refuse-not-null: a blocked send raises `EnvioBloqueado` after logging the reason and emitting the
 `envio_bloqueado` Julia event (`{fluxo, motivo, connection_id}`, plus `bloco` for a non-`sdr` block) -- never a
@@ -65,6 +68,8 @@ class Fluxo(str, Enum):
     REGUA = "regua"
     PRIMEIRO_CONTATO = "primeiro_contato"
     AVALIACAO = "avaliacao"
+    #: A staff notice (report / alert to the org's destination number), never a message to a lead.
+    INTERNO = "interno"
 
 
 #: `run_reengajamento_turn`'s `estado_extra["reengajamento"]` -> the flow it is.
@@ -143,6 +148,9 @@ def motivo_do_bloqueio(
     conexao = _uma(db, T_CONEXOES, org, id=str(connection_id))
     if conexao is None:
         return "sem_conexao"
+    if fluxo is Fluxo.INTERNO:
+        # a staff notice rides the line itself: it must exist and speak free text (a Cloud API line cannot outside the 24 h window)
+        return "linha_nao_waha" if (conexao.get("transporte") or "waha") != "waha" else None
     if conexao.get("agente_leads_ativo") is not True:
         return "julia_desligada"
     if fluxo is Fluxo.RESPOSTA:

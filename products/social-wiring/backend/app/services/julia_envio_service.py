@@ -42,6 +42,7 @@ from noctusai_lib.primitives.phone import normalize_phone
 
 from app.modules.leads.services import dimensions_service, leads_service
 from app.services import (
+    chat_cliente_link,
     clientes_service,
     julia_acoes_service,
     julia_contatos_service as contatos,
@@ -344,6 +345,40 @@ def _criar(client: Any, org_id: UUID | str, contato: dict[str, Any], telefone: s
     return lead, clientes_service.attach_lead_now(client, UUID(str(org_id)), lead)
 
 
+def garantir_cliente(client: Any, org_id: UUID | str, contato: dict[str, Any], *, agora: Optional[datetime] = None) -> Optional[str]:
+    """CONTRACT julia-v2 §12.8: the `clientes` card of this contato's phone, created when it does not exist yet. Returns its id,
+    or None when the contato has no usable phone / the card could not be resolved (logged by the callee).
+
+    NOT a second creation path: the card is found by the ONE chat<->card rule (`chat_cliente_link`, `clientes.chave_canonica` =
+    the phone in E.164); when there is none, the contato's lead is used (its own `lead_id`, else the lead of the same phone, else
+    a new one through `_criar`) and `clientes_service.attach_lead_now` resolves the person -- the exact steps `enviar` takes.
+    Unlike `enviar` this does NOT mark the contato as sent to the SW (`status_envio` stays): receiving an ID document is not
+    the qualified-lead trigger. The contato is linked to the lead (`lead_id`) so the later send keeps THAT lead."""
+    telefone = telefone_do_contato(contato)
+    if telefone is None:
+        return None
+    org = UUID(str(org_id))
+    chat_ids = chat_cliente_link.chat_ids_do_telefone(telefone)
+    if chat_ids:
+        achado = chat_cliente_link.clientes_por_chat(client, org, chat_ids[:1]).get(chat_ids[0])
+        if achado:
+            return str(achado["id"])
+    lead: Optional[dict[str, Any]] = None
+    if contato.get("lead_id"):
+        linhas = client.table(T_LEADS).select("*").eq("org_id", str(org)).eq("id", str(contato["lead_id"])).limit(1).execute().data or []
+        lead = linhas[0] if linhas else None
+    if lead is None:
+        lead = _lead_por_telefone(client, org, telefone)
+    if lead is None:
+        lead, cliente_id = _criar(client, org, contato, telefone, "Lead da Julia: documento de identificação recebido pelo WhatsApp.", agora)
+    else:
+        cliente_id = leads_service.clientes_dos_leads(client, org, [str(lead["id"])]).get(str(lead["id"])) \
+            or clientes_service.attach_lead_now(client, org, lead)
+    if str(contato.get("lead_id") or "") != str(lead["id"]):
+        contatos.atualizar_contato(client, contato["id"], {"lead_id": str(lead["id"])})
+    return str(cliente_id) if cliente_id else None
+
+
 def _entrega(client: Any, org_id: UUID | str, contato_id: Any, gatilho: str, status: str,
              erro: Optional[str] = None, lead_id: Optional[str] = None) -> None:
     try:
@@ -415,6 +450,8 @@ def enviar(client: Any, org_id: UUID | str, contato: dict[str, Any], gatilho: st
             logger.warning("julia envio: no cliente resolved for lead %s (org=%s) -- the note lives on leads.observacoes only", lead_id, org)
         status = STATUS_POR_GATILHO.get(gatilho, "enviado_auto")
         contatos.atualizar_contato(client, contato["id"], {"lead_id": lead_id, "status_envio": status})
+        contatos.espelhar_imoveis_oferecidos(  # the lead card shows what Julia offered (CONTRACT §12.6)
+            client, org_id, {**contato, "lead_id": lead_id}, contato.get("imoveis_oferecidos") or None)
         _entrega(client, org_id, contato["id"], gatilho, "ok", lead_id=lead_id)
         _atribuir_antes_de_notificar(client, org_id, {**contato, "lead_id": lead_id})
         eventos.emitir(client, org_id, "novo_lead", contato["id"], {"lead_id": lead_id, "gatilho": gatilho, "criado": criado})
@@ -625,7 +662,7 @@ def registrar() -> None:
 __all__ = [
     "CAPTACOES", "FRIOS_PADRAO", "GATILHOS", "JOB_FRIO", "MODOS_FRIO", "POLITICAS_PADRAO", "STATUS_ENVIADOS",
     "aplicar_politica_captacao", "avaliar_e_enviar", "criterios_que_usam", "enviar", "enviar_por_estagio",
-    "estagio_atende", "executar_frio", "handlers", "reagir_ao_estagio",
+    "estagio_atende", "executar_frio", "garantir_cliente", "handlers", "reagir_ao_estagio",
     "instante_frio", "ja_qualificado", "ler_politicas", "lead_frio", "listar_regras", "montar_nota", "montar_regras",
     "org_tem_regra", "regra_do_contato", "registrar", "registrar_client_provider", "registrar_repo",
     "salvar_politicas", "substituir_regras", "telefone_do_contato",

@@ -993,18 +993,33 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
 
 ### 12.5 SW: report destination, delivery, lead card
 
-- Migration SW `313_julia_relatorios`:
-  - `julia_relatorio_destino(org_id PK, modo TEXT NOT NULL DEFAULT 'numero' CHECK IN ('numero','responsavel'),
-    numero_e164 TEXT NULL, updated_by, updated_at)`. `modo='responsavel'` resolves the lead's assigned responsavel's
-    `julia_staff.whatsapp`; unresolvable ⇒ falls to `numero_e164`; neither ⇒ refuse-not-null: in-app alert
-    `julia_relatorio_sem_destino` (never silent).
+- Migration SW `313_julia_relatorios` (amended in place, SW built; **deviations from the first draft, owner 2026-11-03**):
+  - `julia_relatorio_destino(org_id PK, modo TEXT NOT NULL DEFAULT 'usuario' CHECK IN ('usuario','responsavel'),
+    usuario_id UUID NULL (CHECK modo<>'usuario' OR usuario_id NOT NULL), updated_by, updated_at)` — the destination is a
+    **user of the org, never a typed number** ("my number is set in noc"): the phone is read at send time from core
+    `public.noctus_users.telefone` (E.164). `modo='responsavel'` = the lead's responsavel's noc phone, else their `julia_staff` number,
+    else `usuario_id`. No phone ⇒ the report is still saved (`envio_status='sem_destino'`), the send is skipped and the person gets the
+    in-app notice "Cadastre seu WhatsApp no noc…" (nobody configured ⇒ the owners get `julia_relatorio_sem_destino`); never silent.
+    Changing the destination: org admin only, audited (`julia_relatorio_destino_auditoria` before/after), admins told in-app, the OLD
+    user's phone told by WhatsApp. No confirmation code (the phone is owned and edited by the user in core).
   - `julia_relatorios(id, org_id, contato_id, lead_id NULL, thread_id, tipo handoff|conclusao|alerta, texto, dados
-    JSONB, destino_e164, envio_status pendente|enviado|falhou|sem_destino, envio_erro, created_at)`.
-  - `leads.imoveis_oferecidos TEXT[] NOT NULL DEFAULT '{}'` and `julia_contatos.imoveis_oferecidos TEXT[]` (same).
-- Delivery: new `julia_envio_gate` flow **`interno`** (staff notice, not a lead send): requires only that the line is
-  connected — NOT gate 1, so an alert still reaches the owner while Julia is being switched off. Sent from the org's
+    JSONB, destino_e164, envio_status pendente|enviado|falhou|sem_destino|limitado, envio_erro, chave, created_at)`;
+    `limitado` = the per-org cap on staff sends (`julia_staff_envios_por_hora`, default 30/h) was hit: stored, owners get one digest.
+  - `leads.imoveis_oferecidos TEXT[] NOT NULL DEFAULT '{}'` and `julia_contatos.imoveis_oferecidos TEXT[]` (same);
+    `cliente_documentos.verificado BOOL NOT NULL DEFAULT true` — **false** for a WhatsApp-origin document until a person confirms its
+    extraction (`extracao/confirmar` sets it true).
+  - Everything sent to the staff number is sanitised (`sanitizar_para_staff`): only the conversation deep link, the org's own listing
+    links and the lead's own phone survive; other links/domains, phones, e-mails, PIX keys and @-mentions become markers.
+- Delivery: new `julia_envio_gate` flow **`interno`** (staff notice, not a lead send): requires only that the line exists and is a WAHA
+  line — NOT gate 1, so an alert still reaches the owner while Julia is being switched off. Sent from the org's
   Julia line through `send_paragraphs`. Keeper `test_julia_envio_gate_keeper` stays green.
-- Settings API: `GET|PUT /api/julia/relatorio-destino {modo, numero_e164}` (org admin).
+- Settings API: `GET|PUT /api/julia/relatorio-destino` — `GET` → `{modo, usuario_id, usuario_nome, telefone_resolvido|null}`;
+  `PUT {modo: 'usuario'|'responsavel', usuario_id?}` (org admin, strict 401/403).
+- Webhook HMAC (security L2): in prod `WAHA_WEBHOOK_HMAC_SECRET` is unset and the shared WAHA does not sign, so SW enforces only when the
+  secret is configured (then strict 401 on an unsigned/bad call); unset in a deploy context it accepts but logs ERROR
+  `webhook_hmac_desativado` once per process and reports it in `/api/health` `startup_hook_error` (`NOC-REMEDIATE[waha-hmac-prod]`).
+  Enable runbook: SW README "Enabling the WAHA webhook HMAC" (generate secret, root `.env`, same `hmac.key` on the WAHA session,
+  recreate social-wiring, verify one signed inbound).
 - Lead card: `GET /api/julia/contatos/{id}/relatorios` (newest first) + the card renders the latest report and the
   `imoveis_oferecidos` chips (código → link).
 

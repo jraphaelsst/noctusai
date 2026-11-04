@@ -54,6 +54,15 @@ logger = logging.getLogger(__name__)
 
 
 async def on_startup() -> None:
+    """Start everything, THEN surface a degraded-security boot (L2): `/api/health` `startup_hook_error` says
+    `webhook_hmac_desativado` while the WAHA webhook HMAC secret is unset in a deploy context. Raised last, so nothing is skipped."""
+    await _iniciar()
+    from app import webhook_hmac
+
+    webhook_hmac.sinalizar_na_saude(settings)
+
+
+async def _iniciar() -> None:
     """Wire the conversation module + start the worker.
 
     Idempotent — ``configure_conversation_module`` short-circuits if

@@ -24,6 +24,10 @@ T_CONTATOS = "julia_contatos"
 T_INTERACOES = "julia_interacoes"
 T_ACOES = "julia_acoes_aplicadas"
 T_EVENTOS = "julia_eventos"
+T_LEADS = "leads"
+#: Bounds of the mirrored offered-listing list (agents sends every code of the conversation, ordered).
+IMOVEIS_OFERECIDOS_MAX = 100
+CODIGO_IMOVEL_MAX = 40
 
 #: An inbound after this much silence opens a NEW episode (contract 2.2).
 SILENCIO_NOVO_EPISODIO = timedelta(hours=24)
@@ -115,6 +119,36 @@ def obter_ou_criar_contato(
 
 def atualizar_contato(client: Any, contato_id: UUID | str, patch: dict[str, Any]) -> None:
     client.table(T_CONTATOS).update({**patch, "updated_at": _now(None).isoformat()}).eq("id", str(contato_id)).execute()
+
+
+def normalizar_codigos_imoveis(codigos: Any) -> list[str]:
+    """Agents' offered-listing codes as stored: stripped, de-duplicated keeping the order, bounded. Anything that is not a
+    list of strings (an older agents build sends none) is `[]`."""
+    if not isinstance(codigos, (list, tuple)):
+        return []
+    vistos: dict[str, None] = {}
+    for c in codigos:
+        if isinstance(c, str) and c.strip():
+            vistos.setdefault(c.strip()[:CODIGO_IMOVEL_MAX], None)
+    return list(vistos)[:IMOVEIS_OFERECIDOS_MAX]
+
+
+def espelhar_imoveis_oferecidos(client: Any, org_id: UUID | str, contato: dict[str, Any], codigos: Any) -> list[str]:
+    """CONTRACT julia-v2 §12.6: overwrite `julia_contatos.imoveis_oferecidos` and the linked `leads.imoveis_oferecidos`
+    with the list agents sent (idempotent -- the same list writes nothing). `codigos=None` (this agents build does not send
+    it) touches nothing. Returns the stored list. Raises on a DB failure (the caller logs; the reply is already out)."""
+    if codigos is None:
+        return list(contato.get("imoveis_oferecidos") or [])
+    novos = normalizar_codigos_imoveis(codigos)
+    if list(contato.get("imoveis_oferecidos") or []) != novos:
+        atualizar_contato(client, contato["id"], {"imoveis_oferecidos": novos})
+    lead_id = contato.get("lead_id")
+    if lead_id:
+        atual = (client.table(T_LEADS).select("imoveis_oferecidos").eq("org_id", str(org_id)).eq("id", str(lead_id))
+                 .limit(1).execute().data or [])
+        if atual and list(atual[0].get("imoveis_oferecidos") or []) != novos:
+            client.table(T_LEADS).update({"imoveis_oferecidos": novos}).eq("org_id", str(org_id)).eq("id", str(lead_id)).execute()
+    return novos
 
 
 def _cas_gen(client: Any, contato_id: UUID | str, extra: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -280,7 +314,7 @@ def apagar_do_chat(client: Any, org_id: UUID | str, connection_id: UUID | str, c
     if not ids:
         return 0
     # wave 13: the credit-analysis rows (consent log + analyses) are personal/financial data -- erased explicitly too
-    for tabela in (T_EVENTOS, T_ACOES, "julia_credito_analises", "julia_credito_consentimentos", T_INTERACOES):
+    for tabela in (T_EVENTOS, T_ACOES, "julia_credito_analises", "julia_credito_consentimentos", "julia_relatorios", T_INTERACOES):
         client.table(tabela).delete().eq("org_id", str(org_id)).in_("contato_id", ids).execute()
     client.table(T_CONTATOS).delete().eq("org_id", str(org_id)).in_("id", ids).execute()
     return len(ids)
@@ -289,6 +323,6 @@ def apagar_do_chat(client: Any, org_id: UUID | str, connection_id: UUID | str, c
 __all__ = [
     "GenConflito", "SILENCIO_NOVO_EPISODIO", "abrir_interacao", "apagar_do_chat", "atualizar_contato",
     "bump_gen", "bump_gen_do_chat", "buscar_contato", "episodio_vencido", "interacao_aberta",
-    "job_obsoleto", "obter_ou_criar_contato", "payload_job", "registrar_inbound", "registrar_outbound",
+    "espelhar_imoveis_oferecidos", "job_obsoleto", "normalizar_codigos_imoveis", "obter_ou_criar_contato", "payload_job", "registrar_inbound", "registrar_outbound",
     "registrar_primeira_resposta", "registrar_primeira_resposta_do_chat",
 ]

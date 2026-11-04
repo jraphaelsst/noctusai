@@ -78,6 +78,9 @@ class LeadOut(BaseModel):
     needs_review: bool = False
     source_sheet: Optional[str] = None
     source_row: Optional[int] = None
+    #: Listing codes Julia offered this lead, in order (migration 313; mirrored from agents every turn). The public link of
+    #: each code is `GET /api/julia/contatos/{connection_id}/{chat_id}` -> `imoveis_oferecidos[{codigo, link}]`.
+    imoveis_oferecidos: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: Optional[datetime] = None
 

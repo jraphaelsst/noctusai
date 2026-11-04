@@ -407,3 +407,45 @@ def test_verify_basic_accepts_secret_containing_a_colon():
     header = _basic(GRUPO_OLX_BASIC_USERNAME, secret)
 
     assert verify_basic_shared_secret(header, secret) is True
+
+
+# -- WAHA: `X-Webhook-Hmac` + `X-Webhook-Hmac-Algorithm` (sha512 default) ------
+# Independent vectors (openssl dgst -hmac), NOT produced by the code under test: WAHA computes `createHmac(algorithm, hmac.key)`
+# over the raw body and sends the hex digest.
+WAHA_BODY = b'{"event":"message","session":"default","payload":{"id":"false_5511988887777@c.us_3EB0A1","body":"oi"}}'
+WAHA_KEY = "waha-hmac-key"
+WAHA_SHA512 = "8ad505e47157e1ffbdcdf5d8b70308c5a6204986f0d19a3d5969c344b040031bc9caa464344acde770539d49881d9800108ed0fde8baf3bedc65494b46fcea0e"
+WAHA_SHA256 = "7447eb43c1dea7d7886db712fbda306d2aee004dfbb90aa8867f072fdd938cc1"
+
+
+def test_waha_accepts_a_real_sha512_signature_with_and_without_the_algorithm_header():
+    from noctusai_lib.security.webhook_signatures import verify_waha_hmac
+
+    assert verify_waha_hmac(WAHA_BODY, WAHA_SHA512, WAHA_KEY, "sha512")
+    assert verify_waha_hmac(WAHA_BODY, WAHA_SHA512, WAHA_KEY, None)  # missing algorithm = WAHA's default, sha512
+    assert verify_waha_hmac(WAHA_BODY, WAHA_SHA512.upper(), WAHA_KEY, "SHA512")
+
+
+def test_waha_accepts_the_sha256_variant_only_when_it_says_so():
+    from noctusai_lib.security.webhook_signatures import verify_waha_hmac
+
+    assert verify_waha_hmac(WAHA_BODY, WAHA_SHA256, WAHA_KEY, "sha256")
+    assert not verify_waha_hmac(WAHA_BODY, WAHA_SHA256, WAHA_KEY, None)  # a sha256 digest without the header is read as sha512
+
+
+def test_waha_rejects_a_wrong_or_unlisted_algorithm_a_tampered_body_a_wrong_key_and_missing_input():
+    from noctusai_lib.security.webhook_signatures import verify_waha_hmac
+
+    assert not verify_waha_hmac(WAHA_BODY, WAHA_SHA512, WAHA_KEY, "sha256")      # the digest does not match the named algorithm
+    for algo in ("md5", "sha1", "sha384", "sha3-512", "none"):
+        assert not verify_waha_hmac(WAHA_BODY, WAHA_SHA512, WAHA_KEY, algo), algo
+    assert not verify_waha_hmac(WAHA_BODY + b" ", WAHA_SHA512, WAHA_KEY, "sha512")  # tampered body
+    assert not verify_waha_hmac(WAHA_BODY, WAHA_SHA512, "other-key", "sha512")
+    assert not verify_waha_hmac(WAHA_BODY, "", WAHA_KEY, "sha512") and not verify_waha_hmac(WAHA_BODY, WAHA_SHA512, "", "sha512")
+
+
+def test_the_old_sha256_hex_scheme_can_never_match_a_real_waha_call():
+    from noctusai_lib.security.webhook_signatures import verify_hmac_sha256_hex
+
+    # WAHA's default digest is sha512; and even its sha256 variant arrives in another header -- sha256_hex has nothing to read
+    assert not verify_hmac_sha256_hex(WAHA_BODY, WAHA_SHA512, WAHA_KEY)

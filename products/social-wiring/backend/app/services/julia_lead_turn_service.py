@@ -9,7 +9,7 @@ controls: ligado / drenando / desligado, the per-conversation pause, another age
 answers with a `status`:
 
   served      respondido | silencio | handoff | encerrado | concluido     -> send the bubbles, apply the actions
-  not served  agente_desligado | novo_lead_recusado | conversa_pausada | conversa_com_outro_responsavel |
+  not served  agente_desligado | agente_desligado_plataforma | restrito_avaliacao | novo_lead_recusado | conversa_pausada | conversa_com_outro_responsavel |
               conversa_com_outro_agente | controle_indisponivel | lead_opt_out | reengajamento_ignorado |
               limite_atingido | limite_taxa | novo_lead_limitado | loop_detectado
                                                                          -> NOTHING is sent, no action is applied
@@ -67,13 +67,13 @@ from app.services.identidade_mascara import ref as ref_log
 from app.services import julia_origem_service
 from app.services import julia_protecao_service as protecao
 from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
-from app.services import julia_espelho_service, julia_thread_service
+from app.services import julia_espelho_service, julia_relatorio_service, julia_thread_service
 from app.services import julia_agente_service as julia
 from app.services import julia_aviso_service, julia_capi_service, julia_envio_gate, julia_envio_service, julia_eventos_service, julia_notificacoes_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
-from app.services.whatsapp_outbound import send_paragraphs
+from app.services.whatsapp_outbound import send_paragraphs, split_for_whatsapp
 from app.services.whatsapp_realtime import (
     EVENT_CHAT_UPSERT,
     EVENT_MESSAGE_NEW,
@@ -136,6 +136,9 @@ class LeadDeps:
     redis: Any = None
     bus: Any = None
     jobs: Any = None  # seed `JobRepository` (re-engagement timers); built lazily, None = no timers
+    #: julia-v3 (CONTRACT §12.8): `async (org_id, cliente_id, *, mensagem_id, media_url, mimetype, filename) -> {status, ...}`, the
+    #: document intake an ID document of a lead goes through. Default = `documento_intake_service.processar_midia_do_webhook`.
+    documento_intake: Optional[Callable[..., Any]] = None
     sleep: Callable[[float], Any] = asyncio.sleep
     turn_timeout_s: float = TURN_TIMEOUT_S
 
@@ -163,6 +166,10 @@ class LeadDeps:
             self.bus = get_whatsapp_bus(self.cfg.redis_url)
         if self.jobs is None:
             self.jobs = _default_job_repository()
+        if self.documento_intake is None:
+            from app.services.documento_intake_service import processar_midia_do_lead
+
+            self.documento_intake = processar_midia_do_lead
 
 
 # ── the buffer run: which inbound messages are still unanswered ─────────────
@@ -379,13 +386,17 @@ async def _pos_turno(
     try:
         if enviou:
             julia_contatos_service.registrar_outbound(deps.scoped, julia_turn.contato["id"])
-        await julia_acoes_service.aplicar(
+        resumo_acoes = await julia_acoes_service.aplicar(
             deps.scoped, org_id=connection.org_id, contato=julia_turn.contato, result=result, lote_hash=lote_hash,
             conversation_id=result.thread or result.conversation_id, agents_client=agents_client,
             core_client=deps.core_client, connection_id=connection.id, chat_id=chat_id,
         )
+        # julia-v3: the actions whose side effect needs the worker's collaborators (report, alert, ID document) -- never raises
+        await julia_relatorio_service.processar_acoes(
+            deps, connection=connection, chat_id=chat_id, result=result, resumo_acoes=resumo_acoes, lote_hash=lote_hash)
     except Exception as exc:
         logger.error("julia: post-turn bookkeeping failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
+    await _espelhar_imoveis_oferecidos(deps, connection=connection, chat_id=chat_id, julia_turn=julia_turn, result=result)
     try:
         # the mirror reads the contato fresh: an action above (encerrar) may have changed it
         fresco = julia_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id) or julia_turn.contato
@@ -401,6 +412,21 @@ async def _pos_turno(
         logger.error("julia: qualification mirror / stage trigger failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
     if enviou:
         await _armar_reengajamento(deps, connection=connection, chat_id=chat_id)
+
+
+async def _espelhar_imoveis_oferecidos(
+    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, julia_turn: JuliaTurn, result: TurnResult,
+) -> None:
+    """CONTRACT §12.6: mirror `qualificacao.imoveis_oferecidos` into `julia_contatos` and the linked `leads` row EVERY turn
+    (idempotent overwrite). An agents build that sends none leaves the mirror as it is. Never raises."""
+    codigos = result.qualificacao.imoveis_oferecidos if result.qualificacao is not None else None
+    if codigos is None:
+        return
+    try:
+        fresco = julia_contatos_service.buscar_contato(deps.scoped, connection.org_id, connection.id, chat_id) or julia_turn.contato
+        julia_contatos_service.espelhar_imoveis_oferecidos(deps.scoped, connection.org_id, fresco, list(codigos))
+    except Exception as exc:
+        logger.error("julia: offered-listings mirror failed conn=%s chat=%s (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
 
 
 async def _armar_reengajamento(deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str) -> None:
@@ -548,7 +574,7 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         agent_key=agent_key,
         connection_id=str(connection.id),
         chat_id=chat_id,
-        phone_e164=phone,
+        phone_e164=phone or julia_turn.contato.get("telefone_e164") or None,  # evaluation mode (restrito_avaliacao) keys on it
         display_name=(meta.get("push_name") or None),
         contexto=julia_turn.contexto,
         lead_ref=str(julia_turn.contato["id"]),
@@ -672,7 +698,7 @@ async def _tratar_sem_atendimento(
       * mirrors the participant state agents reported (display only);
       * appends the lead's messages to the thread when it exists (Q5) -- idempotent;
       * `lead_opt_out`: bumps `gen`, so every queued re-engagement job for the contato is stale (the lead asked to stop);
-      * a lead agents refused (`novo_lead_recusado` / `agente_desligado` with NO thread): the contato SW created for this
+      * a lead agents refused (`novo_lead_recusado` / `agente_desligado` / `agente_desligado_plataforma` with NO thread): the contato SW created for this
         very batch is erased -- a lead Julia never served is not kept (Q5, LGPD data minimisation)."""
     contato = julia_turn.contato if julia_turn else None
     logger.info("julia: agents did not serve the turn (%s) conn=%s chat=%s -- nothing sent", result.status, connection.id, ref_log(chat_id))
@@ -689,7 +715,7 @@ async def _tratar_sem_atendimento(
         )
         if result.status in julia_thread_service.STATUS_ANEXAR_LEAD:
             await julia_thread_service.encaminhar_lead(agents_client, thread_id=thread_id, mensagens=mensagens)
-    elif result.status in ("novo_lead_recusado", "agente_desligado") and contato is not None:
+    elif result.status in ("novo_lead_recusado", "agente_desligado", "agente_desligado_plataforma", "restrito_avaliacao") and contato is not None:
         if julia_thread_service.thread_id_do_estado(state) is None and not contato.get("ultimo_outbound_at"):
             try:
                 removidos = julia_contatos_service.apagar_do_chat(
@@ -916,6 +942,9 @@ async def _deliver(
             contato_id=julia_turn.contato.get("id") if julia_turn is not None else None, regua_id=regua_id,
         )
     except julia_envio_gate.EnvioBloqueado:  # already logged + `envio_bloqueado` event by the gate
+        if handoff is not None:  # the hand-off report is a staff notice (flow `interno`), not a lead send: it must still go out
+            await _entregar_relatorio_do_handoff(
+                deps, connection=connection, chat_id=chat_id, handoff=handoff, result=result, lote_hash=lote_hash, registro=None)
         await _pos_turno(deps, enviou=False, **pos)
         close_run(deps.buffer, key, run)
         return False
@@ -937,6 +966,9 @@ async def _deliver(
             return False
         partes.insert(0, disclosure)
 
+    # One WhatsApp message per paragraph (owner rule): a part that carries blank lines is split through the same rule
+    # `send_paragraphs` applies (`split_for_whatsapp`), so no part ever goes out as one wall of text.
+    partes = [bolha for parte in partes for bolha in split_for_whatsapp(parte)]
     julia.marcar_envio_em_curso(deps.redis, connection.id, chat_id)
     enviadas = 0
     try:
@@ -960,7 +992,7 @@ async def _deliver(
     if handoff is not None:
         await _apply_handoff(
             deps, connection=connection, chat_id=chat_id, chat_store=chat_store, handoff=handoff, result=result,
-            agents_client=agents_client,
+            agents_client=agents_client, lote_hash=lote_hash,
         )
     await _pos_turno(deps, enviou=bool(enviadas), **pos)
     close_run(deps.buffer, key, run)
@@ -1063,9 +1095,20 @@ async def run_reengajamento_turn(
     )
 
 
+async def _entregar_relatorio_do_handoff(
+    deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, handoff: Any, result: TurnResult,
+    lote_hash: Optional[str], registro: Optional[HandoffRecord],
+) -> None:
+    """julia-v3 (CONTRACT §12.4/§12.5): the hand-off REPORT -- saved on the lead card and sent to the org's destination number.
+    Idempotent per `(lote_hash, handoff.seq)`. Never raises."""
+    lote = lote_hash or julia_acoes_service.lote_hash_de(result.thread or result.conversation_id, [f"handoff-{handoff.seq}"])
+    await julia_relatorio_service.entregar_relatorio_do_handoff(
+        deps, connection=connection, chat_id=chat_id, handoff=handoff, result=result, lote_hash=lote, registro=registro)
+
+
 async def _apply_handoff(
     deps: LeadDeps, *, connection: WhatsAppConnectionRecord, chat_id: str, chat_store: Any, handoff: Any, result: TurnResult,
-    agents_client: Optional[AgentsClient],
+    agents_client: Optional[AgentsClient], lote_hash: Optional[str] = None,
 ) -> None:
     """The agent handed the conversation to a human. agents already set the participant `pausado`/`transferido` and
     recorded the hand-off note SERVER-SIDE; SW:
@@ -1121,6 +1164,8 @@ async def _apply_handoff(
                                      {"handoff_id": registro.id if registro else None, "motivo_codigo": codigo})
     except Exception as exc:
         logger.error("julia: handoff notification failed conn=%s chat=%s (the conversation IS handed over) (%s)", connection.id, ref_log(chat_id), type(exc).__name__)
+    await _entregar_relatorio_do_handoff(
+        deps, connection=connection, chat_id=chat_id, handoff=handoff, result=result, lote_hash=lote_hash, registro=registro)
 
 
 __all__ = [

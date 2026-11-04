@@ -110,7 +110,7 @@ class TestDefaultsOff:
 
 # ── gate 1: Julia on for THIS line, read at send time ────────────────────────────────────────────
 class TestJuliaGate:
-    @pytest.mark.parametrize("fluxo", list(Fluxo))
+    @pytest.mark.parametrize("fluxo", [f for f in Fluxo if f is not Fluxo.INTERNO])  # `interno` is a staff notice: see test_julia_relatorio
     def test_julia_off_blocks_every_flow_even_when_opted_in(self, world, fluxo):
         regua_id = opt_in_everything(world)
         assert gate.motivo_do_bloqueio(world.sw, ORG_ID, CONNECTION_ID, fluxo, regua_id=regua_id) is None

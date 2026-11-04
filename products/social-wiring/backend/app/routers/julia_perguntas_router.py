@@ -2,7 +2,7 @@
 
   GET /api/julia/perguntas                              member read    {data: {catalogo, limites}}
   PUT /api/julia/perguntas                              org admin      full replace -> same shape
-  GET /api/julia/contatos/{connection_id}/{chat_id}     member read    {data: {contato, slots, interacao_atual, qualificacao, dados_lead}}
+  GET /api/julia/contatos/{connection_id}/{chat_id}     member read    {data: {contato, imoveis_oferecidos: [{codigo, link}], slots, interacao_atual, qualificacao, dados_lead}}
 
 Errors (AppException envelope): 422 `limite_ativas` / `limite_qualificatorias` / `objetivo_obrigatorio` /
 `chave_desconhecida` / `selecao_invalida`; 409 `usada_em_criterio` (`details.criterios`); 404 `contato_nao_encontrado`.
@@ -21,7 +21,7 @@ from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
 from app.routers.julia_agente_router import get_agents_client_factory
-from app.services import julia_acesso, julia_contatos_service, julia_espelho_service, julia_perguntas_service as svc
+from app.services import julia_acesso, julia_conhecimento_service, julia_contatos_service, julia_espelho_service, julia_perguntas_service as svc
 
 router = APIRouter(tags=["julia-perguntas"])
 
@@ -59,6 +59,15 @@ def put_perguntas(
     return {"data": svc.substituir_selecao(client, org_id, [p.model_dump() for p in payload.selecao])}
 
 
+def imoveis_com_link(client: Any, org_id: Any, contato: dict[str, Any]) -> list[dict[str, Any]]:
+    """`[{codigo, link}]` for `julia_contatos.imoveis_oferecidos`, in offer order."""
+    codigos = julia_contatos_service.normalizar_codigos_imoveis(contato.get("imoveis_oferecidos"))
+    if not codigos:
+        return []
+    link = julia_conhecimento_service.link_imovel_fn(client, org_id)
+    return [{"codigo": c, "link": link(c)} for c in codigos]
+
+
 @router.get("/api/julia/contatos/{connection_id}/{chat_id}")
 async def get_contato(
     connection_id: UUID,
@@ -84,6 +93,9 @@ async def get_contato(
         "dados_lead": dados_lead,
         "contato": {k: contato.get(k) for k in (
             "id", "nome", "email", "operacao", "status_envio", "encerrado_at", "ultimo_inbound_at")},
+        # julia-v3 (CONTRACT §12.5/§12.6): the listings Julia offered this lead, ordered, each with the public link built from the
+        # org's `link_imovel` template (null when the org has no site / template); the lead card renders them as chips
+        "imoveis_oferecidos": imoveis_com_link(client, org_id, contato),
         # values of a question the org later switched off are kept in the row but not shown
         "slots": {k: v for k, v in (contato.get("slots") or {}).items() if k in ativas},
         "interacao_atual": (

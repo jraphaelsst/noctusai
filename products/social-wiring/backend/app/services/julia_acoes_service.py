@@ -16,7 +16,8 @@ Handler registry (waves append ONE line each, nobody edits `aplicar`):
     HANDLERS: dict[str, Handler]
     Handler = Callable[[AcaoCtx, dict], dict | None | Awaitable[dict | None]]
 
-  here    encerrar · intencao_visita (records the intent and STOPS: visit scheduling is out of Julia v2, D11)
+  here    encerrar · intencao_visita (records the intent and STOPS: visit scheduling is out of Julia v2, D11) ·
+          alerta · documento_identificacao (julia-v3: claimed here, performed by the lead worker -- see `_h_tratada_pelo_worker`)
   envio   lead_pronto (the computed stage reached the CRM send, Q6) · captacao
   other   consentimento_credito · (visitas module: pedido_visita, not offered to Julia v2)
 
@@ -88,6 +89,8 @@ def sanitizar_payload(payload: dict[str, Any], org_id: Optional[UUID | str] = No
     """The ledger copy: a CPF is stored as hash + last 3 digits only (contract 17, wave 5); the
     sensitive slots of a `salvar_slots` batch (cpf / renda, wave 2) are protected the same way."""
     out = dict(payload)
+    if "relatorio" in out:  # julia-v3: the report (summary + profile) lives in `julia_relatorios`; the ledger keeps a flag only
+        out["relatorio"] = bool(out["relatorio"])
     slots = out.get("slots")
     if isinstance(slots, dict):
         out["slots"] = {
@@ -235,10 +238,19 @@ def _h_intencao_visita(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
     return {"codigo": codigo, "registrada": True}
 
 
+def _h_tratada_pelo_worker(ctx: AcaoCtx, payload: dict[str, Any]) -> HandlerResult:
+    """julia-v3 actions whose side effect needs the turn's collaborators (WAHA, the document intake): the lead worker performs
+    them right after `aplicar` (`julia_relatorio_service.processar_acoes`), only for an action NEWLY applied here. This entry
+    makes the ledger row an applied one (no `acao_sem_handler` noise) and marks who owns the work."""
+    return {"tratada_pelo_worker": True}
+
+
 #: THE registry. Waves append `"<tipo>": <fn>` (or call `registrar_handler`).
 HANDLERS: dict[str, Handler] = {
     "encerrar": _h_encerrar,
     "intencao_visita": _h_intencao_visita,
+    "alerta": _h_tratada_pelo_worker,  # julia-v3 §12.3: delivered by `julia_relatorio_service.processar_acoes`
+    "documento_identificacao": _h_tratada_pelo_worker,  # julia-v3 §12.8: same
 }
 
 
@@ -258,6 +270,23 @@ def _atualizar_resultado(client: Any, org_id: Any, lote_hash: str, seq: int, res
         _ledger(client).update({"resultado": resultado}).eq("org_id", str(org_id)).eq("lote_hash", lote_hash).eq("seq", seq).execute()
     except Exception as exc:
         logger.error("julia: could not store the result of action seq=%s lote=%s (%s)", seq, lote_hash[:12], type(exc).__name__)
+
+
+def registrar_uma_vez(
+    client: Any, *, org_id: UUID | str, contato_id: Any, conversation_id: Optional[str], lote_hash: str, seq: int, tipo: str,
+    payload: dict[str, Any],
+) -> bool:
+    """Claim `(org_id, lote_hash, seq)` in the ledger: True when THIS call inserted the row (the work is ours to do),
+    False when the batch already applied it (a replay -- skip). The one idempotency primitive: `_aplicar_uma` and any side
+    effect the worker owns outside the action list (the hand-off report) both go through it. Raises when the insert fails."""
+    inserted = _ledger(client).upsert(
+        {
+            "org_id": str(org_id), "contato_id": str(contato_id), "conversation_id": conversation_id,
+            "lote_hash": lote_hash, "seq": seq, "tipo": tipo, "payload": sanitizar_payload(payload, org_id),
+        },
+        on_conflict="org_id,lote_hash,seq", ignore_duplicates=True,
+    ).execute().data or []
+    return bool(inserted)
 
 
 async def aplicar(
@@ -298,14 +327,10 @@ async def _aplicar_uma(
     agents_client: Optional[AgentsClient], core_client: Any,
     connection_id: Optional[UUID | str], chat_id: Optional[str], handlers: Mapping[str, Handler],
 ) -> dict[str, Any]:
-    inserted = _ledger(client).upsert(
-        {
-            "org_id": str(org_id), "contato_id": str(contato_id), "conversation_id": conversation_id,
-            "lote_hash": lote_hash, "seq": acao.seq, "tipo": acao.type, "payload": sanitizar_payload(acao.payload, org_id),
-        },
-        on_conflict="org_id,lote_hash,seq", ignore_duplicates=True,
-    ).execute().data or []
-    if not inserted:
+    if not registrar_uma_vez(
+        client, org_id=org_id, contato_id=contato_id, conversation_id=conversation_id, lote_hash=lote_hash,
+        seq=acao.seq, tipo=acao.type, payload=acao.payload,
+    ):
         logger.info("julia: action %s seq=%s of lote %s already applied -- skipped", acao.type, acao.seq, lote_hash[:12])
         return {"seq": acao.seq, "tipo": acao.type, "estado": "repetida"}
 
@@ -348,6 +373,6 @@ async def _aplicar_uma(
 
 __all__ = [
     "AcaoCtx", "HANDLERS", "Handler", "MOTIVOS_ENCERRAR", "OPERACOES", "aplicar", "fechar_interacao",
-    "POS_ACAO", "POS_ENCERRAR", "POS_FECHAR", "lote_hash_de", "registrar_handler", "registrar_pos_acao", "registrar_pos_encerrar",
+    "POS_ACAO", "POS_ENCERRAR", "POS_FECHAR", "lote_hash_de", "registrar_handler", "registrar_uma_vez", "registrar_pos_acao", "registrar_pos_encerrar",
     "registrar_pos_fechar", "sanitizar_payload",
 ]

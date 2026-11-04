@@ -164,8 +164,9 @@ The webhook is public for WAHA delivery. Runtime controls:
   `+5511974693365`.
 - Public webhook URL: `WAHA_WEBHOOK_URL`, refreshed by
   `./refresh_cf_tunnel.sh` for local Cloudflare Quick Tunnel testing.
-- Optional HMAC: set `WAHA_WEBHOOK_HMAC_SECRET` and send the hex
-  SHA-256 HMAC in `X-Webhook-Hmac-SHA256`.
+- Optional HMAC: set `WAHA_WEBHOOK_HMAC_SECRET` and configure the same
+  `hmac.key` on the WAHA webhook; WAHA sends the hex HMAC in `X-Webhook-Hmac` with the digest named in
+  `X-Webhook-Hmac-Algorithm` (sha512 by default).
 
 Keep `WAHA_WEBHOOK_HMAC_SECRET` empty if the active WAHA deployment
 cannot sign webhook bodies.

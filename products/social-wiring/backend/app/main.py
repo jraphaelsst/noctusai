@@ -130,6 +130,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_conhecimento_router import router as julia_conhecimento_router
     from app.routers.julia_perguntas_router import router as julia_perguntas_router
     from app.routers.julia_conversas_router import router as julia_conversas_router
+    from app.routers.julia_relatorio_destino_router import router as julia_relatorio_destino_router
     from app.routers.julia_visitas_router import router as julia_visitas_router
     from app.routers.julia_notificacoes_router import router as julia_notificacoes_router
     from app.routers.julia_reengajamento_router import router as julia_reengajamento_router
@@ -263,6 +264,7 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_ferramentas_router,
             julia_conhecimento_router,
             julia_conversas_router,  # BEFORE julia_perguntas_router: `/contatos/{id}/notas` vs its `/contatos/{c}/{chat}`
+            julia_relatorio_destino_router,  # BEFORE julia_perguntas_router: `/contatos/{id}/relatorios` vs its `/contatos/{c}/{chat}`
             julia_perguntas_router,
             julia_visitas_router,
             julia_notificacoes_router,

@@ -35,6 +35,7 @@ MEMBER_ID = "00000000-0000-4000-8000-0000000000b1"
 CONNECTION_ID = "00000000-0000-4000-8000-0000000000e3"
 WEBHOOK_TOKEN = "test-webhook-token-abc"
 OPERATOR = "+5511999990000"
+OWNER_TELEFONE = "+5511900001111"  # the owner's WhatsApp as set in noc (core noctus_users.telefone): the default report destination
 LEAD_PHONE = "5511988887777"
 LEAD_CHAT = f"{LEAD_PHONE}@c.us"
 ENCRYPTION_KEY = Fernet.generate_key().decode()
@@ -114,7 +115,7 @@ class World:
         self.slept: list[float] = []
         self.core.set_table_data("organizations", [{"id": ORG_ID, "nome": "Empresa Exemplo"}])
         self.core.set_table_data("noctus_users", [
-            {"id": OWNER_ID, "org_id": ORG_ID, "org_role": "owner"},
+            {"id": OWNER_ID, "org_id": ORG_ID, "org_role": "owner", "nome": "Dono", "telefone": OWNER_TELEFONE},
             {"id": ADMIN_ID, "org_id": ORG_ID, "org_role": "admin"},
             {"id": CORRETOR_ID, "org_id": ORG_ID, "org_role": "corretor"},
             {"id": MEMBER_ID, "org_id": ORG_ID, "org_role": "member"},
@@ -133,7 +134,7 @@ class World:
         self.sw.set_table_data("julia_aviso_privacidade", [])
         self.sw.set_table_data("whatsapp_connections", [])
         for t in ("julia_contatos", "julia_interacoes", "julia_acoes_aplicadas", "julia_eventos", "julia_solicitacoes_titular",
-                  "julia_staff", "julia_protecao_config", "julia_numeros_bloqueados"):
+                  "julia_staff", "julia_protecao_config", "julia_numeros_bloqueados", "julia_relatorio_destino", "julia_relatorios"):
             self.sw.set_table_data(t, [])
         # the platform default texts are DATA (migration julia_v2_espelhos): this is the migration's row, asserted equal to the SQL in
         # tests/services/test_julia_v2_espelhos_migration.py
@@ -188,6 +189,10 @@ class World:
     def contato(self, chat_id: str = LEAD_CHAT) -> dict[str, Any] | None:
         rows = self.rows("julia_contatos", connection_id=CONNECTION_ID, chat_id=chat_id)
         return rows[0] if rows else None
+
+    def seed_destino(self, usuario_id: str = OWNER_ID, modo: str = "usuario") -> None:
+        """The org's report destination (julia-v3 §12.5): WHO receives hand-off reports and alerts (their phone is the one set in noc)."""
+        self.sw.table("julia_relatorio_destino").insert({"org_id": ORG_ID, "modo": modo, "usuario_id": usuario_id}).execute()
 
     def notifications(self) -> list[dict[str, Any]]:
         return self.core.table("notifications").select("*").execute().data or []

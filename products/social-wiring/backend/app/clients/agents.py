@@ -143,6 +143,9 @@ class HandoffAction:
     #: The typed reason code (agents enum, labels live in agents' DB). None from an older agents build.
     motivo_codigo: Optional[str] = None
     seq: int = 0
+    #: julia-v3 (CONTRACT §12.4): the report agents built for this hand-off (`texto`, `resumo_conversa`, `perfil`,
+    #: `imoveis_oferecidos`, ...). None from an older agents build; an unknown / partial shape is tolerated downstream.
+    relatorio: Optional[dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -163,7 +166,7 @@ Action = Union[HandoffAction, JuliaAction]
 STATUS_RESPONDEU = ("respondido", "silencio", "handoff", "encerrado", "concluido")
 #: Nothing is sent to the lead and no action is applied: agents decided NOT to serve this message.
 STATUS_SEM_ATENDIMENTO = (
-    "agente_desligado", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
+    "agente_desligado", "agente_desligado_plataforma", "restrito_avaliacao", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
     "conversa_com_outro_agente", "controle_indisponivel", "lead_opt_out", "reengajamento_ignorado", "limite_atingido",
     "limite_taxa", "novo_lead_limitado", "loop_detectado",
 )
@@ -195,6 +198,9 @@ class QualificacaoResumo:
     score: Optional[int] = None
     faltando: tuple[str, ...] = ()
     estagios: tuple[str, ...] = ()
+    #: julia-v3 (CONTRACT §12.6): every listing code Julia offered this lead, ordered. None = this agents build does not
+    #: send it (SW leaves the mirror as it is); () = it sent an empty list.
+    imoveis_oferecidos: Optional[tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +254,8 @@ class AgentStatus:
     aceita_novos_leads: Optional[bool] = None
     threads_abertas: Optional[int] = None
     conteudo_completo: Optional[bool] = None
+    #: julia-v3 (CONTRACT §12.1): the PLATFORM kill switch is on (every org's Julia is off). None from an older agents build.
+    desligado_plataforma: Optional[bool] = None
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -260,7 +268,7 @@ class AgentStatus:
             "llm_configurado": self.llm_configurado,
         }
         # the controls summary is shown only when this agents build sends it (an older one does not)
-        for k in ("modo", "aceita_novos_leads", "threads_abertas", "conteudo_completo"):
+        for k in ("modo", "aceita_novos_leads", "threads_abertas", "conteudo_completo", "desligado_plataforma"):
             if getattr(self, k) is not None:
                 out[k] = getattr(self, k)
         return out
@@ -1104,12 +1112,16 @@ def parse_qualificacao_resumo(raw: Any) -> Optional[QualificacaoResumo]:
     faltando = raw.get("faltando")
     # A-RT2 names it `estagios_ordem`; older builds sent nothing (kept optional)
     estagios = raw.get("estagios_ordem", raw.get("estagios"))
+    oferecidos = raw.get("imoveis_oferecidos")
     return QualificacaoResumo(
         versao=_opt_str(raw, "versao"),
         estagio=_opt_str(raw, "estagio"),
         score=score if isinstance(score, int) and not isinstance(score, bool) else None,
         faltando=tuple(str(f) for f in faltando if isinstance(f, str)) if isinstance(faltando, list) else (),
         estagios=tuple(str(e) for e in estagios if isinstance(e, str)) if isinstance(estagios, list) else (),
+        imoveis_oferecidos=(
+            tuple(str(c).strip() for c in oferecidos if isinstance(c, str) and c.strip()) if isinstance(oferecidos, list) else None
+        ),
     )
 
 
@@ -1146,6 +1158,7 @@ def parse_turn_result(body: Any) -> TurnResult:
         if a["type"] == "handoff":
             actions.append(HandoffAction(
                 motivo=str(a.get("motivo") or "")[:280], motivo_codigo=_opt_str(a, "motivo_codigo"), seq=seq,
+                relatorio=a["relatorio"] if isinstance(a.get("relatorio"), dict) else None,
             ))
             continue
         # A non-handoff action; an unknown type is kept so the apply service can report `acao_sem_handler`.
@@ -1220,6 +1233,7 @@ def parse_agent_status(body: Any) -> AgentStatus:
     aceita = body.get("aceita_novos_leads")
     abertas = body.get("threads_abertas")
     completo = body.get("conteudo_completo")
+    plataforma = body.get("desligado_plataforma")
     return AgentStatus(
         agent_key=_need(body, "agent_key", str),
         nome=_need(body, "nome", str),
@@ -1232,6 +1246,7 @@ def parse_agent_status(body: Any) -> AgentStatus:
         aceita_novos_leads=aceita if isinstance(aceita, bool) else None,
         threads_abertas=abertas if isinstance(abertas, int) and not isinstance(abertas, bool) else None,
         conteudo_completo=completo if isinstance(completo, bool) else None,
+        desligado_plataforma=plataforma if isinstance(plataforma, bool) else None,
     )
 
 

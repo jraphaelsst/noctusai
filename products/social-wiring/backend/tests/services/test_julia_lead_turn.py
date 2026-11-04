@@ -137,6 +137,12 @@ class TestDisclosure:
         assert [e for e, _ in world.bus_events()].count("message.new") == 2
 
 
+def _avisos_de_handoff(world):
+    """The hand-off in-app notices (these worlds configure no report destination, so the owner also gets the daily
+    `julia_relatorio_sem_destino` notice -- its own test lives in test_julia_relatorio.py)."""
+    return [n for n in world.notifications() if (n.get("metadata") or {}).get("tipo") == julia.HANDOFF_KIND]
+
+
 # ── 11.4: handoff ───────────────────────────────────────────────────────────
 class TestHandoff:
     def _handoff(self, motivo="quer falar com um corretor"):
@@ -148,7 +154,7 @@ class TestHandoff:
         assert world.chat_row()["agente_pausado"] is True
         upserts = [p for e, p in world.bus_events() if e == "chat.upsert"]
         assert upserts[-1]["agente_pausado"] is True and upserts[-1]["chat_id"] == LEAD_CHAT
-        (n,) = world.notifications()
+        (n,) = _avisos_de_handoff(world)
         assert n["user_id"] == OWNER_ID and n["metadata"]["tipo"] == "julia_handoff"
         assert n["type"] == "system"  # core's CHECK: a product event is type=system, kind in metadata.tipo
         assert "Ana" in n["message"] and "quer falar com um corretor" in n["message"]
@@ -179,7 +185,7 @@ class TestHandoff:
         world.sw.table("whatsapp_connections").update({"agente_handoff_notificar_user_id": ADMIN_ID}).eq("id", CONNECTION_ID).execute()
         world.agents = FakeAgentsClient([self._handoff()])
         await _run(world, buffer_lead(world, LEAD_CHAT, ["humano"]))
-        assert [n["user_id"] for n in world.notifications()] == [ADMIN_ID]
+        assert [n["user_id"] for n in _avisos_de_handoff(world)] == [ADMIN_ID]
 
     async def test_a_demoted_admin_falls_back_to_the_connection_owner_and_logs_an_error(self, world, caplog):
         world.sw.table("whatsapp_connections").update({"agente_handoff_notificar_user_id": ADMIN_ID}).eq("id", CONNECTION_ID).execute()
@@ -187,14 +193,14 @@ class TestHandoff:
         world.agents = FakeAgentsClient([self._handoff()])
         with caplog.at_level("ERROR"):
             await _run(world, buffer_lead(world, LEAD_CHAT, ["humano"]))
-        assert [n["user_id"] for n in world.notifications()] == [OWNER_ID]
+        assert [n["user_id"] for n in _avisos_de_handoff(world)] == [OWNER_ID]
         assert any("no longer owner/admin" in r.message for r in caplog.records)
 
     async def test_a_corretor_target_is_never_notified(self, world):
         world.sw.table("whatsapp_connections").update({"agente_handoff_notificar_user_id": CORRETOR_ID}).eq("id", CONNECTION_ID).execute()
         world.agents = FakeAgentsClient([self._handoff()])
         await _run(world, buffer_lead(world, LEAD_CHAT, ["humano"]))
-        assert [n["user_id"] for n in world.notifications()] == [OWNER_ID]
+        assert [n["user_id"] for n in _avisos_de_handoff(world)] == [OWNER_ID]
 
     async def test_a_notification_failure_never_undoes_the_pause(self, world):
         world.agents = FakeAgentsClient([self._handoff()])
@@ -209,7 +215,7 @@ class TestHandoff:
     async def test_the_motivo_is_escaped_and_capped_in_the_notification(self, world):
         world.agents = FakeAgentsClient([self._handoff("<script>alert(1)</script>" + "x" * 500)])
         await _run(world, buffer_lead(world, LEAD_CHAT, ["humano"]))
-        msg = world.notifications()[0]["message"]
+        msg = _avisos_de_handoff(world)[0]["message"]
         assert "<script>" not in msg and "&lt;script&gt;" in msg
         assert len(msg) < 500
 

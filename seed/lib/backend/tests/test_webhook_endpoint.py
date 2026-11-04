@@ -370,3 +370,39 @@ def test_endpoint_basic_scheme_unset_secret_401s_when_bypass_disabled():
     )
 
     assert resp.status_code == 401
+
+
+# -- waha ---------------------------------------------------------------------
+_WAHA_BODY = b'{"event":"message","session":"default","payload":{"id":"false_5511988887777@c.us_3EB0A1","body":"oi"}}'
+_WAHA_KEY = "waha-hmac-key"  # signatures below: openssl dgst -hmac, independent of the code under test
+_WAHA_SHA512 = "8ad505e47157e1ffbdcdf5d8b70308c5a6204986f0d19a3d5969c344b040031bc9caa464344acde770539d49881d9800108ed0fde8baf3bedc65494b46fcea0e"
+_WAHA_SHA256 = "7447eb43c1dea7d7886db712fbda306d2aee004dfbb90aa8867f072fdd938cc1"
+
+
+def _waha_client() -> TestClient:
+    return _make_app(webhook_endpoint(secret_resolver=static_secret_resolver(_WAHA_KEY), scheme="waha", bypass_when_unset=False))
+
+
+def test_waha_scheme_accepts_a_real_waha_shaped_call():
+    tc = _waha_client()
+    for headers in (
+        {"X-Webhook-Hmac": _WAHA_SHA512, "X-Webhook-Hmac-Algorithm": "sha512"},
+        {"X-Webhook-Hmac": _WAHA_SHA512},                                          # algorithm header absent: sha512
+        {"X-Webhook-Hmac": _WAHA_SHA256, "X-Webhook-Hmac-Algorithm": "sha256"},
+    ):
+        assert tc.post("/wh", content=_WAHA_BODY, headers=headers).status_code == 200
+
+
+def test_waha_scheme_is_a_strict_401_otherwise():
+    tc = _waha_client()
+    cases = [
+        {},                                                                                   # missing header
+        {"X-Webhook-Hmac-SHA256": _WAHA_SHA256},                                              # the OLD (never WAHA's) header
+        {"X-Webhook-Hmac": _WAHA_SHA512, "X-Webhook-Hmac-Algorithm": "md5"},                  # unlisted algorithm
+        {"X-Webhook-Hmac": _WAHA_SHA512, "X-Webhook-Hmac-Algorithm": "sha256"},               # algorithm does not match the digest
+        {"X-Webhook-Hmac": "0" * 128, "X-Webhook-Hmac-Algorithm": "sha512"},
+    ]
+    for headers in cases:
+        assert tc.post("/wh", content=_WAHA_BODY, headers=headers).status_code == 401, headers
+    tampered = _WAHA_BODY.replace(b'"oi"', b'"tchau"')
+    assert tc.post("/wh", content=tampered, headers={"X-Webhook-Hmac": _WAHA_SHA512}).status_code == 401
