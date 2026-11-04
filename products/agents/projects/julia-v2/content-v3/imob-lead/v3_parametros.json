@@ -1,0 +1,102 @@
+{
+ "minimo_para_ofertar": {
+  "todos": [
+   {
+    "criterio": "operacao",
+    "op": "preenchido"
+   },
+   {
+    "todos": [
+     {
+      "criterio": "prazo_decisao",
+      "op": "preenchido"
+     },
+     {
+      "algum": [
+       {
+        "criterio": "forma_pagamento",
+        "op": "preenchido"
+       },
+       {
+        "criterio": "precisa_vender_atual",
+        "op": "preenchido"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "algum": [
+     {
+      "id": "ofertar.perfil",
+      "todos": [
+       {
+        "criterio": "faixa_preco",
+        "op": "preenchido"
+       },
+       {
+        "algum": [
+         {
+          "criterio": "regioes",
+          "op": "preenchido"
+         },
+         {
+          "criterio": "trabalho_define_local",
+          "op": "preenchido"
+         }
+        ]
+       },
+       {
+        "algum": [
+         {
+          "criterio": "tipo_imovel",
+          "op": "preenchido"
+         },
+         {
+          "criterio": "quartos_min",
+          "op": "preenchido"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "ofertar.campanha",
+      "criterio": "interesse_campanha",
+      "op": "em",
+      "valores": [
+       "esse_e_similares",
+       "aberto"
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "lote_ofertas": 3,
+ "score_max": 100,
+ "eixos": {
+  "fit": {
+   "max": 40
+  },
+  "intencao": {
+   "max": 40,
+   "decaimento": [
+    {
+     "apos_dias": 14,
+     "fator": 0.5
+    },
+    {
+     "apos_dias": 45,
+     "fator": 0
+    }
+   ]
+  },
+  "urgencia": {
+   "max": 20
+  }
+ },
+ "pedir_identificacao_quando": {
+  "evento": "quer_visitar"
+ }
+}

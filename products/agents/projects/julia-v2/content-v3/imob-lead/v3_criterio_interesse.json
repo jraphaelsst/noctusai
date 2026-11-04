@@ -1,0 +1,73 @@
+{
+ "itens": [
+  {
+   "chave": "interesse_campanha",
+   "grupo": "interesse",
+   "rotulo": "Interesse no imóvel da campanha",
+   "descricao_modelo": "Lead de anúncio: depois de confirmar que o imóvel do anúncio é o de interesse, se quer ver opções PARECIDAS com ele (esse_e_similares), prefere DESCREVER o imóvel ideal (descrever_ideal), quer só aquele (so_esse) ou está aberto a qualquer opção (aberto). Sem anúncio de origem, registre nao_se_aplica só quando o lead disser que não veio de um anúncio.",
+   "tipo": "enum",
+   "ordem": 10,
+   "ativo": true,
+   "eixo": "intencao",
+   "escopo": "sdr",
+   "pontuacao": {
+    "opcoes": {
+     "aberto": 5,
+     "so_esse": 5,
+     "esse_e_similares": 5,
+     "descrever_ideal": 5
+    }
+   },
+   "opcoes": [
+    {
+     "valor": "so_esse",
+     "rotulo": "Só esse imóvel",
+     "descricao_modelo": "quer saber apenas do imóvel do anúncio",
+     "sinonimos": [
+      "só esse",
+      "só ele",
+      "esse mesmo"
+     ]
+    },
+    {
+     "valor": "esse_e_similares",
+     "rotulo": "Ver parecidos",
+     "descricao_modelo": "quer ver opções parecidas com o imóvel do anúncio",
+     "sinonimos": [
+      "parecidos",
+      "similares",
+      "outras parecidas",
+      "opções parecidas"
+     ]
+    },
+    {
+     "valor": "descrever_ideal",
+     "rotulo": "Descrever o ideal",
+     "descricao_modelo": "prefere descrever como é o imóvel ideal para ele",
+     "sinonimos": [
+      "quero descrever",
+      "vou te falar o que procuro",
+      "descrever",
+      "o que eu procuro"
+     ]
+    },
+    {
+     "valor": "aberto",
+     "rotulo": "Aberto a opções",
+     "descricao_modelo": "está aberto a outras opções além do anúncio",
+     "sinonimos": [
+      "outras opções",
+      "qualquer um",
+      "aberto"
+     ]
+    },
+    {
+     "valor": "nao_se_aplica",
+     "rotulo": "Sem anúncio",
+     "descricao_modelo": "o contato não veio de um anúncio de imóvel",
+     "sinonimos": []
+    }
+   ]
+  }
+ ]
+}

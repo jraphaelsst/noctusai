@@ -1,0 +1,5 @@
+{"itens": [
+ {"chave": "contexto.rotulo_fase_testes", "conteudo": "Fase de testes"},
+ {"chave": "ferramenta.resultado.recusa.documento_nao_encontrado", "conteudo": "Não encontrei essa mensagem do lead nesta conversa. Use o identificador de uma mensagem com imagem ou arquivo que ele enviou."},
+ {"chave": "ferramenta.resultado.recusa.documento_sem_midia", "conteudo": "Essa mensagem não traz imagem nem arquivo. Só registre quando o lead enviar a foto ou o arquivo do documento."}
+]}

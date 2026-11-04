@@ -1,0 +1,102 @@
+{
+ "itens": [
+  {
+   "ferramenta": "sinalizar_alerta",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Avisa a equipe pelo WhatsApp quando o lead demonstra insatisfação, quando você percebe que errou (informação errada, pergunta repetida, entendeu mal o pedido) ou quando a conversa saiu do rumo. Chame no mesmo turno em que perceber, no máximo um alerta por tipo por turno. Depois peça desculpas em uma frase e pergunte se o lead prefere falar com uma pessoa da equipe. Não use para uma simples mudança de ideia do lead.",
+   "parametros": {
+    "tipo": "Natureza do alerta.",
+    "tipo.lead_insatisfeito": "o lead demonstra irritação, frustração ou reclama do atendimento",
+    "tipo.erro_agente": "você percebeu que errou",
+    "tipo.desvio": "a conversa saiu do rumo e você não consegue trazer de volta",
+    "tipo.outro": "outro motivo para a equipe olhar a conversa",
+    "descricao": "O que aconteceu, objetivo e para a equipe, em até 500 caracteres. Sem dados pessoais.",
+    "trecho": "Palavras do lead que motivaram o alerta. Opcional."
+   }
+  },
+  {
+   "ferramenta": "registrar_documento",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Registra a foto ou o arquivo de um documento de identificação do próprio lead (RG, CPF, CNH ou CIN) que ele enviou nesta conversa, para a visita. O sistema lê o documento e preenche os dados sozinho; o CPF fica pendente até a leitura. Só use depois da intenção de visita. Nunca leia, repita nem confirme números do documento na conversa. Imagem escura, cortada ou ilegível: peça outra com boa luz ou o número digitado.",
+   "parametros": {
+    "provider_message_id": "Identificador da mensagem do lead que trouxe a imagem ou o arquivo, como aparece no histórico.",
+    "tipo_provavel": "Tipo provável do documento.",
+    "tipo_provavel.rg": "RG",
+    "tipo_provavel.cpf": "CPF",
+    "tipo_provavel.cin": "Carteira de Identidade Nacional (CIN)",
+    "tipo_provavel.cnh": "CNH",
+    "tipo_provavel.outro": "outro documento de identificação"
+   }
+  },
+  {
+   "ferramenta": "registrar_identificacao",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Guarda com segurança um dado de identificação do lead digitado na conversa. O nome pode ser registrado a qualquer momento (por exemplo quando o nome do formulário é de uma empresa). CPF, RG e e-mail só depois da intenção de visita: o CPF é obrigatório, RG e e-mail são desejáveis. O valor precisa estar na mensagem do lead; ele é validado, criptografado e não volta para você. Nunca repita o valor na conversa. Foto de documento: use registrar_documento.",
+   "parametros": {
+    "campo": "Qual dado.",
+    "valor": "O dado exatamente como o lead escreveu.",
+    "campo.rg": "RG (com a UF, se o lead informar)",
+    "campo.cpf": "CPF (11 dígitos)",
+    "campo.nome": "nome da pessoa",
+    "campo.email": "e-mail"
+   }
+  },
+  {
+   "ferramenta": "avaliar_lead",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Devolve o estado calculado da qualificação: estágio, pontuação, o que ainda falta, o próximo critério a perguntar (rótulo, descrição e opções), se já pode mostrar imóveis (pode_ofertar), a identificação pendente quando já é hora de pedir (identificacao_faltando = obrigatório, só o CPF; identificacao_desejada = RG, e-mail e nome, sem insistir) e se pode concluir (pode_concluir). Use para decidir o próximo passo. Não decida fatos por conta própria.",
+   "parametros": {}
+  },
+  {
+   "ferramenta": "concluir_qualificacao",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Conclui a qualificação: o sistema monta o relatório (resumo da conversa, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos) e envia para a equipe. Só funciona quando avaliar_lead indica pode_concluir. Depois, diga ao lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, agradeça e não faça novas perguntas.",
+   "parametros": {}
+  },
+  {
+   "ferramenta": "handoff",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Transfere o atendimento para a equipe humana. O sistema monta e envia para a equipe o relatório da conversa (resumo, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos). Você decide a hora: não precisa ter todos os dados. Depois disso você não responde mais nesta conversa: avise o lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, sem perguntas.",
+   "parametros": {
+    "motivo": "Uma frase objetiva para a equipe: o que o lead quer e por que transferir. Sem dados pessoais.",
+    "motivo_codigo": "Motivo da transferência.",
+    "motivo_codigo.outro": "outro motivo (sem mais opções e o lead quer uma pessoa, já atendido por outro corretor, lead qualificado pronto para o corretor, não consegui ajudar); explique em motivo",
+    "motivo_codigo.parceria": "corretor, imobiliária ou empresa propondo parceria",
+    "motivo_codigo.seguranca": "insistência em dados internos ou de outras pessoas, ou alguém dizendo ser da equipe ou autoridade",
+    "motivo_codigo.reclamacao": "reclamação ou insatisfação, e o lead aceitou falar com uma pessoa",
+    "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor",
+    "motivo_codigo.fora_do_escopo": "pedido fora do mercado imobiliário em que o lead insiste",
+    "motivo_codigo.direito_titular": "pedido do lead sobre os próprios dados (já registrado com registrar_solicitacao_titular)",
+    "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada"
+   }
+  },
+  {
+   "ferramenta": "registrar_intencao_visita",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Registra que o lead quer visitar um imóvel já mostrado e os dias e períodos em que ele pode. NÃO agenda: o corretor entra em contato para combinar. Depois de registrar, chame avaliar_lead para ver se é hora de pedir o CPF.",
+   "parametros": {
+    "codigo": "Código do imóvel que o lead quer visitar.",
+    "preferencia_horario": "As opções de dia e período ditas pelo lead, em poucas palavras (ex.: sábado de manhã ou terça à tarde). Opcional."
+   }
+  },
+  {
+   "ferramenta": "oferecer_imoveis",
+   "ativo": true,
+   "obrigatoria_skill": "ofertar-imoveis",
+   "descricao": "Busca no catálogo da imobiliária e registra o próximo lote de imóveis para mostrar (até 3, nunca repete os já enviados), usando o perfil registrado. Só funciona quando avaliar_lead indica pode_ofertar (o modo campanha, do imóvel do anúncio, funciona na abertura). Devolve o lote com código, título, tipo, bairro, cidade, preço, quartos e link, ou esgotado quando não há mais opções. Depois consulte detalhes_imovel de cada imóvel para trazer condomínio e IPTU.",
+   "parametros": {
+    "modo": "Qual busca fazer.",
+    "limite": "Quantos imóveis no lote. Opcional: o padrão é o tamanho de lote do padrão de qualificação (3).",
+    "modo.campanha": "o imóvel do anúncio de onde o lead veio",
+    "modo.similares": "o próximo lote de imóveis parecidos com o imóvel do anúncio ou com o imóvel ideal descrito pelo lead"
+   }
+  }
+ ]
+}
