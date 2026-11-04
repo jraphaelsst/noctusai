@@ -71,6 +71,26 @@ class VistaCRMAdapter(Protocol):
         """
         ...
 
+    async def search_imoveis(
+        self,
+        *,
+        filter_: Optional[dict] = None,
+        order: Optional[dict] = None,
+        max_results: int = 200,
+        with_detalhes: bool = False,
+    ) -> ImovelPage:
+        """Filtered catalog read: up to `max_results` imóveis matching a Vista `filter`.
+
+        `filter_` is Vista's own `pesquisa.filter` (equality / list-IN / range /
+        comparison operators, `KB § INTEGRATIONS/vista.md` § 2); `order` its
+        `pesquisa.order`. Pages are walked for the caller (the 50-per-page cap
+        is the adapter's concern, not the consumer's). `ImovelPage.total` is
+        the upstream match count, which can exceed `len(items)` when capped.
+        An empty match is an empty page, never an error; a transport / auth /
+        field failure raises (no silent fallback).
+        """
+        ...
+
     async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
         """Read-only photo gallery for one imóvel code.
 

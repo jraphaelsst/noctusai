@@ -25,6 +25,7 @@ now we keep the port verbatim to minimize behavioral risk.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -52,6 +53,10 @@ from noctusai_lib.integrations.vista.client import (
 from noctusai_lib.integrations.vista.imovel_normalizer import vista_to_imovel
 
 logger = logging.getLogger(__name__)
+
+#: Vista caps `paginacao.quantidade` at 50; concurrent requests per search stay small (rate courtesy).
+SEARCH_PAGE_SIZE = 50
+SEARCH_CONCURRENCY = 4
 
 
 # Alias the existing seed names to the adapter-layer vocabulary the
@@ -340,6 +345,78 @@ class VistaRESTAdapter:
             total=int(pagination.get("total") or len(imoveis)),
             page=int(pagination.get("pagina") or page),
             pages=int(pagination.get("paginas") or 1),
+        )
+
+    async def search_imoveis(
+        self,
+        *,
+        filter_: dict | None = None,
+        order: dict | None = None,
+        max_results: int = 200,
+        with_detalhes: bool = False,
+    ) -> ImovelPage:
+        """Filtered catalog read (see `VistaCRMAdapter.search_imoveis`).
+
+        Page 1 reports the match count and page count (`showtotal`); the
+        remaining pages (up to `max_results`) are fetched concurrently,
+        bounded by `SEARCH_CONCURRENCY`. `with_detalhes` adds one `detalhes`
+        call per imóvel (the only source of `Caracteristicas`), also bounded;
+        a single imóvel's detail failure is logged and that imóvel is yielded
+        from its listar row, exactly like `list_imoveis`.
+        """
+        client = self._client()
+        fields = await calibrator.get_imovel_list_fields(client)
+        wanted_pages = max(1, -(-max(max_results, 1) // SEARCH_PAGE_SIZE))
+
+        async def fetch(page: int) -> tuple[list[dict], dict]:
+            try:
+                result = await client.listar_imoveis(
+                    fields=fields, filter_=filter_, order=order, page=page, page_size=SEARCH_PAGE_SIZE
+                )
+            except VistaNotFound:
+                return [], {}
+            return extract_items(result.data)
+
+        rows, pagination = await fetch(1)
+        total_pages = int(pagination.get("paginas") or 1)
+        last_page = min(total_pages, wanted_pages)
+        if last_page > 1:
+            gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
+
+            async def guarded(page: int) -> tuple[list[dict], dict]:
+                async with gate:
+                    return await fetch(page)
+
+            for more, _ in await asyncio.gather(*(guarded(p) for p in range(2, last_page + 1))):
+                rows.extend(more)
+        rows = rows[:max_results]
+
+        details: dict[str, dict] = {}
+        if with_detalhes and rows:
+            detail_fields = await calibrator.get_imovel_detail_fields(client)
+            gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
+
+            async def detail(codigo: str) -> None:
+                async with gate:
+                    try:
+                        res = await client.detalhes_imovel(codigo, fields=detail_fields)
+                    except VistaError as exc:
+                        logger.warning(
+                            "vista: detalhes failed for %s (%s) — yielding listar-only imóvel without caracteristicas",
+                            codigo, type(exc).__name__,
+                        )
+                        return
+                    if isinstance(res.data, dict):
+                        details[codigo] = res.data
+
+            await asyncio.gather(*(detail(r["Codigo"]) for r in rows if r.get("Codigo")))
+
+        imoveis = [vista_to_imovel(listing=r, detalhes=details.get(r.get("Codigo"))) for r in rows]
+        return ImovelPage(
+            items=imoveis,
+            total=int(pagination.get("total") or len(imoveis)),
+            page=1,
+            pages=total_pages,
         )
 
     def _map_response(self, code: str, data: dict) -> PropertyData:

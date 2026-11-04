@@ -647,6 +647,11 @@ Authored 2026-10-24 (F86). `certidao_consultas.documento` DROP NOT NULL + CHECK 
 
 Authored 2026-10-24 (owner direction: contract specifications are selectable and scope the readiness). Adds `atendimento_contratos.especificacoes TEXT[]` + `especificacoes_versao INTEGER` (both NULL = legacy mode, readiness follows the derived switches). No CHECK — the vocabulary is the versioned code catalogue `contrato_gerador/especificacoes.py`, validated on write. Additive, idempotent. Apply BEFORE deploying the image that mounts `PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/especificacoes` (an un-migrated DB 500s that write; reads tolerate the absent columns via `row.get`).
 
+## 314 — julia_catalogo_fonte — NOT APPLIED
+
+Authored 2026-11-03 (julia-v3, CONTRACT 12.7). New table `julia_catalogo_config(org_id PK, fonte 'vista'|'espelho' DEFAULT 'espelho', updated_by, updated_at)`: which catalog Julia's listing tools read per org. RLS service-role only (julia_* lockdown, 289). A missing row = `espelho`, so applying it changes nothing until `PUT /api/julia/catalogo-fonte` flips an org. Apply BEFORE deploying the image: the tools read the config row on every call (an un-migrated DB 500s the three listing tools). After deploy, the operator sets the One org to `vista`.
+
 ## 315 — imovel_notas — NOT APPLIED
 
 Authored 2026-11-03 (owner direction: mirror + owned overlay with CRUD on what is ours). New table `social_wiring.imovel_notas` (internal notes per imóvel, FK to `imovel_registry`, RLS own-org select + service_role). Additive, idempotent. Apply BEFORE deploying the image that mounts `GET/POST /api/imoveis/{codigo}/notas` and `PATCH/DELETE .../notas/{nota_id}` (an un-migrated DB 500s those routes; no other route reads the table).
+

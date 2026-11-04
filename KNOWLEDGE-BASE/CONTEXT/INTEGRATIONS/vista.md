@@ -1734,6 +1734,65 @@ The new adapter and §5's `VistaClient` co-exist. The adapter is consumer-facing
 
 ---
 
+## 6b. Julia catalog map — Vista LIVE (julia-v3, 2026-11-03)
+
+> Julia's listing tools (`buscar_imoveis`, `imovel_campanha`, `detalhes_imovel`) can read Vista live instead of the `imoveis` mirror. The source is **per org** (`social_wiring.julia_catalogo_config.fonte`, migration 314; `GET|PUT /api/julia/catalogo-fonte`, org admin; a missing row = `espelho`). Code: SW `app/services/julia_catalogo_service.py` (`CatalogoImoveis` seam: `EspelhoCatalogo` / `VistaCatalogo`) over the seed `VistaCRMAdapter.search_imoveis` (Fake + Real; `§ 6a`). `consultar_empreendimento` still reads the mirror (`NOC-REMEDIATE[julia-empreendimento-vista-live]`).
+
+**New seed method.** `search_imoveis(*, filter_, order, max_results=200, with_detalhes=False) -> ImovelPage` — a filtered catalog read: page 1 reports `total`/`paginas`, the remaining pages (50 each, the server cap) are fetched concurrently (4 at a time) up to `max_results`; `with_detalhes` adds one `detalhes` call per imóvel (the ONLY source of `Caracteristicas`; a single failure is logged and that imóvel is yielded listar-only). A 404/empty match is an empty page; any other failure raises.
+
+**Tool arg → Vista `filter`** (server-side narrowing only; `julia_busca_imoveis` re-applies every rule in Python):
+
+| Tool arg | Vista `filter` |
+|---|---|
+| `operacao` compra / aluguel | `Status` in `["Venda","Venda e Aluguel"]` / `["Aluguel","Venda e Aluguel"]` |
+| (always) | `ExibirNoSite = "Sim"` (+ a Python published check) |
+| `preco_min` / `preco_max` | `ValorVenda` / `ValorLocacao`: the widest widening band (−15% … +20%) as `[lo, hi]`; one-sided → `[">=", lo]` / `["<=", hi]` |
+| `quartos_min` | `Dormitorios` `[">=", quartos_min − 1]` (the tipologia widening lowers it by one); 0 → not sent |
+| `vagas_min` | `Vagas` `[">=", n]` |
+| `cidade` | `Cidade` `["like", "%cidade%"]` (the tenant has `Embu das Artes` / `Embu Das Artes`) |
+| `bairro` / `bairros` | `Bairro` `["like", "%bairro%"]`, **one query per region** (≤ 3 regions; more → not sent). The Python match (bairro OR empreendimento, accent/case-folded) decides |
+| `tipo` | **not sent** — `Categoria` is matched by stem in Python (`casa` also takes `Casa em Condomínio`; the tipologia widening drops it) |
+| `excluir_codigos` | **not sent** — applied in Python (a `["!=", x]` filter holds one value) |
+| `similar_a` | `imoveis/listar` (`Codigo`) + `imoveis/detalhes` of the reference (`get_imovel`); bairro / price band derived as for the mirror |
+| ordering | `order = {"DataAtualizacao": "desc"}`; at most 500 candidates (60 when the lead asked for features — see below) |
+
+**Features cost a call each.** `Caracteristicas` exist only on `detalhes`. When the lead asked for items (`itens_essenciais` / `itens_desejaveis` / `caracteristicas`) the candidates are enriched (cap 60, so `restantes_estimados` is a lower bound); otherwise only the ≤ 5 returned listings are enriched for the card's `destaques`.
+
+**Vista field → `_item` key** (the mirror's column names are the common row shape):
+
+| Vista field | row key | `_item` / detalhes key |
+|---|---|---|
+| `Codigo` | `codigo` | `codigo` |
+| `TituloSite` | `titulo` | `titulo` (fallback `Categoria`) |
+| `Categoria` | `categoria` | `tipo` |
+| `Status` / `FinalidadeStatus` | `status` / `finalidades` | operation gate |
+| `Bairro` / `Cidade` / `UF` | `bairro` / `cidade` / `uf` | `bairro`, `cidade` |
+| `Empreendimento` | `empreendimento` | `condominio` |
+| `ValorVenda` / `ValorLocacao` | `valor_venda` / `valor_locacao` | `preco`, `preco_venda`, `preco_aluguel` |
+| `ValorCondominio` / `ValorIptu` | `valor_condominio` / `valor_iptu` | `valor_condominio`, `valor_iptu` (IPTU in `detalhes_imovel` only if the org opted in) |
+| `Dormitorios` / `Suites` / `Vagas` | same | `quartos`, `suites`, `vagas` |
+| `AreaPrivativa` (else `AreaTotal`) | `area_privativa` / `area_total` | `area_m2` |
+| `Caracteristicas` | `caracteristicas` | `destaques` (≤ 3) |
+| `DescricaoWeb` | `descricao_web` | `descricao` (detalhes) |
+| `Endereco` / `Numero` | `logradouro` / `numero` | `endereco` (only when the org opted into the full address) |
+| `Pavimentos` | `pavimentos` | `terreo_sem_escadas` check |
+| `DataAtualizacao` | `data_atualizacao` | owner-confirmation freshness |
+| `ExibirNoSite` | `exibir_no_site` | published gate |
+
+**Privacy allow-list.** The row is rebuilt field by field (`linha_de_imovel`); `Corretor`, `Observacoes`, `Chave`, `Matricula`, `InscricaoMunicipal`, the proprietário relation and `vista_raw` are never copied. Same as the mirror's `COLUNAS`.
+
+**Links.** Unchanged: the org's `link_imovel` template (Meu negócio › Perfil do WhatsApp), default `{site}/imovel/{codigo}`.
+
+**Owner-confirmed price/status** (`julia_proprietarios_contatos`) still overrides Vista's value, with provenance, exactly as for the mirror.
+
+**Error semantics.** Any Vista failure (not configured, 401/permission, per-field 400, 5xx, timeout, malformed payload) is the tool error `catalogo_indisponivel` (HTTP 503 `{"error": {"code": "catalogo_indisponivel"}}`); it is logged by type and **never** falls back to the mirror (a stale answer that looks fresh is worse than an honest "unavailable"). An empty match is a normal empty result; an unpublished / unknown code is `encontrado: false` (detalhes) or `[]` (campanha).
+
+**Credentials.** The key is env-level (`VISTA_API_KEY`, one tenant for every org): `NOC-REMEDIATE[vista-key-per-org]` at the adapter construction.
+
+**Live verification status.** Filter operators (`Status` list, ranges, `[">=", n]`, `like`) are the ones §2 documents; `Bairro like` and the multi-value `Status` list were NOT re-probed live for this feature (the 2026-11-03 attempt returned empty pages for every filter incl. a bare listing, and the follow-up probe was blocked) — re-probe (a read-only `imoveis/listar` with each filter) before the One org is flipped to `vista`.
+
+---
+
 ## 7. Future MCP design notes
 
 When an in-repo MCP server is built (or the external-environment one

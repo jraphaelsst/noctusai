@@ -29,6 +29,54 @@ from noctusai_lib.domain.real_estate import (
 )
 
 
+#: Vista `filter` key -> `Imovel` attribute, for the keys `search_imoveis` can evaluate in memory.
+_FILTER_ATTRS = {
+    "Codigo": "codigo", "Status": "status", "Categoria": "categoria", "Bairro": "bairro", "Cidade": "cidade",
+    "ValorVenda": "valor_venda", "ValorLocacao": "valor_locacao", "Dormitorios": "dormitorios", "Suites": "suites",
+    "Vagas": "vagas", "Empreendimento": "empreendimento", "DataAtualizacao": "data_atualizacao",
+}
+_COMPARATORS = (">", "<", ">=", "<=", "like", "!=")
+
+
+def _norm(value: Any) -> Any:
+    return value.casefold() if isinstance(value, str) else value
+
+
+def _num(value: Any) -> Any:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _like(text: Any, pattern: Any) -> bool:
+    import re
+
+    if text is None:
+        return False
+    rx = "".join(".*" if ch == "%" else re.escape(ch) for ch in str(pattern))
+    return re.fullmatch(rx, str(text), flags=re.IGNORECASE | re.DOTALL) is not None
+
+
+def _match(actual: Any, wanted: Any) -> bool:
+    """One filter clause, Vista's operator grammar: equality, list-IN, `[lo, hi]` range, `[op, value]` comparison."""
+    if isinstance(wanted, list):
+        if len(wanted) == 2 and wanted[0] in _COMPARATORS:
+            op, ref = wanted
+            if op == "like":
+                return _like(actual, ref)
+            if op == "!=":
+                return _norm(actual) != _norm(ref)
+            if actual is None:
+                return False
+            a, r = (_num(actual), _num(ref)) if not hasattr(actual, "isoformat") else (actual.isoformat(), str(ref))
+            return {">": a > r, "<": a < r, ">=": a >= r, "<=": a <= r}[op]
+        if len(wanted) == 2 and all(isinstance(x, (int, float)) for x in wanted):
+            return actual is not None and wanted[0] <= _num(actual) <= wanted[1]
+        return _norm(actual) in {_norm(x) for x in wanted}
+    return _norm(actual) == _norm(wanted)
+
+
 class FakeVistaAdapter:
     """In-memory ``VistaCRMAdapter`` stand-in.
 
@@ -87,6 +135,39 @@ class FakeVistaAdapter:
     async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
         """Read-only photo gallery for one imóvel; ``[]`` when unseeded."""
         return parse_imovel_fotos(self._fotos.get(codigo, {}))
+
+    async def search_imoveis(
+        self,
+        *,
+        filter_: Optional[dict] = None,
+        order: Optional[dict] = None,
+        max_results: int = 200,
+        with_detalhes: bool = False,
+    ) -> ImovelPage:
+        """Evaluate a Vista `filter` over the seeded imóveis (same operator grammar as the Real).
+
+        Supported keys: `_FILTER_ATTRS` plus `ExibirNoSite` ("Sim" matches anything not explicitly
+        unpublished, mirroring the real key's published-only grant). An unsupported key raises
+        `ValueError` rather than silently matching everything -- a Fake that ignores a filter would
+        let a consumer's wrong filter pass its tests. `with_detalhes` is accepted and ignored.
+        """
+        items = list(self._imoveis.values())
+        for key, wanted in (filter_ or {}).items():
+            if key == "ExibirNoSite":
+                want_pub = _norm(wanted) == "sim"
+                items = [i for i in items if (i.exibir_no_site is not False) == want_pub]
+            elif key in _FILTER_ATTRS:
+                attr = _FILTER_ATTRS[key]
+                items = [i for i in items if _match(getattr(i, attr), wanted)]
+            else:
+                raise ValueError(f"FakeVistaAdapter.search_imoveis: unsupported filter key {key!r}")
+        for key, direction in (order or {}).items():
+            attr = _FILTER_ATTRS.get(key)
+            if attr is None:
+                raise ValueError(f"FakeVistaAdapter.search_imoveis: unsupported order key {key!r}")
+            items.sort(key=lambda i, a=attr: (getattr(i, a) is None, getattr(i, a)), reverse=str(direction).lower() == "desc")
+        total = len(items)
+        return ImovelPage(items=items[:max_results], total=total, page=1, pages=max(1, (total + 49) // 50))
 
     async def list_imoveis(
         self, *, page: int = 1, page_size: int = 50, with_detalhes: bool = False
