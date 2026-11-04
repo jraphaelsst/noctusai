@@ -17,8 +17,9 @@ from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
 
-from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client, get_settings
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client, get_settings, get_platform_admin_check
 from app.services import julia_agente_service as agente
+from app.services.julia_edicao import exigir_admin_da_plataforma
 from app.services import julia_conhecimento_service as svc
 
 logger = logging.getLogger(__name__)
@@ -67,10 +68,12 @@ def put_secao(
     auth: tuple = Depends(get_current_user_org),
     client: Any = Depends(get_conhecimento_client),
     nome_agente: Optional[str] = Depends(get_nome_agente),
+    e_admin_da_plataforma=Depends(get_platform_admin_check),
     request: Request = None,
 ) -> dict[str, Any]:
     user, _token, raw_org = auth
-    require_org_admin_for(get_core_client(), auth, request, "O conhecimento da Julia")
+    # Julia's knowledge is NoctusAI's to write (owner 2026-11-04); an org admin only reads it.
+    exigir_admin_da_plataforma(e_admin_da_plataforma, auth, "conhecimento")
     org_id = coerce_org_uuid(raw_org)
     user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
     return {"data": svc.salvar_secao(client, org_id, secao, payload.dados, payload.versao, user_id, nome_agente)}

@@ -27,7 +27,7 @@ class Scene:
         return getattr(self.tc, m)(url, headers=H, **({"json": json} if json is not None else {}), **kw)
 
 
-def _scene(role):
+def _scene(role, plataforma=False):
     w = World()
     w.seed_connection(user_id=OWNER_ID)
     for t in TABLES:
@@ -45,13 +45,15 @@ def _scene(role):
         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=w.root),
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=w.admin),
     ):
+        from app.dependencies import get_platform_admin_check
         from app.main import app
         from app.routers.julia_equipe_whatsapp_router import get_equipe_client, get_equipe_core
         from app.routers.julia_protecao_router import get_protecao_client, get_protecao_core
 
         bind_consent_module_to_mock(w.root)
         overrides = {get_equipe_client: lambda: w.sw, get_equipe_core: lambda: w.root,
-                     get_protecao_client: lambda: w.sw, get_protecao_core: lambda: w.root}
+                     get_protecao_client: lambda: w.sw, get_protecao_core: lambda: w.root,
+                     get_platform_admin_check: lambda: (lambda uid: plataforma)}
         app.dependency_overrides.update(overrides)
         yield Scene(TestClient(app), w)
         for k in overrides:
@@ -75,8 +77,34 @@ def admin(override_settings_factory):
 
 
 @pytest.fixture
+def platform(override_settings_factory):
+    yield from _scene("owner", plataforma=True)
+
+
+@pytest.fixture
 def member(override_settings_factory):
     yield from _scene("member")
+
+
+class TestPromptIsNoctusOnly:
+    """`prompt_documento_lead` is Julia's content: NoctusAI writes it (owner 2026-11-04). The numeric limits stay org-admin."""
+
+    PROMPT = "Devolva apenas o tipo do documento e um resumo curto, sem dados pessoais."
+
+    def test_an_org_admin_gets_403_edicao_restrita_and_the_prompt_is_unchanged(self, admin):
+        r = admin.req("put", f"{PROT}/config", {"prompt_documento_lead": self.PROMPT})
+        assert r.status_code == 403 and "edicao_restrita_plataforma" in r.text
+        assert admin.req("get", f"{PROT}/config").json()["data"]["prompt_documento_lead"] is None
+
+    def test_an_org_admin_still_saves_the_limits(self, admin):
+        assert admin.req("put", f"{PROT}/config", {"entrada_limite": 5}).status_code == 200
+
+    def test_a_platform_admin_saves_the_prompt(self, platform):
+        r = platform.req("put", f"{PROT}/config", {"prompt_documento_lead": self.PROMPT})
+        assert r.status_code == 200 and r.json()["data"]["prompt_documento_lead"] == self.PROMPT
+
+    def test_a_member_is_403_even_for_the_prompt(self, member):
+        assert member.req("put", f"{PROT}/config", {"prompt_documento_lead": self.PROMPT}).status_code == 403
 
 
 class TestAuth:

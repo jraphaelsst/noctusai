@@ -22,8 +22,9 @@ from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
 
-from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_scoped_admin_client
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_platform_admin_check, get_scoped_admin_client
 from app.services import julia_protecao_service as prot
+from app.services.julia_edicao import exigir_admin_da_plataforma
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +87,14 @@ def ler_config(
 def salvar_config(
     corpo: ConfigIn, request: Request = None, auth: tuple = Depends(get_current_user_org),
     client: Any = Depends(get_protecao_client), core: Any = Depends(get_protecao_core),
+    e_admin_da_plataforma=Depends(get_platform_admin_check),
 ) -> dict[str, Any]:
-    _admin(auth, request, core, "Os limites de proteção da Julia")
     campos = corpo.model_dump(exclude_unset=True)
+    if "prompt_documento_lead" in campos:
+        # The document-reading prompt is Julia's content: NoctusAI writes it (owner 2026-11-04). The numeric limits stay org-admin.
+        exigir_admin_da_plataforma(e_admin_da_plataforma, auth, "prompt_documento_lead")
+    else:
+        _admin(auth, request, core, "Os limites de proteção da Julia")
     return {"data": _config_payload(prot.salvar_config(client, _org(auth), str(auth[0].id), campos))}
 
 

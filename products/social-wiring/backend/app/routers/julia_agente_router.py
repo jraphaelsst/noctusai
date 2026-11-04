@@ -39,7 +39,9 @@ from app.clients.agents import (
 )
 from app.services import julia_contatos_service, julia_grant_sink, julia_thread_service
 from app.config import settings
+from app.services.julia_edicao import exigir_admin_da_plataforma
 from app.dependencies import (
+    get_platform_admin_check,
     coerce_org_uuid,
     get_admin_client,
     get_core_client,
@@ -127,10 +129,12 @@ def get_aviso(auth: tuple = Depends(get_current_user_org)) -> dict[str, Any]:
 
 @router.put("/api/julia/agente/aviso")
 def put_aviso(
-    payload: AvisoUpdate, auth: tuple = Depends(get_current_user_org), request: Request = None,
+    payload: AvisoUpdate, auth: tuple = Depends(get_current_user_org),
+    e_admin_da_plataforma=Depends(get_platform_admin_check), request: Request = None,
 ) -> dict[str, Any]:
     user, _token, _raw = auth
-    require_org_admin_for(get_core_client(), auth, request, "Aviso de privacidade")
+    # The privacy notice text is NoctusAI's to write (owner 2026-11-04); an org admin only reads it.
+    exigir_admin_da_plataforma(e_admin_da_plataforma, auth, "aviso")
     if not svc.contem_link(payload.mensagem_inicial):
         raise AppException(
             "link_obrigatorio",

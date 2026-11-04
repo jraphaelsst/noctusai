@@ -161,7 +161,7 @@ describe("New cards on the page", () => {
     const card = await screen.findByTestId("whatsapp-julia-card");
     expect(card.id).toBe("whatsapp");
     expect(await screen.findByTestId("especificacoes-card")).toBeTruthy();
-    expect(await screen.findByTestId("espec-form")).toBeTruthy();
+    expect(await screen.findByTestId("espec-lista")).toBeTruthy();
   });
 
   it("a failing specs read degrades that card only", async () => {
@@ -246,60 +246,22 @@ describe("Line list — routing switch and handoff target", () => {
   });
 });
 
-describe("Privacy notice (legal, lives in SW)", () => {
-  it("renders the editor and the public-page link", async () => {
+describe("Privacy notice (legal, lives in SW) is read-only: NoctusAI edits it", () => {
+  it.each([true, false])("shows the text and the public-page link with no inputs and no save (admin=%s)", async (admin) => {
+    h.admin = admin;
     setup();
-    expect(((await screen.findByLabelText("Empresa (controlador)")) as HTMLInputElement).value).toBe("Empresa X");
-    expect((screen.getByLabelText("Texto da seção 1") as HTMLTextAreaElement).value).toBe("Texto.\n\n- a\n- b");
-    expect(screen.getByText(/obrigatório/)).toBeTruthy();
+    expect((await screen.findByTestId("aviso-empresa")).textContent).toBe("Empresa X");
+    expect(screen.getByTestId("aviso-secao-0").textContent).toContain("Controlador");
     expect((screen.getByTestId("aviso-pagina-publica") as HTMLAnchorElement).getAttribute("href")).toBe("/privacidade/empresa-x");
-  });
-
-  it("shows the incompleto warning", async () => {
-    setup(AGENTE, { ...AVISO, incompleto: true, empresa_nome: null });
-    expect(await screen.findByTestId("aviso-incompleto")).toBeTruthy();
-  });
-
-  it("saves the edited notice with blocks rebuilt from the text", async () => {
-    api.put.mockResolvedValue({ data: { ...AVISO, versao: 2 } });
-    setup();
-    fireEvent.change(await screen.findByLabelText("Título"), { target: { value: "Novo título" } });
-    fireEvent.change(screen.getByLabelText("Texto da seção 1"), { target: { value: "Um parágrafo.\n\n- x\n- y" } });
-    fireEvent.click(screen.getByTestId("salvar-aviso"));
-    await waitFor(() => expect(api.put).toHaveBeenCalled());
-    const [url, body] = api.put.mock.calls[0];
-    expect(url).toBe("/api/julia/agente/aviso");
-    expect(body).toMatchObject({
-      titulo: "Novo título",
-      empresa_nome: "Empresa X",
-      contato_whatsapp: null,
-      secoes: [{ n: "1", title: "Controlador", blocks: [{ p: "Um parágrafo." }, { ul: ["x", "y"] }] }],
-    });
-  });
-
-  it("blocks a message without {link} client-side with the pt-BR message (no request)", async () => {
-    setup();
-    fireEvent.change(await screen.findByLabelText("Mensagem inicial"), { target: { value: "Olá sem link" } });
-    fireEvent.click(screen.getByTestId("salvar-aviso"));
-    expect((await screen.findByTestId("aviso-erro-salvar")).textContent).toContain("{link}");
+    expect(screen.getByTestId("aviso-nota-suporte").textContent).toContain("configurado pela equipe NoctusAI");
+    const card = screen.getByTestId("aviso-card");
+    expect(card.querySelectorAll("input, textarea, select")).toHaveLength(0);
+    expect(screen.queryByTestId("salvar-aviso")).toBeNull();
     expect(api.put).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["link_obrigatorio", "{link}"],
-    ["secoes_invalidas", "parágrafo ou uma lista"],
-  ])("server error %s -> pt-BR message", async (code, texto) => {
-    api.put.mockRejectedValue(serverError(code, 422));
-    setup();
-    await screen.findByLabelText("Título");
-    fireEvent.click(screen.getByTestId("salvar-aviso"));
-    expect((await screen.findByTestId("aviso-erro-salvar")).textContent).toContain(texto);
-  });
-
-  it("non-admin gets a read-only form", async () => {
-    h.admin = false;
-    setup();
-    expect(((await screen.findByLabelText("Título")) as HTMLInputElement).disabled).toBe(true);
-    expect(screen.queryByTestId("salvar-aviso")).toBeNull();
+  it("shows the incompleto warning pointing to support", async () => {
+    setup(AGENTE, { ...AVISO, incompleto: true, empresa_nome: null });
+    expect((await screen.findByTestId("aviso-incompleto")).textContent).toContain("suporte");
   });
 });

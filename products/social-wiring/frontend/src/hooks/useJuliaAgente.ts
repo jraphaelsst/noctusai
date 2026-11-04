@@ -75,7 +75,7 @@ const MENSAGENS_POR_CODIGO: Record<string, string> = {
   webhook_hmac_required:
     "O webhook do WhatsApp ainda não tem assinatura (HMAC) configurada. Configure-a antes de ligar a Julia.",
   aviso_incompleto:
-    "O aviso de privacidade ainda está incompleto (nome da empresa e contato). Preencha-o abaixo antes de ligar a Julia.",
+    "O aviso de privacidade ainda está incompleto (nome da empresa e contato). Fale com o suporte NoctusAI para completá-lo antes de ligar a Julia.",
   url_publica_indisponivel:
     "Não foi possível montar o link público do aviso de privacidade. Fale com o suporte.",
   snapshot_falhou:

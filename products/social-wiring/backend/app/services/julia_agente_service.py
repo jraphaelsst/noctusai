@@ -284,13 +284,13 @@ def exigir_aviso_completo(aviso_row: dict[str, Any]) -> None:
     if not (aviso_row.get("empresa_nome") or "").strip():
         raise AppException(
             "aviso_incompleto",
-            "Preencha o nome da empresa no aviso de privacidade antes de ligar a Julia.",
+            "O aviso de privacidade da Julia ainda está incompleto (nome da empresa). Fale com o suporte NoctusAI para completá-lo antes de ligar a Julia.",
             status_code=409,
         )
     if not julia_aviso_service.contem_link(aviso_row.get("mensagem_inicial") or ""):
         raise AppException(
             "aviso_incompleto",
-            "A mensagem inicial precisa conter {link}.",
+            "A mensagem inicial do aviso de privacidade precisa conter {link}. Fale com o suporte NoctusAI para ajustá-la.",
             status_code=409,
         )
 
@@ -316,7 +316,7 @@ def mensagem_inicial_pronta(aviso_row: dict[str, Any], agente_nome: Optional[str
     `julia_textos_padrao`); there is no default text in code."""
     texto = aviso_row.get("mensagem_inicial") or ""
     if not texto.strip():
-        raise AppException("aviso_incompleto", "A mensagem inicial do aviso está vazia.", status_code=409)
+        raise AppException("aviso_incompleto", "A mensagem inicial do aviso de privacidade está vazia. Fale com o suporte NoctusAI para completá-la.", status_code=409)
     if julia_aviso_service.AGENTE_TOKEN in texto:
         nome = (agente_nome or "").strip()
         if not nome:

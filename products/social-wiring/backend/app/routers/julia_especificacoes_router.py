@@ -32,6 +32,7 @@ from app.clients.agents import AgentNotFound, AgentsClient, AgentsClientError, A
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_platform_admin_check
 from app.routers.whatsapp_connections_router import get_agents_client_factory
 from app.services.julia_agente_service import DEFAULT_AGENT_KEY
+from app.services.julia_edicao import exigir_admin_da_plataforma
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +109,7 @@ async def salvar(
     e_admin_da_plataforma=Depends(get_platform_admin_check),
 ) -> JSONResponse:
     core = get_core_client()
-    if not await run_blocking(e_admin_da_plataforma, str(getattr(auth[0], "id", "") or "")):
-        logger.warning("julia: specs write refused -- not a platform admin (edicao_restrita_plataforma)")
-        raise AppException(
-            "edicao_restrita_plataforma",
-            "As especificações da Julia são configuradas pela equipe NoctusAI. Para alterar, fale com o suporte.",
-            status_code=403,
-        )
+    await run_blocking(exigir_admin_da_plataforma, e_admin_da_plataforma, auth, "especificacoes")
     agents = await run_blocking(_agents, client_factory, coerce_org_uuid(auth[2]))
     ator = await run_blocking(_ator, auth, core)
     try:
