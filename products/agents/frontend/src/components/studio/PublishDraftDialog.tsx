@@ -8,6 +8,8 @@ import { AlertTriangle, Rocket, Send } from "lucide-react";
 import { toast } from "sonner";
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
 import { OVERRIDE_REASON_MIN, type CompileWarning, type PublishErrorBody, type VersionSummary } from "@/api/studio/types";
+import { ProntidaoPanel } from "@/components/studio/ProntidaoPanel";
+import type { Prontidao } from "@/api/studio/types-prontidao";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
 import { shortHash } from "@/components/studio/compiledSegments";
 import { useCompiled } from "@/hooks/studio/useCompiled";
@@ -34,6 +36,7 @@ export function PublishDraftDialog({
   const [override, setOverride] = useState("");
   const [serverGate, setServerGate] = useState<PublishErrorBody | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [prontidaoServer, setProntidaoServer] = useState<Prontidao | null>(null);
 
   const hashAtual = compiled.data?.hash ?? draft.compiled_hash;
   const bloqueantes: CompileWarning[] = [
@@ -62,6 +65,7 @@ export function PublishDraftDialog({
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && err.body && typeof err.body === "object") {
         const body = err.body as PublishErrorBody;
+        if (body.prontidao) setProntidaoServer(body.prontidao);
         if (body.code === "eval_required" || body.code === "compile_blocked") setServerGate(body);
         if (body.code === "draft_changed") {
           // The draft's hash moved between the gating eval run and this
@@ -83,6 +87,8 @@ export function PublishDraftDialog({
         <h2 className="text-base font-semibold">Publicar rascunho v{draft.versao}</h2>
       </DialogHeader>
       <DialogBody className="space-y-4" data-testid="publish-dialog">
+        <ProntidaoPanel agentKey={agentKey} override={prontidaoServer} />
+
         <div className="rounded-md border border-border p-3 text-sm" data-testid="publish-gate">
           <p className="font-medium">Portão de avaliação</p>
           <p className="text-xs text-muted-foreground">

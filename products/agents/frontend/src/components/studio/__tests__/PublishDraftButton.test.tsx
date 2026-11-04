@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const refs = vi.fn();
 const isAdmin = vi.fn();
 const compiled = vi.fn();
+vi.mock("@/hooks/studio/useProntidao", () => ({
+  useProntidao: () => ({ data: { pronto_para_publicar: true, itens: [] }, showSkeleton: false, isRefreshing: false, isError: false, error: null, refetch: () => {} }),
+}));
 vi.mock("@/hooks/studio/useVersions", () => ({
   useAgentVersionRefs: () => refs(),
   useCreateDraft: () => ({ mutateAsync: vi.fn(), isPending: false }),

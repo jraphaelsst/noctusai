@@ -20,6 +20,9 @@ const mockUseVersionDiff = vi.fn();
 const mockUseCompiled = vi.fn();
 const mockUseIsAdmin = vi.fn();
 
+vi.mock("@/hooks/studio/useProntidao", () => ({
+  useProntidao: () => ({ data: { pronto_para_publicar: true, itens: [] }, showSkeleton: false, isRefreshing: false, isError: false, error: null, refetch: () => {} }),
+}));
 vi.mock("@/hooks/studio/useVersions", () => ({
   useAgentVersionRefs: () => mockUseAgentVersionRefs(),
   useCreateDraft: () => mockUseCreateDraft(),

@@ -42,6 +42,8 @@ export interface PlatformAgentInput {
   padrao_qualificacao?: string;
   briefing?: Briefing;
   limite_usd?: number;
+  /** Chave de um agente `exemplar` usado como modelo pela geração. */
+  referencia?: string;
   /** "Disponível para as organizações" (API default false). */
   instanciavel?: boolean;
 }
