@@ -23,7 +23,7 @@ export const MSG_VERIFICACAO: Record<VerificacaoPerfil["status"], string> = {
   ja_monitorado: "⚠️ Este perfil já está na biblioteca (monitorado)",
   na_minha_biblioteca: "⚠️ Este perfil já está na sua biblioteca.",
   sem_conta_descoberta:
-    "✗ Nenhuma conta Meta (Facebook Login) conectada — conecte em Conexões › Marcas para monitorar perfis.",
+    "✗ Nenhuma fonte de dados configurada para monitorar perfis. Fale com o administrador.",
 };
 
 export function SolicitarPerfil({ marcaId, contato }: { marcaId: string; contato?: string }) {

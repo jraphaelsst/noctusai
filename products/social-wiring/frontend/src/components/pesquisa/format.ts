@@ -15,3 +15,13 @@ export function dataPtBr(iso: string | null | undefined): string {
     ? "—"
     : d.toLocaleDateString("pt-BR", { timeZone: "UTC" });
 }
+
+/** "25/12/2023 18:00" in the viewer's timezone; "—" when missing/invalid. */
+export function dataHoraPtBr(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const data = d.toLocaleDateString("pt-BR");
+  const hora = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return `${data} ${hora}`;
+}

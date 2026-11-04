@@ -14,7 +14,7 @@ export type Taxonomias = { nichos: Taxon[]; profissoes: Taxon[]; formatos: (Taxo
 export type PerfilCriacao = { marca_id: string; bio: string; nichos: number[]; profissoes: number[];
                        apresentacao_magnetica: string; ctas: string; updated_at: string | null }
 export type Treinamento = { id: string; ordem: number; titulo: string; descricao: string; video_url: string | null; ativo: boolean }
-export type PerfilStatus = 'aguardando'|'ativo'|'pausado'|'nao_encontrado'|'sem_conta'|'erro'
+export type PerfilStatus = 'aguardando'|'ativo'|'pausado'|'nao_encontrado'|'sem_conta'|'sem_credencial'|'sem_orcamento'|'privado'|'erro'
 export type PerfilMonitorado = { id: string; handle: string; nome: string | null; foto_url: string | null; seguidores: number | null;
                           status: PerfilStatus; erro_mensagem: string | null; ultima_sync_em: string | null;
                           metrica_base: 'views' | 'engajamento' | null; mediana_metrica: number | null;
@@ -30,7 +30,9 @@ export type ViralCard = { id: string; codigo: number; perfil: { id: string; hand
 export type ViralDetalhe = ViralCard & { caption: string | null; gancho: string | null; transcricao_texto: string | null;
                    transcricao_status: TranscricaoViralStatus; classificacao_status: 'pendente'|'processando'|'concluida'|'falhou';
                    nichos: Taxon[]; profissoes: Taxon[]; formatos: Taxon[]; gatilho: Gatilho | null;
-                   estrutura_utilizavel: boolean; blueprint?: string | null }
+                   estrutura_utilizavel: boolean; blueprint?: string | null;
+                   /** Scraped CDN video (short-lived; null when absent/expired => Instagram embed). */
+                   video_url?: string | null }
 export type Referencia = { id: string; modo: 'perfil' | 'video'; perfil: PerfilMonitorado | null; viral: ViralCard | null;
                     auto_atualizar: boolean; posts_ate: string | null; updated_at: string }
 export type ItemUsado = { slot: string; item_id: string; conteudo: string }

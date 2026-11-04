@@ -154,7 +154,7 @@ describe("Solicitar Perfil live check", () => {
   it.each([
     ["ja_monitorado", "⚠️ Este perfil já está na biblioteca (monitorado)"],
     ["na_minha_biblioteca", "⚠️ Este perfil já está na sua biblioteca."],
-    ["sem_conta_descoberta", "✗ Nenhuma conta Meta (Facebook Login) conectada — conecte em Conexões › Marcas para monitorar perfis."],
+    ["sem_conta_descoberta", "✗ Nenhuma fonte de dados configurada para monitorar perfis. Fale com o administrador."],
   ])("status %s blocks submit with its message", async (status, texto) => {
     m.verificar.mockImplementation((h: string) => ({ data: h ? { status } : undefined, isFetching: false, isError: false }));
     renderPage();

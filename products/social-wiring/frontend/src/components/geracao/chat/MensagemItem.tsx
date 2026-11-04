@@ -60,8 +60,8 @@ export function MensagemItem({
   const assistente = role === "assistant";
   const permitidos = useMemo(() => (codigosPermitidos ? new Set(codigosPermitidos) : null), [codigosPermitidos]);
   const texto = useMemo(
-    () => (assistente && agente === "headline" ? linkarCitacoes(conteudo, permitidos) : conteudo),
-    [assistente, agente, conteudo, permitidos],
+    () => (assistente ? linkarCitacoes(conteudo, permitidos) : conteudo),
+    [assistente, conteudo, permitidos],
   );
   const headlines = useMemo(
     () => (assistente && agente === "headline" && !streaming ? extrairHeadlines(conteudo) : []),
