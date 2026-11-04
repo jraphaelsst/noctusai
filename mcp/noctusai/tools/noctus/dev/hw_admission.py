@@ -49,8 +49,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-_REPO_ROOT = Path(__file__).resolve().parents[5]
-_DEFAULT_BUDGET = _REPO_ROOT / "deploy" / "fleet" / "hardware-budget.json"
+# The budget path resolves LAZILY: the module also runs as a standalone copy
+# (the out-of-repo sampler), where there is no repo root above it.
+_BUDGET_REL = Path("deploy") / "fleet" / "hardware-budget.json"
+
+
+def _default_budget() -> Path:
+    here = Path(__file__).resolve()
+    root = here.parents[5] if len(here.parents) > 5 else None
+    if root is not None and (root / "mcp" / "noctusai").is_dir():
+        return root / _BUDGET_REL
+    raise BudgetError(f"{here} is outside the repo - set NOCTUS_HW_BUDGET_PATH")
 _HELD_ENV = "NOCTUS_HW_SLOT_HELD"
 _REQUIRED_KNOBS = ("max_heavy", "min_cpu_idle_pct", "cpu_sample_s",
                    "min_reclaimable_mb", "max_swapout_per_s", "wait_s", "poll_s")
@@ -70,7 +79,8 @@ def load_budget(path: Path | None = None, phase: str | None = None,
                 host: str | None = None) -> dict[str, Any]:
     """Resolve the effective budget for this host. Raises BudgetError — a
     missing budget is a setup error, never a silent 'no gate'."""
-    p = Path(os.environ.get("NOCTUS_HW_BUDGET_PATH") or path or _DEFAULT_BUDGET)
+    env_path = os.environ.get("NOCTUS_HW_BUDGET_PATH")
+    p = Path(env_path) if env_path else (Path(path) if path else _default_budget())
     try:
         doc = json.loads(p.read_text())
     except FileNotFoundError as exc:
@@ -321,9 +331,15 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
 
 # ── report ────────────────────────────────────────────────────────────────
 
-def report(last_n: int = 500) -> dict[str, Any]:
+def report(last_n: int = 5000, since: str | None = None, until: str | None = None) -> dict[str, Any]:
+    """Summarize the capacity log; `since`/`until` (ISO-8601, inclusive/exclusive)
+    window it — e.g. a before/after comparison around a budget change."""
     p = _log_path()
     rows = [json.loads(ln) for ln in p.read_text().splitlines()[-last_n:] if ln.strip()] if p.exists() else []
+    lo = datetime.fromisoformat(since).timestamp() if since else None
+    hi = datetime.fromisoformat(until).timestamp() if until else None
+    rows = [r for r in rows if (lo is None or _ts(r) >= lo) and (hi is None or _ts(r) < hi)]
+    samples = [r for r in rows if r.get("event") == "sample"]
     ran = [r for r in rows if r.get("event") == "ran"]
     by_job: dict[str, dict[str, Any]] = {}
     for r in ran:
@@ -334,9 +350,13 @@ def report(last_n: int = 500) -> dict[str, Any]:
         if peak is not None:
             j["max_peak_rss_mb"] = max(j["max_peak_rss_mb"] or 0, peak)
     waits = [r["waited_s"] for r in ran]
-    return {"log": str(p), "rows": len(rows), "runs": len(ran),
+    return {"log": str(p), "window": {"since": since, "until": until}, "rows": len(rows),
+            "runs": len(ran),
             "not_admitted": sum(1 for r in rows if r.get("event") == "not_admitted"),
-            "max_wait_s": max(waits) if waits else 0, "by_job": by_job}
+            "max_wait_s": max(waits) if waits else 0, "by_job": by_job,
+            "samples": len(samples),
+            "overloaded_pct": round(100 * sum(1 for r in samples if r.get("overloaded")) / len(samples), 1)
+            if samples else None}
 
 
 # ── adaptive re-check timer + pattern-change detection ───────────────────
@@ -448,9 +468,10 @@ def register(server) -> None:
             "waiting_for_slot, command not run). Load average is deliberately NOT a gate on macOS."
         ),
     )
-    def _hw_admission(action: str = "status", sample_s: float = 3.0) -> dict:
+    def _hw_admission(action: str = "status", sample_s: float = 3.0,
+                      since: str | None = None, until: str | None = None) -> dict:
         if action == "report":
-            return {**report(), "timer": recheck_timer()}
+            return {**report(since=since, until=until), "timer": recheck_timer()}
         if action == "status":
             return status(sample_s)
         if action == "sample":

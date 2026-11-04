@@ -228,3 +228,25 @@ class TestGateSweepAdmission:
     def test_workers_capped_at_max_heavy(self, env):
         from tools.noctus.dev import gate_sweep as gs
         assert gs._heavy_cap() == 1
+
+
+class TestReportWindow:
+    def test_window_filters_rows(self, env):
+        log = env / "log.ndjson"
+        log.write_text("\n".join(json.dumps(r) for r in [
+            {"ts": "2026-11-04T01:00:00+00:00", "event": "sample", "overloaded": True},
+            {"ts": "2026-11-04T03:00:00+00:00", "event": "sample", "overloaded": False},
+            {"ts": "2026-11-04T03:30:00+00:00", "event": "ran", "job": "pytest:core", "waited_s": 5, "duration_s": 60},
+        ]) + "\n")
+        before = hw.report(until="2026-11-04T02:00:00+00:00")
+        after = hw.report(since="2026-11-04T02:00:00+00:00")
+        assert before["samples"] == 1 and before["overloaded_pct"] == 100.0 and before["runs"] == 0
+        assert after["samples"] == 1 and after["overloaded_pct"] == 0.0 and after["runs"] == 1
+
+    def test_standalone_copy_needs_explicit_budget(self, tmp_path, monkeypatch):
+        import shutil
+        dst = tmp_path / "hw_copy.py"
+        shutil.copy(hw.__file__, dst)
+        monkeypatch.delenv("NOCTUS_HW_BUDGET_PATH", raising=False)
+        out = subprocess.run([sys.executable, str(dst), "status"], capture_output=True, text=True)
+        assert out.returncode == 0 and "budget_error" in out.stdout and "NOCTUS_HW_BUDGET_PATH" in out.stdout
