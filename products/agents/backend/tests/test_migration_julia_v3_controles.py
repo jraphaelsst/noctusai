@@ -24,13 +24,23 @@ def test_fase_testes_defaults_on():
     assert "ADD COLUMN IF NOT EXISTS fase_testes BOOLEAN NOT NULL DEFAULT true" in SQL
 
 
+def test_the_evaluation_mode_columns_and_writer():
+    assert "ADD COLUMN IF NOT EXISTS modo_avaliacao BOOLEAN NOT NULL DEFAULT false" in SQL
+    assert "ADD COLUMN IF NOT EXISTS avaliacao_usuarios UUID[] NOT NULL DEFAULT '{}'" in SQL
+    assert "cardinality(v_novos) > 20" in SQL  # the cap lives in the writer
+    fn = "set_agent_avaliacao(UUID, UUID, BOOLEAN, UUID[], UUID)"
+    assert f"REVOKE ALL ON FUNCTION agents.{fn} FROM PUBLIC, anon, authenticated" in SQL
+    assert f"GRANT EXECUTE ON FUNCTION agents.{fn} TO service_role" in SQL
+    assert "avaliacao_numeros" not in SQL  # phones live in noc, never here
+
+
 def test_the_writers_are_secdef_and_not_executable_by_clients():
     for fn in ("set_plataforma_controle(TEXT, BOOLEAN, TEXT, UUID)", "set_agent_fase_testes(UUID, UUID, BOOLEAN, UUID)"):
         assert f"REVOKE ALL ON FUNCTION agents.{fn} FROM PUBLIC, anon, authenticated" in SQL
         assert f"GRANT EXECUTE ON FUNCTION agents.{fn} TO service_role" in SQL
-    assert SQL.count("SECURITY DEFINER") == 2
+    assert SQL.count("SECURITY DEFINER") == 3
 
 
 def test_the_audit_check_admits_the_new_actions():
-    for acao in ("plataforma_desligada", "plataforma_religada", "fase_testes_alterada"):
+    for acao in ("plataforma_desligada", "plataforma_religada", "fase_testes_alterada", "modo_avaliacao_alterado"):
         assert f"'{acao}'" in SQL

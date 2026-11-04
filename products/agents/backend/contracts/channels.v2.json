@@ -1161,6 +1161,7 @@
           "concluido",
           "agente_desligado",
           "agente_desligado_plataforma",
+          "restrito_avaliacao",
           "novo_lead_recusado",
           "conversa_pausada",
           "conversa_com_outro_responsavel",

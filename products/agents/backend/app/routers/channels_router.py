@@ -71,6 +71,7 @@ from app.qualificacao.service import QualificacaoService
 from app.realtime import publish_event
 from app.routers.channel_threads_router import (
     get_agent_controle_store_dep, get_plataforma_controle_store_dep, get_thread_store_dep,
+    get_usuarios_avaliacao_dep,
 )
 from app.routers.conversations_router import INSTANCE_ID, _conversation_payload, _llm_http
 from app.routers.qualificacao_router import (
@@ -268,6 +269,7 @@ async def run_channel_turn(
     threads=Depends(get_thread_store_dep),
     controles=Depends(get_agent_controle_store_dep),
     plataforma=Depends(get_plataforma_controle_store_dep),
+    usuarios_avaliacao=Depends(get_usuarios_avaliacao_dep),
     conformidade=Depends(get_conformidade_store_dep),
     qual: QualificacaoService = Depends(get_qualificacao_service_dep),
     padroes=Depends(get_padrao_store_dep),
@@ -341,7 +343,7 @@ async def run_channel_turn(
             ctl = aplicar_controles(
                 org_id=org_id, agent_id=agent.id, gatilho=payload.gatilho, channel=payload.channel,
                 channel_ref=channel_ref, controles=controles, conversations=conv_store, threads=threads,
-                plataforma=plataforma, agent_key=agent.key,
+                plataforma=plataforma, agent_key=agent.key, usuarios_avaliacao=usuarios_avaliacao,
                 lead=_lead_identidade(payload), contact=payload.contact.model_dump(mode="json"),
                 version_id=prep.r.versao.id if prep is not None else None, messages=msg_store, agora=agora,
                 admitir_novo_lead=lambda: admissao.motivo_novo_lead_limitado(
@@ -519,6 +521,7 @@ def channel_agent_status(
         modo=controle.modo,
         aceita_novos_leads=controle.aceita_novos_leads,
         desligado_plataforma=desligado_plataforma,
+        modo_avaliacao=controle.modo_avaliacao,
         threads_abertas=len(threads.list_abertos(ctx.org_id, agent.id)),
         conteudo_completo=turno_mod.conteudo_completo(svc, ctx.org_id, agent),
     )

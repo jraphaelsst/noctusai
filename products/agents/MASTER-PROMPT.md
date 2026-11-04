@@ -59,6 +59,15 @@ products/agents/backend/app/
   `agents.agents.fase_testes` (default true) rides the org controle GET/PUT (`fase_testes` optional beside `modo`;
   changing only it applies no mode transition or 409 precondition; audited `fase_testes_alterada`) and renders into
   the turn state as `controle.fase_testes` via the optional text `contexto.rotulo_fase_testes` (blank = no line).
+- Evaluation mode (migration 056, contract §12.12): `agents.agents.modo_avaliacao` + `avaliacao_usuarios` (noctus user ids,
+  max 20; NO phones stored), written by `set_agent_avaliacao` (audit `modo_avaliacao_alterado`) through the org controle PUT
+  (same `modo` ⇒ no mode preconditions; 422 `avaliacao_usuario_fora_da_org` / `avaliacao_sem_telefone`). Each user's phone is
+  read from noc (`stores/usuarios_avaliacao.py`, `noctus_users.telefone`) per turn in `aplicar_controles`, never cached; an
+  unresolvable phone ⇒ nobody allowed (fail closed, logged). `decidir(..., modo_avaliacao=, avaliacao_numeros=,
+  telefone_e164=)`: after the kill and the mode (`desligado` keeps its status), a contact whose normalised
+  `contact.phone_e164` is not among the resolved phones (or has none) ⇒ `restrito_avaliacao`, every trigger, no LLM,
+  inbound stored only for an existing thread, never a new thread/participant. Unreadable flag ⇒ 503.
+  `GET /api/channels/agents/{key}/status` carries `modo_avaliacao` only.
 
 ### Julia v2 — the channel runtime (A-RT)
 

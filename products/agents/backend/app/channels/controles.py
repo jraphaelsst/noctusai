@@ -42,11 +42,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 from uuid import UUID
 
 from app.stores._util import utcnow
-from app.stores.agent_controles import DRENO_DIAS_PADRAO, MODOS
+from app.stores.agent_controles import DRENO_DIAS_PADRAO, MODOS, normalizar_e164
 from app.stores.conversations import ConversationRecord
 from app.stores.threads import LeadRefRecord, OutroAgenteAtivo, ParticipanteRecord
 
@@ -58,6 +58,7 @@ __all__ = [
     "STATUS_AGENTE_DESLIGADO",
     "STATUS_AGENTE_DESLIGADO_PLATAFORMA",
     "STATUS_CONTROLE_INDISPONIVEL",
+    "STATUS_RESTRITO_AVALIACAO",
     "STATUS_CONVERSA_COM_OUTRO_AGENTE",
     "STATUS_CONVERSA_COM_OUTRO_RESPONSAVEL",
     "STATUS_CONVERSA_PAUSADA",
@@ -74,6 +75,7 @@ __all__ = [
     "ThreadView",
     "Transicao",
     "aplicar_controles",
+    "numeros_de_avaliacao",
     "decidir",
 ]
 
@@ -85,6 +87,8 @@ STATUS_NORMAL = "normal"
 STATUS_AGENTE_DESLIGADO = "agente_desligado"
 #: The PLATFORM kill (Julia v3 §12.1): the agent is off for every org. Same effect as ``agente_desligado``.
 STATUS_AGENTE_DESLIGADO_PLATAFORMA = "agente_desligado_plataforma"
+#: Evaluation mode (Julia v3 §12.12): the agent is on but answers only the allow-listed numbers; this contact is not one.
+STATUS_RESTRITO_AVALIACAO = "restrito_avaliacao"
 STATUS_NOVO_LEAD_RECUSADO = "novo_lead_recusado"
 #: The agent is on, but the new-lead admission limit (per hour / per day / the day's budget share) is spent:
 #: SW routes the lead to a human queue, not to silence.
@@ -192,6 +196,9 @@ def decidir(
     *,
     dreno_inatividade_dias: int = DRENO_DIAS_PADRAO,
     desligado_plataforma: bool | None = False,
+    modo_avaliacao: bool | None = False,
+    avaliacao_numeros: Sequence[str] = (),
+    telefone_e164: str | None = None,
 ) -> Decisao:
     """The §5.2 decision table (see the module docstring). Pure.
 
@@ -214,6 +221,19 @@ def decidir(
         return Decisao(
             status=STATUS_CONTROLE_INDISPONIVEL, persistir_inbound=False, executar_llm=False, http_status=503
         )
+
+    # ── evaluation mode (Julia v3 §12.12): on = answers ONLY the allow-listed numbers. Decided after the kill and the
+    # mode (``desligado`` keeps its own status), before anything touches the thread: an outsider never opens a thread
+    # or a participant, and a contact without a (valid) phone is refused too. Every trigger. ``None`` = unreadable. ──
+    if modo != "desligado":
+        if modo_avaliacao is None:
+            return Decisao(
+                status=STATUS_CONTROLE_INDISPONIVEL, persistir_inbound=False, executar_llm=False, http_status=503
+            )
+        if modo_avaliacao:
+            numero = normalizar_e164(telefone_e164)
+            if numero is None or numero not in {normalizar_e164(n) for n in avaliacao_numeros}:
+                return _recusa(STATUS_RESTRITO_AVALIACAO, persistir=thread is not None and gatilho == "mensagem")
 
     # ── the lead withdrew consent: nobody answers, nobody follows up (an existing thread still records) ──
     if thread is not None and thread.lead_opt_out:
@@ -327,6 +347,24 @@ class ControleResultado:
         return self.decisao.normal
 
 
+def numeros_de_avaliacao(org_id: UUID, usuarios: Any, resolvedor: Any) -> tuple[str, ...]:
+    """E.164 phones (from noc) of the allow-listed users of ``org_id`` that have one. A user of another org, one
+    without a phone, or ANY failure to read them yields no number — the gate then refuses everyone (fail closed,
+    logged), never opens to everyone."""
+    ids = list(usuarios)
+    if not ids:
+        return ()
+    if resolvedor is None:
+        logger.error("agents.controles.avaliacao_sem_resolvedor org_id=%s", org_id)
+        return ()
+    try:
+        achados = resolvedor.da_org(org_id, ids)
+    except Exception as exc:
+        logger.exception("agents.controles.avaliacao_telefones_ilegiveis org_id=%s cause=%s", org_id, type(exc).__name__)
+        return ()
+    return tuple(n for u in achados.values() if (n := normalizar_e164(u.telefone)) is not None)
+
+
 _MAX_TENTATIVAS = 3
 
 
@@ -348,6 +386,7 @@ def aplicar_controles(
     admitir_novo_lead: Callable[[], bool] | None = None,
     plataforma: Any = None,
     agent_key: str | None = None,
+    usuarios_avaliacao: Any = None,
 ) -> ControleResultado:
     """Read the controls, decide, and apply what the decision implies.
 
@@ -391,6 +430,12 @@ def aplicar_controles(
             )
             raise ControleIndisponivel() from exc
 
+        # Evaluation mode: the allow-list is noc USERS; their phones are read now, for this turn only (never cached,
+        # so a phone edited in noc applies on the next message). Unresolvable => nobody is allowed (fail closed).
+        numeros_avaliacao = (
+            numeros_de_avaliacao(org_id, controle.avaliacao_usuarios, usuarios_avaliacao)
+            if controle.modo_avaliacao else ()
+        )
         propria = next((p for p in participantes if p.agent_id == agent_id), None)
         decisao = decidir(
             controle.modo,
@@ -405,6 +450,9 @@ def aplicar_controles(
             agora,
             dreno_inatividade_dias=controle.dreno_inatividade_dias,
             desligado_plataforma=kill,
+            modo_avaliacao=controle.modo_avaliacao,
+            avaliacao_numeros=numeros_avaliacao,
+            telefone_e164=(contact or {}).get("phone_e164"),
         )
         if decisao.http_status == 503:
             raise ControleIndisponivel()

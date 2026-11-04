@@ -1055,3 +1055,33 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
 
 `agente_desligado_plataforma` (status). Actions: `alerta`, `documento_identificacao`; `handoff`/`lead_pronto` gain
 `relatorio`. SW's client schema and its fixtures move in the same change.
+
+### 12.12 Evaluation mode (agents only; owner brief 2026-11-03)
+
+Owner: "when Julia is on she replies, but only to me — a gate after we put her online while we are still evaluating
+her chatflow; off = open to other contacts." And: "MY number must be set in noc's app; everywhere that uses it consumes
+from noc." Per org agent instance, agents-only (SW needs only the new status).
+
+- **No phone is stored in agents.** The allow-list is noctus USER ids; each user's phone is `public.noctus_users.telefone`
+  (E.164, set in noc's app) and is read at gate time, per turn, never cached across turns (a phone edited in noc applies
+  on the next message). Seam `stores/usuarios_avaliacao.py` (`da_org(org_id, ids)`; Real reads `noctus_users` through the
+  core client — `NOC-REMEDIATE[user-phones-seed-helper]`: switch to the seed `resolve_user_phones` when it lands).
+- Columns (migration 056): `agents.agents.modo_avaliacao BOOL NOT NULL DEFAULT false`, `avaliacao_usuarios UUID[] NOT NULL
+  DEFAULT '{}'` (at most 20; CHECK). Writer `agents.set_agent_avaliacao` (SECURITY DEFINER, service-role; NULL keeps a
+  value); audit `acao='modo_avaliacao_alterado'` with `{modo_avaliacao, usuarios:[ids]}` (ids only, never phones).
+- `decidir`, after the platform kill and the mode check (`desligado` keeps `agente_desligado`), before any thread work:
+  when `modo_avaliacao` and the turn's `contact.phone_e164` (digits-only normalised to `+<digits>`, so `+55 11 99999-0000`
+  equals `5511999990000`) is absent, invalid or not among the resolved phones ⇒ status `restrito_avaliacao`: no LLM, no
+  reply, inbound persisted only for an EXISTING thread and a lead message, never a new thread/participant. Every gatilho
+  (`mensagem` and `reengajamento`). **Fail closed:** if the users' phones cannot be resolved (table unreadable, user of
+  another org, user without phone, no resolver) the allow-list is empty ⇒ everybody is refused and the failure is logged —
+  never "reply to everyone". Flag itself unreadable ⇒ 503 `controle_indisponivel`. Allowed phones get the normal table.
+- API: `GET /api/channels/agents/{key}/status` adds `modo_avaliacao: bool` (nothing else; the SW token controle read returns
+  `avaliacao_usuarios: []`). The org controle `GET|PUT /api/studio/agents/{key}/controle` returns and accepts
+  `modo_avaliacao: bool|null`, `avaliacao_usuarios: [uuid]|null` (max 20; de-duplicated); org admin/owner writes; a PUT with
+  the SAME `modo` and only these fields applies no mode transition and none of its 409 preconditions. Validated before
+  anything is written: malformed/over 20 ⇒ 422 `avaliacao_usuarios_invalido`; a user not of the org ⇒ 422
+  `avaliacao_usuario_fora_da_org`; turning the mode on (or editing the list while on) without ≥1 listed user with a phone
+  ⇒ 422 `avaliacao_sem_telefone`, the message naming the users without one; user table unreadable ⇒ 503
+  `controle_indisponivel`. Nothing half-applies.
+- TurnStatus gains `restrito_avaliacao` (SW treats it like `agente_desligado`: nothing sent).

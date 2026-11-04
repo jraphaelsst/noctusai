@@ -23,6 +23,9 @@ from app.stores._db_errors import exec_rpc
 from app.stores.errors import NotFound
 
 __all__ = [
+    "AVALIACAO_NUMEROS_MAX",
+    "normalizar_e164",
+    "normalizar_usuarios",
     "DRENO_DIAS_PADRAO",
     "MODOS",
     "AgentControleStore",
@@ -33,6 +36,34 @@ __all__ = [
 ]
 
 _SCHEMA = "agents"
+#: 056 ``avaliacao_usuarios`` CHECK: at most this many allow-listed users.
+AVALIACAO_NUMEROS_MAX = 20
+
+
+def normalizar_e164(bruto: Any) -> str | None:
+    """``"+55 (11) 99999-0000"`` / ``"5511999990000"`` -> ``"+5511999990000"``; ``None`` when it is not a plausible
+    E.164 number (8..15 digits). Only the digits count, so a formatted and a bare number compare equal."""
+    if bruto is None:
+        return None
+    digitos = "".join(ch for ch in str(bruto) if ch.isdigit())
+    return f"+{digitos}" if 8 <= len(digitos) <= 15 else None
+
+
+def normalizar_usuarios(brutos: list[Any]) -> tuple[UUID, ...]:
+    """The allow-list of noctus user ids, de-duplicated, order kept. Raises :class:`ValueError` on a non-UUID or more
+    than :data:`AVALIACAO_NUMEROS_MAX` (the 056 CHECK)."""
+    out: list[UUID] = []
+    for b in brutos:
+        try:
+            u = b if isinstance(b, UUID) else UUID(str(b))
+        except ValueError as exc:
+            raise ValueError("avaliacao_usuarios must be user ids (UUID)") from exc
+        if u not in out:
+            out.append(u)
+    if len(out) > AVALIACAO_NUMEROS_MAX:
+        raise ValueError(f"avaliacao_usuarios allows at most {AVALIACAO_NUMEROS_MAX} users")
+    return tuple(out)
+
 
 #: ``agents.modo_operacao`` CHECK (034).
 MODOS = ("ligado", "drenando", "desligado")
@@ -48,6 +79,9 @@ class ControleRecord:
     dreno_inatividade_dias: int
     #: 056: the org's testing-phase switch (Julia v3 §12.2) — the prompt may say "we are in a testing phase" only while on.
     fase_testes: bool = True
+    #: 056 evaluation mode (Julia v3 §12.12): while on, the agent answers only the phones (from noc) of the listed users.
+    modo_avaliacao: bool = False
+    avaliacao_usuarios: tuple[UUID, ...] = ()
 
     @property
     def aceita_novos_leads(self) -> bool:
@@ -75,6 +109,15 @@ class AgentControleStore(Protocol):
         value writes nothing). Raises :class:`NotFound`."""
         ...
 
+    def set_avaliacao(
+        self, org_id: UUID, agent_id: UUID, *, modo_avaliacao: bool | None = None,
+        usuarios: list[UUID] | None = None, actor: UUID | None = None,
+    ) -> ControleRecord:
+        """Change the evaluation mode and/or its allow-list (``None`` keeps a value) with an audit row
+        (``modo_avaliacao_alterado``; the row carries the user COUNT). Raises
+        :class:`NotFound`, :class:`ValueError` (a non-UUID user id, more than 20)."""
+        ...
+
 
 def _validate(modo: str, dias: int | None) -> None:
     if modo not in MODOS:
@@ -95,6 +138,8 @@ class FakeAgentControleStore:
         self.falha: Exception | None = None
         #: ``(agent_id, actor, antes, depois)`` per ``fase_testes`` change.
         self.auditoria_fase_testes: list[tuple[UUID, UUID | None, bool, bool]] = []
+        #: ``(agent_id, actor, antes, depois)`` per evaluation change: ``(modo, n_usuarios)`` pairs.
+        self.auditoria_avaliacao: list[tuple[UUID, UUID | None, tuple[bool, int], tuple[bool, int]]] = []
 
     def get(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
         if self.falha is not None:
@@ -112,7 +157,7 @@ class FakeAgentControleStore:
         rec = ControleRecord(
             agent_id, org_id, modo,
             dreno_inatividade_dias if dreno_inatividade_dias is not None else before.dreno_inatividade_dias,
-            before.fase_testes,
+            before.fase_testes, before.modo_avaliacao, before.avaliacao_usuarios,
         )
         self._rows[(org_id, agent_id)] = rec
         if (rec.modo, rec.dreno_inatividade_dias) != (before.modo, before.dreno_inatividade_dias):
@@ -133,6 +178,24 @@ class FakeAgentControleStore:
             self.auditoria_fase_testes.append((agent_id, actor, before.fase_testes, rec.fase_testes))
         return rec
 
+    def set_avaliacao(
+        self, org_id: UUID, agent_id: UUID, *, modo_avaliacao: bool | None = None,
+        usuarios: list[UUID] | None = None, actor: UUID | None = None,
+    ) -> ControleRecord:
+        novos = normalizar_usuarios(usuarios) if usuarios is not None else None
+        before = self.get(org_id, agent_id)
+        rec = replace(
+            before,
+            modo_avaliacao=before.modo_avaliacao if modo_avaliacao is None else bool(modo_avaliacao),
+            avaliacao_usuarios=before.avaliacao_usuarios if novos is None else novos,
+        )
+        self._rows[(org_id, agent_id)] = rec
+        if (rec.modo_avaliacao, rec.avaliacao_usuarios) != (before.modo_avaliacao, before.avaliacao_usuarios):
+            self.auditoria_avaliacao.append((
+                agent_id, actor, (before.modo_avaliacao, len(before.avaliacao_usuarios)),
+                (rec.modo_avaliacao, len(rec.avaliacao_usuarios))))
+        return rec
+
 
 class SupabaseAgentControleStore:
     """Real :class:`AgentControleStore` — Postgres via the admin client."""
@@ -143,7 +206,7 @@ class SupabaseAgentControleStore:
     def get(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
         rows = (
             self._client.schema(_SCHEMA).table("agents")
-            .select("id, org_id, modo_operacao, dreno_inatividade_dias, fase_testes")
+            .select("id, org_id, modo_operacao, dreno_inatividade_dias, fase_testes, modo_avaliacao, avaliacao_usuarios")
             .eq("id", str(agent_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
         )
         if not rows:
@@ -170,12 +233,26 @@ class SupabaseAgentControleStore:
         })
         return self.get(org_id, agent_id)
 
+    def set_avaliacao(
+        self, org_id: UUID, agent_id: UUID, *, modo_avaliacao: bool | None = None,
+        usuarios: list[UUID] | None = None, actor: UUID | None = None,
+    ) -> ControleRecord:
+        novos = normalizar_usuarios(usuarios) if usuarios is not None else None
+        exec_rpc(self._client, _SCHEMA, "set_agent_avaliacao", {
+            "p_org_id": str(org_id), "p_agent_id": str(agent_id),
+            "p_modo_avaliacao": None if modo_avaliacao is None else bool(modo_avaliacao),
+            "p_usuarios": None if novos is None else [str(u) for u in novos], "p_actor": str(actor) if actor else None,
+        })
+        return self.get(org_id, agent_id)
+
     @staticmethod
     def _record(row: dict[str, Any]) -> ControleRecord:
         return ControleRecord(
             agent_id=UUID(str(row["id"])), org_id=UUID(str(row["org_id"])),
             modo=row["modo_operacao"], dreno_inatividade_dias=int(row["dreno_inatividade_dias"]),
             fase_testes=bool(row.get("fase_testes", True)),
+            modo_avaliacao=bool(row.get("modo_avaliacao", False)),
+            avaliacao_usuarios=tuple(UUID(str(u)) for u in (row.get("avaliacao_usuarios") or ())),
         )
 
 

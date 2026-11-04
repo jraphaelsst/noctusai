@@ -275,6 +275,10 @@ class ControleOut(BaseModel):
     dreno_inatividade_dias: int
     #: Julia v3 §12.2: the org's testing-phase switch (rendered into the turn state as ``controle.fase_testes``).
     fase_testes: bool = True
+    #: Julia v3 §12.12 evaluation mode + its allow-list of noctus USER ids (never phones; Studio routes only, the
+    #: channel token read blanks it).
+    modo_avaliacao: bool = False
+    avaliacao_usuarios: list[UUID] = Field(default_factory=list)
     threads_abertas: int
     drenagem: DrenagemOut
 
@@ -287,6 +291,11 @@ class ControleUpdateRequest(StrictHttpModel):
     #: Optional: set the testing-phase switch alongside the (required) ``modo``. Changing only this field, with
     #: ``modo`` equal to the current one, applies no mode transition and none of its 409 preconditions.
     fase_testes: bool | None = None
+    #: Evaluation mode switch and its allow-list of noctus user ids (at most 20, each of this org; their phones come
+    #: from noc at gate time). ``modo_avaliacao=true`` needs at least one listed user with a phone. Like
+    #: ``fase_testes``, changing only these applies no mode transition.
+    modo_avaliacao: bool | None = None
+    avaliacao_usuarios: list[UUID] | None = Field(default=None, max_length=20)
 
 
 class MensagemThreadOut(BaseModel):

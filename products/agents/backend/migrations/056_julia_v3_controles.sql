@@ -8,7 +8,11 @@
 --    authenticated / anon.
 -- 2. agents.agents.fase_testes -- per org instance: while true the agent may tell the lead the service is in a
 --    testing phase (rendered into the turn state). Changed through agents.set_agent_fase_testes (audited).
--- 3. agent_audit_log.acao CHECK gains 'plataforma_desligada', 'plataforma_religada', 'fase_testes_alterada'
+-- 2b. agents.agents.modo_avaliacao / avaliacao_usuarios -- the EVALUATION MODE (contract section 12.12): while on,
+--    the agent replies only to the phones (from noc) of the allow-listed noctus users; everybody else gets `restrito_avaliacao` (no reply).
+--    Changed through agents.set_agent_avaliacao (audited).
+-- 3. agent_audit_log.acao CHECK gains 'plataforma_desligada', 'plataforma_religada', 'fase_testes_alterada',
+--    'modo_avaliacao_alterado'
 --    (the union of every action the code writes; tests/test_migration_audit_acao_check.py pins it).
 -- ============================================================================
 
@@ -29,6 +33,11 @@ CREATE POLICY "service_role_bypass" ON agents.plataforma_controles
 REVOKE ALL ON agents.plataforma_controles FROM anon, authenticated;
 
 ALTER TABLE agents.agents ADD COLUMN IF NOT EXISTS fase_testes BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE agents.agents ADD COLUMN IF NOT EXISTS modo_avaliacao BOOLEAN NOT NULL DEFAULT false;
+-- The allow-list holds noctus user ids, NEVER phone numbers: each user's phone is read from noc
+-- (public.noctus_users.telefone) at gate time, so a number edited in noc applies on the next message.
+ALTER TABLE agents.agents ADD COLUMN IF NOT EXISTS avaliacao_usuarios UUID[] NOT NULL DEFAULT '{}';
+-- (The 20-user cap is enforced by agents.set_agent_avaliacao and the API; the column is only written through them.)
 
 DO $$
 DECLARE
@@ -53,7 +62,7 @@ ALTER TABLE agents.agent_audit_log
             'modo_alterado', 'conversa_pausada', 'conversa_retomada', 'padrao_publicado',
             'agente_excluido', 'agente_criado', 'agente_gerado',
             'historico_transferido', 'agente_arquivado',
-            'plataforma_desligada', 'plataforma_religada', 'fase_testes_alterada'
+            'plataforma_desligada', 'plataforma_religada', 'fase_testes_alterada', 'modo_avaliacao_alterado'
         ));
 
 -- Flip the platform switch and audit it in one transaction. The audit row hangs on the PLATFORM definition of the
@@ -126,3 +135,47 @@ $$;
 
 REVOKE ALL ON FUNCTION agents.set_agent_fase_testes(UUID, UUID, BOOLEAN, UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION agents.set_agent_fase_testes(UUID, UUID, BOOLEAN, UUID) TO service_role;
+
+-- Change the evaluation mode and/or its allow-list (noctus user ids) with an attributed audit row. NULL keeps the
+-- current value. The API validates that every user belongs to the org and that the mode has a user with a phone
+-- (that needs noc's user table, which this schema does not see). Raises `agent_not_found`, `invalid_payload`.
+CREATE OR REPLACE FUNCTION agents.set_agent_avaliacao(
+    p_org_id UUID,
+    p_agent_id UUID,
+    p_modo_avaliacao BOOLEAN,
+    p_usuarios UUID[],
+    p_actor UUID
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = agents, public
+AS $$
+DECLARE
+    v_modo BOOLEAN;
+    v_usuarios UUID[];
+    v_novo_modo BOOLEAN;
+    v_novos UUID[];
+BEGIN
+    SELECT modo_avaliacao, avaliacao_usuarios INTO v_modo, v_usuarios
+      FROM agents.agents WHERE id = p_agent_id AND org_id = p_org_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'agent_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    v_novo_modo := COALESCE(p_modo_avaliacao, v_modo);
+    v_novos := COALESCE(p_usuarios, v_usuarios);
+    IF cardinality(v_novos) > 20 THEN
+        RAISE EXCEPTION 'invalid_payload' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_novo_modo IS DISTINCT FROM v_modo OR v_novos IS DISTINCT FROM v_usuarios THEN
+        UPDATE agents.agents SET modo_avaliacao = v_novo_modo, avaliacao_usuarios = v_novos
+         WHERE id = p_agent_id AND org_id = p_org_id;
+        INSERT INTO agents.agent_audit_log (org_id, agent_id, actor, acao, antes, depois)
+        VALUES (p_org_id, p_agent_id, p_actor, 'modo_avaliacao_alterado',
+                jsonb_build_object('modo_avaliacao', v_modo, 'usuarios', to_jsonb(v_usuarios)),
+                jsonb_build_object('modo_avaliacao', v_novo_modo, 'usuarios', to_jsonb(v_novos)));
+    END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION agents.set_agent_avaliacao(UUID, UUID, BOOLEAN, UUID[], UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION agents.set_agent_avaliacao(UUID, UUID, BOOLEAN, UUID[], UUID) TO service_role;

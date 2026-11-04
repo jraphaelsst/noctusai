@@ -42,6 +42,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from app.channels.controles import ControleIndisponivel
 from app.channels.opt_out import OptOutService, evento_out, ultimo_evento_out
 from app.channels.retention import ChannelRetention
 from app.channels.thread_service import (
@@ -98,7 +99,7 @@ from app.schemas.channel_threads import (
 from app.routers.qualificacao_router import get_qualificacao_service_dep
 from app.schemas.channels import ChannelRef
 from app.stores._util import utcnow
-from app.stores.agent_controles import get_agent_controle_store
+from app.stores.agent_controles import get_agent_controle_store, normalizar_usuarios
 from app.stores.errors import Conflict, NotFound, TurnInProgress
 from app.stores.threads import OutroAgenteAtivo, mapa_agentes
 from app.studio.resolucao import conteudo_status, resolve_agent_for_org
@@ -106,7 +107,7 @@ from noctusai_lib.api.auth.session import AuthContext
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["router", "get_thread_store_dep", "get_agent_controle_store_dep", "get_plataforma_controle_store_dep"]
+__all__ = ["router", "get_thread_store_dep", "get_agent_controle_store_dep", "get_plataforma_controle_store_dep", "get_usuarios_avaliacao_dep"]
 
 #: Only an agent on the provider-neutral runtime has the channel controls (same rule as the turn API).
 _CHANNEL_RUNTIME = "llm"
@@ -119,6 +120,13 @@ router = APIRouter(tags=["channel-threads"])
 
 def get_agent_controle_store_dep():
     return get_agent_controle_store(settings)
+
+
+def get_usuarios_avaliacao_dep():
+    """DI seam over the noc user lookup used by the evaluation mode (Julia v3 §12.12)."""
+    from app.stores.usuarios_avaliacao import get_usuarios_avaliacao
+
+    return get_usuarios_avaliacao(settings)
 
 
 def get_plataforma_controle_store_dep():
@@ -431,7 +439,7 @@ def studio_set_participant_state(
 # ── the agent's controls (mode + drain progress) ────────────────────────────
 
 
-def _controle_out(org_id: UUID, agent: Any, controles: Any, threads: Any) -> ControleOut:
+def _controle_out(org_id: UUID, agent: Any, controles: Any, threads: Any, *, com_numeros: bool = True) -> ControleOut:
     controle = controles.get(org_id, agent.id)
     drenagem = progresso_dreno(
         threads.list_abertos(org_id, agent.id), controle.dreno_inatividade_dias, utcnow()
@@ -442,9 +450,59 @@ def _controle_out(org_id: UUID, agent: Any, controles: Any, threads: Any) -> Con
         aceita_novos_leads=controle.aceita_novos_leads,
         dreno_inatividade_dias=controle.dreno_inatividade_dias,
         fase_testes=controle.fase_testes,
+        modo_avaliacao=controle.modo_avaliacao,
+        avaliacao_usuarios=list(controle.avaliacao_usuarios) if com_numeros else [],
         threads_abertas=drenagem["abertas"],
         drenagem=DrenagemOut(**drenagem),
     )
+
+
+def _validar_avaliacao(org_id: UUID, atual: Any, payload: ControleUpdateRequest, usuarios: Any) -> None:
+    """Evaluation-mode rules of the controle PUT (nothing is written here):
+
+    * the list is well formed (UUIDs, at most 20) -> 422 ``avaliacao_usuarios_invalido``;
+    * every listed user belongs to this org -> 422 ``avaliacao_usuario_fora_da_org``;
+    * turning the mode ON (or editing the list while it is on) needs >= 1 listed user WITH a phone in noc -> 422
+      ``avaliacao_sem_telefone``, naming the users without one (so the owner sets the phone in noc, not here);
+    * the user table cannot be read -> 503 ``controle_indisponivel`` (fail closed).
+    """
+    if payload.avaliacao_usuarios is not None:
+        try:
+            normalizar_usuarios(payload.avaliacao_usuarios)
+        except ValueError as exc:
+            raise _err(422, "avaliacao_usuarios_invalido", str(exc)) from exc
+    pede_ligar = payload.modo_avaliacao is True
+    if not pede_ligar and payload.avaliacao_usuarios is None:
+        return  # turning it off / not touching the mode or the list: nothing to look up
+    ligando = pede_ligar or (payload.modo_avaliacao is None and atual.modo_avaliacao)
+    ids = list(normalizar_usuarios(payload.avaliacao_usuarios)) if payload.avaliacao_usuarios is not None \
+        else list(atual.avaliacao_usuarios)
+    try:
+        achados = usuarios.da_org(org_id, ids) if ids else {}
+    except Exception as exc:
+        logger.exception("agents.controle.avaliacao_usuarios_ilegiveis org_id=%s", org_id)
+        raise ControleIndisponivel().as_http_exception() from exc
+    fora = [str(u) for u in ids if u not in achados]
+    if fora:
+        raise _err(422, "avaliacao_usuario_fora_da_org", "Usuários que não pertencem à organização: " + ", ".join(fora))
+    if ligando:
+        sem = [u.nome or str(u.id) for u in achados.values() if not (u.telefone or "").strip()]
+        if not [u for u in achados.values() if (u.telefone or "").strip()]:
+            raise _err(
+                422, "avaliacao_sem_telefone",
+                "Nenhum usuário da lista tem telefone cadastrado no noc"
+                + (": " + ", ".join(sem) if sem else ". Adicione um usuário."))
+
+
+def _aplicar_flags(controles: Any, ctx: AuthContext, agent: Any, payload: ControleUpdateRequest) -> None:
+    """The non-mode switches of the controle PUT: ``fase_testes`` and the evaluation mode + allow-list (each audited)."""
+    if payload.fase_testes is not None:
+        controles.set_fase_testes(ctx.org_id, agent.id, payload.fase_testes, actor=ctx.user_id)
+    if payload.modo_avaliacao is not None or payload.avaliacao_usuarios is not None:
+        controles.set_avaliacao(
+            ctx.org_id, agent.id, modo_avaliacao=payload.modo_avaliacao, usuarios=payload.avaliacao_usuarios,
+            actor=ctx.user_id,
+        )
 
 
 @router.get("/api/channels/agents/{agent_key}/controle", response_model=ControleOut)
@@ -458,7 +516,7 @@ def channel_agent_controle(
     """Read-only for SW: the mode, whether new leads are accepted and the drain progress. SW never
     decides the mode and never gates on a cached copy of this — the turn endpoint decides."""
     agent = _agente_do_token(studio_store, ctx, agent_key)
-    return _controle_out(ctx.org_id, agent, controles, threads)
+    return _controle_out(ctx.org_id, agent, controles, threads, com_numeros=False)
 
 
 @router.get("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
@@ -483,6 +541,7 @@ def studio_set_agent_controle(
     threads=Depends(get_thread_store_dep),
     key_resolver=Depends(get_org_llm_key_resolver_dep),
     catalog=Depends(get_knowledge_catalog_dep),
+    usuarios=Depends(get_usuarios_avaliacao_dep),
 ) -> ControleOut:
     """Switch the agent ligado / drenando / desligado (and set the drain idle days). Turning it ON
     (``ligado`` / ``drenando``) needs a published version, a configured LLM key and complete content (every
@@ -493,15 +552,21 @@ def studio_set_agent_controle(
         atual = controles.get(ctx.org_id, agent.id)
     except NotFound as exc:
         raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
-    # Only the testing-phase switch changes (modo equal to the current one, no new drain days): no mode
-    # transition, so none of its preconditions apply either.
-    so_fase_testes = (
-        payload.fase_testes is not None and payload.modo == atual.modo
+    # Only the flags change (modo equal to the current one, no new drain days): no mode transition, so none of its
+    # preconditions apply either. Covers the testing-phase switch and the evaluation mode + allow-list.
+    # validate the evaluation allow-list BEFORE any change lands (a bad list must not half-apply)
+    _validar_avaliacao(ctx.org_id, atual, payload, usuarios)
+    tem_flags = any(v is not None for v in (payload.fase_testes, payload.modo_avaliacao, payload.avaliacao_usuarios))
+    so_flags = (
+        tem_flags and payload.modo == atual.modo
         and payload.dreno_inatividade_dias in (None, atual.dreno_inatividade_dias)
     )
-    if so_fase_testes:
-        controles.set_fase_testes(ctx.org_id, agent.id, payload.fase_testes, actor=ctx.user_id)
-        return _controle_out(ctx.org_id, agent, controles, threads)
+    try:
+        if so_flags:
+            _aplicar_flags(controles, ctx, agent, payload)
+            return _controle_out(ctx.org_id, agent, controles, threads)
+    except ValueError as exc:
+        raise _err(422, "avaliacao_usuarios_invalido", str(exc)) from exc
     if payload.modo != "desligado":
         # The agent resolves through its platform definition (A-CONT): the published version, the org's
         # specs and the compiled content decide whether it may take leads.
@@ -526,8 +591,9 @@ def studio_set_agent_controle(
             ctx.org_id, agent.id, modo=payload.modo,
             dreno_inatividade_dias=payload.dreno_inatividade_dias, actor=ctx.user_id,
         )
-        if payload.fase_testes is not None:
-            controles.set_fase_testes(ctx.org_id, agent.id, payload.fase_testes, actor=ctx.user_id)
+        _aplicar_flags(controles, ctx, agent, payload)
+    except ValueError as exc:
+        raise _err(422, "avaliacao_usuarios_invalido", str(exc)) from exc
     except NotFound as exc:
         raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
     return _controle_out(ctx.org_id, agent, controles, threads)
