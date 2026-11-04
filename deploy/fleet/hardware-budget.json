@@ -74,14 +74,14 @@
     },
     "trial-mh3-mem": {
       "max_heavy": 3,
-      "min_cpu_idle_pct": 25,
+      "min_cpu_idle_pct": 15,
       "cpu_sample_s": 10,
       "min_reclaimable_mb": 1024,
       "max_swapout_per_s": 50,
       "max_claude_sessions_advisory": 3,
       "wait_s": 1800,
       "poll_s": 20,
-      "_experiment": "owner 2026-11-04 ~18:05Z: 'let's test that at 2.5, let me evaluate. 2x was kinda smooth' - slots are integers, so max_heavy 3 with memory-aware admission vetoing a 3rd job when memory is short (effective 2-3); job_workers 2, min_reclaimable 1024, aborts count GATED samples only (owner, same answer).",
+      "_experiment": "owner 2026-11-04 ~18:05Z: 'let's test that at 2.5, let me evaluate. 2x was kinda smooth' - slots are integers, so max_heavy 3 with memory-aware admission vetoing a 3rd job when memory is short (effective 2-3); job_workers 2, min_reclaimable 1024, aborts count GATED samples only (owner, same answer). | 2026-11-04 ~20:35Z owner: 'lower the cpu limit to 15%, not 25%' -> min_cpu_idle 25->15.",
       "job_workers": 2
     }
   },
