@@ -191,6 +191,32 @@ then change detection, then alerts.
 - **Before dispatching agents:** check status. If the result is `would_wait`, hold and
   re-check on the timer instead of dispatching.
 
+## 6a · Enforcement: the heavy-run PreToolUse guard
+
+The wrap rule used to be discipline-only (one agent file + this doc), so on 2026-11-04 several
+sessions ran suites ungated (1,253 + 273 + 568 tests) and the 8 GB machine swapped. Gate and
+methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-closed via
+`_guard_failclosed`, marker `[noc-guard:heavy-run]`, PreToolUse on `Bash`) over the pure
+`mcp/noctusai/tools/noctus/dev/heavy_run_guard.py::decide`.
+
+- **Matched** (per command segment, shlex token scan, so `cd x && pytest`, `a | pytest`,
+  `(pytest)` and `bash -c "..."` are seen): `pytest` / `py.test` / `python -m pytest`,
+  `vitest`, `playwright test`, `vite build`, `npm|pnpm|yarn [run] test|build[:x]`, and the
+  same behind `npx` / `pnpm exec`.
+- **Allowed:** a segment that runs `hw_admission.py` (the wrapped command is its argument);
+  `--collect-only` / `--co` / `--version` / `--help` / `-h`; commands that merely mention the
+  word (`grep pytest f`, `echo "pytest"`).
+- **Deny message** prints the exact wrapped command with a suggested `--job`
+  (`pytest:<dir>` / `vitest:<product>` / `build:<product>`).
+- **Escape:** inline `NOC_HW_UNGATED_OK=<non-empty reason> <cmd>`; the reason is echoed to
+  stderr. An empty reason is still a deny. Use it only when the gate itself is what is being
+  debugged.
+- **Self-gating tools are untouched:** `task_branch` integrate, `gate_sweep` and
+  `predeploy_check` spawn their gates inside the MCP server process; a PreToolUse hook only
+  sees the agent's own tool calls, never an MCP server's subprocesses.
+- **Limits (stated):** `$(...)`, backticks, `xargs pytest`, aliases and wrapper scripts are not
+  resolved; the hardware gate and CI stay the backstops.
+
 ## 7 · Load experiments: time-boxed trials
 
 To find this machine's real limit (the point where adding concurrency stops adding throughput,

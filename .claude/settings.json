@@ -34,6 +34,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-heavy-run.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Agent|Task",
         "hooks": [
           {
