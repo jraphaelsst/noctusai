@@ -368,3 +368,49 @@ class TestProbeV2:
             pass
         rows = [json.loads(ln) for ln in (env / "log.ndjson").read_text().splitlines()]
         assert rows and all(r["probe_version"] == hw.PROBE_VERSION == 2 for r in rows)
+
+
+class TestJobWorkers:
+    def test_budget_value_wins(self):
+        assert hw.job_workers({"job_workers": 3, "max_heavy": 1}) == 3
+
+    def test_default_is_cores_over_twice_heavy_never_zero(self):
+        n = hw.job_workers({"max_heavy": 1})
+        assert n == max(1, (os.cpu_count() or 2) // 2)
+        assert hw.job_workers({"max_heavy": 1000}) == 1
+
+    def test_unreadable_budget_caps_at_one(self, env, monkeypatch):
+        monkeypatch.setenv("NOCTUS_HW_BUDGET_PATH", str(env / "absent.json"))
+        assert hw.job_workers() == 1
+
+    def test_repo_build_phase_caps_at_two(self, monkeypatch):
+        monkeypatch.delenv("NOCTUS_HW_BUDGET_PATH", raising=False)
+        monkeypatch.setenv("NOCTUS_HW_PHASE", "build")
+        assert hw.job_workers() == 2
+
+    def test_cap_argv_shapes(self):
+        assert hw.cap_worker_argv(["npm", "test"], 2) == ["npm", "test", "--", "--maxWorkers=2"]
+        assert hw.cap_worker_argv(["npx", "playwright", "test"], 2) == \
+            ["npx", "playwright", "test", "--workers=2"]
+        assert hw.cap_worker_argv(["npm", "test", "--", "--maxWorkers=5"], 2) == \
+            ["npm", "test", "--", "--maxWorkers=5"]          # explicit cap is respected
+        assert hw.cap_worker_argv(["python", "-m", "pytest"], 2) == ["python", "-m", "pytest"]
+        assert hw.cap_worker_argv(["npx", "vite", "build"], 2) == ["npx", "vite", "build"]
+
+
+class TestGateRunnerAppliesCap:
+    def test_default_run_gate_launches_capped_vitest(self, tmp_path, monkeypatch):
+        """Real subprocess: a fake `npm` first on PATH prints the argv it got."""
+        import stat
+        from tools.noctus.dev import gate_sweep as gs
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        npm = bin_dir / "npm"
+        npm.write_text('#!/bin/sh\necho "ARGV: $*"\n')
+        npm.chmod(npm.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        monkeypatch.setenv("NOCTUS_HW_PHASE", "build")
+        monkeypatch.delenv("NOCTUS_HW_BUDGET_PATH", raising=False)
+        res = gs._default_run_gate(gs.GateSpec("vitest:x", ["npm", "test"], tmp_path), timeout=30)
+        assert res[0] == 0
+        assert "ARGV: test -- --maxWorkers=2" in res[1]

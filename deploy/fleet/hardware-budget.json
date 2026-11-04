@@ -6,6 +6,8 @@
     "build": {
       "_approved": "owner 2026-11-04 (build/refine phase; spec relayed by session noctusai-04)",
       "max_heavy": 1,
+      "job_workers": 2,
+      "_job_workers": "added 2026-11-04 by noctusai-86 (owner order: cap per-job fan-out); vitest/playwright workers per heavy job. Memory is the ceiling on this 8 GB M2 (trial-mh2 swap abort)",
       "min_cpu_idle_pct": 50,
       "cpu_sample_s": 10,
       "min_reclaimable_mb": 1536,

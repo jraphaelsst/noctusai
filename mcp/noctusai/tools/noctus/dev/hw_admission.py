@@ -264,6 +264,35 @@ def probe(sample_s: float = 10.0) -> dict[str, Any]:
             "sample_s": sample_s, "elapsed_s": round(elapsed, 2)}
 
 
+def job_workers(budget: dict[str, Any] | None = None) -> int:
+    """Internal worker cap for ONE heavy job (vitest --maxWorkers, playwright
+    --workers). The slot count bounds how many jobs run; this bounds how wide
+    each one fans out. 2026-11-04: with a single slot, one vitest run still
+    started ~7 workers on the 8-core M2 and pushed it into swap. The budget's
+    ``job_workers`` wins; when absent it is cores / (2 x max_heavy), never < 1.
+    An unreadable budget gives 1: the conservative answer, never "uncapped"."""
+    try:
+        b = budget or load_budget()
+    except BudgetError:
+        return 1
+    v = b.get("job_workers")
+    if v is None:
+        v = (os.cpu_count() or 2) // (2 * max(1, int(b.get("max_heavy") or 1)))
+    return max(1, int(v))
+
+
+def cap_worker_argv(argv: list[str], workers: int) -> list[str]:
+    """Add the worker cap to a known fan-out command; anything else (and any
+    command that already sets its own cap) is returned unchanged."""
+    a = list(argv)
+    if a[:2] == ["npm", "test"] and not any(x.startswith("--maxWorkers") for x in a):
+        return a + (["--"] if "--" not in a else []) + [f"--maxWorkers={workers}"]
+    if a[:3] == ["npx", "playwright", "test"] and not any(
+            x.startswith("--workers") or x == "-j" for x in a):
+        return a + [f"--workers={workers}"]
+    return a
+
+
 def evaluate(metrics: dict[str, Any], budget: dict[str, Any]) -> list[str]:
     """Return the list of failed admission conditions (empty = admit)."""
     if "probe_error" in metrics:

@@ -29,9 +29,17 @@ capacity admits it.**
 | Knob (phase `build`, owner-approved 2026-11-04) | Value |
 |---|---|
 | Heavy jobs at once, machine-wide | 1 |
+| Workers inside one heavy job (`job_workers`) | 2 (vitest `--maxWorkers`, playwright `--workers`) |
 | Admit when | CPU idle ≥ 50 % over 10 s **and** free + reclaimable memory ≥ 1.5 GB **and** swap-out < 50 pages/s |
 | Claude sessions | ≤ 3 (advisory: surfaced, not enforced) |
 | Wait before giving up | 30 min, polling every 20 s |
+
+**The slot bounds how many jobs run; `job_workers` bounds how wide each one fans out.**
+With one slot, a single `vitest run` still started about 7 workers on the 8-core M2. The cap
+is applied where real gate subprocesses launch (`gate_sweep._default_run_gate` via
+`hw_admission.cap_worker_argv`). An explicit cap already in the command wins. Without the knob
+the default is cores / (2 × `max_heavy`), and an unreadable budget gives 1. Pytest runs
+single-process here (no xdist), so it needs no cap.
 
 **Don't gate on load average alone on macOS.** It counts threads blocked on I/O and memory,
 and it decays slowly. On 2026-11-04 the load was 21–29 while the CPU sat 89 % idle. Memory

@@ -1511,9 +1511,12 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
     `mcp/noctusai/env_bootstrap.py`'s module docstring for the full
     incident."""
     start = time.time()
+    # Per-job fan-out cap from the hardware budget (vitest --maxWorkers,
+    # playwright --workers): the slot bounds how many jobs, this how wide.
+    argv = _hw.cap_worker_argv(spec.argv, _hw.job_workers())
     try:
         proc = subprocess.run(
-            spec.argv, cwd=str(spec.cwd), capture_output=True, text=True, timeout=timeout,
+            argv, cwd=str(spec.cwd), capture_output=True, text=True, timeout=timeout,
             env=gate_subprocess_env(Path(spec.cwd)),
         )
     except subprocess.TimeoutExpired:
