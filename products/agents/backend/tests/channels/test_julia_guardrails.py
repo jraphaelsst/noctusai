@@ -331,6 +331,7 @@ class TestToolArgumentsThatReachHumans:
         assert c.CAMPOS_PROTEGIDOS == {
             "handoff": ("motivo",), "captacao": ("descricao", "endereco"), "encerrar": ("motivo_texto",),
             "registrar_reacao_imovel": ("motivo",), "registrar_intencao_visita": ("preferencia_horario",),
+            "sinalizar_alerta": ("descricao", "trecho"),
         }
         for tool, campos in c.CAMPOS_PROTEGIDOS.items():
             assert set(campos) <= set(TOOLS[tool].args.model_fields), tool

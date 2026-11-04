@@ -61,6 +61,9 @@ __all__ = [
     "EncerrarActionOut",
     "HandoffActionOut",
     "IntencaoVisitaActionOut",
+    "AlertaActionOut",
+    "DocumentoIdentificacaoActionOut",
+    "RelatorioOut",
     "LeadProntoActionOut",
     "ParticipanteOut",
     "QualificacaoOut",
@@ -310,11 +313,46 @@ class _ActionOut(BaseModel):
     seq: int = Field(default=0, ge=0)
 
 
+class RelatorioImovelOut(BaseModel):
+    codigo: str
+    #: The link SW's tool results carried (``None`` when unknown: the consumer may build it from the org's template).
+    link: str | None = None
+    reacao: Literal["gostou", "nao_gostou", "sem_reacao"]
+
+
+class RelatorioIdentificacaoOut(BaseModel):
+    """FLAGS only -- never a value."""
+
+    cpf: bool = False
+    rg: bool = False
+    email: bool = False
+    documento_enviado: bool = False
+
+
+class RelatorioOut(BaseModel):
+    """The report of a hand-off / conclusion (Julia v3, CONTRACT §12.4): ready-to-send text plus its parts."""
+
+    #: pt-BR, ready to send, <= 1500 chars.
+    texto: str
+    #: The narrative (the ``/resumo`` generator); ``None`` when generation failed or was off (``texto`` is then deterministic).
+    resumo_conversa: str | None = None
+    perfil: dict[str, str] = Field(default_factory=dict)
+    imoveis_oferecidos: list[RelatorioImovelOut] = Field(default_factory=list)
+    #: Liked first, then best fit; at most 3.
+    imoveis_recomendados: list[str] = Field(default_factory=list)
+    #: The lead's OWN visit options. Julia never schedules.
+    disponibilidade_visita: str | None = None
+    identificacao: RelatorioIdentificacaoOut = Field(default_factory=RelatorioIdentificacaoOut)
+    motivo: str
+    proximos_passos: str
+
+
 class HandoffActionOut(_ActionOut):
     type: Literal["handoff"]
     #: Typed reason (the code is an enum in the tool schema; its label is a DB row).
     motivo_codigo: str
     motivo: str
+    relatorio: RelatorioOut | None = None
 
 
 class LeadProntoActionOut(_ActionOut):
@@ -326,6 +364,7 @@ class LeadProntoActionOut(_ActionOut):
     valores: dict[str, Any]
     imoveis_gostou: list[str]
     intencoes_visita: list[str]
+    relatorio: RelatorioOut | None = None
 
 
 class IntencaoVisitaActionOut(_ActionOut):
@@ -358,6 +397,25 @@ class ConsentimentoCreditoActionOut(_ActionOut):
     trecho: str | None = None
 
 
+class AlertaActionOut(_ActionOut):
+    """Julia flagged an unhappy lead / her own mistake / a drift (``sinalizar_alerta``, CONTRACT §12.3): SW notifies
+    the report destination. One per ``tipo`` per turn."""
+
+    type: Literal["alerta"]
+    tipo: Literal["lead_insatisfeito", "erro_agente", "desvio", "outro"]
+    descricao: str
+    alerta_id: str
+
+
+class DocumentoIdentificacaoActionOut(_ActionOut):
+    """The lead sent an ID document as media (``registrar_documento``): SW finds/creates the lead's card and runs
+    its document intake on that media. ``provider_message_id`` is the inbound message that carried it."""
+
+    type: Literal["documento_identificacao"]
+    provider_message_id: str
+    tipo_provavel: Literal["rg", "cpf", "cin", "cnh", "outro"]
+
+
 class SolicitacaoTitularActionOut(_ActionOut):
     """A data-subject request was recorded on SW's side (``registrar_solicitacao_titular``) and the lead handed to a
     person (``handoff`` with ``motivo_codigo="direito_titular"`` rides next to it). Nothing was erased."""
@@ -375,7 +433,8 @@ class SolicitacaoTitularActionOut(_ActionOut):
 ChannelActionOut = Annotated[
     Union[
         HandoffActionOut, LeadProntoActionOut, IntencaoVisitaActionOut, CaptacaoActionOut, EncerrarActionOut,
-        ConsentimentoCreditoActionOut, SolicitacaoTitularActionOut,
+        ConsentimentoCreditoActionOut, SolicitacaoTitularActionOut, AlertaActionOut,
+        DocumentoIdentificacaoActionOut,
     ],
     Field(discriminator="type"),
 ]
@@ -402,6 +461,8 @@ class QualificacaoOut(BaseModel):
     #: The pinned standard's stage KEYS in order (low to high), so a consumer can read ``estagio_minimo`` as
     #: "this stage or beyond" without holding a copy of the standard. Keys only.
     estagios_ordem: list[str] = Field(default_factory=list)
+    #: Every property code offered to this lead so far, in order of offer (SW mirrors it every turn, CONTRACT §12.6).
+    imoveis_oferecidos: list[str] = Field(default_factory=list)
 
 
 class EstagioOut(BaseModel):

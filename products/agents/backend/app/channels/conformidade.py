@@ -97,6 +97,7 @@ CAMPOS_PROTEGIDOS: dict[str, tuple[str, ...]] = {
     "encerrar": ("motivo_texto",),
     "registrar_reacao_imovel": ("motivo",),
     "registrar_intencao_visita": ("preferencia_horario",),
+    "sinalizar_alerta": ("descricao", "trecho"),
 }
 
 #: Consecutive normalised tokens that make a reply "the prompt".

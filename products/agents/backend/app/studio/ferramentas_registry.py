@@ -81,6 +81,8 @@ FERRAMENTAS_CONHECIDAS: frozenset[str] = frozenset({
     "avaliar_lead", "registrar_perfil", "oferecer_imoveis", "detalhes_imovel", "consultar_empreendimento",
     "registrar_reacao_imovel", "registrar_intencao_visita", "registrar_identificacao", "concluir_qualificacao",
     "handoff", "encerrar", "captacao", "consentimento_credito", "registrar_solicitacao_titular",
+    # Julia v3 (CONTRACT §12.3 / §12.8)
+    "sinalizar_alerta", "registrar_documento",
     # knowledge (app/studio/tools.py)
     "kb_buscar", "kb_ler",
     # extraction tools (resumo / decisão) -- ``app.channels.extracao``

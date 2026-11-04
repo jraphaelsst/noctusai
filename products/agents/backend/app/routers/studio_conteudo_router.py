@@ -490,13 +490,10 @@ def mint_content_token(
     audit: TokenAudit = Depends(get_token_audit_dep),
 ) -> ContentTokenOut:
     """Mint the ``noctus.agents.content`` MCP token: scope ``studio:content-write`` only, issuer
-    ``noctus-platform`` (server-side), ``expira_em_dias`` days (default 30, 1..365; ``null`` = never expires), org-bound to the platform org the admin acts in. PLATFORM ADMIN
+    ``noctus-platform`` (server-side), ``expira_em_dias`` days (default 30, 1..30; never ``null``), org-bound to the platform org the admin acts in. PLATFORM ADMIN
     only; the raw secret is returned once. Audited like the channel token."""
     scopes = [SCOPE_STUDIO_CONTENT_WRITE] + ([SCOPE_STUDIO_AGENT_DELETE] if payload.permitir_exclusao else [])
-    expires_at = (
-        None if payload.expira_em_dias is None
-        else datetime.now(timezone.utc) + timedelta(days=payload.expira_em_dias)
-    )
+    expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expira_em_dias)
     try:
         minted = token_admin.mint(
             "agents", org_id=ctx.org_id, label=f"conteudo: {payload.label}",
@@ -516,7 +513,7 @@ def mint_content_token(
         raise http_error(502, "audit_failed", "Falha ao registrar a emissão do token.") from exc
     logger.info(
         "agents.content_token.minted org_id=%s token_id=%s by=%s label=%r expires_at=%s",
-        ctx.org_id, minted.info.id, ctx.user_id, payload.label, expires_at.isoformat() if expires_at else "never",
+        ctx.org_id, minted.info.id, ctx.user_id, payload.label, expires_at.isoformat(),
     )
     if payload.permitir_exclusao:
         logger.info("agents.content_token.minted_with_delete org_id=%s token_id=%s", ctx.org_id, minted.info.id)

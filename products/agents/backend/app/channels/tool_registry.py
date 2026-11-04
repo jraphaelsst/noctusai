@@ -27,6 +27,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal, Protocol, Union
 from uuid import UUID
 
@@ -43,15 +44,15 @@ from app.clients.social_wiring import (
     registrar_solicitacao_titular,
 )
 from app.qualificacao.matcher import MIN_TRECHO, normalizar
-from app.qualificacao.identificacao import CAMPOS as IDENT_CAMPOS
-from app.qualificacao.identificacao import EncryptionNotConfigured
+from app.qualificacao.identificacao import TIPOS_DOCUMENTO, EncryptionNotConfigured, obrigatorios_do_padrao
 from app.qualificacao.models import LeadSinais, VersaoPadrao
 from app.qualificacao.service import ItemPerfil, QualificacaoService
 from app.runtime.llm_runtime import LlmToolset
 from app.studio.models import ConteudoBundle
 from app.stores.skills_biblioteca import FERRAMENTAS_DE_ABERTURA
 from app.stores.threads import OPT_OUT_MENSAGEM_MAX
-from app.studio.textos_registry import MOTIVOS_HANDOFF
+from app.stores.thread_alertas import TIPOS_ALERTA
+from app.studio.textos_registry import CODIGOS_RECUSA_OPCIONAIS, MOTIVOS_HANDOFF
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,9 @@ __all__ = [
 ]
 
 MOTIVO_MAX_CHARS = 280
+#: ``sinalizar_alerta`` caps (migration 057 CHECKs).
+ALERTA_DESCRICAO_MAX = 500
+ALERTA_TRECHO_MAX = 500
 #: The longest quote a data-subject request stores (the lead's own words; the SW record column is 500).
 TRECHO_TITULAR_MAX = 300
 #: The longest quote consent / opt-out evidence stores (matches the qualification ``trecho`` column).
@@ -174,6 +178,18 @@ class RegistrarIdentificacaoArgs(_Args):
     valor: str = Field(min_length=1, max_length=120)
 
 
+class RegistrarDocumentoArgs(_Args):
+    #: The inbound lead message that carried the photo / scan (a ``midia`` of tipo imagem or documento).
+    provider_message_id: str = Field(min_length=1, max_length=256)
+    tipo_provavel: Literal[*TIPOS_DOCUMENTO]
+
+
+class SinalizarAlertaArgs(_Args):
+    tipo: Literal[*TIPOS_ALERTA]
+    descricao: str = Field(min_length=1, max_length=ALERTA_DESCRICAO_MAX)
+    trecho: str | None = Field(default=None, max_length=ALERTA_TRECHO_MAX)
+
+
 class ConcluirQualificacaoArgs(_Args):
     pass
 
@@ -235,12 +251,14 @@ TOOLS: dict[str, ToolDef] = {t.nome: t for t in (
     ToolDef("registrar_reacao_imovel", RegistrarReacaoImovelArgs, frozenset({"qualificacao"})),
     ToolDef("registrar_intencao_visita", RegistrarIntencaoVisitaArgs, frozenset({"qualificacao"})),
     ToolDef("registrar_identificacao", RegistrarIdentificacaoArgs, frozenset({"identificacao"})),
+    ToolDef("registrar_documento", RegistrarDocumentoArgs, frozenset({"identificacao", "documentos"})),
     ToolDef("concluir_qualificacao", ConcluirQualificacaoArgs, frozenset({"qualificacao"})),
     ToolDef("handoff", HandoffArgs),
     ToolDef("encerrar", EncerrarArgs),
     ToolDef("captacao", CaptacaoArgs),
     ToolDef("consentimento_credito", ConsentimentoCreditoArgs, frozenset({"credito"})),
     ToolDef("registrar_solicitacao_titular", RegistrarSolicitacaoTitularArgs),
+    ToolDef("sinalizar_alerta", SinalizarAlertaArgs, frozenset({"alertas"})),
 )}
 
 _STRIP = ("title", "default")
@@ -490,6 +508,27 @@ class JuliaTurno:
     #: sanitisers run: a random hex marker can contain a digit run ``sem_contatos`` reads as a phone and strips).
     marcador: str | None = None
     chamadas_com_marcador: int = 0
+    #: Julia v3 seams (all optional; ``None`` = the capability is off for this turn):
+    #: ``agents.thread_alertas`` store (``sinalizar_alerta``).
+    alertas: Any | None = None
+    #: ``provider_message_id -> the midia dict`` of an INBOUND LEAD message of this thread, else ``None``
+    #: (``registrar_documento`` validates the id against it).
+    midia_da_mensagem: Callable[[str], dict[str, Any] | None] | None = None
+    #: ``() -> narrative`` -- the ``/resumo`` generator for the report (CONTRACT §12.4); ``None`` = no LLM call
+    #: (the report's ``resumo_conversa`` is then ``None`` by design, not a failure).
+    resumo_conversa: Callable[[], Awaitable[str]] | None = None
+    #: ``code -> None``: books a thread event (``area:codigo``), e.g. ``relatorio:degradado``.
+    auditar: Callable[[str], None] | None = None
+    #: The alert types already raised this turn (one per tipo per turn) -- the fast path of the store check.
+    alertas_tipos: set[str] = field(default_factory=set)
+    #: A "turn" for the alert dedupe starts after the thread's last assistant message (``None`` = the thread has
+    #: none yet): an alert of the same tipo recorded in ``thread_alertas`` since then is a repeat, also when this
+    #: turn is a re-run of a failed one (a fresh ``JuliaTurno`` has an empty in-memory set).
+    alertas_desde: datetime | None = None
+    #: property code -> the link SW's tool results carried this turn (the report prints it when known).
+    links_por_codigo: dict[str, str] = field(default_factory=dict)
+    #: The report built for this turn's hand-off / conclusion.
+    relatorio: dict[str, Any] | None = None
 
     def proteger_args(self, nome: str, args: BaseModel) -> BaseModel:
         """The lead-influenced arguments that reach humans, scanned for the prompt: a hit replaces the field
@@ -532,6 +571,10 @@ class JuliaTurno:
             caps.add("sw")
         if self.ident is not None:
             caps.add("identificacao")
+            if self.midia_da_mensagem is not None:
+                caps.add("documentos")
+        if self.alertas is not None:
+            caps.add("alertas")
         credito = getattr(self.estado_sw, "credito", None)
         if credito is not None and credito.ativo:
             caps.add("credito")
@@ -574,7 +617,12 @@ def _ok(**payload: Any) -> _Resultado:
 def _recusa(t: JuliaTurno, codigo: str, **extra: Any) -> _Resultado:
     """A typed refusal; the wording is the row ``ferramenta.resultado.recusa.<codigo>``."""
     sub = {"skill": extra["skill"]} if "skill" in extra else {}
-    msg = t.texto(f"ferramenta.resultado.recusa.{codigo}", **sub)
+    try:
+        msg = t.texto(f"ferramenta.resultado.recusa.{codigo}", **sub)
+    except TextoAusente:
+        if codigo not in CODIGOS_RECUSA_OPCIONAIS:
+            raise
+        msg = codigo  # an optional row not written yet: the bare code, never prose from code
     return _Resultado({"ok": False, "codigo": codigo, "mensagem": msg, **{k: v for k, v in extra.items() if k != "skill"}},
                       erro=True, recusa=True)
 
@@ -592,6 +640,11 @@ def _falha_sw(t: JuliaTurno) -> _Resultado:
 def _pedaco_link(item: Any) -> str | None:
     link = item.get("link") if isinstance(item, dict) else None
     return link if isinstance(link, str) and link.strip() else None
+
+
+def _link_do_evento(link: object) -> str | None:
+    """The link stored on an ``oferecido`` event (``motivo`` is capped at 200); ``None`` when absent or too long."""
+    return link if isinstance(link, str) and link.startswith(("http://", "https://")) and len(link) <= 200 else None
 
 
 def _consulta_sw(valores: Mapping[str, Any]) -> dict[str, Any]:
@@ -674,7 +727,16 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
     # ── qualification tools ──
     async def _avaliar() -> _Resultado:
         e = await asyncio.to_thread(t.qual.avaliar, t.org_id, t.lead_ref_id, _versao_id(), t.escopo, t.sinais)
-        return _ok(**{k: v for k, v in e.avaliar_payload().items()})
+        payload = e.avaliar_payload()
+        if "nome" in payload.get("identificacao_desejada", ()) and await _contato_tem_nome():
+            payload["identificacao_desejada"] = [k for k in payload["identificacao_desejada"] if k != "nome"]
+        return _ok(**payload)
+
+    async def _contato_tem_nome() -> bool:
+        """The name came with the contact (the Meta form): it counts as present -- Julia never asks it, unless she
+        judges it a business name and registers the person's own (``registrar_identificacao`` campo=nome)."""
+        lead = await asyncio.to_thread(t.threads.get_lead_ref, t.org_id, t.lead_ref_id)
+        return bool((getattr(lead, "contato", None) or {}).get("nome"))
 
     def _versao_id() -> UUID:
         assert t.padrao.id is not None
@@ -721,18 +783,21 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
 
     async def _visita(a: RegistrarIntencaoVisitaArgs) -> _Resultado:
         origem = await _origem_oferta(a.codigo)
-        r = await _evento(a.codigo, "quer_visitar", origem)
+        pref = _limpo(a.preferencia_horario, 120)
+        # the lead's OWN availability rides on the event (``motivo``): the report reads it back on a later turn
+        r = await _evento(a.codigo, "quer_visitar", origem, pref)
         if not r.ok:
             return _recusa(t, r.codigo or "evento_invalido")
         if not r.inalterado:
-            t.acao(type="intencao_visita", codigo=a.codigo, preferencia_horario=_limpo(a.preferencia_horario, 120))
+            t.acao(type="intencao_visita", codigo=a.codigo, preferencia_horario=pref)
         return _ok(inalterado=r.inalterado, mensagem=t.texto("ferramenta.resultado.registrado"))
 
     async def _identificar(a: RegistrarIdentificacaoArgs) -> _Resultado:
         estado = await asyncio.to_thread(t.qual.avaliar, t.org_id, t.lead_ref_id, _versao_id(), t.escopo, t.sinais)
-        if not estado.pedir_identificacao:
+        # the NAME is not sensitive and the form's may be a business name: it is registrable at any point
+        if a.campo != "nome" and not estado.pedir_identificacao:
             return _recusa(t, "identificacao_nao_devida")
-        obrigatorios = tuple(c.chave for c in t.padrao.criterios if c.ativo and c.tipo == "identificacao") or IDENT_CAMPOS
+        obrigatorios = obrigatorios_do_padrao(t.padrao.criterios)
         try:
             r = await asyncio.to_thread(
                 t.ident.registrar_identificacao, t.org_id, t.lead_ref_id, agent_id=t.agent_id, campo=a.campo,
@@ -751,6 +816,51 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             t.identificacoes_registradas.append(r.valor_registrado)
         # NEVER the value: the field name, the status, what is still missing.
         return _ok(**r.to_payload())
+
+    async def _documento(a: RegistrarDocumentoArgs) -> _Resultado:
+        """The lead sent a photo / scan of an ID: the id must be an inbound LEAD message of this thread carrying
+        imagem|documento media. Remembers THAT (the CPF counts as satisfied pending extraction); SW extracts."""
+        assert t.ident is not None and t.midia_da_mensagem is not None
+        midia = await asyncio.to_thread(t.midia_da_mensagem, a.provider_message_id)
+        if midia is None:
+            return _recusa(t, "documento_nao_encontrado")
+        if midia.get("tipo") not in ("imagem", "documento"):
+            return _recusa(t, "documento_sem_midia")
+        estado = await asyncio.to_thread(t.qual.avaliar, t.org_id, t.lead_ref_id, _versao_id(), t.escopo, t.sinais)
+        if not estado.pedir_identificacao:
+            return _recusa(t, "identificacao_nao_devida")
+        await asyncio.to_thread(
+            t.ident.registrar_documento, t.org_id, t.lead_ref_id, agent_id=t.agent_id,
+            tipo_provavel=a.tipo_provavel, provider_message_id=a.provider_message_id)
+        t.identificacao_registrada = True
+        if not any(x.get("type") == "documento_identificacao" and x.get("provider_message_id") == a.provider_message_id
+                   for x in t.actions):
+            t.acao(type="documento_identificacao", provider_message_id=a.provider_message_id,
+                   tipo_provavel=a.tipo_provavel)
+        faltando = await asyncio.to_thread(
+            t.ident.faltando, t.org_id, t.lead_ref_id, obrigatorios_do_padrao(t.padrao.criterios))
+        return _ok(mensagem=t.texto("ferramenta.resultado.registrado"), faltando=list(faltando))
+
+    async def _alerta(a: SinalizarAlertaArgs) -> _Resultado:
+        """Julia flags an unhappy lead / her own mistake / a drift. One alert per tipo per turn (a repeat is a
+        no-op answered ok); SW turns the ``alerta`` action into a message to the report destination."""
+        assert t.alertas is not None
+        if a.tipo in t.alertas_tipos:
+            return _ok(inalterado=True, mensagem=t.texto("ferramenta.resultado.registrado"))
+        previos = await asyncio.to_thread(t.alertas.listar, t.org_id, t.thread_id)
+        if any(p.tipo == a.tipo and (t.alertas_desde is None or p.created_at >= t.alertas_desde) for p in previos):
+            t.alertas_tipos.add(a.tipo)
+            return _ok(inalterado=True, mensagem=t.texto("ferramenta.resultado.registrado"))
+        # staff-facing (WhatsApp to the owner): a second-order injection channel -- no link / PIX / contact survives
+        descricao = texto_seguro.para_equipe(a.descricao, maximo=ALERTA_DESCRICAO_MAX) or None
+        if descricao is None:
+            return _recusa(t, "valor_invalido")
+        rec = await asyncio.to_thread(
+            t.alertas.registrar, t.org_id, t.thread_id, t.agent_id, tipo=a.tipo, descricao=descricao,
+            trecho=texto_seguro.para_equipe(a.trecho or "", maximo=ALERTA_TRECHO_MAX) or None)
+        t.alertas_tipos.add(a.tipo)
+        t.acao(type="alerta", tipo=a.tipo, descricao=descricao, alerta_id=str(rec.id))
+        return _ok(mensagem=t.texto("ferramenta.resultado.registrado"))
 
     async def _concluir() -> _Resultado:
         r = await asyncio.to_thread(
@@ -810,12 +920,14 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             return _ok(esgotado=True)
         lote = await asyncio.to_thread(t.qual.proximo_lote, t.org_id, t.lead_ref_id)
         for i in itens:
-            r = await _evento(str(i["codigo"]), "oferecido", origem, lote=lote)
+            # the listing link rides on the offer event (``motivo``): the hand-off report reads it back on a later turn
+            r = await _evento(str(i["codigo"]), "oferecido", origem, _link_do_evento(_pedaco_link(i)), lote=lote)
             if not r.ok and r.codigo != "imovel_ja_oferecido":
                 return _recusa(t, r.codigo or "evento_invalido")
             t.codigos_vistos.add(str(i["codigo"]).casefold())
             if (lk := _pedaco_link(i)) is not None:
                 t.links_vistos.add(lk)
+                t.links_por_codigo[str(i["codigo"])] = lk
         # the cards are the agency's listing text: shaped like every other catalogue text, wrapped under one key
         shaped = [_catalogo(body, i, texto_seguro.ALLOW_OFERTA).dados for i in itens]
         out: dict[str, Any] = {"lote": lote, "dados_catalogo": {"imoveis": shaped}}
@@ -841,12 +953,13 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         if a.codigo not in ja:
             if len(ja) >= t.limites.max_imoveis_distintos:
                 return _recusa(t, "limite_ofertas")
-            r = await _evento(a.codigo, "oferecido", "pedido_lead")
+            r = await _evento(a.codigo, "oferecido", "pedido_lead", _link_do_evento(c.dados.get("link")))
             if not r.ok and r.codigo != "imovel_ja_oferecido":
                 return _recusa(t, r.codigo or "evento_invalido")
         t.codigos_vistos.add(a.codigo.casefold())
         if (lk := c.dados.get("link")) is not None:
             t.links_vistos.add(lk)
+            t.links_por_codigo[a.codigo] = lk
         return _ok(encontrado=True, dados_catalogo=c.dados)
 
     async def _empreendimento(a: ConsultarEmpreendimentoArgs) -> _Resultado:
@@ -981,6 +1094,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         "oferecer_imoveis": _oferecer, "detalhes_imovel": _detalhes,
         "consultar_empreendimento": _empreendimento, "registrar_reacao_imovel": _reacao,
         "registrar_intencao_visita": _visita, "registrar_identificacao": _identificar,
+        "registrar_documento": _documento, "sinalizar_alerta": _alerta,
         "concluir_qualificacao": lambda a: _concluir(), "handoff": _handoff, "encerrar": _encerrar,
         "captacao": _captacao, "consentimento_credito": _credito,
         "registrar_solicitacao_titular": _solicitacao_titular,
@@ -1072,7 +1186,7 @@ async def _mascara(t: JuliaTurno) -> tuple[bool, dict[str, Any]]:
     hand-off itself must never be lost to it."""
     if t.ident is None:
         return False, {}
-    obrig = tuple(c.chave for c in t.padrao.criterios if c.ativo and c.tipo == "identificacao") or IDENT_CAMPOS
+    obrig = obrigatorios_do_padrao(t.padrao.criterios)
     faltando = await asyncio.to_thread(t.ident.faltando, t.org_id, t.lead_ref_id, obrig)
     try:
         mascarado = await asyncio.to_thread(t.ident.mascarado, t.org_id, t.lead_ref_id) or {}
@@ -1080,6 +1194,19 @@ async def _mascara(t: JuliaTurno) -> tuple[bool, dict[str, Any]]:
         logger.exception("agents.channel.mascara_ilegivel thread_id=%s", t.thread_id)
         mascarado = {}
     return (not faltando), mascarado
+
+
+async def _relatorio(t: JuliaTurno, motivo: str, perfil: Mapping[str, Any]) -> dict[str, Any]:
+    """The report of this hand-off / conclusion (CONTRACT §12.4), built once per turn."""
+    from app.channels.relatorio import montar_relatorio
+
+    if t.relatorio is None:
+        faltando = ()
+        if t.ident is not None:
+            faltando = await asyncio.to_thread(
+                t.ident.faltando, t.org_id, t.lead_ref_id, obrigatorios_do_padrao(t.padrao.criterios))
+        t.relatorio = await montar_relatorio(t, motivo=motivo, perfil=perfil, faltando_ident=faltando)
+    return t.relatorio
 
 
 async def executar_handoff(
@@ -1091,6 +1218,8 @@ async def executar_handoff(
         return
     perfil = await _perfil_para_handoff(t)
     completa, mascarada = await _mascara(t)
+    relatorio = await _relatorio(t, resumo, perfil)
+    perfil = {**perfil, "relatorio": relatorio}
     try:
         await asyncio.to_thread(
             t.threads.registrar_handoff, t.org_id, t.thread_id, t.agent_id, para=t.handoff_destino,
@@ -1102,7 +1231,7 @@ async def executar_handoff(
         logger.warning("agents.channel.handoff_nao_registrado thread_id=%s cause=%s", t.thread_id, type(exc).__name__)
     t.transferiu = True
     t.resumo_handoff = resumo
-    t.acao(type="handoff", motivo_codigo=motivo_codigo, motivo=resumo)
+    t.acao(type="handoff", motivo_codigo=motivo_codigo, motivo=resumo, relatorio=relatorio)
 
 
 async def finalizar_conclusao(t: JuliaTurno, lead_pronto: Mapping[str, Any]) -> None:
@@ -1114,6 +1243,8 @@ async def finalizar_conclusao(t: JuliaTurno, lead_pronto: Mapping[str, Any]) -> 
         "ferramenta.handoff.resumo_conclusao", estagio=lead_pronto.get("estagio", ""), score=lead_pronto.get("score", ""))
     perfil = await _perfil_para_handoff(t)
     completa, mascarada = await _mascara(t)
+    relatorio = await _relatorio(t, resumo, perfil)
+    perfil = {**perfil, "relatorio": relatorio}
     try:
         await asyncio.to_thread(
             t.threads.registrar_handoff, t.org_id, t.thread_id, t.agent_id, para=t.handoff_destino,
@@ -1125,4 +1256,4 @@ async def finalizar_conclusao(t: JuliaTurno, lead_pronto: Mapping[str, Any]) -> 
         logger.warning("agents.channel.conclusao_nao_registrada thread_id=%s cause=%s", t.thread_id, type(exc).__name__)
     t.concluiu = True
     t.resumo_handoff = resumo
-    t.acao(type="lead_pronto", **dict(lead_pronto))
+    t.acao(type="lead_pronto", **dict(lead_pronto), relatorio=relatorio)

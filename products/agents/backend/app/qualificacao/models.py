@@ -177,6 +177,7 @@ class EstadoQualificacao:
     detalhe: dict[str, Any] = field(default_factory=dict)  # per-axis breakdown, criterion -> points
     identificacao_faltando: tuple[str, ...] = ()  # identity fields still to collect (only once asking is due)
     pedir_identificacao: bool = True  # the data rule says asking for identity is due now
+    identificacao_desejada: tuple[str, ...] = ()  # optional identity fields (ask once, never block)
 
     def avaliar_payload(self) -> dict[str, Any]:
         """The ``avaliar_lead`` tool payload (CONTRACT §3.4) — small by design
@@ -189,6 +190,7 @@ class EstadoQualificacao:
             **({"descartado_sugerido": dict(self.descartado_sugerido)} if self.descartado_sugerido else {}),
             "faltando": list(self.faltando),
             "identificacao_faltando": list(self.identificacao_faltando) if self.pedir_identificacao else [],
+            "identificacao_desejada": list(self.identificacao_desejada) if self.pedir_identificacao else [],
             "proximo_criterio": self.proximo_criterio.to_dict() if self.proximo_criterio else None,
             "pode_ofertar": self.pode_ofertar,
             "pode_concluir": self.pode_concluir,

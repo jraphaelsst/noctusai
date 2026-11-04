@@ -1,0 +1,32 @@
+{
+  "_nota": "Payload para noctus_agents_content kind=ferramenta (rascunho da definicao da plataforma julia). Mesmo obrigatoria_skill de registrar_identificacao em registrar_documento.",
+  "ferramentas": [
+    {
+      "ferramenta": "sinalizar_alerta",
+      "descricao": "Use quando o lead demonstrar insatisfacao, quando voce perceber que cometeu um erro (informacao errada, pergunta repetida, mal-entendido) ou quando a conversa fugir do rumo. Avisa a equipe. No maximo um alerta por tipo por turno; depois peca desculpas e ofereca chamar um humano.",
+      "parametros": {
+        "tipo": "Natureza do alerta.",
+        "tipo.lead_insatisfeito": "o lead demonstra insatisfacao ou irritacao",
+        "tipo.erro_agente": "voce percebeu que errou",
+        "tipo.desvio": "a conversa fugiu do rumo",
+        "tipo.outro": "qualquer outro motivo para a equipe olhar",
+        "descricao": "O que aconteceu, em poucas palavras (ate 500 caracteres).",
+        "trecho": "Trecho da conversa que motivou o alerta (opcional)."
+      }
+    },
+    {
+      "ferramenta": "registrar_documento",
+      "descricao": "Use quando o lead enviar uma foto ou arquivo de documento de identificacao (RG, CPF, CIN, CNH). Registra que o documento foi recebido; a equipe extrai os dados. Nao leia nem repita numeros do documento.",
+      "parametros": {
+        "provider_message_id": "Identificador da mensagem do lead que trouxe a imagem ou o documento.",
+        "tipo_provavel": "Tipo provavel do documento.",
+        "tipo_provavel.rg": "RG", "tipo_provavel.cpf": "CPF", "tipo_provavel.cin": "Carteira de Identidade Nacional",
+        "tipo_provavel.cnh": "CNH", "tipo_provavel.outro": "outro documento"
+      }
+    }
+  ],
+  "textos_opcionais": {
+    "ferramenta.resultado.recusa.documento_nao_encontrado": "Nao encontrei essa mensagem do lead nesta conversa; use o identificador de uma mensagem que ele enviou.",
+    "ferramenta.resultado.recusa.documento_sem_midia": "Essa mensagem nao traz imagem nem documento; so registre quando o lead enviar a foto ou o arquivo."
+  }
+}

@@ -106,6 +106,11 @@ class ServicosCanal:
     skills_factory: Any | None = None
     #: The notification seam (``app.notifications.NotificationSink``) the lead opt-out notice goes through.
     notificacoes: Any | None = None
+    #: ``agents.thread_alertas`` store (``sinalizar_alerta``); ``None`` = the tool is not offered.
+    alertas: Any | None = None
+    #: ``relatorio.ResumoFactory``: builds the narrative generator of the hand-off report; ``None`` = no LLM call
+    #: for the report (``resumo_conversa`` stays ``None``).
+    resumo_factory: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -263,6 +268,16 @@ def _falas_do_lead(r: Any) -> list[str]:
     return falas
 
 
+def _midia_da_mensagem(messages: Any, org_id: UUID, thread_id: UUID, provider_message_id: str) -> dict[str, Any] | None:
+    """The ``midia`` of the INBOUND LEAD message ``provider_message_id`` of this thread (``{}`` when it carried
+    none); ``None`` when no such lead message exists here (the id is recorded on the row at intake)."""
+    for r in messages.list(org_id, thread_id, limite=500):
+        meta = getattr(r, "meta", None) or {}
+        if r.role == "user" and meta.get("provider_message_id") == provider_message_id:
+            return dict(meta.get("midia") or {})
+    return None
+
+
 def _mensagens_do_lead(messages: Any, org_id: UUID, thread_id: UUID) -> tuple[list[str], int, list[str]]:
     """``(the lead's recent words, how many lead messages, the provenance tags of this thread's earlier turns)``."""
     rows = messages.list(org_id, thread_id, limite=500)
@@ -399,6 +414,7 @@ async def executar(
     skills: SkillFonte | None = SkillsComSpecs(fonte, r.valores)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
+    historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
@@ -409,6 +425,18 @@ async def executar(
         opt_out=OptOutService(
             svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
         modo_restrito=nivel != "normal",
+        alertas=svc.alertas,
+        alertas_desde=max(
+            (r.created_at for r in historico_previo if r.role == "assistant" and r.created_at is not None),
+            default=None),
+        midia_da_mensagem=lambda pmid: _midia_da_mensagem(svc.messages, org_id, thread.id, pmid),
+        auditar=lambda codigo: svc.messages.add(
+            org_id, thread.id, "evento", codigo, agent_id=agent.id, lead_ref_id=lead_ref_id),
+        resumo_conversa=(
+            svc.resumo_factory(
+                runtime=runtime, versao=r.versao, conteudo=conteudo, messages=svc.messages, org_id=org_id,
+                thread_id=thread.id)
+            if svc.resumo_factory is not None else None),
         guarda_campos=(
             (lambda texto: conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None)
             if leak is not None and leak.ativo else None),
@@ -558,6 +586,7 @@ async def executar(
             "versao": f"{padrao.padrao_chave}@{padrao.versao}", "estagio": estado.estagio,
             "score": estado.score, "faltando": list(estado.faltando),
             "estagios_ordem": estagios_em_ordem(padrao),
+            "imoveis_oferecidos": await asyncio.to_thread(svc.qual.codigos_oferecidos, org_id, lead_ref_id),
         },
         violacoes=violacoes, message_id=final, identificacao_registrada=identificacao_registrada,
     )
@@ -614,6 +643,7 @@ async def _parar_por_loop(
     """A loop was detected: no model call. The participant is paused and handed off (``seguranca``) so a person
     looks; the response status ``loop_detectado`` is what SW routes on. Codes only are recorded."""
     conteudo = turno.conteudo
+    turno.resumo_conversa = None  # no model call on this path: the report is deterministic
     await executar_handoff(turno, "seguranca", conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", "seguranca"))
     v = Violacao("escala_loop", "sinal", {"sinal": sinal})
     try:

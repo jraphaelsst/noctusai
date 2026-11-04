@@ -61,6 +61,8 @@ from app.dependencies import (
     get_julia_tools_client_dep,
     get_message_store_dep,
     get_notification_sink_dep,
+    get_relatorio_resumo_factory_dep,
+    get_thread_alerta_store_dep,
     get_org_llm_key_resolver_dep,
     get_realtime_bus_dep,
     get_skills_factory_dep,
@@ -228,7 +230,8 @@ def _persistir_lote(
             meta={
                 **({"midia": msg.midia.canonical()} if msg.midia is not None else {}),
                 **({"truncado": True} if msg.truncado else {}),
-            } or None,
+                "provider_message_id": msg.provider_message_id,
+            },
         ))
         try:
             inbound.add(org_id, connection_id, thread.id, msg.provider_message_id, _sha(msg.assinatura()))
@@ -277,6 +280,8 @@ async def run_channel_turn(
     sw=Depends(get_julia_tools_client_dep),
     skills_factory=Depends(get_skills_factory_dep),
     notificacoes=Depends(get_notification_sink_dep),
+    alertas=Depends(get_thread_alerta_store_dep),
+    resumo_factory=Depends(get_relatorio_resumo_factory_dep),
 ) -> ChannelTurnResponse:
     org_id = ctx.org_id
     agent = _resolve_channel_agent(studio_store, ctx, payload.agent_key)
@@ -287,7 +292,7 @@ async def run_channel_turn(
     svc = turno_mod.ServicosCanal(
         studio_store=studio_store, catalog=catalog, conversations=conv_store, messages=msg_store, threads=threads,
         controles=controles, conformidade=conformidade, qual=qual, padroes=padroes, ident=ident, sw=sw,
-        skills_factory=skills_factory, notificacoes=notificacoes,
+        skills_factory=skills_factory, notificacoes=notificacoes, alertas=alertas, resumo_factory=resumo_factory,
     )
 
     existing = (await anyio.to_thread.run_sync(lambda: conv_store.find_thread(org_id, payload.channel, channel_ref)))

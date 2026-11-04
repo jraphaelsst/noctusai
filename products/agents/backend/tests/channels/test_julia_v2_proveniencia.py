@@ -187,7 +187,7 @@ class TestMediaIsDataBesideTheText:
         chan.use_provider(FakeProvider(tool_responses=[say("Qual o bairro?")]))
         body = chan.turn(turn_body("Oi")).json()
         [u] = [r for r in chan.rt.stores.messages.list(chan.org_id, UUID(body["thread_id"]), limite=5) if r.role == "user"]
-        assert u.texto == "Oi" and u.meta == {}
+        assert u.texto == "Oi" and set(u.meta) == {"provider_message_id"}  # no media, no truncation: only the id
 
     def test_a_document_arrives_as_a_literal_object_and_is_not_the_leads_own_words(self, chan):
         chan.seed_agent()

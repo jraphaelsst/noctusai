@@ -41,7 +41,7 @@ kind                  payload                                                   
 ``evals_mecanismo``   ``{"itens": [{slug, titulo, entrada, k, roteiro, asserts,   /api/studio/agents/{agent}/
                       tags, ativo}]}`` (mechanism cases; ``merge=False``          evals/cases
                       deactivates the ones left out)
-``conformidade_regras`` ``{"itens": [{regra, ativo, politica, parametros}]}``     .../conformidade/regras/{regra}
+``conformidade_regras`` (READ-ONLY: list/get; set is refused) ``{"itens": [...]}``     .../conformidade/regras/{regra}
 ====================  ==========================================================  =============================
 
 ``evals_mecanismo`` and ``conformidade_regras`` are not draft rows: a case is judged by the next mechanism run (nothing
@@ -703,6 +703,11 @@ def content(
             )
         if kind not in KINDS:
             raise ContentError("kind_invalido", f"kind deve ser um de {KINDS}.")
+        if kind == "conformidade_regras" and action == "set":
+            raise ContentError(
+                "regra_seguranca_exige_humano",
+                "As regras de conformidade (incluindo as de segurança) são alteradas por uma pessoa, no Studio — "
+                "este caminho é somente leitura (list/get).")
         scoped = kind in _REPLACE_SETS or kind == "skill_ref" or kind in _AGENTE
         if scoped and not agent:
             raise ContentError("agent_ausente", f"O kind '{kind}' precisa de 'agent' (a chave do agente).")

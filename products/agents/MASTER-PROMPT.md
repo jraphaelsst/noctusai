@@ -85,6 +85,15 @@ products/agents/backend/app/
   identity only when the standard says so. Refusals are typed codes; the wording is `ferramenta.resultado.recusa.<codigo>`.
   Past `max_recusas_por_turno` / `max_erros_ferramenta_por_turno` the toolset stops the turn (`should_stop`) and the turn
   ends in a hand-off to the org owner + a flagged event (silence, or the DB text `runtime.parada_segura`).
+- Julia v3 (CONTRACT §12): `sinalizar_alerta` (-> `agents.thread_alertas`, action `alerta`, one per tipo per turn),
+  `registrar_documento` (an ID photo/scan -> flag on `lead_identificacao`, CPF satisfied pending extraction, action
+  `documento_identificacao`; the id is checked against the inbound lead message, whose `provider_message_id` is stored
+  in the row's `meta` at intake), the hand-off/conclusion `relatorio` (`channels/relatorio.py`: ONE `/resumo`-generator
+  call through the `get_relatorio_resumo_factory_dep` seam + deterministic parts; a failure degrades to a
+  deterministic text + a `relatorio:degradado` thread event, never blocking the hand-off; also stored in the hand-off
+  note's `perfil.relatorio`), `qualificacao.imoveis_oferecidos`. Identification: required = `cpf` only
+  (`obrigatorios_do_padrao`), desired = rg/email/nome (`avaliar_lead.identificacao_desejada`); `nome` is registrable at
+  any point and overrides the contact's name in the report header. Migration 057.
 - `channels/contexto.py`: the second system message (state + dossier + hand-off note + credit + re-engagement) rendered
   from DB texts; lead-influenced values are JSON literals on one line. `channels/extracao.py`: the summary (narrative
   only) and the transport decision (`agent_version_decisoes`; fallback = the row's `padrao` option).

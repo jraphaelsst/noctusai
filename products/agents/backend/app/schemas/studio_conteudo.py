@@ -232,8 +232,9 @@ class PlataformaTextosOut(BaseModel):
 
 class ContentTokenCreateRequest(StrictHttpModel):
     label: str = Field(..., min_length=1, max_length=120)
-    #: Days until expiry (1..365); omitted = 30; an explicit ``null`` = never expires.
-    expira_em_dias: int | None = Field(30, ge=1, le=365)
+    #: Days until expiry (1..30); omitted = 30. A token that never expires is not mintable (an explicit ``null`` is 422):
+    #: this secret can rewrite what the agent says to leads, so its life is short by construction.
+    expira_em_dias: int = Field(30, ge=1, le=30)
     #: Also grant ``studio:agent-delete`` (the token may then DELETE agents). Default off.
     permitir_exclusao: bool = False
 

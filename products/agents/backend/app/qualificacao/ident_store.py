@@ -20,7 +20,8 @@ from app.stores._db_errors import exec_query, exec_rpc
 from app.stores._util import db_ts, utcnow, utcnow_iso
 
 _SCHEMA = "agents"
-_COLS = ("nome", "telefone", "email", "cpf_cifrado", "rg_cifrado", "rg_uf", "cpf_hash")
+_COLS = ("nome", "telefone", "email", "cpf_cifrado", "rg_cifrado", "rg_uf", "cpf_hash",
+         "documento_enviado", "documento_tipo", "documento_provider_message_id")
 
 
 class FakeIdentificacaoStore:
@@ -71,6 +72,8 @@ class SupabaseIdentificacaoStore:
             rg_uf=r.get("rg_uf"), cpf_hash=r.get("cpf_hash"), coletado_em=db_ts(r.get("coletado_em")),
             coletado_por_agent_id=UUID(str(r["coletado_por_agent_id"])) if r.get("coletado_por_agent_id") else None,
             origem_msg_id=UUID(str(r["origem_msg_id"])) if r.get("origem_msg_id") else None,
+            documento_enviado=bool(r.get("documento_enviado")), documento_tipo=r.get("documento_tipo"),
+            documento_provider_message_id=r.get("documento_provider_message_id"),
         )
 
     def salvar_campos(self, org_id, lead_ref_id, campos, *, agent_id, origem_msg_id):
