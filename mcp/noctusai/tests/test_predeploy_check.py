@@ -1310,3 +1310,43 @@ def test_webhook_secret_present_audit():
     assert PC.audit_webhook_secret_present({"WAHA_WEBHOOK_HMAC_SECRET": "x"})["violations"] == []
     assert PC.audit_webhook_secret_present({"WAHA_WEBHOOK_HMAC_SECRET": " "})["violations"]
     assert PC.audit_webhook_secret_present({})["violations"]
+
+
+class TestFailureExcerpt:
+    """2026-11-04: the report kept the FIRST 4000 chars, so a pytest failure
+    (printed at the end) was always cut before its assertion."""
+
+    def _pytest_out(self, noise_lines=400):
+        from textwrap import dedent
+        noise = "\n".join(f'{{"level": "INFO", "message": "log line {i}"}}' for i in range(noise_lines))
+        return noise + dedent("""
+            ........F.......
+            =================================== FAILURES ===================================
+            _____________________ TestInviteMember.test_invite_success _____________________
+            >       assert resp.status_code == 200
+            E       assert 500 == 200
+            =========================== short test summary info ============================
+            FAILED tests/routers/test_team_router.py::TestInviteMember::test_invite_success
+            1 failed, 1768 passed in 16.66s""")
+
+    def test_keeps_the_assertion_and_summary(self):
+        from tools.noctus.dev.predeploy_check import failure_excerpt
+        out = failure_excerpt(self._pytest_out())
+        assert "E       assert 500 == 200" in out and "1 failed, 1768 passed" in out
+        assert "log line 0\"" not in out          # the noise before FAILURES is dropped
+
+    def test_short_output_kept_whole(self):
+        from tools.noctus.dev.predeploy_check import failure_excerpt
+        assert failure_excerpt("boom") == "boom"
+
+    def test_very_long_failure_keeps_head_and_closing_summary(self):
+        from tools.noctus.dev.predeploy_check import failure_excerpt
+        big = "= FAILURES =\n" + ("x" * 50000) + "\n1 failed, 3 passed"
+        out = failure_excerpt(big, limit=3000)
+        assert out.startswith("= FAILURES =") and out.endswith("1 failed, 3 passed") and "truncated" in out
+        assert len(out) < 3200
+
+    def test_report_uses_the_excerpt(self):
+        from tools.noctus.dev import predeploy_check as pc
+        src = __import__("inspect").getsource(pc)
+        assert 'u["output"].strip()[:4000]' not in src and "failure_excerpt(u[\"output\"])" in src
