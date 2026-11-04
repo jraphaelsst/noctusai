@@ -37,6 +37,15 @@ capacity admits it.**
 and it decays slowly. On 2026-11-04 the load was 21–29 while the CPU sat 89 % idle. Memory
 is the binding limit on this machine.
 
+**Swap-out is a rate over the MEASURED interval, in pages.** `swapout_per_s` is
+pages/s (16 KB pages on Apple Silicon); `swapout_mb_per_s` is the same rate in MB, and
+`elapsed_s` is the interval it was divided by. Until `probe_version` 2 (2026-11-04) the
+probe divided by the nominal `sample_s`. Under load the interval stretches (`top`'s
+startup alone can take many seconds), so the old rows read about 10× high: 35669/s at
+04:02Z. Read any row without `probe_version`, or with version 1, as an upper bound.
+Every log row carries `probe_version`, and `usage_eval`'s sync copies it into
+`dev_telemetry_os.extra`. Bump it whenever a metric changes meaning.
+
 ## 3 · Guarantees
 
 - **No silent start.** A job that isn't admitted is **not run**:

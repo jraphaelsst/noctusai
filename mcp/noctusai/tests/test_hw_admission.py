@@ -347,3 +347,24 @@ class TestExplicitAdmit:
         for fn in (tb._default_merged_tip_check, tb._default_merged_tip_baseline):
             src = inspect.getsource(fn)
             assert "_hw.heavy_slot" in src, f"{fn.__name__} no longer admits its real runner"
+
+
+class TestProbeV2:
+    """2026-11-04 (noctusai-3d): swap rate was divided by the NOMINAL sample_s,
+    so under load (top's startup stretching the interval) it read ~10x high —
+    35669/s at 04:02Z. v2 divides by the measured interval and adds MB/s."""
+
+    def test_real_probe_reports_measured_interval_and_mb_rate(self):
+        m = hw.probe(1.0)
+        if "probe_error" in m:
+            pytest.skip(f"probe unavailable on this host: {m['probe_error']}")
+        assert m["elapsed_s"] >= 1.0          # the interval it divided by, never below nominal
+        assert m["swapout_per_s"] >= 0 and m["swapout_mb_per_s"] >= 0
+        if m["swapout_per_s"] == 0:
+            assert m["swapout_mb_per_s"] == 0
+
+    def test_every_log_row_carries_probe_version(self, env):
+        with hw.heavy_slot("pytest:pv", probe_fn=lambda s: GOOD):
+            pass
+        rows = [json.loads(ln) for ln in (env / "log.ndjson").read_text().splitlines()]
+        assert rows and all(r["probe_version"] == hw.PROBE_VERSION == 2 for r in rows)

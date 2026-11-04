@@ -222,36 +222,46 @@ def _claude_sessions() -> int:
 
 def probe(sample_s: float = 10.0) -> dict[str, Any]:
     """Sample CPU idle, reclaimable memory and swap-out over `sample_s`.
-    Errors are returned as ``probe_error`` (caller treats as NOT admitted)."""
+
+    ``swapout_per_s`` is PAGES per second over the MEASURED interval between
+    the two counter reads (never the nominal ``sample_s`` — under load the
+    interval stretches and dividing by the nominal value inflated the rate
+    ~10x); ``swapout_mb_per_s`` is the same rate in MB. ``elapsed_s`` is the
+    measured interval. Errors are returned as ``probe_error`` (caller treats
+    as NOT admitted)."""
     sample_s = max(1.0, float(sample_s))
     system = platform.system()
     try:
         if system == "Darwin":
-            v0 = _darwin_vm()
+            v0, t0 = _darwin_vm(), time.monotonic()
             top = _run(["top", "-l", "2", "-s", str(int(sample_s)), "-n", "0"], timeout=sample_s + 30)
-            v1 = _darwin_vm()
+            v1, t1 = _darwin_vm(), time.monotonic()
             idles = re.findall(r"CPU usage:.*?([\d.]+)% idle", top)
             cpu_idle = float(idles[-1])
             pg = v1["_page"]
             reclaim = sum(v1.get(k, 0) for k in
                           ("Pages free", "Pages inactive", "Pages purgeable", "Pages speculative")) * pg
-            swapout = (v1.get("Swapouts", 0) - v0.get("Swapouts", 0)) / sample_s
+            swap_pages = v1.get("Swapouts", 0) - v0.get("Swapouts", 0)
         elif system == "Linux":
-            s0, c0 = _linux_pswpout(), _linux_cpu()
+            s0, c0, t0 = _linux_pswpout(), _linux_cpu(), time.monotonic()
             time.sleep(sample_s)
-            s1, c1 = _linux_pswpout(), _linux_cpu()
+            s1, c1, t1 = _linux_pswpout(), _linux_cpu(), time.monotonic()
+            pg = os.sysconf("SC_PAGE_SIZE")
             cpu_idle = 100.0 * (c1[0] - c0[0]) / max(1, c1[1] - c0[1])
             reclaim = _linux_meminfo().get("MemAvailable", 0)
-            swapout = (s1 - s0) / sample_s
+            swap_pages = s1 - s0
         else:
             return {"probe_error": f"unsupported platform {system}"}
+        elapsed = max(t1 - t0, 1e-3)
+        swapout = swap_pages / elapsed
         sessions = _claude_sessions()
     except (subprocess.SubprocessError, OSError, AttributeError, IndexError, ValueError) as exc:
         return {"probe_error": f"{type(exc).__name__}: {exc}"}
     return {"cpu_idle_pct": round(cpu_idle, 1), "reclaimable_mb": round(reclaim / 2**20),
-            "swapout_per_s": round(swapout, 1), "claude_sessions": sessions,
+            "swapout_per_s": round(swapout, 1),
+            "swapout_mb_per_s": round(swapout * pg / 2**20, 2), "claude_sessions": sessions,
             "load_1m": round(os.getloadavg()[0], 2), "cpu_cores": os.cpu_count(),
-            "sample_s": sample_s}
+            "sample_s": sample_s, "elapsed_s": round(elapsed, 2)}
 
 
 def evaluate(metrics: dict[str, Any], budget: dict[str, Any]) -> list[str]:
@@ -290,8 +300,17 @@ def _log_path() -> Path:
     return p
 
 
+# Bumped whenever a probe metric changes meaning, so consumers (usage_eval's
+# dev_telemetry sync) can tell old rows from corrected ones.
+# 1 = swap rate divided by the NOMINAL sample_s (inflated under load: top's
+#     startup + spawns can take far longer than sample_s) — an upper bound.
+# 2 = swap rate divided by the measured wall-clock interval; + swapout_mb_per_s.
+PROBE_VERSION = 2
+
+
 def _log(row: dict[str, Any]) -> None:
-    row = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **row}
+    row = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "probe_version": PROBE_VERSION, **row}
     with _log_path().open("a") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
