@@ -97,6 +97,18 @@ def _like(q: Optional[str]) -> str:
     return _LIKE_RE.sub(" ", q or "").strip()
 
 
+def modo_de_selecao(refs: list["ReferenciaResolvida"]) -> str:
+    """How the agent picks its structure: ``post`` (exactly one ``@post`` and no ``@perfil`` -> that one,
+    mandatory), ``perfil`` (>= 1 ``@perfil`` -> pick ONE of the profile's top structures), else ``auto``."""
+    bib = [r for r in refs if r.tipo == "biblioteca"]
+    if any("perfil" in r.dados for r in bib):
+        return "perfil"
+    posts = [r for r in bib if "viral" in r.dados]
+    if len(posts) == 1:
+        return "post"
+    return "auto"
+
+
 @dataclass
 class ReferenciaResolvida:
     tipo: str
@@ -285,11 +297,18 @@ class ChatContexto:
         # 3: explicit references, in the order the user attached them
         for ref in refs:
             orc.add(self._secao_referencia(ref, add_codigo))
-        # 4: automatic retrieval
+        modo = modo_de_selecao(refs)
+        if agente in ("headline", "roteiro"):
+            orc.add(bloco("selecao_de_estrutura", f"modo: {modo}", modo=modo))
+        # 4: automatic retrieval. A single @post is the ONLY structure offered (apify-biblioteca-contract
+        # section 3): the auto pool is not appended, so the chosen #codigo can only be that one.
         if agente == "headline":
-            orc.add(self._secao_estruturas(marca_id, refs, add_codigo))
+            if modo != "post":
+                orc.add(self._secao_estruturas(marca_id, refs, add_codigo))
             orc.add(self._secao_pesquisa(marca_id))
         else:
+            if modo == "auto":
+                orc.add(self._secao_estruturas(marca_id, refs, add_codigo))
             orc.add(self._secao_roteiro_brains(marca_id))
         texto = orc.texto()
         return ContextoMontado(texto=texto, chars=len(texto), truncado=orc.truncado, codigos_permitidos=codigos)
@@ -521,5 +540,5 @@ def elementos_para_conteudo(content: str) -> str:
 
 __all__ = [
     "ChatContexto", "ChatError", "ContextoMontado", "MAX_CHARS_PESQUISA", "MAX_ESTRUTURAS",
-    "MAX_ITENS_PESQUISA", "ReferenciaResolvida", "bloco", "cerca", "eh_uuid", "elementos_para_conteudo",
+    "MAX_ITENS_PESQUISA", "ReferenciaResolvida", "modo_de_selecao", "bloco", "cerca", "eh_uuid", "elementos_para_conteudo",
 ]

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from app.modules.media_creation.prompts.methodology import METODO_STRUCTURE, METODO_TRIGGERS
 
-PROMPT_VERSAO = "chat-headline-v1-draft"
+PROMPT_VERSAO = "chat-headline-v2-draft"
 
 #: Shared by both agents (imported by ``chat_roteiro``): the prompt-injection fence (section 9.1).
 REGRAS_MATERIAL = """## Como tratar o material fornecido
@@ -28,10 +28,14 @@ e entrega headlines prontas para usar.
 
 ## Como trabalhar
 - Sempre parta do perfil da marca, das memórias e do material citado pelo usuário com @.
-- Quando o usuário pedir headlines, entregue de 3 a 5 opções numeradas, cada uma em UMA linha, com o gatilho
-  dominante entre parênteses no fim (ex.: "(Reconhecimento)").
-- Quando uma headline for baseada em uma estrutura viral do material, cite no fim da linha `(estrutura #<código>)`
-  usando EXATAMENTE o código que aparece no material. Nunca cite um código que não esteja no material.
+- Quando o usuário pedir headlines, entregue EXATAMENTE a quantidade pedida (de 1 a 10; acima de 10, entregue 10 e
+  avise). Se ele não disser quantas, entregue 5. Opções numeradas, cada uma em UMA linha.
+- Cada headline termina com `(estrutura #<código>)` usando EXATAMENTE o código que aparece no material (o gatilho
+  dominante pode vir antes, entre parênteses). Nunca cite um código que não esteja no material. Use estruturas
+  DIFERENTES em headlines diferentes sempre que o material tiver estruturas suficientes.
+- Escolha da estrutura (bloco `selecao_de_estrutura`): modo `post` = só existe uma estrutura e TODAS as headlines
+  a usam; modo `perfil` = use as estruturas do perfil mencionado; modo `auto` = escolha entre as estruturas do material.
+- Modele o recurso retórico da estrutura, nunca copie o assunto nem as frases do vídeo original.
 - Preencha os espaços da estrutura ({{{{DOR}}}}, {{{{DESEJO}}}} etc.) SOMENTE com itens da pesquisa da marca presentes no
   material, copiados literalmente. Se não houver item adequado, diga e pergunte; não invente.
 - Headlines são curtas (até 12 palavras), específicas, sem clichê e sem promessas que a marca não possa cumprir.
