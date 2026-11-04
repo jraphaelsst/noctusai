@@ -59,6 +59,18 @@
       "wait_s": 1800,
       "poll_s": 20,
       "_experiment": "owner 2026-11-04 stepped load experiment (relayed by noctusai-04)"
+    },
+    "trial-mh2-mem": {
+      "max_heavy": 2,
+      "min_cpu_idle_pct": 25,
+      "cpu_sample_s": 10,
+      "min_reclaimable_mb": 1024,
+      "max_swapout_per_s": 50,
+      "max_claude_sessions_advisory": 3,
+      "wait_s": 1800,
+      "poll_s": 20,
+      "_experiment": "owner 2026-11-04 ~16:50Z 'go trial, i need more speed even tho its gonna overload a bit the machine': max_heavy 2 under memory-aware admission (adb5c4c04), job_workers 2, min_reclaimable 1536->1024 (box idles at 1.2-1.4 GB), aborts unchanged. Not a pure max_heavy A/B vs window A.",
+      "job_workers": 2
     }
   },
   "hosts": {
@@ -97,6 +109,20 @@
         "consecutive": 3
       },
       "why": "step C"
+    },
+    {
+      "phase": "trial-mh2-mem",
+      "from": "2026-11-04T17:10:00Z",
+      "until": "2026-11-04T19:10:00Z",
+      "hosts": [
+        "raphas-macbook-pro"
+      ],
+      "abort": {
+        "reclaimable_mb_below": 500,
+        "swapout_at_least": 50,
+        "consecutive": 3
+      },
+      "why": "re-run of mh2 with memory-aware admission vs window A + post-abort 1-slot (06:30-16:52Z)"
     }
   ]
 }
