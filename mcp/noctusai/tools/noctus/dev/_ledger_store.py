@@ -80,6 +80,7 @@ MOVED_LEDGERS: tuple[str, ...] = (
     "worktree-salvage.ndjson",
     "branch-tree.ndjson",
     "ship-consent.ndjson",
+    "slice-scores.ndjson",
 )
 
 Transform = Callable[[str], str]

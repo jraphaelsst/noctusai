@@ -153,7 +153,7 @@ def test_metrics_output_fields():
 
 
 def test_agent_metrics_input_fields():
-    assert set(AgentMetricsInput.model_fields.keys()) == {"name", "scope"}
+    assert set(AgentMetricsInput.model_fields.keys()) == {"name", "scope", "by_week"}
 
 
 def test_agent_metrics_output_fields():
@@ -295,21 +295,13 @@ def test_agent_metrics_handler_wraps_per_agent():
     name, handler = _register_one(agent_metrics_register)
     assert name == "noctus.team.agent_metrics"
 
-    fake = {
-        "agent": "leader",
-        "scope": None,
-        "events": 5,
-        "total_cost_usd": 0.42,
-        "avg_latency_ms": 2200,
-        "success_rate": 0.8,
-        "tool_call_distribution": {"delegate": 5},
-    }
-    with patch("dev_team.mcp_facade.agent_metrics", return_value=fake) as m:
+    fake = {"groups": [], "total_rows": 0, "cost_note": "x"}
+    with patch("tools.noctus.team.agent_metrics.agent_metrics", return_value=fake) as m:
         out = handler(AgentMetricsInput(name="leader"))
 
     assert isinstance(out, AgentMetricsOutput)
     assert out.metrics == fake
-    m.assert_called_once_with(name="leader", scope=None)
+    m.assert_called_once_with("leader", None, False)
 
 
 def test_configure_handler_wraps_set_agent_config():
