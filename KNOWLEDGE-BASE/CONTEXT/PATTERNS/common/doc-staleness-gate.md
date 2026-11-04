@@ -6,16 +6,21 @@
 
 Found stale the same day, all invisible to line-diffs and to `doc_to_code_drift` (embedding cosine, advisory): `products/agents/README.md` + `MASTER-PROMPT.md` ("scaffold only / PLANNED" over a live studio + 86 routes), the `02-LANDSCAPE.md` agents row (missing the SDR agent), `maya-blocks/CONTRACT.md` ("nothing implemented yet", migration "NOT applied" after S2–S4 shipped). Docs drift because only ONE side changes at a time — so the gate couples the sides.
 
-## The four legs (extended, not parallel)
+## The legs (extended, not parallel)
 
 | Leg | Scope | Fails when |
 |---|---|---|
 | **Coupling** | a commit RANGE (`--doc-range BASE..TIP`; pre-push on a push to `dev`, CI `commit-range-keepers`) | code a doc covers changed **materially** (file added/removed, or a changed line adds/removes a route decorator / public `def`/`class`/`export` / `CREATE|ALTER TABLE`; arg churn and body edits do not count) and none of its covering docs changed |
+| **Commit** | the STAGED diff (`--doc-staged`; `scripts/hooks/commit-msg` BLOCKS, `pre-commit` prints the same fix-list early) | the same materiality + coverage rules as Coupling, evaluated on the commit being made: code a doc covers is staged materially and that doc is not staged. A `Docs-Reviewed: <doc> — <reason>` trailer in the message satisfies it (only commit-msg can read the message, so the block lives there). Skips merges and detached HEAD (rebase/cherry-pick replays) |
 | **Claims** | the tree | a living (non-`projects/`) doc cites a repo path that does not exist; a product README/MASTER-PROMPT says "scaffold only / planned, not built" while `backend/app` declares ≥3 routes; a `CONTRACT.md`/`PROJECT.md` says "nothing implemented" while ≥3 of its cited code paths exist (or ≥2 code commits name the project); a doc says migration `N_x.sql` is "NOT applied" while `migrations-applied.json` records it |
 | **Ratchet** | the tree | a claim finding is NOT in `mcp/noctusai/tests/doc_staleness_baseline.json`. The baseline is the stale set that existed on 2026-10-19; it may only **shrink** (`--doc-baseline shrink` after fixing docs; `init` refuses when a baseline exists) |
 | **Age** | the tree | never fails — warning list (covered code moved ≥40 commits AND ≥14 days past the doc's last touch) in the CI step summary |
 
 Asleep products (`deploy/fleet/active-scope.txt`) are not checked — no gate checks an asleep product.
+
+## The rule: docs follow code, in the same commit, unprompted
+
+Owner order 2026-11-04: *"make sure all documentations referring to anything in repo is updated upon code change, so I don't have to keep asking for docs update."* The agent updates every covering doc **in the commit that changes the code** (the Commit leg lists them the moment the commit is attempted), never waiting to be asked and never deferring to push time. Pre-push and CI (Coupling over the range) remain the backstop for commits made with hooks absent or `NOCTUS_SKIP_DOC_STALENESS` set. A doc the change genuinely does not affect gets the `Docs-Reviewed:` trailer instead.
 
 ## Coverage is declared, never guessed
 
@@ -29,7 +34,7 @@ A commit trailer in any commit of the range: `Docs-Reviewed: <doc path or glob> 
 
 ## Compliance by construction
 
-`--check-doc-staleness [--doc-range …] [--doc-suggest]` / MCP `noctus.dev.doc_staleness` print the exact docs to update and the false claims — fix-list, not just a red. Do not add to the baseline; fix the doc.
+`--check-doc-staleness [--doc-staged [--commit-msg-file F] | --doc-range …] [--doc-suggest]` / MCP `noctus.dev.doc_staleness` print the exact docs to update and the false claims — fix-list, not just a red. Do not add to the baseline; fix the doc.
 
 ## Composes with
 

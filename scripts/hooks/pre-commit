@@ -1518,6 +1518,23 @@ if [[ -n "$STAGED_EIGHT_WAY" ]] && have_py; then
     fi
 fi
 
+# ─── 14. Doc-staleness COMMIT leg — early heads-up (advisory here, BLOCKING in commit-msg) ──
+# Docs follow code IN THE SAME COMMIT, unprompted (owner order 2026-11-04). The
+# pre-commit stage cannot read the message, so it only PRINTS the fix-list (code a doc
+# covers is staged materially, the doc is not); the blocking decision is made by
+# scripts/hooks/commit-msg, which can honour a `Docs-Reviewed: <doc> — <reason>` trailer.
+# Skips merges and detached HEAD (rebase/cherry-pick replays were checked at authoring).
+# KB § PATTERNS/common/doc-staleness-gate.md.
+_dsg="$(git rev-parse --git-dir 2>/dev/null || true)"
+if [[ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" && -n "$_dsg" && ! -f "$_dsg/MERGE_HEAD" ]] \
+   && git symbolic-ref -q HEAD >/dev/null 2>&1 && have_py; then
+    _ds_out="$("$PY" "$CLI" --check-doc-staleness --doc-staged --worktree-path "$REPO_ROOT" 2>&1)" || {
+        echo "[pre-commit] doc-staleness (heads-up): staged code changes under docs that are NOT staged." >&2
+        echo "$_ds_out" | grep -v "env_bootstrap" | sed 's/^/[pre-commit] /' >&2
+        echo "[pre-commit] Update + stage the listed docs NOW (same commit) — commit-msg will block otherwise." >&2
+    }
+fi
+
 # ─── 13. KB-baselines staleness check (advisory, when KB changes) ──
 # When KB markdown changes, the kb_validate_owns_kb findings may shift
 # (vector centroids move). If a baseline exists AND the change is large,

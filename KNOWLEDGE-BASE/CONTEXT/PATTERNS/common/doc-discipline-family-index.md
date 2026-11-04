@@ -19,7 +19,7 @@ These eight are grouped because editing ANY of them is methodology surgery on a 
 
 Doc-propagation sync has a mechanical twin for **live org/product state**: a commit that changes a product's behaviour must stage its help-chat guide (keeper `check_product_guide_cochange`, `Guide-Unaffected: <reason>` trailer to override), and org/product facts in docs are verified against Supabase/prod by `noctus.dev.scan_live_state_claims` before a change counts as done. → `KB § PATTERNS/common/live-state-alignment.md`
 
-Staleness of ALL living docs is gated deterministically: code a doc covers changing materially without the doc (or a `Docs-Reviewed: <doc> — <reason>` trailer) fails pre-push/CI, and false status/path claims fail against a shrink-only ratchet (keeper `check_doc_staleness`, tool `noctus.dev.doc_staleness`). → `KB § PATTERNS/common/doc-staleness-gate.md`
+Staleness of ALL living docs is gated deterministically: code a doc covers changing materially without the doc (or a `Docs-Reviewed: <doc> — <reason>` trailer) fails AT COMMIT TIME (commit-msg hook over the staged diff; the agent updates covering docs in the same commit, unprompted — owner order 2026-11-04) with pre-push/CI as the backstop, and false status/path claims fail against a shrink-only ratchet (keeper `check_doc_staleness`, tool `noctus.dev.doc_staleness`). → `KB § PATTERNS/common/doc-staleness-gate.md`
 
 ## Why a family line
 

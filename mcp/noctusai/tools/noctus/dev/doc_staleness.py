@@ -288,10 +288,18 @@ class Change:
     reason: str
 
 
+#: Sentinel "range" meaning the STAGED diff (`git diff --cached`) -- the commit leg.
+STAGED = "--staged"
+
+
+def _rng(rev_range: str) -> list[str]:
+    return ["--cached"] if rev_range == STAGED else [rev_range]
+
+
 def material_changes(root: Path, rev_range: str) -> tuple[list[Change], list[str], str | None]:
     """(material code changes, ALL changed paths, error) for the NET diff of the range."""
     from .compliance import _TEST_FILE_RE
-    ns = _git(root, "diff", "--name-status", "-M", "--no-renames", rev_range)
+    ns = _git(root, "diff", "--name-status", "-M", "--no-renames", *_rng(rev_range))
     if ns is None or ns.returncode != 0:
         return [], [], f"cannot diff {rev_range!r}: {(ns.stderr if ns else 'git unavailable').strip()}"
     all_paths: list[str] = []
@@ -307,7 +315,7 @@ def material_changes(root: Path, rev_range: str) -> tuple[list[Change], list[str
     changes = [Change(p, st, "added" if st == "A" else "removed") for p, st in cand.items() if st in "AD"]
     modified = [p for p, st in cand.items() if st == "M"]
     for p in modified:
-        d = _git(root, "diff", "-U0", rev_range, "--", p)
+        d = _git(root, "diff", "-U0", *_rng(rev_range), "--", p)
         if d is None or d.returncode != 0:
             changes.append(Change(p, "M", "diff unreadable (treated as material)"))
             continue
@@ -338,9 +346,16 @@ def range_trailers(root: Path, rev_range: str) -> list[tuple[str, str]]:
     return [(m.group(1), m.group(2)) for m in DOCS_REVIEWED_RE.finditer(r.stdout)]
 
 
-def check_range(root: Path, rev_range: str) -> list[dict]:
-    """Leg 1 -- change-coupling over `<base>..<tip>` (net diff)."""
-    if ".." not in rev_range or "..." in rev_range:
+def check_staged(root: Path, message: str = "") -> list[dict]:
+    """Commit leg -- the same coupling over the STAGED diff; `Docs-Reviewed:` trailers are read
+    from `message` (only the commit-msg hook has it). Merges/rebase replays are the caller's skip."""
+    return check_range(root, STAGED, message=message)
+
+
+def check_range(root: Path, rev_range: str, message: str | None = None) -> list[dict]:
+    """Leg 1 -- change-coupling over `<base>..<tip>` (net diff), or over the STAGED diff
+    (`rev_range == STAGED`, trailers from `message`)."""
+    if rev_range != STAGED and (".." not in rev_range or "..." in rev_range):
         return [_issue("<range>", f"needs a `<base>..<tip>` range, got {rev_range!r}")]
     changes, all_paths, err = material_changes(root, rev_range)
     if err:
@@ -348,7 +363,8 @@ def check_range(root: Path, rev_range: str) -> list[dict]:
     if not changes:
         return []
     changed = set(all_paths)
-    acks = range_trailers(root, rev_range)
+    acks = ([(m.group(1), m.group(2)) for m in DOCS_REVIEWED_RE.finditer(message or "")]
+            if rev_range == STAGED else range_trailers(root, rev_range))
     docs = load_docs(root)
     issues: list[dict] = []
     # per-doc: material changes inside its coverage, doc itself untouched
@@ -632,5 +648,5 @@ def register(server) -> None:
         return res
 
 
-__all__ = ["check_doc_staleness", "check_range", "check_claims", "check_tree", "age_report",
+__all__ = ["check_doc_staleness", "check_range", "check_staged", "STAGED", "check_claims", "check_tree", "age_report",
            "write_baseline", "load_baseline", "parse_covers", "register"]

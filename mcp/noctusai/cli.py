@@ -284,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--guide-range", metavar="BASE..TIP", default=None, help="With --check-product-guide-cochange: check each non-merge commit of this range on its own diff + message (CI leg).")
     parser.add_argument("--check-doc-staleness", action="store_true", help="Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over every living doc (cited paths exist; 'scaffold only / nothing implemented / NOT applied' vs the code) judged against the shrink-only ratchet mcp/noctusai/tests/doc_staleness_baseline.json, plus age warnings. Severity high. KB § PATTERNS/common/doc-staleness-gate.md.")
     parser.add_argument("--doc-range", metavar="BASE..TIP", default=None, help="With --check-doc-staleness: run the change-coupling leg over this range.")
+    parser.add_argument("--doc-staged", action="store_true", help="With --check-doc-staleness: the COMMIT leg -- coupling over the STAGED diff (code a doc covers staged materially without that doc staged). With --commit-msg-file the `Docs-Reviewed:` trailers are honoured (commit-msg hook, blocking); without it (pre-commit) the fix-list is printed as an early heads-up.")
     parser.add_argument("--doc-baseline", choices=["init", "shrink"], default=None, help="With --check-doc-staleness: rewrite the ratchet (init = first snapshot; shrink = drop fixed entries; never grows).")
     parser.add_argument("--doc-suggest", action="store_true", help="With --check-doc-staleness: print the exact docs to update and the claims that are false.")
     parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange / --check-lgpd-entry-removal: path of the commit message file (so the Guide-Unaffected / LGPD-Entry-Removed trailer escape hatch can be read).")
@@ -2317,7 +2318,17 @@ def main():
             _r = _ds.write_baseline(_root, _ds.check_claims(_root), args.doc_baseline)
             print(f"  doc-staleness baseline {args.doc_baseline}: {_r}")
             sys.exit(0 if _r.get("ok") else 1)
-        if args.doc_range:
+        if args.doc_staged:
+            _dmsg = ""
+            if args.commit_msg_file:
+                try:
+                    _dmsg = Path(args.commit_msg_file).read_text(encoding="utf-8")
+                except OSError as exc:
+                    print(f"  {RED}\u2717 cannot read --commit-msg-file: {exc}{RESET}")
+                    sys.exit(1)
+            _issues = _ds.check_staged(_root, _dmsg)
+            _res = {"range": _issues, "new": []}
+        elif args.doc_range:
             _issues = _ds.check_range(_root, args.doc_range)
             _res = {"range": _issues, "new": []}
         else:

@@ -78,6 +78,35 @@ if [ -n "$_gd2" ]; then
     fi
 fi
 
+# ─── Doc-staleness COMMIT leg (BLOCKING — docs follow code in the same commit) ──
+# Owner order 2026-11-04: the agent updates every doc covering the code it changes IN THE
+# SAME COMMIT, unprompted. Keeper `check_doc_staleness` over the STAGED diff
+# (`--doc-staged`): code a doc covers staged materially without that doc staged blocks
+# with the exact fix-list; a `Docs-Reviewed: <doc> — <reason>` trailer in this message
+# satisfies it (only this hook can read the message). Pre-push/CI re-check the range
+# (backstop). Skips merges + detached HEAD (rebase/cherry-pick replays) and non-noctus
+# checkouts. KB § PATTERNS/common/doc-staleness-gate.md.
+if [ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" ]; then
+    _gd3="$(git rev-parse --git-dir 2>/dev/null || true)"
+    if [ -n "$_gd3" ] && [ ! -f "$_gd3/MERGE_HEAD" ] && git symbolic-ref -q HEAD >/dev/null 2>&1; then
+        _root3="$(git rev-parse --show-toplevel)"
+        if [ -x "$_root3/venv/bin/python" ]; then _py3="$_root3/venv/bin/python"
+        else
+            _common3="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+            _py3="python3"
+            [ -n "$_common3" ] && [ -x "$(dirname "$_common3")/venv/bin/python" ] && _py3="$(dirname "$_common3")/venv/bin/python"
+        fi
+        if [ -f "$_root3/mcp/noctusai/cli.py" ] && { command -v "$_py3" >/dev/null 2>&1 || [ -x "$_py3" ]; }; then
+            if ! "$_py3" "$_root3/mcp/noctusai/cli.py" --check-doc-staleness --doc-staged \
+                    --commit-msg-file "$msg_file" --worktree-path "$_root3"; then
+                echo "commit-msg: DOC-STALENESS check FAILED — update + stage the listed docs, or add the" \
+                     "'Docs-Reviewed: <doc> — <why still accurate>' trailer. Commit aborted." >&2
+                exit 1
+            fi
+        fi
+    fi
+fi
+
 # An empty message aborts the commit — never turn it into a trailer-only one.
 grep -qvE '^[[:space:]]*(#.*)?$' "$msg_file" || exit 0
 

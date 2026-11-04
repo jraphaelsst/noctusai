@@ -250,3 +250,64 @@ class TestCheckDocStaleness:
         findings = ds.check_claims(REPO_ROOT)  # claims only: no git-log age scan
         new = [f for f in findings if f["id"] not in entries]
         assert new == [], "new doc staleness (fix the doc, never grow the baseline):\n" + ds.suggest({"new": new})
+
+
+# ── commit leg: coupling over the STAGED diff ──────────────────────────────────
+def _stage_new_route(repo: Path) -> None:
+    _write(repo, "products/acme/backend/app/routers/b.py", "@router.post('/b')\ndef b(): ...\n")
+    _git(repo, "add", "-A")
+
+
+def test_staged_code_without_its_docs_is_blocked_with_the_fix_list(repo):
+    _stage_new_route(repo)
+    issues = ds.check_staged(repo, "feat(acme): add b")
+    docs = {i["doc"] for i in issues}
+    assert "products/acme/README.md" in docs
+    assert "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md" in docs
+    assert "UPDATE products/acme/README.md" in ds.suggest({"range": issues, "new": []})
+
+
+def test_staging_the_covering_docs_satisfies_the_commit_leg(repo):
+    _stage_new_route(repo)
+    _write(repo, "products/acme/README.md", "# acme\n\nNow has /b.\n")
+    _write(repo, "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md", "| acme | `products/acme/` b |\n")
+    _git(repo, "add", "-A")
+    assert ds.check_staged(repo, "feat(acme): add b") == []
+
+
+def test_unstaged_doc_edit_does_not_count(repo):
+    _stage_new_route(repo)
+    _write(repo, "products/acme/README.md", "# acme\n\nNow has /b.\n")  # edited, NOT staged
+    assert "products/acme/README.md" in {i["doc"] for i in ds.check_staged(repo, "")}
+
+
+def test_docs_reviewed_trailer_in_the_message_satisfies_the_commit_leg(repo):
+    _stage_new_route(repo)
+    msg = ("feat(acme): add b\n\nDocs-Reviewed: products/acme/README.md — internal endpoint\n"
+           "Docs-Reviewed: KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md — roster unchanged")
+    assert ds.check_staged(repo, msg) == []
+    # reasonless trailer does not count
+    assert ds.check_staged(repo, "x\n\nDocs-Reviewed: products/acme/README.md")
+
+
+def test_non_material_staged_change_passes(repo):
+    _write(repo, "products/acme/backend/app/routers/a.py", "@router.get('/a')\ndef a(): return 1\n")
+    _write(repo, "products/acme/backend/tests/test_a.py", "def test_x(): ...\n")
+    _git(repo, "add", "-A")
+    assert ds.check_staged(repo, "fix(acme): body only") == []
+
+
+def test_cli_doc_staged_exit_codes(repo, tmp_path):
+    cli = Path(__file__).resolve().parents[1] / "cli.py"
+    _stage_new_route(repo)
+    msg = tmp_path / "MSG"
+
+    def run(text: str) -> int:
+        msg.write_text(text, encoding="utf-8")
+        return subprocess.run([sys.executable, str(cli), "--check-doc-staleness", "--doc-staged",
+                               "--commit-msg-file", str(msg), "--worktree-path", str(repo)],
+                              capture_output=True, text=True).returncode
+
+    assert run("feat: b") == 1
+    assert run("feat: b\n\nDocs-Reviewed: products/acme/README.md — x\n"
+               "Docs-Reviewed: KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md — y") == 0
