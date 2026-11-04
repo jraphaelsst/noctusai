@@ -30,7 +30,9 @@ export type ViralCard = { id: string; codigo: number; perfil: { id: string; hand
 export type ViralDetalhe = ViralCard & { caption: string | null; gancho: string | null; transcricao_texto: string | null;
                    transcricao_status: TranscricaoViralStatus; classificacao_status: 'pendente'|'processando'|'concluida'|'falhou';
                    nichos: Taxon[]; profissoes: Taxon[]; formatos: Taxon[]; gatilho: Gatilho | null;
-                   estrutura_utilizavel: boolean; blueprint?: string | null }
+                   estrutura_utilizavel: boolean; blueprint?: string | null;
+                   /** Scraped CDN video (short-lived; null when absent/expired => Instagram embed). */
+                   video_url?: string | null }
 export type Referencia = { id: string; modo: 'perfil' | 'video'; perfil: PerfilMonitorado | null; viral: ViralCard | null;
                     auto_atualizar: boolean; posts_ate: string | null; updated_at: string }
 export type ItemUsado = { slot: string; item_id: string; conteudo: string }

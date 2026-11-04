@@ -1,9 +1,13 @@
 /**
- * "Informações do Viral" modal (contract §7.3): Instagram embed, metrics,
- * transcript (with an honest status chip when it is not `concluida`), badges
- * and the actions Gerar headline / Citar no Chat / Citar perfil no Chat.
+ * "Informações do Viral" modal (contract §7.3; layout mirrors the reference app,
+ * owner decision 2026-11-04): profile pill + Gerar headline, video (native player
+ * from the scraped `video_url`, Instagram embed fallback), Métricas card,
+ * Transcrição card, then Nicho / Profissão / Formato. The structure (gancho,
+ * blueprint, #codigo) is deliberately NOT shown here — it surfaces in the chat.
  */
 import { useState } from "react";
+import type React from "react";
+import { CalendarDays, Clipboard, ExternalLink, Eye, FileText, Heart, Link2, MessageCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -19,8 +23,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { compactoPtBr, dataPtBr } from "@/components/pesquisa/format";
-import { GATILHO_ROTULO } from "@/components/geracao/labels";
+import { compactoPtBr, dataHoraPtBr } from "@/components/pesquisa/format";
 import { useViralDetalhe } from "@/hooks/geracao/useBiblioteca";
 import type { TranscricaoViralStatus } from "@/types/geracao";
 import { embedUrlInstagram } from "./filtros";
@@ -66,13 +69,12 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              Informações do Viral
-              {v && <Badge variant="secondary">#{v.codigo}</Badge>}
-            </DialogTitle>
-            <DialogDescription>{v ? `@${v.perfil.handle}` : "Carregando..."}</DialogDescription>
+            <DialogTitle>Informações do Viral</DialogTitle>
+            <DialogDescription className="sr-only">
+              {v ? `Post de @${v.perfil.handle}` : "Carregando..."}
+            </DialogDescription>
           </DialogHeader>
 
           {q.showSkeleton ? (
@@ -85,128 +87,135 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
               </Button>
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-wrap gap-2">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span tabIndex={0}>
-                        <Button disabled={!v.estrutura_utilizavel} onClick={() => setWizard(true)}>
-                          Gerar headline
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    {!v.estrutura_utilizavel && (
-                      <TooltipContent>
-                        A estrutura deste viral ainda não está disponível para gerar headlines.
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
-                <Button variant="outline" asChild>
-                  <Link to={`/media-creation/chat?cite_viral=${encodeURIComponent(v.id)}`}>
-                    Citar no Chat
-                  </Link>
-                </Button>
-                <Button variant="outline" asChild>
-                  <Link to={`/media-creation/chat?cite_perfil=${encodeURIComponent(v.perfil.id)}`}>
-                    Citar perfil no Chat
-                  </Link>
-                </Button>
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="inline-flex items-center gap-2 rounded-full border bg-muted/40 py-1 pl-1 pr-3 text-sm">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[11px] font-semibold uppercase text-primary-foreground">
+                    {v.perfil.handle.slice(0, 2)}
+                  </span>
+                  <span className="font-medium">@{v.perfil.handle}</span>
+                  <span className="text-xs text-muted-foreground">instagram</span>
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link to={`/media-creation/chat?cite_viral=${encodeURIComponent(v.id)}`}>
+                      Citar no Chat
+                    </Link>
+                  </Button>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link to={`/media-creation/chat?cite_perfil=${encodeURIComponent(v.perfil.id)}`}>
+                      Citar perfil no Chat
+                    </Link>
+                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0}>
+                          <Button
+                            className="rounded-full"
+                            disabled={!v.estrutura_utilizavel}
+                            onClick={() => setWizard(true)}
+                          >
+                            Gerar headline
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!v.estrutura_utilizavel && (
+                        <TooltipContent>
+                          A estrutura deste viral ainda não está disponível para gerar headlines.
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  {embed ? (
+                <div className="rounded-xl border p-4">
+                  {v.video_url ? (
+                    <video
+                      src={v.video_url}
+                      poster={v.thumbnail_url ?? undefined}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="aspect-[9/16] max-h-[60vh] w-full rounded-md bg-black object-contain"
+                    />
+                  ) : embed ? (
                     <iframe
                       title={`Post de @${v.perfil.handle}`}
                       src={embed}
-                      className="aspect-[9/16] w-full rounded-md border"
+                      className="aspect-[9/16] max-h-[60vh] w-full rounded-md"
                       sandbox="allow-scripts allow-same-origin allow-popups"
                       loading="lazy"
                     />
-                  ) : null}
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Não consegue ver o vídeo?{" "}
-                    <a
-                      href={v.permalink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Abrir no Instagram
-                    </a>
-                  </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Vídeo indisponível.</p>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-4 text-sm">
-                  {v.gancho && (
-                    <section>
-                      <h3 className="mb-1 font-semibold">Gancho</h3>
-                      <blockquote className="border-l-2 pl-3 italic">“{v.gancho}”</blockquote>
-                    </section>
-                  )}
-
-                  {v.blueprint && <EstruturaBloco blueprint={v.blueprint} />}
-
-                  <section>
-                    <h3 className="mb-1 font-semibold">Métricas</h3>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-                      {v.views != null && (
-                        <>
-                          <dt className="text-muted-foreground">Visualizações</dt>
-                          <dd>{compactoPtBr(v.views)}</dd>
-                        </>
-                      )}
-                      <dt className="text-muted-foreground">Curtidas</dt>
-                      <dd>{compactoPtBr(v.likes)}</dd>
-                      <dt className="text-muted-foreground">Comentários</dt>
-                      <dd>{compactoPtBr(v.comments)}</dd>
-                      <dt className="text-muted-foreground">Data do Post</dt>
-                      <dd>{dataPtBr(v.publicado_em)}</dd>
+                  <section className="rounded-xl border">
+                    <h3 className="border-b px-4 py-3 font-semibold">Métricas</h3>
+                    <dl className="grid grid-cols-2 gap-4 p-4">
+                      <Metrica icone={<Eye className="h-4 w-4 text-sky-500" />} rotulo="Visualizações" valor={compactoPtBr(v.views)} />
+                      <Metrica icone={<Heart className="h-4 w-4 text-rose-500" />} rotulo="Curtidas" valor={compactoPtBr(v.likes)} />
+                      <Metrica icone={<MessageCircle className="h-4 w-4 text-emerald-500" />} rotulo="Comentários" valor={compactoPtBr(v.comments)} />
+                      <Metrica icone={<CalendarDays className="h-4 w-4 text-fuchsia-500" />} rotulo="Data do Post" valor={dataHoraPtBr(v.publicado_em)} />
                     </dl>
                   </section>
 
-                  <section className="flex flex-col gap-2">
-                    <h3 className="font-semibold">Transcrição</h3>
-                    {v.transcricao_status !== "concluida" && (
-                      <Badge variant="secondary" className="w-fit">
-                        {TRANSCRICAO_ROTULO[v.transcricao_status]}
-                      </Badge>
-                    )}
-                    {v.transcricao_texto ? (
-                      <Textarea readOnly value={v.transcricao_texto} className="h-40" />
-                    ) : (
-                      <p className="text-muted-foreground">Sem transcrição disponível.</p>
-                    )}
-                    <div className="flex flex-wrap gap-2">
+                  <section className="flex flex-col rounded-xl border">
+                    <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+                      <h3 className="flex items-center gap-2 font-semibold">
+                        <FileText className="h-4 w-4" /> Transcrição
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" className="rounded-full" asChild>
+                          <a href={v.permalink} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="mr-1 h-3.5 w-3.5" /> Ver post
+                          </a>
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8 rounded-full"
+                          aria-label="Copiar link do viral"
+                          onClick={() => copiar(linkInternoViral(v.id), "Link copiado!")}
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-3 p-4">
+                      {v.transcricao_status !== "concluida" && (
+                        <Badge variant="secondary" className="w-fit">
+                          {TRANSCRICAO_ROTULO[v.transcricao_status]}
+                        </Badge>
+                      )}
+                      {v.transcricao_texto ? (
+                        <Textarea readOnly value={v.transcricao_texto} className="h-44" />
+                      ) : (
+                        <p className="text-muted-foreground">Sem transcrição disponível.</p>
+                      )}
                       <Button
-                        size="sm"
                         variant="outline"
+                        className="w-full rounded-full"
                         disabled={!v.transcricao_texto}
                         onClick={() => copiar(v.transcricao_texto ?? "", "Transcrição copiada!")}
                       >
-                        Copiar Transcrição
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => copiar(linkInternoViral(v.id), "Link copiado!")}
-                      >
-                        Copiar link
+                        <Clipboard className="mr-2 h-4 w-4" /> Copiar Transcrição
                       </Button>
                     </div>
                   </section>
+                </div>
+              </div>
 
-                  <section className="flex flex-col gap-1.5">
-                    <BadgeGrupo rotulo="Nicho" itens={v.nichos.map((n) => n.nome)} />
-                    <BadgeGrupo rotulo="Profissão" itens={v.profissoes.map((n) => n.nome)} />
-                    <BadgeGrupo rotulo="Formato do Vídeo" itens={v.formatos.map((n) => n.nome)} />
-                    <BadgeGrupo
-                      rotulo="Gatilho"
-                      itens={v.gatilho ? [GATILHO_ROTULO[v.gatilho]] : []}
-                    />
-                  </section>
+              <div className="grid gap-4 text-center text-sm sm:grid-cols-2">
+                <BadgeGrupo rotulo="Nicho" itens={v.nichos.map((n) => n.nome)} />
+                <BadgeGrupo rotulo="Profissão" itens={v.profissoes.map((n) => n.nome)} />
+                <div className="sm:col-span-2">
+                  <BadgeGrupo rotulo="Formato do Vídeo" itens={v.formatos.map((n) => n.nome)} />
                 </div>
               </div>
             </div>
@@ -226,47 +235,33 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
   );
 }
 
-function BadgeGrupo({ rotulo, itens }: { rotulo: string; itens: string[] }) {
+function Metrica({ icone, rotulo, valor }: { icone: React.ReactNode; rotulo: string; valor: string }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-muted-foreground">{rotulo}:</span>
-      {itens.length === 0 ? (
-        <span className="text-muted-foreground">—</span>
-      ) : (
-        itens.map((i) => (
-          <Badge key={i} variant="outline">
-            {i}
-          </Badge>
-        ))
-      )}
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5">{icone}</span>
+      <div>
+        <dt className="text-muted-foreground">{rotulo}</dt>
+        <dd className="font-medium">{valor}</dd>
+      </div>
     </div>
   );
 }
 
-/** Beat labels of a blueprint: bold `**(Label)**` / `(Label)` markers or the first words of each line. */
-export function beatsDoBlueprint(blueprint: string): string[] {
-  const out: string[] = [];
-  for (const linha of blueprint.split("\n")) {
-    const l = linha.trim();
-    if (!l) continue;
-    const m =
-      /^(?:[-*•]\s*|\d+[.)]\s*)?\**\(([^()*]{2,40})\)\**/.exec(l) ??
-      /^(?:[-*•]\s*|\d+[.)]\s*)?\**([^()*:—]{2,40}?)\**\s*(?::|—)/.exec(l);
-    if (m) out.push(m[1].trim());
-  }
-  return out;
-}
-
-function EstruturaBloco({ blueprint }: { blueprint: string }) {
-  const beats = beatsDoBlueprint(blueprint);
+function BadgeGrupo({ rotulo, itens }: { rotulo: string; itens: string[] }) {
   return (
-    <section className="flex flex-col gap-1">
-      <h3 className="font-semibold">Estrutura</h3>
-      {beats.length > 1 && <p>{beats.join(" → ")}</p>}
-      <details>
-        <summary className="cursor-pointer text-muted-foreground">Ver estrutura completa</summary>
-        <p className="mt-1 whitespace-pre-wrap">{blueprint}</p>
-      </details>
-    </section>
+    <div className="flex flex-col items-center gap-1.5">
+      <span className="text-muted-foreground">{rotulo}:</span>
+      <div className="flex flex-wrap justify-center gap-1.5">
+        {itens.length === 0 ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          itens.map((i) => (
+            <Badge key={i} variant="outline">
+              {i}
+            </Badge>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
