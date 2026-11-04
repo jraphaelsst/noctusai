@@ -624,7 +624,8 @@ class TestAgentsStudioProbes:
             if p.product == "agents" and not p.id.startswith("agents_editorial.")
             and not p.id.endswith(".anon_holds_no_sequence_privilege")
             # browser-read lockdown (036) = catalog state assertions, no fixture; own file asserts them
-            and not p.id.startswith(("agents.content_tables.", "agents.status_pagina."))
+            and not p.id.startswith(("agents.content_tables.", "agents.status_pagina.", "agents.grants."))
+            # Julia-line 060 platform grant ledger: one-live unique, own probe (service-role table, no agent fixture)
             # Julia v2 031-040: own group, proven on the real chain in test_agents_julia_v2_probes_on_replay.py
             and p not in _AGENTS_JULIA_V2_PROBES
             and p not in _AGENTS_GERACAO_PROBES

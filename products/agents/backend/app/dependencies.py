@@ -229,13 +229,18 @@ PACKAGE_TOKEN_SCOPES = frozenset({
 SCOPE_CHANNEL_TURN = "agents:channel-turn"
 SCOPE_CHANNEL_STATUS = "agents:channel-status"
 CHANNEL_TOKEN_SCOPES = frozenset({SCOPE_CHANNEL_TURN, SCOPE_CHANNEL_STATUS})
+#: The org-specs surface of the channel API (Julia-line E). Minted ONLY by the platform grant
+#: (``app.grants``), onto the same channel token as turn + status -- not part of the human-minted
+#: :data:`CHANNEL_TOKEN_SCOPES` set (that mint route is retired with the paste UI, CONTRACT D5).
+SCOPE_CHANNEL_SPECS = "agents:channel-specs"
+GRANT_CHANNEL_TOKEN_SCOPES = CHANNEL_TOKEN_SCOPES | {SCOPE_CHANNEL_SPECS}
 #: Who may hold a channel token. Read off the STORED token row (`api_tokens.
 #: issuer`, set only server-side at mint) — a token minted for any other
 #: transport answers 403 `issuer_not_allowed` even with the scope.
 CHANNEL_ALLOWED_ISSUERS = frozenset({"social-wiring"})
 #: The server-side registry of scopes an admin-initiated mint may put on a
 #: token (the union of every documented, product-honoured set).
-MINTABLE_TOKEN_SCOPES = PACKAGE_TOKEN_SCOPES | CHANNEL_TOKEN_SCOPES
+MINTABLE_TOKEN_SCOPES = PACKAGE_TOKEN_SCOPES | GRANT_CHANNEL_TOKEN_SCOPES
 
 
 def _require_channel(scope: str):
@@ -591,6 +596,45 @@ def get_product_token_admin_dep():
     return make_product_token_admin(get_admin_client() if settings.supabase_service_role_key else None)
 
 
+def get_grant_token_admin_dep():
+    """The token admin the platform-grant service mints with: service-role writer pinned to the STRICT grant
+    scope allow-list (``app.grants.registry.GRANT_TOKEN_SCOPES``) -- a grant can never mint a scope the server
+    does not register, whatever the request says."""
+    from app.grants.registry import GRANT_TOKEN_SCOPES
+    from noctusai_lib.api.auth.session import make_product_token_admin
+
+    return make_product_token_admin(
+        get_admin_client() if settings.supabase_service_role_key else None, scope_allow_list=GRANT_TOKEN_SCOPES,
+    )
+
+
+def get_grant_store_dep():
+    from app.grants.store import get_grant_store
+
+    return get_grant_store(settings)
+
+
+def get_org_directory_dep():
+    from app.grants.orgs import get_org_directory
+
+    return get_org_directory(settings)
+
+
+def get_grant_delivery_dep():
+    """The grant SENDER (seed ``GrantDelivery``): Real HTTP when the service-role key is configured; the factory
+    refuses the Fake in a deploy context."""
+    from noctusai_lib.api.auth.grants import make_grant_delivery
+
+    return make_grant_delivery(real=bool(settings.supabase_service_role_key))
+
+
+def get_grant_tools_store_factory_dep():
+    """Factory of agents' per-org encrypted credential store (where a grant keeps the tools-token secret)."""
+    from app.credentials.org_keys import build_llm_key_store
+
+    return build_llm_key_store
+
+
 def get_token_audit_dep():
     from app.channels.token_audit import get_token_audit
 
@@ -648,6 +692,8 @@ def get_build_legacy_chat_spec_dep():
 __all__ = [
     "CHANNEL_ALLOWED_ISSUERS",
     "CHANNEL_TOKEN_SCOPES",
+    "GRANT_CHANNEL_TOKEN_SCOPES",
+    "SCOPE_CHANNEL_SPECS",
     "MINTABLE_TOKEN_SCOPES",
     "SCOPE_CHANNEL_STATUS",
     "SCOPE_CHANNEL_TURN",
@@ -662,6 +708,11 @@ __all__ = [
     "get_org_llm_key_resolver_dep",
     "get_product_token_admin_dep",
     "get_token_audit_dep",
+    "get_grant_token_admin_dep",
+    "get_grant_store_dep",
+    "get_org_directory_dep",
+    "get_grant_delivery_dep",
+    "get_grant_tools_store_factory_dep",
     "require_channel_status",
     "require_channel_turn",
     "PACKAGE_TOKEN_SCOPES",

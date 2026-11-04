@@ -93,6 +93,31 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 | Publish from any content tab: the draft header of Prompt, Textos, Ferramentas, Decisões, Especificações and Skills fixadas carries "Publicar rascunho" (admin only), opening the shared `PublishDraftDialog` that Versões uses (blocking warnings + eval gate); disabled while the tab has unsaved edits. Decisions are rows of the draft version — there is no per-decision publish | Julia v2 |
 | Shared skill library: one standardised, versioned set of skills every agent opens the same way; agent versions pin library versions (`obrigatoria_para` gates tools), Studio shows "new version available"; platform-only authoring in the Studio Skills library page (`/studio/biblioteca-skills`: create, edit the draft body and reference files, publish) and the `noctus.agents.content` MCP tool (drafts only) | Julia v2 |
 
+## Platform grants (agent -> product wiring, `app/grants/`)
+
+Nobody pastes a token. A **platform admin** (`require_platform_admin`) picks agent + product + org and agents mints and
+DELIVERS the credential (Julia-line CONTRACT D1-D4; migration 060 `agents.agent_product_grants`, one live grant per
+(org, agent, product)). The product registry is server-side (`app/grants/registry.py`: only `social-wiring` + `julia`
+today) and so is the strict scope allow-list the grant token admin mints from.
+
+| Route | Does |
+|---|---|
+| `GET /api/studio/plataforma/grants` | every grant `{items, total}` (ids, status `pendente\|ativo\|revogado\|falhou`, `last_error`; never a secret) |
+| `GET /api/studio/plataforma/grants/opcoes?q=&limit=` | the pickers: `{produtos:[{slug,label,agent_keys}], orgs:[{id,nome,slug}]}` |
+| `POST /api/studio/plataforma/grants {agent_key, product, org_id, expira_em_dias?}` | create = mint + deliver (201 grant; no expiry unless asked; 409 `grant_exists`; 502 `mint_failed` / `tools_store_failed` / `delivery_failed`) |
+| `POST /api/studio/plataforma/grants/{id}/rotate` | overlapping rotation: new pair delivered first, then the old pair revoked |
+| `DELETE /api/studio/plataforma/grants/{id}` | revoke both tokens + best-effort `DELETE` at the product (204, idempotent) |
+
+Create: (1) channel token in `agents.api_tokens` for the TARGET org (issuer = the transport `social-wiring`, scopes
+`agents:channel-turn|channel-status|channel-specs`, bound to the org's instance via `ensure_instancia`); (2) tools token
+in the product's `api_tokens` (issuer `agents`, `social-wiring:lais-tools`), its secret kept in agents' per-org encrypted
+store; (3) a 5-minute one-shot delivery token (`platform:grant-receive`); (4) the seed `GrantDelivery` PUTs the channel
+credential to `{product}/api/platform/grants/agents`; (5) the delivery token is revoked. Any failure revokes every token
+of that attempt, restores the stored tools secret, marks the grant `falhou` with `last_error` (stage + error class, no
+secrets). MFA is not required to mint (seed `MintPolicy` default); secrets are shown to nobody and never logged.
+The former `PUT /api/channels/ferramentas-token` paste intake is retired (405); `DELETE` stays. The human
+`POST /api/agents/{key}/channel-token` mint is superseded by grants and goes with the paste UI (S5).
+
 ## Creating a complete agent (Julia as the reference)
 
 `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md` (skill `noc-new-agent`) is the recipe: the artifacts a production agent has and

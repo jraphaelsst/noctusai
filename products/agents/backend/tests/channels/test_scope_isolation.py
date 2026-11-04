@@ -60,7 +60,6 @@ def test_the_channel_route_set_is_exactly_the_documented_ones(chan):
         ("POST", "/api/channels/threads/{thread_id}/mensagens"),
         ("POST", "/api/channels/threads/{thread_id}/resumo"),
         ("POST", "/api/channels/turns"),
-        ("PUT", "/api/channels/ferramentas-token"),
         ("PUT", "/api/channels/leads/{ref}/opt-in"),
     ]
 

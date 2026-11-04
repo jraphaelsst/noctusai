@@ -11417,8 +11417,46 @@ _CORE_BRAND_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE = GuardProbe(
+    id="agents.grants.one_live_unique",
+    product="agents",
+    schema=_AGENTS_SCHEMA,
+    guard_name="idx_agent_product_grants_one_live",
+    kind="write_refusal",
+    migrations=("060_agent_product_grants.sql",),
+    rationale=(
+        "Julia-line D1: ONE live (pendente/ativo) platform grant per (org, agent, product). The service pre-checks and answers "
+        "409 grant_exists; this partial unique index is the backstop under a race (two concurrent creates would otherwise both "
+        "mint and deliver a credential pair for the same wiring)."
+    ),
+    sql=_do_block(f"""
+BEGIN
+  IF to_regclass('{_AGENTS_SCHEMA}.agent_product_grants') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_product_grants does not exist (migration 060 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO {_AGENTS_SCHEMA}.agent_product_grants (org_id, agent_id, agent_key, product, status)
+    VALUES ('00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-00000000a002', 'noc-probe', 'noc-probe', 'ativo');
+    INSERT INTO {_AGENTS_SCHEMA}.agent_product_grants (org_id, agent_id, agent_key, product, status)
+    VALUES ('00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-00000000a002', 'noc-probe', 'noc-probe', 'pendente');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a second live grant for the same (org, agent, product) succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%idx_agent_product_grants_one_live%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
+    _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,
     _ONUS_CREDOR_PAREADO_PROBE,

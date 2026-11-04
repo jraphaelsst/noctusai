@@ -69,6 +69,16 @@ products/agents/backend/app/
   inbound stored only for an existing thread, never a new thread/participant. Unreadable flag ⇒ 503.
   `GET /api/channels/agents/{key}/status` carries `modo_avaliacao` only. The org controle GET/PUT add `avaliacao_resolvidos` (users from noc; full phone to org admins, masked to members) + `avaliacao_resolucao_erro` (lookup failed: null name/phone, never a 500).
 
+### Platform grants (Julia-line S3) — how a product gets its credential
+
+- `app/grants/` (`registry.py` server-side product + scope registry, `store.py` ledger `agents.agent_product_grants` (060),
+  `orgs.py`, `service.py`) behind `routers/plataforma_grants_router.py` (`/api/studio/plataforma/grants`, platform admin
+  only). Create = mint the channel token (agents schema, target org) + the tools token (product schema, secret kept in the
+  per-org encrypted store) + a 5-minute delivery token, `GrantDelivery.deliver`, revoke the delivery token; any failure
+  revokes everything minted and leaves the grant `falhou`. Rotate overlaps; revoke kills both and tells the product.
+  Nobody pastes a token: `PUT /api/channels/ferramentas-token` is gone. Never log or return a secret. README section
+  "Platform grants" has the routes.
+
 ### Julia v2 — the channel runtime (A-RT)
 
 - `POST /api/channels/turns` (`routers/channels_router.py` -> `channels/turno.py`): `resolve_agent_for_org` (platform

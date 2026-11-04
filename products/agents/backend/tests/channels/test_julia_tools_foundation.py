@@ -233,18 +233,17 @@ class TestAuthStrict:
 
     def test_tools_token_without_credential_is_401(self, chan):
         chan.seed_agent()
-        assert chan.request("PUT", "/api/channels/ferramentas-token", json={"token": "pk_xxxxxxxx"}).status_code == 401
         assert chan.request("DELETE", "/api/channels/ferramentas-token").status_code == 401
 
     def test_human_session_is_403_on_the_new_routes(self, chan):
         chan.seed_agent()
-        assert chan.client.put("/api/channels/ferramentas-token", json={"token": "pk_xxxxxxxx"}).status_code == 403
+        assert chan.client.delete("/api/channels/ferramentas-token").status_code == 403
         assert chan.client.post(f"/api/channels/threads/{uuid4()}/resumo", json={"perguntas": []}).status_code == 403
 
     def test_wrong_issuer_is_403(self, chan):
         chan.seed_agent()
         with chan.as_token(issuer="somebody-else"):
-            resp = chan.request("PUT", "/api/channels/ferramentas-token", json={"token": "pk_xxxxxxxx"})
+            resp = chan.request("DELETE", "/api/channels/ferramentas-token")
         assert resp.status_code == 403 and resp.json()["code"] == "issuer_not_allowed"
 
 
@@ -338,6 +337,8 @@ class TestResumo:
 
 
 class TestToolsTokenIntake:
+    """The paste intake (``PUT``) is retired (Julia-line D5): a grant stores the secret. Only ``DELETE`` stays."""
+
     @pytest.fixture
     def store(self, chan):
         from app.main import app
@@ -347,55 +348,27 @@ class TestToolsTokenIntake:
         yield s
         app.dependency_overrides.pop(get_julia_tools_token_store_dep, None)
 
-    def _put(self, chan, token="pk_" + "a" * 20, **kw):
-        with chan.as_token(**kw):
-            return chan.request("PUT", "/api/channels/ferramentas-token", json={"token": token})
+    def _read(self, store, org):
+        return resolve_julia_tools_token(org, store_factory=lambda: store, org_settings_reader=lambda k, o: None)
 
-    def test_put_stores_per_org_and_is_readable_by_the_resolver_only_for_that_org(self, chan, store):
+    def test_put_is_retired(self, chan, store):
         chan.seed_agent()
-        resp = self._put(chan)
-        assert resp.status_code == 204 and resp.content == b""
-        assert resolve_julia_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None) == "pk_" + "a" * 20
-        assert resolve_julia_tools_token(OTHER_ORG, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
+        with chan.as_token():
+            resp = chan.request("PUT", "/api/channels/ferramentas-token", json={"token": "pk_" + "a" * 20})
+        assert resp.status_code == 405
+        assert self._read(store, chan.org_id) is None
 
-    def test_put_twice_replaces_and_delete_is_idempotent(self, chan, store):
+    def test_delete_drops_only_this_orgs_token_and_is_idempotent(self, chan, store):
+        from noctusai_lib.security.api_keys import put_api_key
+
         chan.seed_agent()
-        self._put(chan, "pk_" + "b" * 20)
-        self._put(chan, "pk_" + "c" * 20)
-        read = lambda: resolve_julia_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None)  # noqa: E731
-        assert read() == "pk_" + "c" * 20
+        put_api_key(store, str(chan.org_id), JULIA_TOOLS_TOKEN_KEY, "noc_" + "a" * 20)
+        put_api_key(store, str(OTHER_ORG), JULIA_TOOLS_TOKEN_KEY, "noc_" + "b" * 20)
         for _ in range(2):
             with chan.as_token():
                 assert chan.request("DELETE", "/api/channels/ferramentas-token").status_code == 204
-        assert read() is None
-
-    def test_token_org_comes_from_the_credential(self, chan, store):
-        chan.seed_agent()
-        self._put(chan, org_id=OTHER_ORG)
-        assert resolve_julia_tools_token(OTHER_ORG, store_factory=lambda: store, org_settings_reader=lambda k, o: None)
-        assert resolve_julia_tools_token(chan.org_id, store_factory=lambda: store, org_settings_reader=lambda k, o: None) is None
-
-    def test_validation_and_unknown_field_are_422(self, chan, store):
-        chan.seed_agent()
-        assert self._put(chan, token="x").status_code == 422
-        with chan.as_token():
-            assert chan.request("PUT", "/api/channels/ferramentas-token", json={"token": "pk_" + "a" * 20, "x": 1}).status_code == 422
-
-    def test_the_value_is_never_echoed_or_logged(self, chan, store, caplog):
-        chan.seed_agent()
-        secret = "pk_" + "s3cr3t" * 5
-        with caplog.at_level("DEBUG"):
-            resp = self._put(chan, secret)
-        assert secret not in resp.text and secret not in caplog.text
-
-    def test_missing_encryption_key_is_503(self, chan, monkeypatch):
-        from app.config import settings
-
-        chan.seed_agent()
-        monkeypatch.setattr(settings, "encryption_key", "")  # config input, not our guard
-        resp = self._put(chan)
-        assert resp.status_code == 503 and resp.json()["code"] == "encryption_not_configured"
-
+        assert self._read(store, chan.org_id) is None
+        assert self._read(store, OTHER_ORG) == "noc_" + "b" * 20
 
 class TestMigration029:
     def test_adds_only_contexto_hash(self):

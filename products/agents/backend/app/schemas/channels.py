@@ -54,7 +54,6 @@ __all__ = [
     "ChannelResumoRequest",
     "ChannelResumoResponse",
     "ChannelResumoUsageOut",
-    "ChannelToolsTokenRequest",
     "ConformidadeOut",
     "ContextoEstado",
     "ContextoPergunta",
@@ -624,9 +623,3 @@ class ChannelDecisaoResponse(BaseModel):
     #: option answered (no rule written, or the model could not decide).
     regra: Literal["versao", "padrao_da_versao"]
     usage: ChannelResumoUsageOut
-
-
-class ChannelToolsTokenRequest(StrictHttpModel):
-    """``PUT /api/channels/ferramentas-token`` (§2.1(f))."""
-
-    token: str = Field(..., min_length=8, max_length=4096)
