@@ -62,7 +62,11 @@ def hw_log(tmp_path: Path) -> Path:
         {"ts": "2026-11-04T03:51:00+00:00", "event": "sample", "host": "h", "overloaded": True, "busy_slots": 1,
          "metrics": {**m, "cpu_idle_pct": 10.0, "reclaimable_mb": 900}},
         {"ts": "2026-11-04T03:52:00+00:00", "event": "ran", "host": "h", "job": "pytest:agents", "admitted": True,
-         "waited_s": 12.0, "duration_s": 100.0, "children_peak_rss_mb": 800.0, "exit_code": 1, "phase": "build", "metrics": m},
+         "waited_s": 12.0, "duration_s": 100.0, "children_peak_rss_mb": 800.0, "phase": "build", "metrics": m,
+         "outcome": {"exit_code": 1, "harness_suspect": False, "timed_out": False}},
+        {"ts": "2026-11-04T03:52:30+00:00", "event": "ran", "host": "h", "job": "gate:vitest:sw", "admitted": True,
+         "waited_s": 5.0, "duration_s": 0.0, "children_peak_rss_mb": None, "phase": "build", "metrics": m,
+         "outcome": {"exit_code": None, "harness_suspect": False, "timed_out": True}},
         {"ts": "2026-11-04T03:53:00+00:00", "event": "not_admitted", "host": "h", "job": "vitest:sw", "admitted": False,
          "waited_s": 1800.0, "metrics": m},
         {"ts": "2026-11-04T09:00:00+00:00", "event": "sample", "host": "h", "metrics": m},
@@ -106,18 +110,22 @@ def test_cost_comes_from_the_seed_rate_card(claude_root: Path) -> None:
 def test_hw_samples_and_jobs_in_window(hw_log: Path) -> None:
     samples, jobs = ue.scan_hw(T0, T1, hw_log)
     assert len(samples) == 2
-    assert [(j["kind"], j["target"], j["event"]) for j in jobs] == [("pytest", "agents", "ran"), ("vitest", "sw", "not_admitted")]
+    assert [(j["kind"], j["target"], j["event"]) for j in jobs] == [
+        ("pytest", "agents", "ran"), ("gate", "vitest:sw", "ran"), ("vitest", "sw", "not_admitted")]
+    assert jobs[0]["exit_code"] == 1  # read from the nested outcome, as hw_admission writes it
+    assert jobs[1]["metrics"]["outcome"] == {"timed_out": True, "harness_suspect": False}
 
 
 def test_window_report_and_compare(claude_root: Path, hw_log: Path) -> None:
     a = ue.window_report(T0, T1, claude_root=claude_root, hw_log=hw_log)
-    assert a["jobs"]["ran"] == 1 and a["jobs"]["failed"] == 1 and a["jobs"]["not_admitted"] == 1
+    assert a["jobs"]["ran"] == 2 and a["jobs"]["failed"] == 1 and a["jobs"]["not_admitted"] == 1
+    assert a["jobs"]["timed_out"] == 1 and a["jobs"]["harness_suspect"] == 0
     assert a["os"]["overloaded_pct"] == 50.0 and a["os"]["reclaimable_mb_min"] == 900
     assert a["claude"]["sessions_active"] == 1 and a["claude"]["agents_active"] == 1
     b = ue.window_report(T1, datetime(2026, 11, 4, 7, 45, tzinfo=timezone.utc), claude_root=claude_root, hw_log=hw_log)
     cmp = ue.compare(a, b)
     row = next(m for m in cmp["metrics"] if m["metric"] == "jobs.ran_per_h")
-    assert row["a"] == 0.5 and row["b"] == 0.0 and row["delta"] == -0.5
+    assert row["a"] == 1.0 and row["b"] == 0.0 and row["delta"] == -1.0
     assert next(m for m in cmp["metrics"] if m["metric"] == "os.overloaded_pct")["b"] is None  # unmeasured ≠ 0
 
 
@@ -149,7 +157,7 @@ class _FakeClient:
 def test_sync_upserts_on_the_natural_keys(claude_root: Path, hw_log: Path) -> None:
     fake = _FakeClient()
     out = ue.sync(T0, T1, client=fake, claude_root=claude_root, hw_log=hw_log)
-    assert out["written"] == {"dev_telemetry_claude": 2, "dev_telemetry_os": 2, "dev_telemetry_jobs": 2}
+    assert out["written"] == {"dev_telemetry_claude": 2, "dev_telemetry_os": 2, "dev_telemetry_jobs": 3}
     conflict, rows = fake.sink["dev_telemetry_claude"][0]
     assert conflict == "host,bucket,session_id,agent_id,model"
     assert all("text" not in k for r in rows for k in r)  # counts only, never text

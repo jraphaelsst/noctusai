@@ -38,6 +38,11 @@ UPPER BOUND only. The unit of `swapout_per_s` is PAGES/s (16 KB on Apple silicon
 `swapout_*_max` from v2 samples only and gives v1 apart as `swapout_per_s_max_v1_upper_bound`; sync
 keeps the version in `dev_telemetry_os.extra.probe_version` (absent ⇒ 1).
 
+**Job results are nested.** hw_admission writes `outcome.{exit_code, timed_out, harness_suspect}` on `ran`
+rows; there is no top-level `exit_code`. The report gives `failed` (exit_code ∉ {null, 0}) plus `timed_out`
+and `harness_suspect`. `failed` mixes real product reds with load reds: only gate rows carry the two flags
+that separate them, and predeploy rows carry neither. Sync stores the flags in `dev_telemetry_jobs.metrics.outcome`.
+
 **Cost** is the API-list-price equivalent from the seed rate card (`price_usage`), because Claude Code
 runs on a subscription: comparable across windows, not an invoice. Cache-write cost is a lower bound
 until the seed prices 1-hour cache writes separately (`NOC-REMEDIATE[anthropic-cache-ttl-pricing]`).

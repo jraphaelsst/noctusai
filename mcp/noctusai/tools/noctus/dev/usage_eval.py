@@ -250,12 +250,17 @@ def scan_hw(since: datetime, until: datetime, path: Path = _HW_LOG) -> tuple[lis
             elif d.get("event") in ("ran", "not_admitted"):
                 job = str(d.get("job") or "unknown")
                 kind, _, target = job.partition(":")
+                # hw_admission nests the result: outcome.{exit_code, timed_out, harness_suspect}. A timeout or a
+                # harness-suspect red under load is the false-red signal, so it is kept apart from exit_code.
+                out = d.get("outcome") or {}
                 jobs.append({
                     "host": d.get("host") or host(), "ts": ts.isoformat(), "job": job, "kind": kind,
                     "target": target or "", "event": d["event"], "phase": d.get("phase"),
                     "admitted": d.get("admitted"), "waited_s": d.get("waited_s"),
                     "duration_s": d.get("duration_s"), "children_peak_rss_mb": d.get("children_peak_rss_mb"),
-                    "exit_code": d.get("exit_code"), "metrics": m,
+                    "exit_code": out.get("exit_code"),
+                    "metrics": {**m, "outcome": {"timed_out": bool(out.get("timed_out")),
+                                                 "harness_suspect": bool(out.get("harness_suspect"))}},
                 })
     return samples, jobs
 
@@ -303,7 +308,11 @@ def window_report(since: datetime, until: datetime, *, claude_root: Path = _CLAU
         "jobs": {
             "ran": len(ran), "not_admitted": sum(1 for j in jobs if j["event"] == "not_admitted"),
             "ran_per_h": round(len(ran) / hours, 2),
+            # failed mixes real product reds with load reds; timed_out / harness_suspect split the gate rows
+            # (predeploy rows carry neither, so their reds stay unsplit).
             "failed": sum(1 for j in ran if j.get("exit_code") not in (None, 0)),
+            "timed_out": sum(1 for j in ran if j["metrics"]["outcome"]["timed_out"]),
+            "harness_suspect": sum(1 for j in ran if j["metrics"]["outcome"]["harness_suspect"]),
             "wait_s_max": max(num(ran, "waited_s"), default=None), "wait_s_avg": _avg(num(ran, "waited_s")),
             "duration_s_sum": round(sum(num(ran, "duration_s")), 1),
             "peak_rss_mb_max": max(num(ran, "children_peak_rss_mb"), default=None),
@@ -338,7 +347,7 @@ def _count(items: Iterable[str]) -> dict[str, int]:
 
 _COMPARE_KEYS = (
     ("claude", "cost_usd_per_h"), ("claude", "output_tokens_per_h"), ("claude", "requests_per_h"),
-    ("claude", "sessions_active"), ("jobs", "ran_per_h"), ("jobs", "failed"), ("jobs", "not_admitted"),
+    ("claude", "sessions_active"), ("jobs", "ran_per_h"), ("jobs", "failed"), ("jobs", "timed_out"), ("jobs", "not_admitted"),
     ("jobs", "wait_s_max"), ("jobs", "peak_rss_mb_max"), ("os", "overloaded_pct"), ("os", "cpu_idle_pct_avg"),
     ("os", "reclaimable_mb_min"), ("os", "swapout_per_s_max"), ("os", "swapout_mb_per_s_max"),
     ("os", "claude_sessions_max"),
