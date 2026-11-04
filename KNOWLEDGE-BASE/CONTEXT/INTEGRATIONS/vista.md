@@ -1079,7 +1079,8 @@ carried its 28 real photos with zero probe artifacts afterwards.
 
 > 🔴 **CORRECTION (2026-11-03, owner):** "we dont actually have a quinto andar key. they havent granted us one."
 > NoctusAI holds exactly **one** Vista key, `…644c` (full access since 2026-10-26, § 4.8). Every `…bced`
-> "Quinto Andar portal key" row below is a historical record of a 2026-09-11 probe and is **not a credential we hold**:
+> "Quinto Andar portal key" row below was in fact **a test key the owner was trying** (owner: "It was another vista key i was testing").
+> It is stored nowhere (2026-11-03 sweep: the prod `.env` + 18 backups, the root `.env` and `mcp/vista/.env` all hold `…644c`), so it is **not a credential we hold**:
 > never search for, configure or test a second key. Kept for history only.
 
 
