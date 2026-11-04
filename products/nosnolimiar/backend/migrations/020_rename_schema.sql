@@ -16,7 +16,7 @@
 -- Everything is derived from the live catalog (pg_policies / pg_get_functiondef / pg_class), never copied, and a
 -- final guard RAISES (rolling the whole statement back) if any literal `monica` survives in the schema.
 --
--- ORDER (prod): core 095 FIRST (products.db_schema = 'nosnolimiar' -- the acting-audit step needs it), then this file.
+-- ORDER (prod): core 098 FIRST (products.db_schema = 'nosnolimiar' -- the acting-audit step needs it), then this file.
 --   migrate_product product=nosnolimiar schema=monica confirm=True   -- the ledger still lives in `monica`
 --   migrate_product product=nosnolimiar confirm=True                 -- no-op re-run: records 020 in the renamed ledger
 -- IDEMPOTENT: re-runnable at any point (the rename is guarded; every other step is a no-op once converged).
@@ -74,7 +74,7 @@ BEGIN
     RAISE EXCEPTION '020 requires public.attach_acting_audit_triggers(text, text) (core 072) -- apply core first';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.products WHERE db_schema = v_new) THEN
-    RAISE EXCEPTION '020: public.products has no row with db_schema = % -- apply core 095 first', v_new;
+    RAISE EXCEPTION '020: public.products has no row with db_schema = % -- apply core 098 first', v_new;
   END IF;
   PERFORM public.attach_acting_audit_triggers(v_new);
 
