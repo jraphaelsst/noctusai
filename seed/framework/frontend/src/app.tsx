@@ -312,6 +312,7 @@ export function createProductApp(config: ProductAppConfig) {
           onNavigate={(link) => navigate(link)}
           currentProduct={env.PRODUCT_SLUG}
           onNavigateProduct={onNavigateProduct}
+          countAsMounted={false}
         />
       </div>
     );

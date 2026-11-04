@@ -59,6 +59,8 @@ export interface NotificationBellProps {
    * access): the notice is still marked read, nothing navigates. Without it a cross-product notice is inert.
    */
   onNavigateProduct?: (product: string, link: string) => void | Promise<void>;
+  /** False for the shell's fallback bell: it must not count itself as "a page bell exists" (that would unmount it, forever). */
+  countAsMounted?: boolean;
 }
 
 // How many bells are mounted right now. The shell shows a floating fallback bell only when this is zero, so
@@ -67,12 +69,9 @@ let mountedBells = 0;
 const bellListeners = new Set<() => void>();
 const emitBells = () => bellListeners.forEach((fn) => fn());
 /** True while at least one NotificationBell is mounted. */
+function subscribeBells(cb: () => void) { bellListeners.add(cb); return () => { bellListeners.delete(cb); }; }
 export function useNotificationBellMounted(): boolean {
-  return useSyncExternalStore(
-    (cb) => { bellListeners.add(cb); return () => { bellListeners.delete(cb); }; },
-    () => mountedBells > 0,
-    () => false,
-  );
+  return useSyncExternalStore(subscribeBells, () => mountedBells > 0, () => false);
 }
 
 const PRODUCT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -131,7 +130,7 @@ function timeAgo(dateStr: string): string {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavigate, currentProduct, onNavigateProduct }: NotificationBellProps) {
+export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavigate, currentProduct, onNavigateProduct, countAsMounted = true }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -139,10 +138,11 @@ export function NotificationBell({ hooks, viewAllPath, onViewAll, footer, onNavi
   const { data: contagem, refetch: refetchContagem } = hooks.useContagemNaoLidas();
 
   useEffect(() => {
+    if (!countAsMounted) return;
     mountedBells += 1;
     emitBells();
     return () => { mountedBells -= 1; emitBells(); };
-  }, []);
+  }, [countAsMounted]);
 
   // Opening always shows what the server has NOW, not what the last poll saw.
   function toggle() {
