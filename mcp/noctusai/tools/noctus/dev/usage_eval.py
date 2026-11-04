@@ -259,13 +259,22 @@ def scan_hw(since: datetime, until: datetime, path: Path = _HW_LOG) -> tuple[lis
                     "admitted": d.get("admitted"), "waited_s": d.get("waited_s"),
                     "duration_s": d.get("duration_s"), "children_peak_rss_mb": d.get("children_peak_rss_mb"),
                     "exit_code": out.get("exit_code"),
+                    # job_workers (hw_admission a58b88666): the per-job fan-out cap. Absent = the writing process
+                    # predates the field → "unknown"; null = the job has no fan-out cap → "none". Never conflated.
                     "metrics": {**m, "outcome": {"timed_out": bool(out.get("timed_out")),
-                                                 "harness_suspect": bool(out.get("harness_suspect"))}},
+                                                 "harness_suspect": bool(out.get("harness_suspect"))},
+                                "job_workers": _workers_key(d)},
                 })
     return samples, jobs
 
 
 # ── window report + comparison ───────────────────────────────────────────
+
+def _workers_key(row: dict) -> str:
+    if "job_workers" not in row:
+        return "unknown"
+    return "none" if row["job_workers"] is None else str(int(row["job_workers"]))
+
 
 def _avg(xs: list[float]) -> float | None:
     return round(sum(xs) / len(xs), 2) if xs else None
@@ -317,6 +326,7 @@ def window_report(since: datetime, until: datetime, *, claude_root: Path = _CLAU
             "duration_s_sum": round(sum(num(ran, "duration_s")), 1),
             "peak_rss_mb_max": max(num(ran, "children_peak_rss_mb"), default=None),
             "by_kind": dict(sorted(_count(j["kind"] for j in ran).items())),
+            "by_job_workers": dict(sorted(_count(j["metrics"]["job_workers"] for j in ran).items())),
         },
         "os": {
             "samples": len(samples),

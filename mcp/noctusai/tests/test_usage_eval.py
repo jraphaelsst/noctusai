@@ -184,3 +184,18 @@ def test_swap_out_is_split_by_probe_version(tmp_path: Path, claude_root: Path) -
     samples, _ = ue.scan_hw(T0, T1, p)
     assert [s["extra"]["probe_version"] for s in samples] == [1, 2]
     assert samples[1]["extra"]["elapsed_s"] == 3.67
+
+
+def test_job_workers_unknown_vs_none_vs_capped(tmp_path: Path, claude_root: Path) -> None:
+    p = tmp_path / "hw.ndjson"
+    ran = {"event": "ran", "host": "h", "admitted": True, "waited_s": 1.0, "duration_s": 5.0, "phase": "build",
+           "metrics": {}, "outcome": {"exit_code": 0}}
+    _w(p, [
+        {**ran, "ts": "2026-11-04T04:00:00+00:00", "job": "pytest:agents"},                      # pre-field process
+        {**ran, "ts": "2026-11-04T04:01:00+00:00", "job": "pytest:agents", "job_workers": None},  # no fan-out cap
+        {**ran, "ts": "2026-11-04T04:02:00+00:00", "job": "gate:vitest:sw", "job_workers": 2},
+    ])
+    _, jobs = ue.scan_hw(T0, T1, p)
+    assert [j["metrics"]["job_workers"] for j in jobs] == ["unknown", "none", "2"]
+    rep = ue.window_report(T0, T1, claude_root=claude_root, hw_log=p)
+    assert rep["jobs"]["by_job_workers"] == {"2": 1, "none": 1, "unknown": 1}

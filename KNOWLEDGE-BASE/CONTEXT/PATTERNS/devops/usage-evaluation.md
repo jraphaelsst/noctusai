@@ -43,6 +43,12 @@ rows; there is no top-level `exit_code`. The report gives `failed` (exit_code âˆ
 and `harness_suspect`. `failed` mixes real product reds with load reds: only gate rows carry the two flags
 that separate them, and predeploy rows carry neither. Sync stores the flags in `dev_telemetry_jobs.metrics.outcome`.
 
+**Per-job fan-out is a second variable.** From hw_admission `a124b5020` (~07:50Z 2026-11-04), vitest and
+playwright jobs are capped at the budget `job_workers` (2 in build). From `a58b88666`, rows carry a top-level
+`job_workers`: null means the job has no cap. Rows from processes that loaded hw_admission before that sha
+lack the field, and they read as **unknown**, never as none. The report's `jobs.by_job_workers` splits by it.
+Do not attribute a throughput change to the slot count when a window straddles the cap.
+
 **Cost** is the API-list-price equivalent from the seed rate card (`price_usage`), because Claude Code
 runs on a subscription: comparable across windows, not an invoice. Cache-write cost is a lower bound
 until the seed prices 1-hour cache writes separately (`NOC-REMEDIATE[anthropic-cache-ttl-pricing]`).
