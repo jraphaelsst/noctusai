@@ -121,8 +121,8 @@ def rt(monkeypatch, override_settings_factory):
         )
         scene = Rt(TestClient(app), world, module, override_settings_factory, app)
         scene.settings(
-            encryption_key=ENCRYPTION_KEY, waha_webhook_hmac_secret=SECRET, whatsapp_chatbot_enabled=False,
-            openai_api_key="", whatsapp_authorized_numbers=OPERATOR,
+            encryption_key=ENCRYPTION_KEY, waha_webhook_hmac_secret=SECRET,
+            openai_api_key="",
             redis_url="",
         )
         yield scene
@@ -184,14 +184,14 @@ class TestRoutingTable:
     def test_a_number_on_the_old_authorized_list_is_just_a_lead_now_the_operator_bot_is_retired(self, rt):
         # `authorized_numbers` is a dead column (One Chat retired, 2026-11-04): being on it confers nothing.
         _julia_scene(rt, auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+        rt.settings(openai_api_key="sk-test")
         rt.post(_msg(chat=OPERATOR_CHAT, mid="op-1", body="ONE1234"), signed=True)
         assert rt.operator_memory() == [], "nothing is ever buffered on the retired One Chat key"
         assert len(rt.lead_memory(OPERATOR_CHAT)) == 1
 
     def test_with_julia_off_nothing_is_routed_to_anyone_the_message_is_only_stored(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None, auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+        rt.settings(openai_api_key="sk-test")
         rt.post(_msg(chat=OPERATOR_CHAT, mid="op-1", body="ONE1234"), signed=True)
         assert rt.operator_memory() == [] and rt.lead_memory(OPERATOR_CHAT) == []
         assert len(rt.w.messages(OPERATOR_CHAT)) == 1
@@ -208,7 +208,7 @@ class TestRoutingTable:
     def test_with_julia_off_and_an_empty_list_a_stranger_is_dropped_silently_no_reply_no_turn(self, rt):
         rt.w.seed_connection(agente_leads_ativo=False, agente_leads_ativado_em=None, authorized_numbers=[],
                              auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+        rt.settings(openai_api_key="sk-test")
         assert rt.post(_msg(), signed=True).status_code == 200
         assert rt.w.waha.sent_messages == []
         assert rt.w.redis.get(f"whatsapp:denied:{LEAD_CHAT}") is None
@@ -416,7 +416,7 @@ class TestGroups:
 
     def test_a_group_never_reaches_julia_whoever_the_participant_is_and_whatever_the_old_lists_say(self, rt):
         _julia_scene(rt, authorized_numbers=[GROUP, OPERATOR], bound_chats=[{"chat_id": GROUP, "label": "g"}], auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+        rt.settings(openai_api_key="sk-test")
         for i, who in enumerate(("5511900002222@c.us", OPERATOR_CHAT)):
             rt.post(_msg(chat=GROUP, frm=GROUP, participant=who, mid=f"g{i}", body="ONE1234"), signed=True)
         assert rt.module.buffer.memory_for(GROUP) == [] and rt.operator_memory() == [] and rt.lead_memory(GROUP) == []

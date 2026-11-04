@@ -54,7 +54,7 @@ class TestStaffVsLead:
 
     def test_an_operator_role_is_staff_like_any_other_never_a_lead_and_never_a_bot_command(self, rt):
         _julia_scene(rt, auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+        rt.settings(openai_api_key="sk-test")
         staff.criar(rt.w.sw, rt.w.core, ORG_ID, ADMIN_ID, nome="Op", papel="operador", telefone="5511999990000")
         rt.post(_msg(chat="5511999990000@c.us", mid="op-1", body="ONE1234"), signed=True)
         assert rt.operator_memory() == [] and rt.lead_memory("5511999990000@c.us") == []  # the One Chat operator bot is retired

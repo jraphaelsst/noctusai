@@ -104,7 +104,6 @@ class KeysStatus(BaseModel):
     frontend_base_url: KeyStatusEntry
     openai_api_key: KeyStatusEntry
     openai_chat_model: KeyStatusEntry
-    whatsapp_chatbot_enabled: KeyStatusEntry
     encryption_key: KeyStatusEntry
     smtp_user: KeyStatusEntry
     smtp_password: KeyStatusEntry

@@ -89,7 +89,6 @@ class SocialWiringSettings(ProductSettings):
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4o-mini"
     # (media transcription / vision moved off OpenAI 2026-10-29: see media_vision_model; voice notes go to the self-hosted Whisper with no length limit.)
-    whatsapp_chatbot_enabled: bool = True
 
     # Fernet key for refresh-token-at-rest encryption. Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -126,12 +125,12 @@ class SocialWiringSettings(ProductSettings):
     smtp_user: str = ""
     smtp_password: str = ""
 
-    # ─── WAHA (WhatsApp notifications) ─────────────────────────────────
-    # Empty waha_base_url → noctusai_lib.integrations.whatsapp.get_whatsapp_client
-    # returns FakeWahaClient (logs-instead-of-sends). Safe for dev.
+    # ─── WAHA: PROVISIONING + webhook verification ONLY ─────────────────
+    # `waha_base_url` / `waha_api_key` are what the connections router uses to CREATE a line (the QR pairing); they never
+    # send a message. Every send reads the org's own `whatsapp_connections` row (`app.services.julia_linha.linha_da_org`,
+    # julia-line CONTRACT A2/A3) -- there is no env sender and no session setting.
     waha_base_url: str = ""
     waha_api_key: str = ""
-    waha_session: str = "default"
     waha_dashboard_url: str = "http://localhost:3000/dashboard"
     waha_webhook_url: str = ""
     waha_webhook_hmac_secret: str = ""
@@ -429,10 +428,6 @@ class SocialWiringSettings(ProductSettings):
     biblioteca_lease_seconds: float = 600.0
     # How long a process trusts its last read of `biblioteca_ingestao_habilitada`.
     biblioteca_gate_ttl_seconds: float = 10.0
-
-    # ─── WhatsApp inbound (Phase 5) ────────────────────────────────────
-    # Comma-separated E.164 phone numbers authorized to trigger uploads
-    whatsapp_authorized_numbers: str = "+5511974693365"
 
     # ─── Cloudflare tunnel (Phase 5) ───────────────────────────────────
     # Set to the tunnel URL (e.g. https://random-words.trycloudflare.com)

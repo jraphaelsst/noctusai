@@ -174,9 +174,7 @@ def _webhook_settings(override_settings):
     override_settings(
         encryption_key=_TEST_ENCRYPTION_KEY,
         waha_webhook_hmac_secret="",
-        whatsapp_chatbot_enabled=False,
         openai_api_key="",
-        whatsapp_authorized_numbers=_AUTHORIZED_SENDER,
     )
 
 

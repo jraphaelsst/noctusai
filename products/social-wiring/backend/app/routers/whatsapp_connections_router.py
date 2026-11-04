@@ -362,7 +362,7 @@ async def create_connection(
 
     - ``base_url``      — ``cfg.waha_base_url`` (the shared WAHA server).
                           Empty → 503 (no WAHA configured).
-    - ``session_name``  — ``cfg.waha_session`` (``"default"`` by default).
+    - ``session_name``  — ``"default"`` (one session per WAHA server).
                           WAHA Core only permits the single ``default`` session,
                           so the line drives it directly. (On WAHA Plus, where
                           multiple named sessions are allowed, point
@@ -387,10 +387,9 @@ async def create_connection(
         )
 
     # ── 2. Resolve the WAHA session name ───────────────────────────────
-    # WAHA Core supports ONLY the single "default" session, so we drive the
-    # configured session (default: "default") rather than minting a unique
-    # per-connection name. WAHA Plus users can repoint WAHA_SESSION per tenant.
-    session_name = (cfg.waha_session or "default").strip()
+    # WAHA Core supports ONLY the single "default" session, so we drive it
+    # rather than minting a unique per-connection name.
+    session_name = "default"
 
     # ── 3. Mint webhook token + build public URL ────────────────────────
     webhook_token = secrets.token_urlsafe(24)

@@ -690,13 +690,6 @@ def encerrar_envio(r: Any, connection_id: UUID | str, chat_id: str) -> None:
     r.expire(_sending_key(connection_id, chat_id), _SENDING_GRACE_S)
 
 
-def registrar_envio_proprio(r: Any, provider_message_id: str | None) -> None:
-    """DEPRECATED (writes the old 1-hour Redis key that NOTHING reads any more -- the durable `origem` replaced it). Kept only until
-    `julia_relatorio_service.InternoSender` (S6) switches to `MessageStore.registrar_interno_enviado`, its last caller; then deleted."""
-    if provider_message_id:
-        r.set(f"julia:julia_out:{provider_message_id}", "1", ex=3600)
-
-
 def origem_e_eco_proprio(origem: str | None) -> bool:
     """Is a stored message's `origem` one that SW itself produced (Julia's bubble / a system staff notice)? Its `fromMe` echo is
     never a human takeover."""
@@ -823,7 +816,7 @@ __all__ = [
     "expandir_aliases", "gravar_snapshot", "is_group_chat", "is_lid",
     "lead_key", "limpar_erro_link", "listar_todos_os_chats", "ler_erro_link",
     "marcar_envio_em_curso", "mensagem_inicial_pronta", "motivo_codigo_do_handoff", "notificar_handoff", "origem_e_eco_proprio", "parse_lead_key",
-    "permitir_turno", "phone_digits", "public_privacy_link", "registrar_envio_proprio",
+    "permitir_turno", "phone_digits", "public_privacy_link",
     "registrar_erro_link", "resolve_agents_client", "sanitize_motivo", "snapshot_contem",
     "usuario_e_admin_da_org",
 ]

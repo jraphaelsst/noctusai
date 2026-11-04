@@ -63,10 +63,20 @@ def _build(
         core_client=lambda: core,
         repo=repo,
         preferences=preferences,
+        line_resolver=_fake_line,
         whatsapp_client_factory=lambda **_kw: waha,
         send_email=email_sender,
     )
     return core, notifier, waha
+
+
+def _fake_line(org_id):
+    from types import SimpleNamespace
+
+    from app.services.julia_linha import LinhaDaOrg
+
+    return LinhaDaOrg(org_id=org_id, connection=SimpleNamespace(
+        id="c1", base_url="", api_key="k", session_name="default", org_id=org_id))
 
 
 def _preferences() -> InMemoryNotificationPreferencesRepository:

@@ -60,6 +60,13 @@ FORA_DO_PORTAO: dict[tuple[str, str], str] = {
     # the platform WEB chat's code-first router (its replies go to the web request's collector, never WhatsApp: the One Chat WhatsApp operator
     # bot is retired, 2026-11-04). (S6 moves the web chat off the WhatsApp intake class.)
     ("services/conversation_module.py", "route_inbound"): "platform web chat router (not a WhatsApp send path any more)",
+    # julia-line S6: these senders now resolve the org's line through `julia_linha` (so the scan counts them as Julia-adjacent); none of
+    # them is an automatic send to a lead.
+    ("services/notification_service.py", "NotificationService._send_whatsapp_logged"): "notification to the org's own recipients (staff roster), not a lead",
+    ("modules/edicao_fotos/services/notifier.py", "MultiChannelBatchReadyNotifier._send_whatsapp_logged"): "photo-batch-ready notice to the creator / opted-in admins, not a lead",
+    ("routers/settings_router.py", "send_waha_test"): "operator-initiated test send to an explicit number (POST endpoint)",
+    ("services/whatsapp_intake_service.py", "WhatsAppIntakeService._reply"): "upload-flow reply to the staff uploader (web: sessions never reach WAHA)",
+    ("services/whatsapp_intake_service.py", "WhatsAppIntakeService._run_upload"): "upload-flow status to the staff uploader, not a lead",
     # TRANSITIONAL (`vista_divergencias`, NOC-REMEDIATE[transicao-vista-divergencias-staff-send]): ONE digest per refresh run to the
     # org's own destination USER (an admin of the org, never a lead), capped per hour. It moves behind the gate's `interno` flow
     # (feat/julia-v3-sw-turno) as soon as that branch is merged.

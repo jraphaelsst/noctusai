@@ -275,9 +275,6 @@ class WhatsAppIntakeService:
     def __init__(
         self,
         *,
-        waha_base_url: str,
-        waha_api_key: str,
-        waha_session: str,
         redis_client,
         authorized_numbers: list[str],
         crm_service: CRMService | None,
@@ -288,15 +285,15 @@ class WhatsAppIntakeService:
         connection_id: UUID | None = None,
         bound_chats: list[dict] | None = None,
         watermark_detector: WatermarkDetector | None = None,
+        line_resolver=None,
     ):
+        # The org's WhatsApp line (`julia_linha.linha_da_org` by default) -- the ONLY WAHA credential source; DI seam.
+        self._line_resolver = line_resolver
         # Seam for the exclusive-listing logo check (ffmpeg stills + vision
         # model). Tests inject ``FakeWatermarkDetector``.
         self._watermark_detector: WatermarkDetector = (
             watermark_detector or VisionWatermarkDetector(org_id=org_id)
         )
-        self._waha_base_url = waha_base_url
-        self._waha_api_key = waha_api_key
-        self._waha_session = waha_session
         self._redis = redis_client
         # Operator-only bot (owner order 2026-10-20): an EMPTY authorized_numbers
         # list means NOBODY is authorized (it used to mean "allow all", migration 016).
@@ -936,11 +933,15 @@ class WhatsAppIntakeService:
             if sink is not None:
                 sink.append(text)
             return
-        client = get_whatsapp_client(
-            base_url=self._waha_base_url,
-            api_key=self._waha_api_key,
-            session=self._waha_session,
-        )
+        from app.services.julia_linha import LinhaIndisponivel, linha_da_org  # noqa: PLC0415
+
+        resolver = self._line_resolver or (lambda org: linha_da_org(org, admin_client=self._admin))
+        try:
+            line = await asyncio.to_thread(resolver, self._org_id)
+        except LinhaIndisponivel as exc:  # the named reason; never an env fallback or another org's line
+            logger.error("WhatsApp reply to %s not sent: %s", phone, exc.motivo)
+            return
+        client = line.waha_client(get_whatsapp_client)
         chat_id = _chat_id_for_sender(phone)
         try:
             result = await client.send_text(chat_id, text)

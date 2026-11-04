@@ -69,9 +69,6 @@ class _Intake(WhatsAppIntakeService):
 
 def _intake(detector, tmp_path) -> _Intake:
     return _Intake(
-        waha_base_url="https://waha.example.com",
-        waha_api_key="k",
-        waha_session="default",
         redis_client=FakeRedis(),
         authorized_numbers=[],
         crm_service=None,

@@ -110,9 +110,6 @@ def _build_intake() -> WhatsAppIntakeService:
     crm = vista_credenciais.adapter_ou_none(org_id)
 
     return WhatsAppIntakeService(
-        waha_base_url=settings.waha_base_url,
-        waha_api_key=settings.waha_api_key,
-        waha_session=settings.waha_session,
         redis_client=redis_client,
         authorized_numbers=[],  # platform chat skips the WhatsApp whitelist
         crm_service=crm,

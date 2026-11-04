@@ -73,9 +73,6 @@ def fake_redis():
 @pytest.fixture
 def intake(fake_redis):
     return WhatsAppIntakeService(
-        waha_base_url="",
-        waha_api_key="",
-        waha_session="default",
         redis_client=fake_redis,
         authorized_numbers=["+5511974693365"],
         crm_service=None,
@@ -310,9 +307,6 @@ class TestPrepareUploadFromFileValidation:
         longer works here since the local-catalog lookup is unconditional.
         """
         intake = WhatsAppIntakeService(
-            waha_base_url="",
-            waha_api_key="",
-            waha_session="default",
             redis_client=fake_redis,
             authorized_numbers=["+5511974693365"],
             crm_service=None,

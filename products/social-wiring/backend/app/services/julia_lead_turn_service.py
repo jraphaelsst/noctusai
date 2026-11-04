@@ -131,6 +131,8 @@ class LeadDeps:
     waha_factory: Optional[Callable[..., Any]] = None
     cloud_client_factory: Optional[Callable[..., Any]] = None  # seed `get_meta_cloud_client` by default (wave 12)
     connection_lookup: Optional[Callable[[UUID], Optional[WhatsAppConnectionRecord]]] = None
+    #: `(org_id) -> LinhaDaOrg` (julia-line S6): the org's one line for the staff notices; None = `julia_linha.linha_da_org`.
+    linha_resolver: Optional[Callable[[Any], Any]] = None
     chat_store_factory: Callable[[UUID], Any] = None  # type: ignore[assignment]
     message_store_factory: Callable[[UUID], Any] = None  # type: ignore[assignment]
     redis: Any = None

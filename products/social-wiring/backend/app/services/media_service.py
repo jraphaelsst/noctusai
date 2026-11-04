@@ -1173,12 +1173,23 @@ def _rasterize_pdf_pages(
 
 
 def make_media_service(org_id: Any = None) -> MediaService:
-    """Default factory using product settings — used by webhook + chat
-    routers so they don't have to know the construction details. ``org_id``
-    selects whose Anthropic key (Chaves de API) pays for vision / text."""
+    """Default factory -- used by webhook + chat routers so they don't have to know the construction details. ``org_id``
+    selects whose Anthropic key (Chaves de API) pays for vision / text. The WAHA host + key that media URLs are rewritten
+    onto and downloaded with come from the org's own line (`julia_linha.linha_da_org`, decrypted). No line -> no WAHA host (an absolute media URL still downloads; a relative
+    one cannot) and the reason is logged -- never an env fallback."""
+    base_url, api_key = "", ""
+    try:
+        if org_id is not None:
+            from app.services.julia_linha import linha_da_org  # noqa: PLC0415
+
+            linha = linha_da_org(org_id)
+            base_url, api_key = linha.base_url, linha.api_key or ""
+    except Exception as exc:  # noqa: BLE001 -- SemLinha / LinhaAmbigua / store failure: named below
+        motivo = getattr(exc, "motivo", type(exc).__name__)
+        logger.warning("media: no WhatsApp line for org=%s (%s) -- inbound media is read without a WAHA host", org_id, motivo)
     return MediaService(
-        waha_base_url=settings.waha_base_url,
-        waha_api_key=settings.waha_api_key,
+        waha_base_url=base_url,
+        waha_api_key=api_key,
         org_id=org_id,
         vision_model=settings.media_vision_model,
         text_model=settings.chatbot_llm_model,
