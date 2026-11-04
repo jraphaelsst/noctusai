@@ -71,6 +71,20 @@ class VistaCRMAdapter(Protocol):
         """
         ...
 
+    async def refresh_imovel(self, code: str) -> Imovel:
+        """One imóvel from `/imoveis/detalhes` ALONE (one HTTP call; no `listar`).
+
+        The per-code refresh that keeps a mirror current while `/imoveis/listar` is unavailable. Listar-only fields
+        (`foto_destaque`, `banheiro_social`, `codigo_imobiliaria`) come back empty -- the caller keeps what it already
+        has. Raises `VistaNotFound` when the code does not exist and `VistaRecordUnpublished` when it exists but is
+        not visible to this key (ExibirNoSite=Nao); any other `VistaError` is a transport / auth failure.
+        """
+        ...
+
+    async def list_destaques(self) -> list[str]:
+        """Codes in `/imoveis/destaques` (the featured listings -- a handful), a cheap discovery source."""
+        ...
+
     async def search_imoveis(
         self,
         *,

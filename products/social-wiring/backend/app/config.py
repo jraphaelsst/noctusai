@@ -290,6 +290,12 @@ class SocialWiringSettings(ProductSettings):
     # Deliberately NO base_url / api_key settings: the Vista credential is PER ORG, stored encrypted in
     # `social_wiring.credentials` (provider "vista") and set from Settings (`/api/integracoes/vista`). See
     # `app/services/vista_credenciais.py`.
+    # Refresh cadence of the imóveis mirror (`app/services/imoveis_sync_scheduler.py`): every run refreshes the vitrine +
+    # discovery; once per `imoveis_sync_resto_intervalo_s` it also sweeps the rest of the catalog. The forward probe for NEW
+    # codes stops after `imoveis_sonda_max_falhas` consecutive misses per prefix.
+    imoveis_sync_intervalo_s: int = 7200
+    imoveis_sync_resto_intervalo_s: int = 86400
+    imoveis_sonda_max_falhas: int = 40
 
     # ─── Edição de Fotos (app/modules/edicao_fotos) ─────────────────────
     # The photo-editing job worker (seed `domain.jobs.Worker` over the

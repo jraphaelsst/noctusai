@@ -7,7 +7,8 @@ Endpoints:
     GET  /api/imoveis/duplicatas       → possible manual-vs-Vista duplicate pairs (§8.6)
     GET  /api/imoveis/caracteristicas  → amenity slug → count, usage-ordered
     GET  /api/imoveis/{codigo}         → one imóvel (Vista mirror, or manual captação)
-    POST /api/imoveis/sync             → full pull from Vista (D1 manual refresh)
+    POST /api/imoveis/sync?modo=…      → queue a Vista refresh (org admin; 202, poll /sync/ultimo)
+    GET  /api/imoveis/sync/ultimo      → the last refresh run (path, counts, when)
 
 Auth: ``Depends(get_current_user_org)`` on every route, no exceptions. Reads
 go through the admin client with an explicit `org_id` filter — defense in
@@ -18,15 +19,14 @@ CRM, and it is the write path.
 """
 
 from __future__ import annotations
-import anyio
-
+import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import anyio
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from app.config import settings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
@@ -39,10 +39,8 @@ from app.modules.imovel_hub import duplicatas_service as duplicatas_svc
 from app.modules.imovel_hub import vinculo_service as vinculo_svc
 from app.modules.imovel_hub.deps import get_imovel_hub_client
 from app.services import vista_credenciais
-from app.services.imoveis_service import (
-    build_imoveis_service,
-    build_sync_service,
-)
+from app.services import imoveis_atualizacao_service as atualizacao_svc
+from app.services.imoveis_service import build_imoveis_service
 
 logger = logging.getLogger(__name__)
 
@@ -76,29 +74,6 @@ class FiltrosOut(BaseModel):
     categoria: list[str] = Field(default_factory=list)
     cidade: list[str] = Field(default_factory=list)
     bairro: list[str] = Field(default_factory=list)
-
-
-class SyncOut(BaseModel):
-    """The sync result, including what it did NOT manage to do.
-
-    `complete` is false whenever any page or any detalhes call failed, and
-    `detalhes_failed` names the imóveis. A sync that reported only a success
-    count would let a partial run look identical to a clean one — and the
-    imóveis missing their detalhes are exactly the ones that silently drop
-    out of amenity filters.
-    """
-
-    total_reported: int
-    pages_fetched: int
-    upserted: int
-    detalhes_fetched: int
-    detalhes_failed: list[str]
-    detalhes_failed_count: int
-    page_failures: list[str]
-    complete: bool
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
-    duration_seconds: float = 0.0
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────
@@ -237,30 +212,119 @@ def get_caracteristicas(
     return build_imoveis_service(db).caracteristica_counts(org_id)
 
 
-@router.post("/sync", response_model=SyncOut)
+#: Strong references to in-flight refresh tasks (the loop only holds a weak one).
+_TAREFAS: set = set()
+
+
+class SyncIniciadoOut(BaseModel):
+    """`POST /sync` queues the run and returns at once: a full refresh takes minutes. Poll `GET /sync/ultimo`."""
+
+    execucao_id: str
+    status: str
+    ja_em_andamento: bool = False
+
+
+def get_core_for_sync() -> Any:
+    """DI seam: the core client (the admin notice) — tests override."""
+    from app.dependencies import get_core_client
+
+    return get_core_client()
+
+
+def get_sync_service_factory() -> Any:
+    """DI seam: `None` = the real `build_sync_service` — tests inject a double."""
+    return None
+
+
+def _admin_ou_403(core: Any, auth: tuple, request: Optional[Request]) -> None:
+    from noctusai_lib.api.auth.session import require_org_admin_for
+
+    require_org_admin_for(core, auth, request, "A atualização de imóveis do Vista")
+
+
+@router.post("/sync", response_model=SyncIniciadoOut, status_code=status.HTTP_202_ACCEPTED)
 async def sync_imoveis(
-    with_detalhes: bool = Query(
-        True,
+    modo: Literal["auto", "listar", "detalhes"] = Query(
+        "auto",
         description=(
-            "Fetch per-imóvel detalhes (~1 extra call each, ~4-6 min for the "
-            "full catalog). Required for caracteristicas + finalidades, both "
-            "of which are detalhes-only on the wire."
+            "auto: try Vista's listar, fall back to the per-code refresh when listar is silent; "
+            "listar: only listar; detalhes: only the per-code refresh."
         ),
     ),
+    escopo: Literal["vitrine", "resto", "todos"] = Query(
+        "vitrine", description="Per-code refresh scope (ignored when listar answers).",
+    ),
+    request: Request = None,
     auth=Depends(get_current_user_org),
     db=Depends(get_admin_client),
-) -> SyncOut:
-    """Full pull from Vista. Idempotent — upserts by (org_id, codigo)."""
-    _user, _token, raw_org = auth
+    core=Depends(get_core_for_sync),
+    sync_factory=Depends(get_sync_service_factory),
+) -> SyncIniciadoOut:
+    """Queue a Vista refresh of THIS org's catalog (org admin). Idempotent — upserts by (org_id, codigo); a click
+    while a run is going returns the running one (single flight)."""
+    user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
+    await anyio.to_thread.run_sync(lambda: _admin_ou_403(core, auth, request))
 
     # THIS org's own credential (encrypted store); an org with none is a 503, never an env fallback.
-    adapter = vista_credenciais.adapter_ou_503(org_id)
+    adapter = await anyio.to_thread.run_sync(lambda: vista_credenciais.adapter_ou_503(org_id))
 
-    report = await build_sync_service(db, adapter).sync(
-        org_id, with_detalhes=with_detalhes
+    user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
+    linha, nova = await anyio.to_thread.run_sync(
+        lambda: atualizacao_svc.iniciar(db, org_id, origem="manual", modo=modo, escopo=escopo, user_id=user_id)
     )
-    return SyncOut(**report.as_dict())
+    if nova:
+        tarefa = asyncio.get_running_loop().create_task(
+            atualizacao_svc.executar(
+                db, adapter, org_id, modo=modo, escopo=escopo, origem="manual", user_id=user_id,
+                execucao_id=linha["id"], core=core, sync_factory=sync_factory,
+            )
+        )
+        _TAREFAS.add(tarefa)
+        tarefa.add_done_callback(_TAREFAS.discard)
+    return SyncIniciadoOut(execucao_id=str(linha["id"]), status=linha.get("status", "em_andamento"), ja_em_andamento=not nova)
+
+
+class UltimaAtualizacaoOut(BaseModel):
+    """What the list page shows under "Última atualização do Vista"."""
+
+    execucao_id: Optional[str] = None
+    em_andamento: bool = False
+    status: Optional[str] = None
+    caminho: Optional[str] = None
+    origem: Optional[str] = None
+    iniciado_em: Optional[str] = None
+    finalizado_em: Optional[str] = None
+    novos: int = 0
+    atualizados: int = 0
+    inalterados: int = 0
+    removidos: int = 0
+    falhas: int = 0
+    chamadas: dict = Field(default_factory=dict)
+    sincronizado_em: Optional[str] = None
+
+
+@router.get("/sync/ultimo", response_model=UltimaAtualizacaoOut)
+def ultima_atualizacao(auth=Depends(get_current_user_org), db=Depends(get_admin_client)) -> UltimaAtualizacaoOut:
+    """The last refresh run of this org (any org member may read it) + the newest `sincronizado_em` of the mirror."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    linha = atualizacao_svc.ultima_execucao(db, org_id)
+    mirror = (
+        db.schema("social_wiring").table("imoveis").select("sincronizado_em").eq("org_id", str(org_id))
+        .order("sincronizado_em", desc=True).limit(1).execute().data or []
+    )
+    base = {"sincronizado_em": mirror[0].get("sincronizado_em") if mirror else None}
+    if linha is None:
+        return UltimaAtualizacaoOut(**base)
+    rel = linha.get("relatorio") or {}
+    return UltimaAtualizacaoOut(
+        execucao_id=str(linha["id"]), em_andamento=linha.get("status") == "em_andamento", status=linha.get("status"),
+        caminho=linha.get("caminho"), origem=linha.get("origem"), iniciado_em=linha.get("iniciado_em"),
+        finalizado_em=linha.get("finalizado_em"), novos=int(rel.get("novos") or 0), atualizados=int(rel.get("atualizados") or 0),
+        inalterados=int(rel.get("inalterados") or 0), removidos=int(rel.get("removidos") or 0), falhas=int(rel.get("falhas") or 0),
+        chamadas=rel.get("chamadas") or {}, **base,
+    )
 
 
 # Declared LAST: `/{codigo}` would otherwise shadow `/filtros`,

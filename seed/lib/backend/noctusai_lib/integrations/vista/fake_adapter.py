@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
 from noctusai_lib.domain.real_estate import (
     Imovel,
     ImovelFoto,
@@ -135,6 +136,22 @@ class FakeVistaAdapter:
     async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
         """Read-only photo gallery for one imóvel; ``[]`` when unseeded."""
         return parse_imovel_fotos(self._fotos.get(codigo, {}))
+
+    def set_destaques(self, codes: list[str]) -> None:
+        self._destaques = list(codes)
+
+    async def refresh_imovel(self, code: str) -> Imovel:
+        """Detalhes-only read: the seeded imóvel WITHOUT its listar-only fields; `VistaNotFound` when unseeded,
+        `VistaRecordUnpublished` when seeded with `exibir_no_site=False` (same split as the Real)."""
+        imovel = self._imoveis.get(code)
+        if imovel is None:
+            raise VistaNotFound(404, f"imovel {code!r} does not exist", "/imoveis/detalhes")
+        if imovel.exibir_no_site is False:
+            raise VistaRecordUnpublished(code, "/imoveis/detalhes", ["Corretor"])
+        return imovel.model_copy(update={"foto_destaque": None, "banheiro_social": None, "codigo_imobiliaria": None})
+
+    async def list_destaques(self) -> list[str]:
+        return list(getattr(self, "_destaques", []))
 
     async def search_imoveis(
         self,

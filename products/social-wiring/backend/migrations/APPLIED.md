@@ -655,3 +655,11 @@ Authored 2026-11-03 (julia-v3, CONTRACT 12.7). New table `julia_catalogo_config(
 
 Authored 2026-11-03 (owner direction: mirror + owned overlay with CRUD on what is ours). New table `social_wiring.imovel_notas` (internal notes per imóvel, FK to `imovel_registry`, RLS own-org select + service_role). Additive, idempotent. Apply BEFORE deploying the image that mounts `GET/POST /api/imoveis/{codigo}/notas` and `PATCH/DELETE .../notas/{nota_id}` (an un-migrated DB 500s those routes; no other route reads the table).
 
+## 316 — imoveis_sync_execucoes — NOT APPLIED
+
+Authored 2026-11-03 (Vista outage fallback). New table `imoveis_sync_execucoes`: one row per Vista imóveis refresh run (path listar|detalhes, status, counts, call counts), service-role only. Additive, idempotent. Apply BEFORE deploying the image: the scheduled refresh and `POST /api/imoveis/sync` write/read it (an un-migrated DB 500s the sync endpoints).
+
+## 317 — vista_divergencias — NOT APPLIED
+
+Authored 2026-11-04 (TRANSITIONAL, removable). `imovel_campo_conflitos.notas JSONB` (the drift note) + `vista_divergencias_config(org_id, ativa, destino_user_id)` (per-org flag `divergencia_vista_ativa`, missing row = OFF; the One org seeded ON). Additive, idempotent. Apply BEFORE deploying the image: the sync reads the flag row (an un-migrated DB logs the failure and skips divergences — the sync itself is unaffected).
+

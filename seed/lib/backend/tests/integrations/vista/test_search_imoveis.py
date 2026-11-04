@@ -122,3 +122,69 @@ class TestReal:
             return httpx.Response(401, json={"status": 401, "message": "Acesso negado"})
         with pytest.raises(VistaPermissionDenied):
             asyncio.run(_Real(handler).search_imoveis(filter_={"Bairro": "x"}))
+
+
+# ─── refresh_imovel / list_destaques (per-code refresh while listar is down) ─────────────────────────────
+
+
+from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished  # noqa: E402
+
+
+class TestFakeRefresh:
+    def test_returns_the_imovel_without_listar_only_fields(self):
+        f = FakeVistaAdapter()
+        f.add_imovel(Imovel(codigo="CA1", foto_destaque="u", banheiro_social=True, codigo_imobiliaria="X", valor_venda=1.0))
+        got = asyncio.run(f.refresh_imovel("CA1"))
+        assert got.valor_venda == 1.0 and got.foto_destaque is None and got.banheiro_social is None and got.codigo_imobiliaria is None
+
+    def test_unknown_is_not_found_and_hidden_is_unpublished(self):
+        f = FakeVistaAdapter()
+        f.add_imovel(Imovel(codigo="CA2", exibir_no_site=False))
+        with pytest.raises(VistaNotFound):
+            asyncio.run(f.refresh_imovel("CA9"))
+        with pytest.raises(VistaRecordUnpublished):
+            asyncio.run(f.refresh_imovel("CA2"))
+
+    def test_destaques(self):
+        f = FakeVistaAdapter()
+        assert asyncio.run(f.list_destaques()) == []
+        f.set_destaques(["CA1", "ONE5"])
+        assert asyncio.run(f.list_destaques()) == ["CA1", "ONE5"]
+
+
+def _detalhes_handler(seen, *, corpo):
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        if req.url.path.endswith("/imoveis/detalhes"):
+            return httpx.Response(200, json=corpo(req.url.params["imovel"]))
+        if req.url.path.endswith("/imoveis/destaques"):
+            return httpx.Response(200, json={"CA0001": {"Codigo": "CA0001"}, "ONE5555": {"Codigo": "ONE5555"}, "total": 2})
+        return httpx.Response(200, json={})  # listar: nothing (the outage)
+    return handler
+
+
+class TestRealRefresh:
+    def test_uses_detalhes_alone_even_when_listar_is_empty_and_calibrates_with_the_code(self):
+        seen: list[httpx.Request] = []
+        real = _Real(_detalhes_handler(seen, corpo=lambda c: {"Codigo": c, "Status": "Venda", "ValorVenda": "900000", "Bairro": "X"}))
+        got = asyncio.run(real.refresh_imovel("CA0190"))
+        assert got.codigo == "CA0190" and got.valor_venda == 900_000.0 and got.foto_destaque is None
+        assert all("/imoveis/listar" not in r.url.path for r in seen)
+        assert seen and all(r.url.params.get("imovel") == "CA0190" for r in seen if r.url.path.endswith("/imoveis/detalhes"))
+
+    def test_nonexistent_is_not_found_unpublished_is_unpublished(self):
+        gone = _Real(_detalhes_handler([], corpo=lambda c: []))
+        with pytest.raises(VistaNotFound):
+            asyncio.run(gone.refresh_imovel("CA7777"))
+        hidden = _Real(_detalhes_handler([], corpo=lambda c: {"Corretor": {"1": {"Nome": "B"}}}))
+        with pytest.raises(VistaRecordUnpublished):
+            asyncio.run(hidden.refresh_imovel("CA7778"))
+
+    def test_invalid_code_is_not_found_without_a_call(self):
+        seen: list[httpx.Request] = []
+        with pytest.raises(VistaNotFound):
+            asyncio.run(_Real(_detalhes_handler(seen, corpo=lambda c: {})).refresh_imovel("not a code"))
+        assert seen == []
+
+    def test_destaques_are_codes(self):
+        assert asyncio.run(_Real(_detalhes_handler([], corpo=lambda c: {})).list_destaques()) == ["CA0001", "ONE5555"]

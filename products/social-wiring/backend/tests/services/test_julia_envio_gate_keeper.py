@@ -63,6 +63,10 @@ FORA_DO_PORTAO: dict[tuple[str, str], str] = {
     ("routers/whatsapp_router.py", "_process_waha_body"): "operator bot: once-per-24h denial reply + inline chatbot fallback",
     ("services/conversation_module.py", "_llm_fallback_dispatch_inner"): "operator bot LLM fallback",
     ("services/conversation_module.py", "route_inbound"): "operator bot code-first router: typed YouTube command replies",
+    # TRANSITIONAL (`vista_divergencias`, NOC-REMEDIATE[transicao-vista-divergencias-staff-send]): ONE digest per refresh run to the
+    # org's own destination USER (an admin of the org, never a lead), capped per hour. It moves behind the gate's `interno` flow
+    # (feat/julia-v3-sw-turno) as soon as that branch is merged.
+    ("services/vista_divergencias.py", "enviador_padrao.enviar"): "staff digest to the org's own destination user (not a lead), hourly-capped",
 }
 
 

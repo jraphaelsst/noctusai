@@ -392,6 +392,9 @@ class TestHooks:
 
     def test_sync_completo_roda_a_deteccao_com_o_catalogo_novo(self, client, scoped):
         cenario(scoped, manual_dados=ENDERECO_MANUAL)
+        # a genuinely EMPTY catalog: an empty listar over a mirror that HAS rows is the Vista-outage case the sync now refuses
+        # (status listar_vazio, no sweep, no detection) -- see test_imoveis_sync_detalhes.py
+        scoped.set_table_data("imoveis", [])
         scoped.set_rpc_data("sweep_imovel_registry", [{"marcados_ativos": 1, "marcados_delistados": 0}])
         chamadas = []
 

@@ -69,6 +69,10 @@ a Short; in an exclusive listing (two copies per orientation) the copy with the
 One logo watermark is detected by `app/modules/youtube/services/watermark.py`
 and the clean partner copy is skipped.
 
+## Vista imóveis mirror (refresh, schedule, divergences)
+
+`social_wiring.imoveis` mirrors Vista and is refreshed **every 2 hours** (`IMOVEIS_SYNC_INTERVALO_S`, default 7200) for every org that stores a Vista credential (Settings › Chaves API › Vista CRM). Each run tries Vista's `listar` first; while `listar` is silent (outage since 2026-10-23) it falls back to a per-code refresh (`/imoveis/detalhes`) of the vitrine, plus discovery of new codes (`/imoveis/destaques` + a forward code probe, `IMOVEIS_SONDA_MAX_FALHAS`, default 40), and the rest of the catalog once a day (`IMOVEIS_SYNC_RESTO_INTERVALO_S`). An empty `listar` never delists the catalog. Every run is recorded (`imoveis_sync_execucoes`): `GET /api/imoveis/sync/ultimo`, `POST /api/imoveis/sync?modo=auto|listar|detalhes` (org admin), MCP `noctus.sw.imoveis_sync`. The sync writes Vista columns only — notas, captação, `imovel_dados` and owner confirmations are ours. While the owner keeps both systems, differences between Vista and our data open **divergences** for a human to decide (WhatsApp digest per run; transitional, removable). Depth: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` § 6c.
+
 ## Running
 
 ```bash

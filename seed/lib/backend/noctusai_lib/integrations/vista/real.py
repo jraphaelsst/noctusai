@@ -45,6 +45,7 @@ from noctusai_lib.integrations.vista.client import (
     VistaClient,
     VistaConfigError,
     VistaError,
+    PAGINATION_KEYS,
     VistaNotFound,
     VistaRecordUnpublished,
     extract_items,
@@ -346,6 +347,36 @@ class VistaRESTAdapter:
             page=int(pagination.get("pagina") or page),
             pages=int(pagination.get("paginas") or 1),
         )
+
+    async def refresh_imovel(self, code: str) -> Imovel:
+        if not validate_product_code(code):
+            raise VistaNotFound(404, f"invalid product code {code!r}", "/imoveis/detalhes")
+        client = self._client()
+        fields = await calibrator.get_imovel_detail_fields(client, sample_codigo=code)
+        try:
+            result = await client.detalhes_imovel(code, fields=fields)
+        except VistaRecordUnpublished as exc:
+            if not exc.payload_keys:
+                # `[]` is the answer for a code that does not exist at all (an unpublished one keeps `Corretor`).
+                raise VistaNotFound(404, f"imovel {code!r} does not exist", "/imoveis/detalhes") from exc
+            raise
+        return vista_to_imovel(listing=None, detalhes=result.data if isinstance(result.data, dict) else None)
+
+    async def list_destaques(self) -> list[str]:
+        client = self._client()
+        try:
+            result = await client.listar_destaques_imoveis(page=1, page_size=50)
+        except VistaNotFound:
+            return []
+        data = result.data if isinstance(result.data, dict) else {}
+        codes: list[str] = []
+        for key, value in data.items():
+            if key in PAGINATION_KEYS:
+                continue
+            codigo = (value.get("Codigo") if isinstance(value, dict) else None) or key
+            if isinstance(codigo, str) and validate_product_code(codigo.strip().upper()):
+                codes.append(codigo.strip().upper())
+        return sorted(set(codes))
 
     async def search_imoveis(
         self,
