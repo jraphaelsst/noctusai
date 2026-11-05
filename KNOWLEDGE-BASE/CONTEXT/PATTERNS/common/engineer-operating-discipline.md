@@ -2,7 +2,7 @@
 
 **What it is.** How a dispatched engineer turns a brief into a change a reviewer can trust: understand the ask, plan the slice, prove behaviour test-first, change the code, review your own diff, commit in reviewable units, check the consumers of shared code, and know when you are done. It is the shared craft reference for every executor lens — `engineer-seed`, `backend-engineer`, `frontend-engineer`, `devops-engineer` — and for the tech-lead when it works inline.
 
-**Why it exists.** The 2026-11-05 audit (`projects/agent-refinement/audits/audit-architect-engineer-seed.md`, agent-refinement project) found `engineer-seed.md` excellent as a *safety and integration* protocol (worktree, base, commit, no bypass, the return contract) and thin as a *craft* discipline. It did not say how to understand the ask, write the test first, keep a commit reviewable, review your own diff, or know you are done. The measured misses of the 2026-11-04 Sonnet trial are all craft misses, not safety misses (`KB § PATTERNS/architect/dispatch-engineer-tuning.md` §4·1, :89-93).
+**Why it exists.** The 2026-11-05 read-only audit of the `architect` and `engineer-seed` agents (agent-refinement project; the audit file lives in that project folder and goes when the project is archived — this doc carries its conclusions) found `engineer-seed.md` excellent as a *safety and integration* protocol (worktree, base, commit, no bypass, the return contract) and thin as a *craft* discipline. It did not say how to understand the ask, write the test first, keep a commit reviewable, review your own diff, or know you are done. The measured misses of the 2026-11-04 Sonnet trial are all craft misses, not safety misses (`KB § PATTERNS/architect/dispatch-engineer-tuning.md` §4·1, :89-93).
 
 **How to use it.** `.claude/agents/engineer-seed.md` carries one line per rule with a pointer here; open the section when its situation arises. The house mechanism wins over the general canon. Git and integration **mechanics** — worktree, base check, branch pointer, `git add <paths>`, never push, `task_branch integrate` — are **not** restated here: they live in `engineer-seed.md` §1/§3/§4 and `KB § PATTERNS/architect/branching-and-merging.md`. This doc is the craft; those are the plumbing.
 
@@ -287,7 +287,7 @@ async def test_process_session_end_happy_path():
 
 ## Sources
 
-Accessed 2026-11-05. Each URL was fetched and confirmed for the agent-refinement audit (`audits/audit-architect-engineer-seed.md` § Sources); those marked ✅ were re-fetched while writing this doc.
+Accessed 2026-11-05. Each URL was fetched and confirmed for the agent-refinement audit's source list; those marked ✅ were re-fetched while writing this doc.
 
 - Google eng-practices, *The CL author's guide to getting through code review* — https://google.github.io/eng-practices/review/developer/ — author guide (§6).
 - Google eng-practices, *Small CLs* — https://google.github.io/eng-practices/review/developer/small-cls.html — one self-contained change; refactorings in a separate CL (§3, §7). ✅
