@@ -368,10 +368,19 @@ async def _handle_lead_message(
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
         state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
+        # Allowlist (owner 2026-11-05): switch ON + a non-empty list => only listed numbers are Julia's.
+        lista = await julia_protecao_service.situacao_permitidos(
+            get_scoped_admin_client("social_wiring"), connection.org_id, chat_id=chat_id, sender=sender,
+            resolver_alias=entrada.phone_do_lid,
+        )
+        if lista == "fora":
+            logger.info("Julia: chat %s not eligible (fora_da_lista_de_permitidos) — unchanged behaviour", ref_log(chat_id))
+            return False
         elegibilidade = await julia.avaliar_elegibilidade(
             client=get_scoped_admin_client("social_wiring"), connection=connection,
             chat_id=chat_id, chat_state=state,
             resolver_alias=entrada.phone_do_lid,
+            permitido=lista == "permitido",
         )
     except Exception as exc:
         # Eligibility is a PRIVACY decision (11.1): when it cannot be made, the chat is

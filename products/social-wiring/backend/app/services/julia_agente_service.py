@@ -40,7 +40,7 @@ from noctusai_lib.integrations.whatsapp.inbox.ingest import is_non_conversation_
 from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.exceptions import AppException
 
-from app.clients.agents import AgentsClient, HttpAgentsClient, make_agents_client
+from app.clients.agents import AgentNotFound, AgentsClient, HttpAgentsClient, make_agents_client
 from app.services import julia_aviso_service, julia_contatos_service
 
 logger = logging.getLogger(__name__)
@@ -266,6 +266,53 @@ def julia_ativa_em_alguma_conexao(client: Any) -> bool:
         logger.error("julia: cannot tell whether Julia is on anywhere — failing closed (%s)", type(exc).__name__)
         return True
     return bool(rows)
+
+
+#: Why the per-line switch cannot go ON right now (owner 2026-11-05): code -> (HTTP status, pt-BR text saying what to do).
+BLOQUEIOS_LIGAR: dict[str, tuple[int, str]] = {
+    "julia_nao_publicada": (409, "Publique a Julia no app Agentes antes de ligá-la aqui."),
+    "julia_desligada_no_agents": (409, "Ligue a Julia no app Agentes (Controles) antes de ligá-la aqui."),
+    "agents_indisponivel": (503, "Não foi possível confirmar o estado da Julia no app Agentes agora. Tente novamente em instantes."),
+}
+
+
+def motivo_bloqueio_do_status(st: Any) -> Optional[str]:
+    """The code that stops the switch from going ON given what AGENTS reports, else None (= may turn on).
+    `versao_ativa` is the PUBLISHED version (None = never published); `modo` is the org's control
+    `ligado | drenando | desligado` (only `ligado` takes new leads); `desligado_plataforma` is the platform kill switch."""
+    if getattr(st, "versao_ativa", None) is None:
+        return "julia_nao_publicada"
+    if getattr(st, "modo", None) != "ligado" or getattr(st, "desligado_plataforma", None) is True:
+        return "julia_desligada_no_agents"
+    return None
+
+
+async def motivo_bloqueio_ligar(client: Any, agent_key: str) -> Optional[str]:
+    """Ask agents (live, never cached) whether Julia may be switched on here; the blocking code or None. FAIL CLOSED: no client
+    (no token) or a status that cannot be read is `agents_indisponivel`; an agent agents does not know is `julia_nao_publicada`."""
+    if client is None:
+        return "agents_indisponivel"
+    try:
+        st = await client.agent_status(agent_key)
+    except AgentNotFound:
+        return "julia_nao_publicada"
+    except Exception as exc:
+        logger.warning("julia: agents status unreadable for the on-switch gate (%s) -- failing closed", type(exc).__name__)
+        return "agents_indisponivel"
+    return motivo_bloqueio_do_status(st)
+
+
+def erro_de_bloqueio(codigo: str) -> AppException:
+    status_code, texto = BLOQUEIOS_LIGAR[codigo]
+    return AppException(codigo, texto, status_code=status_code)
+
+
+async def exigir_julia_ligada_no_agents(client: Any, agent_key: str) -> None:
+    """Turning the line switch ON requires Julia PUBLISHED and ON in agents (owner 2026-11-05). Typed 409/503 otherwise.
+    Turning OFF never calls this."""
+    codigo = await motivo_bloqueio_ligar(client, agent_key)
+    if codigo is not None:
+        raise erro_de_bloqueio(codigo)
 
 
 def exigir_hmac_configurado(cfg: Any) -> None:
@@ -583,7 +630,7 @@ def _ts(value: Any) -> Optional[datetime]:
 @dataclass(frozen=True)
 class Elegibilidade:
     elegivel: bool
-    motivo: str  # owned | new | snapshot | chat_anterior | sem_ativado_em | equipe
+    motivo: str  # owned | new | permitido | snapshot | chat_anterior | sem_ativado_em | equipe
 
 
 async def avaliar_elegibilidade(
@@ -593,6 +640,7 @@ async def avaliar_elegibilidade(
     chat_id: str,
     chat_state: Optional[dict[str, Any]],
     resolver_alias: Optional[Callable[[str], Any]] = None,
+    permitido: bool = False,
 ) -> Elegibilidade:
     """Is this chat Julia's? (contract 11.1)
 
@@ -603,6 +651,11 @@ async def avaliar_elegibilidade(
       `@lid` resolves to) AND
     * its `whatsapp_chats` row was not created before `agente_leads_ativado_em`.
     Anything uncertain (no `ativado_em`) is NOT eligible -- fail closed.
+
+    `permitido=True` (owner decision 2026-11-05): the sender is on the org's allowlist while its switch is ON -- an EXPLICIT
+    opt-in (the owner lists his own number so Julia answers only him at first, and that number almost certainly has a chat
+    with the line already). It bypasses the snapshot and previous-chat rules (`snapshot`, `chat_anterior`) and nothing else:
+    staff (`equipe`) still wins, and `sem_ativado_em` still refuses; the blocklist and opt-out are applied by the caller / agents.
     """
     if chat_state and chat_state.get("categoria") == "equipe":
         return Elegibilidade(False, "equipe")
@@ -611,6 +664,8 @@ async def avaliar_elegibilidade(
     ativado = _ts(connection.agente_leads_ativado_em)
     if ativado is None:
         return Elegibilidade(False, "sem_ativado_em")
+    if permitido:
+        return Elegibilidade(True, "permitido")
     candidatos = chat_aliases(chat_id)
     if is_lid(chat_id) and resolver_alias is not None:
         phone = resolver_alias(chat_id)

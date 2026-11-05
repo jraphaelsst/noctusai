@@ -175,7 +175,7 @@ class TestGetAgente:
         admin.w.seed_connection(authorized_numbers=["+5511999990000", "+5511999991111"])
         data = admin.get(BASE).json()["data"]
         # the lines moved to GET /api/julia/roteamento
-        assert set(data) == {"token_configurado", "status_agente", "erro", "banner", "conexao_plataforma"}
+        assert set(data) == {"token_configurado", "status_agente", "erro", "banner", "conexao_plataforma", "pode_ligar", "motivo_bloqueio"}
 
     def test_status_agente_is_the_3_2_shape(self, admin):
         admin.w.seed_connection()

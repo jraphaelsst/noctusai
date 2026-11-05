@@ -10,7 +10,9 @@ must work for ANY org (no org-specific names, no behaviour):
                                                              "this number feeds the agent" + the hand-off notification target
 
 `alimenta` is `whatsapp_connections.agente_leads_ativo` (the routing switch, a separate thing from the agent's own
-ligado / drenando / desligado in agents). Turning it ON keeps every precondition of the legacy surface (authorised
+ligado / drenando / desligado in agents). Turning it ON first needs Julia PUBLISHED and ligada in agents (owner 2026-11-05;
+409 `julia_nao_publicada` / `julia_desligada_no_agents`, 503 `agents_indisponivel` fail-closed; `GET /api/julia/agente` exposes
+`pode_ligar` + `motivo_bloqueio` for the UI; turning OFF is never checked), and keeps every precondition of the legacy surface (authorised
 numbers, webhook HMAC, a complete privacy notice and the 11.1 snapshot of the existing chats) -- the SAME function
 (`julia_agente_router.aplicar_conexao`) does the work, so there is one routing implementation, not two.
 
@@ -28,7 +30,7 @@ from noctusai_lib.api import StrictHttpModel
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_settings
 from app.routers.julia_agente_router import _record_or_404, _require_admin, aplicar_conexao
-from app.routers.whatsapp_connections_router import get_connection_store, get_waha_client_factory
+from app.routers.whatsapp_connections_router import get_agents_client_factory, get_connection_store, get_waha_client_factory
 from app.services import julia_agente_service as julia
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord, WhatsAppConnectionStore
 
@@ -80,13 +82,16 @@ async def put_linha(
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg=Depends(get_settings),
     waha_factory=Depends(get_waha_client_factory),
+    agents_factory=Depends(get_agents_client_factory),
     request: Request = None,
 ) -> dict[str, Any]:
+    """Route a line. Turning `alimenta` ON is refused unless agents reports Julia published AND ligada (409 `julia_nao_publicada` /
+    `julia_desligada_no_agents`, 503 `agents_indisponivel`, fail closed); turning it OFF always works."""
     _user, org_id = _require_admin(auth, request, "O roteamento")
     record = _record_or_404(store, connection_id, org_id, decrypt=True)
     updated = await aplicar_conexao(
         record=record, org_id=org_id, store=store, cfg=cfg, waha_factory=waha_factory,
-        ativo=payload.alimenta, key=None,
+        ativo=payload.alimenta, key=None, agents_client_factory=agents_factory,
         handoff_definido="destino_handoff_user_id" in payload.model_fields_set,
         handoff_alvo=payload.destino_handoff_user_id,
     )

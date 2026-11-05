@@ -4,7 +4,8 @@
   GET   /api/julia/agente/aviso                org member                          (slice P)
   PUT   /api/julia/agente/aviso                core org role owner/admin           (slice P)
 
-  GET   /api/julia/agente                      org member: token, conexao_plataforma, link health (the lines live at /api/julia/roteamento)
+  GET   /api/julia/agente                      org member: token, conexao_plataforma, link health, `pode_ligar` + `motivo_bloqueio`
+                                               (may the line switch go ON? only when agents has Julia published AND ligada; the lines live at /api/julia/roteamento)
   POST  /api/julia/agente/conexao-plataforma/verificar   admin: "Testar conexão" (one call to agents, fresh status)
   PUT   /api/julia/agente/token                RETIRED (410): the platform delivers the token (PUT /api/platform/grants/agents)
   PATCH /api/whatsapp/connections/{id}/chats/{chat_id}/agente   admin: per-chat pause (calls AGENTS, mirrors its answer)
@@ -204,12 +205,14 @@ async def get_agente(
     status_agente: Optional[dict[str, Any]] = None
     erro: Optional[str] = None
     client = client_factory(org_id)
+    motivo_bloqueio: Optional[str] = "agents_indisponivel"  # fail closed until agents answers
     if client is None:
         erro = julia.LINK_ERROR_MESSAGES["nao_configurado"]
     else:
         try:
             st = await client.agent_status(julia.DEFAULT_AGENT_KEY)
             status_agente = st.as_dict()
+            motivo_bloqueio = julia.motivo_bloqueio_do_status(st)
             if not st.ativo:
                 erro = julia.LINK_ERROR_MESSAGES["agent_unavailable"]
             elif not st.llm_configurado:
@@ -218,6 +221,7 @@ async def get_agente(
             erro = julia.LINK_ERROR_MESSAGES["token_invalido"]
         except AgentNotFound:
             erro = julia.LINK_ERROR_MESSAGES["agent_not_found"]
+            motivo_bloqueio = "julia_nao_publicada"
         except AgentsClientError as exc:
             # L2: the UI gets a generic line, never the upstream detail.
             logger.warning("julia: agents status failed (%s)", type(exc).__name__)
@@ -228,6 +232,10 @@ async def get_agente(
         "token_configurado": token_configurado,
         "status_agente": status_agente, "erro": erro,
         "banner": banner_do_status(status_agente),
+        # Owner 2026-11-05: the per-line switch can only go ON when agents has Julia published AND on. The FE disables the switch
+        # with `motivo_bloqueio` (`julia_nao_publicada` | `julia_desligada_no_agents` | `agents_indisponivel`) as the reason.
+        "pode_ligar": motivo_bloqueio is None,
+        "motivo_bloqueio": motivo_bloqueio,
         # Julia-line D5: read-only status of the grant agents delivered (never the token).
         "conexao_plataforma": julia_grant_sink.conexao_plataforma(org_id),
     }}
@@ -266,10 +274,13 @@ async def post_verificar_conexao(
 async def aplicar_conexao(
     *, record: WhatsAppConnectionRecord, org_id: UUID, store: WhatsAppConnectionStore, cfg: Any, waha_factory: Any,
     ativo: bool, key: Optional[str], handoff_definido: bool, handoff_alvo: Optional[UUID],
+    agents_client_factory: Any = None,
 ) -> WhatsAppConnectionRecord:
     """THE line-routing change (used by `PUT /roteamento/linhas/{id}`; the legacy `PUT /agente/conexoes/{id}` is retired): the "this number feeds the agent" switch + the handoff notification target.
     Turning it ON checks every precondition, then takes the 11.1 snapshot of the WAHA session's chats; if the snapshot
-    cannot be proven complete the switch stays OFF (502 ``snapshot_falhou``). This is TRANSPORT config (julia-v2 Q4):
+    cannot be proven complete the switch stays OFF (502 ``snapshot_falhou``). Before any of that, the GATE (owner 2026-11-05): it
+    only goes ON when agents reports Julia PUBLISHED and ON -- 409 ``julia_nao_publicada`` / ``julia_desligada_no_agents``, 503
+    ``agents_indisponivel`` (fail closed: no client / token, or an unreadable status). Turning it OFF never checks anything. This is TRANSPORT config (julia-v2 Q4):
     it decides which numbers reach the agent, never how the agent behaves (that is agents' Controles)."""
     connection_id = record.id
     core = get_core_client()
@@ -285,6 +296,9 @@ async def aplicar_conexao(
         raise AppException("agente_key_invalida", "Chave de agente inválida.", status_code=422)
 
     if ativo and not record.agente_leads_ativo:
+        # The agents gate first (one authenticated status call): nothing below runs for a Julia that would not answer anyway.
+        client = agents_client_factory(org_id) if agents_client_factory is not None else None
+        await julia.exigir_julia_ligada_no_agents(client, key)
         # H1 / 11.3 preconditions first (cheap, no network), THEN the snapshot. (H3, authorized numbers, is no longer a precondition: Julia-line D5.)
         julia.exigir_hmac_configurado(cfg)
         aviso = svc.obter_ou_criar(get_scoped_admin_client("social_wiring"), core, org_id)
