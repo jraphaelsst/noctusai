@@ -5,11 +5,10 @@
  * save payload, the settings sub-route and its admin gate, "Ver paciente" on a closed lead and the /pacientes routes
  * (list, ?lead= redirect, agenda, one patient).
  */
-/// <reference types="@testing-library/jest-dom" />
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import "@testing-library/jest-dom";
+import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { ConfirmProvider } from "@noctusai/lib";
