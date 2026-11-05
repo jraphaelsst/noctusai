@@ -192,6 +192,11 @@ regexes = [
   # also carry per-rule allowlists, but this ensures default rules don't
   # fire on env-pointer values either).
   '''\{\{[^}]*\$env\.[A-Z0-9_]+[^}]*\}\}''',
+  # migrations-applied.json ledger rows: "<nnn>_<name>.sql": "<sha256 of the file>". A migration
+  # whose NAME holds tokens/secrets/apify reads as a key next to a high-entropy value, so
+  # generic-api-key fired on every such row (dev red 2026-11-05: core 099, SW 319/320/321). By
+  # VALUE shape, not by path: a real secret in that file would not match a bare 64-hex checksum.
+  '''[0-9]{3}[a-z]?_[A-Za-z0-9_.-]+\.sql":\s*"[0-9a-f]{64}"''',
 ]
 
 paths = [
