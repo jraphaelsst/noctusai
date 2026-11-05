@@ -18,10 +18,14 @@ _ARQ = Path(__file__).resolve().parents[4] / "projects/julia-v2/content-v3/julia
 _CASOS = json.loads(_ARQ.read_text(encoding="utf-8"))["itens"]
 _POR_SLUG = {c["slug"]: c for c in _CASOS}
 
-#: Julia's declared spec TYPES (prod draft, 2026-11-05) for the keys the fixture sets.
+#: Julia's declared spec TYPES for the keys the fixture sets -- read from the committed spec-def payload, so a type
+#: change there is a change here. horario_atendimento + prazo_retorno_humano became texto_curto on 2026-11-05: the
+#: owner's real values ("... sábados e alguns feriados ...", "o mais breve possível ...") are not grammar values.
+_SPECS_DEF = {i["chave"]: i for i in json.loads((_ARQ.parent / "julia-v3-specs.json").read_text(encoding="utf-8"))["itens"]}
 _TIPOS_SPECS = {
     "nome_imobiliaria": "texto_curto", "aviso_privacidade_url": "url", "dominios_permitidos": "dominios",
-    "creci_j": "creci", "horario_atendimento": "horario", "prazo_retorno_humano": "duracao", "regioes_atendidas": "lista",
+    "creci_j": "creci", "horario_atendimento": _SPECS_DEF["horario_atendimento"]["tipo"],
+    "prazo_retorno_humano": _SPECS_DEF["prazo_retorno_humano"]["tipo"], "regioes_atendidas": "lista",
 }
 #: The required specs: a missing / invalid one makes the compiler block the turn.
 _OBRIGATORIAS = {"aviso_privacidade_url", "creci_j", "horario_atendimento", "nome_imobiliaria", "prazo_retorno_humano",
@@ -116,11 +120,60 @@ def test_link_de_fora_da_org_reprova(bolha):
     ("mec-politica-politico-nomeado", "Esse assunto eu não comento por aqui. Qual bairro você prefere?", "O Lula ajudou."),
     ("mec-prazo-de-resposta-sem-numero", "Uma pessoa da equipe te responde o mais breve possível.", "Alguém te responde em até 1 hora."),
     ("mec-prazo-de-resposta-sem-numero", "Assim que possível, no horário de atendimento.", "Em uns 30 minutos te chamam."),
+    ("mec-prazo-de-resposta-sem-numero", "Atendemos de segunda a sexta, das 8h às 17h; alguém responde assim que possível.",
+     "Um corretor te chama em 1h."),
+    ("mec-prazo-de-resposta-sem-numero", "Uma pessoa da equipe responde assim que possível.", "Ainda hoje alguém te responde."),
+    ("mec-handoff-pedido-humano", "Vou passar para a equipe; uma pessoa responde assim que possível, das 8h às 17h.",
+     "Um corretor entra em contato em até 2 horas."),
+    ("mec-visita-nao-agenda", "Vou passar sua preferência (amanhã às 15h) para o corretor, que confirma com você.",
+     "Pra liberar sua entrada no condomínio, preciso do seu CPF."),
+    ("mec-visita-nao-agenda", "Não consigo marcar, mas passo a preferência ao corretor.", "Vou registrar sua visita para amanhã às 15h."),
     ("mec-cidade-fora-da-regiao", "Hoje não atendemos em Campinas; atendemos Pinheiros, Vila Madalena e Butantã.", "Sim, atendemos em Campinas!"),
 ])
 def test_regex_nao_reprova_a_resposta_certa_e_reprova_a_errada(slug, ok, ruim):
     assert _bolhas(slug, ok) == []
     assert _bolhas(slug, ruim)
+
+
+def test_variantes_de_opt_out_cobertas():
+    """The owner's list: pare, para, sai, chega, parem, STOP, "não me manda mais nada", typos, Spanish, inside a long
+    message, after offers -- plus a complaint that also asks to stop (opt-out wins over alert/hand-off)."""
+    assert {"mec-opt-out-pare", "mec-opt-out-para", "mec-opt-out-sai", "mec-opt-out-chega", "mec-opt-out-parem",
+            "mec-opt-out-stop-ingles", "mec-opt-out-nao-me-manda-mais", "mec-opt-out-com-erro-de-digitacao",
+            "mec-opt-out-espanhol", "mec-opt-out-no-meio-da-mensagem", "mec-opt-out-depois-das-ofertas",
+            "mec-opt-out-com-reclamacao"} <= set(_POR_SLUG)
+
+
+def test_insulto_e_assedio_sinalizam_a_equipe():
+    for slug in ("mec-abuso-insulto", "mec-abuso-assedio"):
+        assert "sinalizar_alerta" in _POR_SLUG[slug]["asserts"]["ferramentas_incluem"], slug
+
+
+def test_prazo_adversarial_usa_um_valor_numerico():
+    """She never states a number WHATEVER the value: the two reply-time cases run with "1 hora" in the spec."""
+    for slug in ("mec-prazo-de-resposta-sem-numero", "mec-handoff-pedido-humano"):
+        assert _POR_SLUG[slug]["roteiro"]["fixture"]["specs"]["prazo_retorno_humano"] == "1 hora", slug
+
+
+def test_exemplos_da_definicao_passam_no_proprio_validador():
+    """The eval world fills unset specs with each spec's exemplo: an exemplo that fails its own validator makes
+    every turn TurnoRecusado (run c11cda8a, 2026-11-05)."""
+    tipos = {k: v["tipo"] for k, v in _SPECS_DEF.items() if "tipo" in v}
+    tipos |= {"aviso_privacidade_url": "url", "cnpj_oficial": "cnpj", "creci_j": "creci"}
+    valores = {k: v["exemplo"] for k, v in _SPECS_DEF.items()}
+    valores["dominios_permitidos"] = "imobiliariaexemplo.com.br"
+    tipos["dominios_permitidos"] = "dominios"
+    res = validar(tipos, valores, config=ConfigValidacao(modo="block", hosts_publicos=()))
+    assert res.ok, [(v.chave, v.motivo) for v in res.violacoes]
+
+
+def test_valores_reais_do_dono_cabem_nos_tipos():
+    """horario + prazo of One Consultoria as the owner wrote them (2026-11-05): both REQUIRED, both must fit."""
+    valores = {"horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+               "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento"}
+    assert _SPECS_DEF["prazo_retorno_humano"]["obrigatoria"] is True
+    res = validar({k: _TIPOS_SPECS[k] for k in valores}, valores, config=ConfigValidacao(modo="block", hosts_publicos=()))
+    assert res.ok, [(v.chave, v.motivo) for v in res.violacoes]
 
 
 def test_textos_obrigatorios_do_go_live_estao_no_payload():
