@@ -61,10 +61,22 @@ export interface ConexaoPlataforma {
   expires_at: string | null;
 }
 
+export type MotivoBloqueioLigar = "julia_nao_publicada" | "julia_desligada_no_agents" | "agents_indisponivel";
+
+/** Why the switch cannot go on: the same sentence for the read (`motivo_bloqueio`) and for the 409/503 on the PUT. */
+export const MENSAGEM_BLOQUEIO_LIGAR: Record<MotivoBloqueioLigar, string> = {
+  julia_nao_publicada: "A Julia ainda não foi publicada no app Agentes. Publique-a lá para poder ligá-la aqui.",
+  julia_desligada_no_agents: "A Julia está desligada no app Agentes (Controles). Ligue-a lá primeiro.",
+  agents_indisponivel: "Não foi possível consultar o app Agentes agora.",
+};
+
 export interface JuliaAgente {
   conexoes: JuliaConexaoAgente[];
   conexao_plataforma: ConexaoPlataforma;
   status_agente: JuliaStatusAgente | null;
+  /** False = the switch cannot be turned ON (turning OFF is always allowed). */
+  pode_ligar?: boolean;
+  motivo_bloqueio?: MotivoBloqueioLigar | null;
   erro: string | null;
 }
 
@@ -72,6 +84,8 @@ export const JULIA_AGENTE_KEY = ["sw", "julia", "agente"] as const;
 
 /** pt-BR sentence per refusal code the Agente page can provoke. */
 const MENSAGENS_POR_CODIGO: Record<string, string> = {
+  julia_nao_publicada: MENSAGEM_BLOQUEIO_LIGAR.julia_nao_publicada,
+  julia_desligada_no_agents: MENSAGEM_BLOQUEIO_LIGAR.julia_desligada_no_agents,
   webhook_hmac_required:
     "O webhook do WhatsApp ainda não tem assinatura (HMAC) configurada. Configure-a antes de ligar a Julia.",
   aviso_incompleto:
@@ -95,6 +109,10 @@ const MENSAGENS_POR_CODIGO: Record<string, string> = {
 function codigoDoErro(err: unknown): string | null {
   const code = (err as { body?: { error?: { code?: unknown } } } | null | undefined)?.body?.error?.code;
   return typeof code === "string" ? code : null;
+}
+
+export function codigoErroJulia(err: unknown): string | null {
+  return codigoDoErro(err);
 }
 
 export function mensagemErroJulia(err: unknown, fallback: string): string {

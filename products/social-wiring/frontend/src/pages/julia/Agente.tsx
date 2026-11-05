@@ -60,7 +60,14 @@ export default function JuliaAgente() {
         </div>
       ) : rot.data ? (
         <>
-          <JuliaLigadaCard linhas={rot.data.linhas} status={agente.data?.status_agente} isAdmin={isAdmin} />
+          <JuliaLigadaCard
+            linhas={rot.data.linhas}
+            status={agente.data?.status_agente}
+            isAdmin={isAdmin}
+            podeLigar={agente.data?.pode_ligar}
+            motivoBloqueio={agente.data?.motivo_bloqueio}
+            agentsUrl={rot.data.agents_url}
+          />
           <WhatsAppJuliaCard linha={rot.data.linhas[0]} isAdmin={isAdmin} />
           {agente.data ? (
             <AgentsLinkCard data={agente.data} isAdmin={isAdmin} />

@@ -8,6 +8,8 @@
  *   POST /api/julia/protecao/bloqueios {numero,motivo,duracao_min?}
  *   POST /api/julia/protecao/bloqueios/{id}/desbloquear
  *
+ *   GET/POST/DELETE /api/julia/protecao/permitidos        the allowlist ("responder só a estes números"); the switch is `permitidos_ativo` on the config
+ *
  * Loading = two signals off `data` (never `isLoading`).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +27,8 @@ export interface ConfigProtecao {
   midia_limite_chat_dia: number;
   midia_limite_conexao_dia: number;
   bloqueio_auto_ativo: boolean;
+  /** Allowlist switch: on + non-empty list = Julia answers ONLY those numbers; empty list or off = everyone. */
+  permitidos_ativo?: boolean;
   bloqueio_auto_limiar: number;
   bloqueio_auto_janela_min: number;
   bloqueio_auto_duracao_min: number;
@@ -109,5 +113,71 @@ export function useDesbloquearNumero() {
       },
     ],
     invalidate: [[...PROTECAO_KEY, "bloqueios"]],
+  });
+}
+
+export interface Permitido {
+  id: string;
+  numero: string;
+  rotulo: string | null;
+  criado_em: string;
+}
+export interface PermitidosLista {
+  ativo: boolean;
+  items: Permitido[];
+}
+export const PERMITIDOS_KEY = [...PROTECAO_KEY, "permitidos"] as const;
+const CONFIG_KEY = [...PROTECAO_KEY, "config"] as const;
+
+export function usePermitidos(enabled = true) {
+  const q = useQuery({
+    enabled,
+    queryKey: PERMITIDOS_KEY,
+    queryFn: async () => (await api.get<{ data: PermitidosLista }>(`${BASE}/permitidos`)).data,
+  });
+  return { ...q, showSkeleton: q.isPending && !q.data, isRefreshing: q.isFetching && !!q.data };
+}
+
+/** The server assigns the id and the timestamp: the answer (the row) is committed into the list. */
+export function useAdicionarPermitido() {
+  return useCacheWriteMutation<Permitido, { numero: string; rotulo?: string }>({
+    mutationFn: async (corpo) => (await api.post<{ data: Permitido }>(`${BASE}/permitidos`, corpo)).data,
+    targets: [
+      {
+        queryKey: PERMITIDOS_KEY,
+        commit: (old: PermitidosLista | undefined, saved) =>
+          listOps.within(old, "items", (l) => listOps.replace(l, saved.id, saved)),
+      },
+    ],
+  });
+}
+
+export function useRemoverPermitido() {
+  return useCacheWriteMutation<unknown, { id: string }>({
+    mutationFn: ({ id }) => api.delete(`${BASE}/permitidos/${encodeURIComponent(id)}`),
+    targets: ({ id }) => [
+      {
+        queryKey: PERMITIDOS_KEY,
+        optimistic: (old: PermitidosLista | undefined) => listOps.within(old, "items", (l) => listOps.remove(l, id)),
+      },
+    ],
+  });
+}
+
+/** The switch: exactly what the user sent goes into BOTH reads that carry it (list envelope + config). */
+export function useAlternarPermitidosAtivo() {
+  const patch = (v: boolean) => [
+    {
+      queryKey: PERMITIDOS_KEY,
+      optimistic: (old: PermitidosLista | undefined) => (old ? { ...old, ativo: v } : old),
+    },
+    {
+      queryKey: CONFIG_KEY,
+      optimistic: (old: ConfigProtecao | undefined) => (old ? { ...old, permitidos_ativo: v } : old),
+    },
+  ];
+  return useCacheWriteMutation<unknown, { ativo: boolean }>({
+    mutationFn: ({ ativo }) => api.put(`${BASE}/config`, { permitidos_ativo: ativo }),
+    targets: ({ ativo }) => patch(ativo),
   });
 }

@@ -5,6 +5,7 @@
  *
  *   Limites           per-number inbound rate, media AI budget per chat / per line a day, the automatic temporary block
  *   Texto do documento  what the vision model is asked for a lead's document (type + a non-identifying summary)
+ *   Responder só a estes números  the allowlist (switch + list): Julia answers only them; empty or off = everyone
  *   Números bloqueados  manual or automatic-temporary blocks: reason, who, when, until; unblock with a confirmation
  *
  * Loading = two signals off `data` (never `isLoading`); confirmations are design-system dialogs, never browser dialogs.
@@ -15,6 +16,7 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { toast } from "sonner";
 
 import { BloqueioDialog } from "@/components/julia/protecao/BloqueioDialog";
+import { PermitidosCard } from "@/components/julia/protecao/PermitidosCard";
 import { LimitesForm } from "@/components/julia/protecao/LimitesForm";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
@@ -84,6 +86,8 @@ export default function JuliaProtecao() {
         </div>
       )}
       {isAdmin && config.data && <LimitesForm key={config.data.atualizado_em ?? "padrao"} config={config.data} />}
+
+      {isAdmin && <PermitidosCard />}
 
       {isAdmin && (
         <section className="space-y-3" aria-labelledby="bloqueios-titulo">

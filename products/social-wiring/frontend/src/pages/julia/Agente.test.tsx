@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 const h = vi.hoisted(() => ({ admin: true, team: { data: [] as unknown[], isError: false } }));
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), patch: vi.fn(), post: vi.fn() }));
@@ -67,7 +68,7 @@ function setup(agente: unknown = AGENTE, aviso: unknown = AVISO, roteamento: unk
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><JuliaAgente /></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><MemoryRouter><JuliaAgente /></MemoryRouter></QueryClientProvider>);
 }
 
 beforeEach(() => {
