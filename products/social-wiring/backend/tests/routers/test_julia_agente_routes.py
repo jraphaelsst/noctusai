@@ -235,25 +235,26 @@ class TestSwitchOn:
     def _on(self, scene, **extra):
         return scene.put(ROT_URL, {"alimenta": True, **extra})
 
-    def test_turning_on_snapshots_the_session_then_sets_the_flag(self, admin):
+    def test_turning_on_stamps_go_live_takes_no_snapshot_and_sends_nothing(self, admin):
+        """Owner 2026-11-05: Julia answers anyone who writes AFTER go-live and never messages old contacts. Switching her on must not
+        list the WAHA chats (a listing that blows up proves it is never called), write a snapshot, send a message or open a turn."""
         _off_connection(admin.w)
         admin.w.waha.fake_chat_list = [{"id": {"_serialized": f"55119{i:08d}@c.us"}} for i in range(230)]
+
+        async def explode(*a, **kw):
+            raise AssertionError("activation must not list WAHA chats")
+
+        admin.w.waha.list_chats = explode
+        admin.w.waha.list_lids = explode
         r = self._on(admin)
         assert r.status_code == 200
         out = r.json()["data"]
         assert out["alimenta"] is True
         assert out["alimenta_desde"]
-        # 230 phone chats + their `@s.whatsapp.net` twins
-        assert len(admin.snapshot_ids()) == 460
+        assert admin.snapshot_ids() == set()
+        assert admin.w.waha.sent_messages == [] and admin.w.agents.turns == []
         row = admin.conn()
         assert row["agente_leads_ativo"] is True and row["agente_leads_ativado_em"] and row["agente_leads_key"] == "julia"
-
-    def test_both_the_phone_and_the_lid_form_are_stored_when_waha_exposes_both(self, admin):
-        _off_connection(admin.w)
-        admin.w.waha.fake_chat_list = [{"id": "5511988887777@c.us"}]
-        admin.w.waha.fake_lids = [{"lid": "123456@lid", "pn": "5511988887777@c.us"}]
-        assert self._on(admin).status_code == 200
-        assert admin.snapshot_ids() >= {"5511988887777@c.us", "5511988887777@s.whatsapp.net", "123456@lid"}
 
     def test_julia_line_D5_empty_authorized_numbers_no_longer_blocks_turning_it_on(self, admin):
         _off_connection(admin.w, authorized_numbers=[])
@@ -282,48 +283,7 @@ class TestSwitchOn:
         r = self._on(admin)
         assert r.status_code == 409 and "url_publica_indisponivel" in r.text
 
-    def test_11_1_a_failed_listing_is_502_snapshot_falhou_and_the_switch_stays_OFF(self, admin):
-        _off_connection(admin.w)
-
-        async def boom(limit=50, offset=0):
-            raise RuntimeError("WAHA 422")
-
-        admin.w.waha.list_chats = boom
-        r = self._on(admin)
-        assert handler_status(r) == 502 and "snapshot_falhou" in r.text
-        assert admin.conn()["agente_leads_ativo"] is False and admin.snapshot_ids() == set()
-
-    def test_11_1_an_incomplete_listing_is_the_same_502_not_a_partial_snapshot(self, admin):
-        _off_connection(admin.w)
-        calls = {"n": 0}
-        chats = [{"id": f"55119{i:08d}@c.us"} for i in range(150)]
-
-        async def flaky(limit=50, offset=0):
-            calls["n"] += 1
-            if offset > 0:
-                raise TimeoutError("slow")
-            return chats[:limit]
-
-        admin.w.waha.list_chats = flaky
-        assert handler_status(self._on(admin)) == 502
-        assert admin.snapshot_ids() == set() and admin.conn()["agente_leads_ativo"] is False
-
-    def test_11_1_a_session_with_no_chats_snapshots_nothing_and_turns_on(self, admin):
-        _off_connection(admin.w)
-        assert self._on(admin).status_code == 200 and admin.snapshot_ids() == set()
-
-    def test_11_1_off_then_on_again_takes_a_NEW_snapshot_and_keeps_the_old_exclusions(self, admin):
-        _off_connection(admin.w)
-        admin.w.waha.fake_chat_list = [{"id": "5511900000001@c.us"}]
-        self._on(admin)
-        first = admin.snapshot_ids()
-        assert admin.put(ROT_URL, {"alimenta": False}).json()["data"]["alimenta"] is False
-        admin.w.waha.fake_chat_list = [{"id": "5511900000001@c.us"}, {"id": "5511900000002@c.us"}]
-        self._on(admin)
-        assert admin.snapshot_ids() > first and "5511900000002@c.us" in admin.snapshot_ids()
-        assert first <= admin.snapshot_ids(), "chats excluded once stay excluded"
-
-    def test_putting_on_while_already_on_does_not_re_snapshot_nor_move_ativado_em(self, admin):
+    def test_putting_on_while_already_on_does_not_move_ativado_em(self, admin):
         admin.w.seed_connection()  # already on, ativado_em fixed
         admin.w.waha.fake_chat_list = [{"id": "5511900000001@c.us"}]
         r = self._on(admin)
@@ -331,7 +291,7 @@ class TestSwitchOn:
         assert admin.snapshot_ids() == set()
         assert admin.conn()["agente_leads_ativado_em"] == "2026-10-01T00:00:00+00:00"
 
-    def test_turning_off_keeps_the_exclusions_and_clears_only_the_flag(self, admin):
+    def test_turning_off_clears_only_the_flag(self, admin):
         admin.w.seed_connection()
         r = admin.put(ROT_URL, {"alimenta": False})
         assert r.status_code == 200 and admin.conn()["agente_leads_ativo"] is False
