@@ -28,6 +28,10 @@ Owner order 2026-11-04: *"make sure all documentations referring to anything in 
 - Derived: `products/<slug>/README.md` and `MASTER-PROMPT.md` cover `backend/app/**`, `frontend/src/**`, `backend/migrations/*.sql`; a `CONTRACT.md` covers the code paths it cites. Paths written relative to a base the contract declares ("Paths are relative to `products/<slug>/`") resolve against it, and only the ones that exist count. A bare product root (`products/<slug>`) is never a contract cover, because the README/MASTER-PROMPT already cover it. As a citation it coupled `sw-lead-to-contract/CONTRACT.md` to every SW change, so three unrelated Julia v2 branches each needed a `Docs-Reviewed:` trailer (fixed 2026-10-20). A contract that is mostly routes and cites few files declares its real scope as `covers:`.
 - `STRUCTURAL_RULES` in `doc_staleness.py` for cross-cutting inventories (today: `02-LANDSCAPE.md` ← a router/studio/channel module **added or removed**). Add a rule when a roster-style doc needs its own coupling.
 
+## Commit-time new-citation check (2026-11-05)
+
+`check_staged` also runs `check_staged_new_missing_paths`: a staged living doc (not under `projects/`) that ADDS a backticked repo path which does not exist is refused at commit, with the fix. Only citations new in the staged text are judged; pre-existing debt in a doc you touch stays with CI's shrink-only tree ratchet. Before this, the claim check ran only in CI, so a typo'd citation surfaced ~25 min later as a queue ejection. The first catch was its own author's KB line citing a runtime-only file.
+
 ## Escape hatch (auditable, never silent)
 
 A commit trailer in any commit of the range: `Docs-Reviewed: <doc path or glob> — <reason>` (reason mandatory; sibling of `Guide-Unaffected:`). `Docs-Reviewed` also resets the **age** clock for that doc.

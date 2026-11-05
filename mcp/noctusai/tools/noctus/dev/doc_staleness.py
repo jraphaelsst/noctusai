@@ -348,8 +348,43 @@ def range_trailers(root: Path, rev_range: str) -> list[tuple[str, str]]:
 
 def check_staged(root: Path, message: str = "") -> list[dict]:
     """Commit leg -- the same coupling over the STAGED diff; `Docs-Reviewed:` trailers are read
-    from `message` (only the commit-msg hook has it). Merges/rebase replays are the caller's skip."""
-    return check_range(root, STAGED, message=message)
+    from `message` (only the commit-msg hook has it). Merges/rebase replays are the caller's skip.
+    Also: a staged living doc may not ADD a citation of a path that does not exist (below)."""
+    return check_range(root, STAGED, message=message) + check_staged_new_missing_paths(root)
+
+
+def check_staged_new_missing_paths(root: Path) -> list[dict]:
+    """A staged living doc that ADDS a citation of a non-existent repo path (2026-11-05).
+
+    The claim check (`check_claims` (a)) ran only in CI's tree ratchet, so a doc
+    citing a renamed/mistyped path committed cleanly and went red ~25 min later
+    in the queue. Only citations NEW in the staged text are judged — a doc you
+    touch is not blocked for pre-existing debt (the CI ratchet owns that)."""
+    def out(*args: str) -> str | None:
+        r = _git(root, *args)
+        return r.stdout if r is not None and r.returncode == 0 else None
+
+    listed = out("diff", "--cached", "--name-only", "--diff-filter=AM")
+    if listed is None:
+        return [_issue("<staged>", "could not list staged files; fail-closed", "missing_path")]
+    active = _active_slugs(root)
+    issues: list[dict] = []
+    for rel in [n for n in listed.splitlines() if n]:
+        if not is_living_doc(rel, active) or rel.startswith("projects/") or "/projects/" in rel:
+            continue
+        staged = out("show", f":{rel}")
+        if staged is None:
+            issues.append(_issue(rel, f"could not read staged `{rel}`; fail-closed", "missing_path"))
+            continue
+        before = out("show", f"HEAD:{rel}") or ""  # new file => no prior citations
+        _, missing_now = _cited_code_paths(root, Doc(rel=rel, text=staged, covers=[]))
+        _, missing_before = _cited_code_paths(root, Doc(rel=rel, text=before, covers=[]))
+        for path in sorted(set(missing_now) - set(missing_before)):
+            if _rel_exists(root, rel, path):
+                continue
+            issues.append(_issue(rel, f"`{rel}` newly cites `{path}`, which does not exist in the tree "
+                                 "(typo / renamed?). Fix the reference.", "missing_path", detail=path))
+    return issues
 
 
 def check_range(root: Path, rev_range: str, message: str | None = None) -> list[dict]:

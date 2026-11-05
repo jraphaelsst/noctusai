@@ -622,7 +622,7 @@ executor agent must carry it; never a hand-listed constant. Activation is a
 
 ### §11b · Guard-event log (2026-11-05)
 
-Every deny and every rewrite from a PreToolUse guard (`_guard_failclosed.run_guard`: primary-write, test-seams, heavy-run, executor-dispatch, harness-signature) appends one JSON line to `.claude/cache/guard-events.ndjson` (machine-local, gitignored): `ts`, `guard`, `outcome` (`deny`|`rewrite`), `tool`, `target` (path or command, 200 chars), `reason`, `session`, `cwd`. The 2026-11-05 gates audit could count guard friction only by grepping transcripts; now `jq -r .guard .claude/cache/guard-events.ndjson | sort | uniq -c` answers it. A failed write is reported on stderr and never changes the verdict. Tests point it elsewhere via `NOCTUS_GUARD_EVENT_LOG` (autouse fixture).
+Every deny and every rewrite from a PreToolUse guard (`_guard_failclosed.run_guard`: primary-write, test-seams, heavy-run, executor-dispatch, harness-signature) appends one JSON line to guard-events.ndjson in the gitignored .claude/cache directory (machine-local, runtime-only): `ts`, `guard`, `outcome` (`deny`|`rewrite`), `tool`, `target` (path or command, 200 chars), `reason`, `session`, `cwd`. The 2026-11-05 gates audit could count guard friction only by grepping transcripts; now a `jq -r .guard` over that file, piped to `sort | uniq -c`, answers it. A failed write is reported on stderr and never changes the verdict. Tests point it elsewhere via `NOCTUS_GUARD_EVENT_LOG` (autouse fixture).
 
 ## §12 · The primary/origin divergence loop (2026-08-31) — six encounters, one unlifted fix
 

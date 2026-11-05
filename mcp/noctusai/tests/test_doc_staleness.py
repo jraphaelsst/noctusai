@@ -344,3 +344,21 @@ def test_pre_push_doc_staleness_leg_covers_merge_queue_refs():
     leg = hook[hook.index("doc-staleness gate"):]
     assert 'refs/heads/mq/*' in leg
     assert 'git merge-base origin/dev "$_ds_loid"' in leg
+
+
+# 2026-11-05: a staged living doc may not ADD a citation of a missing path
+# (the claim check used to run only in CI, ~25 min later in the queue).
+def test_staged_doc_newly_citing_a_missing_path_is_flagged(repo):
+    _write(repo, "products/acme/README.md",
+           "# acme\n\nLive. See `products/acme/backend/app/routers/a.py` and `products/acme/backend/app/routers/nope.py`.\n")
+    _git(repo, "add", "-A")
+    issues = [i for i in ds.check_staged(repo, "") if i["kind"] == "missing_path"]
+    assert [i["id"] for i in issues] == ["missing_path::products/acme/README.md::products/acme/backend/app/routers/nope.py"]
+
+
+def test_pre_existing_missing_citation_does_not_block_an_unrelated_edit(repo):
+    _write(repo, "products/acme/README.md", "# acme\n\nSee `products/acme/backend/app/gone.py`.\n")
+    _commit(repo, "debt")
+    _write(repo, "products/acme/README.md", "# acme\n\nSee `products/acme/backend/app/gone.py`. Typo fixed.\n")
+    _git(repo, "add", "-A")
+    assert not [i for i in ds.check_staged(repo, "") if i["kind"] == "missing_path"]
