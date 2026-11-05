@@ -106,8 +106,14 @@ class TestTestCoverage:
 
 class TestCodeMetrics:
     def test_returns_all_products(self):
+        """One row per ACTIVE product — derived from the scope file, never a
+        frozen count (sleeping 4 products on 2026-11-04 broke `>= 6`)."""
+        from tools.noctus.dev.analyzers import _list_products
+
         metrics = get_code_metrics()
-        assert len(metrics) >= 6
+        expected = {p["name"] for p in _list_products()}
+        assert expected, "no active products — the scope file is wrong"
+        assert {m["product"] for m in metrics} == expected
 
     def test_seed_is_minimal(self):
         """Seed ships ≤2 demo routers (example_router + webhook_router, see
