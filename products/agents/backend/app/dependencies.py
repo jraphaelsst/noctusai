@@ -243,6 +243,34 @@ CHANNEL_ALLOWED_ISSUERS = frozenset({"social-wiring"})
 MINTABLE_TOKEN_SCOPES = PACKAGE_TOKEN_SCOPES | GRANT_CHANNEL_TOKEN_SCOPES
 
 
+def get_grant_store_dep():
+    from app.grants.store import get_grant_store
+
+    return get_grant_store(settings)
+
+
+def assert_channel_grant_live(ctx: AuthContext, grants) -> None:
+    """A channel token is PERSONAL: one per (agent, product, org) grant, bound to that agent's instance
+    (``principal_agent_id``) and org. The token's own revoked/expiry state is checked by ``get_auth_context``; this
+    adds the GRANT's: the row the token was minted for must be live (``ativo``, not expired) and name this very
+    (org, agent), so a revoked / expired grant stops the agent's turns and spec edits at once, and a token with no
+    principal (or none of ours) reaches nothing. 403 ``agent_not_allowed`` / ``grant_inativo``."""
+    if ctx.principal_agent_id is None or ctx.api_token_id is None:
+        raise HTTPException(
+            status_code=403, detail={"detail": "O token não pertence a nenhum agente.", "code": "agent_not_allowed"},
+        )
+    grant = grants.find_by_channel_token(ctx.api_token_id)
+    if grant is None or not grant.is_live():
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "O grant deste token não está ativo.", "code": "grant_inativo"},
+        )
+    if grant.agent_id != ctx.principal_agent_id or grant.org_id != ctx.org_id:
+        raise HTTPException(
+            status_code=403, detail={"detail": "O token não pertence a este agente.", "code": "agent_not_allowed"},
+        )
+
+
 def _require_channel(scope: str):
     """Product-token-only gate for one channel scope + the issuer allowlist.
     `restrict="product_only"`: a human session answers 403 `product_required`;
@@ -254,12 +282,13 @@ def _require_channel(scope: str):
         restrict="product_only",
     )
 
-    def _dep(ctx: AuthContext = Depends(base)) -> AuthContext:
+    def _dep(ctx: AuthContext = Depends(base), grants=Depends(get_grant_store_dep)) -> AuthContext:
         if ctx.issuer not in CHANNEL_ALLOWED_ISSUERS:
             raise HTTPException(
                 status_code=403,
                 detail={"detail": "Token issuer not allowed for this API", "code": "issuer_not_allowed"},
             )
+        assert_channel_grant_live(ctx, grants)
         return ctx
 
     return _dep
@@ -618,12 +647,6 @@ def get_grant_token_admin_dep():
     )
 
 
-def get_grant_store_dep():
-    from app.grants.store import get_grant_store
-
-    return get_grant_store(settings)
-
-
 def get_org_directory_dep():
     from app.grants.orgs import get_org_directory
 
@@ -701,6 +724,7 @@ def get_build_legacy_chat_spec_dep():
 
 __all__ = [
     "CHANNEL_ALLOWED_ISSUERS",
+    "assert_channel_grant_live",
     "CHANNEL_TOKEN_SCOPES",
     "GRANT_CHANNEL_TOKEN_SCOPES",
     "SCOPE_CHANNEL_SPECS",

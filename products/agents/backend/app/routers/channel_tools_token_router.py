@@ -23,6 +23,8 @@ from app.clients.social_wiring import JULIA_TOOLS_TOKEN_KEY
 from app.credentials.org_keys import build_llm_key_store
 from app.dependencies import require_channel_turn
 from app.routers.channels_router import _ChannelRoute, _err
+from app.routers.studio_agents_router import get_studio_definition_store_dep
+from app.stores.errors import NotFound
 from noctusai_lib.api.auth.session import AuthContext
 
 logger = logging.getLogger(__name__)
@@ -46,8 +48,24 @@ def get_julia_tools_token_store_dep() -> Any:
 def delete_tools_token(
     ctx: AuthContext = Depends(require_channel_turn),
     store: Any = Depends(get_julia_tools_token_store_dep),
+    studio_store: Any = Depends(get_studio_definition_store_dep),
 ) -> Response:
-    """Idempotent: 204 whether or not a token was stored."""
+    """Idempotent: 204 whether or not a token was stored. The stored secret is JULIA's: only the token of the agent that
+    secret belongs to (the grant registry's agent for this issuer) may clear it -- another agent's personal token is
+    403 ``agent_not_allowed``."""
+    from app.grants.registry import GRANT_PRODUCTS
+
+    try:
+        agent = studio_store.get_agent_by_id(ctx.principal_agent_id)
+    except NotFound as exc:  # the token names no agent we can verify
+        logger.warning("agents.julia_tools_token.delete_refused org_id=%s cause=%s", ctx.org_id, type(exc).__name__)
+        raise _err(403, "agent_not_allowed", "O token não pertence a este agente.") from exc
+    spec = next((p for p in GRANT_PRODUCTS.values() if p.channel_issuer == ctx.issuer), None)
+    if (
+        spec is None or agent.org_id != ctx.org_id or agent.key not in spec.agent_keys
+        or spec.tools_secret_name != JULIA_TOOLS_TOKEN_KEY
+    ):
+        raise _err(403, "agent_not_allowed", "O token não pertence a este agente.")
     removed = delete_api_key(store, str(ctx.org_id), JULIA_TOOLS_TOKEN_KEY)
     logger.info("agents.julia_tools_token.deleted org_id=%s existed=%s", ctx.org_id, removed)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

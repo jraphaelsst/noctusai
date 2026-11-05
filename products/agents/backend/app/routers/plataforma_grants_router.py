@@ -73,6 +73,7 @@ class GrantOut(BaseModel):
     revoked_at: datetime | None = None
     last_delivered_at: datetime | None = None
     last_error: str | None = None
+    especificacoes_editor: str = "plataforma"
 
 
 class GrantListOut(BaseModel):
