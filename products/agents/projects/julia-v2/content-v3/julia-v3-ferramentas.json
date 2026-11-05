@@ -73,7 +73,7 @@
     "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor",
     "motivo_codigo.fora_do_escopo": "pedido fora do mercado imobiliário em que o lead insiste",
     "motivo_codigo.direito_titular": "pedido do lead sobre os próprios dados (já registrado com registrar_solicitacao_titular)",
-    "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada"
+    "motivo_codigo.info_indisponivel": "o lead insistiu em uma informação da imobiliária que a Julia não tem (dado não preenchido) e aceitou falar com uma pessoa", "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada"
    }
   },
   {

@@ -47,6 +47,7 @@ from app.stores.conformidade import FakeConformidadeStore
 from app.stores.conversations import FakeConversationStore
 from app.stores.messages import FakeMessageStore
 from app.stores.threads import FakeThreadStore
+from app.studio.especificacoes_avaliacao import specs_de_avaliacao
 from app.studio.eval_driver import (
     Estado,
     Handoff,
@@ -63,8 +64,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["FixtureSwClient", "LiveEvalTurnDriver", "make_live_eval_driver_factory"]
 
-#: A required org spec the roteiro did not provide gets this neutral value (the eval world is synthetic).
-_SPEC_NEUTRA = "exemplo"
 _CANAL = "whatsapp"
 
 
@@ -253,8 +252,9 @@ class LiveEvalTurnDriver:
         if draft is None:
             raise turno_mod.TurnoRecusado(409, "no_draft", "O agente não tem rascunho para avaliar.")
         declaradas = self._studio.list_spec_defs(org_id, draft.id)
-        dados = dict(thread.fixture.get("specs") or {})
-        specs = {d.chave: str(dados.get(d.chave) or (d.exemplo or _SPEC_NEUTRA)) for d in declaradas}
+        specs = specs_de_avaliacao(declaradas, thread.fixture.get("specs"))
+        for ausente in thread.fixture.get("specs_ausentes") or ():  # a case that tests the org NOT having filled a spec
+            specs.pop(str(ausente), None)
         messages, conversations = FakeMessageStore(), FakeConversationStore()
         threads, controles = FakeThreadStore(conversations), FakeAgentControleStore()
         leads = FakeLeadQualificacaoStore()

@@ -40,7 +40,7 @@
   - JSON schemas, validation, ordering/layout, gates
   - a registry of required keys
 
-  There is no fallback text in code. Missing content means publish is refused, or a turn gets 409 `conteudo_incompleto`. A default string is never substituted.
+  There is no fallback text in code. Missing content means publish is refused, or a turn gets 409 `conteudo_incompleto` (a missing REQUIRED org spec is the exception: see "Spec substitution policy"). A default string is never substituted.
 - **D3 · The first content is a one-time data seed.**
   - The v1 content (§4) is written as a project artifact (`products/agents/projects/julia-v2/seed/julia-v1.json`) and applied once to the draft through the new MCP tool (§2.5). The project archives the artifact; no runtime module imports it.
   - The constants in `julia.py` are deleted in the same wave.
@@ -310,6 +310,29 @@ mandate of 2026-10-19 (no org may read the platform's prompts/rules).
   reads tool descriptions/texts from); `conteudo_status(...)` -> `ConteudoStatus` (the 409 `conteudo_incompleto`
   / `status.conteudo_completo` source); `carimbo(...)` -> `(definition_version_id, compiled_hash,
   org_specs_hash, skill_version_ids)`. A legacy `org` agent resolves to itself.
+- **Spec substitution policy (one function, one policy; 2026-11).** `app/studio/especificacoes.py` owns it; no
+  `{{org.x}}` or `[dado: x]` ever reaches a lead and no `{{org.x}}` ever reaches a model.
+  - *Present value*: typed -> inlined; free text -> `[dado: chave]` + the value in the data block (E3).
+  - *Optional, no value*: the placeholder is replaced by `""` (the sentence is omitted as authored). Never raw.
+  - *Required, no value* (`completar_indisponiveis`): NOT a refusal at turn time. The prompt carries the typed
+    sentinel `INDISPONIVEL` for it (`[dado: chave]` inline, sentinel in the data block); the section rule
+    `dado-indisponivel` tells the model to say "I don't have that now, I will check and come back", keep the
+    conversation going, and on a repeated ask offer a person (`handoff`, `motivo_codigo=info_indisponivel`). The runtime
+    raises `alertar_info_indisponivel` through the existing `alerta` action (SW: in-app + WhatsApp): step `aviso` at the
+    first turn of the thread that runs without the value, step `redirecionado` when that handoff happens; deduped per
+    (thread, step, chave). Publish readiness is unchanged: `spec_org_faltando` still blocks publish and
+    `conteudo_completo` (SW / Studio) stays false; only `turno.preparar` tolerates it.
+  - *Runs with no org behind them* (judge eval, mechanism eval, Studio simulator): `specs_de_avaliacao`
+    (`especificacoes_avaliacao.py`) fills every declared spec: fixture value, stored org value, the declaration's
+    `exemplo`, a validator-passing neutral value of its type. `build_studio_spec(..., specs_sinteticas=True)` compiles
+    the model's prompt with them; the stamped hash stays the definition's (what the run stamp / publish gate compare).
+    Without it, a prompt that still has `{{org.x}}` is refused (`StudioSpecError placeholder_cru`).
+  - *Output guard*: `placeholder_cru_em` (any `{{...}}` or `[dado: ...]` in a reply). Channel turn: always-on
+    `placeholder_cru` violation (blocks by default, reuses the conformidade correction: one re-run with the optional row
+    `conformidade.correcao.placeholder_cru`, then silence + handoff). Judge eval: the case fails with a typed error.
+    Studio test chat: the reply is suppressed and a `placeholder_cru` violation recorded.
+  - *Scan*: `tests/studio/def/test_placeholder_guard.py` checks every placeholder of `content-v3/*.json` names a defined
+    spec chave (migration 059's list).
 - **Compiler.** Layout/order only. Layer order: sections (platform) -> qualification block generated from the
   pinned standard rows (`CompileInput.qualificacao`; headings are textos) -> skills -> knowledge index -> tools
   (rows) -> client (dynamic). `ponto_cache` = end of the static prefix. Hash = sha256 over a canonical

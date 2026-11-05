@@ -47,6 +47,7 @@ from app.dependencies import (
     require_member,
 )
 from app.channels.conformidade import GuardaVazamento
+from app.studio.especificacoes import placeholder_cru_em
 from app.channels.opt_out import ultimo_evento_out
 from app.config import settings
 from app.routers.qualificacao_router import get_qualificacao_service_dep
@@ -658,7 +659,8 @@ def _prepare_studio_turn(
     if conversation.version_id is None:
         conversation = conv_store.pin_version(org_id, conversation.id, active.id)
     try:
-        spec = build_studio_spec(dono, conversation, definitions=studio_store, catalog=catalog, org_specs=org_specs)
+        spec = build_studio_spec(dono, conversation, definitions=studio_store, catalog=catalog, org_specs=org_specs,
+                                 specs_sinteticas=org_specs is None)
     except StudioSpecError as exc:
         raise _http(409, exc.code, exc.detail) from exc
     return agent, spec
@@ -872,7 +874,19 @@ async def _run_turn_background(
                 kind = event["event"]
                 evt_payload = event["payload"]
 
-                if kind == "message.new" and guarda is not None and (
+                if kind == "message.new" and (cru := placeholder_cru_em(evt_payload.get("texto", ""))):
+                    # A raw ``{{…}}`` / ``[dado: …]`` in a reply is never stored nor published (same suppression as a leak).
+                    logger.error(
+                        "agents.turn.placeholder_cru_bloqueado org_id=%s conversation_id=%s n=%s",
+                        org_id, conversation_id, len(cru))
+                    if conformidade is not None:
+                        try:
+                            conformidade.registrar_violacao(
+                                org_id, agent_id, Violacao("placeholder_cru", "bloquear", {"n": len(cru)}, True),
+                                thread_id=conversation_id, compiled_hash=stamp.get("compiled_hash"), origem="teste")
+                        except Exception:  # noqa: BLE001 -- a lost audit row is seen, the block still holds
+                            logger.exception("agents.turn.violacao_nao_registrada")
+                elif kind == "message.new" and guarda is not None and (
                     achado := guarda.verificar(evt_payload.get("texto", ""))
                 ):
                     # The reply reproduces the prompt: suppressed (never stored, never published), recorded.
