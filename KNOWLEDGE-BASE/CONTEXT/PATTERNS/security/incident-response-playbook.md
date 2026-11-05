@@ -233,10 +233,11 @@ migration 001/011 — date from git), evidence of access (Supabase Storage logs 
 retained), `papel` (is the client imobiliária the controller?), `risco_relevante` decision. Owner +
 legal decide; `security` assembles the evidence. Tracked as agent-refinement follow-up #7.
 
-## 10 · Hand-off — for the future legal / privacy advisor
+## 10 · Hand-off — legal / privacy advisor
 
-The owner approved a `legal-advisor` hire (incl. LGPD) for Wave 2. Items this playbook deliberately
-leaves to that advisor, each to be re-verified against primary text and decided:
+Agent `legal-advisor` (hired 2026-11-05) answered these from the DOU primary text in
+`KB § PATTERNS/legal/lgpd-privacy-program.md` (incident communication + register sections) — that
+doc wins on the legal side; this list stays as the hand-off record:
 1. Exact Res. 15/2024 article/paragraph numbers for complementation (20 business days) and the
    titulares-notice declaration; full art. 10 register field list (read the DOU text).
 2. NoctusAI's agente de pequeno porte status (Res. CD/ANPD 2/2022) and its exclusions.

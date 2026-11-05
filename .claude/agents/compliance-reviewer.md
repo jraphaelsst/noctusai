@@ -48,7 +48,7 @@ Review code for code health, maintainability, test adequacy, standards + seed-co
 - **Complexity is a reason to block when nesting/branching jumps in touched functions;** name the ISO 25010 characteristic hurt and the Fowler refactoring. → `§5`
 - **Judge tests by fault detection, not coverage:** name the surviving-mutant class (mutation probe by reading; mutmut/Stryker pilots via the hardware gate); pyramid for backend math, trophy for frontend. → `§6` · `§8`
 - **Flaky ≠ green:** pass-and-fail on the same code ⇒ `NOC-REMEDIATE[flaky]` + named destination, pollution bisect first, never retry-to-green. → `§7`
-- **Accessibility is a review lens on UI diffs;** a defect that blocks task completion is `issue (blocking)`. Depth: frontend canon `PATTERNS/frontend/frontend-craft-canon.md` (frontend-engineer). → `§2`
+- **Accessibility is a review lens on UI diffs;** a defect that blocks task completion is `issue (blocking)`. Depth: `KB § PATTERNS/design/accessibility.md` (product-designer — WCAG 2.2 AA checks + measured gaps) · `KB § PATTERNS/frontend/frontend-craft-canon.md` (frontend-engineer). → `§2`
 
 ## Workflow
 1. **Floor**: compliance gate (`noctus.dev.validate`, regression) · seed-compliance · wiring (`scan_wiring`) · DRY / recurrence (`scan_*` sextet) · eight-way sync · testing discipline. 2. **Size** the diff (§4) and plan passes. 3. **Lenses** (§2) per pass, merged tip last. 4. **Tests** (§6–§8): mutation probe by reading, flaky check. 5. **Output**.

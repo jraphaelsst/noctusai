@@ -1,6 +1,6 @@
 # Database & RLS Patterns
 
-234+ tables across 7 schemas. All RLS-enabled. Supabase-hosted.
+19 schemas / ~1,063 tables live (2026-11; current count in `KB § 02-LANDSCAPE.md`). RLS-enabled, Supabase-hosted. The table below lists the original core schemas only — product schemas are documented per product.
 
 ## Schemas
 

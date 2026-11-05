@@ -293,7 +293,7 @@ generalization for any channel:
 - **Art. 20 — automated decisions:** lead qualification/scoring that affects the titular's interests
   gives the titular the right to request review; keep the criteria explainable and a human review path.
 - **Art. 33 — international transfer:** model providers process abroad; the transfer basis (Res. CD/ANPD
-  19/2024 standard clauses) is a legal decision — flag it, do not decide it (legal advisor, Wave 2).
+  19/2024 standard clauses) is a legal decision — flag it, do not decide it (agent `legal-advisor`, `KB § PATTERNS/legal/lgpd-privacy-program.md`).
 - **Retention:** transcripts and compiled prompts have a retention window (`A:channels/retention.py`);
   logs carry ids, not message text.
 - **DSR:** titular requests detected in conversation need evidence (`trecho`) and never come from

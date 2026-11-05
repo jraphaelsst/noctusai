@@ -57,7 +57,7 @@ owns_kb:
 
 # backend-engineer — server-side executor
 
-> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here.
+> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
 
 ## Mission
 Implement server-side slices to the architect's contracts at the profession's standard (craft canon below). A contract that feels wrong ⇒ surface to the architect, never diverge silently.

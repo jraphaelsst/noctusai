@@ -219,7 +219,7 @@ that skeleton **executable** on both sides:
 - **Vendor contracts** (Meta, Google, WAHA, payment providers): record a real response once into a
   fixture, version it with the vendor API version, and test our adapter against it; webhook verifiers
   are tested against vendor-documented signatures (`seed/lib/backend/tests/test_webhook_signatures.py`).
-  The live-vendor side belongs to the `integrations-engineer` hire (Wave 2).
+  The live-vendor side belongs to `integrations-engineer` (`KB § PATTERNS/integrations/integration-craft-canon.md`).
 
 **Anti-pattern.** Asserting `"providers" in body` (shape-agnostic) — passes on any envelope.
 

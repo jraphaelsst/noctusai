@@ -17,7 +17,7 @@ owns_kb:
 
 # test-engineer — test harness + strategy executor
 
-> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here.
+> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
 
 ## Mission
 Make the suites tell the truth: every test fails for the right reason, runs isolated, and proves the behaviour it names. Build the harness and the tests; compliance-reviewer owns the policy and the verdict.
