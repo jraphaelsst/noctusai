@@ -437,6 +437,42 @@ class TestGraphErrorParsing:
         assert g.call_count == 1
         assert ei.value.delay == 7200.0
 
+    def test_retry_later_is_also_a_metagraph_error(self):
+        # social-wiring (live) maps `except MetaGraphError` -> clean HTTP error
+        # in ~20 handlers; a long throttle must NOT escape them as a 500.
+        from noctusai_lib.integrations import rate_limit
+        from noctusai_lib.integrations.meta import _meta_api
+
+        err = {"error": {"message": "limit", "code": 80001, "fbtrace_id": "T1"}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(
+            err, 400, headers={"X-Business-Use-Case-Usage":
+                               '{"1":[{"type":"pages","estimated_time_to_regain_access":120}]}'},
+        )):
+            with pytest.raises(rate_limit.RetryLater) as ei:
+                _meta_api.graph_get("1/feed", access_token="x")
+        e = ei.value
+        assert isinstance(e, MetaGraphError) and isinstance(e, rate_limit.RetryLater)
+        assert isinstance(e, _meta_api.MetaRetryLater)
+        assert e.is_rate_limited and e.code == 80001 and e.fbtrace_id == "T1"
+        assert e.http_status == 400 and e.retry_after == 7200.0 and e.delay == 7200.0
+        assert "limit" in str(e)
+        assert isinstance(e.__cause__, MetaGraphError)
+
+    def test_social_wiring_style_except_metagraph_error_catches_long_throttle(self):
+        from noctusai_lib.integrations.meta import _meta_api
+
+        def handler():
+            try:
+                _meta_api.graph_get("1/feed", access_token="x")
+            except MetaGraphError as exc:  # the live-router contract
+                return ("http-error", exc.is_rate_limited, exc.code)
+
+        err = {"error": {"message": "limit", "code": 80002}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(
+            err, 400, headers={"Retry-After": "7200"},
+        )):
+            assert handler() == ("http-error", True, 80002)
+
     def test_html_503_fallback_raises(self):
         from noctusai_lib.integrations.meta import _meta_api
 

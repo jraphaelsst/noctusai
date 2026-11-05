@@ -222,6 +222,29 @@ def test_max_retry_after_is_configurable_via_env(monkeypatch):
         )
 
 
+def test_retry_later_factory_lets_adapter_error_type_be_retry_later():
+    class VendorErr(Exception):
+        def __init__(self, msg):
+            Exception.__init__(self, msg)  # not super(): RetryLater is next in the MRO
+
+    class VendorLater(VendorErr, RetryLater):
+        def __init__(self, orig, bucket, delay):
+            VendorErr.__init__(self, str(orig))
+            self._set_retry_later(bucket, delay, orig)
+
+    def boom():
+        raise VendorErr("slow down")
+
+    with pytest.raises(VendorErr) as ei:
+        retry_with_backoff(
+            boom, bucket="meta", is_retryable=lambda e: isinstance(e, VendorErr),
+            retry_after=lambda e: 9999.0, clock=VirtualClock(),
+            retry_later_factory=lambda e, b, d: VendorLater(e, b, d),
+        )
+    assert isinstance(ei.value, RetryLater) and ei.value.delay == 9999.0
+    assert str(ei.value) == "slow down"
+
+
 def test_retry_later_async():
     import asyncio
 

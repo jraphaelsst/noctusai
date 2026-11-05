@@ -20,7 +20,7 @@ integration adopts it — never a per-integration reinvented backoff.
    longer than the bucket's `max_retry_after` (default 300 s;
    `NOC_RL_<BUCKET>_MAX_RETRY_AFTER`) is NOT retried inline: `RetryLater`
    (`rate_limit.py:421`, `.retry_at`) is raised for the job layer to
-   reschedule. Meta Business Use Case codes `80000–80014` count as rate limits
+   reschedule (adapters pass `retry_later_factory=` so the raised error is also their own error type — `MetaRetryLater` is a `MetaGraphError`). Meta Business Use Case codes `80000–80014` count as rate limits
    and carry the `X-Business-Use-Case-Usage` regain time. This is what recovers *gracefully* instead of
    hammering a throttled endpoint (which extends the ban).
 

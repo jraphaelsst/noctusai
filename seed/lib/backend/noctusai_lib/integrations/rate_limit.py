@@ -366,6 +366,7 @@ async def retry_with_backoff_async(
     is_retryable: Callable[[BaseException], bool],
     retry_after: Callable[[BaseException], float | None] | None = None,
     clock: Clock | None = None,
+    retry_later_factory: "RetryLaterFactory | None" = None,
 ) -> Any:
     """Async twin of ``retry_with_backoff``. ``fn`` is an async callable
     (returns an awaitable). Same backoff policy; waits with
@@ -389,7 +390,7 @@ async def retry_with_backoff_async(
                 )
                 raise
             hinted = retry_after(exc) if retry_after else None
-            delay = _choose_delay(attempt, cfg, clk, hinted, bucket, exc)
+            delay = _choose_delay(attempt, cfg, clk, hinted, bucket, exc, retry_later_factory)
             logger.info(
                 "rate_limit[%s] async: retryable (attempt %d/%d) — backing off %.1fs: %s",
                 bucket, attempt, cfg.max_retries, delay, exc,
@@ -425,29 +426,47 @@ class RetryLater(Exception):
     NOT retried: the caller (job layer) reschedules at ``retry_at``.
 
     ``delay`` is seconds from raise time; ``retry_at`` is an aware UTC
-    datetime; ``__cause__`` is the original vendor error."""
+    datetime; ``__cause__`` is the original vendor error.
+
+    A vendor adapter whose callers already ``except <VendorError>`` passes
+    ``retry_later_factory=`` to the retry helpers so the raised object is
+    BOTH its own error type and a ``RetryLater`` (see ``MetaRetryLater``);
+    such a subclass sets the fields via ``_set_retry_later`` and must not
+    rely on ``RetryLater.__init__`` (cooperative ``super()`` is unsafe with
+    differing ``__init__`` signatures)."""
 
     def __init__(self, bucket: str, delay: float, cause: BaseException | None = None):
+        self._set_retry_later(bucket, delay, cause)
+        Exception.__init__(
+            self,
+            f"rate_limit[{bucket}]: vendor asked to wait {delay:.0f}s "
+            f"(> inline max) — retry later at {self.retry_at.isoformat()}",
+        )
+
+    def _set_retry_later(
+        self, bucket: str, delay: float, cause: BaseException | None
+    ) -> None:
         self.bucket = bucket
         self.delay = delay
         self.retry_at = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=delay)
-        super().__init__(
-            f"rate_limit[{bucket}]: vendor asked to wait {delay:.0f}s "
-            f"(> inline max) — retry later at {self.retry_at.isoformat()}"
-        )
         self.__cause__ = cause
+
+
+RetryLaterFactory = Callable[[BaseException, str, float], "RetryLater"]
 
 
 def _choose_delay(
     attempt: int, cfg: BucketConfig, clk: Any, hinted: float | None,
     bucket: str, exc: BaseException,
+    factory: "RetryLaterFactory | None" = None,
 ) -> float:
     """Vendor hint wins (RFC 9110); past ``cfg.max_retry_after`` it becomes
     ``RetryLater`` instead of a silent clamp. Computed backoff stays capped
     at ``cfg.max_backoff``."""
     if hinted is not None and hinted >= 0:
         if hinted > cfg.max_retry_after:
-            raise RetryLater(bucket, hinted, exc) from exc
+            later = factory(exc, bucket, hinted) if factory else RetryLater(bucket, hinted, exc)
+            raise later from exc
         return hinted
     return min(_backoff_delay(attempt, cfg, clk), cfg.max_backoff)
 
@@ -459,6 +478,7 @@ def retry_with_backoff(
     is_retryable: Callable[[BaseException], bool],
     retry_after: Callable[[BaseException], float | None] | None = None,
     clock: Clock | None = None,
+    retry_later_factory: "RetryLaterFactory | None" = None,
     on_retry: Callable[[int, float, BaseException], None] | None = None,
 ) -> T:
     """Call ``fn``; on a *retryable* exception (per ``is_retryable`` —
@@ -487,7 +507,7 @@ def retry_with_backoff(
                 )
                 raise
             hinted = retry_after(exc) if retry_after else None
-            delay = _choose_delay(attempt, cfg, clk, hinted, bucket, exc)
+            delay = _choose_delay(attempt, cfg, clk, hinted, bucket, exc, retry_later_factory)
             logger.info(
                 "rate_limit[%s]: retryable error (attempt %d/%d) — backing off %.1fs: %s",
                 bucket, attempt, cfg.max_retries, delay, exc,
@@ -507,6 +527,7 @@ def paced_call(
     is_retryable: Callable[[BaseException], bool],
     retry_after: Callable[[BaseException], float | None] | None = None,
     clock: Clock | None = None,
+    retry_later_factory: "RetryLaterFactory | None" = None,
 ) -> T:
     """The full protection for one logical operation: acquire a pacing
     token before EACH attempt (so a retry is itself paced), and back off
@@ -523,6 +544,7 @@ def paced_call(
         is_retryable=is_retryable,
         retry_after=retry_after,
         clock=clock,
+        retry_later_factory=retry_later_factory,
     )
 
 
@@ -573,6 +595,7 @@ __all__ = [
     "BucketConfig",
     "RateLimiter",
     "RetryLater",
+    "RetryLaterFactory",
     "TokenBucket",
     "VirtualClock",
     "acquire",

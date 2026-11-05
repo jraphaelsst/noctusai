@@ -94,6 +94,7 @@ def _meta_paced_retry(fn: Callable[..., _T]) -> Callable[..., _T]:
             bucket="meta",
             is_retryable=_is_meta_rate_limited,
             retry_after=_meta_retry_after,
+            retry_later_factory=_meta_retry_later,
         )
 
     return wrapper
@@ -200,7 +201,9 @@ class MetaGraphError(Exception):
         http_status: int | None = None,
         retry_after: float | None = None,
     ) -> None:
-        super().__init__(message)
+        # Exception.__init__ directly: `MetaRetryLater` also inherits
+        # `RetryLater`, and a cooperative super() would route `message` there.
+        Exception.__init__(self, message)
         # Seconds the vendor asked us to wait (Retry-After header, or BUC
         # `estimated_time_to_regain_access`); None when no hint was sent.
         self.retry_after = retry_after
@@ -266,6 +269,31 @@ class MetaGraphError(Exception):
             f"MetaGraphError(code={self.code}, subcode={self.error_subcode}, "
             f"type={self.error_type!r}, msg={self.message!r})"
         )
+
+
+class MetaRetryLater(MetaGraphError, rate_limit.RetryLater):
+    """Graph throttle whose wait exceeds the bucket's inline maximum.
+
+    IS a `MetaGraphError` (same code / `is_rate_limited` / `retry_after`, so
+    every existing `except MetaGraphError` handler keeps its contract) AND a
+    `RetryLater` (the job layer reschedules at `.retry_at`)."""
+
+    def __init__(self, original: MetaGraphError, bucket: str, delay: float) -> None:
+        MetaGraphError.__init__(
+            self,
+            original.message,
+            code=original.code,
+            error_subcode=original.error_subcode,
+            error_type=original.error_type,
+            fbtrace_id=original.fbtrace_id,
+            http_status=original.http_status,
+            retry_after=delay,
+        )
+        self._set_retry_later(bucket, delay, original)
+
+
+def _meta_retry_later(exc: BaseException, bucket: str, delay: float) -> MetaRetryLater:
+    return MetaRetryLater(exc, bucket, delay)  # type: ignore[arg-type] — only MetaGraphError is retryable here
 
 
 class BusinessDiscoveryNotFound(MetaGraphError):

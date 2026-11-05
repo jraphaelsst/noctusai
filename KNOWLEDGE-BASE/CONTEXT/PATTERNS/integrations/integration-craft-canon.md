@@ -313,7 +313,7 @@ application retries on library retries.
   A hinted wait is **not** clamped to `max_backoff` (`_choose_delay`, `:441-452`); past the bucket's
   `max_retry_after` (default 300 s, `BucketConfig` `:74`, env `NOC_RL_<BUCKET>_MAX_RETRY_AFTER`) the call is
   **not retried inline** — `RetryLater` (`:421`, carries `delay`, `retry_at`, `__cause__`) is raised for the
-  job layer to reschedule (`RescheduleLater`). Continuing early extends the throttle ("continued calls extend the
+  job layer to reschedule (`RescheduleLater`). An adapter whose callers already `except <VendorError>` passes `retry_later_factory=` so the raised object is BOTH: Meta raises `MetaRetryLater(MetaGraphError, RetryLater)` (`_meta_api.py`), so live `except MetaGraphError` handlers keep working. Callers with hint extractors must handle `RetryLater` (focus `_request`, OpenAI `_create_retrying` re-raise the provider error). Continuing early extends the throttle ("continued calls extend the
   recovery time", Meta "Rate limits").
 - **Vendor-specific throttle classification.** Meta `MetaGraphError.is_rate_limited` covers platform codes
   `{4, 17, 32, 613}` **and** the Business Use Case codes `80000–80014` (`_meta_api.py:128-137`; `80001` Pages,
