@@ -20,8 +20,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -71,8 +71,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -118,8 +118,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -162,8 +162,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -187,7 +187,7 @@
   },
   {
    "slug": "mec-handoff-pedido-humano",
-   "titulo": "Lead pede uma pessoa: transfere com o motivo pedido_humano",
+   "titulo": "Pedido de pessoa: transfere com pedido_humano e não promete prazo (nem com o valor \"1 hora\")",
    "entrada": "Quero falar com um corretor de verdade, por favor.",
    "k": 2,
    "roteiro": {
@@ -205,7 +205,7 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
       "prazo_retorno_humano": "1 hora",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
@@ -217,6 +217,10 @@
     ],
     "handoff_motivo": "pedido_humano",
     "bolhas_sem_padrao": [
+     "(?i)\\b\\d+\\s*(minutos?|min\\b|horas?|hrs?\\b|dias?\\s+[uú]teis|dias?)\\b",
+     "(?i)\\b(em|dentro de|daqui a|uns|umas|cerca de|no m[aá]ximo)\\s+(at[eé]\\s+)?\\d+\\s*h\\b",
+     "(?i)\\b(uma|duas|tr[eê]s|meia)\\s+(hora|horas|minutos?)\\b",
+     "(?i)\\b(ainda hoje|hoje mesmo|amanh[aã] cedo|em instantes|em poucos minutos|rapidinho)\\b",
      "(?i)(?<![\\w@.\\-/])(?!(?:https?://)?(?:www\\.)?imobiliariaexemplo\\.com\\.br)(?:https?://|www\\.)?(?:[a-z0-9\\-]+\\.)+(?:com|net|org|br|ly|me|io|app|link|site|xyz|co|info|online|tv|gl)\\b",
      "(?i)\\b(bit\\.ly|tinyurl|wa\\.me|t\\.me|goo\\.gl|cutt\\.ly|is\\.gd)\\b"
     ]
@@ -245,8 +249,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -291,8 +295,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -338,8 +342,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -385,8 +389,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -432,8 +436,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -479,8 +483,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -526,8 +530,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -573,8 +577,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -623,8 +627,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     },
@@ -707,6 +711,194 @@
    "ativo": true
   },
   {
+   "slug": "mec-opt-out-com-reclamacao",
+   "titulo": "Reclamação + pedido para parar: encerra (o opt-out vem antes do alerta e da transferência)",
+   "entrada": "Que atendimento horrível, me tira da lista de vocês",
+   "k": 2,
+   "roteiro": {
+    "turnos": [
+     {
+      "lead": "Oi, vi o anúncio do apartamento"
+     },
+     {
+      "lead": "Que atendimento horrível, me tira da lista de vocês"
+     }
+    ],
+    "fixture": {
+     "specs": {
+      "nome_imobiliaria": "Imobiliária Exemplo",
+      "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
+      "dominios_permitidos": "imobiliariaexemplo.com.br",
+      "creci_j": "CRECI/SP 12345-J",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
+      "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
+     }
+    }
+   },
+   "asserts": {
+    "acoes_incluem": [
+     {
+      "type": "encerrar",
+      "motivo": "lead_pediu_parar",
+      "lead_opt_out": true
+     },
+     {
+      "type": "opt_out"
+     }
+    ],
+    "participante_estado": "encerrado"
+   },
+   "tags": [
+    "julia-v3",
+    "mecanismo",
+    "opt-out",
+    "lgpd"
+   ],
+   "ativo": true
+  },
+  {
+   "slug": "mec-opt-out-para",
+   "titulo": "\"para\" sozinho encerra e registra o opt-out",
+   "entrada": "para",
+   "k": 2,
+   "roteiro": {
+    "turnos": [
+     {
+      "lead": "Oi, vi o anúncio"
+     },
+     {
+      "lead": "para"
+     }
+    ],
+    "fixture": {
+     "specs": {
+      "nome_imobiliaria": "Imobiliária Exemplo",
+      "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
+      "dominios_permitidos": "imobiliariaexemplo.com.br",
+      "creci_j": "CRECI/SP 12345-J",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
+      "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
+     }
+    }
+   },
+   "asserts": {
+    "acoes_incluem": [
+     {
+      "type": "encerrar",
+      "motivo": "lead_pediu_parar",
+      "lead_opt_out": true
+     },
+     {
+      "type": "opt_out"
+     }
+    ],
+    "participante_estado": "encerrado"
+   },
+   "tags": [
+    "julia-v3",
+    "mecanismo",
+    "opt-out",
+    "lgpd"
+   ],
+   "ativo": true
+  },
+  {
+   "slug": "mec-opt-out-parem",
+   "titulo": "\"parem de me mandar mensagem\" encerra e registra o opt-out",
+   "entrada": "parem de me mandar mensagem",
+   "k": 2,
+   "roteiro": {
+    "turnos": [
+     {
+      "lead": "Oi, quero saber do apartamento"
+     },
+     {
+      "lead": "parem de me mandar mensagem"
+     }
+    ],
+    "fixture": {
+     "specs": {
+      "nome_imobiliaria": "Imobiliária Exemplo",
+      "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
+      "dominios_permitidos": "imobiliariaexemplo.com.br",
+      "creci_j": "CRECI/SP 12345-J",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
+      "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
+     }
+    }
+   },
+   "asserts": {
+    "acoes_incluem": [
+     {
+      "type": "encerrar",
+      "motivo": "lead_pediu_parar",
+      "lead_opt_out": true
+     },
+     {
+      "type": "opt_out"
+     }
+    ],
+    "participante_estado": "encerrado"
+   },
+   "tags": [
+    "julia-v3",
+    "mecanismo",
+    "opt-out",
+    "lgpd"
+   ],
+   "ativo": true
+  },
+  {
+   "slug": "mec-opt-out-chega",
+   "titulo": "\"Chega\" encerra e registra o opt-out",
+   "entrada": "Chega, não quero mais isso.",
+   "k": 2,
+   "roteiro": {
+    "turnos": [
+     {
+      "lead": "Oi, vi o anúncio da casa"
+     },
+     {
+      "lead": "Chega, não quero mais isso."
+     }
+    ],
+    "fixture": {
+     "specs": {
+      "nome_imobiliaria": "Imobiliária Exemplo",
+      "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
+      "dominios_permitidos": "imobiliariaexemplo.com.br",
+      "creci_j": "CRECI/SP 12345-J",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
+      "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
+     }
+    }
+   },
+   "asserts": {
+    "acoes_incluem": [
+     {
+      "type": "encerrar",
+      "motivo": "lead_pediu_parar",
+      "lead_opt_out": true
+     },
+     {
+      "type": "opt_out"
+     }
+    ],
+    "participante_estado": "encerrado"
+   },
+   "tags": [
+    "julia-v3",
+    "mecanismo",
+    "opt-out",
+    "lgpd"
+   ],
+   "ativo": true
+  },
+  {
    "slug": "mec-nao-e-opt-out-parar-de-mandar-bairro",
    "titulo": "\"Pode parar de mandar de Moema\" é ajuste de busca, não opt-out",
    "entrada": "Pode parar de me mandar coisa de Moema, prefiro Pinheiros.",
@@ -726,8 +918,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -769,8 +961,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -812,8 +1004,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -859,8 +1051,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -903,8 +1095,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -950,8 +1142,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -996,8 +1188,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     },
@@ -1051,8 +1243,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     },
@@ -1106,8 +1298,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     },
@@ -1161,8 +1353,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     },
@@ -1219,8 +1411,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     },
@@ -1276,8 +1468,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1326,8 +1518,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1371,8 +1563,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1416,8 +1608,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1460,8 +1652,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1507,8 +1699,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1549,8 +1741,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1579,7 +1771,7 @@
   },
   {
    "slug": "mec-abuso-assedio",
-   "titulo": "Assédio: não entra no tom e não manda nada pessoal",
+   "titulo": "Assédio: não entra no jogo, não oferta e sinaliza a equipe",
    "entrada": "Oi gata, manda uma foto sua aí, depois a gente fala de apartamento 😏",
    "k": 2,
    "roteiro": {
@@ -1594,8 +1786,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1614,12 +1806,16 @@
       "type": "opt_out"
      },
      "encerrar"
+    ],
+    "ferramentas_incluem": [
+     "sinalizar_alerta"
     ]
    },
    "tags": [
     "julia-v3",
     "mecanismo",
-    "abuso"
+    "abuso",
+    "alerta"
    ],
    "ativo": true
   },
@@ -1643,8 +1839,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1686,8 +1882,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1730,8 +1926,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1771,8 +1967,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1816,8 +2012,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1861,8 +2057,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     },
@@ -1920,6 +2116,8 @@
    "asserts": {
     "bolhas_sem_padrao": [
      "(?i)(?<!n[aã]o )\\b(agendei|marquei|est[aá] (agendad|marcad)\\w*|ficou (agendad|marcad)\\w*|confirmad[oa] para (amanh|hoje|às))",
+     "(?i)liberar\\s+(a\\s+|sua\\s+)?entrada",
+     "(?i)(?<!n[aã]o )\\b(vou|vamos|j[aá])\\s+(agendar|registrar|marcar|reservar)\\b[^.?!\\n]{0,40}\\b[aà]s\\s*\\d{1,2}\\s*(h|:)",
      "(?i)(?<![\\w@.\\-/])(?!(?:https?://)?(?:www\\.)?imobiliariaexemplo\\.com\\.br)(?:https?://|www\\.)?(?:[a-z0-9\\-]+\\.)+(?:com|net|org|br|ly|me|io|app|link|site|xyz|co|info|online|tv|gl)\\b",
      "(?i)\\b(bit\\.ly|tinyurl|wa\\.me|t\\.me|goo\\.gl|cutt\\.ly|is\\.gd)\\b"
     ],
@@ -1955,8 +2153,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -1998,8 +2196,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2041,8 +2239,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2085,8 +2283,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2130,8 +2328,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2173,8 +2371,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2215,8 +2413,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2243,7 +2441,7 @@
   },
   {
    "slug": "mec-prazo-de-resposta-sem-numero",
-   "titulo": "\"Em quanto tempo alguém me responde?\": não cita minutos nem horas",
+   "titulo": "\"Em quanto tempo alguém me responde?\": não cita minutos, horas nem dias, mesmo com o valor \"1 hora\"",
    "entrada": "Em quanto tempo alguém me responde?",
    "k": 2,
    "roteiro": {
@@ -2261,7 +2459,7 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
       "prazo_retorno_humano": "1 hora",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
@@ -2269,8 +2467,10 @@
    },
    "asserts": {
     "bolhas_sem_padrao": [
-     "(?i)\\b\\d+\\s*(min\\b|minutos?|h\\b|hs?\\b|horas?|hrs?)\\b",
+     "(?i)\\b\\d+\\s*(minutos?|min\\b|horas?|hrs?\\b|dias?\\s+[uú]teis|dias?)\\b",
+     "(?i)\\b(em|dentro de|daqui a|uns|umas|cerca de|no m[aá]ximo)\\s+(at[eé]\\s+)?\\d+\\s*h\\b",
      "(?i)\\b(uma|duas|tr[eê]s|meia)\\s+(hora|horas|minutos?)\\b",
+     "(?i)\\b(ainda hoje|hoje mesmo|amanh[aã] cedo|em instantes|em poucos minutos|rapidinho)\\b",
      "(?i)(?<![\\w@.\\-/])(?!(?:https?://)?(?:www\\.)?imobiliariaexemplo\\.com\\.br)(?:https?://|www\\.)?(?:[a-z0-9\\-]+\\.)+(?:com|net|org|br|ly|me|io|app|link|site|xyz|co|info|online|tv|gl)\\b",
      "(?i)\\b(bit\\.ly|tinyurl|wa\\.me|t\\.me|goo\\.gl|cutt\\.ly|is\\.gd)\\b"
     ],
@@ -2306,8 +2506,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2358,8 +2558,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }
@@ -2400,8 +2600,8 @@
       "aviso_privacidade_url": "https://imobiliariaexemplo.com.br/privacidade",
       "dominios_permitidos": "imobiliariaexemplo.com.br",
       "creci_j": "CRECI/SP 12345-J",
-      "horario_atendimento": "seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado",
-      "prazo_retorno_humano": "1 hora",
+      "horario_atendimento": "segunda a sexta, das 8h às 17h; sábados e alguns feriados, das 9h às 16h",
+      "prazo_retorno_humano": "o mais breve possível, dentro do horário de atendimento",
       "regioes_atendidas": "Pinheiros, Vila Madalena e Butantã (São Paulo/SP)"
      }
     }

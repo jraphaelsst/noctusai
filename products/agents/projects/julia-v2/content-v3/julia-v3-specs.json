@@ -1,0 +1,29 @@
+{
+ "itens": [
+  {
+   "chave": "aviso_privacidade_url",
+   "exemplo": "https://imobiliariaexemplo.com.br/privacidade"
+  },
+  {
+   "chave": "cnpj_oficial",
+   "exemplo": "11.222.333/0001-81"
+  },
+  {
+   "chave": "creci_j",
+   "exemplo": "CRECI/SP 12345-J"
+  },
+  {
+   "chave": "horario_atendimento",
+   "tipo": "texto_curto",
+   "descricao": "Dias e horários em que a equipe humana atende, escritos como a imobiliária fala com o cliente (pode citar feriados). Uma linha.",
+   "exemplo": "segunda a sexta, das 9h às 18h; sábado, das 9h às 13h"
+  },
+  {
+   "chave": "prazo_retorno_humano",
+   "tipo": "texto_curto",
+   "obrigatoria": true,
+   "descricao": "Como a imobiliária descreve o retorno da equipe depois da transferência, sem prometer número (ex.: o mais breve possível, dentro do horário de atendimento). A Julia nunca cita minutos, horas ou dias ao lead: diz só que uma pessoa responde assim que possível.",
+   "exemplo": "o mais breve possível, dentro do horário de atendimento"
+  }
+ ]
+}
