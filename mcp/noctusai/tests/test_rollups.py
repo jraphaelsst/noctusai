@@ -258,9 +258,10 @@ class TestTeamDashboard:
     baseline-verified pre-existing on origin/main.)"""
 
     def test_returns_stable_skeleton_when_no_telemetry(self):
-        result = team_dashboard()
+        result = team_dashboard(slice_scores_fn=lambda *_a: {"groups": []})
         # Envelope shape is always present.
-        assert set(result.keys()) == {"snapshot", "metrics", "agents", "errors"}
+        assert set(result.keys()) == {"snapshot", "metrics", "agents", "slice_scores", "errors"}
+        assert result["slice_scores"]["by_week"] == []
         # Slices are zeroed-but-well-formed skeletons, not empty / not None.
         assert set(result["snapshot"]) == {
             "project", "current_phase", "last_verification"

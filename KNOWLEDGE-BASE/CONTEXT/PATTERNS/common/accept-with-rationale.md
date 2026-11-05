@@ -770,6 +770,14 @@ state change, not a removal.
 - **Scope:** the two files, each carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
 - **Revisit trigger:** identical to 9a's (a).
 
+### 9h Heavy-run guard retains shell (`[carve:hook]`, 2026-11-04)
+
+- **Subject:** `scripts/hooks/claude-guard-heavy-run.py` (PreToolUse `Bash`): denies a heavy test/build command that does not go through the machine-wide hardware admission gate (`hw_admission.py run`).
+- **Decision `[A]`:** stays a script, same `[carve:hook]` bucket and structural reason as 9a–9f — the harness invokes guard adapters as processes on the pre-tool path, where the MCP server is not reachable. The decision lives in `tools/noctus/dev/heavy_run_guard.py`; the adapter loads it through `_guard_failclosed.load_module` and runs under `run_guard` (fail-closed).
+- **Why:** on 2026-11-04 heavy suites ran ungated while 7–9 sessions shared an 8 GB machine, contributing to swapping that slowed every session. A rule in the agent docs alone did not stop it; the gate makes the gated path the only path. → `KB § PATTERNS/devops/hardware-admission-budget.md`
+- **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a).
+
 ### 9g SessionStart worktree-sweep hook retains shell (`[carve:hook]`, 2026-10-09)
 
 - **Subject:** `scripts/hooks/claude-session-start-worktree-sweep.py` (SessionStart): the crash backstop for worktree reclamation.

@@ -58,11 +58,10 @@ def _unconfigured_meta(monkeypatch):
 def _fonte_business_discovery(monkeypatch):
     """The pre-Apify module tests exercise the Business Discovery path (and its ``sem_conta`` state);
     the product default is now ``apify`` (owner decision 2026-11-04), so pin the source explicitly.
-    Apify behaviour is covered in ``test_biblioteca_apify.py`` with an injected ``fonte_reader``."""
-    from app.config import settings
-
-    monkeypatch.delenv("BIBLIOTECA_FONTE", raising=False)
-    monkeypatch.setattr(settings, "biblioteca_fonte", "business_discovery")
+    Apify behaviour is covered in ``test_biblioteca_apify.py`` with an injected ``fonte_reader``.
+    Pinned through the env leg of ``read_biblioteca_fonte`` (platform_settings -> env -> default),
+    never by patching the ``settings`` singleton (``check_no_self_monkeypatch``)."""
+    monkeypatch.setenv("BIBLIOTECA_FONTE", "business_discovery")
 
 
 @pytest.fixture
