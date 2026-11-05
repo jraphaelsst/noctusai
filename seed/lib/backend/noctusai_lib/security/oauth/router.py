@@ -13,11 +13,11 @@ Mounts FOUR endpoints per registered provider, all under
        The `redirect_uri` consumed here is read from the query string
        too (forwarded so it matches the authorize call).
 
-  POST /api/oauth/{provider}/refresh
+  POST /api/oauth/{provider}/refresh      (authenticated: `auth_dependency`)
        Body: `{"refresh_token": "..."}`
        → returns the new TokenSet shape as JSON.
 
-  POST /api/oauth/{provider}/revoke
+  POST /api/oauth/{provider}/revoke       (authenticated: `auth_dependency`)
        Body: `{"token": "..."}`
        → 204 on success.
 
@@ -51,9 +51,9 @@ registration after mounting.
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from noctusai_lib.security.oauth.protocol import OAuthProvider
@@ -63,8 +63,13 @@ logger = logging.getLogger(__name__)
 
 
 CallbackHook = Callable[[OAuthCallbackResult], Awaitable[None]]
+#: `(auth_context, provider, token) -> allowed`. Org-scope seam for refresh /
+#: revoke: the consumer checks that `token` belongs to the caller's org.
+TokenAuthorizer = Callable[[Any, str, str], Awaitable[bool]]
 def oauth_router(
     *providers: OAuthProvider,
+    auth_dependency: Callable[..., Any],
+    token_authorizer: TokenAuthorizer | None = None,
     on_callback: CallbackHook | None = None,
     prefix: str = "/api/oauth",
     callback_paths: dict[str, str] | None = None,
@@ -76,6 +81,14 @@ def oauth_router(
             `name` is the path segment (`<prefix>/<name>/...`). Names
             must be unique within the router; duplicates raise `ValueError`
             at construction.
+        auth_dependency: REQUIRED FastAPI dependency (e.g. the product's
+            `get_current_user_org`) guarding `POST refresh` / `POST revoke`;
+            no/invalid auth -> 401 from the dependency. These endpoints act
+            on a bearer token at the vendor, so they are never anonymous.
+        token_authorizer: optional async `(auth, provider, token) -> bool`
+            org-scope check; False -> 403. Consumers whose tokens are stored
+            per org plug the "does this token belong to the caller's org"
+            lookup here.
         on_callback: optional async hook invoked on every callback round-trip
             (success OR failure — `result.error` is set on failure). The
             hook is where consumers persist tokens, typically encrypting
@@ -140,6 +153,12 @@ def oauth_router(
         if name not in registry:
             raise HTTPException(status_code=404, detail=f"unknown provider: {name}")
         return registry[name]
+
+    async def _enforce_token_scope(auth: Any, provider: str, token: str) -> None:
+        if token_authorizer is not None and not await token_authorizer(
+            auth, provider, token
+        ):
+            raise HTTPException(status_code=403, detail="token not owned by caller org")
 
     async def _run_callback(
         provider: str,
@@ -306,7 +325,9 @@ def oauth_router(
     # ─── POST refresh ─────────────────────────────────────────────────────
 
     @router.post(f"{base}/{{provider}}/refresh")
-    async def refresh(provider: str, body: dict) -> JSONResponse:
+    async def refresh(
+        provider: str, body: dict, auth: Any = Depends(auth_dependency)
+    ) -> JSONResponse:
         """Refresh an access token. Body: `{"refresh_token": "..."}`.
 
         Returns a JSON shape mirroring `TokenSet`. On failure, returns
@@ -319,6 +340,7 @@ def oauth_router(
             raise HTTPException(
                 status_code=400, detail="missing or invalid refresh_token"
             )
+        await _enforce_token_scope(auth, provider, refresh_token)
         try:
             new_tokens = await impl.refresh(refresh_token)
         except Exception as exc:  # noqa: BLE001 — network/4xx → 502 with reason
@@ -342,12 +364,15 @@ def oauth_router(
     # ─── POST revoke ──────────────────────────────────────────────────────
 
     @router.post(f"{base}/{{provider}}/revoke")
-    async def revoke(provider: str, body: dict) -> Response:
+    async def revoke(
+        provider: str, body: dict, auth: Any = Depends(auth_dependency)
+    ) -> Response:
         """Revoke a token at the provider. Body: `{"token": "..."}`. 204 on success."""
         impl = _resolve(provider)
         token = body.get("token")
         if not token or not isinstance(token, str):
             raise HTTPException(status_code=400, detail="missing or invalid token")
+        await _enforce_token_scope(auth, provider, token)
         try:
             await impl.revoke(token)
         except Exception as exc:  # noqa: BLE001 — surface as 502, never 500

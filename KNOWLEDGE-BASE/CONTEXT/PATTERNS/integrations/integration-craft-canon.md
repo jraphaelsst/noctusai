@@ -205,8 +205,10 @@ gate opens, re-verify every claim written while it was closed (memory `feedback_
 **Anti-patterns.** `state = org_id` with nothing server-side. Trusting `redirect_uri` from the request
 to choose where tokens land. Storing a Meta Page token as the long-lived credential. Treating an empty
 Graph `data: []` as "no assets" before checking access level. Mounting `oauth_router`'s `/refresh` and
-`/revoke` (`router.py:309-363`) unauthenticated on a public product — they proxy any token in the body;
-no product mounts them today, keep it that way or wrap them in an auth dependency.
+`/revoke` unauthenticated on a public product — they proxy any token in the body. FIXED 2026-11-05:
+`oauth_router(..., auth_dependency=)` is now a REQUIRED keyword guarding both (401 without auth;
+optional `token_authorizer` for the org-scope check, 403) (`security/oauth/router.py:71,328,367`;
+tests `tests/test_oauth.py` `test_oauth_router_*requires_auth`).
 
 ---
 
@@ -225,8 +227,9 @@ default timestamp tolerance; live-mode retries for up to three days.
 **How it applies here.**
 - **Verify** — the 5-pin contract (`KB § PATTERNS/security/webhook-signatures.md`): `webhook_endpoint(...)`
   with a per-request secret resolver, explicit `bypass_when_unset`, `@limiter.limit`, strict-status
-  tests. The seed default still accepts unsigned requests when the secret is unset unless
-  `WEBHOOK_REQUIRE_SIGNATURE=1` (`security/webhook_signatures.py:58-87`) — the open P0 (PROJECT §6 #1).
+  tests. The seed default is now FAIL CLOSED (2026-11-05): an unset secret is refused with 401 in a
+  deploy context (`is_deploy_context()`), accepted+logged only in dev/test; a per-mount, declared
+  `allow_unsigned_in_prod=True` is the sole opt-out (`security/webhook_signatures.py:63-104`) — P0 closed.
   New receivers pass `bypass_when_unset=False` for any route already live in prod, as the Meta leadgen
   receiver does (`products/social-wiring/backend/app/modules/meta_ads/routers/leadgen_router.py:20-26,180-186`).
 - **Replay window only where the timestamp is signed.** Stripe and Svix sign the timestamp, so the
@@ -234,13 +237,11 @@ default timestamp tolerance; live-mode retries for up to three days.
   `X-Webhook-Timestamp` (milliseconds) and `X-Webhook-Request-Id`, but its HMAC covers the body only
   (WAHA "Events" docs) — an unsigned timestamp proves nothing, so WAHA replay defence is dedup.
 - **Dedupe** on the vendor's event/message id **before** side effects — backend canon §6.5 lists the
-  three house layers. The seed `WebhookDedup` Protocol has `claim()` and **no release**
-  (`integrations/whatsapp/dedup.py:79-90`); the WhatsApp router claims before `on_message`
-  (`whatsapp/router.py:138-146`). If `on_message` raises, the id stays claimed (Redis TTL 1 h,
-  `dedup.py:52`), WAHA's retry is answered `duplicate`, and the message is lost unless the consumer's
-  durable layer (`message_store` UNIQUE) already recorded it. ⇒ **Persist the raw event durably before
-  the work, or use `EventInbox.claim/release`** (durable, releases on failure). Seed gap to surface:
-  `WebhookDedup.release()`.
+  three house layers. The seed `WebhookDedup` Protocol now has `claim()` AND `release()`
+  (`integrations/whatsapp/dedup.py`, 2026-11-05); the WhatsApp router claims before `on_message` and
+  releases the claim when `on_message` raises (`whatsapp/router.py:150-157`), so WAHA's retry is
+  processed instead of answered `duplicate`. Still **persist the raw event durably before fallible
+  work** (`message_store` UNIQUE) or use `EventInbox.claim/release`.
 - **Acknowledge fast.** Meta retries any non-2xx immediately and then less often for 36 h, then drops
   (Meta "Getting started with webhooks"); Asaas pauses the whole queue after 15 consecutive failures and
   deletes events older than 14 days (Asaas "Sobre os webhooks"). So: return 200 for everything past
@@ -598,12 +599,10 @@ migration `062_codigo_imovel_canonical.sql`).
 - ✅ Non-message events answer 200 `ignored` so WAHA does not retry (`:129-131`).
 - ✅ Dedup on `provider_message_id` before the consumer (`:138-144`) — kills the `message` +
   `message.any` double run.
-- ⚠️ Unsigned when the secret is unset: CRITICAL log at mount (`:84-88`) and `handle_unsigned_webhook`
-  accepts unless `WEBHOOK_REQUIRE_SIGNATURE=1` (`webhook_signatures.py:69-87`). Fix = the seed P0.
-- ⚠️ Claim without release: if `on_message` raises (`:146`), the id stays claimed for the dedup TTL
-  and WAHA's retry is dropped as `duplicate`. Consumers must persist the message (durable
-  `message_store` UNIQUE) **before** any fallible work inside `on_message`, or the seed grows
-  `WebhookDedup.release()` used in a `try/except: release; raise`.
+- ✅ Unsigned when the secret is unset: now refused with 401 in a deploy context
+  (`webhook_signatures.py:63-104`); dev/test still logs and accepts.
+- ✅ Claim without release: fixed — `WebhookDedup.release()` is called when `on_message` raises
+  (`whatsapp/router.py:150-157`). Persisting before fallible work is still the durable layer.
 - ⚠️ No replay window possible: WAHA's `X-Webhook-Timestamp` is not covered by the HMAC (WAHA
   "Events"), so durable dedup is the replay defence.
 - Retries are configured per webhook (`config.webhooks[].retries` — constant/linear/exponential with

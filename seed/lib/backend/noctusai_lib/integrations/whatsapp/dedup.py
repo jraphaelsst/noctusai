@@ -74,6 +74,8 @@ class SetnxRedis(Protocol):
         ex: int | None = None,
     ) -> bool | None: ...
 
+    def delete(self, *names: str) -> int: ...
+
 
 @runtime_checkable
 class WebhookDedup(Protocol):
@@ -88,6 +90,11 @@ class WebhookDedup(Protocol):
     """
 
     def claim(self, message_id: str) -> bool: ...
+
+    def release(self, message_id: str) -> None:
+        """Forget a claim so the vendor's retry of `message_id` is processed
+        (call when the handler failed AFTER a successful `claim`)."""
+        ...
 
 
 class InMemoryWebhookDedup:
@@ -108,6 +115,9 @@ class InMemoryWebhookDedup:
             return False
         self._seen.add(message_id)
         return True
+
+    def release(self, message_id: str) -> None:
+        self._seen.discard(message_id)
 
     def clear(self) -> None:
         """Reset between test cases."""
@@ -144,6 +154,9 @@ class RedisWebhookDedup:
             self._key(message_id), "1", nx=True, ex=self._ttl
         )
         return bool(result)
+
+    def release(self, message_id: str) -> None:
+        self._redis.delete(self._key(message_id))
 
 
 def get_webhook_dedup(

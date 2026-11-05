@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 
 from noctusai_lib.security import oauth as oauth_module
@@ -422,23 +422,37 @@ def test_make_oauth_provider_google_requires_credentials():
 # ───────────────────────────── oauth_router ────────────────────────────────
 
 
-def _build_app_with_router(*providers, on_callback=None):
+def _test_auth(authorization: str | None = Header(default=None)):
+    """Stand-in for a product's `get_current_user_org`: 401 without a bearer."""
+    if authorization != "Bearer org-a":
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return ("user-1", "org-a")
+
+
+_AUTH = {"Authorization": "Bearer org-a"}
+
+
+def _build_app_with_router(*providers, on_callback=None, authed=True, **kw):
     """Wrap the router in a fresh FastAPI app for `TestClient`."""
     app = FastAPI()
-    app.include_router(oauth_router(*providers, on_callback=on_callback))
-    return TestClient(app)
+    app.include_router(
+        oauth_router(
+            *providers, on_callback=on_callback, auth_dependency=_test_auth, **kw
+        )
+    )
+    return TestClient(app, headers=_AUTH if authed else None)
 
 
 def test_oauth_router_requires_at_least_one_provider():
     with pytest.raises(ValueError, match="at least one"):
-        oauth_router()
+        oauth_router(auth_dependency=_test_auth)
 
 
 def test_oauth_router_rejects_duplicate_provider_names():
     a = FakeOAuthProvider(name="dup")
     b = FakeOAuthProvider(name="dup")
     with pytest.raises(ValueError, match="duplicate provider name"):
-        oauth_router(a, b)
+        oauth_router(a, b, auth_dependency=_test_auth)
 
 
 def test_oauth_router_authorize_returns_url():
@@ -738,7 +752,7 @@ def test_oauth_router_custom_prefix_mounts_all_endpoints_there():
     """A custom prefix moves every endpoint; the old /api/oauth path 404s."""
     fake = FakeOAuthProvider(name="vendor-a")
     app = FastAPI()
-    app.include_router(oauth_router(fake, prefix="/custom/auth"))
+    app.include_router(oauth_router(fake, prefix="/custom/auth", auth_dependency=_test_auth))
     client = TestClient(app)
 
     ok = client.get(
@@ -779,6 +793,7 @@ def test_oauth_router_callback_paths_preserves_legacy_absolute_path():
             yt,
             cal,
             on_callback=hook,
+            auth_dependency=_test_auth,
             prefix="/api/oauth",
             callback_paths={
                 "youtube": "/api/youtube/oauth/callback",
@@ -829,7 +844,9 @@ def test_oauth_router_callback_paths_unknown_provider_raises():
     construction — not silently ignored."""
     fake = FakeOAuthProvider(name="vendor-a")
     with pytest.raises(ValueError, match="unknown provider"):
-        oauth_router(fake, callback_paths={"not-registered": "/x/cb"})
+        oauth_router(
+            fake, callback_paths={"not-registered": "/x/cb"}, auth_dependency=_test_auth
+        )
 
 
 def test_oauth_router_callback_paths_default_none_is_full_back_compat():
@@ -837,7 +854,7 @@ def test_oauth_router_callback_paths_default_none_is_full_back_compat():
     <prefix>/{provider}/callback; identical to the pre-seam behavior."""
     fake = FakeOAuthProvider(name="vendor-a")
     app = FastAPI()
-    app.include_router(oauth_router(fake, callback_paths=None))
+    app.include_router(oauth_router(fake, callback_paths=None, auth_dependency=_test_auth))
     client = TestClient(app)
     resp = client.get(
         "/api/oauth/vendor-a/callback",
@@ -1104,3 +1121,36 @@ def test_authorization_url_dataclass_has_default_none_code_verifier():
     constructors keep working without change."""
     au = AuthorizationURL(url="https://x", state="s")
     assert au.code_verifier is None
+
+
+# ─── refresh / revoke are authenticated + org-scoped (appsec WE-2) ─────────
+
+
+def test_oauth_router_refresh_requires_auth():
+    client = _build_app_with_router(FakeOAuthProvider(name="vendor-a"), authed=False)
+    response = client.post("/api/oauth/vendor-a/refresh", json={"refresh_token": "rt"})
+    assert response.status_code == 401
+
+
+def test_oauth_router_revoke_requires_auth():
+    fake = FakeOAuthProvider(name="vendor-a")
+    client = _build_app_with_router(fake, authed=False)
+    response = client.post("/api/oauth/vendor-a/revoke", json={"token": "tok"})
+    assert response.status_code == 401
+    assert fake.revoked_tokens == []
+
+
+def test_oauth_router_refresh_and_revoke_blocked_when_token_not_in_caller_org():
+    fake = FakeOAuthProvider(name="vendor-a")
+
+    async def _deny(auth, provider, token):
+        return False
+
+    client = _build_app_with_router(fake, token_authorizer=_deny)
+    assert client.post(
+        "/api/oauth/vendor-a/refresh", json={"refresh_token": "rt"}
+    ).status_code == 403
+    assert client.post(
+        "/api/oauth/vendor-a/revoke", json={"token": "tok"}
+    ).status_code == 403
+    assert fake.revoked_tokens == []

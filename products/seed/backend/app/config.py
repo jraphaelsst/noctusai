@@ -14,8 +14,9 @@ class SeedSettings(ProductSettings):
 
     # ── Webhook receiver (consumed by app/routers/webhook_router.py) ──
     # Empty by default → ``webhook_endpoint(bypass_when_unset=True)``
-    # accepts unsigned payloads with a WARNING (early-dev only). Set in
-    # ``.env`` (``EXAMPLE_WEBHOOK_SECRET=…``) to enforce verification.
+    # accepts unsigned payloads with a WARNING in local dev ONLY; in a deploy
+    # context an unset secret is refused (401). Set it in ``.env`` and the prod
+    # env manifest (``EXAMPLE_WEBHOOK_SECRET=…``) to enforce verification.
     # Rename per vendor (``resend_webhook_secret`` / ``meta_webhook_secret`` / etc.).
     example_webhook_secret: str = ""
 

@@ -13,9 +13,12 @@ meta_api):
 * Per-request ``ResolvedSecret`` resolver — a tiny lambda that reads
   the secret from settings at *request* time so test-time monkeypatches
   are honored (the import-time-capture trap is real).
-* ``bypass_when_unset=True`` so the product boots cleanly in early-dev
-  before the secret is configured. Bypass logs a WARNING — never
-  silent. Flip to ``False`` once your secret is live.
+* ``bypass_when_unset=True`` so the product boots cleanly in local dev
+  before the secret is configured (logs a WARNING — never silent). In a
+  deploy/prod context an unset secret is REFUSED with 401 (fail closed,
+  2026-11-05); a mount that must accept unsigned traffic in prod has to
+  declare ``allow_unsigned_in_prod=True`` + a NOC-REMEDIATE[webhook-secret]
+  marker. Flip ``bypass_when_unset`` to ``False`` once your secret is live.
 * ``@limiter.limit(settings.webhook_rate_limit)`` — DDOS guard on a
   public endpoint.
 * The handler reads ``verified.body`` (raw bytes the signature was
@@ -86,8 +89,8 @@ async def example_webhook(
 
     Auth: signature verified by ``webhook_endpoint(...)`` BEFORE this
     body runs. Reaching here means either (a) the signature checked out,
-    or (b) ``EXAMPLE_WEBHOOK_SECRET`` is unset and bypass fired with a
-    WARNING (early-dev only — set the secret in ``.env`` to enforce).
+    or (b) ``EXAMPLE_WEBHOOK_SECRET`` is unset in a NON-deploy context and
+    bypass fired with a WARNING (local dev only; in prod it is a 401).
 
     TODO(new-product): replace this body with the real event dispatch.
     Typical shape:

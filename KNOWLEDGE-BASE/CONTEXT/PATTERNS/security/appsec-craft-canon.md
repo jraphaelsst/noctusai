@@ -239,7 +239,7 @@ with a removal trigger — never as a silent default.
 
 | Site | Behaviour today | Verdict |
 |---|---|---|
-| Webhook secret unset — `webhook_endpoint(bypass_when_unset=True)` | accepts unsigned, logs CRITICAL in prod; refuses only when `WEBHOOK_REQUIRE_SIGNATURE=1` (`seed/lib/backend/noctusai_lib/security/webhook_signatures.py:52-87`, default OFF) | 🔴 fail-open by default; receivers: seed `products/seed/backend/app/routers/webhook_router.py:81`, `products/igig/backend/app/routers/lead_webhooks_router.py:123`, `products/erp-imobiliario/backend/app/routers/whatsapp_webhook.py:99`, `products/commerce/backend/app/routers/webhook_router.py:81`, `products/social-wiring/backend/app/routers/whatsapp_router.py:1353,1427` |
+| Webhook secret unset — `webhook_endpoint(bypass_when_unset=True)` | refuses with 401 in a deploy context (`seed/lib/backend/noctusai_lib/security/webhook_signatures.py:63-104`) | ✅ FIXED 2026-11-05: fail-closed in deploy context (401), per-mount `allow_unsigned_in_prod=True` is the only opt-out (`webhook_signatures.py:63-104`); `WEBHOOK_REQUIRE_SIGNATURE=1` stays as force-on. Receivers (inherit the fix): seed `products/seed/backend/app/routers/webhook_router.py:81`, `products/igig/backend/app/routers/lead_webhooks_router.py:123`, `products/erp-imobiliario/backend/app/routers/whatsapp_webhook.py:99`, `products/commerce/backend/app/routers/webhook_router.py:81`, `products/social-wiring/backend/app/routers/whatsapp_router.py:1353,1427` |
 | Same, SW WAHA | accept unsigned in deploy context but ERROR `webhook_hmac_desativado` + `/api/health` degraded (`products/social-wiring/backend/app/webhook_hmac.py:1-40`) | 🟡 loud degraded state; `NOC-REMEDIATE[waha-hmac-prod]` names the exit |
 | Predeploy | `audit_webhook_secret_present` fails when no `*WEBHOOK_HMAC_SECRET` in the env snapshot (`mcp/noctusai/tools/noctus/dev/predeploy_check.py:528-535`) | 🟢 gate exists; only as good as the snapshot |
 | AI consent unknown feature | `is_granted` ⇒ False (`KB § PATTERNS/security/lgpd.md` §9) | 🟢 |
@@ -478,7 +478,7 @@ fleet). Rotating a secret without searching where the old one went.
 | Anti-pattern | Incident in this repo |
 |---|---|
 | "RLS enabled" accepted as proof | erp-certidoes public bucket, 2026-09-17 (`KB § PATTERNS/security/lgpd.md` §12) |
-| Fail-open default in the seed | `bypass_when_unset=True` inherited by 5 receivers (§6, §15 WE-2) |
+| Fail-open default in the seed | `bypass_when_unset=True` inherited by 5 receivers — now refused in deploy context (§6, §15 WE-2, fixed 2026-11-05) |
 | Authorizing on `user_metadata` | SW email_marketing/media_creation routers, 2026-10-06 (`KB § PATTERNS/backend/no-metadata-authz.md`) |
 | Signing secret ≠ provider's signing key | erp Meta receiver used the verify token as HMAC secret (fixed 2026-08-03, `products/erp-imobiliario/backend/app/routers/meta_api.py:42-58`) |
 | Wrong scheme for a provider | WAHA assumed sha256 hex; it signs sha512 in `X-Webhook-Hmac` (`KB § PATTERNS/security/webhook-signatures.md` §2b) |
@@ -551,6 +551,9 @@ retention · access log · RIPD trigger check (Art. 38) · withheld-then-activat
   **A10:2025** (fail-open on a missing secret).
 - **Severity:** `CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:H/VA:N/SC:N/SI:L/SA:N` = **8.2 High**; AT:P
   because it needs the misconfiguration (secret unset in prod). Unauthenticated + seed-wide ⇒ **P0**.
+- **STATUS 2026-11-05: FIXED at the seed** (`webhook_signatures.py:63-104`; tests
+  `tests/security/test_unsigned_webhook_flag.py`). Mount comments updated in `products/seed`,
+  `templates/product-seed`, `products/commerce`; no live mount needed an opt-out.
 - **Fix at the seed, once** (CLAUDE.md §1 "Seed defaults"): `bypass_when_unset` resolves from the deploy
   context (dev-only true), prod refuses with 401 and `/api/health` reports degraded like SW's
   `webhook_hmac_desativado`; strict-401 test; `predeploy_check` keeps the secret-present leg. Products

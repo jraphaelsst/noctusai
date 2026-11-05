@@ -233,3 +233,32 @@ def test_router_400_on_invalid_json() -> None:
     )
 
     assert response.status_code == 400
+
+
+def test_router_releases_dedup_claim_when_handler_fails_so_retry_is_processed() -> None:
+    calls: list[str] = []
+    state = {"fail": True}
+
+    async def on_message(inbound: WhatsAppInboundMessage) -> None:
+        calls.append(inbound.provider_message_id)
+        if state["fail"]:
+            raise RuntimeError("downstream down")
+
+    app = FastAPI()
+    app.include_router(
+        create_whatsapp_webhook_router(
+            WhatsAppSettings(base_url="http://waha", webhook_hmac_secret=None),
+            on_message,
+        ),
+        prefix="/webhooks/whatsapp",
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    payload = _valid_payload("m-retry")
+
+    assert client.post("/webhooks/whatsapp", json=payload).status_code == 500
+    state["fail"] = False
+    retry = client.post("/webhooks/whatsapp", json=payload)
+
+    assert retry.status_code == 200
+    assert retry.json() == {"status": "accepted"}
+    assert calls == ["m-retry", "m-retry"]

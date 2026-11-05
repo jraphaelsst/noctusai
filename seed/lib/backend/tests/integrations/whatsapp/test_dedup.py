@@ -65,3 +65,15 @@ def test_both_satisfy_webhook_dedup_protocol() -> None:
     assert isinstance(
         RedisWebhookDedup(make_fake_redis_client()), WebhookDedup
     )
+
+
+def test_release_makes_the_retry_claimable_again():
+    mem = InMemoryWebhookDedup()
+    assert mem.claim("m") is True
+    mem.release("m")
+    assert mem.claim("m") is True
+    redis = RedisWebhookDedup(make_fake_redis_client())
+    assert redis.claim("m") is True
+    redis.release("m")
+    assert redis.claim("m") is True
+    redis.release("never-claimed")  # idempotent

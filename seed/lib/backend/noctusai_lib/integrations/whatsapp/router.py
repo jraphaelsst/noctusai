@@ -54,6 +54,7 @@ def create_whatsapp_webhook_router(
     *,
     signature_header: str = "X-Webhook-Hmac",
     dedup: WebhookDedup | None = None,
+    allow_unsigned_in_prod: bool = False,
 ) -> APIRouter:
     """Build a FastAPI APIRouter that accepts WAHA inbound webhooks.
 
@@ -97,7 +98,9 @@ def create_whatsapp_webhook_router(
         body = await request.body()
 
         if not settings.webhook_hmac_secret:
-            handle_unsigned_webhook("whatsapp-webhook")
+            handle_unsigned_webhook(
+                "whatsapp-webhook", allow_unsigned_in_prod=allow_unsigned_in_prod
+            )
 
         if settings.webhook_hmac_secret:
             if not x_webhook_hmac_sha256:
@@ -143,7 +146,14 @@ def create_whatsapp_webhook_router(
             )
             return {"status": "duplicate"}
 
-        await on_message(inbound)
+        try:
+            await on_message(inbound)
+        except Exception:
+            # The claim above would otherwise swallow the vendor's retry for
+            # the whole TTL: release it so the redelivery is processed.
+            if inbound.provider_message_id:
+                _dedup.release(inbound.provider_message_id)
+            raise
         return {"status": "accepted"}
 
     return router
