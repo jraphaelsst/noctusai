@@ -40,3 +40,4 @@
 {"ts": "2026-11-05T21:15:15.620034+00:00", "slug": "guard-cd-target-path", "agent": "tooling-engineer", "duration_minutes": 8.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-05T21:25:53.403025+00:00", "slug": "agents-staff-org-specs", "agent": "backend-engineer", "duration_minutes": 33.6, "estimated_tokens": null, "outcome": "landed", "notes": "Staff spec-edit by grant plus personal-token enforcement; prod precheck clean; full suite 5769 green"}
 {"ts": "2026-11-05T21:40:33.022970+00:00", "slug": "mq-eject-on-push-reject", "agent": "tooling-engineer", "duration_minutes": 20.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
+{"ts": "2026-11-05T22:02:04.590105+00:00", "slug": "mq-push-token", "agent": "tooling-engineer", "duration_minutes": 20.0, "estimated_tokens": null, "outcome": "landed", "notes": "fabe16cc4 on feat/mq-push-token; 27 merge_queue tests green; actionlint clean"}
