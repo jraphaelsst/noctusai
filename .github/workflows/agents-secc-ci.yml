@@ -57,10 +57,10 @@ jobs:
     # single-slot proof — comfortable margin on a cold-cache CI runner.
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.11"
           cache: pip
@@ -77,7 +77,7 @@ jobs:
       # host — ubuntu-latest — IS amd64 natively, so there's no
       # cross-build / registry-pull hole to fall into here).
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build seed base images (dev tag)
         run: bash scripts/infra/build-base-images.sh dev
@@ -90,7 +90,7 @@ jobs:
 
       - name: Upload proof results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: secc-proof-results
           path: secc-proof-results.json
