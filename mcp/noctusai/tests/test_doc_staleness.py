@@ -333,3 +333,14 @@ def test_commit_msg_hook_in_an_old_base_worktree_uses_the_primary_cli(tmp_path):
     assert "predates the doc-staleness commit leg" in r.stderr
     called = (primary / "mcp/noctusai/CALLED").read_text()
     assert "--doc-staged" in called and str(wt) in called
+
+
+def test_pre_push_doc_staleness_leg_covers_merge_queue_refs():
+    # 2026-11-05: code reaches dev through `mq/<slug>--<sha7>` pushes (always a
+    # new ref). The leg matched only refs/heads/dev and so never fired; it now
+    # also judges mq/* pushes against their merge-base with origin/dev.
+    from pathlib import Path
+    hook = (Path(__file__).resolve().parents[3] / "scripts/hooks/pre-push").read_text()
+    leg = hook[hook.index("doc-staleness gate"):]
+    assert 'refs/heads/mq/*' in leg
+    assert 'git merge-base origin/dev "$_ds_loid"' in leg

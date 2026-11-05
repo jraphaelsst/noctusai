@@ -43,6 +43,7 @@ class FakeCI:
         self.origin, self.red_if, self.flaky_once = origin, red_if, flaky_once
         self.statuses: dict[str, list[tuple[str, str]]] = {}
         self.dispatched: list[tuple[str, str]] = []
+        self.bases: list[str] = []
         self.reruns = 0
         self._runs: dict[str, str] = {}
 
@@ -54,6 +55,7 @@ class FakeCI:
         if args[:2] == ["workflow", "run"]:
             wf, ref = args[2], args[args.index("--ref") + 1]
             self.dispatched.append((wf, ref))
+            self.bases.append(args[args.index("-f") + 1] if "-f" in args else "")
             sha = sh(self.origin, "git", "rev-parse", f"refs/heads/{ref}")
             self._runs[str(len(self._runs) + 1)] = sha
             return 0, "", ""
@@ -180,6 +182,15 @@ def test_green_batch_lands_in_fifo_order_and_marks_each_entry(world):
     assert not sh(world["origin"], "git", "for-each-ref", "refs/heads/mq-candidate/")
 
 
+def test_candidate_run_is_dispatched_with_the_dev_base(world):
+    # 2026-11-05: without it the range keepers judged SHA~50..SHA.
+    dev_before = sh(world["origin"], "git", "rev-parse", "refs/heads/dev")
+    enqueue(world, "a", [("a.txt", "a\n")], 2000)
+    ci = FakeCI(world["origin"])
+    make_queue(world, ci).drain()
+    assert ci.bases == [f"base={dev_before}"]
+
+
 def test_red_batch_bisects_and_ejects_only_the_culprit(world):
     good = enqueue(world, "good", [("g.txt", "g\n")], 2000)
     bad = enqueue(world, "bad", [("BREAK", "boom\n")], 2100)
@@ -228,8 +239,8 @@ def test_ledger_only_dev_advance_is_replayed_without_a_retest(world, monkeypatch
     q = make_queue(world, ci)
     real_dispatch = q.dispatch_and_wait
 
-    def dispatch_then_ledger_push(ref, sha):
-        out = real_dispatch(ref, sha)
+    def dispatch_then_ledger_push(ref, sha, base=""):
+        out = real_dispatch(ref, sha, base)
         # a peer drains a ledger row straight to dev while CI was running
         sh(world["work"], "git", "fetch", "-q", "origin")
         sh(world["work"], "git", "checkout", "-q", "-B", "ledger", "origin/dev")
@@ -253,8 +264,8 @@ def test_code_advance_of_dev_forces_a_retest(world):
     real_dispatch = q.dispatch_and_wait
     pushed = {"done": False}
 
-    def dispatch_then_code_push(ref, sha):
-        out = real_dispatch(ref, sha)
+    def dispatch_then_code_push(ref, sha, base=""):
+        out = real_dispatch(ref, sha, base)
         if not pushed["done"]:
             pushed["done"] = True
             sh(world["work"], "git", "fetch", "-q", "origin")

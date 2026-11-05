@@ -149,6 +149,14 @@ workflows.
   per batch, but runner minutes are free for a public repository and batching
   amortizes it. Per-product lanes are the next step if queue time becomes the
   bottleneck.
+- **Range keepers judge exactly the batch (2026-11-05).** The drain dispatches
+  `test.yml` with `-f base=<dev sha the candidate was composed on>`; the
+  commit-range keepers use `base..candidate`. Before this, a dispatched run had
+  no `event.before` and fell back to `SHA~50..SHA`, re-judging 50 commits
+  already on dev.
+- **Local pre-push doc-staleness covers `mq/*` (2026-11-05).** The leg matched
+  only pushes to `dev`, so it never fired once code took the queue; an `mq/*`
+  push is judged against its merge-base with `origin/dev`.
 - **Bisection is "first half", not speculative.** A red batch of N retries its
   first ⌈N/2⌉. That is enough at our volume; Uber-style speculation is not
   warranted.

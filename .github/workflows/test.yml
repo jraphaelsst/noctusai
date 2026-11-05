@@ -14,6 +14,14 @@ on:
   # `embedding-cache-gate.yml` already carried this; the two heaviest gates did
   # not.
   workflow_dispatch:
+    inputs:
+      base:
+        # The merge queue passes the dev sha its candidate was composed on, so
+        # the range keepers judge exactly the batch (2026-11-05). Optional:
+        # a manual dispatch without it keeps the SHA~50 fallback.
+        description: diff base for the range keepers (dev sha)
+        required: false
+        default: ''
   push:
     # `release/**` (2026-09-22): a ship-consent CUT (noctus.dev.release
     # stage=bless mode=cut) pushes release/<stamp>; bless REQUIRES this
@@ -1374,11 +1382,16 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
+          DISPATCH_BASE: ${{ github.event.inputs.base }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "pull_request" ]; then
             RANGE="${PR_BASE}..${PR_HEAD}"
+          elif [ "$EVENT" = "workflow_dispatch" ] && [ -n "${DISPATCH_BASE:-}" ] \
+               && git cat-file -e "${DISPATCH_BASE}^{commit}" 2>/dev/null; then
+            # Merge-queue candidate: judge exactly what the batch adds to dev.
+            RANGE="${DISPATCH_BASE}..${SHA}"
           elif [ -n "${PUSH_BEFORE:-}" ] && [ "${PUSH_BEFORE//0/}" != "" ] \
                && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
             RANGE="${PUSH_BEFORE}..${SHA}"

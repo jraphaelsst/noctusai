@@ -265,8 +265,13 @@ class Queue:
         return {"slug": e.slug, "ref": e.ref, "sha": e.sha, "kind": kind, "why": why}
 
     # CI ----------------------------------------------------------------------
-    def dispatch_and_wait(self, cand_ref: str, cand_sha: str) -> dict[str, Any]:
-        self.gh("workflow", "run", CI_WORKFLOW, "--ref", cand_ref, "-R", self.repo)
+    def dispatch_and_wait(self, cand_ref: str, cand_sha: str, base: str = "") -> dict[str, Any]:
+        # `base` = the dev sha the candidate was composed on (2026-11-05). A
+        # dispatched run has no `event.before`, so test.yml's range keepers
+        # fell back to `SHA~50..SHA` and judged 50 commits that were already
+        # on dev; with base they judge exactly what this batch adds.
+        self.gh("workflow", "run", CI_WORKFLOW, "--ref", cand_ref, "-R", self.repo,
+                *(("-f", f"base={base}") if base else ()))
         run_id = None
         deadline = time.time() + self.timeout_s
         for _ in range(30):
@@ -359,7 +364,7 @@ class Queue:
                 self.git("push", self.remote, f"{cand}:refs/heads/{cand_ref}")
                 for e in applied:
                     self.set_status(e.sha, "pending", f"testing in batch {cand_ref} ({len(applied)} entr{'y' if len(applied) == 1 else 'ies'})")
-                ci = self.dispatch_and_wait(cand_ref, cand)
+                ci = self.dispatch_and_wait(cand_ref, cand, base)
                 rnd = {"round": n, "candidate": cand, "batch": [e.slug for e in applied], "ci": ci}
                 if ci["verdict"] == "green":
                     ok, landed_sha = self.land(cand, base, wt)

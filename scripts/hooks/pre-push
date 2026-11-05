@@ -441,7 +441,7 @@ else
     echo "[pre-push] migration-applied-ledger-drift: SKIPPED (no interpreter at $_ld_py)" >&2
 fi
 
-# ─── doc-staleness gate (BLOCKING on a push to dev; owner order 2026-10-19) ───
+# ─── doc-staleness gate (BLOCKING on a push to dev or mq/*; owner order 2026-10-19) ───
 # Keeper `check_doc_staleness` (`KB § PATTERNS/common/doc-staleness-gate.md`):
 # for the pushed range <remote_oid>..<local_oid>, code a doc is accountable for
 # (frontmatter `covers:` / derived coverage) must not change materially while
@@ -452,7 +452,18 @@ fi
 # Skips (loudly) when no interpreter, a new branch, or an unknown remote tip.
 if [[ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" ]]; then
     while read -r _ds_lref _ds_loid _ds_rref _ds_roid; do
-        [[ "${_ds_rref:-}" == "refs/heads/dev" ]] || continue
+        # 2026-11-05: code reaches dev through the CI merge queue — a push to
+        # `mq/<slug>--<sha7>`, always a NEW ref (remote oid all-zero). This leg
+        # used to match only refs/heads/dev, so it never fired for the one path
+        # code now takes. For an mq/* push the range base is the merge-base
+        # with origin/dev (what the queue will add to dev).
+        if [[ "${_ds_rref:-}" == refs/heads/mq/* ]]; then
+            [[ "$_ds_loid" =~ $ZERO_RE ]] && continue
+            _ds_roid="$(git merge-base origin/dev "$_ds_loid" 2>/dev/null || true)"
+            [[ -n "$_ds_roid" ]] || { echo "[pre-push] doc-staleness: SKIPPED (no merge-base with origin/dev) — CI re-checks the range." >&2; continue; }
+        else
+            [[ "${_ds_rref:-}" == "refs/heads/dev" ]] || continue
+        fi
         [[ "$_ds_loid" =~ $ZERO_RE || "$_ds_roid" =~ $ZERO_RE ]] && continue
         if [[ ! -x "$_ld_py" || ! -f "$CLI_PP" ]]; then
             echo "[pre-push] doc-staleness: SKIPPED (no interpreter at $_ld_py) — unmeasurable, not a pass." >&2
