@@ -19282,9 +19282,9 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
 # ── Harness-layer format keepers (Stage-4 2026-05-25, harness-agents-skills) ──
 # .claude/skills + .claude/agents are always-on surfaces; these keepers gate
 # authoring discipline so new skills/agents conform by construction.
-_HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer"})
-_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-seed"})
-# Other agents (orchestrator-operator, skill-scout) have specialized contracts and
+_HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer", "agents-security", "accountant", "legal-advisor"})
+_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-seed", "integrations-engineer", "ai-engineer", "test-engineer", "tooling-engineer"})
+# Other agents (orchestrator-operator, skill-scout, ops-steward, reverse-engineer, product-designer) have specialized contracts and
 # are skipped by check_agent_archetype_contract.
 
 # ── Agent-context architecture (Stage-4 2026-05-26, agent-context-architecture) ──
@@ -19706,8 +19706,8 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": rel,
                 "issue": (
                     f"Meta-agent `{stem}` declares non-empty `owns_kb:` — "
-                    f"meta-agents (engineer-seed, orchestrator-operator, "
-                    f"skill-scout) own no KB territory. Declare `owns_kb: []`."
+                    f"meta-agents (engineer-seed, orchestrator-operator) "
+                    f"own no KB territory. Declare `owns_kb: []`."
                 ),
                 "severity": "high",
             })
