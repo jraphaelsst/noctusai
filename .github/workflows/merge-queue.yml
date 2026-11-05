@@ -1,0 +1,58 @@
+name: Merge Queue
+
+# The ONE path code takes into `dev` (2026-11-05). A session enqueues with
+# `noctus.dev.task_branch action='enqueue'` (pushes `mq/<slug>--<sha7>`); this
+# workflow composes the oldest entries onto dev, runs the full `Tests & Build`
+# on the composed candidate (on GitHub runners — never the owner's laptop), and
+# fast-forwards dev only to a green candidate. A red batch is bisected; a red
+# single entry, a conflict or a duplicate migration number is ejected with a
+# `merge-queue` commit status on the enqueued sha saying why.
+# Driver + rationale: mcp/noctusai/tools/noctus/dev/merge_queue.py ·
+# KB § PATTERNS/devops/merge-queue.md.
+on:
+  push:
+    branches: ['mq/**']
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: max entries per batch
+        required: false
+        default: '4'
+  # Sweeper: a drain that died (runner loss, timeout) leaves entries queued;
+  # the next tick picks them up. Cheap when the queue is empty (one fetch).
+  schedule:
+    - cron: '*/20 * * * *'
+
+# One drain at a time, never cancelled: a running drain finishes its batch.
+# GitHub keeps at most one PENDING run per group (a newer trigger replaces the
+# queued one) — harmless here because every drain processes the WHOLE queue,
+# so the surviving pending run covers every entry pushed meanwhile.
+concurrency:
+  group: merge-queue
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # push the candidate ref, fast-forward dev, delete queue refs
+  actions: write    # dispatch Tests & Build on the candidate, re-run failed jobs
+  statuses: write   # the per-entry verdict on the enqueued sha
+
+jobs:
+  drain:
+    name: Drain the merge queue
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: dev
+          fetch-depth: 0
+      - name: Configure git identity for composed commits
+        run: |
+          git config user.name "noctus-merge-queue"
+          git config user.email "noctus-merge-queue@users.noreply.github.com"
+      - name: Drain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 mcp/noctusai/tools/noctus/dev/merge_queue.py drain \
+            --batch "${{ github.event.inputs.batch || '4' }}"

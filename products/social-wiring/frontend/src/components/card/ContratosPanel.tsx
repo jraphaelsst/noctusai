@@ -51,7 +51,7 @@
  * mounted by `ContratosContainer`, not here — it needs compradores/vendedores/
  * testemunhas data this presentational file must not fetch; this panel only
  * calls `onAbrirEnvioAssinatura` to open it. "Cancelar envio" is a plain
- * inline motivo form (`_CancelarEnvioForm` below) since it needs no such data —
+ * inline motivo form (`CancelarEnvioForm` below) since it needs no such data —
  * same reasoning as `excluirContrato`'s `window.prompt`, but with a length
  * gate (§3.3: 3..500 chars) a bare `prompt()` cannot express well.
  */
@@ -211,7 +211,7 @@ interface Props {
   renderAditivos?: (contratoId: string, aberto: boolean) => ReactNode;
   /** `contrato.id` → its `useAssinaturas` entry. A missing key means "never
    *  eligible" (no `gerado` version ever existed) and reads the same as a
-   *  resolved `data: null` — see `_AssinaturaSection`. */
+   *  resolved `data: null` — see `AssinaturaSection`. */
   assinaturas?: Record<string, AssinaturaEntry>;
   /** Opens `EnviarAssinaturaDialog` (mounted by the caller) for this contract
    *  + version. Optional — the button is omitted while not wired, same
@@ -704,7 +704,7 @@ function ContratoCard({
           marcandoAssinado={marcandoAssinado}
           digitalContent={
             atual ? (
-              <_AssinaturaSection
+              <AssinaturaSection
                 contratoId={contrato.id}
                 versao={atual}
                 entry={assinaturaEntry}
@@ -767,7 +767,7 @@ function ContratoCard({
         </div>
 
         {isAdmin && onSetProcessoLegado && (
-          <_ProcessoLegadoControl
+          <ProcessoLegadoControl
             contratoId={contrato.id}
             processoLegado={contrato.processo_legado}
             onSet={onSetProcessoLegado}
@@ -1045,7 +1045,7 @@ function _VersaoAtualRow({
 }
 
 /**
- * `_AssinaturaSection` — the envelope's own row (signature-integration-CONTRACT
+ * `AssinaturaSection` — the envelope's own row (signature-integration-CONTRACT
  * §4): either the "Enviar para assinatura" button, the pendente/parcial
  * status block, or nothing at all once the envelope is `concluido` (the
  * "Assinado" badge on the signed VERSION already covers that state — see
@@ -1061,7 +1061,7 @@ function _VersaoAtualRow({
  * contract that already has a live one, the exact lying-loading-state shape
  * `KB § PATTERNS/frontend/lying-loading-state.md` exists to rule out.
  */
-function _AssinaturaSection({
+function AssinaturaSection({
   contratoId,
   versao,
   entry,
@@ -1178,7 +1178,7 @@ function _AssinaturaSection({
             )}
             Cancelar envio
           </Button>
-          <_CancelarEnvioForm
+          <CancelarEnvioForm
             open={cancelarAberto}
             onCancelar={() => setCancelarAberto(false)}
             onConfirmar={(motivo) => {
@@ -1197,12 +1197,12 @@ const MOTIVO_CANCELAMENTO_MIN = 3;
 const MOTIVO_CANCELAMENTO_MAX = 500;
 
 /**
- * `_CancelarEnvioForm` — §3.3's motivo, 3..500 chars. INLINE, not a modal:
+ * `CancelarEnvioForm` — §3.3's motivo, 3..500 chars. INLINE, not a modal:
  * the card already lives inside `ClienteCardDialog`'s Dialog and a nested
  * Dialog there fights the outer focus trap (same defect as the
  * processo-legado form above). Live length feedback is kept.
  */
-function _CancelarEnvioForm({
+function CancelarEnvioForm({
   open,
   onCancelar,
   onConfirmar,
@@ -1260,11 +1260,11 @@ function _CancelarEnvioForm({
 }
 
 /**
- * `_ProcessoLegadoControl` — the checkbox + inline motivo form, owning its
+ * `ProcessoLegadoControl` — the checkbox + inline motivo form, owning its
  * own open state so ticking it re-renders ONLY this block, never the whole
  * `ContratoCard` and its heavy children.
  */
-function _ProcessoLegadoControl({
+function ProcessoLegadoControl({
   contratoId,
   processoLegado,
   onSet,
@@ -1306,7 +1306,7 @@ function _ProcessoLegadoControl({
         </Label>
       </div>
       {!processoLegado && (
-        <_ProcessoLegadoForm
+        <ProcessoLegadoForm
           open={aberto}
           onCancelar={() => setAberto(false)}
           onConfirmar={(motivo) => {
@@ -1324,13 +1324,13 @@ const MOTIVO_PROCESSO_LEGADO_MIN = 3;
 const MOTIVO_PROCESSO_LEGADO_MAX = 500;
 
 /**
- * `_ProcessoLegadoForm` — migration 151's motivo, 3..500 chars. INLINE, not a
+ * `ProcessoLegadoForm` — migration 151's motivo, 3..500 chars. INLINE, not a
  * modal: the contract card already lives inside `ClienteCardDialog`'s Dialog,
  * and a Dialog nested in it fights the outer focus trap (see the header note)
  * — it never visibly opened in prod, so ticking the checkbox looked inert.
  * Only asked when turning the flag ON; OFF calls back directly.
  */
-function _ProcessoLegadoForm({
+function ProcessoLegadoForm({
   open,
   onCancelar,
   onConfirmar,

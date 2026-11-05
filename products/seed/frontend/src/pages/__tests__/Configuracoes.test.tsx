@@ -1,8 +1,7 @@
 /** Route test: `/configuracoes/*` -- the seed `SectionTabsPage` mount redirects the bare base to the first tab. */
-/// <reference types="@testing-library/jest-dom" />
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import "@testing-library/jest-dom";
+import "@testing-library/jest-dom/vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 vi.mock("@noctusai/seed/infra", () => ({

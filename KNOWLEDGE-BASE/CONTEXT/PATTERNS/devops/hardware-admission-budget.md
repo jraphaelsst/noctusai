@@ -7,6 +7,8 @@
 
 ## 1 · Why
 
+> **Scope since 2026-11-05.** The merged-tree verification moved to the CI merge queue (KB § PATTERNS/devops/merge-queue.md), so this gate now admits only LOCAL heavy checks (scoped pre-enqueue suites, predeploy, ad-hoc runs). The 2026-11-04/05 storm — five integrates queued on two slots, one waiting 2h20m — is the reason: the laptop was running the same full suites CI runs anyway.
+
 One 8-core / 8 GB laptop runs many Claude sessions, and each one fans out agents and
 gates. On 2026-11-04:
 - The load average reached 74, swap usage hit 5.4 of 6 GB, and about 31 Claude processes were running.

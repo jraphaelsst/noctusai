@@ -31,6 +31,8 @@ Pick the row; route to its depth. Axis order: **write-vs-read first** (isolation
 | **two sessions / humans** (architect + operator) | two-session split | — | [[two-session-architect-operator]] |
 | keep working while we talk (dispatch-heavy queue) | autonomous operator subagent | — | [[autonomous-operator-via-subagent]] |
 
+**Landing = enqueue (2026-11-05).** Every writing mode above lands through the CI merge queue — `task_branch action=enqueue`, then `action=landed` — never a direct push and never a local merged-tip run. Small slices, enqueued as soon as they are green; about 3–4 writing sessions at once. → `KB § PATTERNS/devops/merge-queue.md`.
+
 **Three forks that cause reworks — get them right:**
 - **`inline` ≠ `no-isolation`.** Inline = "don't dispatch a subagent" (size economics). Self-branch = "isolate the write" (collision-safety). **Orthogonal** — a tiny inline write STILL self-branches. Never reuse "inline" for isolation.
 - **Engineers never touch `dev`/`main`/`prod`.** They commit ONLY on their own worker branch; integration (merge / reconcile / push) is the **architect**'s job (∨ a peer-as-its-own-architect). The model **nests**: a self-branching peer that dispatches engineers integrates their sub-branches itself.

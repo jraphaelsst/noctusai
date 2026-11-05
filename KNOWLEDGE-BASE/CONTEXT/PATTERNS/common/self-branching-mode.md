@@ -71,6 +71,15 @@ noctus.dev.task_branch action="start" slug="<task-slug>" confirm=True
 
 # ... do the work; commit on feat/<slug> (explicit-path git add, own files only) ...
 
+noctus.dev.task_branch action="enqueue" slug="<task-slug>" confirm=True   # THE DEFAULT (2026-11-05)
+#   → fetch → rebase onto origin/dev → migration renumber, doc-staleness, KB counts, pre-push keepers
+#   → push HEAD → refs/heads/mq/<slug>--<sha7>   (NOT dev; NO local merged-tip gates)
+#   → the CI merge queue composes it onto dev (+ queue ahead), runs Tests & Build on GitHub
+#     runners, lands it green / bisects a red batch / ejects with the reason (KB § PATTERNS/devops/merge-queue.md)
+noctus.dev.task_branch action="landed" slug="<task-slug>" confirm=True
+#   → reads the `merge-queue` commit status; once landed: pointer, primary FF, auto-cleanup
+
+# FALLBACK only when GitHub Actions is down (local gates, direct push):
 noctus.dev.task_branch action="integrate" slug="<task-slug>" confirm=True
 #   → fetch → rebase onto origin/dev → FF-push HEAD → origin/dev
 #   → on the concurrent-push race (non-FF): fetch, rebase, RETRY (≤5)
@@ -541,11 +550,24 @@ A refused **Edit / Write / MultiEdit / NotebookEdit** is rewritten into the sess
   - The noc-harness mod claims automatically when its session runs `task_branch start`; `/noc-claim <slug> | release` does it by hand.
   - `task_branch cleanup` releases every claim on the worktree it removes.
 - **Never redirected:**
-  - Bash. A shell command's targets are parsed, not known.
+  - Bash naming an absolute primary path, or choosing its own directory (`cd`, `git -C`). A relative-path Bash write IS redirected since 2026-11-05 (next section).
   - A worktree that is unregistered or missing, or on `dev`, `main` or `prod`. `claim_problem` rejects it both when the claim is written and on every redirect.
   - Another session's claim.
   - A malformed claim file. It reads as no claims, so the refusal stands.
 - **Why it was held first:** it changes the guard that refuses the agent's own writes. The harness permission classifier blocked it as self-modification until the owner switched out of auto mode and approved each edit. That is the right posture for any change that loosens a guard.
+
+### Auto-claim + relative-path Bash redirect (2026-11-05)
+
+**The drift it closes.** The owner reported it as recurring. A session edits correctly in its worktree, then runs `git add … && git commit …` (or `echo … > rel/path`) with its cwd still in the primary. The refusal fired every time, and the next commit repeated the habit. A refusal that the same agent hits again and again is a gate at the wrong place (§10/§11): the act itself must land right. Two changes, both in `primary_write_guard.py`, both visible:
+
+- **Auto-claim.** Any call that demonstrably works inside a registered non-shared worktree makes it the session's claim, with no explicit `harness_claim_worktree` needed. That means an Edit/Write/NotebookEdit under it, a Bash call whose cwd is in it, or a Bash call that `cd`s or `git -C`s into it. The last worktree used wins (`auto_claim`).
+- **Bash redirect.** A refused Bash command is rewritten to `cd <claimed worktree> && <command>` (`redirect_bash_for`) only when all of these hold:
+  - its session holds a valid claim;
+  - its cwd is the primary root;
+  - every guarded target comes from a RELATIVE path, meaning no `cd`, no `git -C`, and no absolute path into the primary outside a worktree.
+  The allow carries `[noc-guard:primary-write] REDIRECTED …` and tells the agent to `cd` once. An explicit primary path, another session's claim, a stale claim or a command that picks its own directory keeps the refusal.
+- **The refusal text was itself drift.** It said "a bare `cd` does not survive to the next tool call". That is no longer true for a main session, where Claude Code carries the cwd forward inside the working directories. It also pointed at `integrate`. It now says: `cd <worktree>` once (subagents: absolute paths / `git -C`), then `action='enqueue'`.
+- Tests: `tests/test_guard_redirect.py::TestAutoClaimAndBashRedirect` (real hook subprocess, throwaway repo).
 
 ### Two false positives fixed at the root (2026-10-06)
 

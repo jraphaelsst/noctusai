@@ -40,20 +40,23 @@ def test_all_healthy_exit_0():
     assert {f["slug"] for f in res["frontends"]} == {"core", "seed"}
 
 
-def test_one_backend_down_exit_1():
-    # port 8013 = igig, an ACTIVE product (deploy/fleet/active-scope.txt) —
-    # an asleep product's port would never be checked at all (see the
-    # skipped_asleep tests below), so it cannot stand in as "the one down".
-    def fetcher(url: str) -> str:
-        return "FAIL" if ":8013/" in url else "200"
+def test_one_backend_down_exit_1(tmp_path):
+    # Hermetic synthetic fleet: "the one down" must be an ACTIVE product (an
+    # asleep one is never fetched), and the real fleet's awake/asleep split
+    # moves with the catalog — it pinned igig:8013 until igig was slept on
+    # 2026-11-04 and the test went red. 8001 = awake-one in _make_fleet.
+    root = _make_fleet(tmp_path, ["core", "awake-one"])
 
-    res = SF.smoke_fleet(fetch_status=fetcher, repo_root=str(REPO))
+    def fetcher(url: str) -> str:
+        return "FAIL" if ":8001/" in url else "200"
+
+    res = SF.smoke_fleet(fetch_status=fetcher, repo_root=str(root))
     assert res["status"] == "degraded"
     assert res["exit_code"] == 1
     assert res["failed"] == 1
     assert res["passed"] == res["total"] - 1
     down = [b for b in res["backends"] if not b["ok"]]
-    assert len(down) == 1 and down[0]["port"] == "8013"
+    assert len(down) == 1 and down[0]["port"] == "8001"
 
 
 def test_non_200_counts_as_fail():

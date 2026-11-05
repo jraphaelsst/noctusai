@@ -15,6 +15,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md
   - CONTEXT/PATTERNS/devops/ci-deploy-prod.md
   - CONTEXT/PATTERNS/devops/dev-main-ci-gates.md
+  - CONTEXT/PATTERNS/devops/merge-queue.md
   - CONTEXT/PATTERNS/devops/prod-deploy-safety-gates.md
   - CONTEXT/PATTERNS/devops/prod-watchdog.md
   - CONTEXT/PATTERNS/devops/hardware-admission-budget.md
@@ -69,6 +70,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Usage evaluation — measure before/after every change in how we work** (`noctus.dev.usage_eval`; counts only, never `ai_usage`). → `KB § PATTERNS/devops/usage-evaluation.md`
 - **Pin what executes: actions by full SHA, base images by digest, deploys by immutable tag or digest — never `:latest` in prod.** A mutable tag is a re-pointable supply chain (trivy-action, 2026-03). CI = pre-commit + Actions `build-and-push.yml` → GHCR; AST-first for code-shaped CI scripts, shell + YAML are config. → `KB § PATTERNS/devops/sre-craft-canon.md` §6 · `KB § PATTERNS/devops/ci-security-gates.md`
 - **dev→main process — consistent, CI-enforced gates.** The consolidated map: which CI workflows gate `dev`/`main`, the green requirement, the bless→promote flow; every suite + baseline is CI-gated (an unenforced gate is silent debt). → `KB § PATTERNS/devops/dev-main-ci-gates.md`
+- **The CI merge queue is the one path into `dev`.** `task_branch action=enqueue` → `merge-queue.yml` composes, tests on GitHub runners, lands green / bisects / ejects; you own the workflow + `merge_queue.py`. → `KB § PATTERNS/devops/merge-queue.md`
 - **CI embedding-cache gate** (`embedding-cache-gate.yml`): hard-fail when the cache tunnel is up, soft-fail on fork PRs. → `KB § PATTERNS/devops/ci-embedding-cache-gate.md`
 - **SSH deploy keys: forced-command, never `restrict` when a `permitopen` forward is needed.** → `KB § PATTERNS/devops/ssh-deploy-key-restrictions.md`
 - **CI-dispatchable prod deploy.** `deploy-prod.yml` (`workflow_dispatch`) fast-forwards the VPS checkout over CI so deploys work from egress-restricted envs (no outbound `:22`); forced-command deploy key (`command="…/prod-pull.sh"`) + ref-whitelist + §2a safe-pull (FF-only, backup, refuse non-FF/overlap); dormant until `NOCTUS_VPS_DEPLOY_PROD_KEY`/`NOCTUS_VPS_HOST` set; composes with `noctus.dev.release` bless/promote. → `KB § PATTERNS/devops/ci-deploy-prod.md`

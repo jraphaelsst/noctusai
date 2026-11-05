@@ -121,9 +121,18 @@ from tools.noctus.dev.products import list_products
 
 
 def resolve_domain_product() -> str:
-    """The alphabetically-first non-seed product that has a backend and ≥1
-    domain router, resolved from the live product registry."""
-    for p in sorted(list_products(), key=lambda d: d["name"]):
+    """The alphabetically-first ACTIVE non-seed product that has a backend and
+    ≥1 domain router, resolved from the live product registry.
+
+    Active-only, because the analyzers it is compared against audit active
+    products only (`analyzers._list_products` → `filter_active`). An asleep
+    product resolved here can never appear in their output (2026-11-05: the
+    catalog slept academia-de-reciclagem and the matrix test went red)."""
+    from tools.noctus.dev.product_scope import filter_active
+
+    products = list_products()
+    active = set(filter_active([d["name"] for d in products]))
+    for p in sorted((d for d in products if d["name"] in active), key=lambda d: d["name"]):
         if p["name"] != "seed" and p.get("has_backend") and p.get("routers"):
             return p["name"]
     raise AssertionError("no domain product with backend routers in registry")

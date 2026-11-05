@@ -117,6 +117,10 @@ const metaDMAdapter: ChatWindowAdapter = {
 export default function IgDMs() {
   const accountId = useActiveMetaAccountId();
 
+  // Hook is unconditional (rules-of-hooks); demo mode passes null so the
+  // query stays disabled — no network call, same as the early return before.
+  const { data: conversationsData } = useIgConversations(isDemoMode() ? null : accountId);
+
   // App-Review screencast surface — `?demo=1` renders the exact live DMs UX
   // (thread list → open → read → compose + send) from seeded data, since
   // Standard Access blocks the real inbox until Advanced Access is granted.
@@ -142,7 +146,6 @@ export default function IgDMs() {
   // queryKey) — no extra request. Intercepts the "needs Meta setup" gate
   // (Graph #3) so the tab shows an actionable card instead of an empty
   // ChatWindow that would misread as "no conversations".
-  const { data: conversationsData } = useIgConversations(accountId);
 
   if (!accountId) {
     return (
