@@ -283,9 +283,15 @@ class TestElegibilidade:
         r = await self._ask(mundo, LEAD_CHAT, permitido=True)
         assert (r.elegivel, r.motivo) == (True, "permitido")
 
-    async def test_staff_still_wins_over_permitido(self, mundo):
+    async def test_a_chat_marked_staff_is_julias_when_listed(self, mundo):
+        # Owner 2026-11-05: the owner's own number is an org member's, so its chat was staff before it was listed.
         r = await julia.avaliar_elegibilidade(
             client=mundo.sw, connection=mundo.record(CONNECTION_ID), chat_id=LEAD_CHAT, chat_state={"categoria": "equipe"}, permitido=True)
+        assert (r.elegivel, r.motivo) == (True, "permitido")
+
+    async def test_a_chat_marked_staff_is_refused_when_not_listed(self, mundo):
+        r = await julia.avaliar_elegibilidade(
+            client=mundo.sw, connection=mundo.record(CONNECTION_ID), chat_id=LEAD_CHAT, chat_state={"categoria": "equipe"})
         assert (r.elegivel, r.motivo) == (False, "equipe")
 
     async def test_permitido_does_not_waive_a_missing_ativado_em(self, mundo):
@@ -387,3 +393,34 @@ class TestTriagemSemRedis:
             t = await whatsapp_router._triar_lead(mundo.record(CONNECTION_ID), chat_id="5511900001111@c.us",
                                                   sender="5511900001111@c.us", cfg=cfg)
         assert t.estado == "erro" and t.bloqueia_ia is True
+
+
+@pytest.mark.asyncio
+class TestStaffOnTheAllowlist:
+    """Owner 2026-11-05: a staff number listed on the allowlist (switch ON) is classified as a LEAD, so Julia answers it."""
+
+    async def _classificar(self, w, chat):
+        p1, p2, p3 = _db(w)
+        with p1, p2, p3:
+            return await whatsapp_router._classificar_remetente(w.record(CONNECTION_ID), entrada=_Entrada(), chat_id=chat, sender=chat)
+
+    def _staff(self, w):
+        w.sw.set_table_data("julia_staff", [{"id": "s1", "org_id": ORG_ID, "telefone": OWNER_PHONE, "ativo": True, "nome": "Dono", "papel": "outro"}])
+
+    async def test_staff_not_listed_stays_staff(self, mundo):
+        self._staff(mundo)
+        _config(mundo, True)
+        _permitir(mundo, "5511900001111")
+        assert await self._classificar(mundo, f"{OWNER_PHONE}@c.us") is not None
+
+    async def test_staff_listed_with_the_switch_on_is_a_lead(self, mundo):
+        self._staff(mundo)
+        _config(mundo, True)
+        _permitir(mundo)
+        assert await self._classificar(mundo, f"{OWNER_PHONE}@c.us") is None
+
+    async def test_staff_listed_with_the_switch_off_stays_staff(self, mundo):
+        self._staff(mundo)
+        _config(mundo, False)
+        _permitir(mundo)
+        assert await self._classificar(mundo, f"{OWNER_PHONE}@c.us") is not None

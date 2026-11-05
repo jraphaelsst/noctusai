@@ -270,9 +270,9 @@ def julia_ativa_em_alguma_conexao(client: Any) -> bool:
 
 #: Why the per-line switch cannot go ON right now (owner 2026-11-05): code -> (HTTP status, pt-BR text saying what to do).
 BLOQUEIOS_LIGAR: dict[str, tuple[int, str]] = {
-    "julia_nao_publicada": (409, "Publique a Julia no app Agentes antes de ligá-la aqui."),
-    "julia_desligada_no_agents": (409, "Ligue a Julia no app Agentes (Controles) antes de ligá-la aqui."),
-    "agents_indisponivel": (503, "Não foi possível confirmar o estado da Julia no app Agentes agora. Tente novamente em instantes."),
+    "julia_nao_publicada": (409, "A Julia ainda não foi liberada para esta empresa pela NoctusAI. Assim que for, você poderá ligá-la aqui."),
+    "julia_desligada_no_agents": (409, "A Julia está pausada pela NoctusAI no momento. Você poderá ligá-la aqui quando ela for reativada."),
+    "agents_indisponivel": (503, "Não foi possível confirmar agora se a Julia pode ser ligada. Tente novamente em instantes."),
 }
 
 
@@ -654,10 +654,10 @@ async def avaliar_elegibilidade(
 
     `permitido=True` (owner decision 2026-11-05): the sender is on the org's allowlist while its switch is ON -- an EXPLICIT
     opt-in (the owner lists his own number so Julia answers only him at first, and that number almost certainly has a chat
-    with the line already). It bypasses the snapshot and previous-chat rules (`snapshot`, `chat_anterior`) and nothing else:
-    staff (`equipe`) still wins, and `sem_ativado_em` still refuses; the blocklist and opt-out are applied by the caller / agents.
+    with the line already). It bypasses the snapshot and previous-chat rules (`snapshot`, `chat_anterior`) AND a chat earlier marked staff (`equipe`):
+    the owner's own number is an org member's, so it was staff before it was listed. `sem_ativado_em` still refuses; the blocklist and opt-out are applied by the caller / agents.
     """
-    if chat_state and chat_state.get("categoria") == "equipe":
+    if chat_state and chat_state.get("categoria") == "equipe" and not permitido:
         return Elegibilidade(False, "equipe")
     if chat_state and chat_state.get("agente_conversation_id"):
         return Elegibilidade(True, "owned")

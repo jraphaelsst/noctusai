@@ -469,7 +469,21 @@ async def _classificar_remetente(connection, *, entrada, chat_id: str, sender: s
             resolvido = await entrada.phone_do_lid(chat_id if julia.is_lid(chat_id) else sender)
             if resolvido:
                 extras.append(resolvido)
-        return julia_staff_service.classificar_remetente(client, core, connection.org_id, julia_staff_service.formas_do_remetente(*extras))
+        remetente = julia_staff_service.classificar_remetente(client, core, connection.org_id, julia_staff_service.formas_do_remetente(*extras))
+        if remetente is not None:
+            # Owner 2026-11-05: a number on the allowlist (switch ON) is a LEAD even when it is staff -- the owner lists their own
+            # number to test Julia, and their phone is an org member's. Unreadable allowlist => keep the staff verdict.
+            try:
+                lista = await julia_protecao_service.situacao_permitidos(
+                    client, connection.org_id, chat_id=chat_id, sender=sender, resolver_alias=entrada.phone_do_lid,
+                )
+            except Exception as exc:
+                logger.error("Julia: allowlist unreadable conn=%s (%s) -- staff verdict kept", connection.id, type(exc).__name__)
+                lista = None
+            if lista == "permitido":
+                logger.info("Julia: staff number on the allowlist conn=%s -- treated as a lead", connection.id)
+                return None
+        return remetente
     except Exception as exc:
         logger.error("Julia: staff lookup failed conn=%s (%s) -- the sender is treated as a lead", connection.id, type(exc).__name__)
         return None
