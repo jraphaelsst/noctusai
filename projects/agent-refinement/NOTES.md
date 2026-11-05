@@ -98,6 +98,15 @@
 - dev_team tests 167 passed on the merged tip; kb_sync OK. No configs / .py / allowlists touched.
 - Left: test_charters asserts the literal "three-way sync" (kept as "supersedes the older …"); allowlist-driven Tools sections unchanged (wiring).
 
+## Phase 3 — orchestration research — DONE
+- 7987da470 `PATTERNS/architect/orchestration-craft-canon.md` (543 lines, architect-owned) + leader charter §10 + family-index pointer. Merged 705338b36.
+- Q1: the tech-lead is NOT the builder — it plans, dispatches, integrates, lands, and is the user's single contact; it self-branches for its own edits (contracts, integration, sub-cutoff fixes). Coupled work → one writer; separable → parallel specialists.
+- Q2: specialists are called as tools (brief out → structured return + durable artefacts, verified from the tech-lead's own shell); advisors return decisions; executors meet at a written contract; effort tiers E0–E5, wave ≤3–5; MAST's 14 failure modes mapped to house fixes.
+- Q3: peer sessions = air-traffic sectors: claim zone (pointer paths) before entering, separation by files, merge queue as the shared check, freeze only for shared plumbing with owner + explicit lift; message kinds CLAIM/HEADS-UP/ASK/FREEZE/THAW/HANDOVER/LANDED/CONFLICT; peers inform/request, never grant; twice-reverted ⇒ stop; silence ≠ consent.
+- Proposals for noctusai-3d (canon §10, NOT applied): P1 Agent isolation:"worktree" forks from origin/HEAD (=origin/main here) — the real cause of the stale base; P2 CLAIM/ASK on paths_overlap at start; P3 freeze as ledger data that enqueue refuses on; P4 `lease_until` on pointers; P5 cite sources for the 3–4 session cap.
+- Owner/gc: family-index line "Orchestrator=architect" reads as if the read-only architect agent orchestrates (verbatim member line — not edited).
+- Slice scores: 15 dispatched slices logged to slice-scores.ndjson (W1×6, W2×6, P2×2, P3).
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
