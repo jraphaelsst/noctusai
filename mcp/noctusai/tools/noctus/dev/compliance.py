@@ -20966,7 +20966,13 @@ def check_all_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     # cache's source was STAGED, leaving out-of-commit/FF-merge drift to block).
     try:
         from tools.noctus.dev.refresh_all_caches import settle_structural_caches
-        settle_structural_caches(repo_root)
+        # noc-graph is EXCLUDED (2026-11-05, measured): healing it here rebuilt
+        # the whole 97k-node graph inside every methodology commit's 8-way
+        # sync — 29-80 s per commit — contradicting the documented
+        # cache-timing relocation (pre-commit §9f: the graph rebuilds lazily on
+        # read and at delivery, never per commit; its freshness keeper is
+        # advisory). The other structural caches stay heal-on-contact (<1 s).
+        settle_structural_caches(repo_root, exclude=("noc-graph",))
     except Exception as exc:  # best-effort; residual staleness still flagged below
         logger.warning(
             "check_all_cache_freshness: structural heal-on-contact skipped (%s); "

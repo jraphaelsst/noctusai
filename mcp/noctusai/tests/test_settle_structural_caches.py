@@ -80,3 +80,24 @@ class TestSettleStructuralCaches:
         monkeypatch.setattr(rac, "refresh_all", lambda **kw: {"ok": True, "failures": []})
         r = rac.settle_structural_caches()
         assert r["healed"] == ["keeper-patterns", "noc-graph"]
+
+
+class TestCommitTimeExcludesNocGraph:
+    """2026-11-05 (measured 29-80 s per methodology commit): the 8-way-sync
+    freshness check must not rebuild the 97k-node graph at commit time — the
+    graph refreshes lazily on read and at delivery; its keeper is advisory."""
+
+    def test_exclude_skips_the_named_cache(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(rac, "detect_stale_caches", lambda root=None: ["noc-graph", "agent-context"])  # self-patch-ok: the freshness probe is the module's own IO seam (reads real caches); the exclusion logic under test runs unpatched
+        monkeypatch.setattr(rac, "refresh_all", lambda **kw: calls.append(kw) or {"ok": True, "failures": []})  # self-patch-ok: refresh_all rebuilds real caches (IO); the selection logic under test runs unpatched
+        r = rac.settle_structural_caches(exclude=("noc-graph",))
+        assert calls == [{"only": ["agent-context"]}]
+        assert r["healed"] == ["agent-context"]
+
+    def test_eight_way_sync_freshness_check_excludes_noc_graph(self):
+        import inspect
+
+        from tools.noctus.dev import compliance
+        src = inspect.getsource(compliance.check_all_cache_freshness)
+        assert 'settle_structural_caches(repo_root, exclude=("noc-graph",))' in src
