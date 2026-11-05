@@ -990,7 +990,9 @@
     "julia-v3",
     "mecanismo",
     "opt-out",
-    "lgpd"
+    "lgpd",
+    "espera-deploy",
+    "espera-deploy:feat/julia-recusa-corrigivel"
    ],
    "ativo": true
   },
@@ -2964,7 +2966,9 @@
     "julia-v3",
     "mecanismo",
     "handoff",
-    "entrada-estranha"
+    "entrada-estranha",
+    "espera-deploy",
+    "espera-deploy:feat/julia-recusa-corrigivel"
    ],
    "ativo": true
   },
