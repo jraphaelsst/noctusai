@@ -23,6 +23,14 @@
 - Fixed: 01-CORE get_current_admin (MFA gate, platform authz), asleep banners 02/03/06/08, 04-DATABASE snapshot flag, 05 heading.
 - Wave-3/2 todo: jobs-organ.md candidate; agents + social-wiring backend domain docs; 06-THERAPY user_metadata roles claim (asleep).
 
+### W1-S2 security + agents-security — merged
+- Commits 8fee81c06 · 998660e62. appsec-craft-canon 605 · secure-code-review-checklist 181 (83 items, 46 keeper-covered) · incident-response-playbook 268 · ai-agent-security-canon 445 · audits/julia-2026-11 108 (status rows moved out of the catalog verbatim + 2026-11-05 re-check).
+- L1 security 41 → 58 (+WebFetch, llm-bot-security ownership → agents-security); agents-security 39 → 51.
+- Fixed: lgpd.md broken pointer + misplaced §, webhook-signatures fail-closed-in-prod rule + numbering + adopter re-check, llm-bot-security wrong claims, threat-model stale pointer.
+- Audit corrections: conversation_rate_limit.py / anomaly.py have NO callers on dev (dead code claimed as wired); real gap = SW Julia triage returns `erro` and lets turns through when Redis is down (julia_protecao_service.py:367-369) — P2 (P1 if org daily cap unset). erp-certidoes = CVSS 4.0 8.2 High (8.7 if URL leaked), P0 via LGPD; object path embeds a person's name. Seed webhook has an opt-in `WEBHOOK_REQUIRE_SIGNATURE` (default OFF).
+- Dev harness: no PreToolUse guard on WebFetch / vps.exec curl / notify(confirm=True); no project permission allow/deny list → AI canon §13 proposal.
+- Wave-3 todo: INDEX.md:381 "four shapes" stale; INDEX layout misplaced security/ node ~:202. feat/jl-sec* (3 branches) local-only, unmerged.
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
