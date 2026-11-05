@@ -41,7 +41,7 @@ import math
 from dataclasses import replace
 from typing import Any
 
-from app.studio.especificacoes import placeholders_org, resolver_texto
+from app.studio.especificacoes import completar_indisponiveis, placeholders_org, resolver_texto
 from app.studio.especificacoes_service import preparar as preparar_valores
 from app.studio.spec_formatos import dividir_itens
 from app.studio.ferramentas_registry import ferramenta_conhecida, ferramenta_da_conversa, nome_no_modelo
@@ -576,10 +576,11 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
                 + ": " + "; ".join(f"{k} ({', '.join(sorted({v.motivo for v in vs}))})" for k, vs in sorted(prep.invalidas.items())) + ".",
                 bloqueia,
             ))
-        faltam = sorted(
-            sp.chave for sp in version.conteudo.specs
-            if sp.obrigatoria and not valores.get(sp.chave, "").strip()
-        )
+        # A REQUIRED spec with no valid value never renders raw nor empty: it carries the typed sentinel in the data
+        # block (the turn keeps running and tells the lead it will check; publish readiness still blocks below).
+        valores, fenced, faltam_t = completar_indisponiveis(
+            [sp.chave for sp in version.conteudo.specs if sp.obrigatoria], valores, fenced)
+        faltam = list(faltam_t)
         if faltam:
             faltando_specs = tuple(faltam)
             avisos.append(CompileWarning(

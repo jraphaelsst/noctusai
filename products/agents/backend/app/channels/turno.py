@@ -27,11 +27,13 @@ from zoneinfo import ZoneInfo
 
 from app.channels import admissao
 from app.channels import conformidade as conf
+from app.studio.especificacoes import completar_indisponiveis, placeholder_cru_em
 from app.channels.contexto import Dossie, render_contexto_system
 from app.channels import proveniencia as prov
 from app.channels.opt_out import OptOutService
 from app.channels.tool_registry import (
     MOTIVO_LEAD_PEDIU_PARAR,
+    alertar_info_indisponivel,
     OPT_OUT_PALAVRA_CHAVE,
     JuliaTurno,
     SkillFonte,
@@ -148,7 +150,7 @@ def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
 
 def _compilar(
     svc: ServicosCanal, org_id: UUID, agent: Any, *, versao: UUID | str = "ativa",
-    specs: Mapping[str, str] | None = None,
+    specs: Mapping[str, str] | None = None, tolerar_specs_faltando: bool = False,
 ) -> tuple[AgenteResolvido, VersaoPadrao, Any]:
     """Resolve + compile FOR THE ORG with the pinned standard; refuses (typed) when there is nothing to run
     or the content is incomplete. No side effect. ``versao``/``specs`` serve the eval driver (a DRAFT, with
@@ -165,7 +167,11 @@ def _compilar(
     padrao = padrao_do_turno(svc, r)
     compiled = compile_for_org(svc.studio_store, svc.catalog, r, qualificacao=qualificacao_data(padrao))
     status = conteudo_status(svc.studio_store, svc.catalog, r, compiled=compiled)
-    if not status.completo:
+    # A REQUIRED org spec with no value is readiness (publish), not a refusal at turn time: the prompt carries the
+    # INDISPONIVEL sentinel for it and the turn alerts the org (``alertar_info_indisponivel``). ``conteudo_completo``
+    # (what SW / Studio show) stays strict.
+    bloqueantes = set(status.avisos_bloqueantes) - ({"spec_org_faltando"} if tolerar_specs_faltando else set())
+    if bloqueantes:
         raise TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.")
     return r, padrao, compiled
 
@@ -204,7 +210,7 @@ def preparar(
     """Everything a turn needs that does not depend on the lead. Raises :class:`TurnoRecusado` (409) BEFORE
     anything is persisted: ``no_active_version`` · ``qualificacao_indisponivel`` · ``conteudo_incompleto`` ·
     ``prompt_too_large``."""
-    r, padrao, compiled = _compilar(svc, org_id, agent, versao=versao, specs=specs)
+    r, padrao, compiled = _compilar(svc, org_id, agent, versao=versao, specs=specs, tolerar_specs_faltando=True)
     if len(compiled.texto) > MAX_COMPILED_PROMPT_CHARS:
         raise TurnoRecusado(409, "prompt_too_large", "O prompt compilado passa do limite de tamanho.")
     try:  # proof of use (§A7), under the org that owns the version's rows
@@ -441,7 +447,10 @@ async def executar(
     #: allowlists are RULES: built only from values that passed the validator (report mode keeps an invalid value as
     #: data, it never lets it widen what a reply may link or cite)
     valores = prep_specs.limpos
-    skills: SkillFonte | None = SkillsComSpecs(fonte, prep_specs.valores, prep_specs.fenced)
+    # a REQUIRED spec with no value reads ``[dado: chave]`` in a skill text too (the sentinel is in the prompt's data block)
+    valores_skill, fenced_skill, _ = completar_indisponiveis(
+        [d.chave for d in r.specs_declaradas if d.obrigatoria], prep_specs.valores, prep_specs.fenced)
+    skills: SkillFonte | None = SkillsComSpecs(fonte, valores_skill, fenced_skill)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
     historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
@@ -456,6 +465,7 @@ async def executar(
             svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
         modo_restrito=nivel != "normal",
         alertas=svc.alertas,
+        specs_faltando=tuple(prep.compiled.specs_faltando),
         alertas_desde=max(
             (r.created_at for r in historico_previo if r.role == "assistant" and r.created_at is not None),
             default=None),
@@ -518,6 +528,8 @@ async def executar(
     codigos_da_thread = {e.codigo_imovel.casefold() for e in eventos} | ({campanha.casefold()} if campanha else set())
     tentativas: list[_Tentativa] = []
     bloqueios: list[Violacao] = []
+    if parada is None and turno.specs_faltando:  # the org learns the agent is answering without a required spec
+        await alertar_info_indisponivel(turno, "aviso")
 
     def _avaliar(t: _Tentativa) -> list[Violacao]:
         resposta = "\n\n".join(x for x in t.textos if x and x.strip())
@@ -711,6 +723,10 @@ def _marcadores_da_resposta(resposta: str, marcador: str | None, tag: str, regra
     """The honeytoken in the reply is a prompt leak (``vazamento_prompt``, the rule's own policy: it blocks by
     default); the turn's provenance tag in the reply is a forgery signal."""
     out: list[Violacao] = []
+    cru = placeholder_cru_em(resposta)
+    if cru:  # structural + always on (no rule row can switch it off): a raw placeholder is never sent
+        logger.error("agents.channel.placeholder_cru n=%s", len(cru))
+        out.append(Violacao("placeholder_cru", conf.politica_efetiva(regras, "placeholder_cru"), {"n": len(cru)}))
     if prov.marcador_em([resposta], marcador):
         out.append(Violacao("vazamento_prompt", conf.politica_efetiva(regras, "vazamento_prompt"), {prov.MARCADOR_HONEYTOKEN: True}))
     if tag and tag in resposta:

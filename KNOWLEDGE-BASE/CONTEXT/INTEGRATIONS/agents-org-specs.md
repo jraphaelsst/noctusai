@@ -56,6 +56,14 @@ cache (`useCacheWriteMutation`) and `invalidate` refetches derived views; unsave
 guard (`useUnsavedChanges`); first load is a skeleton (never "empty"); a 422 whose message starts `<chave>:` is
 shown on that field, with `conflitos` named via `conflictLabels`.
 
+## Missing values at run time (agents side)
+
+A placeholder is never rendered raw. Optional + empty: omitted. Required + empty: the turn is NOT refused; the prompt
+carries the sentinel `INDISPONIVEL`, the agent says it will check and come back, the org is alerted (in-app +
+WhatsApp, once per step per conversation), and a lead who insists and accepts is handed to a person
+(`info_indisponivel`, second alert). Publish readiness still requires every required spec. Full policy:
+`products/agents/projects/julia-v2/CONTRACT.md` ("Spec substitution policy").
+
 ## Gaps
 
 - `monica` must be the agent's org-side consumer: the agent definition must declare the specs (platform admin work).

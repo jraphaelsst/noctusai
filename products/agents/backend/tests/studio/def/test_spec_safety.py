@@ -356,9 +356,14 @@ def test_the_fence_texts_are_rows_required_only_when_something_is_fenced():
     fenced = compile_prompt(replace(i, org_specs=VALORES))
     w = next(w for w in fenced.avisos if w.codigo == "texto_ausente")
     assert w.bloqueante and "compilador.titulo_dados_org" in w.mensagem and "compilador.dados_org_intro" in w.mensagem
+    so_cnpj = _conteudo(specs=(SPECS[1],), textos=sem)
     typed_only = compile_prompt(replace(i, org_specs={"cnpj_oficial": "11.222.333/0001-81"}, version=replace(
-        i.version, secoes=(replace(i.version.secoes[0], conteudo="CNPJ {{org.cnpj_oficial}}"),))))
+        i.version, conteudo=so_cnpj, secoes=(replace(i.version.secoes[0], conteudo="CNPJ {{org.cnpj_oficial}}"),))))
     assert not any(w.codigo == "texto_ausente" for w in typed_only.avisos)
+    # a REQUIRED spec with no value travels as the INDISPONIVEL sentinel in the data block: that fences too
+    falta = compile_prompt(replace(i, org_specs={"cnpj_oficial": "11.222.333/0001-81"}, version=replace(
+        i.version, secoes=(replace(i.version.secoes[0], conteudo="CNPJ {{org.cnpj_oficial}}"),))))
+    assert any(w.codigo == "texto_ausente" for w in falta.avisos)
 
 
 def test_spec_tipos_migration_seeds_the_fence_texts_into_existing_versions_and_the_content_pack_carries_them():
