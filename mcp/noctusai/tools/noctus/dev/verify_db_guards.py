@@ -1320,10 +1320,16 @@ DECLARE
   v_org_id uuid;
   v_contato_id uuid;
 BEGIN
-  SELECT org_id, id INTO v_org_id, v_contato_id FROM {_SW_SCHEMA}.julia_contatos LIMIT 1;
-  IF v_contato_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in {_SW_SCHEMA}.julia_contatos to own a probe report';
+  -- Self-provisioned owner: the walker rolls the whole block back, so the probe contact never
+  -- persists. Borrowing an existing julia_contatos row made the probe unverifiable on a DB
+  -- where Julia had no contacts yet (prod before go-live, 2026-11-05).
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe contact';
   END IF;
+  INSERT INTO {_SW_SCHEMA}.julia_contatos (org_id, connection_id, chat_id)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe@c.us')
+  RETURNING id INTO v_contato_id;
   BEGIN
     INSERT INTO {_SW_SCHEMA}.julia_relatorios (org_id, contato_id, tipo, texto, chave)
     VALUES (v_org_id, v_contato_id, 'alerta', 'noc-probe-a', 'noc-probe-chave');
