@@ -79,15 +79,15 @@ start_period: 30s
 
 ## Backup
 
-Phase 2 follow-up. The container-only commit (Phase 3.1.5) covers the service; a backup plan is the next increment:
+**Posture (stated 2026-11-05): no backup, by design — RPO unbounded, accepted because nothing here is irreplaceable.** Every row in this container is regenerable from git plus the embedding pipeline (no user data at stake), so a lost cache is a cold rebuild via the `--force` flag on each cache module followed by `cache_deploy_mirror`, not a data incident. The cold-rebuild RTO is not yet measured; the quarterly restore drill measures it. Fleet-wide RPO/RTO table, 3-2-1 and the drill procedure → `KB § PATTERNS/devops/sre-craft-canon.md` §5.
+
+If that ever changes (for example the cache starts holding state that cannot be regenerated), the earlier sketch still applies — a nightly dump shipped **off-host**, never left on the VPS:
 
 ```
-# Future P3.2 — simple pg_dump cronjob (one-liner cron on the VPS host):
+# sketch only — not installed; an on-host-only copy would not meet 3-2-1
 0 3 * * * docker exec noctus-cache-pg pg_dump -U noctus_cache noctus_cache \
   | gzip > /backups/noctus_cache_$(date +%F).sql.gz
 ```
-
-Until then, the caches are regenerable from source (no user data at stake). A lost cache = a cold rebuild via `--force` flag on each cache module, not a data incident.
 
 ## Composes with
 
