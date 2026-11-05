@@ -1,12 +1,34 @@
-# Prototype on real data — page first, validated, then code
+# Prototype first — a clickable mockup, on real data where it exists, then code
 
-**Rule.** A new page (a dashboard, an admin view, a product screen) is first built as a **prototype page
-that reads the REAL database**, validated with the owner on real numbers, and only then written as
-product code. Never a mock-data prototype, never code-first for a page whose shape is still unknown.
+**Rule.** No UI is built before the owner has clicked through it. A new page or tool (a dashboard, an
+admin view, a product screen, an editor) is first built as a **clickable mockup** on the noc pattern
+(the seed tokens and app shell, never a vendor's look). It reads the **REAL database** wherever the
+data exists. It is iterated with the owner until it is right, and only then written as product code.
+Never code-first for a screen whose shape is still unknown.
 
-Owner, 2026-11-04: *"the new dashboard page … it should consume real data from db so we have a real
-scenario. we'll use that to develop a page and funcs, validate, and then create code"* — declared a
-methodology change the same day.
+Sample content is allowed in exactly one case: the real data **does not exist yet** (a feature that has
+never run, such as an editor before its first video). It is then labelled as sample on the mockup and in
+the report, and swapped for real data as soon as the data exists. Sample content never stands in for
+data that exists but was not wired up.
+
+Owner, 2026-11-04 (two statements the same day):
+- *"the new dashboard page … it should consume real data from db so we have a real scenario. we'll use
+  that to develop a page and funcs, validate, and then create code"*
+- after the Twin editor mockup: *"let's implement the mockuping before building ui so we can easily
+  modify it before building, so we gain time and speed"*
+
+## 0 · Two kinds of screen
+
+| Screen | What the mockup must prove | Data |
+|---|---|---|
+| **Data-display** (dashboard, report, list) | The numbers and their edge cases (empties, nulls, outliers) | Real, always (§ 2) |
+| **Interaction-heavy** (editor, wizard, builder) | The flow, the controls and the states (loading, empty, error, done) | Real where it exists, else labelled sample |
+
+Both are claude.ai artifacts (private), and both use the seed tokens
+(`@noctusai/lib/design-system/tokens.css`) in light and dark. Every control the code will have is
+there and clickable. A canvas artifact (the Design type, one artboard per screen) suits an
+interaction mockup. First instance: the Twin video editor
+(`products/social-wiring/projects/core-studio-build/specs/twin-editor-design.md`).
 
 ## 1 · Why
 
@@ -34,8 +56,12 @@ validated page becomes the contract for the code.
 - Read-only. A prototype never writes to the DB; writes belong to the code that follows.
 - Private by default. It shows real data, so share only with people allowed to see that data.
 - Counts and aggregates over raw personal data; LGPD rules apply as in product code.
-- When the prototype cannot reach the data (no connector, table not migrated yet), say so on the page
-  and to the owner. Never fill it with sample numbers.
+- When the prototype cannot reach data that exists (no connector, table not migrated yet), say so on
+  the page and to the owner. Never fill it with sample numbers. Sample content only for data that does
+  not exist yet (§ 0), labelled.
+- The mockup is the owner's design surface: change it until it is right, because a change there costs
+  minutes and a change in code costs a slice. Once it is validated, the code follows it; it does not
+  re-decide it.
 
 ## 4 · First instance
 
