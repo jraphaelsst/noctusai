@@ -8,7 +8,7 @@
 > (`.claude/agents/product-designer.md`).
 >
 > **Why it exists.** One a11y commit in 4,035, zero a11y keepers, zero product FEs with
-> `eslint-plugin-jsx-a11y`/axe (audit 2026-11-05, `projects/agent-refinement/audits/audit-missing-hires.md` §3).
+> `eslint-plugin-jsx-a11y`/axe (audit 2026-11-05, `archive/projects/2026-11-05/01-agent-refinement/audits/audit-missing-hires.md` §3).
 > Measuring for this doc found worse than the audit said: the seed **removes every focus indicator
 > globally** and the seed `Button` never adds one back, and most status-colour token pairs fail contrast
 > (§3). Accessibility that is not designed in is retro-fitted at N× the cost, product by product.

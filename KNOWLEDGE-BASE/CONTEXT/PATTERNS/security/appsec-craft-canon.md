@@ -5,7 +5,7 @@
 > platform: FastAPI products built from the seed, Supabase (PostgREST + RLS + Storage + GoTrue), a
 > Cloudflare named tunnel in front of one VPS, WAHA for WhatsApp, LLM providers behind
 > `noctusai_lib.integrations.llm`. Owned by agent `security`. Born 2026-11-05 (agent-refinement W1-S2,
-> from the verified audit `projects/agent-refinement/audits/audit-security-agents-security.md`).
+> from the verified audit `archive/projects/2026-11-05/01-agent-refinement/audits/audit-security-agents-security.md`).
 >
 > **Why.** The house lessons (incident ⇒ keeper) are above average, but a reviewer with only lessons can
 > only find bugs we already had. The canon adds the method that finds the NEXT class: a threat model per

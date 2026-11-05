@@ -9,7 +9,7 @@
 > status_pagina, consent routes …) each came from an incident and each has a keeper. The CRAFT
 > under them had no home: zero accessibility rule, zero forms rule, no query-key convention, no
 > effects lens, no TypeScript, i18n, performance or XSS guidance (audit 2026-11-05,
-> `projects/agent-refinement/audits/audit-frontend-engineer.md`). This doc is that home.
+> `archive/projects/2026-11-05/01-agent-refinement/audits/audit-frontend-engineer.md`). This doc is that home.
 >
 > **How to use it.** Read §0 before any UI slice; open the section your slice touches. **The house
 > mechanism wins over the general canon** — when this doc and a house pattern disagree, the house

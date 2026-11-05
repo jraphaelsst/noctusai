@@ -5,7 +5,7 @@
 > social-wiring), the anonymous `public_ask` surface, the agents runtime sandbox, BYOK credentials,
 > memory/knowledge — **and our own dev-agent harness** (Claude Code subagents + the `mcp__noctusai__*`
 > toolkit). Owned by agent `agents-security`. Born 2026-11-05 (agent-refinement W1-S2, from the verified
-> audit `projects/agent-refinement/audits/audit-security-agents-security.md`).
+> audit `archive/projects/2026-11-05/01-agent-refinement/audits/audit-security-agents-security.md`).
 >
 > **Why.** The per-class catalog (`KB § PATTERNS/security/ai-agent-threat-model.md`) is a strong,
 > codebase-grounded list of *what* attacks look like and *where* each defense lives. What it lacked was

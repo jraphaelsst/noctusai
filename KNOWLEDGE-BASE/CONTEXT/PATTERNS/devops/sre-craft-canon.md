@@ -471,7 +471,7 @@ The table in §5 is the worked example. Its loudest line is that the production 
 
 ## Sources
 
-All URLs below were fetched and confirmed on 2026-11-05: either by the agent-refinement audit (`projects/agent-refinement/audits/audit-devops-ops-operator.md` §4) or re-fetched for this doc (marked †).
+All URLs below were fetched and confirmed on 2026-11-05: either by the agent-refinement audit (`archive/projects/2026-11-05/01-agent-refinement/audits/audit-devops-ops-operator.md` §4) or re-fetched for this doc (marked †).
 
 - Google SRE Book, "Monitoring Distributed Systems" — https://sre.google/sre-book/monitoring-distributed-systems/ — four golden signals; symptoms over causes (§3).
 - Google SRE Workbook ch.2, "Implementing SLOs" — https://sre.google/workbook/implementing-slos/ — choosing SLIs/SLOs; written error-budget policy (§2).

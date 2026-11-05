@@ -243,8 +243,8 @@ Multiple Statements in a Simple Query). Consequences:
 **Gap (named destination).** A runner directive (e.g. a first-line `-- noc:no-transaction`
 marker that makes `migrate_product` send each statement separately) is the root fix for
 `CONCURRENTLY`. It is a toolkit change touching the applied-record path, which sits in the
-git/merge redesign zone (`KB § PATTERNS/backend/migrate-product-mcp-tool.md:421`) — owner
-follow-up §6 item 6 in `projects/agent-refinement/PROJECT.md`. Until it lands: plain index build
+git/merge redesign zone (`KB § PATTERNS/backend/migrate-product-mcp-tool.md:421`) — tracked in
+`project-history/roadmaps/agent-refinement-followups-2026-11.md` §2 (`feat/df-migration-runner`). Until it lands: plain index build
 only with a stated small row count, otherwise surface to the tech-lead.
 
 ### 6.4 Migration checklist (one page)

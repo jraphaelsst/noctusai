@@ -5,7 +5,7 @@
 > engineer brings to this codebase, with every principle mapped to the house mechanism that
 > implements it, a checklist, and anti-patterns. Owner: `backend-engineer`
 > (`.claude/agents/backend-engineer.md`). Authored 2026-11-05 (agent-refinement W1-S3, from the
-> verified audit `projects/agent-refinement/audits/audit-backend-engineer.md`).
+> verified audit `archive/projects/2026-11-05/01-agent-refinement/audits/audit-backend-engineer.md`).
 >
 > **Why it exists.** The house docs record incidents and their gates very well; they barely teach
 > the discipline those incidents are instances of. An engineer who knows only the incident list

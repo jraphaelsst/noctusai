@@ -8,7 +8,7 @@
 > **Why it exists.** Since 2026-11-04 every new screen starts as an owner-validated clickable mockup
 > (`KB § PATTERNS/frontend/prototype-on-real-data.md`, memory `feedback-mockup-before-ui`). Nobody owned
 > that step: the tech-lead designed by hand and frontend-engineer built in worktrees (audit 2026-11-05,
-> `projects/agent-refinement/audits/audit-missing-hires.md` §3). The DESIGN side of a screen — what it is
+> `archive/projects/2026-11-05/01-agent-refinement/audits/audit-missing-hires.md` §3). The DESIGN side of a screen — what it is
 > for, what is on it, in what words, in which states, and whether people can use it — had no canon.
 >
 > **How to use it.** §0 is the decision checklist for any design task; open the section your task
