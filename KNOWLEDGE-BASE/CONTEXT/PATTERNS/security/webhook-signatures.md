@@ -136,12 +136,24 @@ event = stripe.Webhook.construct_event(
   `hmac.compare_digest` internally so verification time is independent
   of where two signatures diverge — no timing side-channel bug.
   When you compare manually (pattern #2), use `hmac.compare_digest` too.
-- **Bypass with a WARNING when the secret is unset.** Dev environments
-  often run the bot without the real provider configured. Make the
-  unsafe state observable: log
-  `<SECRET_NAME> unset — accepting webhook without verification` at
-  WARNING and continue. Production deploys must set the secret; CI
-  should fail if the env doesn't.
+- **Fail-closed in prod when the secret is unset; bypass only in dev.**
+  Dev environments often run the bot without the real provider
+  configured, so a dev-context bypass is allowed — loud (WARNING) and
+  never silent. In a prod/deploy context an unset secret must REFUSE
+  (401) and report degraded on `/api/health` (SW's
+  `webhook_hmac_desativado` is the loud-degraded reference,
+  `products/social-wiring/backend/app/webhook_hmac.py`).
+  **Where the code is today (2026-11-05):** `handle_unsigned_webhook`
+  logs CRITICAL in prod and refuses only when `WEBHOOK_REQUIRE_SIGNATURE=1`
+  (default OFF — `seed/lib/backend/noctusai_lib/security/webhook_signatures.py:52-87`);
+  `predeploy_check` fails when no `*WEBHOOK_HMAC_SECRET` is in the prod env
+  snapshot. Flipping the seed default to fail-closed is the open P0
+  (`KB § PATTERNS/security/appsec-craft-canon.md` §6, §15 WE-2).
+
+  > **Corrected 2026-11-05.** This rule used to read "Bypass with a WARNING
+  > when the secret is unset … and continue" — a fail-open default that
+  > contradicted `ai-agent-threat-model.md` ("unsigned refused, strict 401")
+  > and OWASP A10:2025. Doctrine now: fail-closed in prod.
 - **One secret per provider per environment.** Don't re-use the WAHA
   secret for Meta. Don't share secrets across products. Rotation
   should be a single-product operation.
@@ -166,12 +178,12 @@ event = stripe.Webhook.construct_event(
 ## Where the helpers live
 
 - `noctusai_lib.security.webhook_signatures` — canonical home for
-  patterns 1–3.
+  patterns 1, 2, 2b, 3 and 4.
 - `core/backend/app/services/stripe_service.construct_webhook_event` —
-  the Stripe SDK call (pattern 4).
+  the Stripe SDK call (pattern 5).
 
 If you're adding a new webhook receiver and your provider doesn't fit
-patterns 1–3 (and isn't Stripe), open a discussion before rolling your
+patterns 1–4 (and isn't Stripe), open a discussion before rolling your
 own — the surface area should grow only when a real new pattern shows
 up.
 
@@ -186,11 +198,12 @@ products inherit it via `scaffold_product` and rename per vendor.
 
 | Pin | Rule | Why | Anti-shape |
 |---|---|---|---|
-| **1** | Use `webhook_endpoint(...)` from `noctusai_lib.security.webhook_signatures` (or Stripe SDK for pattern 4) | One decorator replaces hand-rolled HMAC dance; verification BEFORE any DB work | Hand-rolled `hmac.compare_digest` in the handler body |
+| **1** | Use `webhook_endpoint(...)` from `noctusai_lib.security.webhook_signatures` (or Stripe SDK for pattern 5) | One decorator replaces hand-rolled HMAC dance; verification BEFORE any DB work | Hand-rolled `hmac.compare_digest` in the handler body |
 | **2** | Per-request `ResolvedSecret` resolver (lambda reads `settings.<vendor>_webhook_secret` at request time) | Honors test-time monkeypatches on `settings`; avoids the import-time-capture trap | `static_secret_resolver(settings.foo_secret)` at module load |
-| **3** | `bypass_when_unset=` flag explicitly set (True for early-dev, False for production-strict) | Boots cleanly before secret is configured; bypass logs a WARNING — never silent | Flag omitted (default False is technically compliant but easy to miss) |
+| **3** | `bypass_when_unset=` flag explicitly set — True only where the context is dev; prod refuses an unset secret (fail-closed, see Universal rules) | Boots cleanly before secret is configured; bypass logs a WARNING — never silent | Flag omitted (default False is technically compliant but easy to miss); `True` hard-coded with no dev gate (the seed's current shape — the open P0) |
 | **4** | `@limiter.limit(settings.webhook_rate_limit)` decorator | DDOS guard on a public endpoint — every receiver is unauth so rate-limit is the only throttle | No limiter; only the FastAPI default trust |
 | **5** | Status-code-pinned tests (`assert resp.status_code == N`) | The keeper detector `check_test_status_assertion` enforces this; substring body checks miss 4xx slips | Asserting only on `resp.json()` / `resp.text` |
+| **6** *(proposed 2026-11-05)* | Idempotency: dedup on the provider's event/message id before side effects (seed `noctusai_lib.integrations.whatsapp.dedup` for WhatsApp — DB UNIQUE, fail-safe) | Providers retry and double-deliver (WAHA `message` + `message.any`); a verified duplicate is still a duplicate write / a second LLM turn | Verified-but-stateless receiver |
 
 **Test shape — copy from the seed reference:**
 
@@ -212,13 +225,21 @@ def test_unset_secret_bypasses_with_warning(self, client, monkeypatch, caplog):
     assert any("bypass" in r.message.lower() for r in caplog.records)
 ```
 
-**Stripe carve-out (pattern 4).** Pins 1+2+3 don't apply (Stripe SDK
+**Stripe carve-out (pattern 5).** Pins 1+2+3 don't apply (Stripe SDK
 owns secret resolution); pins 4+5 still apply. The Stripe receiver in
 `core/billing.py` was missing pin 4 until 2026-05-09 — fixed inline.
 
 ---
 
 ## Current adopters
+
+> **Re-checked against `origin/dev` 2026-11-05 (security agent-refinement slice).** Pattern numbers
+> realigned to the headings (WAHA = 2b, Stripe = 5; the list predates §2b). Two 🔴 entries below are
+> stale and annotated in place: SW WAHA now uses `webhook_endpoint(scheme="waha")` (pin 1 satisfied) and
+> the erp Meta secret was fixed 2026-08-03 (`bypass_when_unset=False`). Receivers still hard-coding
+> `bypass_when_unset=True` (pin 3 anti-shape under the fail-closed doctrine): seed skeleton
+> `products/seed/backend/app/routers/webhook_router.py:81`, igig `lead_webhooks_router.py:123`, erp
+> `whatsapp_webhook.py:99`, commerce `webhook_router.py:81`, SW `routers/whatsapp_router.py:1353,1427`.
 
 > **Audited against the tree 2026-08-03.** The previous version of this list
 > named `mailing`, `imobi-scheduling` and `media-scheduling` — **none of which
@@ -228,16 +249,16 @@ owns secret resolution); pins 4+5 still apply. The Stripe receiver in
 > compliance is worse than no list: it is exactly what stops the next author
 > from checking. Verify before appending.
 
-- ✅ `core` — Stripe billing webhooks (pattern 4) — pins 4+5 enforced 2026-05-09
+- ✅ `core` — Stripe billing webhooks (pattern 5) — pins 4+5 enforced 2026-05-09
   (`app/routers/billing.py`; SDK carve-out, so pins 1–3 are N/A by design)
 - ✅ `social-wiring` — Resend (pattern 3), `app/modules/email_marketing/routers/webhooks.py`
   — uses `webhook_endpoint(scheme="svix")`, all applicable pins
-- 🔴 `social-wiring` — WAHA (pattern 2), `app/routers/whatsapp_router.py:592`
+- ✅ pin 1, was 🔴 (2026-11-05: now `webhook_endpoint(scheme="waha", bypass_when_unset=True)` at `:1350`/`:1424`; pin 3 open) `social-wiring` — WAHA (pattern 2b), `app/routers/whatsapp_router.py:592`
   — **VIOLATES pin 1**: hand-rolls `hmac.new(...)` + `compare_digest` in
   `_verify_hmac` instead of using the lib factory. Compensating controls
   (opaque per-connection routing token, rate limit) are real, but this is the
   exact anti-shape pin 1 names.
-- 🔴 `erp-imobiliario` — Meta Lead Ads (pattern 1), `app/routers/meta_api.py:64-71`
+- ✅ was 🔴 (fixed 2026-08-03: App Secret resolver, `bypass_when_unset=False`, `meta_api.py:42-58,376`) `erp-imobiliario` — Meta Lead Ads (pattern 1), `app/routers/meta_api.py:64-71`
   — **VIOLATES pin 2**: `_resolve_meta_secret` returns
   `row.get("webhook_verify_token")` as the HMAC secret. Meta signs
   `X-Hub-Signature-256` with the **App Secret**. Both branches are wrong — no
@@ -245,7 +266,7 @@ owns secret resolution); pins 4+5 still apply. The Stripe receiver in
   accepts unverified traffic; a matching row ⇒ it 401s genuine Meta traffic.
   Currently inert (`erp.meta_config` and `erp.meta_leads` are both empty — it
   was never configured), scheduled for consolidation onto the seed capability.
-- ✅ `erp-imobiliario` — WAHA (pattern 2), `app/routers/whatsapp_webhook.py`
+- ✅ `erp-imobiliario` — WAHA (pattern 2b), `app/routers/whatsapp_webhook.py`
   — uses `webhook_endpoint(...)`; note it has **no dedup**, so the WAHA
   `message`/`message.any` double-delivery race is unguarded.
 - ✅ `social-wiring` — Grupo OLX portal leads (pattern 4),
@@ -261,7 +282,7 @@ owns secret resolution); pins 4+5 still apply. The Stripe receiver in
   `basic_username="noctusai-imovelweb"` overriding the OLX default. All 5
   pins. Its auth-boundary test asserts strict `== 401` and enumerates the
   ONE intentionally public route.
-- ✅ `whatsapp-google-scheduling` (sibling repo) — WAHA (pattern 2)
+- ✅ `whatsapp-google-scheduling` (sibling repo) — WAHA (pattern 2b)
   via vendored copy until published-package shape lands.
 
 When a new product comes online, the inherited seed skeleton already
