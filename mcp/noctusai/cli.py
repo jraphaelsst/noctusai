@@ -325,6 +325,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-hardcoded-product-slug-set", action="store_true", help="Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instead — a frozen literal goes stale the moment the fleet changes (product added/removed/consolidated/never-deployed) and can silently misattribute failures OR abort an entire build. Opt-out: a `slug-literal-ok`/`registry-exempt`/`not-a-product-set` rationale comment. Severity warning. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-lockfile-dep-sync", action="store_true", help="Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (package.json declaration) yet still breaks a clean `npm ci` (Rollup/Vite import-resolution failure), invisible in dev where an already-populated node_modules masks the gap. N=3 in one week: @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-dependabot-product-coverage", action="store_true", help="Keeper: .github/dependabot.yml must carry an npm block for every products/<slug>/frontend with a package.json, no block may point at a directory whose package.json no longer exists, and every npm block must carry the 8-entry fleet-major `ignore:` guard (unguarded/partially-guarded is the actual hole). 2026-08-13 incident: igig (live since 2026-08-09), orbity, and products/seed had ZERO Dependabot coverage — nothing was watching those directories. Fix: --refresh-dependabot-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
+    parser.add_argument("--check-kb-vector-canonical", action="store_true", help="Keeper: the KB vector cache is an index over the markdown KB, never a content store (orphan rows, stale source_sha). Advisory (warnings, exit 0). Run by embedding-cache-gate.yml.")
+    parser.add_argument("--check-workflow-cli-flags-exist", action="store_true", help="Keeper: every `cli.py --<flag>` a .github/workflows run: block invokes must be defined by this parser (derived from its AST). Severity high. KB § PATTERNS/devops/dev-main-ci-gates.md.")
+    parser.add_argument("--check-workflow-mcp-requirements-path", action="store_true", help="Keeper: every workflow `pip install -r <file>` must resolve to an existing file from the step's working directory (toolkit requirements: mcp/noctusai/requirements.txt). Severity high. KB § PATTERNS/devops/dev-main-ci-gates.md.")
+    parser.add_argument("--check-workflow-actionlint", action="store_true", help="Run actionlint (+shellcheck) over .github/workflows. Binary absent => INCONCLUSIVE (exit 0 locally, never a silent pass); add --actionlint-require (CI) to make absent exit 1. KB § PATTERNS/devops/dev-main-ci-gates.md.")
+    parser.add_argument("--actionlint-require", action="store_true", help="With --check-workflow-actionlint: a missing actionlint binary is a failure, not inconclusive.")
     parser.add_argument("--check-workflow-job-timeouts", action="store_true", help="Keeper: every GitHub Actions job (no `uses:`) must declare timeout-minutes <= ceiling (merge-queue drain 360), and every apt/apt-get step a step timeout. 2026-11-05: a hung apt step with no timeout held a merge-queue batch (and 13 queued entries) for 1.5h+. Severity high. KB § PATTERNS/devops/merge-queue.md.")
     parser.add_argument("--check-ci-test-matrix-coverage", action="store_true", help="Keeper: .github/workflows/test.yml's product-backend-tests / product-frontend-tests `matrix: product:` lists must include every product that QUALIFIES (has real test files for that suite) — a missing entry means that product's tests silently never run in CI. 2026-08-13: igig/orbity/seed backend suites + orbity's frontend suite were never collected. Fix: --refresh-ci-matrix-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-seed-test-root-ci-coverage", action="store_true", help="Keeper: every seed/*/backend with pytest files and every seed/*/frontend with vitest specs must have a workflow step that RUNS that suite. Sibling of --check-ci-test-matrix-coverage, whose domain is products/* and so could never see these. 2026-09-09: seed/lib/backend (3637 tests), seed/framework/backend (203) and seed/lib/frontend (375) had NO job at all — the packages every product imports were the only ones ungated. Matches on the RUN command, not on working-directory: seed-typecheck.yml visited seed/lib/frontend for months running only tsc. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
@@ -2329,6 +2334,35 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
+        sys.exit(1 if blocking else 0)
+
+    elif args.check_kb_vector_canonical:
+        from tools.noctus.dev.compliance import check_kb_vector_canonical
+        issues = check_kb_vector_canonical()
+        if not issues:
+            print(f"  {GREEN}✓ kb-vector-canonical: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} kb-vector-canonical issue(s) (warnings, not blockers):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i.get('severity','warning')}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(0)
+
+    elif args.check_workflow_cli_flags_exist or args.check_workflow_mcp_requirements_path or args.check_workflow_actionlint:
+        from tools.noctus.dev import compliance as _c
+        if args.check_workflow_cli_flags_exist:
+            name, issues = "workflow-cli-flags-exist", _c.check_workflow_cli_flags_exist()
+        elif args.check_workflow_mcp_requirements_path:
+            name, issues = "workflow-mcp-requirements-path", _c.check_workflow_mcp_requirements_path()
+        else:
+            name, issues = "workflow-actionlint", _c.check_workflow_actionlint(require=args.actionlint_require)
+        blocking = [i for i in issues if i.get("severity") != "inconclusive"]
+        if not issues:
+            print(f"  {GREEN}✓ {name}: clean.{RESET}")
+            sys.exit(0)
+        for i in issues:
+            col = YELLOW if i.get("severity") == "inconclusive" else RED
+            print(f"    {col}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        print(f"  {RED if blocking else YELLOW}{'✗' if blocking else '?'} {len(issues)} {name} issue(s).{RESET}")
         sys.exit(1 if blocking else 0)
 
     elif args.check_workflow_job_timeouts:
