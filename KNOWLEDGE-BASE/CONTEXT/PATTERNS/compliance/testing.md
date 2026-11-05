@@ -628,6 +628,8 @@ Detector severity is `warning` by default because the first run flagged 420 site
 
 The "five layers" table at the top is the **target shape** every product should reach. Today, coverage is uneven. This section is the inventory + ratchet plan — open it before adding new tests so you know the highest-leverage gap to fill.
 
+> ⚠️ **Stale inventory (flagged 2026-11-05, fix-on-contact).** The counts below were taken 2026-04-28 against **7 products** (Playwright row updated 2026-06-10). On 2026-11-05 `products/` holds **19 entries** (incl. `seed` and `dev-team`), so every "N/7" denominator is out of date and the per-product adopter lists are incomplete. The numbers were NOT re-measured here (no fleet-wide coverage run in that slice) — treat the rows as a lower bound on the gap, not as current state. Re-inventory destination: the Wave-2 `test-engineer` split of this doc (agent-refinement PROJECT.md §4a). Judging test adequacy (mutation, flaky, coverage-as-signal) → `KB § PATTERNS/compliance/code-review-craft.md §6–§8`.
+
 ### Backend coverage
 
 | Tier | Status | Gap |
