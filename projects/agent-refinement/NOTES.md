@@ -39,6 +39,9 @@
 - Re-verify: NFS-e Nacional new date 01/11/2026 (CGSN 191/2026, professional sources only); IT-CNAE Fator R practice; split-payment date; NBC TG final CFC texts.
 - Wave-3 todo: compliance-reviewer accessibility pointer → `KB § PATTERNS/frontend/frontend-craft-canon.md` (now exists); compliance.py ~19706 message still names skill-scout as meta (minimal fix, own commit); test_agent_kb_alignment fixture uses orchestrator-operator (retiring!) → repoint; skills `version:` → `metadata.version` fleet decision; TaxRegime lacks `real`, no IBS/CBS rows, no subscription ledger (finance organ proposals).
 
+### W1-S1 architect + engineer-seed — merged (agent still waiting on an hw slot; 4 commits clean)
+- 5c419081a (keeper allowlist +1 line ~19388, own commit) · b89091390 engineer-operating-discipline + engineer-seed upgrade · f7f88945f architecture-craft-canon + architect L1 · 2c23bd672 fix-on-contact. Details to fill from the agent's return.
+
 ## Wave 2 — slice returns
 
 ### W2-S4 tooling-engineer — merged
