@@ -31,6 +31,14 @@
 - Dev harness: no PreToolUse guard on WebFetch / vps.exec curl / notify(confirm=True); no project permission allow/deny list → AI canon §13 proposal.
 - Wave-3 todo: INDEX.md:381 "four shapes" stale; INDEX layout misplaced security/ node ~:202. feat/jl-sec* (3 branches) local-only, unmerged.
 
+### W1-S6 compliance-reviewer · skill-scout · reverse-engineer · accountant — merged
+- 5 commits; keeper pin isolated in f60a04cca (compliance.py:19395 + test 57-58). 292 agent/skill/KB tests passed via hw_admission.
+- Canons: code-review-craft 254 · vendored-skills 175 (real register: 0/29 skills vendored) · reverse-engineering-craft 142 · br-tax-advisor-canon 190 · managerial-and-saas-metrics 156.
+- L1: compliance 47→58 · skill-scout 46→64 · reverse-engineer 33→51 · accountant 38→50.
+- Fixed: eight-way-sync pointer, all 7 owned docs listed, accessibility review lens, testing.md stale banner, dead vendored-register pointers (skill-scout + skill-creator:26), skill-creator spec link, RE description contradiction (vendor material only in `_private-studies/`), dre-structure §8/§1/§7.
+- Re-verify: NFS-e Nacional new date 01/11/2026 (CGSN 191/2026, professional sources only); IT-CNAE Fator R practice; split-payment date; NBC TG final CFC texts.
+- Wave-3 todo: compliance-reviewer accessibility pointer → `KB § PATTERNS/frontend/frontend-craft-canon.md` (now exists); compliance.py ~19706 message still names skill-scout as meta (minimal fix, own commit); test_agent_kb_alignment fixture uses orchestrator-operator (retiring!) → repoint; skills `version:` → `metadata.version` fleet decision; TaxRegime lacks `real`, no IBS/CBS rows, no subscription ledger (finance organ proposals).
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
