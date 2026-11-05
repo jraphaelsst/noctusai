@@ -356,7 +356,15 @@ _WORD_BREAK = set(" \t\n;|&<>()")
 
 
 def _redirect_targets(command: str) -> list[str]:
-    """Every file a redirect in `command` would write, as written.
+    """Every file a redirect in `command` would write, as written (see
+    :func:`_redirect_targets_at` for the offset-carrying form)."""
+    return [word for word, _ in _redirect_targets_at(command)]
+
+
+def _redirect_targets_at(command: str) -> list[tuple[str, int]]:
+    """Every file a redirect in `command` would write, as written, each with the
+    offset of the `>` that names it (so the caller can judge it against the cwd
+    in force AT that point, not the cwd of the last `cd` in the whole call).
 
     A SCANNER, not a regex, because the two things a regex cannot tell apart
     here are exactly the two that matter:
@@ -378,7 +386,7 @@ def _redirect_targets(command: str) -> list[str]:
     target starting with `&` is skipped. `2> file` and `&> file` are real writes
     and are returned — a digit-blind lookbehind used to hide the first.
     """
-    out: list[str] = []
+    out: list[tuple[str, int]] = []
     i, n = 0, len(command)
     quote: str | None = None
 
@@ -405,6 +413,7 @@ def _redirect_targets(command: str) -> list[str]:
             i += 1
             continue
 
+        op_at = i
         i += 1
         if i < n and command[i] == ">":  # `>>` append
             i += 1
@@ -416,7 +425,7 @@ def _redirect_targets(command: str) -> list[str]:
 
         word, i = _read_word(command, i)
         if word:
-            out.append(word)
+            out.append((word, op_at))
 
     return out
 
@@ -685,6 +694,30 @@ def _segment_cwds(command: str, cwd: str) -> list[str] | None:
     if seen_cd != len(_CD_RE.findall(command)):
         return None
     return out
+
+
+def _cwd_at(command: str, cwd: str, offset: int) -> tuple[str, bool]:
+    """`(cwd in force at `offset`, exact)` after the `cd`s that END before it.
+
+    🔴 2026-11-05: redirects were resolved against the LAST `cd` of the whole
+    call, so `cd <outside> && cat >> f <<EOF …; cd <primary> && git …` charged
+    the outside write to the primary. `exact` is False once a `cd` we cannot
+    follow statically (`cd "$X"`, `cd -`, `cd -P x`) has run: the caller then
+    treats a relative target as UNCERTAIN (fail closed) instead of trusting a
+    stale directory.
+    """
+    current, exact = cwd, True
+    for match in _CD_RE.finditer(command):
+        if match.end() > offset:
+            break
+        target = match.group("path").strip().strip("'\"")
+        if not target:
+            continue
+        if target.startswith("-") or _is_unresolvable(target):
+            exact = False
+            continue
+        current = _resolve(target, current)
+    return current, exact
 
 
 def _effective_cwd(command: str, cwd: str) -> str:
@@ -1237,12 +1270,18 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
     # Redirects are scanned over the WHOLE command, not per segment: `_segments`
     # splits on `|` and `;` without regard for quotes, which would cut a quoted
     # span in half and leave the scanner reading an unbalanced quote.
-    for raw in _redirect_targets(command):
+    for raw, op_at in _redirect_targets_at(command):
         if raw in _SINKS:
             continue
-        resolved = _resolve(raw, cwd)
+        at_cwd, exact = _cwd_at(command, session_cwd, op_at)
+        resolved = _resolve(raw, at_cwd)
         if resolved:
             targets.append(resolved)
+            if not exact and not os.path.isabs(os.path.expanduser(raw)):
+                # Unknowable cwd: ALSO judge it against the session cwd, so a
+                # `cd <outside> && cd "$X" && echo >> f` cannot hide in the
+                # last directory we happened to know.
+                targets.append(_resolve(raw, session_cwd))
         else:
             # `> $TARGET` — a write is happening somewhere we cannot name. That
             # is the same condition the `_ALWAYS_WRITE` branch below already

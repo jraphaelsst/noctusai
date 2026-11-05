@@ -172,6 +172,46 @@ def test_writes_outside_the_repo_are_none_of_our_business():
     assert _decide("Write", {"file_path": "/tmp/scratch/plan.md"}) is None
 
 
+OUTSIDE_MEM = "~/.claude/projects/x/memory"
+
+
+def test_relative_redirect_after_cd_outside_the_repo_is_allowed():
+    """2026-11-05: the redirect was resolved against the session cwd (primary)."""
+    cmd = (
+        f"cd {OUTSIDE_MEM} && cat >> note.md <<'EOF'\nbody\nEOF\n"
+        f"cd {PRIMARY} && git fetch -q origin && git log -1"
+    )
+    assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None
+
+
+def test_relative_redirect_after_cd_into_primary_is_still_refused():
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && echo x >> f"}, cwd=PRIMARY) is not None
+
+
+def test_a_second_write_after_returning_to_the_primary_is_refused():
+    cmd = f"cd {OUTSIDE_MEM} && cat >> f; cd {PRIMARY} && echo hi >> g"
+    verdict = _decide("Bash", {"command": cmd}, cwd=PRIMARY)
+    assert verdict is not None
+    assert any(t.endswith("/g") for t in verdict["targets"])
+    assert not any(t.endswith("/memory/f") for t in verdict["targets"])
+
+
+def test_an_unresolvable_cd_target_fails_closed_for_relative_redirects():
+    assert _decide("Bash", {"command": 'cd "$X" && echo x >> f'}, cwd=PRIMARY) is not None
+    cmd = f'cd {OUTSIDE_MEM} && cd "$X" && echo x >> f'
+    assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None
+    assert _decide("Bash", {"command": f"cd {OUTSIDE_MEM} && cd - && echo x >> f"}, cwd=PRIMARY) is not None
+
+
+def test_cd_tracking_keeps_the_guard_fast():
+    import time
+
+    cmd = " && ".join(f"cd {OUTSIDE_MEM} && echo {i} >> f{i}" for i in range(60))
+    t0 = time.perf_counter()
+    _decide("Bash", {"command": cmd}, cwd=PRIMARY)
+    assert time.perf_counter() - t0 < 1.0
+
+
 def test_plain_sed_is_a_reader_but_sed_dash_i_is_not():
     assert _decide("Bash", {"command": f"cd {PRIMARY} && sed -n '1,5p' CLAUDE.md"}) is None
     assert _decide("Bash", {"command": f"cd {PRIMARY} && sed -i.bak 's/a/b/' CLAUDE.md"}) is not None
