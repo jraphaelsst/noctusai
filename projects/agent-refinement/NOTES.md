@@ -23,6 +23,17 @@
 - Fixed: 01-CORE get_current_admin (MFA gate, platform authz), asleep banners 02/03/06/08, 04-DATABASE snapshot flag, 05 heading.
 - Wave-3/2 todo: jobs-organ.md candidate; agents + social-wiring backend domain docs; 06-THERAPY user_metadata roles claim (asleep).
 
+## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
+Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
+- integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
+- merged-tip gates / re-run on merged tip before bless → the queue's CI run judges the combined tree; locally only scoped checks (`noctus.dev.gate_sweep`) before enqueueing. "per-branch green ≠ integration green" STAYS.
+- train-before-integrate → enqueue each slice when green; queue batches + bisects (train only for joint conflict resolution).
+- migration numbers → next free number vs origin/dev AND the queue (`noctus.dev.merge_queue`); enqueue auto-renumbers vs dev; in-queue collision ejects the later entry. NNN_*.sql unchanged.
+- Commit ownership stays + "never enqueue on another's behalf unless briefed".
+- hw_admission lines: local slot gate covers only LOCAL heavy checks; merged-tree verification is CI.
+- Don't touch: noc-self-branch, noc-branch-dispatch, noc-ship, self-branching-mode, branching-dispatch, dev-main-ci-gates, hardware-admission-budget.
+- orchestrator-operator: DELETE in this branch with 8-way sync (CLAUDE.md §2, 06-AGENTS, INDEX, CONTEXTUALIZE §4, refs listed in audit-devops-ops-operator.md).
+
 ## Follow-up code defects (added during the run)
 - S3: `_batched` duplicated twice in seed (N=2 triage); jobs retry_policy.py:39-67 no jitter vs rate_limit full jitter; migration runner needs `-- noc:no-transaction` directive for CONCURRENTLY (runner = noctusai-3d's zone?).
 - 🔴 P0 (S5): decide Supabase backups — Pro/PITR or free nightly `supabase db dump` off-host; off-host copy of deploy secrets; n8n volume backup. (Replaces §6 item 3 "no log rotation" → "rotation config not in git".)
