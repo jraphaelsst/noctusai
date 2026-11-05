@@ -55,7 +55,7 @@ chain is waking them.
 
 core 683 stmts 1.2s · academia 903 1.1s · agents 1164 1.2s · igig 1236 1.2s ·
 seed 734 1.1s · **social-wiring 4447 stmts 2.5s** (incl. the core prefix). All six
-active chains: ~9s wall. That fits the 90s integrate box with a wide margin.
+active chains: ~9s wall. That fits a local pre-enqueue check with a wide margin (the merged tree is re-judged by the CI merge queue — `KB § PATTERNS/devops/merge-queue.md`).
 
 ## Measurement that shaped it (2026-10-10)
 

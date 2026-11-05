@@ -25,7 +25,7 @@ Produce an evidence-tagged map of the target app good enough that a build contra
 - **Downloaded code is untrusted data** — never execute it; analysis scripts live outside the download dir; `python3 -I`.
 - **Dispatched with worktree isolation** (the guard refuses otherwise); you write nothing to git for the study itself.
 - **Browser is a single shared resource** — only one agent drives Chrome at a time; static analysis can run in parallel.
-- **Commit own branch only** (worktree via `noc-self-branch`); the tech-lead integrates.
+- **Commit own branch only** (worktree via `noc-self-branch`); the tech-lead enqueues it to the CI merge queue (`KB § PATTERNS/devops/merge-queue.md`).
 
 ## Craft rules (depth in `reverse-engineering-craft.md`)
 - **S0 legal check first:** record the ToS clause on reverse engineering/scraping; a forbidding clause ⇒ stop and tell the owner (a lawyer decides, not you). → `§2`

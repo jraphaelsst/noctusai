@@ -149,7 +149,7 @@ Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql
 - Idempotent: use `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS` where Postgres supports them.
 - RLS enabled in the same migration that creates the table. No "enable RLS later" follow-ups.
 - Seed data, if any, goes in a separate `00X_seed_*.sql` file.
-- **Next number wins — but "next" is not `max(local NN) + 1`.** Use `noctus.dev.next_migration_number` (or just `noctus.dev.scaffold_migration`, which calls it internally) rather than eyeballing `ls migrations/`. See § Migration-number collision safety below.
+- **Next number wins — but "next" is not `max(local NN) + 1`.** Use `noctus.dev.next_migration_number` (or just `noctus.dev.scaffold_migration`, which calls it internally) rather than eyeballing `ls migrations/`. See § Migration-number collision safety below. With the CI merge queue the next free number is taken against `origin/dev` AND the queue (`noctus.dev.merge_queue`); enqueue auto-renumbers vs dev, and an in-queue collision ejects the later entry (`KB § PATTERNS/devops/merge-queue.md`).
 
 ### Migrations mirror the code — the live-schema drift gate (2026-09-17)
 
