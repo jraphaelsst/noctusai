@@ -35,6 +35,8 @@ Names: schema `monica` -> `nosnolimiar` · host `monica.noctusai.com` (retired, 
 | C7 | Tunnel: `noctus.dev.tunnel_config action=apply confirm=True` (new host on; `monica.noctusai.com` is in `retired:` so apply may drop it) | restore the saved `config.yml`, restart cloudflared |
 | C8 | Verify: `noctus.dev.deploy_verify`; `noctus.dev.spa_smoke products=['nosnolimiar']`; `noctus.dev.sso_cors_smoke`; `noctus.dev.sso_smoke product=nosnolimiar`; `noctus.dev.latency_report product=nosnolimiar`; manual login as Mônica -> lands in "Nós no Limiar"; Financeiro lists the 30 categories; Contexto/Leads/Pacientes load; `monica.noctusai.com` no longer resolves to the app | see rollback below |
 
+> **🔴 C4 BLOCKED — owner decision pending (2026-11-05).** Owner rule "one branding per org" (relayed by noctusai-3d): exactly ONE `social_wiring.marcas` row per org. `cutover.sql` step 3 moves EVERY `social_wiring.*` row from MT to NnL — incl. MT's marca `07798cf9…` ("Mônica Tangerino", pessoa_fisica) as a non-primary 2nd brand on NnL (which has its own primary `06c35543…`). That violates the rule. Do NOT run C4 as written. Owner picks: (A) keep the MT org — no delete; move users/licenses only, MT keeps its brand; (B) archive the MT marca (+ its cs_chat rows) and still delete the org; (C) other. Re-cut step 3 + the 6a allowlist + the post-check (NnL marca count == 1, total) to the choice, regenerate the dry-run, coordinate with 3d's marcas unique-per-org constraint, then re-show the dry-run NOTICEs.
+
 **Full rollback (any time before C4 commits):** C7 restore tunnel -> C6 old service up -> `rollback-020.sql` -> reverse core 098 (C2 rollback) -> restore `.env` keys.
 After C4 commits the org delete cannot be undone from SQL; restore from backup only.
 
