@@ -2117,3 +2117,113 @@ class TestApplyIsHermeticToRealRepo:
                                  git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
         assert result["applied_record"]["status"] == "skipped_injected_tree"
         assert snap() == before
+
+
+# ---------------------------------------------------------------------------
+# File directives + default lock_timeout (df-migration-runner)
+# ---------------------------------------------------------------------------
+
+
+def _run(tmp_path, files, fake=None):
+    products = _make_products_dir(tmp_path)
+    _make_migration_files(products, "orbity", files)
+    fake = fake or FakeSqlExecutor()
+    res = migrate_product("orbity", confirm=True, executor=fake, products_dir=products,
+                          git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"),
+                          record_persister=lambda p, f: {"status": "recorded", "path": None, "error": None})
+    return res, fake
+
+
+class TestLockTimeoutAndDirectives:
+    def test_default_set_local_5s_in_same_request_and_not_on_ledger(self, tmp_path):
+        res, fake = _run(tmp_path, [("001_a.sql", "CREATE TABLE orbity.t (id int);")])
+        assert res["status"] == "applied"
+        body = [s for s in fake.executed if "CREATE TABLE orbity.t" in s]
+        assert body == ["SET LOCAL lock_timeout = '5s';\nCREATE TABLE orbity.t (id int);"]
+        ledger = [s for s in fake.executed if "INSERT INTO" in s and "schema_migrations" in s]
+        assert len(ledger) == 1 and "lock_timeout" not in ledger[0]
+        assert not any(s.strip().upper().startswith("SET LOCK_TIMEOUT") for s in fake.executed)
+
+    def test_ledger_checksum_is_of_the_original_file(self, tmp_path):
+        sql = "CREATE TABLE orbity.t (id int);"
+        _, fake = _run(tmp_path, [("001_a.sql", sql)])
+        assert _checksum(sql) in [s for s in fake.executed if "INSERT INTO" in s][0]
+
+    @pytest.mark.parametrize("val,lit", [("30s", "'30s'"), ("0", "0"), ("250ms", "'250ms'"), ("2min", "'2min'")])
+    def test_per_file_override(self, tmp_path, val, lit):
+        res, fake = _run(tmp_path, [("001_a.sql", f"-- noc:lock-timeout {val}\nSELECT 1;")])
+        assert res["status"] == "applied"
+        assert any(s.startswith(f"SET LOCAL lock_timeout = {lit};") for s in fake.executed)
+
+    @pytest.mark.parametrize("bad", ["", "abc", "5", "-1s", "1.5s", "5 s", "00", "5sec", "0s"])
+    def test_bad_override_refuses_before_any_ddl(self, tmp_path, bad):
+        res, fake = _run(tmp_path, [("001_ok.sql", "SELECT 1;"), ("002_bad.sql", f"-- noc:lock-timeout {bad}\nSELECT 2;")])
+        assert res["status"] == "error" and "002_bad.sql" in res["error"] and "lock-timeout" in res["error"]
+        assert not any("SELECT 1;" in s for s in fake.executed), "batch must be refused before any DDL"
+
+    @pytest.mark.parametrize("sql,frag", [
+        ("-- noc:nope\nSELECT 1;", "unknown directive"),
+        ("-- noc:no-transaction x\nSELECT 1;", "takes no value"),
+        ("-- noc:no-transaction\n-- noc:no-transaction\nSELECT 1;", "duplicate"),
+        ("SELECT 1;\n-- noc:no-transaction\nSELECT 2;", "leading comment block"),
+        ("-- noc:no-transaction\nBEGIN;\nSELECT 1;\nCOMMIT;", "transaction control"),
+    ])
+    def test_strict_directive_errors(self, tmp_path, sql, frag):
+        res, fake = _run(tmp_path, [("001_a.sql", sql)])
+        assert res["status"] == "error" and frag in res["error"]
+        assert not any("SELECT 1" in s for s in fake.executed)
+
+    def test_no_transaction_runs_statements_separately_with_session_set_and_reset(self, tmp_path):
+        sql = ("-- noc:no-transaction\n-- why: live table\n"
+               "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix ON orbity.t (a);\n"
+               "DO $$ BEGIN PERFORM 1; PERFORM 2; END $$;\n")
+        res, fake = _run(tmp_path, [("001_a.sql", sql)])
+        assert res["status"] == "applied"
+        ex = fake.executed
+        i = ex.index("SET lock_timeout = '5s';")
+        assert ex[i + 1] == "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix ON orbity.t (a)"
+        assert ex[i + 2].startswith("DO $$") and "PERFORM 2;" in ex[i + 2]   # $$ body not split
+        assert ex[i + 3] == "RESET lock_timeout;"
+        assert not any("SET LOCAL" in s for s in ex)
+        ledger_pos = [k for k, s in enumerate(ex) if "INSERT INTO" in s][0]
+        assert ledger_pos > i + 3, "ledger write happens after success and after RESET"
+
+    def test_no_transaction_failure_resets_stops_and_skips_ledger(self, tmp_path):
+        sql = "-- noc:no-transaction\nCREATE INDEX CONCURRENTLY a ON t(x);\nCREATE INDEX CONCURRENTLY b ON t(y);\n"
+        res, fake = _run(tmp_path, [("001_a.sql", sql)], FakeSqlExecutor(fail_on={"CONCURRENTLY a "}))
+        assert res["status"] == "error" and "statement 1/2" in res["error"] and "idempotent" in res["error"]
+        assert fake.executed[-1] == "RESET lock_timeout;"
+        assert not any("CONCURRENTLY b" in s for s in fake.executed)
+        assert not any("INSERT INTO" in s for s in fake.executed)
+
+    def test_no_transaction_override_zero(self, tmp_path):
+        _, fake = _run(tmp_path, [("001_a.sql", "-- noc:no-transaction\n-- noc:lock-timeout 0\nSELECT 1;")])
+        assert "SET lock_timeout = 0;" in fake.executed
+
+    def test_schema_rename_ledger_warning_stays_non_fatal(self, tmp_path):
+        """c3: a migration that renames the schema itself makes the ledger INSERT fail; that
+        stays a WARNING (status applied), with schema= overriding the ledger schema."""
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "nosnolimiar", [("001_rename.sql", "ALTER SCHEMA monica RENAME TO nosnolimiar;")])
+        fake = FakeSqlExecutor(fail_on={'INSERT INTO "monica".schema_migrations'})
+        res = migrate_product("nosnolimiar", schema="monica", confirm=True, executor=fake, products_dir=products,
+                              git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("nosnolimiar"),
+                              record_persister=lambda p, f: {"status": "recorded", "path": None, "error": None})
+        assert res["status"] == "applied" and res["applied"] == ["001_rename.sql"]
+        assert res["schema"] == "monica"
+        ex = fake.executed
+        ddl = [k for k, s in enumerate(ex) if "RENAME TO nosnolimiar" in s][0]
+        led = [k for k, s in enumerate(ex) if 'INSERT INTO "monica".schema_migrations' in s][0]
+        assert led > ddl and "lock_timeout" not in ex[led]
+
+
+class TestMigrationDirectivesUnit:
+    def test_split_statements_respects_quotes_comments_dollars(self):
+        from tools.noctus.dev.migration_directives import split_statements
+        sql = "SELECT 'a;b'; -- c;d\nSELECT E'x\\';y'; /* ; */ SELECT $t$ ; $t$;  ; "
+        assert split_statements(sql) == ["SELECT 'a;b'", "SELECT E'x\\';y'", "SELECT $t$ ; $t$"]
+
+    def test_header_scan_ignores_non_directive_comments(self):
+        from tools.noctus.dev.migration_directives import parse_directives
+        d = parse_directives("-- hello noc: not a directive\n\n-- noc:no-transaction\nSELECT 1;")
+        assert d.no_transaction and d.lock_timeout == "5s"

@@ -91,6 +91,18 @@ def lock_timeout_literal(value: str) -> str:
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
+def _strip_leading_comments(stmt: str) -> str:
+    s = stmt
+    while True:
+        s = s.lstrip()
+        if s.startswith("--"):
+            nl = s.find("\n"); s = "" if nl < 0 else s[nl + 1:]
+        elif s.startswith("/*"):
+            e = s.find("*/"); s = "" if e < 0 else s[e + 2:]
+        else:
+            return s
+
+
 def split_statements(sql: str) -> list[str]:
     """Split on top-level ``;`` (quotes, E'' escapes, $tag$ bodies, comments respected).
 
@@ -134,29 +146,20 @@ def split_statements(sql: str) -> list[str]:
                 cur.append(sql[i:end]); i = end; has_code = True; continue
         if c == ";":
             if has_code:
-                out.append("".join(cur).strip())
+                out.append(_strip_leading_comments("".join(cur)))
             cur, has_code = [], False
             i += 1; continue
         if not c.isspace():
             has_code = True
         cur.append(c); i += 1
     if has_code:
-        out.append("".join(cur).strip())
+        out.append(_strip_leading_comments("".join(cur)))
     return out
 
 
 def first_keyword(stmt: str) -> str:
     """First SQL word of a statement, skipping leading comments."""
-    s = stmt
-    while True:
-        s = s.lstrip()
-        if s.startswith("--"):
-            nl = s.find("\n"); s = "" if nl < 0 else s[nl + 1:]
-        elif s.startswith("/*"):
-            e = s.find("*/"); s = "" if e < 0 else s[e + 2:]
-        else:
-            break
-    m = re.match(r"[A-Za-z]+", s)
+    m = re.match(r"[A-Za-z]+", _strip_leading_comments(stmt))
     return m.group(0).upper() if m else ""
 
 
