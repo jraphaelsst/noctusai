@@ -66,6 +66,14 @@
 - Follow-up defects: 🔴 Meta Graph pinned v21.0 (`_meta_api.py:67`, sunsets 2027-01-21); WhatsApp Cloud client pins v18.0 (`meta_cloud_client.py:21`, ALREADY expired 2026-01-26) · `WebhookDedup` lacks `release()` (failed handler loses WAHA retry for TTL) · `is_rate_limited` misses Meta BUC codes 80000–80014 · `parse_retry_after` ignores HTTP-date + caps vendor Retry-After at 60s · Vista Real adapter constructed directly at 6+ sites (DRY N≥3) · `oauth_router` /refresh + /revoke unauthenticated (unmounted today) · `waha:latest` unpinned (compose.services.yml:106).
 - KB drift (backend-owned, Wave 3): outbound-rate-limiting "WAHA pending" stale; YouTube quota units in google.md §3 stale; whatsapp.md §6 "CORE one session" maybe stale.
 
+### W2-S2 product-designer — merged 3a347d6e3 (agent 49 · design-craft-canon 717 · mockup-protocol 315 · accessibility 385)
+- ADVISOR + mockups (Write = mockup HTML only; tech-lead runs data queries + publishes Artifacts).
+- Transfers requested (from frontend): prototype-on-real-data.md, product-icon-registry.md.
+- 🔴 Follow-up defects: seed `tokens.css:183-187` kills ALL focus outlines + seed Button has no ring ⇒ no visible focus on most screens (WCAG 2.4.7, P0-class) · token contrast: muted text 3.48–3.98 on light, white on pastel status fills 2.0–2.7 (every destructive Button label), dark primary 4.24 — palette change = OWNER decision · core Dashboard.tsx:250-261 product launch not keyboard-reachable · seed IntegrationCard.tsx:424 mouse-only div.
+- Keeper candidates: check_token_contrast (ratchet), check_global_focus_reset.
+- KB drift (frontend-owned): frontend-craft-canon §14 LBI art. 63 now verified; §7 div-onClick count 25 → 21.
+- Tooling note: union_roster.py only handles executor-style lines — the designer name was dropped and re-added by hand (design role).
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
