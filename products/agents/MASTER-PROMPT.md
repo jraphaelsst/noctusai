@@ -97,7 +97,7 @@ products/agents/backend/app/
   identity only when the standard says so. Refusals are typed codes; the wording is `ferramenta.resultado.recusa.<codigo>`.
   Refusals are two classes (`RECUSAS_CORRIGIVEIS` / `RECUSAS_CONTADAS`, fail-closed): a CORRECTABLE one (skill not opened,
   no campaign code, react before offered, unknown skill/file) is guidance and does NOT spend `max_recusas_por_turno` (the
-  call caps still bound a loop); every other code counts. The refusal log line carries `classe=`.
+  it also refunds the per-tool call count, the global `max_chamadas_ferramenta_turno` still bounds a loop); every other code counts. The refusal log line carries `classe=`.
   Past `max_recusas_por_turno` / `max_erros_ferramenta_por_turno` the toolset stops the turn (`should_stop`) and the turn
   ends in a hand-off to the org owner + a flagged event (silence, or the DB text `runtime.parada_segura`).
 - Julia v3 (CONTRACT §12): `sinalizar_alerta` (-> `agents.thread_alertas`, action `alerta`, one per tipo per turn),

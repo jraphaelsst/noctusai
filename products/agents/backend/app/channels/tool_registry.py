@@ -1158,7 +1158,10 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
                 res = await despacho[call.name](args)
         if res.recusa:
             classe = "corrigivel" if res.corrigivel else "contada"
-            if not res.corrigivel:
+            if res.corrigivel:
+                # the corrected retry must not hit the per-tool cap; the global ``t.chamadas`` still bounds a loop
+                t.chamadas_por_ferramenta[call.name] -= 1
+            else:
                 t.recusas += 1
             logger.info("agents.channel.recusa org_id=%s ferramenta=%s codigo=%s classe=%s recusas=%d chamadas=%d",
                         t.org_id, call.name, res.payload.get("codigo") or "itens_recusados", classe, t.recusas, t.chamadas)

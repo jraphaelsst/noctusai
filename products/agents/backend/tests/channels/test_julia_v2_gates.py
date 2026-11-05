@@ -367,6 +367,25 @@ class TestRecusaCorrigivelNaoGastaOOrcamento:
         assert body["status"] == "respondido" and body["actions"] == []
         assert "limite_recusas" not in json.dumps(body)
 
+    def test_a_correctable_refusal_does_not_spend_the_per_tool_budget(self, gated):
+        """Prod: max_oferecer_turno=1. oferecer(campanha) is refused (no code), the corrected oferecer must still run."""
+        chan = gated
+        assert chan.conformidade.limites(chan.org_id, chan.agent.id).max_oferecer_turno == 1
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("abrir_skill", nome="qualificar-lead"), call("abrir_skill", nome="ofertar-imoveis")),
+            step(call("registrar_perfil", itens=[
+                {"criterio": "operacao", "valor": "compra", "trecho": "Quero comprar"},
+                {"criterio": "interesse_campanha", "valor": "aberto", "trecho": "aceito ver"},
+                {"criterio": "regioes", "valor": ["Pinheiros"], "trecho": "Pinheiros"}])),
+            step(call("oferecer_imoveis", modo="campanha")),   # sem_codigo_campanha (correctable)
+            step(call("oferecer_imoveis", modo="similares")),  # the correction: must not hit limite_ferramentas
+            say("Veja: https://imob.exemplo/B1. Gostou?")]))
+        body = chan.turn(turn_body("Quero comprar em Pinheiros, aceito ver outras")).json()
+        codigos = [r.get("codigo") for r in tool_results(chan.provider)]
+        assert "sem_codigo_campanha" in codigos and "limite_ferramentas" not in codigos
+        assert chan.qual.codigos_oferecidos(chan.org_id, chan.lead_ref().id)  # the offer happened
+        assert body["status"] == "respondido"
+
     def test_two_counted_refusals_still_stop_the_turn(self, gated):
         chan = gated
         chan.use_provider(FakeProvider(tool_responses=[
