@@ -1544,14 +1544,18 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
     def _exec(self, query, *, unique_code: str | None = None, fk_code: str | None = None):
         return exec_query(query, unique_code=unique_code, fk_code=fk_code)
 
-    def _paged(self, build, *, label: str, order: tuple[str, ...]) -> list[dict[str, Any]]:
+    def _paged(self, build, *, label: str, order: tuple[str, ...], id_key: str = "id") -> list[dict[str, Any]]:
+        """``id_key`` = the unique column that ends the page order and that the pager dedupes on. A table without an
+        ``id`` (the composite-key ``definition_org_grants``) passes its own -- ``order=id`` there made PostgREST fail
+        and the grants routes answer 500."""
         def fetch(start: int, end: int):
             q = build()
             for col in order:
-                q = q.order(col)
-            return q.order("id").range(start, end).execute().data
+                if col != id_key:
+                    q = q.order(col)
+            return q.order(id_key).range(start, end).execute().data
 
-        return list(iter_paged_rows(fetch, label=label))
+        return list(iter_paged_rows(fetch, label=label, id_key=id_key))
 
     @staticmethod
     def _one(resp, what: str) -> dict[str, Any]:

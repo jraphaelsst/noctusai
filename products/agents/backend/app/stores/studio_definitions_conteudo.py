@@ -579,7 +579,8 @@ class SupabaseConteudoMixin:
     def list_definition_grants(self, definition_id):
         rows = self._paged(
             lambda: self._t("definition_org_grants").select("org_id").eq("definition_id", str(definition_id)),
-            label="definition grants", order=("org_id",),
+            # PK (definition_id, org_id) and no id column: filtered by definition, org_id is unique.
+            label="definition grants", order=(), id_key="org_id",
         )
         return [UUID(str(r["org_id"])) for r in rows]
 
