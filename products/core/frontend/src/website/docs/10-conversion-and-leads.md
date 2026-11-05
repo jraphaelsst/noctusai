@@ -55,8 +55,8 @@ Scope note: `orbity.leads` + activities already exist product-locally. With the 
 ## Fan-out on new lead (all Fake + Real + factory, all async after commit)
 
 1. **Core DB**: the source of truth, committed first.
-2. **Team notification by e-mail**: after the e-mail organ is formalized (Protocol + Fake + Real + factory).
-3. **WAHA**: an internal WhatsApp alert to the sales number *(owner to confirm the target number)*. An automated message to the lead is sent **only** if they opted in, and only as a template (no spam).
+2. **In-app notice** (`lead_novo`, bell) to the platform org's owners/admins, linking the admin Leads page. **No e-mail is sent for a lead** (owner 2026-11-05).
+3. ~~WAHA~~ removed 2026-11-04 (core owns no WhatsApp line; julia-line §A4). An automated message to the lead is sent **only** if they opted in, and only as a template (no spam).
 4. **n8n**: through the seed `outbound_webhook` (signed payload), to a follow-up workflow.
 
 A fan-out failure never loses the lead. It's recorded as a failed activity and retried; there's no silent failure.

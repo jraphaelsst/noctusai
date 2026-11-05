@@ -90,6 +90,9 @@ class Settings(ProductSettings):
     # Lead fan-out (contract §3, "Side effects of POST /leads"). Each is
     # optional — an unset value skips that channel with a debug log, never
     # an error (contract: "Never silent, never blocks the 201").
+    # `website_leads_notify_email` is NOT a lead channel any more (owner
+    # 2026-11-05: no e-mail on new leads) -- it is the owner daily brief's
+    # address only (`owner_brief_service`); leads notify in-app.
     website_leads_notify_email: str = ""
     website_sales_whatsapp: str = ""
     website_leads_webhook_url: str = ""
