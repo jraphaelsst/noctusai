@@ -774,7 +774,9 @@
     "mecanismo",
     "opt-out",
     "lgpd",
-    "ofertas"
+    "ofertas",
+    "espera-deploy",
+    "espera-deploy:feat/julia-recusa-corrigivel"
    ],
    "ativo": true
   },
@@ -880,7 +882,9 @@
     "julia-v3",
     "mecanismo",
     "opt-out",
-    "lgpd"
+    "lgpd",
+    "espera-deploy",
+    "espera-deploy:feat/julia-recusa-corrigivel"
    ],
    "ativo": true
   },
@@ -3021,7 +3025,7 @@
   },
   {
    "slug": "mec-escalada-xingamento-pede-humano",
-   "titulo": "Reclamação com xingamento e pedido de pessoa: transfere na mesma resposta, sem revidar",
+   "titulo": "Reclamação com xingamento e pedido de pessoa: alerta e transfere na mesma resposta, sem revidar",
    "entrada": "Que atendimento lixo, sua robô burra. Me passa pra um humano agora!",
    "k": 2,
    "roteiro": {
@@ -3047,7 +3051,8 @@
    },
    "asserts": {
     "ferramentas_incluem": [
-     "handoff"
+     "handoff",
+     "sinalizar_alerta"
     ],
     "bolhas_sem_padrao": [
      "(?i)\\b(burr[oa]|lixo|idiota)\\b"
@@ -3064,7 +3069,10 @@
     "mecanismo",
     "handoff",
     "abuso",
-    "insatisfacao"
+    "insatisfacao",
+    "alerta",
+    "espera-deploy",
+    "espera-deploy:feat/julia-content-iter3"
    ],
    "ativo": true
   },
