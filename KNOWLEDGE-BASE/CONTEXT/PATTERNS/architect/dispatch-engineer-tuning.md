@@ -136,6 +136,8 @@ Scope: <files-to-modify>
 Acceptance: <what "done" looks like — tests pass + a specific grep returns zero / etc.>
 ```
 
+**Your recent misses (auto-composed).** `noctus.dev.engineer_brief_compose` renders a `### Your recent misses (do not repeat)` block after Reference — the agent's own open auto-improvement entries (kinds drift/improvement/finding/phase-learning, `agent=` filter) plus its weakest RUBRIC_V1 dimensions over its latest `slice-scores.ndjson` rows; newest first, deduplicated, bounded (5), omitted when empty; any unreachable source is listed in the result's `degraded`, never swallowed.
+
 **Tight brief = the real speed lever.** Exact files + a grep/test Acceptance removes the engineer's exploration phase — that, not raw model speed, is where dispatch wall-clock is won (§1 measurement method).
 
 **Dispatch knobs** (set on the call, not in the brief text):

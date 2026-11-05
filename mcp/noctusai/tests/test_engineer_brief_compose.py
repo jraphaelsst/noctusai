@@ -1,22 +1,24 @@
 """Tests for noctus.dev.engineer_brief_compose.
 
-Mocks the three keeper-mirror cache modules (auto_improvement,
-kb_embeddings, agent_context_cache) so the tests run without a live
-embedding provider or populated SQLite caches.
+Every cache source is an injectable parameter of ``compose_brief`` /
+``_recent_misses`` — the tests pass fakes; nothing patches this module
+(``check_no_self_monkeypatch``).
 
 Acceptance gates:
-  - Brief dict shape (all four keys present).
+  - Brief dict shape (all six keys present).
   - Brief text contains required sections.
   - Graceful-degrade when caches raise ImportError or return empties.
   - Agent is auto-routed when not supplied; honoured when supplied.
   - _cosine and _centroid helpers produce correct values.
+  - "Your recent misses" block: rendered, absent when empty, deduped +
+    bounded, and every swallowed failure reported in ``degraded``.
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.engineer_brief_compose import (
     _centroid,
     _cosine,
+    _query_auto_improvement,
+    _recent_misses,
     compose_brief,
 )
 
@@ -67,35 +71,49 @@ _STUB_FILES = [
 _STUB_DESC = "Add engineer_brief_compose MCP tool with cache enrichment"
 
 
-def _make_fake_embed(vec: list[float]):
-    """Return a `embed_text` stub that returns the given vector."""
-    def _embed(text: str) -> dict:
-        return {"ok": True, "vector": vec, "dim": len(vec), "model": "test", "provider": "test"}
-    return _embed
+def _no_embed(text: str) -> dict:
+    return {"ok": False, "error": "provider offline (test)"}
+
+
+def _empty_query(**kw: Any) -> list[dict]:
+    return []
+
+
+def _empty_kb(description: str, top_k: int = 3) -> list[dict]:
+    return []
+
+
+def _no_rows() -> list[dict]:
+    return []
+
+
+def _compose(**over: Any) -> dict:
+    """compose_brief with every cache source injected as an empty fake."""
+    kw: dict[str, Any] = dict(
+        target_files=_STUB_FILES,
+        description=_STUB_DESC,
+        embed_text=_no_embed,
+        ai_query=_empty_query,
+        kb_search=_empty_kb,
+        pick_agent=lambda vec: "backend-engineer",
+        score_rows=_no_rows,
+    )
+    kw.update(over)
+    return compose_brief(**kw)
 
 
 class TestComposeBriefShape:
     """Verify the output dict has the right shape in all cache states."""
 
-    def test_returns_four_keys(self):
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
-        assert set(result.keys()) == {"brief", "suggested_agent", "auto_improvement_context", "kb_references"}
+    def test_returns_six_keys(self):
+        result = _compose()
+        assert set(result.keys()) == {
+            "brief", "suggested_agent", "auto_improvement_context",
+            "kb_references", "recent_misses", "degraded",
+        }
 
     def test_brief_contains_required_sections(self):
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
-        brief = result["brief"]
+        brief = _compose()["brief"]
         assert "## Engineer Brief" in brief
         assert "### Goal" in brief
         assert "### Reference" in brief
@@ -105,79 +123,38 @@ class TestComposeBriefShape:
         assert "Leg 2" in brief
 
     def test_scope_contains_target_files(self):
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
-        brief = result["brief"]
+        brief = _compose()["brief"]
         for tf in _STUB_FILES:
             assert tf in brief
 
     def test_agent_in_brief_footer(self):
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
-        assert "backend-engineer" in result["brief"]
+        assert "backend-engineer" in _compose()["brief"]
 
 
 class TestGracefulDegrade:
-    """When caches are unavailable the tool degrades gracefully."""
+    """When caches are unavailable the tool degrades — and says so."""
 
-    def test_empty_kb_references_on_import_error(self):
-        """If kb_embeddings is not importable, kb_references == []."""
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch(
-                "tools.noctus.dev.engineer_brief_compose._query_kb",
-                side_effect=ImportError("no module"),
-            ),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            # _query_kb is already guarded; if it raises ImportError the
-            # compose_brief caller won't catch it because the guard is inside
-            # _query_kb. We patch _query_kb itself to return [] to model the
-            # already-handled degrade.
-            pass
+    def test_empty_kb_references_when_search_raises(self):
+        def _boom(description: str, top_k: int = 3) -> list[dict]:
+            raise RuntimeError("kb cache missing")
 
-        # Correct path: _query_kb internally catches ImportError and returns [].
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
+        result = _compose(kb_search=_boom)
         assert result["kb_references"] == []
         assert "KB embeddings cache empty" in result["brief"]
+        assert any(d.startswith("kb-embeddings: RuntimeError") for d in result["degraded"])
 
     def test_empty_ai_context_on_no_ledger(self):
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
-        assert result["auto_improvement_context"] == []
+        assert _compose()["auto_improvement_context"] == []
+
+    def test_unreachable_embedding_is_reported(self):
+        result = _compose()
+        assert "embedding: provider offline (test)" in result["degraded"]
 
     def test_fallback_agent_when_no_embedding(self):
-        """When embedding returns [] and agent cache is absent, fallback agent is used."""
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
-        # _pick_agent with empty vec returns _FALLBACK_AGENT.
+        """Empty embedding + live _pick_agent ⇒ fallback agent, reason reported."""
+        result = _compose(pick_agent=None)
         assert result["suggested_agent"] == "backend-engineer"
+        assert any(d.startswith("agent-routing: no query embedding") for d in result["degraded"])
 
     def test_no_exception_when_all_caches_absent(self):
         """No ImportError should bubble up — all cache queries are guarded;
@@ -192,42 +169,34 @@ class TestGracefulDegrade:
         result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
         assert "brief" in result
         assert isinstance(result["suggested_agent"], str) and result["suggested_agent"]
+        assert isinstance(result["degraded"], list)
 
 
 class TestAgentRouting:
     def test_pinned_agent_honoured(self):
         """When `agent` is provided it is used verbatim without picking."""
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-        ):
-            result = compose_brief(
-                target_files=_STUB_FILES,
-                description=_STUB_DESC,
-                agent="frontend-engineer",
-            )
+        def _never(vec: list[float]) -> str:
+            raise AssertionError("pick_agent must not run when agent is pinned")
+
+        result = _compose(agent="frontend-engineer", pick_agent=_never)
         assert result["suggested_agent"] == "frontend-engineer"
         assert "frontend-engineer" in result["brief"]
 
-    def test_auto_route_picks_best_cosine(self):
-        """With a real embedding and mocked _pick_agent, picks highest-cosine agent.
-
-        _pick_agent is the seam: its internals use agent_context_cache +
-        kb_embeddings which may not be importable in all worktrees. We mock
-        _pick_agent directly and separately verify _pick_agent's cosine logic
-        through the unit tests on _cosine + _centroid above.
-        """
+    def test_auto_route_receives_the_query_vector(self):
+        """The picker seam gets the embedding of the description."""
         query_vec = [1.0, 0.0, 0.0]
+        seen: list[list[float]] = []
 
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=query_vec),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
+        def _pick(vec: list[float]) -> str:
+            seen.append(vec)
+            return "backend-engineer"
+
+        result = _compose(
+            embed_text=lambda t: {"ok": True, "vector": query_vec},
+            pick_agent=_pick,
+        )
         assert result["suggested_agent"] == "backend-engineer"
+        assert seen == [query_vec]
 
     def test_pick_agent_cosine_logic_directly(self):
         """Directly exercise _pick_agent's cosine selection without live cache deps.
@@ -283,38 +252,125 @@ class TestKbReferencesRendered:
         kb_hits = [
             {"path": "PATTERNS/backend.md", "chunk_text": "# Backend patterns", "score": 0.92},
         ]
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=kb_hits),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
+        result = _compose(kb_search=lambda description, top_k=3: kb_hits)
         assert result["kb_references"] == kb_hits
         assert "PATTERNS/backend.md" in result["brief"]
 
 
 class TestAutoImprovementRendered:
     def test_ai_context_in_brief(self):
-        ai_entries = [
-            {
-                "ts": "2026-05-26T10:00:00+00:00",
-                "kind": "improvement",
-                "target": "mcp/noctusai/tools/noctus/dev/engineer_brief_compose.py",
-                "description": "Add vector routing for agent selection",
-                "status": "s1-emergent",
-            },
-        ]
-        with (
-            patch("tools.noctus.dev.engineer_brief_compose._embed", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._query_auto_improvement", return_value=ai_entries),
-            patch("tools.noctus.dev.engineer_brief_compose._query_kb", return_value=[]),
-            patch("tools.noctus.dev.engineer_brief_compose._pick_agent", return_value="backend-engineer"),
-        ):
-            result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
-        assert result["auto_improvement_context"] == ai_entries
+        entry = {
+            "ts": "2026-05-26T10:00:00+00:00",
+            "kind": "improvement",
+            "target": "mcp/noctusai/tools/noctus/dev/engineer_brief_compose.py",
+            "description": "Add vector routing for agent selection",
+            "status": "s1-emergent",
+        }
+
+        def _q(**kw: Any) -> list[dict]:
+            return [] if kw.get("agent") else [entry]
+
+        result = _compose(ai_query=_q)
+        assert result["auto_improvement_context"] == [entry]
         assert "Auto-improvement context" in result["brief"]
         assert "vector routing" in result["brief"]
+
+    def test_failed_sub_queries_are_reported_not_swallowed(self):
+        def _boom(**kw: Any) -> list[dict]:
+            raise OSError("ndjson unreadable")
+
+        degraded: list[str] = []
+        out = _query_auto_improvement("d", ["a.py"], ai_query=_boom, degraded=degraded)
+        assert out == []
+        assert degraded == [
+            "auto-improvement query(target='a.py'): OSError: ndjson unreadable",
+            "auto-improvement query(keyword): OSError: ndjson unreadable",
+            "auto-improvement query(recency): OSError: ndjson unreadable",
+        ]
+
+
+# ── Your recent misses (do not repeat) ────────────────────────────────────────
+def _ai_row(ts: str, desc: str, kind: str = "drift", target: str = "x.py") -> dict:
+    return {"ts": ts, "kind": kind, "target": target, "description": desc, "status": "s1-emergent"}
+
+
+def _score_row(ts: str, agent: str, **q: float) -> dict:
+    full = {k: 4.0 for k in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7")}
+    full.update(q)
+    return {"ts": ts, "agent": agent, "model": "m", "q": full}
+
+
+class TestRecentMisses:
+    def test_misses_rendered_after_reference(self):
+        rows = [_ai_row("2026-11-01T00:00:00+00:00", "ran the full repo suite instead of the scoped test")]
+
+        def _q(**kw: Any) -> list[dict]:
+            return rows if kw.get("agent") == "backend-engineer" else []
+
+        scores = [_score_row("2026-11-02T00:00:00+00:00", "backend-engineer", Q3=1.0)]
+        result = _compose(ai_query=_q, score_rows=lambda: scores)
+        brief = result["brief"]
+        assert "### Your recent misses (do not repeat)" in brief
+        block = brief.split("### Your recent misses (do not repeat)", 1)[1].split("###", 1)[0]
+        assert "ran the full repo suite" in block
+        assert "tests scored 1.0/4" in block
+        assert brief.index("### Reference") < brief.index("### Your recent misses")
+        assert brief.index("### Your recent misses") < brief.index("### Scope")
+        # newest first: the rubric miss (11-02) precedes the drift (11-01).
+        assert [m["source"] for m in result["recent_misses"]] == ["rubric", "auto-improvement"]
+
+    def test_block_absent_when_no_misses(self):
+        result = _compose()
+        assert result["recent_misses"] == []
+        assert "recent misses" not in result["brief"]
+
+    def test_only_miss_kinds_and_own_rubric_rows(self):
+        rows = [
+            _ai_row("2026-11-01T00:00:00+00:00", "a drift", kind="drift"),
+            _ai_row("2026-11-01T00:00:01+00:00", "a trial obs", kind="trial-obs"),
+            _ai_row("2026-11-01T00:00:02+00:00", "a phase lesson", kind="phase-learning"),
+        ]
+        scores = [
+            _score_row("2026-11-03T00:00:00+00:00", "frontend-engineer", Q1=0.0),
+            _score_row("2026-11-03T00:00:00+00:00", "backend-engineer"),  # all 4.0 → no miss
+        ]
+        out = _recent_misses("backend-engineer", ai_query=lambda **kw: rows, score_rows=lambda: scores)
+        assert [m["text"] for m in out] == ["a phase lesson", "a drift"]
+
+    def test_dedupe_and_bound(self):
+        rows = [
+            _ai_row(f"2026-10-{d:02d}T00:00:00+00:00", f"miss number {d}") for d in range(1, 10)
+        ] + [
+            _ai_row("2026-10-20T00:00:00+00:00", "Same   Miss"),
+            _ai_row("2026-10-19T00:00:00+00:00", "same miss"),
+        ]
+        out = _recent_misses("backend-engineer", limit=3, ai_query=lambda **kw: rows,
+                             score_rows=_no_rows)
+        assert [m["text"] for m in out] == ["Same   Miss", "miss number 9", "miss number 8"]
+
+    def test_rubric_weakest_first_and_capped(self):
+        scores = [_score_row("2026-11-01T00:00:00+00:00", "backend-engineer",
+                             Q1=2.5, Q3=1.0, Q6=2.0)]
+        out = _recent_misses("backend-engineer", ai_query=_empty_query, score_rows=lambda: scores)
+        assert [m["target"] for m in out] == ["Q3 tests", "Q6 methodology"]
+
+    def test_degradation_reported_and_other_leg_survives(self):
+        def _boom(**kw: Any) -> list[dict]:
+            raise RuntimeError("cache locked")
+
+        scores = [_score_row("2026-11-01T00:00:00+00:00", "backend-engineer", Q2=1.0)]
+        result = _compose(ai_query=_boom, score_rows=lambda: scores)
+        assert [m["target"] for m in result["recent_misses"]] == ["Q2 design"]
+        assert "recent-misses auto-improvement: RuntimeError: cache locked" in result["degraded"]
+
+    def test_score_loader_failure_reported(self):
+        def _boom() -> list[dict]:
+            raise ValueError("bad ledger")
+
+        result = _compose(score_rows=_boom)
+        assert result["recent_misses"] == []
+        assert "recent-misses slice-scores: ValueError: bad ledger" in result["degraded"]
+        assert "recent misses" not in result["brief"]
 
 
 # ── 2026-09-22: brief footer follows engineer-seed §3/§4 (commit own branch) ──
