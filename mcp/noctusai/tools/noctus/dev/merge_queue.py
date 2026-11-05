@@ -430,15 +430,19 @@ def read_status(repo: str, sha: str, run: Runner = _default_run) -> dict[str, An
         return {"state": "unavailable", "detail": err.strip()[:300]}
     if not out.strip() or out.strip() == "null":
         return {"state": "queued", "detail": "no merge-queue verdict yet"}
-    s = json.loads(out)
+    try:
+        s = json.loads(out)
+    except json.JSONDecodeError as exc:  # a gh banner / partial body is "unavailable", never a crash
+        return {"state": "unavailable", "detail": f"unparseable gh output: {exc}: {out.strip()[:200]}"}
     state = {"success": "landed", "failure": "ejected", "error": "ejected"}.get(s.get("state"), "pending")
     m = re.search(r"landed in dev as ([0-9a-f]{7,40})", s.get("description") or "")
     return {"state": state, "description": s.get("description"), "url": s.get("target_url"),
             **({"dev_sha": m.group(1)} if m else {})}
 
 
-def queue_report(repo: str = "", run: Runner = _default_run, workdir: str | None = None) -> dict[str, Any]:
-    """Read-only: what is waiting in the queue, oldest first, with each entry's verdict."""
+def queue_snapshot(repo: str = "", run: Runner = _default_run, workdir: str | None = None) -> dict[str, Any]:
+    """The queue as it is NOW. RAISES on a git/gh failure (callers decide: `queue_report`
+    folds it into an error object, `watch` retries and keeps its last good snapshot)."""
     q = Queue(repo, run=run, workdir=workdir)
     q.repo = repo or _repo_from_remote(run, q.workdir)
     q.fetch()
@@ -446,6 +450,106 @@ def queue_report(repo: str = "", run: Runner = _default_run, workdir: str | None
     return {"status": "ok", "dev": q.dev_sha(), "count": len(entries),
             "entries": [{"slug": e.slug, "ref": e.ref, "sha": e.sha,
                          "verdict": read_status(q.repo, e.sha, run=run)} for e in entries]}
+
+
+def error_report(exc: BaseException) -> dict[str, Any]:
+    """The one shape every failure path prints: a JSON object with status=error (never a bare
+    traceback — 2026-11-05 a failed `git fetch` printed no JSON and the steward's scraper
+    died on `substring not found`, missing 6 transitions)."""
+    return {"status": "error", "error_type": type(exc).__name__, "error": str(exc)[:500]}
+
+
+def queue_report(repo: str = "", run: Runner = _default_run, workdir: str | None = None) -> dict[str, Any]:
+    """Read-only: what is waiting in the queue, oldest first, with each entry's verdict.
+    Never raises: a failure is `{status: "error", error_type, error}`."""
+    try:
+        return queue_snapshot(repo, run=run, workdir=workdir)
+    except Exception as exc:  # noqa: BLE001 - boundary: every failure becomes a JSON error object
+        return error_report(exc)
+
+
+def _fmt_entry_line(slug: str, sha: str, v: dict[str, Any]) -> str:
+    tail = " ".join(x for x in (str(v.get("description") or v.get("detail") or ""), str(v.get("url") or "")) if x)
+    return f"MQ {slug} {sha[:9]} -> {v.get('state', 'unknown')}: {tail}".rstrip()
+
+
+def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict[str, Any]],
+          interval: float = 60, sleep: Callable[[float], None] = time.sleep,
+          emit: Callable[[str], None] = lambda line: print(line, flush=True),
+          max_polls: int | None = None, attempts: int = 3, left_retries: int = 10) -> None:
+    """Long-running transition printer: ONE line per change, so a steward never diffs by hand.
+
+    `MQ <slug> <sha9> -> <state>: <desc> <url>` when a listed entry's verdict changes (and once
+    for each entry on first sight); `MQ-LEFT <slug> <sha9> -> landed <dev_sha> | ejected <reason>`
+    when an entry leaves the list (its final verdict is read by sha; a not-yet-readable verdict
+    is retried on later polls, never dropped). A failing read is retried with backoff, then
+    reported as `MQ-WATCH-ERROR <type>: <msg>` while the last good snapshot is KEPT, so the next
+    successful poll still reports every transition that happened in between. Never exits on a
+    transient error (only KeyboardInterrupt / `max_polls`, for tests)."""
+    known: dict[str, dict[str, Any]] = {}   # sha -> {slug, state, line}
+    leaving: dict[str, dict[str, Any]] = {}  # sha -> {slug, tries}
+    polls = 0
+    while max_polls is None or polls < max_polls:
+        polls += 1
+        report: dict[str, Any] | None = None
+        err: BaseException | None = None
+        for i in range(attempts):
+            try:
+                report = list_fn()
+                if report.get("status") == "error":
+                    err = RuntimeError(f"{report.get('error_type', 'Error')}: {report.get('error')}")
+                    report = None
+                else:
+                    err = None
+                    break
+            except Exception as exc:  # noqa: BLE001 - never die on a transient
+                err = exc
+            if i < attempts - 1:
+                sleep(min(2 ** i, interval))
+        if report is None:
+            emit(f"MQ-WATCH-ERROR {type(err).__name__}: {str(err)[:300]}")
+        else:
+            current = {e["sha"]: e for e in report.get("entries", [])}
+            for sha, e in current.items():
+                v = e.get("verdict", {})
+                prev = known.get(sha)
+                if v.get("state") == "unavailable" and prev:
+                    continue  # a flaky status read is not a transition
+                if prev is None or prev["state"] != v.get("state"):
+                    emit(_fmt_entry_line(e["slug"], sha, v))
+                known[sha] = {"slug": e["slug"], "state": v.get("state")}
+                leaving.pop(sha, None)
+            for sha in [s for s in known if s not in current]:
+                leaving[sha] = {"slug": known.pop(sha)["slug"], "tries": 0}
+        for sha in list(leaving):
+            slug = leaving[sha]["slug"]
+            try:
+                v = status_fn(sha)
+            except Exception as exc:  # noqa: BLE001
+                v = {"state": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
+            st = v.get("state")
+            if st == "landed":
+                emit(f"MQ-LEFT {slug} {sha[:9]} -> landed {v.get('dev_sha', '')}".rstrip())
+            elif st == "ejected":
+                emit(f"MQ-LEFT {slug} {sha[:9]} -> ejected {v.get('description') or v.get('detail') or ''}".rstrip())
+            else:
+                leaving[sha]["tries"] += 1
+                if leaving[sha]["tries"] >= left_retries:
+                    emit(f"MQ-LEFT {slug} {sha[:9]} -> unknown (no final verdict after {left_retries} polls: {st})")
+                else:
+                    continue
+            leaving.pop(sha, None)
+        if max_polls is not None and polls >= max_polls:
+            break
+        sleep(interval)
+
+
+def watch_live(interval: float = 60, run: Runner = _default_run, workdir: str | None = None) -> None:
+    """`watch` against the real repo: the list is read IN-PROCESS (no subprocess/JSON scrape)."""
+    wd = workdir or os.getcwd()
+    repo = _repo_from_remote(run, wd)
+    watch(lambda: queue_snapshot(repo, run=run, workdir=wd),
+          lambda sha: read_status(repo, sha, run=run), interval=interval)
 
 
 def _repo_from_remote(run: Runner, cwd: str) -> str:
@@ -487,12 +591,18 @@ def _summary(res: Outcome) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("command", choices=["drain", "list", "status"])
+    ap.add_argument("command", choices=["drain", "list", "status", "watch"])
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     ap.add_argument("--batch", type=int, default=DEFAULT_BATCH)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--sha", help="status: the enqueued sha")
+    ap.add_argument("--interval", type=float, default=60, help="watch: poll interval, seconds")
     a = ap.parse_args(argv)
+    if a.command == "watch":
+        try:
+            watch_live(a.interval)
+        except KeyboardInterrupt:
+            return 0
     if a.command == "status":
         print(json.dumps(read_status(a.repo, a.sha), indent=2))
         return 0

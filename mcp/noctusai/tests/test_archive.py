@@ -458,6 +458,17 @@ class TestLedgerStampOnProjectArchive:
         # Source still archived:
         assert not proj.exists()
 
+    def test_archive_renders_and_stages_project_history_md(self, tmp_repo):
+        """The ledger row and its re-rendered PROJECT-HISTORY.md land in the SAME operation."""
+        _make_project(tmp_repo, "rendered")
+        archive("projects/rendered", repo_root=tmp_repo, finding_rows_fn=lambda: [])
+        md = tmp_repo / "project-history" / "PROJECT-HISTORY.md"
+        assert md.exists() and "rendered" in md.read_text(encoding="utf-8")
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=str(tmp_repo),
+                                capture_output=True, text=True).stdout.split()
+        assert "project-history/ledger.ndjson" in staged
+        assert "project-history/PROJECT-HISTORY.md" in staged
+
     def test_second_project_archive_appends_second_line(self, tmp_repo):
         """Re-running on a second project appends (not overwrites)."""
         _make_project(tmp_repo, "first")

@@ -286,6 +286,11 @@ if have_py; then
             echo "[pre-commit] Staging updated project-history/PROJECT-HISTORY.md"
             git add project-history/PROJECT-HISTORY.md
         fi
+        # Backstop: the staged ledger must have its staged render (index vs index).
+        if [[ -n "$STAGED_LEDGER" ]] && ! "$PY" "$CLI" --check-project-history-staged --worktree-path "$REPO_ROOT" >/dev/null; then
+            echo "[pre-commit] project-history/ledger.ndjson staged without its PROJECT-HISTORY.md render. Fix: python mcp/noctusai/cli.py --render-project-history && git add project-history/PROJECT-HISTORY.md" >&2
+            exit 1
+        fi
     fi
 fi
 

@@ -38,7 +38,7 @@ from workspace import resolve_caller_root
 
 # Sibling history-record tool — same file imports are cheap; tools share
 # the dev-umbrella import surface.
-from tools.noctus.dev.history import history_record
+from tools.noctus.dev.history import history_record, render_project_history
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +429,14 @@ def archive(
             review_md=resolved_review,
             outcome_signals=outcome_signals,
             repo_root=root,
+        )
+        # The human view is part of the same close-out: a ledger row without its re-render
+        # left dev's PROJECT-HISTORY.md stale for ~2 months (2026-09-11 -> 11-05). Re-render and
+        # stage both in this operation; failures propagate (no silent skip).
+        render_project_history(repo_root=root)
+        subprocess.run(
+            ["git", "add", "--", "project-history/ledger.ndjson", "project-history/PROJECT-HISTORY.md"],
+            check=True, cwd=str(root), capture_output=True,
         )
         logger.info(
             "archive: stamped ledger for slug=%s before git mv (line_count=%s)",

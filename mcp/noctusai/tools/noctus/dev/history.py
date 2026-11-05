@@ -57,6 +57,7 @@ import json
 import logging
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -804,6 +805,34 @@ def render_project_history(
         "rows": len(deduped),
         "check": check,
     }
+
+
+def check_project_history_staged(repo_root: Path | None = None) -> dict:
+    """Pre-commit gate: a commit staging ``project-history/ledger.ndjson`` must stage the
+    PROJECT-HISTORY.md rendered from THAT staged ledger (index vs index — not the working
+    tree). A close-out once committed a ledger row without the re-render and dev's view sat
+    stale for ~2 months. Returns ``{"ok", "staged", "drift", "fix"}``; not staged -> ok."""
+    root = Path(repo_root) if repo_root is not None else REPO_ROOT
+
+    def _git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True)
+
+    ledger_rel, md_rel = "project-history/ledger.ndjson", "project-history/PROJECT-HISTORY.md"
+    names = _git("diff", "--cached", "--name-only", "--", ledger_rel).stdout.split()
+    if ledger_rel not in names:
+        return {"ok": True, "staged": False, "drift": False, "fix": ""}
+    shown = _git("show", f":{ledger_rel}")
+    if shown.returncode != 0:
+        raise RuntimeError(f"cannot read staged {ledger_rel}: {shown.stderr.strip()[:300]}")
+    md = _git("show", f":{md_rel}")
+    staged_md = md.stdout if md.returncode == 0 else ""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td) / "ledger.ndjson"
+        tmp.write_text(shown.stdout, encoding="utf-8")
+        rendered = _history_render_body(tmp)
+    drift = rendered != staged_md
+    return {"ok": not drift, "staged": True, "drift": drift,
+            "fix": f"python mcp/noctusai/cli.py --render-project-history && git add {md_rel}"}
 
 
 # ---------------------------------------------------------------------------
