@@ -291,3 +291,32 @@ class TestEndToEndAllowDeny:
         assert code == 0 and out is None
         code, out = _run(POST, _bash("true"))
         assert code == 0 and (out is None or "additionalContext" in out["hookSpecificOutput"])
+
+
+def test_deny_and_rewrite_are_logged_one_json_line_each(tmp_path):
+    # 2026-11-05: guard friction is measured from this log, not transcripts.
+    mod = _runner()
+    log = tmp_path / "events.ndjson"
+    payload = {"tool_name": "Bash", "tool_input": {"command": "pytest"}, "session_id": "s1", "cwd": "/x"}
+    mod.run_guard("heavy-run", lambda p: {"reason": "ungated"}, stdin=io.StringIO(json.dumps(payload)),
+                  stdout=io.StringIO(), event_log=log)
+    mod.run_guard("primary-write", lambda p: {"decision": "allow", "updated_input": {"command": "cd w && ls"},
+                                              "context": "redirected"},
+                  stdin=io.StringIO(json.dumps(payload)), stdout=io.StringIO(), event_log=log)
+    mod.run_guard("heavy-run", lambda p: None, stdin=io.StringIO(json.dumps(payload)),
+                  stdout=io.StringIO(), event_log=log)
+    rows = [json.loads(x) for x in log.read_text().splitlines()]
+    assert [(r["guard"], r["outcome"]) for r in rows] == [("heavy-run", "deny"), ("primary-write", "rewrite")]
+    assert rows[0]["target"] == "pytest" and rows[0]["session"] == "s1"
+
+
+def test_unwritable_event_log_never_changes_the_verdict(tmp_path, capsys):
+    mod = _runner()
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    out = io.StringIO()
+    mod.run_guard("heavy-run", lambda p: {"reason": "ungated"},
+                  stdin=io.StringIO(json.dumps({"tool_name": "Bash", "tool_input": {}})),
+                  stdout=out, event_log=blocker / "sub" / "log.ndjson")
+    assert "deny" in out.getvalue()
+    assert "log write failed" in capsys.readouterr().err

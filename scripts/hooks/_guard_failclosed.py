@@ -32,6 +32,41 @@ from typing import Any, TextIO
 
 DEFAULT_DEADLINE_S = 8.0  # must stay below the `timeout` in .claude/settings.json (10)
 
+# Guard-event log (2026-11-05, gates audit): every deny and every rewrite is
+# appended here, one JSON line each. Before this, guard friction was only
+# countable by grepping session transcripts. Read it with e.g.
+#   jq -r .guard .claude/cache/guard-events.ndjson | sort | uniq -c
+# Gitignored (.claude/cache/), machine-local, append-only. A failed write is
+# reported on stderr and never changes the verdict.
+EVENT_LOG = Path(__file__).resolve().parents[2] / ".claude" / "cache" / "guard-events.ndjson"
+
+
+def log_event(name: str, outcome: str, reason: str, payload: dict[str, Any] | None,
+              log_path: Path | None = None) -> None:
+    import datetime
+    import os
+    tool_input = (payload or {}).get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, dict) else {"command": str(tool_input or "")}
+    target = tool_input.get("file_path") or tool_input.get("command") or ""
+    row = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "guard": name,
+        "outcome": outcome,
+        "tool": (payload or {}).get("tool_name"),
+        "target": str(target)[:200],
+        "reason": reason[:300],
+        "session": (payload or {}).get("session_id"),
+        "cwd": (payload or {}).get("cwd") or os.getcwd(),
+    }
+    path = log_path or Path(os.environ.get("NOCTUS_GUARD_EVENT_LOG") or EVENT_LOG)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    except OSError as exc:
+        print(f"claude-guard-{name}: guard-event log write failed ({exc}); verdict unchanged",
+              file=sys.stderr)
+
 
 class GuardTimeout(BaseException):
     """BaseException on purpose: a guard's inner `except Exception` must not swallow it."""
@@ -77,6 +112,7 @@ def run_guard(
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     deadline_s: float = DEFAULT_DEADLINE_S,
+    event_log: Path | None = None,
 ) -> int:
     """Read the hook payload, call `judge(payload)`, emit a deny on a verdict OR on any failure.
 
@@ -88,8 +124,11 @@ def run_guard(
     stdin = stdin if stdin is not None else sys.stdin
     out = stdout if stdout is not None else sys.stdout
 
+    payload: Any = None
+
     def _emit(reason: str) -> int:
         json.dump(deny_json(name, reason), out)
+        log_event(name, "deny", reason, payload if isinstance(payload, dict) else None, event_log)
         return 0
 
     try:
@@ -138,6 +177,7 @@ def run_guard(
         if not isinstance(verdict.get("updated_input"), dict):
             return _emit("allow verdict without an updated_input object — guard failed closed; fix the guard.")
         json.dump(allow_rewritten_json(verdict["updated_input"], str(verdict.get("context") or "")), out)
+        log_event(name, "rewrite", str(verdict.get("context") or ""), payload, event_log)
         return 0
     return _emit(str(verdict["reason"]))
 

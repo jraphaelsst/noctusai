@@ -192,6 +192,14 @@ def ledger_repo(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_guard_event_log(tmp_path, monkeypatch):
+    """Guard runs in tests (and the hook subprocesses they spawn, which inherit
+    the env) append to a per-test file, never the real
+    `.claude/cache/guard-events.ndjson` (2026-11-05)."""
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(tmp_path / "guard-events.ndjson"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_ledger_dev_copies(tmp_path, monkeypatch):
     """Point every moved ledger's `LEDGER_PATH` at an empty per-test path.
 
