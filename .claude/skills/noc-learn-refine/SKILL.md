@@ -1,7 +1,7 @@
 ---
 name: noc-learn-refine
 description: Use whenever the owner wants learning and refinement to happen WHILE the work happens — triggers "learn during this", "learn while building", "learn as we go", "refine as we go", "auto-improve while you do it", "let's learn from this run", "evaluate this method", "we're testing this approach", "treat this as an experiment", "measure if this works", "improve the skill/tool while using it", or any task the owner frames as a learning round (e.g. the first run of a new process, seed, skill or tool). Treat the method in use as UNTRUSTED-UNDER-EVALUATION — state a hypothesis + metrics up front, log observations as they happen, refine mid-flight, close with an evidence-backed verdict.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-learn-refine — auto-improvement consciousness
@@ -26,6 +26,12 @@ Every trial lands in the shared auto-improvement ledger through ONE tool, `noctu
    - **discard** → remove or rewrite the target and record why in its KB home.
    - **extend** → open a follow-up trial with the widened hypothesis.
 7. **Report loudly at wrap-up.** `action=report` → in the final reply: trials opened, key numbers, verdicts, what changed (paths), trials still open and why. Open trials are carried forward by name; none silently dropped.
+
+## When the method on trial is a dispatch shape or a model choice
+- **Score every slice on the shared rubric**: call `noctus.dev.dispatch_log_completion` with `score=` (Q1–Q7 of `RUBRIC_V1`) and `engineer_return=`, then read the trend from `noctus.team.agent_metrics`. Use those numbers, not an impression.
+- **Get a baseline before the first comparison.** If the ledger has no rows for the alternative (another model or another shape), dispatch the SAME brief to both arms in parallel, on the same base commit, under the same load, and score the diffs blind. This costs one extra slice. Without it, the verdict compares against nothing. (Born 2026-11-04: an Opus-plans/Sonnet-executes trial reached its verdict step with no Opus baseline to compare against.)
+- **Time from `date +%s`** (the engineer's first and last command) or the FINAL task-notification `duration_ms`, never an interim notification and never the engineer's own estimate.
+- **Heavy runs go through the hardware gate** (`hw_admission.py run`). The `heavy-run-guard` hook enforces it; ungated suites distort every other session's timings.
 
 ## Guardrails
 - ⚠️ **No self-grading without evidence.** "Worked well" without an observation row is not a verdict. Numbers and pointers over adjectives.
