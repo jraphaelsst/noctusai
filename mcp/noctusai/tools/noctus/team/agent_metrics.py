@@ -78,6 +78,8 @@ def _group_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ratios = [r["wall_s_self_reported"] / r["wall_s_measured"] for r in rows
               if r.get("wall_s_self_reported") and r.get("wall_s_measured")]
     drifts = Counter(d["text"] for r in rows for d in r.get("drifts") or [] if d.get("text"))
+    oc = Counter(d.get("outcome") for r in rows for d in r.get("drifts") or [])
+    tagged = oc["fixed"] + oc["fixing"] + oc["deferred"]
     return {
         "n": n,
         "mean_q_weighted": _mean(qw),
@@ -86,6 +88,9 @@ def _group_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "tokens_per_accepted_slice": int(sum(tokens) / len(tokens)) if tokens else None,
         "cost_usd_est": round(sum(costs), 4) if costs else None,
         "self_estimate_error_ratio": _mean(ratios),
+        "drift_outcomes": {"fixed": oc["fixed"], "fixing": oc["fixing"], "deferred": oc["deferred"],
+                           "untagged": sum(oc.values()) - tagged},
+        "drift_fixed_ratio": round((oc["fixed"] + oc["fixing"]) / tagged, 3) if tagged else None,
         "top_drifts": [{"text": t, "count": c} for t, c in drifts.most_common(3)],
     }
 

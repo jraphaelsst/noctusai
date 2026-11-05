@@ -147,11 +147,9 @@ Returns open (non-closed) surfaces, most-recent-first. The author incorporates r
 
 ## How surfaces land in the ledger
 
-**Engineer side** (scoped — engineer-slice):
-The engineer's `drift-found:` / `scoped-improvement:` lines in their short-form return are TEXT — they don't write to the ledger directly (file-disjoint discipline / commit-own-branch-only). The **tech-lead** transcribes via `noctus.dev.auto_improvement_log(...)` after reading the engineer's report.
+**Fix on contact first (owner rule 2026-11-05).** A `drift-found:` line is not a parking slot: each bullet must end with an outcome tag — `[fixed <sha>]` | `[fixing → feat/<slug>]` | `[deferred → <destination> because <reason>]` (destination = `NOC-REMEDIATE[<class>]` path · `project-history/roadmaps/…` · `MEMORY-reminders` · owner-decision). The linter refuses untagged bullets and `dispatch_log_completion` refuses the return; the tag is stored on the slice-score drift row (`outcome`, `ref`) and rolled up as `drift_fixed_ratio` in `team.agent_metrics`. See `KB § PATTERNS/common/drift-fix-on-contact.md`.
 
-**Tech-lead side** (broad — cross-cutting):
-The tech-lead logs directly when surfacing methodology-level observations during the session (architectural slips, doc-tool coherence drift, recurrence patterns).
+The engineer's `drift-found:` / `scoped-improvement:` lines are TEXT; `noctus.dev.dispatch_log_completion(engineer_return=…)` transcribes each to the ledger (`resolve_when: manual:engineer-footer triage`) AFTER the lint passes. Logging to the ledger is bookkeeping for the pattern radar — it does NOT close a drift; a `[deferred]` row stays open until its destination is actually worked.
 
 ## Why the role-split persists at the ledger layer
 

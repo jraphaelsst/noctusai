@@ -33,6 +33,7 @@ Both sections required. Both must be non-empty OR carry a sentinel (`none`, `n/a
 
 ## Tolerances
 
+- **Outcome tags (2026-11-05)**: every `drift-found:` bullet must end in `[fixed <sha>]` | `[fixing → feat/<slug>]` | `[deferred → <NOC-REMEDIATE[class] | project-history/roadmaps/… | MEMORY-reminders | owner-decision> because <reason ≥10 chars>]`; untagged bullets land in `untagged` (+ `expected_tag_shape`), `ok=False`, and `dispatch_log_completion` refuses. `- none` stays valid. See `drift-fix-on-contact.md`.
 - **Case insensitive**: `Drift-Found:` / `DRIFT-FOUND:` / `drift-found:` all match.
 - **Bold wrapping**: `**drift-found:**` matches.
 - **Sentinels accepted as "intentional empty"**: `none`, `n/a`, `(none)`, `no drift`, `no drift found`, `no improvements`, `nothing`.
