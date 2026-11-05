@@ -11,7 +11,7 @@
   (the allowlist switch is `permitidos_ativo` on PUT/GET /config)
 
 All org-admin actions. The limits and the blocklist are data per org (migration 298); the webhook reads them on every inbound.
-ALLOWLIST (migration 322, owner 2026-11-05: "so she only replies to me at first. The list, when empty, answers all numbers"):
+ALLOWLIST (migration 323, owner 2026-11-05: "so she only replies to me at first. The list, when empty, answers all numbers"):
 `permitidos_ativo` ON + a non-empty list => a sender not on it is not Julia's (the webhook keeps today's behaviour, motivo
 `fora_da_lista_de_permitidos`); OFF or an empty list => nobody is filtered; an unreadable list with the switch ON fails CLOSED.
 A listed number bypasses the 11.1 snapshot / previous-chat rules (explicit opt-in); staff, the blocklist and opt-out still win.

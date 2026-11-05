@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.julia_permitidos (
 );
 
 COMMENT ON TABLE social_wiring.julia_permitidos IS
-    'Per-org allowlist (migration 322): with julia_protecao_config.permitidos_ativo ON and the list non-empty, only these numbers are '
+    'Per-org allowlist (migration 323): with julia_protecao_config.permitidos_ativo ON and the list non-empty, only these numbers are '
     'Julia''s; a listed number bypasses the 11.1 snapshot / previous-chat rules (an explicit opt-in). Backend-only.';
 
 DO $rls$

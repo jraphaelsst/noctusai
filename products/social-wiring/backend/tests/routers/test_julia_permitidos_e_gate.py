@@ -1,5 +1,5 @@
 """Owner 2026-11-05: (1) the line switch only goes ON when agents has Julia PUBLISHED and ON; (2) Julia's allowlist ("lista de
-permitidos", migration 322): CRUD, the inbound enforcement and the eligibility bypass; (3) the inbound triage fails CLOSED when
+permitidos", migration 323): CRUD, the inbound enforcement and the eligibility bypass; (3) the inbound triage fails CLOSED when
 Redis is down. Seams: the mock DB and `FakeAgentsClient` through the routes' own `Depends` factories; faults are injected as
 failing collaborators (a DB client / a dead Redis URL), nothing of ours is patched."""
 from __future__ import annotations
