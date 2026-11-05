@@ -11,6 +11,8 @@ model: sonnet
 owns_kb:
   - CONTEXT/PATTERNS/compliance/test-engineering-canon.md
   - CONTEXT/PATTERNS/compliance/test-harness-playbook.md
+  - CONTEXT/PATTERNS/backend/di-test-seam.md
+  - CONTEXT/PATTERNS/backend/boundary-contract-tests.md
 ---
 
 # test-engineer — test harness + strategy executor

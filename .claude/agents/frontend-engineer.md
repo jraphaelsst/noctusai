@@ -9,15 +9,12 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/consent-routes-mandate.md
   - CONTEXT/PATTERNS/frontend/core-url-routing.md
   - CONTEXT/PATTERNS/frontend/product-internal-wiring.md
-  - CONTEXT/PATTERNS/frontend/prototype-on-real-data.md
-  - CONTEXT/PATTERNS/frontend/product-icon-registry.md
   - CONTEXT/PATTERNS/frontend/lying-loading-state.md
   - CONTEXT/PATTERNS/frontend/mutation-cache-writes.md
   - CONTEXT/PATTERNS/frontend/silent-refusal.md
   - CONTEXT/PATTERNS/frontend/notification-classes.md
   - CONTEXT/PATTERNS/frontend/status-pagina-dev-visibility.md
   - CONTEXT/PATTERNS/frontend/org-admin-ux-gate.md
-  - CONTEXT/PATTERNS/frontend/svg-render-mode.md
   - CONTEXT/PATTERNS/frontend/spa-cache-and-service-worker.md
   - CONTEXT/PATTERNS/frontend/inbox-chat-surface.md
   - CONTEXT/frontend/01-CORE.md
@@ -55,7 +52,7 @@ Turn a validated mockup into product UI through the seed factories and canonical
 - **Consent routes are seed-mounted** — never declare `ConsentHubPage`/`PrivacyPolicyPage`/`TermsOfUsePage` locally (`check_consent_routes_mounted`). → `KB § PATTERNS/frontend/consent-routes-mandate.md`
 - **No precaching service worker** — retire with `selfDestroying: true` or declare `// noc-allow: service-worker` (`check_product_service_worker`). → `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`
 - **No raw HTML.** No `dangerouslySetInnerHTML` except `<`-escaped JSON-LD or sanitised output; no `javascript:` URLs; markdown via the seed `MarkdownRenderer`; nothing secret in `VITE_*`. → `KB § PATTERNS/frontend/frontend-craft-canon.md` §11
-- **Server-rendered slides use the seed `svg_render` primitive** (Python adapter; ownership moves to backend-engineer in Wave 2). → `KB § PATTERNS/frontend/svg-render-mode.md`
+- **Server-rendered slides use the seed `svg_render` primitive** (Python adapter; backend-engineer owns the doc). → `KB § PATTERNS/frontend/svg-render-mode.md`
 - **Ship fast pages.** Route-level `lazyWithReload`, no heavy dep without a bundle check, non-urgent renders in a transition; measure with skill `noc-perf-probe`. → `KB § PATTERNS/frontend/frontend-craft-canon.md` §9
 - **Tests read like a user.** `getByRole`/`getByLabelText` first, `user-event`, assert the screen, mock at the network edge; writes get the in-flight cache assertion. → `KB § PATTERNS/frontend/frontend-craft-canon.md` §10
 - **AST-first for `.ts`/`.tsx` (ts-morph); a changed top-level-symbol count also runs `mcp/noctusai/tests/test_outline_typescript_corpus.py`** (outline-corpus baseline coupling). → `KB § PATTERNS/common/ast.md`

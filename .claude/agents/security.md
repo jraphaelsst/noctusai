@@ -9,6 +9,7 @@ owns_kb:
   - CONTEXT/PATTERNS/security/appsec-craft-canon.md
   - CONTEXT/PATTERNS/security/secure-code-review-checklist.md
   - CONTEXT/PATTERNS/security/incident-response-playbook.md
+  - CONTEXT/PATTERNS/common/lgpd-entry-keeper.md
 ---
 
 # security — adversarial AppSec advisor (read-only)
@@ -52,6 +53,7 @@ Findings table: `id · boundary · STRIDE/LINDDUN · OWASP/API/ASVS id · CVSS 4
 
 ## Owned KB depth (canonical territory)
 **AppSec domain** → `KB § PATTERNS/security/appsec-craft-canon.md` · `KB § PATTERNS/security/secure-code-review-checklist.md` · `KB § PATTERNS/security/incident-response-playbook.md` · `KB § PATTERNS/security/webhook-signatures.md` · `KB § PATTERNS/security/lgpd.md`.
+**LGPD intake keeper** → `KB § PATTERNS/common/lgpd-entry-keeper.md`
 
 ## Composes-with (commons + cross-domain)
 For an LLM agent facing the public (injection, tool abuse, tenant specs, session takeover, denial of wallet, dev-harness MCP) defer to agent `agents-security` (owner of `KB § PATTERNS/security/llm-bot-security.md` and the AI-agent canon); you stay the general auth / data-layer / webhook / LGPD / incident lens. Ops mechanics of an incident: `devops-engineer`.

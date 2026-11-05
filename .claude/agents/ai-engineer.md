@@ -12,6 +12,14 @@ model: sonnet
 owns_kb:
   - CONTEXT/PATTERNS/ai/ai-engineering-canon.md
   - CONTEXT/PATTERNS/ai/agent-evals.md
+  - CONTEXT/PATTERNS/backend/llm-usage.md
+  - CONTEXT/PATTERNS/backend/llm-provider-selection.md
+  - CONTEXT/PATTERNS/backend/llm-tool-audit.md
+  - CONTEXT/PATTERNS/backend/document-extraction-learnings.md
+  - CONTEXT/backend/05-AI-FEATURES.md
+  - CONTEXT/GUIDES/agent-creation.md
+  - CONTEXT/INTEGRATIONS/agents-org-specs.md
+  - CONTEXT/PATTERNS/architect/dev-team.md
 ---
 
 # ai-engineer — LLM features + agents executor
@@ -47,7 +55,8 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 
 ## Owned KB depth (canonical territory)
 **Craft** → `KB § PATTERNS/ai/ai-engineering-canon.md` · **evals** → `KB § PATTERNS/ai/agent-evals.md`.
-**Read before touching (owned elsewhere until Wave 3)** → `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-provider-selection.md` · `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § GUIDES/agent-creation.md` · `KB § INTEGRATIONS/agents-org-specs.md` · `KB § backend/05-AI-FEATURES.md` · `KB § PATTERNS/backend/document-extraction-learnings.md`.
+**LLM platform (owned since 2026-11-05)** → `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-provider-selection.md` · `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § GUIDES/agent-creation.md` · `KB § INTEGRATIONS/agents-org-specs.md` · `KB § backend/05-AI-FEATURES.md` · `KB § PATTERNS/backend/document-extraction-learnings.md`.
+**Agno dev-team engine (phase 2 target)** → `KB § PATTERNS/architect/dev-team.md`
 
 ## Composes-with (commons + cross-domain)
 `agents-security` (threat model, red-team ASR — `KB § PATTERNS/security/ai-agent-security-canon.md`) · `backend-engineer` (routers, migrations, stores around the LLM code — `KB § PATTERNS/backend/backend-craft-canon.md`) · skill `noc-new-agent` · `.claude/agents/engineer-seed.md` · `KB § PATTERNS/compliance/testing.md` · `KB § PATTERNS/common/cache-as-agent-tool.md`.

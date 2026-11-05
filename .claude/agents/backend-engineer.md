@@ -25,10 +25,6 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/pydantic-strict-http.md
   - CONTEXT/PATTERNS/backend/redis-auth-seam.md
   - CONTEXT/PATTERNS/backend/seed-fake-real-adapter.md
-  - CONTEXT/PATTERNS/backend/di-test-seam.md
-  - CONTEXT/PATTERNS/backend/llm-tool-audit.md
-  - CONTEXT/PATTERNS/backend/llm-usage.md
-  - CONTEXT/PATTERNS/backend/llm-provider-selection.md
   - CONTEXT/PATTERNS/backend/notifications.md
   - CONTEXT/PATTERNS/backend/logging.md
   - CONTEXT/PATTERNS/backend/logging-at-except.md
@@ -42,46 +38,21 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md
   - CONTEXT/PATTERNS/backend/leads-organ.md
   - CONTEXT/PATTERNS/backend/chatbot-operational-readiness.md
-  - CONTEXT/PATTERNS/backend/boundary-contract-tests.md
   - CONTEXT/PATTERNS/backend/upload-route-body-override-derivation.md
-  - CONTEXT/PATTERNS/backend/document-extraction-learnings.md
-  - CONTEXT/PATTERNS/common/outbound-rate-limiting.md
   - CONTEXT/PATTERNS/common/realtime-sse-bus.md
   - CONTEXT/PATTERNS/common/performance-analysis.md
   - CONTEXT/backend/01-CORE.md
   - CONTEXT/backend/02-ERP.md
   - CONTEXT/backend/03-PF.md
   - CONTEXT/backend/04-DATABASE.md
-  - CONTEXT/backend/05-AI-FEATURES.md
   - CONTEXT/backend/06-THERAPY.md
   - CONTEXT/backend/07-AUTH-SECURITY.md
   - CONTEXT/backend/08-DAILY-LIFE.md
-  - CONTEXT/GUIDES/google-oauth-setup.md
   - CONTEXT/GUIDES/matricula-source-recovery.md
-  - CONTEXT/GUIDES/agent-creation.md
-  - CONTEXT/INTEGRATIONS/google.md
-  - CONTEXT/INTEGRATIONS/meta.md
-  - CONTEXT/INTEGRATIONS/meta-setup.md
-  - CONTEXT/INTEGRATIONS/meta-app-verification.md
-  - CONTEXT/INTEGRATIONS/meta-leads-checklist.md
-  - CONTEXT/INTEGRATIONS/meta-leadgen.md
-  - CONTEXT/INTEGRATIONS/google-oauth-console-setup.md
-  - CONTEXT/INTEGRATIONS/whatsapp.md
-  - CONTEXT/INTEGRATIONS/vista.md
-  - CONTEXT/INTEGRATIONS/oauth-patterns.md
   - CONTEXT/INTEGRATIONS/image-gen.md
   - CONTEXT/INTEGRATIONS/image-edit.md
-  - CONTEXT/INTEGRATIONS/fx-ptax.md
-  - CONTEXT/INTEGRATIONS/infosimples-certidoes.md
-  - CONTEXT/INTEGRATIONS/mailchimp.md
-  - CONTEXT/INTEGRATIONS/olx.md
-  - CONTEXT/INTEGRATIONS/imovelweb.md
-  - CONTEXT/INTEGRATIONS/payments.md
-  - CONTEXT/INTEGRATIONS/invoices.md
-  - CONTEXT/INTEGRATIONS/live-rooms.md
-  - CONTEXT/INTEGRATIONS/turnstile.md
   - CONTEXT/INTEGRATIONS/risk-classifier.md
-  - CONTEXT/INTEGRATIONS/agents-org-specs.md
+  - CONTEXT/PATTERNS/frontend/svg-render-mode.md
 ---
 
 # backend-engineer — server-side executor
@@ -135,14 +106,15 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 
 ## Owned KB depth (canonical territory)
 **Craft** → `KB § PATTERNS/backend/backend-craft-canon.md` · `KB § PATTERNS/backend/postgres-craft.md`.
-**Backend patterns** → `KB § PATTERNS/backend/backend.md` · `KB § PATTERNS/backend/pydantic-strict-http.md` · `KB § PATTERNS/backend/di-test-seam.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/backend/boundary-contract-tests.md` · `KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`.
+**Backend patterns** → `KB § PATTERNS/backend/backend.md` · `KB § PATTERNS/backend/pydantic-strict-http.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`.
 **Data & migrations** → `KB § PATTERNS/backend/database-rls.md` · `KB § PATTERNS/backend/migrate-product-mcp-tool.md` · `KB § backend/04-DATABASE.md`.
-**Domain (per product; 02/03/06/08 = asleep products)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/05-AI-FEATURES.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
+**Domain (per product; 02/03/06/08 = asleep products)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
 **Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md` · `KB § PATTERNS/backend/audit-trail.md` · `KB § PATTERNS/common/performance-analysis.md`.
-**LLM & AI** → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-provider-selection.md` · `KB § PATTERNS/backend/photo-editing-seed.md` · `KB § GUIDES/agent-creation.md` (skill `noc-new-agent`).
+**Photo editing** → `KB § PATTERNS/backend/photo-editing-seed.md`.
 **Chatbot & organs** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md` · `KB § PATTERNS/backend/leads-organ.md`.
-**Integrations — Google/Meta/WhatsApp** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/google-oauth-console-setup.md` · `KB § GUIDES/google-oauth-setup.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/meta-setup.md` · `KB § INTEGRATIONS/meta-app-verification.md` · `KB § INTEGRATIONS/meta-leads-checklist.md` · `KB § INTEGRATIONS/meta-leadgen.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/agents-org-specs.md`.
-**Integrations — other vendors** → `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/infosimples-certidoes.md` · `KB § GUIDES/matricula-source-recovery.md` · `KB § INTEGRATIONS/payments.md` · `KB § INTEGRATIONS/invoices.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § INTEGRATIONS/risk-classifier.md`.
+**Internal/LLM-provider adapters** → `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/risk-classifier.md` · `KB § GUIDES/matricula-source-recovery.md`.
+**Server-rendered slides** → `KB § PATTERNS/frontend/svg-render-mode.md`.
+**Handed off 2026-11-05** — vendor integrations + OAuth + `outbound-rate-limiting` → `integrations-engineer`; LLM usage/provider/tool-audit, `05-AI-FEATURES`, agent-creation, agents-org-specs, document-extraction → `ai-engineer`; `di-test-seam` + `boundary-contract-tests` → `test-engineer`. Consult them; their canons win in their domain.
 
 ## Composes-with (commons + cross-domain)
 `.claude/agents/engineer-seed.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/ast.md` · `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/compliance/testing.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `dispatch-with-project-and-notes.md` · `webhook-signatures.md` (security-owned).

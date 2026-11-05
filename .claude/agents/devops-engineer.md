@@ -4,7 +4,6 @@ description: Senior DevOps / platform engineer — EXECUTOR. Dispatch for contai
 tools: Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*
 model: sonnet
 owns_kb:
-  - CONTEXT/PATTERNS/common/harness-mods.md
   - CONTEXT/PATTERNS/devops/containerization.md
   - CONTEXT/PATTERNS/devops/containerization-operations.md
   - CONTEXT/PATTERNS/devops/container-sanitization.md
@@ -29,14 +28,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/ssh-deploy-key-restrictions.md
   - CONTEXT/PATTERNS/devops/product-lockfile-and-slug-drift.md
   - CONTEXT/PATTERNS/devops/tunnel-ingress-source-of-truth.md
-  - CONTEXT/PATTERNS/common/push-time-embedding-gate.md
-  - CONTEXT/PATTERNS/common/memory-embeddings.md
-  - CONTEXT/PATTERNS/common/corpus-embeddings.md
   - CONTEXT/PATTERNS/common/tmp-artifact-cleanup.md
-  - CONTEXT/PATTERNS/common/cache-portable-architecture.md
-  - CONTEXT/PATTERNS/common/cache-as-agent-tool.md
-  - CONTEXT/PATTERNS/common/vectorize-embed-cache-framework.md
-  - CONTEXT/INTEGRATIONS/openai-mcp.md
   - CONTEXT/05-INFRASTRUCTURE.md
   - CONTEXT/GUIDES/production-deploy.md
   - CONTEXT/GUIDES/deploy-workspace-online.md
@@ -103,8 +95,8 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Containers** → `KB § PATTERNS/devops/containerization.md` · `KB § PATTERNS/devops/containerization-operations.md` · `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/base-image-dep-freshness.md` · `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`.
 **Deploy & parity** → `KB § PATTERNS/devops/deploy-config-contract.md` · `KB § PATTERNS/devops/dev-prod-parity.md` · `KB § PATTERNS/devops/dev-fleet-dormant.md` · `KB § PATTERNS/devops/prod-deploy-safety-gates.md` · `KB § PATTERNS/devops/predeploy-leg-verify-or-block.md` · `KB § PATTERNS/devops/prod-exposure-consent.md` · `KB § PATTERNS/devops/ship-consent-riders.md` · `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md` · `KB § GUIDES/production-deploy.md` · `KB § GUIDES/deploy-workspace-online.md` · `KB § GUIDES/setup.md`.
 **CI / environment** → `KB § PATTERNS/devops/ci-security-gates.md` · `KB § PATTERNS/devops/ci-deploy-prod.md` · `KB § PATTERNS/devops/dev-main-ci-gates.md` · `KB § PATTERNS/devops/ci-embedding-cache-gate.md` · `KB § PATTERNS/devops/ssh-deploy-key-restrictions.md` · `KB § PATTERNS/devops/environment.md`.
-**Cache/vector platform** → `KB § PATTERNS/common/cache-portable-architecture.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/vectorize-embed-cache-framework.md` · `KB § PATTERNS/common/memory-embeddings.md` · `KB § PATTERNS/common/corpus-embeddings.md` · `KB § PATTERNS/common/push-time-embedding-gate.md` · `KB § PATTERNS/devops/prod-cache-container.md` · `KB § PATTERNS/devops/cache-deploy-mirror.md` · `KB § INTEGRATIONS/openai-mcp.md`.
-**Dev harness** → `KB § PATTERNS/common/harness-mods.md` · `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/devops/usage-evaluation.md` · `KB § PATTERNS/common/tmp-artifact-cleanup.md`.
+**Cache runtime in prod** → `KB § PATTERNS/devops/prod-cache-container.md` · `KB § PATTERNS/devops/cache-deploy-mirror.md` (cache/vector design + harness mods → `tooling-engineer` since 2026-11-05).
+**Dev harness** → `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/devops/usage-evaluation.md` · `KB § PATTERNS/common/tmp-artifact-cleanup.md`.
 
 ## Composes-with (commons + cross-domain)
 `KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-seed.md`.

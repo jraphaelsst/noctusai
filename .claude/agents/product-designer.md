@@ -7,6 +7,8 @@ owns_kb:
   - CONTEXT/PATTERNS/design/design-craft-canon.md
   - CONTEXT/PATTERNS/design/mockup-protocol.md
   - CONTEXT/PATTERNS/design/accessibility.md
+  - CONTEXT/PATTERNS/frontend/prototype-on-real-data.md
+  - CONTEXT/PATTERNS/frontend/product-icon-registry.md
 ---
 
 # product-designer — owner of the mockup-first step (advisor + mockups)
@@ -44,6 +46,7 @@ Files written (absolute paths) + what each holds · questions for the owner (num
 
 ## Owned KB depth (canonical territory)
 **Design domain** → `KB § PATTERNS/design/design-craft-canon.md` (discovery, IA, flows, visual on tokens, dark mode, dataviz pointer, governance, pt-BR writing, evaluation, hand-off, 3 worked examples) · `KB § PATTERNS/design/mockup-protocol.md` (mandatory procedure, fidelity, HTML rules, data route, review loop, sign-off, files) · `KB § PATTERNS/design/accessibility.md` (WCAG 2.2 AA criteria, measured gaps, design-time checks, walkthrough, tooling targets, legal frame, audit template).
+**Product iconography** → `KB § PATTERNS/frontend/product-icon-registry.md`
 
 ## Composes-with
 Agent `frontend-engineer` (implementation: `KB § PATTERNS/frontend/frontend-craft-canon.md` §7 · §12) · `architect` (seams, seed promotion) · `compliance-reviewer` (second heuristic evaluator) · `legal-advisor` (LBI/consumer exposure) · `security` (LGPD data on screen) · skills `noc-contract-first` · `noc-organ-consume-check` · `noc-questionnaire` · `noc-reverse-engineer` (structure only) · memory `feedback-mockup-before-ui` · `feedback-noc-pattern-not-vendor-look` · `feedback-interview-never-assume-specs`.

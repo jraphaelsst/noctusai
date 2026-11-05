@@ -11,6 +11,27 @@ tools: Bash, Read, Edit, Write, Grep, Glob, WebFetch, mcp__noctusai__*
 model: sonnet
 owns_kb:
   - CONTEXT/PATTERNS/integrations/integration-craft-canon.md
+  - CONTEXT/INTEGRATIONS/oauth-patterns.md
+  - CONTEXT/INTEGRATIONS/google.md
+  - CONTEXT/INTEGRATIONS/google-oauth-console-setup.md
+  - CONTEXT/INTEGRATIONS/meta.md
+  - CONTEXT/INTEGRATIONS/meta-setup.md
+  - CONTEXT/INTEGRATIONS/meta-app-verification.md
+  - CONTEXT/INTEGRATIONS/meta-leadgen.md
+  - CONTEXT/INTEGRATIONS/meta-leads-checklist.md
+  - CONTEXT/INTEGRATIONS/whatsapp.md
+  - CONTEXT/INTEGRATIONS/vista.md
+  - CONTEXT/INTEGRATIONS/olx.md
+  - CONTEXT/INTEGRATIONS/imovelweb.md
+  - CONTEXT/INTEGRATIONS/mailchimp.md
+  - CONTEXT/INTEGRATIONS/fx-ptax.md
+  - CONTEXT/INTEGRATIONS/infosimples-certidoes.md
+  - CONTEXT/INTEGRATIONS/payments.md
+  - CONTEXT/INTEGRATIONS/invoices.md
+  - CONTEXT/INTEGRATIONS/live-rooms.md
+  - CONTEXT/INTEGRATIONS/turnstile.md
+  - CONTEXT/GUIDES/google-oauth-setup.md
+  - CONTEXT/PATTERNS/common/outbound-rate-limiting.md
 ---
 
 # integrations-engineer — third-party integrations executor
@@ -52,7 +73,8 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 
 ## Owned KB depth (canonical territory)
 **Craft** → `KB § PATTERNS/integrations/integration-craft-canon.md`.
-**Per-vendor references (read; ownership transfer pending Wave 3)** → `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/payments.md` · `KB § GUIDES/google-oauth-setup.md`.
+**Core vendors (owned since 2026-11-05)** → `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/payments.md` · `KB § GUIDES/google-oauth-setup.md`.
+**More vendors + setup guides** → `KB § INTEGRATIONS/google-oauth-console-setup.md` · `KB § INTEGRATIONS/meta-setup.md` · `KB § INTEGRATIONS/meta-leadgen.md` · `KB § INTEGRATIONS/meta-leads-checklist.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/infosimples-certidoes.md` · `KB § INTEGRATIONS/invoices.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § PATTERNS/common/outbound-rate-limiting.md`.
 
 ## Composes-with (commons + cross-domain)
 `.claude/agents/engineer-seed.md` · `backend-engineer` (`KB § PATTERNS/backend/backend-craft-canon.md` §4.5, §6 — generic reliability) · `security` (`KB § PATTERNS/security/webhook-signatures.md`, `KB § PATTERNS/security/appsec-craft-canon.md` §7) · `KB § PATTERNS/security/lgpd.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/compliance/testing.md`.

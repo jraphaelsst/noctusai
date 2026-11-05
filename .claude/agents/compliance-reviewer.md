@@ -11,6 +11,11 @@ owns_kb:
   - CONTEXT/PATTERNS/compliance/code-review-craft.md
   - CONTEXT/PATTERNS/common/silent-test-failure-from-missing-dep.md
   - CONTEXT/PATTERNS/common/method-trials.md
+  - CONTEXT/PATTERNS/common/doc-symbology.md
+  - CONTEXT/PATTERNS/common/claude-md-router-discipline.md
+  - CONTEXT/PATTERNS/common/memory-index-topic-split.md
+  - CONTEXT/PATTERNS/common/lossless-doc-refactor.md
+  - CONTEXT/PATTERNS/common/eight-way-sync.md
 ---
 
 # compliance-reviewer — quality + methodology gate (read-only)
@@ -53,6 +58,7 @@ Verdict (pass/block) + labelled findings (Conventional Comments, file:line, whic
 
 ## Owned KB depth (canonical territory)
 **Compliance & testing** → `KB § PATTERNS/compliance/code-review-craft.md` (craft canon) · `KB § PATTERNS/compliance/compliance-regression-baseline.md` · `KB § PATTERNS/compliance/testing.md` · `KB § PATTERNS/compliance/auth-boundary-false-green.md` · `KB § PATTERNS/compliance/org-config-isolation.md` · `KB § PATTERNS/common/silent-test-failure-from-missing-dep.md` · `KB § PATTERNS/common/method-trials.md`.
+**Doc discipline** → `KB § PATTERNS/common/doc-symbology.md` · `KB § PATTERNS/common/claude-md-router-discipline.md` · `KB § PATTERNS/common/memory-index-topic-split.md` · `KB § PATTERNS/common/lossless-doc-refactor.md`
 
 ## Composes-with (commons + cross-domain)
 `KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `methodology-codification-pipeline.md` · `claude-md-router-discipline.md` · `remediation-markers.md` · `product-internal-wiring.md` (frontend-owned) · `seed-absorption.md` (architect-owned) · `branching.md` · agent `security` (auth/injection findings) · agent `architect` (design disputes the KB doesn't settle).

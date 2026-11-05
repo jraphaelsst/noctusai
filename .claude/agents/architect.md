@@ -23,20 +23,27 @@ owns_kb:
   - CONTEXT/PATTERNS/architect/dispatch-engineer-tuning.md
   - CONTEXT/PATTERNS/architect/two-session-architect-operator.md
   - CONTEXT/PATTERNS/architect/autonomous-operator-via-subagent.md
-  - CONTEXT/PATTERNS/architect/dev-team.md
   - CONTEXT/PATTERNS/architect/project-execution.md
   - CONTEXT/PATTERNS/architect/product-working-scope.md
-  - CONTEXT/PATTERNS/architect/component-bundle-tool.md
-  - CONTEXT/PATTERNS/architect/dev-toolkit-scaffolders.md
-  - CONTEXT/PATTERNS/architect/mcp-tool-conventions.md
-  - CONTEXT/PATTERNS/architect/mcp-first-scripts.md
-  - CONTEXT/PATTERNS/architect/noc-graph.md
   - CONTEXT/PATTERNS/architect/component-list-and-validation.md
   - CONTEXT/GUIDES/new-product.md
   - CONTEXT/GUIDES/seed-first-design.md
   - CONTEXT/GUIDES/absorb-seed-workspace.md
   - CONTEXT/GUIDES/product-body-caching.md
   - CONTEXT/PATTERNS/architect/architecture-craft-canon.md
+  - CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md
+  - CONTEXT/PATTERNS/common/lenses-applied-trailer.md
+  - CONTEXT/PATTERNS/common/persistent-files-absorption.md
+  - CONTEXT/PATTERNS/common/learn-before-archive.md
+  - CONTEXT/PATTERNS/common/roadmap-tracking.md
+  - CONTEXT/PATTERNS/common/scoped-auto-improvement.md
+  - CONTEXT/PATTERNS/common/methodology-codification-pipeline.md
+  - CONTEXT/PATTERNS/common/dispatch-warmup.md
+  - CONTEXT/PATTERNS/common/dispatch-token-log.md
+  - CONTEXT/PATTERNS/common/dispatch-budget-telemetry.md
+  - CONTEXT/PATTERNS/common/brief-similarity-radar.md
+  - CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md
+  - CONTEXT/PATTERNS/architect/products-consume-canonical-organs.md
 ---
 
 # architect — system-level advisor (read-only)
@@ -90,11 +97,14 @@ Own the **how** at system level. Make the technical decisions downstream enginee
 ## Owned KB depth (the canonical territory)
 **Craft canon** → `KB § PATTERNS/architect/architecture-craft-canon.md`.
 **Seed** → `KB § PATTERNS/architect/seed-canonical-defaults.md` · `KB § PATTERNS/architect/seed-lib-layout.md` · `KB § PATTERNS/architect/seed-workspace.md` · `KB § PATTERNS/architect/seed-absorption.md` · `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md` · `KB § PATTERNS/architect/shared-library-conventions.md`.
-**Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · `KB § PATTERNS/architect/git-branch-model.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/branch-tree-tracking.md` (global live map of git×claude trees — pre-dispatch, contextualize on dev's `branch-tree.ndjson`; collision-zones before they happen) · `KB § PATTERNS/common/ledger-store.md` (the append-only ledgers live on the orphan `origin/ledgers` branch, plumbing-written; read them via `read_dual`, never commit them to dev) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md` · `KB § PATTERNS/architect/dev-team.md`.
+**Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · `KB § PATTERNS/architect/git-branch-model.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/branch-tree-tracking.md` (global live map of git×claude trees — pre-dispatch, contextualize on dev's `branch-tree.ndjson`; collision-zones before they happen) · `KB § PATTERNS/common/ledger-store.md` (the append-only ledgers live on the orphan `origin/ledgers` branch, plumbing-written; read them via `read_dual`, never commit them to dev) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md`.
 **Project execution** → `KB § PATTERNS/architect/project-execution.md`.
 **Product working scope** → `KB § PATTERNS/architect/product-working-scope.md`.
-**MCP toolkit & tooling** → `KB § PATTERNS/architect/mcp-tool-conventions.md` · `KB § PATTERNS/architect/mcp-first-scripts.md` · `KB § PATTERNS/architect/dev-toolkit-scaffolders.md` · `KB § PATTERNS/architect/noc-graph.md` · `KB § PATTERNS/architect/component-bundle-tool.md` · `KB § PATTERNS/architect/component-list-and-validation.md`.
+**MCP toolkit** → owned by `tooling-engineer` since 2026-11-05 (consult it for tool/keeper/cache design); architect keeps `KB § PATTERNS/architect/component-list-and-validation.md`.
 **Guides** → `KB § GUIDES/new-product.md` · `KB § GUIDES/seed-first-design.md` · `KB § GUIDES/absorb-seed-workspace.md` · `KB § GUIDES/product-body-caching.md`.
+**Knowledge lifecycle + codification** → `KB § PATTERNS/common/methodology-codification-pipeline.md` · `KB § PATTERNS/common/scoped-auto-improvement.md` · `KB § PATTERNS/common/persistent-files-absorption.md` · `KB § PATTERNS/common/learn-before-archive.md` · `KB § PATTERNS/common/roadmap-tracking.md`.
+**Dispatch craft + telemetry** → `KB § PATTERNS/common/dispatch-with-project-and-notes.md` · `KB § PATTERNS/common/lenses-applied-trailer.md` · `KB § PATTERNS/common/dispatch-warmup.md` · `KB § PATTERNS/common/dispatch-token-log.md` · `KB § PATTERNS/common/dispatch-budget-telemetry.md` · `KB § PATTERNS/common/brief-similarity-radar.md`.
+**Organ set** → `KB § PATTERNS/architect/seed-organ-canonical-set.md` · `KB § PATTERNS/architect/products-consume-canonical-organs.md`.
 
 ## Composes-with (commons every agent shares)
 `KB § 01-PHILOSOPHY.md` · `02-LANDSCAPE.md` · `03-SEED-ARCHITECTURE.md` · `PATTERNS/common/agent-context-architecture.md` · `PATTERNS/common/cache-as-agent-tool.md` (devops-owned) · `PATTERNS/common/drift-fix-on-contact.md` · `PATTERNS/common/self-branching-mode.md` · `PATTERNS/common/methodology-codification-pipeline.md`.
