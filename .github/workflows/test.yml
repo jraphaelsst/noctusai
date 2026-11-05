@@ -631,6 +631,20 @@ jobs:
         working-directory: products/${{ matrix.product }}/frontend
         run: npx tsc --noEmit -p tsconfig.json
 
+      # ESLint. This matrix is the ONLY place active products' frontends get
+      # linted (the old sole lint step lived in erp-frontend-build, an ASLEEP
+      # product, so nothing awake was linted). Products without a `lint`
+      # script (e.g. core, p-studio) skip with a notice rather than failing.
+      - name: Lint (npm run lint)
+        if: steps.gate.outputs.run == 'true'
+        working-directory: products/${{ matrix.product }}/frontend
+        run: |
+          if node -e 'process.exit(require("./package.json").scripts?.lint ? 0 : 1)'; then
+            npm run lint
+          else
+            echo "::notice::${{ matrix.product }} has no lint script — skipping lint"
+          fi
+
   seed-frontend-tests:
     # The SHARED-LIBRARY half of the FE suite — `@noctusai/lib`
     # (seed/lib/frontend: 32 spec files, 375 tests).
