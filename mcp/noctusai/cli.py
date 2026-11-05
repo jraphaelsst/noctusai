@@ -440,6 +440,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verify-db-guards-probe-ids", default=None, help="With --verify-db-guards: comma-separated probe ids to run ONLY (the retry button for retry_probe_ids).")
     parser.add_argument("--verify-db-guards-project-ref", default=None, help="With --verify-db-guards: Supabase project ref (default: the platform project).")
     parser.add_argument("--deploy-verify", action="store_true", help="The INDEPENDENT prod revision-drift witness — read-only, ZERO dependency on --deploy-image having run. Roster is CATALOG-DRIVEN (ativo=true AND deploy_scope='live' + core, not the compose file) — or --deploy-verify-products to check named slugs (incl. inactive ones) deliberately. Per actionable product: running container revision vs the freshly-resolved prod branch tip, fed through the build-scope diff predicate (a stale-but-untouched revision is expected; only a diff touching the product's own build inputs is drift) + health + startup_hook_error. A catalog-live product with no running container is its own 'missing' finding; non-actionable products are reported (never dropped) in skipped_inactive. Exit 0 only when status='verified'. MCP: noctus.dev.deploy_verify.")
+    parser.add_argument("--cloudflare-dns", default=None, metavar="ACTION", help="DNS for the cloudflared tunnel hostnames: check (default, read-only DoH diff vs deploy/tunnel/ingress.yml) | route (DRY-RUN unless --cloudflare-dns-confirm; creates CNAMEs via cloudflared-in-docker on the VPS) | list (zone records; needs cloudflare_api_token). MCP: noctus.dev.cloudflare_dns.")
+    parser.add_argument("--cloudflare-dns-hosts", default=None, help="With --cloudflare-dns: comma-separated hostnames (route targets / extra check hosts).")
+    parser.add_argument("--cloudflare-dns-all-missing", action="store_true", help="With --cloudflare-dns route: target every ingress.yml host that has no DNS.")
+    parser.add_argument("--cloudflare-dns-confirm", action="store_true", help="With --cloudflare-dns route: actually create the records.")
     parser.add_argument("--deploy-verify-products", default=None, help="With --deploy-verify: comma-separated product slugs to check deliberately (bypasses the catalog — every named slug is treated as actionable, including an inactive one). Default: the catalog-derived live roster.")
     parser.add_argument("--release", metavar="STAGE", choices=["status", "manifest", "bless", "promote", "backmerge"], help="The dev→main (bless) / main→prod (promote) release gates. DRY-RUN unless --release-confirm. MCP: noctus.dev.release. Also the R4 (release-no-freeze) fresh-subprocess target: a stale primary MCP server re-execs a confirm=True release call here, against the current on-disk code.")
     parser.add_argument("--release-confirm", action="store_true", help="With --release: actually push (a production action). Without it, plan/dry-run only.")
@@ -3620,6 +3624,19 @@ def main():
         r = deploy_verify(products=products, ssh_host=args.deploy_host)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.cloudflare_dns is not None:
+        from tools.noctus.dev.cloudflare_dns import cloudflare_dns
+        raw = getattr(args, "cloudflare_dns_hosts", None)
+        r = cloudflare_dns(
+            action=args.cloudflare_dns or "check",
+            hosts=[h.strip() for h in raw.split(",") if h.strip()] if raw else None,
+            all_missing=bool(args.cloudflare_dns_all_missing),
+            confirm=bool(args.cloudflare_dns_confirm),
+            ssh_host=args.deploy_host,
+        )
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     # R4 (release-no-freeze, 2026-09-24): the fresh-subprocess re-exec target
     # for a stale primary MCP server's confirm=True gated write — see

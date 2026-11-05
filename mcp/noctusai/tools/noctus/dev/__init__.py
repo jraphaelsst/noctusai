@@ -104,6 +104,7 @@ def register_all(server) -> None:
     from . import certidoes_emissao_aprendizado
     from . import schema_drift
     from . import finance_import_igig
+    from . import cloudflare_dns
     from . import tunnel_config
     from . import waha_instance
     from . import products
@@ -265,6 +266,7 @@ def register_all(server) -> None:
     certidoes_emissao_aprendizado.register(server)
     schema_drift.register(server)
     finance_import_igig.register(server)
+    cloudflare_dns.register(server)
     tunnel_config.register(server)
     waha_instance.register(server)
     products.register(server)

@@ -53,9 +53,9 @@ Three artifacts live there and all three must stay gitignored:
 
 `cert.pem` was uncovered until 2026-08-10 — caught **before** `cloudflared tunnel login` was run, not after. It is strictly more powerful than the tunnel credentials JSON: the JSON proves which tunnel you are, `cert.pem` can create or modify DNS for the **entire zone**. A `tunnel login` on the VPS drops it right next to `ingress.yml` in a tracked directory. Pinned by `TestTunnelSecretsAreGitignored`, which asserts all three via `git check-ignore` rather than trusting the file to stay correct.
 
-## DNS is a separate, human-gated step
+## DNS is a separate step — agent-routable via `noctus.dev.cloudflare_dns`
 
-Routing and DNS are two different artifacts. `route-dns.sh <TUNNEL_NAME>` reads hostnames straight from `ingress.yml` and creates the proxied CNAMEs — idempotent, safe to re-run. It requires the **zone-scoped `cert.pem`** from `cloudflared tunnel login`, which is an interactive browser flow and is deliberately **not** wired into any auto-deploy path: creating public DNS is outward-facing and stays a human action. An agent with only the tunnel credentials JSON cannot do it, and should say so rather than improvise.
+Routing and DNS are two different artifacts. **Owner decision 2026-11-05:** agents may create DNS for ingress-declared hosts with `noctus.dev.cloudflare_dns action='route' confirm=True` (DRY-RUN without `confirm`). It runs `cloudflared tunnel --origincert … route dns <TUNNEL_ID> <host>` in a throwaway `cloudflare/cloudflared` container on the VPS over the shared throttled SSH helper (the VPS has no host `cloudflared`), mounting `deploy/tunnel/` read-only. It refuses hosts not declared in `ingress.yml` (unless `allow_undeclared=True`) and hosts outside `noctusai.com`; "already exists" counts as ok. `action='check'` (read-only, default) resolves every `ingress.yml` hostname over DNS-over-HTTPS and reports `in_sync` / `missing` / `unverified` — the drift detector for the "five products had no DNS" incident above. `action='list'` reads zone records through the Cloudflare API and needs `cloudflare_api_token` (platform_settings → env `CLOUDFLARE_API_TOKEN`); without it, `not_configured` plus setup instructions. The zone-scoped `cert.pem` secrecy rules above are unchanged: the tool never reads or prints it, only mounts it into the container. `route-dns.sh` remains the manual path for a host that has `cloudflared`.
 
 ## Composes with
 
@@ -69,6 +69,7 @@ Routing and DNS are two different artifacts. `route-dns.sh <TUNNEL_NAME>` reads 
 python mcp/noctusai/cli.py --check-tunnel-ingress-snapshot-sync
 ```
 
+- `noctus.dev.cloudflare_dns(action='check'|'route'|'list', hosts=…, all_missing=…, confirm=…)` (CLI: `--cloudflare-dns check|route|list`)
 - `noctus.dev.tunnel_config(action='render'|'check'|'apply', ssh_host=…, live_path=…, confirm=…)`
 
 ## History

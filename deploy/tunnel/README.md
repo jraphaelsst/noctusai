@@ -20,6 +20,8 @@ Files in this dir:
 | `compose.tunnel.yml` | runs the named tunnel on the VPS, on `noctus-net`. |
 | `README.md` | this runbook. |
 
+> **DNS:** agents create/check the CNAMEs with the MCP tool `noctus.dev.cloudflare_dns` (`action='check'` read-only; `action='route' confirm=True` to create) — no host `cloudflared` needed (see `route-dns.sh` for the manual path). KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.
+
 > **Why the template/rendered split (Phase 2 / P4 — "nothing-to-clobber").**
 > Before, `config.yml` was git-tracked *and* edited-in-place on the VPS, so it
 > showed `M` on every `git status` and every pull had to "dance around" it —
