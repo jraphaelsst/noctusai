@@ -25,6 +25,9 @@
 # See KB § PATTERNS/branching-and-merging.md § 0.2 and § PATTERNS/branching-dispatch.md.
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
+# Quiet the toolkit CLI's banner + INFO logs for every call this hook makes
+# (verdict lines still print). NOCTUS_HOOK_VERBOSE=1 restores them.
+export NOCTUS_HOOK_QUIET=1
 
 PROTECTED_RE='^refs/heads/(main|prod)$'
 ZERO_RE='^0+$'   # all-zero OID = a delete (SHA-1 or SHA-256)

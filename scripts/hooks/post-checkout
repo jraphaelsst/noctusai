@@ -21,6 +21,9 @@
 # KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md.
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
+# Quiet the toolkit CLI's banner + INFO logs for every call this hook makes
+# (verdict lines still print). NOCTUS_HOOK_VERBOSE=1 restores them.
+export NOCTUS_HOOK_QUIET=1
 
 PREV_HEAD="$1"
 NEW_HEAD="$2"

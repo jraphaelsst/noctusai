@@ -372,6 +372,7 @@ _STRUCTURAL_CACHES = ("keeper-patterns", "agent-context", "auto-improvement", "n
 
 def settle_structural_caches(
     repo_root: Path | None = None, worktree_path: str | None = None,
+    exclude: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Heal-on-contact for the zero-OpenAI STRUCTURAL caches.
 
@@ -399,7 +400,7 @@ def settle_structural_caches(
     """
     effective_root = _resolve_effective_root(repo_root, worktree_path)
     stale_all = detect_stale_caches(effective_root)
-    stale_structural = [c for c in stale_all if c in _STRUCTURAL_CACHES]
+    stale_structural = [c for c in stale_all if c in _STRUCTURAL_CACHES and c not in exclude]
     stale_embedding = [c for c in stale_all if c not in _STRUCTURAL_CACHES]
     if not stale_structural:
         return {"ok": True, "healed": [], "stale_embedding": stale_embedding, "detail": None}

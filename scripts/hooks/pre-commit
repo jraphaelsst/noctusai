@@ -32,6 +32,9 @@
 # Bypass (not recommended): git commit --no-verify
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
+# Quiet the toolkit CLI's banner + INFO logs for every call this hook makes
+# (verdict lines still print). NOCTUS_HOOK_VERBOSE=1 restores them.
+export NOCTUS_HOOK_QUIET=1
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -237,8 +240,12 @@ if have_py; then
             done <<< "$CHANGED_DOCS"
         fi
     else
-        echo "[pre-commit] KB auto-derived counts — drift-check only on '$CURRENT_BRANCH' (regenerated once at task_branch integrate)..."
-        "$PY" "$CLI" --update-kb-counts --check --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /' || true
+        # 2026-11-05: the drift-check printed "KB counts drift detected" on
+        # essentially every branch commit (counts move with any KB/product
+        # change) and could never block (`|| true`) — a permanently-red line
+        # that trained readers to skip red. Counts are regenerated and
+        # committed by task_branch enqueue/integrate; nothing to do here.
+        :
     fi
 else
     echo "[pre-commit] Skipping count refresh — python not found"
@@ -290,6 +297,8 @@ if have_py; then
         echo "[pre-commit] Fix the broken pointers in CLAUDE.md or update KNOWLEDGE-BASE/INDEX.md." >&2
         exit 1
     fi
+    # Passed here, blocking ⇒ the 8-way sync (step 12) need not re-run it.
+    export NOCTUS_8WAY_SKIP_LEGS="kb-sync"
 fi
 
 # ─── 4a. Skills ↔ CLAUDE.md §2 sync (blocking, when skills OR router staged) ─
@@ -305,6 +314,7 @@ if have_py; then
             echo "[pre-commit] Skills↔router sync FAILED. Commit aborted." >&2
             exit 1
         fi
+        export NOCTUS_8WAY_SKIP_LEGS="${NOCTUS_8WAY_SKIP_LEGS:+$NOCTUS_8WAY_SKIP_LEGS,}skills-router"
     fi
 fi
 

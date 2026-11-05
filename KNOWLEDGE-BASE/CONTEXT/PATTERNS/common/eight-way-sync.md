@@ -129,3 +129,11 @@ Each promotion has been a methodology evolution, captured here so future surface
 
 - **One summary line, not one per stale file.** Embedding-cache staleness is advisory (refreshed at push). `--check-eight-way-sync` used to print one `[warning]` per stale file — 159 on 2026-10-09 — burying any real blocker. It now collapses every `eight-way-sync-cache-freshness::all-cache-freshness-*` warning into a single per-cache count line. High-severity issues and other warnings still print in full. Per-file detail: `--verbose`, or `NOCTUS_HOOK_VERBOSE=1` from a hook.
 - **The freshness check no longer re-reads the tree.** `noc_graph_cache.compute_source_sha` ran twice per check (settle + keeper) and read ~7.4k files each time (18s cold in the profile). It is now memoized on the inputs' stat signature (path, size, mtime_ns, inode — git's index heuristic) in the per-tree `noc-graph-source-sha.memo.json`. The value is byte-identical to the uncached computation, so no cache is invalidated. A memo hit costs ~0.4s (the stat walk).
+
+## Hook quiet mode + no double runs (2026-11-05)
+
+Measured on a methodology commit: the hook made ~20 toolkit CLI calls, each printing a 3-line banner, a `worktree override` line and two `env_bootstrap` INFO lines, and it ran kb-sync and skills-router twice (its own blocking step 4/4a, then again inside this keeper). Now:
+- Every git hook exports `NOCTUS_HOOK_QUIET=1`; `cli.py` then drops the banner, the override line and INFO logs. Verdict lines and WARNING+ still print. `NOCTUS_HOOK_VERBOSE=1` restores everything.
+- After step 4 (kb-sync) and step 4a (skills-router) pass, the hook exports `NOCTUS_8WAY_SKIP_LEGS`; `check_eight_way_sync` drops only those named legs. CI and manual runs set nothing and keep all eight.
+- The branch-commit `--update-kb-counts --check` line is gone: it printed "KB counts drift detected" on nearly every branch commit and could never block. Counts are regenerated and committed by `task_branch` enqueue/integrate.
+- With noc-graph excluded from the commit-time heal (`cache-auto-freshness.md`), a methodology commit went from 29–80 s to ~13 s.

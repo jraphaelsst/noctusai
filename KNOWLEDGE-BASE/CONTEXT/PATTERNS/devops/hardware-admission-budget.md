@@ -226,7 +226,13 @@ methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-close
   (`pytest:<dir>` / `vitest:<product>` / `build:<product>`).
 - **Escape:** inline `NOC_HW_UNGATED_OK=<non-empty reason> <cmd>`; the reason is echoed to
   stderr. An empty reason is still a deny. Use it only when the gate itself is what is being
-  debugged.
+  debugged. The escape is read BEFORE parsing (2026-11-05), so it works on a command the
+  scanner cannot parse; it used to be checked only after a successful parse.
+- **Heredocs + newlines (2026-11-05):** a heredoc body is data and is not scanned
+  (`cat > run.sh <<'EOF' … pytest … EOF` writes a script, it runs nothing), unless the heredoc
+  feeds `bash`/`sh`/`zsh`. Newlines outside quotes separate commands (`cd x⏎pytest` is judged).
+  Before this, writing a test-runner script was refused as an ungated run, and an apostrophe
+  in any heredoc body made the whole command "unparseable" and refused.
 - **Self-gating tools are untouched:** `task_branch` integrate, `gate_sweep` and
   `predeploy_check` spawn their gates inside the MCP server process; a PreToolUse hook only
   sees the agent's own tool calls, never an MCP server's subprocesses.
