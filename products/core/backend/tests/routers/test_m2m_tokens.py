@@ -38,7 +38,7 @@ class _PublicDb(MockSupabaseClient):
 
 class Env:
     def __init__(self) -> None:
-        self.db = _PublicDb(validate_schema=False, schema="public")
+        self.db = _PublicDb(schema="public")
         self.db.set_table_data("noctus_users", [
             {"id": ADMIN, "org_id": ORG, "org_role": "owner", "role": "admin"},
             {"id": MEMBER, "org_id": ORG, "org_role": "owner", "role": "member"},
