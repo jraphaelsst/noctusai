@@ -58,6 +58,14 @@
     "310_permuta_matches_motivo_rejeicao.sql": "d15d5dfd46f3e29f8c179fff0f012f7a8c4936cf0ea7dc26087f4aeb4d2ba8e0",
     "311_status_pagina_leftovers.sql": "ed85f17f0f9f7649a09210747a05ae1635a0fbf919ba5b9d0f0301591e1015bb",
     "312_leads_meta_external_key_backfill.sql": "b0c742c07a4ea1e00b04e11a91e183bc845025658fb0fc431d464ff9e61299c6",
-    "313_julia_relatorios.sql": "69dbd5ab478358b291d510ae7ba4161f29030c7e63470a4bf1738e00661f9219"
+    "313_julia_relatorios.sql": "69dbd5ab478358b291d510ae7ba4161f29030c7e63470a4bf1738e00661f9219",
+    "314_julia_catalogo_fonte.sql": "6d9b5765300f99194312572fa28bf0e3cd354898b784a9ad624207cde01c1428",
+    "315_imovel_notas.sql": "588db7e6b90da56ac3a5e8e15817bf31c4de2db839658048c7ed57052b83fd8a",
+    "316_imoveis_sync_execucoes.sql": "9df8cad26caf93b03ddcade19f5b9965b1a94273885e365164353712aab77b87",
+    "317_vista_divergencias.sql": "66216e8a07ce0e28885286a6cc1d3b859128362ca42026a93d197f80defe1439",
+    "318_julia_linha_roteamento.sql": "90e9fe8559300429cf09e2f743059a8f7af3cf8b10e46ba8d41c660257d576e6",
+    "319_credentials_hide_encrypted_tokens.sql": "fe114f8ecc243b03c6eb027646dfcc1241f2c0937f7a70a500bbc875843c8b2b",
+    "320_biblioteca_apify.sql": "d035c93a8ea51f283fe4dee76143bf2c1874fbe63f875cc376ffd6222462b7e8",
+    "321_whatsapp_connections_session_unique_hide_secrets.sql": "7e15c60cf9f496aee33cabcf6f38b4cb3d1aca8df60387c88f1e9c6c8e4527da"
   }
 }
