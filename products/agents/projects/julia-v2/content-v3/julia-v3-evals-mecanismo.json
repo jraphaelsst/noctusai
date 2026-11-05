@@ -10,7 +10,10 @@
      {
       "lead": "Oi, vi um anúncio de vocês",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -66,7 +69,10 @@
      {
       "lead": "Oi, procuro um apartamento para comprar",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -293,7 +299,10 @@
      {
       "lead": "Oi, vi o anúncio do apartamento",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -343,7 +352,10 @@
      {
       "lead": "Oi, quero saber de um imóvel",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -393,7 +405,10 @@
      {
       "lead": "Oi, recebi a mensagem de vocês",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -443,7 +458,10 @@
      {
       "lead": "Hi",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -493,7 +511,10 @@
      {
       "lead": "Oi, vi o anúncio",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -543,7 +564,10 @@
      {
       "lead": "oi",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -593,7 +617,10 @@
      {
       "lead": "Hola",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -643,11 +670,20 @@
      {
       "lead": "Oi! Procuro apartamento de 2 quartos para alugar em Pinheiros, até R$ 4.000.",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
-      "lead": "Pode me mandar as opções que vocês têm?"
+      "lead": "Pode me mandar as opções que vocês têm?",
+      "esperar": {
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
+      }
      },
      {
       "lead": "Não gostei de nenhum. Para de me mandar mensagem, por favor."
@@ -752,7 +788,10 @@
      {
       "lead": "Oi, vi o anúncio do apartamento",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -802,7 +841,10 @@
      {
       "lead": "Oi, vi o anúncio",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -852,7 +894,10 @@
      {
       "lead": "Oi, quero saber do apartamento",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
@@ -902,7 +947,10 @@
      {
       "lead": "Oi, vi o anúncio da casa",
       "esperar": {
-       "sem_handoff": true
+       "sem_handoff": true,
+       "sem_violacoes": [
+        "parada_segura"
+       ]
       }
      },
      {
