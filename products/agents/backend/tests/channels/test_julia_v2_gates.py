@@ -300,12 +300,17 @@ class TestOtherGates:
 
 class TestRetryBudgetAndSafeStop:
     def _refusals(self, n):
-        return [step(call("registrar_perfil", itens=[PERFIL_OPERACAO])) for _ in range(n)]
+        """``n`` COUNTED refusals (trecho_nao_confere, skill already open): evidence the lead never gave."""
+        falso = {**PERFIL_OPERACAO, "trecho": "frase que o lead nunca escreveu"}
+        return [step(call("abrir_skill", nome="qualificar-lead")),
+                *[step(call("registrar_perfil", itens=[falso])) for _ in range(n)]]
 
     def test_after_two_refusals_in_a_turn_the_turn_stops_with_a_handoff_and_a_flagged_event(self, gated):
         chan = gated
         chan.use_provider(FakeProvider(tool_responses=[*self._refusals(2), step(call("avaliar_lead")), say("nunca")]))
         body = chan.turn(turn_body("Quero comprar")).json()
+        recusados = [x["codigo"] for r in tool_results(chan.provider) for x in r.get("recusados", [])]
+        assert recusados == ["trecho_nao_confere"]  # the 2nd result is never re-sent: the stop answers first
         assert body["status"] == "handoff" and body["reply"]["partes"] == []  # silence: no text row, no code text
         [h] = body["actions"]
         assert (h["type"], h["motivo_codigo"]) == ("handoff", "limite_recusas")
@@ -315,7 +320,7 @@ class TestRetryBudgetAndSafeStop:
         [nota] = chan.threads.list_handoffs(chan.org_id, UUID(body["thread_id"]))
         assert nota.motivo_codigo == "limite_recusas" and nota.para.tipo == "papel"
         calls = [c for c in chan.provider.calls if c["method"] == "chat_with_tools"]
-        assert len(calls) == 2  # the third chat of the loop is answered by the stop, WITHOUT reaching the provider
+        assert len(calls) == 3  # skill + 2 refusals; the next chat is answered by the stop, WITHOUT reaching the provider
 
     def test_the_stop_replies_with_the_db_text_when_the_owner_wrote_one(self, chan):
         from app.stores.studio_definitions_conteudo import TextoInput
@@ -343,6 +348,82 @@ class TestRetryBudgetAndSafeStop:
         chan.use_provider(FakeProvider(tool_responses=[*self._refusals(2), say("Qual o bairro?")]))
         body = chan.turn(turn_body("Quero comprar")).json()
         assert body["status"] == "respondido"  # two refusals are within a budget of three
+
+
+class TestRecusaCorrigivelNaoGastaOOrcamento:
+    """A refusal the model fixes with a DIFFERENT call in the same turn is guidance, not abuse (Julia prod eval,
+    2026-11-05: a greeting + two correctable refusals handed the lead off)."""
+
+    def test_two_correctable_refusals_then_a_valid_call_complete_with_no_handoff(self, gated):
+        chan = gated
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("oferecer_imoveis", modo="campanha")),            # skill ofertar-imoveis not opened
+            step(call("registrar_perfil", itens=[PERFIL_OPERACAO])),    # skill qualificar-lead not opened
+            step(call("avaliar_lead")),                                 # the valid call
+            say("Oi! Em que posso ajudar?")]))
+        body = chan.turn(turn_body("Oi, vi o anúncio")).json()
+        codigos = [r["codigo"] for r in tool_results(chan.provider) if r.get("codigo")]
+        assert codigos == ["skill_nao_aberta", "skill_nao_aberta"]
+        assert body["status"] == "respondido" and body["actions"] == []
+        assert "limite_recusas" not in json.dumps(body)
+
+    def test_two_counted_refusals_still_stop_the_turn(self, gated):
+        chan = gated
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("abrir_skill", nome="qualificar-lead")),
+            *[step(call("registrar_perfil", itens=[{**PERFIL_OPERACAO, "trecho": "nunca dito"}])) for _ in range(2)],
+            say("nunca")]))
+        body = chan.turn(turn_body("Oi")).json()
+        assert body["status"] == "handoff" and body["actions"][0]["motivo_codigo"] == "limite_recusas"
+
+    def test_an_unbounded_correctable_loop_still_hits_the_call_cap(self, gated):
+        chan = gated
+        chan.conformidade.definir_limites(chan.org_id, chan.agent.id, max_chamadas_ferramenta_turno=4)
+        chan.use_provider(FakeProvider(tool_responses=[
+            *[step(call("registrar_perfil", itens=[PERFIL_OPERACAO])) for _ in range(8)], say("nunca")]))
+        body = chan.turn(turn_body("Quero comprar")).json()
+        codigos = [r["codigo"] for r in tool_results(chan.provider) if r.get("codigo")]
+        assert codigos[:4] == ["skill_nao_aberta"] * 4 and "limite_ferramentas" in codigos  # correctable ones free, the cap bites
+        assert body["status"] == "handoff" or body["status"] == "silencio"
+
+    def test_a_correctable_refusal_does_not_count_and_a_counted_one_does(self):
+        from app.channels.tool_registry import _recusa
+
+        class T:
+            def texto(self, *a, **k):
+                return "x"
+
+        assert _recusa(T(), "skill_nao_aberta", skill="s").corrigivel is True
+        assert _recusa(T(), "trecho_nao_confere").corrigivel is False
+        assert _recusa(T(), "codigo_inventado_novo").corrigivel is False  # unclassified: fail-closed
+
+
+class TestClassificacaoDasRecusas:
+    def test_every_refusal_code_in_the_module_is_in_exactly_one_class(self):
+        import ast
+        import inspect
+
+        from app.channels import tool_registry as tr
+        from app.studio.textos_registry import CODIGOS_RECUSA, CODIGOS_RECUSA_OPCIONAIS
+
+        tree = ast.parse(inspect.getsource(tr))
+        usados: set[str] = set(CODIGOS_RECUSA) | set(CODIGOS_RECUSA_OPCIONAIS)
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_recusa" and len(n.args) > 1:
+                a = n.args[1]
+                if isinstance(a, ast.Constant):
+                    usados.add(a.value)
+                elif isinstance(a, ast.BoolOp):  # ``r.codigo or "evento_invalido"``
+                    usados |= {v.value for v in a.values if isinstance(v, ast.Constant)}
+            if isinstance(n, ast.Dict):  # {"ok": False, "codigo": "<literal>", ...}
+                for k, v in zip(n.keys, n.values):
+                    if isinstance(k, ast.Constant) and k.value == "codigo" and isinstance(v, ast.Constant):
+                        usados.add(v.value)
+        assert tr.RECUSAS_CORRIGIVEIS.isdisjoint(tr.RECUSAS_CONTADAS)
+        sem_classe = usados - tr.RECUSAS_CORRIGIVEIS - tr.RECUSAS_CONTADAS
+        assert not sem_classe, f"unclassified refusal codes: {sorted(sem_classe)}"
+        assert {"skill_nao_aberta", "sem_codigo_campanha"} <= tr.RECUSAS_CORRIGIVEIS
+        assert {"trecho_nao_confere", "consentimento_sem_evidencia", "limite_ferramentas"} <= tr.RECUSAS_CONTADAS
 
 
 class TestExhaustedLoopIsSilenceByDefault:

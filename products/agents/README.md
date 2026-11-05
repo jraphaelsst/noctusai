@@ -169,7 +169,7 @@ model only records criterion values through tools; **score and stage are compute
   confirms it (`POST /api/channels/leads/{ref}/descarte/confirmar`, actor stored) - LGPD art. 20.
 - **Service** (`QualificacaoService`): `avaliar`, `registrar_perfil` (the `trecho` must be in the lead's own
   recent messages), `registrar_evento_imovel`, `pode_concluir`, `confirmar_terminal`, `apagar_por_lead`.
-  Refusals are typed codes; their wording lives in DB texts.
+  Refusals are typed codes; their wording lives in DB texts. Correctable ones (skill not opened, no campaign code) do not spend `max_recusas_por_turno`; the rest do (`RECUSAS_CORRIGIVEIS` / `RECUSAS_CONTADAS`).
 - **Lead identity** (`identificacao.py`): name/e-mail/CPF/RG apart from the records, CPF/RG Fernet-encrypted
   with the fleet `ENCRYPTION_KEY`, masked by default, clear text only for org owner/admin via an audited
   endpoint; 180-day retention and delete-by-lead cover it.
