@@ -74,6 +74,13 @@
 - KB drift (frontend-owned): frontend-craft-canon §14 LBI art. 63 now verified; §7 div-onClick count 25 → 21.
 - Tooling note: union_roster.py only handles executor-style lines — the designer name was dropped and re-added by hand (design role).
 
+### W2-S3 legal-advisor — merged 6b52d288d (agent 50 · legal-advisor-canon 166 · lgpd-privacy-program 348 · contracts-br 178 · consumer-ecommerce 143)
+- Transfers: none. Proposed LGPD-WARNINGS split (file + `lgpd_flag` stay security; legal disposition of buckets B/C-communication/D/F → legal-advisor; plan in lgpd-privacy-program §14; tooling idea: `bucket:` field on lgpd_flag).
+- Answered from DOU: Res. 15/2024 — 20 business days to complement ANPD notice, titulares declaration 3 business days, register ≥5 years; no operator→controller deadline (contractual). Res. 19/2024 SCCs verbatim by ~2025-08-23 + art. 17 §2 transfer page.
+- ⚖️ Lawyer questions for the owner: small-agent status likely EXCLUDED (LLM + sensitive/credit data = high risk) ⇒ plan on 3 business days; owner = controller AND encarregado (Res. 18/2024 art. 19 §1 II conflict); D4Sign promise valid between parties but probably NOT registrable at Registro de Imóveis without ICP-Brasil ⇒ "autorização de registro" clause needs rewording; PJ wording (`frases.py:519`) lacks contrato social/procuração reference + CC 1.015 majority check.
+- Follow-up defects: store `schemas/store.py:34` `guarantee_days` accepts 0–6 (CDC art. 49 floor 7 ⇒ `ge=7`); store lacks supplier identification / pre-checkout summary / withdrawal channel (Decreto 7.962) — supplier ID belongs in the seed storefront footer; privacy policy (`consent.ts`) lacks "when we act as operator" + transfer page; DSAR-locator tool idea.
+- Drift: memory `reminder_contrato_pj_qualificacao` stale (migration 193 replaced the block; open part = powers act + CC 1.015); security `lgpd.md` §10/§12 labels art. 7 V as legal obligation (it is II); incident playbook cites legisweb (DOU URL now in legal docs); store live in memories but absent from active-scope.txt (owner to confirm).
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
