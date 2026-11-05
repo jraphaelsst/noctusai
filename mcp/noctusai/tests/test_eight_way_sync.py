@@ -145,6 +145,23 @@ class TestEightWaySync:
         assert len(skills_issues) >= 1
         assert any("noc-orphan" in i["issue"] for i in skills_issues)
 
+    def test_skip_legs_env_drops_only_the_named_leg(self, tmp_path, monkeypatch):
+        # 2026-11-05: the pre-commit hook already ran skills-router (and
+        # kb-sync) blocking; it exports their names so 8-way does not re-run
+        # them in the same commit. Only the named legs are dropped.
+        _mk_repo(tmp_path)
+        _mk_skill(tmp_path, "noc-orphan")
+        _mk_claude_md(
+            tmp_path,
+            "**Procedure skills** (`.claude/skills/`, auto-trigger): `noc-other`.",
+        )
+        monkeypatch.setenv("NOCTUS_8WAY_SKIP_LEGS", "skills-router")
+        result = check_eight_way_sync(tmp_path)
+        assert not [i for i in result if "skills-router" in i["symbol"]]
+        monkeypatch.setenv("NOCTUS_8WAY_SKIP_LEGS", "kb-sync")
+        result = check_eight_way_sync(tmp_path)
+        assert [i for i in result if "skills-router" in i["symbol"]]
+
     def test_sub_keeper_exceptions_dont_crash(self, tmp_path, monkeypatch):
         # If a sub-keeper raises, the composition keeper must absorb +
         # surface as a warning-symbol-error, not crash.
@@ -253,7 +270,7 @@ class TestAllCacheFreshness:
 
         called = {"n": 0}
 
-        def _spy(repo_root=None):
+        def _spy(repo_root=None, **_kw):
             called["n"] += 1
             return {"ok": True, "healed": [], "stale_embedding": [], "detail": None}
 
@@ -268,7 +285,7 @@ class TestAllCacheFreshness:
         # surfaces through the composed sub-keepers).
         from tools.noctus.dev import refresh_all_caches as _r
 
-        def _boom(repo_root=None):
+        def _boom(repo_root=None, **_kw):
             raise RuntimeError("synthetic settle failure")
 
         monkeypatch.setattr(_r, "settle_structural_caches", _boom)

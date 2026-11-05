@@ -21459,7 +21459,14 @@ def check_eight_way_sync(repo_root: Path | None = None) -> list[dict]:
 
     KB § PATTERNS/common/eight-way-sync.md.
     """
-    return _run_composed_keeper("eight-way-sync", [
+    # NOCTUS_8WAY_SKIP_LEGS (2026-11-05, gates audit): the pre-commit hook runs
+    # kb-sync (step 4) and skills-router (step 4a) as their own BLOCKING legs
+    # earlier in the same commit, then ran them again here — twice per commit.
+    # The hook exports the names of the legs it already passed; only those are
+    # skipped, and only inside that hook process (CI/manual runs keep all 8).
+    import os as _os
+    _skip = {x.strip() for x in _os.environ.get("NOCTUS_8WAY_SKIP_LEGS", "").split(",") if x.strip()}
+    legs = [
         ("kb-sync", lambda: _check_kb_sync_for_six_way(repo_root)),
         ("contextualize", lambda: check_contextualize_alignment(repo_root)),
         ("agent-kb", lambda: check_agent_kb_alignment(repo_root)),
@@ -21471,7 +21478,8 @@ def check_eight_way_sync(repo_root: Path | None = None) -> list[dict]:
         # the residual gap (fresh ≠ correct). Warning severity — same tier.
         # KB § PATTERNS/common/extractor-correctness-vs-mirror.md.
         ("extractor-sanity", lambda: check_graph_extractor_corpus_sanity(repo_root)),
-    ])
+    ]
+    return _run_composed_keeper("eight-way-sync", [leg for leg in legs if leg[0] not in _skip])
 
 
 # Back-compat aliases — old names retained so external callers (if any)
