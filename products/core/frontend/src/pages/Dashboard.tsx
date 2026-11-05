@@ -270,7 +270,7 @@ export function Dashboard() {
                   status toggle is live. Non-admins never see those rows. */}
               {isAdmin ? (
                 <div
-                  className="absolute top-3 right-3 flex items-center gap-1.5"
+                  className="absolute top-3 right-3 z-10 flex items-center gap-1.5"
                   onClick={e => e.stopPropagation()}
                 >
                   <DeployScopeToggle
@@ -298,7 +298,17 @@ export function Dashboard() {
                 )
               )}
               <div className="mb-3"><ProductIcon name={product.icone} color={product.cor} /></div>
-              <h3 className="text-lg font-semibold text-foreground mb-1">{product.nome}</h3>
+              <h3 className="text-lg font-semibold text-foreground mb-1">
+                {/* Keyboard/AT entry point: a native button whose ::after stretches over the
+                    whole card. No handler of its own — its click bubbles to the card's onClick. */}
+                <button
+                  type="button"
+                  disabled={inactive}
+                  className="text-left after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring disabled:cursor-not-allowed"
+                >
+                  {product.nome}
+                </button>
+              </h3>
               <p className="text-sm text-muted-foreground mb-4">{product.descricao}</p>
 
               {inactive ? (

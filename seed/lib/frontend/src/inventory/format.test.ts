@@ -8,7 +8,7 @@ describe('quantities', () => {
     expect(formatQty(2.5)).toBe('2,5');
     expect(formatQty(1234)).toBe('1.234');
     expect(formatQty(0.125)).toBe('0,125');
-    expect(formatQty(null)).toBe('0');
+    expect(formatQty(null)).toBe('—');
   });
   it('parses what a person types into the canonical wire string', () => {
     expect(parseQty('2,5')).toBe('2.5');

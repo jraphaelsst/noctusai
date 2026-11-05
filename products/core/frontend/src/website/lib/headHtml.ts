@@ -4,6 +4,7 @@
  * `scripts/prerender-site.mjs`. Kept as plain functions (no React) so the
  * exact same logic is trivially testable from the build-output check.
  */
+import { safeJsonLd } from "@noctusai/lib/json-ld";
 import { THEME_INLINE_SCRIPT } from "./themeScript";
 import { ROUTES, type RouteDef } from "./routes";
 import type { PageMeta } from "./pageMeta";
@@ -42,7 +43,7 @@ export function buildHead(opts: HeadOptions): string {
   ].join("\n    ");
 
   const jsonLdScripts = meta.jsonLd
-    .map((node) => `<script type="application/ld+json">${JSON.stringify(node)}</script>`)
+    .map((node) => `<script type="application/ld+json">${safeJsonLd(node)}</script>`)
     .join("\n    ");
 
   return `<head>

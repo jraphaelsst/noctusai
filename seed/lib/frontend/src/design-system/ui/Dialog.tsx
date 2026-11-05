@@ -15,6 +15,10 @@
  *   - role="dialog" aria-modal="true" on the backdrop
  *   - aria-label={title} when title is provided
  *   - Escape key calls onClose
+ *   - Focus management (APG modal pattern): on open, focus moves into the
+ *     panel (a child that already took focus, e.g. `autoFocus`, wins; else the
+ *     first tabbable; else the panel itself); Tab / Shift+Tab cycle inside the
+ *     panel; on close focus returns to the element that opened the dialog
  *   - Clicking the backdrop calls onClose — but ONLY when the press both
  *     started and ended there, so a text-selection drag that starts inside
  *     the panel and releases over the backdrop never closes the dialog
@@ -96,7 +100,15 @@ export interface DialogProps {
   children: React.ReactNode;
 }
 
+const TABBABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+
+function tabbables(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) => !el.hasAttribute("hidden") && el.getAttribute("aria-hidden") !== "true");
+}
+
 export function Dialog({ open, onClose, title, className, children }: DialogProps) {
+  const panelRef = React.useRef<HTMLDivElement>(null);
   /** Where the current press STARTED — see the backdrop's onMouseDown/onClick. */
   const pressOriginRef = React.useRef<"backdrop" | "panel" | null>(null);
 
@@ -108,6 +120,42 @@ export function Dialog({ open, onClose, title, className, children }: DialogProp
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
+
+  // Initial focus in, focus return out (cleanup runs on close/unmount).
+  React.useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = panelRef.current;
+    if (panel && !panel.contains(document.activeElement)) {
+      (tabbables(panel)[0] ?? panel).focus();
+    }
+    return () => {
+      if (opener && opener.isConnected) opener.focus();
+    };
+  }, [open]);
+
+  /** Trap Tab inside the panel (wraps at both ends). */
+  function trapTab(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const items = tabbables(panel);
+    if (items.length === 0) {
+      e.preventDefault();
+      panel.focus();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === panel || !panel.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !panel.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 
   if (!open) return null;
 
@@ -124,6 +172,7 @@ export function Dialog({ open, onClose, title, className, children }: DialogProp
          common ancestor — the backdrop — and would close the dialog, losing
          whatever the user had typed. So the close requires BOTH ends of the
          gesture on the backdrop: `mousedown` arms it, `click` acts on it. */
+      onKeyDown={trapTab}
       onMouseDown={(e) => {
         pressOriginRef.current = e.target === e.currentTarget ? "backdrop" : "panel";
       }}
@@ -135,8 +184,10 @@ export function Dialog({ open, onClose, title, className, children }: DialogProp
     >
       {/* Panel */}
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={cn(
-          "relative w-full max-w-md rounded-lg border border-border bg-background shadow-lg",
+          "relative w-full max-w-md focus:outline-none rounded-lg border border-border bg-background shadow-lg",
           className,
         )}
         onClick={(e) => e.stopPropagation()}

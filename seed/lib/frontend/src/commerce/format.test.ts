@@ -10,7 +10,7 @@ describe('money from cents', () => {
     expect(nbsp(formatCents(123456))).toBe('R$ 1.234,56');
     expect(nbsp(formatCents(5))).toBe('R$ 0,05');
     expect(nbsp(formatCents(0))).toBe('R$ 0,00');
-    expect(nbsp(formatCents(null))).toBe('R$ 0,00');
+    expect(formatCents(null)).toBe('—');
   });
 
   it('formats other currency/locale', () => {

@@ -18,6 +18,7 @@
  * RESOLVED 2026-05-29). Full render tests are safe.
  */
 /// <reference types="@testing-library/jest-dom" />
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 
@@ -425,6 +426,16 @@ describe("IntegrationCard onSave", () => {
 // ── 10. onOpenModal ──────────────────────────────────────────────────────────
 
 describe("IntegrationCard onOpenModal", () => {
+  it("opens the modal from the keyboard via a native button (Enter)", async () => {
+    const onOpenModal = vi.fn();
+    render(<IntegrationCard account={youtubeAccount} onOpenModal={onOpenModal} />);
+    const opener = screen.getAllByRole("button").find((b) => b.tagName === "BUTTON" && b.textContent && !b.getAttribute("aria-label"))!;
+    opener.focus();
+    await userEvent.setup().keyboard("{Enter}");
+    expect(onOpenModal).toHaveBeenCalledTimes(1);
+    expect(onOpenModal).toHaveBeenCalledWith(youtubeAccount);
+  });
+
   it("fires onOpenModal when card body is clicked", () => {
     const onOpenModal = vi.fn();
     render(

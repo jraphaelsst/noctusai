@@ -180,10 +180,12 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
-  /* Remove focus indicators globally */
-  *:focus,
-  *:focus-visible {
-    @apply outline-none ring-0;
+  /* Keyboard focus is ALWAYS visible (WCAG 2.2 SC 2.4.7 / 2.4.11). Default ring on the
+     existing --ring token; components may override with their own focus-visible utilities
+     (utilities beat @layer base). Pointer focus stays quiet via :focus-visible. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 
   /* Scrollbar styling */

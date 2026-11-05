@@ -5,8 +5,10 @@ export { formatCents };
 
 /** `2.5` -> `2,5`; `1234` -> `1.234`; never more than 3 decimals, no trailing zeros. */
 export function formatQty(value: number | string | null | undefined, locale = 'pt-BR'): string {
-  const n = typeof value === 'string' ? Number(value) : (value ?? 0);
-  return new Intl.NumberFormat(locale, { maximumFractionDigits: 3, minimumFractionDigits: 0 }).format(Number.isFinite(n) ? n : 0);
+  if (value == null || value === '') return '—';
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (!Number.isFinite(n)) return '—';
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 3, minimumFractionDigits: 0 }).format(n);
 }
 
 /**

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { safeJsonLd } from "@noctusai/lib/json-ld";
 import { useL10n } from "../lib/i18n";
 import type { WebsiteFaqItem } from "../content/types";
 
@@ -40,7 +41,7 @@ export function FaqAccordion({ items, sectionId }: { items: WebsiteFaqItem[]; se
           </div>
         </div>
       ))}
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }} />
     </div>
   );
 }

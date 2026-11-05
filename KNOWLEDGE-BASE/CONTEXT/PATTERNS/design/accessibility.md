@@ -28,7 +28,7 @@
 | Design tokens / colour pairs | `--<role>` + `--<role>-foreground` HSL triplets | `seed/lib/frontend/src/design-system/tokens.css:16-171` |
 | Theme switch | `.dark` class on `<html>` via `useTheme` | `seed/lib/frontend/src/design-system/useTheme.ts:43` |
 | Org brand theme | `BrandProvider` + validated `noctus.brand-tokens/v1` | `seed/lib/frontend/src/design-system/brand-tokens.ts:10-12` |
-| Modal dialog (APG) | Radix `CardHubDialog*` (full) · bare `Dialog` (no focus trap) | `ui/radix-dialog.tsx` · `ui/Dialog.tsx:99-146` |
+| Modal dialog (APG) | Radix `CardHubDialog*` · bare `Dialog` (focus in/trap/return, fixed 2026-11-05) | `ui/radix-dialog.tsx` · `ui/Dialog.tsx:110-160` |
 | Navigation landmark + current page | `Sidebar` organ (`aria-current="page"`, `aria-expanded`) | `design-system/components/Sidebar.tsx:312`, `:341` |
 | Status message (4.1.3) | `QueryErrorState`/`RetryableError` `role="alert"`; sonner toasts | `seed/lib/frontend/src/components/RetryableError.tsx` |
 | Conformance evaluation (WCAG-EM) | a11y audit report (§8) attached to the mockup sign-off | `KB § PATTERNS/design/mockup-protocol.md` §7 |
@@ -74,8 +74,8 @@ Parsing was removed. The table is ordered by how often our screens break them.
 
 | SC (level) | What it requires (paraphrase) | Where our screens break it | Design-time check |
 |---|---|---|---|
-| 2.1.1 Keyboard (A) | all functionality operable by keyboard | product cards launched by `<div onClick>` (`products/core/frontend/src/pages/Dashboard.tsx:250-261`, WE in canon) | §4.6 walk the mockup with Tab only |
-| 2.4.7 Focus Visible (AA) | a visible keyboard focus indicator | seed kills outlines globally (`tokens.css:183-187`); seed `Button` adds no ring (`ui/Button.tsx:70-79`) | every interactive element in the mockup has a drawn focus state |
+| 2.1.1 Keyboard (A) | all functionality operable by keyboard | product cards launched by `<div onClick>` — ✅ FIXED 2026-11-05: native stretched `<button>` (`products/core/frontend/src/pages/Dashboard.tsx:297-310`; test `Dashboard.launch.test.tsx`) | §4.6 walk the mockup with Tab only |
+| 2.4.7 Focus Visible (AA) | a visible keyboard focus indicator | ✅ FIXED 2026-11-05: global reset replaced by a `:focus-visible` ring on `--ring` (`tokens.css:182-189`); seed `Button` has its own ring (`ui/Button.tsx:76`). Was: seed killed outlines globally | every interactive element in the mockup has a drawn focus state |
 | 1.4.3 Contrast (Minimum) (AA) | text ≥ 4.5:1; large text (≥ 24 px, or ≥ 18.5 px bold) ≥ 3:1 | `muted-foreground` on any light surface 3.48-3.98; white on status colours 2.15-2.67 (§3) | §4.1 contrast table per token pair used |
 | 1.4.11 Non-text Contrast (AA) | UI component boundaries, states, focus indicators and meaningful graphics ≥ 3:1 vs adjacent colours | `--border`/`--input` on card 1.32 (light) / 1.25 (dark) — an input whose border is its only identifier fails | §4.1 · inputs carry a visible label AND a 3:1 boundary |
 | 1.4.1 Use of Color (A) | colour never the only signal | status chips, chart series, "DEV" badge | every state = colour + text/icon |
@@ -147,7 +147,7 @@ focus only. Route: owner decision → seed token slice (frontend/seed), pilots f
 
 ### 3.2 Focus indicators
 
-- `tokens.css:183-187` — `*:focus, *:focus-visible { @apply outline-none ring-0; }` in `@layer base`.
+- ✅ **FIXED 2026-11-05** (history): `tokens.css` had `*:focus, *:focus-visible { @apply outline-none ring-0; }` in `@layer base`; now `:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px }` (`tokens.css:182-189`) and `Button` carries `focus-visible:ring-2` (`ui/Button.tsx:76`). Palette untouched. The paragraph below describes the pre-fix state.
   Utilities win over base, so components that add `focus-visible:ring-*` (seed `Input`,
   `card-hub-button.tsx:31`) still show a ring; **everything else has no focus indicator at all**:
   native `<a>`, raw `<button>`s, `OrgPickerModal` rows (`:113-118`) and the seed `Button` itself
@@ -173,7 +173,7 @@ Not all are defects — three kinds, read each site before calling it:
   management), not the click — route to the Radix dialog.
 - **Done right**: `role="button"` + `tabIndex={0}` + Enter/Space handler (`social-wiring/.../esteira/PostCardFace.tsx:49-58`,
   `seed/lib/frontend/src/components/card-hub/CardHubFace.tsx:93-102`) — accessible, though a native `<button>` would be simpler.
-- **Mouse-only content** — the real defects: `products/core/frontend/src/pages/Dashboard.tsx:250-261` (the product
+- **Mouse-only content** — ✅ both FIXED 2026-11-05 (native `<button>` with a stretched `::after`, click bubbles to the card handler; nested controls raised with `z-10`: `Dashboard.tsx:297-310`, `IntegrationCard.tsx:463-475`; tests `Dashboard.launch.test.tsx`, `IntegrationCard.test.tsx`). Were the real defects: `products/core/frontend/src/pages/Dashboard.tsx:250-261` (the product
   launcher card: no role, no tabIndex, no key handler — a keyboard user cannot open a product from the
   core dashboard) and `seed/lib/frontend/src/design-system/integrations/IntegrationCard.tsx:424-427` (`role="article"` + `onClick`
   opening the account modal). `seed/lib/frontend/src/components/kanban/KanbanCard.tsx:104-113` deliberately leaves Enter/Space
@@ -183,7 +183,7 @@ different scopes and single-line greps; use this table and re-run before quoting
 
 ### 3.4 Dialog focus management
 
-The bare seed `Dialog` (`ui/Dialog.tsx:99-146`) has `role="dialog"`/`aria-modal`/`aria-label` (on the
+✅ **FIXED 2026-11-05** (`ui/Dialog.tsx:110-160`): initial focus into the panel (first tabbable / panel), Tab trap with wrap, focus return to the opener on close; tests in `ui/Dialog.test.tsx` (user-event). Pre-fix description follows. The bare seed `Dialog` had `role="dialog"`/`aria-modal`/`aria-label` (on the
 backdrop, `:116-118`) and Esc, but no initial focus, no Tab trap, no focus return (APG modal pattern).
 It is the dialog of the **org picker every multi-org user sees on product entry**
 (`OrgPickerModal.tsx:153`). The Radix one (`CardHubDialog*`) is complete. Seed follow-up is
@@ -333,7 +333,7 @@ Auditor: product-designer · Standard: WCAG 2.2 AA (≡ ABNT NBR 17225:2025 requ
 
 | Anti-pattern | Why it fails | Instead |
 |---|---|---|
-| Global `outline: none` "because the ring is ugly" (`tokens.css:183-187`) | removes 2.4.7 for every element that does not opt back in | a designed ring (§2.3), `:focus-visible` only |
+| Global `outline: none` "because the ring is ugly" (removed 2026-11-05; was `tokens.css:183-187`) | removes 2.4.7 for every element that does not opt back in | a designed ring (§2.3), `:focus-visible` only |
 | Clickable `div`/card | no role, no focus, no Enter/Space (2.1.1, 4.1.2) | the card's title is a link/button; secondary controls are siblings, not nested |
 | Pastel fill + white label | 2.0-2.7:1 (§3.1) | darker fill or dark label |
 | Placeholder as label | disappears on input; low contrast (3.3.2, 1.4.3) | visible label above the field |

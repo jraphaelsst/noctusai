@@ -460,9 +460,21 @@ export function IntegrationCard({
 
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <p className="truncate text-sm font-semibold text-foreground">
-                {primaryLabel}
-              </p>
+              {/* Keyboard/AT entry point for the card-body click: a native button whose
+                  ::after stretches over the whole card. It carries no handler of its
+                  own — its click bubbles to the card's onClick (single call). */}
+              {!editMode && !busy && onOpenModal ? (
+                <button
+                  type="button"
+                  className="truncate text-left text-sm font-semibold text-foreground after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring"
+                >
+                  {primaryLabel}
+                </button>
+              ) : (
+                <p className="truncate text-sm font-semibold text-foreground">
+                  {primaryLabel}
+                </p>
+              )}
             </div>
             {config && (
               <p className="text-xs text-muted-foreground">{config.displayName}</p>
@@ -472,7 +484,7 @@ export function IntegrationCard({
 
         {/* Status badge + controls */}
         <div
-          className="flex shrink-0 items-center gap-1"
+          className="relative z-10 flex shrink-0 items-center gap-1"
           onClick={(e) => e.stopPropagation()}
         >
           <StatusBadge status={account.status} />

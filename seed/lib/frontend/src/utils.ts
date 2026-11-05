@@ -21,10 +21,11 @@ export function cn(...inputs: ClassValue[]) {
 
 /**
  * Formats a number as Brazilian Real (R$).
- * Returns "R$ 0,00" when value is null/undefined.
+ * Returns "—" when value is null/undefined/NaN: a missing value is not zero
+ * (frontend-craft-canon §8).
  */
 export function formatCurrency(value: number | null | undefined): string {
-  if (value == null) return 'R$ 0,00';
+  if (value == null || !Number.isFinite(value)) return '—';
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',

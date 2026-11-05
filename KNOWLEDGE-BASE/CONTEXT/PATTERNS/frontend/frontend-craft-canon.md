@@ -309,7 +309,7 @@ visuals come from tokens. Radix primitives implement the WAI-ARIA authoring prac
 roving focus, Esc, labelling) (Radix — Accessibility). Building a menu/listbox/combobox/tabs by hand
 re-implements that contract and usually misses half of it.
 
-⚠️ **Two dialogs ship in the seed — know which is which.** The bare `Dialog` export is a minimal inline
+⚠️ **Two dialogs ship in the seed — know which is which.** The bare `Dialog` export (focus in/trap/return added 2026-11-05, `Dialog.tsx:110-160`) is a minimal inline
 modal with no Radix dependency (`seed/lib/frontend/src/design-system/ui/Dialog.tsx:1-27`): it has
 `role="dialog"` + `aria-modal` (on the backdrop, `:117-118`), `aria-label={title}`, Esc and safe
 backdrop-click, but **no focus trap, no initial focus, no focus return**. The Radix dialog is exported
@@ -464,9 +464,10 @@ missing seed helpers (`formatNumber`, `formatPercent`, `formatRelative`) are why
 
 A KPI with no data must read "—" (or "Sem dados"), never "R$ 0,00": a zero is a fact, a missing value is
 the absence of one. This is the value-axis twin of the lying-loading-state rule and the shape the
-wiring audit hunts as the "all-zeros dashboard" (skill `noc-wiring-audit`). 🔴 The seed formatter itself
-violates it today — `formatCurrency(null) → "R$ 0,00"` (`seed/lib/frontend/src/utils.ts:22-27`); see
-WE2. `formatDate` already does it right (`null → '-'`, `:47`).
+wiring audit hunts as the "all-zeros dashboard" (skill `noc-wiring-audit`). ✅ Fixed 2026-11-05 in the seed:
+`formatCurrency` / `formatCents` / `formatQty` / `formatCompactNumber` return "—" for null/undefined/NaN
+(`utils.ts:28`, `organ-kit/money.ts:8`, `inventory/format.ts:8`, `charts/formatters.ts:14`; test
+`format-missing.test.ts`); see WE2. `formatDate` returns `'-'` (`:47`).
 
 ### 8.3 Time zones and dates
 
@@ -585,8 +586,9 @@ elements). Core's server does exactly this when injecting website settings
 settings (`products/core/frontend/src/website/lib/settings.tsx:32`, decoding `<` back to `<`) and
 `FaqAccordion` re-serialises admin-editable FAQ items with plain `JSON.stringify` into
 `dangerouslySetInnerHTML` (`products/core/frontend/src/website/components/FaqAccordion.tsx:15-43`) — the
-server's escaping is undone on the client. Fix shape: `JSON.stringify(jsonLd).replace(/</g, '\\u003c')`
-(product-code fix — out of this doc's slice; recorded as a follow-up).
+server's escaping is undone on the client. ✅ Fixed 2026-11-05: every JSON-LD site serialises through the
+seed `safeJsonLd` (`@noctusai/lib/json-ld`, `seed/lib/frontend/src/json-ld.ts`; escapes `<` `>` `&` U+2028/9) —
+`FaqAccordion.tsx:44`, `headHtml.ts` prerender; test `website/__tests__/faqJsonLd.test.tsx`.
 
 **CSP.** The seed sets `Content-Security-Policy-Report-Only` on HTML responses
 (`seed/lib/backend/noctusai_lib/api/security_headers.py:24-33,63-64`) with `script-src 'self'
@@ -656,13 +658,13 @@ are readable by any XSS — one more reason the exits above stay closed.
 | Anti-pattern | Example | Section |
 |---|---|---|
 | Hand-rolled modal (`div` + `onClick`, no focus management, unlabelled inputs) | `products/core/frontend/src/pages/admin/AdminPlans.tsx:176-181` | §4.2 · §7 · WE1 |
-| Seed dialog without focus trap/return | `seed/lib/frontend/src/design-system/ui/Dialog.tsx:99-146` | §4.2 |
+| ~~Seed dialog without focus trap/return~~ fixed 2026-11-05 | `seed/lib/frontend/src/design-system/ui/Dialog.tsx:110-160` | §4.2 |
 | Missing value renders as a real zero | `seed/lib/frontend/src/utils.ts:26-27` | §8.2 · WE2 |
 | Key literals drifting from the family | `products/social-wiring/frontend/src/hooks/useLeadsImport.ts:91`, `useOlxLeads.ts:97`, `useImovelWebLeads.ts:200,211` vs `useLeads.ts:53-54` | §3.2 · WE3 |
 | Draft seeded by an effect | `products/core/frontend/src/pages/AccountSettings.tsx:15-21` | §1.3 · §6 |
 | State reset by effects instead of `key` | `products/agents/frontend/src/pages/studio/tabs/SkillsTab.tsx:95-110` | §1.3 |
 | Label not bound, error not described | `products/social-wiring/frontend/src/pages/Certidoes.tsx:775-780` | §6 |
-| JSON-LD re-serialised unescaped | `products/core/frontend/src/website/components/FaqAccordion.tsx:43` | §11 |
+| ~~JSON-LD re-serialised unescaped~~ fixed 2026-11-05 (`safeJsonLd`) | `products/core/frontend/src/website/components/FaqAccordion.tsx:44` | §11 |
 | Plain `lazy` on 38 routes | `products/core/frontend/src/main.tsx:19-56` | §9 |
 | Generic error copy at the boundary | `seed/lib/frontend/src/components/ErrorBoundary.tsx:86-91` | §12 |
 | Product tsconfig not strict (scaffold) | `products/seed/frontend/tsconfig.json:14-15` | §5 |
@@ -710,12 +712,12 @@ expect(screen.getByLabelText(/nome/i)).toHaveFocus();          // or the first f
 await user.keyboard('{Escape}');
 expect(screen.getByRole('button', { name: /novo plano/i })).toHaveFocus();
 ```
-**Seed follow-up.** The bare seed `Dialog` should gain focus-in/trap/return (or become a thin wrapper
+**Seed follow-up (DONE 2026-11-05 — bare `Dialog` now has focus-in/trap/return).** It was to gain focus-in/trap/return (or become a thin wrapper
 over the Radix one) so "consume the seed dialog" is accessible by construction — pilots first.
 
 ### WE2 — `formatCurrency(null)` lies with a zero (honest values)
 
-**Before.** `seed/lib/frontend/src/utils.ts:22-31`:
+**Before (fixed 2026-11-05: `formatCurrency` & siblings now return "—"; the `opts.empty` / `formatNumber` extras below remain future work).** `seed/lib/frontend/src/utils.ts:22-31`:
 ```ts
 /** Returns "R$ 0,00" when value is null/undefined. */
 export function formatCurrency(value: number | null | undefined): string {

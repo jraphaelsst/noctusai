@@ -64,4 +64,18 @@ describe("Dashboard launchProduct", () => {
     expect(post).toHaveBeenCalledWith("/api/sso/token", { product_slug: "prod-um" });
     expect(open).toHaveBeenCalledWith("https://prod-um.example/sso#token=TOK", "_blank", "noopener");
   });
+
+  it("is keyboard-operable: the launcher is a native focusable button, and activating it launches", async () => {
+    post.mockResolvedValue({ sso_token: "T", product_slug: "prod-um", redirect_url: "https://prod-um.example/sso#token=T" });
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const launcher = await screen.findByRole("button", { name: "Prod Um" });
+    // A native <button> is in the tab order and turns Enter/Space into a click by itself.
+    expect(launcher.tagName).toBe("BUTTON");
+    expect((launcher as HTMLButtonElement).disabled).toBe(false);
+    launcher.focus();
+    expect(document.activeElement).toBe(launcher);
+    fireEvent.click(launcher);
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  });
 });

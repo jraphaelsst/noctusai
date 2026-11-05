@@ -11,8 +11,8 @@
 
 /** `1234` -> "1,2 mil" style compact pt-BR number, K/M suffixed like the existing product helper. */
 export function formatCompactNumber(value: number | null | undefined): string {
-  const v = value ?? 0;
-  if (!Number.isFinite(v)) return "—";
+  if (value == null || !Number.isFinite(value)) return "—";
+  const v = value;
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(v / 1_000).toFixed(1)}K`;

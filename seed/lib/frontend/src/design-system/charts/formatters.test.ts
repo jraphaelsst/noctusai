@@ -14,9 +14,9 @@ describe("formatCompactNumber", () => {
     expect(formatCompactNumber(2_300_000)).toBe("2.3M");
   });
 
-  it("treats null/undefined as 0, never as NaN or a crash", () => {
-    expect(formatCompactNumber(null)).toBe((0).toLocaleString("pt-BR"));
-    expect(formatCompactNumber(undefined)).toBe((0).toLocaleString("pt-BR"));
+  it("renders null/undefined as an em dash (a missing value is not zero), never NaN or a crash", () => {
+    expect(formatCompactNumber(null)).toBe("—");
+    expect(formatCompactNumber(undefined)).toBe("—");
   });
 
   it("renders a non-finite value as an em dash rather than 'NaN' or 'Infinity'", () => {

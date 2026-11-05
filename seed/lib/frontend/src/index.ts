@@ -1,4 +1,5 @@
 // Utilities
+export { safeJsonLd } from './json-ld';
 export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from './utils';
 
 // Phone — THE canonical format (E.164). `formatPhone` is the single display

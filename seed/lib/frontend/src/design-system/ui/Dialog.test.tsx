@@ -12,6 +12,8 @@
 /// <reference types="@testing-library/jest-dom" />
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 
 import { Dialog } from './Dialog';
 
@@ -66,5 +68,42 @@ describe('Dialog close gestures', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Dialog focus management', () => {
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button onClick={() => setOpen(true)}>Abrir</button>
+        <Dialog open={open} onClose={() => setOpen(false)} title="Detalhes">
+          <button>Primeiro</button>
+          <button>Segundo</button>
+        </Dialog>
+      </>
+    );
+  }
+
+  it('moves focus in, traps Tab, and returns focus to the opener on Esc', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Abrir' });
+    await user.click(opener);
+
+    const first = screen.getByRole('button', { name: 'Primeiro' });
+    const second = screen.getByRole('button', { name: 'Segundo' });
+    expect(first).toHaveFocus();
+
+    await user.tab();
+    expect(second).toHaveFocus();
+    await user.tab(); // wraps, never leaves the dialog
+    expect(first).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(second).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(opener).toHaveFocus();
   });
 });

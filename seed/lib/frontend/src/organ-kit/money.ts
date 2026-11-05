@@ -3,9 +3,10 @@
  * `formatCents` is the single display seam; `parseMoneyToCents` / `centsToInput` are the typed-input pair.
  */
 
-/** Integer cents → localized currency string (`123456` → `R$ 1.234,56`). */
+/** Integer cents → localized currency string (`123456` → `R$ 1.234,56`); a missing value is `—`, never `R$ 0,00`. */
 export function formatCents(cents: number | null | undefined, currency = 'BRL', locale = 'pt-BR'): string {
-  const value = (cents ?? 0) / 100;
+  if (cents == null || !Number.isFinite(cents)) return '—';
+  const value = cents / 100;
   return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(value);
 }
 
