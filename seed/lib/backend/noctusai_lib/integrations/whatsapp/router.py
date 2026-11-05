@@ -54,7 +54,6 @@ def create_whatsapp_webhook_router(
     *,
     signature_header: str = "X-Webhook-Hmac",
     dedup: WebhookDedup | None = None,
-    allow_unsigned_in_prod: bool = False,
 ) -> APIRouter:
     """Build a FastAPI APIRouter that accepts WAHA inbound webhooks.
 
@@ -98,9 +97,7 @@ def create_whatsapp_webhook_router(
         body = await request.body()
 
         if not settings.webhook_hmac_secret:
-            handle_unsigned_webhook(
-                "whatsapp-webhook", allow_unsigned_in_prod=allow_unsigned_in_prod
-            )
+            handle_unsigned_webhook("whatsapp-webhook")
 
         if settings.webhook_hmac_secret:
             if not x_webhook_hmac_sha256:

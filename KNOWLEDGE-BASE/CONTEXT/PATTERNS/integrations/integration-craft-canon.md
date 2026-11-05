@@ -227,9 +227,8 @@ default timestamp tolerance; live-mode retries for up to three days.
 **How it applies here.**
 - **Verify** — the 5-pin contract (`KB § PATTERNS/security/webhook-signatures.md`): `webhook_endpoint(...)`
   with a per-request secret resolver, explicit `bypass_when_unset`, `@limiter.limit`, strict-status
-  tests. The seed default is now FAIL CLOSED (2026-11-05): an unset secret is refused with 401 in a
-  deploy context (`is_deploy_context()`), accepted+logged only in dev/test; a per-mount, declared
-  `allow_unsigned_in_prod=True` is the sole opt-out (`security/webhook_signatures.py:63-104`) — P0 closed.
+  tests. The seed default still accepts unsigned requests (CRITICAL log) when the secret is unset unless
+  `WEBHOOK_REQUIRE_SIGNATURE=1` (`security/webhook_signatures.py:52-87`) — the open P0, HELD as an owner-timed step (2026-11-05): flipping the default to refuse in a deploy context was tried and reverted — merge-queue batch `mq-candidate/42047199280-2` failed social-wiring, whose shared WAHA does not sign yet (L2 2026-11-03, `NOC-REMEDIATE[waha-hmac-prod]`), and ~20 live mounts use this verifier with no prod secret inventory. Order: inventory every mount's prod secret → provision → `WEBHOOK_REQUIRE_SIGNATURE=1` per product → then flip the default.
   New receivers pass `bypass_when_unset=False` for any route already live in prod, as the Meta leadgen
   receiver does (`products/social-wiring/backend/app/modules/meta_ads/routers/leadgen_router.py:20-26,180-186`).
 - **Replay window only where the timestamp is signed.** Stripe and Svix sign the timestamp, so the
@@ -599,8 +598,8 @@ migration `062_codigo_imovel_canonical.sql`).
 - ✅ Non-message events answer 200 `ignored` so WAHA does not retry (`:129-131`).
 - ✅ Dedup on `provider_message_id` before the consumer (`:138-144`) — kills the `message` +
   `message.any` double run.
-- ✅ Unsigned when the secret is unset: now refused with 401 in a deploy context
-  (`webhook_signatures.py:63-104`); dev/test still logs and accepts.
+- ⚠️ Unsigned when the secret is unset: CRITICAL log and `handle_unsigned_webhook` accepts unless
+  `WEBHOOK_REQUIRE_SIGNATURE=1` (`webhook_signatures.py:69-87`). Fix = the seed P0 (owner-timed rollout).
 - ✅ Claim without release: fixed — `WebhookDedup.release()` is called when `on_message` raises
   (`whatsapp/router.py:150-157`). Persisting before fallible work is still the durable layer.
 - ⚠️ No replay window possible: WAHA's `X-Webhook-Timestamp` is not covered by the HMAC (WAHA

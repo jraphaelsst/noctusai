@@ -50,64 +50,42 @@ DEFAULT_MAX_AGE_SECONDS = 300
 
 logger = logging.getLogger(__name__)
 
-# Fail-closed by default in a deploy/prod context (2026-11-05, appsec WE-2).
-# A webhook arriving while its secret is unset is REFUSED with 401 whenever the
-# process runs in a deploy context (`is_deploy_context()`: APP_ENV production/
-# staging, or a PRODUCT_URL_* override) and DEBUG is not truthy. Dev shells and
-# tests (no deploy marker, or DEBUG=true) keep the logged accept-unverified
-# affordance. A mount that must keep accepting unsigned traffic in prod declares
-# that explicitly with `allow_unsigned_in_prod=True` (and a NOC-REMEDIATE
-# marker naming the missing secret) -- it is never the default.
-# WEBHOOK_REQUIRE_SIGNATURE=1 stays as a fleet-wide force-on (refuses whenever
-# DEBUG is not truthy, even without a deploy marker).
+# Fail-closed switch for the "secret unset => accept unverified" bypass.
+# Default is OFF (log CRITICAL only) so flipping it is an explicit, owner-timed
+# step AFTER every webhook secret is provisioned in the prod env. When ON and
+# the app runs in a deploy/prod context (DEBUG not truthy), an unsigned webhook
+# is refused with 401 instead of accepted.
 REQUIRE_SIGNATURE_ENV = "WEBHOOK_REQUIRE_SIGNATURE"
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
-def unsigned_webhook_refused(allow_unsigned_in_prod: bool = False) -> bool:
-    """True when an unset-secret webhook must be refused.
-
-    Refused when DEBUG is not truthy AND (the force flag is on, OR we are in a
-    deploy context and the mount did not declare `allow_unsigned_in_prod`).
-    """
-    if os.environ.get("DEBUG", "").strip().lower() in _TRUTHY:
+def unsigned_webhook_refused() -> bool:
+    """True when an unset-secret webhook must be refused (flag on AND prod)."""
+    if os.environ.get(REQUIRE_SIGNATURE_ENV, "").strip().lower() not in _TRUTHY:
         return False
-    if os.environ.get(REQUIRE_SIGNATURE_ENV, "").strip().lower() in _TRUTHY:
-        return True
-    if allow_unsigned_in_prod:
-        return False
-    from noctusai_lib.config.deploy_config import is_deploy_context
-
-    return is_deploy_context()
+    return os.environ.get("DEBUG", "").strip().lower() not in _TRUTHY
 
 
-def handle_unsigned_webhook(
-    log_prefix: str, *, allow_unsigned_in_prod: bool = False
-) -> None:
+def handle_unsigned_webhook(log_prefix: str) -> None:
     """Called when a webhook arrives and no secret is configured.
 
-    Raises 401 in a deploy context (unless the mount declared
-    `allow_unsigned_in_prod=True`); otherwise logs (CRITICAL when not DEBUG,
-    WARNING under DEBUG) and returns so the dev/test accept-unverified
-    behaviour is kept.
+    Raises 401 when the fail-closed flag is on in a prod context; otherwise
+    logs (CRITICAL in prod context, WARNING under DEBUG) and returns so the
+    caller keeps its legacy accept-unverified behaviour.
     """
     in_prod = os.environ.get("DEBUG", "").strip().lower() not in _TRUTHY
-    if unsigned_webhook_refused(allow_unsigned_in_prod):
+    if unsigned_webhook_refused():
         logger.critical(
-            "%s: webhook secret is UNSET in a deploy context -- refusing the "
-            "unsigned request (401). Set the vendor webhook secret in the prod "
-            "env (and its env manifest); only a mount that declares "
-            "allow_unsigned_in_prod=True may accept unsigned traffic.",
-            log_prefix,
+            "%s: secret unset in prod context — refusing unsigned webhook", log_prefix
         )
         raise HTTPException(status_code=401, detail="webhook secret not configured")
     logger.log(
         logging.CRITICAL if in_prod else logging.WARNING,
-        "%s: secret unset -- accepting webhook without verification "
-        "(dev/test only; set the secret before deploying)",
+        "%s: secret unset — accepting webhook without verification "
+        "(set the secret, then %s=1)",
         log_prefix,
+        REQUIRE_SIGNATURE_ENV,
     )
-
 
 WebhookScheme = Literal[
     "sha256_prefixed", "sha256_hex", "svix", "basic_shared_secret", "waha"
@@ -444,7 +422,6 @@ def webhook_endpoint(
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
     enforce_replay_window: bool = False,
     bypass_when_unset: bool = False,
-    allow_unsigned_in_prod: bool = False,
     log_prefix: str = "webhook",
 ):
     """Build a FastAPI dependency that verifies an inbound webhook signature.
@@ -475,13 +452,7 @@ def webhook_endpoint(
             the `svix-timestamp` to fall within `±max_age_seconds`.
         bypass_when_unset: When True and the resolver returns no secret,
             log WARNING + pass through (early-dev / unconfigured-tenant
-            affordance) -- but ONLY outside a deploy context: in a deploy
-            context an unset secret is refused with 401 unless
-            `allow_unsigned_in_prod=True`. When False, raise 401.
-        allow_unsigned_in_prod: Declared per-mount opt-out: keep accepting
-            unsigned traffic in a deploy context while the secret is unset.
-            Must carry a NOC-REMEDIATE[webhook-secret] marker naming the
-            missing secret. Default False (fail closed).
+            affordance). When False, raise 401.
         log_prefix: Prefix for diagnostic WARNING logs.
 
     Returns:
@@ -502,9 +473,7 @@ def webhook_endpoint(
 
         if not secret:
             if bypass_when_unset:
-                handle_unsigned_webhook(
-                    log_prefix, allow_unsigned_in_prod=allow_unsigned_in_prod
-                )
+                handle_unsigned_webhook(log_prefix)
                 return VerifiedWebhook(body=body, extras=extras)
             raise HTTPException(status_code=401, detail="webhook secret not configured")
 
