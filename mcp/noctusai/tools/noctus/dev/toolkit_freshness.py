@@ -503,7 +503,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",
-        "wire_products", "accept_unmeasured", "accept_unmeasured_reason",
+        "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored",
         "slugs", "order",
     }),
 }
