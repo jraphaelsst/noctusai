@@ -6,6 +6,7 @@ tests are deterministic and timezone-explicit.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -36,39 +37,55 @@ class RetryPolicy:
 DEFAULT_POLICY: RetryPolicy = RetryPolicy()
 
 
-def next_retry_at(retry_count: int, policy: RetryPolicy, now: datetime) -> datetime:
-    """Compute when the next retry should fire.
-
-    Pure: deterministic given `(retry_count, policy, now)`.
-
-    Backoff formula:
-        delay = min(
-            policy.backoff_seconds * (policy.backoff_multiplier ** retry_count),
-            policy.max_backoff_seconds,
-        )
-
-    `retry_count` is the number of retries ALREADY consumed (so the
-    first retry uses `retry_count=0` → `backoff_seconds`).
-
-    Args:
-        retry_count: retries consumed so far (>= 0).
-        policy: RetryPolicy for this job type.
-        now: current clock; the returned datetime is `now + delay`.
-
-    Returns:
-        UTC datetime (or whatever timezone `now` carries) of the next retry.
-    """
+def backoff_ceiling_seconds(retry_count: int, policy: RetryPolicy) -> float:
+    """Un-jittered exponential delay for `retry_count`, capped at
+    `policy.max_backoff_seconds` (the full-jitter upper bound)."""
     if retry_count < 0:
         raise ValueError(f"retry_count must be >= 0, got {retry_count}")
+    try:
+        raw = policy.backoff_seconds * (policy.backoff_multiplier ** retry_count)
+    except OverflowError:
+        return policy.max_backoff_seconds
+    return min(raw, policy.max_backoff_seconds)
 
-    delay_seconds = policy.backoff_seconds * (policy.backoff_multiplier ** retry_count)
-    if delay_seconds > policy.max_backoff_seconds:
-        delay_seconds = policy.max_backoff_seconds
+
+def next_retry_at(
+    retry_count: int,
+    policy: RetryPolicy,
+    now: datetime,
+    *,
+    rng: random.Random | None = None,
+    jitter: bool = True,
+) -> datetime:
+    """Compute when the next retry should fire.
+
+    Full jitter ("Exponential Backoff And Jitter", AWS Architecture Blog):
+
+        ceiling = min(backoff_seconds * multiplier**retry_count, max_backoff_seconds)
+        delay   = uniform(0, ceiling)
+
+    Without jitter, jobs that failed together retry together and re-hammer
+    the same vendor (thundering herd). `rng` is injectable/seedable so tests
+    are deterministic (`random.Random(42)`); default is the module RNG.
+    `jitter=False` returns the exact ceiling (legacy deterministic shape).
+
+    `retry_count` is the number of retries ALREADY consumed (first retry
+    uses `retry_count=0`).
+
+    Returns:
+        `now + delay`, in whatever timezone `now` carries.
+    """
+    ceiling = backoff_ceiling_seconds(retry_count, policy)
+    if jitter:
+        delay_seconds = (rng or random).uniform(0.0, ceiling)  # noqa: S311 — not a security path
+    else:
+        delay_seconds = ceiling
     return now + timedelta(seconds=delay_seconds)
 
 
 __all__ = [
     "DEFAULT_POLICY",
     "RetryPolicy",
+    "backoff_ceiling_seconds",
     "next_retry_at",
 ]

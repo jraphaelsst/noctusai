@@ -18,6 +18,7 @@ statement — no consumer-side read-then-write race window.
 from __future__ import annotations
 
 import uuid
+import random
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
@@ -219,7 +220,9 @@ class FakeJobRepository:
     back.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, retry_rng: random.Random | None = None) -> None:
+        # Injectable RNG for the retry full-jitter (deterministic tests).
+        self._retry_rng = retry_rng
         self._jobs: dict[str, Job] = {}
         self._next_id: int = 1
         self._dedupe_index: dict[str, str] = {}
@@ -364,7 +367,9 @@ class FakeJobRepository:
         )
         requeued = replace(
             requeued,
-            scheduled_for=next_retry_at(job.retry_count, policy, now),
+            scheduled_for=next_retry_at(
+                job.retry_count, policy, now, rng=self._retry_rng
+            ),
             worker_id=None,
             lease_expires_at=None,
         )

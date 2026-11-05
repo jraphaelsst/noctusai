@@ -103,7 +103,13 @@ services:
         condition: service_healthy
 
   waha:
-    image: devlikeapro/waha:latest
+    # Pinned by DIGEST (2026-11-05) to the image actually running in prod
+    # (container noctus-services-waha-1, image id == this digest; it is the
+    # `latest` pull of 2026-07-29, rev 79233e09e348; the image carries no
+    # semver label). A floating `latest` re-pulls a different WAHA on any
+    # recreate. Bump deliberately: pull a tagged <engine>-<version>, verify,
+    # replace this digest (KB INTEGRATIONS/whatsapp.md).
+    image: devlikeapro/waha@sha256:65e593e30bb702f891550b9da5d65e9e0eff8a926f5451fac6a582db84d3a323
     restart: unless-stopped
     networks:
       noctus-net:

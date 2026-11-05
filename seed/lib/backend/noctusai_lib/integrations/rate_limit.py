@@ -37,6 +37,10 @@ from __future__ import annotations
 
 import logging
 import os
+import dataclasses
+import datetime as _dt
+import email.utils
+import math
 import random
 import threading
 import time
@@ -64,6 +68,10 @@ class BucketConfig:
     max_retries: int = 5
     base_backoff: float = 2.0
     max_backoff: float = 60.0
+    # Longest vendor ``Retry-After`` we will sleep through INLINE. A hint past
+    # this is NOT retried early (that extends the throttle) and NOT silently
+    # clamped: ``RetryLater`` is raised so the job layer reschedules at T.
+    max_retry_after: float = 300.0
 
 
 # Conservative defaults. Meta's Marketing API is the sensitive one (the
@@ -106,6 +114,14 @@ def _config_for(bucket: str) -> BucketConfig:
     ``NOC_RL_<BUCKET>_BURST`` (float)."""
     base = _DEFAULTS.get(bucket, _DEFAULT)
     key = bucket.upper()
+    mra = os.getenv(f"NOC_RL_{key}_MAX_RETRY_AFTER")
+    if mra:
+        try:
+            base = dataclasses.replace(base, max_retry_after=float(mra))
+        except ValueError:
+            logger.warning(
+                "rate_limit: bad NOC_RL_%s_MAX_RETRY_AFTER=%r — using default", key, mra
+            )
     rps = os.getenv(f"NOC_RL_{key}_RPS")
     burst = os.getenv(f"NOC_RL_{key}_BURST")
     if rps is None and burst is None:
@@ -117,6 +133,7 @@ def _config_for(bucket: str) -> BucketConfig:
             max_retries=base.max_retries,
             base_backoff=base.base_backoff,
             max_backoff=base.max_backoff,
+            max_retry_after=base.max_retry_after,
         )
     except ValueError:
         logger.warning(
@@ -372,10 +389,7 @@ async def retry_with_backoff_async(
                 )
                 raise
             hinted = retry_after(exc) if retry_after else None
-            delay = hinted if (hinted is not None and hinted >= 0) else _backoff_delay(
-                attempt, cfg, clk
-            )
-            delay = min(delay, cfg.max_backoff)
+            delay = _choose_delay(attempt, cfg, clk, hinted, bucket, exc)
             logger.info(
                 "rate_limit[%s] async: retryable (attempt %d/%d) — backing off %.1fs: %s",
                 bucket, attempt, cfg.max_retries, delay, exc,
@@ -402,6 +416,40 @@ def _backoff_delay(attempt: int, cfg: BucketConfig, clock: Clock) -> float:
     # Full jitter (AWS recipe): uniform in [0, ceiling] — avoids
     # thundering-herd retries. random is fine here (not a security path).
     return random.uniform(0, ceiling)  # noqa: S311
+
+
+class RetryLater(Exception):
+    """The vendor asked us to wait longer than the bucket's
+    ``max_retry_after``. Retrying inline would either block a worker for
+    minutes or (worse) retry early and extend the throttle, so the call is
+    NOT retried: the caller (job layer) reschedules at ``retry_at``.
+
+    ``delay`` is seconds from raise time; ``retry_at`` is an aware UTC
+    datetime; ``__cause__`` is the original vendor error."""
+
+    def __init__(self, bucket: str, delay: float, cause: BaseException | None = None):
+        self.bucket = bucket
+        self.delay = delay
+        self.retry_at = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=delay)
+        super().__init__(
+            f"rate_limit[{bucket}]: vendor asked to wait {delay:.0f}s "
+            f"(> inline max) — retry later at {self.retry_at.isoformat()}"
+        )
+        self.__cause__ = cause
+
+
+def _choose_delay(
+    attempt: int, cfg: BucketConfig, clk: Any, hinted: float | None,
+    bucket: str, exc: BaseException,
+) -> float:
+    """Vendor hint wins (RFC 9110); past ``cfg.max_retry_after`` it becomes
+    ``RetryLater`` instead of a silent clamp. Computed backoff stays capped
+    at ``cfg.max_backoff``."""
+    if hinted is not None and hinted >= 0:
+        if hinted > cfg.max_retry_after:
+            raise RetryLater(bucket, hinted, exc) from exc
+        return hinted
+    return min(_backoff_delay(attempt, cfg, clk), cfg.max_backoff)
 
 
 def retry_with_backoff(
@@ -439,10 +487,7 @@ def retry_with_backoff(
                 )
                 raise
             hinted = retry_after(exc) if retry_after else None
-            delay = hinted if (hinted is not None and hinted >= 0) else _backoff_delay(
-                attempt, cfg, clk
-            )
-            delay = min(delay, cfg.max_backoff)
+            delay = _choose_delay(attempt, cfg, clk, hinted, bucket, exc)
             logger.info(
                 "rate_limit[%s]: retryable error (attempt %d/%d) — backing off %.1fs: %s",
                 bucket, attempt, cfg.max_retries, delay, exc,
@@ -484,17 +529,37 @@ def paced_call(
 # ─── httpx Retry-After parsing helper ───────────────────────────────────────
 
 
-def parse_retry_after(value: Any) -> float | None:
-    """Parse an HTTP ``Retry-After`` header value → seconds. Supports the
-    delta-seconds form (``"120"``); the HTTP-date form is rare for rate
-    limits and returns ``None`` (falls back to exponential backoff)."""
+def parse_retry_after(value: Any, *, now: _dt.datetime | None = None) -> float | None:
+    """Parse an HTTP ``Retry-After`` value → seconds to wait (RFC 9110
+    §10.2.3: ``delay-seconds`` or ``HTTP-date``).
+
+    - ``"120"`` → ``120.0``; negative / non-finite → ``None``.
+    - ``"Wed, 21 Oct 2026 07:28:00 GMT"`` → seconds until then; a date already
+      in the past → ``0.0`` (the vendor says retry now).
+    - garbage / ``None`` → ``None`` (caller falls back to jittered backoff).
+
+    ``now`` is injectable (aware datetime) for deterministic tests."""
     if value is None:
         return None
-    try:
-        secs = float(str(value).strip())
-        return secs if secs >= 0 else None
-    except (TypeError, ValueError):
+    text = str(value).strip()
+    if not text:
         return None
+    try:
+        secs = float(text)
+    except ValueError:
+        secs = None
+    if secs is not None:
+        return secs if (secs >= 0 and math.isfinite(secs)) else None
+    try:
+        when = email.utils.parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=_dt.timezone.utc)
+    ref = now or _dt.datetime.now(_dt.timezone.utc)
+    return max(0.0, (when - ref).total_seconds())
 
 
 def _reset_all_buckets() -> None:
@@ -507,6 +572,7 @@ def _reset_all_buckets() -> None:
 __all__ = [
     "BucketConfig",
     "RateLimiter",
+    "RetryLater",
     "TokenBucket",
     "VirtualClock",
     "acquire",
