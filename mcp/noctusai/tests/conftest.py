@@ -191,6 +191,38 @@ def ledger_repo(tmp_path, monkeypatch):
     yield bare, clone, show
 
 
+_LIVE_DB_ENV_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_db_env_leak(request):
+    """Fail LOUDLY, at the test that caused it, when a test leaves a live-DB
+    variable behind in the process environment.
+
+    2026-11-05: `_llm_bootstrap._source_env_for_key` copied the whole platform
+    `.env` (prod SUPABASE_URL) into os.environ and never restored it; ~5000
+    tests later a child pytest (test_scaffold_overlay) inherited it and the
+    hermetic live-DB guard refused it -- a failure nowhere near its cause.
+    Declared first in the file so it tears down AFTER monkeypatch: a test that
+    uses monkeypatch.setenv has already been restored by the time this checks.
+    """
+    import os
+
+    before = {k: os.environ.get(k) for k in _LIVE_DB_ENV_KEYS}
+    yield
+    leaked = [k for k in _LIVE_DB_ENV_KEYS if os.environ.get(k) != before[k]]
+    for k in leaked:  # restore so one leaker is one failure, not a cascade
+        if before[k] is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = before[k]
+    assert not leaked, (
+        f"{request.node.nodeid} leaked {leaked} into os.environ. Use monkeypatch.setenv/"
+        "delenv, or stop the code under test from sourcing the platform .env "
+        "(see env_bootstrap.load_repo_env + NO_ENV_FILE_VAR)."
+    )
+
+
 @pytest.fixture(autouse=True)
 def _isolate_guard_event_log(tmp_path, monkeypatch):
     """Guard runs in tests (and the hook subprocesses they spawn, which inherit
