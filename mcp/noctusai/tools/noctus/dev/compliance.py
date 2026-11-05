@@ -15902,7 +15902,7 @@ def check_db_guard_registry_static(repo_root: Path | None = None) -> list[dict]:
                         break
             else:
                 found = ((root / mig).is_file() if "/" in mig
-                         else any((root / "products").glob(f"*/backend/migrations/{mig}")))
+                         else any((root / "products").glob(f"*/backend/migrations/{mig}")))  # product-scope: all — resolving a registered probe migration (any product, asleep included), not a product check
             if not found:
                 _issue(probe.id, f"names migration `{mig}`, which does not exist (renumbered/renamed?)",
                        "db-guard-registry-missing-migration")
