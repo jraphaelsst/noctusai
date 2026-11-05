@@ -15,7 +15,10 @@ vi.mock("@noctusai/lib/design-system", async () => ({
   ...(await vi.importActual<typeof import("@noctusai/lib/design-system")>("@noctusai/lib/design-system")),
   useEffectiveSSOContext: () => ({}),
 }));
-vi.mock("@noctusai/lib", () => ({ isOrgAdmin: () => isAdminRef.current }));
+vi.mock("@noctusai/lib", async () => ({
+  ...(await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib")),
+  isOrgAdmin: () => isAdminRef.current,
+}));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/condominios/CondominioDetalhe", () => ({
   CondominioDetalhe: ({ condominioId }: { condominioId: string | null }) =>
