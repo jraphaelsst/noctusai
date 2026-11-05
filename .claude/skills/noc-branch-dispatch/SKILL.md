@@ -1,6 +1,6 @@
 ---
 name: noc-branch-dispatch
-description: Use when parallelizing work across multiple engineers — triggers "dispatch agents", "branch this in parallel", "run these in parallel", "branch + dispatch", "branch yourself and dispatch N agents". The architect/tech-lead decomposes into file-disjoint slices, dispatches isolated engineers, integrates, gates.
+description: Use when parallelizing work across multiple engineers — triggers "dispatch agents", "branch this in parallel", "run these in parallel", "branch + dispatch", "branch yourself and dispatch N agents". The architect/tech-lead decomposes into file-disjoint slices, dispatches isolated engineers, enqueues each slice to the CI merge queue.
 version: 1.0.0
 ---
 
@@ -17,9 +17,9 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 4. **Dispatch in ONE message** (multiple `Agent` calls) so they run concurrently. Each brief ≤~15 lines, references `engineer-seed`. Sonnet default; `model: opus` for judgment-heavy slices: semantics in one word of the brief, an open design choice, or expected fix-on-contact (`KB § PATTERNS/architect/dispatch-engineer-tuning.md` §4·1). Score every slice (`dispatch_log_completion score=`) — integrate refuses an unscored one.
 5. Collect each engineer's short-form return + a `/tmp` patch overlay-safety copy.
 6. **Detect collisions** — (a) path-overlap AND (b) semantic-duplicate git can't see.
-7. **Train-integrate all ready slices** (owner rule: merge all before integrating): `task_branch action=train slugs=[...]` (no slugs = candidate list; `order=auto` = least-overlap first) merges each `feat/<slug>` `--no-ff` into ONE `train-<name>` branch, stops at the first conflict (resolve in a **dedicated honest reconciliation commit**, re-run), returns `overlap_files` + `suggested_tests` → run those narrow tests → ONE `integrate` of the train. Serial per-slug integrate only for a lone ready branch or a hotfix.
-8. Architect runs the FULL gate ONCE at integration on a clean `origin/dev` tree (engineers run only the narrowest scoped check).
-9. Cleanup worktrees: automatic - `task_branch integrate` removes its own worktree on success (a train's integrate also flips each rider's pointer to shipped and cleans each rider's worktree), and the SessionStart sweep reclaims abandoned merged+clean ones (no manual ritual).
+7. **Enqueue each ready slice as soon as it is green** (2026-11-05, supersedes "merge all before integrating"): `task_branch action=enqueue slug=<slug> confirm=true` per slice. The CI merge queue batches whatever is waiting, tests the COMBINED tree on GitHub runners, bisects a red batch and ejects only the culprit — batching is the queue's job now, not a local train. A slice that is ejected goes back to its engineer with the reason. `task_branch action=train` still exists for slices that genuinely need a joint conflict resolution (the queue merges a train `--no-ff`, so its resolutions survive). → `KB § PATTERNS/devops/merge-queue.md`
+8. Engineers run only the narrowest scoped check; the tech-lead runs `noctus.dev.gate_sweep` on any slice touching `mcp/`, migrations, KB or compliance surfaces BEFORE enqueueing (an ejection costs a ~25-min CI cycle). The full merged-tree gate is the queue's CI run — never a local merged-tip run on this machine.
+9. Cleanup worktrees: `task_branch action=landed slug=<slug> confirm=true` once the queue reports landed (pointer, primary FF, worktree + branch teardown); the SessionStart sweep reclaims abandoned merged+clean ones. Keep about 3–4 writing sessions/engineers live at once.
 10. Gate `main` only at 100% — human-gated per R4.
 
 ## Guardrails

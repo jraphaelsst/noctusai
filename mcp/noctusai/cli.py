@@ -443,7 +443,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--migrate-product-allow-stale-tree", action="store_true", help="With --migrate-product: bypass the stale-tree refusal — almost always wrong.")
     parser.add_argument("--migrate-product-allow-inactive", action="store_true", help="With --migrate-product: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--migrate-product-allow-stale-toolkit", action="store_true", help="With --migrate-product: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
-    parser.add_argument("--task-branch", metavar="ACTION", choices=["status", "start", "integrate", "cleanup", "train", "sync_primary"], help="The self-branching-mode per-task git lifecycle. DRY-RUN unless --task-branch-confirm. MCP: noctus.dev.task_branch. Also an R4 fresh-subprocess target for its mutating (start/integrate/cleanup, confirm=True) actions.")
+    parser.add_argument("--task-branch", metavar="ACTION", choices=["status", "start", "enqueue", "landed", "integrate", "cleanup", "train", "sync_primary"], help="The self-branching-mode per-task git lifecycle. enqueue = the DEFAULT landing path (push to the CI merge queue, KB § PATTERNS/devops/merge-queue.md); landed = read the queue verdict + run the post-landing tail; integrate = the legacy local-gates path (queue-down fallback). DRY-RUN unless --task-branch-confirm. MCP: noctus.dev.task_branch. Also an R4 fresh-subprocess target for its mutating (start/integrate/cleanup, confirm=True) actions.")
+    parser.add_argument("--merge-queue", metavar="ACTION", choices=["list", "status"], help="Read-only view of the CI merge queue (the one path into dev): list = waiting entries + verdicts; status = one enqueued sha's verdict (--merge-queue-sha). MCP: noctus.dev.merge_queue. KB § PATTERNS/devops/merge-queue.md.")
+    parser.add_argument("--merge-queue-sha", default=None, help="With --merge-queue=status: the enqueued sha.")
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
     parser.add_argument("--task-branch-train-order", default="given", choices=["given", "auto"], help="With --task-branch=train: merge order - 'given' (as listed) or 'auto' (least path-overlap first).")
     parser.add_argument("--task-branch-slug", default=None, help="With --task-branch: the feat/<slug> worktree/branch name.")
@@ -3626,6 +3628,15 @@ def main():
         )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif getattr(args, "merge_queue", None):
+        from tools.noctus.dev import merge_queue as _mq
+        if args.merge_queue == "status":
+            r = _mq.read_status(_mq._repo_from_remote(_mq._default_run, os.getcwd()), args.merge_queue_sha or "")
+        else:
+            r = _mq.queue_report()
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0)
 
     elif args.task_branch_post_integrate:
         from tools.noctus.dev.task_branch import run_post_integrate

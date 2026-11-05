@@ -71,6 +71,15 @@ noctus.dev.task_branch action="start" slug="<task-slug>" confirm=True
 
 # ... do the work; commit on feat/<slug> (explicit-path git add, own files only) ...
 
+noctus.dev.task_branch action="enqueue" slug="<task-slug>" confirm=True   # THE DEFAULT (2026-11-05)
+#   → fetch → rebase onto origin/dev → migration renumber, doc-staleness, KB counts, pre-push keepers
+#   → push HEAD → refs/heads/mq/<slug>--<sha7>   (NOT dev; NO local merged-tip gates)
+#   → the CI merge queue composes it onto dev (+ queue ahead), runs Tests & Build on GitHub
+#     runners, lands it green / bisects a red batch / ejects with the reason (KB § PATTERNS/devops/merge-queue.md)
+noctus.dev.task_branch action="landed" slug="<task-slug>" confirm=True
+#   → reads the `merge-queue` commit status; once landed: pointer, primary FF, auto-cleanup
+
+# FALLBACK only when GitHub Actions is down (local gates, direct push):
 noctus.dev.task_branch action="integrate" slug="<task-slug>" confirm=True
 #   → fetch → rebase onto origin/dev → FF-push HEAD → origin/dev
 #   → on the concurrent-push race (non-FF): fetch, rebase, RETRY (≤5)
