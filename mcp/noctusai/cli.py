@@ -594,6 +594,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    # `--apply` is shared by several mode flags; alone it would silently do nothing.
+    if args.apply and not (args.async_handlers_to_def or args.auto_improvement_propose_resolve_when):
+        parser.error("--apply needs a mode flag: --async-handlers-to-def or --auto-improvement-propose-resolve-when")
     # Harness mod fast path: runs on every Claude turn (<400 ms budget), so it
     # returns BEFORE the env bootstrap + banner + worktree rebind below. It needs
     # none of them (refs-only git + local caches; --hs-cwd carries the tree).

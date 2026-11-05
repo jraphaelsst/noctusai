@@ -24,9 +24,9 @@ refuse), it only surfaces loudly so the agent cleans up before committing.
 All the actual decision logic lives in the SHARED
 `mcp/noctusai/tools/noctus/dev/primary_write_guard.py` module —
 `measure_posttool_dirt(cwd)`. This file only speaks the harness's hook
-protocol (JSON on stdin → stdout/stderr) and loads that module BY PATH, the
-same `importlib.util.spec_from_file_location` idiom every other
-`claude-guard-*` hook in this repo uses, for the same reason: this hook runs
+protocol (JSON on stdin → stdout/stderr) and loads that module BY PATH via
+`_guard_failclosed.load_module`, the shared loader every `claude-guard-*`
+hook in this repo uses, for the same reason: this hook runs
 after every Bash call in a session, so its import cost is paid hundreds of
 times.
 

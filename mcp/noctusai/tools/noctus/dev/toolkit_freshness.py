@@ -468,6 +468,8 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-accept-unmeasured={','.join(str(g) for g in kwargs['accept_unmeasured'])}")
         if kwargs.get("accept_unmeasured_reason"):
             argv.append(f"--task-branch-accept-unmeasured-reason={kwargs['accept_unmeasured_reason']}")
+        if kwargs.get("accept_unscored"):
+            argv.append(f"--task-branch-accept-unscored={kwargs['accept_unscored']}")
         if kwargs.get("slugs"):
             argv.append(f"--task-branch-slugs={','.join(str(g) for g in kwargs['slugs'])}")
         if kwargs.get("order") and kwargs["order"] != "given":

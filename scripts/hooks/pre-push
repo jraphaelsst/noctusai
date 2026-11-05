@@ -344,6 +344,25 @@ elif [[ $_sp_rc -ne 0 ]]; then
     blocked=1
 fi
 
+# ── learning-loop keepers: engineer slices scored + guard hooks registered ──
+# Backstops for the task_branch integrate slice-score gate and for guard hooks
+# that exist on disk but are wired to nothing (a silent no-op). Same shape as
+# the stale-branch-pointer block above: blocks on a non-zero exit, and a
+# missing venv is reported as unmeasurable, never as a pass.
+for _ll_flag in --check-engineer-slice-scored --check-guard-hooks-registered; do
+    _ll_rc=0
+    if [[ ! -x "$PY_PP" || ! -f "$CLI_PP" ]]; then
+        echo "[pre-push] ${_ll_flag#--}: SKIPPED — no toolkit venv at $PY_PP (unmeasurable, not a pass)."
+    elif _ll_out="$("$PY_PP" "$CLI_PP" "$_ll_flag" 2>&1)" || { _ll_rc=$?; false; }; then
+        echo "[pre-push] $(echo "$_ll_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
+    elif [[ $_ll_rc -ne 0 ]]; then
+        echo "" >&2
+        echo "🔴 pre-push: ${_ll_flag#--} failed." >&2
+        echo "$_ll_out" >&2
+        blocked=1
+    fi
+done
+
 # ── ledger-drain keeper ─────────────────────────────────────────────────────
 # Branch-independent (it inspects task_branch.py's own structure, not the ref
 # being pushed), so it runs ONCE outside the per-ref loop rather than per-ref.
