@@ -16,6 +16,7 @@ pairs above 0.50 — all tools take ``payload`` and share the
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -61,6 +62,14 @@ class DashboardOutput(BaseModel):
             "as `noctus.team.agent_metrics` returns."
         ),
     )
+    slice_scores: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Slice-score rollup from noctus.team.agent_metrics (per agent+model: "
+            "mean_q_weighted, first_pass_yield, rework_rate, tokens_per_accepted_slice, "
+            "cost_usd_est; `cost_note` explains the estimate; `by_week` is the weekly trend)."
+        ),
+    )
     errors: list[str] = Field(
         default_factory=list,
         description=(
@@ -76,6 +85,7 @@ def dashboard(
     project: str | None = None,
     scope: str | None = None,
     agents: list[str] | None = None,
+    slice_scores_fn: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compose status + metrics + per-agent metrics into one envelope.
 
@@ -115,10 +125,22 @@ def dashboard(
                     f"agent_metrics[{role}]: {type(exc).__name__}: {exc}"
                 )
 
+    slice_scores: dict[str, Any] = {}
+    try:
+        if slice_scores_fn is None:
+            from tools.noctus.team.agent_metrics import agent_metrics as slice_scores_fn
+        name = "*"
+        slice_scores = slice_scores_fn(name, effective_scope, False)
+        slice_scores["by_week"] = slice_scores_fn(name, effective_scope, True)["groups"]
+    except Exception as exc:  # noqa: BLE001 — soft-fail by contract
+        slice_scores = {}
+        errors.append(f"slice_scores: {type(exc).__name__}: {exc}")
+
     return {
         "snapshot": snapshot,
         "metrics": metrics,
         "agents": per_agent,
+        "slice_scores": slice_scores,
         "errors": errors,
     }
 

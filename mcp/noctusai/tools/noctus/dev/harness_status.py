@@ -147,10 +147,14 @@ def _section_auto_improvement() -> dict:
     rows = ai.query(open_only=True, limit=500)
     top = [{"target": r.get("target"), "stage": r.get("status"),
             "summary": (r.get("description") or "")[:160]} for r in rows[:5]]
+    stale = sorted(ai.reconcile(dry_run=True).get("stale_s1", []),
+                   key=lambda r: -(r.get("age_days") or 0))
     return {
         "open_s1": sum(1 for r in rows if r.get("status") == "s1-emergent"),
         "open_s2": sum(1 for r in rows if r.get("status") == "s2-memory"),
         "top": top,
+        "stale_s1_count": len(stale),
+        "stale_s1_oldest": stale[:5],
     }
 
 

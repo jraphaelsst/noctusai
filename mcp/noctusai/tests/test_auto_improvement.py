@@ -720,3 +720,15 @@ class TestBackfill:
         res = ai.propose_resolve_when(apply=True, repo_root=tmp_repo)
         assert res["applied"] == 2
         assert json.loads(ai.LEDGER_PATH.read_text().splitlines()[0])["resolve_when"] == "superseded_by:mcp/x/foo.py"
+
+
+class TestProposeResolveWhenCli:
+    def test_flag_registered_and_dry_run_default(self, tmp_repo, capsys, monkeypatch):
+        import cli
+        _write(ai.LEDGER_PATH, [_row("2026-09-03T00:00:00+00:00", "*", "no signal")])
+        monkeypatch.setattr("sys.argv", ["cli.py", "--auto-improvement-propose-resolve-when"])
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+        assert e.value.code == 0
+        assert "DRY-RUN" in capsys.readouterr().out
+        assert "resolve_when" not in json.loads(ai.LEDGER_PATH.read_text().splitlines()[0])

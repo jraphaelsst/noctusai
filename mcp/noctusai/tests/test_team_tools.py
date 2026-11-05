@@ -384,3 +384,26 @@ def test_noctus_umbrella_register_all_includes_team():
 
 if __name__ == "__main__":  # pragma: no cover — convenience runner
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_dashboard_composes_slice_scores_and_soft_fails():
+    from tools.noctus.team.dashboard import dashboard
+
+    calls = []
+
+    def fake(name, scope, by_week):
+        calls.append(by_week)
+        return {"groups": [{"agent": "a", "model": "m", "mean_q_weighted": 3.0}],
+                "cost_note": "note"}
+
+    out = dashboard(slice_scores_fn=fake)
+    assert out["slice_scores"]["cost_note"] == "note"
+    assert out["slice_scores"]["by_week"][0]["agent"] == "a"
+    assert calls == [False, True]
+
+    def boom(*a):
+        raise RuntimeError("x")
+
+    bad = dashboard(slice_scores_fn=boom)
+    assert bad["slice_scores"] == {}
+    assert any(e.startswith("slice_scores:") for e in bad["errors"])
