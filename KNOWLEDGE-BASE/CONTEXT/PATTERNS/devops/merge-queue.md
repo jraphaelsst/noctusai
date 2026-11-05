@@ -259,14 +259,39 @@ timeout.
     permission" rejection ejects the workflow-touching entries with the same
     reason; any other rejection ejects a lone entry (`push_rejected`, with the
     stderr tail) or bisects a batch;
-  - the seam is `MQ_WORKFLOW_TOKEN=1` (set by the workflow once a PAT/App token
-    with `workflows` is configured); default off, and when on the pre-eject
-    switches off.
+  - the seam is the env var `MQ_PUSH_TOKEN` (see below); with it unset the
+    pre-eject above applies unchanged.
+
+  **The token path (2026-11-05).** The owner created a fine-grained PAT
+  (contents + workflows write), stored as the environment secret
+  `MQ_PUSH_TOKEN` of the GitHub environment `merge-queue`. When it is set the
+  queue is workflow-capable: the pre-eject is off, and for a batch whose
+  composed diff against dev touches `.github/workflows/` the candidate push and
+  the dev fast-forward go to `https://x-access-token:<tok>@github.com/<repo>.git`.
+  Every other batch pushes through the plain remote with `github.token`. Why
+  only workflow batches: a push made with a PAT triggers push workflows
+  (`test.yml`, seed-typecheck, agents-secc-ci fire on a push to dev) while a
+  `github.token` push does not, so using the PAT everywhere would double-run CI
+  on every landing. The token is redacted from every error, stderr tail and
+  status the drain surfaces (`redact()`).
+
+  **Why a dev-only environment and a kick job.** The environment's
+  deployment-branch policy allows only `dev`, so only a run whose workflow file
+  comes from dev can read the secret; a queued branch could otherwise edit
+  `merge-queue.yml` to print it. A run triggered by the `mq/**` push has the
+  queue branch as its ref, so `merge-queue.yml` is split: `kick` (push only, no
+  secrets, no environment) dispatches the workflow on dev, and `drain` (only on
+  `refs/heads/dev`, `environment: merge-queue`) does the work. The concurrency
+  group is on the drain job so a kick never waits behind a running drain.
 
   Covered by `test_workflow_touching_entry_is_pre_ejected_and_the_rest_land`,
   `test_workflow_token_seam_switches_the_pre_eject_off`,
   `test_rejected_candidate_push_ejects_instead_of_raising`,
-  `test_workflow_permission_rejection_maps_to_the_workflow_reason`.
+  `test_workflow_permission_rejection_maps_to_the_workflow_reason`,
+  `test_workflow_batch_pushes_candidate_and_dev_via_the_token_url_and_lands`,
+  `test_non_workflow_batch_with_token_still_pushes_via_the_plain_remote`,
+  `test_token_never_surfaces_in_errors_statuses_or_verdicts`,
+  `test_merge_queue_workflow_splits_kick_from_the_dev_only_drain`.
 
 ## 8 · Related
 

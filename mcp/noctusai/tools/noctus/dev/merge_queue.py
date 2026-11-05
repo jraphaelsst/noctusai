@@ -64,7 +64,7 @@ POST_LAND_DISPATCH: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 # A queue ref is `mq/<slug>--<sha7>`; the slug is everything before the last `--`.
 WORKFLOW_PREFIX = ".github/workflows/"
-WORKFLOW_TOKEN_ENV = "MQ_WORKFLOW_TOKEN"
+PUSH_TOKEN_ENV = "MQ_PUSH_TOKEN"  # fine-grained PAT (contents+workflows write); env secret of the dev-only `merge-queue` environment
 # GitHub's wording when a token without the `workflows` permission pushes a new commit touching workflow files.
 WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
 ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
@@ -72,10 +72,18 @@ ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
 Runner = Callable[..., "tuple[int, str, str]"]
 
 
+def redact(text: str, token: str = "") -> str:
+    """Strip the push token (explicit or from env) and any URL userinfo from text that may be surfaced."""
+    tok = token or os.environ.get(PUSH_TOKEN_ENV, "").strip()
+    if tok:
+        text = text.replace(tok, "***")
+    return re.sub(r"(https?://)[^/@\s]+@", r"\1***@", text or "")
+
+
 def _default_run(cmd: list[str], cwd: str | None = None, check: bool = False) -> tuple[int, str, str]:
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if check and p.returncode != 0:
-        raise RuntimeError(f"{' '.join(cmd)} -> {p.returncode}: {p.stderr.strip()[:500]}")
+        raise RuntimeError(redact(f"{' '.join(cmd)} -> {p.returncode}: {p.stderr.strip()[:500]}"))
     return p.returncode, p.stdout, p.stderr
 
 
@@ -154,9 +162,9 @@ def is_workflow_rejection(stderr: str) -> bool:
     return bool(WORKFLOW_REJECT_RE.search(stderr or ""))
 
 
-def workflow_token_enabled(env: dict[str, str] | None = None) -> bool:
-    """The seam: the run has a PAT/App token with the `workflows` permission (workflow sets MQ_WORKFLOW_TOKEN=1)."""
-    return (env if env is not None else os.environ).get(WORKFLOW_TOKEN_ENV, "").strip().lower() in ("1", "true", "yes")
+def push_token_from_env(env: dict[str, str] | None = None) -> str:
+    """The seam: a PAT with the `workflows` permission (env secret MQ_PUSH_TOKEN of the `merge-queue` environment)."""
+    return (env if env is not None else os.environ).get(PUSH_TOKEN_ENV, "").strip()
 
 
 WORKFLOW_EJECT_WHY = ("changes .github/workflows/* - the queue's token cannot push workflow edits; "
@@ -174,19 +182,34 @@ class Queue:
                  run: Runner = _default_run, run_url: str = "", run_id: str = "local",
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
                  workdir: str | None = None, log: Callable[[str], None] = print,
-                 workflow_token: bool | None = None):
+                 workflow_token: bool | None = None, push_token: str | None = None):
         self.repo, self.remote, self.dev = repo, remote, dev
         self.run, self.run_url, self.run_id = run, run_url, run_id
         self.poll_s, self.timeout_s, self.sleep = poll_s, timeout_s, sleep
         self.workdir = workdir or os.getcwd()
         self.log = log
-        self.workflow_token = workflow_token_enabled() if workflow_token is None else workflow_token
+        self.push_token = push_token_from_env() if push_token is None else push_token.strip()
+        # workflow-capable = a token is configured; the bool override exists for tests (no real token needed).
+        self.workflow_token = bool(self.push_token) if workflow_token is None else workflow_token
+
+    def _redact(self, text: str) -> str:
+        return redact(text, self.push_token)
+
+    def push_remote(self, workflow_batch: bool) -> str:
+        """Plain remote normally; the authenticated URL ONLY for a batch that needs the `workflows` permission
+        (a PAT push triggers push workflows, a github.token push does not - never double-run CI)."""
+        if workflow_batch and self.push_token and self.repo:
+            return f"https://x-access-token:{self.push_token}@github.com/{self.repo}.git"
+        return self.remote
+
+    def batch_needs_workflows(self, base: str, sha: str) -> bool:
+        return bool(self.push_token) and touches_workflows(self.changed_paths(base, sha))
 
     # git plumbing ------------------------------------------------------------
     def git(self, *args: str, cwd: str | None = None, check: bool = True) -> str:
         rc, out, err = self.run(["git", *args], cwd=cwd or self.workdir)
         if check and rc != 0:
-            raise RuntimeError(f"git {' '.join(args)} failed ({rc}): {err.strip()[:400]}")
+            raise RuntimeError(self._redact(f"git {' '.join(args)} failed ({rc}): {err.strip()[:400]}"))
         return out.strip()
 
     def fetch(self) -> None:
@@ -219,7 +242,7 @@ class Queue:
     def gh(self, *args: str, check: bool = True) -> str:
         rc, out, err = self.run(["gh", *args], cwd=self.workdir)
         if check and rc != 0:
-            raise RuntimeError(f"gh {' '.join(args)} failed ({rc}): {err.strip()[:400]}")
+            raise RuntimeError(self._redact(f"gh {' '.join(args)} failed ({rc}): {err.strip()[:400]}"))
         return out.strip()
 
     def set_status(self, sha: str, state: str, description: str) -> None:
@@ -339,7 +362,8 @@ class Queue:
     def land(self, cand_sha: str, tested_base: str, wt: str) -> tuple[bool, str]:
         """FF dev to the candidate. Returns (landed, sha_on_dev)."""
         for _ in range(5):
-            rc, _, err = self.run(["git", "push", self.remote, f"{cand_sha}:refs/heads/{self.dev}"], cwd=wt)
+            remote = self.push_remote(self.batch_needs_workflows(tested_base, cand_sha))
+            rc, _, err = self.run(["git", "push", remote, f"{cand_sha}:refs/heads/{self.dev}"], cwd=wt)
             if rc == 0:
                 return True, cand_sha
             self.fetch()
@@ -396,7 +420,8 @@ class Queue:
                         res.landed.append({"slug": e.slug, "dev": base})
                     continue
                 cand_ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}"
-                rc, _, perr = self.run(["git", "push", self.remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
+                remote = self.push_remote(self.batch_needs_workflows(base, cand))
+                rc, _, perr = self.run(["git", "push", remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
                 if rc != 0:
                     # Never crash the drain on a rejected push (2026-11-05: it wedged the queue ~1.5h).
                     if self._handle_push_rejection(applied, base, perr, res):
@@ -449,7 +474,8 @@ class Queue:
     def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome) -> bool:
         """A candidate push was rejected. Eject the culprit(s) and return True when the batch must still be
         bisected (cause not attributable to a single entry)."""
-        tail = (stderr or "").strip()[-300:]
+        stderr = self._redact(stderr or "")
+        tail = stderr.strip()[-300:]
         if is_workflow_rejection(stderr):
             culprits = [e for e in applied if touches_workflows(self.changed_paths(base, e.sha))]
             kind, why = "needs_workflow_token", WORKFLOW_EJECT_WHY

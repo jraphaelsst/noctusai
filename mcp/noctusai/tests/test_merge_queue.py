@@ -399,11 +399,12 @@ def test_workflow_touching_entry_is_pre_ejected_and_the_rest_land(world):
     assert WF not in tree.splitlines()
 
 
-def test_workflow_token_seam_switches_the_pre_eject_off(world, monkeypatch):
-    monkeypatch.setenv("MQ_WORKFLOW_TOKEN", "1")
+def test_workflow_token_seam_switches_the_pre_eject_off(world):
     _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
     _diverge_dev(world)
-    res = make_queue(world, FakeCI(world["origin"])).drain()
+    q = mq.Queue("o/r", run=FakeCI(world["origin"]), run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=world["runner"], log=lambda m: None, workflow_token=True)
+    res = q.drain()
     assert res.ejected == [] and [x["slug"] for x in res.landed] == ["wf"]
 
 
@@ -423,8 +424,7 @@ def test_rejected_candidate_push_ejects_instead_of_raising(world):
     assert "pre-receive" in ci.last(bad)[1]
 
 
-def test_workflow_permission_rejection_maps_to_the_workflow_reason(world, monkeypatch):
-    monkeypatch.setenv("MQ_WORKFLOW_TOKEN", "1")  # defeat the pre-check so the push itself is rejected
+def test_workflow_permission_rejection_maps_to_the_workflow_reason(world):
     ok = enqueue(world, "ok", [("a.txt", "a\n")], 2000)
     wf = enqueue(world, "wf", [(WF, "name: x\n")], 2100)
     ci = FakeCI(world["origin"])
@@ -437,9 +437,94 @@ def test_workflow_permission_rejection_maps_to_the_workflow_reason(world, monkey
         return ci(cmd, cwd=cwd)
 
     q = mq.Queue("o/r", run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
-                 workdir=world["runner"], log=lambda m: None)
+                 workdir=world["runner"], log=lambda m: None, workflow_token=True)  # defeat the pre-check so the push itself is rejected
     res = q.drain()
     assert [x["slug"] for x in res.ejected] == ["wf"]
     assert res.ejected[0]["kind"] == "needs_workflow_token"
     assert {x["slug"] for x in res.landed} == {"ok"} and ci.last(ok)[0] == "success"
     assert ci.last(wf)[0] == "failure"
+
+
+# ── MQ_PUSH_TOKEN: the PAT is used ONLY for workflow batches ───────────────
+
+TOK = "github_pat_SECRET123"
+
+
+def _token_runner(world, ci, pushes):
+    """Record every push remote; route the authenticated URL to the local bare origin."""
+    def run(cmd, cwd=None):
+        if cmd[:2] == ["git", "push"]:
+            pushes.append(cmd[2])
+            if cmd[2].startswith("https://x-access-token:"):
+                cmd = [*cmd[:2], world["origin"], *cmd[3:]]
+        return ci(cmd, cwd=cwd)
+    return mq.Queue("o/r", run=run, run_id="7", poll_s=0, sleep=lambda s: None,
+                    workdir=world["runner"], log=lambda m: None, push_token=TOK)
+
+
+def test_workflow_batch_pushes_candidate_and_dev_via_the_token_url_and_lands(world):
+    wf = _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    _diverge_dev(world)
+    pushes: list[str] = []
+    res = _token_runner(world, FakeCI(world["origin"]), pushes).drain()
+    assert res.ejected == [] and [x["slug"] for x in res.landed] == ["wf"]
+    assert WF in sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "refs/heads/dev").splitlines()
+    assert pushes[:2] == [f"https://x-access-token:{TOK}@github.com/o/r.git"] * 2  # candidate, then dev FF
+    assert wf  # enqueued
+
+
+def test_non_workflow_batch_with_token_still_pushes_via_the_plain_remote(world):
+    enqueue(world, "ok", [("a.txt", "a\n")], 2000)
+    pushes: list[str] = []
+    res = _token_runner(world, FakeCI(world["origin"]), pushes).drain()
+    assert [x["slug"] for x in res.landed] == ["ok"]
+    assert not any("x-access-token" in p for p in pushes)
+
+
+def test_no_token_keeps_the_pre_eject(world):
+    _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    _diverge_dev(world)
+    q = make_queue(world, FakeCI(world["origin"]))
+    assert q.push_token == "" and q.workflow_token is False
+    assert [x["kind"] for x in q.drain().ejected] == ["needs_workflow_token"]
+
+
+def test_token_never_surfaces_in_errors_statuses_or_verdicts(world):
+    bad = enqueue(world, "bad", [(WF, "name: x\n")], 2000)
+    ci = FakeCI(world["origin"])
+    msg = f"fatal: unable to access 'https://x-access-token:{TOK}@github.com/o/r.git/': 403 {TOK}"
+
+    def run(cmd, cwd=None):
+        if cmd[:2] == ["git", "push"] and ":refs/heads/mq-candidate/" in cmd[-1]:
+            return 1, "", msg
+        return ci(cmd, cwd=cwd)
+
+    q = mq.Queue("o/r", run=run, run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=world["runner"], log=lambda m: None, push_token=TOK)
+    res = q.drain()
+    blob = json.dumps(res.ejected) + json.dumps(ci.statuses)
+    assert res.ejected and TOK not in blob and bad in ci.statuses
+    assert TOK not in q._redact(msg) and "***" in q._redact(msg)
+    rc = lambda cmd, cwd=None: (1, "", msg)  # noqa: E731
+    q2 = mq.Queue("o/r", run=rc, workdir=world["runner"], log=lambda m: None, push_token=TOK)
+    with pytest.raises(RuntimeError) as ei:
+        q2.git("push", f"https://x-access-token:{TOK}@github.com/o/r.git", "x")
+    assert TOK not in str(ei.value)
+
+
+# ── the workflow file itself: kick → dev-only drain ────────────────────────
+
+def test_merge_queue_workflow_splits_kick_from_the_dev_only_drain():
+    import yaml
+    wf = yaml.safe_load((Path(__file__).resolve().parents[3] / ".github/workflows/merge-queue.yml").read_text())
+    jobs = wf["jobs"]
+    assert set(jobs) == {"kick", "drain"}
+    kick, drain = jobs["kick"], jobs["drain"]
+    assert "environment" not in kick and "secrets." not in json.dumps(kick)
+    assert kick["if"] == "github.event_name == 'push'" and "timeout-minutes" in kick
+    assert drain["environment"] == "merge-queue"
+    assert drain["if"] == "github.event_name != 'push' && github.ref == 'refs/heads/dev'"
+    step_env = {k: v for st in drain["steps"] for k, v in st.get("env", {}).items()}
+    assert step_env["MQ_PUSH_TOKEN"] == "${{ secrets.MQ_PUSH_TOKEN }}"
+    assert drain["concurrency"]["cancel-in-progress"] is False and "concurrency" not in wf
+    assert json.dumps(drain).count("secrets.") == 1  # only the drain step reads the PAT

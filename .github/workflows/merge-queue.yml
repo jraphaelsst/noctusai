@@ -7,6 +7,19 @@ name: Merge Queue
 # fast-forwards dev only to a green candidate. A red batch is bisected; a red
 # single entry, a conflict or a duplicate migration number is ejected with a
 # `merge-queue` commit status on the enqueued sha saying why.
+#
+# Two jobs, because of the push token. A batch whose diff touches
+# `.github/workflows/` can only be pushed with a PAT that has the `workflows`
+# permission (GITHUB_TOKEN never can). That PAT is the environment secret
+# MQ_PUSH_TOKEN of the `merge-queue` environment, whose deployment-branch policy
+# allows ONLY `dev`: a run can read it only if its workflow file comes from dev,
+# never from a queued branch's edited copy of this file.
+#  - `kick` runs on the `mq/**` push (that run's ref is the queue branch, so it
+#    cannot use the environment): it only dispatches this workflow on dev.
+#  - `drain` runs on dev (dispatched by kick, the schedule, or by hand), reads
+#    the secret, and does the real work. The driver uses the PAT only for
+#    batches that touch workflow files, so normal landings still push with
+#    github.token and do not double-trigger push workflows.
 # Driver + rationale: mcp/noctusai/tools/noctus/dev/merge_queue.py ·
 # KB § PATTERNS/devops/merge-queue.md.
 on:
@@ -23,24 +36,36 @@ on:
   schedule:
     - cron: '*/20 * * * *'
 
-# One drain at a time, never cancelled: a running drain finishes its batch.
-# GitHub keeps at most one PENDING run per group (a newer trigger replaces the
-# queued one) — harmless here because every drain processes the WHOLE queue,
-# so the surviving pending run covers every entry pushed meanwhile.
-concurrency:
-  group: merge-queue
-  cancel-in-progress: false
-
 permissions:
   contents: write   # push the candidate ref, fast-forward dev, delete queue refs
   actions: write    # dispatch Tests & Build on the candidate, re-run failed jobs
   statuses: write   # the per-entry verdict on the enqueued sha
 
 jobs:
+  kick:
+    name: Kick a drain on dev
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the drain on dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run merge-queue.yml --ref dev -R "${{ github.repository }}"
+
   drain:
     name: Drain the merge queue
+    if: github.event_name != 'push' && github.ref == 'refs/heads/dev'
+    environment: merge-queue
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    # One drain at a time, never cancelled: a running drain finishes its batch.
+    # GitHub keeps at most one PENDING run per group (a newer trigger replaces
+    # the queued one) - harmless here because every drain processes the WHOLE
+    # queue. Job-level, so a kick never waits behind a running drain.
+    concurrency:
+      group: merge-queue
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -53,6 +78,7 @@ jobs:
       - name: Drain
         env:
           GH_TOKEN: ${{ github.token }}
+          MQ_PUSH_TOKEN: ${{ secrets.MQ_PUSH_TOKEN }}
         run: |
           python3 mcp/noctusai/tools/noctus/dev/merge_queue.py drain \
             --batch "${{ github.event.inputs.batch || '4' }}"
