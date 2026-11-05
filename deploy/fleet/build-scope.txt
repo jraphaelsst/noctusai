@@ -26,12 +26,11 @@
 # ESCAPE HATCH: a manual `workflow_dispatch` run ignores this file entirely — pass an
 # explicit `products` list, or leave it empty to rebuild every fleet slug.
 #
-# Last refresh: 2026-11-05 — 5 live + 1 platform.
-# Excluded (inactive): academia-de-reciclagem, adconnect, commerce, community, daily-life, dev-team, erp-imobiliario, igig, p-studio, personal-finance, store, therapy-platform, transcriber
+# Last refresh: 2026-11-05 — 4 live + 1 platform.
+# Excluded (inactive): academia-de-reciclagem, adconnect, commerce, community, daily-life, dev-team, erp-imobiliario, igig, orbity, p-studio, personal-finance, store, therapy-platform, transcriber
 
 agents
 core
 monica
-orbity
 seed
 social-wiring
