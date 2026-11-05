@@ -467,6 +467,17 @@ class TestSupabaseStore:
         names = [c[0] for c in calls]
         assert ("eq", ("org_id", str(ORG)), {}) in calls
         assert "range" in names
+        assert ("order", ("id",), {}) in calls  # tables with an id keep it as the page tiebreak
+
+    def test_definition_grants_never_order_by_a_missing_id(self):
+        """definition_org_grants has a composite key and NO ``id`` column: ``order=id`` made PostgREST fail and
+        GET/POST /plataforma/agents/{key}/grants answer 500 in prod (2026-11-05) even though the grant was written."""
+        org = uuid4()
+        client = _RecordingClient([[{"org_id": str(org)}]])
+        assert SupabaseStudioDefinitionStore(client).list_definition_grants(uuid4()) == [org]
+        table, _, calls = client.executed[0]
+        assert table == "definition_org_grants"
+        assert [c[1] for c in calls if c[0] == "order"] == [("org_id",)]
 
 
 class TestProviderAwareModelAllowlist:
