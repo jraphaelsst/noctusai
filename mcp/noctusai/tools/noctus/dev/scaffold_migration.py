@@ -440,6 +440,10 @@ def _build_sql(
         "--   updated_at_trigger(schema, table) -- per table that has updated_at\n"
         "--   guc_carveout_guard_sql(...)     -- append-only table w/ one GUC-gated carve-out\n"
         "--   rls_subquery_policy(table, ...)  -- per RLS-enabled table\n"
+        "--   Runner defaults to lock_timeout 5s. Directives go in the LEADING comment block\n"
+        "--   (above the first statement) as `-- noc:` + `no-transaction` (CREATE INDEX\n"
+        "--   CONCURRENTLY; must be idempotent) or `lock-timeout 30s` (0 = off). See\n"
+        "--   KB PATTERNS/backend/postgres-craft.md section 6.3.\n"
         "-- See seed/lib/backend/noctusai_lib/domain/sql_templates.py\n"
         "-- ======================================================="
     )

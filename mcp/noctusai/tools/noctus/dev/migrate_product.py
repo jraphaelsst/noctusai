@@ -99,6 +99,19 @@ RETURN SHAPE
     error: str | None,
 }``
 
+FILE DIRECTIVES + LOCK TIMEOUT — ``migration_directives.py``
+-----------------------------------------------------------
+Every file runs under a default ``lock_timeout`` of 5s (blocked DDL fails fast
+instead of queueing behind live traffic). Transactional files get
+``SET LOCAL lock_timeout`` prepended in the SAME request (implicit transaction),
+so it never leaks onto the session or the separate ledger INSERT.
+Leading-comment directives: ``-- noc:lock-timeout <0|Nms|Ns|Nmin|Nh|Nd>``
+(override; ``0`` = off) and ``-- noc:no-transaction`` (statement-by-statement,
+session ``SET`` / ``RESET`` in a finally; for ``CREATE INDEX CONCURRENTLY``;
+must be idempotent -- a half-failed file keeps its earlier statements).
+Malformed directives refuse the whole batch before any DDL. The ledger INSERT
+is unchanged and stays non-fatal (schema-renaming migrations rely on that).
+
 REPAIR MODE — ``repair_schema_migrations_ledger()``
 ----------------------------------------------------
 Moves ``schema_migrations`` rows stranded in a phantom schema (written back
@@ -219,6 +232,7 @@ from . import _catalog_scope_guard
 from . import ledger_checksums as _ledger_checksums
 from . import toolkit_freshness as _toolkit_freshness
 from . import _transient_retry
+from . import migration_directives as _directives
 
 logger = logging.getLogger(__name__)
 
@@ -1094,6 +1108,47 @@ def _schema_migrations_exists_sql(schema: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _apply_migration_sql(
+    executor: SqlExecutor, sql: str, directives: "_directives.Directives", stmts: list[str] | None,
+) -> dict[str, Any]:
+    """Run ONE migration file's DDL under the lock_timeout guard (NOT the ledger write).
+
+    Transactional file (default): the Management API runs a multi-statement
+    request as ONE implicit transaction, so ``SET LOCAL lock_timeout`` is
+    prepended to that same request -- it dies with the transaction and can never
+    leak onto the session or onto the separate ledger INSERT that follows.
+
+    ``-- noc:no-transaction`` file: ``stmts`` (pre-split, pre-validated) run one
+    request each (``CREATE INDEX CONCURRENTLY`` refuses a transaction block);
+    lock_timeout is a session-level ``SET`` before and ``RESET`` in a ``finally``
+    after. A statement failure stops the file and reports how far it got -- the
+    file is NOT atomic, so it must be idempotent (KB postgres-craft.md § 6.3).
+    """
+    lit = _directives.lock_timeout_literal(directives.lock_timeout)
+    if not directives.no_transaction:
+        return executor.execute(f"SET LOCAL lock_timeout = {lit};\n{sql}")
+    if stmts is None:
+        return {"ok": False, "rows": None, "error": "internal: no-transaction file without pre-split statements"}
+    pre = executor.execute(f"SET lock_timeout = {lit};")
+    if not pre.get("ok"):
+        return {"ok": False, "rows": None, "error": f"could not SET lock_timeout: {pre.get('error')}"}
+    try:
+        for i, stmt in enumerate(stmts, start=1):
+            res = executor.execute(stmt)
+            if not res.get("ok"):
+                return {
+                    "ok": False, "rows": None,
+                    "error": (f"statement {i}/{len(stmts)} failed (earlier statements stay applied; "
+                              f"drop any INVALID index and re-run -- the file must be idempotent): "
+                              f"{res.get('error') or 'unknown'}"),
+                }
+        return {"ok": True, "rows": None, "error": None}
+    finally:
+        reset = executor.execute("RESET lock_timeout;")
+        if not reset.get("ok"):
+            logger.warning("migrate_product: RESET lock_timeout failed: %s", reset.get("error"))
+
+
 _ERROR_STATUSES = frozenset({
     "error", "not_configured", "refused_stale_tree", _catalog_scope_guard.REFUSED_STATUS,
     "checksum_drift", "checksum_inconclusive",
@@ -1538,10 +1593,30 @@ def migrate_product(
             ),
         )
 
+    # Directives (`-- noc:no-transaction`, `-- noc:lock-timeout <v>`) are parsed and
+    # validated for EVERY pending file before any DDL runs: a malformed one refuses
+    # the whole batch, never half-applies it.
+    file_directives: dict[str, tuple[Any, list[str] | None]] = {}
+    for mig_file, sql, _csum in pending_sql:
+        try:
+            d = _directives.parse_directives(sql)
+            stmts = _directives.split_statements(sql) if d.no_transaction else None
+            if stmts is not None:
+                _directives.check_no_transaction_statements(stmts)
+        except _directives.DirectiveError as exc:
+            return _result(
+                "error",
+                skipped_already_applied=skipped,
+                pending=pending_names,
+                error=f"migration {mig_file.name}: {exc} (refused before applying any DDL)",
+            )
+        file_directives[mig_file.name] = (d, stmts)
+
     newly_applied: list[str] = []
     for mig_file, sql, csum in pending_sql:
         logger.info("migrate_product: applying %s …", mig_file.name)
-        result = executor.execute(sql)
+        file_dir, file_stmts = file_directives[mig_file.name]
+        result = _apply_migration_sql(executor, sql, file_dir, file_stmts)
         if not result.get("ok"):
             logger.error(
                 "migrate_product: failed to apply %s: %s",

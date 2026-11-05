@@ -205,3 +205,17 @@ def test_sw_231_v1_goes_red_with_23514_and_the_fix_goes_green(pglite):
 
     green = mr.migration_replay(paths=[_SW_231])
     assert green["status"] == "green", mr.format_report(green)
+
+
+def test_no_transaction_directive_lets_concurrently_replay_green(tmp_path, pglite):
+    """`-- noc:no-transaction` (migrate_product directive): replayed statement by statement, twice."""
+    base = {"001_demo.sql": "CREATE SCHEMA demo; CREATE TABLE demo.t (id int);"}
+    target = "products/demo/backend/migrations/002_ix.sql"
+    # two statements: one CONCURRENTLY statement alone is not a transaction block, several are
+    ix = "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix ON demo.t (id);\nSELECT 1;\n"
+
+    root = _repo(tmp_path / "plain", {"core": _CORE, "demo": {**base, "002_ix.sql": ix}})
+    assert _replay(root, "demo", [target])["status"] == "red"   # whole-file call = a transaction block
+
+    root = _repo(tmp_path / "notx", {"core": _CORE, "demo": {**base, "002_ix.sql": "-- noc:no-transaction\n" + ix}})
+    assert _replay(root, "demo", [target])["status"] == "green"
