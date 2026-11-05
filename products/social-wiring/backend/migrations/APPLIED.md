@@ -675,6 +675,6 @@ Authored 2026-11-04 (Julia-line S8, owner: the platform-delivered agents token m
 
 Authored 2026-11-04 (Julia go-live hardening). `UNIQUE (base_url, session_name) WHERE transporte='waha'` on `social_wiring.whatsapp_connections` (one WAHA session = one line across orgs; the create route answers 409 `sessao_ja_vinculada`) and REVOKE of the table-wide SELECT from anon/authenticated with a column-level re-grant that leaves out `webhook_token` and `encrypted_api_key` (service_role only). **OPS before applying:** the migration aborts loudly if two WAHA lines already share a session; check first with `SELECT base_url, session_name, count(*) FROM social_wiring.whatsapp_connections WHERE transporte='waha' GROUP BY 1,2 HAVING count(*)>1;` and resolve by hand (nothing is merged silently). Apply BEFORE deploying the image (the create route relies on the index as its race backstop; without it the route-level check still holds). Idempotent.
 
-## 322 — julia_permitidos — NOT APPLIED
+## 323 — julia_permitidos — NOT APPLIED
 
 Authored 2026-11-05 (owner: "add the allowlist with a switch on/off, so I can set my own number so she only replies to me at first"). Adds `social_wiring.julia_permitidos` (per-org allowlist, UNIQUE (org_id, numero), service-role-only RLS) and `julia_protecao_config.permitidos_ativo boolean NOT NULL DEFAULT false`. Additive and idempotent; safe before or after the image (the previous image ignores both). Apply BEFORE the image that reads them: without the table, a switch that is ON fails CLOSED (no number is Julia's).

@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 322 -- social_wiring: Julia's ALLOWLIST ("lista de permitidos") + its on/off switch (owner 2026-11-05)
+-- Migration 323 -- social_wiring: Julia's ALLOWLIST ("lista de permitidos") + its on/off switch (owner 2026-11-05)
 -- ============================================================================
 -- WHY: owner, verbatim: "add the allowlist with a switch on/off, so I can set my own number so she only replies to me at first.
 -- The list, when empty, answers all numbers." Sits next to the blocklist (migration 298).
