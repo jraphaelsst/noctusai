@@ -19392,7 +19392,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
 # Their frontmatter MUST declare `owns_kb: []` explicitly (no ambiguity).
-_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed", "orchestrator-operator", "skill-scout"})
+_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed", "orchestrator-operator"})
 
 # Repo-root-relative untracked allowlist for check_git_leftovers — files that
 # may legitimately appear at depth 1 untracked. Anything else trips the keeper.
