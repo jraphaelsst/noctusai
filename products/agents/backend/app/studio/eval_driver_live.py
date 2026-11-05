@@ -46,6 +46,7 @@ from app.stores.agent_controles import FakeAgentControleStore
 from app.stores.conformidade import FakeConformidadeStore
 from app.stores.conversations import FakeConversationStore
 from app.stores.messages import FakeMessageStore
+from app.stores.thread_alertas import FakeThreadAlertaStore
 from app.stores.threads import FakeThreadStore
 from app.studio.especificacoes_avaliacao import specs_de_avaliacao
 from app.studio.eval_driver import (
@@ -278,6 +279,9 @@ class LiveEvalTurnDriver:
             threads=threads, controles=controles, conformidade=conformidade, qual=qual,
             padroes=self._padroes, ident=ident, sw=sw, skills_factory=self._skills_factory,
             notificacoes=FakeNotificationSink(),  # an eval never notifies a real owner
+            # the channel route always wires an alert store; without one ``sinalizar_alerta`` is not offered and the
+            # ``info_indisponivel`` alert is never raised, so the suite would judge a toolset prod does not run
+            alertas=FakeThreadAlertaStore(),
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
         externo = f"eval-{uuid4()}"
