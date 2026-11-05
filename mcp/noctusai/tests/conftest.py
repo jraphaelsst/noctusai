@@ -194,8 +194,15 @@ def ledger_repo(tmp_path, monkeypatch):
 _LIVE_DB_ENV_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")
 
 
-@pytest.fixture(autouse=True)
-def _no_live_db_env_leak(request):
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_setup(item):
+    """Snapshot the live-DB variables before ANY fixture of this test runs."""
+    item._live_db_env_before = {k: os.environ.get(k) for k in _LIVE_DB_ENV_KEYS}
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
     """Fail LOUDLY, at the test that caused it, when a test leaves a live-DB
     variable behind in the process environment.
 
@@ -203,13 +210,16 @@ def _no_live_db_env_leak(request):
     `.env` (prod SUPABASE_URL) into os.environ and never restored it; ~5000
     tests later a child pytest (test_scaffold_overlay) inherited it and the
     hermetic live-DB guard refused it -- a failure nowhere near its cause.
-    Declared first in the file so it tears down AFTER monkeypatch: a test that
-    uses monkeypatch.setenv has already been restored by the time this checks.
-    """
-    import os
 
-    before = {k: os.environ.get(k) for k in _LIVE_DB_ENV_KEYS}
-    yield
+    A hook wrapper, not an autouse fixture: the check must run after EVERY
+    fixture finalizer (monkeypatch's restore included). As a fixture its
+    teardown order relative to monkeypatch depended on fixture instantiation
+    order, and it flagged `monkeypatch.setenv` itself as a leak.
+    """
+    result = yield
+    before = getattr(item, "_live_db_env_before", None)
+    if before is None:
+        return result
     leaked = [k for k in _LIVE_DB_ENV_KEYS if os.environ.get(k) != before[k]]
     for k in leaked:  # restore so one leaker is one failure, not a cascade
         if before[k] is None:
@@ -217,10 +227,11 @@ def _no_live_db_env_leak(request):
         else:
             os.environ[k] = before[k]
     assert not leaked, (
-        f"{request.node.nodeid} leaked {leaked} into os.environ. Use monkeypatch.setenv/"
+        f"{item.nodeid} leaked {leaked} into os.environ. Use monkeypatch.setenv/"
         "delenv, or stop the code under test from sourcing the platform .env "
         "(see env_bootstrap.load_repo_env + NO_ENV_FILE_VAR)."
     )
+    return result
 
 
 @pytest.fixture(autouse=True)
