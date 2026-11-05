@@ -91,6 +91,13 @@
 - 01e18e80e roster: CLAUDE.md §2 + 06-AGENTS list the 6 hires.
 - e526b9191 archetype sets widened (+3 advisors, +4 executors) · 4e05720a7 allowlist −37 now-owned docs — noctusai-3d told.
 
+## Phase 2 — agno `dev_team/` charters (content only) — DONE
+- P2-A ddc204d94 (shared, leader, solution_architect, code_reviewer, technical_writer, product_manager, MASTER-PROMPT) · P2-B 91b2aa996 (backend, frontend, devops, qa, security, ux). Merged 2cb61420e + next.
+- Every role charter keeps §1–9 and gains §10 Craft canon with `read_kb` pointers; shared.md resynced to CLAUDE.md §1 (8-way sync, merge queue, CONTEXT/ paths), ~2.1K tokens.
+- Claude-only specialists folded as labelled lenses: integrations + AI → backend; tooling + ops-steward/SRE → devops; agents-security → security; legal + finance → PM. MASTER-PROMPT maps all 9 Claude-only roles (owner to confirm; adding agno roles = future wiring, not done).
+- dev_team tests 167 passed on the merged tip; kb_sync OK. No configs / .py / allowlists touched.
+- Left: test_charters asserts the literal "three-way sync" (kept as "supersedes the older …"); allowlist-driven Tools sections unchanged (wiring).
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
