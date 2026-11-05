@@ -60,6 +60,12 @@
 - Transfers: llm-usage, llm-provider-selection, llm-tool-audit, backend/05-AI-FEATURES, GUIDES/agent-creation, INTEGRATIONS/agents-org-specs (+ optional document-extraction-learnings) ← backend.
 - Findings: eval judge fixed at claude-sonnet-5 (evals.py:109) also a generator ⇒ self-grading for Sonnet-5 agents; judge emits verdict before reasoning (evals.py:220); no judge-vs-human calibration tool; cache-min warning ~1024 tokens wrong per model (chat.py:26-30); judge uses json_object + hand parser (structured outputs available); no Batch API mode for offline evals.
 
+### W2-S6 integrations-engineer — merged 252c02299 (agent 58 lines · integration-craft-canon 698)
+- Vista first-class (canon §11): dependency map, live-period rules (one factory, read the mirror, depend on `Imovel`), exit plan (export gaps: clients/owners/history/notes/photos not archived; SoT flip; retirement order).
+- Transfers requested (Wave 3, all from backend): INTEGRATIONS/{oauth-patterns,google,google-oauth-console-setup,meta,meta-setup,meta-app-verification,meta-leadgen,meta-leads-checklist,whatsapp,vista,olx,imovelweb,mailchimp,fx-ptax,infosimples-certidoes,payments,invoices,live-rooms,turnstile}.md + GUIDES/google-oauth-setup.md; outbound-rate-limiting.md (or shared). image-gen/image-edit/risk-classifier stay backend; agents-org-specs → ai; openai-mcp (unowned) → tooling/ai.
+- Follow-up defects: 🔴 Meta Graph pinned v21.0 (`_meta_api.py:67`, sunsets 2027-01-21); WhatsApp Cloud client pins v18.0 (`meta_cloud_client.py:21`, ALREADY expired 2026-01-26) · `WebhookDedup` lacks `release()` (failed handler loses WAHA retry for TTL) · `is_rate_limited` misses Meta BUC codes 80000–80014 · `parse_retry_after` ignores HTTP-date + caps vendor Retry-After at 60s · Vista Real adapter constructed directly at 6+ sites (DRY N≥3) · `oauth_router` /refresh + /revoke unauthenticated (unmounted today) · `waha:latest` unpinned (compose.services.yml:106).
+- KB drift (backend-owned, Wave 3): outbound-rate-limiting "WAHA pending" stale; YouTube quota units in google.md §3 stale; whatsapp.md §6 "CORE one session" maybe stale.
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
