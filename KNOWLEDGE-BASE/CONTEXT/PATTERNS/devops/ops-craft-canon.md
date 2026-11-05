@@ -194,7 +194,7 @@ Every review ends in the same output shape as the brief: **Today (≤ 3 items)**
 | **Monthly** (first Monday) | SLO report per product: budget used, incidents, burn alerts · DORA five (`sre-craft-canon.md` §8) · cost per product and month-over-month delta (`sre-craft-canon.md` §12) · toil budget (§5) · days since the last restore drill (§6) · autonomy promotions/demotions due (§8) · postmortem action items still open | ratify SLO/budget changes · promote/demote an action · spend decisions |
 | **Quarterly** | restore drill for the rotation's store (`sre-craft-canon.md` §5) · one game day (`sre-craft-canon.md` §11) · access review: who holds which keys (deploy keys, watchdog key, GHCR token, Supabase service role) and whether each is still needed · review the starter SLOs | SLO targets for the next quarter · keys to rotate or revoke |
 
-The monthly and quarterly levels are new here. The skill `noc-daily-ops` currently runs daily and weekly. Extending the skill to carry these steps is a skill-sync item (§ Open).
+The monthly and quarterly levels are new here. The skill `noc-daily-ops` (v1.1.0) runs all four levels.
 
 ---
 
@@ -261,8 +261,8 @@ Why not simply automate the restart: automating the restart would hide the cause
 
 ## Open (named destinations)
 
-- **Tooling slice** (Wave 2 tooling-engineer, or the next devops slice): one shared append helper on `origin/ledgers` for `alert-outcomes.ndjson`, `ops-actions.ndjson`, `problems.ndjson` and `watchdog-runs.ndjson`, exposed as `noctus.dev.*` tools, so the steward can write through a tool without gaining Write/Edit.
-- **Skill sync:** add the monthly and quarterly levels (§7), the alert-classification step (§3) and the backup-age check (§6) to skill `noc-daily-ops`. Its step 5 wording (`branch_pointer action=list`) stays as it is until the git redesign settles branch-debt semantics.
+- **Tooling slice** (agent `tooling-engineer`): one shared append helper on `origin/ledgers` for `alert-outcomes.ndjson`, `ops-actions.ndjson`, `problems.ndjson` and `watchdog-runs.ndjson`, exposed as `noctus.dev.*` tools, so the steward can write through a tool without gaining Write/Edit.
+- **Skill sync:** done 2026-11-05 — skill `noc-daily-ops` v1.1.0 carries the monthly/quarterly levels (§7), alert classification (§3, `inconclusive` until the outcome log exists) and the backup-age check (§6). Its step 5 wording (`branch_pointer action=list`) stays as it is until the git redesign settles branch-debt semantics.
 - **tmp-cleanup ownership** is claimed twice: `owner-operations.md` §2 lists tmp cleanup as an ops-steward L3 action, while `KB § PATTERNS/common/tmp-artifact-cleanup.md` and devops-engineer name orchestrator-operator as the sole caller. Resolution is deferred to Wave 3 (orchestrator-operator retirement). Until then the steward does **not** run `tmp_cleanup`.
 
 ---
