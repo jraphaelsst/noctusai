@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from . import release_steward as _steward
 from .task_branch import task_branch as _task_branch
 
 _COMMIT_TRAILER = (
@@ -128,4 +129,7 @@ def register(server) -> None:
         ),
     )
     def _record_applied_migrations(product: str, files: dict[str, str]) -> dict:
+        refused = _steward.tool_refusal("noctus.dev.record_applied_migrations", {})
+        if refused is not None:
+            return refused
         return record_applied_migrations(product, files)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from . import release_steward as _steward
 from ._vps_ssh import run_remote as _throttled_ssh
 
 DEFAULT_HOST = "noctus-vps"
@@ -256,6 +257,9 @@ def register(server) -> None:
     @server.tool(name="noctus.vps.recreate",
                  description="compose up -d --force-recreate a product on its current image. Confirm-gated production mutation.")
     def _recreate(product: str, confirm: bool = False, ssh_host: str = DEFAULT_HOST) -> dict:
+        refused = _steward.tool_refusal("noctus.vps.recreate", {"confirm": confirm})
+        if refused is not None:
+            return refused
         return recreate(product, confirm=confirm, ssh_host=ssh_host)
 
     @server.tool(name="noctus.vps.prune",

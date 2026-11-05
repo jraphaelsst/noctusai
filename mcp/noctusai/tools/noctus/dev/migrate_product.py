@@ -231,6 +231,7 @@ from workspace import resolve_caller_root
 
 from . import _catalog_scope_guard
 from . import ledger_checksums as _ledger_checksums
+from . import release_steward as _steward
 from . import toolkit_freshness as _toolkit_freshness
 from . import _transient_retry
 from . import migration_directives as _directives
@@ -2027,6 +2028,9 @@ def register(server) -> None:
         allow_inactive: bool = False,
         allow_stale_toolkit: bool = False,
     ) -> dict:
+        refused = _steward.tool_refusal("noctus.dev.migrate_product", {"confirm": confirm})
+        if refused is not None:
+            return refused
         return migrate_product(
             product=product,
             confirm=confirm,

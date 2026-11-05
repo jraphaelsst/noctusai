@@ -81,6 +81,7 @@ from typing import Any, Callable
 from env_bootstrap import redact_secrets_in_text
 
 from . import _catalog_scope_guard
+from . import release_steward as _steward
 from . import toolkit_freshness as _toolkit_freshness
 from ._vps_ssh import run_remote as _throttled_ssh
 
@@ -966,6 +967,9 @@ def register(server) -> None:
         allow_inactive: bool = False,
         allow_stale_toolkit: bool = False,
     ) -> dict:
+        refused = _steward.tool_refusal("noctus.dev.deploy_image", {"confirm": confirm})
+        if refused is not None:
+            return refused
         return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm,
                             skip_ancestry_check=skip_ancestry_check, skip_boot_smoke=skip_boot_smoke,
                             skip_compose_drift_check=skip_compose_drift_check,

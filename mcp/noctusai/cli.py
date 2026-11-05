@@ -522,6 +522,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
+    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
+    parser.add_argument("--steward-session-id", default=None, help="With --release-steward: the caller's session id (default $CLAUDE_CODE_SESSION_ID).")
+    parser.add_argument("--steward-name", default=None, help="With --release-steward claim/request: a human-readable session name (e.g. noctusai-51).")
+    parser.add_argument("--steward-reason", default=None, help="With --release-steward claim: why this session holds the lane.")
+    parser.add_argument("--steward-ttl-s", type=int, default=None, help="With --release-steward claim: heartbeat TTL in seconds (default 7200 / $NOCTUS_STEWARD_TTL_S).")
+    parser.add_argument("--steward-slug", default=None, help="With --release-steward request/ack: the feat/<slug> name.")
+    parser.add_argument("--steward-branch", default=None, help="With --release-steward request: the branch (default feat/<slug>).")
+    parser.add_argument("--steward-head-sha", default=None, help="With --release-steward request: the head sha to ship (default: resolved from the branch).")
+    parser.add_argument("--steward-products", default=None, help="With --release-steward request: comma-separated products touched.")
+    parser.add_argument("--steward-migrations", action="store_true", help="With --release-steward request: the delivery carries migrations.")
+    parser.add_argument("--steward-notes", default=None, help="With --release-steward request/ack/handoff/release: free-text notes.")
+    parser.add_argument("--steward-outcome", default=None, choices=["enqueued", "landed", "ejected", "deployed"], help="With --release-steward ack: the request's new outcome.")
+    parser.add_argument("--steward-dev-sha", default=None, help="With --release-steward ack: the dev sha it landed as.")
+    parser.add_argument("--steward-to-session-id", default=None, help="With --release-steward handoff: transfer the lane to this session id.")
+    parser.add_argument("--steward-to-name", default=None, help="With --release-steward handoff: offer the lane to this named session (it accepts with claim).")
+    parser.add_argument("--steward-include-done", action="store_true", help="With --release-steward inbox/mine: include finished requests.")
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
     parser.add_argument("--task-branch-post-dev-branch", default="dev", help="With --task-branch-post-integrate: the dev branch name.")
     parser.add_argument("--task-branch-post-remote", default="origin", help="With --task-branch-post-integrate: the remote.")
@@ -3775,6 +3791,23 @@ def main():
             r = _mq.error_report(_exc)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(1 if r.get("status") == "error" else 0)
+
+    elif args.release_steward:
+        import os
+        from tools.noctus.dev import release_steward as _rs
+        _sid = args.steward_session_id or os.environ.get(_rs.SESSION_ENV)
+        _pid = os.environ.get("CLAUDE_PID")
+        r = _rs.run_action(
+            args.release_steward, _sid, claude_pid=int(_pid) if _pid and _pid.isdigit() else None,
+            child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
+            name=args.steward_name, reason=args.steward_reason, ttl_s=args.steward_ttl_s,
+            to_session_id=args.steward_to_session_id, to_name=args.steward_to_name, slug=args.steward_slug,
+            branch=args.steward_branch, head_sha=args.steward_head_sha,
+            products=[x.strip() for x in (args.steward_products or "").split(",") if x.strip()] or None,
+            migrations=args.steward_migrations, notes=args.steward_notes, outcome=args.steward_outcome,
+            dev_sha=args.steward_dev_sha, include_done=args.steward_include_done)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     elif args.task_branch_post_integrate:
         from tools.noctus.dev.task_branch import run_post_integrate

@@ -98,6 +98,7 @@ from tools.noctus.dev._benign_stash import (
 )
 from node_env import is_transient_node_modules_entry as _is_transient_nm_entry
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness
+from tools.noctus.dev import release_steward as _steward
 from tools.noctus.dev import gate_budget as _gate_budget
 from tools.noctus.dev import task_branch_train as _train
 
@@ -3659,6 +3660,9 @@ def register(server) -> None:
         slugs: list[str] | None = None,
         order: str = "given",
     ) -> dict:
+        refused = _steward.tool_refusal("noctus.dev.task_branch", {"action": action, "slug": slug, "confirm": confirm})
+        if refused is not None:
+            return refused
         return task_branch(accept_unmeasured=accept_unmeasured, slugs=slugs, order=order,
                            accept_unmeasured_reason=accept_unmeasured_reason, accept_unscored=accept_unscored, action=action, slug=slug, confirm=confirm,
                            keep_worktree=keep_worktree,
