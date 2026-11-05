@@ -2688,7 +2688,7 @@ def task_branch(
                     "message": f"will fork {branch} off {remote}/{dev_branch} ({dev[:9]}) at "
                                f"{wt_path}{' + auto-wire the §5a verification env' if wire_env else ''}. "
                                "Pass confirm=True. Then work THERE + commit; "
-                               "integrate with action='integrate'."}
+                               "land it with action='enqueue' (the CI merge queue), then action='landed'."}
         rc, out, err = git("worktree", "add", wt_path, "-b", branch, f"{remote}/{dev_branch}")
         already_existed = False
         if rc != 0:
@@ -2737,7 +2737,8 @@ def task_branch(
                            f"{wt_path} on {branch}"
                            f"{' + wired %d env symlink(s)' % wired_count if wire_env else ''}. "
                            f"Work there (cd {wt_path}), commit on {branch}, then "
-                           f"noctus.dev.task_branch action='integrate' slug='{slug}'."}
+                           f"noctus.dev.task_branch action='enqueue' slug='{slug}' (the CI merge queue; "
+                           f"then action='landed'). 'integrate' is the fallback for when Actions is down."}
 
     # ── INTEGRATE ── rebase onto origin/dev → FF-push HEAD→dev (retry on race)
     if action == "landed":
@@ -2896,7 +2897,15 @@ def task_branch(
                         log_prefix="task_branch.integrate")
             # A train carries merge commits: --rebase-merges replays them as merges
             # (rider tips stay ancestors, resolutions kept) instead of flattening.
-            _rb = (("--rebase-merges",) if _train.is_train_slug(slug) else ())
+            # 2026-11-05: ANY branch carrying a merge commit gets the same
+            # treatment, not only `train-*` slugs. A combining branch (e.g.
+            # feat/julia-golive = dev + merge --no-ff of a feature line, with
+            # hand-resolved conflicts) was flattened by a plain rebase, which
+            # replayed the merged line's commits one by one and re-hit the very
+            # conflicts its merge commit had already resolved.
+            _mrc_m, _merges, _ = git("rev-list", "--merges", f"{remote}/{dev_branch}..HEAD", cwd=wt_path)
+            _carries_merge = _mrc_m == 0 and bool(_merges.strip())
+            _rb = (("--rebase-merges",) if (_train.is_train_slug(slug) or _carries_merge) else ())
             if _rb:
                 # Merge dev in first so --rebase-merges keeps the train's resolutions
                 # (task_branch_train.sync_with_dev); a real dev-vs-train conflict stops here.

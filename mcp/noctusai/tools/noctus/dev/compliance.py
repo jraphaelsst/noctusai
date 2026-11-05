@@ -20930,7 +20930,13 @@ def check_all_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     # cache's source was STAGED, leaving out-of-commit/FF-merge drift to block).
     try:
         from tools.noctus.dev.refresh_all_caches import settle_structural_caches
-        settle_structural_caches(repo_root)
+        # noc-graph is EXCLUDED (2026-11-05, measured): healing it here rebuilt
+        # the whole 97k-node graph inside every methodology commit's 8-way
+        # sync — 29-80 s per commit — contradicting the documented
+        # cache-timing relocation (pre-commit §9f: the graph rebuilds lazily on
+        # read and at delivery, never per commit; its freshness keeper is
+        # advisory). The other structural caches stay heal-on-contact (<1 s).
+        settle_structural_caches(repo_root, exclude=("noc-graph",))
     except Exception as exc:  # best-effort; residual staleness still flagged below
         logger.warning(
             "check_all_cache_freshness: structural heal-on-contact skipped (%s); "
@@ -21417,7 +21423,14 @@ def check_eight_way_sync(repo_root: Path | None = None) -> list[dict]:
 
     KB § PATTERNS/common/eight-way-sync.md.
     """
-    return _run_composed_keeper("eight-way-sync", [
+    # NOCTUS_8WAY_SKIP_LEGS (2026-11-05, gates audit): the pre-commit hook runs
+    # kb-sync (step 4) and skills-router (step 4a) as their own BLOCKING legs
+    # earlier in the same commit, then ran them again here — twice per commit.
+    # The hook exports the names of the legs it already passed; only those are
+    # skipped, and only inside that hook process (CI/manual runs keep all 8).
+    import os as _os
+    _skip = {x.strip() for x in _os.environ.get("NOCTUS_8WAY_SKIP_LEGS", "").split(",") if x.strip()}
+    legs = [
         ("kb-sync", lambda: _check_kb_sync_for_six_way(repo_root)),
         ("contextualize", lambda: check_contextualize_alignment(repo_root)),
         ("agent-kb", lambda: check_agent_kb_alignment(repo_root)),
@@ -21429,7 +21442,8 @@ def check_eight_way_sync(repo_root: Path | None = None) -> list[dict]:
         # the residual gap (fresh ≠ correct). Warning severity — same tier.
         # KB § PATTERNS/common/extractor-correctness-vs-mirror.md.
         ("extractor-sanity", lambda: check_graph_extractor_corpus_sanity(repo_root)),
-    ])
+    ]
+    return _run_composed_keeper("eight-way-sync", [leg for leg in legs if leg[0] not in _skip])
 
 
 # Back-compat aliases — old names retained so external callers (if any)

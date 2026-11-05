@@ -113,7 +113,11 @@ Code lives in:
   the later entry is ejected with the number to change.
 - **Trains still work.** A branch carrying `--no-ff` merge commits is merged,
   not rebased, so its conflict resolutions survive. The queue already batches,
-  so prefer enqueueing slices individually.
+  so prefer enqueueing slices individually. The local half matches since
+  2026-11-05: `enqueue` merges `origin/dev` into any branch carrying a merge
+  commit and rebases it with `--rebase-merges` (it used to do that only for
+  `train-*` slugs, so feat/julia-golive was flattened and re-hit the conflicts
+  its merge had already resolved).
 
 ## 5 · Fallback: `task_branch action=integrate`
 

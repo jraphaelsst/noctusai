@@ -107,6 +107,22 @@ except ImportError as exc:
         exc, Path(__file__).parents[2],
     )
 
+# Hook quiet mode (2026-11-05, gates audit): a git hook runs this CLI ~20-77
+# times per commit, and each call printed a 3-line banner, a "worktree
+# override" line and two env_bootstrap INFO lines — ~9 lines of noise per
+# call, burying the one line that blocks. The hooks export NOCTUS_HOOK_QUIET=1;
+# then INFO logs and the banner are dropped (WARNING+ and every check's own
+# verdict line still print). NOCTUS_HOOK_VERBOSE=1 wins over quiet.
+import os as _os_quiet
+import logging as _logging_quiet
+HOOK_QUIET = (
+    _os_quiet.environ.get("NOCTUS_HOOK_QUIET") == "1"
+    and _os_quiet.environ.get("NOCTUS_HOOK_VERBOSE") != "1"
+)
+if HOOK_QUIET:
+    _logging_quiet.getLogger().setLevel(_logging_quiet.WARNING)
+    _logging_quiet.getLogger("noctusai-mcp-cli").setLevel(_logging_quiet.WARNING)
+
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 BLUE = "\033[94m"
@@ -670,7 +686,8 @@ def main():
         # same reasoning as F2's banner/logging move: a `--json` caller's
         # stdout parse must be exact (only the JSON payload), and this line
         # is diagnostic, not data.
-        print(f"  {YELLOW}worktree override:{RESET} REPO_ROOT={wt}", file=sys.stderr)
+        if not HOOK_QUIET:
+            print(f"  {YELLOW}worktree override:{RESET} REPO_ROOT={wt}", file=sys.stderr)
 
     # Load the repo's `.env` into THIS process — the CLI/hooks leg of the
     # shared server+CLI credential bootstrap (`env_bootstrap.py`). The MCP
@@ -692,9 +709,10 @@ def main():
     # printed unconditionally on EVERY dispatch, ahead of whatever
     # `print(json.dumps(...))` a flag below emits — the other half of the
     # stdout noise a machine parser had to work around.
-    print(f"\n{BOLD}╔══════════════════════════════════════════════════════════╗{RESET}", file=sys.stderr)
-    print(f"{BOLD}║                NoctusAI Dev Toolkit                      ║{RESET}", file=sys.stderr)
-    print(f"{BOLD}╚══════════════════════════════════════════════════════════╝{RESET}\n", file=sys.stderr)
+    if not HOOK_QUIET:
+        print(f"\n{BOLD}╔══════════════════════════════════════════════════════════╗{RESET}", file=sys.stderr)
+        print(f"{BOLD}║                NoctusAI Dev Toolkit                      ║{RESET}", file=sys.stderr)
+        print(f"{BOLD}╚══════════════════════════════════════════════════════════╝{RESET}\n", file=sys.stderr)
 
     if args.validate:
         from tools.noctus.dev.compliance import check_all_products

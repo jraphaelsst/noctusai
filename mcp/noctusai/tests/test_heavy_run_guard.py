@@ -135,3 +135,37 @@ def test_hook_wrapper_fails_closed_on_bad_stdin_and_crash(monkeypatch):
     out = io.StringIO()
     hook.run_guard("heavy-run", boom, stdin=io.StringIO(json.dumps(_bash("ls"))), stdout=out)
     assert "deny" in out.getvalue() and "[noc-guard:heavy-run]" in out.getvalue()
+
+
+# 2026-11-05 — heredoc bodies are data; newlines separate commands; the escape
+# is honoured before any parse can refuse. Each case is a shape that was
+# refused (or missed) in practice.
+HEREDOC_ALLOW = [
+    # writing a test-runner script is not running it
+    "cat > /tmp/s/g1.sh <<'EOF'\ncd x && .venv/bin/python -m pytest -q tests/a.py\nEOF\n"
+    "python mcp/noctusai/tools/noctus/dev/hw_admission.py run --job pytest:x -- bash /tmp/s/g1.sh",
+    # an apostrophe in a body used to make the whole command "unparseable"
+    "cat > notes.md <<EOF\nit's where pytest lives\nEOF",
+    "git commit -F - <<'EOF'\nfix: don't run pytest ungated\nEOF",
+    "cat > f <<-EOF\n\tpytest\n\tEOF",
+]
+HEREDOC_DENY = [
+    "cd x\npytest -q",
+    "bash <<'EOF'\ncd x && pytest -q\nEOF",
+    "cat > f <<EOF\ndata\nEOF\npytest",
+]
+
+
+@pytest.mark.parametrize("cmd", HEREDOC_ALLOW)
+def test_heredoc_body_is_data(cmd):
+    assert guard.decide(_bash(cmd)) is None
+
+
+@pytest.mark.parametrize("cmd", HEREDOC_DENY)
+def test_heredoc_and_newline_still_judged(cmd):
+    assert guard.decide(_bash(cmd))
+
+
+def test_escape_honoured_even_when_unparseable():
+    assert guard.decide(_bash("NOC_HW_UNGATED_OK=harness-trial pytest 'unterminated")) is None
+    assert guard.decide(_bash("NOC_HW_UNGATED_OK= pytest 'unterminated"))

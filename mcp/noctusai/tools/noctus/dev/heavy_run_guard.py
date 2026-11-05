@@ -31,6 +31,13 @@ fires only on the AGENT's own tool calls (Bash/Edit/...), never on subprocesses
 of an MCP server, so they cannot be blocked by this guard (and must not be
 wrapped; see the KB). The agent's own `pytest` inside a Bash call IS seen.
 
+HEREDOCS AND NEWLINES (2026-11-05)
+==================================
+A heredoc body is data (`cat > run.sh <<'EOF' … EOF` runs nothing) and is not
+scanned, unless the heredoc feeds bash/sh/zsh. Newlines outside quotes split
+commands. The escape is read BEFORE parsing, so an unparseable command that
+carries a valid escape is no longer refused.
+
 DELIBERATE LIMITS
 =================
 Token scanning, not a shell interpreter: `$(...)`, backticks, `xargs pytest`,
@@ -58,6 +65,92 @@ _PKG = {"npm", "pnpm", "yarn", "bun"}
 _SHELLS = {"bash", "sh", "zsh"}
 _BENIGN = {"--collect-only", "--co", "--version", "--help", "-h"}
 _SCRIPT_TARGETS = {"test", "t", "tst", "build"}
+
+
+_HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+_ESCAPE_INLINE = re.compile(
+    rf"(?:^|[\s;&|(]){ESCAPE_ENV}=('[^']*'|\"[^\"]*\"|[^\s;&|)]*)"
+)
+
+
+def _split_heredocs(command: str) -> tuple[str, list[tuple[str, str]]]:
+    """Separate heredoc BODIES from the command text (2026-11-05).
+
+    A heredoc body is DATA — `cat > run.sh <<'EOF' … pytest … EOF` writes a
+    file, it runs nothing. The token scanner used to read the body as more
+    command words, so writing a test script was refused as an ungated run, and
+    an apostrophe in a body made the whole command "unparseable" (refused too).
+    Returns (command text with bodies removed, [(introducing line, body)]).
+    The caller re-scans a body only when the line feeds it to a shell
+    (`bash <<EOF`), because then the body DOES run.
+    """
+    lines = command.split("\n")
+    kept: list[str] = []
+    bodies: list[tuple[str, str]] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for strip_tabs, _q, delim in _HEREDOC.findall(line):
+            body: list[str] = []
+            while i < len(lines):
+                cur = lines[i].lstrip("\t") if strip_tabs else lines[i]
+                i += 1
+                if cur == delim:
+                    break
+                body.append(lines[i - 1])
+            bodies.append((line, "\n".join(body)))
+    return "\n".join(kept), bodies
+
+
+def _chunks(text: str) -> list[str]:
+    """Split on newlines that are command separators (not inside quotes).
+
+    shlex treats a newline as plain whitespace, so `cd x\\npytest` used to read
+    as one segment whose command word is `cd`. Lines are accumulated until they
+    parse; each parseable run is one chunk. A trailing unbalanced run is
+    returned as-is so the caller's unparseable branch still judges it.
+    """
+    out: list[str] = []
+    buf: list[str] = []
+    for line in text.split("\n"):
+        buf.append(line)
+        joined = "\n".join(buf)
+        if joined.rstrip().endswith("\\"):
+            continue
+        try:
+            shlex.split(joined)
+        except ValueError:
+            continue
+        out.append(joined)
+        buf = []
+    if buf:
+        out.append("\n".join(buf))
+    return out
+
+
+def _feeds_a_shell(line: str) -> bool:
+    """True when the heredoc on `line` is the stdin of bash/sh/zsh (so it runs)."""
+    for seg in _segments(line):
+        words, _env = _strip_prefix(seg)
+        if words and os.path.basename(words[0]) in _SHELLS and "-c" not in words and "<<" in "".join(words):
+            return True
+    return False
+
+
+def _escape_reason(command: str) -> str:
+    """The escape is honoured FIRST, before any parsing can refuse (2026-11-05).
+
+    It used to be read only after a successful scan, so a command the scanner
+    could not parse was refused even when it carried a valid escape — the
+    documented way out was unreachable exactly when it was needed.
+    """
+    for m in _ESCAPE_INLINE.finditer(command):
+        val = m.group(1).strip("'\"").strip()
+        if val:
+            return val
+    return os.environ.get(ESCAPE_ENV, "").strip()
 
 
 def _segments(command: str) -> list[list[str]]:
@@ -170,23 +263,30 @@ def decide(payload: dict[str, Any]) -> dict[str, Any] | None:
     if not command.strip():
         return None
     found: list[tuple[str, list[str], dict[str, str]]] = []
+    text, bodies = _split_heredocs(command)
     try:
-        _scan(command, found)
+        for chunk in _chunks(text):
+            _scan(chunk, found)
+        for feeder, body in bodies:
+            # A body fed to a shell runs; a body fed to `cat >`/`tee`/python
+            # stdin is data (python stdin is a script, but it cannot spawn a
+            # suite through a word this scanner could see anyway).
+            if _feeds_a_shell(feeder):
+                for chunk in _chunks(body):
+                    _scan(chunk, found)
     except ValueError:
         # Unparseable shell (unbalanced quotes): cannot judge; heavy words present => refuse.
-        if re.search(r"\b(pytest|vitest|playwright test|vite build)\b", command):
-            return {"reason": _msg("pytest", ["pytest"], command, "unparseable command")}
-        return None
+        if re.search(r"\b(pytest|vitest|playwright test|vite build)\b", text):
+            found.append(("pytest", ["pytest"], {"__unparseable__": "1"}))
     if not found:
         return None
-    reason = os.environ.get(ESCAPE_ENV, "")
-    for _kind, _words, env in found:
-        reason = env.get(ESCAPE_ENV, reason)
-    if reason.strip():
-        sys.stderr.write(f"[noc-guard:heavy-run] ungated heavy run accepted: {ESCAPE_ENV}={reason.strip()!r}\n")
+    reason = _escape_reason(command)
+    if reason:
+        sys.stderr.write(f"[noc-guard:heavy-run] ungated heavy run accepted: {ESCAPE_ENV}={reason!r}\n")
         return None
-    kind, words, _env = found[0]
-    return {"reason": _msg(kind, words, command, None)}
+    kind, words, env = found[0]
+    why = "unparseable command" if "__unparseable__" in env else None
+    return {"reason": _msg(kind, words, command, why)}
 
 
 def _msg(kind: str, words: list[str], command: str, why: str | None) -> str:

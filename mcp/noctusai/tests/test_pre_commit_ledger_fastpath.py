@@ -17,6 +17,9 @@ STUB = textwrap.dedent('''
     import os, sys, time
     with open(os.environ["STUB_LOG"], "a") as f:
         f.write(" ".join(a for a in sys.argv[1:] if a.startswith("--check") or a.startswith("--verify") or a.startswith("--update") or a.startswith("--stamp") or a.startswith("--sync")) + "\\n")
+    if "--check-eight-way-sync" in sys.argv:
+        with open(os.environ["STUB_LOG"], "a") as f:
+            f.write("SKIP_LEGS=" + os.environ.get("NOCTUS_8WAY_SKIP_LEGS", "") + "\\n")
     if "--check-eight-way-sync" in sys.argv and os.environ.get("STUB_HANG"):
         time.sleep(60)
 ''')
@@ -80,3 +83,26 @@ def test_eight_way_timeout_fails_loudly(tmp_path):
     r, _ = _run(repo, tmp_path, STUB_HANG="1", NOCTUS_EIGHT_WAY_TIMEOUT="2")
     assert r.returncode == 1
     assert "TIMED OUT" in r.stderr
+
+
+def test_eight_way_skips_the_kb_sync_leg_the_hook_already_ran(tmp_path):
+    # 2026-11-05: step 4 runs --verify-kb-sync blocking; the 8-way sync must
+    # not run it a second time in the same commit.
+    repo = _repo(tmp_path)
+    (repo / "KNOWLEDGE-BASE").mkdir()
+    (repo / "KNOWLEDGE-BASE/x.md").write_text("x\n")
+    _git(repo, "add", "-A")
+    r, calls = _run(repo, tmp_path)
+    assert "--verify-kb-sync" in calls
+    assert "SKIP_LEGS=kb-sync" in calls
+
+
+def test_branch_commit_prints_no_always_red_counts_line(tmp_path):
+    repo = _repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feat/x")
+    (repo / "KNOWLEDGE-BASE").mkdir()
+    (repo / "KNOWLEDGE-BASE/x.md").write_text("x\n")
+    _git(repo, "add", "-A")
+    r, calls = _run(repo, tmp_path)
+    assert "--update-kb-counts --check" not in calls
+    assert "drift" not in r.stdout.lower() or "KB counts drift" not in r.stdout
