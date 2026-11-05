@@ -23674,6 +23674,140 @@ def check_stale_branch_pointers(
 
 
 # ---------------------------------------------------------------------------
+# `check_engineer_slice_scored` - commit/pre-push backstop for the
+# task_branch integrate slice-score gate (the mechanism refuses
+# `refused="slice_unscored"`; this fires only if something landed anyway, e.g.
+# accept_unscored later forgotten, an older toolkit, a hand merge).
+# KB § PATTERNS/common/dispatch-token-log.md.
+# ---------------------------------------------------------------------------
+
+_SLICE_SCORED_SINCE = "2026-11-04"
+_SLICE_INLINE_AGENTS = frozenset({"self-branch", "tech-lead", "orchestrator", "orchestrator-operator"})
+_SLICE_LANDED_STATUSES = frozenset({"integrated-worktree-live", "shipped"})
+
+
+def check_engineer_slice_scored(
+    session: str | None = None,
+    repo_root: Path | None = None,
+    scores_text: str | None = None,
+    since: str = _SLICE_SCORED_SINCE,
+) -> list[dict]:
+    """Landed engineer slices (branch-tree pointer agent not inline, status
+    integrated/shipped, claimed on/after ``since``) with no row in
+    slice-scores.ndjson. High (blocking) only for this session's own pointers;
+    peers get a warning. ``scores_text`` is an injection seam for tests."""
+    import json
+    import os
+
+    from tools.noctus.dev import branch_pointer as bp
+
+    root = repo_root or REPO_ROOT
+    text = _branch_tree_text(root)
+    if not text:
+        return []
+    if scores_text is None:
+        from tools.noctus.dev._ledger_store import read_ledger_text
+        from tools.noctus.dev.dispatch_token_log import _slice_scores_path
+        path = _slice_scores_path()
+        scores_text, err = read_ledger_text(path.name, path)
+        if err:
+            return [{
+                "product": "<platform>", "file": "project-history/slice-scores.ndjson",
+                "issue": f"slice-scores ledger unreadable ({err}); cannot verify engineer slices were scored.",
+                "severity": "warning"}]
+
+    def _rows(blob: str) -> list[dict]:
+        out = []
+        for ln in blob.splitlines():
+            ln = ln.strip()
+            if ln:
+                try:
+                    out.append(json.loads(ln))
+                except json.JSONDecodeError:
+                    continue
+        return out
+
+    scored: set[str] = set()
+    for r in _rows(scores_text):
+        if r.get("slug"):
+            scored.add(str(r["slug"]))
+        if r.get("branch"):
+            scored.add(str(r["branch"]).removeprefix("feat/"))
+    me = session if session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    issues: list[dict] = []
+    for branch, row in bp._latest_per_branch(_rows(text)).items():
+        if row.get("status") not in _SLICE_LANDED_STATUSES:
+            continue
+        if (row.get("agent") or "") in _SLICE_INLINE_AGENTS or not row.get("agent"):
+            continue
+        if str(row.get("ts", ""))[:10] < since:
+            continue
+        slug = branch.removeprefix("feat/")
+        if slug in scored or branch in scored:
+            continue
+        own = bool(me) and row.get("session") == me
+        issues.append({
+            "product": "<platform>",
+            "file": "project-history/slice-scores.ndjson",
+            "issue": (
+                f"engineer slice '{branch}' (agent {row.get('agent')}) landed with no slice-scores "
+                f"row. Fix: noctus.dev.dispatch_log_completion(slug='{slug}', agent='{row.get('agent')}', "
+                "duration_minutes=<n>, score={...}, engineer_return=<text>). "
+                "KB § CONTEXT/PATTERNS/common/dispatch-token-log.md."),
+            "severity": "high" if own else "warning",
+        })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_guard_hooks_registered` - an unregistered Claude guard hook is a
+# silent no-op: the script exists and is tested, but nothing ever runs it.
+# ---------------------------------------------------------------------------
+
+def check_guard_hooks_registered(repo_root: Path | None = None) -> list[dict]:
+    """Every ``scripts/hooks/claude-guard-*.py`` must be named in a hook
+    ``command`` of ``.claude/settings.json``."""
+    import json
+
+    root = repo_root or REPO_ROOT
+    guards = sorted(p.name for p in (root / "scripts" / "hooks").glob("claude-guard-*.py"))
+    if not guards:
+        return []
+    settings = root / ".claude" / "settings.json"
+    if not settings.exists():
+        return [{"product": "<platform>", "file": ".claude/settings.json",
+                 "issue": f".claude/settings.json is missing; guard hooks {guards} are unregistered.",
+                 "severity": "high"}]
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        return [{"product": "<platform>", "file": ".claude/settings.json",
+                 "issue": f".claude/settings.json is not valid JSON ({e}); cannot verify guard registration.",
+                 "severity": "high"}]
+    commands: list[str] = []
+
+    def _walk(node) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "command" and isinstance(v, str):
+                    commands.append(v)
+                else:
+                    _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(data.get("hooks", {}))
+    return [{
+        "product": "<platform>", "file": ".claude/settings.json",
+        "issue": (f"scripts/hooks/{g} is not referenced by any hook command in .claude/settings.json "
+                  "- an unregistered guard is a silent no-op. Register it under the right "
+                  "PreToolUse/PostToolUse matcher (or delete the script)."),
+        "severity": "high",
+    } for g in guards if not any(g in c for c in commands)]
+
+
+# ---------------------------------------------------------------------------
 # `check_prod_exposure_consent` — the prod-promotion consent gate.
 #
 # INCIDENT: orbity went prod-serving 2026-06-03, the same day it was

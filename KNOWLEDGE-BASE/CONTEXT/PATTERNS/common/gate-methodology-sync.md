@@ -50,6 +50,7 @@ The 2026-09-23 audit ranked the walls; the fixes landed as mechanisms:
 | Wall | Mechanism now |
 |---|---|
 | branch-tree pointers left `on_going` for months | `task_branch` start/integrate/cleanup write the transitions; healer proves rebased branches via `Noc-Branch` trailers; net: `check_stale_branch_pointers` |
+| engineer slices landing unmeasured; guard hooks never registered | `task_branch integrate` refuses `slice_unscored`; nets: `check_engineer_slice_scored`, `check_guard_hooks_registered` (`dispatch-token-log.md`) |
 | follow-up branch read as an unapproved ship-consent project | `task_branch start project=` / inherited from `parent` |
 | outline corpus baseline bumped by every UI change (a gate that guarded ceremony) | frozen vendored corpus; the baseline moves only when the outliner changes |
 | `check_framework_deps` red after scaffold/absorb; its fix wrote `"*"` | `scaffold_product` runs the fix; ranges come from seed's own package.json |

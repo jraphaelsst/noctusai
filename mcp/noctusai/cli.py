@@ -307,6 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-stand-in-conformance", action="store_true", help="Keeper: a test double (mock/wrapper) must satisfy the same CONTRACT as the real thing it replaces. Built against THREE same-day production failures (2026-09-22) where a stand-in was more permissive than the real thing, so the suite stayed green while production could not work: `imovel_dados` (MockSupabaseClient accepted a `datetime.date` write payload httpx's stdlib JSON encoder refuses — fixed by `_validate_json_serializable`, leg B(iii) pins the call stays wired), `_SchemaPinnedAdminClient` (a `__slots__` wrapper missing `__weakref__` broke every `WeakKeyDictionary`-keyed cache the moment it ran against real dependency resolution — CI green, predeploy_check clean; leg A resolves each product's OWN FastAPI dependency graph against a REAL client object built with dummy JWT-shaped credentials, construction-only, never a live request, and leg B(i)/B(ii) assert the resolved objects stay weak-referenceable and identity-stable for the two accessor names — `get_admin_client`/`get_scoped_admin_client` — whose own docstrings promise it), and `atendimento_contrato_versoes` (a cross-column CHECK `CheckManifest`'s single-column shape cannot express, silently unenforced — leg B(iv) inventories migration-declared cross-column CHECKs against `ConditionalPresenceManifest` coverage; an unlisted one is a finding). NEVER a false green: a product whose dependency graph can't be resolved (missing venv, import failure, timeout) reports `inconclusive`, never `ok` — mirrors `noctus.dev.gate_sweep`'s posture. Scoped to `ativo=true` products (`_active_product_dirs`) for CI speed; legs A/B(i)/B(ii) run one short subprocess PER ACTIVE product in parallel. Leg B(iv) is DELIBERATELY advisory: the fleet-wide migration scan correctly surfaces a substantial number of PRE-EXISTING cross-column CHECK constraints unrelated to this fix that nobody has reviewed yet — an unreviewed backlog, not a broken detector; escape hatch for a reviewed one: `_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS` in `tools/noctus/dev/stand_in_conformance.py`. KB: see that module's docstring for the full account (no KB doc yet — new detector).")
     parser.add_argument("--check-piped-exit-code-pattern", action="store_true", help="Keeper: verdict-channel-integrity — flags `$?` read off a PIPELINE (reads the LAST stage's exit status, not the judged command's), a pipe into tail/head/grep/sed/awk/cat used directly as an if/&&/|| condition, and either shape with no effective pipefail backing it (severity escalates to high — the verdict is DEFINITELY wrong, not merely fragile; void for a plain bash-shell GitHub Actions run: step, which defaults to pipefail). Scans every .sh file, the extensionless scripts/hooks/ entrypoints, and .github/workflows/*.yml run: steps — excludes .claude/worktrees/** and archive/** (each linked worktree is a full checkout; an unscoped walk over-counted the same 16 real sites ~7x, 2026-09-20). Two real 2026-09-17 incidents: `if git merge ... | tail -1; then` read tail's status on a clean merge; `npx tsc --noEmit | tail -5 && echo \"rc=$?\"` printed tail's $?, not tsc's. `--paths` (staged-files idiom, same as --check-storage-bucket-public) scopes to files touched in this commit; every real finding on this tree today is `warning`, so pre-commit wires this non-blocking. Opt-out: `# noctusai-keeper: allow-piped-exit-code`. KB § PATTERNS/common/methodology-execution-discipline.md § 6.")
     parser.add_argument("--check-ledger-drain-after-settle", action="store_true", help="Keeper (pre-push HARD-BLOCK): every append-only project-history ledger written during a task_branch run must have a stage that SHIPS it — the drain leg must exist in BOTH the integrate and cleanup result paths AND run AFTER cache_settle. Closes the 4+-incident stranded-ledger-row recurrence. Severity high. KB § PATTERNS/common/self-branching-mode.md.")
+    parser.add_argument("--check-engineer-slice-scored", action="store_true", help="Backstop for the task_branch integrate slice-score gate: landed engineer slices (branch-tree pointer) with no slice-scores.ndjson row. Blocks only on this session's own pointers. KB § CONTEXT/PATTERNS/common/dispatch-token-log.md.")
+    parser.add_argument("--check-guard-hooks-registered", action="store_true", help="Every scripts/hooks/claude-guard-*.py must be referenced by a hook entry in .claude/settings.json (unregistered guard = silent no-op).")
     parser.add_argument("--check-stale-branch-pointers", action="store_true", help="Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers whose branch landed on origin/dev and whose worktree is gone. Blocks only on pointers owned by this session (CLAUDE_CODE_SESSION_ID); others are warnings. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3.")
     parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
@@ -462,6 +464,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-post-remote", default="origin", help="With --task-branch-post-integrate: the remote.")
     parser.add_argument("--task-branch-accept-unmeasured", default=None, help="With --task-branch integrate: comma-separated in-scope merged-tip gates that TIMED OUT and that you knowingly accept as unmeasured (requires --task-branch-accept-unmeasured-reason). Without it a timed-out in-scope gate blocks the integrate (status gate_timeout).")
     parser.add_argument("--task-branch-accept-unmeasured-reason", default=None, help="With --task-branch-accept-unmeasured: the audited reason (recorded in the integrate result and the branch pointer).")
+    parser.add_argument("--task-branch-accept-unscored", default=None, metavar="REASON", help="With --task-branch integrate: land an engineer slice that has no slice-scores.ndjson row, with this audited reason (>=10 chars; recorded in the result). Without it an unscored engineer slice is refused (refused=slice_unscored).")
     parser.add_argument("--task-branch-keep-worktree", action="store_true", help="With --task-branch integrate: do NOT auto-clean the worktree after a successful integrate (default: integrate tears down its worktree + merged branch).")
     parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
@@ -2584,6 +2587,29 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
 
+    elif args.check_engineer_slice_scored:
+        from tools.noctus.dev.compliance import check_engineer_slice_scored
+        issues = check_engineer_slice_scored()
+        high = [i for i in issues if i["severity"] == "high"]
+        if not issues:
+            print(f"  {GREEN}✓ engineer-slice-scored: every landed engineer slice has a score row.{RESET}")
+            sys.exit(0)
+        print(f"  {RED if high else YELLOW}{'✗' if high else '⚠'} {len(issues)} unscored engineer slice(s) ({len(high)} owned by this session → blocking):{RESET}")
+        for i in issues:
+            print(f"    [{i['severity']}] {i['issue']}")
+        sys.exit(1 if high else 0)
+
+    elif args.check_guard_hooks_registered:
+        from tools.noctus.dev.compliance import check_guard_hooks_registered
+        issues = check_guard_hooks_registered()
+        if not issues:
+            print(f"  {GREEN}✓ guard-hooks-registered: every claude-guard-*.py is wired in .claude/settings.json.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} unregistered guard hook(s):{RESET}")
+        for i in issues:
+            print(f"    [{i['severity']}] {i['issue']}")
+        sys.exit(1)
+
     elif args.check_stale_branch_pointers:
         from tools.noctus.dev.compliance import check_stale_branch_pointers
         issues = check_stale_branch_pointers()
@@ -3617,6 +3643,7 @@ def main():
             action=args.task_branch,
             accept_unmeasured=accept_unmeasured,
             accept_unmeasured_reason=getattr(args, "task_branch_accept_unmeasured_reason", None),
+            accept_unscored=getattr(args, "task_branch_accept_unscored", None),
             slug=getattr(args, "task_branch_slug", None),
             slugs=([x.strip() for x in args.task_branch_slugs.split(",") if x.strip()]
                    if getattr(args, "task_branch_slugs", None) else None),
