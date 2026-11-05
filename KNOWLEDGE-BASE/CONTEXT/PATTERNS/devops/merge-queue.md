@@ -142,6 +142,52 @@ landed diff touches their paths (`POST_LAND_DISPATCH`, today
 `agents-secc-ci.yml`), because a `GITHUB_TOKEN` push deliberately triggers no
 workflows.
 
+## 6a · Job timeouts — a hung job without one blocks the whole queue
+
+2026-11-05: batch run `42057027002` (`mq-candidate/42047199280-3`) hung in the
+`Install system build deps` apt step of `Tooling Tests (pytest)` for 1.5h+.
+The job had no `timeout-minutes`, so GitHub's 360-min default applied; the
+drain job waits on the batch's `Tests & Build`, so all 13 queued entries
+stalled behind one apt call.
+
+**Rule.** Every workflow job (no `uses:`) declares `timeout-minutes` <= 120
+(drain: 360); every step running apt / `playwright --with-deps` carries a
+step `timeout-minutes` (10) and apt gets `-o Acquire::Retries=3 -o
+Acquire::http::Timeout=30`. Keeper `check_workflow_job_timeouts`
+(`--check-workflow-job-timeouts`; pre-commit when a workflow is staged, and in
+the compliance sweep).
+
+**Values are measured, not guessed** — p95/max of the last ~40 green runs per
+workflow (2026-11-05), set at roughly max(2 x p95, p95 + 10), floor 5, rounded
+up (max >= p95 headroom for cold caches):
+
+| Job | p95 / max (min) | Set |
+|---|---|---|
+| changes | 0.5 / 0.5 | 5 |
+| product-backend-tests | 2.1 / 16.0 | 30 |
+| seed-backend-tests | 6.5 / 12.9 | 25 |
+| product-frontend-tests | 1.7 / 9.2 | 20 |
+| seed-frontend-tests | 2.3 / 2.7 | 15 |
+| core/erp/pf frontend builds | 0.8 / 1.0 (erp, pf no data) | 10 |
+| core-e2e / erp-e2e (no data) | 8.3 / 10.6 | 25 |
+| sw-e2e-tests | 3.0 / 3.0 | 15 |
+| docker-compose-validate, trivy, bandit, gitleaks, harness-mod | <= 2.0 | 10 |
+| commit-range-keepers | 1.6 / 1.6 | 15 |
+| tooling-tests | 3.0 / 6.2 | 20 |
+| mcp-toolkit-tests | 14.3 / 16.8 | 35 |
+| mcp-toolkit-tests-coverage | 0.2 / 0.2 | 5 |
+| build-and-push build-push | 10.6 / 10.9 | 30 |
+| build-transcriber build-push | 9.7 / 9.7 | 30 |
+| cache-cleanup | 0.6 / 0.6 | 5 |
+| deploy-prod deploy (SSH ff-only pull) | 0.1 / 0.1 | 15 |
+| embedding-cache-validate (no data) | - | 20 |
+| seed-typecheck (lib, framework) | 1.4 / 1.4 | 10 |
+
+`deploy-prod` is generous on purpose: the §2a pull backs up, then
+fast-forwards, and cancelling mid-FF is the one unsafe cut, so the budget is
+~150x the observed runtime. Re-measure when a job's p95 drifts toward half its
+timeout.
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned

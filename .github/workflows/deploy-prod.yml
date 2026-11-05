@@ -41,6 +41,7 @@ jobs:
   deploy:
     name: VPS git-FF pull
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     # Map secrets to job env — the `secrets` context is FORBIDDEN in step `if:`
     # (it fails the workflow at STARTUP, 0s, no logs). Gate on a STEP OUTPUT
     # derived from these env vars instead. (memory feedback_ci_secrets_in_if_startup_failure)

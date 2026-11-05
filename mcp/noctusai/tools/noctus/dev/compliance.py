@@ -6672,6 +6672,87 @@ def check_ci_test_matrix_coverage(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_workflow_job_timeouts` — every GitHub Actions job declares a
+# `timeout-minutes` (2026-11-05: a merge-queue batch's "Tooling Tests" job hung
+# in an apt step for 1.5h+; no timeout => GitHub's 360-min default; the drain
+# job waits on it, so the WHOLE queue stalled). Severity `high`.
+# KB § PATTERNS/devops/merge-queue.md · dev-main-ci-gates.md.
+# ---------------------------------------------------------------------------
+
+WORKFLOW_JOB_TIMEOUT_CEILING_MIN = 120
+# The merge-queue drain job legitimately outlives every test job (it waits on
+# them), so it keeps its own ceiling (GitHub's hard max is 360).
+_WORKFLOW_JOB_TIMEOUT_OVERRIDES = {("merge-queue.yml", "drain"): 360}
+_APT_RE = re.compile(r"\bapt(?:-get)?\s+(?:-\S+\s+)*(?:install|update|upgrade)\b|--with-deps")
+
+
+def check_workflow_job_timeouts(repo_root: Path | None = None) -> list[dict]:
+    """Every job in `.github/workflows/*.yml` that runs steps (no `uses:`
+    reusable-workflow call) must declare an integer `timeout-minutes` that is
+    <= `WORKFLOW_JOB_TIMEOUT_CEILING_MIN` (merge-queue drain: 360), and every
+    step that runs apt/apt-get must carry its own step-level `timeout-minutes`
+    (the observed hang point). A job without one inherits GitHub's 360-minute
+    default, so a single hung step stalls everything waiting on it.
+    """
+    import yaml
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    wf_dir = root / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return issues
+
+    def _issue(rel: str, msg: str) -> dict:
+        return {"file": rel, "issue": msg, "severity": "high"}
+
+    for path in sorted(wf_dir.glob("*.y*ml")):
+        rel = str(path.relative_to(root))
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            issues.append(_issue(rel, f"cannot parse workflow ({exc})"))
+            continue
+        jobs = (doc or {}).get("jobs") if isinstance(doc, dict) else None
+        if not isinstance(jobs, dict):
+            continue
+        for job_id, job in jobs.items():
+            if not isinstance(job, dict) or "uses" in job:
+                continue
+            ceiling = _WORKFLOW_JOB_TIMEOUT_OVERRIDES.get(
+                (path.name, job_id), WORKFLOW_JOB_TIMEOUT_CEILING_MIN
+            )
+            tmo = job.get("timeout-minutes")
+            if tmo is None:
+                issues.append(_issue(
+                    rel,
+                    f"job `{job_id}` has no `timeout-minutes` — GitHub's default is 360 min, "
+                    f"so one hung step blocks the job (and the merge queue) for 6h "
+                    f"(2026-11-05 apt hang). Set a measured value "
+                    f"(KB § PATTERNS/devops/merge-queue.md § Job timeouts).",
+                ))
+            elif isinstance(tmo, bool) or not isinstance(tmo, int):
+                issues.append(_issue(
+                    rel, f"job `{job_id}` `timeout-minutes` must be a literal integer (got {tmo!r})."
+                ))
+            elif tmo > ceiling:
+                issues.append(_issue(
+                    rel, f"job `{job_id}` `timeout-minutes: {tmo}` exceeds the ceiling {ceiling}."
+                ))
+            for i, step in enumerate(job.get("steps") or []):
+                if not isinstance(step, dict):
+                    continue
+                run = step.get("run")
+                if isinstance(run, str) and _APT_RE.search(run) and "timeout-minutes" not in step:
+                    label = step.get("name") or f"#{i}"
+                    issues.append(_issue(
+                        rel,
+                        f"job `{job_id}` step `{label}` runs apt but has no step-level "
+                        f"`timeout-minutes` (apt is the observed hang point).",
+                    ))
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_seed_test_root_ci_coverage` — the SAME "a test suite silently never
 # runs in CI" class as `check_ci_test_matrix_coverage` above, one directory
 # level out, where that keeper structurally cannot look.
@@ -18704,6 +18785,8 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-13 sibling (found while building the dependabot fix — same
     # class, second surface): test.yml's per-product CI matrices.
     all_issues.extend(check_ci_test_matrix_coverage())
+    # 2026-11-05: a job without timeout-minutes hung the whole merge queue.
+    all_issues.extend(check_workflow_job_timeouts())
     # 2026-10-19 owner order: stale docs fail CI (claims vs ratchet; coupling is range-scoped).
     all_issues.extend(check_doc_staleness())
     all_issues.extend(check_seed_test_root_ci_coverage())

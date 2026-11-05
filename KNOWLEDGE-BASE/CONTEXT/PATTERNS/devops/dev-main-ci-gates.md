@@ -37,6 +37,8 @@ Security-gate specifics: `KB § PATTERNS/devops/ci-security-gates.md`.
 - **Baselines grow only by accept-with-rationale** (human ratifies), never silently. The compliance gate fails on any NEW high/critical fingerprint vs the committed `compliance_baseline.json`; refreshing it is a deliberate, documented act (e.g. the 2 NotificationBell organ-shims accepted 2026-05-31), and a real issue surfaced by a refresh is **fixed, not accepted** (the MEMORY.md over-cap finding, same day). → `KB § PATTERNS/common/accept-with-rationale.md`.
 - **Caches stay fresh by automation** (pre-commit structural · pre-push/post-merge embedding · out-of-repo memory-embeddings always-attempt). Manual `--refresh-*` is the emergency stopgap, never the plan. → `KB § PATTERNS/common/cache-auto-freshness.md`.
 
+- **Every job is time-boxed.** A job with no `timeout-minutes` defaults to 360 min and one hung apt step stalled the whole merge queue (2026-11-05). Measured per-job values + keeper `check_workflow_job_timeouts` → `KB § PATTERNS/devops/merge-queue.md` § 6a.
+
 ## Composes with
 
 `KB § PATTERNS/architect/branching-and-merging.md` (the sacred-main gates) · `KB § PATTERNS/common/branching.md` (worktree integration) · `KB § PATTERNS/devops/ci-security-gates.md` · `KB § PATTERNS/devops/ci-embedding-cache-gate.md` · `KB § PATTERNS/devops/deploy-config-contract.md` · `KB § PATTERNS/common/cache-auto-freshness.md`. Born 2026-05-31 — the consolidation leg of the unenforced-gate lesson.

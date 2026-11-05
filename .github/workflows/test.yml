@@ -93,6 +93,7 @@ jobs:
   changes:
     name: Detect changed scope
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     outputs:
       run_heavy: ${{ steps.classify.outputs.run_heavy }}
       shared_changed: ${{ steps.classify.outputs.shared_changed }}
@@ -299,6 +300,7 @@ jobs:
     # `check_every_test_file_is_gated` keep working unchanged.
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     strategy:
       fail-fast: false
       matrix:
@@ -357,6 +359,7 @@ jobs:
           cache: pip
 
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         if: steps.gate.outputs.run == 'true'
         run: |
           # 🔴 A THIRD-PARTY APT SOURCE MUST NOT BE ABLE TO FAIL THIS BUILD.
@@ -382,8 +385,8 @@ jobs:
           # loudly and by name. What `|| true` drops is only the "some index
           # failed to download" verdict, which says nothing about whether the
           # packages we actually need are installable.
-          sudo apt-get update || true
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
             libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
@@ -431,6 +434,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     strategy:
       fail-fast: false
       matrix:
@@ -448,6 +452,7 @@ jobs:
           cache: pip
 
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         run: |
           # Same third-party-apt-source guard as `product-backend-tests` above —
           # see that job for the full rationale (dl.google.com served a corrupt
@@ -455,8 +460,8 @@ jobs:
           sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
             | sudo xargs -r rm -f
           sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
-          sudo apt-get update || true
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
             libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
@@ -484,6 +489,7 @@ jobs:
     # `== 'ALL'` is the fail-toward-coverage sentinel for a missing scope file.
     if: needs.changes.outputs.run_heavy == 'true' && (needs.changes.outputs.active_products == 'ALL' || contains(needs.changes.outputs.active_products, ',erp-imobiliario,'))
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -514,6 +520,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -561,6 +568,7 @@ jobs:
     # above for the full rationale. Same "Scope gate" step pattern here.
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     strategy:
       fail-fast: false
       matrix:
@@ -680,6 +688,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     strategy:
       fail-fast: false
       matrix:
@@ -724,6 +733,7 @@ jobs:
     # job-level gate rationale as erp-frontend-build above.
     if: needs.changes.outputs.run_heavy == 'true' && (needs.changes.outputs.active_products == 'ALL' || contains(needs.changes.outputs.active_products, ',personal-finance,'))
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -750,6 +760,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -780,6 +791,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browsers (cache miss)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: products/core/frontend
         run: |
@@ -821,6 +833,7 @@ jobs:
     # job-level gate rationale as erp-frontend-build above.
     if: needs.changes.outputs.run_heavy == 'true' && (needs.changes.outputs.active_products == 'ALL' || contains(needs.changes.outputs.active_products, ',erp-imobiliario,'))
     runs-on: ubuntu-latest
+    timeout-minutes: 25  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -851,6 +864,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browsers (cache miss)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: products/erp-imobiliario/frontend
         run: |
@@ -896,6 +910,7 @@ jobs:
     # /api/me/access gate broke every one unnoticed for 6 days.
     if: needs.changes.outputs.run_heavy == 'true' && (needs.changes.outputs.active_products == 'ALL' || contains(needs.changes.outputs.active_products, ',social-wiring,')) && (needs.changes.outputs.shared_changed == 'true' || contains(needs.changes.outputs.changed_products, ',social-wiring,'))
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -926,6 +941,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browsers (cache miss)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: products/social-wiring/frontend
         run: |
@@ -967,6 +983,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Provide .env for compose interpolation (per-product env_file refs ../../.env)
@@ -1028,6 +1045,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     permissions:
       contents: read
       security-events: write
@@ -1131,6 +1149,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     permissions:
       contents: read
       security-events: write
@@ -1257,6 +1276,7 @@ jobs:
     # only touches the two generated deploy/fleet/*-scope.txt files.
     if: needs.changes.outputs.run_heavy == 'true' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     permissions:
       contents: read
     steps:
@@ -1296,6 +1316,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true' && needs.changes.outputs.harness_changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     env:
       HARNESS_CLAUDE_CODE_VERSION: "2.1.291"
     steps:
@@ -1361,6 +1382,7 @@ jobs:
     # Cheap and scope-independent: runs on every push/PR (no `changes` dependency).
     name: Commit-range keepers (LGPD entries, product guides, doc staleness, migration replay)
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1467,6 +1489,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -1477,14 +1500,15 @@ jobs:
           cache: pip
 
       - name: Install system build deps (cairo/pango/gdk + libpq/ffi)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         run: |
           # Same third-party-apt-source guard as `product-backend-tests` — see
           # that job for the incident it exists for.
           sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
             | sudo xargs -r rm -f
           sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
-          sudo apt-get update || true
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
             libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
@@ -1584,6 +1608,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 35  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     # SHARDED (2026-09 CI-cost audit): this suite was the workflow's critical
     # path — ~2.6k tests, single process, ~10min wall-clock, while every other
     # job finished by minute 4–5. pytest-xdist was evaluated and rejected: 31
@@ -1649,6 +1674,7 @@ jobs:
           node-version: "20"
 
       - name: Install system build deps (libpq for psycopg; ffi for cffi)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         run: |
           # 🔴 A THIRD-PARTY APT SOURCE MUST NOT BE ABLE TO FAIL THIS BUILD.
           # The runner image ships Google's Chrome repo, so `apt-get update`
@@ -1673,8 +1699,8 @@ jobs:
           # loudly and by name. What `|| true` drops is only the "some index
           # failed to download" verdict, which says nothing about whether the
           # packages we actually need are installable.
-          sudo apt-get update || true
-          sudo apt-get install -y --no-install-recommends libffi-dev libpq-dev pkg-config
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends libffi-dev libpq-dev pkg-config
 
       - name: Install toolkit deps (incl. -e seed/lib/backend → noctusai_lib)
         # MUST run from mcp/noctusai/: requirements.txt has `-e ../../seed/lib/backend`,
@@ -1786,6 +1812,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

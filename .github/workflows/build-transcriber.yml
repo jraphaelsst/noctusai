@@ -31,6 +31,7 @@ jobs:
   build-push:
     name: Build + push transcriber
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

@@ -48,6 +48,7 @@ jobs:
   embedding-cache-validate:
     name: Embedding Cache Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
 
     # The `secrets` context is NOT available in step `if:` conditions — using it
     # there fails the workflow at STARTUP (0s startup_failure on every event,
@@ -68,6 +69,7 @@ jobs:
           cache: pip
 
       - name: Install system build deps
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         # pycairo / weasyprint / psycopg2-binary build deps — same set as test.yml
         # to keep the env shape uniform across CI jobs.
         run: |
@@ -94,8 +96,8 @@ jobs:
           # loudly and by name. What `|| true` drops is only the "some index
           # failed to download" verdict, which says nothing about whether the
           # packages we actually need are installable.
-          sudo apt-get update || true
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
             libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 

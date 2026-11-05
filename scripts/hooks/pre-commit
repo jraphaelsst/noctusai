@@ -900,6 +900,18 @@ if [[ -n "$STAGED_CI_MATRIX" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies. Workflow job timeouts (blocking, only when workflows ──
+# change). Keeper `check_workflow_job_timeouts` — 2026-11-05 a job with no
+# timeout-minutes hung on apt and blocked the whole merge queue.
+STAGED_WF=$(git diff --cached --name-only 2>/dev/null | grep -E '^\.github/workflows/.*\.ya?ml$' || true)
+if [[ -n "$STAGED_WF" ]] && have_py; then
+    echo "[pre-commit] workflow staged — checking job timeouts..."
+    if ! "$PY" "$CLI" --check-workflow-job-timeouts --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WORKFLOW-JOB-TIMEOUTS check FAILED. Commit aborted. See KB § PATTERNS/devops/merge-queue.md § Job timeouts." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-sexies-pre0. Not-configured exceptions carry the marker (blocking) ─
 # Keeper `check_not_configured_carries_marker` (2026-10-10): a new
 # `*NotConfigured`/`*NaoConfigurado` class without `IntegrationNotConfigured`

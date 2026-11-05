@@ -21,6 +21,7 @@ jobs:
   prune-superseded-caches:
     name: Delete all but the newest cache per key prefix
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # measured p95/max over recent green runs — KB § PATTERNS/devops/merge-queue.md § Job timeouts
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
