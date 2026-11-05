@@ -372,7 +372,7 @@ class LeadgenWebhookService:
         mode being silently-wrong qualification on real leads.
 
         The trigger to finish it is one real (non-test) event: see
-        `META-LEADGEN-UPDATE.md` at the repo root for the exact next steps and
+        `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta-leadgen.md` for the exact next steps and
         the query that finds it.
 
         Returns the terminal status. NEVER raises — the caller owes Meta a 200.
@@ -424,7 +424,7 @@ class LeadgenWebhookService:
         logger.warning(
             "meta-leadgen: 🔔 REAL leadgen_update received — lead=%s matched=%s "
             "area=%s event=%s updated_fields=%s. This is the trigger to finish "
-            "the qualification sync (see META-LEADGEN-UPDATE.md).",
+            "the qualification sync (see KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta-leadgen.md).",
             leadgen_id, bool(matched),
             getattr(event, "area", None), getattr(event, "event", None),
             list(getattr(event, "updated_fields", ()) or ()),

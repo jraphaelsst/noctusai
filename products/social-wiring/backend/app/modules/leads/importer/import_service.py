@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 from app.modules.leads.importer import xlsx_reader
 from app.modules.leads.importer.resolvers import resolve_corretor, resolve_origem
-from app.modules.leads.services import dimensions_service, leads_service
+from app.modules.leads.services import dimensions_service, lead_notice, leads_service
 from app.modules.leads.services.query import backfill_generated_columns, chunked, iter_leads_rows
 
 _SCHEMA = "social_wiring"
@@ -324,6 +324,8 @@ def commit(
         ).eq("id", batch_id).execute()
         raise
 
+    # ONE summary notice for the whole import (never per row); never raises.
+    lead_notice.avisar_importacao(org_id, rows_inserted)
     return get_batch(client, org_id, batch_id)
 
 

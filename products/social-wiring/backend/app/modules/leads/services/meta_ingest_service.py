@@ -321,6 +321,7 @@ def ingest_meta_lead(
     corretor_map: Optional[dict[str, str]] = None,
     question_types: Optional[dict[str, str]] = None,
     question_labels: Optional[dict[str, str]] = None,
+    notificar: bool = True,
 ) -> dict[str, Any]:
     """Idempotent single-lead ingest: one ``meta_ads_leads``-shaped row
     (dict with at least ``id``/``full_name``/``phone``/``created_time``/
@@ -356,7 +357,7 @@ def ingest_meta_lead(
         question_types=question_types,
         question_labels=question_labels,
     )
-    lead = leads_service.create_lead(client, org_id, payload)
+    lead = leads_service.create_lead(client, org_id, payload, notificar=notificar)
     # §1.3 — the card's titular exists before this returns (the same synchronous
     # attach the manual "Novo lead" uses). Never raises; the sweep is the net.
     cliente_id = clientes_service.attach_lead_now(client, org_id, lead)
@@ -521,6 +522,7 @@ def backfill_meta_ads_leads(
                 corretor_map=corretor_map,
                 question_types=question_types,
                 question_labels=question_labels,
+                notificar=False,  # historical backfill: no per-lead operational notice
             )
         except ValueError as exc:
             errors.append({"meta_lead_id": row.get("id"), "error": str(exc)})

@@ -180,7 +180,7 @@ integration green`, running in reverse.
    p-studio already declare; therapy is inactive): *which env keys must never fall back to a
    dev default in prod?*
 3. **`imovelweb-portal-leads-ingestion`** — *send the drafted `gate-1-credential-request.md`
-   to `integracao@imovelweb.com.br`, yes or no?* Everything buildable without credentials is
+   to the ImovelWeb integration mailbox (address in `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/imovelweb.md`), yes or no?* Everything buildable without credentials is
    built; this is the only real blocker.
 4. **`therapy-scheduling-pilot-rollout`** — *reactivate therapy-platform, or park this?*
    Phase 3 needs live Google OAuth QA but the product is `ativo=false`.

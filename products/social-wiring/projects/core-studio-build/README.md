@@ -12,6 +12,7 @@ Frozen, already-applied migration files still cite the old path `projects/core-s
 | --- | --- |
 | `specs/*-contract.md` | Our build contracts: pesquisa, pesquisa wave 2, cerebro, geracao, esteira, transcription. |
 | `specs/apify-biblioteca-contract.md` | Biblioteca de virais via Apify (transitional source), chat structure choice + citation (2026-11-04). |
+| `specs/twin-editor-design.md` | Our Twin video editor: data flow, data model, API draft, UI layout and components, render path, seed mapping, open questions (draft v0, 2026-11-04). |
 | `specs/instagram-insights-api.md` · `specs/branding-import.md` | Implemented API contract and the branding import runbook. |
 | `specs/biblioteca-lia.md` · `ROPA-biblioteca.md` | LGPD legitimate-interest assessment and record of processing for the Biblioteca de virais. |
 | `DECISIONS.md` | Every interview answer so far, and what is still open. |

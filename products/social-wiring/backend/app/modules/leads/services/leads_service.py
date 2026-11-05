@@ -163,7 +163,7 @@ def _derive_codigo_norm(payload: dict) -> dict:
     return {**payload, "codigo_imovel_norm": valor.upper() or None}
 
 
-def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
+def create_lead(client: Any, org_id: UUID, payload: dict, *, notificar: bool = True) -> dict:
     # `id`/`created_at` are explicit here (not left to a DB DEFAULT) so
     # the returned row is deterministic across the real Supabase client
     # AND `MockSupabaseClient` (whose auto-id is `mock-<table>-<n>`, not
@@ -187,8 +187,14 @@ def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
     )
     resp = _table(client, "leads").insert(row).execute()
     rows = list(resp.data or [])
-    result = rows[0] if rows else row
-    return backfill_generated_columns(result)
+    result = backfill_generated_columns(rows[0] if rows else row)
+    if notificar:
+        # OPERATIONAL `lead_novo` notice — the one seam for every single-lead path.
+        # Never raises (lead_notice logs + returns 0). Bulk backfills pass notificar=False.
+        from app.modules.leads.services import lead_notice
+
+        lead_notice.avisar_lead_novo(client, result)
+    return result
 
 
 def get_lead(client: Any, org_id: UUID, lead_id: UUID) -> Optional[dict]:

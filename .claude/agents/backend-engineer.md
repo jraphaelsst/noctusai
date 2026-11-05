@@ -55,6 +55,11 @@ owns_kb:
   - CONTEXT/GUIDES/agent-creation.md
   - CONTEXT/INTEGRATIONS/google.md
   - CONTEXT/INTEGRATIONS/meta.md
+  - CONTEXT/INTEGRATIONS/meta-setup.md
+  - CONTEXT/INTEGRATIONS/meta-app-verification.md
+  - CONTEXT/INTEGRATIONS/meta-leads-checklist.md
+  - CONTEXT/INTEGRATIONS/meta-leadgen.md
+  - CONTEXT/INTEGRATIONS/google-oauth-console-setup.md
   - CONTEXT/INTEGRATIONS/whatsapp.md
   - CONTEXT/INTEGRATIONS/vista.md
   - CONTEXT/INTEGRATIONS/oauth-patterns.md
@@ -127,7 +132,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Realtime** → `KB § PATTERNS/common/realtime-sse-bus.md`.
 **Agent creation (the complete-agent recipe, Julia as the reference)** → `KB § GUIDES/agent-creation.md` (readiness `GET /api/studio/agents/{key}/prontidao` ↔ the publish gates; skill `noc-new-agent`).
 **Performance (client view)** → `KB § PATTERNS/common/performance-analysis.md` (`noctus.dev.perf_probe`; skill `noc-perf-probe`).
-**Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/infosimples-certidoes.md` · `KB § INTEGRATIONS/payments.md` · `KB § INTEGRATIONS/invoices.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § INTEGRATIONS/risk-classifier.md` · `KB § INTEGRATIONS/agents-org-specs.md` · `KB § GUIDES/google-oauth-setup.md` · `KB § GUIDES/matricula-source-recovery.md`.
+**Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/meta-setup.md` · `KB § INTEGRATIONS/meta-app-verification.md` · `KB § INTEGRATIONS/meta-leads-checklist.md` · `KB § INTEGRATIONS/meta-leadgen.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/infosimples-certidoes.md` · `KB § INTEGRATIONS/payments.md` · `KB § INTEGRATIONS/invoices.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § INTEGRATIONS/risk-classifier.md` · `KB § INTEGRATIONS/agents-org-specs.md` · `KB § GUIDES/google-oauth-setup.md` · `KB § INTEGRATIONS/google-oauth-console-setup.md` · `KB § GUIDES/matricula-source-recovery.md`.
 
 ## Composes-with (commons + cross-domain)
 `KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-seed.md`.
