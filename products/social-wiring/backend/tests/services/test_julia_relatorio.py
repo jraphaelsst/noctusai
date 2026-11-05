@@ -274,6 +274,24 @@ class TestOptOut:
         assert "sem_destino" in caplog.text
         assert [n for n in world.notifications() if n["metadata"].get("tipo") == svc.KIND_OPT_OUT]
 
+    async def test_modo_responsavel_alerts_the_leads_responsible_on_whatsapp_with_the_reason(self, world):
+        """Owner: "the lead says PARAR: she ends the conversation and alerts the responsible". With the report destination in
+        `modo responsavel`, the opt-out WhatsApp goes to the lead's responsible (here: their staff-list number), with the reason
+        and the lead's words; the in-app notice still reaches the org admins."""
+        contato = contatos.obter_ou_criar_contato(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT,
+                                                  telefone_e164=f"+{LEAD_PHONE}", nome="Ana")
+        resp = "00000000-0000-4000-8000-0000000000c1"
+        world.sw.table("julia_contatos").update({"responsavel_user_id": resp}).eq("id", contato["id"]).execute()
+        world.sw.table("julia_relatorio_destino").update({"modo": "responsavel"}).eq("org_id", ORG_ID).execute()
+        world.sw.table("julia_staff").insert({"org_id": ORG_ID, "user_id": resp, "nome": "Carla", "papel": "corretor",
+                                              "telefone": "5511955554444", "ativo": True}).execute()
+        world.agents = FakeAgentsClient([_ok("ok", actions=[self._acao(motivo="palavra_chave", trecho="PARAR")])])
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["PARAR"]))
+        (texto,) = [m["text"] for m in world.waha.sent_messages if m["chatId"] == "5511955554444@c.us"]
+        assert "Motivo: palavra-chave de parada" in texto and "PARAR" in texto
+        assert _para_destino(world) == []  # not the configured user: the responsible got it
+        assert [n for n in world.notifications() if n["metadata"].get("tipo") == svc.KIND_OPT_OUT]
+
     def test_masking(self):
         assert svc.mascarar_nome("Maria Souza Lima") == "Maria L."
         assert svc.mascarar_nome(None) == "sem nome"
