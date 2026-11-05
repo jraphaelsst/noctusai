@@ -110,6 +110,17 @@ class MockSupabaseClient(_SharedMockSupabaseClient):
         ]
         self._tables["org_memberships"] = self._builder_for("org_memberships", data=members)
 
+    def set_team_caller_responses(self, profile, *rest):
+        """Queue ``noctus_users`` for a team-router call: the caller ``profile`` TWICE, then ``rest``.
+
+        ``team._team_scope`` reads the caller's profile AND ``platform_staff_role`` IN PARALLEL
+        (``run_parallel``), both from ``noctus_users``. A sequential queue is popped in
+        thread-scheduling order, so with one profile head the staff read sometimes won it and the
+        profile read got the next item -- an intermittent 404 "Perfil não encontrado" (predeploy
+        red 2026-11-05, CI green on the same sha). Two identical heads make either order serve the
+        profile; staff stays ``None`` (no ``organizations`` embed -> not staff, fail closed)."""
+        self.set_table_responses("noctus_users", [profile, profile, *rest])
+
     def set_table_responses(self, name, responses):
         """Set a queue of mock responses for a specific table.
 

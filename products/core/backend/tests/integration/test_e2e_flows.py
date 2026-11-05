@@ -219,9 +219,9 @@ class TestInvitationLifecycle:
         }
 
         # --- Step 1: Invite ---
-        ms.set_table_responses("noctus_users", [
-            # _get_user_profile
-            {"id": "admin-user-456", "org_id": "test-org-123", "org_role": "admin", "role": "admin"},
+        admin_profile = {"id": "admin-user-456", "org_id": "test-org-123", "org_role": "admin", "role": "admin"}
+        ms.set_team_caller_responses(
+            admin_profile,
             # existing email check -> empty
             [],
             # audit service lookups (best-effort, may fail)
@@ -229,7 +229,7 @@ class TestInvitationLifecycle:
             {"id": "admin-user-456"},
             # email: inviter name lookup
             {"nome": "Admin User"},
-        ])
+        )
         ms.set_table_responses("roles", [
             [{"id": "role-1", "slug": "member"}],
         ])
@@ -249,9 +249,7 @@ class TestInvitationLifecycle:
         assert resp.json()["data"]["email"] == "new@example.com"
 
         # --- Step 2: List invitations ---
-        ms.set_table_responses("noctus_users", [
-            {"id": "admin-user-456", "org_id": "test-org-123", "org_role": "admin", "role": "admin"},
-        ])
+        ms.set_team_caller_responses(admin_profile)
         ms.set_table_responses("invitations", [
             [invite_record],
         ])
@@ -261,9 +259,7 @@ class TestInvitationLifecycle:
         assert len(resp.json()["data"]) == 1
 
         # --- Step 3: Cancel invitation ---
-        ms.set_table_responses("noctus_users", [
-            {"id": "admin-user-456", "org_id": "test-org-123", "org_role": "admin", "role": "admin"},
-        ])
+        ms.set_team_caller_responses(admin_profile)
         ms.set_table_responses("invitations", [
             {"id": "inv-1", "status": "pending"},  # cancel_invitation select
             {"id": "inv-1", "status": "canceled"},  # cancel_invitation update

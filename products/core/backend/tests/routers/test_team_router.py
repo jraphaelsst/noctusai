@@ -62,11 +62,11 @@ class TestInviteMember:
         #   1. _get_user_profile (.single) → admin profile
         #   2. existing-member check (.eq email) → must be empty
         #   3. inviter name lookup (.single) → admin profile
-        mock_sb.set_table_responses("noctus_users", [
+        mock_sb.set_team_caller_responses(
             {"id": "admin-user-456", "org_id": "org-1", "org_role": "admin", "role": "admin", "nome": "Admin"},
             [],  # no existing member with that email
             {"id": "admin-user-456", "nome": "Admin"},  # inviter name
-        ])
+        )
         # invitations is queried then inserted:
         #   1. pending-invite check → must be empty
         #   2. insert → returns the new invitation

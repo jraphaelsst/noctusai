@@ -24,11 +24,11 @@ def _members(mock_sb, caller_org_role, caller_role, target_org_role, target_id="
 
 
 def _invite_setup(mock_sb, org_role, role="user", target_slug="member"):
-    mock_sb.set_table_responses("noctus_users", [
+    mock_sb.set_team_caller_responses(
         _caller(mock_sb, org_role, role),
         [],
         {"id": CALLER, "nome": "C"},
-    ])
+    )
     mock_sb.set_table_responses("invitations", [
         [],
         [{"id": "inv-1", "email": "n@example.com", "role": target_slug, "status": "pending", "token": "t"}],
@@ -72,11 +72,11 @@ class TestRoleChangeGrantRules:
 
     def test_manager_cannot_promote_to_admin(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        mock_sb.set_table_responses("noctus_users", [
+        mock_sb.set_team_caller_responses(
             _caller(mock_sb, "manager"),
             {"id": "other-user", "org_id": "org-1", "org_role": "member"},
             [{"id": "other-user", "org_id": "org-1", "org_role": "admin"}],
-        ])
+        )
         mock_sb.set_table_data("roles", [{"id": "r1", "slug": "admin"}])
         resp = admin_client.patch("/api/team/other-user/role", json={"role": "admin"})
         assert resp.status_code == 403
