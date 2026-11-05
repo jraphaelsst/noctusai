@@ -551,7 +551,7 @@ retention · access log · RIPD trigger check (Art. 38) · withheld-then-activat
   **A10:2025** (fail-open on a missing secret).
 - **Severity:** `CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:H/VA:N/SC:N/SI:L/SA:N` = **8.2 High**; AT:P
   because it needs the misconfiguration (secret unset in prod). Unauthenticated + seed-wide ⇒ **P0**.
-- **STATUS 2026-11-05: OPEN, HELD as an owner-timed step (2026-11-05): flipping the default to refuse in a deploy context was tried and reverted — merge-queue batch `mq-candidate/42047199280-2` failed social-wiring, whose shared WAHA does not sign yet (L2 2026-11-03, `NOC-REMEDIATE[waha-hmac-prod]`), and ~20 live mounts use this verifier with no prod secret inventory. Order: inventory every mount's prod secret → provision → `WEBHOOK_REQUIRE_SIGNATURE=1` per product → then flip the default.**
+- **STATUS 2026-11-05: OPEN, HELD as an owner-timed step (2026-11-05): flipping the default to refuse in a deploy context was tried and reverted — merge-queue batch `mq-candidate/42047199280-2` failed social-wiring, whose shared WAHA does not sign yet (L2 2026-11-03, `NOC-REMEDIATE[waha-hmac-prod]`), and ~20 live mounts use this verifier with no prod secret inventory. Order: inventory every mount's prod secret → provision → `WEBHOOK_REQUIRE_SIGNATURE=1` per product → then flip the default. APPROVED by the owner 2026-11-05; inventory done, phases tracked in `project-history/roadmaps/unsigned-webhook-rollout-2026-11.md`.**
 - **Fix at the seed, once** (CLAUDE.md §1 "Seed defaults"): `bypass_when_unset` resolves from the deploy
   context (dev-only true), prod refuses with 401 and `/api/health` reports degraded like SW's
   `webhook_hmac_desativado`; strict-401 test; `predeploy_check` keeps the secret-present leg. Products
