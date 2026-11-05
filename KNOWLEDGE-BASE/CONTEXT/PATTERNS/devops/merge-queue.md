@@ -87,6 +87,17 @@ Code lives in:
 
 ## 4 · How to work under the queue (the session rules)
 
+- **One elected steward runs the queue; everyone else files and keeps
+  building.** Before any queue/deploy action check your environment
+  (`ListAgents` + `release_steward action=status`). Only the steward enqueues,
+  runs `landed`, blesses, promotes and deploys; the `release-steward` hook
+  refuses everyone else and names the steward. A gated session does **not**
+  stop: it files `release_steward action=request slug=<slug>` (re-filing keeps
+  the latest `head_sha`) and continues building; the steward drains the whole
+  outbox in one pass so riders batch in the queue, then replies `LANDED <dev
+  sha>` / `EJECTED <reason>` / `DEPLOYED`. The steps below that say "enqueue" or
+  "`landed`" are the steward's; a non-steward session's equivalent is the
+  request. → `KB § PATTERNS/devops/release-steward.md`
 - **Small slices, enqueued as soon as they are green.** One branch is one
   concern. Do not build a long-lived multi-slice branch. jl-ship carried 14
   slices plus a train, and that is how 40% of the blocks were our own bugs
@@ -230,7 +241,8 @@ timeout.
 `KB § PATTERNS/common/self-branching-mode.md` (the worktree lifecycle around
 it) · `KB § PATTERNS/architect/branching-dispatch.md` (dispatch and trains) ·
 `KB § PATTERNS/devops/dev-main-ci-gates.md` (what CI gates) ·
-`KB § PATTERNS/devops/hardware-admission-budget.md` (the local slot gate, which
+`KB § PATTERNS/devops/release-steward.md` (who runs the queue: one elected
+session) · `KB § PATTERNS/devops/hardware-admission-budget.md` (the local slot gate, which
 now covers local checks only) · `KB § PATTERNS/common/methodology-execution-discipline.md`
 (per-branch green ≠ integration green).
 
