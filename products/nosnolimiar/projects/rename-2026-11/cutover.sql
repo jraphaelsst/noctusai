@@ -48,6 +48,24 @@ BEGIN
   IF v_n <> 0 THEN RAISE EXCEPTION 'cutover: Nós no Limiar already has % fin_categories -- would duplicate', v_n; END IF;
   EXECUTE 'SELECT count(*) FROM nosnolimiar.fin_categories WHERE org_id = $1' INTO v_n USING v_mt;
   IF v_n <> 30 THEN RAISE NOTICE 'cutover: fin_categories of MT = % (recon saw 30)', v_n; END IF;
+  -- M1: the surviving org MUST hold an active license on the RENAMED product. The app's license gate
+  -- (org_sem_licenca) is evaluated against Nós no Limiar from now on; without this row the user is locked out
+  -- the moment the org delete commits. Needs core 098 (the catalog row is already `nosnolimiar`).
+  IF NOT EXISTS (SELECT 1 FROM public.licenses l JOIN public.products p ON p.id = l.product_id
+                  WHERE l.org_id = v_nnl AND p.slug = 'nosnolimiar'
+                    AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now())) THEN
+    RAISE EXCEPTION 'cutover: Nós no Limiar holds no ACTIVE license on product nosnolimiar (core 098 applied? license granted?) -- refusing to delete the old org';
+  END IF;
+  -- M2: this script does NOT move Storage objects. Any object filed under MT's org id (first folder segment,
+  -- or anywhere in the name) would be orphaned/unreachable once the org is gone: refuse, move them first.
+  IF to_regclass('storage.objects') IS NULL THEN
+    RAISE EXCEPTION 'cutover: storage.objects not found -- cannot prove MT owns no Storage objects';
+  END IF;
+  EXECUTE 'SELECT count(*) FROM storage.objects WHERE split_part(name, ''/'', 1) = $1 OR position($1 in name) > 0'
+     INTO v_n USING v_mt::text;
+  IF v_n <> 0 THEN
+    RAISE EXCEPTION 'cutover: % storage.objects row(s) are filed under MT''s org id -- this script does not move Storage; move or re-key them first', v_n;
+  END IF;
 END $$;
 
 -- ── 1 · the user: home org -> Nós no Limiar (owner). Triggers ON (membership mirror + auth sync) ─────────────
@@ -94,10 +112,103 @@ SELECT set_config('core.audit_log_purge', 'on', true);
 DELETE FROM public.audit_logs WHERE org_id = 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
 SELECT set_config('core.audit_log_purge', 'off', true);
 
--- ── 6 · delete the org (cascades: licenses, memberships, platform_org_selections, notifications, pipeline_stages) ─
+-- ── 5b · public.notifications of MT (3 rows): MOVED, not cascaded -- they are the owner's own in-app notices and ─
+--      she now logs into Nós no Limiar. The FK column is read from the catalog (no hand-typed column name).
+DO $$
+DECLARE t record;
+BEGIN
+  FOR t IN SELECT a.attname AS col
+             FROM pg_constraint c
+             CROSS JOIN LATERAL unnest(c.conkey, c.confkey) AS k(child, parent)
+             JOIN pg_attribute a  ON a.attrelid  = c.conrelid  AND a.attnum  = k.child
+             JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.parent AND pa.attname = 'id'
+            WHERE c.contype = 'f' AND c.confrelid = 'public.organizations'::regclass
+              AND c.conrelid = 'public.notifications'::regclass AND cardinality(c.conkey) = 1
+  LOOP
+    EXECUTE format('UPDATE public.notifications SET %I = %L WHERE %I = %L', t.col,
+                   'fa80a1e0-1bcd-4c65-8a37-2162e8ffa688', t.col, 'ad6ec2e2-b470-4044-884e-6345e4fe66d4');
+  END LOOP;
+END $$;
+
+-- ── 6a · CASCADE INVENTORY (catalog-derived) -- runs BEFORE the delete, so losses are visible and abortable ──────
+-- The old post-check (section 7) runs AFTER the delete: ON DELETE CASCADE rows are already gone and invisible to
+-- it. Here we walk pg_constraint: EVERY foreign key onto public.organizations (any ON DELETE action, multi-column
+-- keys included) PLUS one hop through public.org_memberships (e.g. org_member_product_access, keyed by the
+-- membership rows of MT). A table still holding MT rows that is NOT in the allowlist below aborts the script.
+-- The allowlist is the ONLY set of tables this script knowingly lets the delete remove. Value = the maximum rows
+-- tolerated (recon 2026-11-02: exact; a larger count means data appeared since and must be looked at):
+--   public.pipeline_stages.org_id               13  MT's signup-seeded default funnel template; Nós no Limiar has its own
+--                                                   (guarded below: it must hold >= 1). Moving would duplicate stages.
+--   public.licenses.org_id                       2  MT's own licenses; NnL's license on nosnolimiar is guarded in section 0.
+--   public.org_memberships.org_id                1  MT's membership row of the user (home org just moved; the NnL
+--                                                   owner membership already exists and is asserted in sections 0 and 7).
+--   public.platform_org_selections.target_org_id 13 \ platform-staff org-picker session history (service-role only,
+--   public.platform_org_selections.home_org_id    4 /  ephemeral) that names MT; carries no business data.
+-- NOT allowlisted because moved/purged earlier: noctus_users (1, step 1), nosnolimiar.* and social_wiring.*
+-- (cs_chat_conversas 1 / cs_chat_mensagens 1 / marcas 1 -- steps 2-3), audit_logs (5, step 5), notifications (3, 5b).
+DO $$
+DECLARE
+  v_mt  constant uuid := 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
+  v_nnl constant uuid := 'fa80a1e0-1bcd-4c65-8a37-2162e8ffa688';
+  v_allow constant jsonb := '{
+    "public.pipeline_stages.org_id": 13,
+    "public.licenses.org_id": 2,
+    "public.org_memberships.org_id": 1,
+    "public.platform_org_selections.target_org_id": 13,
+    "public.platform_org_selections.home_org_id": 4
+  }'::jsonb;
+  f record; v_n bigint; v_cap bigint; v_key text; v_bad text := ''; v_tot bigint := 0;
+BEGIN
+  -- NnL must own a funnel of its own, or the pipeline_stages cascade would leave the moved leads without stages.
+  EXECUTE 'SELECT count(*) FROM public.pipeline_stages WHERE org_id = $1' INTO v_n USING v_nnl;
+  IF v_n < 1 THEN RAISE EXCEPTION 'inventory: Nós no Limiar has no pipeline_stages -- move MT''s instead of cascading them'; END IF;
+
+  FOR f IN
+    SELECT format('%I.%I', rn.nspname, rc.relname) AS rel,       -- always schema-qualified (regclass::text drops 'public.')
+           (c.confrelid = 'public.organizations'::regclass) AS on_org, c.confdeltype AS del,
+           string_agg(a.attname, '+' ORDER BY k.ord) AS cols,
+           string_agg(format('o.%I = t.%I', pa.attname, a.attname), ' AND ' ORDER BY k.ord) AS join_pred
+      FROM pg_constraint c
+      JOIN pg_class rc ON rc.oid = c.conrelid
+      JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+      CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(child, parent, ord)
+      JOIN pg_attribute a  ON a.attrelid  = c.conrelid  AND a.attnum  = k.child
+      JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.parent
+     WHERE c.contype = 'f'
+       AND c.confrelid IN ('public.organizations'::regclass, 'public.org_memberships'::regclass)
+     GROUP BY c.oid, rn.nspname, rc.relname, c.confrelid, c.confdeltype
+     ORDER BY 1, 4
+  LOOP
+    IF f.on_org THEN
+      EXECUTE format('SELECT count(*) FROM %s t WHERE EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = $1 AND %s)',
+                     f.rel, f.join_pred) INTO v_n USING v_mt;
+      v_key := f.rel || '.' || f.cols;
+    ELSE   -- one hop: rows pointing at a membership row OF MT
+      EXECUTE format('SELECT count(*) FROM %s t WHERE EXISTS (SELECT 1 FROM public.org_memberships o WHERE o.org_id = $1 AND %s)',
+                     f.rel, f.join_pred) INTO v_n USING v_mt;
+      v_key := f.rel || '.' || f.cols || ' (via org_memberships)';
+    END IF;
+    IF v_n = 0 THEN CONTINUE; END IF;
+    v_cap := (v_allow ->> v_key)::bigint;
+    IF v_cap IS NULL OR v_n > v_cap THEN
+      v_bad := v_bad || format('%s=%s (ON DELETE %s, allowed %s); ', v_key, v_n, f.del, coalesce(v_cap::text, 'none'));
+    ELSE
+      v_tot := v_tot + v_n;
+      RAISE NOTICE 'inventory: allowed cascade % = % row(s) (cap %)', v_key, v_n, v_cap;
+    END IF;
+  END LOOP;
+  IF v_bad <> '' THEN
+    RAISE EXCEPTION 'inventory: the org delete would silently drop/null rows not in the allowlist: %', v_bad;
+  END IF;
+  RAISE NOTICE 'inventory OK: % row(s) will cascade, all allowlisted', v_tot;
+END $$;
+
+-- ── 6 · delete the org. Cascades ONLY what section 6a allowlisted (pipeline_stages, licenses, org_memberships, ─
+--      platform_org_selections); everything else was moved/purged above and 6a proved nothing else references it.
 DELETE FROM public.organizations WHERE id = 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
 
--- ── 7 · post-checks: ZERO references anywhere; the user and her ownership survive ─────────────────────────────
+-- ── 7 · post-checks (AFTER the delete: cascaded rows are gone, so 6a is the loss check; this proves no dangling ──
+--      org_id-like column survives and the user's ownership is intact) ─────────────────────────────────────────
 DO $$
 DECLARE
   v_mt  constant uuid := 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
