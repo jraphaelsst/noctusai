@@ -192,7 +192,7 @@ Every product accesses LLMs exclusively through this package. No product code im
 
 | Class / function | Purpose |
 |-------|---------|
-| `MockSupabaseClient` | `.table()`, `.set_table_data()`, `.set_sequential_responses()`, `.rpc()`. Default-on validation against the migrations: columns (`MockSchemaError`) and CHECK constraints (`MockRowCheckViolation`, 2026-10-10) — `KB § PATTERNS/compliance/testing.md § CHECK constraints` |
+| `MockSupabaseClient` | `.table()`, `.set_table_data()`, `.set_sequential_responses()`, `.rpc()`. Default-on validation against the migrations: columns (`MockSchemaError`) and CHECK constraints (`MockRowCheckViolation`, 2026-10-10) — `KB § PATTERNS/compliance/test-harness-playbook.md § CHECK constraints` |
 | `sql_check.compile_check(body)` | A migration's `CHECK (...)` body → a row predicate with Postgres three-valued logic; `UnsupportedCheck` for SQL outside the modelled subset. `compile_checks(raw)` is the one compile path the mock and `check_stand_in_conformance` leg B(iv) (`compile_cross_column_checks`) share |
 | `migration_parser.parse_check_files` / `parse_default_files` | CHECKs and DEFAULTed columns as they stand after the migrations apply in order (drop / re-add / rename / drop column) |
 | `MockSelectBuilder` | Chainable: `.eq()`, `.order()`, `.single()`, `.or_()`, `.gte()`, `.lte()`, `.ilike()` (no-op) |

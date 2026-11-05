@@ -117,6 +117,6 @@ Edit `templates/product-seed/backend/migrations/` by hand, and keep it idempoten
 ## Composed with
 
 `KB § PATTERNS/backend/migrate-product-mcp-tool.md` (the prod apply this mirrors) ·
-`KB § PATTERNS/compliance/testing.md § CHECK constraints` (the mock layer's CHECK
+`KB § PATTERNS/compliance/test-harness-playbook.md § CHECK constraints` (the mock layer's CHECK
 enforcement: unit speed, no DDL) · `KB § PATTERNS/common/remediation-markers.md` ·
 `KB § PATTERNS/common/methodology-execution-discipline.md` (inconclusive ≠ red ≠ green).
