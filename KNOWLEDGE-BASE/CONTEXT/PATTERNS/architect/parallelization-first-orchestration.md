@@ -74,7 +74,7 @@ origin/dev
 **Mechanism:**
 1. **Self-branch off `origin/dev`** (architect's branch — e.g. `noctus.dev.task_branch action=start slug=wave-X-arch`).
 2. **For each engineer**: call `noctus.dev.task_branch action=start slug=E<X>` from the ARCHITECT'S branch. This forks the engineer's worktree off architect-branch (per `noc-self-branch` workflow), NOT off `dev`.
-3. **Dispatch the agent INTO that worktree** — pass the worktree path in the brief as the engineer's cwd. Do NOT use the Agent tool's `isolation: "worktree"` parameter (the harness's built-in isolation forks from an arbitrary base; we have N=4 evidence it doesn't honor `origin/dev`).
+3. **Dispatch the agent INTO that worktree** — pass the worktree path in the brief as the engineer's cwd. Do NOT use the Agent tool's `isolation: "worktree"` parameter. The harness forks that worktree from the repository's DEFAULT branch, as the local `origin/HEAD` names it, unless `worktree.baseRef` says otherwise. It is not an arbitrary base. Our N=4 stale-base evidence had one cause: the local `origin/HEAD` still pointed at `main` from clone time, while GitHub's default had become `dev`. That was fixed 2026-11-05 with `git remote set-head origin --auto`. The rule stands regardless: `task_branch` also publishes the pointer claim, wires the env overlay and records the base, and `isolation` does none of that. The `executor-dispatch` guard refuses an executor dispatch that names no worktree.
 4. **Collect + reconcile** at architect-branch level. Architect cherry-picks / merges each engineer's commits. Semantic conflicts (E4 re-creating shared modules) get caught HERE, before `dev`.
 5. **Push architect-branch → `dev`** (FF) when the wave is clean.
 

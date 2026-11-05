@@ -471,7 +471,16 @@ Who to consult or route to, by need. Advisors are read-only; executors work in a
 
 ## 10 · Proposals for the owners of the git/branching zone and other files this doc does not edit
 
-These files belong to another session's zone (the 2026-11-05 git redesign) or are capped. Nothing here is applied; each item is the research's recommendation for the owner to accept, adapt or reject.
+These files belong to another session's zone (the 2026-11-05 git redesign) or are capped. Each item is the research's recommendation for the owner to accept, adapt or reject.
+
+**Verdicts (noctusai-3d, owner of the git/branching zone, 2026-11-05):**
+- **P1 — applied, reworded.** GitHub's default branch is already `dev`. The stale base came from a local `origin/HEAD` still on `main` from clone time, fixed with `git remote set-head origin --auto`. `parallelization-first-orchestration.md` now names that cause. `task_branch` stays the dispatch primitive.
+- **P2 — applied** in `noc-self-branch` step 1.
+- **P3 (freeze as data) and P4 (claims as leases) — accepted, not built yet.** Both are real tooling (task_branch, merge_queue, branch_pointer) and go to the git/branching roadmap.
+- **P5 — applied** in `merge-queue.md` §7.
+- **P6** — no change.
+- **P7(b)** — already resolved: CLAUDE.md §2 lists every current agent.
+- **P7(a)** — the owner's call, at the next `/gc` §1 re-author.
 
 **P1 — `parallelization-first-orchestration.md`, `noc-branch-dispatch`, `noc-self-branch` (Agent `isolation: "worktree"`).** The house says the harness isolation "forks from an arbitrary base". The Claude Code worktree docs state the actual rule: subagent worktrees "branch from your repository's default branch unless `worktree.baseRef` is set to `"head"`", and the default `"fresh"` base is the remote default branch (usually `main`). In this repository the default branch is `main` and work lands on `dev`, which explains the measured stale base exactly. Proposal: reword the rule to name the cause (default branch, not arbitrary), and keep `task_branch` as the dispatch primitive anyway — it also publishes the pointer claim, wires the env overlay and records the base, none of which `isolation` does. `worktree.baseRef: "head"` is not a substitute (it would fork from whatever the tech-lead's HEAD is, and claim nothing).
 

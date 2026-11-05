@@ -106,7 +106,11 @@ Code lives in:
   the reason (it links the CI run), fix it on the branch, and enqueue again.
 - **About 3–4 sessions writing code at once.** More only adds queue time and
   conflict odds; the codebase's ability to absorb parallel change is the limit,
-  not the session count. Each session publishes its branch-pointer `paths`
+  not the session count. The figure is not arbitrary:
+  - Claude Code's agent-teams guidance recommends 3–5 teammates.
+  - Brooks' law: communication paths grow as n(n−1)/2, so 4 writers have 6 paths and 8 have 28.
+  - Conway (1968) makes the same observation.
+  Sources are in `orchestration-craft-canon.md` § Sources. Each session publishes its branch-pointer `paths`
   before the first edit (`branch-tree-tracking.md`); that is the claim.
 - **Migration numbers.** Take the next free number against `origin/dev` *and*
   the queue (`noctus.dev.merge_queue` lists what is waiting). On a collision
