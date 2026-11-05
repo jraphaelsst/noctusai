@@ -2,7 +2,7 @@
 
 **What it is.** The software-architecture profession's canon — decision records, quality attributes, architecture evaluation, views, fitness functions, strategic domain design, deployment-unit style, evolution patterns, multi-tenancy and the team lens — written as an operating manual for the `architect` agent and anyone who reviews a plan. Every section says what the canon teaches, where this codebase already does it (with file:line), what is missing, a checklist and the anti-patterns.
 
-**Why it exists.** The 2026-11-05 audit (`projects/agent-refinement/audits/audit-architect-engineer-seed.md`, agent-refinement project) found the architect strong on *where code goes* (bone or organ, seam or fork, N=2/3 recurrence) and weak on *what a design trades off*. It had no record format for an affirmative choice, no quality-attribute reasoning, no view of the platform, and no map of which keeper protects which architectural property. The house already practises much of the canon under other names; this doc names it, so an architect can reason in both vocabularies and spot the gaps.
+**Why it exists.** The 2026-11-05 read-only audit of the `architect` and `engineer-seed` agents (agent-refinement project; the audit file lives in that project folder and goes when the project is archived — this doc carries its conclusions) found the architect strong on *where code goes* (bone or organ, seam or fork, N=2/3 recurrence) and weak on *what a design trades off*. It had no record format for an affirmative choice, no quality-attribute reasoning, no view of the platform, and no map of which keeper protects which architectural property. The house already practises much of the canon under other names; this doc names it, so an architect can reason in both vocabularies and spot the gaps.
 
 **How to use it.** The house mechanism wins over the general canon. Where this doc and a house pattern disagree, the house pattern is the rule and this doc is wrong — fix it on contact. Read §1 (the term map) and §14 (the one-page checklist) on every design review; open the other sections when the review touches their topic. Read the worked examples (§15) once — they show the method end to end on decisions this platform actually made.
 
@@ -624,7 +624,7 @@ flowchart LR
 
 ## Sources
 
-Accessed 2026-11-05. Each URL was fetched and confirmed for the agent-refinement audit (`audits/audit-architect-engineer-seed.md` § Sources); the ones marked ✅ were re-fetched while writing this doc.
+Accessed 2026-11-05. Each URL was fetched and confirmed for the agent-refinement audit's source list; the ones marked ✅ were re-fetched while writing this doc.
 
 **Decision records**
 - Michael Nygard, *Documenting Architecture Decisions* — https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions — ADR fields, superseded status, numbering (§3). ✅
