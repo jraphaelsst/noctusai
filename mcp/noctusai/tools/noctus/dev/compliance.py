@@ -2697,6 +2697,8 @@ def check_unknown_table_references(product_path: Path) -> list[dict]:
         except (OSError, UnicodeDecodeError) as exc:
             logger.debug("compliance: cannot read %s (%s)", py_file, exc)
             continue
+        if "table" not in source:
+            continue  # only a `.table(...)` call is flagged (exact prefilter)
         try:
             tree = ast.parse(source, filename=str(py_file))
         except SyntaxError as exc:
@@ -9695,6 +9697,8 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
             continue
         if _FLEET_SIZE_RATIONALE_RE.search(content):
             continue
+        if "len(" not in content:
+            continue  # a `len(...)` comparison is the only shape flagged (exact prefilter)
         try:
             tree = ast.parse(content, filename=str(py_path))
         except SyntaxError as exc:
@@ -9708,15 +9712,24 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
 
         # Map every node to its enclosing FunctionDef so we can check
         # whether the count is registry-derived in the same function.
-        func_src_by_node: dict[int, str] = {}
-        for fn in ast.walk(tree):
-            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                try:
-                    fn_src = ast.get_source_segment(content, fn) or ""
-                except (ValueError, TypeError):
-                    fn_src = ""
-                for child in ast.walk(fn):
-                    func_src_by_node[id(child)] = fn_src
+        # Lazy (2026-11-05 perf): the per-function source map walks every
+        # function's subtree (quadratic for nested defs) and slices source; only
+        # a Compare that already passed the cheap len/const/floor tests needs it.
+        func_src_by_node: dict[int, str] | None = None
+
+        def _fn_src_for(target: ast.AST) -> str:
+            nonlocal func_src_by_node
+            if func_src_by_node is None:
+                func_src_by_node = {}
+                for fn in ast.walk(tree):
+                    if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        try:
+                            fn_src = ast.get_source_segment(content, fn) or ""
+                        except (ValueError, TypeError):
+                            fn_src = ""
+                        for child in ast.walk(fn):
+                            func_src_by_node[id(child)] = fn_src
+            return func_src_by_node.get(id(target), "")
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Compare) or len(node.ops) != 1:
@@ -9740,7 +9753,7 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
                 continue
             if const_node.value < _FLEET_SIZE_FLOOR:
                 continue
-            fn_src = func_src_by_node.get(id(node), "")
+            fn_src = _fn_src_for(node)
             # Registry-derived in the enclosing function → computed, not
             # frozen → does not stale → suppress.
             if any(tok in fn_src for tok in _REGISTRY_DERIVED_TOKENS):
@@ -18425,6 +18438,8 @@ def check_canonical_organ_consumption(
 
                 # Check each canonical organ name.
                 for organ_name, seed_path in registry.items():
+                    if organ_name not in content:
+                        continue  # decl_pattern needs the literal name (exact prefilter)
                     # Match: function/const declaration (not import).
                     decl_pattern = (
                         r"(?:export\s+)?(?:function|const)\s+"

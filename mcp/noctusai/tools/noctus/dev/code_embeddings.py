@@ -632,6 +632,64 @@ def code_neighbors(
     return [d for _, d in scored[:top_k]]
 
 
+def neighbor_index(rows: list[tuple[str, int, str, str, str, list[float]]]):
+    """`f(path, symbol_name="", top_k=5)` with `code_neighbors` semantics, vectorized.
+
+    `code_neighbors` scores one anchor against every row in pure Python
+    (1536 multiply-adds per pair); a whole-corpus recurrence scan calls it once
+    per anchor, i.e. O(N^2 x dim) interpreter work — 65 s of the 6-minute
+    compliance scan (2026-11-05). This builds the normalised matrix ONCE and
+    scores an anchor with one matvec. Same anchor resolution (first matching
+    row), same self-exclusion, same stable score-desc order; falls back to the
+    pure-Python path when numpy is missing or the vectors are ragged.
+    """
+    def _slow(path: str, symbol_name: str = "", top_k: int = 5) -> list[dict]:
+        return code_neighbors(path, symbol_name=symbol_name, top_k=top_k, rows=rows)
+
+    try:
+        import numpy as np
+        mat = np.asarray([r[5] for r in rows], dtype=np.float64)
+        if mat.ndim != 2:
+            return _slow
+    except Exception:  # noqa: BLE001 — numpy absent / ragged vectors => exact slow path
+        return _slow
+
+    norms = np.linalg.norm(mat, axis=1)
+    first_by_path: dict[str, int] = {}
+    first_by_key: dict[tuple[str, str], int] = {}
+    idx_by_path: dict[str, list[int]] = {}
+    idx_by_key: dict[tuple[str, str], list[int]] = {}
+    for i, (p, _idx, sym, _k, _t, _v) in enumerate(rows):
+        first_by_path.setdefault(p, i)
+        first_by_key.setdefault((p, sym), i)
+        idx_by_path.setdefault(p, []).append(i)
+        idx_by_key.setdefault((p, sym), []).append(i)
+
+    def _fast(path: str, symbol_name: str = "", top_k: int = 5) -> list[dict]:
+        if symbol_name:
+            a = first_by_key.get((path, symbol_name))
+            excluded = idx_by_key.get((path, symbol_name), [])
+        else:
+            a = first_by_path.get(path)
+            excluded = idx_by_path.get(path, [])
+        if a is None:
+            return []
+        denom = norms * norms[a]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scores = np.where(denom == 0, 0.0, (mat @ mat[a]) / denom)
+        keep = np.ones(len(rows), dtype=bool)
+        keep[excluded] = False
+        cand = np.flatnonzero(keep)
+        order = cand[np.argsort(-scores[cand], kind="stable")][:top_k]
+        return [
+            {"path": rows[i][0], "symbol_name": rows[i][2], "kind": rows[i][3],
+             "chunk_idx": rows[i][1], "score": float(scores[i])}
+            for i in order
+        ]
+
+    return _fast
+
+
 def code_similar_to_text(text: str, top_k: int = 5, kind: str | None = None) -> list[dict]:
     """Find code symbols semantically similar to free text.
 
