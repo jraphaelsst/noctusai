@@ -3,6 +3,7 @@
 -- Owner decisions (2026-11-02): the app (ex-`monica`, now `nosnolimiar`) and its data live in the org
 -- "Nós no Limiar" (company); the org "Mônica Tangerino" (individual, created by her signup) is DELETED.
 -- Mônica's user account is KEPT: its home org becomes Nós no Limiar (owner).
+-- Owner decision (2026-11-05): ONE branding per org -- MT's marca + its Studio chat are DELETED, never moved to NnL.
 --
 --   Nós no Limiar    fa80a1e0-1bcd-4c65-8a37-2162e8ffa688   KEEP  (target)
 --   Mônica Tangerino ad6ec2e2-b470-4044-884e-6345e4fe66d4   DELETE
@@ -11,8 +12,8 @@
 -- container is stopped. Run as service role / owner, ONE session, via the Supabase SQL editor or the MCP.
 -- Run cutover-dry-run.sql FIRST (identical, ends in ROLLBACK).
 -- Triggers stay ON for the user/org statements (the noctus_users -> org_memberships mirror + auth metadata
--- sync must fire). The social_wiring moves run under session_replication_role = replica (composite
--- (org_id, id) FKs are not deferrable and have no ON UPDATE CASCADE); integrity is re-checked in section 7.
+-- sync must fire). social_wiring rows of MT are DELETED, not moved (owner 2026-11-05, one branding per org —
+-- section 3); integrity is re-checked in section 7.
 
 BEGIN;
 
@@ -86,22 +87,46 @@ BEGIN
   END LOOP;
 END $$;
 
--- ── 3 · social_wiring.*: the MT brand + the one Studio chat -> Nós no Limiar (no longer primary) ───────────────
-SET LOCAL session_replication_role = replica;
-UPDATE social_wiring.marcas SET is_primary = false
- WHERE org_id = 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';   -- NnL already has its own primary brand (uq_marcas_one_primary_per_org)
+-- ── 3 · social_wiring.*: DELETE MT's brand + its one Studio chat — NOT moved (owner 2026-11-05: "one branding
+--    per org"; "delete monica, let's keep only nos no limiar"). NnL keeps exactly ONE marca (its own primary).
+--    Max-count guarded (live inventory 2026-11-05: cs_chat_mensagens 1, cs_chat_conversas 1, marcas 1); more -> abort.
+--    marcas has no archive column, so "archive" = this audited delete. Children first; nothing may cascade/SET NULL
+--    silently off the marca (any other marca_id reference aborts).
 DO $$
-DECLARE t record;
+DECLARE
+  v_mt uuid := 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
+  v_mk uuid := '07798cf9-01aa-465e-aa11-49f3a0a18386';
+  v_n int; v_left text := ''; t record;
 BEGIN
+  IF (SELECT count(*) FROM social_wiring.marcas WHERE org_id = v_mt) <> 1
+     OR NOT EXISTS (SELECT 1 FROM social_wiring.marcas WHERE id = v_mk AND org_id = v_mt) THEN
+    RAISE EXCEPTION 'social_wiring: MT must hold exactly its one marca %', v_mk;
+  END IF;
+  DELETE FROM social_wiring.cs_chat_mensagens WHERE org_id = v_mt; GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n > 1 THEN RAISE EXCEPTION 'social_wiring: % cs_chat_mensagens for MT (max 1 allowlisted) -- re-inventory', v_n; END IF;
+  RAISE NOTICE 'social_wiring: deleted % cs_chat_mensagens of MT', v_n;
+  DELETE FROM social_wiring.cs_chat_conversas WHERE org_id = v_mt; GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n > 1 THEN RAISE EXCEPTION 'social_wiring: % cs_chat_conversas for MT (max 1 allowlisted) -- re-inventory', v_n; END IF;
+  RAISE NOTICE 'social_wiring: deleted % cs_chat_conversas of MT', v_n;
+  FOR t IN SELECT c.table_name FROM information_schema.columns c
+             JOIN information_schema.tables x ON x.table_schema = c.table_schema AND x.table_name = c.table_name AND x.table_type = 'BASE TABLE'
+            WHERE c.table_schema = 'social_wiring' AND c.column_name = 'marca_id'
+  LOOP
+    EXECUTE format('SELECT count(*) FROM social_wiring.%I WHERE marca_id = $1', t.table_name) INTO v_n USING v_mk;
+    IF v_n > 0 THEN v_left := v_left || format('%s=%s; ', t.table_name, v_n); END IF;
+  END LOOP;
+  IF v_left <> '' THEN RAISE EXCEPTION 'social_wiring: rows still reference the MT marca (would cascade/null): %', v_left; END IF;
+  DELETE FROM social_wiring.marcas WHERE id = v_mk AND org_id = v_mt; GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n <> 1 THEN RAISE EXCEPTION 'social_wiring: expected to delete 1 MT marca, deleted %', v_n; END IF;
+  RAISE NOTICE 'social_wiring: deleted MT marca % (Mônica Tangerino)', v_mk;
   FOR t IN SELECT c.table_name FROM information_schema.columns c
              JOIN information_schema.tables x ON x.table_schema = c.table_schema AND x.table_name = c.table_name AND x.table_type = 'BASE TABLE'
             WHERE c.table_schema = 'social_wiring' AND c.column_name = 'org_id'
   LOOP
-    EXECUTE format('UPDATE social_wiring.%I SET org_id = %L WHERE org_id = %L', t.table_name,
-                   'fa80a1e0-1bcd-4c65-8a37-2162e8ffa688', 'ad6ec2e2-b470-4044-884e-6345e4fe66d4');
+    EXECUTE format('SELECT count(*) FROM social_wiring.%I WHERE org_id = $1', t.table_name) INTO v_n USING v_mt;
+    IF v_n > 0 THEN RAISE EXCEPTION 'social_wiring: %.org_id still holds % MT row(s) -- re-inventory', t.table_name, v_n; END IF;
   END LOOP;
 END $$;
-SET LOCAL session_replication_role = origin;
 
 -- ── 4 · erp.profiles of MT (no FK -> would be orphaned by the org delete; NnL has its own agency profile) ──────
 DELETE FROM erp.profiles WHERE org_id = 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
@@ -144,8 +169,9 @@ END $$;
 --                                                   owner membership already exists and is asserted in sections 0 and 7).
 --   public.platform_org_selections.target_org_id 13 \ platform-staff org-picker session history (service-role only,
 --   public.platform_org_selections.home_org_id    4 /  ephemeral) that names MT; carries no business data.
--- NOT allowlisted because moved/purged earlier: noctus_users (1, step 1), nosnolimiar.* and social_wiring.*
--- (cs_chat_conversas 1 / cs_chat_mensagens 1 / marcas 1 -- steps 2-3), audit_logs (5, step 5), notifications (3, 5b).
+-- NOT allowlisted because moved/purged earlier: noctus_users (1, step 1), nosnolimiar.* (moved, step 2),
+-- social_wiring.* (DELETED, step 3: cs_chat_mensagens 1 / cs_chat_conversas 1 / marcas 1), audit_logs (5, step 5),
+-- notifications (3, 5b).
 DO $$
 DECLARE
   v_mt  constant uuid := 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
@@ -233,8 +259,9 @@ BEGIN
   END IF;
   EXECUTE 'SELECT count(*) FROM nosnolimiar.fin_categories WHERE org_id = $1' INTO v_n USING v_nnl;
   IF v_n < 30 THEN RAISE EXCEPTION 'post-check: Nós no Limiar has only % fin_categories (expected >= 30)', v_n; END IF;
-  IF (SELECT count(*) FROM social_wiring.marcas WHERE org_id = v_nnl AND is_primary) <> 1 THEN
-    RAISE EXCEPTION 'post-check: Nós no Limiar must have exactly one primary marca';
+  IF (SELECT count(*) FROM social_wiring.marcas WHERE org_id = v_nnl) <> 1
+     OR (SELECT count(*) FROM social_wiring.marcas WHERE org_id = v_nnl AND is_primary) <> 1 THEN
+    RAISE EXCEPTION 'post-check: Nós no Limiar must have exactly ONE marca, and it primary (one branding per org)';
   END IF;
   RAISE NOTICE 'post-checks OK: no references to the deleted org; fin_categories(NnL)=%', v_n;
 END $$;

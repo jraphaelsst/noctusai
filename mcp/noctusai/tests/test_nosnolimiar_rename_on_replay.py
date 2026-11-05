@@ -53,6 +53,63 @@ def test_dry_run_body_is_byte_identical_to_cutover():
     assert real[-2] == "COMMIT;" and dry[-2].startswith("ROLLBACK;")
 
 
+# ---------------------------------------------------------------- cutover section 3: one branding per org --------
+# Owner 2026-11-05: MT's marca + its Studio chat are DELETED (never moved to NnL); NnL keeps exactly ONE marca.
+_MK = "07798cf9-01aa-465e-aa11-49f3a0a18386"
+_NNL_MK = "06c35543-1a90-44eb-ab6f-e111e879e3f4"
+_SW_FIXTURE = f"""
+CREATE SCHEMA IF NOT EXISTS social_wiring;
+CREATE TABLE social_wiring.marcas (id uuid PRIMARY KEY, org_id uuid NOT NULL, name text, is_primary boolean NOT NULL DEFAULT false);
+CREATE TABLE social_wiring.cs_chat_conversas (id serial PRIMARY KEY, org_id uuid NOT NULL,
+    marca_id uuid NOT NULL REFERENCES social_wiring.marcas(id) ON DELETE CASCADE);
+CREATE TABLE social_wiring.cs_chat_mensagens (id serial PRIMARY KEY, org_id uuid NOT NULL,
+    conversa_id int NOT NULL REFERENCES social_wiring.cs_chat_conversas(id) ON DELETE CASCADE);
+CREATE TABLE social_wiring.campanhas (id serial PRIMARY KEY, org_id uuid NOT NULL,
+    marca_id uuid REFERENCES social_wiring.marcas(id) ON DELETE SET NULL);
+INSERT INTO social_wiring.marcas VALUES ('{_MK}', '{_MT}', 'Mônica Tangerino', true), ('{_NNL_MK}', '{_NNL}', 'Nós no Limiar', true);
+INSERT INTO social_wiring.cs_chat_conversas (org_id, marca_id) VALUES ('{_MT}', '{_MK}');
+INSERT INTO social_wiring.cs_chat_mensagens (org_id, conversa_id) VALUES ('{_MT}', 1);
+"""
+_SW_AFTER = f"""
+DO $$ BEGIN
+  IF (SELECT count(*) FROM social_wiring.marcas WHERE org_id = '{_MT}') <> 0 THEN RAISE EXCEPTION 'MT marca left'; END IF;
+  IF (SELECT count(*) FROM social_wiring.cs_chat_conversas) + (SELECT count(*) FROM social_wiring.cs_chat_mensagens) <> 0
+    THEN RAISE EXCEPTION 'MT chat left'; END IF;
+  IF (SELECT count(*) FROM social_wiring.marcas WHERE org_id = '{_NNL}') <> 1 THEN RAISE EXCEPTION 'NnL must keep exactly 1 marca'; END IF;
+END $$;
+"""
+
+
+def test_section3_deletes_mt_brand_never_moves_it(pglite):
+    sql = (_RENAME / "cutover.sql").read_text(encoding="utf-8")
+    sec3 = _section(sql, "-- ── 3 · social_wiring", "-- ── 4 ·")
+    assert "SET org_id" not in sec3, "section 3 must never MOVE social_wiring rows to NnL (one branding per org)"
+    steps = [
+        _step("sw_fixture", _SW_FIXTURE),
+        # a campanha pointing at MT's marca would be silently SET NULL -> abort (the DO is atomic: nothing deleted)
+        _step("fx_ref", f"INSERT INTO social_wiring.campanhas (org_id, marca_id) VALUES ('{_NNL}', '{_MK}');"),
+        _step("s3_ref", sec3),
+        # over the max-count cap -> abort
+        _step("fx_cap", "DELETE FROM social_wiring.campanhas;"
+                        f"INSERT INTO social_wiring.cs_chat_mensagens (org_id, conversa_id) VALUES ('{_MT}', 1);"),
+        _step("s3_cap", sec3),
+        # an MT row in another org_id table (not the marca chain) -> abort
+        _step("fx_stray", f"DELETE FROM social_wiring.cs_chat_mensagens WHERE id = 2;"
+                          f"INSERT INTO social_wiring.campanhas (org_id) VALUES ('{_MT}');"),
+        _step("s3_stray", sec3),
+        _step("fx_clean", "DELETE FROM social_wiring.campanhas;"),
+        _step("s3_ok", sec3),
+        _step("after", _SW_AFTER),
+    ]
+    res = mr._run_harness(steps, 600, None)
+    assert _failures(res, "sw_fixture") == ""
+    assert "would cascade/null" in _failures(res, "s3_ref")
+    assert "max 1" in _failures(res, "s3_cap")
+    assert "campanhas" in _failures(res, "s3_stray") and "still holds" in _failures(res, "s3_stray")
+    assert _failures(res, "s3_ok") == ""
+    assert _failures(res, "after") == ""
+
+
 # ---------------------------------------------------------------- cutover section 6a inventory --------------------
 _INV_FIXTURE = f"""
 CREATE SCHEMA IF NOT EXISTS erp;
