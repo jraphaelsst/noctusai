@@ -65,6 +65,35 @@ Greppable one-liners (extract only the number, never dump the JSONL): `grep -m1 
 
 If engineer output quality drops on mechanical work, that's a **brief-tightness** signal (L5) before it's a model signal — under-specified briefs fail on any model.
 
+### 4·1 · Measured evidence (2026-11-04): Opus plans, Sonnet executes
+
+Owner-requested trial, scored on the shared rubric `RUBRIC_V1` (Q1–Q7, 0–4, weighted) and recorded in `slice-scores.ndjson`. Timing comes from the engineer's own `date +%s` or the FINAL task-notification `duration_ms`. Read the trend with `noctus.team.agent_metrics`.
+
+- **12 Sonnet slices** (Core Studio + learning loop) scored a mean q_weighted of **3.62**, ranging 3.45–3.875, with every slice ≥ 3.0. First-pass yield was 6/10. Every rework was **minor**; there were 0 blockers and 0 majors. Each slice took 400–1,660 s and 180–290k tokens.
+- **Same-brief A/B** (one judgment-heavy slice, the same base commit, under the same load):
+
+  | | q_weighted | wall | tokens | list cost (90/10 in/out) |
+  |---|---|---|---|---|
+  | Opus 5.5 | **3.90** | 1,354 s | 201k | ~$1.13 |
+  | Sonnet 5.5 | 3.45 | **1,054 s** | **180k** | **~$0.50** |
+
+  The deciding gap: the brief said *latest* score rows. Sonnet averaged all of history, which makes the feature's own purpose (showing progress) invisible. Opus honoured the window and also applied fix-on-contact to the existing self-patching tests. List prices overstate the cost gap, because cache reads cost $0.20/MTok on both models.
+
+**What this changes in the escalation rule (§4 bullet 2).** Sonnet stays the default. Escalate to `model: opus` when the slice has any of these:
+1. **semantics hidden in one word** of the brief (a window, an ordering, "latest", "only", "per X");
+2. **a design choice the brief leaves open** (a new seam, a gate's exemption signal, a data-model shape);
+3. **expected fix-on-contact** in code next to the change.
+
+A slice that copies an existing shape (a guard, a keeper, a CLI flag, a renderer block) stays on Sonnet: those scored highest (3.8–3.875).
+
+**Recurring Sonnet misses, which every brief should pre-empt.** These are now also fed back automatically through the brief's `### Your recent misses` block:
+- patching our own module attributes in tests even when a seam exists (3 of 12 slices);
+- not re-running tests after a last-minute rename;
+- shipping a keeper without wiring it into a hook;
+- adding a tool param without registering it in `toolkit_freshness._MAPPED_PARAMS`.
+
+**Every slice is scored.** `task_branch integrate` refuses an unscored engineer slice (`refused="slice_unscored"`; escape `accept_unscored="<reason>"`), and `check_engineer_slice_scored` is the pre-push backstop. A model-choice verdict without a same-brief baseline is not a verdict (`noc-learn-refine`).
+
 ---
 
 ## 4a · Cache-first reflex — what makes the dispatch worth doing

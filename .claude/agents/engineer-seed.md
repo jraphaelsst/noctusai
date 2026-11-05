@@ -11,6 +11,7 @@ tools: Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*
 # executes). The architect escalates a genuinely ambiguous / architectural / judgment-heavy task to
 # Opus per-dispatch via the Agent tool's `model: opus` param (overrides this line). Hard-judgment work
 # must NOT ride Sonnet silently — that's a brief-scoping decision the architect makes at dispatch.
+# Escalation triggers + measured A/B (2026-11-04): dispatch-engineer-tuning.md §4·1.
 model: sonnet
 owns_kb: []
 ---
