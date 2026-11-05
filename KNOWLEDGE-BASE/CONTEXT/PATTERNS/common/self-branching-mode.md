@@ -115,7 +115,7 @@ This is **exactly [[branching-and-merging]] §10.2 Option A** with `dev` substit
 ### 4.2 Safety (the tool enforces, tests assert)
 - Safe git allowlist; **no banned token** (`reset`/`checkout`/`switch`/`restore`/`clean`/`merge`/`--force`/`--force-with-lease`/`-f`/`-D`) ⇒ can't force, reset, rewrite history, or switch the primary checkout.
 - **Dev-only push boundary** — every push dst MUST be `dev`; main/prod refused structurally; `NOCTUS_ALLOW_MAIN_PUSH` never set (this tool can't reach the sacred lines).
-- `cleanup` refuses a **dirty** worktree (no `--force`) ∧ refuses an **unmerged** branch (`-d` not `-D`) ⇒ never silently drops unintegrated work.
+- `cleanup` refuses a **dirty** worktree (no `--force`) ∧ refuses an **unmerged** branch (`-d` not `-D`) ⇒ never silently drops unintegrated work. "Merged" is ancestry OR content: a branch the merge queue rebased before landing (new shas, every patch-id on `origin/dev`, or an empty trial merge) counts as merged and is deleted with a proven-safe `-D`; `landed` uses the same proof and refuses, worktree untouched, naming `missing_commits` when content is genuinely absent.
 - `cleanup` **learns before deleting**: surfaces the learnings checkpoint + sequences a mole worktree-sweep ⇒ a precise teardown can no longer silently lose the worktree's durable knowledge. It writes **no** salvage row since 2026-09-24 — it only ever deletes a branch already merged into `origin/dev`, which is itself the recovery pointer; those rows were 373 `chore(salvage)` dev commits of noise (`KB § PATTERNS/common/ledger-store.md`).
 - Rebase conflict ⇒ **abort + surface** (no silent auto-resolve, no half-rebase left behind).
 

@@ -75,6 +75,13 @@ Code lives in:
    `merge-queue` commit status: `pending` (in a batch under test), `success`
    (landed as `<dev sha>`), or `failure` (ejected, with the reason). Silence is
    never a pass. `landed` reports `queued` until a verdict exists.
+   The steward may REBASE an entry before landing it (new shas, same content),
+   so once landed, `task_branch` decides "merged" by CONTENT, not ancestry:
+   every branch commit's patch-id is on `origin/dev` (`git cherry`), or a trial
+   merge of the branch into dev yields dev's own tree. Equivalent ⇒ pointer,
+   primary FF, worktree + branch teardown (the branch is then force-deleted,
+   safe because the content is proven on dev). Not equivalent ⇒ refused with
+   `missing_commits`, worktree untouched (it is never rebased or half-applied).
 3. **A batch is judged as one tree.** File-disjoint is not effect-disjoint
    (`methodology-execution-discipline.md`). The queue tests exactly the tree
    that `dev` will become.

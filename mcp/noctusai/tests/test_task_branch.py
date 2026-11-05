@@ -81,6 +81,10 @@ class FakeGit:
                 return (0, STASH_SHA + "\n", "")
             sha = self.refs.get(ref)
             return (0, sha + "\n", "") if sha else (1, "", "bad ref")
+        if sub == "cherry":      # cherry dev branch: '-' = patch on dev, '+' = missing
+            return (0, "- c1\n" if getattr(self, "cherry_equiv", False) else "+ c1\n", "")
+        if sub == "merge-tree":  # trial merge differs from dev's tree
+            return (1, "", "")
         if sub == "merge-base":  # merge-base --is-ancestor a b
             return (0 if self.anc(cmd[3], cmd[4]) else 1, "", "")
         if sub == "log":         # log --oneline a..b

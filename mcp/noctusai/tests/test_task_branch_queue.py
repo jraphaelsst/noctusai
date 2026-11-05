@@ -71,11 +71,12 @@ def test_landed_dry_run_only_reports():
     assert not [c for c, _ in fake.calls if "rebase" in c]
 
 
-def test_landed_confirm_replays_onto_dev_then_runs_the_tail():
+def test_landed_confirm_decides_by_content_then_runs_the_tail():
     fake = _fake()
+    fake.cherry_equiv = True  # every patch is on dev (queue rebased the entry)
     res = _landed(fake, "landed", keep_worktree=True)
     assert res["status"] == "integrated" and res["exit_code"] == 0
-    assert [c for c, _ in fake.calls if c[:2] == ["git", "rebase"]]  # patches dropped onto dev
+    assert not [c for c, _ in fake.calls if c[:2] == ["git", "rebase"]]  # worktree never touched
     assert "primary_ff" in res and "pointer" in res
     assert fake.pushes() == []  # landing already happened on CI
 

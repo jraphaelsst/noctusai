@@ -111,6 +111,8 @@ logger = logging.getLogger(__name__)
 _ALLOWED_GIT = frozenset(
     {"fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "status",
      "worktree", "rebase", "push", "branch",
+     # read-only content-equivalence proof for a queue-rebased landing
+     "cherry", "merge-tree",
      # integrate-time mechanisms (migration renumber, KB-count regen) commit
      # on the branch itself; path-scoped add/mv/commit rewrite no history.
      "mv", "add", "commit"}
@@ -224,6 +226,25 @@ def _is_ancestor(git, a: str, b: str) -> bool:
     """True iff commit `a` is an ancestor of (or equal to) `b`."""
     rc, _o, _e = git("merge-base", "--is-ancestor", a, b)
     return rc == 0
+
+
+def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
+    """Is `branch`'s CONTENT already on `dev_ref` even though its shas are not
+    ancestors (the merge queue rebased the entry before landing it)?
+
+    Proof 1: `git cherry` — every branch commit's patch-id is on dev (no `+`).
+    Proof 2: a trial merge of the branch into dev yields dev's own tree (the
+    branch adds nothing; covers conflict-resolved / squashed replays).
+    Returns (equivalent, commits_missing_from_dev)."""
+    rc, out, _e = git("cherry", dev_ref, branch)
+    missing = [ln[2:].strip() for ln in out.splitlines() if ln.startswith("+")] if rc == 0 else []
+    if rc == 0 and not missing:
+        return True, []
+    rc1, tree, _e1 = git("merge-tree", "--write-tree", dev_ref, branch)
+    rc2, devtree, _e2 = git("rev-parse", f"{dev_ref}^{{tree}}")
+    if rc1 == 0 and rc2 == 0 and tree.strip().splitlines()[:1] == [devtree.strip()]:
+        return True, []
+    return False, missing
 
 
 def _commits(git, a: str, b: str, cwd: str | None = None) -> list[str]:
@@ -2327,12 +2348,15 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
                 "message": f"{branch} LANDED ({st.get('description')}). Pass confirm=True to run the post-landing tail."}
     abs_wt = _absolute_wt_path(wt_path, _resolve_primary_root(primary_root))
     if not _is_ancestor(git, head, dev):
-        rc, _o, err = git("rebase", f"{remote}/{dev_branch}", cwd=abs_wt)
-        if rc != 0:
-            git("rebase", "--abort", cwd=abs_wt)
-            return {**out, "status": "error", "exit_code": 1,
-                    "error": (f"{branch} landed but replaying it onto {remote}/{dev_branch} to mark it "
-                              f"merged failed: {err.strip()[:300]}. Worktree left as is.")}
+        # The queue may have REBASED the entry (new shas, same content): decide
+        # "merged" by content, never by ancestry, and never touch the worktree.
+        equivalent, missing = _content_on_dev(git, branch, f"{remote}/{dev_branch}")
+        if not equivalent:
+            return {**out, "status": "error", "exit_code": 1, "missing_commits": missing,
+                    "error": (f"{branch} reported landed but {len(missing)} commit(s) are NOT on "
+                              f"{remote}/{dev_branch} by content: {', '.join(missing[:8]) or '(diff non-empty)'}. "
+                              "Worktree left untouched; re-enqueue or integrate the missing work.")}
+        out["content_equivalent"] = True
     new_head = _resolve(git, branch)
     result = {**out, "status": "integrated", "exit_code": 0, "dev_sha": dev,
               "message": f"{branch} landed via the merge queue ({st.get('description')})."}
@@ -3421,6 +3445,10 @@ def task_branch(
     dev = _resolve(git, f"{remote}/{dev_branch}")
     head = _resolve(git, branch)
     merged = bool(dev and head and _is_ancestor(git, head, dev))
+    content_merged = False
+    if dev and head and not merged:
+        content_merged, _missing = _content_on_dev(git, branch, f"{remote}/{dev_branch}")
+        merged = content_merged
     if head and not merged:
         return {**base, "status": "blocked", "exit_code": 1, "dev_sha": dev, "branch_sha": head,
                 "reason": f"{branch} has commit(s) not on {remote}/{dev_branch} — integrate first "
@@ -3481,7 +3509,14 @@ def task_branch(
                     "error": f"worktree force-remove failed (gitignored-only path): "
                              f"{err2.strip() or _o2.strip()}"}
     git("worktree", "prune")
-    rc, out, err = git("branch", "-d", branch)
+    # Content-merged (rebased by the queue): -d refuses on ancestry; the content
+    # is proven on dev, so the force-delete is safe.
+    if content_merged:
+        # fixed argv, outside `_git` (which bans -D): reached ONLY after
+        # `_content_on_dev` proved every change is on origin/<dev>.
+        rc, out, err = runner(["git", "branch", "-D", branch])
+    else:
+        rc, out, err = git("branch", "-d", branch)
     if rc != 0:
         return {**plan, "status": "partial", "exit_code": 1, "worktree_removed": True,
                 "salvage_ledger": salvage_ledger,
