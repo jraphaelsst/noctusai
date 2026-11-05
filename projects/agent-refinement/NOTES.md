@@ -39,6 +39,13 @@
 - Re-verify: NFS-e Nacional new date 01/11/2026 (CGSN 191/2026, professional sources only); IT-CNAE Fator R practice; split-payment date; NBC TG final CFC texts.
 - Wave-3 todo: compliance-reviewer accessibility pointer → `KB § PATTERNS/frontend/frontend-craft-canon.md` (now exists); compliance.py ~19706 message still names skill-scout as meta (minimal fix, own commit); test_agent_kb_alignment fixture uses orchestrator-operator (retiring!) → repoint; skills `version:` → `metadata.version` fleet decision; TaxRegime lacks `real`, no IBS/CBS rows, no subscription ledger (finance organ proposals).
 
+## Wave 2 — slice returns
+
+### W2-S4 tooling-engineer — merged
+- Commit 50ea4a7be. `tooling/tooling-craft-canon.md` 588 lines; agent 62 lines (sonnet + Opus comment). Roster: CONTEXTUALIZE.md §4 executors line (+1 name; eight-way-sync demanded it).
+- Transfers requested (Wave 3): architect → mcp-tool-conventions, mcp-first-scripts, dev-toolkit-scaffolders, noc-graph, component-bundle-tool, (component-list-and-validation weaker); devops → harness-mods, cache-portable-architecture, cache-as-agent-tool, vectorize-embed-cache-framework, memory-embeddings, corpus-embeddings, push-time-embedding-gate (ci-embedding-cache-gate only if noctusai-3d agrees); unowned allowlist → keeper-pattern-cache, keeper-check-before-docing, cache-locking-discipline, cache-auto-freshness, kb-vector-search, code-embeddings, vector-baseline, code-recurrence-baseline, vector-cost-tracking, vector-calibration, cache-telemetry, unified-query, absorption-tracking, extractor-correctness-vs-mirror, engineer-output-linter, auto-author-scaffolds, doc-to-code-drift, scan-repetition-semantic. Keep unowned: cache-family-index, gate-methodology-sync, doc-staleness-gate.
+- Drift (toolkit follow-ups): server.py:268 claims retired legacy aliases still registered; stale docstrings (tools/__init__, dev/__init__, keeper_pattern_cache "~8000 lines" — real 26,079 lines / 178 check_*); mcp-tool-conventions §2 vs server.py registration; scaffold_mcp_tool emits connector-leaf shape not FastMCP register(); cache_backend.py:89-92 silent `except … pass`; gate_sweep has no cli flag; cli.py allow_abbrev default; no tool declares MCP annotations/outputSchema; kb_search/memory_search returned EMPTY (embedding provider unreachable?).
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
