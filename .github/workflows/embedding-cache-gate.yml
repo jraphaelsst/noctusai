@@ -102,7 +102,11 @@ jobs:
             libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
       - name: Install dependencies
-        run: pip install -r mcp/noctusai/requirements.txt
+        # Relative to mcp/noctusai: requirements.txt carries `-e ../../seed/lib/backend`
+        # (resolved against pip's CWD, not the file) — installing from the repo root
+        # failed every run with "not a valid editable requirement" (root cause of the
+        # gate's zero-green history). Same shape as test.yml.
+        run: (cd mcp/noctusai && pip install -r requirements.txt)
 
       - name: Check cache reachability
         # continue-on-error: sibling slice (PGV-COMPOSE) ships the CLI flag
@@ -145,7 +149,7 @@ jobs:
           # vs. soft-fail (tunnel skipped on fork PR = sqlite fallback,
           # advisory only). The flag is consumed by `continue-on-error`
           # expressions on the gate steps below.
-          echo "CACHE_TUNNEL_UP=1" >> $GITHUB_ENV
+          echo "CACHE_TUNNEL_UP=1" >> "$GITHUB_ENV"
 
       - name: Connect to prod cache
         # Exports the backend selector so all subsequent steps use the shared
@@ -153,8 +157,8 @@ jobs:
         # Until the secrets above are set the tunnel step is skipped → backend
         # falls back to local SQLite and subsequent steps continue-on-error.
         run: |
-          echo "NOCTUS_CACHE_BACKEND=postgres" >> $GITHUB_ENV
-          echo "NOCTUS_CACHE_POSTGRES_DSN=${{ secrets.NOCTUS_CACHE_POSTGRES_DSN }}" >> $GITHUB_ENV
+          echo "NOCTUS_CACHE_BACKEND=postgres" >> "$GITHUB_ENV"
+          echo "NOCTUS_CACHE_POSTGRES_DSN=${{ secrets.NOCTUS_CACHE_POSTGRES_DSN }}" >> "$GITHUB_ENV"
 
       - name: Run KB vector canonical gate
         # Hard-fail when the prod cache tunnel is UP (real validation against
@@ -177,7 +181,7 @@ jobs:
         run: >
           python mcp/noctusai/cli.py
           --vector-costs-total
-          --since=${{ github.event.pull_request.created_at }}
+          "--since=${{ github.event.pull_request.created_at }}"
 
       - name: Close SSH tunnel
         # Always-run cleanup — tear down the tunnel even on prior step failure
