@@ -18,6 +18,8 @@ const m = {
   finalizar: vi.fn(),
   audio: vi.fn(),
 };
+// Partial mock: everything real except the recorder, so a new lib export consumed
+// in the import chain (e.g. createOpenInProduct) never breaks this file.
 vi.mock("@noctusai/lib", async () => ({
   ...(await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib")),
   VoiceAnswerInput: (p: any) => (

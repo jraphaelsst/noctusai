@@ -2,10 +2,9 @@
  * Route test: the seed finance organ page mounted at `/financeiro` -- the shell renders its section nav, the section
  * follows the URL, and the page talks to the `/api/finance` API through the product's `api` client.
  */
-/// <reference types="@testing-library/jest-dom" />
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import "@testing-library/jest-dom";
+import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 

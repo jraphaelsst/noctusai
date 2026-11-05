@@ -192,7 +192,7 @@ export function ContratoModalidadeSection({
             </p>
           )}
           {onMarcarAssinado && (
-            <_MarcarAssinadoDialog
+            <MarcarAssinadoDialog
               contratoId={id}
               open={dialogAberto}
               onOpenChange={setDialogAberto}
@@ -210,7 +210,7 @@ export function ContratoModalidadeSection({
   );
 }
 
-function _MarcarAssinadoDialog({
+function MarcarAssinadoDialog({
   contratoId,
   open,
   onOpenChange,

@@ -15,6 +15,8 @@ vi.mock("@noctusai/lib/design-system", async () => ({
   ...(await vi.importActual<typeof import("@noctusai/lib/design-system")>("@noctusai/lib/design-system")),
   useEffectiveSSOContext: () => ({}),
 }));
+// Partial mock: everything real except the role check, so a new lib export
+// consumed in the import chain (e.g. createOpenInProduct) never breaks this file.
 vi.mock("@noctusai/lib", async () => ({
   ...(await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib")),
   isOrgAdmin: () => isAdminRef.current,

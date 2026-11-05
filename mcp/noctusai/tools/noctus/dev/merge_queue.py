@@ -1,0 +1,500 @@
+"""Merge queue — ONE serialized, batched, CI-verified path into `dev` (2026-11-05).
+
+Why (owner-ordered refinement after the 2026-11-04/05 julia-line integrate storm):
+every `task_branch integrate` ran the full merged-tip gate set ON THE OWNER'S
+LAPTOP, ~6 sessions shared 2 hardware slots, a single integrate waited 2h20m, and
+each result went stale the moment a peer pushed (rebase -> re-run). Industry
+practice (Bors "not rocket science rule", GitHub/GitLab merge trains, Uber
+SubmitQueue) is a queue that tests each change against the state `dev` WILL have,
+on CI runners, never on developer machines. GitHub's native merge queue is not
+available to a user-owned repository, so this is a small Bors-shaped queue on
+GitHub Actions. KB § PATTERNS/devops/merge-queue.md.
+
+Shape
+-----
+* ENQUEUE (local, `task_branch action='enqueue'`): rebase onto origin/dev, the
+  cheap local keepers (pre-push: doc-staleness, branch-tree, migration renumber),
+  then push the branch to `refs/heads/mq/<slug>--<sha7>`. No local merged-tip
+  gates — CI is the verdict.
+* DRAIN (CI, `.github/workflows/merge-queue.yml`, concurrency-serialized): take
+  the oldest `mq/*` entries (up to `batch_limit`), compose them onto `dev` in a
+  scratch worktree (fast-forward / rebase / `--no-ff` merge for entries that
+  carry merge commits), eject an entry that conflicts or adds a duplicate
+  migration number, push the candidate to `mq-candidate/<run>-<n>`, dispatch the
+  full `Tests & Build` on it, wait. Green -> fast-forward `dev` to the candidate
+  (a ledger-only `project-history/**/*.ndjson` advance of dev meanwhile is
+  rebased over without a re-test — the same predicate `test.yml` paths-ignore
+  uses). Red -> retry the failed jobs once (flake guard), then halve the batch
+  (bisection): a batch of one that is red is ejected with its failing jobs.
+* VERDICT: a commit status `merge-queue` on the ENQUEUED sha (success = landed,
+  description names the dev sha; failure = ejected + why). `task_branch
+  action='landed'` reads it and runs the post-landing tail.
+
+Stdlib only: this module runs on a bare CI runner with git + gh.
+Invariant: `dev` only moves to a sha whose `Tests & Build` run is green (or a
+ledger-only rebase of one). That is what makes "dev is green" true by
+construction instead of by discipline.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+QUEUE_PREFIX = "mq/"
+CANDIDATE_PREFIX = "mq-candidate/"
+STATUS_CONTEXT = "merge-queue"
+CI_WORKFLOW = "test.yml"
+DEFAULT_BATCH = 4
+LEDGER_ONLY_RE = re.compile(r"^project-history/.*\.ndjson$")
+MIGRATION_RE = re.compile(r"^(?P<dir>(?:products/[^/]+|seed)/.*?migrations)/(?P<num>\d+)[_-][^/]*\.sql$")
+# Path-scoped workflows that normally fire on a push to dev. A queue landing is a
+# GITHUB_TOKEN push, which GitHub deliberately does not turn into workflow runs,
+# so the queue dispatches them itself when the landed diff touches their paths.
+POST_LAND_DISPATCH: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("agents-secc-ci.yml", ("products/agents/", "seed/docker/",
+                            "scripts/infra/build-base-images.sh", ".github/workflows/agents-secc-ci.yml")),
+)
+# A queue ref is `mq/<slug>--<sha7>`; the slug is everything before the last `--`.
+ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
+
+Runner = Callable[..., "tuple[int, str, str]"]
+
+
+def _default_run(cmd: list[str], cwd: str | None = None, check: bool = False) -> tuple[int, str, str]:
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if check and p.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)} -> {p.returncode}: {p.stderr.strip()[:500]}")
+    return p.returncode, p.stdout, p.stderr
+
+
+@dataclass
+class Entry:
+    ref: str          # mq/<slug>--<sha7>
+    sha: str          # the enqueued tip
+    slug: str
+    committed_at: int  # tip committer date (enqueue rebases, so ~= enqueue time)
+
+
+@dataclass
+class Outcome:
+    landed: list[dict[str, Any]] = field(default_factory=list)
+    ejected: list[dict[str, Any]] = field(default_factory=list)
+    rounds: list[dict[str, Any]] = field(default_factory=list)
+
+
+# ── pure helpers (unit-tested) ───────────────────────────────────────────────
+
+def parse_entry(ref: str, sha: str, committed_at: int) -> Entry | None:
+    name = ref[len(QUEUE_PREFIX):] if ref.startswith(QUEUE_PREFIX) else None
+    if not name:
+        return None
+    m = ENTRY_RE.match(name)
+    slug = m.group("slug") if m else name
+    return Entry(ref=ref, sha=sha, slug=slug, committed_at=committed_at)
+
+
+def order_entries(entries: list[Entry]) -> list[Entry]:
+    """FIFO by enqueue time (tip committer date), ref name as the tiebreak."""
+    return sorted(entries, key=lambda e: (e.committed_at, e.ref))
+
+
+def is_ledger_only(paths: list[str]) -> bool:
+    paths = [p for p in paths if p.strip()]
+    return bool(paths) and all(LEDGER_ONLY_RE.match(p) for p in paths)
+
+
+def migration_numbers(paths: list[str]) -> dict[tuple[str, str], list[str]]:
+    """{(migrations_dir, number-as-int-string): [files]} for every migration path."""
+    out: dict[tuple[str, str], list[str]] = {}
+    for p in paths:
+        m = MIGRATION_RE.match(p.strip())
+        if m:
+            out.setdefault((m.group("dir"), str(int(m.group("num")))), []).append(p.strip())
+    return out
+
+
+def new_migration_collisions(before: list[str], after: list[str]) -> list[dict[str, Any]]:
+    """Duplicate migration numbers present in `after` but not already in `before`
+    (pre-existing duplicates, e.g. SW 005, are history — never this entry's fault)."""
+    old = {k for k, v in migration_numbers(before).items() if len(v) > 1}
+    return [{"dir": d, "number": n, "files": sorted(files)}
+            for (d, n), files in sorted(migration_numbers(after).items())
+            if len(files) > 1 and (d, n) not in old]
+
+
+def next_batch_limit(current: int, batch_size: int, green: bool, default: int = DEFAULT_BATCH) -> int:
+    """Bisection: a red batch of N>1 retries with its first half; green resets."""
+    if green:
+        return default
+    return max(1, (batch_size + 1) // 2) if batch_size > 1 else 1
+
+
+def post_land_workflows(paths: list[str]) -> list[str]:
+    return [wf for wf, prefixes in POST_LAND_DISPATCH
+            if any(p.startswith(prefixes) for p in paths)]
+
+
+def status_description(text: str) -> str:
+    return text if len(text) <= 140 else text[:137] + "..."
+
+
+# ── the queue against a real git/gh ──────────────────────────────────────────
+
+class Queue:
+    def __init__(self, repo: str, remote: str = "origin", dev: str = "dev",
+                 run: Runner = _default_run, run_url: str = "", run_id: str = "local",
+                 poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
+                 workdir: str | None = None, log: Callable[[str], None] = print):
+        self.repo, self.remote, self.dev = repo, remote, dev
+        self.run, self.run_url, self.run_id = run, run_url, run_id
+        self.poll_s, self.timeout_s, self.sleep = poll_s, timeout_s, sleep
+        self.workdir = workdir or os.getcwd()
+        self.log = log
+
+    # git plumbing ------------------------------------------------------------
+    def git(self, *args: str, cwd: str | None = None, check: bool = True) -> str:
+        rc, out, err = self.run(["git", *args], cwd=cwd or self.workdir)
+        if check and rc != 0:
+            raise RuntimeError(f"git {' '.join(args)} failed ({rc}): {err.strip()[:400]}")
+        return out.strip()
+
+    def fetch(self) -> None:
+        self.git("fetch", "--prune", self.remote,
+                 f"+refs/heads/{self.dev}:refs/remotes/{self.remote}/{self.dev}",
+                 f"+refs/heads/{QUEUE_PREFIX}*:refs/remotes/{self.remote}/{QUEUE_PREFIX}*")
+
+    def dev_sha(self) -> str:
+        return self.git("rev-parse", f"refs/remotes/{self.remote}/{self.dev}")
+
+    def entries(self) -> list[Entry]:
+        out = self.git("for-each-ref", "--format=%(refname)%09%(objectname)%09%(committerdate:unix)",
+                       f"refs/remotes/{self.remote}/{QUEUE_PREFIX}")
+        found = []
+        for line in out.splitlines():
+            ref, sha, ts = line.split("\t")
+            short = ref[len(f"refs/remotes/{self.remote}/"):]
+            e = parse_entry(short, sha, int(ts or 0))
+            if e:
+                found.append(e)
+        return order_entries(found)
+
+    def changed_paths(self, a: str, b: str) -> list[str]:
+        return [p for p in self.git("diff", "--name-only", a, b).splitlines() if p.strip()]
+
+    def tree_paths(self, sha: str) -> list[str]:
+        return self.git("ls-tree", "-r", "--name-only", sha).splitlines()
+
+    # github plumbing ---------------------------------------------------------
+    def gh(self, *args: str, check: bool = True) -> str:
+        rc, out, err = self.run(["gh", *args], cwd=self.workdir)
+        if check and rc != 0:
+            raise RuntimeError(f"gh {' '.join(args)} failed ({rc}): {err.strip()[:400]}")
+        return out.strip()
+
+    def set_status(self, sha: str, state: str, description: str) -> None:
+        args = ["api", "-X", "POST", f"repos/{self.repo}/statuses/{sha}",
+                "-f", f"state={state}", "-f", f"context={STATUS_CONTEXT}",
+                "-f", f"description={status_description(description)}"]
+        if self.run_url:
+            args += ["-f", f"target_url={self.run_url}"]
+        self.gh(*args, check=False)
+
+    def delete_ref(self, ref: str) -> None:
+        self.git("push", self.remote, f":refs/heads/{ref}", check=False)
+
+    # compose -----------------------------------------------------------------
+    def compose(self, batch: list[Entry], base: str, wt: str) -> tuple[str, list[Entry], list[dict]]:
+        """Apply each entry onto `base` in a scratch worktree. Returns
+        (candidate_sha, applied_entries, ejections)."""
+        self.git("worktree", "add", "--detach", wt, base)
+        applied: list[Entry] = []
+        ejected: list[dict] = []
+        head = base
+        for e in batch:
+            before_tree = self.tree_paths(head)
+            merges = self.git("rev-list", "--merges", f"{head}..{e.sha}", cwd=wt)
+            rc_anc, _, _ = self.run(["git", "merge-base", "--is-ancestor", head, e.sha], cwd=wt)
+            how = ""
+            if rc_anc == 0:
+                self.git("merge", "--ff-only", "--quiet", e.sha, cwd=wt)
+                how = "fast-forward"
+            elif merges:
+                rc, out, err = self.run(["git", "merge", "--no-ff", "--no-edit", "-m",
+                                         f"mq: merge {e.slug}", e.sha], cwd=wt)
+                how = "merge"
+                if rc != 0:
+                    files = self.git("diff", "--name-only", "--diff-filter=U", cwd=wt, check=False)
+                    self.run(["git", "merge", "--abort"], cwd=wt)
+                    ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
+                    continue
+            else:
+                # Linear entry: replay its own commits (merge-base..tip) onto head.
+                mb = self.git("merge-base", head, e.sha, cwd=wt)
+                self.git("checkout", "--quiet", "--detach", e.sha, cwd=wt)
+                rc, out, err = self.run(["git", "rebase", "--quiet", "--onto", head, mb], cwd=wt)
+                how = "rebase"
+                if rc != 0:
+                    files = self.git("diff", "--name-only", "--diff-filter=U", cwd=wt, check=False)
+                    self.run(["git", "rebase", "--abort"], cwd=wt)
+                    self.git("checkout", "--quiet", "--detach", head, cwd=wt)
+                    ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
+                    continue
+            new_head = self.git("rev-parse", "HEAD", cwd=wt)
+            collisions = new_migration_collisions(before_tree, self.tree_paths(new_head))
+            if collisions:
+                self.git("checkout", "--quiet", "--detach", head, cwd=wt)
+                c = collisions[0]
+                ejected.append(self._eject_info(
+                    e, "migration_collision",
+                    f"migration number {c['number']} in {c['dir']} already taken: {c['files']} - renumber and re-enqueue"))
+                continue
+            head = new_head
+            applied.append(e)
+            self.log(f"  composed {e.slug} ({how}) -> {head[:9]}")
+        return head, applied, ejected
+
+    def _eject_info(self, e: Entry, kind: str, why: str) -> dict[str, Any]:
+        return {"slug": e.slug, "ref": e.ref, "sha": e.sha, "kind": kind, "why": why}
+
+    # CI ----------------------------------------------------------------------
+    def dispatch_and_wait(self, cand_ref: str, cand_sha: str) -> dict[str, Any]:
+        self.gh("workflow", "run", CI_WORKFLOW, "--ref", cand_ref, "-R", self.repo)
+        run_id = None
+        deadline = time.time() + self.timeout_s
+        for _ in range(30):
+            self.sleep(10)
+            out = self.gh("run", "list", "-R", self.repo, "--workflow", CI_WORKFLOW, "--branch", cand_ref,
+                          "--event", "workflow_dispatch", "--limit", "5", "--json", "databaseId,headSha", check=False)
+            runs = [r for r in json.loads(out or "[]") if r.get("headSha") == cand_sha]
+            if runs:
+                run_id = str(runs[0]["databaseId"])
+                break
+        if not run_id:
+            return {"verdict": "unavailable", "detail": "dispatched run never appeared"}
+        return self.wait_run(run_id, deadline, retried=False)
+
+    def wait_run(self, run_id: str, deadline: float, retried: bool) -> dict[str, Any]:
+        while time.time() < deadline:
+            out = self.gh("run", "view", run_id, "-R", self.repo, "--json", "status,conclusion,url,jobs", check=False)
+            try:
+                info = json.loads(out or "{}")
+            except json.JSONDecodeError:
+                info = {}
+            if info.get("status") == "completed":
+                failed = [j["name"] for j in info.get("jobs", [])
+                          if j.get("conclusion") not in ("success", "skipped", None)]
+                if info.get("conclusion") == "success":
+                    return {"verdict": "green", "run_id": run_id, "url": info.get("url")}
+                if not retried and failed:
+                    self.log(f"  run {run_id} red on {failed} - re-running failed jobs once (flake guard)")
+                    self.gh("run", "rerun", run_id, "--failed", "-R", self.repo, check=False)
+                    self.sleep(20)
+                    return self.wait_run(run_id, deadline, retried=True)
+                return {"verdict": "red", "run_id": run_id, "url": info.get("url"), "failed_jobs": failed}
+            self.sleep(self.poll_s)
+        return {"verdict": "timeout", "run_id": run_id}
+
+    # land --------------------------------------------------------------------
+    def land(self, cand_sha: str, tested_base: str, wt: str) -> tuple[bool, str]:
+        """FF dev to the candidate. Returns (landed, sha_on_dev)."""
+        for _ in range(5):
+            rc, _, err = self.run(["git", "push", self.remote, f"{cand_sha}:refs/heads/{self.dev}"], cwd=wt)
+            if rc == 0:
+                return True, cand_sha
+            self.fetch()
+            now = self.dev_sha()
+            moved = self.changed_paths(tested_base, now)
+            if not is_ledger_only(moved):
+                self.log(f"  dev moved with code ({len(moved)} paths) since the test base - re-test needed")
+                return False, ""
+            # ledger-only advance: replay the candidate over it, no re-test (test.yml paths-ignore).
+            self.git("checkout", "--quiet", "--detach", cand_sha, cwd=wt)
+            rc, _, err = self.run(["git", "rebase", "--quiet", "--onto", now, tested_base], cwd=wt)
+            if rc != 0:
+                self.run(["git", "rebase", "--abort"], cwd=wt)
+                return False, ""
+            cand_sha, tested_base = self.git("rev-parse", "HEAD", cwd=wt), now
+        return False, ""
+
+    # drain -------------------------------------------------------------------
+    def drain(self, batch_limit: int = DEFAULT_BATCH, max_rounds: int = 12, dry_run: bool = False) -> Outcome:
+        res = Outcome()
+        limit = batch_limit
+        for n in range(1, max_rounds + 1):
+            self.fetch()
+            queue = self.entries()
+            if not queue:
+                self.log("queue empty")
+                break
+            batch = queue[:limit]
+            base = self.dev_sha()
+            self.log(f"round {n}: dev={base[:9]} batch={[e.slug for e in batch]} (queue {len(queue)})")
+            if dry_run:
+                res.rounds.append({"round": n, "batch": [e.slug for e in batch], "dry_run": True})
+                break
+            wt = tempfile.mkdtemp(prefix="mq-")
+            os.rmdir(wt)
+            try:
+                cand, applied, ejected = self.compose(batch, base, wt)
+                for x in ejected:
+                    self._finish_eject(x)
+                    res.ejected.append(x)
+                if not applied:
+                    continue
+                if cand == base:
+                    # Everything was already on dev (re-enqueued landed work).
+                    for e in applied:
+                        self._finish_land(e, base)
+                        res.landed.append({"slug": e.slug, "dev": base})
+                    continue
+                cand_ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}"
+                self.git("push", self.remote, f"{cand}:refs/heads/{cand_ref}")
+                for e in applied:
+                    self.set_status(e.sha, "pending", f"testing in batch {cand_ref} ({len(applied)} entr{'y' if len(applied) == 1 else 'ies'})")
+                ci = self.dispatch_and_wait(cand_ref, cand)
+                rnd = {"round": n, "candidate": cand, "batch": [e.slug for e in applied], "ci": ci}
+                if ci["verdict"] == "green":
+                    ok, landed_sha = self.land(cand, base, wt)
+                    rnd["landed"] = ok
+                    if ok:
+                        for e in applied:
+                            self._finish_land(e, landed_sha)
+                            res.landed.append({"slug": e.slug, "dev": landed_sha})
+                        for wf in post_land_workflows(self.changed_paths(base, landed_sha)):
+                            self.gh("workflow", "run", wf, "--ref", self.dev, "-R", self.repo, check=False)
+                            rnd.setdefault("dispatched", []).append(wf)
+                    limit = batch_limit
+                elif ci["verdict"] == "red" and len(applied) == 1:
+                    e = applied[0]
+                    x = self._eject_info(e, "ci_red", f"Tests & Build red: {ci.get('failed_jobs', [])[:4]}")
+                    self._finish_eject(x)
+                    res.ejected.append(x)
+                    limit = batch_limit
+                elif ci["verdict"] == "red":
+                    limit = next_batch_limit(limit, len(applied), green=False)
+                    self.log(f"  batch red - bisecting: next batch limit {limit}")
+                else:
+                    # timeout/unavailable: leave the entries queued; the next drain retries.
+                    for e in applied:
+                        self.set_status(e.sha, "pending", f"CI {ci['verdict']} - still queued, will retry")
+                    res.rounds.append(rnd)
+                    self.delete_ref(cand_ref)
+                    break
+                res.rounds.append(rnd)
+                self.delete_ref(cand_ref)
+            finally:
+                self.run(["git", "worktree", "remove", "--force", wt], cwd=self.workdir)
+        return res
+
+    def _finish_land(self, e: Entry, dev_sha: str) -> None:
+        self.set_status(e.sha, "success", f"landed in dev as {dev_sha[:9]}")
+        self.delete_ref(e.ref)
+        self.log(f"  LANDED {e.slug} -> dev {dev_sha[:9]}")
+
+    def _finish_eject(self, x: dict[str, Any]) -> None:
+        self.set_status(x["sha"], "failure", f"ejected ({x['kind']}): {x['why']}")
+        self.delete_ref(x["ref"])
+        self.log(f"  EJECTED {x['slug']}: {x['kind']} - {x['why']}")
+
+
+def read_status(repo: str, sha: str, run: Runner = _default_run) -> dict[str, Any]:
+    """The queue verdict for an enqueued sha: queued | pending | landed | ejected | unknown."""
+    rc, out, err = run(["gh", "api", f"repos/{repo}/commits/{sha}/statuses", "--jq",
+                        f'[.[] | select(.context=="{STATUS_CONTEXT}")][0]'])
+    if rc != 0:
+        return {"state": "unavailable", "detail": err.strip()[:300]}
+    if not out.strip() or out.strip() == "null":
+        return {"state": "queued", "detail": "no merge-queue verdict yet"}
+    s = json.loads(out)
+    state = {"success": "landed", "failure": "ejected", "error": "ejected"}.get(s.get("state"), "pending")
+    m = re.search(r"landed in dev as ([0-9a-f]{7,40})", s.get("description") or "")
+    return {"state": state, "description": s.get("description"), "url": s.get("target_url"),
+            **({"dev_sha": m.group(1)} if m else {})}
+
+
+def queue_report(repo: str = "", run: Runner = _default_run, workdir: str | None = None) -> dict[str, Any]:
+    """Read-only: what is waiting in the queue, oldest first, with each entry's verdict."""
+    q = Queue(repo, run=run, workdir=workdir)
+    q.repo = repo or _repo_from_remote(run, q.workdir)
+    q.fetch()
+    entries = q.entries()
+    return {"status": "ok", "dev": q.dev_sha(), "count": len(entries),
+            "entries": [{"slug": e.slug, "ref": e.ref, "sha": e.sha,
+                         "verdict": read_status(q.repo, e.sha, run=run)} for e in entries]}
+
+
+def _repo_from_remote(run: Runner, cwd: str) -> str:
+    rc, out, _ = run(["git", "remote", "get-url", "origin"], cwd=cwd)
+    m = re.search(r"github\.com[:/]([^/]+/[^/.]+?)(?:\.git)?\s*$", out or "")
+    return m.group(1) if rc == 0 and m else ""
+
+
+def register(server) -> None:  # pragma: no cover - thin MCP wrapper
+    @server.tool(
+        name="noctus.dev.merge_queue",
+        description=(
+            "Read-only view of the CI merge queue — the one path code takes into dev "
+            "(KB § PATTERNS/devops/merge-queue.md). action='list' (default): entries "
+            "waiting (oldest first) with each one's merge-queue verdict; action='status' "
+            "sha=<enqueued sha>: queued | pending | landed (+dev sha) | ejected (+why). "
+            "Enqueue/land with noctus.dev.task_branch action='enqueue' / 'landed'. The "
+            "drain itself runs only on GitHub Actions (.github/workflows/merge-queue.yml)."),
+    )
+    def noctus_dev_merge_queue(action: str = "list", sha: str | None = None) -> dict[str, Any]:
+        if action == "status":
+            if not sha:
+                return {"status": "error", "error": "action='status' needs sha="}
+            return read_status(_repo_from_remote(_default_run, os.getcwd()), sha)
+        return queue_report()
+
+
+def _summary(res: Outcome) -> str:
+    lines = ["## Merge queue", ""]
+    for x in res.landed:
+        lines.append(f"- ✅ landed `{x['slug']}` → dev `{x['dev'][:9]}`")
+    for x in res.ejected:
+        lines.append(f"- ❌ ejected `{x['slug']}` ({x['kind']}): {x['why']}")
+    for r in res.rounds:
+        ci = r.get("ci", {})
+        lines.append(f"- round {r['round']}: {r.get('batch')} → CI {ci.get('verdict', '-')} {ci.get('url', '')}")
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("command", choices=["drain", "list", "status"])
+    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
+    ap.add_argument("--batch", type=int, default=DEFAULT_BATCH)
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--sha", help="status: the enqueued sha")
+    a = ap.parse_args(argv)
+    if a.command == "status":
+        print(json.dumps(read_status(a.repo, a.sha), indent=2))
+        return 0
+    run_url = ""
+    if os.environ.get("GITHUB_RUN_ID"):
+        run_url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{a.repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    q = Queue(a.repo, run_url=run_url, run_id=os.environ.get("GITHUB_RUN_ID", "local"))
+    if a.command == "list":
+        q.fetch()
+        print(json.dumps([e.__dict__ for e in q.entries()], indent=2))
+        return 0
+    res = q.drain(batch_limit=a.batch, dry_run=a.dry_run)
+    text = _summary(res)
+    print(text)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+            fh.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

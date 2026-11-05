@@ -3,10 +3,9 @@
  * follows the URL (and writes it back), and the page talks to `/api/finance` through the product's `api` client.
  * The organ's own URL sync is covered in `seed/lib` (`FinanceRoutedPage.test.tsx`); this pins the product wiring.
  */
-/// <reference types="@testing-library/jest-dom" />
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import "@testing-library/jest-dom";
+import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 

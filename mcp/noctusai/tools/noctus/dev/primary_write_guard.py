@@ -1381,9 +1381,13 @@ def decide(
             f"every writing task isolates in its own worktree off origin/dev.\n"
             f"Do this instead:\n"
             f"  1. noctus.dev.task_branch action='start' slug='<kebab-slug>' confirm=True\n"
-            f"  2. make the edit under {os.path.join(ctx.primary_root, '.claude/worktrees/<slug>')}/ "
-            f"(absolute paths — a bare `cd` does not survive to the next tool call)\n"
-            f"  3. noctus.dev.task_branch action='integrate' slug='<kebab-slug>' confirm=True\n"
+            f"  2. `cd {os.path.join(ctx.primary_root, '.claude/worktrees/<slug>')}` ONCE — in the "
+            f"main session the cwd sticks, so every later edit/git command lands there (a "
+            f"subagent: use absolute worktree paths and `git -C <worktree>`). Once you have "
+            f"edited inside a worktree, this guard auto-claims it for your session and moves "
+            f"relative-path commands like this one there for you.\n"
+            f"  3. noctus.dev.task_branch action='enqueue' slug='<kebab-slug>' confirm=True "
+            f"(the CI merge queue lands it — KB § PATTERNS/devops/merge-queue.md)\n"
             f"Committing here diverges local '{ctx.branch}' from origin, and the failure "
             f"surfaces much later as a non-fast-forward at integrate or deploy time."
             + ("\nThis command also names at least one OTHER target this guard "
@@ -1527,6 +1531,105 @@ def redirect_for(
             f"'{claim.get('branch', '?')}'), so the write into the PRIMARY checkout on "
             f"'{ctx.branch}' was rewritten there instead of refused. Address every "
             f"further read and edit to the worktree path, not the primary one."
+        ),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# AUTO-CLAIM + Bash redirect (2026-11-05, owner: "fix this error by not letting
+# the agent act as they always do — this is a methodology drift").
+#
+# The drift: a session edits correctly in its worktree, then runs `git add … &&
+# git commit …` (or any relative-path shell write) with its cwd still in the
+# PRIMARY. The refusal above is right, but it costs a round-trip every time and
+# the agent repeats the habit on the next commit. Two changes make the wrong
+# move land right by construction instead of by discipline:
+#
+# 1. AUTO-CLAIM: the moment a session demonstrably works in a worktree (an
+#    Edit/Write/NotebookEdit under it, or a Bash call whose cwd is in it or that
+#    `cd`s / `git -C`s into it), that worktree becomes the session's claim — no
+#    explicit `harness_claim_worktree` call needed. Last worktree used wins.
+# 2. Bash REDIRECT: a refused Bash command from a session with a valid claim,
+#    whose cwd is the primary root and whose guarded targets come ONLY from
+#    relative paths (no `cd`, no `git -C`, no absolute path into the primary
+#    outside a worktree), is rewritten to `cd <claimed worktree> && <command>`.
+#    Relative paths then resolve exactly where the session's work lives.
+#    Visible, never silent: the allow carries `[noc-guard:primary-write]
+#    REDIRECTED`. Anything less certain keeps the refusal.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_CD_OR_GIT_C = re.compile(r"(?:(?:^|[\s;&|(])cd\s+|\bgit\s+-C\s+)([\"']?)([^\s;&|\"')]+)\1")
+_ABS_PATH = re.compile(r"(?<![\w.~$-])(/[^\s\"';|&<>()]+)")
+
+
+def worktree_in_use(tool_name: str, tool_input: dict[str, Any] | None, cwd: str,
+                    ctx: GuardContext) -> str | None:
+    """The registered linked worktree this call demonstrably works in, else None."""
+    if not ctx.worktrees:
+        return None
+    candidates: list[str] = []
+    if tool_name in _FILE_PATH_TOOLS:
+        raw = (tool_input or {}).get(_FILE_PATH_TOOLS[tool_name]) or ""
+        if raw:
+            candidates.append(_resolve(raw, cwd))
+    elif tool_name == "Bash":
+        candidates.append(cwd)
+        command = (tool_input or {}).get("command") or ""
+        candidates.extend(_resolve(m.group(2), cwd) for m in _CD_OR_GIT_C.finditer(command))
+    for cand in candidates:
+        for wt in ctx.worktrees:
+            if _within(cand, wt):
+                return os.path.normpath(wt)
+    return None
+
+
+def auto_claim(tool_name: str, tool_input: dict[str, Any] | None, session_id: str | None,
+               cwd: str, ctx: GuardContext) -> dict[str, Any] | None:
+    """Claim the worktree this call works in for `session_id` when it is not
+    already the claim. Never raises: a failed claim only means no redirect."""
+    if not session_id:
+        return None
+    wt = worktree_in_use(tool_name, tool_input, cwd, ctx)
+    if not wt:
+        return None
+    current = read_claims(ctx.primary_root).get(session_id) or {}
+    if os.path.normpath(str(current.get("worktree", ""))) == wt:
+        return None
+    try:
+        if claim_problem(wt, ctx) is not None:
+            return None
+        return write_claim(ctx.primary_root, session_id, wt)
+    except Exception:  # noqa: BLE001 - claiming is an optimization, never a gate
+        return None
+
+
+def redirect_bash_for(tool_input: dict[str, Any] | None, session_id: str | None, cwd: str,
+                      ctx: GuardContext, verdict: dict[str, Any]) -> dict[str, Any] | None:
+    """The `cd <worktree> && …` rewrite that replaces a Bash refusal, or None."""
+    if not session_id or verdict.get("tool") != "Bash":
+        return None
+    if os.path.normpath(cwd) != os.path.normpath(ctx.primary_root):
+        return None
+    claim = read_claims(ctx.primary_root).get(session_id)
+    if not claim:
+        return None
+    wt = os.path.normpath(str(claim.get("worktree", "")))
+    if claim_problem(wt, ctx) is not None:
+        return None
+    command = (tool_input or {}).get("command") or ""
+    if _CD_OR_GIT_C.search(command):
+        return None  # the command already chooses its own directory: not ours to move
+    for tok in _ABS_PATH.findall(command):
+        if _within(tok, ctx.primary_root) and not any(_within(tok, w) for w in ctx.worktrees):
+            return None  # an explicit primary path: the agent named the primary on purpose
+    return {
+        "decision": "allow",
+        "updated_input": {**(tool_input or {}), "command": f"cd {shlex.quote(wt)} && {command}"},
+        "context": (
+            f"[noc-guard:primary-write] REDIRECTED this Bash command into {wt} (branch "
+            f"'{claim.get('branch', '?')}'): it would have written the PRIMARY checkout on "
+            f"'{ctx.branch}' through relative paths, and this session works in that worktree. "
+            f"Run `cd {wt}` once — in the main session the cwd then sticks for later calls."
         ),
     }
 

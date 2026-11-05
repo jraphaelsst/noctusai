@@ -4,7 +4,7 @@
 
 ## Branch model
 
-- **`dev`** = integration. Everyday work lands here (via `noctus.dev.task_branch` worktrees off `origin/dev`, integrated clean). → `KB § PATTERNS/common/branching.md`.
+- **`dev`** = integration. Everyday work lands here ONLY through the **CI merge queue** (2026-11-05): `noctus.dev.task_branch action=enqueue` pushes `mq/<slug>--<sha7>`; `.github/workflows/merge-queue.yml` composes the waiting entries onto `dev`, dispatches `test.yml` on the candidate and fast-forwards `dev` only to a green one — so every code landing on `dev` is a CI-green sha by construction. → `KB § PATTERNS/devops/merge-queue.md` · `KB § PATTERNS/common/branching.md`.
 - **`main`** = production, **sacred**. Only reached by an explicit, gated bless→promote. → `KB § PATTERNS/architect/branching-and-merging.md § 0`.
 
 ## The CI gates (what runs, when)
@@ -14,6 +14,7 @@ Every push/PR is gated automatically by GitHub Actions. The full set:
 | Workflow | Trigger | What it gates |
 |---|---|---|
 | **`test.yml` — Tests & Build** | push/PR to `main`,`dev` | product backend pytest (core/erp/pf) · frontend builds · e2e · `docker-compose` validate · **security** (Trivy fs, bandit, gitleaks) · **`mcp-toolkit-tests`** — the dev toolkit's own ~2.6k-test suite (hermetic, no live key), added 2026-05-31 to close the no-CI-gate gap · **`harness-mod-tests`** — Claude Code mod suite (`claude plugin validate`/`test` + `--check-harness-mod`, keyless; runs when `.claude/mods/**`, `.claude-plugin/**` or `.claude/settings.json` change, and on every full run) |
+| **`merge-queue.yml` — Merge Queue** | push to `mq/**`, dispatch, every 20 min | the ONE path into `dev`: composes queued entries on `dev`, dispatches `test.yml` on the candidate, FF-lands green, bisects red, ejects conflicts / duplicate migration numbers; verdict = `merge-queue` commit status on the enqueued sha |
 | **`seed-typecheck.yml`** | push/PR to `main`,`dev` | seed lib + framework typecheck — validates the `dev` tip pre-bless |
 | **`embedding-cache-gate.yml`** | PR (seed/embedding paths) | validates the shared prod embedding cache is reachable + fresh (conditional gate — hard-fail when the validation surface is up, soft-fail on fork PRs without secrets). → `KB § PATTERNS/devops/ci-embedding-cache-gate.md` |
 | **`build-and-push.yml`** | push to `main` | builds + pushes the fleet images to GHCR (the deploy/deliver leg) |

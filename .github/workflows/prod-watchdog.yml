@@ -59,14 +59,14 @@ jobs:
       WATCHDOG_ALERT_EMAIL: ${{ vars.WATCHDOG_ALERT_EMAIL || 'joaoraphaelsst@gmail.com' }}
       STATE_FILE: .prod-watchdog/state.json
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.11"
 
       - name: Restore watchdog state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .prod-watchdog/state.json
           key: prod-watchdog-state-${{ github.run_id }}
@@ -114,7 +114,7 @@ jobs:
       - name: Save watchdog state
         id: save
         if: ${{ always() && hashFiles('.prod-watchdog/state.json') != '' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .prod-watchdog/state.json
           key: prod-watchdog-state-${{ github.run_id }}

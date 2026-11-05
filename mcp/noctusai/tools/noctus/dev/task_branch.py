@@ -167,6 +167,13 @@ def _default_run_local(cmd: list[str], cwd: str | None = None) -> tuple[int, str
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 
 
+# The merge queue (2026-11-05, KB § PATTERNS/devops/merge-queue.md): `enqueue`
+# pushes the rebased branch to `mq/<slug>--<sha7>`; the CI-side drain
+# (`merge_queue.py`) is then the ONLY thing that moves dev for it. A queue ref
+# is the one non-dev destination this tool may push to — never main/prod.
+MQ_PREFIX = "mq/"
+
+
 def _assert_push_targets_dev(args: tuple[str, ...], dev_branch: str) -> None:
     """A push refspec's DESTINATION must be `dev` — the tool's defining safety
     boundary. Refuses main/prod/any-other dst, structurally."""
@@ -175,7 +182,7 @@ def _assert_push_targets_dev(args: tuple[str, ...], dev_branch: str) -> None:
     for tok in args:
         if ":refs/heads/" in tok:
             dst = tok.split(":refs/heads/", 1)[1]
-            if dst != dev_branch:
+            if dst != dev_branch and not dst.startswith(MQ_PREFIX):
                 raise ValueError(
                     f"task_branch: push destination '{dst}' is not '{dev_branch}'. "
                     "This tool integrates ONLY to dev; main/prod move via noctus.dev.release."
@@ -2244,13 +2251,116 @@ def _train_riders_after_integrate(
     return res
 
 
+def _enqueue_push(git, runner, *, plan: dict[str, Any], branch: str, slug: str, remote: str,
+                  wt_path: str, benign_stashed, introduced_migrations: list[str],
+                  renumbered: list[dict], kb_counts_result: dict[str, Any] | None,
+                  verbose: bool) -> dict[str, Any]:
+    """Push the rebased branch to `mq/<slug>--<sha7>` (a fresh ref per enqueue,
+    so a re-enqueue never needs a force-push). The pre-push hook runs the same
+    dev-delivery keepers on a queue push as on a dev push."""
+    head = _resolve(git, branch) or ""
+    qref = f"{MQ_PREFIX}{slug}--{head[:7]}"
+    rc, out, err = git("push", remote, f"HEAD:refs/heads/{qref}", cwd=wt_path)
+    if benign_stashed:
+        _pop_stash(runner, wt_path, benign_stashed, verbose)
+    if rc != 0:
+        tail = "\n".join((err or out or "").strip().splitlines()[-25:])
+        return {**plan, "status": "blocked", "exit_code": 1, "queue_ref": qref,
+                "hook_output": tail,
+                "message": f"enqueue push of {branch} to {qref} was rejected; fix what it names, re-enqueue.\n{tail}"}
+    res = {**plan, "status": "queued", "exit_code": 0, "queue_ref": qref, "enqueued_sha": head,
+           "introduced_migrations": introduced_migrations,
+           "message": (f"queued {branch} as {qref} ({head[:9]}). The CI merge queue tests it on top of "
+                       f"dev (+ anything queued ahead) and lands it. Check: "
+                       f"task_branch action='landed' slug='{slug}' confirm=True — it finishes "
+                       "the post-landing tail (pointer, primary FF, worktree cleanup) once landed.")}
+    if renumbered:
+        res["migration_renumber"] = {"renumbered": renumbered}
+    if kb_counts_result is not None:
+        res["kb_counts_regenerate"] = kb_counts_result
+    return res
+
+
+def _repo_slug(runner) -> str:
+    rc, out, _ = runner(["git", "remote", "get-url", "origin"])
+    m = re.search(r"github\.com[:/]([^/]+/[^/.]+?)(?:\.git)?\s*$", out or "")
+    return m.group(1) if (rc == 0 and m) else ""
+
+
+def _default_queue_status_reader(runner):
+    from tools.noctus.dev import merge_queue as _mq
+    repo = _repo_slug(runner)
+    return lambda sha: _mq.read_status(repo, sha, run=lambda cmd, cwd=None: runner(cmd))
+
+
+def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_path: str,
+            confirm: bool, remote: str, dev_branch: str, primary_root: str | None,
+            pointer_fn, auto_cleanup: bool, post_integrate_fn, task_branch_fn,
+            cleanup_kwargs: dict[str, Any], status_reader) -> dict[str, Any]:
+    """Read the queue's verdict for this branch and, once LANDED, run the same
+    post-landing tail `integrate` runs after its own push: pointer ->
+    integrated-worktree-live, FF the primary, auto-cleanup, detached settle+drain.
+
+    The enqueued sha is the local branch tip (enqueue pushes HEAD after the local
+    rebase). The queue may have replayed it onto a newer dev, so the worktree is
+    first rebased onto origin/dev — git drops the already-applied patches and the
+    branch becomes merged, which `cleanup`'s merged check then accepts."""
+    git("fetch", remote, "--quiet")
+    head = _resolve(git, branch)
+    if not head:
+        return {**base, "status": "error", "exit_code": 1, "error": f"cannot resolve {branch}"}
+    reader = status_reader or _default_queue_status_reader(runner)
+    st = reader(head)
+    out = {**base, "enqueued_sha": head, "queue": st}
+    state = st.get("state")
+    if state in ("queued", "pending", "unavailable"):
+        return {**out, "status": state, "exit_code": 0,
+                "message": f"{branch} not landed yet ({state}: {st.get('description') or st.get('detail', '')})."}
+    if state == "ejected":
+        return {**out, "status": "ejected", "exit_code": 1,
+                "message": (f"{branch} was EJECTED by the merge queue: {st.get('description')} "
+                            f"({st.get('url', '')}). Fix it on the branch, then enqueue again.")}
+    dev = _resolve(git, f"{remote}/{dev_branch}")
+    if not confirm:
+        return {**out, "status": "landed", "exit_code": 0, "dev_sha": dev,
+                "message": f"{branch} LANDED ({st.get('description')}). Pass confirm=True to run the post-landing tail."}
+    abs_wt = _absolute_wt_path(wt_path, _resolve_primary_root(primary_root))
+    if not _is_ancestor(git, head, dev):
+        rc, _o, err = git("rebase", f"{remote}/{dev_branch}", cwd=abs_wt)
+        if rc != 0:
+            git("rebase", "--abort", cwd=abs_wt)
+            return {**out, "status": "error", "exit_code": 1,
+                    "error": (f"{branch} landed but replaying it onto {remote}/{dev_branch} to mark it "
+                              f"merged failed: {err.strip()[:300]}. Worktree left as is.")}
+    new_head = _resolve(git, branch)
+    result = {**out, "status": "integrated", "exit_code": 0, "dev_sha": dev,
+              "message": f"{branch} landed via the merge queue ({st.get('description')})."}
+    result["pointer"] = _pointer_transition(
+        pointer_fn, branch=branch, status="integrated-worktree-live",
+        commit=(new_head or "")[:9] or None,
+        notes=f"merge-queue landed → {dev_branch}@{(dev or '')[:9]} (enqueued {head[:9]})")
+    result["primary_ff"] = _ff_primary_after_integrate(
+        runner, _resolve_primary_root(primary_root), dev_branch, remote)
+    if auto_cleanup:
+        result["auto_cleanup"] = _auto_cleanup_after_integrate(
+            runner, wt_path, slug, task_branch_fn, cleanup_kwargs)
+        result["message"] += f" Auto-cleanup: {result['auto_cleanup']['status']}."
+    if post_integrate_fn is not None:
+        try:
+            result["post_integrate"] = post_integrate_fn(
+                _resolve_primary_root(primary_root), dev_branch, remote)
+        except Exception as e:  # noqa: BLE001 - a landed branch must still report success
+            result["post_integrate"] = {"status": "error", "error": f"{type(e).__name__}: {e}"}
+    return result
+
+
 def _task_branch_is_write(bound_args: dict) -> bool:
     """`task_branch`'s REFUSE predicate (2026-09-18, the incident tool
     itself): only the MUTATING actions — `start` / `integrate` / `cleanup`
     — with `confirm=True` are a write. `action='status'` is always a read
     regardless of `confirm` (it never inspects the flag)."""
     return (
-        bound_args.get("action") in {"start", "integrate", "cleanup", "train"}
+        bound_args.get("action") in {"start", "integrate", "enqueue", "landed", "cleanup", "train"}
         and bool(bound_args.get("confirm", False))
     )
 
@@ -2297,6 +2407,7 @@ def task_branch(
     wire_products: list[str] | None = None,
     slugs: list[str] | None = None,
     order: str = "given",
+    queue_status_reader: "Callable[[str], dict[str, Any]] | None" = None,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, integrate, cleanup, train, sync_primary}.
 
@@ -2436,9 +2547,19 @@ def task_branch(
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
 
-    if action not in {"status", "start", "integrate", "cleanup", "train", "sync_primary"}:
+    if action not in {"status", "start", "integrate", "enqueue", "landed", "cleanup", "train", "sync_primary"}:
         return {"ok": False, "status": "error", "exit_code": 1,
-                "error": f"unknown action '{action}' (expected status|start|integrate|cleanup|train|sync_primary)"}
+                "error": (f"unknown action '{action}' (expected status|start|enqueue|landed|"
+                          "integrate|cleanup|train|sync_primary)")}
+    # ── ENQUEUE ── the default landing path (2026-11-05): everything `integrate`
+    # does locally (dirty-file triage, doc-staleness, rebase, migration renumber,
+    # KB-count regen, pre-push keepers) EXCEPT the merged-tip gates, then push to
+    # a merge-queue ref instead of dev. The CI drain runs the full suite on the
+    # composed candidate — on GitHub runners, not this machine — and lands it.
+    queue_mode = action == "enqueue"
+    if queue_mode:
+        action = "integrate"
+        verify_merged_tip = False
 
     # ── TRAIN ── merge every ready feat/<slug> into one train branch (see module doc).
     if action == "train":
@@ -2619,6 +2740,20 @@ def task_branch(
                            f"noctus.dev.task_branch action='integrate' slug='{slug}'."}
 
     # ── INTEGRATE ── rebase onto origin/dev → FF-push HEAD→dev (retry on race)
+    if action == "landed":
+        return _landed(git, runner, base=base, slug=slug, branch=branch, wt_path=wt_path,
+                       confirm=confirm, remote=remote, dev_branch=dev_branch,
+                       primary_root=primary_root, pointer_fn=pointer_fn,
+                       auto_cleanup=auto_cleanup, post_integrate_fn=post_integrate_fn,
+                       task_branch_fn=task_branch,
+                       cleanup_kwargs=dict(remote=remote, dev_branch=dev_branch,
+                                           worktrees_dir=worktrees_dir, branch_prefix=branch_prefix,
+                                           primary_root=primary_root, run=run, fs=fs, settle=settle,
+                                           pointer_ops=pointer_ops, verbose=verbose,
+                                           settle_and_drain=post_integrate_fn is None,
+                                           allow_stale_toolkit=True),
+                       status_reader=queue_status_reader)
+
     if action == "integrate":
         git("fetch", remote, "--quiet")
         dev = _resolve(git, f"{remote}/{dev_branch}")
@@ -3072,6 +3207,12 @@ def task_branch(
                     logger.debug("task_branch.integrate: KB-counts regen committed: %s",
                                  kb_counts_result.get("paths"))
             remote_before_push = _resolve(git, f"{remote}/{dev_branch}")
+            if queue_mode:
+                return _enqueue_push(git, runner, plan=plan, branch=branch, slug=slug,
+                                     remote=remote, wt_path=wt_path, benign_stashed=benign_stashed,
+                                     introduced_migrations=introduced_migrations,
+                                     renumbered=all_renumbered, kb_counts_result=kb_counts_result,
+                                     verbose=verbose)
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc != 0:
                 push_failures.append(_classify_push_failure(
@@ -3402,7 +3543,16 @@ def register(server) -> None:
             "sibling (§9a). action='status' (default) lists active self-branch "
             "worktrees + ahead/behind vs origin/dev (read-only); action='start' "
             "slug= forks a worktree on feat/<slug> off origin/dev; action="
-            "'integrate' slug= rebases onto origin/dev then FF-pushes to dev "
+            "'enqueue' slug= (THE DEFAULT LANDING PATH, 2026-11-05) does every "
+            "local integrate step (rebase, migration renumber, doc-staleness, "
+            "KB-count regen, pre-push keepers) but NOT the merged-tip gates, and "
+            "pushes to the CI merge queue ref mq/<slug>--<sha7>; GitHub runners "
+            "test it composed on dev and land it (KB § PATTERNS/devops/"
+            "merge-queue.md). action='landed' slug= reads the queue verdict "
+            "(queued/pending/ejected/landed) and, once landed with confirm=True, "
+            "runs the post-landing tail (pointer, primary FF, cleanup). action="
+            "'integrate' slug= (legacy / queue-down fallback: runs the merged-tip "
+            "gates on THIS machine) rebases onto origin/dev then FF-pushes to dev "
             "(retry on the concurrent-push race; a rebase conflict is aborted + "
             "surfaced, never auto-resolved; a migration file this branch "
             "introduces is re-checked for a number collision AFTER the rebase "
