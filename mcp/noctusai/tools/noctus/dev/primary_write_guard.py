@@ -1741,6 +1741,51 @@ def primary_status_snapshot(ctx: GuardContext) -> str | None:
     return out if answered else None
 
 
+#: Commands that cannot write a file by construction (no `-i`/`-o` style flag
+#: exists, or is rejected below). Deliberately small: anything not listed takes
+#: the normal measured path.
+_READ_ONLY_COMMANDS = frozenset({
+    "ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "echo", "printf",
+    "which", "stat", "file", "du", "df", "date", "uname", "whoami", "id",
+    "true", "false", "cd", "test", "[", "realpath", "dirname", "basename",
+})
+_READ_ONLY_GIT = frozenset({
+    "status", "log", "diff", "show", "rev-parse", "branch", "ls-files",
+    "ls-tree", "cat-file", "blame", "describe", "remote", "rev-list",
+    "merge-base", "shortlog", "reflog",
+})
+_RO_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+_RO_FORBIDDEN = ("`", "$(", ">", "<", "\n", "&", "${")
+
+
+def bash_is_read_only(command: str) -> bool:
+    """True only when EVERY segment of `command` provably cannot write a file.
+
+    COST: the pre-call baseline is a `git status --porcelain` of the primary
+    (150ms idle, seconds under load) and this hook runs before every Bash call;
+    a call that cannot write has nothing for the Post leg to diff, so paying it
+    there bought nothing and could blow the hook deadline (2026-11-05).
+    Conservative: redirects, substitutions, backgrounding, `branch` with
+    operands, and anything unlisted return False (=> the baseline is taken).
+    """
+    if not command or any(tok in command for tok in _RO_FORBIDDEN):
+        return False
+    for seg in _RO_SPLIT_RE.split(command.strip()):
+        words = seg.split()
+        if not words:
+            return False
+        name = words[0]
+        if name in _READ_ONLY_COMMANDS:
+            continue
+        if name == "git" and len(words) >= 2 and words[1] in _READ_ONLY_GIT:
+            # `git branch <name>` / `git remote add` create refs/config.
+            if words[1] in {"branch", "remote"} and any(not w.startswith("-") for w in words[2:]):
+                return False
+            continue
+        return False
+    return True
+
+
 def capture_pretool_baseline(ctx: GuardContext, session_id: str | None = None) -> None:
     """Write the current primary status as the baseline the NEXT PostToolUse
     measurement diffs against.
