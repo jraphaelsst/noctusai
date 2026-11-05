@@ -252,7 +252,14 @@ BEFORE any DDL (`migrate_product.py:1597-1613`).
 - `-- noc:no-transaction` — run outside the implicit transaction: the file is split on top-level
   `;` (`migration_directives.py:94` `split_statements`, quote/`$tag$`/comment aware) and each
   statement is its own request, so `CREATE INDEX CONCURRENTLY` / `DROP INDEX CONCURRENTLY` work.
-  `lock_timeout` is then a session `SET` before and `RESET lock_timeout` in a `finally` after.
+  `lock_timeout` is scoped PER STATEMENT (`migrate_product.py:1112` `_apply_migration_sql`): a
+  statement that cannot run in a transaction block goes BARE, with no guard
+  (`migration_directives.py:188` `needs_bare_request`: any `CONCURRENTLY` — CREATE/DROP INDEX,
+  REINDEX, REFRESH MATERIALIZED VIEW — plus `VACUUM`, `CLUSTER`, `DISCARD`, `ALTER SYSTEM`,
+  `CREATE/DROP DATABASE|TABLESPACE|SUBSCRIPTION`, `REINDEX DATABASE|SCHEMA|SYSTEM`); every other
+  statement is sent as `SET LOCAL lock_timeout = <lit>;\n<stmt>` in its own implicit
+  transaction, and `noc:lock-timeout` applies to those. The result's `unguarded_statements`
+  (`{file: [statement numbers]}`) names what ran without a guard. There is no session SET/RESET.
   `BEGIN/COMMIT/SAVEPOINT…` inside such a file is refused. The ledger INSERT still runs only after
   every statement succeeded.
 
@@ -265,48 +272,16 @@ the non-transactional statements and put `NOT VALID`/`VALIDATE` pairs in the sam
 
 PGlite replay (`mcp/noctusai/node/migration_replay/replay.mjs`) honours `noc:no-transaction`
 (statement-by-statement, twice) so `CONCURRENTLY` files replay green. `scaffold_migration`'s
-generated body carries a hint comment about both directives. Unverified on the Management API:
-whether successive requests share one backend connection, so the session `SET` may not reach the
-following statement on a pooled connection — the lock_timeout guard of a no-transaction file is
-best-effort; keep such statements to `CONCURRENTLY` builds (which wait on, rather than hold, locks).
+generated body carries a hint comment about both directives.
 
-### 6.4 Migration checklist (one page)
-
-- [ ] Authored via `noctus.dev.scaffold_migration`; idempotent (`IF NOT EXISTS`); runs twice on PGlite.
-- [ ] N-1 image works against this schema (no drop/rename/retype of anything N-1 reads).
-- [ ] `lock_timeout` is on by default (5s); override only with `-- noc:lock-timeout <v>` and a reason.
-- [ ] New constraint on existing data ⇒ `NOT VALID` + `VALIDATE`; precondition guard that `RAISE`s
-      when data is not clean (035 :33-51 is the reference shape).
-- [ ] Index on a non-trivial live table ⇒ `CONCURRENTLY` in a file whose leading block has `-- noc:no-transaction`, idempotent.
-- [ ] RLS + policies + grants in the same file; `SECURITY DEFINER` ⇒ `search_path` + `REVOKE`.
-- [ ] Data backfill batched; never mixed with a long DDL lock.
-- [ ] `schema_drift` / `predeploy_check` green after apply.
-
-**Anti-patterns.** Rename-in-place; drop-in-the-same-deploy; "it's a small table" without a count;
-a backfill `UPDATE` over the whole table in the same file as the DDL; no `lock_timeout`.
-
----
-
-## 7 · Escalation
-
-Per `KB § PATTERNS/architect/dispatch-engineer-tuning.md` § 4·1: a migration on a large or hot
-table, a constraint/index/type change on existing data, or a new multi-table invariant is
-judgment-heavy work — the dispatcher should run it on Opus, and a Sonnet executor that meets one
-unannounced should surface rather than improvise.
-
-## Sources
-
-- PostgreSQL — Explicit Locking — https://www.postgresql.org/docs/current/explicit-locking.html — lock modes and conflicts (§ 4). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — ALTER TABLE — https://www.postgresql.org/docs/current/sql-altertable.html — `NOT VALID` / `VALIDATE` (SHARE UPDATE EXCLUSIVE), FK lock, `USING INDEX`, non-volatile default without rewrite (§ 4, § 6). Accessed 2026-11-05.
-- PostgreSQL — CREATE INDEX — https://www.postgresql.org/docs/current/sql-createindex.html — `CONCURRENTLY` cannot run in a transaction block (§ 6). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — Message Flow, Multiple Statements in a Simple Query — https://www.postgresql.org/docs/current/protocol-flow.html — implicit transaction block (§ 6.3). Accessed 2026-11-05.
-- PostgreSQL — Client Connection Defaults — https://www.postgresql.org/docs/current/runtime-config-client.html — `lock_timeout`, `statement_timeout` (§ 4, § 6). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — Transaction Isolation — https://www.postgresql.org/docs/current/transaction-iso.html — Read Committed default; retry on `40001` (§ 5). Accessed 2026-11-05.
-- PostgreSQL — SELECT, The Locking Clause — https://www.postgresql.org/docs/current/sql-select.html — `SKIP LOCKED` for queue-like tables (§ 5). Accessed 2026-11-05.
-- PostgreSQL — Using EXPLAIN — https://www.postgresql.org/docs/current/using-explain.html — plan reading (§ 2). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — Partial Indexes — https://www.postgresql.org/docs/current/indexes-partial.html — partial and partial-unique indexes (§ 1, § 2). Accessed 2026-11-05.
-- PostgreSQL — pg_stat_statements — https://www.postgresql.org/docs/current/pgstatstatements.html — ranking statements by execution time (§ 2). Accessed 2026-11-05.
-- Supabase — Row Level Security — https://supabase.com/docs/guides/database/postgres/row-level-security — `(select auth.uid())`, index policy columns (§ 3). Accessed 2026-11-05 (audit-verified).
-- Supabase — RLS Performance and Best Practices — https://supabase.com/docs/guides/troubleshooting/rls-performance-and-best-practices-Z5Jjwv — the six recommendations (§ 3). Accessed 2026-11-05.
-- PostgREST — Transactions — https://github.com/PostgREST/postgrest-docs/blob/main/docs/references/transactions.rst — every request runs inside a transaction; RAISE rolls back (§ 5). Accessed 2026-11-05 (docs.postgrest.org returned HTTP 429; content read from the docs source repo).
-- Martin Fowler — Parallel Change — https://martinfowler.com/bliki/ParallelChange.html — expand/migrate/contract (§ 6.1). Accessed 2026-11-05 (audit-verified).
+**Live evidence (2026-11-05, Supabase project `nyplttplcoyiiqjrvtiw`, data-free probes).**
+- No connection reuse: 5 Management-API requests returned 5 different `pg_backend_pid()`; after
+  `SET lock_timeout='7s'` the next requests read `0`. A session `SET` can never guard a later
+  request, so the first design (session SET + RESET) was a no-op and was removed.
+- A multi-statement request is a transaction block: `SET lock_timeout='5s'; DISCARD ALL;` failed
+  `25001 … cannot run inside a transaction block`; `DISCARD ALL;` alone succeeded. Hence a
+  CONCURRENTLY-class statement can never share a request with a SET — it runs bare.
+- Transactional path: `SET LOCAL` read `5s` inside the request and `0` after (no leak), also for a
+  file with its own `BEGIN;…COMMIT;`. It fires: a waiter on a `pg_advisory_xact_lock` held 8s by
+  another request, under `noc:lock-timeout 2s`, was cancelled with `55P03 canceling statement due
+  to lock timeout`.

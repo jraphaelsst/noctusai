@@ -2173,32 +2173,43 @@ class TestLockTimeoutAndDirectives:
         assert res["status"] == "error" and frag in res["error"]
         assert not any("SELECT 1" in s for s in fake.executed)
 
-    def test_no_transaction_runs_statements_separately_with_session_set_and_reset(self, tmp_path):
+    def test_no_transaction_exact_requests_guarded_vs_bare_and_no_session_set(self, tmp_path):
         sql = ("-- noc:no-transaction\n-- why: live table\n"
                "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix ON orbity.t (a);\n"
-               "DO $$ BEGIN PERFORM 1; PERFORM 2; END $$;\n")
+               "DO $$ BEGIN PERFORM 1; PERFORM 2; END $$;\n"
+               "VACUUM orbity.t;\n")
         res, fake = _run(tmp_path, [("001_a.sql", sql)])
         assert res["status"] == "applied"
+        assert res["unguarded_statements"] == {"001_a.sql": [1, 3]}
         ex = fake.executed
-        i = ex.index("SET lock_timeout = '5s';")
-        assert ex[i + 1] == "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix ON orbity.t (a)"
-        assert ex[i + 2].startswith("DO $$") and "PERFORM 2;" in ex[i + 2]   # $$ body not split
-        assert ex[i + 3] == "RESET lock_timeout;"
-        assert not any("SET LOCAL" in s for s in ex)
-        ledger_pos = [k for k, s in enumerate(ex) if "INSERT INTO" in s][0]
-        assert ledger_pos > i + 3, "ledger write happens after success and after RESET"
+        i = ex.index("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix ON orbity.t (a)")  # bare, exact
+        assert ex[i + 1] == "SET LOCAL lock_timeout = '5s';\nDO $$ BEGIN PERFORM 1; PERFORM 2; END $$"
+        assert ex[i + 2] == "VACUUM orbity.t"
+        assert not any(s.startswith(("SET lock_timeout", "RESET")) for s in ex), "session SET/RESET is ineffective"
+        assert [k for k, s in enumerate(ex) if "INSERT INTO" in s][0] > i + 2
 
-    def test_no_transaction_failure_resets_stops_and_skips_ledger(self, tmp_path):
+    def test_no_transaction_failure_stops_and_skips_ledger(self, tmp_path):
         sql = "-- noc:no-transaction\nCREATE INDEX CONCURRENTLY a ON t(x);\nCREATE INDEX CONCURRENTLY b ON t(y);\n"
         res, fake = _run(tmp_path, [("001_a.sql", sql)], FakeSqlExecutor(fail_on={"CONCURRENTLY a "}))
         assert res["status"] == "error" and "statement 1/2" in res["error"] and "idempotent" in res["error"]
-        assert fake.executed[-1] == "RESET lock_timeout;"
         assert not any("CONCURRENTLY b" in s for s in fake.executed)
         assert not any("INSERT INTO" in s for s in fake.executed)
 
-    def test_no_transaction_override_zero(self, tmp_path):
-        _, fake = _run(tmp_path, [("001_a.sql", "-- noc:no-transaction\n-- noc:lock-timeout 0\nSELECT 1;")])
-        assert "SET lock_timeout = 0;" in fake.executed
+    @pytest.mark.parametrize("stmt,bare", [
+        ("CREATE UNIQUE INDEX CONCURRENTLY i ON t(a)", True), ("drop index concurrently i", True),
+        ("REINDEX INDEX CONCURRENTLY i", True), ("REFRESH MATERIALIZED VIEW CONCURRENTLY v", True),
+        ("-- c\nVACUUM t", True), ("CLUSTER t", True), ("ALTER SYSTEM SET x = 1", True),
+        ("CREATE DATABASE d", True), ("REINDEX SCHEMA s", True), ("DISCARD ALL", True),
+        ("CREATE INDEX i ON t(a)", False), ("ALTER TABLE t ADD COLUMN c int", False),
+        ("INSERT INTO t VALUES (1)", False),
+    ])
+    def test_needs_bare_request_list(self, stmt, bare):
+        from tools.noctus.dev.migration_directives import needs_bare_request
+        assert needs_bare_request(stmt) is bare
+
+    def test_no_transaction_override_applies_to_guarded_statements(self, tmp_path):
+        _, fake = _run(tmp_path, [("001_a.sql", "-- noc:no-transaction\n-- noc:lock-timeout 2s\nSELECT 1;")])
+        assert "SET LOCAL lock_timeout = '2s';\nSELECT 1" in fake.executed
 
     def test_schema_rename_ledger_warning_stays_non_fatal(self, tmp_path):
         """c3: a migration that renames the schema itself makes the ledger INSERT fail; that

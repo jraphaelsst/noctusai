@@ -171,3 +171,23 @@ def check_no_transaction_statements(stmts: list[str]) -> None:
                 f"noc:no-transaction file contains transaction control ({first_keyword(s)}); "
                 "remove it -- every statement runs on its own"
             )
+
+
+_BARE_HEADS = (
+    # PreventInTransactionBlock statements (PostgreSQL docs, each command's page): cannot share a
+    # request with a SET LOCAL (a multi-statement request is a transaction block, live 25001).
+    r"VACUUM\b", r"CLUSTER\b", r"DISCARD\b", r"ALTER\s+SYSTEM\b",
+    r"(?:CREATE|DROP)\s+(?:DATABASE|TABLESPACE)\b",
+    r"REINDEX\s+(?:\(.*?\)\s*)?(?:DATABASE|SCHEMA|SYSTEM)\b",
+    r"(?:CREATE|DROP)\s+SUBSCRIPTION\b",
+)
+_BARE_HEAD_RE = re.compile(r"^(?:" + "|".join(_BARE_HEADS) + ")", re.I | re.S)
+_CONCURRENTLY_RE = re.compile(r"\bCONCURRENTLY\b", re.I)
+
+
+def needs_bare_request(stmt: str) -> bool:
+    """True when ``stmt`` cannot run in a transaction block, so it is sent as its own request
+    WITHOUT a lock_timeout guard: any ``CONCURRENTLY`` (CREATE/DROP INDEX, REINDEX, REFRESH
+    MATERIALIZED VIEW) or one of ``_BARE_HEADS``. Explicit list, not inference."""
+    body = _strip_leading_comments(stmt)
+    return bool(_CONCURRENTLY_RE.search(body) or _BARE_HEAD_RE.match(body))
