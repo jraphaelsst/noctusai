@@ -46,6 +46,17 @@
 - Transfers requested (Wave 3): architect → mcp-tool-conventions, mcp-first-scripts, dev-toolkit-scaffolders, noc-graph, component-bundle-tool, (component-list-and-validation weaker); devops → harness-mods, cache-portable-architecture, cache-as-agent-tool, vectorize-embed-cache-framework, memory-embeddings, corpus-embeddings, push-time-embedding-gate (ci-embedding-cache-gate only if noctusai-3d agrees); unowned allowlist → keeper-pattern-cache, keeper-check-before-docing, cache-locking-discipline, cache-auto-freshness, kb-vector-search, code-embeddings, vector-baseline, code-recurrence-baseline, vector-cost-tracking, vector-calibration, cache-telemetry, unified-query, absorption-tracking, extractor-correctness-vs-mirror, engineer-output-linter, auto-author-scaffolds, doc-to-code-drift, scan-repetition-semantic. Keep unowned: cache-family-index, gate-methodology-sync, doc-staleness-gate.
 - Drift (toolkit follow-ups): server.py:268 claims retired legacy aliases still registered; stale docstrings (tools/__init__, dev/__init__, keeper_pattern_cache "~8000 lines" — real 26,079 lines / 178 check_*); mcp-tool-conventions §2 vs server.py registration; scaffold_mcp_tool emits connector-leaf shape not FastMCP register(); cache_backend.py:89-92 silent `except … pass`; gate_sweep has no cli flag; cli.py allow_abbrev default; no tool declares MCP annotations/outputSchema; kb_search/memory_search returned EMPTY (embedding provider unreachable?).
 
+### W2-S5 test-engineer — merged 546f577a4
+- Commit 8533a566d. test-engineering-canon 614 · test-harness-playbook 705 (lossless line-check 0 missing) · testing.md 1,137 → 625 (policy + redirect table). Agent 58 lines. Pointer fixes in 5 docs. Roster: CONTEXTUALIZE §4.
+- Transfers: di-test-seam, boundary-contract-tests ← backend; (optional) silent-test-failure-from-missing-dep ← compliance.
+- Drift: ~15 conftests/3 code files cite old `KB § PATTERNS/testing.md` (no compliance/); duplicate polling helper in agents tests (N=2); Playwright `retries: CI ? 2 : 0` greens flaky specs (CI → noctusai-3d); predicted surviving CANCELLED mutant simples_base.py:47.
+- Owner choice: flaky quarantine expiry 14 days (Fowler suggests ~1 week).
+
+### W2-S1 ai-engineer — merged 14b0b96a1
+- Commit da1e706f0. ai-engineering-canon 591 · agent-evals 386; agent 53 lines (+WebFetch). Roster: CONTEXTUALIZE §4.
+- Transfers: llm-usage, llm-provider-selection, llm-tool-audit, backend/05-AI-FEATURES, GUIDES/agent-creation, INTEGRATIONS/agents-org-specs (+ optional document-extraction-learnings) ← backend.
+- Findings: eval judge fixed at claude-sonnet-5 (evals.py:109) also a generator ⇒ self-grading for Sonnet-5 agents; judge emits verdict before reasoning (evals.py:220); no judge-vs-human calibration tool; cache-min warning ~1024 tokens wrong per model (chat.py:26-30); judge uses json_object + hand parser (structured outputs available); no Batch API mode for offline evals.
+
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
 - integrate / FF-push to dev → enqueue to the CI merge queue (`task_branch action=enqueue`); queue lands it; `task_branch action=landed confirm=true` finishes cleanup; `integrate` only = fallback when GitHub Actions is down.
