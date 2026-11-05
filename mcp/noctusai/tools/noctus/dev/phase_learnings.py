@@ -26,11 +26,12 @@ at module bottom per the per-file FastMCP registration pattern.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ._pii_guard import assert_no_pii
 
@@ -90,6 +91,47 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def log_learning_ledgered(
+    project_slug: str,
+    phase_number: int,
+    phase_title: str | None,
+    learning_kind: str,
+    learning_text: str,
+    created_by: str | None = None,
+    db_path: Path | None = None,
+    ai_logger: Callable[..., dict] | None = None,
+) -> dict[str, Any]:
+    """`log_learning` + durable copy in the auto-improvement ledger.
+
+    SQLite stays the local cache; the ledger row (`kind="phase-learning"`,
+    `source={tool:"phase_learnings", ref:<id>}`) is the durable copy.
+    Returns `{id, ledger}` where `ledger` is the logger's result dict; a
+    logger exception or `ok: False` is surfaced there (`ok: False, error`),
+    never swallowed. `ai_logger` defaults to `auto_improvement.log_entry`.
+    """
+    new_id = log_learning(project_slug, phase_number, phase_title, learning_kind,
+                          learning_text, created_by, db_path, _mirror=False)
+    if ai_logger is None:
+        from .auto_improvement import log_entry as ai_logger  # noqa: PLC0415
+    by = created_by or os.environ.get("NOCTUS_AGENT_ID") or "unknown"
+    title = f" ({phase_title.strip()})" if phase_title and phase_title.strip() else ""
+    try:
+        ledger = ai_logger(
+            scope="scoped", kind="phase-learning",
+            target=f"projects/{project_slug.strip()}",
+            description=f"[{learning_kind}] phase {int(phase_number)}{title}: {learning_text.strip()}",
+            agent=by,
+            source={"tool": "phase_learnings", "ref": str(new_id)},
+        )
+    except Exception as exc:  # noqa: BLE001 — surfaced in the return, not swallowed
+        ledger = {"ok": False, "error": f"ai_logger raised: {exc}"[:300]}
+    if not ledger.get("ok"):
+        logging.getLogger(__name__).error(
+            "phase_learnings: learning %s saved to SQLite but NOT to the ledger: %s",
+            new_id, ledger.get("error"))
+    return {"id": new_id, "ledger": ledger}
+
+
 def log_learning(
     project_slug: str,
     phase_number: int,
@@ -98,8 +140,13 @@ def log_learning(
     learning_text: str,
     created_by: str | None = None,
     db_path: Path | None = None,
+    _mirror: bool = True,
 ) -> int:
     """Append a phase learning. Returns the new row id.
+
+    Also mirrors to the auto-improvement ledger (see `log_learning_ledgered`,
+    which returns the ledger result); a mirror failure is logged at ERROR
+    here since this int-returning form cannot carry it.
 
     Args:
         project_slug: e.g. 'phase-detector-and-enrichment-loop'
@@ -118,6 +165,9 @@ def log_learning(
         raise ValueError(f"learning_kind must be one of {_VALID_KINDS}, got {learning_kind!r}")
     assert_no_pii({"phase_title": phase_title or "", "learning_text": learning_text},
                   field="phase_learning")
+    if _mirror:
+        return log_learning_ledgered(project_slug, phase_number, phase_title, learning_kind,
+                                     learning_text, created_by, db_path)["id"]
     by = created_by or os.environ.get("NOCTUS_AGENT_ID") or "unknown"
     conn = _connect(db_path)
     try:
@@ -225,7 +275,7 @@ def register(server) -> None:
         phase_title: str | None = None,
         created_by: str | None = None,
     ) -> dict:
-        new_id = log_learning(
+        res = log_learning_ledgered(
             project_slug=project_slug,
             phase_number=phase_number,
             phase_title=phase_title,
@@ -233,7 +283,7 @@ def register(server) -> None:
             learning_text=learning_text,
             created_by=created_by,
         )
-        return {"id": new_id}
+        return res
 
     @server.tool(
         name="noctus.dev.phase_learning_query",

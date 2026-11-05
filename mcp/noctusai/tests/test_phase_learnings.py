@@ -192,3 +192,31 @@ class TestMcpToolRegistration:
         }
         missing = expected - tool_names
         assert not missing, f"Expected tools missing from registry: {missing}"
+
+
+class TestLedgerMirror:
+    def test_ledgered_writes_phase_learning_row(self, tmp_db):
+        from tools.noctus.dev.phase_learnings import log_learning_ledgered
+        calls = []
+        def fake(**kw):
+            calls.append(kw)
+            return {"ok": True}
+        r = log_learning_ledgered("proj", 1, "T", "tool", "a lesson here", db_path=tmp_db, ai_logger=fake)
+        assert r["ledger"]["ok"]
+        assert calls[0]["kind"] == "phase-learning"
+        assert calls[0]["source"] == {"tool": "phase_learnings", "ref": str(r["id"])}
+        assert query_learnings("proj", db_path=tmp_db)[0]["id"] == r["id"]
+
+    def test_logger_failure_surfaced_sqlite_kept(self, tmp_db):
+        from tools.noctus.dev.phase_learnings import log_learning_ledgered
+        def boom(**kw):
+            raise RuntimeError("down")
+        r = log_learning_ledgered("proj", 1, None, "tool", "lesson text", db_path=tmp_db, ai_logger=boom)
+        assert r["ledger"]["ok"] is False and "down" in r["ledger"]["error"]
+        assert len(query_learnings("proj", db_path=tmp_db)) == 1
+
+    def test_ok_false_surfaced(self, tmp_db):
+        from tools.noctus.dev.phase_learnings import log_learning_ledgered
+        r = log_learning_ledgered("proj", 1, None, "tool", "lesson text", db_path=tmp_db,
+                                  ai_logger=lambda **k: {"ok": False, "error": "bad"})
+        assert r["ledger"] == {"ok": False, "error": "bad"}

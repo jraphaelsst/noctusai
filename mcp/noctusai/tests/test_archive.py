@@ -130,7 +130,7 @@ class TestNextNN:
 class TestArchiveProject:
     def test_basic_project_archive(self, tmp_repo):
         proj = _make_project(tmp_repo, "alpha")
-        result = archive("projects/alpha", repo_root=tmp_repo)
+        result = archive("projects/alpha", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         assert result["mode"] == "project"
         assert result["next_NN"] == 1
         today = _today_str()
@@ -145,23 +145,23 @@ class TestArchiveProject:
 
     def test_second_project_same_day_gets_NN_02(self, tmp_repo):
         _make_project(tmp_repo, "alpha")
-        archive("projects/alpha", repo_root=tmp_repo)
+        archive("projects/alpha", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         # Commit the move so the next archive starts from clean state
         subprocess.run(["git", "commit", "-q", "-am", "archive alpha"], cwd=str(tmp_repo), check=True)
         _make_project(tmp_repo, "beta")
-        result = archive("projects/beta", repo_root=tmp_repo)
+        result = archive("projects/beta", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         assert result["next_NN"] == 2
         today = _today_str()
         assert result["archived_to"] == f"archive/projects/{today}/02-beta"
 
     def test_auto_detect_project_from_directory(self, tmp_repo):
         _make_project(tmp_repo, "gamma")
-        result = archive("projects/gamma", repo_root=tmp_repo)  # no mode specified
+        result = archive("projects/gamma", repo_root=tmp_repo, finding_rows_fn=lambda: [])  # no mode specified
         assert result["mode"] == "project"
 
     def test_explicit_project_md_path_works(self, tmp_repo):
         _make_project(tmp_repo, "delta")
-        result = archive("projects/delta/PROJECT.md", repo_root=tmp_repo)
+        result = archive("projects/delta/PROJECT.md", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         assert result["mode"] == "project"
         # Slug is derived from parent folder name
         today = _today_str()
@@ -175,7 +175,7 @@ class TestArchiveProject:
 class TestArchiveFeature:
     def test_basic_feature_archive(self, tmp_repo):
         feat = _make_feature(tmp_repo, "easy-fix")
-        result = archive("features/easy-fix.md", repo_root=tmp_repo)
+        result = archive("features/easy-fix.md", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         assert result["mode"] == "feature"
         assert result["next_NN"] == 1
         today = _today_str()
@@ -187,15 +187,15 @@ class TestArchiveFeature:
 
     def test_second_feature_same_day_gets_NN_02(self, tmp_repo):
         _make_feature(tmp_repo, "first")
-        archive("features/first.md", repo_root=tmp_repo)
+        archive("features/first.md", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         subprocess.run(["git", "commit", "-q", "-am", "archive first"], cwd=str(tmp_repo), check=True)
         _make_feature(tmp_repo, "second")
-        result = archive("features/second.md", repo_root=tmp_repo)
+        result = archive("features/second.md", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         assert result["next_NN"] == 2
 
     def test_auto_detect_feature(self, tmp_repo):
         _make_feature(tmp_repo, "auto")
-        result = archive("features/auto.md", repo_root=tmp_repo)  # no mode
+        result = archive("features/auto.md", repo_root=tmp_repo, finding_rows_fn=lambda: [])  # no mode
         assert result["mode"] == "feature"
 
 
@@ -211,7 +211,7 @@ class TestArchiveAdHoc:
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
         subprocess.run(["git", "commit", "-q", "-m", "scratch"], cwd=str(tmp_repo), check=True)
         with pytest.raises(ValueError, match="name is required"):
-            archive("scratch", mode="ad_hoc", repo_root=tmp_repo)
+            archive("scratch", mode="ad_hoc", repo_root=tmp_repo, finding_rows_fn=lambda: [])
 
     def test_ad_hoc_basic(self, tmp_repo):
         scratch = tmp_repo / "scratch"
@@ -219,7 +219,7 @@ class TestArchiveAdHoc:
         (scratch / "stuff.txt").write_text("x")
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
         subprocess.run(["git", "commit", "-q", "-m", "scratch"], cwd=str(tmp_repo), check=True)
-        result = archive("scratch", mode="ad_hoc", name="my-scratch", repo_root=tmp_repo)
+        result = archive("scratch", mode="ad_hoc", name="my-scratch", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         assert result["mode"] == "ad_hoc"
         assert result["next_NN"] is None
         # Path matches archive/<YYYY-MM-DD>_<HH-MM-SS>_my-scratch
@@ -240,11 +240,11 @@ class TestIdempotencyGuard:
         archived.mkdir(parents=True)
         (archived / "PROJECT.md").write_text("already archived")
         with pytest.raises(ValueError, match="already under archive"):
-            archive(str(archived), repo_root=tmp_repo)
+            archive(str(archived), repo_root=tmp_repo, finding_rows_fn=lambda: [])
 
     def test_refuses_archive_root_itself(self, tmp_repo):
         with pytest.raises(ValueError, match="already under archive"):
-            archive("archive", repo_root=tmp_repo)
+            archive("archive", repo_root=tmp_repo, finding_rows_fn=lambda: [])
 
 
 # ---------------------------------------------------------------------------
@@ -254,12 +254,12 @@ class TestIdempotencyGuard:
 class TestErrors:
     def test_nonexistent_target_raises(self, tmp_repo):
         with pytest.raises(ValueError, match="does not exist"):
-            archive("projects/never-existed", repo_root=tmp_repo)
+            archive("projects/never-existed", repo_root=tmp_repo, finding_rows_fn=lambda: [])
 
     def test_invalid_mode_raises(self, tmp_repo):
         _make_project(tmp_repo, "x")
         with pytest.raises(ValueError, match="invalid mode"):
-            archive("projects/x", mode="not-a-mode", repo_root=tmp_repo)
+            archive("projects/x", mode="not-a-mode", repo_root=tmp_repo, finding_rows_fn=lambda: [])
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +273,7 @@ class TestHistoryPreservation:
         (proj / "PROJECT.md").write_text("# histtest\n\nupdated content.\n")
         subprocess.run(["git", "commit", "-q", "-am", "update histtest"], cwd=str(tmp_repo), check=True)
         # Archive
-        result = archive("projects/histtest", repo_root=tmp_repo)
+        result = archive("projects/histtest", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         # Commit the move
         subprocess.run(["git", "commit", "-q", "-m", "archive histtest"], cwd=str(tmp_repo), check=True)
         # git log --follow should walk back through the project's pre-archive history
@@ -368,6 +368,7 @@ class TestWorktreeAwarePathResolution:
             target_path=str(proj),
             mode="project",
             worktree_path=wt,
+            finding_rows_fn=lambda: [],
         )
         # archived_to is relative to the worktree root.
         archived = wt / result["archived_to"]
@@ -385,6 +386,7 @@ class TestWorktreeAwarePathResolution:
                 mode="ad_hoc",
                 name="x",
                 worktree_path=bad,
+                finding_rows_fn=lambda: [],
             )
 
     def test_explicit_repo_root_overrides_worktree_path(self, tmp_path):
@@ -409,6 +411,7 @@ class TestWorktreeAwarePathResolution:
             mode="project",
             repo_root=sink,  # should win
             worktree_path=wt,
+            finding_rows_fn=lambda: [],
         )
         archived = sink / result["archived_to"]
         assert archived.exists()
@@ -437,7 +440,7 @@ class TestLedgerStampOnProjectArchive:
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         assert not ledger.exists()
 
-        result = archive("projects/phase2-sample", repo_root=tmp_repo)
+        result = archive("projects/phase2-sample", repo_root=tmp_repo, finding_rows_fn=lambda: [])
 
         # Ledger exists; exactly one line; that line is valid JSON for
         # this slug.
@@ -458,10 +461,10 @@ class TestLedgerStampOnProjectArchive:
     def test_second_project_archive_appends_second_line(self, tmp_repo):
         """Re-running on a second project appends (not overwrites)."""
         _make_project(tmp_repo, "first")
-        archive("projects/first", repo_root=tmp_repo)
+        archive("projects/first", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         subprocess.run(["git", "commit", "-q", "-am", "archive first"], cwd=str(tmp_repo), check=True)
         _make_project(tmp_repo, "second")
-        archive("projects/second", repo_root=tmp_repo)
+        archive("projects/second", repo_root=tmp_repo, finding_rows_fn=lambda: [])
 
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         lines = ledger.read_text(encoding="utf-8").splitlines()
@@ -473,7 +476,8 @@ class TestLedgerStampOnProjectArchive:
         """``skip_history=True`` — no ledger writes; archive still works."""
         _make_project(tmp_repo, "no-stamp")
         result = archive(
-            "projects/no-stamp", repo_root=tmp_repo, skip_history=True
+            "projects/no-stamp", repo_root=tmp_repo, skip_history=True,
+            finding_rows_fn=lambda: [],
         )
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         assert not ledger.exists(), "skip_history=True must NOT create the ledger"
@@ -486,7 +490,7 @@ class TestLedgerStampOnProjectArchive:
     def test_feature_archive_does_not_stamp(self, tmp_repo):
         """Feature archives are NOT projects — no ledger entry."""
         _make_feature(tmp_repo, "feat")
-        result = archive("features/feat.md", repo_root=tmp_repo)
+        result = archive("features/feat.md", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         assert not ledger.exists(), "feature archives must not stamp the ledger"
         assert result["history"] is None
@@ -499,7 +503,8 @@ class TestLedgerStampOnProjectArchive:
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
         subprocess.run(["git", "commit", "-q", "-m", "scratch"], cwd=str(tmp_repo), check=True)
         result = archive(
-            "scratch", mode="ad_hoc", name="ad-hoc-thing", repo_root=tmp_repo
+            "scratch", mode="ad_hoc", name="ad-hoc-thing", repo_root=tmp_repo,
+            finding_rows_fn=lambda: [],
         )
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         assert not ledger.exists()
@@ -525,6 +530,7 @@ class TestLedgerStampOnProjectArchive:
                 "projects/fail-stamp",
                 repo_root=tmp_repo,
                 status_at_close="not-a-valid-status",
+                finding_rows_fn=lambda: [],
             )
 
         # Source untouched — archive did NOT proceed:
@@ -546,6 +552,7 @@ class TestLedgerStampOnProjectArchive:
             summary_md="A precise human-written summary.",
             review_md="- step a\n- step b",
             outcome_signals=["pytest 60/60 green"],
+            finding_rows_fn=lambda: [],
         )
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         rec = json.loads(ledger.read_text().splitlines()[0])
@@ -557,7 +564,7 @@ class TestLedgerStampOnProjectArchive:
         """When ``status_at_close`` is not supplied, default is
         ``shipped`` (archive's most common trigger)."""
         _make_project(tmp_repo, "defaults")
-        archive("projects/defaults", repo_root=tmp_repo)
+        archive("projects/defaults", repo_root=tmp_repo, finding_rows_fn=lambda: [])
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         rec = json.loads(ledger.read_text().splitlines()[0])
         assert rec["status_at_close"] == "shipped"
@@ -569,6 +576,7 @@ class TestLedgerStampOnProjectArchive:
             "projects/abandoned-one",
             repo_root=tmp_repo,
             status_at_close="abandoned",
+            finding_rows_fn=lambda: [],
         )
         ledger = tmp_repo / "project-history" / "ledger.ndjson"
         rec = json.loads(ledger.read_text().splitlines()[0])
@@ -690,6 +698,48 @@ class TestArchiveCleanMcpRegistration:
         assert "noctus.dev.archive_clean" in s._tool_manager._tools
 
 
+def _frow(slug, status, n=1):
+    return {"kind": "finding", "status": status, "description": f"lesson {n}",
+            "source": {"tool": "findings", "ref": f"{slug}:Lessons:abc{n}"}}
+
+
+class TestFindingsLedgerGate:
+    def test_open_finding_refuses_with_list(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-open")
+        with pytest.raises(ValueError, match="fl-open:Lessons:abc1"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True,
+                    finding_rows_fn=lambda: [_frow("fl-open", "s1-emergent")])
+        assert proj.exists()
+
+    def test_open_finding_not_bypassed_by_learnings_absorbed(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-flag")
+        with pytest.raises(ValueError, match="still open"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True, learnings_absorbed=True,
+                    finding_rows_fn=lambda: [_frow("fl-flag", "s1-emergent")])
+
+    def test_promoted_and_closed_pass(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-done")
+        r = archive(str(proj), repo_root=tmp_repo, skip_history=True,
+                    finding_rows_fn=lambda: [_frow("fl-done", "s3-kb"), _frow("fl-done", "closed", 2),
+                                             _frow("other", "s1-emergent")])
+        assert r["accepted_open_findings"] == []
+
+    def test_accept_open_findings_escape_is_recorded(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-esc")
+        r = archive(str(proj), repo_root=tmp_repo, skip_history=True,
+                    accept_open_findings="owner accepted",
+                    finding_rows_fn=lambda: [_frow("fl-esc", "s1-emergent")])
+        assert r["accept_open_findings_reason"] == "owner accepted"
+        assert r["accepted_open_findings"] == ["fl-esc:Lessons:abc1"]
+
+    def test_reader_failure_refuses(self, tmp_repo):
+        proj = _make_project(tmp_repo, "fl-err")
+        def boom():
+            raise RuntimeError("ledger down")
+        with pytest.raises(ValueError, match="cannot read"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=boom)
+
+
 class TestLearnBeforeArchiveGate:
     """archive() refuses to archive a PROJECT until learnings_absorbed=True —
     the lesson must outlive the folder (KB § "Durable docs are self-contained")."""
@@ -698,7 +748,7 @@ class TestLearnBeforeArchiveGate:
         proj = _make_project(tmp_repo, "demo-proj")
         (proj / "findings.md").write_text("# findings\n- a lesson\n")
         with pytest.raises(ValueError, match="learn-before-archive"):
-            archive(str(proj), repo_root=tmp_repo, skip_history=True)
+            archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=lambda: [])
         assert proj.exists(), "project must NOT be moved when the gate refuses"
 
     def test_project_proceeds_with_learnings_absorbed(self, tmp_repo):
@@ -706,7 +756,8 @@ class TestLearnBeforeArchiveGate:
         (proj / "findings.md").write_text("# findings\n- a lesson\n")  # gate WOULD fire
         result = archive(
             str(proj), repo_root=tmp_repo, skip_history=True,
-            learnings_absorbed=True,  # ...the flag bypasses it
+            learnings_absorbed=True,  # ...the flag bypasses it,
+            finding_rows_fn=lambda: [],
         )
         assert result["mode"] == "project"
         assert result["archived_to"].startswith("archive/projects/")
@@ -714,7 +765,7 @@ class TestLearnBeforeArchiveGate:
 
     def test_feature_mode_unaffected_by_gate(self, tmp_repo):
         feat = _make_feature(tmp_repo, "demo-feat")
-        result = archive(str(feat), repo_root=tmp_repo, skip_history=True)
+        result = archive(str(feat), repo_root=tmp_repo, skip_history=True, finding_rows_fn=lambda: [])
         assert result["mode"] == "feature"
 
 
@@ -738,7 +789,7 @@ class TestDurableRefsGate:
             "run: bash projects/deploy-proj/deploy/build.sh\n",
         )
         with pytest.raises(ValueError, match="durable-refs gate"):
-            archive(str(proj), repo_root=tmp_repo, skip_history=True)
+            archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=lambda: [])
         assert proj.exists(), "project must NOT move while a durable surface points into it"
 
     def test_refuses_when_py_constant_references_the_project(self, tmp_repo):
@@ -755,12 +806,12 @@ class TestDurableRefsGate:
             'DEFAULT_COMPOSE = "projects/deploy-tooling-proj/deploy/fleet/docker-compose.prod.yml"\n',
         )
         with pytest.raises(ValueError, match="durable-refs gate"):
-            archive(str(proj), repo_root=tmp_repo, skip_history=True)
+            archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=lambda: [])
         assert proj.exists(), "a .py constant pointing into projects/ must trip the gate"
 
     def test_proceeds_when_no_durable_ref(self, tmp_repo):
         proj = _make_project(tmp_repo, "clean-proj")
-        result = archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        result = archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=lambda: [])
         assert result["mode"] == "project"
         assert not proj.exists()
 
@@ -771,6 +822,7 @@ class TestDurableRefsGate:
         )
         result = archive(
             str(proj), repo_root=tmp_repo, skip_history=True, allow_durable_refs=True,
+            finding_rows_fn=lambda: [],
         )
         assert result["mode"] == "project"
         assert not proj.exists()
@@ -783,7 +835,7 @@ class TestDurableRefsGate:
             tmp_repo, "project-history/ledger.ndjson",
             '{"path": "projects/ledgered-proj/"}\n',
         )
-        result = archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        result = archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=lambda: [])
         assert not proj.exists(), "project-history/ reference must not trip the gate"
 
     def test_reference_from_another_project_does_not_count(self, tmp_repo):
@@ -795,7 +847,7 @@ class TestDurableRefsGate:
         (sibling / "PROJECT.md").write_text("# other\nsee projects/target-proj/ thing\n")
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
         subprocess.run(["git", "commit", "-q", "-m", "sibling"], cwd=str(tmp_repo), check=True)
-        result = archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        result = archive(str(proj), repo_root=tmp_repo, skip_history=True, finding_rows_fn=lambda: [])
         assert not proj.exists(), "a sibling projects/ reference must not trip the gate"
 
     def test_mcp_wrapper_exposes_allow_durable_refs_param(self):
