@@ -8,9 +8,9 @@
 -- Roadmap: project-history/roadmaps/nosnolimiar-rename-2026-11.md.
 --
 -- WHAT: rename the catalog row IN PLACE (guarded on slug='monica' -> idempotent, a no-op on a fresh DB or a
--- re-run) and rename the slug-keyed LIVE rows of the platform tables. Historical rows
--- (sso_token_redemptions, audit_logs.product_slug, act_as_sessions, ai_usage, scheduler_runs) are history
--- and are deliberately left as written.
+-- re-run) and rename the slug-keyed LIVE rows of the platform tables (derived from the catalog, see below).
+-- Historical rows (sso_token_redemptions, audit_logs.product_slug, act_as_sessions, ai_usage, scheduler_runs,
+-- credit_entries, help_chat_conversas) are history and are deliberately left as written.
 -- ORDER (prod): this runs BEFORE the product's 020 (which renames the Postgres schema); the product container
 -- is stopped for the window. KB § PATTERNS/architect/product-working-scope.md.
 
@@ -22,22 +22,50 @@ UPDATE public.products
        db_schema = 'nosnolimiar'
  WHERE slug = 'monica';
 
--- Slug-keyed LIVE rows of the platform tables (guarded: a table/column absent in an older DB is skipped).
+-- Slug-keyed LIVE rows: DERIVED from the catalog, never hand-listed (the hand-list missed
+-- agents.agent_product_grants.product). Candidate = every text column in the platform schemas (public, agents)
+-- whose NAME says "product slug". The declared HISTORICAL set below is excluded on purpose: those rows record what
+-- the product was called when the event happened (append-only ledgers / audit / session history) and stay as written.
+-- A final guard fails the migration if a non-historical candidate still holds 'monica', so a column added later
+-- (or one this pattern did not anticipate) cannot be silently skipped.
 DO $$
 DECLARE
-    t record;
+    -- schema.table.column of the declared historical set (RUNBOOK Notes; sso/audit are the owner-named ones)
+    v_historical constant text[] := ARRAY[
+        'public.sso_token_redemptions.product',
+        'public.audit_logs.product_slug',
+        'public.act_as_sessions.entry_product_slug',
+        'public.ai_usage.product',
+        'public.scheduler_runs.product',
+        'public.credit_entries.product',
+        'public.help_chat_conversas.produto'
+    ];
+    v_cols constant text[] := ARRAY['product', 'product_slug', 'produto', 'owner_product'];
+    c record;
+    v_left text := '';
+    v_n bigint;
 BEGIN
-    FOR t IN
-        SELECT * FROM (VALUES
-            ('scheduler_jobs',     'product'),
-            ('platform_templates', 'product')
-        ) AS x(tbl, col)
+    FOR c IN
+        SELECT col.table_schema AS sch, col.table_name AS tbl, col.column_name AS col
+          FROM information_schema.columns col
+          JOIN information_schema.tables t
+            ON t.table_schema = col.table_schema AND t.table_name = col.table_name AND t.table_type = 'BASE TABLE'
+         WHERE col.table_schema IN ('public', 'agents')
+           AND col.column_name = ANY (v_cols)
+           AND col.data_type IN ('text', 'character varying')
+           AND format('%s.%s.%s', col.table_schema, col.table_name, col.column_name) <> ALL (v_historical)
+         ORDER BY 1, 2, 3
     LOOP
-        IF EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'public' AND table_name = t.tbl AND column_name = t.col) THEN
-            EXECUTE format('UPDATE public.%I SET %I = %L WHERE %I = %L',
-                           t.tbl, t.col, 'nosnolimiar', t.col, 'monica');
+        EXECUTE format('UPDATE %I.%I SET %I = %L WHERE %I = %L',
+                       c.sch, c.tbl, c.col, 'nosnolimiar', c.col, 'monica');
+        -- guard: nothing non-historical may still hold the old slug
+        EXECUTE format('SELECT count(*) FROM %I.%I WHERE %I = %L', c.sch, c.tbl, c.col, 'monica') INTO v_n;
+        IF v_n > 0 THEN
+            v_left := v_left || format('%s.%s.%s=%s; ', c.sch, c.tbl, c.col, v_n);
         END IF;
     END LOOP;
+    IF v_left <> '' THEN
+        RAISE EXCEPTION '098: non-historical column(s) still hold the slug monica: %', v_left;
+    END IF;
 END
 $$;
