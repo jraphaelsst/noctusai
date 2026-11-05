@@ -41,22 +41,23 @@ Regression tests: `mcp/noctusai/tests/test_kb_sync.py::test_render_kb_counts_*` 
 - **`merge=ours` (keep one side)** is unsafe for `02-LANDSCAPE.md` / `CLAUDE.md`: they mix generated blocks with **hand-written prose** → `ours` would silently drop a real concurrent prose edit. The regenerating driver + marker-guard preserves prose conflicts.
 - **Stop auto-stamping counts per-commit** would re-open the 2026-06-01 "count regen left dirty → blocks `task_branch` integrate" recurrence, and would also strand the roster-row structural sync the `check_kb_sync` keeper depends on (product-add must update the roster). The driver leaves the per-commit stamp intact and fixes only the *merge* surface.
 
-## Wiring (driver = local git config, NOT committable)
+## Wiring (driver = per-repo git config, NOT committable)
 
-`.gitattributes` (committed) maps the path → driver name; the driver body is per-repo git config, so `scripts/hooks/install-hooks.sh` registers it:
+`.gitattributes` (committed) maps the path → driver NAME; the driver body is per-repo git config, registered by **`scripts/hooks/register-merge-drivers.sh [ROOT]`** (idempotent; one `reg` line per driver). Two callers: `scripts/hooks/install-hooks.sh` (developer clones) and `.github/workflows/merge-queue.yml` (the runner — setup-python + `pip install -r mcp/noctusai/requirements.txt` + this script, all before the drain).
 
-```sh
-git config merge.kb-counts.name   "regenerate auto-derived kb-counts blocks; surface real prose conflicts"
-git config merge.kb-counts.driver "$REPO_ROOT/scripts/hooks/merge-kb-counts.sh %O %A %B %P"
-```
+A clone that hasn't registered the drivers degrades to the default text merge (the old conflict). Fresh clone: `bash scripts/install-hooks.sh`.
 
-A clone that hasn't run `install-hooks.sh` degrades gracefully to the default merge (the old conflict) — never a hard break. Fresh clone: `bash scripts/install-hooks.sh`.
+### 🔴 Incident 2026-11-05 — the CI runner never registered them
+
+4 queue entries (core-lead-email-off, julia-mecanismo-v2, agents-optout-paused, julia-content-fixes) were ejected `conflict … 02-LANDSCAPE.md`: every enqueue regenerates the kb-counts blocks, so parallel entries always touch the same block, and on the runner `merge=kb-counts` named an UNDEFINED driver → plain text merge → conflict. The drain's `git merge --no-ff` and `git rebase --onto` both honour drivers once registered (proved in `tests/test_merge_drivers_ci.py`). Keeper `check_merge_drivers_registered_in_ci` now requires: every custom `merge=<name>` in `.gitattributes` is registered by the script, and `merge-queue.yml` invokes it.
+
+`merge-kb-counts.sh` re-renders via `cli.py --render-kb-counts`, which needs the toolkit deps. If python/the CLI/deps are missing it now **exits 1** (a real conflict, stderr says why) instead of keeping stale counts as before. Locally this only bites with a broken venv.
 
 ## When you add a new auto-generated surface
 
 1. Decide the shape (append vs derive).
 2. Add the `.gitattributes` line (`merge=union` or `merge=<regen-driver>`).
-3. Append-only → done (union is built in). Derived → author/extend a regenerating driver + register it in `install-hooks.sh` + run it now.
-4. Codify here + memory; keep `.gitattributes` ↔ `install-hooks.sh` ↔ this doc in sync.
+3. Append-only → done (union is built in). Derived → author/extend a regenerating driver + add a `reg` line in `register-merge-drivers.sh` (CI picks it up) + run it now.
+4. Codify here + memory; keep `.gitattributes` ↔ `register-merge-drivers.sh` ↔ this doc in sync.
 
 Related: `KB § PATTERNS/common/branching.md` (integrate cleanly) · `KB § PATTERNS/common/methodology-execution-discipline.md` (recurring gate → root fix) · `KB § PATTERNS/architect/noc-graph.md` (committed `graph.json` + merge driver, same family).

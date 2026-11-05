@@ -140,6 +140,7 @@ Code lives in:
   commit and rebases it with `--rebase-merges` (it used to do that only for
   `train-*` slugs, so feat/julia-golive was flattened and re-hit the conflicts
   its merge had already resolved).
+- **The drain registers the repo's custom merge drivers first** (`scripts/hooks/register-merge-drivers.sh`, after installing toolkit deps). `.gitattributes` only names a driver; unregistered on the runner, derived kb-counts blocks text-merge and eject parallel entries (2026-11-05). Keeper `check_merge_drivers_registered_in_ci`. → `KB § PATTERNS/common/auto-generated-merge-drivers.md`
 
 ## 5 · Fallback: `task_branch action=integrate`
 

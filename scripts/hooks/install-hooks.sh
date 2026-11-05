@@ -51,25 +51,11 @@ ln -s "$REPO_ROOT/scripts/hooks/commit-msg" "$HOOKS_DIR/commit-msg"
 chmod +x "$REPO_ROOT/scripts/hooks/commit-msg"
 echo "  commit-msg: append Noc-Branch trailer (ship-consent attribution)"
 
-# ─── merge driver: kb-counts (regenerate auto-derived inventory blocks on merge)
-# `.gitattributes` maps the count-block-bearing KB docs to merge=kb-counts; the
-# driver itself is per-repo git config (NOT committable), so wire it here. Without
-# it, two parallel branches that bump the same product's inventory row conflict on
-# pure machine churn at rebase/integrate. KB § PATTERNS/common/auto-generated-merge-drivers.md
-chmod +x "$REPO_ROOT/scripts/hooks/merge-kb-counts.sh"
-git -C "$REPO_ROOT" config merge.kb-counts.name "regenerate auto-derived kb-counts blocks; surface real prose conflicts"
-git -C "$REPO_ROOT" config merge.kb-counts.driver "$REPO_ROOT/scripts/hooks/merge-kb-counts.sh %O %A %B %P"
-echo "  merge driver: kb-counts (regenerate inventory blocks; no churn conflicts)"
-
-# ─── merge driver: lgpd-warnings (entry-aware merge of LGPD-WARNINGS.md)
-# `.gitattributes` maps LGPD-WARNINGS.md to merge=lgpd-warnings. Every flag inserts
-# at the same anchor, so parallel flags always conflict; the driver merges by
-# (concern, path) identity and keeps BOTH sides' entries. Per-repo git config.
-# KB § PATTERNS/common/lgpd-entry-keeper.md
-chmod +x "$REPO_ROOT/scripts/hooks/merge-lgpd-warnings.sh"
-git -C "$REPO_ROOT" config merge.lgpd-warnings.name "entry-aware merge of LGPD-WARNINGS.md (keeps both sides' entries)"
-git -C "$REPO_ROOT" config merge.lgpd-warnings.driver "$REPO_ROOT/scripts/hooks/merge-lgpd-warnings.sh %O %A %B %P"
-echo "  merge driver: lgpd-warnings (entry-aware; parallel flags merge cleanly)"
+# ─── merge drivers (kb-counts, lgpd-warnings): per-repo git config, NOT committable.
+# `.gitattributes` maps docs to merge=<driver>; the bodies are registered by the
+# shared script (also run by .github/workflows/merge-queue.yml on the runner).
+# KB § PATTERNS/common/auto-generated-merge-drivers.md
+bash "$REPO_ROOT/scripts/hooks/register-merge-drivers.sh" "$REPO_ROOT"
 
 # ─── post-merge: auto-refresh caches after git pull / merge.
 # Without this, `git pull` brings in remote KB / code changes but the

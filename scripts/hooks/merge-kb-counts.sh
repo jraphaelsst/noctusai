@@ -41,7 +41,8 @@
 # rebase (`-c merge.kb-counts.driver=true`), which is a workaround around a
 # defect in this file. Keep this driver side-effect-free instead.
 #
-# Registered (local git config, not committed) by scripts/hooks/install-hooks.sh.
+# Registered (per-repo git config, not committed) by scripts/hooks/register-merge-drivers.sh
+# (called by install-hooks.sh and by .github/workflows/merge-queue.yml).
 # KB § PATTERNS/common/auto-generated-merge-drivers.md
 # ──────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -80,21 +81,26 @@ has_markers() { grep -qE '^(<<<<<<<|=======|>>>>>>>)' "$1" 2>/dev/null; }
 # `set -e` ones — a merge driver that litters temp files into the repo is the
 # same class of side effect this driver was rewritten to stop having.
 RENDERED="$(mktemp "${TMPDIR:-/tmp}/kb-counts-render.XXXXXX")"
-trap 'rm -f "$RENDERED"' EXIT
+trap 'rm -f "$RENDERED" "$RENDERED.err"' EXIT
 
 # 1. Render %A's content with the counts blocks regenerated from the tree.
 #    Pure — nothing is written to the working tree. If python/the CLI is
-#    unavailable, or the render fails for any reason, we fall through to the
-#    marker check with the UNRENDERED merge result, which surfaces the conflict
-#    rather than silently committing churn.
-if { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; } && [[ -f "$CLI" ]]; then
-    if ! "$PY" "$CLI" --render-kb-counts "$PATHNAME" --source "$CURRENT" \
-            --out "$RENDERED" --worktree-path "$REPO_ROOT" >/dev/null 2>&1; then
-        cp "$CURRENT" "$RENDERED"
-    fi
-else
-    cp "$CURRENT" "$RENDERED"
+#    unavailable, or the render fails, exit 1 (a REAL conflict, %A untouched):
+#    the old fallback kept %A's stale counts and reported success, a silent
+#    wrong answer. On a runner/clone WITHOUT the toolkit deps (noctusai_lib)
+#    this is where it bites — install them (merge-queue.yml does).
+if ! { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; } || [[ ! -f "$CLI" ]]; then
+    echo "merge-kb-counts: no usable python ($PY) or CLI ($CLI); cannot re-derive counts for $PATHNAME" >&2
+    exit 1
 fi
+if ! "$PY" "$CLI" --render-kb-counts "$PATHNAME" --source "$CURRENT" \
+        --out "$RENDERED" --worktree-path "$REPO_ROOT" >/dev/null 2>"$RENDERED.err"; then
+    echo "merge-kb-counts: render of $PATHNAME failed (missing toolkit deps?); refusing to keep stale counts:" >&2
+    tail -n 5 "$RENDERED.err" >&2 || true
+    rm -f "$RENDERED.err"
+    exit 1
+fi
+rm -f "$RENDERED.err"
 
 # 2. Decide: clean → resolved; markers remain → real (prose) conflict, surface
 #    it with %A exactly as git left it.

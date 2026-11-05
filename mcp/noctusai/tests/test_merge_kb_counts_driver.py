@@ -7,7 +7,7 @@ script inside a throwaway repo whose ``mcp/noctusai/cli.py`` is a recording stub
 The contract under test (see the script header):
   * exit 0 + regenerated content in %A when the render leaves no conflict markers;
   * exit 1 + %A byte-identical when markers remain (a real prose conflict);
-  * a failed render falls back to the unrendered merge result, never to silence;
+  * a failed render exits 1 (real conflict, %A untouched) — never stale counts;
   * no %P → exit 1 without invoking the CLI;
   * the driver writes %A and NOTHING else — no tracked file, no temp leftover
     (the 2026-08-17 rebase-loop regression).
@@ -115,19 +115,14 @@ def test_prose_conflict_leaves_A_untouched_and_exits_1(fake_repo, tmp_path):
     assert current.read_text() == CONFLICTED
 
 
-def test_render_failure_falls_back_to_surfacing_the_conflict(fake_repo, tmp_path):
-    current = _current(tmp_path, CONFLICTED)
-    rc, calls, _ = _run(fake_repo, tmp_path, current, "KB.md", "fail")
-    assert len(calls) == 1
-    assert rc == 1
-    assert current.read_text() == CONFLICTED
-
-
-def test_render_failure_on_a_clean_merge_keeps_A(fake_repo, tmp_path):
-    current = _current(tmp_path, RESOLVED)
-    rc, _, _ = _run(fake_repo, tmp_path, current, "KB.md", "fail")
-    assert rc == 0
-    assert current.read_text() == RESOLVED
+def test_render_failure_is_a_real_conflict_never_stale_counts(fake_repo, tmp_path):
+    # Missing toolkit deps must NOT silently keep stale counts: exit 1, %A untouched.
+    for text in (CONFLICTED, RESOLVED):
+        current = _current(tmp_path, text)
+        rc, calls, _ = _run(fake_repo, tmp_path, current, "KB.md", "fail")
+        assert calls  # the render was attempted
+        assert rc == 1
+        assert current.read_text() == text
 
 
 def test_missing_pathname_exits_1_without_invoking_cli(fake_repo, tmp_path):
