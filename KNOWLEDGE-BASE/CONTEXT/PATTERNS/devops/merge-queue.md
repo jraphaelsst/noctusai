@@ -243,6 +243,31 @@ timeout.
   set lives for one drain run only. A new run starts clean and re-bisects if
   needed.
 
+- **Workflow-file entries cannot ride the queue (2026-11-05).** The drain
+  pushes `mq-candidate/*` with `github.token`, and GitHub refuses any pushed
+  *new* commit object that changes `.github/workflows/*` unless the token has
+  the `workflows` permission, which `GITHUB_TOKEN` can never have. A rebased or
+  merged entry that touches a workflow file was unpushable, and the drain
+  raised on the push, wedging the whole queue (17 entries `queued` for ~1.5h).
+  Now:
+  - compose ejects such an entry up front with kind `needs_workflow_token`
+    ("changes .github/workflows/* - the queue's token cannot push workflow
+    edits; land via the steward's workflow-file path") and continues;
+  - a fast-forward entry reuses its already-pushed commit, so it is not
+    pre-ejected;
+  - any rejected candidate push is caught, never raised: a "without `workflows`
+    permission" rejection ejects the workflow-touching entries with the same
+    reason; any other rejection ejects a lone entry (`push_rejected`, with the
+    stderr tail) or bisects a batch;
+  - the seam is `MQ_WORKFLOW_TOKEN=1` (set by the workflow once a PAT/App token
+    with `workflows` is configured); default off, and when on the pre-eject
+    switches off.
+
+  Covered by `test_workflow_touching_entry_is_pre_ejected_and_the_rest_land`,
+  `test_workflow_token_seam_switches_the_pre_eject_off`,
+  `test_rejected_candidate_push_ejects_instead_of_raising`,
+  `test_workflow_permission_rejection_maps_to_the_workflow_reason`.
+
 ## 8 · Related
 
 `KB § PATTERNS/common/self-branching-mode.md` (the worktree lifecycle around

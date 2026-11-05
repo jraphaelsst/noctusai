@@ -362,3 +362,84 @@ def test_a_green_half_does_not_reset_bisection_onto_fresh_entries(world):
         assert not any(f"f{i}.txt" in tree for i in range(3)), tree
     assert ci.last(bad)[0] == "failure"
     assert all(ci.last(f)[0] == "success" for f in fresh)
+
+
+# ── workflow-file entries / rejected pushes (2026-11-05 wedge) ─────────────
+
+WF = ".github/workflows/build-and-push.yml"
+
+
+def _diverge_dev(world):
+    """Move dev so queued entries are not fast-forwards (forces a rebase = a NEW commit object)."""
+    work = world["work"]
+    sh(work, "git", "checkout", "-q", "dev")
+    commit(work, "other.txt", "o\n", "dev moved", 1500)
+    sh(work, "git", "push", "-q", "origin", "dev")
+
+
+def _stale_enqueue(world, slug, files, when):
+    base = sh(world["work"], "git", "rev-parse", "origin/dev")
+    sh(world["work"], "git", "fetch", "-q", "origin")
+    return enqueue(world, slug, files, when, base=base)
+
+
+def test_workflow_touching_entry_is_pre_ejected_and_the_rest_land(world):
+    ok1 = _stale_enqueue(world, "ok1", [("a.txt", "a\n")], 2000)
+    wf = _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    ok2 = _stale_enqueue(world, "ok2", [("b.txt", "b\n")], 2200)
+    _diverge_dev(world)
+    ci = FakeCI(world["origin"])
+    res = make_queue(world, ci).drain()
+    assert [x["slug"] for x in res.ejected] == ["wf"]
+    assert res.ejected[0]["kind"] == "needs_workflow_token"
+    assert {x["slug"] for x in res.landed} == {"ok1", "ok2"}
+    assert ci.last(wf)[0] == "failure" and "workflows" in ci.last(wf)[1]
+    assert ci.last(ok1)[0] == ci.last(ok2)[0] == "success"
+    tree = sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "refs/heads/dev")
+    assert WF not in tree.splitlines()
+
+
+def test_workflow_token_seam_switches_the_pre_eject_off(world, monkeypatch):
+    monkeypatch.setenv("MQ_WORKFLOW_TOKEN", "1")
+    _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    _diverge_dev(world)
+    res = make_queue(world, FakeCI(world["origin"])).drain()
+    assert res.ejected == [] and [x["slug"] for x in res.landed] == ["wf"]
+
+
+def test_rejected_candidate_push_ejects_instead_of_raising(world):
+    bad = enqueue(world, "bad", [("a.txt", "a\n")], 2000)
+    ci = FakeCI(world["origin"])
+
+    def rejecting(cmd, cwd=None):
+        if cmd[:2] == ["git", "push"] and any(str(c).endswith(":refs/heads/mq-candidate/7-1") for c in cmd):
+            return 1, "", "! [remote rejected] x (pre-receive hook declined)"
+        return ci(cmd, cwd=cwd)
+
+    q = mq.Queue("o/r", run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=world["runner"], log=lambda m: None)
+    res = q.drain()
+    assert res.landed == [] and res.ejected[0]["kind"] == "push_rejected"
+    assert "pre-receive" in ci.last(bad)[1]
+
+
+def test_workflow_permission_rejection_maps_to_the_workflow_reason(world, monkeypatch):
+    monkeypatch.setenv("MQ_WORKFLOW_TOKEN", "1")  # defeat the pre-check so the push itself is rejected
+    ok = enqueue(world, "ok", [("a.txt", "a\n")], 2000)
+    wf = enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    ci = FakeCI(world["origin"])
+    n = {"c": 0}
+
+    def rejecting(cmd, cwd=None):
+        if cmd[:2] == ["git", "push"] and any(":refs/heads/mq-candidate/" in str(c) for c in cmd) and n["c"] == 0:
+            n["c"] += 1
+            return 1, "", "! [remote rejected] (refusing to allow a GitHub App to create or update workflow `x.yml` without `workflows` permission)"
+        return ci(cmd, cwd=cwd)
+
+    q = mq.Queue("o/r", run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=world["runner"], log=lambda m: None)
+    res = q.drain()
+    assert [x["slug"] for x in res.ejected] == ["wf"]
+    assert res.ejected[0]["kind"] == "needs_workflow_token"
+    assert {x["slug"] for x in res.landed} == {"ok"} and ci.last(ok)[0] == "success"
+    assert ci.last(wf)[0] == "failure"

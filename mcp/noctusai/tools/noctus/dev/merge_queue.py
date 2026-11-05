@@ -63,6 +63,10 @@ POST_LAND_DISPATCH: tuple[tuple[str, tuple[str, ...]], ...] = (
                             "scripts/infra/build-base-images.sh", ".github/workflows/agents-secc-ci.yml")),
 )
 # A queue ref is `mq/<slug>--<sha7>`; the slug is everything before the last `--`.
+WORKFLOW_PREFIX = ".github/workflows/"
+WORKFLOW_TOKEN_ENV = "MQ_WORKFLOW_TOKEN"
+# GitHub's wording when a token without the `workflows` permission pushes a new commit touching workflow files.
+WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
 ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
 
 Runner = Callable[..., "tuple[int, str, str]"]
@@ -142,6 +146,23 @@ def post_land_workflows(paths: list[str]) -> list[str]:
             if any(p.startswith(prefixes) for p in paths)]
 
 
+def touches_workflows(paths: list[str]) -> bool:
+    return any(p.strip().startswith(WORKFLOW_PREFIX) for p in paths)
+
+
+def is_workflow_rejection(stderr: str) -> bool:
+    return bool(WORKFLOW_REJECT_RE.search(stderr or ""))
+
+
+def workflow_token_enabled(env: dict[str, str] | None = None) -> bool:
+    """The seam: the run has a PAT/App token with the `workflows` permission (workflow sets MQ_WORKFLOW_TOKEN=1)."""
+    return (env if env is not None else os.environ).get(WORKFLOW_TOKEN_ENV, "").strip().lower() in ("1", "true", "yes")
+
+
+WORKFLOW_EJECT_WHY = ("changes .github/workflows/* - the queue's token cannot push workflow edits; "
+                      "land via the steward's workflow-file path")
+
+
 def status_description(text: str) -> str:
     return text if len(text) <= 140 else text[:137] + "..."
 
@@ -152,12 +173,14 @@ class Queue:
     def __init__(self, repo: str, remote: str = "origin", dev: str = "dev",
                  run: Runner = _default_run, run_url: str = "", run_id: str = "local",
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
-                 workdir: str | None = None, log: Callable[[str], None] = print):
+                 workdir: str | None = None, log: Callable[[str], None] = print,
+                 workflow_token: bool | None = None):
         self.repo, self.remote, self.dev = repo, remote, dev
         self.run, self.run_url, self.run_id = run, run_url, run_id
         self.poll_s, self.timeout_s, self.sleep = poll_s, timeout_s, sleep
         self.workdir = workdir or os.getcwd()
         self.log = log
+        self.workflow_token = workflow_token_enabled() if workflow_token is None else workflow_token
 
     # git plumbing ------------------------------------------------------------
     def git(self, *args: str, cwd: str | None = None, check: bool = True) -> str:
@@ -255,6 +278,11 @@ class Queue:
                 ejected.append(self._eject_info(
                     e, "migration_collision",
                     f"migration number {c['number']} in {c['dir']} already taken: {c['files']} - renumber and re-enqueue"))
+                continue
+            if not self.workflow_token and new_head != e.sha and touches_workflows(self.changed_paths(head, new_head)):
+                # A NEW commit object (rebase/merge) changing a workflow file is unpushable with github.token.
+                self.git("reset", "--hard", "--quiet", head, cwd=wt)
+                ejected.append(self._eject_info(e, "needs_workflow_token", WORKFLOW_EJECT_WHY))
                 continue
             head = new_head
             applied.append(e)
@@ -368,7 +396,14 @@ class Queue:
                         res.landed.append({"slug": e.slug, "dev": base})
                     continue
                 cand_ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}"
-                self.git("push", self.remote, f"{cand}:refs/heads/{cand_ref}")
+                rc, _, perr = self.run(["git", "push", self.remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
+                if rc != 0:
+                    # Never crash the drain on a rejected push (2026-11-05: it wedged the queue ~1.5h).
+                    if self._handle_push_rejection(applied, base, perr, res):
+                        suspects = [e.ref for e in applied
+                                    if not any(x["ref"] == e.ref for x in res.ejected)]
+                        limit = next_batch_limit(limit, len(applied), green=False) if suspects else batch_limit
+                    continue
                 for e in applied:
                     self.set_status(e.sha, "pending", f"testing in batch {cand_ref} ({len(applied)} entr{'y' if len(applied) == 1 else 'ies'})")
                 ci = self.dispatch_and_wait(cand_ref, cand, base)
@@ -410,6 +445,27 @@ class Queue:
             finally:
                 self.run(["git", "worktree", "remove", "--force", wt], cwd=self.workdir)
         return res
+
+    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome) -> bool:
+        """A candidate push was rejected. Eject the culprit(s) and return True when the batch must still be
+        bisected (cause not attributable to a single entry)."""
+        tail = (stderr or "").strip()[-300:]
+        if is_workflow_rejection(stderr):
+            culprits = [e for e in applied if touches_workflows(self.changed_paths(base, e.sha))]
+            kind, why = "needs_workflow_token", WORKFLOW_EJECT_WHY
+        else:
+            culprits = applied if len(applied) == 1 else []
+            kind, why = "push_rejected", f"candidate push rejected: {tail}"
+        if not culprits and len(applied) == 1:
+            culprits = applied
+        for e in culprits:
+            x = self._eject_info(e, kind, why)
+            self._finish_eject(x)
+            res.ejected.append(x)
+        left = [e for e in applied if e not in culprits]
+        if left:
+            self.log(f"  candidate push rejected ({kind}); {len(left)} entr{'y' if len(left) == 1 else 'ies'} stay queued")
+        return bool(left) and not culprits
 
     def _finish_land(self, e: Entry, dev_sha: str) -> None:
         self.set_status(e.sha, "success", f"landed in dev as {dev_sha[:9]}")
