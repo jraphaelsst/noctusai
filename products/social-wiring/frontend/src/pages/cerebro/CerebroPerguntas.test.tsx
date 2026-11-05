@@ -18,7 +18,10 @@ const m = {
   finalizar: vi.fn(),
   audio: vi.fn(),
 };
-vi.mock("@noctusai/lib", () => ({
+// Partial mock: everything real except the recorder, so a new lib export consumed
+// in the import chain (e.g. createOpenInProduct) never breaks this file.
+vi.mock("@noctusai/lib", async () => ({
+  ...(await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib")),
   VoiceAnswerInput: (p: any) => (
     <button data-testid="fake-rec" disabled={p.disabled} onClick={() => p.onRecorded(new Blob(["x"]), "audio/webm", 3)}>
       REC{p.maxSeconds}
