@@ -158,7 +158,7 @@ generates TWO checked-in files:
 | File | Set | Who reads it |
 |---|---|---|
 | `deploy/fleet/build-scope.txt` | `ativo AND deploy_scope='live'` + core | image builds, deploy guard, smoke |
-| `deploy/fleet/active-scope.txt` | `ativo` (any scope) ∩ on-disk + core | every CI test job, keeper, hook, `gate_sweep`, `run_all_tests`, `build_parallel`, `smoke_fleet`, predeploy roster legs |
+| `deploy/fleet/active-scope.txt` | `ativo` (any scope) ∧ on-disk + core | every CI test job, keeper, hook, `gate_sweep`, `run_all_tests`, `build_parallel`, `smoke_fleet`, predeploy roster legs |
 
 `live ⊆ active` by construction (pinned by `test_product_scope.py`). Every
 consumer goes through `tools/noctus/dev/product_scope.filter_active` (Python)
