@@ -86,3 +86,39 @@ def test_landed_skips_the_replay_when_already_merged():
     res = _landed(fake, "landed", keep_worktree=True)
     assert res["status"] == "integrated"
     assert not [c for c, _ in fake.calls if c[:2] == ["git", "rebase"]]
+
+
+class _MergeCarryingFake:
+    """Wraps the FakeGit: `rev-list --merges` reports one merge commit."""
+
+    def __init__(self, inner, merges: str):
+        self.inner, self.merges = inner, merges
+        self.calls = inner.calls
+
+    def __call__(self, cmd, cwd=None):
+        if cmd[:3] == ["git", "rev-list", "--merges"]:
+            self.inner.calls.append((cmd, cwd))
+            return 0, self.merges, ""
+        return self.inner(cmd, cwd=cwd)
+
+    def pushes(self):
+        return self.inner.pushes()
+
+
+def test_enqueue_keeps_merge_resolutions_of_a_merge_carrying_branch():
+    # 2026-11-05 (feat/julia-golive): a branch that merged a feature line with
+    # hand-resolved conflicts was flattened by a plain rebase and re-hit those
+    # conflicts. Any merge-carrying branch now syncs dev in and rebases with
+    # --rebase-merges, like a train.
+    fake = _MergeCarryingFake(_fake(), "m" * 40 + "\n")
+    T.task_branch(action="enqueue", slug="x", confirm=True, run=fake)
+    rebases = [c for c, _ in fake.calls if c[:2] == ["git", "rebase"]]
+    assert rebases and all("--rebase-merges" in c for c in rebases)
+    assert [c for c, _ in fake.calls if c[:2] == ["git", "merge"]]  # dev synced in first
+
+
+def test_enqueue_of_a_linear_branch_still_plain_rebases():
+    fake = _MergeCarryingFake(_fake(), "")
+    T.task_branch(action="enqueue", slug="x", confirm=True, run=fake)
+    rebases = [c for c, _ in fake.calls if c[:2] == ["git", "rebase"]]
+    assert rebases and not any("--rebase-merges" in c for c in rebases)
