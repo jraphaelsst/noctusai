@@ -40,7 +40,12 @@
 - Wave-3 todo: compliance-reviewer accessibility pointer → `KB § PATTERNS/frontend/frontend-craft-canon.md` (now exists); compliance.py ~19706 message still names skill-scout as meta (minimal fix, own commit); test_agent_kb_alignment fixture uses orchestrator-operator (retiring!) → repoint; skills `version:` → `metadata.version` fleet decision; TaxRegime lacks `real`, no IBS/CBS rows, no subscription ledger (finance organ proposals).
 
 ### W1-S1 architect + engineer-seed — merged (agent still waiting on an hw slot; 4 commits clean)
-- 5c419081a (keeper allowlist +1 line ~19388, own commit) · b89091390 engineer-operating-discipline + engineer-seed upgrade · f7f88945f architecture-craft-canon + architect L1 · 2c23bd672 fix-on-contact. Details to fill from the agent's return.
+- 5c419081a (keeper allowlist +1 line ~19388, own commit) · b89091390 engineer-operating-discipline + engineer-seed upgrade · f7f88945f architecture-craft-canon + architect L1 · 2c23bd672 fix-on-contact.
+- +cfedc248a (drop project-folder audit path from both canons — doc-staleness high) merged 9a1171b1b. architect.md 76→100 · engineer-seed 80→84 · architecture-craft-canon 696 · engineer-operating-discipline 315.
+- Tests: agent keeper tests 56 passed; compliance/cache/kb-sync 406 passed, 2 pre-existing reds: `ts_morph_not_installed` (worktree has no node_modules — harness gap) + social-wiring `test_lead_novo_notice.py` `validate_schema=False` without rationale (red on base too).
+- Wave-3 todo: point backend/frontend/devops L1 at `engineer-operating-discipline.md`; `project-history/decisions/` home for ADRs (canon §3 proposes; owner/tech-lead call); pilot set in project-execution §2.12 has 2 asleep pilots (re-pick = owner).
+- Drift: database-rls.md:3,7-17 stale counts (19 schemas / 1063 tables); orchestrator-operator.md:231 cites engineer-seed §10 (gone); dispatch-engineer-tuning §2 L5 cites engineer-seed §11 (merge-flow, left); branch-tree-tracking 6 symbology warnings (merge-flow, left).
+- Audit correction: the llm seam already enforces per-org LLM budget (compliance.py:12154-12157). p-studio `ProvedorCobranca` beside shared payments = N=2 recurrence → triage before any Banco do Brasil adapter.
 
 ## Wave 2 — slice returns
 
@@ -80,6 +85,11 @@
 - ⚖️ Lawyer questions for the owner: small-agent status likely EXCLUDED (LLM + sensitive/credit data = high risk) ⇒ plan on 3 business days; owner = controller AND encarregado (Res. 18/2024 art. 19 §1 II conflict); D4Sign promise valid between parties but probably NOT registrable at Registro de Imóveis without ICP-Brasil ⇒ "autorização de registro" clause needs rewording; PJ wording (`frases.py:519`) lacks contrato social/procuração reference + CC 1.015 majority check.
 - Follow-up defects: store `schemas/store.py:34` `guarantee_days` accepts 0–6 (CDC art. 49 floor 7 ⇒ `ge=7`); store lacks supplier identification / pre-checkout summary / withdrawal channel (Decreto 7.962) — supplier ID belongs in the seed storefront footer; privacy policy (`consent.ts`) lacks "when we act as operator" + transfer page; DSAR-locator tool idea.
 - Drift: memory `reminder_contrato_pj_qualificacao` stale (migration 193 replaced the block; open part = powers act + CC 1.015); security `lgpd.md` §10/§12 labels art. 7 V as legal obligation (it is II); incident playbook cites legisweb (DOU URL now in legal docs); store live in memories but absent from active-scope.txt (owner to confirm).
+
+### Wave 3 — progress (tech-lead inline)
+- f11a10372 ownership transfers (84 rows; plan in scratchpad plan.tsv) — alignment keeper 0.
+- 01e18e80e roster: CLAUDE.md §2 + 06-AGENTS list the 6 hires.
+- e526b9191 archetype sets widened (+3 advisors, +4 executors) · 4e05720a7 allowlist −37 now-owned docs — noctusai-3d told.
 
 ## Merge-queue translation (noctusai-3d, 2026-11-05) — apply AFTER feat/merge-queue lands + rebase
 Point to `KB § PATTERNS/devops/merge-queue.md`, don't restate. Map:
