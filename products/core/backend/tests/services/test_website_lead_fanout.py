@@ -5,7 +5,6 @@ import pytest
 
 from app.services import website_lead_fanout
 from noctusai_lib.integrations.outbound_webhook.fake import FakeOutboundWebhookSender, failure, success
-from noctusai_lib.integrations.whatsapp import FakeWahaClient
 
 LEAD = {
     "id": "lead-1", "source": "waitlist", "name": "Ana", "email": "ana@example.com",
@@ -61,24 +60,20 @@ class TestRunFanout:
         assert calls[0][1] == "email"
 
     @pytest.mark.asyncio
-    async def test_whatsapp_configured_and_succeeds(self, recorded_failures):
-        calls, record = recorded_failures
-        fake_client = FakeWahaClient()
-        await website_lead_fanout.run_fanout(
-            LEAD, notify_email="", sales_whatsapp="+5511999999999", webhook_url="",
-            whatsapp_client=fake_client, record_failure=record,
-        )
-        assert len(fake_client.sent_messages) == 1
-        assert calls == []
-
-    @pytest.mark.asyncio
-    async def test_whatsapp_bad_number_records_failure(self, recorded_failures):
+    async def test_whatsapp_configured_records_sem_linha_and_never_sends(self, recorded_failures):
+        """Core owns no WhatsApp line (julia-line §A4): a configured target is a loud failure, not a send."""
         calls, record = recorded_failures
         await website_lead_fanout.run_fanout(
-            LEAD, notify_email="", sales_whatsapp="not-a-phone", webhook_url="", record_failure=record,
+            LEAD, notify_email="", sales_whatsapp="+5511999999999", webhook_url="", record_failure=record,
         )
         assert len(calls) == 1
         assert calls[0][1] == "whatsapp"
+        assert calls[0][2].startswith("sem_linha_da_plataforma")
+
+    def test_fanout_has_no_whatsapp_client_seam(self):
+        import inspect
+        params = inspect.signature(website_lead_fanout.run_fanout).parameters
+        assert not {"whatsapp_client", "waha_base_url", "waha_api_key", "waha_session"} & set(params)
 
     @pytest.mark.asyncio
     async def test_webhook_configured_and_succeeds(self, recorded_failures):

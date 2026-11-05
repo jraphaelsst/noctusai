@@ -132,8 +132,7 @@ class TestDisclosure:
         rows = [m for m in world.messages() if m["direction"] == "outbound"]
         assert [m["body"] for m in rows][-1] == "oi!"
         assert len(rows) == 2
-        for msg in world.waha.sent_messages:
-            assert world.redis.get(f"julia:julia_out:{msg['id']}")  # her echo will be recognised (L3)
+        assert {m["origem"] for m in rows} == {"julia"}  # her echo is recognised by the durable origem (L3), not a Redis key
         assert [e for e, _ in world.bus_events()].count("message.new") == 2
 
 
@@ -362,10 +361,11 @@ class TestGuards:
         await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
         assert "oi!" in world.sent_texts()
 
-    async def test_H3_empty_authorized_numbers_at_worker_time_fails_closed(self, world):
+    async def test_empty_authorized_numbers_do_not_stop_the_worker_julia_needs_none(self, world):
+        """One Chat is retired (2026-11-04): the old H3 fail-closed on an empty `authorized_numbers` is gone."""
         world.sw.table("whatsapp_connections").update({"authorized_numbers": []}).eq("id", CONNECTION_ID).execute()
         await _run(world, buffer_lead(world, LEAD_CHAT, ["oi"]))
-        assert world.agents.turns == [] and world.sent_texts() == []
+        assert world.agents.turns and world.sent_texts()
 
     async def test_julia_switched_off_means_no_turn(self, world):
         world.sw.table("whatsapp_connections").update({"agente_leads_ativo": False}).eq("id", CONNECTION_ID).execute()

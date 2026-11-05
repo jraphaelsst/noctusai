@@ -51,6 +51,9 @@ _MESSAGES = "conversation_messages"
 _PREVIEW_MAX = 140
 
 
+CATEGORIAS = ("lead", "equipe")
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -210,6 +213,7 @@ class WhatsAppChatStore:
         created_at: str,
         title: str | None = None,
         has_media: bool = False,
+        categoria: str | None = None,
     ) -> ChatSummary:
         """Fold one persisted message into its conversation row.
 
@@ -243,6 +247,12 @@ class WhatsAppChatStore:
             row["last_direction"] = direction
         # Only ever fill a title in; never overwrite a resolved contact name
         # with a worse one (a later webhook may carry no pushName at all).
+        # `categoria` (migration 318) is only ever SET by a caller that decided it (staff -> 'equipe'); a plain message never resets
+        # it, and the DB DEFAULT ('lead') covers a new chat.
+        if categoria:
+            if categoria not in CATEGORIAS:
+                raise ValueError(f"invalid categoria: {categoria}")
+            row["categoria"] = categoria
         if title and (existing is None or not existing.title or existing.title == chat_id):
             row["title"] = title
         elif existing is None:
@@ -359,7 +369,7 @@ class WhatsAppChatStore:
         response = (
             self._admin.schema(_SCHEMA)
             .table(_CHATS)
-            .select("chat_id, created_at, agente_pausado, agente_conversation_id, agente_thread_id, agente_estado")
+            .select("chat_id, created_at, agente_pausado, agente_conversation_id, agente_thread_id, agente_estado, categoria")
             .eq("connection_id", str(connection_id))
             .eq("org_id", str(self._org_id))
             .eq("chat_id", chat_id)
@@ -376,6 +386,7 @@ class WhatsAppChatStore:
             "agente_thread_id": row.get("agente_thread_id"),
             "agente_estado": row.get("agente_estado"),
             "created_at": row.get("created_at"),
+            "categoria": row.get("categoria") or "lead",
         }
 
     def set_agente_pausado(self, *, connection_id: UUID, chat_id: str, pausado: bool) -> bool:

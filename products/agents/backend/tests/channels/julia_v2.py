@@ -48,7 +48,7 @@ def textos_completos() -> list[TextoInput]:
     """A row for every REQUIRED key of a channel agent with a standard (the optional ones stay empty)."""
     chaves = chaves_exigidas(
         tool_policy={"web_search": False, "knowledge": False}, tem_skills=True, com_cliente=False, canal=True,
-        com_qualificacao=True,
+        com_qualificacao=True, com_dados_org=True,  # a Julia with free-text org specs fences them (E3)
     )
     return [TextoInput(c, texto_de(c)) for c in sorted(chaves)]
 

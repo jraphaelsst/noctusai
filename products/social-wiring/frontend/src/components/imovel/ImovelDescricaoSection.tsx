@@ -24,7 +24,7 @@ export default function ImovelDescricaoSection({
   if (!descricaoWeb) return null;
 
   return (
-    <SectionCard title="Descrição" editLabel="Editar descrição">
+    <SectionCard title="Descrição">
       <div className="col-span-full space-y-2">
         <p className={expandido ? EXPANDED_CLASS : CLAMP_CLASS}>{descricaoWeb}</p>
         <Button

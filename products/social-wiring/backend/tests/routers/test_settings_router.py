@@ -18,8 +18,6 @@ class TestKeysStatus:
             encryption_key="",
             smtp_user="user@example.com",
             smtp_password="",
-            waha_base_url="",
-            waha_api_key="",
         )
 
         resp = client.get("/api/settings/keys/status")

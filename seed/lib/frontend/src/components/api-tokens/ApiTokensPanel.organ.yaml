@@ -1,0 +1,34 @@
+name: ApiTokensPanel
+path: seed/lib/frontend/src/components/api-tokens/ApiTokensPanel.tsx
+phase: pilot-seed
+registered_at: "2026-11-04"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "The shared token card (Julia-line CONTRACT §D6: 'the token card moves into @noctusai/lib'). Pairs with createApiTokensHooks(api, { basePath? }) — the caller builds the hooks once and passes the bag as `hooks`, the createApiKeysHooks/ApiKeysPanel idiom."
+  - "Wire contract is the seed auth_router token routes: GET/POST /api/settings/api-tokens, GET /scopes (the SERVER allow-list), POST /{id}/rotate, DELETE /{id}. Mint scopes are checkboxes over that allow-list — never free text."
+  - "Rows show the stored prefix MASKED (first 4 + last 4 of the 12-char `noc_`+8hex prefix, e.g. noc_••••3a4f): the server keeps only that prefix and the sha256, never the secret, so 'last 4 of the secret' does not exist to show."
+  - "The raw secret lives only in the mint/rotate mutation result; the dialog that shows it closes ONLY through its own button (Esc/backdrop are no-ops) so the single copy cannot be lost by a stray click."
+  - "Cache writes (skill noc-cache-writes): mint prepends, rotate revokes the old row + prepends the new, revoke stamps revoked_at optimistically with rollback. Loading uses showSkeleton/isRefreshing, never isLoading."
+  - "mfa_required (403) and the other known refusals map to pt-BR copy via tokenRefusalMessage; a refusal is rendered inline in the dialog / row, never swallowed."
+  - "Does not gate on role — mount behind the caller's admin check; the server enforces (core: platform admins only)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product token card (agents ChannelTokenCard / SW paste card) — rejected: the owner wants one entry point; those cards are bridge-token specific and move/retire per the Julia-line contract."
+
+manual_validation_log: []
+
+integration_test_status: unit-tested (createApiTokensHooks.test.ts, ApiTokensPanel.test.tsx)
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

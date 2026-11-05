@@ -13,7 +13,7 @@ backs each engine port (`KB § PATTERNS/backend/photo-editing-seed.md` §4):
 | image_edit  | `openai_image_edit_factory(resolve_credential("openai_api_key", org))` — REFUSES without a key; never the Fake. |
 | llm         | `LlmStructuredAdapter()`. |
 | fx          | `get_fx_rate_adapter(live=True)` (BCB PTAX). |
-| notifier    | `MultiChannelBatchReadyNotifier` — in-app + the seed email integration + social-wiring's existing WAHA sender (`cfg.waha_base_url/waha_api_key/waha_session`), fanned out to the creator + every opted-in agency admin via `SupabaseNotificationPreferencesRepository` (migration 131). |
+| notifier    | `MultiChannelBatchReadyNotifier` — in-app + the seed email integration + social-wiring's WAHA sender on the org's own line (`julia_linha.linha_da_org`), fanned out to the creator + every opted-in agency admin via `SupabaseNotificationPreferencesRepository` (migration 131). |
 | edit_quota  | `DefaultingQuotaTracker` (Redis when `REDIS_URL` resolves) capped by `EDICAO_FOTOS_EDICOES_POR_DIA`. |
 
 Built lazily and cached: nothing here runs at import time.
@@ -134,9 +134,6 @@ def build_ports(cfg: Any) -> PhotoEditingPorts:
             core_client=lambda: core,
             repo=repo,
             preferences=preferences,
-            waha_base_url=getattr(cfg, "waha_base_url", "") or "",
-            waha_api_key=getattr(cfg, "waha_api_key", "") or "",
-            waha_session=getattr(cfg, "waha_session", "default") or "default",
         ),
         edit_quota=build_edit_quota(cfg),
     )

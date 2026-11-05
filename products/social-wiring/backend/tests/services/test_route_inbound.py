@@ -145,9 +145,6 @@ def redis():
 @pytest.fixture
 def web_intake(redis):
     return WhatsAppIntakeService(
-        waha_base_url="",
-        waha_api_key="",
-        waha_session="default",
         redis_client=redis,
         authorized_numbers=[],
         crm_service=None,

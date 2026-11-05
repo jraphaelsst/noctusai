@@ -76,6 +76,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.llm import llm_usage_context
+
 from app.channels.conformidade import GuardaVazamento
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores._util import utcnow
@@ -571,10 +573,11 @@ class EvalRunner:
             return _erro("O turno do agente falhou."), None
 
         try:
-            verdict = await self._judge.judge(
-                org_id=org_id, entrada=case.entrada, contexto=case.contexto, criterios=criterios,
-                rubrica=case.rubrica, saida=saida,
-            )
+            with llm_usage_context(product="agents", agent_key=spec.key, org_id=str(org_id)):
+                verdict = await self._judge.judge(
+                    org_id=org_id, entrada=case.entrada, contexto=case.contexto, criterios=criterios,
+                    rubrica=case.rubrica, saida=saida,
+                )
             passed, score = score_case(verdict)
         except JudgeError as exc:
             logger.warning("agents.eval.judge_unusable run_id=%s case_id=%s: %s", run.id, case_id, exc)

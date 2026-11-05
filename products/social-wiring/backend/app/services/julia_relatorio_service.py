@@ -457,22 +457,36 @@ def avisar_in_app(
 
 # ── delivery ────────────────────────────────────────────────────────────────
 class InternoSender:
-    """`send_paragraphs`' `intake` seam for a STAFF notice: sends through the connection's own WAHA client and registers the
-    message id as Julia's own so the `fromMe` echo is never mistaken for a human taking over. Not a lead send: nothing is
-    recorded as a lead outbound."""
+    """`send_paragraphs`' `intake` seam for a STAFF notice: sends through the org line's WAHA client and PRE-WRITES the outbound row
+    (`origem='interno'`, keyed by the provider id WAHA returned) via `MessageStore.registrar_interno_enviado`, so WAHA's `fromMe`
+    echo trips UNIQUE(provider_message_id) and is never mistaken for a human taking over Julia's line. Not a lead send: nothing is
+    recorded as a lead outbound. The send is bracketed by the in-flight flag (`marcar_envio_em_curso` / `encerrar_envio`) so an
+    echo that beats the row write is still recognised."""
 
-    def __init__(self, *, connection: Any, waha: Any, redis: Any, liberacao: julia_envio_gate.Liberacao):
+    def __init__(self, *, connection: Any, waha: Any, redis: Any, liberacao: julia_envio_gate.Liberacao, message_store: Any):
         self._c = connection
         self._waha = waha
         self._redis = redis
         self._liberacao = liberacao
+        self._store = message_store
 
     async def send_reply(self, sender: str, text: str) -> None:
         from app.schemas.whatsapp import extract_waha_message_id
 
         julia_envio_gate.conferir(self._liberacao, self._c.id)  # the outbound gate (flow `interno`) passed for this line
-        result = await self._waha.send_text(sender, text)
-        julia.registrar_envio_proprio(self._redis, extract_waha_message_id(result) if isinstance(result, dict) else None)
+        julia.marcar_envio_em_curso(self._redis, self._c.id, sender)
+        try:
+            result = await self._waha.send_text(sender, text)
+        finally:
+            julia.encerrar_envio(self._redis, self._c.id, sender)
+        provider_id = extract_waha_message_id(result) if isinstance(result, dict) else None
+        try:
+            self._store.registrar_interno_enviado(
+                connection_id=self._c.id, chat_id=sender, body=text, provider_message_id=provider_id,
+                structured_payload={"fluxo": "interno"},
+            )
+        except Exception as exc:  # the notice WAS delivered: a failed pre-write must be loud, not a failed send
+            logger.error("julia: internal send delivered but its row was not pre-written org=%s (%s)", self._c.org_id, type(exc).__name__)
 
 
 def _primeira_do_periodo(servicos: Any, assunto: str, org_id: UUID | str, *, limite: int = 1, periodo: str = "dia") -> bool:
@@ -502,6 +516,10 @@ class ServicosInternos:
     redis: Any
     cfg: Any
     documento_intake: Optional[Callable[..., Any]] = None
+    #: `(org_id) -> MessageStore` (default: over the service-role client) -- the `interno` pre-write.
+    message_store_factory: Optional[Callable[[Any], Any]] = None
+    #: `(org_id) -> LinhaDaOrg` (default: `julia_linha.linha_da_org`).
+    linha_resolver: Optional[Callable[[Any], Any]] = None
 
 
 def _conexao(servicos: Any, connection_id: UUID | str) -> Any:
@@ -562,9 +580,13 @@ async def _enviar_texto(servicos: Any, connection: Any, numero: str, texto: str,
     except julia_envio_gate.EnvioBloqueado as exc:  # already logged + `envio_bloqueado` event by the gate
         return f"bloqueado: {exc.motivo}"
     try:
-        waha = servicos.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
+        from app.services.julia_linha import linha_da_conexao
+
+        waha = linha_da_conexao(connection).waha_client(servicos.waha_factory)
         chat = (await waha.resolve_chat_id(numero)).chat_id
-        sender = InternoSender(connection=connection, waha=waha, redis=servicos.redis, liberacao=liberacao)
+        sender = InternoSender(
+            connection=connection, waha=waha, redis=servicos.redis, liberacao=liberacao,
+            message_store=_message_store(servicos, connection.org_id))
         esperadas = len(split_for_whatsapp(texto, enabled=True))
         enviadas = await send_paragraphs(
             intake=sender, sender=chat, text=texto, delay_seconds=float(servicos.cfg.whatsapp_paragraph_delay_seconds), split=True)
@@ -575,15 +597,32 @@ async def _enviar_texto(servicos: Any, connection: Any, numero: str, texto: str,
     return None
 
 
+def _message_store(servicos: Any, org_id: Any) -> Any:
+    factory = getattr(servicos, "message_store_factory", None)
+    if factory is not None:
+        return factory(org_id)
+    from app.dependencies import get_admin_client
+    from app.services.message_store import MessageStore
+
+    return MessageStore(admin_supabase=get_admin_client(), org_id=UUID(str(org_id)))
+
+
 async def enviar_aviso_interno(servicos: Any, org_id: UUID | str, numero: str, texto: str) -> Optional[str]:
-    """A short staff notice (the destination confirmation code, the "your number was replaced" warning) from the org's Julia line:
-    its WAHA line that is on Julia, else its first. None on success, else the error label (also `sem_linha`)."""
-    rows = servicos.scoped.table("whatsapp_connections").select("id,agente_leads_ativo").eq("org_id", str(org_id)).execute().data or []
-    rows.sort(key=lambda r: (r.get("agente_leads_ativo") is not True, str(r.get("id"))))
-    connection = servicos.connection_lookup(UUID(str(rows[0]["id"]))) if rows else None
-    if connection is None:
-        return "sem_linha"
-    return await _enviar_texto(servicos, connection, numero, texto)
+    """A short staff notice (the destination confirmation code, the "your number was replaced" warning) from the org's ONE line,
+    resolved through `julia_linha.linha_da_org`. None on success, else the error label (`sem_linha` / `linha_ambigua` when the
+    org has no usable line -- logged, never a fallback)."""
+    import asyncio
+
+    from app.services.julia_linha import LinhaIndisponivel, linha_da_org
+
+    resolver = getattr(servicos, "linha_resolver", None) or (lambda org: linha_da_org(org, admin_client=getattr(servicos, "admin", None)))
+    try:
+        linha = await asyncio.to_thread(resolver, org_id)
+    except LinhaIndisponivel as exc:
+        motivo = exc.motivo
+        logger.error("julia: staff notice not sent org=%s: %s", org_id, motivo)
+        return motivo
+    return await _enviar_texto(servicos, linha.connection, numero, texto)
 
 
 def _falha(servicos: Any, client: Any, connection: Any, contato: dict[str, Any], row: dict[str, Any], erro: str) -> str:

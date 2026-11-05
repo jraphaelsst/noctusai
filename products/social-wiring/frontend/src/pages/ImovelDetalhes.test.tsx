@@ -1,8 +1,8 @@
 /**
  * ImovelDetalhes — CONTRACT § 5 section surface.
  *
- * Scoped to what this slice owns: header badges (true-only), the header
- * Pencil placeholder (toast, no mutation), and section-hidden-when-empty
+ * Scoped to what this slice owns: header badges (true-only), the Vista
+ * provenance markers (read-only mirror), and section-hidden-when-empty
  * for the new CONTRACT § 5 sections. Real formatters/labels come through
  * `importOriginal` on `@/hooks/useImoveis`; the cartório/documentos/team
  * hooks are mocked to keep the render fast and deterministic — those are
@@ -84,6 +84,13 @@ vi.mock("@/components/imovel/ImovelInteressadosCard", () => ({
 }));
 vi.mock("@/components/imovel/ImovelProprietariosCard", () => ({
   ImovelProprietariosCard: () => null,
+}));
+vi.mock("@/components/imovel/ImovelDivergenciasVista", () => ({
+  ImovelDivergenciasVista: () => <div data-testid="mock-divergencias" />,
+  DivergenciaCampoBadge: () => null,
+}));
+vi.mock("@/components/imovel/ImovelNotasCard", () => ({
+  ImovelNotasCard: () => <div data-testid="mock-notas-card" />,
 }));
 vi.mock("@/components/imovel/ImovelSimilaresCard", () => ({
   ImovelSimilaresCard: () => null,
@@ -289,14 +296,23 @@ describe("ImovelDetalhes — header badges (true-only)", () => {
   });
 });
 
-describe("ImovelDetalhes — header Pencil placeholder (CONTRACT § 4)", () => {
-  it("fires the toast and performs no mutation on click", async () => {
-    mockUseImovel.mockReturnValue({ data: makeImovel(), isPending: false, isError: false });
-    const { getByRole, fireEvent } = await renderDetalhes();
+describe("ImovelDetalhes — Vista provenance (mirror is read-only, CONTRACT § 4)", () => {
+  it("marks the mirrored header and sections as Vista, with the last sync, and offers no dead editor", async () => {
+    mockUseImovel.mockReturnValue({
+      data: makeImovel({ sincronizado_em: new Date(Date.now() - 2 * 3_600_000).toISOString() }),
+      isPending: false,
+      isError: false,
+    });
+    const { getAllByTestId, queryByRole } = await renderDetalhes();
 
-    fireEvent.click(getByRole("button", { name: "Editar cabeçalho" }));
-
-    expect(mockToastInfo).toHaveBeenCalledTimes(1);
+    const badges = getAllByTestId("source-badge");
+    // header + at least one mirrored section card
+    expect(badges.length).toBeGreaterThan(1);
+    badges.forEach((b) => expect(b.textContent).toContain("Vista"));
+    expect(badges[0].textContent).toContain("há 2 h");
+    // the old "editar" pencil that only toasted is gone
+    expect(queryByRole("button", { name: "Editar cabeçalho" })).toBeNull();
+    expect(mockToastInfo).not.toHaveBeenCalled();
     expect(mockUseSolicitarCampanha().mutate).not.toHaveBeenCalled();
     expect(mockUseImovelDadosMutation().mutate).not.toHaveBeenCalled();
   });

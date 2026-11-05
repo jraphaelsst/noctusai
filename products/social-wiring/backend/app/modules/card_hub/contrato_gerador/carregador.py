@@ -353,6 +353,37 @@ def _pacto(row: dict) -> Optional[PactoAntenupcial]:
     return None if pacto.vazio() else pacto
 
 
+_CAMPOS_IDENTIDADE = ("cpf", "rg", "rg_orgao_expedidor")
+
+
+def identidade_nao_verificada(client: Any, org_id: UUID, row: dict) -> list[str]:
+    """[Security M1] The identity fields of this cliente that came from a document the lead sent over WhatsApp
+    (`cliente_documentos.origem_entrada='whatsapp'`, the row `<campo>_documento_id` points at) and that no human has
+    confirmed (`<campo>_confirmado_por/_em` empty). Defensive on the flag that marks such an extraction `verificado=false`
+    (a column on the document row or `<campo>_verificado` on the cliente, when present): an explicit False counts as
+    unverified, an explicit True as verified, an absent flag falls back to the origin."""
+    pendentes: dict[str, str] = {}
+    for campo in _CAMPOS_IDENTIDADE:
+        doc_id = row.get(f"{campo}_documento_id")
+        if not doc_id or not row.get(campo):
+            continue
+        if row.get(f"{campo}_confirmado_por") or row.get(f"{campo}_confirmado_em"):
+            continue
+        if row.get(f"{campo}_verificado") is True:
+            continue
+        pendentes[campo] = str(doc_id)
+    if not pendentes:
+        return []
+    docs = _rows_por_id_generico(client, org_id, "cliente_documentos", sorted(set(pendentes.values())))
+    saida: list[str] = []
+    for campo, doc_id in pendentes.items():
+        doc = docs.get(doc_id) or {}
+        flag = doc.get("verificado")
+        if row.get(f"{campo}_verificado") is False or flag is False or (flag is not True and doc.get("origem_entrada") == "whatsapp"):
+            saida.append(campo)
+    return saida
+
+
 def _pessoa(
     client: Any,
     org_id: UUID,
@@ -405,11 +436,13 @@ def _pessoa(
         data_casamento=_data(row.get("data_casamento")),
         certidao_estado_civil_emitida_em=_data(certidao_ec.get("emitida_em")),
         faltando_qualificacao=list(completude.get("faltando") or []),
+        avisos_qualificacao=list(completude.get("avisos") or []),
         certidoes=[_certidao(r) for r in brutas],
         # Migration 193.
         identidade_tipo=row.get("identidade_tipo"),
         pacto=_pacto(row),
         representa_parte_id=representa_parte_id,
+        identidade_nao_verificada=identidade_nao_verificada(client, org_id, row),
     )
 
 

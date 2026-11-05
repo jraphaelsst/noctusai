@@ -87,6 +87,10 @@ runtime leg (3) + the page-scoped-CRUD leg (7) are NOT deterministic and STAY
 advisory: leg 3 is a live auth-gated endpoint probe (see the admin-probe pattern
 in the trigger session); leg 7 needs judgment (the read-only/derived carve-out).
 
+### 2b · Mirrored entities: which fields are manageable
+
+When the entity is a mirror of an external system plus our own overlay, §2a applies per field: mirror fields are read-only with provenance + freshness, owned fields get full CRUD, a sync never overwrites owned data. → `KB § PATTERNS/frontend/mirror-owned-overlay.md`
+
 ## 3 · When it fires
 
 - **Product evaluation / audit** — assert every UI surface is wired (steps 1–7).

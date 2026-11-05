@@ -71,6 +71,40 @@ class VistaCRMAdapter(Protocol):
         """
         ...
 
+    async def refresh_imovel(self, code: str) -> Imovel:
+        """One imóvel from `/imoveis/detalhes` ALONE (one HTTP call; no `listar`).
+
+        The per-code refresh that keeps a mirror current while `/imoveis/listar` is unavailable. Listar-only fields
+        (`foto_destaque`, `banheiro_social`, `codigo_imobiliaria`) come back empty -- the caller keeps what it already
+        has. Raises `VistaNotFound` when the code does not exist and `VistaRecordUnpublished` when it exists but is
+        not visible to this key (ExibirNoSite=Nao); any other `VistaError` is a transport / auth failure.
+        """
+        ...
+
+    async def list_destaques(self) -> list[str]:
+        """Codes in `/imoveis/destaques` (the featured listings -- a handful), a cheap discovery source."""
+        ...
+
+    async def search_imoveis(
+        self,
+        *,
+        filter_: Optional[dict] = None,
+        order: Optional[dict] = None,
+        max_results: int = 200,
+        with_detalhes: bool = False,
+    ) -> ImovelPage:
+        """Filtered catalog read: up to `max_results` imóveis matching a Vista `filter`.
+
+        `filter_` is Vista's own `pesquisa.filter` (equality / list-IN / range /
+        comparison operators, `KB § INTEGRATIONS/vista.md` § 2); `order` its
+        `pesquisa.order`. Pages are walked for the caller (the 50-per-page cap
+        is the adapter's concern, not the consumer's). `ImovelPage.total` is
+        the upstream match count, which can exceed `len(items)` when capped.
+        An empty match is an empty page, never an error; a transport / auth /
+        field failure raises (no silent fallback).
+        """
+        ...
+
     async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
         """Read-only photo gallery for one imóvel code.
 

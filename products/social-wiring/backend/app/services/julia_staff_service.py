@@ -1,29 +1,21 @@
-"""The org STAFF list -- who is staff on the org's WhatsApp lines (owner decision 2026-10-21).
+"""The org STAFF list -- who is staff on the org's WhatsApp line (owner decision 2026-10-21, line model 2026-11-04).
 
 "staff will be set in-org. only those registered on the sw are staff and their roles ... by default, if not in the staff
-list, it's an incoming lead." This module is the ONE place that decides it. It replaces the per-connection
-`authorized_numbers` as the thing people EDIT: before this there were three overlapping lists (the connection's
-`authorized_numbers`, the Julia teams' members, the org users), none of them a "this number is our colleague" registry.
+list, it's an incoming lead." Julia's line is ONE number shared by leads and staff notifications; the "One Chat" operator bot
+is retired (2026-11-04), so a role no longer grants any bot privilege -- it only names the person in notices and thread authors.
 
-The list (`julia_staff`, migration 298): one row per WhatsApp number (a person with two numbers has two rows), with the
-person's name, their SW user when they have one, and a ROLE:
+`classificar_remetente` is the ONE function that decides whether a sender is staff. Staff = the ACTIVE rows of this table
+(`julia_staff`, migration 298: one row per WhatsApp number, name, optional SW user, role) UNION the phones of the members of the
+line-owning org (core `noctus_users.telefone`, read through the seed `resolve_user_phones`). A staff message is stored (chat
+`categoria='equipe'`), never reaches an agent, and the org admins get an in-app notice.
 
-  admin, operador   -> the One Chat OPERATOR path (they may drive the operator agent from their own number)
-  corretor, atendente, outro
-                    -> staff, but NOT operators: a message from them on Julia's public line is never a lead and never an
-                       operator command; it is stored, logged (ids only) and the org's admins get one notice an hour.
-
-`whatsapp_connections.authorized_numbers` stays as the column the One Chat intake reads (and migration 258's CHECK guards),
-but it is now a MIRROR of the staff list: `espelhar_conexoes` writes the active operator numbers into it after every staff
-write, preserving only the entries that are not phones (a LID literal, which has no phone to register). Nothing edits that
-column by hand any more (the connection PATCH goes through `sincronizar_de_lista`).
-
-Text never confers staff identity: staff is decided by the sender's number only, against this table.
+Text never confers staff identity: staff is decided by the sender's number only.
 """
 from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 from uuid import UUID, uuid4
@@ -33,9 +25,8 @@ from noctusai_lib.primitives.exceptions import AppException
 logger = logging.getLogger(__name__)
 
 T = "julia_staff"
-T_CONEXOES = "whatsapp_connections"
 PAPEIS = ("admin", "operador", "corretor", "atendente", "outro")
-#: Roles that may drive the One Chat operator agent from their number.
+#: Roles that read as "operator" in the UI (kept for the role label; the One Chat operator bot is retired, 2026-11-04).
 PAPEIS_OPERADOR = ("admin", "operador")
 NOME_MAX = 120
 _DIGITOS = re.compile(r"^[0-9]{10,15}$")
@@ -151,46 +142,6 @@ def autor_de_usuario(client: Any, core: Any, org_id: UUID | str, user_id: Option
             "na_lista": False}
 
 
-# ── the mirror: authorized_numbers <- active operator numbers ───────────────
-def numeros_operadores(client: Any, org_id: UUID | str) -> list[str]:
-    rows = client.table(T).select("telefone, papel, ativo").eq("org_id", str(org_id)).eq("ativo", True).execute().data or []
-    return sorted({f"+{r['telefone']}" for r in rows if r.get("telefone") and e_operador(r.get("papel"))})
-
-
-def lista_espelhada(atual: Iterable[Any], operadores: list[str]) -> list[str]:
-    """The connection's new `authorized_numbers`: the operator phones plus every entry of the old list that is NOT a phone."""
-    preservados = [str(n) for n in atual if str(n).strip() and normalizar_telefone(n) is None]
-    return operadores + [p for p in preservados if p not in operadores]
-
-
-def _conexoes_da_org(client: Any, org_id: UUID | str) -> list[dict[str, Any]]:
-    return client.table(T_CONEXOES).select("id, authorized_numbers, agente_leads_ativo").eq("org_id", str(org_id)).execute().data or []
-
-
-def exigir_que_a_julia_continue_autorizada(client: Any, org_id: UUID | str, operadores: list[str]) -> None:
-    """Migration 258's invariant (Julia on => at least one authorized number), checked BEFORE a write so the answer is a clear 409
-    instead of a CHECK violation after the staff row already changed."""
-    for c in _conexoes_da_org(client, org_id):
-        if c.get("agente_leads_ativo") and not lista_espelhada(c.get("authorized_numbers") or [], operadores):
-            raise AppException(
-                "ultimo_operador",
-                "A Julia está ligada em uma linha desta organização e precisa de ao menos um operador (admin ou operador) com WhatsApp.",
-                status_code=409,
-            )
-
-
-def espelhar_conexoes(client: Any, org_id: UUID | str) -> dict[str, list[str]]:
-    """Write the active operator numbers into every connection's `authorized_numbers` (idempotent). Returns `{connection_id: list}`."""
-    operadores = numeros_operadores(client, org_id)
-    out: dict[str, list[str]] = {}
-    for c in _conexoes_da_org(client, org_id):
-        nova = lista_espelhada(c.get("authorized_numbers") or [], operadores)
-        out[str(c["id"])] = nova
-        if nova != list(c.get("authorized_numbers") or []):
-            client.table(T_CONEXOES).update({"authorized_numbers": nova, "updated_at": _agora()}).eq("id", str(c["id"])).eq("org_id", str(org_id)).execute()
-    return out
-
-
 # ── writes ──────────────────────────────────────────────────────────────────
 def _numero_bloqueado(client: Any, org_id: UUID | str, telefone: str) -> bool:
     rows = client.table("julia_numeros_bloqueados").select("id").eq("org_id", str(org_id)).eq("numero", telefone).eq("ativo", True).limit(1).execute().data or []
@@ -221,8 +172,6 @@ def criar(
     res = client.table(T).insert(linha).execute().data or []
     if not res:
         raise RuntimeError("julia: staff row not stored")
-    if e_operador(papel):
-        espelhar_conexoes(client, org_id)
     return res[0]
 
 
@@ -252,59 +201,71 @@ def atualizar(client: Any, core: Any, org_id: UUID | str, staff_id: UUID | str, 
         raise AppException("identificacao_obrigatoria", "Informe o WhatsApp ou o usuário da equipe.", status_code=422)
     if not patch:
         return atual
-    afeta_operadores = e_operador(atual.get("papel")) or e_operador(novo.get("papel"))
-    if afeta_operadores:  # validate the resulting operator set before touching the row
-        futuros = [r for r in listar(client, org_id) if str(r["id"]) != str(staff_id)] + [novo]
-        ops = sorted({f"+{r['telefone']}" for r in futuros if r.get("ativo") and r.get("telefone") and e_operador(r.get("papel"))})
-        exigir_que_a_julia_continue_autorizada(client, org_id, ops)
     client.table(T).update({**patch, "updated_at": _agora()}).eq("id", str(staff_id)).eq("org_id", str(org_id)).execute()
-    if afeta_operadores:
-        espelhar_conexoes(client, org_id)
     return novo
 
 
 def remover(client: Any, org_id: UUID | str, staff_id: UUID | str) -> None:
     """A removed person stops being staff at once (their next message is a lead)."""
-    atual = _linha(client, org_id, staff_id)
-    if e_operador(atual.get("papel")) and atual.get("ativo"):
-        restantes = [r for r in listar(client, org_id) if str(r["id"]) != str(staff_id)]
-        ops = sorted({f"+{r['telefone']}" for r in restantes if r.get("ativo") and r.get("telefone") and e_operador(r.get("papel"))})
-        exigir_que_a_julia_continue_autorizada(client, org_id, ops)
+    _linha(client, org_id, staff_id)  # 404 when it is not this org's
     client.table(T).delete().eq("id", str(staff_id)).eq("org_id", str(org_id)).execute()
-    if e_operador(atual.get("papel")):
-        espelhar_conexoes(client, org_id)
 
 
-def sincronizar_de_lista(client: Any, core: Any, org_id: UUID | str, ator_user_id: str, numeros: Iterable[Any]) -> dict[str, list[str]]:
-    """The connection PATCH's `authorized_numbers`, redirected into the staff list: every PHONE in `numeros` becomes (or stays) an
-    active operator; an active operator-role number that is not in `numeros` is deactivated. Non-phone entries (LID literals) are
-    left to the mirror. Returns `{connection_id: authorized_numbers}` after the mirror."""
-    pedidos = []
-    for n in numeros:
-        d = normalizar_telefone(n)
-        if d and d not in pedidos:
-            pedidos.append(d)
-    atuais = {r["telefone"]: r for r in listar(client, org_id) if r.get("telefone")}
-    ops_futuros = sorted({f"+{d}" for d in pedidos})
-    exigir_que_a_julia_continue_autorizada(client, org_id, ops_futuros)
-    for d in pedidos:
-        r = atuais.get(d)
-        if r is None:
-            if _numero_bloqueado(client, org_id, d):
-                raise AppException("numero_bloqueado", "Este número está na lista de bloqueio.", status_code=409)
-            client.table(T).insert({
-                "id": str(uuid4()), "org_id": str(org_id), "nome": f"Operador (final {d[-4:]})", "papel": "operador", "telefone": d,
-                "ativo": True, "criado_por": str(ator_user_id),
-            }).execute()
-        elif not r.get("ativo") or not e_operador(r.get("papel")):
-            client.table(T).update({"ativo": True, "papel": r["papel"] if e_operador(r.get("papel")) else "operador", "updated_at": _agora()}).eq("id", str(r["id"])).execute()
-    for d, r in atuais.items():
-        if d not in pedidos and r.get("ativo") and e_operador(r.get("papel")):
-            client.table(T).update({"ativo": False, "updated_at": _agora()}).eq("id", str(r["id"])).execute()
-    return espelhar_conexoes(client, org_id)
+@dataclass(frozen=True)
+class Remetente:
+    """A sender that IS staff. `origem`: `julia_staff` (a registered number) | `membro` (an active member of the line-owning org, by
+    the phone in core). `chave` is stable per person (dedupes the admin notice)."""
+
+    origem: str
+    nome: str
+    papel: str
+    chave: str
+
+
+def telefones_de_membros(core: Any, org_id: UUID | str) -> dict[str, dict[str, str]]:
+    """`{phone digits: {id, nome, papel}}` for the members of the org that have a phone in core. Membership is the trusted
+    `noctus_users` row (never user_metadata); the phone comes from the seed `resolve_user_phones`."""
+    from noctusai_lib.integrations.persistence.table_reads import resolve_user_phones
+
+    membros = core.table("noctus_users").select("id,nome,org_role").eq("org_id", str(org_id)).execute().data or []
+    if not membros:
+        return {}
+    por_id = {str(m["id"]): m for m in membros}
+    out: dict[str, dict[str, str]] = {}
+    for uid, telefone in resolve_user_phones(core, por_id).items():
+        d = normalizar_telefone(telefone)
+        if d:
+            m = por_id[uid]
+            out[d] = {"id": uid, "nome": (m.get("nome") or "").strip()[:NOME_MAX] or "Membro",
+                      "papel": _PAPEL_DO_ORG_ROLE.get(str(m.get("org_role")), "atendente")}
+    return out
+
+
+def existe_equipe_com_telefone(client: Any, core: Any, org_id: UUID | str) -> bool:
+    """Does the org have ANY staff number at all (a LID costs a WAHA round-trip to resolve: only worth it when this is True)."""
+    return existe_staff_com_telefone(client, org_id) or bool(telefones_de_membros(core, org_id))
+
+
+def classificar_remetente(client: Any, core: Any, org_id: UUID | str, formas: Iterable[str]) -> Optional[Remetente]:
+    """Is the sender (any of the phone-digit `formas`, see `formas_do_remetente`) staff of the org that owns the line? None = a lead.
+    Staff = an active `julia_staff` row, else an active member of the org whose core phone matches. RAISES on a store failure (the
+    caller decides; the webhook logs it and treats the sender as a lead -- it never guesses staff)."""
+    formas = [d for d in formas if d]
+    if not formas:
+        return None
+    linha = buscar_por_telefone(client, org_id, formas)
+    if linha is not None:
+        return Remetente("julia_staff", str(linha.get("nome") or "Equipe"), str(linha.get("papel") or "outro"), f"staff:{linha['id']}")
+    membros = telefones_de_membros(core, org_id)
+    for d in formas:
+        if d in membros:
+            m = membros[d]
+            return Remetente("membro", m["nome"], m["papel"], f"membro:{m['id']}")
+    return None
 
 
 __all__ = [
-    "PAPEIS", "PAPEIS_OPERADOR", "atualizar", "autor_de_usuario", "buscar_por_telefone", "criar", "e_operador", "espelhar_conexoes", "existe_staff_com_telefone",
-    "formas_do_remetente", "lista_espelhada", "listar", "normalizar_telefone", "numeros_operadores", "remover", "sincronizar_de_lista",
+    "PAPEIS", "PAPEIS_OPERADOR", "Remetente", "atualizar", "autor_de_usuario", "buscar_por_telefone", "classificar_remetente", "criar",
+    "e_operador", "existe_equipe_com_telefone", "existe_staff_com_telefone", "formas_do_remetente", "listar", "normalizar_telefone",
+    "remover", "telefones_de_membros",
 ]

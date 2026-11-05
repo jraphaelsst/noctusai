@@ -73,7 +73,7 @@ describe("query + column model", () => {
 
 describe("ConversasPanel", () => {
   it("lists conversations, switches tab and applies a filter from the drawer", async () => {
-    wrap(<ConversasPanel connectionId="c1" autoReplyEnabled={false} />);
+    wrap(<ConversasPanel connectionId="c1" />);
     expect(await screen.findByText("Ana")).toBeTruthy();
     fireEvent.click(screen.getByTestId("aba-arquivadas"));
     await waitFor(() => expect(api.get.mock.calls.some(([u]) => String(u).includes("aba=arquivadas"))).toBe(true));
@@ -86,7 +86,7 @@ describe("ConversasPanel", () => {
   });
 
   it("selecting a conversation shows the Cliente column sections", async () => {
-    wrap(<ConversasPanel connectionId="c1" autoReplyEnabled={false} />);
+    wrap(<ConversasPanel connectionId="c1" />);
     fireEvent.click(await screen.findByText("Ana"));
     const col = await screen.findByTestId("cliente-column");
     for (const t of ["Perfil", "Visitas solicitadas", "Etiquetas", "Notas internas", "Interações"]) expect(within(col).getByLabelText(t)).toBeTruthy();
@@ -97,7 +97,7 @@ describe("ConversasPanel", () => {
   });
 
   it("kanban view renders Todas (n), tag column added through the picker, collapsed Arquivadas", async () => {
-    wrap(<ConversasPanel connectionId="c1" autoReplyEnabled={false} />, "/?view=kanban");
+    wrap(<ConversasPanel connectionId="c1" />, "/?view=kanban");
     await waitFor(() => expect(screen.getByTestId("kanban-todas-olho").closest("div")?.textContent).toContain("Todas (2)"));
     expect(screen.getByTestId("kanban-arquivadas").getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(screen.getByTestId("kanban-add-coluna"));

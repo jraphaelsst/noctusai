@@ -83,8 +83,8 @@ class _Client:
 class TestHelpers:
     def test_minted_secret_shape(self):
         raw, prefix = mint_token_secret()
-        assert raw.startswith("pk_") and len(raw) == 67
-        assert prefix == raw[:11]
+        assert raw.startswith("noc_") and len(raw) == 68
+        assert prefix == raw[:12]
 
     def test_row_stores_only_the_digest(self):
         raw, _ = mint_token_secret()
@@ -135,7 +135,7 @@ class TestSupabaseProductTokenAdmin:
         assert admin.revoke("social_wiring", minted.info.id, org_id=uuid4()) is False
 
     def test_unknown_secret_is_none(self):
-        assert SupabaseProductTokenAdmin(_Client()).find_by_secret("s", "pk_nope") is None
+        assert SupabaseProductTokenAdmin(_Client()).find_by_secret("s", "noc_nope") is None
 
 
 class TestFakeAndFactory:
@@ -146,8 +146,8 @@ class TestFakeAndFactory:
     def test_fake_seed_and_find(self):
         fake = FakeProductTokenAdmin()
         org = uuid4()
-        info = fake.seed("s", "pk_existing", org_id=org, expires_at=EXPIRES, scopes=["a"])
-        assert fake.find_by_secret("s", "pk_existing") == info
+        info = fake.seed("s", "noc_existing", org_id=org, expires_at=EXPIRES, scopes=["a"])
+        assert fake.find_by_secret("s", "noc_existing") == info
         assert fake.revoke("s", info.id, org_id=org) is True
 
 

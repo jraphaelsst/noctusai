@@ -15,8 +15,6 @@ import {
   CheckCircle2,
   CircleAlert,
   Clipboard,
-  Eye,
-  EyeOff,
   Hash,
   Loader2,
   MessageSquare,
@@ -56,9 +54,7 @@ import {
   useWhatsAppConnectionQr,
   useRecoverConnection,
   useWhatsAppConnectionActions,
-  useRevealApiKey,
   useConnectionChats,
-  useToggleAutoReply,
   type UpdateConnectionBody,
   type WhatsAppConnectionLine,
 } from "@/hooks/useWhatsAppConnections";
@@ -170,129 +166,6 @@ function ReadOnlyField({
         </code>
         {copyable && <CopyButton value={value} />}
       </div>
-    </div>
-  );
-}
-
-// ─── Authorized-numbers chip editor ───────────────────────────────────────────
-function AuthorizedNumbersEditor({
-  lineId,
-  initialNumbers,
-}: {
-  lineId: string;
-  initialNumbers: string[];
-}) {
-  const [numbers, setNumbers] = useState<string[]>(initialNumbers);
-  const [newNum, setNewNum] = useState("");
-  const [saving, setSaving] = useState(false);
-  const { update } = useWhatsAppConnectionMutations();
-
-  const addNumber = useCallback(() => {
-    const n = newNum.trim();
-    if (!n || numbers.includes(n)) return;
-    setNumbers((prev) => [...prev, n]);
-    setNewNum("");
-  }, [newNum, numbers]);
-
-  const removeNumber = (n: string) =>
-    setNumbers((prev) => prev.filter((x) => x !== n));
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      addNumber();
-    }
-  };
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      await update.mutateAsync({
-        id: lineId,
-        body: { authorized_numbers: numbers },
-      });
-      toast.success("Números autorizados salvos");
-    } catch (e: any) {
-      toast.error(e?.message ?? "Falha ao salvar números");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-2" data-testid="authorized-numbers-editor">
-      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        <Hash className="h-3.5 w-3.5" />
-        Números autorizados
-      </div>
-
-      {numbers.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {numbers.map((n) => (
-            <span
-              key={n}
-              className="inline-flex items-center gap-1 rounded-full border bg-muted px-2.5 py-0.5 text-xs font-mono"
-              data-testid="number-chip"
-            >
-              {n}
-              <button
-                type="button"
-                onClick={() => removeNumber(n)}
-                className="ml-0.5 rounded-full hover:text-destructive"
-                aria-label={`Remover ${n}`}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p
-          className="text-xs text-muted-foreground italic"
-          data-testid="numbers-empty-hint"
-        >
-          Vazio = ninguém pode usar o bot do operador.
-        </p>
-      )}
-
-      <div className="flex gap-2">
-        <Input
-          value={newNum}
-          onChange={(e) => setNewNum(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="+55119XXXXXXXX"
-          className="h-8 font-mono text-xs"
-          disabled={saving}
-          data-testid="number-input"
-        />
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={addNumber}
-          disabled={!newNum.trim() || saving}
-          className="h-8"
-          data-testid="btn-add-number"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={save}
-        disabled={saving}
-        className="h-8"
-        data-testid="btn-save-numbers"
-      >
-        {saving ? (
-          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Save className="mr-1.5 h-3.5 w-3.5" />
-        )}
-        Salvar números
-      </Button>
     </div>
   );
 }
@@ -530,37 +403,14 @@ export function ConnectionSettingsPanel({
   const { data: status } = useWhatsAppConnectionStatus(line.id);
   const { start, restart, logout } = useWhatsAppConnectionActions();
   const { update } = useWhatsAppConnectionMutations();
-  const reveal = useRevealApiKey();
-  const toggleAutoReply = useToggleAutoReply();
 
   const [editLabel, setEditLabel] = useState(line.label);
   const [editApiKey, setEditApiKey] = useState("");
-  const [keyMode, setKeyMode] = useState<"hidden" | "revealed" | "editing">(
-    "hidden",
-  );
-  const [revealedKey, setRevealedKey] = useState<string | null>(null);
-
-  const onToggleReveal = async () => {
-    if (keyMode === "revealed") {
-      setKeyMode("hidden");
-      return;
-    }
-    try {
-      const res =
-        revealedKey != null
-          ? { api_key: revealedKey }
-          : await reveal.mutateAsync(line.id);
-      setRevealedKey(res.api_key);
-      setKeyMode("revealed");
-    } catch (e: any) {
-      toast.error(e?.message ?? "Falha ao revelar a API key");
-    }
-  };
+  const [keyMode, setKeyMode] = useState<"hidden" | "editing">("hidden");
 
   const startEditingKey = () => {
     setKeyMode("editing");
     setEditApiKey("");
-    setRevealedKey(null);
   };
 
   const cancelEditingKey = () => {
@@ -714,46 +564,6 @@ export function ConnectionSettingsPanel({
 
         <Separator />
 
-          {/* Auto-reply toggle */}
-          <div
-            className="flex items-center justify-between gap-3"
-            data-testid="auto-reply-section"
-          >
-            <div className="flex items-center gap-2 text-sm">
-              <Bot className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <p className="font-medium">Auto-reply IA</p>
-                <p className="text-xs text-muted-foreground">
-                  Respostas automáticas via IA para mensagens recebidas.
-                </p>
-              </div>
-            </div>
-            <Switch
-              checked={line.auto_reply_enabled}
-              onCheckedChange={(checked) =>
-                toggleAutoReply.mutate(
-                  { id: line.id, enabled: checked },
-                  {
-                    onSuccess: () =>
-                      toast.success(
-                        checked
-                          ? "Auto-reply ativado"
-                          : "Auto-reply desativado",
-                      ),
-                    onError: (e: any) =>
-                      toast.error(
-                        e?.message ?? "Falha ao atualizar auto-reply",
-                      ),
-                  },
-                )
-              }
-              disabled={toggleAutoReply.isPending}
-              data-testid="auto-reply-switch"
-            />
-          </div>
-
-          <Separator />
-
           {/* Editable fields */}
           <div className="grid gap-3">
             <div className="grid gap-1.5">
@@ -771,8 +581,8 @@ export function ConnectionSettingsPanel({
                 API key{" "}
                 <span className="text-xs font-normal text-muted-foreground">
                   {keyMode === "editing"
-                    ? "(digite a nova chave)"
-                    : "(toque no lápis para trocar)"}
+                    ? "(substituir: digite a nova chave)"
+                    : "(configurada — toque no lápis para substituir)"}
                 </span>
               </Label>
               {keyMode === "editing" ? (
@@ -808,30 +618,10 @@ export function ConnectionSettingsPanel({
                     id="edit-apikey"
                     type="text"
                     readOnly
-                    value={keyMode === "revealed" ? revealedKey ?? "" : "••••••••"}
+                    value="••••••••"
                     className="font-mono"
                     data-testid="edit-conn-apikey-display"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 shrink-0"
-                    onClick={onToggleReveal}
-                    disabled={reveal.isPending}
-                    aria-label={
-                      keyMode === "revealed" ? "Ocultar API key" : "Mostrar API key"
-                    }
-                    data-testid="btn-apikey-reveal"
-                  >
-                    {reveal.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : keyMode === "revealed" ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
@@ -873,13 +663,6 @@ export function ConnectionSettingsPanel({
               </Button>
             )}
           </div>
-
-          <Separator />
-
-          <AuthorizedNumbersEditor
-            lineId={line.id}
-            initialNumbers={line.authorized_numbers ?? []}
-          />
 
           <Separator />
 

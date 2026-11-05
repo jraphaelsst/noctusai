@@ -14,6 +14,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/mutation-cache-writes.md
   - CONTEXT/PATTERNS/frontend/silent-refusal.md
   - CONTEXT/PATTERNS/frontend/notification-classes.md
+  - CONTEXT/PATTERNS/frontend/mirror-owned-overlay.md
   - CONTEXT/PATTERNS/frontend/status-pagina-dev-visibility.md
   - CONTEXT/PATTERNS/frontend/org-admin-ux-gate.md
   - CONTEXT/PATTERNS/frontend/svg-render-mode.md
@@ -45,6 +46,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 - **Product icon must render.** A product's `icone` must register as a REAL icon — empty/missing fails `check_product_icon_registered`. → `KB § PATTERNS/frontend/product-icon-registry.md`
 - **Loading UI = two signals off `data`, never `isLoading` and never a bare `isFetching`.** `showSkeleton = isPending && !data` · `isRefreshing = isFetching && !!data` (indicator only, never an early `return`) · `placeholderData: (prev) => prev` on any user-keyed query, unless it returns authorisation-scoped personal data (say why in a comment). `isLoading` false mid-refetch ⇒ empty lies over data (2026-07-21); `isPending || isFetching` ⇒ the subtree unmounts on every mutation (2026-08-31, 70 sites). Compute it in the HOOK, not per consumer. `check_lying_loading_state` (warning) catches the first mode only. → `KB § PATTERNS/frontend/lying-loading-state.md`
 - **A mutation writes what it knows into the cache — never invalidate-only.** `useCacheWriteMutation` (`@noctusai/lib/cache-writes`): optimistic draw when predictable · commit the server's answer on success · background settle. Invalidate-only = write + refetch before the screen agrees with the toast (orbity note ~2 s, 2026-10-21). `check_mutation_invalidate_only` (ratchet, blocking). → `KB § PATTERNS/frontend/mutation-cache-writes.md`
+- **Mirror + owned overlay.** A UI over external data (Vista) declares each field's source + CRUD verbs; mirror = read-only `SourceBadge`, never a dead edit button; owned = full CRUD via the existing service; sync never overwrites owned; differing values shown both (`MirrorOverrideValue`). → `KB § PATTERNS/frontend/mirror-owned-overlay.md`
 - **A refusal is never silent.** Failed query ⇒ error branch before the empty one (`QueryErrorState`); uploads via `useUploadDocumento` + `<UploadErro>`, `onUpload` returns `mutateAsync` (F76/F78/F86, 2026-10-24). `check_silent_refusal` (blocking). → `KB § PATTERNS/frontend/silent-refusal.md`
 - **Org-admin UX gate = `useIsOrgAdmin()` / `isOrgAdmin(ctx)` from `@noctusai/lib`, never the inline `isProductAdmin || org.role owner/admin` copy.** Correct under the org picker (staff carry `noctus_role` admin); UX only, the server enforces. `check_hand_copied_org_admin` blocks. → `KB § PATTERNS/frontend/org-admin-ux-gate.md`
 - **Any chat/inbox surface = `ChatWindow` organ + adapter + DB-first reads + ONE realtime stream.** Never fork the organ, never put a vendor call on the read path, never `refetchInterval`. Register every new organ's `.organ.yaml` — a missing registration makes the catalog report it as shelfware, which is what manufactured the three existing chat forks. → `KB § PATTERNS/frontend/inbox-chat-surface.md`

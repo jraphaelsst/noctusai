@@ -125,8 +125,8 @@ ROTULO_QUALIFICACAO = {
     "nacionalidade": "Nacionalidade",
     "profissao": "Profissão",
     "estado_civil": "Estado civil",
-    "rg": "RG",
-    "rg_orgao_expedidor": "Órgão expedidor do RG",
+    "rg": "RG (opcional)",
+    "rg_orgao_expedidor": "Órgão expedidor do RG (opcional)",
     "cpf": "CPF",
     "endereco": "Endereço completo",
     "regime_bens": "Regime de bens",
@@ -146,9 +146,9 @@ ROTULO_QUALIFICACAO = {
 #: `documento_checklist_service.CAMPOS_DOCUMENTO_IDENTIDADE` by a test — not
 #: imported, so this pure module stays free of the service layer.
 _CHAVES_DO_DOCUMENTO_DE_IDENTIDADE = frozenset(
-    {"nome_oficial", "rg", "rg_orgao_expedidor", "cpf"}
+    {"nome_oficial", "cpf"}
 )
-SUFIXO_DOCUMENTO_DE_IDENTIDADE = " (Documento de identidade: RG/CPF, CNH ou CIN)"
+SUFIXO_DOCUMENTO_DE_IDENTIDADE = " (Documento de identidade: CPF, CNH ou CIN)"
 
 #: [E1] `classificar_situacao_pj`/`classificar_empresa` outcomes.
 PJ_EXIGIDO = "exigido"
@@ -1596,10 +1596,6 @@ _PROFISSAO_SOCIO_RE = re.compile(r"empres[áa]ri|s[óo]ci[oa]|administrador|come
 #: wording omits the fragment cleanly. key -> (aviso code, message tail).
 _CHAVES_QUALIFICACAO_AVISO: dict[str, tuple[str, str]] = {
     "profissao": ("PARTE_SEM_PROFISSAO", "não tem profissão; a qualificação sai sem ela."),
-    "rg_orgao_expedidor": (
-        "RG_SEM_ORGAO_EXPEDIDOR",
-        "não tem órgão expedidor do RG; a qualificação sai só com o número.",
-    ),
 }
 
 #: [Migration 193] Qualificação keys a REPRESENTANTE never prints: they sign
@@ -1748,6 +1744,18 @@ def _identidade(av: Avaliacao, p: Pessoa) -> None:
         )
 
 
+def _identidade_verificada(av: Avaliacao, p: Pessoa) -> None:
+    """[Security M1] Identity read from a document the lead sent over WhatsApp is machine data from an unauthenticated
+    channel: it is not printed in a contract until a human confirms it (the card's confirm action stamps
+    `<campo>_confirmado_por`)."""
+    if p.identidade_nao_verificada:
+        campos = ", ".join(ROTULO_QUALIFICACAO.get(c, c) for c in p.identidade_nao_verificada)
+        av.bloqueia(
+            "IDENTIDADE_NAO_VERIFICADA",
+            f"{_nome(p)}: {campos} veio de um documento enviado pelo WhatsApp e ainda não foi confirmado por uma pessoa.",
+        )
+
+
 def _render_qualificacao(av: Avaliacao, p: Pessoa) -> None:
     """Render guards on values the qualificação prints AS STORED — each one
     surfaced for a human, never silently rewritten:
@@ -1758,6 +1766,23 @@ def _render_qualificacao(av: Avaliacao, p: Pessoa) -> None:
       e.g. the misread "aposentanda") is a `falta` — it would go into the deed
       verbatim; one the operator TYPED (`profissao_origem == 'manual'`) only
       warns and prints as typed."""
+    # [Owner decision, 2026-11-04] RG is optional for every party. A present
+    # RG that is incomplete only WARNS (never blocks); an absent one is not
+    # mentioned at all and the qualificação is by the CPF alone.
+    if (
+        (p.rg or "").strip()
+        and not (p.rg_orgao or "").strip()
+        and (p.identidade_tipo or "rg").strip().lower() == "rg"
+    ):
+        av.avisa(
+            "RG_SEM_ORGAO_EXPEDIDOR",
+            f"{_nome(p)} não tem órgão expedidor do RG; a qualificação sai só com o número.",
+        )
+    if CHAVE_RG_SO_DA_CNH in p.avisos_qualificacao:
+        av.avisa(
+            "RG_SEM_DIGITO_VERIFICADOR",
+            f"O RG de {_nome(p)} veio só da CNH, sem dígito verificador: confirme o número antes de assinar.",
+        )
     if frases.rg_orgao_sem_uf(p):
         av.avisa(
             "RG_ORGAO_SEM_UF",
@@ -1849,6 +1874,7 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRA
         ids_lado = {p.cliente_id: p for p in lado_pessoas}
         for p in lado_pessoas:
             _identidade(av, p)
+            _identidade_verificada(av, p)
             _render_qualificacao(av, p)
             # [Owner decision, 2026-10-03] a missing BAIRRO warns, never blocks
             # (the other address fields still gate via `faltando_qualificacao`).

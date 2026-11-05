@@ -1,4 +1,4 @@
-"""Audit trail of channel-token mint / revoke (Lais contract §10.1 M1: "every
+"""Audit trail of channel-token mint / revoke, written by the platform-grant service (Lais contract §10.1 M1: "every
 mint and revoke is audit-logged").
 
 Reuses ``agents.api_token_audit`` (migration 007) — the table the seed writes a

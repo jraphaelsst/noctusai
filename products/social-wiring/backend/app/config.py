@@ -89,7 +89,6 @@ class SocialWiringSettings(ProductSettings):
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4o-mini"
     # (media transcription / vision moved off OpenAI 2026-10-29: see media_vision_model; voice notes go to the self-hosted Whisper with no length limit.)
-    whatsapp_chatbot_enabled: bool = True
 
     # Fernet key for refresh-token-at-rest encryption. Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -126,12 +125,12 @@ class SocialWiringSettings(ProductSettings):
     smtp_user: str = ""
     smtp_password: str = ""
 
-    # ─── WAHA (WhatsApp notifications) ─────────────────────────────────
-    # Empty waha_base_url → noctusai_lib.integrations.whatsapp.get_whatsapp_client
-    # returns FakeWahaClient (logs-instead-of-sends). Safe for dev.
+    # ─── WAHA: PROVISIONING + webhook verification ONLY ─────────────────
+    # `waha_base_url` / `waha_api_key` are what the connections router uses to CREATE a line (the QR pairing); they never
+    # send a message. Every send reads the org's own `whatsapp_connections` row (`app.services.julia_linha.linha_da_org`,
+    # julia-line CONTRACT A2/A3) -- there is no env sender and no session setting.
     waha_base_url: str = ""
     waha_api_key: str = ""
-    waha_session: str = "default"
     waha_dashboard_url: str = "http://localhost:3000/dashboard"
     waha_webhook_url: str = ""
     waha_webhook_hmac_secret: str = ""
@@ -286,14 +285,16 @@ class SocialWiringSettings(ProductSettings):
     local_dev_org_id: str = "00000000-0000-4000-8000-000000000001"
     local_dev_user_id: str = "00000000-0000-4000-8000-000000000001"
 
-    # ─── CRM (real estate property lookup, Phase 5) ────────────────────
-    crm_base_url: str = ""
-    crm_api_key: str = ""
-    # Vista aliases. In local/dev deployments these are copied from the
-    # NoctusAI root .env; CRMService consumes crm_* after model_post_init
-    # maps the aliases.
-    vista_base_url: str = ""
-    vista_api_key: str = ""
+    # ─── Vista CRM ──────────────────────────────────────────────────────
+    # Deliberately NO base_url / api_key settings: the Vista credential is PER ORG, stored encrypted in
+    # `social_wiring.credentials` (provider "vista") and set from Settings (`/api/integracoes/vista`). See
+    # `app/services/vista_credenciais.py`.
+    # Refresh cadence of the imóveis mirror (`app/services/imoveis_sync_scheduler.py`): every run refreshes the vitrine +
+    # discovery; once per `imoveis_sync_resto_intervalo_s` it also sweeps the rest of the catalog. The forward probe for NEW
+    # codes stops after `imoveis_sonda_max_falhas` consecutive misses per prefix.
+    imoveis_sync_intervalo_s: int = 7200
+    imoveis_sync_resto_intervalo_s: int = 86400
+    imoveis_sonda_max_falhas: int = 40
 
     # ─── Edição de Fotos (app/modules/edicao_fotos) ─────────────────────
     # The photo-editing job worker (seed `domain.jobs.Worker` over the
@@ -427,10 +428,6 @@ class SocialWiringSettings(ProductSettings):
     biblioteca_lease_seconds: float = 600.0
     # How long a process trusts its last read of `biblioteca_ingestao_habilitada`.
     biblioteca_gate_ttl_seconds: float = 10.0
-
-    # ─── WhatsApp inbound (Phase 5) ────────────────────────────────────
-    # Comma-separated E.164 phone numbers authorized to trigger uploads
-    whatsapp_authorized_numbers: str = "+5511974693365"
 
     # ─── Cloudflare tunnel (Phase 5) ───────────────────────────────────
     # Set to the tunnel URL (e.g. https://random-words.trycloudflare.com)
@@ -644,10 +641,6 @@ class SocialWiringSettings(ProductSettings):
             tunnel = self.tunnel_hostname.rstrip("/")
             if tunnel not in self.cors_origins:
                 self.cors_origins = f"{self.cors_origins},{tunnel}"
-        if not self.crm_base_url and self.vista_base_url:
-            self.crm_base_url = self.vista_base_url
-        if not self.crm_api_key and self.vista_api_key:
-            self.crm_api_key = self.vista_api_key
         # OAuth redirect URIs — derive from oauth_redirect_base_url (or
         # tunnel_hostname fallback) when set; preserves today's behavior
         # otherwise (per-URI defaults / env vars). The derivation always

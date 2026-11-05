@@ -46,15 +46,12 @@ __all__ = [
     "ChannelLead",
     "ChannelRef",
     "ChannelReplyOut",
-    "ChannelTokenCreateRequest",
-    "ChannelTokenOut",
     "ChannelTurnRequest",
     "ChannelTurnResponse",
     "ChannelUsageOut",
     "ChannelResumoRequest",
     "ChannelResumoResponse",
     "ChannelResumoUsageOut",
-    "ChannelToolsTokenRequest",
     "ConformidadeOut",
     "ContextoEstado",
     "ContextoPergunta",
@@ -549,21 +546,6 @@ class ChannelDeleteRequest(StrictHttpModel):
     channel_ref: ChannelRef
 
 
-class ChannelTokenCreateRequest(StrictHttpModel):
-    product: Literal["social-wiring"]
-    label: str = Field(..., min_length=1, max_length=120)
-
-
-class ChannelTokenOut(BaseModel):
-    """Returned ONCE at mint. ``token`` is never retrievable again."""
-
-    id: UUID
-    token: str
-    prefix: str
-    expires_at: datetime
-    scopes: list[str]
-
-
 class ChannelResumoRequest(StrictHttpModel):
     """``POST /api/channels/threads/{id}/resumo`` (also ``/conversations/{id}/resumo``): a narrative only --
     the criteria come from the qualification records, never from this call."""
@@ -624,9 +606,3 @@ class ChannelDecisaoResponse(BaseModel):
     #: option answered (no rule written, or the model could not decide).
     regra: Literal["versao", "padrao_da_versao"]
     usage: ChannelResumoUsageOut
-
-
-class ChannelToolsTokenRequest(StrictHttpModel):
-    """``PUT /api/channels/ferramentas-token`` (§2.1(f))."""
-
-    token: str = Field(..., min_length=8, max_length=4096)

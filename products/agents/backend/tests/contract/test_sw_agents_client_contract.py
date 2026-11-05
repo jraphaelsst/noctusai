@@ -26,7 +26,7 @@ from noctusai_lib.api.auth.session import SupabaseApiTokenResolver, make_get_aut
 from noctusai_lib.integrations.llm import ChatToolsResponse, FakeProvider, LLMUsage, ToolCall
 from noctusai_lib.testing import MockSupabaseClient
 
-from app.dependencies import get_auth_context
+from app.dependencies import CHANNEL_TOKEN_SCOPES, get_auth_context
 from app.runtime.llm_runtime import LlmTurnLimiter
 from tests.channels.conftest import CONNECTION_ID, chan  # noqa: F401 — fixture
 from tests.routers.conftest import agents_client  # noqa: F401 — fixture
@@ -59,15 +59,16 @@ class _NoSession:
 
 @pytest.fixture
 def wired(chan):  # noqa: F811
-    """Mint a REAL channel token, resolve it through the seed resolver, return a SW client."""
+    """Mint a REAL channel token (the way a platform grant does), resolve it through the seed resolver, return a SW client."""
     from app.main import app
 
     chan.seed_agent()  # Julia v2: the platform definition (published) + this org's instance, switched on
-    minted = chan.client.post(
-        "/api/agents/julia/channel-token", json={"product": "social-wiring", "label": "contract-x"}
+    agent = chan.rt.studio.get_agent(chan.org_id, "julia")
+    minted = chan.token_admin.mint(
+        "agents", org_id=chan.org_id, label="contract-x", scopes=sorted(CHANNEL_TOKEN_SCOPES),
+        expires_at=None, principal_agent_id=agent.id, issuer="social-wiring",
     )
-    assert minted.status_code == 201, minted.text
-    token = minted.json()["token"]
+    token = minted.secret
     resolver = SupabaseApiTokenResolver(
         MockSupabaseClient(list(chan.token_admin.rows["agents"]), schema="agents"), schema="agents"
     )

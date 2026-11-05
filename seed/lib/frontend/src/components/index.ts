@@ -45,6 +45,9 @@ export type {
 
 // Org specs — the org's own context for an agent (lifted from agents' Studio EspecificacoesOrgTab).
 export { createOrgSpecsHooks, OrgSpecsForm } from './org-specs';
+// Provenance — read-only source badge + "Vista: X · Nosso: Y" (mirror + owned overlay).
+export { SourceBadge, MirrorOverrideValue, formatSyncedAgo } from './provenance';
+export type { SourceBadgeProps, MirrorOverrideValueProps } from './provenance';
 // Section tabs — a settings-style page whose sections are tabs AND sub-routes (URL-synced).
 export { SectionTabsPage } from './section-tabs';
 export type { SectionTab, SectionTabsPageProps } from './section-tabs';
@@ -73,6 +76,19 @@ export type {
   ApiKeysPanelProps,
 } from './api-keys';
 
+// API tokens — machine-to-machine `noc_` tokens (list / mint with server scope allow-list / rotate / revoke).
+export { createApiTokensHooks, ApiTokensPanel, maskTokenPrefix, tokenRefusalMessage } from './api-tokens';
+export type {
+  ApiTokensHooks,
+  CreateApiTokensHooksOptions,
+  ApiTokenItem,
+  MintedApiToken,
+  MintTokenInput,
+  TokenScopes,
+  ApiTokensPanelProps,
+  ApiTokenServiceAccount,
+} from './api-tokens';
+
 // WhatsApp connections — multi-line WAHA connection management (lifted from
 // social-wiring's Conexoes/Conexao pages as a pure addition).
 export {
@@ -80,6 +96,7 @@ export {
   WhatsAppConnectionsPage,
   CreateConnectionDialog,
   ConnectionDetailDialog as WhatsAppConnectionDetailDialog,
+  ConnectionPairingPanel,
 } from './whatsapp-connections';
 export type {
   WhatsAppConnectionsHooks,
@@ -93,6 +110,7 @@ export type {
   UpdateWhatsAppConnectionBody,
   ConfigureWhatsAppConnectionWebhookBody,
   WhatsAppConnectionsPageProps,
+  ConnectionPairingPanelProps,
 } from './whatsapp-connections';
 
 // WhatsApp inbox — "Conversas": chat list + thread + reply on the seed ChatWindow

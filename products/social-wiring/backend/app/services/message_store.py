@@ -26,7 +26,7 @@ import json
 import logging
 import uuid as _uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA = "social_wiring"
 _TABLE = "conversation_messages"
+
+
+ORIGENS = ("lead", "julia", "humano", "interno")
 
 
 class DuplicateMessage(Exception):
@@ -61,6 +64,8 @@ class StoredMessage:
     acked_at: str | None = None
     created_at: str | None = None
     structured_payload: dict[str, Any] | None = None
+    # Migration 318: who produced the message (lead | julia | humano | interno); None = written before origin stamping.
+    origem: str | None = None
 
     def as_message_dto(self) -> dict[str, Any]:
         """The realtime-bus ``MessageDTO`` shape (contract appendix, W4.4):
@@ -102,6 +107,7 @@ class MessageStore:
         connection_id: UUID | None = None,
         created_at: str | None = None,
         chat_id: str | None = None,
+        origem: str | None = None,
     ) -> StoredMessage:
         """Insert a row.
 
@@ -123,6 +129,8 @@ class MessageStore:
         """
         if direction not in {"inbound", "outbound"}:
             raise ValueError(f"invalid direction: {direction}")
+        if origem is not None and origem not in ORIGENS:
+            raise ValueError(f"invalid origem: {origem}")
         payload = {
             "id": str(_uuid.uuid4()),
             "org_id": str(self._org_id),
@@ -157,6 +165,10 @@ class MessageStore:
         # unchanged until they're updated to pass chat_id themselves.
         if chat_id:
             payload["chat_id"] = chat_id
+        # `origem` (migration 318) follows the same rule as chat_id: only sent when a caller stamps it, so a caller that predates
+        # the column (and a fixture schema without it) keeps working; NULL = "before origin stamping".
+        if origem:
+            payload["origem"] = origem
         try:
             response = (
                 self._admin
@@ -251,7 +263,66 @@ class MessageStore:
             acked_at=row.get("acked_at"),
             created_at=row.get("created_at"),
             structured_payload=sp if isinstance(sp, dict) else None,
+            origem=row.get("origem") or None,
         )
+
+    def origem_por_provider_id(self, provider_message_id: str | None) -> str | None:
+        """The stored `origem` of the row with this `provider_message_id` (globally unique), or None when there is no such row or it
+        predates origin stamping. The DURABLE answer to "is this `fromMe` echo a message SW itself wrote?" -- it survives a Redis
+        outage and a restart, unlike the in-flight flag. A read failure RAISES (the caller decides; never a silent None)."""
+        if not provider_message_id:
+            return None
+        rows = (
+            self._admin.schema(_SCHEMA).table(_TABLE).select("origem")
+            .eq("provider_message_id", provider_message_id).limit(1).execute().data or []
+        )
+        return (rows[0].get("origem") or None) if rows else None
+
+    def registrar_interno_enviado(
+        self,
+        *,
+        connection_id: UUID,
+        chat_id: str,
+        body: str,
+        provider_message_id: str | None,
+        structured_payload: dict[str, Any] | None = None,
+    ) -> StoredMessage | None:
+        """Pre-write the outbound row of a SYSTEM-sent internal (staff) message, `origem='interno'`, keyed by the provider id WAHA
+        returned from the send. WAHA's `fromMe` echo of that same send then trips UNIQUE(provider_message_id) and is dropped as a
+        duplicate -- and `_apply_human_takeover` skips an `interno` row -- so a report/alert to a colleague is never mistaken for a
+        person typing on Julia's line. Replaces the 1-hour Redis "own id" key.
+
+        Also folds the send into the staff chat (`whatsapp_chats.categoria='equipe'`) so the thread shows it and the chat is never
+        offered to Julia. Returns the stored row, or None when `provider_message_id` is empty (nothing to dedup on -- the echo cannot
+        be matched, so nothing is written and the caller logs it). If the echo already won the race (its row exists with another
+        origem) the row is PROMOTED to `interno` and returned. Raises only on a store failure other than a duplicate."""
+        if not provider_message_id:
+            logger.error("julia: internal send has no provider message id -- not recorded (its echo cannot be deduplicated)")
+            return None
+        try:
+            stored = self.record(
+                session_id=chat_id, raw_sender=chat_id, direction="outbound", body=body,
+                provider_message_id=provider_message_id, authorized=True, structured_payload=structured_payload,
+                connection_id=connection_id, chat_id=chat_id, origem="interno",
+            )
+        except DuplicateMessage:
+            rows = (
+                self._admin.schema(_SCHEMA).table(_TABLE).update({"origem": "interno"})
+                .eq("provider_message_id", provider_message_id).execute().data or []
+            )
+            if not rows:
+                return None
+            stored = self._to_stored_message(rows[0])
+        try:
+            from app.services.whatsapp_chat_store import WhatsAppChatStore  # local: chat store imports nothing from here
+
+            WhatsAppChatStore(admin_supabase=self._admin, org_id=self._org_id).record_message(
+                connection_id=connection_id, chat_id=chat_id, direction="outbound", body=body,
+                created_at=stored.created_at or datetime.now(timezone.utc).isoformat(), categoria="equipe",
+            )
+        except Exception as exc:
+            logger.error("julia: staff chat row update failed conn=%s (%s)", connection_id, type(exc).__name__)
+        return stored
 
     def _is_duplicate_error(self, exc: Exception, provider_message_id: str) -> bool:
         """Best-effort duplicate detection across backends.

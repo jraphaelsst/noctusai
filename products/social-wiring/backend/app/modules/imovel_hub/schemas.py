@@ -297,3 +297,10 @@ __all__ = [
     "RegistrarImovelBody",
     "ReferenciasPatchBody",
 ]
+
+
+class ImovelNotaBody(StrictHttpModel):
+    """An internal note (migration 315). Create and edit share the shape —
+    the whole text is replaced; the service trims and refuses blank/over-long."""
+
+    texto: str = Field(max_length=4000)

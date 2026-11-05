@@ -28,6 +28,7 @@ from noctusai_lib.integrations.llm.ledger_read import (
 )
 from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
 
+from app.services.dev_usage import freshness
 from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ async def aggregate_llm_usage(
     org_id: Optional[str] = Query(None, description="Filter by org id"),
     product: Optional[str] = Query(None, description="Filter by product slug"),
     feature: Optional[str] = Query(None, description="Filter by feature"),
+    agent_key: Optional[str] = Query(None, description="Filter by agent; the literal 'none' = rows with no agent"),
+    conversation_id: Optional[str] = Query(None, description="Filter by conversation (agent session)"),
     from_: Optional[str] = Query(None, alias="from", description="ISO-8601 start (default now-30d)"),
     to: Optional[str] = Query(None, description="ISO-8601 end (default now)"),
 ):
@@ -52,7 +55,8 @@ async def aggregate_llm_usage(
 
         {
           "window": {"from": "...", "to": "..."},
-          "filters": {"org_id": ..., "product": ..., "feature": ...},
+          "freshness": {"ai_usage": await run_blocking(lambda: freshness(db, "ai_usage", "created_at"))},
+        "filters": {"org_id": ..., "product": ..., "feature": ...},
           "totals": {calls, errors, partial, input_tokens, output_tokens, ..., cost_usd, cost_brl},
           "per_org": [{org_id, ...totals, "per_product": [{product, ...,
                         "per_feature": [{feature, ...}], "by_model": [{provider, model, ...}]}]}],
@@ -71,24 +75,23 @@ async def aggregate_llm_usage(
         rows = await run_blocking(
             lambda: read_ai_usage_rows(
                 db, start=start, end=end, org_id=org_id, product=product, feature=feature,
+                agent_key=agent_key, conversation_id=conversation_id,
             )
         )
     except AiUsageWindowTooLarge:
         raise HTTPException(status_code=400, detail="Janela grande demais; filtre por org/produto ou reduza o período")
 
     agg = aggregate_ai_usage(rows)
-    per_product: dict[str, dict] = {}
-    for org in agg["per_org"]:
-        for prod in org["per_product"]:
-            bucket = per_product.setdefault(prod["product"], {k: 0 for k in agg["totals"]})
-            for k in agg["totals"]:
-                bucket[k] += prod[k]
+    per_product = agg.pop("per_product")
     if product and product not in per_product:
-        per_product[product] = {k: 0 for k in agg["totals"]}
+        per_product[product] = {**{k: 0 for k in agg["totals"]}, "per_agent": []}
 
     return {
-        "window": {"from": start.isoformat(), "to": end.isoformat()},
-        "filters": {"org_id": org_id, "product": product, "feature": feature},
+        "window": {"from": start.isoformat(), "to": end.isoformat(),
+                   "hours": round((end - start).total_seconds() / 3600.0, 3)},
+        "freshness": {"ai_usage": await run_blocking(lambda: freshness(db, "ai_usage", "created_at"))},
+        "filters": {"org_id": org_id, "product": product, "feature": feature,
+                    "agent_key": agent_key, "conversation_id": conversation_id},
         **agg,
         "per_product": per_product,
     }

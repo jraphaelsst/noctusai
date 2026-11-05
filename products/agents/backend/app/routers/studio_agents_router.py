@@ -1023,6 +1023,17 @@ def publish_draft(
             avisos=[w.to_dict() for w in compiled.avisos], prontidao=prontidao(compiled),
         )
 
+    # Org-spec safety (Julia-line E2), block mode only: an invalid stored org-spec value is a readiness `bloqueante`
+    # (`spec_org_invalida`) and therefore a publish refusal -- one definition, two readers. Report mode never gets here.
+    itens_prontidao = prontidao(compiled)
+    if itens_prontidao and any(
+        i["codigo"] == "spec_org_invalida" and i["severidade"] == "bloqueante" for i in itens_prontidao
+    ):
+        raise http_error(
+            409, "compile_blocked", "Há especificações da organização inválidas (SPEC_VALIDATION_MODE=block).",
+            prontidao=itens_prontidao,
+        )
+
     # Julia v2 A-EVAL (CONTRACT 3.5 E4): the mechanism suite is a HARD gate with NO override. It runs ahead of
     # the judge suite so a green judge run (or an owner override) can never stand in for it.
     mecanismo = gate.mecanismo_requisito(ctx.org_id, agent.id, draft.id)

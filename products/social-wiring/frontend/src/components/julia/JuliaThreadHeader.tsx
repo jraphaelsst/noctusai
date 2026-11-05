@@ -97,7 +97,7 @@ export function JuliaThreadHeader({
           toast.success(
             r.agents_ok
               ? "Dados deste contato apagados."
-              : "Dados apagados aqui; a exclusão no Agents falhou — tente novamente.",
+              : "Dados apagados aqui; a exclusão na Julia falhou — tente novamente.",
           );
         },
         onError: (e) => toast.error(mensagemErroJulia(e, "Não foi possível apagar os dados.")),

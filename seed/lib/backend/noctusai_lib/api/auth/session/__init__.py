@@ -7,7 +7,7 @@
 - ``SessionStore`` (``Protocol``) + ``FakeSessionStore`` — server-side
   session persistence for cookie-based human-user auth.
 - ``ApiTokenResolver`` (``Protocol``) + ``FakeApiTokenResolver`` +
-  ``hash_token(secret) -> hex`` — opaque ``pk_*`` bearer resolution.
+  ``hash_token(secret) -> hex`` — opaque ``noc_*`` (legacy ``pk_*``) bearer resolution.
 - ``make_get_auth_context(...)`` — FastAPI dep factory composing the
   two adapters (+ optional legacy-JWT bridge) into one resolver with
   fixed priority: cookie → ``pk_*`` bearer → legacy-JWT → 401.
@@ -51,6 +51,7 @@ from noctusai_lib.api.auth.session.legacy_bridge import (
     make_trusted_legacy_jwt_resolver,
 )
 from noctusai_lib.api.auth.session.factory import (
+    make_api_token_resolver,
     make_session_store,
 )
 from noctusai_lib.api.auth.session.scopes import (
@@ -100,6 +101,19 @@ from noctusai_lib.api.auth.session.token_admin import (
     make_product_token_admin,
     mint_token_secret,
 )
+from noctusai_lib.api.auth.session.token_policy import (
+    ACCEPTED_TOKEN_PREFIXES,
+    GRANT_RECEIVE_SCOPE,
+    NEW_TOKEN_PREFIX,
+    TOKEN_SCOPES,
+    MfaRequiredError,
+    MintPolicy,
+    RotatedToken,
+    TokenScopeAllowList,
+    UnknownTokenScopeError,
+    has_api_token_prefix,
+    rotate_token,
+)
 from noctusai_lib.api.auth.session.types import (
     AuthContext,
     CallerKind,
@@ -110,6 +124,18 @@ from noctusai_lib.api.auth.session.types import (
 )
 
 __all__ = [
+    "MfaRequiredError",
+    "MintPolicy",
+    "ACCEPTED_TOKEN_PREFIXES",
+    "GRANT_RECEIVE_SCOPE",
+    "NEW_TOKEN_PREFIX",
+    "RotatedToken",
+    "TOKEN_SCOPES",
+    "TokenScopeAllowList",
+    "UnknownTokenScopeError",
+    "has_api_token_prefix",
+    "make_api_token_resolver",
+    "rotate_token",
     "resolve_org_membership",
     "make_trusted_legacy_jwt_resolver",
     "ADMIN_ORG_ROLES",

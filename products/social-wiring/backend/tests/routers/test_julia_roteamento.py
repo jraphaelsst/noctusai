@@ -84,8 +84,14 @@ class TestAlimentar:
         assert admin.conn()["agente_leads_ativo"] is True
         assert "5511988887777@c.us" in admin.snapshot_ids()  # 11.1: chats that already existed are never Julia's
 
-    def test_the_same_preconditions_as_the_legacy_switch_still_block_it(self, admin):
+    def test_empty_authorized_numbers_no_longer_block_it_julia_line_D5(self, admin):
         _off_connection(admin.w, authorized_numbers=[])
+        r = admin.put(LINHA, {"alimenta": True})
+        assert r.status_code == 200 and admin.conn()["agente_leads_ativo"] is True
+
+    def test_the_hmac_precondition_still_blocks_it(self, admin, override_settings_factory):
+        _off_connection(admin.w)
+        override_settings_factory(waha_webhook_hmac_secret="")
         r = admin.put(LINHA, {"alimenta": True})
         assert r.status_code == 409 and admin.conn()["agente_leads_ativo"] is False
 

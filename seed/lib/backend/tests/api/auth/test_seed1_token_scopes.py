@@ -50,7 +50,7 @@ class TestResolverExpiryAndRevocation:
         return MockSupabaseClient(rows, validate_schema=False)
 
     def test_revoked_returns_none(self):
-        secret = "pk_" + "a" * 32
+        secret = "noc_" + "a" * 32
         row = {
             "id": str(_TOKEN_ID),
             "org_id": str(_ORG),
@@ -67,7 +67,7 @@ class TestResolverExpiryAndRevocation:
         assert _run(resolver.resolve(secret)) is None
 
     def test_expired_returns_none(self):
-        secret = "pk_" + "b" * 32
+        secret = "noc_" + "b" * 32
         past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         row = {
             "id": str(_TOKEN_ID),
@@ -85,7 +85,7 @@ class TestResolverExpiryAndRevocation:
         assert _run(resolver.resolve(secret)) is None
 
     def test_valid_populates_new_fields(self):
-        secret = "pk_" + "c" * 32
+        secret = "noc_" + "c" * 32
         future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
         row = {
             "id": str(_TOKEN_ID),

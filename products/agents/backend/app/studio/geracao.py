@@ -25,6 +25,8 @@ from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
+from noctusai_lib.integrations.llm.attribution import llm_usage_context
+
 from app.schemas.studio_geracao import (
     SAIDAS,
     AreaOut,
@@ -606,10 +608,12 @@ async def _executar(deps: Dependencias, *, org_id: UUID, geracao_id: UUID, agent
         if not orc.reservar(estimativa):
             return None, "limite_de_custo", 0.0, None, None
         try:
-            r = await deps.chat(
-                mensagens, provider=gerador.version.provider, model=gerador.version.model, org_id=str(agent.org_id),
-                max_tokens=max_tokens, response_format={"type": "json_object"}, cache=False,
-            )
+            # Attribute the Studio generator's spend to the agent being generated (ai_usage.agent_key).
+            with llm_usage_context(product="agents", agent_key=agent.key, org_id=str(agent.org_id)):
+                r = await deps.chat(
+                    mensagens, provider=gerador.version.provider, model=gerador.version.model, org_id=str(agent.org_id),
+                    max_tokens=max_tokens, response_format={"type": "json_object"}, cache=False,
+                )
         except Exception:  # noqa: BLE001 -- provider/key failure: logged, fixed code to the caller
             logger.warning("agents.geracao.llm_falhou etapa=%s geracao_id=%s", etapa, geracao_id, exc_info=True)
             orc.liquidar(estimativa, 0.0)

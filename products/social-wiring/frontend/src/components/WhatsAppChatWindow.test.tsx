@@ -15,7 +15,7 @@
  *   2. useThreads adapter — maps ChatSummary → ChatThread (incl. JID stripping)
  *   3. useMessages adapter — maps Message → ChatMessage (incl. media fallback)
  *   4. useSend adapter — forwards {text} to useSendWhatsAppMessage.mutateAsync
- *   5. useAutoReply adapter — reflects the initial prop + calls useSetAutoReply.mutate
+ *   5. no useAutoReply adapter
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -28,7 +28,6 @@ afterEach(async () => {
 const mockUseWhatsAppChats = vi.fn();
 const mockUseWhatsAppChatMessages = vi.fn();
 const mockUseSendWhatsAppMessage = vi.fn();
-const mockUseSetAutoReply = vi.fn();
 const mockUseMarkChatRead = vi.fn();
 const mockUseWhatsAppRealtime = vi.fn();
 
@@ -38,7 +37,6 @@ vi.mock("@/hooks/useWhatsAppChats", () => ({
   useWhatsAppChats: mockUseWhatsAppChats,
   useWhatsAppChatMessages: mockUseWhatsAppChatMessages,
   useSendWhatsAppMessage: mockUseSendWhatsAppMessage,
-  useSetAutoReply: mockUseSetAutoReply,
   useMarkChatRead: mockUseMarkChatRead,
   useWhatsAppRealtime: mockUseWhatsAppRealtime,
 }));
@@ -62,14 +60,13 @@ beforeEach(() => {
   mockUseWhatsAppChats.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUseWhatsAppChatMessages.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUseSendWhatsAppMessage.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
-  mockUseSetAutoReply.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockUseMarkChatRead.mockReturnValue({ mutate: vi.fn(), isPending: false });
   // The realtime subscription is a side effect, not data — the adapter tests
   // assert cache/DTO mapping, so a no-op stub keeps them transport-agnostic.
   mockUseWhatsAppRealtime.mockReturnValue({ status: "open", lastEventId: null });
 });
 
-async function renderWindow(props: Partial<{ connectionId: string; autoReplyEnabled: boolean; className: string }> = {}) {
+async function renderWindow(props: Partial<{ connectionId: string; className: string }> = {}) {
   const mod = await import("./WhatsAppChatWindow");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
@@ -177,14 +174,9 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
     expect(mutateAsync).toHaveBeenCalledWith({ text: "Oi" });
   });
 
-  it("useAutoReply adapter reflects the initial prop and calls useSetAutoReply.mutate on toggle", async () => {
-    const mutate = vi.fn();
-    mockUseSetAutoReply.mockReturnValue({ mutate, isPending: false });
-    await renderWindow({ autoReplyEnabled: true });
-    const autoReply = lastProps.adapter.useAutoReply!("conn-1");
-    expect(autoReply.enabled).toBe(true);
-    autoReply.onToggle(false);
-    expect(mutate).toHaveBeenCalledWith({ enabled: false });
+  it("exposes no auto-reply control (replies are manual, from the UI)", async () => {
+    await renderWindow();
+    expect(lastProps.adapter.useAutoReply).toBeUndefined();
   });
 });
 

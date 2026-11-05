@@ -1,0 +1,24 @@
+name: SourceProvenance
+kind: component
+path: seed/lib/frontend/src/components/provenance/SourceProvenance.tsx
+phase: pilot-seed
+registered_at: '2026-11-03'
+organ_version: '1.0'
+validation_status: emerging
+known_facts:
+- 'Import: import { SourceBadge, MirrorOverrideValue } from "@noctusai/lib/components".'
+- 'SourceBadge = the read-only marker for external-mirror data ("Vista · há 2 h"); it replaces an edit pencil that opens nothing. MirrorOverrideValue renders "Vista: X · Nosso: Y" only when both exist AND differ; it never decides precedence (the caller passes what its backend resolved).'
+- 'Part of the mirror + owned-overlay rule: every data UI declares each field''s source and CRUD verbs. KB § PATTERNS/frontend/mirror-owned-overlay.md.'
+errors_encountered: []
+drifts_surfaced:
+- 'social-wiring ImovelDetalhes had a Pencil per section that toasted "edição não disponível" — a button that edits nothing; the badge states why instead.'
+alternatives_considered:
+- 'A per-field editable-field organ — deferred: owned fields in social-wiring are multi-field cards validated together (useUnsavedChanges + Salvar), not single inline inputs; build it when a second product needs inline per-field editing.'
+manual_validation_log: []
+integration_test_status: unit-tested (SourceProvenance.test.tsx)
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

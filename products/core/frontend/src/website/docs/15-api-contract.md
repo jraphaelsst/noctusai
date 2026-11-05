@@ -15,7 +15,7 @@
 | D7 | Rebrand | **Bootstrap identity** (neutral night palette + Inter/JetBrains Mono + procedural three.js scene). The Higgsfield exploration waits for owner permission; the identity swap later is a token/asset change |
 | D8 | Tracking | Consent infra ships; GA4/Meta Pixel/Plausible load **only if an id is configured AND consent is granted**. IDs start empty ⇒ nothing third-party loads at launch. The privacy text update stays open for compliance |
 | D9 | Capture archive | Stays out of the repo |
-| D10 | Currency / retention / alert number | BRL in both languages; lead retention 18 months (documented, job later); WAHA alert only if `WEBSITE_SALES_WHATSAPP` env is set |
+| D10 | Currency / retention / alert number | BRL in both languages; lead retention 18 months (documented, job later); no WhatsApp alert: core owns no line (julia-line §A4, 2026-11-04); a set `WEBSITE_SALES_WHATSAPP` is recorded as a `sem_linha_da_plataforma` fan-out failure |
 | D11 | Waitlist → sign-up | Manual for now (admin sees waitlist leads) |
 | — | Blog | **Deferred to v1.1**: section `news` default off, no `/blog` routes in v1 |
 
@@ -106,7 +106,7 @@ Envelope: success = `{"data": …}` (+ `"total"` on lists); errors = FastAPI `{"
 1. The lead row exists (or an existing lead with the same `dedupe_key` got a `form_submit` activity and updated fields), with a `created` or `form_submit` activity.
 2. Fan-out runs **after commit, async, best-effort**:
    - e-mail notify via seed `integrations/email` to `WEBSITE_LEADS_NOTIFY_EMAIL` (if set);
-   - WAHA text alert to `WEBSITE_SALES_WHATSAPP` (if set);
+   - ~~WAHA text alert~~ removed 2026-11-04 (julia-line §A4): if `WEBSITE_SALES_WHATSAPP` is still set, a `sem_linha_da_plataforma` failure is recorded instead of sending;
    - `outbound_webhook` POST to `WEBSITE_LEADS_WEBHOOK_URL` (if set; for n8n).
    Each failure appends a `fanout_failed` activity with `{channel, error}`. **Never silent, never blocks the 201.**
 

@@ -31,9 +31,6 @@ def _make_intake(
     redis_stub.get.return_value = None
     redis_stub.ping.return_value = True
     return WhatsAppIntakeService(
-        waha_base_url="https://waha.example.com",
-        waha_api_key="test-key",
-        waha_session="default",
         redis_client=redis_stub,
         authorized_numbers=authorized_numbers or [],
         crm_service=None,

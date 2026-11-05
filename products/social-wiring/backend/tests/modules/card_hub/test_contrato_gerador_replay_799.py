@@ -302,17 +302,21 @@ def _cliente_cnh(cid: str, **extra) -> dict:
 
 
 class TestRgSoDaCnh:
-    def test_a_cnh_only_rg_is_missing_for_the_contract(self, client, scoped):
+    def test_a_cnh_only_rg_is_an_aviso_not_blocking_for_the_contract(self, client, scoped):
+        """[Owner decision, 2026-11-04 — RG optional] an RG resting only on an
+        unconfirmed CNH reading no longer blocks: it is an `avisos` entry."""
         cid = str(uuid4())
         scoped.set_table_data("clientes", [_cliente_cnh(cid)])
         out = checklist.completude_contratual(scoped, ORG_UUID, cid)
-        assert checklist.CHAVE_RG_SO_DA_CNH in out["faltando"]
-        assert out["completo"] is False
+        assert checklist.CHAVE_RG_SO_DA_CNH in out["avisos"]
+        assert checklist.CHAVE_RG_SO_DA_CNH not in out["faltando"]
+        assert out["completo"] is True
 
     def test_agrees_with_the_card_checklist_rule(self, client, scoped):
         cid = str(uuid4())
         row = _cliente_cnh(cid)
-        assert "rg" in checklist.campos_faltando(row, "identidade", {})
+        assert checklist._RESSALVAS["rg_so_da_cnh"]["pendente"](row, {})
+        assert "rg" not in checklist.campos_faltando(row, "identidade", {})  # optional now
 
     def test_a_confirmed_rg_is_complete(self, client, scoped):
         cid = str(uuid4())
@@ -329,11 +333,4 @@ class TestRgSoDaCnh:
         }])
         out = checklist.completude_contratual(scoped, ORG_UUID, cid)
         assert checklist.CHAVE_RG_SO_DA_CNH not in out["faltando"]
-
-    def test_the_contract_gate_names_it_with_the_checklist_label(self):
-        d = fx.variante(1)
-        v = replace(d.vendedores[0], faltando_qualificacao=[checklist.CHAVE_RG_SO_DA_CNH])
-        av = _avaliar(replace(d, vendedores=[v]))
-        faltas = [f for f in av.faltando if f["campo"] == f"qualificacao.{checklist.CHAVE_RG_SO_DA_CNH}"]
-        assert faltas and faltas[0]["rotulo"].startswith(checklist.ROTULO_RG_SO_DA_CNH)
-        assert not av.pronto
+        assert checklist.CHAVE_RG_SO_DA_CNH not in out["avisos"]

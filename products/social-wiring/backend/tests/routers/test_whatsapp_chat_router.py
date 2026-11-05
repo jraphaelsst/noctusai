@@ -100,6 +100,7 @@ CREATE TABLE conversation_messages (
     ack INTEGER,
     acked_at TEXT,
     chat_id TEXT,
+    origem TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 """

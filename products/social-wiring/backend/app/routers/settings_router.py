@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+import anyio.to_thread
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import Field, field_validator
@@ -97,8 +98,8 @@ from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
     VistaNotConfigured as CRMNotConfigured,
-    VistaRESTAdapter as CRMService,
 )
+from app.services import vista_credenciais
 from app.services.api_keys_store import (
     API_KEY_SPECS,
     MANAGED_API_KEYS,
@@ -293,10 +294,6 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> KeysStatus:
             cfg.openai_chat_model, "OpenAI Chat Model",
             "Model used by the WhatsApp chatbot orchestration loop.",
         ),
-        whatsapp_chatbot_enabled=_entry(
-            str(cfg.whatsapp_chatbot_enabled), "WhatsApp Chatbot",
-            "When true and OpenAI is configured, WhatsApp uses GPT tool orchestration.",
-        ),
         encryption_key=_entry(
             cfg.encryption_key, "Encryption Key",
             "Fernet key used to encrypt refresh tokens at rest.",
@@ -311,11 +308,11 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> KeysStatus:
         ),
         waha_base_url=_entry(
             cfg.waha_base_url, "WAHA Base URL",
-            "WAHA server base URL. Empty = FakeWahaClient (dev).",
+            "WAHA server base URL, used ONLY to provision a new connection; sends use the org's own connection row.",
         ),
         waha_api_key=_entry(
             cfg.waha_api_key, "WAHA API Key",
-            "Bearer token for WAHA. Required when WAHA Base URL is set.",
+            "WAHA key used ONLY to provision a new connection; sends use the org's own connection row.",
         ),
         waha_dashboard_url=_entry(
             cfg.waha_dashboard_url, "WAHA Dashboard URL",
@@ -328,14 +325,6 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> KeysStatus:
         waha_webhook_hmac_secret=_entry(
             cfg.waha_webhook_hmac_secret, "WAHA Webhook Secret",
             "Optional shared secret for webhook hardening. Empty in local dev is allowed.",
-        ),
-        vista_base_url=_entry(
-            cfg.crm_base_url or cfg.vista_base_url, "Vista Base URL",
-            "Vista tenant REST base URL. Server-side only.",
-        ),
-        vista_api_key=_entry(
-            cfg.crm_api_key or cfg.vista_api_key, "Vista API Key",
-            "Vista API key. Server-side only; never expose as VITE_*.",
         ),
         database_backend=_entry(
             cfg.database_backend, "Database Backend",
@@ -355,17 +344,14 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> KeysStatus:
 @router.get("/vista/status", response_model=VistaStatus)
 async def get_vista_status(
     product_code: str = Query(default="ONE5555", min_length=6, max_length=9),
-    _user=Depends(get_current_user),
+    auth=Depends(get_current_user_org),
 ) -> VistaStatus:
-    """Live Vista smoke check using a property code.
+    """Live Vista smoke check of THIS org's stored credential, using a property code.
 
     Returns a sanitized property summary only. It never echoes the Vista key.
     """
     try:
-        crm = CRMService(
-            base_url=settings.crm_base_url,
-            api_key=settings.crm_api_key,
-        )
+        crm = vista_credenciais.adapter_da_org(coerce_org_uuid(auth[2]))
     except CRMNotConfigured as exc:
         return VistaStatus(
             configured=False,
@@ -434,24 +420,32 @@ async def send_email_test(
     return EmailTestResult(ok=True, to=to)
 
 
+def _linha_do_usuario(raw_org: Any):
+    """The caller's org line (julia_linha) -- or the named reason it has none. Returns (linha, motivo)."""
+    from app.services.julia_linha import LinhaIndisponivel, linha_da_org  # noqa: PLC0415
+
+    try:
+        return linha_da_org(coerce_org_uuid(raw_org), admin_client=get_admin_client()), None
+    except LinhaIndisponivel as exc:
+        logger.warning("settings/waha: org=%s has no usable WhatsApp line (%s)", exc.org_id, exc.motivo)
+        return None, exc.motivo
+
+
 @router.get("/waha/status", response_model=WahaStatus)
 async def get_waha_status(
-    _user=Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> WahaStatus:
-    """Best-effort WAHA session status check."""
-    if not settings.waha_base_url:
-        return WahaStatus(
-            configured=False,
-            ok=False,
-            session=settings.waha_session,
-            error="WAHA_BASE_URL is empty; FakeWahaClient mode.",
-        )
-
-    headers = {"X-Api-Key": settings.waha_api_key} if settings.waha_api_key else {}
-    base_url = settings.waha_base_url.rstrip("/")
+    """Best-effort status of the org's OWN WAHA session (read from its whatsapp_connections row)."""
+    _user, _token, raw_org = auth
+    linha, motivo = await anyio.to_thread.run_sync(_linha_do_usuario, raw_org)
+    if linha is None:
+        return WahaStatus(configured=False, ok=False, session="default", error=motivo)
+    session_name = linha.session
+    headers = {"X-Api-Key": linha.api_key} if linha.api_key else {}
+    base_url = linha.base_url.rstrip("/")
     candidates = [
-        f"/api/sessions/{settings.waha_session}",
-        f"/api/sessions/{settings.waha_session}/status",
+        f"/api/sessions/{session_name}",
+        f"/api/sessions/{session_name}/status",
         "/api/sessions",
     ]
     last_error: str | None = None
@@ -484,7 +478,7 @@ async def get_waha_status(
                     configured=True,
                     ok=False,
                     base_url=base_url,
-                    session=settings.waha_session,
+                    session=session_name,
                     error=f"{path} returned HTTP {response.status_code}: {response.text[:200]}",
                 )
             data = response.json() if response.content else {}
@@ -498,19 +492,19 @@ async def get_waha_status(
                     "or a sessions list. Extract status best-effort."
                 ),
             )
-            session_status = _extract_waha_session_status(data)
+            session_status = _extract_waha_session_status(data, session_name)
             return WahaStatus(
                 configured=True,
                 ok=True,
                 base_url=base_url,
-                session=settings.waha_session,
+                session=session_name,
                 status=session_status,
             )
     return WahaStatus(
         configured=True,
         ok=False,
         base_url=base_url,
-        session=settings.waha_session,
+        session=session_name,
         error=last_error or "WAHA status endpoint did not respond.",
     )
 
@@ -518,7 +512,7 @@ async def get_waha_status(
 @router.post("/waha/test", response_model=WahaTestResult)
 async def send_waha_test(
     payload: WahaTestRequest,
-    _user=Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> WahaTestResult:
     """Send a real WAHA test message to an explicit phone number.
 
@@ -534,17 +528,11 @@ async def send_waha_test(
        whatsapp-scheduling's ``buffer_service.append_to_memory`` after
        every successful send.
     """
-    if not settings.waha_base_url:
-        return WahaTestResult(
-            ok=False,
-            phone=payload.phone,
-            error="WAHA_BASE_URL is empty; refusing fake-mode test send.",
-        )
-    client = get_whatsapp_client(
-        base_url=settings.waha_base_url,
-        api_key=settings.waha_api_key,
-        session=settings.waha_session,
-    )
+    _user, _token, raw_org = auth
+    linha, motivo = await anyio.to_thread.run_sync(_linha_do_usuario, raw_org)
+    if linha is None:
+        return WahaTestResult(ok=False, phone=payload.phone, error=motivo)
+    client = linha.waha_client(get_whatsapp_client)
     try:
         result = await client.send_text(chat_id_for_phone(payload.phone), payload.text)
     except Exception as exc:
@@ -596,14 +584,11 @@ async def send_waha_test(
                 normalized_phone,
                 ex=30 * 24 * 3600,
             )
-        # Durable persistence into conversation_messages — same audit log
-        # the webhook handler writes to. Uses the local-dev org since this
-        # endpoint runs without a JWT in SQLite mode.
+        # Durable persistence into conversation_messages -- same audit log the webhook handler writes to, in the line's org.
         try:
-            from uuid import UUID as _UUID
             store = MessageStore(
                 admin_supabase=get_admin_client(),
-                org_id=_UUID(settings.local_dev_org_id),
+                org_id=linha.org_id,
             )
             store.record(
                 session_id=normalized_phone,
@@ -805,7 +790,7 @@ def get_instagram_app_config_status(
     return _instagram_app_status(cfg, store=store)
 
 
-def _extract_waha_session_status(payload) -> str | None:
+def _extract_waha_session_status(payload, session_name: str) -> str | None:
     if isinstance(payload, dict):
         try:
             return WAHASessionInfo.model_validate(payload).status
@@ -815,17 +800,17 @@ def _extract_waha_session_status(payload) -> str | None:
             return str(payload["status"])
         if "state" in payload:
             return str(payload["state"])
-        if payload.get("name") == settings.waha_session:
+        if payload.get("name") == session_name:
             return str(payload.get("status") or payload.get("state") or "present")
     if isinstance(payload, list):
         for item in payload:
             if isinstance(item, dict):
                 try:
                     session = WAHASessionInfo.model_validate(item)
-                    if session.name == settings.waha_session:
+                    if session.name == session_name:
                         return session.status or "present"
                 except Exception:
-                    if item.get("name") == settings.waha_session:
+                    if item.get("name") == session_name:
                         return str(item.get("status") or item.get("state") or "present")
         return "listed" if payload else "empty"
     return None
@@ -1025,6 +1010,16 @@ def _api_key_spec_or_404(key: str) -> ApiKeySpec:
     return spec
 
 
+def _recusar_se_gerenciada(spec: ApiKeySpec) -> None:
+    """Julia-line D5: a platform-managed key (`agents`) is delivered, never pasted or removed here."""
+    if spec.read_only:
+        raise AppException(
+            "gerenciada_pela_plataforma",
+            "Esta chave é gerenciada pela plataforma e não pode ser alterada aqui.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+
 def _api_key_status(spec: ApiKeySpec, org_id, store) -> ApiKeyStatus:
     """Resolve one key and project it onto the wire shape — value out,
     only a masked hint in."""
@@ -1038,6 +1033,7 @@ def _api_key_status(spec: ApiKeySpec, org_id, store) -> ApiKeyStatus:
         input_type=spec.input_type,
         placeholder=spec.placeholder,
         configured=resolution.configured,
+        read_only=spec.read_only,
         options=[
             ApiKeyOptionOut(
                 value=option.value,
@@ -1088,6 +1084,7 @@ def update_api_key(
     user, _token, raw_org = auth
     _require_admin(auth, request, "Chaves de API")
     spec = _api_key_spec_or_404(key)
+    _recusar_se_gerenciada(spec)
     org_id = coerce_org_uuid(raw_org)
 
     value = payload.value.strip()
@@ -1135,6 +1132,7 @@ def remove_api_key(
     user, _token, raw_org = auth
     _require_admin(auth, request, "Chaves de API")
     spec = _api_key_spec_or_404(key)
+    _recusar_se_gerenciada(spec)
     org_id = coerce_org_uuid(raw_org)
 
     removed = delete_api_key(store, str(org_id), spec.name)

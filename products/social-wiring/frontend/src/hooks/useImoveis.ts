@@ -2,8 +2,8 @@
  * Imóveis hooks — TanStack Query wrappers over /api/imoveis.
  *
  * These read the LOCAL mirror (`social_wiring.imoveis`), never Vista. Only
- * `useSyncImoveis` reaches the CRM, and it is a deliberate user action —
- * the full pull takes ~4-6 minutes for the 1919-imóvel catalog.
+ * `useAtualizarVista` (alias `useSyncImoveis`) reaches the CRM, and it is a deliberate
+ * admin action that queues a server-side refresh (minutes) — polled via `useUltimaAtualizacaoVista`.
  *
  * Field semantics that look like bugs and are not (all measured against the
  * live tenant on 2026-08-03 — see the roadmap):
@@ -14,8 +14,9 @@
  *   · `latitude`/`longitude` are null on 36.8% — any map needs a fallback.
  *   · `corretores` can hold 2-3 entries (13.1% of imóveis do).
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import type { CondominioResumo } from "@/hooks/useCondominios";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -178,20 +179,6 @@ export interface FiltroOptions {
   bairro: string[];
 }
 
-export interface SyncResult {
-  total_reported: number;
-  pages_fetched: number;
-  upserted: number;
-  detalhes_fetched: number;
-  detalhes_failed: string[];
-  detalhes_failed_count: number;
-  page_failures: string[];
-  complete: boolean;
-  started_at: string | null;
-  finished_at: string | null;
-  duration_seconds: number;
-}
-
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
 const IMOVEIS_KEY = (f: ImovelFilters) => ["sw", "imoveis", f] as const;
@@ -334,24 +321,96 @@ export function useCaracteristicas() {
 
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
-export function useSyncImoveis() {
-  const qc = useQueryClient();
-  // Variables typed explicitly: a defaulted `mutationFn` parameter makes
-  // TanStack infer the variable type as `void`, so `mutateAsync(true)` then
-  // fails to compile.
-  return useMutation<SyncResult, Error, boolean>({ // noc-allow: invalidate-only — vendor bulk sync: the answer is counts, every imóvel/filter/amenity read is recomputed server-side
-    mutationFn: async (withDetalhes) =>
-      api.post<SyncResult>(
-        `/api/imoveis/sync?with_detalhes=${withDetalhes}`,
+// ─── Vista refresh: queued run + "Última atualização" ─────────────────────
+
+/** `GET /api/imoveis/sync/ultimo` — the last refresh run of the org (any member may read it). */
+export interface UltimaAtualizacaoVista {
+  execucao_id: string | null;
+  em_andamento: boolean;
+  /** em_andamento | ok | incompleto | listar_vazio | removidos_excessivos | falhou | ignorada */
+  status: string | null;
+  /** Which path ran: Vista's listar, or the per-code (detalhes) refresh used while listar is silent. */
+  caminho: "listar" | "detalhes" | null;
+  origem: "agendado" | "manual" | null;
+  iniciado_em: string | null;
+  finalizado_em: string | null;
+  novos: number;
+  atualizados: number;
+  inalterados: number;
+  removidos: number;
+  falhas: number;
+  chamadas: Record<string, number>;
+  /** Newest `sincronizado_em` of the mirror (shown when no run was recorded yet). */
+  sincronizado_em: string | null;
+}
+
+/** `POST /api/imoveis/sync` answers 202 at once: the refresh runs on the server (minutes) — poll `ultimo`. */
+export interface AtualizacaoVistaIniciada {
+  execucao_id: string;
+  status: string;
+  ja_em_andamento: boolean;
+}
+
+export type ModoAtualizacaoVista = "auto" | "listar" | "detalhes";
+
+export const ULTIMA_ATUALIZACAO_KEY = ["sw", "imoveis", "sync", "ultimo"] as const;
+const POLL_MS = 5000;
+
+/**
+ * useUltimaAtualizacaoVista — GET /api/imoveis/sync/ultimo, polled every 5 s WHILE a run is going (the hand-off of the
+ * queued job). Two loading signals, never `isLoading`: `showSkeleton` on the first load only, `isRefreshing` for a refetch
+ * over data already on screen.
+ */
+export function useUltimaAtualizacaoVista() {
+  const query = useQuery({
+    queryKey: ULTIMA_ATUALIZACAO_KEY,
+    queryFn: () => api.get<UltimaAtualizacaoVista>("/api/imoveis/sync/ultimo"),
+    refetchInterval: (q) => (q.state.data?.em_andamento ? POLL_MS : false),
+  });
+  return {
+    ...query,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
+}
+
+/**
+ * useAtualizarVista — POST /api/imoveis/sync?modo=… (org admin). The answer is the QUEUED run, so it is written straight into
+ * the "ultimo" entry as `em_andamento` — that is what hands the screen off to polling; the imóveis list is refetched by
+ * the caller when the run finishes (the rows change then, not now).
+ */
+export function useAtualizarVista() {
+  return useCacheWriteMutation<AtualizacaoVistaIniciada, { modo?: ModoAtualizacaoVista } | void>({
+    mutationFn: (vars) =>
+      api.post<AtualizacaoVistaIniciada>(
+        `/api/imoveis/sync?modo=${(vars && vars.modo) || "auto"}`,
         {},
       ),
-    onSuccess: () => {
-      // Everything derived from the table is now stale — including the
-      // filter options and amenity counts, which are computed FROM the rows.
-      qc.invalidateQueries({ queryKey: ["sw", "imoveis"] });
-    },
+    targets: [
+      {
+        queryKey: ULTIMA_ATUALIZACAO_KEY,
+        commit: (old: UltimaAtualizacaoVista | undefined, saved) => ({
+          ...(old ?? {
+            origem: null, caminho: null, iniciado_em: null, finalizado_em: null, novos: 0, atualizados: 0, inalterados: 0,
+            removidos: 0, falhas: 0, chamadas: {}, sincronizado_em: null,
+          }),
+          execucao_id: saved.execucao_id,
+          em_andamento: true,
+          status: "em_andamento",
+        }),
+      },
+    ],
   });
 }
+
+/** Everything derived from the imóveis table is stale once a refresh finishes (list, filter options, amenity counts). */
+export function useInvalidarImoveis() {
+  const qc = useQueryClient();
+  return () => qc.invalidateQueries({ queryKey: ["sw", "imoveis"] });
+}
+
+/** Kept under its historical name: the page's "Sincronizar" buttons are the same queued refresh. */
+export const useSyncImoveis = useAtualizarVista;
 
 // ─── Display helpers ────────────────────────────────────────────────────────
 

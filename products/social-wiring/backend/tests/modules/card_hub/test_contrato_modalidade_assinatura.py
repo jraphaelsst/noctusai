@@ -185,14 +185,16 @@ class TestFisicaTemplate:
         inicio = next(i for i, p in enumerate(ps) if p.startswith("E, por estarem assim"))
         bloco_partes, bloco_testemunhas = ps[inicio:fim], ps[fim:]
 
-        # One line per signer, each directly followed by NAME then CPF.
+        # One line per signer, each directly followed by NAME then CPF and/or RG (whichever exist;
+        # [julia-v3, owner 2026-11-03] the RG joins the CPF under the name).
+        def doc(p):
+            return frases.documentos_assinatura(p.cpf, frases.identidade_assinatura(p))
+
         pares = [(bloco_partes[i + 1], bloco_partes[i + 2]) for i, p in enumerate(bloco_partes) if p == LINHA]
-        assert pares == [
-            ("FULANO DE TAL", f"CPF {frases.documento(d.vendedores[0].cpf)[1]}"),
-            ("BELTRANA EXEMPLO", f"CPF {frases.documento(d.compradores[0].cpf)[1]}"),
-        ]
-        # One line per witness: NAME then CPF. [Migration 168, owner
-        # decision] RG never prints anymore — CPF replaces it everywhere.
+        assert pares == [("FULANO DE TAL", doc(d.vendedores[0])), ("BELTRANA EXEMPLO", doc(d.compradores[0]))]
+        assert all(x[1].startswith("CPF ") and " · RG " in x[1] for x in pares)
+        # One line per witness: NAME then CPF. [Migration 168, owner decision] A witness's RG never prints --
+        # the form is CPF-only and `Testemunha.rg` is never filled in production.
         t1, t2 = d.testemunhas
         pares_t = [(bloco_testemunhas[i + 1], bloco_testemunhas[i + 2])
                    for i, p in enumerate(bloco_testemunhas) if p == LINHA]

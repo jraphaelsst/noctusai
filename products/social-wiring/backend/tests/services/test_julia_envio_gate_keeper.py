@@ -57,12 +57,20 @@ FORA_DO_PORTAO: dict[tuple[str, str], str] = {
     ("services/julia_disparos_service.py", "_enviar_um"): "operator-initiated disparo / owner request (POST endpoints), Cloud-only, opt-out + caps",
     ("services/julia_visitas_service.py", "avisar_lead"): "operator confirms / reschedules / cancels a visit in the UI",
     ("routers/whatsapp_connections_router.py", "send_message"): "operator types a message in Conversas (POST endpoint)",
-    # the OPERATOR bot (pre-Julia intake + chatbot). Not a Julia send: reached only after the Julia split
-    # (`agente_leads_ativo` on -> leads go to Julia and return). It answers `authorized_numbers` only -- an EMPTY list
-    # authorizes nobody (owner order 2026-10-20), so a lead line never reaches it.
-    ("routers/whatsapp_router.py", "_process_waha_body"): "operator bot: once-per-24h denial reply + inline chatbot fallback",
-    ("services/conversation_module.py", "_llm_fallback_dispatch_inner"): "operator bot LLM fallback",
-    ("services/conversation_module.py", "route_inbound"): "operator bot code-first router: typed YouTube command replies",
+    # the platform WEB chat's code-first router (its replies go to the web request's collector, never WhatsApp: the One Chat WhatsApp operator
+    # bot is retired, 2026-11-04). (S6 moves the web chat off the WhatsApp intake class.)
+    ("services/conversation_module.py", "route_inbound"): "platform web chat router (not a WhatsApp send path any more)",
+    # julia-line S6: these senders now resolve the org's line through `julia_linha` (so the scan counts them as Julia-adjacent); none of
+    # them is an automatic send to a lead.
+    ("services/notification_service.py", "NotificationService._send_whatsapp_logged"): "notification to the org's own recipients (staff roster), not a lead",
+    ("modules/edicao_fotos/services/notifier.py", "MultiChannelBatchReadyNotifier._send_whatsapp_logged"): "photo-batch-ready notice to the creator / opted-in admins, not a lead",
+    ("routers/settings_router.py", "send_waha_test"): "operator-initiated test send to an explicit number (POST endpoint)",
+    ("services/whatsapp_intake_service.py", "WhatsAppIntakeService._reply"): "upload-flow reply to the staff uploader (web: sessions never reach WAHA)",
+    ("services/whatsapp_intake_service.py", "WhatsAppIntakeService._run_upload"): "upload-flow status to the staff uploader, not a lead",
+    # TRANSITIONAL (`vista_divergencias`, NOC-REMEDIATE[transicao-vista-divergencias-staff-send]): ONE digest per refresh run to the
+    # org's own destination USER (an admin of the org, never a lead), capped per hour. It moves behind the gate's `interno` flow
+    # (feat/julia-v3-sw-turno) as soon as that branch is merged.
+    ("services/vista_divergencias.py", "enviador_padrao.enviar"): "staff digest to the org's own destination user (not a lead), hourly-capped",
 }
 
 

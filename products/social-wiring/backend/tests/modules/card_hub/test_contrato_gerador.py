@@ -480,33 +480,60 @@ class TestGate:
         assert not any(f["campo"].startswith("qualificacao.rg") for f in av.faltando)
         assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_a_missing_rg_blocks_and_names_the_identity_document(self):
-        """[Owner directive, 2026-09-23] Only one of CIN/CNH is needed — but a
-        missing RG or CPF still blocks, naming WHICH one, and the label names
-        the one checklist item the operator fixes it on."""
+    def test_a_missing_cpf_still_blocks_and_names_the_identity_document(self):
+        """[Owner decision, 2026-11-04 — RG optional] CPF stays mandatory: a
+        missing one blocks, naming the identity-document checklist item."""
         d = fx.variante(1)
-        v = replace(d.vendedores[0], faltando_qualificacao=["rg"])
+        v = replace(d.vendedores[0], faltando_qualificacao=["cpf"])
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        item = next(f for f in av.faltando if f["campo"] == "qualificacao.rg")
-        assert item["rotulo"].startswith("RG (Documento de identidade: RG/CPF, CNH ou CIN) — ")
-        assert not any(f["campo"] == "qualificacao.cpf" for f in av.faltando)
+        item = next(f for f in av.faltando if f["campo"] == "qualificacao.cpf")
+        assert item["rotulo"].startswith("CPF (Documento de identidade: CPF, CNH ou CIN) — ")
         assert not av.pronto
 
-    @pytest.mark.parametrize(
-        "chave, codigo",
-        [("profissao", "PARTE_SEM_PROFISSAO"), ("rg_orgao_expedidor", "RG_SEM_ORGAO_EXPEDIDOR")],
-    )
-    def test_missing_profissao_or_rg_orgao_warns_never_blocks(self, chave, codigo):
-        """[P5 F8, owner rule "if the signed contracts have it, it is
-        required; if they don't, it is a doubt" — supersedes the 2026-09-23
-        "all mandatory"] the office's signed contracts routinely omit the
-        profissão and sometimes the RG órgão; the qualificação renders
-        cleanly without them."""
+    def test_a_cpf_only_party_is_ready_and_the_contract_prints_no_rg(self):
+        """[Owner decision, 2026-11-04] a party with a CPF and no RG at all is
+        contract-ready and the text carries no RG wording for them."""
         d = fx.variante(1)
-        v = replace(d.vendedores[0], faltando_qualificacao=[chave])
+        v = replace(d.vendedores[0], rg=None, rg_orgao=None)
+        d2 = replace(d, vendedores=[v] + d.vendedores[1:])
+        _d, _pol, _sw, av = _avaliar(1, d2)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert not any(c.startswith("RG_") for c in _codigos(av.avisos))
+        texto = frases.texto_pessoa(v, em_nucleo=False)
+        assert "RG" not in texto and "cédula" not in texto
+        assert "no CPF/MF" in texto and ", ," not in texto and " e inscrit" not in texto
+
+    def test_rg_without_orgao_warns_never_blocks(self):
+        """RG present, órgão absent: aviso `RG_SEM_ORGAO_EXPEDIDOR`, ready."""
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], rg_orgao=None)
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v] + d.vendedores[1:]))
+        assert "RG_SEM_ORGAO_EXPEDIDOR" in _codigos(av.avisos)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_orgao_without_uf_warns_never_blocks(self):
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], rg_orgao="SSP")
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v] + d.vendedores[1:]))
+        assert "RG_ORGAO_SEM_UF" in _codigos(av.avisos)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_rg_only_from_cnh_warns_never_blocks(self):
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], avisos_qualificacao=["rg_digito_verificador"])
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v] + d.vendedores[1:]))
+        assert "RG_SEM_DIGITO_VERIFICADOR" in _codigos(av.avisos)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_missing_profissao_warns_never_blocks(self):
+        """[P5 F8, owner rule "if the signed contracts have it, it is
+        required; if they don't, it is a doubt"] the office's signed contracts
+        routinely omit the profissão; the qualificação renders cleanly."""
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], faltando_qualificacao=["profissao"])
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        assert codigo in _codigos(av.avisos)
-        assert not any(f["campo"] == f"qualificacao.{chave}" for f in av.faltando)
+        assert "PARTE_SEM_PROFISSAO" in _codigos(av.avisos)
+        assert not any(f["campo"] == "qualificacao.profissao" for f in av.faltando)
         assert av.pronto
 
     def test_an_intermediaria_with_no_favorecido_warns_and_prints_without_an_account(self):

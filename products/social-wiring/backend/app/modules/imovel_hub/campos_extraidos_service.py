@@ -68,7 +68,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.imovel_hub import conflito_resolucao, dados_service
-from app.services import campo_conflitos, table_reads
+from app.services import campo_conflitos, divergencia_resolucao, table_reads
 from app.services import identificadores as idf
 
 logger = logging.getLogger(__name__)
@@ -1129,6 +1129,7 @@ def backfill_resolver_conflitos_pendentes(
         campo = CAMPOS.get(conflito.get("campo"))
         if (
             campo is None
+            or conflito.get("origem_proposto") in divergencia_resolucao.ORIGENS_DECISAO_HUMANA
             or conflito.get("fonte_tabela") == FONTE_VINCULO
             or (campos is not None and campo.chave not in campos)
         ):
@@ -1261,6 +1262,10 @@ def resolver(
     conflito = rows[0]
     if conflito.get("status") != "pendente":
         raise ValidationError_("Este conflito já foi decidido.", field="status")
+    if conflito.get("origem_proposto") in divergencia_resolucao.ORIGENS_DECISAO_HUMANA:
+        raise ValidationError_(
+            "Esta é uma divergência com o Vista: decida em /api/imoveis/{codigo}/divergencias.", field="origem_proposto",
+        )
 
     agora = _now()
     patch = {

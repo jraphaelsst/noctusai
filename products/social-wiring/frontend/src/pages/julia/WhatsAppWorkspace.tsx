@@ -104,13 +104,13 @@ function NoConnectionsState() {
     <div className="flex h-64 flex-col items-center justify-center gap-4 text-muted-foreground">
       <Smartphone className="h-12 w-12 opacity-30" />
       <div className="text-center">
-        <p className="text-sm font-medium">Nenhuma conexão WhatsApp</p>
+        <p className="text-sm font-medium">Nenhuma linha de WhatsApp</p>
         <p className="mt-1 text-xs">
-          Vá para{" "}
-          <a href="/conexoes" className="text-primary underline">
-            Conexões
-          </a>{" "}
-          para adicionar uma conexão.
+          Pareie o WhatsApp da Julia na página{" "}
+          <a href="/julia/agente#whatsapp" className="text-primary underline">
+            Agente
+          </a>
+          .
         </p>
       </div>
     </div>
@@ -124,7 +124,6 @@ function ChatPanel({ connection }: { connection: WhatsAppConnectionLine | null }
   return (
     <ConversasPanel
       connectionId={connection.id}
-      autoReplyEnabled={connection.auto_reply_enabled}
     />
   );
 }

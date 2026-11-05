@@ -251,34 +251,39 @@ class Calibrator:
             ),
         )
 
-    async def get_imovel_detail_fields(self, client: VistaClient) -> list[Any]:
-        # Detail probing requires a real Codigo. We use the lightest-weight
-        # sample: probe listar first (already cached after first imoveis call),
-        # take its first Codigo, then probe detalhes.
-        list_fields = await self.get_imovel_list_fields(client)
-        try:
-            list_call = await client.listar_imoveis(
-                fields=list_fields, page=1, page_size=1
-            )
-        except VistaUpstreamError as e:
-            logger.warning(
-                "calibration: cannot probe detail fields — listar failed: %s", e
-            )
-            return list(FLOOR_FIELDS)
-        items = []
-        if isinstance(list_call.data, dict):
-            for k, v in list_call.data.items():
-                if k in {"total", "paginas", "pagina", "quantidade"}:
-                    continue
-                if isinstance(v, dict):
-                    items.append(v)
-                    break
-        if not items:
-            logger.warning(
-                "calibration: listar returned 0 imoveis — cannot probe detail fields"
-            )
-            return list(FLOOR_FIELDS)
-        sample_codigo = items[0].get("Codigo") or "CA2830"
+    async def get_imovel_detail_fields(
+        self, client: VistaClient, *, sample_codigo: Optional[str] = None
+    ) -> list[Any]:
+        # Detail probing requires a real Codigo. With `sample_codigo` (a code the caller already knows is real -- the
+        # per-code refresh passes the one it is about to fetch) listar is not needed at all, which is what keeps the
+        # detalhes path alive while `/imoveis/listar` is returning nothing (2026-11 Vista outage). Otherwise use the
+        # lightest-weight sample: probe listar first (already cached after first imoveis call), take its first Codigo,
+        # then probe detalhes.
+        if sample_codigo is None:
+            list_fields = await self.get_imovel_list_fields(client)
+            try:
+                list_call = await client.listar_imoveis(
+                    fields=list_fields, page=1, page_size=1
+                )
+            except VistaUpstreamError as e:
+                logger.warning(
+                    "calibration: cannot probe detail fields — listar failed: %s", e
+                )
+                return list(FLOOR_FIELDS)
+            items = []
+            if isinstance(list_call.data, dict):
+                for k, v in list_call.data.items():
+                    if k in {"total", "paginas", "pagina", "quantidade"}:
+                        continue
+                    if isinstance(v, dict):
+                        items.append(v)
+                        break
+            if not items:
+                logger.warning(
+                    "calibration: listar returned 0 imoveis — cannot probe detail fields"
+                )
+                return list(FLOOR_FIELDS)
+            sample_codigo = items[0].get("Codigo") or "CA2830"
 
         return await self._calibrate(
             client,

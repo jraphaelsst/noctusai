@@ -1,71 +1,18 @@
 /**
  * `<ConnectionDetailDialog/>` — per-connection manage modal: live status,
- * QR pairing panel, start/restart/logout, the recovery ladder, and the
+ * the shared `ConnectionPairingPanel` (QR, start/restart/logout, recovery ladder), and the
  * webhook URL (read-only + "reenviar configuração").
  *
  * QR panel lifted from social-wiring's `ConnectionDetailDialog.tsx:114-122`.
  */
 import * as React from 'react';
-import { CheckCircle2, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
-import { Badge } from '../../design-system/ui/Badge';
 import { Button } from '../../design-system/ui/Button';
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../../design-system/ui/Dialog';
 import type { WhatsAppConnectionLine, WhatsAppConnectionsHooks } from '../../whatsapp';
+import { ConnectionPairingPanel } from './ConnectionPairingPanel';
 import { PurgeConnectionDialog } from './PurgeConnectionDialog';
-
-function StatusBadge({ status, paired }: { status: string | null | undefined; paired: boolean | undefined }) {
-  if (paired) {
-    return (
-      <Badge variant="default" className="gap-1">
-        <CheckCircle2 className="h-3 w-3" />
-        {status ?? 'WORKING'}
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="muted" className="gap-1">
-      <CircleAlert className="h-3 w-3" />
-      {status ?? 'desconectado'}
-    </Badge>
-  );
-}
-
-/**
- * QR panel — polls while the dialog is open and the line is not yet
- * paired; shows the scannable image or a "gerando/aguardando" placeholder.
- */
-function QrPanel({ hooks, connectionId, enabled }: { hooks: WhatsAppConnectionsHooks; connectionId: string; enabled: boolean }) {
-  const { data: qr } = hooks.useConnectionQr(connectionId, enabled);
-  return (
-    <div
-      className="flex flex-col items-center gap-2 rounded-md border bg-muted/10 p-4"
-      data-testid="wa-qr-panel"
-    >
-      {qr?.scannable && qr.png_base64 ? (
-        <>
-          <img
-            src={`data:image/png;base64,${qr.png_base64}`}
-            alt="QR code para parear o WhatsApp"
-            className="h-52 w-52 rounded-md border bg-white p-2"
-            data-testid="wa-qr-image"
-          />
-          <p className="text-center text-xs text-muted-foreground">
-            WhatsApp → Aparelhos conectados → Conectar aparelho. Atualiza sozinho.
-          </p>
-        </>
-      ) : (
-        <div
-          className="flex h-52 w-52 flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
-          data-testid="wa-qr-loading"
-        >
-          <Loader2 className="h-5 w-5 animate-spin" />
-          {qr?.status ? `Aguardando QR (${qr.status})` : 'Gerando QR...'}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export interface ConnectionDetailDialogProps {
   open: boolean;
@@ -75,19 +22,12 @@ export interface ConnectionDetailDialogProps {
 }
 
 export function ConnectionDetailDialog({ open, onClose, line, hooks }: ConnectionDetailDialogProps) {
-  const { data: status } = hooks.useConnectionStatus(line.id, open);
-  const actions = hooks.useConnectionActions();
-  const recover = hooks.useRecoverConnection();
   const configureWebhook = hooks.useConfigureConnectionWebhook();
 
   const [purgeOpen, setPurgeOpen] = React.useState(false);
 
-  const paired = !!status?.paired;
   // A borrowed session belongs to another app: its owner pairs / restarts / re-registers it, never this app.
   const borrowed = line.session_role === 'borrower';
-  const anyActionPending =
-    borrowed ||
-    actions.start.isPending || actions.restart.isPending || actions.logout.isPending || recover.isPending;
 
   return (
     <>
@@ -95,26 +35,10 @@ export function ConnectionDetailDialog({ open, onClose, line, hooks }: Connectio
       <DialogHeader>
         <div>
           <h3 className="text-sm font-semibold">{line.label}</h3>
-          <div className="mt-1">
-            <StatusBadge status={status?.status} paired={status?.paired} />
-          </div>
         </div>
       </DialogHeader>
       <DialogBody className="grid gap-4">
-        {!paired && !borrowed && <QrPanel hooks={hooks} connectionId={line.id} enabled={open} />}
-
-        {borrowed && (
-          <p className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground" data-testid="wa-borrowed-note">
-            Esta conexão usa a sessão de WhatsApp de outro app. Parear, reiniciar e desconectar são feitos por quem é
-            dono da sessão; aqui você só liga ou desliga este app.
-          </p>
-        )}
-
-        {status?.error && (
-          <p role="alert" className="text-xs text-destructive" data-testid="wa-status-error">
-            {status.error}
-          </p>
-        )}
+        <ConnectionPairingPanel connectionId={line.id} hooks={hooks} borrowed={borrowed} enabled={open} />
 
         <div className="grid gap-1">
           <span className="text-xs font-medium text-muted-foreground">Webhook</span>
@@ -135,34 +59,6 @@ export function ConnectionDetailDialog({ open, onClose, line, hooks }: Connectio
               {configureWebhook.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Reenviar configuração'}
             </Button>
           )}
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" disabled={anyActionPending} onClick={() => actions.start.mutate(line.id)}>
-            {actions.start.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Iniciar'}
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled={anyActionPending} onClick={() => actions.restart.mutate(line.id)}>
-            {actions.restart.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Reiniciar'}
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled={anyActionPending} onClick={() => actions.logout.mutate(line.id)}>
-            {actions.logout.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Desconectar'}
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            disabled={anyActionPending}
-            onClick={() => recover.mutate(line.id)}
-          >
-            {recover.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <>
-                <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                Recuperar conexão
-              </>
-            )}
-          </Button>
         </div>
 
         {line.app_enabled === false && (

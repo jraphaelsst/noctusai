@@ -52,12 +52,13 @@ class TestStaffVsLead:
         n2 = len([n for n in rt.w.notifications() if (n.get("metadata") or {}).get("tipo") == "julia_staff_na_linha_publica"])
         assert n1 >= 1 and n2 == n1
 
-    def test_an_operator_role_on_the_authorized_list_keeps_the_one_chat_path_and_never_the_lead_flow(self, rt):
+    def test_an_operator_role_is_staff_like_any_other_never_a_lead_and_never_a_bot_command(self, rt):
         _julia_scene(rt, auto_reply_enabled=True)
-        rt.settings(whatsapp_chatbot_enabled=True, openai_api_key="sk-test")
+        rt.settings(openai_api_key="sk-test")
         staff.criar(rt.w.sw, rt.w.core, ORG_ID, ADMIN_ID, nome="Op", papel="operador", telefone="5511999990000")
         rt.post(_msg(chat="5511999990000@c.us", mid="op-1", body="ONE1234"), signed=True)
-        assert rt.operator_memory() and rt.lead_memory("5511999990000@c.us") == []
+        assert rt.operator_memory() == [] and rt.lead_memory("5511999990000@c.us") == []  # the One Chat operator bot is retired
+        assert [m["body"] for m in rt.w.messages("5511999990000@c.us")] == ["ONE1234"]
 
     def test_a_removed_staff_member_is_a_lead_on_the_next_message(self, rt):
         _julia_scene(rt)

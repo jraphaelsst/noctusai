@@ -84,7 +84,6 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
     logout: { mutate: vi.fn(), isPending: false },
     configureWebhook: { mutate: vi.fn(), isPending: false },
   })),
-  useRevealApiKey: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useConnectionChats: vi.fn(() => ({ data: [], isLoading: false, isError: false })),
   useToggleAutoReply: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));

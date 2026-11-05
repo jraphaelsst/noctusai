@@ -96,12 +96,29 @@ LIMITS: dict[str, int] = {
     "decisao.regra": 8_000,
     "spec.descricao": 2_000,
     "spec.exemplo": 2_000,
+    # Org-spec VALUES by declared type (Julia-line CONTRACT §E1). 031's column CHECK (<= 20 000) stays the DB
+    # backstop; the product caps below are what the validator enforces.
+    "org_spec.valor.backstop": 20_000,
+    "org_spec.valor.texto_curto": 120,
     "org_spec.valor.texto": 1_000,
-    "org_spec.valor.texto_longo": 20_000,
+    "org_spec.valor.texto_longo": 4_000,
+    "org_spec.valor.url": 300,
+    "org_spec.valor.dominios": 1_000,
+    "org_spec.valor.contatos": 1_500,
+    "org_spec.valor.cnpj": 32,
+    "org_spec.valor.creci": 40,
+    "org_spec.valor.horario": 300,
+    "org_spec.valor.duracao": 40,
+    "org_spec.valor.lista": 1_500,
 }
 
-#: `agent_version_specs.tipo` (031 CHECK) — the cap of the org's value follows it.
-SPEC_TIPOS = ("texto", "texto_longo")
+#: `agent_version_specs.tipo` (031 CHECK, widened by 059) — the format AND the cap of the org's value follow it.
+#: Free text (fenced in the compiled prompt): texto_curto, texto, texto_longo, lista. Typed (inline): the rest.
+SPEC_TIPOS = (
+    "texto_curto", "texto", "texto_longo", "url", "dominios", "contatos", "cnpj", "creci", "horario", "duracao", "lista",
+)
+#: The types whose value is untrusted free text -> compiled as ``[dado: chave]`` + the data fence (E3).
+SPEC_TIPOS_TEXTO_LIVRE = ("texto_curto", "texto", "texto_longo", "lista")
 
 #: L1 — an override reason needs this many NON-whitespace characters.
 OVERRIDE_REASON_MIN_CHARS = 20
@@ -341,6 +358,19 @@ class ClientBundle:
 
 
 @dataclass(frozen=True)
+class ConfigValidacao:
+    """How org-spec values are validated: ``modo`` ``report`` (accept + warn) | ``block`` (refuse), and the public
+    hosts a ``url`` spec may use besides the org's ``dominios_permitidos``."""
+
+    modo: str = "report"
+    hosts_publicos: tuple[str, ...] = ()
+
+    @property
+    def bloqueia(self) -> bool:
+        return self.modo == "block"
+
+
+@dataclass(frozen=True)
 class CompileInput:
     agent_nome: str
     version: VersionBundle
@@ -359,6 +389,8 @@ class CompileInput:
     canal: bool = False
     #: The pinned qualification standard rendered as the "Qualificação" block (static layer).
     qualificacao: "QualificacaoData | None" = None
+    #: Org-spec validation config (mode + public hosts) the compiler re-validates stored values with (CONTRACT §E2).
+    spec_validacao: ConfigValidacao = field(default_factory=ConfigValidacao)
 
 
 # ── Compiler output ─────────────────────────────────────────────────────────

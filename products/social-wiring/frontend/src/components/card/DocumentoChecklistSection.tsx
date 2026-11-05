@@ -92,12 +92,12 @@ const EXTRAS_QUALIFICACAO: Record<
   // The two numbers the ONE identity item needs (2026-09-23). Their readings
   // used to ride on the `rg`/`cpf` items themselves; with those collapsed
   // into `identidade`, the server sends them here, keyed by column.
-  rg: { label: "RG (Documento de identidade)", formatar: (v) => v },
+  rg: { label: "RG (opcional)", formatar: (v) => v },
   // The issuer joined the identity item's required data on 2026-09-30; its
   // reading was already offered by the server (`CAMPOS`) but had no entry
   // here, so it was silently invisible — same shape as `data_casamento`.
   rg_orgao_expedidor: {
-    label: "Órgão expedidor do RG (Documento de identidade)",
+    label: "Órgão expedidor do RG (opcional)",
     formatar: (v) => v,
   },
   cpf: { label: "CPF (Documento de identidade)", formatar: (v) => v },

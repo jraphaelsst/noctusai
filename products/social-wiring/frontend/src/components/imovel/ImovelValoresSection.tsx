@@ -38,7 +38,7 @@ export default function ImovelValoresSection({
       : null;
 
   return (
-    <SectionCard title="Valores e custos" editLabel="Editar valores">
+    <SectionCard title="Valores e custos">
       {valorVenda !== null && (
         <Fact icon={<CircleDollarSign className="h-4 w-4" />} label="Venda" value={formatValor(valorVenda)} />
       )}

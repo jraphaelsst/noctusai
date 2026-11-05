@@ -32,3 +32,6 @@ export type { PurgeConnectionDialogProps } from './PurgeConnectionDialog';
 
 export { ConnectionDetailDialog } from './ConnectionDetailDialog';
 export type { ConnectionDetailDialogProps } from './ConnectionDetailDialog';
+
+export { ConnectionPairingPanel, ConnectionStatusBadge } from './ConnectionPairingPanel';
+export type { ConnectionPairingPanelProps } from './ConnectionPairingPanel';

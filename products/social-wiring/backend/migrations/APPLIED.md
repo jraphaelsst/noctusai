@@ -646,3 +646,28 @@ Authored 2026-10-24 (F86). `certidao_consultas.documento` DROP NOT NULL + CHECK 
 ## 308 — contrato_especificacoes — NOT APPLIED
 
 Authored 2026-10-24 (owner direction: contract specifications are selectable and scope the readiness). Adds `atendimento_contratos.especificacoes TEXT[]` + `especificacoes_versao INTEGER` (both NULL = legacy mode, readiness follows the derived switches). No CHECK — the vocabulary is the versioned code catalogue `contrato_gerador/especificacoes.py`, validated on write. Additive, idempotent. Apply BEFORE deploying the image that mounts `PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/especificacoes` (an un-migrated DB 500s that write; reads tolerate the absent columns via `row.get`).
+
+## 314 — julia_catalogo_fonte — NOT APPLIED
+
+Authored 2026-11-03 (julia-v3, CONTRACT 12.7). New table `julia_catalogo_config(org_id PK, fonte 'vista'|'espelho' DEFAULT 'espelho', updated_by, updated_at)`: which catalog Julia's listing tools read per org. RLS service-role only (julia_* lockdown, 289). A missing row = `espelho`, so applying it changes nothing until `PUT /api/julia/catalogo-fonte` flips an org. Apply BEFORE deploying the image: the tools read the config row on every call (an un-migrated DB 500s the three listing tools). After deploy, the operator sets the One org to `vista`.
+
+## 315 — imovel_notas — NOT APPLIED
+
+Authored 2026-11-03 (owner direction: mirror + owned overlay with CRUD on what is ours). New table `social_wiring.imovel_notas` (internal notes per imóvel, FK to `imovel_registry`, RLS own-org select + service_role). Additive, idempotent. Apply BEFORE deploying the image that mounts `GET/POST /api/imoveis/{codigo}/notas` and `PATCH/DELETE .../notas/{nota_id}` (an un-migrated DB 500s those routes; no other route reads the table).
+
+## 316 — imoveis_sync_execucoes — NOT APPLIED
+
+Authored 2026-11-03 (Vista outage fallback). New table `imoveis_sync_execucoes`: one row per Vista imóveis refresh run (path listar|detalhes, status, counts, call counts), service-role only. Additive, idempotent. Apply BEFORE deploying the image: the scheduled refresh and `POST /api/imoveis/sync` write/read it (an un-migrated DB 500s the sync endpoints).
+
+## 317 — vista_divergencias — NOT APPLIED
+
+Authored 2026-11-04 (TRANSITIONAL, removable). `imovel_campo_conflitos.notas JSONB` (the drift note) + `vista_divergencias_config(org_id, ativa, destino_user_id)` (per-org flag `divergencia_vista_ativa`, missing row = OFF; the One org seeded ON). Additive, idempotent. Apply BEFORE deploying the image: the sync reads the flag row (an un-migrated DB logs the failure and skips divergences — the sync itself is unaffected).
+
+## 318 — julia_linha_roteamento — NOT APPLIED
+
+Authored 2026-11-04 (CONTRACT julia-line SW-A). `conversation_messages.origem` (lead|julia|humano|interno, NULLABLE, no backfill), `whatsapp_chats.categoria` (lead|equipe, default `lead`), and DROP of CHECK `whatsapp_connections_agente_exige_autorizados` (Julia no longer needs `authorized_numbers`). Additive/idempotent. Apply BEFORE deploying the image: the webhook writes `origem` / `categoria` (an un-migrated DB fails the inbound insert, which is logged and processed anyway, but the staff/echo rules need the columns).
+
+## 319 — credentials_hide_encrypted_tokens — NOT APPLIED
+
+Authored 2026-11-04 (Julia-line S8, owner: the platform-delivered agents token must be unreachable from the browser). Revokes the table-wide SELECT on `social_wiring.credentials` from anon/authenticated and re-grants only the non-secret columns, so `encrypted_tokens` is service-role only. Idempotent; no schema change. Safe before or after the image (the backend reads through the service-role client).
+

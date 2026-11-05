@@ -81,7 +81,20 @@ Clean slate: on 2026-11-04 at 17:43–17:47Z the old Julia tokens were revoked. 
 - **C4. Business-specs editor.**
   - `EspecificacoesCard` renders agents' spec declarations generically.
   - The SW proxy `GET/PUT /api/julia/especificacoes` (org admin) calls agents `GET/PUT /api/channels/agents/{key}/specs` with the grant token and passes the actor id.
+  - **S9 built:** `GET|PUT /api/julia/especificacoes` (org admin) passes agents' 200/422 bodies verbatim; 409 `agente_nao_conectado` without the `api_key:agents` credential. Agents side: `GET|PUT /api/channels/agents/{key}/specs` (`channel_specs_router`, scope `agents:channel-specs`), sharing `aplicar_org_specs` with the studio PUT. Actor (owner 2026-11-04): the proxy fills `ator {user_id, nome, email}` from the authenticated SW session (never the client body, which is `valores` only) and agents' channel PUT requires it (422 `ator_obrigatorio`), product-attested by the channel token; agents stores `updated_by`/`updated_by_nome`/`updated_by_token` (agents migration 062) and audits token + person; `valores[].updated_by_nome` feeds "alterado por X em Y". `julia_aviso_service` is untouched (the notice URL stays SW-derived and read-only; no S9 change was needed).
   - `aviso_privacidade_url` is SW-derived (`julia_agente_router.py:117`) and read-only in the form.
+
+### C · implementation record (S10a, 2026-11-04)
+
+Frontend, `products/social-wiring/frontend/src`:
+
+- **C1** `components/julia/WhatsAppJuliaCard.tsx` (`id="whatsapp"`): seed `ConnectionPairingPanel` inside a `ConfirmProvider`, bound by `hooks/useJuliaLinhaWhatsapp.ts` (`createWhatsAppConnectionsHooks(api)`). The line is `roteamento.linhas[0]`; "Criar linha" (seed `CreateConnectionDialog`, admin) only while there is none; link to `/julia/conversas`. No "add another connection".
+- **C2** the Conversas and Roteamento empty states already point at `/julia/agente#whatsapp` (S10b).
+- **C3** `AgentsLinkCard` is now "Conexão com a plataforma" (read-only). `agents_url` / `urlConfigurarJulia` / the paste-token mutation are gone; `useJuliaAgente` messages never name the agents app; the guard also scans `hooks/useJulia*` and forbids "One Chat". One Chat copy removed from the Equipe role text. `JuliaLigadaCard` no longer gates on `numeros_autorizados`.
+- **Platform connection** `components/julia/ConexaoPlataforma.tsx`: status badge, masked token (no input, `select-none`), times, pt-BR help per status/motivo, "Testar conexão" -> `POST /api/julia/agente/conexao-plataforma/verificar`, answer written into the `["sw","julia","agente"]` cache. Configurações: `ApiKeyStatus.read_only` renders `ManagedReadOnlyRow` (the `agents` key = the same card; any other read-only key = masked hint, no input).
+- **C4** `components/julia/EspecificacoesCard.tsx` + `hooks/useJuliaEspecificacoes.ts`: fields per `tipo` from the declarations (rotulo / descricao / exemplo), PUT sends EVERY declared key (blank clears), `aviso_privacidade_url` read-only, draft flagged "não salvas" until the server accepts, 422 `violacoes` per field (draft kept), report-mode `invalidas` per field, 409 `agente_nao_conectado` -> link to `#conexao-plataforma`, 502/503 named.
+
+Reconciled with S9: the SW proxy passes agents' bodies through bare; a 422's `code`/`violacoes` sit under `detail`; each value carries `updated_by` / `updated_by_nome` ("Alterado por <nome> em <data>"). Dead `useSetAutoReply` and `auto_reply_enabled`/`authorized_numbers` in the connection hooks/types go with S12.
 
 ## D · Platform grant (clean slate)
 

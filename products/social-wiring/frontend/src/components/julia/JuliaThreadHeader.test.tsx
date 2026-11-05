@@ -17,7 +17,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { JuliaThreadHeader } from "./JuliaThreadHeader";
 
 const LINHA = { connection_id: "c1", label: "x", alimenta: true, alimenta_desde: null, numeros_autorizados: 1, destino_handoff_user_id: null };
-const ROT = { linhas: [LINHA], destino_handoff_padrao: { tipo: "dono_da_organizacao", user_id: null }, agents_url: null };
+const ROT = { linhas: [LINHA], destino_handoff_padrao: { tipo: "dono_da_organizacao", user_id: null } };
 const ESTADO_URL = "/api/whatsapp/connections/c1/chats/5511%40c.us/agente";
 const estado = (estado: string | null, fonte = "agents") => ({
   thread_id: "t1", estado, pausado: estado === "pausado", reengajamento_suprimido: null, motivo: null, fonte,

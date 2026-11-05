@@ -12,7 +12,7 @@
  * `Message` from `useWhatsAppChats`) into ChatWindow's generic
  * `ChatThread` / `ChatMessage` shape, plus wiring send + the auto-reply
  * toggle. Public props/behaviour are unchanged from the pre-extraction
- * version (connectionId / autoReplyEnabled / className).
+ * version (connectionId / className).
  *
  * Data layer (realtime v2): reads are pure Postgres behind keyset pagination
  * and updates arrive over ONE SSE stream per connection. `useWhatsAppRealtime`
@@ -25,7 +25,6 @@ import {
   useWhatsAppChats,
   useWhatsAppChatMessages,
   useSendWhatsAppMessage,
-  useSetAutoReply,
   useMarkChatRead,
   useWhatsAppRealtime,
 } from "@/hooks/useWhatsAppChats";
@@ -147,23 +146,13 @@ function useWhatsAppSendAdapter(connectionId: string | null, chatId: string | nu
   };
 }
 
-function useWhatsAppAutoReplyAdapter(connectionId: string | null, autoReplyEnabled: boolean) {
-  const autoReplyMutation = useSetAutoReply(connectionId);
-  return {
-    enabled: autoReplyEnabled,
-    isPending: autoReplyMutation.isPending,
-    onToggle: (enabled: boolean) => autoReplyMutation.mutate({ enabled }),
-  };
-}
-
-function buildWhatsAppAdapter(autoReplyEnabled: boolean): ChatWindowAdapter {
+function buildWhatsAppAdapter(): ChatWindowAdapter {
   return {
     useThreads: useWhatsAppThreadsAdapter,
     useMessages: useWhatsAppMessagesAdapter,
     useSend: useWhatsAppSendAdapter,
     useLoadMore: useWhatsAppLoadMoreAdapter,
     useReadState: useWhatsAppReadStateAdapter,
-    useAutoReply: (connectionId) => useWhatsAppAutoReplyAdapter(connectionId, autoReplyEnabled),
     ThreadHeaderExtra: JuliaThreadHeader,
   };
 }
@@ -173,8 +162,6 @@ function buildWhatsAppAdapter(autoReplyEnabled: boolean): ChatWindowAdapter {
 interface WhatsAppChatWindowProps {
   /** WAHA connection ID to show chats for. */
   connectionId: string;
-  /** Initial auto-reply state from the parent's connection object. */
-  autoReplyEnabled?: boolean;
   className?: string;
   /** Controlled selection, passed straight to the organ. */
   selectedThreadId?: string | null;
@@ -183,7 +170,6 @@ interface WhatsAppChatWindowProps {
 
 export function WhatsAppChatWindow({
   connectionId,
-  autoReplyEnabled = false,
   className,
   selectedThreadId,
   onSelectThread,
@@ -196,8 +182,8 @@ export function WhatsAppChatWindow({
   // identity every time, which is exactly the kind of churn that makes hook
   // identity in an adapter bag fragile.
   const adapter = useMemo(
-    () => buildWhatsAppAdapter(autoReplyEnabled),
-    [autoReplyEnabled],
+    () => buildWhatsAppAdapter(),
+    [],
   );
 
   return (

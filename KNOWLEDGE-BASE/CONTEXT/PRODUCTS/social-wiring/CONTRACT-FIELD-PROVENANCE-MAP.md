@@ -1,5 +1,8 @@
 # Contract field provenance map — F5 instrument generator (`card_hub/contrato_gerador`)
 
+> **RG is optional for contract parties (owner decision, 2026-11-04):** "make RG optional for contract parties" — building on the earlier rule "contracts… rg + cpf, whichever is available, only displaying on the contract values that exist. If not available, don't show empty data." CPF stays MANDATORY; `rg` / `rg_orgao_expedidor` are NOT in `documento_checklist_service._CAMPOS_QUALIFICACAO_CONTRATO` (never `faltando`). An RG that is present but incomplete only WARNS (`RG_SEM_ORGAO_EXPEDIDOR`, `RG_ORGAO_SEM_UF`, `RG_SEM_DIGITO_VERIFICADOR` for a CNH-only RG; `RG_IGUAL_CPF` is not a check — CIN uses the CPF number). A CPF-only party qualifies by the CPF alone (`frases.identidade_texto` returns "" with no RG). The card checklist shows RG / órgão as "(opcional)".
+
+
 > Verified live 2026-09-17. Home: `CONTEXT/PRODUCTS/social-wiring/` — this is a
 > per-product DATA-PROVENANCE map tightly coupled to social-wiring's own schema
 > (`atendimento_negociacao_termos`, `imovel_dados`, `matricula_ato_detalhes`,

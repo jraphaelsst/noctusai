@@ -111,6 +111,7 @@ def _register_media_wiring() -> ModuleRegistration:
         _LazyApiTokenResolver,
         _legacy_jwt_resolver,
         auth_router_deps,
+        get_auth_context,
     )
     from app.routers.calendar_router import router as calendar_router
     from app.routers.chat_router import router as chat_router
@@ -125,6 +126,7 @@ def _register_media_wiring() -> ModuleRegistration:
         router as assinatura_webhook_router,
     )
     from app.routers.julia_agente_router import router as julia_agente_router
+    from app.services.julia_grant_sink import build_router as build_julia_grant_router
     from app.routers.julia_roteamento_router import router as julia_roteamento_router
     from app.routers.julia_ferramentas_router import router as julia_ferramentas_router
     from app.routers.julia_conhecimento_router import router as julia_conhecimento_router
@@ -146,6 +148,10 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_opt_outs_router import router as julia_opt_outs_router
     from app.routers.julia_equipe_whatsapp_router import router as julia_equipe_whatsapp_router
     from app.routers.julia_protecao_router import router as julia_protecao_router
+    from app.routers.julia_catalogo_router import router as julia_catalogo_router
+    from app.routers.integracao_vista_router import router as integracao_vista_router
+    from app.routers.imovel_divergencias_router import router as imovel_divergencias_router
+    from app.routers.julia_especificacoes_router import router as julia_especificacoes_router
     from app.services import julia_reengajamento_worker
     from app.routers.settings_router import router as settings_router
     from app.routers.whatsapp_router import router as whatsapp_router
@@ -260,6 +266,7 @@ def _register_media_wiring() -> ModuleRegistration:
             auth_router,
             settings_router,
             julia_agente_router,
+            build_julia_grant_router(get_auth_context),  # PUT/DELETE /api/platform/grants/agents (Julia-line D2-D5)
             julia_roteamento_router,
             julia_ferramentas_router,
             julia_conhecimento_router,
@@ -281,6 +288,10 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_opt_outs_router,
             julia_equipe_whatsapp_router,
             julia_protecao_router,
+            julia_catalogo_router,
+            integracao_vista_router,
+            imovel_divergencias_router,
+            julia_especificacoes_router,
             whatsapp_router,
             assinatura_webhook_router,
             whatsapp_connections_router,

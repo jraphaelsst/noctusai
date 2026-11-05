@@ -14,10 +14,19 @@ typed-error hierarchy).
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from noctusai_lib.domain.real_estate import PropertyData
 from noctusai_lib.integrations.vista.fake_adapter import FakeVistaAdapter
 from noctusai_lib.integrations.vista.protocol import VistaCRMAdapter
 from noctusai_lib.integrations.vista.real import VistaRESTAdapter
+
+
+class VistaOrgCredentials(Protocol):
+    """`get(org_id) -> (base_url, api_key)`; raises `VistaConfigError` when the org has none."""
+
+    def get(self, org_id: str) -> tuple[str, str]:
+        ...
 
 
 def get_vista_adapter(
@@ -41,3 +50,13 @@ def get_vista_adapter(
     if fake:
         return FakeVistaAdapter(fake_data)
     return VistaRESTAdapter(base_url=base_url or "", api_key=api_key or "")
+
+
+def get_vista_adapter_for_org(resolver: "VistaOrgCredentials", org_id: str) -> VistaCRMAdapter:
+    """The Real adapter for ONE org, built from its stored credential (`VistaCredentialResolver`).
+
+    The only sanctioned construction path for a multi-tenant product: credentials are per org and live in the
+    encrypted `CredentialStore`, never in the process environment. Raises `VistaConfigError` (via the resolver) when
+    the org has no record -- there is no fallback."""
+    base_url, api_key = resolver.get(org_id)
+    return VistaRESTAdapter(base_url=base_url, api_key=api_key)

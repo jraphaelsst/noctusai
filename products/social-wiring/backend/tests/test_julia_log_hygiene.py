@@ -24,7 +24,7 @@ MODULES = tuple(sorted(f"services/{p.name}" for p in (APP / "services").glob("ju
 #: (file, function) pairs: the Julia functions inside the two big WhatsApp routers
 ROUTER_FUNCS = {
     "routers/whatsapp_router.py": {
-        "_handle_lead_message", "_triar_remetente", "_resolver_midia_do_lead", "_staff_na_linha", "_avisar_staff_na_linha_publica",
+        "_handle_lead_message", "_triar_lead", "_resolver_midia_do_lead", "_classificar_remetente", "_avisar_equipe_na_linha",
         "_apply_human_takeover",
     },
     "routers/whatsapp_connections_router.py": {"_encaminhar_humano_ao_agente"},

@@ -70,8 +70,6 @@ export interface KeysStatus {
   waha_base_url: KeyStatusEntry;
   waha_api_key: KeyStatusEntry;
   waha_webhook_hmac_secret: KeyStatusEntry;
-  vista_base_url: KeyStatusEntry;
-  vista_api_key: KeyStatusEntry;
   database_backend: KeyStatusEntry;
   supabase_url: KeyStatusEntry;
   supabase_service_role_key: KeyStatusEntry;
@@ -570,6 +568,12 @@ export interface ApiKeyStatus {
   input_type: string;
   placeholder: string;
   configured: boolean;
+  /**
+   * Managed by the platform, not by this org: render the status/masked hint with NO input, no replace and no
+   * remove (the server answers 409 `gerenciada_pela_plataforma` to a PUT/DELETE). Optional for the same
+   * non-atomic-deploy reason as `options`.
+   */
+  read_only?: boolean;
   /**
    * Non-empty makes this a CHOICE, not a free-text key: render a switch
    * over these instead of an input. Empty for every ordinary key, so this

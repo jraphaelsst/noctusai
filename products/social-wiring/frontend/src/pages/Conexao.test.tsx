@@ -35,7 +35,6 @@ const mockUseWhatsAppConnectionStatus = vi.fn();
 const mockUseWhatsAppConnectionQr = vi.fn();
 const mockUseWhatsAppConnectionActions = vi.fn();
 const mockRecoverMutate = vi.fn();
-const mockUseRevealApiKey = vi.fn();
 const mockUseConnectionChats = vi.fn();
 const mockUseToggleAutoReply = vi.fn();
 
@@ -46,7 +45,6 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnectionQr: mockUseWhatsAppConnectionQr,
   useRecoverConnection: () => ({ mutate: mockRecoverMutate, isPending: false }),
   useWhatsAppConnectionActions: mockUseWhatsAppConnectionActions,
-  useRevealApiKey: mockUseRevealApiKey,
   useConnectionChats: mockUseConnectionChats,
   useToggleAutoReply: mockUseToggleAutoReply,
 }));
@@ -144,10 +142,6 @@ beforeEach(() => {
   mockUseWhatsAppConnectionQr.mockReturnValue({ data: null });
   mockUseWhatsAppConnectionActions.mockReturnValue(makeDefaultActions());
   mockRecoverMutate.mockClear();
-  mockUseRevealApiKey.mockReturnValue({
-    mutateAsync: vi.fn().mockResolvedValue({ connection_id: "c", api_key: "revealed-key" }),
-    isPending: false,
-  });
   mockUseConnectionChats.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUseToggleAutoReply.mockReturnValue({ mutate: vi.fn(), isPending: false });
 });
@@ -396,11 +390,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
     expect(getByTestId("paired-success")).toBeTruthy();
   });
 
-  it("API key field: masked by default → eye reveals → pencil enters edit mode", async () => {
-    const revealMutate = vi
-      .fn()
-      .mockResolvedValue({ connection_id: "conn-1", api_key: "revealed-key" });
-    mockUseRevealApiKey.mockReturnValue({ mutateAsync: revealMutate, isPending: false });
+  it("API key field: masked, no reveal control, pencil opens a blank write-only input", async () => {
     const line = makeLine();
     mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
 
@@ -408,20 +398,12 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
     const { getByText, getByTestId, queryByTestId } = await renderWhatsAppConnections();
     rtl.fireEvent.click(getByText("Atendimento SP").closest("button")!);
 
-    // Masked by default; no editable input yet.
     expect((getByTestId("edit-conn-apikey-display") as HTMLInputElement).value).toBe("••••••••");
     expect(queryByTestId("edit-conn-apikey")).toBeNull();
+    expect(queryByTestId("btn-apikey-reveal")).toBeNull();
 
-    // Eye → reveal the stored key via the owner-scoped endpoint.
-    await rtl.act(async () => {
-      rtl.fireEvent.click(getByTestId("btn-apikey-reveal"));
-    });
-    expect(revealMutate).toHaveBeenCalledWith(line.id);
-    expect((getByTestId("edit-conn-apikey-display") as HTMLInputElement).value).toBe("revealed-key");
-
-    // Pencil → edit (rotate) mode: an editable input replaces the masked display.
     rtl.fireEvent.click(getByTestId("btn-apikey-edit"));
-    expect(queryByTestId("edit-conn-apikey")).toBeTruthy();
+    expect((getByTestId("edit-conn-apikey") as HTMLInputElement).value).toBe("");
     expect(queryByTestId("edit-conn-apikey-display")).toBeNull();
   });
 });

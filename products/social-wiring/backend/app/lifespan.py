@@ -117,14 +117,14 @@ async def _iniciar() -> None:
     start_scheduler()
 
     # Vista catalog catch-up. APScheduler keeps its schedule in memory, so
-    # a container that was down at 00:05 does not queue that run — the slot
-    # simply passes. This asks the DATA whether the slot was missed and
-    # re-runs it if so, which is what makes the nightly refresh guaranteed
-    # rather than best-effort.
+    # a container that was down at a slot does not queue that run — the slot
+    # simply passes. This asks the DATA whether an org is older than one
+    # refresh interval (default 2 h) and refreshes it if so, which is what
+    # makes the refresh guaranteed rather than best-effort.
     #
-    # Scheduled, NOT awaited: a full pull takes 4-6 minutes and awaiting it
-    # here would stall startup past the container health check. It no-ops
-    # in the normal case where nothing is overdue.
+    # Scheduled, NOT awaited: a refresh takes minutes and awaiting it here
+    # would stall startup past the container health check. It no-ops in the
+    # normal case where nothing is overdue.
     from app.services.imoveis_sync_scheduler import schedule_catch_up
 
     schedule_catch_up()

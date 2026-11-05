@@ -151,22 +151,6 @@ class WhatsAppConnectionOut(BaseModel):
     marca_id: Optional[UUID] = None
 
 
-class WhatsAppConnectionApiKeyOut(BaseModel):
-    """The decrypted API key for ONE line — returned ONLY by the explicit,
-    owner-scoped reveal endpoint (``GET /{id}/api-key``).
-
-    This is the single deliberate exception to the "secret never rides a
-    response" rule that governs every other DTO here: the reveal is an explicit
-    user action (the eye toggle in the connection modal), owner-scoped by the
-    same auth+store filter as every live op, and never returned on a list/get
-    path. Treat it as sensitive — it carries the plaintext WAHA ``X-Api-Key``.
-    """
-
-    connection_id: UUID
-    api_key: str
-
-
-# ─── Live WAHA state (per line) ──────────────────────────────────────────
 class WhatsAppConnectionStatusOut(BaseModel):
     connection_id: UUID
     status: Optional[str] = Field(

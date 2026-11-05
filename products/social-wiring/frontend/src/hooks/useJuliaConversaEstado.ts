@@ -55,6 +55,6 @@ export const ROTULO_ESTADO: Record<EstadoJulia, string> = {
 /** Honest copy per source: what the chip may claim and what it must admit. */
 export const AVISO_FONTE: Record<FonteEstado, string | null> = {
   agents: null,
-  espelho: "Sem resposta do app de agentes agora: este é o último estado conhecido e pode estar desatualizado.",
+  espelho: "Sem resposta da Julia agora: este é o último estado conhecido e pode estar desatualizado.",
   nenhuma: "A Julia ainda não atendeu esta conversa.",
 };

@@ -151,6 +151,10 @@ class ApiKeySpec:
     #: Stated so the UI can show the effective value instead of an empty
     #: control that implies nothing is chosen.
     default: Optional[str] = None
+    #: ``True`` = the PLATFORM manages this key (a delivered grant): the UI
+    #: shows it masked with no paste field and the write/delete routes refuse
+    #: it (409 ``gerenciada_pela_plataforma``). Julia-line D5.
+    read_only: bool = False
 
     @property
     def allowed_values(self) -> tuple[str, ...]:
@@ -428,21 +432,24 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         placeholder="Senha GOV.BR",
     ),
     #: The org's channel token for the `agents` product (Julia, contract
-    #: section 4): minted in agents (scope `agents:channel-turn`), pasted ONCE on
-    #: Julia > Agente, stored here Fernet-encrypted as `api_key:agents`. It is read
-    #: through the LOCAL tier only (`julia_agente_service.agents_token_for_org`) --
-    #: a platform/env fallback would let one org's token answer for another's.
+    #: section 4). Julia-line D5: it is DELIVERED by the platform (agents'
+    #: `PUT /api/platform/grants/agents`, `julia_grant_sink`), never pasted;
+    #: stored Fernet-encrypted as `api_key:agents` and read through the LOCAL
+    #: tier only (`julia_agente_service.agents_token_for_org`) -- a platform/env
+    #: fallback would let one org's token answer for another's.
     ApiKeySpec(
         name="agents",
         label="Token do agente (agents) — Julia",
         description=(
-            "Token de canal do produto agents que o social-wiring usa para "
-            "pedir as respostas da Julia aos leads. Cole em Julia › Agente."
+            "Token de canal do produto agents. Gerenciado pela plataforma: "
+            "é entregue automaticamente quando a Julia é conectada à sua "
+            "organização, não é preciso colar nada."
         ),
         is_secret=True,
         testable=False,
         input_type="password",
-        placeholder="pk_...",
+        placeholder="",
+        read_only=True,
     ),
     ApiKeySpec(
         name="infosimples_email_envio",
@@ -490,6 +497,9 @@ def mask_value(value: Optional[str], spec: ApiKeySpec) -> Optional[str]:
         return None
     if not spec.is_secret:
         return value
+    if spec.read_only:
+        # Owner request: a platform-managed token shows its first 4 + last 4.
+        return f"{value[:4]}...{value[-4:]}" if len(value) > 8 else "••••"
     if len(value) <= 4:
         return "••••"
     return f"...{value[-4:]}"

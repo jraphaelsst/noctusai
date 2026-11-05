@@ -83,7 +83,7 @@ export default function JuliaEnvio() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h2 className="font-semibold">Envio de leads qualificados</h2>
-                  <p className="text-sm text-muted-foreground">A qualificação é feita pela Julia no app de agentes; aqui você escolhe a etapa mínima para o envio.</p>
+                  <p className="text-sm text-muted-foreground">A qualificação é feita pela Julia; aqui você escolhe a etapa mínima para o envio.</p>
                 </div>
                 <Button size="sm" onClick={() => setEditando(true)} data-testid="envio-editar">
                   {isAdmin ? "Editar regra" : "Ver regra"}

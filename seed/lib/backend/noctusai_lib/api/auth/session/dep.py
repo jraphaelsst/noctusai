@@ -5,7 +5,7 @@ bridge) into one async dependency that produces an ``AuthContext``
 regardless of how the caller authenticated. Resolution priority:
 
   1. Cookie ``<session_cookie_name>`` → ``session_store.lookup``
-  2. ``Authorization: Bearer pk_*`` → ``api_token_resolver.resolve``
+  2. ``Authorization: Bearer noc_*`` (or legacy ``pk_*``) → ``api_token_resolver.resolve``
   3. ``Authorization: Bearer <jwt>`` AND ``legacy_jwt_resolver`` → bridge
   4. → ``HTTPException(401)``
 
@@ -23,7 +23,7 @@ the bearer of account B, attributing B's actions to A). Same user, or
 only one credential present → unchanged behaviour. The rule concerns
 two VALID, DIFFERENT identities only: a bearer that is invalid/expired
 while the cookie is valid keeps today's behaviour (cookie wins), and a
-``pk_*`` token (no user identity) never triggers it. A structured
+``noc_*``/``pk_*`` token (no user identity) never triggers it. A structured
 WARNING with user ids only (never tokens) is logged on mismatch.
 
 Wave 2 consumer projects pass real adapters; Wave 1 dev/test wiring
@@ -48,6 +48,7 @@ from typing import Awaitable, Callable
 
 from fastapi import Cookie, Header, HTTPException, Request
 from noctusai_lib.api.auth._reasons import log_auth_401, token_shape
+from noctusai_lib.api.auth._token_prefixes import has_api_token_prefix
 from noctusai_lib.api.auth.session.cookie import session_cookie_clear_header
 
 from noctusai_lib.api.auth.session.api_tokens import ApiTokenResolver
@@ -82,10 +83,10 @@ def make_get_auth_context(
         api_token_resolver: ApiTokenResolver implementation. The dep
             calls ``await api_token_resolver.resolve(bearer)`` when
             the ``Authorization: Bearer ...`` value starts with
-            ``pk_`` (the platform's API-token convention).
+            ``noc_`` or legacy ``pk_`` (the platform's API-token convention).
         legacy_jwt_resolver: Optional async callable invoked when an
             ``Authorization: Bearer <jwt>`` reaches the dep AND the
-            value does NOT start with ``pk_``. Returning ``None``
+            value does NOT start with ``noc_``/``pk_``. Returning ``None``
             falls through to 401. Pass ``None`` (default) to disable
             the bridge — pure new-scheme.
         session_cookie_name: Name of the HttpOnly session cookie.
@@ -107,7 +108,8 @@ def make_get_auth_context(
             return
         token = authorization[len("Bearer ") :].strip()
         # pk_* carries no user identity; no bridge → nothing to compare.
-        if token.startswith("pk_") or legacy_jwt_resolver is None:
+        # NOC-REMEDIATE[pk-prefix-cutoff]: accepts noc_ and legacy pk_.
+        if has_api_token_prefix(token) or legacy_jwt_resolver is None:
             return
         try:
             if getattr(legacy_jwt_resolver, "accepts_request", False):
@@ -161,7 +163,8 @@ def make_get_auth_context(
         # ── Priority 2/3: bearer token ──
         if authorization and authorization.startswith("Bearer "):
             token = authorization[len("Bearer ") :].strip()
-            if token.startswith("pk_"):
+            # NOC-REMEDIATE[pk-prefix-cutoff]: accepts noc_ and legacy pk_.
+            if has_api_token_prefix(token):
                 ctx = await api_token_resolver.resolve(token)
                 if ctx is not None:
                     request.state.auth_context = ctx

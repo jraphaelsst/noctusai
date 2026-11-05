@@ -278,6 +278,10 @@ def identidade_texto(p: Pessoa) -> str:
     signed contracts' wording). The RNE/RNM's issuing body (DIREX, CGPI/
     DIREX/DPF — the Polícia Federal) is NEVER part of the number and is not
     printed: appending it produced "RNE W-573.678-Z DIREX"."""
+    if not (p.rg or "").strip():
+        # [julia-v3, owner 2026-11-03] No identity number on file: the clause is OMITTED entirely
+        # (never "RG " / "RG -SSP"); `texto_pessoa` then qualifies by the CPF alone.
+        return ""
     portador = _g(p, "portador", "portadora")
     sigla = IDENTIDADES_ESTRANGEIRO.get((p.identidade_tipo or "").strip().lower())
     if sigla is None:
@@ -312,10 +316,9 @@ def texto_pessoa(p: Pessoa, *, em_nucleo: bool, avulso: bool = False) -> str:
     if profissao:
         partes.append(profissao)
     texto = ", ".join(partes)
-    texto += (
-        f", {identidade_texto(p)}"
-        f" e {_g(p, 'inscrito', 'inscrita')} no CPF/MF {documento(p.cpf)[1]}"
-    )
+    cpf_frase = f"{_g(p, 'inscrito', 'inscrita')} no CPF/MF {documento(p.cpf)[1]}"
+    identidade = identidade_texto(p)
+    texto += f", {identidade} e {cpf_frase}" if identidade else f", {cpf_frase}"
     if p.email:
         texto += f", com endereço eletrônico: {p.email.strip().lower()}"
     return texto
@@ -552,7 +555,8 @@ def assinante_fisico_pj(pj: ParteJuridica, representante: Pessoa) -> dict[str, s
         "nome": (pj.razao_social or "").upper(),
         "documento": " – ".join(
             x for x in (
-                f"Por: {(representante.nome or '').upper()}", rotulo, documento_linha(representante.cpf),
+                f"Por: {(representante.nome or '').upper()}", rotulo,
+                documentos_assinatura(representante.cpf, identidade_assinatura(representante)),
             ) if x
         ),
     }
@@ -591,22 +595,44 @@ def documento_linha(cpf: Optional[str]) -> str:
     return f"{rotulo} {numero}"
 
 
+DOCUMENTOS_SEPARADOR = " · "
+
+
+def identidade_assinatura(p: Pessoa) -> str:
+    """The identity document as it reads UNDER a signer's name: "RG 12.345.678-9 SSP/SP" (the órgão as stored,
+    never invented), "RNE <n>" / "RNM <n>" for a foreign party (no issuing body), "" when no number is on file."""
+    numero = (p.rg or "").strip()
+    if not numero:
+        return ""
+    sigla = IDENTIDADES_ESTRANGEIRO.get((p.identidade_tipo or "").strip().lower())
+    if sigla is not None:
+        return f"{sigla} {numero}"
+    orgao = re.sub(r"\s*/\s*", "/", re.sub(r"\s+", " ", (p.rg_orgao or "").strip().upper()))
+    return f"RG {numero} {orgao}".strip()
+
+
+def documentos_assinatura(cpf: Optional[str], identidade: str = "") -> str:
+    """[julia-v3, owner 2026-11-03] Under the name: the CPF and/or the RG, whichever exist ("CPF 000.000.000-00 ·
+    RG 12.345.678-9 SSP/SP"); "" when neither -- never a dangling label."""
+    return DOCUMENTOS_SEPARADOR.join(x for x in (documento_linha(cpf), (identidade or "").strip()) if x)
+
+
 def testemunha_documento_linha(cpf: Optional[str]) -> str:
     """A física witness's document line: "CPF 000.000.000-00".
 
-    [Migration 168, owner decision] The contract now prints CPF instead of
-    RG for every witness — RG left the form and the readiness gate alike, so
-    there is no second document to fall back to. Kept as its own function
-    (rather than callers using `documento_linha` directly) so a future
-    witness-specific document rule has one place to land, same reasoning
-    `assinante_fisico` keeps its own wrapper over `documento_linha`."""
+    [Migration 168, owner decision] The contract prints CPF instead of RG for every witness -- RG left the
+    witness form and the readiness gate alike, and `Testemunha.rg` is never filled (`carregador` passes None). The
+    julia-v3 "CPF and/or RG" signature rule (`documentos_assinatura`) therefore has no RG to add for a witness
+    TODAY; when a witness ever carries one, this is the single place that passes it to `documentos_assinatura`.
+    Kept as its own function (rather than callers using `documento_linha` directly) so a future witness-specific
+    document rule has one place to land, same reasoning `assinante_fisico` keeps its own wrapper."""
     return documento_linha(cpf)
 
 
 def assinante_fisico(p: Pessoa) -> dict[str, str]:
-    """A física signer's block: name (upper) + CPF — no e-mail (nothing is
-    e-mailed for a física contract)."""
-    return {"nome": (p.nome or "").upper(), "documento": documento_linha(p.cpf)}
+    """A física signer's block: name (upper) + CPF and/or RG, whichever exist -- no e-mail (nothing is e-mailed
+    for a física contract)."""
+    return {"nome": (p.nome or "").upper(), "documento": documentos_assinatura(p.cpf, identidade_assinatura(p))}
 
 
 # ─── preço / parcelas (spec §2.3) ─────────────────────────────────────────

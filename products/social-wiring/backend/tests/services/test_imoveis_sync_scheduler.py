@@ -1,102 +1,116 @@
-"""Daily Vista catalog refresh — registration, discovery, catch-up.
+"""Vista imóveis refresh job — registration, discovery (orgs with a Vista credential), overdue arithmetic, catch-up.
 
-Pins the things that make this job either work or silently not:
+Pins what makes the job work or silently not:
 
-  · It registers at **00:05 America/Sao_Paulo**, not UTC, with an hour of
-    misfire grace so a restart spanning the slot still fires.
-  · Org discovery paginates. PostgREST caps an unbounded select at 1000
-    rows and this table holds ~1919 per org — an uncapped read would see
-    only the first page and, with a single org, still look correct. The
-    trap `imoveis_service._select_all` documents.
-  · One org failing must not cost the others their refresh.
-  · The startup catch-up re-runs a MISSED slot and stays quiet otherwise.
-    This is the layer that turns the refresh from best-effort into
-    guaranteed, so its arithmetic is tested directly rather than inferred.
+  · It registers as an INTERVAL job (default 7200 s, configurable) with an hour of misfire grace.
+  · Candidates are the orgs holding a Vista credential record; discovery paginates past the 1000-row PostgREST cap.
+  · An org with no credential is skipped (logged); one org failing never costs the others their refresh.
+  · The startup catch-up refreshes orgs older than one interval and stays quiet otherwise.
+  · Interval path and catch-up never overlap in one process; a lost per-org lease skips that org.
+Drives the REAL entry points through the `_run` kwarg seams (no module patching) against a MockSupabaseClient admin.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
-from zoneinfo import ZoneInfo
 
 import pytest
+from noctusai_lib.testing import MockSupabaseClient
 
 from app.services import imoveis_sync_scheduler as sched
 
 _ORG_A = "6dd73140-74a4-41c6-aeff-bc94b5312b53"
 _ORG_B = "0f5b1a2c-9d3e-4a7b-8c1d-2e3f4a5b6c7d"
-_TZ = ZoneInfo("America/Sao_Paulo")
 
 
-class _FakeTable:
-    """Minimal PostgREST chain stand-in."""
-
-    def __init__(self, pages: list[list[dict]]) -> None:
-        self._pages = pages
-        self._current: list[dict] = []
-        self.ranges: list[tuple[int, int]] = []
-
-    def select(self, *_a, **_kw):
-        return self
-
-    def eq(self, *_a, **_kw):
-        return self
-
-    def order(self, *_a, **_kw):
-        return self
-
-    def limit(self, *_a, **_kw):
-        return self
-
-    def range(self, start: int, end: int):
-        self.ranges.append((start, end))
-        index = start // 1000
-        self._current = self._pages[index] if index < len(self._pages) else []
-        return self
-
-    def execute(self):
-        return MagicMock(data=self._current or (self._pages[0] if self._pages else []))
-
-
-class _FakeAdmin:
-    def __init__(self, table: _FakeTable) -> None:
-        self._table = table
+class _Db(MockSupabaseClient):
+    """`MockSupabaseClient.schema()` hands back a DIFFERENT client (data set on the root is invisible through it);
+    the product code always goes through `.schema("social_wiring")`, so the schema is a no-op here."""
 
     def schema(self, _name):
         return self
 
-    def table(self, _name):
-        return self._table
+
+class _Svc:
+    """A sync service double with the two entry points `executar` uses."""
+
+    chamadas: list = []
+
+    def __init__(self, vazio: bool = False):
+        self._vazio = vazio
+
+    def _rel(self, caminho):
+        return MagicMock(
+            status_final="ok", complete=True,
+            as_dict=lambda: {"caminho": caminho, "status": "ok", "novos": 0, "atualizados": 1}, chamadas={},
+        )
+
+    async def sync(self, org_id, *a, **k):
+        _Svc.chamadas.append(("sync", str(org_id)))
+        return self._rel("listar")
+
+    async def sync_detalhes(self, org_id, *a, **k):
+        _Svc.chamadas.append(("sync_detalhes", str(org_id)))
+        return self._rel("detalhes")
+
+
+def _factory(client, adapter, **kw):
+    return _Svc()
+
+
+@pytest.fixture(autouse=True)
+def _limpa():
+    _Svc.chamadas = []
+    yield
+
+
+@contextlib.contextmanager
+def _lease_ok(_admin, _name, **_kw):
+    yield True
+
+
+@contextlib.contextmanager
+def _lease_negado(_admin, _name, **_kw):
+    yield False
+
+
+def _admin():
+    db = _Db()
+    db.set_table_data("imoveis_sync_execucoes", [])
+    return db
+
+
+def _seams(admin, **over):
+    base = dict(
+        admin_factory=lambda: admin, adapter_factory=lambda _org: MagicMock(), discover_fn=lambda _a: [_ORG_A],
+        sync_service_factory=_factory, lease_fn=_lease_ok, core_factory=lambda: None,
+    )
+    base.update(over)
+    return base
 
 
 # ─── Registration ───────────────────────────────────────────────────────
 
 
-def test_configure_registers_job_at_five_past_midnight():
+def test_configure_registers_an_interval_job_of_two_hours_by_default():
     from noctusai_lib.api import scheduler as seed_scheduler
 
     seed_scheduler.reset_for_testing()
     sched.configure()
 
-    job = seed_scheduler.scheduler.get_job("imoveis_vista_sync_daily")
+    job = seed_scheduler.scheduler.get_job("imoveis_vista_refresh")
     assert job is not None, "job did not register — the mirror would never refresh"
-
-    fields = {f.name: str(f) for f in job.trigger.fields}
-    assert fields["hour"] == "0"
-    assert fields["minute"] == "5"
-    assert str(job.trigger.timezone) == "America/Sao_Paulo"
+    assert job.trigger.interval == timedelta(seconds=7200)
 
 
 def test_configure_sets_an_hour_of_misfire_grace():
-    """The seed default is 30s, which would skip a restart spanning 00:05."""
     from noctusai_lib.api import scheduler as seed_scheduler
 
     seed_scheduler.reset_for_testing()
     sched.configure()
-
-    job = seed_scheduler.scheduler.get_job("imoveis_vista_sync_daily")
-    assert job.misfire_grace_time == 3600
+    assert seed_scheduler.scheduler.get_job("imoveis_vista_refresh").misfire_grace_time == 3600
 
 
 def test_configure_is_idempotent():
@@ -111,215 +125,164 @@ def test_configure_is_idempotent():
 # ─── Overdue arithmetic ─────────────────────────────────────────────────
 
 
-def test_last_slot_is_today_when_now_is_after_the_slot():
-    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
-    assert sched._last_expected_slot(now) == datetime(2026, 8, 20, 0, 5, tzinfo=_TZ)
+def _agora():
+    return datetime.now(tz=timezone.utc)
 
 
-def test_last_slot_is_yesterday_when_now_is_before_the_slot():
-    """00:02 belongs to YESTERDAY's slot — the classic off-by-one here."""
-    now = datetime(2026, 8, 20, 0, 2, tzinfo=_TZ)
-    assert sched._last_expected_slot(now) == datetime(2026, 8, 19, 0, 5, tzinfo=_TZ)
+def test_the_expected_slot_is_one_interval_ago():
+    now = _agora()
+    assert now - sched._last_expected_slot(now) == timedelta(seconds=7200)
 
 
-def test_last_slot_handles_a_utc_instant():
-    """Callers pass an aware datetime; it must be converted, not assumed."""
-    now = datetime(2026, 8, 20, 2, 0, tzinfo=timezone.utc)  # 23:00 on the 19th local
-    assert sched._last_expected_slot(now) == datetime(2026, 8, 19, 0, 5, tzinfo=_TZ)
+def _com_ultimo(ts):
+    db = _Db()
+    db.set_table_data("imoveis", [{"org_id": _ORG_A, "sincronizado_em": ts}] if ts else [])
+    return db
 
 
-def test_org_synced_after_the_slot_is_not_overdue():
-    # `sincronizado_em` is stored UTC. 00:06 local is 03:06Z — writing the
-    # naive-looking "00:06Z" here would be 21:06 the PREVIOUS day locally,
-    # i.e. still overdue. The comparison is instant-vs-instant on purpose.
-    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
-    admin = _FakeAdmin(_FakeTable([[{"sincronizado_em": "2026-08-20T03:06:00+00:00"}]]))
-    assert sched._overdue_orgs(admin, [_ORG_A], now) == []
+def test_org_refreshed_within_the_interval_is_not_overdue():
+    now = _agora()
+    assert sched._overdue_orgs(_com_ultimo((now - timedelta(minutes=30)).isoformat()), [_ORG_A], now) == []
 
 
-def test_org_synced_before_the_slot_is_overdue():
-    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
-    admin = _FakeAdmin(_FakeTable([[{"sincronizado_em": "2026-08-03T23:51:41+00:00"}]]))
-    assert sched._overdue_orgs(admin, [_ORG_A], now) == [_ORG_A]
+def test_org_refreshed_before_the_interval_is_overdue():
+    now = _agora()
+    assert sched._overdue_orgs(_com_ultimo((now - timedelta(hours=5)).isoformat()), [_ORG_A], now) == [_ORG_A]
 
 
 def test_org_never_synced_is_overdue():
-    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
-    admin = _FakeAdmin(_FakeTable([[{"sincronizado_em": None}]]))
-    assert sched._overdue_orgs(admin, [_ORG_A], now) == [_ORG_A]
+    assert sched._overdue_orgs(_com_ultimo(None), [_ORG_A], _agora()) == [_ORG_A]
 
 
 def test_unreadable_last_sync_counts_as_overdue():
-    """Re-running an idempotent sync is cheaper than a day of staleness."""
-    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
+    class _Quebrado:
+        def schema(self, _n):
+            raise RuntimeError("boom")
 
-    class _Boom(_FakeAdmin):
-        def table(self, _name):
-            raise RuntimeError("postgrest down")
-
-    assert sched._overdue_orgs(_Boom(_FakeTable([])), [_ORG_A], now) == [_ORG_A]
+    assert sched._overdue_orgs(_Quebrado(), [_ORG_A], _agora()) == [_ORG_A]
 
 
-# ─── Org discovery ──────────────────────────────────────────────────────
+# ─── Org discovery: those with a Vista credential ───────────────────────
 
 
-def test_orgs_with_catalog_paginates_past_the_postgrest_cap():
-    pages = [
-        [{"org_id": _ORG_A}] * 1000,
-        [{"org_id": _ORG_B}] * 1000,
-        [{"org_id": _ORG_B}] * 19,
-    ]
-    table = _FakeTable(pages)
-
-    orgs = sched._orgs_with_catalog(_FakeAdmin(table))
-
-    assert orgs == sorted([_ORG_A, _ORG_B])
-    assert table.ranges == [(0, 999), (1000, 1999), (2000, 2999)]
+def test_orgs_with_credential_are_the_provider_vista_rows_only_and_deduped():
+    db = _Db()
+    db.set_table_data("credentials", [
+        {"org_id": _ORG_A, "provider": "vista"}, {"org_id": _ORG_B, "provider": "meta"},
+        {"org_id": _ORG_B, "provider": "google_calendar"}, {"org_id": None, "provider": "vista"},
+    ])
+    assert sched._orgs_with_credential(db) == [_ORG_A]
 
 
-def test_orgs_with_catalog_skips_null_org_ids():
-    table = _FakeTable([[{"org_id": _ORG_A}, {"org_id": None}, {}]])
-    assert sched._orgs_with_catalog(_FakeAdmin(table)) == [_ORG_A]
+def test_orgs_with_credential_paginates_past_the_postgrest_cap():
+    db = _Db()
+    db.set_table_data("credentials", [
+        {"org_id": f"00000000-0000-4000-8000-{i:012d}", "provider": "vista"} for i in range(1500)
+    ])
+    assert len(sched._orgs_with_credential(db)) == 1500
 
 
-# ─── The cron path ──────────────────────────────────────────────────────
+# ─── The interval path ──────────────────────────────────────────────────
 
 
-def test_job_skips_entirely_when_vista_unconfigured():
-    discovery = MagicMock()
-
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: None, discover_fn=discovery))
-
-    discovery.assert_not_called()
-
-
-def test_job_skips_when_no_org_has_a_catalog():
-    build = MagicMock()
-
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [], sync_service_factory=build))
-
-    build.assert_not_called()
+def test_an_org_without_a_vista_credential_is_skipped_and_the_others_still_run():
+    admin = _admin()
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(
+        admin, adapter_factory=lambda org: None if org == _ORG_A else MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B],
+    )))
+    assert _Svc.chamadas == [("sync", _ORG_B)]
 
 
-def test_cron_path_does_not_filter_by_overdue():
-    """The scheduled run refreshes everyone; only catch-up filters."""
-    synced: list[str] = []
+def test_the_default_adapter_factory_is_per_org_and_refuses_without_a_record():
+    from noctusai_lib.security.token_store import FakeCredentialStore
 
-    class _Svc:
-        async def sync(self, org_id, *, with_detalhes):
-            synced.append(str(org_id))
-            return MagicMock(
-                complete=True, upserted=1, detalhes_fetched=1,
-                page_failures=[], detalhes_failed=[], duration_seconds=1.0,
-            )
+    from app.services import vista_credenciais
 
-    overdue = MagicMock()
-
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc(), overdue_fn=overdue))
-
-    assert synced == [_ORG_A, _ORG_B]
-    overdue.assert_not_called()
+    vista_credenciais.configure_store(lambda: FakeCredentialStore())
+    try:
+        assert sched._build_adapter(_ORG_A) is None
+    finally:
+        vista_credenciais.configure_store(None)
 
 
-def test_job_isolates_a_failing_org_and_still_syncs_the_rest():
-    synced: list[str] = []
+def test_job_skips_when_no_org_has_a_credential():
+    admin = _admin()
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(admin, discover_fn=lambda _a: [])))
+    assert _Svc.chamadas == []
 
-    class _Svc:
-        async def sync(self, org_id, *, with_detalhes):
-            assert with_detalhes is True, (
-                "listar-only would blank caracteristicas on every touched row"
-            )
+
+def test_interval_path_does_not_filter_by_overdue():
+    called = MagicMock(return_value=[])
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(_admin(), overdue_fn=called, discover_fn=lambda _a: [_ORG_A, _ORG_B])))
+    called.assert_not_called()
+    assert len(_Svc.chamadas) == 2
+
+
+def test_each_run_is_persisted_with_origin_and_scope():
+    admin = _admin()
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(admin)))
+    [row] = admin.schema("social_wiring").table("imoveis_sync_execucoes").select("*").execute().data
+    assert row["org_id"] == _ORG_A and row["origem"] == "agendado" and row["modo"] == "auto" and row["status"] == "ok"
+    assert row["escopo"] == "todos"  # no 'resto' pass yet today => this run also sweeps the rest
+    assert row["relatorio"]["caminho"] == "listar"
+
+
+def test_job_isolates_a_failing_org_and_still_runs_the_rest():
+    class _Falha(_Svc):
+        async def sync(self, org_id, *a, **k):
             if str(org_id) == _ORG_A:
-                raise RuntimeError("vista 500")
-            synced.append(str(org_id))
-            return MagicMock(
-                complete=True, upserted=1919, detalhes_fetched=1919,
-                page_failures=[], detalhes_failed=[], duration_seconds=300.0,
-            )
+                raise RuntimeError("boom")
+            return await super().sync(org_id)
 
-
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
-
-    assert synced == [_ORG_B], "org A's failure swallowed org B's refresh"
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(
+        _admin(), sync_service_factory=lambda c, a, **k: _Falha(), discover_fn=lambda _a: [_ORG_A, _ORG_B],
+    )))
+    assert _Svc.chamadas == [("sync", _ORG_B)]
 
 
 def test_job_survives_a_discovery_failure():
-
     def _boom(_a):
-        raise RuntimeError("postgrest down")
+        raise RuntimeError("db down")
 
-    build = MagicMock()
-
-    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=_boom, sync_service_factory=build))
-    build.assert_not_called()
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(_admin(), discover_fn=_boom)))
+    assert _Svc.chamadas == []
 
 
-def test_job_warns_rather_than_claiming_clean_on_a_degraded_run(caplog):
-    class _Svc:
-        async def sync(self, org_id, *, with_detalhes):
-            return MagicMock(
-                complete=False, upserted=1900, detalhes_fetched=1880,
-                page_failures=["page 12"], detalhes_failed=["CA0190"],
-                duration_seconds=310.0,
-            )
+def test_a_lost_lease_skips_that_org():
+    admin = _admin()
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(admin, lease_fn=_lease_negado)))
+    assert _Svc.chamadas == []
+    [row] = admin.schema("social_wiring").table("imoveis_sync_execucoes").select("*").execute().data
+    assert row["status"] == "ignorada"
 
 
-    with caplog.at_level("INFO"):
-        asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A], sync_service_factory=lambda _a, _b: _Svc()))
-
-    levels = {r.levelname for r in caplog.records if "imoveis_vista_sync" in r.message}
-    assert "WARNING" in levels, "a partial pull logged as a clean run"
+def test_holding_the_lease_runs_the_refresh():
+    asyncio.run(sched.imoveis_vista_refresh_job(**_seams(_admin())))
+    assert _Svc.chamadas == [("sync", _ORG_A)]
 
 
 # ─── The catch-up path ──────────────────────────────────────────────────
 
 
-def test_catch_up_runs_the_missed_slot():
-    """The guarantee: container down at 00:05, sync happens on boot."""
-    synced: list[str] = []
-
-    class _Svc:
-        async def sync(self, org_id, *, with_detalhes):
-            synced.append(str(org_id))
-            return MagicMock(
-                complete=True, upserted=1919, detalhes_fetched=1919,
-                page_failures=[], detalhes_failed=[], duration_seconds=300.0,
-            )
-
-
-    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A], overdue_fn=lambda _a, orgs, _now: orgs, sync_service_factory=lambda _a, _b: _Svc()))
-
-    assert synced == [_ORG_A]
+def test_catch_up_runs_overdue_orgs():
+    asyncio.run(sched.catch_up_if_overdue(**_seams(_admin(), overdue_fn=lambda _a, orgs, _now: orgs)))
+    assert _Svc.chamadas == [("sync", _ORG_A)]
 
 
 def test_catch_up_is_a_no_op_when_nothing_is_overdue():
-    """The normal boot: must not trigger a 4-6 minute pull for nothing."""
-    build = MagicMock()
-
-    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [], sync_service_factory=build))
-
-    build.assert_not_called()
+    asyncio.run(sched.catch_up_if_overdue(**_seams(_admin(), overdue_fn=lambda _a, _o, _n: [])))
+    assert _Svc.chamadas == []
 
 
-def test_catch_up_syncs_only_the_overdue_org():
-    synced: list[str] = []
-
-    class _Svc:
-        async def sync(self, org_id, *, with_detalhes):
-            synced.append(str(org_id))
-            return MagicMock(
-                complete=True, upserted=1, detalhes_fetched=1,
-                page_failures=[], detalhes_failed=[], duration_seconds=1.0,
-            )
-
-
-    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [_ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
-
-    assert synced == [_ORG_B]
+def test_catch_up_refreshes_only_the_overdue_org():
+    asyncio.run(sched.catch_up_if_overdue(**_seams(
+        _admin(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [_ORG_B],
+    )))
+    assert _Svc.chamadas == [("sync", _ORG_B)]
 
 
 def test_schedule_catch_up_returns_a_task_and_does_not_block():
-    """Lifespan must not await a 4-6 minute pull."""
+    """Lifespan must not await a long refresh."""
     started = asyncio.Event()
 
     async def _slow():
@@ -343,119 +306,28 @@ def test_schedule_catch_up_returns_a_task_and_does_not_block():
 
 
 def test_schedule_catch_up_outside_a_loop_reports_rather_than_crashing(caplog):
-    """No event loop ⇒ say the catch-up did not start; never raise."""
     with caplog.at_level("ERROR"):
         assert sched.schedule_catch_up() is None
     assert any("did NOT start" in r.message for r in caplog.records)
 
 
-def test_cron_and_catch_up_cannot_run_concurrently():
-    """A boot at 00:04 must not run two full pulls against one table."""
+def test_interval_and_catch_up_cannot_run_concurrently():
     concurrent = 0
     peak = 0
 
-    class _Svc:
-        async def sync(self, org_id, *, with_detalhes):
+    class _Lento(_Svc):
+        async def sync(self, org_id, *a, **k):
             nonlocal concurrent, peak
             concurrent += 1
             peak = max(peak, concurrent)
             await asyncio.sleep(0)
             concurrent -= 1
-            return MagicMock(
-                complete=True, upserted=1, detalhes_fetched=1,
-                page_failures=[], detalhes_failed=[], duration_seconds=1.0,
-            )
+            return await super().sync(org_id)
 
-    seams = dict(
-        admin_factory=lambda: MagicMock(),
-        adapter_factory=lambda: MagicMock(),
-        discover_fn=lambda _a: [_ORG_A],
-        overdue_fn=lambda _a, orgs, _now: orgs,
-        sync_service_factory=lambda _a, _b: _Svc(),
-    )
+    seams = _seams(_admin(), overdue_fn=lambda _a, orgs, _now: orgs, sync_service_factory=lambda c, a, **k: _Lento())
 
     async def _both():
-        await asyncio.gather(
-            sched.daily_imoveis_sync_job(**seams),
-            sched.catch_up_if_overdue(**seams),
-        )
+        await asyncio.gather(sched.imoveis_vista_refresh_job(**seams), sched.catch_up_if_overdue(**seams))
 
     asyncio.run(_both())
-
-    assert peak == 1, f"two syncs overlapped (peak={peak})"
-
-
-class TestCrossProcessLease:
-    """Migration 069 — a second PROCESS cannot run the sync concurrently.
-
-    `_sync_lock` covers coroutines inside one process. This covers two
-    containers, which is the case the scheduler guard
-    (`NOCTUS_SCHEDULERS_ENABLED`) deliberately says nothing about: both are
-    legitimately authorised.
-
-    Driven through `_run`'s Class-B kwarg seams, NOT by
-    `monkeypatch.setattr(sched, ...)`. Patching our own module takes the
-    real wiring out of the code path — the test then proves the fake works
-    and says nothing about whether `_run` calls the right collaborator in
-    the right order. `check_seed_compliance` flags it high-severity, and an
-    earlier draft of these very tests tripped it (CI red on f267409c).
-    """
-
-    def test_losing_the_lease_skips_the_sync_entirely(self):
-        import contextlib
-
-        @contextlib.contextmanager
-        def _denied(_admin, _name, **_kw):
-            yield False
-
-        build = MagicMock()
-
-        asyncio.run(
-            sched._run(
-                motivo="cron",
-                only_overdue=False,
-                admin_factory=lambda: MagicMock(),
-                adapter_factory=lambda: MagicMock(),
-                discover_fn=lambda _a: [_ORG_A],
-                sync_service_factory=build,
-                lease_fn=_denied,
-            )
-        )
-
-        build.assert_not_called()
-
-    def test_holding_the_lease_runs_the_sync(self):
-        import contextlib
-
-        synced: list[str] = []
-
-        @contextlib.contextmanager
-        def _granted(_admin, _name, **_kw):
-            yield True
-
-        class _Svc:
-            async def sync(self, org_id, *, with_detalhes):
-                synced.append(str(org_id))
-                return MagicMock(
-                    complete=True, upserted=1, detalhes_fetched=1,
-                    page_failures=[], detalhes_failed=[], duration_seconds=1.0,
-                )
-
-        asyncio.run(
-            sched._run(
-                motivo="cron",
-                only_overdue=False,
-                admin_factory=lambda: MagicMock(),
-                adapter_factory=lambda: MagicMock(),
-                discover_fn=lambda _a: [_ORG_A],
-                sync_service_factory=lambda _a, _b: _Svc(),
-                lease_fn=_granted,
-            )
-        )
-
-        assert synced == [_ORG_A]
-
-    def test_the_lease_name_is_stable(self):
-        """Every process must contend on the SAME row — a per-process or
-        per-run name would be a lock that never locks."""
-        assert sched._LEASE_NAME == "imoveis_vista_sync"
+    assert peak == 1, f"two refreshes overlapped (peak={peak})"

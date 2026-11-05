@@ -324,23 +324,9 @@ def _build_processor(
             lead_dispatcher.submit_threadsafe(main_loop, conversation_id, memory)
             return
 
-        unanswered = _join_unanswered_inbound(memory)
-        if not unanswered.strip():
-            logger.debug("conv=%s: no unanswered inbound, skipping dispatch.", conversation_id)
-            return
-
-        coro = _dispatch_conversation(
-            buffer=buffer,
-            admin_supabase=admin_supabase,
-            org_id=org_id,
-            conversation_id=conversation_id,
-            joined_inbound=unanswered,
-        )
-        future = asyncio.run_coroutine_threadsafe(coro, main_loop)
-        try:
-            future.result(timeout=PROCESSOR_TIMEOUT_S)
-        except Exception:
-            logger.exception("conv=%s: dispatch failed", conversation_id)
+        # The One Chat operator path is retired (2026-11-04): the only conversations the SW buffer carries are Julia's lead keys.
+        # Anything else is a bug upstream -- logged loudly, never silently routed.
+        logger.error("conv=%s: not a Julia lead key -- dropped (the operator bot is retired)", conversation_id)
 
     return _process
 
@@ -480,94 +466,6 @@ async def route_inbound(
     )
     await llm_fallback(text)
     return "llm"
-
-
-async def _dispatch_conversation(
-    *,
-    buffer: ConversationBufferService,
-    admin_supabase: Any,
-    org_id: UUID,
-    conversation_id: str,
-    joined_inbound: str,
-) -> None:
-    """WhatsApp worker entry: build the intake and run :func:`route_inbound`
-    over the buffered inbound run. Failures are logged, never raised — the
-    worker thread must keep draining other conversations."""
-    del buffer  # intake._reply writes outbound to the unified buffer key
-    from app.routers.whatsapp_router import build_intake_service_for_processor
-
-    intake = await build_intake_service_for_processor(
-        admin_supabase=admin_supabase,
-        org_id=org_id,
-    )
-    if intake is None:
-        logger.warning("conv=%s: intake service unavailable", conversation_id)
-        return
-
-    async def _llm(text: str) -> None:
-        await _llm_fallback_dispatch_inner(
-            intake=intake,
-            conversation_id=conversation_id,
-            joined_inbound=text,
-        )
-
-    try:
-        await route_inbound(
-            intake=intake,
-            session_id=conversation_id,
-            text=joined_inbound,
-            llm_fallback=_llm,
-            commands=intake.youtube_chat_commands(),
-        )
-    except Exception:
-        logger.exception("conv=%s: route_inbound failed", conversation_id)
-
-
-async def _llm_fallback_dispatch_inner(
-    *,
-    intake: Any,
-    conversation_id: str,
-    joined_inbound: str,
-) -> None:
-    """LLM fallback: run the tool-calling chatbot (Anthropic) over the buffered
-    text and send the reply via the paragraph-splitter.
-
-    Called from ``_dispatch_conversation`` after the state-machine check
-    + regex extractor have both declined. ``intake`` is pre-built so we
-    don't pay the constructor cost twice.
-
-    Memory writes are suppressed on the chatbot side (``append_inbound=False,
-    append_outbound=False``) because the seed buffer already wrote the
-    per-message inbounds, and ``send_paragraphs`` writes the outbound via
-    ``intake._reply`` which lands on the same unified buffer key.
-    """
-    from app.services.chatbot_service import ChatbotService
-    from app.services.whatsapp_outbound import send_paragraphs
-
-    chatbot = ChatbotService(
-        redis_client=intake.redis_client,
-        intake_service=intake,
-        session_id=conversation_id,
-        model=settings.chatbot_llm_model,
-    )
-    try:
-        reply = await chatbot.reply(
-            joined_inbound,
-            append_inbound=False,
-            append_outbound=False,
-        )
-    except Exception:
-        logger.exception("conv=%s LLM-fallback: chatbot.reply failed", conversation_id)
-        return
-
-    if not reply:
-        logger.info("conv=%s LLM-fallback: empty reply, nothing to send", conversation_id)
-        return
-
-    try:
-        await send_paragraphs(intake=intake, sender=conversation_id, text=reply)
-    except Exception:
-        logger.exception("conv=%s LLM-fallback: send_paragraphs failed", conversation_id)
 
 
 # ---------------------------------------------------------------------------

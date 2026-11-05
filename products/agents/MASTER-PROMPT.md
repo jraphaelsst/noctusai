@@ -69,6 +69,18 @@ products/agents/backend/app/
   inbound stored only for an existing thread, never a new thread/participant. Unreadable flag ⇒ 503.
   `GET /api/channels/agents/{key}/status` carries `modo_avaliacao` only. The org controle GET/PUT add `avaliacao_resolvidos` (users from noc; full phone to org admins, masked to members) + `avaliacao_resolucao_erro` (lookup failed: null name/phone, never a 500).
 
+### Platform grants (Julia-line S3) — how a product gets its credential
+
+- `app/grants/` (`registry.py` server-side product + scope registry, `store.py` ledger `agents.agent_product_grants` (060),
+  `orgs.py`, `service.py`) behind `routers/plataforma_grants_router.py` (`/api/studio/plataforma/grants`, platform admin
+  only). Create = mint the channel token (agents schema, target org) + the tools token (product schema, secret kept in the
+  per-org encrypted store) + a 5-minute delivery token, `GrantDelivery.deliver`, revoke the delivery token; any failure
+  revokes everything minted and leaves the grant `falhou`. Rotate overlaps; revoke kills both and tells the product.
+  Nobody pastes a token: `PUT /api/channels/ferramentas-token` is gone. Never log or return a secret. README section
+  "Platform grants" has the routes. UI: `/conexoes-plataforma` (`pages/ConexoesPlataforma.tsx`, `hooks/useGrants.ts`), platform
+  admin only; the old channel-token paste card AND the human `POST|DELETE /api/agents/{key}/channel-token` routes are deleted; `ChannelsTab`
+  links to the page. Grant responses carry `token_prefix` (stored prefix only), never a secret.
+
 ### Julia v2 — the channel runtime (A-RT)
 
 - `POST /api/channels/turns` (`routers/channels_router.py` -> `channels/turno.py`): `resolve_agent_for_org` (platform
@@ -132,6 +144,13 @@ products/agents/backend/app/
 - Skill texts are org-resolved: the turn wraps its `SkillFonte` in `SkillsComSpecs`, so `abrir_skill` /
   `ler_arquivo_skill` return the index line, body and files with every `{{org.chave}}` replaced by the org's value -
   the same `especificacoes.resolver_texto` the prompt sections go through (own and pinned library skills).
+- Org specs are UNTRUSTED DATA (Julia-line E1-E3): every value is validated by its declared `tipo`
+  (`spec_formatos.py`: texto_curto/texto/texto_longo(4000)/url/dominios/contatos/cnpj/creci/horario/duracao/lista) through
+  the one `especificacoes_service.validar` (studio PUT, readiness, compiler). `SPEC_VALIDATION_MODE=report|block`
+  (default report: accept + `spec_org_invalida` aviso; block: 422 + bloqueante). Free-text values are never inlined -
+  prompt text AND opened skills show `[dado: chave]`; one section "Dados da organização" (rows
+  `compilador.titulo_dados_org` / `compilador.dados_org_intro`) carries them as JSON. Never add a path that inlines a
+  free-text spec value. Details: `projects/julia-v2/CONTRACT.md` §2.6.
 - Optional enum parameters (`Literal[...] | None`, `anyOf [enum, null]` in the schema) get their value labels from the
   row too (`enriquecer_schema`), like required ones. The extraction-only tools (`registrar_resumo` /
   `registrar_escolha`, `ferramentas_registry.FERRAMENTAS_DE_EXTRACAO`) are never offered on a turn and are not listed in
@@ -176,6 +195,7 @@ products/agents/backend/app/
 
 ### Julia v2 — consumer and Studio support (A-RT2, migration 040)
 - `GET /api/channels/agents/{key}/qualificacao/estagios` (channel token) → ordered `[{chave, rotulo, ordem, conclusivo}]` only; the turn response carries `qualificacao.estagios_ordem`.
+- `GET|PUT /api/channels/agents/{key}/specs` (channel token, scope `agents:channel-specs`, bound to `{key}`) → the org's business specs, SW's editor behind `/api/julia/especificacoes`; the same service as the studio `PUT /api/studio/agents/{key}/specs` (`aplicar_org_specs`: declared keys only, `especificacoes_service.validar`, report → 200 + `invalidas`, block → 422 + `violacoes`, undeclared → 422 `spec_nao_declarada`). PUT body also carries `ator {user_id, nome?, email?}` (REQUIRED, product-attested by the channel token; absent → 422 `ator_obrigatorio`; recorded as `updated_by`/`updated_by_nome`/`updated_by_token`, migration 062, and in the audit with the token id); `valores[]` expose `updated_by`, `updated_by_nome`. Values are DATA (fenced in the compiled prompt); `routers/channel_specs_router.py`.
 - Publish pins the qualification standard version on the agent version (`qualificacao_versao_id`, inherited by new drafts, covered by `compiled_hash`); `GET|PUT /api/studio/agents/{key}/(draft/)qualificacao` (platform admin).
 - `GET /api/agents/catalogo` — tiered: org users get `{key, nome, papel, descricao_publica, runtime, capacidades}` from DB rows (`catalogo_agentes`, `catalogo_capacidades`); platform admins also tool keys + versions. One Chat is listed as `runtime=external`, papel `operador`.
 - Studio support: `/capacidades` (server-provided tier + tabs), conformidade rule/violation routes (codes only), thread result + participant state on the channel conversation list, textos/ferramentas registry (structure only), `ponto_cache` in compiled outputs, mecanismo summary on versions.

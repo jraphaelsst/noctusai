@@ -100,6 +100,13 @@ const mockSaveApiKey = vi.fn();
 const mockRemoveApiKey = vi.fn();
 const mockTestApiKey = vi.fn();
 
+// The agents row is the platform-connection card (own query); its behaviour is covered in ConexaoPlataforma.test.tsx.
+vi.mock("@/components/julia/ConexaoPlataforma", () => ({
+  ConexaoPlataformaDoAgente: ({ canTest }: { canTest: boolean }) => (
+    <div data-testid="conexao-plataforma-stub" data-can-test={String(canTest)} />
+  ),
+}));
+
 vi.mock("@/hooks/useSettings", () => ({
   useRecipients: mockUseRecipients,
   useKeysStatus: mockUseKeysStatus,
@@ -212,8 +219,6 @@ const KEYS_STATUS_FIXTURE = {
   waha_base_url: keyEntry("WAHA base URL"),
   waha_api_key: keyEntry("WAHA API key"),
   waha_webhook_hmac_secret: keyEntry("WAHA webhook HMAC secret"),
-  vista_base_url: keyEntry("Vista base URL"),
-  vista_api_key: keyEntry("Vista API key"),
   database_backend: keyEntry("Database backend"),
   supabase_url: keyEntry("Supabase URL"),
   supabase_service_role_key: keyEntry("Supabase service role key"),
@@ -1236,6 +1241,49 @@ describe("Settings — managed API keys test probe", () => {
     expect(
       getByTestId("api-key-test-result-openai_api_key").textContent
     ).toContain("API Key inválida ou expirada.");
+  });
+});
+
+describe("Settings — platform-managed (read_only) keys", () => {
+  it("renders the agents key as the read-only connection card: no paste field, no edit/remove", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: {
+        items: [
+          apiKey({ key: "agents", label: "Token do agente", read_only: true, configured: true, hint: "noc_…9f3a", source: "platform" }),
+          apiKey({ key: "infosimples_token", label: "InfoSimples Token", testable: true }),
+        ],
+        total: 2,
+      },
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderSettingsOnTab("chaves-api");
+    const row = getByTestId("api-key-agents");
+    expect(row.getAttribute("data-read-only")).toBe("true");
+    expect(getByTestId("conexao-plataforma-stub")).toBeTruthy();
+    expect(queryByTestId("api-key-edit-agents")).toBeNull();
+    expect(queryByTestId("api-key-remove-agents")).toBeNull();
+    expect(queryByTestId("api-key-input-agents")).toBeNull();
+    // An ordinary key beside it is still editable.
+    expect(getByTestId("api-key-edit-infosimples_token")).toBeTruthy();
+  });
+
+  it("any other read_only key shows its masked hint and the platform note, never an input", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: { items: [apiKey({ key: "outra", label: "Outra", read_only: true, configured: true, hint: "...ab12", source: "platform" })], total: 1 },
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, getByText, queryByTestId } = await renderSettingsOnTab("chaves-api");
+    expect(getByTestId("api-key-hint-outra").textContent).toBe("...ab12");
+    expect(getByText("Gerenciada pela plataforma NoctusAI.")).toBeTruthy();
+    expect(queryByTestId("api-key-edit-outra")).toBeNull();
   });
 });
 

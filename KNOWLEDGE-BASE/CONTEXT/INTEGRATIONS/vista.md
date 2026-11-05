@@ -68,8 +68,9 @@
 
 Where the key lives in NoctusAI:
 
-- Backend `.env` (root, gitignored): `VISTA_BASE_URL`, `VISTA_API_KEY`.
-- Read into Python at startup via `ERPSettings.vista_base_url` / `vista_api_key`.
+- **social-wiring (since 2026-11-03): the database, per org — NOT `.env`.** Owner: "our keys are to be stored in the db, not .env". The credential is a record in the seed `CredentialStore` (Fernet-encrypted; SW backs it with `social_wiring.credentials (org_id, provider)`), provider `"vista"` (`credential_resolvers.VISTA_PROVIDER`), bundle `{base_url, api_key}` plus the non-secret `chave_final` (last 4), `verificado_em`, `verificado_por` (they ride inside the encrypted bundle: that table has no free-form metadata column). Every adapter is built per org through `VistaCredentialResolver` → `get_vista_adapter_for_org`; **there is no `.env` fallback** — an org with no record gets 503 `Vista não configurada para esta empresa`. The settings screen (Settings › Chaves API › “Vista CRM”, org admin) and `GET|PUT|DELETE /api/integracoes/vista` + `POST …/testar` manage it; the key is write-only (never returned or logged; only `chave_final`), the base URL must match `^[a-z0-9-]+\.vistahost\.com\.br$` (https, no port/path — SSRF guard) and the key is live-checked (`/corretores/listar`, one row) before it is stored. We hold exactly ONE Vista key (`…644c`).
+- **One-time move after deploy (no migration copies env secrets):** an org admin opens Settings › Chaves API › Vista CRM, enters the tenant address + the key, and saves; “Testar conexão” confirms. Until then the nightly sync skips the org (logged) and the listing tools answer `catalogo_indisponivel`. After storing it, `VISTA_BASE_URL` / `VISTA_API_KEY` can be removed from the product's environment (social-wiring no longer reads them; `deploy/fleet/env.fleet.keys` never listed them).
+- Other consumers (`mcp/vista`, the dev MCP server; `erp-imobiliario`, asleep): backend `.env` (root, gitignored): `VISTA_BASE_URL`, `VISTA_API_KEY`, read via `ERPSettings.vista_base_url` / `vista_api_key`.
 - **Never** prefixed with `VITE_` — the browser must never see the key. The
   frontend calls `/api/vista-showcase/*` and the ERP backend proxies upstream.
 
@@ -1077,6 +1078,13 @@ carried its 28 real photos with zero probe artifacts afterwards.
 
 #### Permission verdicts — the two keys DIFFER (production, 2026-09-11)
 
+> 🔴 **CORRECTION (2026-11-03, owner):** "we dont actually have a quinto andar key. they havent granted us one."
+> NoctusAI holds exactly **one** Vista key, `…644c` (full access since 2026-10-26, § 4.8). Every `…bced`
+> "Quinto Andar portal key" row below was in fact **a test key the owner was trying** (owner: "It was another vista key i was testing").
+> It is stored nowhere (2026-11-03 sweep: the prod `.env` + 18 backups, the root `.env` and the vista MCP connector's local env file all hold `…644c`), so it is **not a credential we hold**:
+> never search for, configure or test a second key. Kept for history only.
+
+
 | key | `/imoveis/fotos` write | owner data (§ 4.1 `proprietarios`) |
 |---|---|---|
 | `…644c` — **ours**, the ERP's key | ❌ **DENIED** (`Permissão Negada`) → ✅ **PERMITTED 2026-10-26** | ❌ 403 → ✅ **200 2026-10-26** |
@@ -1734,6 +1742,90 @@ The new adapter and §5's `VistaClient` co-exist. The adapter is consumer-facing
 
 ---
 
+## 6b. Julia catalog map — Vista LIVE (julia-v3, 2026-11-03)
+
+> Julia's listing tools (`buscar_imoveis`, `imovel_campanha`, `detalhes_imovel`) can read Vista live instead of the `imoveis` mirror. The source is **per org** (`social_wiring.julia_catalogo_config.fonte`, migration 314; `GET|PUT /api/julia/catalogo-fonte`, org admin; a missing row = `espelho`). Code: SW `app/services/julia_catalogo_service.py` (`CatalogoImoveis` seam: `EspelhoCatalogo` / `VistaCatalogo`) over the seed `VistaCRMAdapter.search_imoveis` (Fake + Real; `§ 6a`). `consultar_empreendimento` still reads the mirror (`NOC-REMEDIATE[julia-empreendimento-vista-live]`).
+
+**New seed method.** `search_imoveis(*, filter_, order, max_results=200, with_detalhes=False) -> ImovelPage` — a filtered catalog read: page 1 reports `total`/`paginas`, the remaining pages (50 each, the server cap) are fetched concurrently (4 at a time) up to `max_results`; `with_detalhes` adds one `detalhes` call per imóvel (the ONLY source of `Caracteristicas`; a single failure is logged and that imóvel is yielded listar-only). A 404/empty match is an empty page; any other failure raises.
+
+**Tool arg → Vista `filter`** (server-side narrowing only; `julia_busca_imoveis` re-applies every rule in Python):
+
+| Tool arg | Vista `filter` |
+|---|---|
+| `operacao` compra / aluguel | `Status` in `["Venda","Venda e Aluguel"]` / `["Aluguel","Venda e Aluguel"]` |
+| (always) | `ExibirNoSite = "Sim"` (+ a Python published check) |
+| `preco_min` / `preco_max` | `ValorVenda` / `ValorLocacao`: the widest widening band (−15% … +20%) as `[lo, hi]`; one-sided → `[">=", lo]` / `["<=", hi]` |
+| `quartos_min` | `Dormitorios` `[">=", quartos_min − 1]` (the tipologia widening lowers it by one); 0 → not sent |
+| `vagas_min` | `Vagas` `[">=", n]` |
+| `cidade` | `Cidade` `["like", "%cidade%"]` (the tenant has `Embu das Artes` / `Embu Das Artes`) |
+| `bairro` / `bairros` | `Bairro` `["like", "%bairro%"]`, **one query per region** (≤ 3 regions; more → not sent). The Python match (bairro OR empreendimento, accent/case-folded) decides |
+| `tipo` | **not sent** — `Categoria` is matched by stem in Python (`casa` also takes `Casa em Condomínio`; the tipologia widening drops it) |
+| `excluir_codigos` | **not sent** — applied in Python (a `["!=", x]` filter holds one value) |
+| `similar_a` | `imoveis/listar` (`Codigo`) + `imoveis/detalhes` of the reference (`get_imovel`); bairro / price band derived as for the mirror |
+| ordering | `order = {"DataAtualizacao": "desc"}`; at most 500 candidates (60 when the lead asked for features — see below) |
+
+**Features cost a call each.** `Caracteristicas` exist only on `detalhes`. When the lead asked for items (`itens_essenciais` / `itens_desejaveis` / `caracteristicas`) the candidates are enriched (cap 60, so `restantes_estimados` is a lower bound); otherwise only the ≤ 5 returned listings are enriched for the card's `destaques`.
+
+**Vista field → `_item` key** (the mirror's column names are the common row shape):
+
+| Vista field | row key | `_item` / detalhes key |
+|---|---|---|
+| `Codigo` | `codigo` | `codigo` |
+| `TituloSite` | `titulo` | `titulo` (fallback `Categoria`) |
+| `Categoria` | `categoria` | `tipo` |
+| `Status` / `FinalidadeStatus` | `status` / `finalidades` | operation gate |
+| `Bairro` / `Cidade` / `UF` | `bairro` / `cidade` / `uf` | `bairro`, `cidade` |
+| `Empreendimento` | `empreendimento` | `condominio` |
+| `ValorVenda` / `ValorLocacao` | `valor_venda` / `valor_locacao` | `preco`, `preco_venda`, `preco_aluguel` |
+| `ValorCondominio` / `ValorIptu` | `valor_condominio` / `valor_iptu` | `valor_condominio`, `valor_iptu` (IPTU in `detalhes_imovel` only if the org opted in) |
+| `Dormitorios` / `Suites` / `Vagas` | same | `quartos`, `suites`, `vagas` |
+| `AreaPrivativa` (else `AreaTotal`) | `area_privativa` / `area_total` | `area_m2` |
+| `Caracteristicas` | `caracteristicas` | `destaques` (≤ 3) |
+| `DescricaoWeb` | `descricao_web` | `descricao` (detalhes) |
+| `Endereco` / `Numero` | `logradouro` / `numero` | `endereco` (only when the org opted into the full address) |
+| `Pavimentos` | `pavimentos` | `terreo_sem_escadas` check |
+| `DataAtualizacao` | `data_atualizacao` | owner-confirmation freshness |
+| `ExibirNoSite` | `exibir_no_site` | published gate |
+
+**Privacy allow-list.** The row is rebuilt field by field (`linha_de_imovel`); `Corretor`, `Observacoes`, `Chave`, `Matricula`, `InscricaoMunicipal`, the proprietário relation and `vista_raw` are never copied. Same as the mirror's `COLUNAS`.
+
+**Links.** Unchanged: the org's `link_imovel` template (Meu negócio › Perfil do WhatsApp), default `{site}/imovel/{codigo}`.
+
+**Owner-confirmed price/status** (`julia_proprietarios_contatos`) still overrides Vista's value, with provenance, exactly as for the mirror.
+
+**Error semantics.** Any Vista failure (not configured, 401/permission, per-field 400, 5xx, timeout, malformed payload) is the tool error `catalogo_indisponivel` (HTTP 503 `{"error": {"code": "catalogo_indisponivel"}}`); it is logged by type and **never** falls back to the mirror (a stale answer that looks fresh is worse than an honest "unavailable"). An empty match is a normal empty result; an unpublished / unknown code is `encontrado: false` (detalhes) or `[]` (campanha).
+
+**Credentials.** Per org, from the encrypted `CredentialStore` (§ 1) — `VistaCatalogo` builds its adapter with `vista_credenciais.adapter_da_org(org_id)`; an org with no record gets `catalogo_indisponivel`. (`NOC-REMEDIATE[vista-key-per-org]` is resolved.)
+
+**Live verification status.** Filter operators (`Status` list, ranges, `[">=", n]`, `like`) are the ones §2 documents; `Bairro like` and the multi-value `Status` list were NOT re-probed live for this feature (the 2026-11-03 attempt returned empty pages for every filter incl. a bare listing, and the follow-up probe was blocked) — re-probe (a read-only `imoveis/listar` with each filter) before the One org is flipped to `vista`.
+
+---
+
+## 6c. The imóveis mirror when `listar` is silent — per-code refresh, schedule, divergences (2026-11-03/04)
+
+> **Outage.** `/imoveis/listar` answers "A pesquisa não retornou resultados" to EVERY request since the 2026-10-23 sync (Vista-side; reported by the owner). Still working: `/imoveis/detalhes?imovel=CODE`, `/imoveis/destaques` (≤ 17 codes), `listar` on clientes / proprietários / agenda. No bulk alternative exists (`listarConteudo` refuses a code filter; `/proprietarios/listar` rejects every `imoveis` relation field with 400). The mirror `social_wiring.imoveis` is therefore kept current CODE BY CODE.
+
+**Refresh run** (`imoveis_atualizacao_service.executar`, one row per run in `imoveis_sync_execucoes`, migration 316; single flight per org = DB lease `imoveis_vista_sync:<org>` + the `em_andamento` row):
+
+1. `modo=auto` (scheduler, "Atualizar agora"): `listar` first (`ImovelSyncService.sync`). If it is empty while the mirror has rows → `status=listar_vazio` **and the registry sweep is REFUSED** (it would mark the whole catalog removed; logged at ERROR) → fall back to the per-code refresh. The report records which path ran; the first such run of a day raises ONE in-app notice to the org admins ("Vista não está listando imóveis — atualização feita imóvel a imóvel"). The day `listar` answers again the auto path uses it (≈ total/50 calls) and the walk stops by itself.
+2. **Per-code refresh** (`ImovelSyncService.sync_detalhes`): seed `adapter.refresh_imovel(code)` = ONE detalhes call (no listar; the detail-field calibration is done with the code itself), mapped through the same `vista_to_imovel` + `_imovel_to_row` + upsert as the listar path (a test pins both paths build the same row; listar-only fields `foto_destaque`/`banheiro_social`/`codigo_imobiliaria` keep the mirror's value). Concurrency 4, the `vista` rate-limit bucket. A code whose detalhes `DataAtualizacao` equals the mirror's is only touched (`sincronizado_em`).
+3. **Tiers.** Every run: the *vitrine* (mirror Status Venda/Aluguel/Venda e Aluguel, not hidden, not delisted in the registry) + discovery. Once per `imoveis_sync_resto_intervalo_s` (default 86400): also the rest (sold / suspended / hidden / removed, so a come-back is noticed) — scope `todos`.
+4. **Gone / unpublished.** `VistaNotFound` (detalhes `[]`) or `VistaRecordUnpublished` (the stub keeps `Corretor`) → marked removed in `imovel_registry` the way the sweep does (`ativo_no_vista=false`, `delistado_em`, `snap_*`); unpublished also sets `imoveis.exibir_no_site=false`. **Never deletes.** A transport error is a reported failure, never a removal. Circuit breaker: more than max(50, 20 %) of the walked codes "removed" → `status=removidos_excessivos`, nothing marked.
+5. **Discovery of NEW listings** (named seams, `imoveis_descoberta`): `por_destaques` (`/imoveis/destaques`) and `por_sonda` — a forward probe above the highest known numeric suffix of each prefix (`ONE#####`, `CA####`, `AP####`…), stopping after `imoveis_sonda_max_falhas` (default 40) CONSECUTIVE misses per prefix. Code gaps in the real mirror could not be measured from this branch (no read access to the production mirror from the build environment): 40 is a conservative upper bound for sequential issuing; **measure the real hole widths (`SELECT prefix, max gap`) and tune the setting** — a hole wider than the setting is invisible until probed again.
+6. **Report** (`GET /api/imoveis/sync/ultimo`, the list page's "Última atualização do Vista"): when, path (`listar`|`detalhes`), status, novos / atualizados / inalterados / removidos / falhas, **HTTP calls per kind** (`listar`, `detalhes`, `destaques`, `sonda`).
+
+**Schedule.** Seed scheduler interval job `imoveis_vista_refresh`, every `imoveis_sync_intervalo_s` (default 7200 s), for every org that has a Vista credential in the DB (§ 1); misfire grace 1 h; startup catch-up for orgs older than one interval. API: `POST /api/imoveis/sync?modo=auto|listar|detalhes&escopo=vitrine|resto|todos` (org admin, 202, poll `ultimo`). MCP: `noctus.sw.imoveis_sync` (action status|run; run is a dry-run without `confirm=true`).
+
+**Our data is an overlay.** The sync writes ONLY Vista columns of `imoveis` (`COLUNAS_VISTA`, enforced by `_assert_so_vista`) and the lifecycle columns of `imovel_registry`. Owned: `imovel_dados` (118…), `imovel_captacao` (226, `atualizar_manual`), the duplicate pairs, proprietário links, documents, `julia_proprietarios_contatos` (owner confirmations read through `julia_imovel_confirmado`), `imovel_notas`. No Vista column has a manual override on `imoveis` itself; precedence lives at read time (`imoveis_catalogo` unions Vista with manual captação rows; `julia_imovel_confirmado` lets a confirmation newer than Vista's `DataAtualizacao` win, always with provenance).
+
+### Vista-vs-ours divergences — TRANSITIONAL, removable (`vista_divergencias.py`)
+
+Owner 2026-11-04: "the system recognizes divergencies from vista and warns us, so we human decide which data is true… might get deleted anytime." During every refresh (either path) each imóvel's Vista values are compared with OUR owned values (normalised: money, counts, accents/case/whitespace, CEP digits, UF) for: price, condomínio, IPTU, áreas, dormitórios/suítes/vagas, status/availability, address, empreendimento. A real difference opens a PENDING `imovel_campo_conflitos` row (`origem_proposto='vista_sync'`, our value in `valor_anterior`, Vista's in `valor_proposto`, the drift note in `notas`: both values and when/who set them, Vista código + links, and — for an owner's WhatsApp confirmation — the julia contato/thread and a sanitised excerpt). **Never overwrites ours; the auto resolver never decides these** (`ORIGENS_DECISAO_HUMANA`). `campo` values emitted: `valor_venda, valor_locacao, valor_condominio, valor_iptu, area_total, area_privativa, area_terreno_m2, area_construida_m2, dormitorios, suites, vagas, status, disponibilidade, logradouro, numero, complemento, bairro, cidade, uf, cep, empreendimento`. Review API: `GET /api/imoveis/{codigo}/divergencias` (org member) and `POST …/{id}/resolver {escolha: vista|nosso|manual, valor?}` (org admin). One WhatsApp digest per run to the destination USER (`vista_divergencias_config.destino_user_id`, a small per-org setting because `julia_relatorio_destino` lives on another branch; phone read from core `noctus_users.telefone`; hourly cap 4; no phone/line → in-app notice, never silent). Flag: `vista_divergencias_config.ativa` (`divergencia_vista_ativa`; missing row = OFF; the One org seeded ON by migration 317).
+
+**Removal recipe** (`NOC-REMEDIATE[transicao-vista-divergencias]`): delete `app/services/vista_divergencias.py`, `app/routers/imovel_divergencias_router.py` (+ its registration in `main.py`) and their tests; in `imoveis_service.py` drop the `self._div` field, `_divergencias` / `_fechar_divergencias` and their 4 call lines plus the `divergencias_*` report fields; in `imoveis_atualizacao_service.py` drop `_digest_de_divergencias`; in `divergencia_resolucao.py` drop `ORIGENS_DECISAO_HUMANA` and its early return, and the two `ORIGENS_DECISAO_HUMANA` lines in `imovel_hub/campos_extraidos_service.py`; add a migration that drops `vista_divergencias_config` and `imovel_campo_conflitos.notas` and deletes the rows with `origem_proposto='vista_sync'`. The FE side is `ImovelDivergenciasVista` + `useImovelDivergencias` (one mount in `ImovelDetalhes`) and the Settings alert block `components/settings/DivergenciasAvisos.tsx` + `hooks/useVistaDivergenciasConfig.ts` (one mount in `VistaCard`, plus its stub in `VistaCard.test.tsx`).
+
+---
+
 ## 7. Future MCP design notes
 
 When an in-repo MCP server is built (or the external-environment one
@@ -2085,7 +2177,7 @@ technical detail.
    *the 401 response body contains the caller's API key in plaintext.* Any
    customer logging error bodies is persisting a credential. We redact on
    receipt (§ 3), but the fix belongs upstream.
-3a. **🔴 Scope the Quinto Andar key DOWN — the highest-value ask (added
+3a. **(VOID 2026-11-03 — we hold no Quinto Andar key; see the correction in § 4.7.)** **🔴 Scope the Quinto Andar key DOWN — the highest-value ask (added
    2026-09-11).** The portal key `…bced` was issued with full photo **write +
    DELETE** on live listings and full owner-PII read (§ 4.7). Neither is needed
    to receive a property feed, and our own key holds neither, so this is an

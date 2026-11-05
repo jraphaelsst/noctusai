@@ -108,3 +108,57 @@ def test_window_outside_rows_is_empty(env):
 
 def test_inverted_window_is_400(env):
     assert env.client.get(URL, params={"from": "2026-10-31", "to": "2026-10-01"}).status_code == 400
+
+
+# ── Uso & Custos: per_agent / attribution / per_session / new filters ────────
+
+def _attr(row, agent, conv):
+    row["agent_key"], row["conversation_id"] = agent, conv
+    return row
+
+
+@pytest.fixture
+def env_attr(env):
+    rows = [dict(r) for r in ROWS]
+    _attr(rows[0], "julia", "c1")
+    _attr(rows[1], "julia", "c1")
+    _attr(rows[2], "julia", "c2")
+    _attr(rows[3], None, None)
+    _attr(rows[4], None, "c3")
+    env.fakes.db.set_table_data("ai_usage", rows)
+    return env
+
+
+def test_per_agent_groups_nulls_honestly(env_attr):
+    body = env_attr.client.get(URL, params={"from": "2026-10-01", "to": "2026-10-31"}).json()
+    sw = body["per_product"]["social-wiring"]
+    by_agent = {a["agent_key"]: a for a in sw["per_agent"]}
+    assert set(by_agent) == {"julia", None}
+    assert by_agent["julia"]["calls"] == 3 and by_agent["julia"]["conversations"] == 2
+    assert by_agent["julia"]["cost_usd"] == pytest.approx(0.60)
+    assert by_agent[None]["calls"] == 1 and by_agent[None]["conversations"] == 1
+    assert [a["cost_usd"] for a in sw["per_agent"]] == sorted((a["cost_usd"] for a in sw["per_agent"]), reverse=True)
+    org = next(o for o in body["per_org"] if o["org_id"] == ORG_ID)
+    assert "per_agent" in org["per_product"][0]
+
+
+def test_attribution_and_sessions(env_attr):
+    body = env_attr.client.get(URL, params={"from": "2026-10-01", "to": "2026-10-31"}).json()
+    assert body["attribution"] == {"calls_with_agent": 3, "calls_without_agent": 2}
+    assert body["window"]["hours"] == pytest.approx(30 * 24)
+    assert "ai_usage" in body["freshness"]
+    top = body["per_session"][0]
+    assert top["conversation_id"] is None and top["product"] == "agents" and top["agent_key"] is None
+    c1 = next(s for s in body["per_session"] if s["conversation_id"] == "c1")
+    assert c1["calls"] == 2 and c1["cost_usd"] == pytest.approx(0.50) and c1["first"] == WHEN
+
+
+def test_filter_agent_key_and_none_literal(env_attr):
+    p = {"from": "2026-10-01", "to": "2026-10-31"}
+    assert env_attr.client.get(URL, params={**p, "agent_key": "julia"}).json()["totals"]["calls"] == 3
+    assert env_attr.client.get(URL, params={**p, "agent_key": "none"}).json()["totals"]["calls"] == 2
+
+
+def test_filter_conversation_id(env_attr):
+    body = env_attr.client.get(URL, params={"from": "2026-10-01", "to": "2026-10-31", "conversation_id": "c1"}).json()
+    assert body["totals"]["calls"] == 2 and body["filters"]["conversation_id"] == "c1"

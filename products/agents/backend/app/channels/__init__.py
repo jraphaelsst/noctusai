@@ -4,5 +4,6 @@
 M5). ``tools`` — the page-0 ``handoff`` tool. ``budget`` — the channel-specific
 per-org daily cap default (M4). The HTTP surface is
 ``app/routers/channels_router.py`` (turns / status / deletion) and
-``app/routers/channel_token_router.py`` (the §4 token mint).
+``app/routers/plataforma_grants_router.py`` (the channel token is minted and delivered by a platform grant;
+there is no human mint route).
 """

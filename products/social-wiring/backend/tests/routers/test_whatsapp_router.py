@@ -57,6 +57,7 @@ _CONNECTION_ID = "00000000-0000-4000-8000-0000000000e3"
 _WEBHOOK_TOKEN = "test-webhook-token-abc"
 _AUTHORIZED_SENDER = "+5511999990000"
 _CHAT_ID = "5511999990000@c.us"
+_TOKEN_URL = f"/api/whatsapp/webhook/{_WEBHOOK_TOKEN}"
 
 
 def _sig(body: bytes, secret: str) -> str:
@@ -173,11 +174,7 @@ def _webhook_settings(override_settings):
     override_settings(
         encryption_key=_TEST_ENCRYPTION_KEY,
         waha_webhook_hmac_secret="",
-        whatsapp_chatbot_enabled=False,
         openai_api_key="",
-        crm_base_url="",
-        crm_api_key="",
-        whatsapp_authorized_numbers=_AUTHORIZED_SENDER,
     )
 
 
@@ -290,15 +287,16 @@ def _reset_recording_chat_store():
     _RecordingChatStore.calls = []
 
 
-# ── Signature verification (legacy global route) ───────────────────────────
+# ── Signature verification (the per-connection token route; the legacy global /webhook was deleted) ───────────────────────────
 
 class TestWebhookSignatureVerification:
     def test_valid_signature_returns_200(self, client, monkeypatch, override_settings):
         tc, _mock_sb, _db = client
+        _seed_connection(_db)
         override_settings(waha_webhook_hmac_secret="sekrit")
         body = b'{"event":"session.status","session":"default","payload":{"status":"WORKING"}}'
         resp = tc.post(
-            "/api/whatsapp/webhook",
+            _TOKEN_URL,
             content=body,
             headers={
                 "X-Webhook-Hmac": _sig(body, "sekrit"),
@@ -309,11 +307,12 @@ class TestWebhookSignatureVerification:
 
     def test_tampered_body_returns_401(self, client, monkeypatch, override_settings):
         tc, _mock_sb, _db = client
+        _seed_connection(_db)
         override_settings(waha_webhook_hmac_secret="sekrit")
         signed_body = b'{"event":"session.status","session":"default","payload":{"status":"A"}}'
         sig = _sig(signed_body, "sekrit")
         resp = tc.post(
-            "/api/whatsapp/webhook",
+            _TOKEN_URL,
             content=b'{"event":"session.status","session":"default","payload":{"status":"B"}}',
             headers={"X-Webhook-Hmac": sig, "content-type": "application/json"},
         )
@@ -321,9 +320,10 @@ class TestWebhookSignatureVerification:
 
     def test_missing_signature_header_returns_401(self, client, monkeypatch, override_settings):
         tc, _mock_sb, _db = client
+        _seed_connection(_db)
         override_settings(waha_webhook_hmac_secret="sekrit")
         resp = tc.post(
-            "/api/whatsapp/webhook",
+            _TOKEN_URL,
             content=b'{"event":"session.status","session":"default","payload":{}}',
             headers={"content-type": "application/json"},
         )
@@ -332,8 +332,9 @@ class TestWebhookSignatureVerification:
     def test_production_with_a_secret_set_refuses_an_unsigned_webhook_strictly(self, client, monkeypatch, override_settings):
         monkeypatch.setenv("APP_ENV", "production")
         tc, _mock_sb, _db = client
+        _seed_connection(_db)
         override_settings(waha_webhook_hmac_secret="sekrit")
-        resp = tc.post("/api/whatsapp/webhook", content=b'{"event":"session.status","session":"default","payload":{}}',
+        resp = tc.post(_TOKEN_URL, content=b'{"event":"session.status","session":"default","payload":{}}',
                        headers={"content-type": "application/json"})
         assert resp.status_code == 401
 
@@ -346,11 +347,12 @@ class TestWebhookSignatureVerification:
         monkeypatch.setenv("APP_ENV", "production")
         webhook_hmac._resetar_para_testes()
         tc, _mock_sb, _db = client
+        _seed_connection(_db)
         override_settings(waha_webhook_hmac_secret="")
         body = b'{"event":"session.status","session":"default","payload":{}}'
         with caplog.at_level(logging.ERROR):
-            assert tc.post("/api/whatsapp/webhook", content=body, headers={"content-type": "application/json"}).status_code == 200
-            assert tc.post("/api/whatsapp/webhook", content=body, headers={"content-type": "application/json"}).status_code == 200
+            assert tc.post(_TOKEN_URL, content=body, headers={"content-type": "application/json"}).status_code == 200
+            assert tc.post(_TOKEN_URL, content=body, headers={"content-type": "application/json"}).status_code == 200
         assert len([r for r in caplog.records if webhook_hmac.CODIGO in r.getMessage()]) == 1  # once per process
         from app.config import settings as _s
 
@@ -362,10 +364,11 @@ class TestWebhookSignatureVerification:
         import logging
 
         tc, _mock_sb, _db = client
+        _seed_connection(_db)
         override_settings(waha_webhook_hmac_secret="")
         with caplog.at_level(logging.WARNING, logger="noctusai_lib.security.webhook_signatures"):
             resp = tc.post(
-                "/api/whatsapp/webhook",
+                _TOKEN_URL,
                 content=b'{"event":"session.status","session":"default","payload":{}}',
                 headers={"content-type": "application/json"},
             )
@@ -380,10 +383,11 @@ class TestWebhookSignatureVerification:
         JSON is malformed post-verification, the router 200-acks and
         drops it (never retried forever)."""
         tc, _mock_sb, _db = client
+        _seed_connection(_db)
         override_settings(waha_webhook_hmac_secret="sekrit")
         body = b"not-json{"
         resp = tc.post(
-            "/api/whatsapp/webhook",
+            _TOKEN_URL,
             content=body,
             headers={
                 "X-Webhook-Hmac": _sig(body, "sekrit"),
@@ -435,18 +439,12 @@ class TestTokenRouteResolution:
 # ── session.status ──────────────────────────────────────────────────────────
 
 class TestSessionStatus:
-    def test_legacy_route_persists_to_redis(self, client):
-        import redis as redis_lib
-
+    def test_the_legacy_global_route_is_gone(self, client):
+        """CONTRACT julia-line B3: the global `/webhook` (no connection, no line) was deleted -- 404/405, never 200, signed or not."""
         tc, _mock_sb, _db = client
         resp = tc.post("/api/whatsapp/webhook", json=_session_status_payload("SCAN_QR_CODE"))
-        assert resp.status_code == 200
-
-        r = redis_lib.from_url(settings.redis_url, decode_responses=True)
-        try:
-            assert r.get("whatsapp:session_status:default") == "SCAN_QR_CODE"
-        finally:
-            r.delete("whatsapp:session_status:default")
+        assert resp.status_code in (404, 405)
+        assert tc.post("/api/whatsapp/webhook", json=_reaction_payload()).status_code in (404, 405)
 
     def test_token_route_persists_and_publishes(self, client, monkeypatch):
         import redis as redis_lib
@@ -552,10 +550,11 @@ class TestMessageAck:
 class TestMessageReaction:
     def test_reaction_is_acknowledged_not_persisted(self, client):
         tc, _mock_sb, db = client
+        _seed_connection(db)
         before = (
             db.schema("social_wiring").table("conversation_messages").select("*").execute()
         )
-        resp = tc.post("/api/whatsapp/webhook", json=_reaction_payload())
+        resp = tc.post(_TOKEN_URL, json=_reaction_payload())
         assert resp.status_code == 200
         after = (
             db.schema("social_wiring").table("conversation_messages").select("*").execute()

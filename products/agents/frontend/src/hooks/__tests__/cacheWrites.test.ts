@@ -100,30 +100,40 @@ describe("chat conversations", () => {
   });
 });
 
-describe("channel tokens", () => {
-  const key = ["agents", "channel", "tokens"];
+describe("platform grants", () => {
+  const key = ["agents", "plataforma", "grants"];
+  const row = (id: string, status = "ativo") => ({ id, status, revoked_at: null });
 
-  it("a minted token's row is cached WITHOUT the secret", async () => {
+  it("a created grant is prepended to the list from the server's answer", async () => {
     const { qc, w } = setup();
-    const { useMintChannelToken } = await import("@/hooks/useChannel");
-    qc.setQueryData(key, []);
-    mockPost.mockResolvedValue({ id: "t1", token: "pk_SECRET", prefix: "pk_abc", expires_at: "x", scopes: ["a"] });
-    const { result } = renderHook(() => useMintChannelToken("julia"), { wrapper: w });
-    result.current.mutate({ label: "site" });
-    await waitFor(() => expect(qc.getQueryData<unknown[]>(key)).toHaveLength(1));
-    expect(JSON.stringify(qc.getQueryData(key))).not.toContain("pk_SECRET");
+    const { useCreateGrant } = await import("@/hooks/useGrants");
+    qc.setQueryData(key, { items: [row("g1")], total: 1 });
+    mockPost.mockResolvedValue(row("g2"));
+    const { result } = renderHook(() => useCreateGrant(), { wrapper: w });
+    result.current.mutate({ agent_key: "julia", product: "social-wiring", org_id: "o1" });
+    await waitFor(() => expect(qc.getQueryData<{ items: { id: string }[] }>(key)?.items.map((g) => g.id)).toEqual(["g2", "g1"]));
   });
 
-  it("a revoked token is marked revoked on the click", async () => {
+  it("a rotated grant is replaced in place by the server's answer", async () => {
     const { qc, w } = setup();
-    const { useRevokeChannelToken } = await import("@/hooks/useChannel");
-    qc.setQueryData(key, [{ id: "t1", revoked_at: null }]);
-    mockDelete.mockReturnValue(new Promise(() => {}));
-    const { result } = renderHook(() => useRevokeChannelToken("julia"), { wrapper: w });
-    result.current.mutate("t1");
+    const { useRotateGrant } = await import("@/hooks/useGrants");
+    qc.setQueryData(key, { items: [row("g1")], total: 1 });
+    mockPost.mockResolvedValue({ ...row("g1"), last_delivered_at: "2026-11-04T00:00:00Z" });
+    const { result } = renderHook(() => useRotateGrant(), { wrapper: w });
+    result.current.mutate("g1");
     await waitFor(() =>
-      expect(qc.getQueryData<{ revoked_at: string | null }[]>(key)?.[0].revoked_at).not.toBeNull(),
+      expect(qc.getQueryData<{ items: { last_delivered_at?: string }[] }>(key)?.items[0].last_delivered_at).toBe("2026-11-04T00:00:00Z"),
     );
+  });
+
+  it("a revoked grant flips to revogado on the click", async () => {
+    const { qc, w } = setup();
+    const { useRevokeGrant } = await import("@/hooks/useGrants");
+    qc.setQueryData(key, { items: [row("g1")], total: 1 });
+    mockDelete.mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useRevokeGrant(), { wrapper: w });
+    result.current.mutate("g1");
+    await waitFor(() => expect(qc.getQueryData<{ items: { status: string }[] }>(key)?.items[0].status).toBe("revogado"));
   });
 });
 

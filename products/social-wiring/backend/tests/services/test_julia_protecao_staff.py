@@ -223,22 +223,15 @@ class TestStaff:
             staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="X", papel="outro", telefone="5511977770001")
         assert exc.value.code == "numero_bloqueado"
 
-    def test_operator_roles_are_mirrored_into_authorized_numbers_and_others_are_not(self, world):
-        staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="Op", papel="operador", telefone="5511977770003")
-        staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="Cor", papel="corretor", telefone="5511977770004")
-        auth = world.rows("whatsapp_connections")[0]["authorized_numbers"]
-        assert "+5511977770003" in auth and "+5511977770004" not in auth
-        assert OPERATOR not in auth  # the old hand-edited list is replaced by the mirror of the staff list (the mock row was not in it)
-
-    def test_the_last_operator_of_a_julia_line_cannot_be_removed(self, world):
+    def test_staff_writes_no_longer_touch_the_connections_authorized_numbers(self, world):
+        before = world.rows("whatsapp_connections")[0]["authorized_numbers"]
         op = staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="Op", papel="operador", telefone="5511977770003")
-        with pytest.raises(AppException) as exc:
-            staff.remover(world.sw, ORG_ID, op["id"])
-        assert exc.value.code == "ultimo_operador"
-        with pytest.raises(AppException):
-            staff.atualizar(world.sw, world.core, ORG_ID, op["id"], {"papel": "corretor"})
-        staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="Op2", papel="admin", telefone="5511977770005")
-        staff.remover(world.sw, ORG_ID, op["id"])  # a second operator exists now
+        staff.atualizar(world.sw, world.core, ORG_ID, op["id"], {"papel": "corretor"})
+        assert world.rows("whatsapp_connections")[0]["authorized_numbers"] == before  # the mirror is gone
+
+    def test_the_last_operator_can_be_removed_there_is_no_operator_role_to_protect_any_more(self, world):
+        op = staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="Op", papel="operador", telefone="5511977770003")
+        staff.remover(world.sw, ORG_ID, op["id"])
         assert staff.buscar_por_telefone(world.sw, ORG_ID, ["5511977770003"]) is None
 
     def test_removing_staff_makes_the_number_a_lead_again(self, world):
@@ -246,16 +239,6 @@ class TestStaff:
         c = staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="Cor", papel="corretor", telefone="5511977770004")
         staff.remover(world.sw, ORG_ID, c["id"])
         assert staff.buscar_por_telefone(world.sw, ORG_ID, ["5511977770004"]) is None
-
-    def test_the_connection_patch_goes_through_the_staff_list(self, world):
-        espelho = staff.sincronizar_de_lista(world.sw, world.core, ORG_ID, ADMIN_ID, ["+55 11 97777-0003", "5511977770003"])
-        assert espelho[CONNECTION_ID] == ["+5511977770003"]
-        assert [r["papel"] for r in staff.listar(world.sw, ORG_ID)] == ["operador"]
-        espelho = staff.sincronizar_de_lista(world.sw, world.core, ORG_ID, ADMIN_ID, ["5511977770003", "5511977770006"])
-        assert espelho[CONNECTION_ID] == ["+5511977770003", "+5511977770006"]
-        with pytest.raises(AppException) as exc:
-            staff.sincronizar_de_lista(world.sw, world.core, ORG_ID, ADMIN_ID, [])
-        assert exc.value.code == "ultimo_operador"
 
     def test_the_author_of_a_human_line_is_the_registered_name_and_role_else_the_core_role(self, world):
         staff.criar(world.sw, world.core, ORG_ID, ADMIN_ID, nome="Bia Souza", papel="corretor", telefone="5511977770009", user_id=CORRETOR_ID)
