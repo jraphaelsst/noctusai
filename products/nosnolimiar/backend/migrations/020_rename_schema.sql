@@ -19,6 +19,7 @@
 -- ORDER (prod): core 098 FIRST (products.db_schema = 'nosnolimiar' -- the acting-audit step needs it), then this file.
 --   migrate_product product=nosnolimiar schema=monica confirm=True   -- the ledger still lives in `monica`
 --   migrate_product product=nosnolimiar confirm=True                 -- no-op re-run: records 020 in the renamed ledger
+-- FRESH DB: `nosnolimiar` holding only the ledger (migrate_product's default schema) is adopted -- see step 0.
 -- IDEMPOTENT: re-runnable at any point (the rename is guarded; every other step is a no-op once converged).
 -- ROLLBACK: projects/rename-2026-11/rollback-020.sql (this same block with the names swapped).
 -- KB § PATTERNS/devops/product-lockfile-and-slug-drift.md · project-history/roadmaps/nosnolimiar-rename-2026-11.md
@@ -33,6 +34,29 @@ DECLARE
   v_next  text;
   v_left  text;
 BEGIN
+  -- 0. fresh-DB bootstrap: `migrate_product` WITHOUT schema=monica creates `nosnolimiar` + its ledger FIRST, then 001
+  --    creates `monica`. Adopt that shape: when `nosnolimiar` holds NOTHING but the ledger, fold the ledger into
+  --    `monica` (move it, or merge its rows into monica's own), drop the empty schema, and fall through to the rename.
+  --    Anything else in `nosnolimiar` is a real second schema: keep refusing below. Prod (no `nosnolimiar` yet) never
+  --    enters this branch.
+  IF to_regnamespace(v_old) IS NOT NULL AND to_regnamespace(v_new) IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM pg_class c
+                      WHERE c.relnamespace = to_regnamespace(v_new)
+                        AND c.relname <> 'schema_migrations' AND c.relkind <> 'i')
+     AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.pronamespace = to_regnamespace(v_new)) THEN
+    IF to_regclass(format('%I.schema_migrations', v_new)) IS NOT NULL THEN
+      IF to_regclass(format('%I.schema_migrations', v_old)) IS NULL THEN
+        EXECUTE format('ALTER TABLE %I.schema_migrations SET SCHEMA %I', v_new, v_old);
+      ELSE
+        EXECUTE format('INSERT INTO %I.schema_migrations (filename, applied_at, checksum) '
+                       'SELECT filename, applied_at, checksum FROM %I.schema_migrations ON CONFLICT (filename) DO NOTHING',
+                       v_old, v_new);
+        EXECUTE format('DROP TABLE %I.schema_migrations', v_new);
+      END IF;
+    END IF;
+    EXECUTE format('DROP SCHEMA %I', v_new);   -- RESTRICT: fails loudly if anything unexpected is left
+  END IF;
+
   -- 1. rename the schema (guarded) ---------------------------------------------------------------------------
   IF to_regnamespace(v_old) IS NOT NULL AND to_regnamespace(v_new) IS NULL THEN
     EXECUTE format('ALTER SCHEMA %I RENAME TO %I', v_old, v_new);

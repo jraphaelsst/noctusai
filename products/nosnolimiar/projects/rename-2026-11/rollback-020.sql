@@ -2,7 +2,7 @@
 -- traffic as `nosnolimiar` again. It is 020 with the two names swapped (same catalog-derived re-pointing of the
 -- functions / RLS policies / acting-audit triggers / exposed-schemas list, same convergence guard).
 -- ORDER: reverse core 098 FIRST (products.db_schema = 'monica' -- the acting-audit helper needs it), then this file,
--- then the schema ledger lives in `monica.schema_migrations` again (the 020 row is harmless there).
+-- afterwards the ledger lives in `monica.schema_migrations` again and step 7 deletes its 020 row, so a forward retry re-applies 020.
 -- Not a migration: never place it under backend/migrations/.
 DO $mig$
 DECLARE
@@ -93,6 +93,12 @@ BEGIN
   ) z;
   IF v_left IS NOT NULL THEN
     RAISE EXCEPTION 'rollback: literals of the old schema name survive in %: %', v_new, v_left;
+  END IF;
+
+  -- 7. forget 020 in the ledger we just renamed back, so a forward retry re-applies it (otherwise migrate_product
+  --    sees 020 as done and leaves the schema named `monica`). The ledger travelled with the schema rename.
+  IF to_regclass(format('%I.schema_migrations', v_new)) IS NOT NULL THEN
+    EXECUTE format('DELETE FROM %I.schema_migrations WHERE filename = %L', v_new, '020_rename_schema.sql');
   END IF;
 END
 $mig$;
