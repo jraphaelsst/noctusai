@@ -604,6 +604,8 @@ class TestAgentsStudioProbes:
         # uq_agents_conversations_channel_ref: dropped by migration 035, probe retired (successor uq_agents_threads_channel)
         "uq_agents_channel_inbound_msg",
         "agent_audit_log_identifica_agente",
+        # Julia-line E1 (migration 059): an org spec's tipo must be a typed format.
+        "agent_version_specs_tipo_check",
     }
     _MIGRATIONS = {
         ("012_agent_studio_definitions.sql",),
@@ -614,6 +616,7 @@ class TestAgentsStudioProbes:
         ("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
         ("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
         ("012_agent_studio_definitions.sql", "048_agent_lifecycle_delete.sql"),
+        ("012_agent_studio_definitions.sql", "031_julia_v2_conteudo.sql", "059_spec_tipos_tipados.sql"),
     }
 
     @staticmethod
