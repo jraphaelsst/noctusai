@@ -9,6 +9,22 @@
 - Audit corrections: seed `Dialog` is NOT Radix (no focus trap/return; Radix = CardHubDialog*); react-hook-form declared in 4 FEs but used once; dual-React vitest gap fixed 2026-05-29 (only in symlinked worktrees); React 18 not 19.
 - Wave-3 todo: INDEX.md:487 prototype row still says "never mock-data" (stale vs mockup-first); CLAUDE/frontend.md:20 asleep-products note; no FE domain docs for social-wiring/agents/monica.
 
+### W1-S5 devops-engineer + ops-steward — merged
+- Commits b1155a51a (canons + L1) · 66d18ac08 (fix-on-contact). `devops/sre-craft-canon.md` 505 lines · `devops/ops-craft-canon.md` 285 lines. 23 agent tests passed via hw_admission.
+- devops L1 body 62 → 65 (44 frontmatter lines = 38 owns_kb); ops-steward 33 → 51.
+- Fixed: 05-INFRASTRUCTURE (raw VPS IP removed, Caddy/LE → CF tunnel, title), prod-cache-container backup stub, ci-security-gates (claimed image scan that NO workflow runs; action versions).
+- 🔴 OWNER: Supabase org plan reads `free` ⇒ no managed daily backups; no dump job in repo ⇒ prod DB RPO undefined; Storage never backed up. Deploy secrets backups (257 tgz) only ON the VPS; n8n volumes unbacked. Log rotation EXISTS on host (daemon.json 10m×3, journald 1G/7d) but not in git.
+- Wave-3 todo: INDEX prod-cache-container row stale; chatbot-operational-readiness.md:34 false "managed daily backups" claim (backend-owned); raw IP left in production-deploy.md:163,255 (merge-flow text), INSTRUCTIONS/06-TECH-STACK.md:265, WORKFLOWS/README.md:9; noc-daily-ops skill needs cadence/alert-classification/backup-age steps; ledger-append tool idea; leftover Coolify volumes on VPS.
+
+### W1-S3 backend-engineer — merged
+- Commits b0a863ac3 · a72117811. `backend/backend-craft-canon.md` 628 lines + `backend/postgres-craft.md` 289 lines.
+- L1 body words 1,752 → 1,138 (target ~1,000; the 75-path owned-KB block is ~270 words). No pointer dropped; moved narrative grep-verified at destination.
+- Audit corrections: Idempotency-Key IS read (commerce refunds router.py:383 + RPC money_sql.py:213; EventInbox, jobs dedupe_key exist) → example B generalizes them; the "no timeout" clients do pass per-request timeouts — real issue = fresh httpx client per call.
+- Fixed: 01-CORE get_current_admin (MFA gate, platform authz), asleep banners 02/03/06/08, 04-DATABASE snapshot flag, 05 heading.
+- Wave-3/2 todo: jobs-organ.md candidate; agents + social-wiring backend domain docs; 06-THERAPY user_metadata roles claim (asleep).
+
 ## Follow-up code defects (added during the run)
+- S3: `_batched` duplicated twice in seed (N=2 triage); jobs retry_policy.py:39-67 no jitter vs rate_limit full jitter; migration runner needs `-- noc:no-transaction` directive for CONCURRENTLY (runner = noctusai-3d's zone?).
+- 🔴 P0 (S5): decide Supabase backups — Pro/PITR or free nightly `supabase db dump` off-host; off-host copy of deploy secrets; n8n volume backup. (Replaces §6 item 3 "no log rotation" → "rotation config not in git".)
 - NEW (S4): stored XSS path — FaqAccordion.tsx:43 JSON-LD writes admin-editable FAQ unescaped (server escapes `<` at website_html.py:137, client JSON.parse undoes it at settings.tsx:32). Admin-only write.
 - S4: seed Dialog lacks focus trap/initial focus/return; 3 date-format families in seed (N=3 → triage); core uses plain `lazy` on 38 routes; seed ErrorBoundary copy + raw error.message toast; 5,612 *ByTestId vs 1,367 *ByRole.
