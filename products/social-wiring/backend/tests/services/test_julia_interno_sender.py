@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from noctusai_lib.testing import MockSupabaseClient
 
 from app.services import julia_envio_gate, julia_relatorio_service as rel
 from app.services.julia_linha import LinhaDaOrg, SemLinha
@@ -51,6 +52,13 @@ def _conn():
     return SimpleNamespace(id=CONN_ID, org_id=ORG, base_url="https://waha.test", api_key="k", session_name="default")
 
 
+def _scoped_com_a_linha():
+    """The real gate (`julia_envio_gate.exigir`, flow INTERNO) only needs the line's row: a WAHA line speaks free text."""
+    sw = MockSupabaseClient().schema("social_wiring")
+    sw.table("whatsapp_connections").insert({"id": str(CONN_ID), "org_id": str(ORG), "transporte": "waha"}).execute()
+    return sw
+
+
 def _liberacao():
     return julia_envio_gate.Liberacao(
         org_id=str(ORG), connection_id=str(CONN_ID), fluxo=julia_envio_gate.Fluxo.INTERNO, selo=julia_envio_gate._SELO)
@@ -92,7 +100,7 @@ async def test_aviso_interno_without_a_line_returns_the_named_reason():
 
 
 @pytest.mark.asyncio
-async def test_aviso_interno_sends_on_the_resolved_line(monkeypatch):
+async def test_aviso_interno_sends_on_the_resolved_line():
     conn = _conn()
     waha, store = _Waha(), _Store()
 
@@ -100,7 +108,6 @@ async def test_aviso_interno_sends_on_the_resolved_line(monkeypatch):
         return SimpleNamespace(chat_id=f"{numero.lstrip('+')}@c.us")
 
     waha.resolve_chat_id = resolve_chat_id
-    monkeypatch.setattr(rel.julia_envio_gate, "exigir", lambda *a, **k: _liberacao())
     seen = {}
 
     def factory(**kw):
@@ -108,7 +115,7 @@ async def test_aviso_interno_sends_on_the_resolved_line(monkeypatch):
         return waha
 
     servicos = SimpleNamespace(
-        linha_resolver=lambda org: LinhaDaOrg(org_id=ORG, connection=conn), scoped=object(), waha_factory=factory,
+        linha_resolver=lambda org: LinhaDaOrg(org_id=ORG, connection=conn), scoped=_scoped_com_a_linha(), waha_factory=factory,
         redis=_Redis(), cfg=SimpleNamespace(whatsapp_paragraph_delay_seconds=0), message_store_factory=lambda org: store)
     assert await rel.enviar_aviso_interno(servicos, ORG, "+5511999990000", "Aviso") is None
     assert seen["base_url"] == "https://waha.test" and seen["api_key"] == "k"  # credentials from the line, not the env

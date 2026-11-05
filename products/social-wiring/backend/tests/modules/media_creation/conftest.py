@@ -62,7 +62,7 @@ def _fonte_business_discovery(monkeypatch):
     from app.config import settings
 
     monkeypatch.delenv("BIBLIOTECA_FONTE", raising=False)
-    monkeypatch.setattr(settings, "biblioteca_fonte", "business_discovery")
+    monkeypatch.setattr(settings, "biblioteca_fonte", "business_discovery")  # self-patch-ok: pins a config VALUE (the default moved to apify), no logic is neutered
 
 
 @pytest.fixture
