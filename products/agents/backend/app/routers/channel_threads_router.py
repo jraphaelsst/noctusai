@@ -469,14 +469,14 @@ def _resolvidos(org_id: UUID, ids: list[UUID], usuarios: Any, *, admin: bool) ->
 
 
 def _controle_out(
-    org_id: UUID, agent: Any, controles: Any, threads: Any, *, com_numeros: bool = True,
+    org_id: UUID, agent: Any, controles: Any, threads: Any, *,
     usuarios: Any = None, admin: bool = False,
 ) -> ControleOut:
     controle = controles.get(org_id, agent.id)
     drenagem = progresso_dreno(
         threads.list_abertos(org_id, agent.id), controle.dreno_inatividade_dias, utcnow()
     )
-    ids = list(controle.avaliacao_usuarios) if com_numeros else []
+    ids = list(controle.avaliacao_usuarios)
     resolvidos, erro = _resolvidos(org_id, ids, usuarios, admin=admin) if usuarios is not None else ([], False)
     return ControleOut(
         agent_key=agent.key,
@@ -560,10 +560,12 @@ def channel_agent_controle(
     controles=Depends(get_agent_controle_store_dep),
     threads=Depends(get_thread_store_dep),
 ) -> ControleOut:
-    """Read-only for SW: the mode, whether new leads are accepted and the drain progress. SW never
-    decides the mode and never gates on a cached copy of this — the turn endpoint decides."""
+    """Read-only for SW: the mode, whether new leads are accepted and the drain progress, plus the evaluation mode switch and
+    its list of noctus USER ids (never phones or names: the channel read passes no user resolver). SW uses the list ONLY to let
+    a listed org member through its own staff (`equipe`) filter while testing; SW never decides the mode and never gates on a
+    cached copy of this -- the turn endpoint decides (outsiders get `restrito_avaliacao` there)."""
     agent = _agente_do_token(studio_store, ctx, agent_key)
-    return _controle_out(ctx.org_id, agent, controles, threads, com_numeros=False)
+    return _controle_out(ctx.org_id, agent, controles, threads)
 
 
 @router.get("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)

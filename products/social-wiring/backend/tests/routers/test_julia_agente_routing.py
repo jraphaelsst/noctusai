@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
 from uuid import UUID
@@ -511,37 +512,46 @@ class TestSignedWebhooksOnly:
 
 # ── 11.1 eligibility through the webhook ────────────────────────────────────
 class TestChatsThatStartAfterJulia:
-    def test_a_chat_in_the_snapshot_never_reaches_julia_it_is_only_stored(self, rt):
+    """Owner 2026-11-05: Julia answers anyone who writes AFTER go-live (even a contact with an older chat) and never answers a message
+    stamped before go-live. The snapshot is gone: what the dead table holds changes nothing."""
+
+    def test_a_chat_in_the_old_snapshot_table_is_still_answered(self, rt):
         _julia_scene(rt)
-        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
+        rt.w.sw.table("julia_agente_chats_preexistentes").insert(
+            {"org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "capturado_em": "2026-10-01T00:00:00+00:00"}).execute()
+        rt.post(_msg(), signed=True)
+        assert len(rt.lead_memory()) == 1
+
+    def test_a_brand_new_chat_reaches_julia(self, rt):
+        _julia_scene(rt)
+        rt.post(_msg(), signed=True)
+        assert len(rt.lead_memory()) == 1
+
+    def test_a_chat_row_older_than_go_live_is_answered_when_it_writes_after(self, rt):
+        _julia_scene(rt)
+        rt.w.seed_chat(created_at="2026-09-01T00:00:00+00:00")
+        rt.post(_msg(), signed=True)
+        assert len(rt.lead_memory()) == 1
+
+    def test_a_message_stamped_before_go_live_is_only_stored_never_answered(self, rt):
+        _julia_scene(rt)
+        rt.w.sw.set_table_data("whatsapp_connections", [])
+        rt.w._connections = []
+        rt.w.seed_connection(agente_leads_ativado_em=(datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat())
         rt.post(_msg(), signed=True)
         assert rt.lead_memory() == [] and rt.w.agents.turns == []
         assert rt.w.waha.sent_messages == [], "no denial / no reply of any kind"
         assert len(rt.w.messages()) == 1, "still stored"
 
-    def test_a_brand_new_chat_reaches_julia(self, rt):
+    def test_a_message_with_no_readable_time_is_not_answered(self, rt):
         _julia_scene(rt)
-        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=["5511900009999@c.us"])
-        rt.post(_msg(), signed=True)
-        assert len(rt.lead_memory()) == 1
-
-    def test_a_pre_existing_LID_alias_of_a_snapshotted_phone_chat_gets_no_turn(self, rt):
-        _julia_scene(rt)
-        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
-        lid = "424242@lid"
-        rt.w.waha.fake_lid_phones[lid] = LEAD_CHAT
-        rt.post(_msg(chat=lid, mid="lid-9"), signed=True)
-        assert rt.lead_memory(lid) == []
-
-    def test_a_chat_row_older_than_the_switch_is_excluded_even_if_the_snapshot_missed_it(self, rt):
-        _julia_scene(rt)
-        rt.w.seed_chat(created_at="2026-09-01T00:00:00+00:00")
-        rt.post(_msg(), signed=True)
-        assert rt.lead_memory() == []
+        body = _msg()
+        body["payload"]["timestamp"] = "ontem"
+        rt.post(body, signed=True)
+        assert rt.lead_memory() == [] and rt.w.agents.turns == []
 
     def test_a_chat_Julia_already_owns_stays_hers(self, rt):
         _julia_scene(rt)
-        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
         rt.w.seed_chat(created_at="2026-09-01T00:00:00+00:00", agente_conversation_id="11111111-1111-4111-8111-111111111111")
         rt.post(_msg(), signed=True)
         assert len(rt.lead_memory()) == 1
@@ -554,12 +564,6 @@ class TestChatsThatStartAfterJulia:
         rt.w.seed_connection(agente_leads_ativado_em="not-a-timestamp")
         rt.post(_msg(), signed=True)
         assert rt.lead_memory() == []
-
-    def test_the_snapshot_only_excludes_ids_of_ITS_connection(self, rt):
-        _julia_scene(rt)
-        julia.gravar_snapshot(rt.w.sw, org_id=ORG_ID, connection_id="00000000-0000-4000-8000-0000000000ff", chat_ids=[LEAD_CHAT])
-        rt.post(_msg(), signed=True)
-        assert len(rt.lead_memory()) == 1
 
 
 # ── pause + deletion bypass ─────────────────────────────────────────────────

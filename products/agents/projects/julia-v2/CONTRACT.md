@@ -165,7 +165,7 @@ Classes:
 | `julia_interacoes` (267) | (2) | Episodes for SW reporting. Gains `primeira_resposta_agente_at` / `primeira_resposta_humana_at` (§7). Narrative `resumo` still from agents. `slots`/`desfecho` become a mirror. |
 | `julia_acoes_aplicadas`, `julia_eventos` (267) | (2) | Stay (idempotency ledger, event bus). |
 | `julia_aviso_privacidade` (255) | (2) | Stays. |
-| `julia_agente_chats_preexistentes` (258) | (2) | Stays: transport eligibility ("pre-existing chats are not leads"). Drain semantics live in agents. |
+| `julia_agente_chats_preexistentes` (258) | (2) | DEAD since 2026-11-05 (owner: Julia answers anyone who writes after go-live; no snapshot is read or written). Kept only for the rolling deploy: `NOC-REMEDIATE[drop-julia-snapshot]`. Testing = agents evaluation mode only; SW has no allowlist. |
 | `julia_conhecimento_secoes` (268) | (3) Q1 | → agents if Q1 = yes (backfill, then drop). |
 | `julia_perguntas_catalogo` / `_org` (269) | (1) | Retired. The catalogue + org picks seed the standard (§3.7). Dropped one release after v2. |
 | `julia_envio_*` (270) | (2) | Stays. Slot-criteria `grupos` retired per Q6. |
@@ -1173,8 +1173,7 @@ from noc." Per org agent instance, agents-only (SW needs only the new status).
   (`mensagem` and `reengajamento`). **Fail closed:** if the users' phones cannot be resolved (table unreadable, user of
   another org, user without phone, no resolver) the allow-list is empty ⇒ everybody is refused and the failure is logged —
   never "reply to everyone". Flag itself unreadable ⇒ 503 `controle_indisponivel`. Allowed phones get the normal table.
-- API: `GET /api/channels/agents/{key}/status` adds `modo_avaliacao: bool` (nothing else; the SW token controle read returns
-  `avaliacao_usuarios: []`). The org controle `GET|PUT /api/studio/agents/{key}/controle` returns and accepts
+- API: `GET /api/channels/agents/{key}/status` adds `modo_avaliacao: bool` (nothing else). The SW token controle read `GET /api/channels/agents/{key}/controle` (changed 2026-11-05) returns `modo_avaliacao` and `avaliacao_usuarios` (noctus USER ids only, never phones/names); SW uses them solely to let a listed org member through its `equipe` filter and to restrict first contact. Testing = this evaluation mode only; SW has no allowlist. The org controle `GET|PUT /api/studio/agents/{key}/controle` returns and accepts
   `modo_avaliacao: bool|null`, `avaliacao_usuarios: [uuid]|null` (max 20; de-duplicated); org admin/owner writes; a PUT with
   the SAME `modo` and only these fields applies no mode transition and none of its 409 preconditions. Validated before
   anything is written: malformed/over 20 ⇒ 422 `avaliacao_usuarios_invalido`; a user not of the org ⇒ 422

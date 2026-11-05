@@ -194,19 +194,19 @@ describe("Line list — routing switch and handoff target", () => {
     expect(screen.queryByTestId("motivo-desabilitado")).toBeNull();
   });
 
-  it("explains who gets whom (new chats / pre-existing; no One Chat)", async () => {
+  it("explains who gets whom (anyone writing after go-live, testing = agents evaluation mode; no One Chat)", async () => {
     setup();
     const t = (await screen.findByTestId("julia-roteamento-card")).textContent!;
     expect(t).not.toContain("One Chat");
-    expect(t).toContain("NOVAS");
-    expect(t).toContain("já existiam");
+    expect(t).toContain("responde a qualquer pessoa que escrever");
+    expect(t).toContain("modo de avaliação");
+    expect(t).not.toContain("nunca são respondidas");
   });
 
   it.each([
     ["webhook_hmac_required", 409, "HMAC"],
     ["aviso_incompleto", 409, "aviso de privacidade ainda está incompleto"],
     ["url_publica_indisponivel", 409, "link público"],
-    ["snapshot_falhou", 502, "Não foi possível ler as conversas existentes deste número; a Julia continua desligada."],
     ["destinatario_invalido", 422, "owner ou admin"],
   ])("switch error %s -> pt-BR message", async (code, status, texto) => {
     api.put.mockRejectedValue(serverError(code, status));

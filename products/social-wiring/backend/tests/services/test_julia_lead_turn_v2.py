@@ -238,6 +238,19 @@ class TestAnexarSemResponder:
         assert world.contato() is None  # the contato SW created for this batch is erased (Q5, minimisation)
         assert world.rows("julia_interacoes") == []
 
+    @pytest.mark.parametrize("thread", [None, THREAD_ID])
+    async def test_testing_mode_a_non_listed_contact_gets_total_silence_no_fallback_to_the_owner(self, world, thread):
+        """Owner 2026-11-05: testing mode ON + a non-listed inbound => ZERO outbound messages to anyone (the contact AND the owner:
+        no reroute, no drafted answer, no mirror, no holding message) and no handoff notice. Recorded internally only."""
+        world.agents = FakeAgentsClient([_nao_atendeu("restrito_avaliacao", thread=thread)])
+        antes = len(world.notifications())
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["oi, vi o anúncio"]))
+        assert world.waha.sent_messages == [], "nothing goes to any number, the owner's included"
+        assert [m for m in world.messages(LEAD_CHAT) if m.get("direction") == "outbound"] == []
+        assert len(world.notifications()) == antes, "no handoff / evaluator notice"
+        if thread:
+            assert [e["payload"] for e in world.rows("julia_eventos")][-1:] == [{"status": "restrito_avaliacao"}]
+
     async def test_a_known_conversation_is_never_erased_by_a_refusal(self, world):
         world.agents = FakeAgentsClient([_ok("oi!"), _nao_atendeu("agente_desligado")])
         k = buffer_lead(world, LEAD_CHAT, ["oi"], ids=["m1"])

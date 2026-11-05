@@ -498,6 +498,10 @@ class ControleInfo:
     dreno_inatividade_dias: int = 7
     threads_abertas: int = 0
     drenagem: dict[str, Any] = field(default_factory=dict)
+    #: The testing phase (agents' evaluation mode, the ONLY testing switch): while ON, agents answers only the listed users.
+    #: `avaliacao_usuarios` are noctus USER ids of the org (never phones). Absent from an older agents => mode OFF, no ids.
+    modo_avaliacao: bool = False
+    avaliacao_usuarios: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1447,6 +1451,8 @@ def parse_controle(body: Any) -> ControleInfo:
         dreno_inatividade_dias=dias if isinstance(dias, int) and not isinstance(dias, bool) else 7,
         threads_abertas=abertas if isinstance(abertas, int) and not isinstance(abertas, bool) else 0,
         drenagem=dict(body["drenagem"]) if isinstance(body.get("drenagem"), dict) else {},
+        modo_avaliacao=body.get("modo_avaliacao") is True,
+        avaliacao_usuarios=tuple(str(u) for u in body["avaliacao_usuarios"]) if isinstance(body.get("avaliacao_usuarios"), list) else (),
     )
 
 

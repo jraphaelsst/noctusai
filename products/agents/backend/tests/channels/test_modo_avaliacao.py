@@ -69,7 +69,7 @@ def test_an_outsider_is_refused_in_every_mode_and_trigger_without_creating_anyth
     d = _d(modo, thread, PART if thread else None, gatilho, telefone_e164=FORA)
     assert d.status == STATUS_RESTRITO_AVALIACAO
     assert (d.executar_llm, d.criar_thread, d.transicao, d.http_status) == (False, False, None, 200)
-    assert d.persistir_inbound is (thread is not None and gatilho == "mensagem")
+    assert d.persistir_inbound is False  # owner 2026-11-05: a blocked message is never stored, not even on an existing thread
 
 
 @pytest.mark.parametrize("telefone", [None, "", "sem numero"])
@@ -218,16 +218,22 @@ def test_the_lookup_runs_once_per_turn_and_never_when_the_mode_is_off(chan):
     assert chan.usuarios.leituras == 1
 
 
-def test_an_existing_thread_of_an_outsider_records_the_message_and_stays_silent(chan):
+def test_an_existing_thread_of_an_outsider_stores_nothing_and_it_never_surfaces_when_testing_ends(chan):
     chan.seed_agent()
     assert chan.turn(turn_body("Oi", ids=["a1"])).json()["status"] == "respondido"
     _avaliacao(chan, _dono(chan, "+5511111110000"))
     calls = len(chan.provider.calls)
-    resp = chan.turn(turn_body("Voltei", ids=["a2"]))
-    assert resp.json()["status"] == "restrito_avaliacao" and resp.json()["thread_id"] is not None
-    assert len(chan.provider.calls) == calls
-    rows = chan.rt.stores.messages.list(chan.org_id, UUID(resp.json()["thread_id"]), limite=50)
-    assert any(m.role == "user" and "Voltei" in m.texto for m in rows)
+    resp = chan.turn(turn_body("Voltei com segredo", ids=["a2"]))
+    assert resp.json()["status"] == "restrito_avaliacao"
+    assert len(chan.provider.calls) == calls  # no LLM, no tool, no memory work
+    tid = UUID(resp.json()["thread_id"])
+    rows = chan.rt.stores.messages.list(chan.org_id, tid, limite=50)
+    assert not any("segredo" in (m.texto or "") for m in rows)
+    chan.controles.set_avaliacao(chan.org_id, chan.agent.id, modo_avaliacao=False)   # testing ends
+    assert chan.turn(turn_body("Quero visitar", ids=["a3"])).json()["status"] == "respondido"
+    assert not any("segredo" in (m.texto or "") for m in chan.rt.stores.messages.list(chan.org_id, tid, limite=50))
+    assert not any("segredo" in str(c) for c in chan.provider.calls), "never in the model context"
+
 
 
 def test_the_mode_off_again_opens_the_agent(chan):
@@ -237,7 +243,19 @@ def test_the_mode_off_again_opens_the_agent(chan):
     assert chan.turn(turn_body("Oi")).json()["status"] == "respondido"
 
 
-def test_status_reports_the_flag_never_the_users_or_numbers(chan):
+def test_the_mode_is_a_live_state_stranger_answered_when_off_refused_again_when_flipped_on(chan):
+    """Owner 2026-11-05: testing mode is read on every turn, never latched."""
+    chan.seed_agent()
+    dono = _dono(chan, "+5511111110000")
+    _avaliacao(chan, dono)
+    assert chan.turn(turn_body("Oi")).json()["status"] == "restrito_avaliacao"
+    chan.controles.set_avaliacao(chan.org_id, chan.agent.id, modo_avaliacao=False)
+    assert chan.turn(turn_body("Tem apartamento?")).json()["status"] == "respondido"
+    chan.controles.set_avaliacao(chan.org_id, chan.agent.id, modo_avaliacao=True)
+    assert chan.turn(turn_body("E de dois quartos?")).json()["status"] == "restrito_avaliacao"
+
+
+def test_status_reports_the_flag_and_the_controle_read_the_user_ids_never_numbers(chan):
     from app.dependencies import SCOPE_CHANNEL_STATUS
 
     chan.seed_agent()
@@ -246,7 +264,10 @@ def test_status_reports_the_flag_never_the_users_or_numbers(chan):
         body = chan.request("GET", "/api/channels/agents/julia/status").json()
         ctl = chan.request("GET", "/api/channels/agents/julia/controle").json()
     assert body["modo_avaliacao"] is True and not [k for k in body if k.startswith("avaliacao")]
-    assert ctl["modo_avaliacao"] is True and ctl["avaliacao_usuarios"] == []
+    # the controle read hands SW the evaluation USER IDS (so SW can let a listed member through its staff filter) -- no phone, no name
+    assert ctl["modo_avaliacao"] is True and ctl["avaliacao_usuarios"] == [str(u) for u in chan.controles.get(chan.org_id, chan.agent.id).avaliacao_usuarios]
+    assert ctl["avaliacao_usuarios"] and ctl["avaliacao_resolvidos"] == []
+    assert "5511" not in str(ctl)
 
 
 # ── the Studio controle ─────────────────────────────────────────────────────

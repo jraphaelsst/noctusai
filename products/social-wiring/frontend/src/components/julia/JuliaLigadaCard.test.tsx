@@ -80,6 +80,6 @@ describe("JuliaLigadaCard bloqueio de ligar", () => {
 
   it("links to Proteção under the switch", () => {
     renderCard({ alimenta: false });
-    expect(screen.getByRole("link", { name: "Escolher a quem ela responde (lista de permitidos e bloqueados)" }).getAttribute("href")).toBe("/julia/protecao");
+    expect(screen.getByRole("link", { name: "Bloquear números (a fase de testes é configurada na página da Julia no agents)" }).getAttribute("href")).toBe("/julia/protecao");
   });
 });
