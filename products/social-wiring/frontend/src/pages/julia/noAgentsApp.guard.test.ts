@@ -27,6 +27,8 @@ describe("Julia UI never points users at the agents app", () => {
   const hooks = readdirSync(HOOKS_DIR)
     .filter((n) => /^useJulia.*\.tsx?$/.test(n))
     .map((n) => join(HOOKS_DIR, n));
+  // Owner 2026-11-05: the switch-on refusal (Julia not published / off in agents) is the ONE place that may link to agents.
+  const LINK_ALLOWED = /(JuliaLigadaCard\.tsx|useJuliaRoteamento\.ts|Agente\.tsx)$/;
   const files = [...ROOTS.flatMap(walk), ...hooks].filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f));
   it("scans the Julia hooks too", () => expect(files.some((f) => f.endsWith("useJuliaAgente.ts"))).toBe(true));
 
@@ -34,7 +36,9 @@ describe("Julia UI never points users at the agents app", () => {
 
   for (const [label, re] of FORBIDDEN) {
     it(`has no ${label}`, () => {
-      const hits = files.filter((f) => re.test(readFileSync(f, "utf8")));
+      const hits = files.filter(
+        (f) => re.test(readFileSync(f, "utf8")) && !(label.startsWith("a link") && LINK_ALLOWED.test(f)),
+      );
       expect(hits).toEqual([]);
     });
   }

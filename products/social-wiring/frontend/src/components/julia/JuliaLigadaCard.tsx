@@ -5,12 +5,15 @@
  * org mode is not `ligado`.
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { mensagemErroJulia, type JuliaStatusAgente } from "@/hooks/useJuliaAgente";
+import {
+  codigoErroJulia, MENSAGEM_BLOQUEIO_LIGAR, mensagemErroJulia, type JuliaStatusAgente, type MotivoBloqueioLigar,
+} from "@/hooks/useJuliaAgente";
 import { useAtualizarLinha, type LinhaRoteamento } from "@/hooks/useJuliaRoteamento";
 
 export function JuliaLigadaBanner({ status }: { status: JuliaStatusAgente | null | undefined }) {
@@ -34,10 +37,18 @@ export function JuliaLigadaBanner({ status }: { status: JuliaStatusAgente | null
   );
 }
 
-function Linha({ linha, isAdmin }: { linha: LinhaRoteamento; isAdmin: boolean }) {
+/** Why the switch cannot go ON; null = it can (an already-ON line can always be turned OFF, so this is never asked then). */
+export interface BloqueioLigar {
+  motivo: MotivoBloqueioLigar | null;
+  agentsUrl?: string | null;
+}
+
+function Linha({ linha, isAdmin, bloqueio }: { linha: LinhaRoteamento; isAdmin: boolean; bloqueio: BloqueioLigar | null }) {
   const atualizar = useAtualizarLinha();
   const [erro, setErro] = useState<string | null>(null);
   const id = `julia-ligada-${linha.connection_id}`;
+  const bloqueada = !linha.alimenta && bloqueio !== null;
+  const motivoMsg = bloqueio ? MENSAGEM_BLOQUEIO_LIGAR[bloqueio.motivo ?? "agents_indisponivel"] : null;
 
   function alternar(v: boolean) {
     setErro(null);
@@ -45,7 +56,14 @@ function Linha({ linha, isAdmin }: { linha: LinhaRoteamento; isAdmin: boolean })
       { connectionId: linha.connection_id, body: { alimenta: v } },
       {
         onSuccess: () => toast.success(v ? "Julia ligada" : "Julia desligada"),
-        onError: (e) => setErro(mensagemErroJulia(e, "Não foi possível salvar a alteração.")),
+        onError: (e) => {
+          const code = codigoErroJulia(e);
+          setErro(
+            code && code in MENSAGEM_BLOQUEIO_LIGAR
+              ? MENSAGEM_BLOQUEIO_LIGAR[code as MotivoBloqueioLigar]
+              : mensagemErroJulia(e, "Não foi possível salvar a alteração."),
+          );
+        },
       },
     );
   }
@@ -64,11 +82,25 @@ function Linha({ linha, isAdmin }: { linha: LinhaRoteamento; isAdmin: boolean })
           <Switch
             id={id}
             checked={linha.alimenta}
-            disabled={!isAdmin || atualizar.isPending}
+            disabled={!isAdmin || atualizar.isPending || bloqueada}
+            aria-describedby={bloqueada ? `${id}-motivo` : undefined}
             onCheckedChange={alternar}
           />
         </div>
       </div>
+      {bloqueada && (
+        <p id={`${id}-motivo`} className="text-sm text-muted-foreground" data-testid="linha-bloqueio">
+          {motivoMsg}
+          {bloqueio?.agentsUrl && (
+            <>
+              {" "}
+              <a href={bloqueio.agentsUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline" data-testid="linha-bloqueio-link">
+                Abrir o app Agentes
+              </a>
+            </>
+          )}
+        </p>
+      )}
       {erro && (
         <p role="alert" className="text-sm text-destructive" data-testid="linha-erro">
           {erro}
@@ -82,11 +114,19 @@ export function JuliaLigadaCard({
   linhas,
   status,
   isAdmin,
+  podeLigar,
+  motivoBloqueio,
+  agentsUrl,
 }: {
   linhas: LinhaRoteamento[];
   status: JuliaStatusAgente | null | undefined;
   isAdmin: boolean;
+  /** `pode_ligar` of GET /api/julia/agente. Only an explicit `false` blocks (unknown = the server decides and answers 409/503). */
+  podeLigar?: boolean;
+  motivoBloqueio?: MotivoBloqueioLigar | null;
+  agentsUrl?: string | null;
 }) {
+  const bloqueio: BloqueioLigar | null = podeLigar === false ? { motivo: motivoBloqueio ?? "agents_indisponivel", agentsUrl } : null;
   return (
     <Card data-testid="julia-ligada-card">
       <CardHeader>
@@ -104,10 +144,15 @@ export function JuliaLigadaCard({
         ) : (
           <ul className="space-y-3">
             {linhas.map((l) => (
-              <Linha key={l.connection_id} linha={l} isAdmin={isAdmin} />
+              <Linha key={l.connection_id} linha={l} isAdmin={isAdmin} bloqueio={bloqueio} />
             ))}
           </ul>
         )}
+        <p className="text-sm" data-testid="ligada-link-protecao">
+          <Link to="/julia/protecao" className="font-medium text-primary underline">
+            Escolher a quem ela responde (lista de permitidos e bloqueados)
+          </Link>
+        </p>
         {!isAdmin && (
           <p className="text-xs text-muted-foreground">Somente owner ou admin da organização pode alterar.</p>
         )}

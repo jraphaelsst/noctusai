@@ -33,6 +33,7 @@ const B = (over: Record<string, unknown> = {}) => ({
 
 function setup({ config = CFG() as unknown | Error, bloqueios = [B()] as unknown[] | Error } = {}) {
   api.get.mockImplementation((u: string) => {
+    if (u.includes("/permitidos")) return Promise.resolve({ data: { ativo: false, items: [] } });
     if (u.includes("/bloqueios"))
       return bloqueios instanceof Error ? Promise.reject(bloqueios) : Promise.resolve({ data: { items: bloqueios } });
     return config instanceof Error ? Promise.reject(config) : Promise.resolve({ data: config });
