@@ -844,6 +844,88 @@ def status(sample_s: float = 3.0) -> dict[str, Any]:
 
 # ── shell entry: run any heavy command through the gate ──────────────────
 
+# ── streamed child: log file + heartbeat + one-line verdict ──────────────
+# A wrapped run is auto-backgrounded by the harness at ~180s and, piped through
+# `tail`, shows nothing until exit — an agent cannot tell a long suite from a
+# hung one (2026-11-05). The child's combined output is therefore teed to a log
+# file whose path is printed FIRST, a heartbeat goes to stderr, and the last
+# line is a one-line verdict. The exit code is the child's, unchanged.
+
+HEARTBEAT_S = 30.0
+
+
+def _runs_dir() -> Path:
+    return Path(os.environ.get("NOCTUS_HW_RUNS_DIR") or Path.home() / ".noctus" / "hw-runs")
+
+
+def format_heartbeat(elapsed_s: float, last_line: str, log: str) -> str:
+    last = (last_line or "<no output yet>").strip()
+    if len(last) > 160:
+        last = last[:157] + "..."
+    return f"HW-RUN ... elapsed={int(elapsed_s)}s last={last!r} log={log}"
+
+
+def format_verdict(rc: int, elapsed_s: float, log: str) -> str:
+    return f"HW-RUN DONE rc={rc} elapsed={int(elapsed_s)}s log={log}"
+
+
+def stream_process(proc: Any, log_path: Path, *, out: Any = None, err: Any = None,
+                   clock: Callable[[], float] = time.monotonic,
+                   heartbeat_s: float = HEARTBEAT_S, poll_s: float = 1.0) -> int:
+    """Tee `proc.stdout` lines to `log_path` + `out`; heartbeat to `err`; return rc.
+
+    `proc` needs `.stdout` (line iterable) and `.wait()`. Clock and process are
+    injectable so formatting and cadence are testable without sleeping.
+    """
+    out = out if out is not None else sys.stdout
+    err = err if err is not None else sys.stderr
+    log = str(log_path)
+    state = {"last": ""}
+    t0 = clock()
+
+    with open(log_path, "w", encoding="utf-8", errors="replace") as fh:
+        def _pump() -> None:
+            for line in proc.stdout:
+                fh.write(line)
+                fh.flush()
+                text = line.rstrip("\n")
+                if text.strip():
+                    state["last"] = text
+                with contextlib.suppress(Exception):
+                    out.write(line)
+                    out.flush()
+
+        reader = threading.Thread(target=_pump, daemon=True)
+        reader.start()
+        next_beat = t0 + heartbeat_s
+        while reader.is_alive():
+            reader.join(timeout=poll_s)
+            now = clock()
+            if reader.is_alive() and now >= next_beat:
+                print(format_heartbeat(now - t0, state["last"], log), file=err, flush=True)
+                next_beat = now + heartbeat_s
+        rc = proc.wait()
+    print(format_verdict(rc, clock() - t0, log), file=err, flush=True)
+    return rc
+
+
+def run_streamed(job: str, argv: list[str]) -> int:
+    """Run `argv`, streaming per `stream_process`; the log path is printed first."""
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", job) or "job"
+    d = _runs_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    log_path = d / f"{safe}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.log"
+    print(f"HW-RUN START job={job} log={log_path}", file=sys.stderr, flush=True)
+    env = {**os.environ, "PYTHONUNBUFFERED": os.environ.get("PYTHONUNBUFFERED", "1")}
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, bufsize=1, env=env, errors="replace")
+    except OSError as exc:
+        print(format_verdict(127, 0, str(log_path)) + f" error={exc}", file=sys.stderr)
+        return 127
+    return stream_process(proc, log_path)
+
+
 def run_command(job: str, argv: list[str], wait_s: float | None = None) -> int:
     """Exit 75 (EX_TEMPFAIL) when not admitted — never runs the command then.
     A known fan-out command (`npm test`, `npx playwright test`) gets the budget's
@@ -855,7 +937,7 @@ def run_command(job: str, argv: list[str], wait_s: float | None = None) -> int:
         if not adm.admitted:
             print(json.dumps({"hw_admission": adm.as_dict()}), file=sys.stderr)
             return 75
-        code = subprocess.call(capped)
+        code = run_streamed(job, capped)
         adm.outcome["exit_code"] = code
         return code
 

@@ -633,3 +633,57 @@ class TestCpuAndSlotGatesOnly:
                            probe_fn=lambda s: {**GOOD, "cpu_idle_pct": 0}) as adm:
             assert adm.admitted and adm.verdict == "suspended"
         assert not list((env / "queue").glob("*.json")) if (env / "queue").exists() else True
+
+
+# --- streamed run: log + heartbeat + verdict (2026-11-05) ---
+
+class _FakeProc:
+    def __init__(self, lines, rc=0, gate=None):
+        self._lines, self._rc, self._gate = lines, rc, gate
+        self.stdout = self._gen()
+
+    def _gen(self):
+        for ln in self._lines:
+            if self._gate:
+                self._gate()
+            yield ln
+
+    def wait(self):
+        return self._rc
+
+
+def test_heartbeat_and_verdict_formatting():
+    from tools.noctus.dev import hw_admission as hw
+    assert hw.format_verdict(3, 61.9, "/x.log") == "HW-RUN DONE rc=3 elapsed=61s log=/x.log"
+    hb = hw.format_heartbeat(31.2, "", "/x.log")
+    assert "elapsed=31s" in hb and "<no output yet>" in hb and "log=/x.log" in hb
+    assert len(hw.format_heartbeat(1, "y" * 500, "/x.log")) < 300
+
+
+def test_stream_process_logs_tees_heartbeats_and_returns_rc(tmp_path):
+    import io
+    import time as _t
+    from tools.noctus.dev import hw_admission as hw
+    ticks = iter(range(0, 10_000, 20))      # injected clock: +20s per reading
+    proc = _FakeProc(["a\n", "b\n", "last line\n"], rc=7, gate=lambda: _t.sleep(0.05))
+    out, err = io.StringIO(), io.StringIO()
+    log = tmp_path / "j.log"
+    rc = hw.stream_process(proc, log, out=out, err=err, clock=lambda: next(ticks),
+                           heartbeat_s=30, poll_s=0.01)
+    assert rc == 7
+    assert log.read_text() == "a\nb\nlast line\n" and out.getvalue() == "a\nb\nlast line\n"
+    lines = err.getvalue().splitlines()
+    assert any(l.startswith("HW-RUN ...") and "elapsed=" in l for l in lines)
+    assert lines[-1].startswith("HW-RUN DONE rc=7 ") and str(log) in lines[-1]
+
+
+def test_run_streamed_prints_log_path_first_and_keeps_exit_code(tmp_path, monkeypatch, capsys):
+    import sys as _s
+    from tools.noctus.dev import hw_admission as hw
+    monkeypatch.setenv("NOCTUS_HW_RUNS_DIR", str(tmp_path))
+    rc = hw.run_streamed("pytest:x", [_s.executable, "-c", "print('hi'); raise SystemExit(5)"])
+    cap = capsys.readouterr()
+    assert rc == 5 and "hi" in cap.out
+    assert cap.err.splitlines()[0].startswith("HW-RUN START job=pytest:x log=")
+    assert "HW-RUN DONE rc=5" in cap.err
+    assert list(tmp_path.glob("pytest_x-*.log"))
