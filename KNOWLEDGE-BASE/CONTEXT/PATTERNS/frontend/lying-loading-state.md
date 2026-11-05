@@ -56,7 +56,7 @@ Cause: the fix for Mode A, applied literally. `isFetching` is true during
 **every** background refetch, so
 
 ```tsx
-if (isPending || isFetching) return <Skeleton />;   // ← unmounts on every mutation
+if (isPending || isFetching) return <Skeleton />;   // BAD: unmounts on every mutation
 ```
 
 tears down the subtree each time any mutation invalidates the query. The

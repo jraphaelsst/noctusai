@@ -1,5 +1,7 @@
 # 06 — Therapy Platform Backend
 
+> **⚠️ ASLEEP product (verified 2026-11-05).** `therapy-platform` is `ativo=false` in the catalog — listed under "Asleep" in `deploy/fleet/active-scope.txt` (refresh 2026-11-04); no gate, CI job or keeper checks it (`KB § PATTERNS/architect/product-working-scope.md`). Counts and router lists below are an unrefreshed historical snapshot — do not touch this product unless the owner wakes it; re-verify against code before relying on any line.
+
 > Path: `products/therapy-platform/backend/app/` · Port: 8003 · 40 routers · 43 services · 1336 backend tests passing (2026-05-11 post-wiring)
 > Schema: `therapy` · Auth: Direct Supabase Auth (NOT NoctusAI SSO)
 > Seed entry: `noctusai_seed.create_product_app(..., standard_routers=["health", "notificacoes", "llm"], consent_features="app.services.ai_consent_features")`.

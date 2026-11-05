@@ -31,7 +31,7 @@
 | 2 | **Structured logs** | JSON output; correlation IDs; level discipline    | `noctusai_lib.logging_config.configure_logging` (auto-wired by seed) |
 | 3 | **Health check**    | `GET /api/health` returns 200 + lifespan state    | `standard_routers=["health"]` (seed)        |
 | 4 | **Deployment doc**  | Compose vs k8s decision + env checklist + secrets | Product `DEPLOYMENT.md`                     |
-| 5 | **Backup procedure**| Restore path documented; critical tables listed   | Supabase managed daily backups + manual `pg_dump` recipe |
+| 5 | **Backup procedure**| Restore path documented; critical tables listed   | ⚠️ NOT in place: the Supabase org is on the Free plan (no managed backups, Storage never backed up — verified 2026-11-05); a scheduled `pg_dump` + Storage copy is an open owner follow-up |
 | 6 | **Metrics sink**    | Seam wired at call sites; default `NoopCounter`   | Product `app/services/metrics.py` (lift to platform-metrics project at N=2) |
 
 A chatbot product reaching its production-hardening phase walks this

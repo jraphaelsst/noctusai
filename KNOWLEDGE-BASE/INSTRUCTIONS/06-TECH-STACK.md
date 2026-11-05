@@ -262,7 +262,7 @@ Frontend uses `VITE_`-prefixed vars in per-frontend `.env` files (security bound
 - PF Backend: `uvicorn app.main:app --reload --port 8002 --app-dir products/personal-finance/backend`
 
 ### VPS — Hostinger (n8n + WAHA)
-- Server: `72.61.28.36`
+- Server: the Hostinger VPS (address in `.env.fleet` / SSH config, never in docs)
 - n8n: `n8n.noctusai.com` (Docker)
 - WAHA: `waha.noctusai.com` (Docker)
 - SSL: Let's Encrypt via reverse proxy

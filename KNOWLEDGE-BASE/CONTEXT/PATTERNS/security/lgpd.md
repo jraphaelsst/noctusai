@@ -118,7 +118,9 @@ Call `noctus.dev.lgpd_flag` whenever you:
 - **`project_lgpd_cross_product.md`** (memory) — blocks cross-product data sharing until encryption is in place. Still in force. The LGPD flag complements it; the block is the backstop.
 - **`KNOWLEDGE-BASE/CONTEXT/backend/07-AUTH-SECURITY.md`** — auth + session security deep-dive.
 - **`KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend/database-rls.md`** — RLS policy templates. Every RLS design is an LGPD statement — re-read it when building one.
-- **`CLAUDE.md` → "Keeper principles"** — this file is one of them.
+- **Keeper principles** — this file is one of the platform's keeper principles (the LGPD lens is the first lens, §1). *(Fixed 2026-11-05: this line pointed at a `CLAUDE.md` → "Keeper principles" section that does not exist; CLAUDE.md §1 routes security rules by pointer only.)*
+- **`KB § PATTERNS/security/appsec-craft-canon.md`** — LINDDUN privacy threat modeling (§2) and the LGPD severity multiplier (§4).
+- **`KB § PATTERNS/security/incident-response-playbook.md`** — when personal data is exposed: the Art. 48 + Res. CD/ANPD 15/2024 clock, register, communication templates.
 
 ---
 
@@ -262,13 +264,13 @@ A certidão de matrícula, a certidão de casamento, a CND — any document a ca
 - migration `075_imovel_dados_cartorio.sql` shipped `imovel_documentos` with the reasoning "a matrícula is a public registry document about a PROPERTY, not a person" — and gave it no `categoria_lgpd`, no access log, no retention clock;
 - migration `109_matricula_estruturada.sql` reversed that: once the contract flow started keeping and re-opening these PDFs routinely, "public registry" stopped being a reason to skip logging WHO read a document that also happens to carry someone's CPF.
 
-**The lesson generalizes past matrículas.** A document being a public record NEVER exempts it from the LGPD posture (§2–§3 above) — it only changes the *lawful basis* (Art. 7 V — cumprimento de obrigação legal/regulatória — rather than Art. 7 I consent), never the *obligation to log access and set a retention window*.
+**The lesson generalizes past matrículas.** A document being a public record NEVER exempts it from the LGPD posture (§2–§3 above) — it only changes the *lawful basis* (Art. 7 II — cumprimento de obrigação legal/regulatória — rather than Art. 7 I consent), never the *obligation to log access and set a retention window*.
 
 **Retention and access-log decisions are made TOGETHER, not staggered.** Migration 079 (`documento_retencao_politicas`) explicitly excluded the imóvel surface for the SAME reason 075 gave it no log: "offering a retention control with nothing logging its use would be a lying UI." Shipping the log (109) without also giving the surface a retention clock (111, two migrations later) leaves exactly that lying-UI window open — a surface that is LOGGED but has no ANSWER to "how long do we keep this". When a review finds one half missing, the fix ships both halves in the same change, or explicitly defers the second half with a named migration/ticket, never silently.
 
 **Readings derived from the document inherit its posture (migration 115).** Party names/CPFs, creditor and instrument read OUT of a matrícula act (`matricula_ato_detalhes`) are the same personal data as the text: a route returning them without the text logs `detalhes_view` in `imovel_documento_acessos` (as 111 logs `text_view`), and `purgar_texto_expirado` deletes them with the transcription — retention follows the `imovel` surface, never outlives the source.
 
-**LGPD flag filed for this class:** matrícula transcription text (CPF, estado civil, cônjuge of every owner in the chain of title) — basis Art. 7 V (cumprimento de obrigação legal, corretor de imóveis) + Art. 7 IX (legítimo interesse — evidenciar o negócio), retention per the `documento_retencao_politicas` "imovel" surface (§2 above), LLM transcription of the CPF-bearing PDF is itself a processing operation under Art. 5º X. See `noctus.dev.lgpd_flag` output for `app/modules/matriculas/service.py::processar_extracao`.
+**LGPD flag filed for this class:** matrícula transcription text (CPF, estado civil, cônjuge of every owner in the chain of title) — basis Art. 7 II (cumprimento de obrigação legal, corretor de imóveis) + Art. 7 IX (legítimo interesse — evidenciar o negócio), retention per the `documento_retencao_politicas` "imovel" surface (§2 above), LLM transcription of the CPF-bearing PDF is itself a processing operation under Art. 5º X. See `noctus.dev.lgpd_flag` output for `app/modules/matriculas/service.py::processar_extracao`.
 
 **Auditability is part of the LGPD posture too, not a separate concern (migration 135).** 092's original UNLINKED upload shape discarded the source PDF the moment transcription finished reading it — so a data-subject request, an office audit, or a simple "does this transcription actually say what the PDF says" question had no source to answer against, and the write-once trigger (111) correctly refused to let the transcription be fixed in place either. Retaining the source is itself an LGPD-relevant decision (a second copy of the same CPF-bearing PDF, in a new table `matricula_extracao_arquivos`), made deliberately symmetric with the already-logged linked shape: same bucket, same `superficie="imovel"` retention policy, same access-log table (`imovel_documento_acessos`, keyed by `extracao_id` — the exact optional column 111 added for "an extraction with no `imovel_documentos` row to log against"). **A re-transcription of a retained source SUPERSEDES, never rewrites** — a new row is inserted and the old one is marked `substituida_por` (the platform's existing collapse-pointer shape, `negociacoes_venda.substituida_por`, migration 054), so the write-once trigger's guarantee (a signed deed keeps resolving to the exact text it quoted) is extended to a two-more-column freeze, never fought. The 6 rows that predate this migration cannot be repaired — there is no source left to retain — so they are made LEGIBLE instead (`possui_marcacao_bruta`, a stored flag an operator's list view shows) and the contract generator (`card_hub.contrato_gerador.derivacao`) refuses to generate off text still carrying a raw `**`/`<u>` marker, independent of that flag.
 
@@ -288,6 +290,10 @@ A data category can be **built, wired end-to-end, and deliberately not turned on
 | Legal basis | Art. 7 V — execução de contrato do qual o titular é parte, ou de procedimentos preliminares relacionados a ele (the qualificação civil clause the contract generator gates on). |
 | Access logging | `cliente_documento_acessos`, already wired — `acao` in `view` / `extract` / `delete` (migration 057/068), unchanged by activation. |
 | Owner decision | User, 2026-09-16 (roadmap `social-wiring-contract-automation-2026-09.md`, question Q-identity-docs). |
+
+**Activation ships as data, never as code.** `119_cliente_identidade_ativacao.sql` is a single `UPDATE ... SET ativo = true WHERE tipo_documento IN ('rg', 'cpf')` — no `CREATE TABLE`, no `ALTER TABLE`, no new CHECK. The lesson generalizes: when a category is withheld pending an intake, wire everything downstream of the gate FIRST (extraction, retention, access log) and leave literally one boolean for the activation migration to flip once the register entry above exists — a withheld category with unfinished downstream wiring would make "flip the flag" the wrong migration to write.
+
+> *(Moved 2026-11-05 from the end of §12, where it was orphaned — it is §11's activation rule.)*
 
 ## 12. Public storage buckets bypass RLS entirely (erp-certidoes leak, 2026-09-17)
 
@@ -337,7 +343,7 @@ hatch — a public bucket is never the correct answer, so there is no
 rationale that could make one acceptable.
 
 **LGPD flag filed for this class:** certidão PDFs (CPF, nome completo,
-débitos/restrições) held in `erp-certidoes` — basis Art. 7 V (cumprimento
+débitos/restrições) held in `erp-certidoes` — basis Art. 7 II (cumprimento
 de obrigação legal/regulatória, due-diligence imobiliária), retention per
 the certidões feature's own lifecycle (deleted with the consulta —
 `app/routers/certidoes.py::excluir_consulta` /
@@ -346,8 +352,11 @@ minted at read time — never a persisted or public link. See
 `KB § PATTERNS/backend/database-rls.md § Storage buckets — never public`
 for the canonical pattern.
 
-**Activation ships as data, never as code.** `119_cliente_identidade_ativacao.sql` is a single `UPDATE ... SET ativo = true WHERE tipo_documento IN ('rg', 'cpf')` — no `CREATE TABLE`, no `ALTER TABLE`, no new CHECK. The lesson generalizes: when a category is withheld pending an intake, wire everything downstream of the gate FIRST (extraction, retention, access log) and leave literally one boolean for the activation migration to flip once the register entry above exists — a withheld category with unfinished downstream wiring would make "flip the flag" the wrong migration to write.
+**The incident half was never recorded.** The fix and the gate are exemplary; the assessment is
+missing — no "risco ou dano relevante" decision (Res. CD/ANPD 15/2024 art. 5), no register entry
+(art. 10, ≥ 5 years, mandatory even when not communicated). Owed retroactively:
+`KB § PATTERNS/security/incident-response-playbook.md` §9.
 
-## Ledgers never hold personal data (2026-10-19)
+## 13. Ledgers never hold personal data (2026-10-19)
 
 Append-only ledgers (`project-history/**`, `origin/ledgers`, findings) are permanent, so personal data is **refused at write time, never redacted afterwards**. Runtime: `tools/noctus/dev/_pii_guard.assert_no_pii` runs inside every `Ledger.append` (Fake + Real) and the findings / history_record / brief_ledger / phase_learning writers; it raises `PiiLedgerError` naming the kind and field, never the value. Commit time: keeper `check_ledger_pii` (`--check-ledger-pii`, pre-commit, staged ledger files). Detection: CPF/CNPJ need a valid check digit, phone needs the BR shape, RG and personal dates need their label. Incident: a live-extraction probe wrote a real CPF + marriage date and a customer phone into `auto-improvement.ndjson`. Reference ids, not values.

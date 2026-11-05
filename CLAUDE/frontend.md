@@ -18,7 +18,8 @@
 ## Pointers (depth)
 
 - Frontend patterns (TanStack Query, hooks-per-entity, mobile-first) → `KB § PATTERNS/frontend/frontend.md`
-- Per-product frontend specs → `KB § frontend/{01-CORE, 02-ERP, 03-PF, 04-THERAPY}.md`
+- Per-product frontend specs → `KB § frontend/{01-CORE, 02-ERP, 03-PF, 04-THERAPY}.md` (only 01-CORE is active; ERP/PF/Therapy are asleep — reference only, per `deploy/fleet/active-scope.txt`)
+- Design before UI (mockup-first, accessibility) → agent `product-designer` · `KB § PATTERNS/design/mockup-protocol.md`
 - Shared component catalog (check before writing anything) → `KB § 04-SHARED-LIBRARY.md`
 - Notifications (shared `NotificationBell`, proxy shape) → `KB § PATTERNS/backend/notifications.md`
 - Environment / `.env` (VITE_ security boundary) → `KB § PATTERNS/devops/environment.md`

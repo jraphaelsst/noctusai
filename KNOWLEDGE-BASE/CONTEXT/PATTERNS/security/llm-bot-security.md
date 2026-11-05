@@ -12,6 +12,9 @@
 
 ---
 
+> **Owner: agent `agents-security`** (moved from `security` 2026-11-05 — the subject is LLM tool surfaces).
+> Method layer (trifecta, architecture patterns, red-team ASR, fail-closed cost): `KB § PATTERNS/security/ai-agent-security-canon.md`.
+
 > **Adversarial catalog lives elsewhere.** The full threat classes for public, multi-tenant, tool-using agents (injection variants, obfuscation, tenant-spec injection, session takeover, opt-out, agent-creator template must-haves, eval starter set) are in `KB § PATTERNS/security/ai-agent-threat-model.md` — not duplicated here. This doc stays the generic defense-trio baseline.
 
 ## 1. Threat model — what an LLM tool surface looks like to attackers
@@ -153,6 +156,14 @@ Three layered defenses:
    ```
    Not bulletproof (sufficiently long jailbreaks can still flip the
    model), but cheap + effective for casual injection attempts.
+
+   > **Corrected 2026-11-05.** "Cheap + effective" overstated it: delimiters
+   > are a *hint* to the model, not a boundary — prompt injection is unsolved
+   > (Anthropic reports ~1-2% attack success even with improved safeguards).
+   > Keep the delimiter, but the defense that holds is structural: untrusted
+   > text must not be able to choose tools, destinations or arguments that
+   > matter (dual-LLM / plan-then-execute / context-minimization) — see
+   > `KB § PATTERNS/security/ai-agent-security-canon.md` §3-§4.
 2. **Explicit allowlist of mutating tools.** The bot's system prompt
    lists which tools are mutating + states they only run on user
    confirmation. The dispatcher backs this up with the
@@ -231,6 +242,18 @@ above sustainable human typing speed. Fail-open semantics on Redis
 outage (logged WARN; legitimate inbounds not blocked by storage
 failure).
 
+> **Re-audited 2026-11-05 — two corrections.** (1) **Not wired on dev:** no
+> caller of `configure_rate_limiter` / `get_rate_limiter` exists in
+> `products/social-wiring/backend/` (`conversation_rate_limit.py` and
+> `anomaly.py` are imported by nothing), so the "wired BEFORE auth" claim
+> above describes the absorbed sibling, not the current tree. Julia's live
+> limits are `services/julia_protecao_service.py` (SW) + agents
+> `channels/admissao.py`. (2) **Fail-open on the cost path is wrong
+> doctrine** (OWASP LLM10 / A10:2025): a limit whose store is down must
+> refuse the expensive action and route a human, never allow it —
+> `KB § PATTERNS/security/ai-agent-security-canon.md` §5. Re-wiring or
+> deleting this module is a product follow-up, not a doc fix.
+
 **Seed-lift destination — N=2**: `noctusai_lib.api.conversation_rate_limit`
 when a second LLM-tool product needs the same axis. Surface candidate
 for `KB § PATTERNS/architect/seed-lib-layout.md § api`.
@@ -305,7 +328,8 @@ emits a structured WARN log; no automatic kill-switch (false-positives
 blocking legitimate conversations is worse than the threat; the
 per-conversation rate limiter is the hard guard).
 
-Sliding-window via Redis ZSET. Fail-open on Redis outage. Threaded
+Sliding-window via Redis ZSET. Fail-open on Redis outage (a detector that
+only logs may fail open; a limiter may not — see §7.1 note). Threaded
 into the tool-handler stack via a ContextVar set by the conversation
 processor — the wrapper reads `conversation_id` without changing the
 seed's `ToolHandler` signature.

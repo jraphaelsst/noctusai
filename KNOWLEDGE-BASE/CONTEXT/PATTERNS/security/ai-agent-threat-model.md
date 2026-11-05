@@ -7,10 +7,16 @@
 > rate-limit trio) stays in `KB § PATTERNS/security/llm-bot-security.md` — this doc is the
 > adversarial catalog on top of it. Webhook signatures: `webhook-signatures.md`. LGPD: `lgpd.md`.
 
-**Status vocabulary.** DEFENDED = verified in code with a regression test. PARTIAL = defense
-exists but has a known gap. OPEN = no defense. Items marked **in progress on
-`feat/jl-sec-sw` / `feat/jl-sec-agents` (2026-11-04)** are being fixed on those branches and
-are NOT done until merged and re-audited.
+**Doctrine only — status lives in dated audit records.** This catalog says what each class requires and
+which seam owns the defense. Whether a given agent is DEFENDED / PARTIAL / OPEN is point-in-time and
+lives in `KB § PATTERNS/security/audits/<agent>-<yyyy-mm>.md` (Julia: `KB § PATTERNS/security/audits/julia-2026-11.md`).
+Method, framework tags and the trifecta: `KB § PATTERNS/security/ai-agent-security-canon.md`.
+
+> **Trimmed 2026-11-05 (always-doc-the-trim).** Removed from this file: the status vocabulary, every
+> per-row status/"(IP)" annotation naming `feat/jl-sec-sw` / `feat/jl-sec-agents`, and the §3.3
+> "DEFENDED today" list. All moved verbatim to `KB § PATTERNS/security/audits/julia-2026-11.md` (with a
+> 2026-11-05 re-check: those branches are NOT merged to dev). Rule: a branch name never appears in a
+> catalog row (`ai-agent-security-canon.md` §1).
 
 **Path shorthand.** `SW:` = `products/social-wiring/backend/app/` · `A:` = `products/agents/backend/app/`.
 
@@ -36,51 +42,54 @@ are NOT done until merged and re-audited.
 | Tenant to prompt | org-typed spec values | system prompt | typed validator (block mode) + fence |
 | Staff to platform | staff phones/accounts | admin routes | role gate (not just org membership) |
 
-## 3. Threat classes, required defense, where it lives
+## 3. Threat classes, required defense, where the seam lives
 
-Each row: class, required defense, our location. "(IP)" = in progress on the branches named above.
+Each row: class, framework tags (OWASP LLM 2025 · Agentic 2026 · ATLAS — full map in
+`ai-agent-security-canon.md` §2), required defense, and the seam that owns it. Status per agent: the audit record.
 
 ### 3.1 Model-facing
 
-| Class | Required defense | Where (julia line) |
-|---|---|---|
-| Direct injection ("ignore previous instructions") | Prompt rules + input signals + output detectors; never rely on the prompt alone | A:`channels/conformidade.py`, guard section content-v3 |
-| Indirect injection: media (image/audio/PDF OCR), forwards, quoted replies, vCards, links the agent reads | Treat all non-typed content as data; structured media field; provenance envelope; no autonomous link fetch (channel spec `tools=()`, `web_search=False`) | A:`channels/proveniencia.py`, A:`stores/threads.py`, A:`channels/turno.py`; SW:`routers/whatsapp_router.py` media field |
-| Obfuscation / ASCII smuggling (zero-width, bidi, Unicode tag chars U+E0000-E007F, homoglyphs, spaced "ponto com", spaced digits) | ONE normalizer at intake: strip Cf/tag/bidi, confusable skeleton, collapse spaced digits; outputs with Cf/tag chars blocked; de-obfuscated second pass for links/phones | PARTIAL (NFKC only). Spec input already refuses Cf: A:`studio/spec_formatos.py`. Intake normalizer (IP) |
-| Jailbreak families (role-play, DAN, many-shot, payload split, translation/encoding, "for a test") | Classify before the model; length caps; extraction escalation to restricted mode then hand-off | A:`schemas/channels.py` caps, A:`channels/turno.py` escalation |
-| Prompt extraction | Prompt is never a secret (design as if leaked); compiled prompt endpoints platform-admin only; canary/honeytoken checks on input, reply and tool args | A:`routers/studio_conteudo_router.py`, A:`routers/studio_agents_router.py` |
-| Tool abuse / excessive agency | Least-privilege tool list; strict args (`extra="forbid"`); evidence `trecho` for consent/opt-out/DSR; catalogue allowlist; org from token not body | A:`channels/tool_registry.py`, A:`channels/texto_seguro.py`; SW:`routers/julia_ferramentas_router.py` |
-| Exfiltration via links / markdown / images | Link and contact allowlists built from VALIDATED values; block unknown hosts in replies; no markdown image autoload; de-obfuscated link pass | A:`channels/turno.py` allowlists (use validated specs: IP), A:`channels/conformidade.py` |
-| Tenant-spec injection | Typed validator in `block` mode; invalid typed value is never inlined (drop or fence as data); allowlists from validated values only | A:`studio/especificacoes.py`, `especificacoes_service.py`, `spec_formatos.py`, `compiler.py` fence; `SPEC_VALIDATION_MODE=block` in prod (IP) |
-| Other tenant text reaching context (regua templates, attendant name) | Run the same validators at SAVE time in the owning product | PARTIAL: A:`channels/contexto.py` quotes only (IP: validate at SW save) |
-| Hallucinated price / discount / commitment (CDC art. 30/35; Moffatt v Air Canada; the $1 Tahoe) | Detector `valor_sem_ferramenta`: every R$/percentage must equal a number in this thread's tool results or the lead's own text; ban "garanto", "fechado", "desconto" promises | PARTIAL, content only; detector (IP) |
-| Forbidden-claim content (PIX, boleto, taxa de reserva, "financiamento aprovado", verification codes, identity claims) | `padroes_proibidos` + `alegacao_identidade` rules with a CODE-SIDE default floor, not only DB rows | A:`stores/conformidade.py`; seeding gap for instances created after the seed migration (IP: code defaults + blocking readiness item) |
-| Cross-tenant leakage | org from the token only; RLS; per-org budgets; per-org prompts/specs; never share a session across orgs | A:`grants/service.py`, seed `platform_grants_router.py`; SW tools org-from-token |
-| Denial of wallet / unbounded consumption (OWASP LLM10) | Input caps, per-chat and per-connection limits, new-lead admission with budget reservation, loop breaker, triage with auto-block, 429 goes to a human not dropped; media byte caps, no video for strangers | A:`channels/admissao.py`, `LimitesCanal`; SW:`services/julia_protecao_service.py`, `media_service.py` |
-| LGPD / PII | Data-category intake via `lgpd.md`; mask IDs; do not log raw sender; staff-bound text sanitized | SW:`services/media_service.py` (masking), A:`channels/texto_seguro.py` `para_equipe` |
+| Class | Tags | Required defense | Seam (julia line) |
+|---|---|---|---|
+| Direct injection ("ignore previous instructions") | LLM01 · ASI01 · T0051.000 | Prompt rules + input signals + output detectors; never rely on the prompt alone | A:`channels/conformidade.py`, guard section content-v3 |
+| Indirect injection: media (image/audio/PDF OCR), forwards, quoted replies, vCards, links the agent reads | LLM01 · ASI01/ASI06 · T0051.001 | Treat all non-typed content as data; structured media field; provenance envelope; no autonomous link fetch (channel spec `tools=()`, `web_search=False`) | A:`channels/proveniencia.py`, A:`stores/threads.py`, A:`channels/turno.py`; SW:`routers/whatsapp_router.py` media field |
+| Obfuscation / ASCII smuggling (zero-width, bidi, Unicode tag chars U+E0000-E007F, homoglyphs, spaced "ponto com", spaced digits) | LLM01 · ASI01 · T0051 | ONE normalizer at intake: strip Cf/tag/bidi, confusable skeleton, collapse spaced digits; outputs with Cf/tag chars blocked; de-obfuscated second pass for links/phones; spec input refuses Cf | intake normalizer (channel intake); spec format validator (A:`studio/`) |
+| Jailbreak families (role-play, DAN, many-shot, payload split, translation/encoding, "for a test") | LLM01 · ASI01 · T0054 | Classify before the model; length caps; extraction escalation to restricted mode then hand-off | A:`schemas/channels.py` caps, A:`channels/turno.py` escalation |
+| Prompt extraction | LLM07 · T0056 | Prompt is never a secret (design as if leaked); compiled prompt endpoints platform-admin only; canary/honeytoken checks on input, reply and tool args | A:`routers/studio_conteudo_router.py`, A:`routers/studio_agents_router.py` |
+| Tool abuse / excessive agency | LLM06 · ASI02/ASI03 · T0053 | Least-privilege tool list; strict args (`extra="forbid"`); evidence `trecho` for consent/opt-out/DSR; catalogue allowlist; org from token not body | A:`channels/tool_registry.py`, A:`channels/texto_seguro.py`; SW:`routers/julia_ferramentas_router.py` |
+| Exfiltration via links / markdown / images | LLM02/LLM05 · ASI02 · T0057 | Link and contact allowlists built from VALIDATED values; block unknown hosts in replies; no markdown image autoload; de-obfuscated link pass | A:`channels/turno.py` allowlists (built from validated specs), A:`channels/conformidade.py` |
+| Tenant-spec injection | LLM01 · ASI01/ASI06 · T0051.001 | Typed validator in `block` mode; invalid typed value is never inlined (drop or fence as data); allowlists from validated values only; `block` the only prod mode | A:`studio/especificacoes.py`, `especificacoes_service.py`, spec format validator, `compiler.py` fence |
+| Other tenant text reaching context (regua templates, attendant name) | LLM01 · ASI06 | Run the same validators at SAVE time in the owning product | A:`channels/contexto.py` (quotes); SW save path |
+| Hallucinated price / discount / commitment (CDC art. 30/35; Moffatt v Air Canada; the $1 Tahoe) | LLM09 · ASI09 | Detector `valor_sem_ferramenta`: every R$/percentage must equal a number in this thread's tool results or the lead's own text; ban "garanto", "fechado", "desconto" promises | content rules + output detector (A:`channels/conformidade.py`) |
+| Forbidden-claim content (PIX, boleto, taxa de reserva, "financiamento aprovado", verification codes, identity claims) | LLM05/LLM09 · ASI09 | `padroes_proibidos` + `alegacao_identidade` rules with a CODE-SIDE default floor, not only DB rows; blocking readiness item when absent | A:`stores/conformidade.py`; code defaults + readiness item for instances created after the seed migration |
+| Cross-tenant leakage | LLM02 · ASI03 · T0057 | org from the token only; RLS; per-org budgets; per-org prompts/specs; never share a session across orgs | A:`grants/service.py`, seed `platform_grants_router.py`; SW tools org-from-token |
+| Denial of wallet / unbounded consumption (OWASP LLM10) | LLM10 · ASI08 · T0034 | Input caps, per-chat and per-connection limits, new-lead admission with budget reservation, loop breaker, triage with auto-block, 429 goes to a human not dropped; media byte caps, no video for strangers; limit stores fail CLOSED | A:`channels/admissao.py`, `LimitesCanal`; SW:`services/julia_protecao_service.py`, `media_service.py` |
+| LGPD / PII | LLM02 | Data-category intake via `lgpd.md`; mask IDs; do not log raw sender; staff-bound text sanitized | SW:`services/media_service.py` (masking), A:`channels/texto_seguro.py` `para_equipe` |
 
 ### 3.2 Channel and mechanism
 
-| Class | Required defense | Where |
-|---|---|---|
-| Webhook spoof / replay | Signed webhooks refused when unsigned; replay window (reject stale signed `timestamp` > 300 s); `envelope.session` must equal `connection.session_name`; drop empty message ids; per-connection secret preferred | PARTIAL. SW:`webhook_hmac.py`, SW:`routers/whatsapp_router.py`, seed `webhook_signatures.py`. Prod must have `WAHA_WEBHOOK_HMAC_SECRET` (WAHA first, then SW). Session match + replay window (IP) |
-| Session hijack (connection admin routes) | Every mutation requires org ADMIN, not mere membership; `base_url`, `session_name`, `api_key`, `webhook_url` are server-derived, never client-writable; `/webhook` refuses any URL but our own | OPEN as of audit; SW:`routers/whatsapp_connections_router.py` (IP) |
-| Shared-session takeover (one WAHA session for all orgs) | Server-side provisioning key; UNIQUE (`base_url`, `session_name`) across orgs; line provisioning platform-admin only; per-org instance/session or Cloud API | OPEN (structural; blocker before a 2nd org). (IP) |
-| Status / Channels / broadcast | `status@broadcast`, `@newsletter`, `@broadcast` stored at most, never routed to the agent; also set WAHA session `ignore.status/channels` | OPEN; groups already blocked. SW:`services/julia_agente_service.py` (IP) |
-| LID / phone spoofing, `pushName` impersonation | Classify staff by number before any AI call; never trust display names; lead-typed phones not echoed back | SW:`routers/whatsapp_router.py` staff routing (DEFENDED); echo of lead phones PARTIAL |
-| Ban risk (unofficial WAHA/Baileys; WhatsApp general-purpose-bot ban from 2026-01-15) | Scoped business bot only; no proactive/bulk sends on the unofficial line; keep gate-2 flows off; deterministic STOP | PARTIAL (STOP floor IP) |
-| Impersonation (agent claims to be a person / the company's official channel) | `alegacao_identidade` detector with code floor; honest-AI disclosure in the persona | A:`channels/conformidade.py` (floor IP) |
-| Forwarded text as consent | Forwarded/quoted text is never evidence for consent, opt-out or DSR; pass `encaminhada: bool` and the `replyTo` link | PARTIAL; SW:`schemas/whatsapp.py`, A:`channels/tool_registry.py` (IP) |
-| Echo / takeover race | Outbound row written with a client id BEFORE send; unknown `fromMe` within N s of an agent send is an echo; must work with Redis down | PARTIAL; SW:`routers/whatsapp_router.py` (IP) |
-| Opt-out backstop | Code-floor exact-match STOP keywords (`PARAR`, `SAIR`, `STOP`, `CANCELAR`, `NÃO QUERO MAIS`; data-extendable) records opt-out WITHOUT the model; the owner is notified in-app and on WhatsApp with the reason | PARTIAL; A:`channels/opt_out.py`, `tool_registry.py` (keyword floor + owner WhatsApp notify IP) |
-| Excessive agency of the connection (insider / compromised staff account) | See session hijack; grant mint/rotate/revoke requires step-up MFA (AAL2); `TOKEN_SCOPES.enforce()` | PARTIAL; A:`routers/plataforma_grants_router.py` (IP) |
-| Webhook routing token readable by browsers | `REVOKE SELECT (webhook_token, api_key)` from `authenticated`; store a hash | PARTIAL (IP) |
-| Third-party component CVEs (WAHA CVE-2026-6979 media SSRF, <= 2026.3.4) | Pin version past the fix; WAHA internal-only, no tunnel hostname, dashboard password set; rotate key if ever shared | UNVERIFIED (ops) |
-| Media SSRF / host trust | Refuse any media URL whose host is not the provider base after rewrite; redirects off; key host-pinned | PARTIAL; SW:`services/media_service.py` (host refusal IP) |
+| Class | Tags | Required defense | Seam |
+|---|---|---|---|
+| Webhook spoof / replay | ASI03 (AppSec: API2) | Signed webhooks refused when unsigned (prod fail-closed); replay window (reject stale signed `timestamp` > 300 s); `envelope.session` must equal `connection.session_name`; drop empty message ids; per-connection secret preferred; prod has `WAHA_WEBHOOK_HMAC_SECRET` (WAHA first, then SW) | SW:`webhook_hmac.py`, SW:`routers/whatsapp_router.py`, seed `webhook_signatures.py` |
+| Session hijack (connection admin routes) | ASI03 (API5) | Every mutation requires org ADMIN, not mere membership; `base_url`, `session_name`, `api_key`, `webhook_url` are server-derived, never client-writable; `/webhook` refuses any URL but our own | SW:`routers/whatsapp_connections_router.py` |
+| Shared-session takeover (one WAHA session for all orgs) | ASI03 | Server-side provisioning key; UNIQUE (`base_url`, `session_name`) across orgs; line provisioning platform-admin only; per-org instance/session or Cloud API — structural blocker before a 2nd org | connection provisioning (SW) + `deploy/fleet/waha-instances.yml` |
+| Status / Channels / broadcast | LLM01 · ASI01 | `status@broadcast`, `@newsletter`, `@broadcast` stored at most, never routed to the agent; also set WAHA session `ignore.status/channels`; groups blocked | SW:`services/julia_agente_service.py` |
+| LID / phone spoofing, `pushName` impersonation | ASI03/ASI09 | Classify staff by number before any AI call; never trust display names; lead-typed phones not echoed back | SW:`routers/whatsapp_router.py` staff routing |
+| Ban risk (unofficial WAHA/Baileys; WhatsApp general-purpose-bot ban from 2026-01-15) | — | Scoped business bot only; no proactive/bulk sends on the unofficial line; keep gate-2 flows off; deterministic STOP | channel policy + STOP floor |
+| Impersonation (agent claims to be a person / the company's official channel) | ASI09 | `alegacao_identidade` detector with code floor; honest-AI disclosure in the persona | A:`channels/conformidade.py` |
+| Forwarded text as consent | LLM01 · ASI09 | Forwarded/quoted text is never evidence for consent, opt-out or DSR; pass `encaminhada: bool` and the `replyTo` link | SW:`schemas/whatsapp.py`, A:`channels/tool_registry.py` |
+| Echo / takeover race | — | Outbound row written with a client id BEFORE send; unknown `fromMe` within N s of an agent send is an echo; must work with Redis down | SW:`routers/whatsapp_router.py` |
+| Opt-out backstop | ASI09 | Code-floor exact-match STOP keywords (`PARAR`, `SAIR`, `STOP`, `CANCELAR`, `NÃO QUERO MAIS`; data-extendable) records opt-out WITHOUT the model; the owner is notified in-app and on WhatsApp with the reason | A:`channels/opt_out.py`, `tool_registry.py` |
+| Excessive agency of the connection (insider / compromised staff account) | ASI03 | See session hijack; grant mint/rotate/revoke requires step-up MFA (AAL2); `TOKEN_SCOPES.enforce()` | A:`routers/plataforma_grants_router.py` |
+| Webhook routing token readable by browsers | LLM02 (API3) | `REVOKE SELECT (webhook_token, api_key)` from `authenticated`; store a hash | SW migrations (column grants) |
+| Third-party component CVEs (WAHA CVE-2026-6979 media SSRF, <= 2026.3.4) | LLM03 · ASI04 | Pin version past the fix; WAHA internal-only, no tunnel hostname, dashboard password set; rotate key if ever shared | ops (`deploy/fleet/`) |
+| Media SSRF / host trust | (API7) | Refuse any media URL whose host is not the provider base after rewrite; redirects off; key host-pinned | SW:`services/media_service.py` |
 
-### 3.3 What is DEFENDED today (regression-test these; verified 2026-11-04)
+### 3.3 What is DEFENDED today
 
-Lead keyword deletion removed (keeper `test_lead_path_never_deletes.py`) · staff classified by number before any AI call, no staff command surface, customers refused at API and RLS · groups never reach the agent · ONE outbound chokepoint `SW:services/julia_envio_gate.py` (sealed `Liberacao`, DB re-read of the on/off switch, keeper) · agent toggle admin-only and needs HMAC + privacy notice · history provenance (non-lead lines as system envelopes, media as structured field) · output detectors default `bloquear` with one corrective re-run then silence + hand-off, correction wording not persisted · extraction escalation to restricted mode · strict tool args, evidence required for consent/opt-out/DSR · staff-bound text sanitized twice · lead media (no video, per-type byte caps streamed, redirects off, key host-pinned, IDs masked) · denial-of-wallet limits · prompt endpoints platform-admin only · canary checks on input/reply/tool args · grant receiver (org from token, body `extra=forbid`, credential hidden from repr and 422 bodies, one-shot 5-minute delivery token, aborted mint revokes all) · SW tools org-from-token with issuer pinned · spec validator when it runs.
+Moved to the dated audit record (`KB § PATTERNS/security/audits/julia-2026-11.md` § DEFENDED list) —
+"today" is a point-in-time claim. The catalog keeps the rule: DEFENDED requires file:line on `origin/dev`
+plus a regression test.
 
 ### 3.4 Leaks — what can leak, through which door, and the guard
 
@@ -192,9 +201,13 @@ Proof tests (pytest), minimum: non-admin gets strict 403 on every connection mut
 
 ## 8. Re-audit cadence
 
-Re-audit (agent `agents-security`): on every NEW agent, on every channel or tool change, on provider/component upgrades or CVEs, and periodically (at least each release train that touches agents or the connection layer). Every audit re-opens section 3 rows, re-verifies "DEFENDED" with file:line, and refreshes sources.
+Re-audit (agent `agents-security`): on every NEW agent, on every channel or tool change, on provider/component upgrades or CVEs, and periodically (at least each release train that touches agents or the connection layer). Every audit writes a NEW dated record (`KB § PATTERNS/security/audits/<agent>-<yyyy-mm>.md`, template in `ai-agent-security-canon.md` §12), re-derives every section 3 row's status on `origin/dev` with file:line, and refreshes sources.
 
 ## 9. Sources
+
+**Primary sources (added 2026-11-05; prefer these).** OWASP Top 10 for LLM Applications 2025 — https://genai.owasp.org/llm-top-10/ · OWASP Top 10 for Agentic Applications 2026 — https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/ · OWASP LLM Prompt Injection Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html · MITRE ATLAS — https://atlas.mitre.org/ · NIST AI 600-1 — https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence · Willison, lethal trifecta — https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/ · CaMeL — https://arxiv.org/abs/2503.18813 · CDC — https://www.planalto.gov.br/ccivil_03/leis/l8078compilado.htm. Full annotated list: `ai-agent-security-canon.md` §16.
+
+**Original sources (2026-11-04; several are vendor summaries — kept for provenance, superseded by the primaries above where they overlap):**
 
 - OWASP Top 10 for LLM Apps 2025 (Invicti summary): https://invicti.com/blog/web-security/owasp-top-10-risks-llm-security-2025 (LLM01 injection, LLM07 prompt leakage; the prompt is never a secret)
 - OWASP LLM10:2025 Unbounded Consumption: https://owasp.org/www-project-top-10-for-large-language-model-applications/2_0_vulns/LLM10_UnboundedConsumption
@@ -215,4 +228,4 @@ Re-audit (agent `agents-security`): on every NEW agent, on every channel or tool
 
 ## Composes-with
 
-`KB § PATTERNS/security/llm-bot-security.md` · `webhook-signatures.md` · `lgpd.md` · `KB § GUIDES/agent-creation.md` · `KB § PATTERNS/common/agent-context-architecture.md` · agent `agents-security` (owner) · agent `security` (generic).
+`KB § PATTERNS/security/ai-agent-security-canon.md` (method) · `KB § PATTERNS/security/llm-bot-security.md` · `webhook-signatures.md` · `lgpd.md` · `KB § GUIDES/agent-creation.md` · `KB § PATTERNS/common/agent-context-architecture.md` · agent `agents-security` (owner) · agent `security` (generic).

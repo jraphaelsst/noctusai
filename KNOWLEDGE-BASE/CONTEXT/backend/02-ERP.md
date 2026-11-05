@@ -1,5 +1,7 @@
 # 02 — ERP Backend Context
 
+> **⚠️ ASLEEP product (verified 2026-11-05).** `erp-imobiliario` is `ativo=false` in the catalog — listed under "Asleep" in `deploy/fleet/active-scope.txt` (refresh 2026-11-04); no gate, CI job or keeper checks it (`KB § PATTERNS/architect/product-working-scope.md`). Counts and router lists below are an unrefreshed historical snapshot — do not touch this product unless the owner wakes it; re-verify against code before relying on any line.
+
 > Path: `products/erp-imobiliario/backend/app/` · Port: 8001 · 48 routers · 41 services · 100 test files · 1,506 test fns
 > Standard backend patterns (auth, responses, exceptions, DELETE pre-checks, search, N+1, rate limiting): see `../PATTERNS/backend/backend.md`.
 

@@ -626,6 +626,8 @@ When a seed / shared-lib / framework change ripples to consumers, do **NOT** ada
 
 **Pilot selection is fixed** unless the change touches a seam none of the 3 exercise — then add the minimal extra pilot that does and state why. Companion to §2.7 (recurrence — *formalize-to-seed still fires*; this only scopes the *validation/adaptation fan-out*, not whether you fix the root) and `CLAUDE.md §1 Branching-first / Wave-based dispatch`. Memory: `feedback_pilot_products_first`. Codification candidate: a `noctus.dev` advisory warning when a ripple-wave dispatches beyond pilots+core.
 
+> **Note 2026-11-05 (fix-on-contact, agent-refinement W1-S1).** `erp-imobiliario` and `therapy-platform` are asleep (`deploy/fleet/active-scope.txt`, refresh 2026-11-04): no gate exercises them, and CLAUDE.md §1 "inativo ⇒ don't touch" forbids adapting them. Until the fixed set is re-chosen (a tech-lead/owner decision), apply this rule's own substitution clause — pick an awake product that exercises the same seam and state why (`KB § PATTERNS/architect/product-working-scope.md` §4c).
+
 ---
 
 ## 2.13 In-flight resolution — clear-path deferrals/accept resolve in the SAME commit, not later (2026-05-18)

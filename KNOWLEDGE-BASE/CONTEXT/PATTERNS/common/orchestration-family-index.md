@@ -18,6 +18,8 @@ Git-workflow rules stay standalone in §1 — **branching**, **self-branching mo
 - **Dispatch with PROJECT — return with notes.** Tech-lead writes PROJECT.md §4a routing before dispatch; engineer/inline-lens returns a `delivery` note, or a `surface` note + BLOCK when re-routing mid-flight. → `KB § PATTERNS/common/dispatch-with-project-and-notes.md`
 - **Hardware admission bounds parallel-by-default.** Heavy runs (suites/vitest/e2e/vite build/merged-tip gates) take a machine-wide slot admitted on MEASURED capacity (CPU idle ∧ reclaimable memory ∧ swap-out, per-host phase in `deploy/fleet/hardware-budget.json`); not admitted ⇒ not run (`waiting_for_slot`, overloaded ⇒ hold, re-check on the adaptive timer. Enforced at the first expensive consequence: the `heavy-run` PreToolUse guard (`claude-guard-heavy-run.py`) denies an ungated pytest/vitest/playwright/vite-build Bash call and prints the wrapped command. → `KB § PATTERNS/devops/hardware-admission-budget.md`
 
+**Craft depth (not a member rule):** the cited canon behind these rules — who builds vs who orchestrates, the agent↔agent protocol, the session↔session peer protocol and the specialist routing table → `KB § PATTERNS/architect/orchestration-craft-canon.md`.
+
 ## Why a family line
 
 These 9 rules shared one framework, and a session that needs one of them typically needs the rest — so a single router hop costs a lookup and returns 8 always-on lines of budget. The forcing function is the router keeper's rule-COUNT ceiling; the procedure is `/gc` step 5. → `KB § PATTERNS/common/claude-md-router-discipline.md`

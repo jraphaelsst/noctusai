@@ -6,7 +6,7 @@
 
 ## Orchestration Engine
 
-**n8n** self-hosted at `n8n.noctusai.com` on VPS (Hostinger, 72.61.28.36).
+**n8n** self-hosted at `n8n.noctusai.com` on the Hostinger VPS (address in `.env.fleet`, never in docs).
 
 ---
 

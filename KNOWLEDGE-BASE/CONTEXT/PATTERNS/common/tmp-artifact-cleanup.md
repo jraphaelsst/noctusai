@@ -1,7 +1,8 @@
 # tmp-artifact-cleanup — automated sweep of retired engineer-dispatch patches
 
-> 🔒 **Caller-scope rule.** `noctus.dev.tmp_cleanup` is **orchestrator-only** — the
-> `orchestrator-operator` agent invokes it as a standing end-of-tick step with `dry_run=False`.
+> 🔒 **Caller-scope rule.** `noctus.dev.tmp_cleanup` is **ops-only** — agent `ops-steward`
+> invokes it as a weekly L3 step (skill `noc-daily-ops`) with `dry_run=False`, or the tech-lead
+> does. (Until 2026-11-05 the retired `orchestrator-operator` ran it at the end of each drain tick.)
 > Specialist agents (backend / frontend / devops / compliance / security / architect /
 > engineer-seed) MUST NOT call it. Same shape as `release` / `deploy_pull` / `archive` — call
 > restriction is doc-discipline + the tool's own description banner, not a runtime guard.
@@ -40,9 +41,9 @@ tmp_cleanup(
 
 CLI: `python mcp/noctusai/cli.py --tmp-cleanup [--force] [--tmp-cleanup-max-age-days N]`. Dry-run unless `--force`.
 
-## Orchestrator wiring
+## Caller wiring
 
-The `.claude/agents/orchestrator-operator` runs `tmp_cleanup(dry_run=False)` as a **standing end-of-tick step**, after draining the dispatcher inbox + before returning the summary. The operator surfaces one line in its return:
+Agent `ops-steward` runs `tmp_cleanup(dry_run=False)` in the **weekly** routine (skill `noc-daily-ops`; `KB § PATTERNS/devops/owner-operations.md` §2 lists it as L3). History: the retired `orchestrator-operator` ran it as an end-of-tick step after draining the dispatcher inbox. The caller surfaces one line in its return:
 
 ```
 Hygiene: <N> patches purged (<M> bytes freed); <K> kept-fresh.

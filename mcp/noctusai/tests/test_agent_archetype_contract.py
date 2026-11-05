@@ -61,9 +61,9 @@ class TestAgentArchetypeContract:
         assert any("does not reference `engineer-seed`" in i["issue"] for i in issues)
 
     def test_other_archetype_skipped(self, tmp_path):
-        # orchestrator-operator + skill-scout have specialized contracts → skipped.
-        _write_agent(tmp_path, "orchestrator-operator",
-            "---\nname: orchestrator-operator\ndescription: operator.\ntools: Bash, Read, Write, Edit, Agent\n---\n# No engineer-seed mention.\n")
+        # reverse-engineer + skill-scout have specialized contracts → skipped.
+        _write_agent(tmp_path, "reverse-engineer",
+            "---\nname: reverse-engineer\ndescription: study.\ntools: Bash, Read, Write, Edit\n---\n# No engineer-seed mention.\n")
         _write_agent(tmp_path, "skill-scout",
             "---\nname: skill-scout\ndescription: scout.\ntools: Bash, Read, Write, Grep, WebSearch\n---\n# No engineer-seed.\n")
         assert check_agent_archetype_contract(repo_root=tmp_path) == []

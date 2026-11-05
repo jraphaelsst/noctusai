@@ -401,7 +401,7 @@ Routers are imported (and their `@router.<verb>(...)` decorators evaluated) **be
 
 5. **Dep signature uses primitives, not `Depends(...)` indirection.** The dep takes `authorization: Optional[str] = Header(None)` directly and manually invokes the configured `get_current_user(authorization=...)`. **Do not** use `auth = Depends(_get_current_user_dep)` in the signature — it forces FastAPI to resolve `_get_current_user_dep` at decorator-evaluation time (i.e. at import time, before `configure_X_module(...)` ran), which fails.
 
-6. **Helper for tests: `bind_X_module_to_mock(mock_sb)`** in `noctusai_lib.testing` lets product conftests rewire the module per fixture (TestClient caches the app, so the boot-time configure captures the FIRST fixture's mock_sb permanently — re-bind per fixture). See `KB § PATTERNS/compliance/testing.md § Consent-guard product conftest pattern` for the canonical conftest shape.
+6. **Helper for tests: `bind_X_module_to_mock(mock_sb)`** in `noctusai_lib.testing` lets product conftests rewire the module per fixture (TestClient caches the app, so the boot-time configure captures the FIRST fixture's mock_sb permanently — re-bind per fixture). See `KB § PATTERNS/compliance/test-harness-playbook.md § Consent-guard product conftest pattern` for the canonical conftest shape.
 
 ### Reference adopters (read these before designing a new dep factory)
 

@@ -1,5 +1,7 @@
 # Daily Life Backend
 
+> **⚠️ ASLEEP product (verified 2026-11-05).** `daily-life` is `ativo=false` in the catalog — listed under "Asleep" in `deploy/fleet/active-scope.txt` (refresh 2026-11-04); no gate, CI job or keeper checks it (`KB § PATTERNS/architect/product-working-scope.md`). Counts and router lists below are an unrefreshed historical snapshot — do not touch this product unless the owner wakes it; re-verify against code before relying on any line.
+
 Personal productivity hub. Schema: `daily_life`. Backend port: 8005. Frontend port: 8110.
 
 ## Routers (6)

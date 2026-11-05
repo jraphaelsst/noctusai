@@ -19447,9 +19447,9 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
 # ── Harness-layer format keepers (Stage-4 2026-05-25, harness-agents-skills) ──
 # .claude/skills + .claude/agents are always-on surfaces; these keepers gate
 # authoring discipline so new skills/agents conform by construction.
-_HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer"})
-_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-seed"})
-# Other agents (orchestrator-operator, skill-scout) have specialized contracts and
+_HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer", "agents-security", "accountant", "legal-advisor"})
+_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-seed", "integrations-engineer", "ai-engineer", "test-engineer", "tooling-engineer"})
+# Other agents (skill-scout, ops-steward, reverse-engineer, product-designer) have specialized contracts and
 # are skipped by check_agent_archetype_contract.
 
 # ── Agent-context architecture (Stage-4 2026-05-26, agent-context-architecture) ──
@@ -19457,7 +19457,7 @@ _HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "
 # `owns_kb:` in frontmatter; the keeper enforces existence + body-pointer mirror +
 # exclusive ownership. The unowned-allowlist below names KB paths that are
 # universal commons (no single owner) — every agent inherits via CLAUDE.md §1.
-# Procedure-doc carve-out: orchestrator-operator + engineer-seed own no KB
+# Procedure-doc carve-out: engineer-seed owns no KB
 # (they ARE protocols); skill-scout is a meta-scout (owns no KB).
 _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     # §1 family indexes + the GC pattern (2026-08-03 harness-audit re-author).
@@ -19473,7 +19473,6 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/live-state-alignment.md",  # universal commons: org/product live state vs docs — spans backend (orgs), frontend/product guides, devops (prod SHA); no single specialist domain
     "CONTEXT/PATTERNS/common/doc-staleness-gate.md",  # universal commons: a pre-push/CI gate on EVERY living doc (READMEs, contracts, KB) that every committing lens runs into; the `Docs-Reviewed:` trailer is read by all
-    "CONTEXT/PATTERNS/common/lgpd-entry-keeper.md",  # universal commons: a commit-time/CI gate + merge driver on LGPD-WARNINGS.md that EVERY committing lens (any agent that flags a concern) runs into; the LGPD domain depth stays owned by security (security/lgpd.md)
     "CONTEXT/PATTERNS/common/doc-discipline-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/learning-posture-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/server-state-family-index.md",  # universal commons: §1 family index (frontend server state; members owned by frontend-engineer)
@@ -19483,7 +19482,6 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/04-SHARED-LIBRARY.md",
     "CONTEXT/06-AGENTS.md",
     "CONTEXT/07-GAMIFICATION.md",
-    "CONTEXT/PATTERNS/common/doc-symbology.md",
     "CONTEXT/PATTERNS/common/agent-reading-discipline.md",
     "CONTEXT/PATTERNS/common/ast.md",
     "CONTEXT/PATTERNS/common/accept-with-rationale.md",
@@ -19492,7 +19490,6 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/absorption-ships-consume-docs.md",
     "CONTEXT/PATTERNS/common/storage-hygiene.md",
     "CONTEXT/PATTERNS/common/claim-vs-evidence-shared-state.md",  # universal commons: never destroy shared state on a written claim (merged flag / pointer status / benign label) — check the state itself, fail closed on unknown; applies to every lens that removes a worktree, drops a stash or deletes a branch
-    "CONTEXT/PATTERNS/common/methodology-codification-pipeline.md",
     "CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md",  # universal commons: DRY for procedures — sibling of methodology-codification-pipeline + project-execution recurrence rule, applies to every lens that authors procedures
     "CONTEXT/PATTERNS/common/build-learn-cache-mindset.md",  # universal commons: body-DRY for artifact knowledge — sibling of code-DRY + skill-DRY + methodology-codification-pipeline, applies to every lens that builds/refactors/bugfixes/integrates/deploys any artifact
     "CONTEXT/PATTERNS/common/funnel-self-satisfies-preconditions.md",  # universal commons: a shared funnel/factory/adapter must self-satisfy its config/env preconditions (never "caller MUST call setup()"), applies to every lens that authors a single-entry helper
@@ -19500,15 +19497,6 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/bypass-rationalization-anti-patterns.md",  # universal commons: 5 rationalization shapes + ea7514e7 worked example + closes --no-verify commit loophole, applies to every lens that commits (engineers + tech-lead)
     "CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md",  # universal commons: bg-dispatched engineers SURFACE-don't-bypass auto-mode safety (no --no-verify/--force/destructive-shared-ops); applies to every dispatched lens, no single owner
     "CONTEXT/PATTERNS/common/drift-fix-on-contact.md",
-    "CONTEXT/PATTERNS/common/persistent-files-absorption.md",
-    "CONTEXT/PATTERNS/common/keeper-check-before-docing.md",
-    "CONTEXT/PATTERNS/common/keeper-pattern-cache.md",
-    "CONTEXT/PATTERNS/common/absorption-tracking.md",  # universal commons — 9th keeper-mirror cache (absorption-state ledger); methodology/cache infra, sibling of keeper-pattern-cache + scoped-auto-improvement, no single-agent ownership
-    "CONTEXT/PATTERNS/common/claude-md-router-discipline.md",
-    "CONTEXT/PATTERNS/common/memory-index-topic-split.md",  # universal commons: MEMORY.md is a router of TOPICS (auto-loaded + read-capped ~24.4KB — past it recall returns NOTHING); every lens reads AND writes memory, so no single-agent ownership — sibling of claude-md-router-discipline (same principle, different always-on surface)
-    "CONTEXT/PATTERNS/common/lenses-applied-trailer.md",  # universal commons: every lens/role applies
-    "CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md",  # universal commons: every dispatch + inline-lens reads PROJECT.md + files notes
-    "CONTEXT/PATTERNS/common/lossless-doc-refactor.md",
     "CONTEXT/PATTERNS/common/agent-context-architecture.md",
     "CONTEXT/PATTERNS/common/self-branching-mode.md",
     "CONTEXT/PATTERNS/common/branching.md",
@@ -19519,45 +19507,21 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/verify-seed-on-fork-base.md",
     "CONTEXT/PATTERNS/common/phased-push-policy.md",
     "CONTEXT/PATTERNS/common/minimum-viable-rebuild.md",
-    "CONTEXT/PATTERNS/common/scoped-auto-improvement.md",
-    "CONTEXT/PATTERNS/common/kb-vector-search.md",
-    "CONTEXT/PATTERNS/common/roadmap-tracking.md",
-    "CONTEXT/PATTERNS/common/vector-cost-tracking.md",
-    "CONTEXT/PATTERNS/common/vector-calibration.md",
-    "CONTEXT/PATTERNS/common/code-embeddings.md",
-    "CONTEXT/PATTERNS/common/vector-baseline.md",
-    "CONTEXT/PATTERNS/common/code-recurrence-baseline.md",
     "CONTEXT/PATTERNS/common/dont-block-on-background.md",
-    "CONTEXT/PATTERNS/common/eight-way-sync.md",
     "CONTEXT/PATTERNS/common/gate-methodology-sync.md",  # universal commons: meta-rule for ALL lenses that author a gate — gate ships with its compliance-by-construction mechanism
-    "CONTEXT/PATTERNS/common/extractor-correctness-vs-mirror.md",
-    "CONTEXT/PATTERNS/common/cache-locking-discipline.md",
     "CONTEXT/PATTERNS/common/versioning.md",
-    "CONTEXT/PATTERNS/common/engineer-output-linter.md",
-    "CONTEXT/PATTERNS/common/unified-query.md",
-    "CONTEXT/PATTERNS/common/scan-repetition-semantic.md",
-    "CONTEXT/PATTERNS/common/doc-to-code-drift.md",
     "CONTEXT/PATTERNS/common/orphan-branch-sweeper.md",
-    "CONTEXT/PATTERNS/common/cache-telemetry.md",
-    "CONTEXT/PATTERNS/common/brief-similarity-radar.md",
     "CONTEXT/PATTERNS/common/session-end-sweep.md",
-    "CONTEXT/PATTERNS/common/dispatch-warmup.md",
     "CONTEXT/PATTERNS/common/product-centroid-drift.md",
-    "CONTEXT/PATTERNS/common/dispatch-token-log.md",
-    "CONTEXT/PATTERNS/common/dispatch-budget-telemetry.md",  # universal commons — orchestrator tool, no single-agent ownership
-    "CONTEXT/PATTERNS/common/auto-author-scaffolds.md",
-    "CONTEXT/PATTERNS/common/cache-auto-freshness.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
-    "CONTEXT/PATTERNS/common/learn-before-archive.md",  # universal commons — pre-delete salvage gate applies to every lens that deletes any artifact (branch/worktree/file/project); no single-agent ownership
     "CONTEXT/PATTERNS/common/methodology-execution-discipline.md",  # universal commons — close-the-loop/work-within-the-grain/gate-as-learning is an operating contract for EVERY lens; no single-agent ownership
+    "CONTEXT/PATTERNS/common/engineer-operating-discipline.md",  # universal commons — senior-engineer craft (restate the ask, red-first, self-review, commit craft, DoD) shared by EVERY executor lens (engineer-seed/backend/frontend/devops); engineer-seed keeps owns_kb: []
     "CONTEXT/PATTERNS/common/product-dev-learning-ground.md",  # universal commons — learn-development-craft applies to every lens that builds products (backend/frontend/seed); no single-agent ownership
-    "CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md",  # universal commons — organ catalog is consumed by all agents as a reuse surface; no single-agent ownership
-    "CONTEXT/PATTERNS/architect/products-consume-canonical-organs.md",  # universal commons — canonical organ consumption rule applies to every agent that builds FE components
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
 # Their frontmatter MUST declare `owns_kb: []` explicitly (no ambiguity).
-_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed", "orchestrator-operator", "skill-scout"})
+_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed"})
 
 # Repo-root-relative untracked allowlist for check_git_leftovers — files that
 # may legitimately appear at depth 1 untracked. Anything else trips the keeper.
@@ -19702,7 +19666,7 @@ def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
         tool layer, not just discipline).
       - EXECUTORS (backend-engineer, frontend-engineer, engineer-seed) —
         body should reference the `engineer-seed` protocol.
-    Other agents (orchestrator-operator, skill-scout) have specialized
+    Other agents (skill-scout, ops-steward, reverse-engineer, product-designer) have specialized
     contracts and are skipped. Update the archetype sets when new agents land.
     """
     issues: list[dict] = []
@@ -19870,8 +19834,8 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": rel,
                 "issue": (
                     f"Meta-agent `{stem}` declares non-empty `owns_kb:` — "
-                    f"meta-agents (engineer-seed, orchestrator-operator, "
-                    f"skill-scout) own no KB territory. Declare `owns_kb: []`."
+                    f"meta-agents (engineer-seed) "
+                    f"own no KB territory. Declare `owns_kb: []`."
                 ),
                 "severity": "high",
             })

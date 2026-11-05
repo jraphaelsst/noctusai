@@ -1,6 +1,8 @@
 # Autonomous Operator via Subagent — Option D
 
-> **What this is.** A pattern for keeping a single Claude session **autonomously responsive** to a dispatch / cherry-pick / archive queue between user turns, without polluting the architect's user-facing context. A `ScheduleWakeup` tick fires → the architect spawns an `orchestrator-operator` **subagent** (defined at `.claude/agents/orchestrator-operator.md`) → the subagent drains the `## Pending` section of `.claude/dispatcher.md` in **its own isolated context** → returns a summary → the architect's main context stays clean.
+> ⚠️ **RETIRED 2026-11-05 — kept as history.** The `orchestrator-operator` agent this pattern spawned was deleted when the CI merge queue became the one path into `dev` (`KB § PATTERNS/devops/merge-queue.md`): landing work no longer needs an inbox-draining operator. Its tmp-cleanup duty moved to `ops-steward` (`KB § PATTERNS/common/tmp-artifact-cleanup.md`). Do not spawn `orchestrator-operator`; references to it below describe the old design.
+
+> **What this is.** A pattern for keeping a single Claude session **autonomously responsive** to a dispatch / cherry-pick / archive queue between user turns, without polluting the architect's user-facing context. A `ScheduleWakeup` tick fires → the architect spawns an `orchestrator-operator` **subagent** (defined at the retired `orchestrator-operator` agent file) → the subagent drains the `## Pending` section of `.claude/dispatcher.md` in **its own isolated context** → returns a summary → the architect's main context stays clean.
 >
 > **What this is NOT.** A multi-session orchestrator (that's Option B / `/loop`). A replacement for the architect (Option A — direct in-session orchestration). A separate Claude process (Option C — full specialized subagent per task). Option D is the **fusion** of B + C: single session, autonomous polling, specialized subagent drains inbox per tick.
 >
@@ -19,7 +21,7 @@ A vs B vs C vs D — same goal (autonomous orchestration between user turns), fo
 | **A — Direct in-session** | Architect dispatches + cherry-picks + pushes inline between user turns | **Drains fast** — every mechanical op consumes user-facing budget | Zero | Tiny projects (<5 mechanical ops total) |
 | **B — `/loop` autonomous polling** | Separate `/loop` command polls inbox on a cadence; runs in its own process | **Untouched** | Setup `/loop` cadence + inbox plumbing | Long-running orchestrators that survive session restarts |
 | **C — Specialized subagent per task** | Each mechanical op spawns a fresh subagent inline; architect prompts it each time | Architect prompts cost some budget; **subagent context is fresh per task** | Per-task brief overhead | High-variance task types where each needs a custom brief |
-| **D — Single session, ScheduleWakeup → subagent drains inbox** | `ScheduleWakeup` tick fires → architect spawns ONE `orchestrator-operator` subagent → subagent drains entire inbox in isolated context → returns summary → architect resumes user-conversation mode | **Stays clean** — only the summary lands; subagent eats the per-tick context | Define the agent once at `.claude/agents/orchestrator-operator.md` + inbox/outbox plumbing | **Dispatch-heavy projects where the architect needs to stay with the user** |
+| **D — Single session, ScheduleWakeup → subagent drains inbox** | `ScheduleWakeup` tick fires → architect spawns ONE `orchestrator-operator` subagent → subagent drains entire inbox in isolated context → returns summary → architect resumes user-conversation mode | **Stays clean** — only the summary lands; subagent eats the per-tick context | Define the agent once at the retired `orchestrator-operator` agent file + inbox/outbox plumbing | **Dispatch-heavy projects where the architect needs to stay with the user** |
 
 **Decision rule.** Default to A for small projects, B if you need cross-session continuity, C if every task needs custom briefing. Option D is the right choice when **dispatch-heavy + user-thinks-with-architect** are both true at the same time.
 
@@ -54,7 +56,7 @@ Step-by-step:
 3. **ScheduleWakeup queued.** Architect schedules a wakeup (15min default; 5min during dispatch-heavy phases).
 4. **Wakeup fires.** Architect reads `.claude/dispatcher.md` `## Pending` to check for pending tasks.
 5. **IF pending → spawn subagent.** Architect invokes `Agent(subagent_type="orchestrator-operator", prompt="Drain .claude/dispatcher.md ## Pending.")`.
-6. **Subagent works in isolated context.** Per-task playbook lives in `.claude/agents/orchestrator-operator.md`. Subagent reads `## Pending`, executes each task, mutates state (`pending` → `in-progress` → `done` / `failed`), appends to the `## Outbox` section.
+6. **Subagent works in isolated context.** Per-task playbook lives in the retired `orchestrator-operator` agent file. Subagent reads `## Pending`, executes each task, mutates state (`pending` → `in-progress` → `done` / `failed`), appends to the `## Outbox` section.
 7. **Subagent returns summary text.** Single concise text block — drained count, per-task verdict, architect-followup queue, suggested next cadence.
 8. **Architect re-reads outbox + resumes user mode.** Re-schedules next wakeup. Loop continues.
 
@@ -90,7 +92,7 @@ The unified gitignored file (created from `templates/dispatcher.md`). One task p
 
 ### Outbox — `.claude/dispatcher.md` `## Outbox`
 
-Append-only audit section (after `## Completed`). One entry per completed task. Shape defined in `.claude/agents/orchestrator-operator.md § Outbox convention`. Architect reads to verify, prune, or re-queue.
+Append-only audit section (after `## Completed`). One entry per completed task. Shape defined in `the retired orchestrator-operator agent file § Outbox convention`. Architect reads to verify, prune, or re-queue.
 
 ### State mutation rules
 
@@ -131,9 +133,9 @@ Append-only audit section (after `## Completed`). One entry per completed task. 
 ## 6. Setup recipe
 
 1. **Define the operator agent** (one-time per repo).
-   - File: `.claude/agents/orchestrator-operator.md` with YAML frontmatter (`name`, `description`, `tools: Bash, Read, Write, Edit, Agent, mcp__noctusai__noctus_dev_archive`).
+   - File: the retired `orchestrator-operator` agent file with YAML frontmatter (`name`, `description`, `tools: Bash, Read, Write, Edit, Agent, mcp__noctusai__noctus_dev_archive`).
    - Body: per-task playbook (dispatch-engineer / validate-worktree / cherry-pick-and-push / archive-project), outbox convention, git ownership rules, failure handling.
-   - Reference implementation: `.claude/agents/orchestrator-operator.md` shipped 2026-05-11.
+   - Reference implementation: the retired `orchestrator-operator` agent file shipped 2026-05-11.
 
 2. **Plumb the dispatcher file.** `mkdir -p .claude && cp templates/dispatcher.md .claude/dispatcher.md` (the live file is **gitignored** — transient coordination state, not history; `.gitignore` already carries `.claude/dispatcher.md`, enforced by `check_gitignore_drift`).
 
@@ -147,7 +149,7 @@ Append-only audit section (after `## Completed`). One entry per completed task. 
 
 ## 7. Anti-patterns
 
-- **Operator dispatches a second operator.** Cross-context recursion. One operator per tick. Caught by `.claude/agents/orchestrator-operator.md § Scope guards`.
+- **Operator dispatches a second operator.** Cross-context recursion. One operator per tick. Caught by `the retired orchestrator-operator agent file § Scope guards`.
 - **Operator pushes main without brief authorization.** Push-to-main requires the architect's `Args:` block to carry an explicit `push-main: yes` flag — calibrated from pilot tick 1, which surfaced the contradiction between "brief authorizes push" and "agent definition forbids push". Default-safe is still no-push-main; the flag is the override.
 - **Operator dispatches engineers with overlapping files.** Two `dispatch-engineer` tasks in one tick targeting the same file = race condition; operator must STOP + outbox `failed — overlap detected`. Same-product carries higher overlap risk; same-shared-lib (`seed/`, `noctusai_lib/`, `mcp/`) is the highest. Cross-product is default-safe. Architect's `overlap-acknowledged:` flag is the explicit override. Mirrors the architect-side rule in `KB § PATTERNS/architect/branching-and-merging.md § 17.6`.
 - **Operator presumes architect-brief facts without verifying.** Briefs sometimes carry stale claims ("branch already renamed" / "worktree already pushed"). Operator runs `git branch --list` + `git log ..HEAD` + `git status` to confirm; adapts inline if reality diverges; outboxes the divergence.
