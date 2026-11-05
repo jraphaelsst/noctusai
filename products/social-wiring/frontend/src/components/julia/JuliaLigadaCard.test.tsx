@@ -35,20 +35,15 @@ afterEach(cleanup);
 
 describe("JuliaLigadaCard bloqueio de ligar", () => {
   it.each([
-    ["julia_nao_publicada", "A Julia ainda não foi publicada no app Agentes. Publique-a lá para poder ligá-la aqui."],
-    ["julia_desligada_no_agents", "A Julia está desligada no app Agentes (Controles). Ligue-a lá primeiro."],
-    ["agents_indisponivel", "Não foi possível consultar o app Agentes agora."],
-  ] as const)("off line + %s: switch disabled with the reason and the agents link", (motivo, texto) => {
-    renderCard({ alimenta: false, podeLigar: false, motivoBloqueio: motivo, agentsUrl: "https://agents.example.test/" });
+    ["julia_nao_publicada", "A Julia ainda não foi liberada para esta empresa pela NoctusAI. Assim que for, você poderá ligá-la aqui."],
+    ["julia_desligada_no_agents", "A Julia está pausada pela NoctusAI no momento. Você poderá ligá-la aqui quando ela for reativada."],
+    ["agents_indisponivel", "Não foi possível confirmar agora se a Julia pode ser ligada. Tente novamente em instantes."],
+  ] as const)("off line + %s: switch disabled with the reason (never naming the agents app)", (motivo, texto) => {
+    renderCard({ alimenta: false, podeLigar: false, motivoBloqueio: motivo });
     expect(sw().disabled).toBe(true);
     expect(screen.getByTestId("linha-bloqueio").textContent).toContain(texto);
     expect(sw().getAttribute("aria-describedby")).toBe(screen.getByTestId("linha-bloqueio").id);
-    expect(screen.getByRole("link", { name: "Abrir o app Agentes" }).getAttribute("href")).toBe("https://agents.example.test/");
-  });
-
-  it("no link when agents_url is absent", () => {
-    renderCard({ alimenta: false, podeLigar: false, motivoBloqueio: "julia_nao_publicada" });
-    expect(screen.queryByRole("link", { name: "Abrir o app Agentes" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /agentes/i })).toBeNull();
   });
 
   it("an already-ON line can always be turned OFF, even when pode_ligar is false", async () => {
@@ -72,9 +67,9 @@ describe("JuliaLigadaCard bloqueio de ligar", () => {
   });
 
   it.each([
-    [409, "julia_nao_publicada", "A Julia ainda não foi publicada no app Agentes. Publique-a lá para poder ligá-la aqui."],
-    [409, "julia_desligada_no_agents", "A Julia está desligada no app Agentes (Controles). Ligue-a lá primeiro."],
-    [503, "agents_indisponivel", "Não foi possível consultar o app Agentes agora."],
+    [409, "julia_nao_publicada", "A Julia ainda não foi liberada para esta empresa pela NoctusAI. Assim que for, você poderá ligá-la aqui."],
+    [409, "julia_desligada_no_agents", "A Julia está pausada pela NoctusAI no momento. Você poderá ligá-la aqui quando ela for reativada."],
+    [503, "agents_indisponivel", "Não foi possível confirmar agora se a Julia pode ser ligada. Tente novamente em instantes."],
   ])("maps %s %s on the PUT to its sentence and rolls the switch back", async (status, code, texto) => {
     api.put.mockRejectedValue(Object.assign(new Error("x"), { status, body: { error: { code, message: "ignored" } } }));
     const { qc } = renderCard({ alimenta: false });
