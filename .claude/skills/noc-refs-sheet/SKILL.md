@@ -1,7 +1,7 @@
 ---
 name: noc-refs-sheet
-description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + Vídeos count (an Observação ONLY when there is a real warning/reminder — never a description); on EVERY run also fixes every Código to canonical `ONE<digits>` and fills/normalizes `Imóvel / Valor` (`Condomínio - Preço`) from the Vista CRM. The link TARGET differs per sheet — getting that wrong means redoing every row.
-version: 1.3.0
+description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + Vídeos count (an Observação ONLY when there is a real warning/reminder — never a description); on EVERY run also fixes every Código to canonical `ONE<digits>` and fills/normalizes `Imóvel / Valor` (`Condomínio - Preço`) from the Vista CRM — a price that changed in Vista is UPDATED with a dated `valor atualizado…` Observação. The link TARGET differs per sheet — getting that wrong means redoing every row.
+version: 1.4.0
 ---
 
 # noc-refs-sheet — ONExxxxx references into a midiasone spreadsheet
@@ -126,10 +126,28 @@ the thousands separator, no `R$`, no cents. Regex: `^.+ - \d{1,3}(\.\d{3})+$`.
   is new to the sheet uses the Vista text, with lowercase connectors (`Parque das Artes`).
 - **Empty cell** ⇒ fill it. **Filled but off-pattern** (e.g. `Reserva do Moinho 3.980.000`,
   missing ` - `) ⇒ rewrite it in the pattern, keeping the user's name + price.
-- **Filled, but the price differs from Vista** ⇒ do NOT overwrite (it may be the price
-  at publication time). List it for the user: row, sheet value, Vista value.
+- 🔴 **Filled, but the price differs from Vista ⇒ UPDATE it to the Vista price AND leave a
+  note** in the Observação (owner's rule, 2026-11-04 — replaces "never overwrite, report
+  only"). Keep the user's condo spelling; change only the price. The note, pt-BR, dated:
+  `valor atualizado em DD/MM/AAAA: <antigo> → <novo> (Vista)`
+  — e.g. `valor atualizado em 04/11/2026: 780.000 → 740.000 (Vista)`. The note is the
+  audit trail: the old value must still be readable after the cell changes.
+  - The Observação already holds the **user's** text ⇒ append with ` · `, never replace it
+    (§4a). It holds **our own** earlier `valor atualizado…` note ⇒ replace that note with
+    the new one, keeping the ORIGINAL old value (`780.000 → 720.000`, not a chain).
+  - A price that later returns to the sheet's value needs no note — remove our stale one.
+  - Report every update in chat too: row, old → new.
 - **`VistaRecordUnpublished`** (`ExibirNoSite=Nao`; the API key cannot see the record) ⇒
-  leave the cell empty and tell the user. Never invent a value.
+  leave the cell as it is (empty stays empty) and tell the user. Never invent a value,
+  and never "update" a price you could not read.
+- 🔴 **Every ref comes back blank (no `Empreendimento`, no `ValorVenda`) ⇒ suspect the
+  lookup, not the data.** On 2026-11-04 `/imoveis/listar` began answering "A pesquisa não
+  retornou resultados." for every query, so the detail calibrator had no sample record and
+  fell to the `["Codigo"]` floor — every `get_imovel` looked successful and empty. Fixed in
+  `seed/lib/backend/noctusai_lib/integrations/vista/calibration.py` (the calibrator now
+  samples the code being looked up). If it recurs: run `vista.diagnostics.probe`, and
+  confirm with `client.detalhes_imovel(<code>, fields=["Codigo","Empreendimento",
+  "Bairro","ValorVenda"])` before writing anything. Never blank a cell from an all-empty run.
 
 **Calling it when the `vista` MCP is disabled for the session** (it is off the keep-list
 in `settings.local.json`): call the handler directly from the MCP's venv:
@@ -140,13 +158,22 @@ import asyncio, sys
 sys.path.insert(0, "<repo>/mcp")
 from vista.tools.imoveis import get_imovel
 async def main():
+    blank = 0
     for c in sys.argv[1:]:
         r = await get_imovel({"codigo": c})
         raw = (((r.get("item") or {}).get("base") or {}).get("raw")) or {}
-        print(c, r.get("error", {}).get("error_class") if r.get("error") else "",
-              raw.get("Empreendimento"), raw.get("Bairro"), raw.get("ValorVenda"))
+        err = r.get("error", {}).get("error_class") if r.get("error") else ""
+        if not err and not raw.get("ValorVenda"):
+            blank += 1  # a "successful" record with no price — see §2b
+        print(c, err, raw.get("Empreendimento"), raw.get("Bairro"), raw.get("ValorVenda"))
+    if blank:
+        print(f"!! {blank} record(s) came back with no ValorVenda and no error — "
+              "suspect the lookup (§2b), do NOT write these to the sheet")
 asyncio.run(main())
 ```
+
+Run it from the PRIMARY checkout (it reads `mcp/vista/.env` next to the module — a
+worktree copy has none and every row comes back `VistaConfigError`).
 
 ## 3 · Traps, each of which has cost a redo
 
@@ -213,11 +240,12 @@ Most rows have **no** Observação. Everything descriptive goes in the chat repo
 | a second folder with more videos, with its URL (`vídeos em outra pasta: <url>`) | `link aponta para a subpasta VIDEOS`; the folder holds FOTOS + VIDEOS |
 | `não publicado no Vista — condomínio/preço pendentes` | the video breakdown (`YT + REELS, normal e EXCLUSIVA`) |
 | a decoy/wrong-property folder nearby (`cuidado: pasta "VIDEO ERRADO…" é outro imóvel`) | loose videos at the root; duplicate photo-only folders |
-| `preço no Vista mudou: 740.000` (only if the user asks for it in the sheet; default = chat) | `código repetido` (chat report only) |
+| `valor atualizado em 04/11/2026: 780.000 → 740.000 (Vista)` — every price §2b updated | `código repetido` (chat report only) |
 
 - 🔴 **A non-empty Observação is the user's** (e.g. row 7 `Casa de Exclusividade Casa
   Noble - video de parceiros`). Never overwrite or "clean" it; append only with ` · `.
 - Once the warning is resolved (folder found, record published), clear the note you wrote.
+  A `valor atualizado…` note is a record, not a warning — it stays (§2b says when it changes).
 
 ### 4b · Vídeos — the count column, kept filled on every row
 
@@ -248,7 +276,10 @@ Re-export the CSV (`cache:'no-store'`) and assert programmatically:
    Observação you wrote is in the ✅ column of §4a; **and**
 4. every non-empty `Imóvel / Valor` matches `^.+ - \d{1,3}(\.\d{3})+$` **and** sits on
    the row of its own code (compare against the Vista value you fetched, row by row; a
-   shifted run passes the regex but fails this check).
+   shifted run passes the regex but fails this check); **and**
+5. every price equals Vista's `ValorVenda` (except `VistaRecordUnpublished` rows), and
+   every row whose price you changed carries its `valor atualizado…` note — with the
+   user's own Observação text still intact in front of it (§2b).
 
 Leg 2 is what catches a half-finished redo. The export lags a few seconds behind the last
 edit — re-fetch before calling a cell missing.

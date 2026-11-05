@@ -227,7 +227,9 @@ class VistaRESTAdapter:
         listing = await self._fetch_listing_row(client, code)
         detalhes: dict | None = None
         try:
-            fields = await calibrator.get_imovel_detail_fields(client)
+            fields = await calibrator.get_imovel_detail_fields(
+                client, sample_codigo=code
+            )
             result = await client.detalhes_imovel(code, fields=fields)
             if isinstance(result.data, dict):
                 detalhes = result.data
@@ -331,7 +333,9 @@ class VistaRESTAdapter:
                 codigo = row.get("Codigo")
                 if codigo:
                     try:
-                        detail_fields = await calibrator.get_imovel_detail_fields(client)
+                        detail_fields = await calibrator.get_imovel_detail_fields(
+                            client, sample_codigo=codigo
+                        )
                         detail_result = await client.detalhes_imovel(
                             codigo, fields=detail_fields
                         )

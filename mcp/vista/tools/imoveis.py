@@ -117,7 +117,9 @@ async def get_imovel(args: dict) -> dict:
     client = _client()
 
     list_fields = await calibrator.get_imovel_list_fields(client)
-    detail_fields = await calibrator.get_imovel_detail_fields(client)
+    detail_fields = await calibrator.get_imovel_detail_fields(
+        client, sample_codigo=inp.codigo
+    )
 
     # Prefetch the listing row to grab FotoDestaque (vista.md § 4.1
     # /imoveis/detalhes quirks). Non-fatal on failure.
