@@ -19385,6 +19385,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
     "CONTEXT/PATTERNS/common/learn-before-archive.md",  # universal commons — pre-delete salvage gate applies to every lens that deletes any artifact (branch/worktree/file/project); no single-agent ownership
     "CONTEXT/PATTERNS/common/methodology-execution-discipline.md",  # universal commons — close-the-loop/work-within-the-grain/gate-as-learning is an operating contract for EVERY lens; no single-agent ownership
+    "CONTEXT/PATTERNS/common/engineer-operating-discipline.md",  # universal commons — senior-engineer craft (restate the ask, red-first, self-review, commit craft, DoD) shared by EVERY executor lens (engineer-seed/backend/frontend/devops); engineer-seed keeps owns_kb: []
     "CONTEXT/PATTERNS/common/product-dev-learning-ground.md",  # universal commons — learn-development-craft applies to every lens that builds products (backend/frontend/seed); no single-agent ownership
     "CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md",  # universal commons — organ catalog is consumed by all agents as a reuse surface; no single-agent ownership
     "CONTEXT/PATTERNS/architect/products-consume-canonical-organs.md",  # universal commons — canonical organ consumption rule applies to every agent that builds FE components
