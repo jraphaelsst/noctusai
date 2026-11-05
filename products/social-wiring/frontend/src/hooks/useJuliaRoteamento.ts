@@ -27,8 +27,6 @@ export interface LinhaRoteamento {
 export interface Roteamento {
   linhas: LinhaRoteamento[];
   destino_handoff_padrao: { tipo: string; user_id: string | null };
-  /** Where the Julia is published/controlled (link shown only when the switch is blocked by agents). */
-  agents_url?: string | null;
 }
 
 export interface LinhaUpdate {

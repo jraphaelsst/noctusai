@@ -40,7 +40,6 @@ export function JuliaLigadaBanner({ status }: { status: JuliaStatusAgente | null
 /** Why the switch cannot go ON; null = it can (an already-ON line can always be turned OFF, so this is never asked then). */
 export interface BloqueioLigar {
   motivo: MotivoBloqueioLigar | null;
-  agentsUrl?: string | null;
 }
 
 function Linha({ linha, isAdmin, bloqueio }: { linha: LinhaRoteamento; isAdmin: boolean; bloqueio: BloqueioLigar | null }) {
@@ -91,14 +90,6 @@ function Linha({ linha, isAdmin, bloqueio }: { linha: LinhaRoteamento; isAdmin: 
       {bloqueada && (
         <p id={`${id}-motivo`} className="text-sm text-muted-foreground" data-testid="linha-bloqueio">
           {motivoMsg}
-          {bloqueio?.agentsUrl && (
-            <>
-              {" "}
-              <a href={bloqueio.agentsUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline" data-testid="linha-bloqueio-link">
-                Abrir o app Agentes
-              </a>
-            </>
-          )}
         </p>
       )}
       {erro && (
@@ -116,7 +107,6 @@ export function JuliaLigadaCard({
   isAdmin,
   podeLigar,
   motivoBloqueio,
-  agentsUrl,
 }: {
   linhas: LinhaRoteamento[];
   status: JuliaStatusAgente | null | undefined;
@@ -124,9 +114,8 @@ export function JuliaLigadaCard({
   /** `pode_ligar` of GET /api/julia/agente. Only an explicit `false` blocks (unknown = the server decides and answers 409/503). */
   podeLigar?: boolean;
   motivoBloqueio?: MotivoBloqueioLigar | null;
-  agentsUrl?: string | null;
 }) {
-  const bloqueio: BloqueioLigar | null = podeLigar === false ? { motivo: motivoBloqueio ?? "agents_indisponivel", agentsUrl } : null;
+  const bloqueio: BloqueioLigar | null = podeLigar === false ? { motivo: motivoBloqueio ?? "agents_indisponivel" } : null;
   return (
     <Card data-testid="julia-ligada-card">
       <CardHeader>

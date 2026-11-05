@@ -65,9 +65,9 @@ export type MotivoBloqueioLigar = "julia_nao_publicada" | "julia_desligada_no_ag
 
 /** Why the switch cannot go on: the same sentence for the read (`motivo_bloqueio`) and for the 409/503 on the PUT. */
 export const MENSAGEM_BLOQUEIO_LIGAR: Record<MotivoBloqueioLigar, string> = {
-  julia_nao_publicada: "A Julia ainda não foi publicada no app Agentes. Publique-a lá para poder ligá-la aqui.",
-  julia_desligada_no_agents: "A Julia está desligada no app Agentes (Controles). Ligue-a lá primeiro.",
-  agents_indisponivel: "Não foi possível consultar o app Agentes agora.",
+  julia_nao_publicada: "A Julia ainda não foi liberada para esta empresa pela NoctusAI. Assim que for, você poderá ligá-la aqui.",
+  julia_desligada_no_agents: "A Julia está pausada pela NoctusAI no momento. Você poderá ligá-la aqui quando ela for reativada.",
+  agents_indisponivel: "Não foi possível confirmar agora se a Julia pode ser ligada. Tente novamente em instantes.",
 };
 
 export interface JuliaAgente {
