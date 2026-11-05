@@ -102,7 +102,7 @@ class TestRedirect:
         pwg.write_claim(str(primary), "other", str(wt))
         assert _hook(_write(primary, session="s1"))["permissionDecision"] == "deny"
 
-    def test_bash_is_never_redirected(self, layout):
+    def test_bash_naming_an_absolute_primary_path_is_never_redirected(self, layout):
         primary, wt = layout
         pwg.write_claim(str(primary), "s1", str(wt))
         payload = _write(primary)
@@ -184,3 +184,80 @@ class TestPostHookPathIdentity:
 
     def test_genuinely_new_path_is_reported(self):
         assert pwg.diff_new_primary_dirt("?? old.txt", "?? old.txt\n?? new.txt") == ["new.txt"]
+
+
+def _bash(primary: Path, command: str, session: str = "s1", cwd: Path | None = None) -> dict:
+    return {
+        "hook_event_name": "PreToolUse", "tool_name": "Bash", "session_id": session,
+        "tool_input": {"command": command}, "cwd": str(cwd or primary),
+        "transcript_path": "/dev/null", "tool_use_id": "t",
+    }
+
+
+class TestAutoClaimAndBashRedirect:
+    """2026-11-05 drift fix: a session that works in a worktree and then runs a
+    relative-path git/shell write from the primary cwd is moved into its
+    worktree instead of refused (owner: "not letting the agent act as they
+    always do")."""
+
+    def _edit_in_worktree(self, wt: Path, session: str = "s1") -> None:
+        payload = _write(wt, session=session)  # an Edit/Write INSIDE the worktree
+        assert _hook(payload) is None or _hook(payload)["permissionDecision"] != "deny"
+
+    def test_editing_in_a_worktree_auto_claims_it(self, layout):
+        primary, wt = layout
+        self._edit_in_worktree(wt)
+        assert pwg.read_claims(str(primary))["s1"]["worktree"] == str(wt)
+
+    def test_bash_cwd_in_a_worktree_auto_claims_it(self, layout):
+        primary, wt = layout
+        _hook(_bash(primary, "git status", cwd=wt))
+        assert pwg.read_claims(str(primary))["s1"]["worktree"] == str(wt)
+
+    def test_git_dash_c_into_a_worktree_auto_claims_it(self, layout):
+        primary, wt = layout
+        _hook(_bash(primary, f"git -C {wt} log -1"))
+        assert pwg.read_claims(str(primary))["s1"]["worktree"] == str(wt)
+
+    def test_relative_git_commit_from_primary_is_moved_into_the_claimed_worktree(self, layout):
+        primary, wt = layout
+        self._edit_in_worktree(wt)
+        cmd = "git add app.py && git commit -q -m wip"
+        out = _hook(_bash(primary, cmd))
+        assert out["permissionDecision"] == "allow", out
+        assert out["updatedInput"]["command"] == f"cd {wt} && {cmd}"
+        assert "REDIRECTED" in out["additionalContext"]
+
+    def test_relative_shell_redirect_write_is_moved_too(self, layout):
+        primary, wt = layout
+        self._edit_in_worktree(wt)
+        out = _hook(_bash(primary, "echo y > app.py"))
+        assert out["permissionDecision"] == "allow"
+        assert out["updatedInput"]["command"].startswith(f"cd {wt} && ")
+
+    def test_a_command_that_picks_its_own_directory_is_not_moved(self, layout):
+        primary, wt = layout
+        self._edit_in_worktree(wt)
+        out = _hook(_bash(primary, f"cd {primary} && git add app.py"))
+        assert out["permissionDecision"] == "deny"
+
+    def test_without_worktree_use_the_refusal_stands_and_names_enqueue(self, layout):
+        primary, _ = layout
+        out = _hook(_bash(primary, "git add app.py && git commit -m x"))
+        assert out["permissionDecision"] == "deny"
+        assert "action='enqueue'" in out["permissionDecisionReason"]
+        assert "does not survive" not in out["permissionDecisionReason"]
+
+    def test_another_sessions_auto_claim_never_moves_my_command(self, layout):
+        primary, wt = layout
+        self._edit_in_worktree(wt, session="other")
+        out = _hook(_bash(primary, "git add app.py", session="s1"))
+        assert out["permissionDecision"] == "deny"
+
+    def test_last_worktree_used_wins(self, layout):
+        primary, wt = layout
+        wt2 = primary / ".claude" / "worktrees" / "feat-y"
+        _git("worktree", "add", "-q", "-b", "feat/y", str(wt2), cwd=primary)
+        self._edit_in_worktree(wt)
+        self._edit_in_worktree(wt2.resolve())
+        assert pwg.read_claims(str(primary))["s1"]["worktree"] == str(wt2.resolve())
