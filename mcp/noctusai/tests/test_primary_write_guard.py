@@ -1492,3 +1492,63 @@ def test_segments_respect_quotes_and_escapes_but_split_real_separators():
     assert _segments(r"echo 'x|y'; echo z\;w" + "\n" + "ls") == ["echo 'x|y'", r" echo z\;w", "ls"]
     # unbalanced quote: the old split (fail-conservative)
     assert _segments("cd 'unterminated && git commit") == ["cd 'unterminated ", " git commit"]
+
+
+# ---------------------------------------------------------------- bash_is_read_only (2026-11-05)
+# The PreToolUse hook skips the primary `git status` baseline for provably read-only Bash
+# (cold start 0.25s -> 0.09s; the baseline under load blew the 8s hook deadline). The
+# detector must stay CONSERVATIVE: any command that can write returns False.
+from tools.noctus.dev.primary_write_guard import bash_is_read_only  # noqa: E402
+
+
+@pytest.mark.parametrize("cmd", [
+    "ls -la",
+    "cat a.txt | grep foo | wc -l",
+    "git status --porcelain",
+    "git log --oneline -5",
+    "git diff --stat origin/dev...HEAD",
+    "git branch -a",
+    "git remote -v",
+    "git reflog",
+    "git reflog show HEAD",
+    "pwd",
+])
+def test_read_only_commands_are_detected(cmd):
+    assert bash_is_read_only(cmd) is True
+
+
+@pytest.mark.parametrize("cmd", [
+    "",
+    "echo hi > out.txt",
+    "cat a >> b",
+    "ls $(touch x)",
+    "ls `touch x`",
+    "ls && touch x",
+    "ls; rm -rf foo",
+    "sleep 5 &",
+    "touch x",
+    "rm x",
+    "sed -i s/a/b/ f",
+    "python3 script.py",
+    "git checkout -- f",
+    "git commit -m x",
+    "git branch newbranch",
+    "git branch -D old",
+    "git remote add up url",
+    "git reflog expire --expire=now --all",
+    "git reflog delete HEAD@{1}",
+    "git diff --output=patch.diff",
+    "git log --output=log.txt",
+    "ls\ntouch x",
+    "echo ${HOME}",
+])
+def test_writing_or_unknown_commands_are_not_read_only(cmd):
+    assert bash_is_read_only(cmd) is False
+
+
+def test_detector_is_fast():
+    import time
+    t0 = time.perf_counter()
+    for _ in range(2000):
+        bash_is_read_only("git log --oneline -5 | head -3")
+    assert time.perf_counter() - t0 < 1.0

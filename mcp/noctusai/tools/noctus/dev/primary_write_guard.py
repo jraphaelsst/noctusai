@@ -1781,6 +1781,12 @@ def bash_is_read_only(command: str) -> bool:
             # `git branch <name>` / `git remote add` create refs/config.
             if words[1] in {"branch", "remote"} and any(not w.startswith("-") for w in words[2:]):
                 return False
+            # `git reflog expire|delete` rewrite reflogs; only bare/`show` reads.
+            if words[1] == "reflog" and len(words) >= 3 and not words[2].startswith("-") and words[2] != "show":
+                return False
+            # `--output=<file>` / `-o` (diff/log/show) writes a file.
+            if any(w.startswith("--output") for w in words[2:]):
+                return False
             continue
         return False
     return True
