@@ -755,7 +755,58 @@ def _substitute_known(text: str, known: dict[str, str]) -> str:
 
 
 def _segments(command: str) -> list[str]:
-    return [seg for seg in re.split(r"&&|\|\||[;|\n]", command) if seg.strip()]
+    """Split on the shell separators `&&` `||` `;` `|` and newline -- OUTSIDE quotes.
+
+    🔴 2026-11-05: a plain regex split cut a multi-line quoted commit message
+    (`git commit -m "line1\n\nline2"; cd <primary> && …`) into fragments; shlex
+    then failed on the dangling quote, `_segment_cwds` returned None and the
+    whole call fell back to the LAST `cd` -- the worktree commit was charged to
+    the primary (a false refusal). Quotes and backslash escapes are honoured
+    here; an unbalanced quote keeps the old split (fail-conservative: the
+    caller's cd walk then distrusts it exactly as before).
+    """
+    out: list[str] = []
+    buf: list[str] = []
+    quote = ""
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                buf.append(command[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            buf.append(command[i:i + 2])
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        two = command[i:i + 2]
+        if two in ("&&", "||"):
+            out.append("".join(buf))
+            buf = []
+            i += 2
+            continue
+        if ch in ";|\n":
+            out.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    if quote:
+        return [seg for seg in re.split(r"&&|\|\||[;|\n]", command) if seg.strip()]
+    out.append("".join(buf))
+    return [seg for seg in out if seg.strip()]
 
 
 def _tokens(segment: str) -> list[str]:

@@ -574,6 +574,10 @@ A refused **Edit / Write / MultiEdit / NotebookEdit** is rewritten into the sess
 - **`W=<abs>; cd $W; …`** was refused as a write to the primary: `_effective_cwd` could not expand `$W`, so it kept the session cwd. `expand_literal_assignments` now substitutes variables the SAME command assigned a literal, only after the assignment, as the shell would. `W=$(pwd)` and other non-literals stay unresolved, consistent with "measure, don't predict".
 - **The post-hook advised `rm` on the owner's files.** `git restore --staged -- .` turned nine pre-existing untracked files from `A ` to `??`; the line-set diff read each status change as new dirt. `diff_new_primary_dirt` now compares PATHS: a path dirty before the call, in any state, is never reported. A missing baseline reports nothing, which is what `measure_posttool_dirt` already promised.
 
+### A third false positive: quoted newlines (2026-11-05)
+
+**`cd <wt> && git commit -m "multi\n\nline"; cd <primary> && …`** was refused as a primary write. `_segments` split on every newline and `;`, inside quotes too. It cut the commit message into fragments, so shlex failed on the dangling quote. `_segment_cwds` then returned None, and the whole call fell back to the last `cd`. `_segments` now honours quotes and backslash escapes. An unbalanced quote keeps the old split, so the walk still distrusts it (fail-conservative). The reverse order, a quoted primary commit followed by `cd <wt>`, is still refused. Tests are in `test_primary_write_guard.py` under "quote-aware segments".
+
 ### Escape hatch
 
 `NOCTUS_ALLOW_PRIMARY_WRITE=1`, mirroring `NOCTUS_ALLOW_PRIMARY_COMMIT=1`. An

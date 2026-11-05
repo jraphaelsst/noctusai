@@ -1468,3 +1468,27 @@ def test_a_cd_the_segment_walk_cannot_see_falls_back_to_the_old_rule():
     # quoting the walk cannot split -> None -> whole-command cwd as before
     assert _segment_cwds("cd 'unterminated && git commit", PRIMARY) is None
     assert _segment_cwds(f"cd {WT} && git commit; cd {PRIMARY} && ls", PRIMARY) == [PRIMARY, WT, WT, PRIMARY]
+
+
+# ── quote-aware segments (2026-11-05) ────────────────────────────────────────
+# A plain regex split cut a multi-line quoted commit message into fragments, the
+# walk returned None, and the worktree commit was charged to the primary.
+
+def test_a_multiline_quoted_commit_message_keeps_the_worktree_commit_in_the_worktree():
+    cmd = (f'cd {WT} && git commit -qam "fix(x): y\n\nbody with `# marker:` and \'all\'; '
+           f'a && b || c | d\n\nCo-Authored-By: C" >/dev/null 2>&1; git log --oneline -1; '
+           f"cd {PRIMARY} && venv/bin/python mcp/noctusai/cli.py --help 2>&1 | head -3")
+    assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None
+
+
+def test_a_multiline_quoted_commit_in_the_primary_is_still_refused():
+    cmd = f'cd {PRIMARY} && git commit -qam "a\n\nb; c && d"; cd {WT} && git status'
+    assert _decide("Bash", {"command": cmd}, cwd=WT) is not None
+
+
+def test_segments_respect_quotes_and_escapes_but_split_real_separators():
+    from tools.noctus.dev.primary_write_guard import _segments
+    assert _segments('echo "a;b && c\nd" && ls | wc') == ['echo "a;b && c\nd" ', " ls ", " wc"]
+    assert _segments(r"echo 'x|y'; echo z\;w" + "\n" + "ls") == ["echo 'x|y'", r" echo z\;w", "ls"]
+    # unbalanced quote: the old split (fail-conservative)
+    assert _segments("cd 'unterminated && git commit") == ["cd 'unterminated ", " git commit"]
