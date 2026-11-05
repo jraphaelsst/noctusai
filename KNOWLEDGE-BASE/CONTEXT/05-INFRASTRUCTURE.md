@@ -1,10 +1,13 @@
-# 06 — Infrastructure Context
+# 05 — Infrastructure Context
 
-## VPS (Hostinger)
+## Production host (VPS)
 
-- **Server**: `72.61.28.36` — Docker containers with Let's Encrypt SSL
-- `n8n.noctusai.com` — Agentic workflow orchestration
-- `waha.noctusai.com` — WhatsApp HTTP API
+- **One VPS** (Hostinger, 8 GB RAM / 2 vCPU) runs the whole product fleet, one container per product, plus the infra and services stacks (`deploy/fleet/`, `deploy/services/`). Single points of failure and their mitigations → `KB § PATTERNS/devops/sre-craft-canon.md` §1.
+- **Address and access are not recorded in the KB.** The host is reached through the SSH alias `noctus-vps` (operator `~/.ssh/config`; the default `ssh_host` of the `noctus.vps.*` tools) and, from CI, through the `NOCTUS_VPS_HOST` secret (`KB § PATTERNS/devops/prod-watchdog.md` §6). Look it up there, never paste it into docs.
+- **TLS and routing** terminate at Cloudflare: a named Cloudflare tunnel (`noctus-tunnel`) carries every public hostname, with no open inbound web ports. Routes are derived from `deploy/tunnel/ingress.yml` (`KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md`). The earlier Caddy + Let's Encrypt setup is retired.
+- `n8n.noctusai.com` — agentic workflow orchestration (`noctus-services` stack, `deploy/services/compose.services.yml`).
+- `waha.noctusai.com` — WhatsApp HTTP API (same stack; per-product WAHA instances in `deploy/fleet/compose.waha.yml`).
+- Liveness: the off-host watchdog → `KB § PATTERNS/devops/prod-watchdog.md`. Backups / DR → `KB § PATTERNS/devops/sre-craft-canon.md` §5.
 
 ## CORS
 

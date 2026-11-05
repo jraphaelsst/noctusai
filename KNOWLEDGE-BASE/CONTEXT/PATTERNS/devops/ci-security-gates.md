@@ -22,11 +22,11 @@ Lives at `.github/workflows/test.yml`. First landed 2026-05-11 via the `ci-secur
 | Gate | Tool | Config file | Action / image | Scope | Gate condition |
 |---|---|---|---|---|---|
 | **Trivy fs-scan** | `aquasecurity/trivy-action@v0.36.0` | `.trivyignore` | `scan-type: fs` | Lockfiles (`requirements.txt`, `package-lock.json`, `Pipfile.lock`, `yarn.lock`, …) at repo root | HIGH/CRITICAL not in `.trivyignore` — **requires `limit-severities-for-sarif: true`**, else gates on ALL severities (§ 2a) |
-| ~~**Trivy image-scan**~~ (removed 2026-05-22) | — | — | was inside `docker-images-build` matrix | — | Removed — duplicated `build-and-push.yml`; image CVE coverage rides the deploy build |
+| ~~**Trivy image-scan**~~ (removed 2026-05-22) | — | — | was inside `docker-images-build` matrix | — | Removed — duplicated `build-and-push.yml`. ⚠️ Corrected 2026-11-05: `build-and-push.yml` has **no** scan step, so **no workflow scans the built image today** (gap; target state → `KB § PATTERNS/devops/sre-craft-canon.md` §6) |
 | **Bandit** | `bandit==1.9.4` | `bandit.yml` + `bandit-baseline.json` | `setup-python@v5` + `pip install` | `products/*/backend/app/` + `seed/lib/backend/noctusai_lib/` | NEW MEDIUM+ finding (existing findings grandfathered in baseline) |
-| **Gitleaks** | `gitleaks/gitleaks-action@v2` | `.gitleaks.toml` | GH Action | Full repo on push to main; diff on PR | Any leaked secret not in allowlist |
+| **Gitleaks** | `gitleaks/gitleaks-action@v3` | `.gitleaks.toml` | GH Action | Full repo on push to main; diff on PR | Any leaked secret not in allowlist |
 
-All three gates upload a SARIF report to the GitHub Security tab via `github/codeql-action/upload-sarif@v3` with `if: always()` so the report is visible even when the gate fails.
+All three gates upload a SARIF report to the GitHub Security tab via `github/codeql-action/upload-sarif@v4` with `if: always()` so the report is visible even when the gate fails.
 
 ---
 
@@ -35,7 +35,7 @@ All three gates upload a SARIF report to the GitHub Security tab via `github/cod
 **Two scan modes, same DB, complementary coverage.**
 
 - **fs-scan** reads lockfiles. Catches vulnerable deps **before** any image builds. Fast (< 30s typically). New job, lands at `trivy-fs-scan`.
-- **image-scan** reads the built OCI image. Catches additional CVEs from base OS packages (apt/apk-installed deps). Already wired into `docker-images-build` matrix (per product × role).
+- **image-scan** reads the built OCI image. Catches additional CVEs from base OS packages (apt/apk-installed deps). **Not wired into CI today** — the `docker-images-build` matrix that ran it was removed 2026-05-22 and `build-and-push.yml` has no scan step (verified 2026-11-05); run it locally (§7) until CI adds it.
 
 Both honour the same `.trivyignore` at repo root. Both use the canonical config (per the T9 spec recorded in `accept-with-rationale.md § "Entries from trivy-prescan-2026-05-11"`):
 
@@ -47,7 +47,9 @@ aquasec/trivy:0.49.1 (pinned, not @latest)
 
 The action wraps the CLI; pass `severity` / `ignore-unfixed` / `trivyignores` as YAML keys.
 
-> **Action version:** the fs-scan now pins `aquasecurity/trivy-action@v0.36.0` (the prior `@0.24.0` was **yanked** — 2026-05-22). Tags are v-prefixed. The standalone Trivy **image-scan** matrix was removed 2026-05-22 (it duplicated `build-and-push.yml`'s build); image CVE coverage rides the deploy build, not `test.yml`.
+> **Action version:** the fs-scan now pins `aquasecurity/trivy-action@v0.36.0` (the prior `@0.24.0` was **yanked** — 2026-05-22). Tags are v-prefixed. The standalone Trivy **image-scan** matrix was removed 2026-05-22 (it duplicated `build-and-push.yml`'s build); the claim that image CVE coverage then rode the deploy build was wrong — `build-and-push.yml` carries no scan (corrected 2026-11-05).
+>
+> **Pinning.** Every `uses:` here is tag-pinned today; tags are re-pointable (the trivy-action tags were force-pushed to malicious commits on 2026-03-19). Target state = full-SHA pins with a version comment, bumped by Dependabot `github-actions` → `KB § PATTERNS/devops/sre-craft-canon.md` §6 + worked example B.
 
 ---
 
@@ -118,7 +120,7 @@ The baseline file is itself tracked technical debt. When a finding in the baseli
 
 ## 4 · Gitleaks — secrets scanning
 
-`gitleaks/gitleaks-action@v2` auto-detects the event shape:
+`gitleaks/gitleaks-action@v3` auto-detects the event shape:
 - **Push to main:** scans the diff against `HEAD~1` (fast).
 - **Pull request:** scans the PR diff against the base branch.
 
