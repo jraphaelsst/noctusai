@@ -15846,6 +15846,83 @@ def _organ_declared_guard_names(spec) -> set[str]:
 
 
 # NOC-REMEDIATE[migration-guard-probes]: burn down the pre-existing guards with no GuardProbe, batched per product by the release lane; this keeper is the tracker (212 on 2026-10-10 — social-wiring 147, core 17, academia 4, agents 4, igig 3; asleep: erp-imobiliario 22, orbity 7, community 3, personal-finance 3, daily-life 2) — 2026-10-10
+def check_db_guard_registry_static(repo_root: Path | None = None) -> list[dict]:
+    """Static sanity of `verify_db_guards.DEFAULT_REGISTRY`, cheap enough for commit time (2026-11-05).
+
+    verify_db_guards is the most-fixed gate since 2026-09-01 (22 fix commits:
+    a probe naming a migration that was renumbered, duplicate ids, a probe
+    whose wrapped SQL did not parse) and every one surfaced in CI, ~25 min
+    after the commit. These are the registry's offline invariants (the same
+    ones `TestRegistrySanity` asserts), run in-process in well under a
+    second: unique ids, every probe's migration files exist, every probe
+    raises a recognised sentinel, and its rollback-wrapped SQL splits into
+    exactly BEGIN; / one DO block / ROLLBACK;. Pre-commit runs it when
+    `verify_db_guards.py` or a migration is staged. Severity high.
+    KB § PATTERNS/common/methodology-execution-discipline.md § 8.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+
+    def _issue(probe_id: str, msg: str, symbol: str) -> None:
+        issues.append({"product": "<harness>", "file": "mcp/noctusai/tools/noctus/dev/verify_db_guards.py",
+                       "issue": f"probe `{probe_id}`: {msg}", "severity": "high", "symbol": symbol})
+
+    try:
+        from tools.noctus.dev import verify_db_guards as _vdg
+    except Exception as exc:  # unmeasurable is surfaced, never a silent pass
+        return [{"product": "<harness>", "file": "mcp/noctusai/tools/noctus/dev/verify_db_guards.py",
+                 "issue": f"cannot import verify_db_guards ({type(exc).__name__}: {exc})",
+                 "severity": "high", "symbol": "db-guard-registry-import"}]
+    try:
+        from noctusai_lib.testing.migration_parser import _walk_statements
+    except ImportError as exc:
+        _walk_statements = None
+        issues.append({"product": "<harness>", "file": "seed/lib",
+                       "issue": f"statement walker unavailable ({exc}); wrapped-SQL shape NOT checked",
+                       "severity": "warning", "symbol": "db-guard-registry-unmeasurable"})
+    seen: set[str] = set()
+    for probe in _vdg.DEFAULT_REGISTRY:
+        if probe.id in seen:
+            _issue(probe.id, "duplicate probe id", "db-guard-registry-duplicate-id")
+        seen.add(probe.id)
+        for mig in probe.migrations:
+            # Registry entries name either a repo path or a bare filename
+            # (resolved under any product's backend/migrations/).
+            # A `seed:<module>.<name>` entry names a seed SQL template; it resolves
+            # when the module file exists under seed/lib/backend and defines <name>.
+            if mig.startswith("seed:"):
+                parts = mig[len("seed:"):].split(".")
+                found = False
+                for i in range(len(parts), 0, -1):
+                    mod = root / "seed" / "lib" / "backend" / ("/".join(parts[:i]) + ".py")
+                    if mod.is_file():
+                        rest = parts[i:]
+                        text = mod.read_text(encoding="utf-8", errors="replace")
+                        found = not rest or bool(re.search(rf"^(?:def |async def |){re.escape(rest[0])}\b", text, re.M))
+                        break
+            else:
+                found = ((root / mig).is_file() if "/" in mig
+                         else any((root / "products").glob(f"*/backend/migrations/{mig}")))
+            if not found:
+                _issue(probe.id, f"names migration `{mig}`, which does not exist (renumbered/renamed?)",
+                       "db-guard-registry-missing-migration")
+        if not any(x in probe.sql for x in ("NOC_PROBE:permitted", "NOC_PROBE:violation", "NOC_PROBE:blocked")):
+            _issue(probe.id, "raises no recognised sentinel (permitted/violation/blocked)",
+                   "db-guard-registry-no-sentinel")
+        try:
+            wrapped = _vdg.wrap_rollback_only(probe.sql)
+        except ValueError as exc:  # the wrapper refuses a malformed probe outright
+            _issue(probe.id, f"wrapper refuses its SQL: {str(exc)[:160]}", "db-guard-registry-shape")
+            continue
+        if _walk_statements is not None:
+            stmts = [x.strip() for x in _walk_statements(wrapped) if x.strip()]
+            if (len(stmts) != 3 or stmts[0] != "BEGIN;" or not stmts[1].startswith("DO $noc_probe$")
+                    or stmts[2] != "ROLLBACK;"):
+                _issue(probe.id, f"wrapped SQL is not BEGIN;/one DO block/ROLLBACK; ({len(stmts)} statements)",
+                       "db-guard-registry-shape")
+    return issues
+
+
 def check_migration_guard_has_probe(
     repo_root: Path | None = None, paths: list[str] | None = None
 ) -> list[dict]:

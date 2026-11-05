@@ -938,3 +938,23 @@ class TestPendingMigration:
     def test_an_undeclared_migration_name_never_parks_a_probe(self):
         result, _ = self._run(applied=set(), declared=False)
         assert result["status"] == "unverified" and result["pending"] == []
+
+
+class TestCheckDbGuardRegistryStatic:
+    """`check_db_guard_registry_static` - the commit-time copy of the registry invariants (2026-11-05)."""
+
+    def test_live_registry_is_clean(self):
+        from tools.noctus.dev.compliance import check_db_guard_registry_static
+        assert [i for i in check_db_guard_registry_static() if i["severity"] == "high"] == []
+
+    def test_flags_duplicate_id_missing_migration_and_bad_shape(self, tmp_path, monkeypatch):
+        from tools.noctus.dev import compliance
+        from tools.noctus.dev import verify_db_guards as vdg
+        good = vdg.DEFAULT_REGISTRY[0]
+        dup = vdg.GuardProbe(id=good.id, product="x", schema="x", guard_name=good.guard_name, kind=good.kind,
+                             sql="SELECT 1;", rationale="r",
+                             migrations=("products/x/backend/migrations/999_nope.sql",))
+        monkeypatch.setattr(vdg, "DEFAULT_REGISTRY", (good, dup))  # self-patch-ok: the registry is DATA under test; the keeper logic runs unpatched
+        symbols = {i["symbol"] for i in compliance.check_db_guard_registry_static(tmp_path)}
+        assert {"db-guard-registry-duplicate-id", "db-guard-registry-missing-migration",
+                "db-guard-registry-no-sentinel", "db-guard-registry-shape"} <= symbols

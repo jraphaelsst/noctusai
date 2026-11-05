@@ -440,6 +440,8 @@ declared probes are exercised on PGlite against the organ's own DDL
 
 ⇒ **A structural check that a guard exists is a hypothesis about its
 behaviour, not proof of it — proof requires watching it refuse.**
+**Registry sanity at commit (2026-11-05).** verify_db_guards was the most-fixed gate since 2026-09-01 (22 fix commits), and every defect surfaced in CI. Keeper `check_db_guard_registry_static` (`--check-db-guard-registry-static`, ~0.5 s) runs the registry's offline invariants at pre-commit whenever `verify_db_guards.py` or a migration is staged: unique probe ids, every named migration resolves (repo path, bare filename under any product, or `seed:<module>.<name>`), a recognised sentinel, and a rollback-wrapped shape of BEGIN;/one DO block/ROLLBACK;.
+
 ### 9. Resolve the root from the artefact under evaluation, never from the ambient cwd
 
 `Path.cwd()` and "wherever this module's `__file__` happens to resolve"

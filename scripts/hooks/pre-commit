@@ -482,6 +482,17 @@ fi
 
 # ─── 6b-sexies. Migration guard has a behaviour probe (blocking, only ─────
 # when a migration is staged) ──────────────────────────────────────────────
+# Keeper `check_db_guard_registry_static` (2026-11-05): verify_db_guards is the
+# most-fixed gate (22 fixes since 09-01), every one found in CI. Its offline
+# registry invariants run here, sub-second, when the registry or a migration
+# (which a probe may name) is staged.
+if have_py && git diff --cached --name-only | grep -qE '(^mcp/noctusai/tools/noctus/dev/verify_db_guards\.py$|/backend/migrations/.*\.sql$)'; then
+    if ! "$PY" "$CLI" --check-db-guard-registry-static --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] db-guard registry check FAILED. Commit aborted (CI would eject it ~25 min later)." >&2
+        exit 1
+    fi
+fi
+
 # Keeper `check_migration_guard_has_probe` — gate↔methodology-sync backstop
 # for `noctus.dev.verify_db_guards` (2026-09-18, "structure-green is not
 # behaviour-green"). A migration that defines a genuine guard (a trigger
