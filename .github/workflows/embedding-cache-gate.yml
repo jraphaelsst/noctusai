@@ -167,7 +167,7 @@ jobs:
         # The CACHE_TUNNEL_UP env is set by the tunnel step above when nc
         # confirms 127.0.0.1:5432 is listening.
         continue-on-error: ${{ env.CACHE_TUNNEL_UP != '1' }}
-        run: python mcp/noctusai/cli.py --check-kb-vector-canonical
+        run: python mcp/noctusai/cli.py --check-kb-embeddings-cache-freshness
 
       - name: Run code embeddings cache freshness gate
         # Same conditional hard-fail rationale as the KB gate above.
