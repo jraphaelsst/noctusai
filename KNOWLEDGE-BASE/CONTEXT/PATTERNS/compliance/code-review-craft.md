@@ -150,7 +150,7 @@ passes when validation runs before auth; the test never proves auth. Assert `== 
 
 **House rule.** Flaky ≠ green. A test seen to pass and fail on the same commit is:
 1. **Quarantined with a named destination** — `NOC-REMEDIATE[flaky]` at the test + a proposal row naming the suspected cause class (order dependence, shared singleton, time, network, the shared-checkout worktree sensitivity).
-2. **Bisected for pollution first** — the house playbook for test-isolation pollution lives in `testing.md` (seed-singleton guard, shadow purge); most noc "flakes" so far were pollution, not randomness.
+2. **Bisected for pollution first** — the house playbook for test-isolation pollution lives in `test-harness-playbook.md` §6 (seed-singleton guard §2, shadow purge §2); most noc "flakes" so far were pollution, not randomness.
 3. **Never retried into silence.** A CI retry that turns red into green hides the 84%-class signal; the verdict channel must belong to what is judged (§1 verdict-channel integrity).
 
 ## 8 · Coverage as a signal
