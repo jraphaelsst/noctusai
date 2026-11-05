@@ -210,3 +210,84 @@ class TestExecutorDispatch:
     def test_bad_stdin_fails_closed(self):
         code, out = _run(EXEC, "{nope")
         assert code == 0 and _reason(out).startswith("[noc-guard:executor-dispatch] ")
+
+
+# ── shared `load_module` (the one importlib idiom all six guards use) ──────────
+
+HEAVY = HOOKS / "claude-guard-heavy-run.py"
+SIGNATURE = HOOKS / "claude-guard-harness-signature.py"
+POST = HOOKS / "claude-guard-primary-write-post.py"
+
+
+class TestLoadModule:
+    def test_loads_by_path_and_registers_in_sys_modules(self):
+        mod = runner.load_module(HOOKS / "_guard_failclosed.py", "noc_load_module_ut")
+        assert mod.marker("x") == "[noc-guard:x]" and sys.modules["noc_load_module_ut"] is mod
+
+    def test_default_name_is_noc_stem(self):
+        mod = runner.load_module(HOOKS / "_guard_failclosed.py")
+        assert mod.__name__ == "noc_" + "_guard_failclosed"
+
+    def test_missing_file_raises_never_returns_none(self):
+        with pytest.raises((ImportError, FileNotFoundError)):
+            runner.load_module(HOOKS / "no_such_guard_module.py")
+
+    def test_load_failure_inside_judge_denies_with_marker(self):
+        out = io.StringIO()
+        runner.run_guard(
+            "g", lambda _p: runner.load_module(HOOKS / "no_such_guard_module.py"),
+            stdin=io.StringIO("{}"), stdout=out,
+        )
+        reason = json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecisionReason"]
+        assert reason.startswith("[noc-guard:g] ") and "guard crashed" in reason
+
+
+def _bash(cmd):
+    return json.dumps({"tool_name": "Bash", "cwd": str(REPO_ROOT), "tool_input": {"command": cmd}})
+
+
+class TestEndToEndAllowDeny:
+    """One allow + one deny per guard, real subprocess, JSON on stdin."""
+
+    def test_primary_write(self):
+        code, out = _run(PRIMARY, json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}, "cwd": str(REPO_ROOT)}))
+        assert code == 0 and out is None
+        code, out = _run(PRIMARY, "[1]")
+        assert _reason(out).startswith("[noc-guard:primary-write] ")
+
+    def test_test_seams(self):
+        code, out = _run(SEAMS, json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}, "cwd": str(REPO_ROOT)}))
+        assert code == 0 and out is None
+        code, out = _run(SEAMS, "")
+        assert _reason(out).startswith("[noc-guard:test-seams] ")
+
+    def test_executor_dispatch(self):
+        agent = lambda s, **x: json.dumps({"tool_name": "Agent", "cwd": str(REPO_ROOT),
+                                           "tool_input": {"subagent_type": s, "prompt": "x", **x}})
+        code, out = _run(EXEC, agent("backend-engineer", isolation="worktree"))
+        assert code == 0 and out is None
+        code, out = _run(EXEC, agent("backend-engineer"))
+        assert _reason(out).startswith("[noc-guard:executor-dispatch] ")
+
+    def test_heavy_run(self):
+        code, out = _run(HEAVY, _bash("ls -la"))
+        assert code == 0 and out is None
+        code, out = _run(HEAVY, _bash("pytest some/test_file.py"))
+        assert _reason(out).startswith("[noc-guard:heavy-run] ")
+
+    def test_harness_signature_advisory(self):
+        silent = {"tool_name": "Bash", "tool_response": {"stdout": "ok", "exit_code": 0}}
+        code, out = _run(SIGNATURE, json.dumps(silent))
+        assert code == 0 and out is None
+        hit = {"tool_name": "Bash", "tool_response": {
+            "stdout": "", "stderr": "migration_replay: INCONCLUSIVE node missing", "exit_code": 1}}
+        code, out = _run(SIGNATURE, json.dumps(hit))
+        assert code == 0
+        assert "HARNESS SIGNATURE MATCHED" in out["hookSpecificOutput"]["additionalContext"]
+
+    def test_primary_write_post_advisory(self):
+        # Never blocks: non-Bash and malformed payloads stay silent, exit 0.
+        code, out = _run(POST, json.dumps({"tool_name": "Read"}))
+        assert code == 0 and out is None
+        code, out = _run(POST, _bash("true"))
+        assert code == 0 and (out is None or "additionalContext" in out["hookSpecificOutput"])

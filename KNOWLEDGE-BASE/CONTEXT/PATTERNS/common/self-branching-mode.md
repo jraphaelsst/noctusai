@@ -578,8 +578,11 @@ internal 8 s deadline (below the 10 s settings timeout; `SIGALRM`, a
 empty/malformed stdin all emit a `deny` and exit 0. Every deny reason starts
 with the machine-readable marker `[noc-guard:<name>]` (`primary-write`,
 `test-seams`) so a UI can attribute it. `NOCTUS_ALLOW_PRIMARY_WRITE` /
-`NOCTUS_ALLOW_SELF_PATCH` live inside the judges and are unchanged. A new
-PreToolUse guard script MUST use `run_guard`; tests in
+`NOCTUS_ALLOW_SELF_PATCH` live inside the judges and are unchanged. Every `claude-guard-*.py` (PreToolUse and the advisory PostToolUse pair) loads
+its decision module through the ONE shared `_guard_failclosed.load_module(path)`
+(DRY, N=6): a load failure raises, so inside a `judge` `run_guard` denies with
+the guard's marker; the advisory hooks catch it and stay non-blocking. A new
+PreToolUse guard script MUST use `run_guard` and `load_module`; tests in
 `mcp/noctusai/tests/test_guard_failclosed.py`.
 
 **Dispatch-time gate for executors.** `claude-guard-executor-dispatch.py`

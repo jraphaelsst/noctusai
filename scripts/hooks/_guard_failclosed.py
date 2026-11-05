@@ -21,10 +21,13 @@ KB § PATTERNS/common/self-branching-mode.md §11.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import signal
 import sys
 from collections.abc import Callable
+from pathlib import Path
+from types import ModuleType
 from typing import Any, TextIO
 
 DEFAULT_DEADLINE_S = 8.0  # must stay below the `timeout` in .claude/settings.json (10)
@@ -32,6 +35,25 @@ DEFAULT_DEADLINE_S = 8.0  # must stay below the `timeout` in .claude/settings.js
 
 class GuardTimeout(BaseException):
     """BaseException on purpose: a guard's inner `except Exception` must not swallow it."""
+
+
+def load_module(path: str | Path, name: str | None = None) -> ModuleType:
+    """Load a guard's decision module BY PATH (the one shared importlib idiom).
+
+    Fail-CLOSED: any failure raises `ImportError` (or whatever the module's own
+    import raises) — never returns None. Called from inside a `judge`, `run_guard`
+    turns the raise into a `[noc-guard:<name>]` deny; the advisory hooks catch it
+    and stay silent-but-logged. `name` defaults to `noc_<file stem>`.
+    """
+    path = Path(path)
+    spec = importlib.util.spec_from_file_location(name or f"noc_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: @dataclass resolves annotations through sys.modules.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def marker(name: str) -> str:
