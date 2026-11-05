@@ -54,8 +54,8 @@ class TestAgentKbAlignment:
     def test_meta_agent_with_non_empty_owns_flagged(self, tmp_path):
         _write_kb(tmp_path, "CONTEXT/PATTERNS/foo.md")
         _write_agent(
-            tmp_path, "skill-scout",
-            "name: skill-scout\ndescription: scout.\ntools: Read, WebSearch\nowns_kb:\n  - CONTEXT/PATTERNS/foo.md",
+            tmp_path, "orchestrator-operator",
+            "name: orchestrator-operator\ndescription: operator.\ntools: Read, Bash\nowns_kb:\n  - CONTEXT/PATTERNS/foo.md",
             "Body referencing KB § PATTERNS/foo.md.",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
