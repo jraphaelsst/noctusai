@@ -23,8 +23,8 @@ import { createApiClient } from "@noctusai/lib/api";
 import { createDeadSessionHandler, createSupabaseTokenRefresher } from "@noctusai/lib/auth";
 import { createNotificationHooks } from "@noctusai/lib/notifications";
 import { createAuthProvider } from "@noctusai/lib/components";
-import { NotificationBell as SharedNotificationBell, withNextPath } from "@noctusai/lib/design-system";
-import { env } from "@noctusai/lib";
+import { NotificationBell as SharedNotificationBell } from "@noctusai/lib/design-system";
+import { env, createOpenInProduct } from "@noctusai/lib";
 
 interface ProductInfraConfig {
   /** Database schema name. Optional — auto-detected from VITE_PRODUCT_SCHEMA
@@ -144,7 +144,7 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
    * landing path. Same request shape as SSOCallback's redeem: `credentials: include` so core's browser-bind
    * cookie is set. Rejects (unknown product, no licence, refused URL) so the bell navigates nowhere.
    */
-  async function openInProduct(product: string, link: string) {
+  const openInProduct = createOpenInProduct(async (product) => {
     const token = await getAuthToken();
     const res = await fetch(`${env.CORE_API_URL}/api/sso/token`, {
       method: "POST",
@@ -153,10 +153,8 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
       body: JSON.stringify({ product_slug: product }),
     });
     if (!res.ok) throw new Error(`sso/token ${res.status}`);
-    const target = withNextPath((await res.json()).redirect_url, link);
-    if (!target) throw new Error("launch url refused");
-    window.location.assign(target);
-  }
+    return (await res.json()).redirect_url as string;
+  });
   function NotificationBell() {
     const navigate = useNavigate();
     return (
@@ -186,6 +184,8 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
     appConfig: {
       supabase,
       useAuthStore,
+      /** Live operational pop-ups + the fallback bell, mounted once by `createProductApp`. */
+      notifications: { hooks: notificationHooks, onNavigateProduct: openInProduct },
     },
   };
 }

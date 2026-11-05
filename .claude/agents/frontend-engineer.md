@@ -13,6 +13,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/lying-loading-state.md
   - CONTEXT/PATTERNS/frontend/mutation-cache-writes.md
   - CONTEXT/PATTERNS/frontend/silent-refusal.md
+  - CONTEXT/PATTERNS/frontend/notification-classes.md
   - CONTEXT/PATTERNS/frontend/status-pagina-dev-visibility.md
   - CONTEXT/PATTERNS/frontend/org-admin-ux-gate.md
   - CONTEXT/PATTERNS/frontend/svg-render-mode.md
@@ -47,6 +48,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 - **A refusal is never silent.** Failed query ⇒ error branch before the empty one (`QueryErrorState`); uploads via `useUploadDocumento` + `<UploadErro>`, `onUpload` returns `mutateAsync` (F76/F78/F86, 2026-10-24). `check_silent_refusal` (blocking). → `KB § PATTERNS/frontend/silent-refusal.md`
 - **Org-admin UX gate = `useIsOrgAdmin()` / `isOrgAdmin(ctx)` from `@noctusai/lib`, never the inline `isProductAdmin || org.role owner/admin` copy.** Correct under the org picker (staff carry `noctus_role` admin); UX only, the server enforces. `check_hand_copied_org_admin` blocks. → `KB § PATTERNS/frontend/org-admin-ux-gate.md`
 - **Any chat/inbox surface = `ChatWindow` organ + adapter + DB-first reads + ONE realtime stream.** Never fork the organ, never put a vendor call on the read path, never `refetchInterval`. Register every new organ's `.organ.yaml` — a missing registration makes the catalog report it as shelfware, which is what manufactured the three existing chat forks. → `KB § PATTERNS/frontend/inbox-chat-surface.md`
+- **Two notice classes, never mixed.** User-triggered result ⇒ `toast.success`/`toast.error` (green/red); something that happened to them (new lead, sync applied) ⇒ a `write_in_app` row → bell + neutral `toastOperacional` pop-up; the seed mounts the live hook + closeButton Toaster + fallback bell once. → `KB § PATTERNS/frontend/notification-classes.md`
 - **SVG via seed primitive.** Use `svg_render` (the media-creator residual) — not hand-rolled `<svg>` strings in components. → `KB § PATTERNS/frontend/svg-render-mode.md`
 - **Consent routes are seed-mounted — never re-declare per-product.** Do NOT declare `ConsentHubPage`/`PrivacyPolicyPage`/`TermsOfUsePage` locally; `createProductApp` mounts `/consent*` by construction. `check_consent_routes_mounted` enforces. → `KB § PATTERNS/frontend/consent-routes-mandate.md`
 - **No precaching service worker.** Products don't ship a PWA/`VitePWA` service worker (it precaches the shell+JS BYPASSING HTTP caching → clients pinned to STALE bundles after deploy). Retire with `selfDestroying: true` or declare `// noc-allow: service-worker`. `check_product_service_worker` enforces. → `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`

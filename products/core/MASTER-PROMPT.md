@@ -101,6 +101,7 @@ AcceptInvite, AccountSettings, BillingSettings, BrandIdentity (`/org-settings/id
 - Webhook delivery uses retry with exponential backoff
 - N+1 zero tolerance: `.in_("id", ids)` for batch reads, `.insert(rows)` for batch writes
 - All product notification proxies route through Core's `public.notifications` table
+- Core's frontend passes `notifications: { hooks, onNavigateProduct }` (from `components/NotificationBell.tsx`) to `createProductApp`: the seed shell mounts the live operational pop-ups + a fallback bell on header-less pages, and bridges core's custom auth to the global auth-ready signal (without it the notification queries never enable). See `KB § PATTERNS/frontend/notification-classes.md`
 - **Rate-limit policies are canonical.** `team.py` ∧ `onboarding.py` consume `DEFAULT_AUTH_RL` from `noctusai_lib.api.rate_limit_policies`. New auth/team/invite routes MUST import `DEFAULT_AUTH_RL`; webhook routes → `DEFAULT_WEBHOOK_RL`; admin/portal routes → `DEFAULT_PORTAL_RL`; LLM-touching routes → `DEFAULT_AI_RL`. Inline `@limiter.limit("N/min")` strings ≡ N=2 trigger.
 - **Doc-code coherence at commit time.** Script / MCP tool / keeper detector / CLI flag Δ referenced by this MASTER-PROMPT ∨ `KB § backend/01-CORE.md` ⇒ update prose in SAME commit. `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ products/core/` first. → CLAUDE.md §1 "Doc-code coherence" + `KB § PATTERNS/methodology-codification-pipeline.md`
 

@@ -111,3 +111,28 @@ describe("withNextPath", () => {
     expect(withNextPath("javascript:alert(1)", "/a")).toBeNull();
   });
 });
+
+describe("NotificationBell open + refetch", () => {
+  it("opens on click, shows the list, refetches list and badge on open, closes on outside mousedown", () => {
+    const refetchLista = vi.fn(); const refetchContagem = vi.fn();
+    const h = {
+      useNotificacoes: () => ({ data: { data: [{ ...base, id: "a1", titulo: "Novo lead: Maria" }] as never[] }, refetch: refetchLista }),
+      useContagemNaoLidas: () => ({ data: { nao_lidas: 1 }, refetch: refetchContagem }),
+      useMarcarComoLida: () => ({ mutate: vi.fn(), isPending: false }),
+      useMarcarTodasComoLidas: () => ({ mutate: vi.fn(), isPending: false }),
+    };
+    render(<NotificationBell hooks={h} />);
+    expect(screen.queryByText("Novo lead: Maria")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Notificacoes"));
+    expect(screen.getByText("Novo lead: Maria")).toBeTruthy();
+    expect(refetchLista).toHaveBeenCalledTimes(1);
+    expect(refetchContagem).toHaveBeenCalledTimes(1);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByText("Novo lead: Maria")).toBeNull();
+  });
+
+  it("reads metadata.produto (pt-BR row contract) as well as metadata.product", () => {
+    expect(notificationProduct({ metadata: { produto: "agents" } })).toBe("agents");
+    expect(notificationProduct({ metadata: { product: "agents" } })).toBe("agents");
+  });
+});

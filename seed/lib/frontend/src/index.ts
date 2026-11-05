@@ -45,7 +45,7 @@ export { hasOrgVisitMarker, getOrgVisitOrg, markOrgVisit, clearOrgVisitMarker, b
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth
-export { useSupabaseAuthInit, useAuthReady, useAuthReconnecting, classifyBootSession, classifyBootMeStatus, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler, IDENTITY_CHECK_THROTTLE_MS } from './auth';
+export { useSupabaseAuthInit, markAuthReady, useAuthReady, useAuthReconnecting, classifyBootSession, classifyBootMeStatus, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler, IDENTITY_CHECK_THROTTLE_MS } from './auth';
 export { adoptRotatedPair, endSessionLocally, signOutExplicitly, type StoredSessionPair, type EndSessionLocallyOptions, type SignOutExplicitlyOptions } from './session-ending';
 export { clearLocalIdentity, dropProductCookieSession, isAuthRejection, verifySessionWithServer } from './identity';
 
@@ -364,3 +364,8 @@ export * from './erp-dashboard';
 // Categorized multi-step journey (steps, subtabs, progress, skip, a11y).
 export { JourneyWizard } from './journey';
 export type { JourneyWizardProps, JourneyStep, JourneySubtab, JourneyContext } from './journey';
+
+export { toastOperacional, OPERATIONAL_TOAST_MS } from './operational-toast';
+export type { ToastOperacionalOptions } from './operational-toast';
+export { useLiveNotifications, createOpenInProduct, selectFreshNotifications, MAX_LIVE_TOASTS } from './live-notifications';
+export type { LiveNotificationsOptions } from './live-notifications';

@@ -47,6 +47,9 @@ export interface ContagemNaoLidas {
   nao_lidas: number;
 }
 
+/** How often the notice list and the unread badge are re-read while the tab is visible. */
+export const NOTIFICATION_POLL_MS = 15_000;
+
 // ── Hook Factory ───────────────────────────────────────────────────
 
 export function createNotificationHooks(
@@ -75,7 +78,12 @@ export function createNotificationHooks(
       // ahead of the restored session (else 401 → spurious
       // "servidor indisponível" toast on every standalone page load).
       enabled: authReady && !!user,
-      staleTime: 30 * 1000,
+      // Live: the list is what the bell shows AND what the live pop-up reads, so a notice created
+      // while the tab is open reaches both within ~15 s. react-query pauses the interval while the
+      // tab is hidden and refetches on focus -- no extra visibility code.
+      refetchInterval: NOTIFICATION_POLL_MS,
+      refetchOnWindowFocus: true,
+      staleTime: 10 * 1000,
       // Keyed on `page` — paging forward/back is a key change, so `data`
       // would otherwise go `undefined` for a tick and the notification list
       // would blank every page click instead of just updating in place.
@@ -94,8 +102,9 @@ export function createNotificationHooks(
         return result as ContagemNaoLidas;
       },
       enabled: authReady && !!user,
-      refetchInterval: 30000,
-      staleTime: 30 * 1000,
+      refetchInterval: NOTIFICATION_POLL_MS,
+      refetchOnWindowFocus: true,
+      staleTime: 10 * 1000,
     });
   }
 
