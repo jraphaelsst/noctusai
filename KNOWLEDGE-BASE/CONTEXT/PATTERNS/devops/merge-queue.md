@@ -140,7 +140,7 @@ Code lives in:
   commit and rebases it with `--rebase-merges` (it used to do that only for
   `train-*` slugs, so feat/julia-golive was flattened and re-hit the conflicts
   its merge had already resolved).
-- **The drain registers the repo's custom merge drivers first** (`scripts/hooks/register-merge-drivers.sh`, after installing toolkit deps). `.gitattributes` only names a driver; unregistered on the runner, derived kb-counts blocks text-merge and eject parallel entries (2026-11-05). Keeper `check_merge_drivers_registered_in_ci`. → `KB § PATTERNS/common/auto-generated-merge-drivers.md`
+- **The drain registers the repo's custom merge drivers first** (`scripts/hooks/register-merge-drivers.sh`, after installing toolkit deps). `.gitattributes` only names a driver; unregistered on the runner, derived kb-counts blocks text-merge and eject parallel entries (2026-11-05). Keeper `check_merge_drivers_registered_in_ci`. Merge drivers run before git writes the merged tree (ort), so they re-derive counts against the pre-merge tree: after every composed entry the drain therefore re-runs `cli.py --update-kb-counts` in its worktree and commits changed derived paths as `chore(kb-counts): regenerate derived counts at compose [auto]`; a failing regen ejects the entry (`kb_counts_regen`), never continues silently. → `KB § PATTERNS/common/auto-generated-merge-drivers.md`
 
 ## 5 · Fallback: `task_branch action=integrate`
 

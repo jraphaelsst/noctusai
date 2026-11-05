@@ -117,9 +117,10 @@ def enqueue(w, slug, files, when, base="origin/dev"):
     return sha
 
 
-def make_queue(w, ci):
+def make_queue(w, ci, regen=lambda wt: (True, "")):
+    # regen injected: the real one shells out to cli.py --update-kb-counts (absent in tmp repos)
     return mq.Queue("o/r", run=ci, run_id="7", poll_s=0, sleep=lambda s: None,
-                    workdir=w["runner"], log=lambda m: None)
+                    workdir=w["runner"], log=lambda m: None, regen=regen)
 
 
 def origin_dev(w):
@@ -528,3 +529,40 @@ def test_merge_queue_workflow_splits_kick_from_the_dev_only_drain():
     assert step_env["MQ_PUSH_TOKEN"] == "${{ secrets.MQ_PUSH_TOKEN }}"
     assert drain["concurrency"]["cancel-in-progress"] is False and "concurrency" not in wf
     assert json.dumps(drain).count("secrets.") == 1  # only the drain step reads the PAT
+
+
+# ── kb-counts regeneration at compose ───────────────────────────────────────
+
+def _compose_one(w, regen):
+    sha = enqueue(w, "kc", [("a.txt", "a\n")], 5000)
+    q = make_queue(w, FakeCI(w["origin"]), regen=regen)
+    q.fetch()
+    base = q.dev_sha()
+    wt = str(Path(w["runner"]).parent / "wt")
+    head, applied, ejected = q.compose(q.entries(), base, wt)
+    return q, wt, base, head, applied, ejected
+
+
+def test_compose_commits_regenerated_counts_when_they_change(world):
+    def regen(wt):
+        p = Path(wt) / "KNOWLEDGE-BASE" / "doc.md"
+        p.parent.mkdir(exist_ok=True)
+        p.write_text("count=derived\n")
+        return True, ""
+    q, wt, base, head, applied, ejected = _compose_one(world, regen)
+    assert [e.slug for e in applied] == ["kc"] and not ejected
+    assert sh(wt, "git", "log", "-1", "--format=%s", head) == "chore(kb-counts): regenerate derived counts at compose [auto]"
+    assert sh(wt, "git", "show", f"{head}:KNOWLEDGE-BASE/doc.md") == "count=derived"
+
+
+def test_compose_makes_no_commit_when_counts_unchanged(world):
+    q, wt, base, head, applied, ejected = _compose_one(world, lambda wt: (True, ""))
+    assert [e.slug for e in applied] == ["kc"]
+    assert "regenerate derived counts" not in sh(wt, "git", "log", "--format=%s", f"{base}..{head}")
+
+
+def test_compose_ejects_with_reason_when_regeneration_fails(world):
+    q, wt, base, head, applied, ejected = _compose_one(world, lambda wt: (False, "No module named noctusai_lib"))
+    assert applied == [] and head == base
+    assert ejected[0]["kind"] == "kb_counts_regen"
+    assert "noctusai_lib" in ejected[0]["why"]
