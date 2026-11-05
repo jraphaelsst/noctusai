@@ -8,7 +8,7 @@
 | Function | Purpose |
 |----------|---------|
 | `get_current_user(authorization)` | Validates Bearer token via Supabase Auth → `(user, token)` |
-| `get_current_admin(authorization)` | Same + checks `noctus_users.role == "admin"` (403 if not) |
+| `get_current_admin(authorization)` | Same + checks the PLATFORM flag `noctus_users.role == "admin"` (403 if not), then the platform-admin MFA assurance gate `require_admin_assurance` (policy off/warn/enforce). Platform authz only — NOT a license bypass (`KB § PATTERNS/backend/tenancy-license-gate.md`). Code: `products/core/backend/app/dependencies.py:63-88` (re-verified 2026-11-05). |
 | `get_current_user_with_permissions(authorization)` | Fetches org_role + role permissions |
 | `create_sso_token(user_id, org_id, ...)` | Short-lived JWT for product access (5 min) |
 | `verify_sso_token(token)` | Validates SSO token structure and expiry |

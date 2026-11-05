@@ -1,4 +1,4 @@
-# 07 — AI Features Context
+# 05 — AI Features Context
 
 > **LLM access is platform-level.** Every product calls `noctusai_lib.llm` —
 > `chat_completion`, `generate_embedding`, `transcribe_audio`, `analyze_image`.
