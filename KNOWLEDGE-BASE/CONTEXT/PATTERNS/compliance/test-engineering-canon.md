@@ -319,13 +319,13 @@ permanently". Playwright calls a test that failed then passed on retry `flaky` �
    it a deadline of **14 days** or the next touch of that file, whichever is first. Never `xfail(strict=False)`.
 4. **Fix at the source** — the polluter, the global, the clock — never a `setup_method` on the victim.
    A new process-global seam gets its reset in the seed pytest plugin, not per file.
-5. **Never retry-to-green silently.** A retry may *diagnose*; it may not *decide*. Finding (2026-11-05):
-   the three Playwright configs set `retries: process.env.CI ? 2 : 0` with the `github` reporter
-   (`products/core/frontend/playwright.config.ts:7,9`; same in erp-imobiliario and social-wiring), so a
-   spec that fails twice and passes once is green in CI. Target state (CI config belongs to the
-   CI/merge redesign, noctusai-3d): retries stay for trace capture, but a `flaky` outcome fails the job
-   or is reported as a finding — e.g. Playwright's `--fail-on-flaky-tests`. Until then, read the report's
-   flaky list as reds.
+5. **Never retry-to-green silently.** A retry may *diagnose*; it may not *decide*. Resolved 2026-11-05:
+   the three Playwright configs (`products/{core,erp-imobiliario,social-wiring}/frontend/playwright.config.ts:7-11`)
+   keep `retries: process.env.CI ? 2 : 0` (trace capture via `trace: 'on-first-retry'`) and now set
+   `failOnFlakyTests: !!process.env.CI` (config option, Playwright 1.63 `test.d.ts:1274`): a spec that fails then
+   passes fails the job. Trade-off vs `retries: 0`: keeps the trace of the first failure and does not hide
+   which spec flaked, at the cost of up to 2 wasted reruns per real red. Quarantine = `test.fixme()` +
+   `NOC-REMEDIATE[flaky]` at the spec, 14-day expiry (pending owner confirmation). `agents` has no Playwright config.
 
 **Anti-pattern.** Rerun-until-green; `sleep` added to make it pass; deleting the test.
 
@@ -422,7 +422,7 @@ top preference for just about everything"; `getByTestId` only when role or text 
 - **Harness:** `webServer` boots vite dev with the boot-critical `VITE_SUPABASE_*` placeholders
   (keeper `check_playwright_supabase_env`); the backend is mocked with `page.route` fixtures
   (`products/core/frontend/e2e/fixtures/`); chromium only; `workers: 1` and `retries: 2` in CI
-  (`playwright.config.ts:7-8` — see §8 on retries).
+  (`playwright.config.ts:7-11` — see §8 on retries).
 - **Locators:** role + accessible name first (`getByRole('button', { name: 'Sair' })`,
   `products/core/frontend/e2e/tests/auth.spec.ts:124`). Core/erp specs lean on Portuguese copy
   (`getByText('Não tem conta? Criar agora')`, `auth.spec.ts:27`) — copy-fragile (`testing.md § Rules`,
@@ -459,7 +459,7 @@ where possible, a static detector — a test runner cannot catch a green.
 | aggregate `failed == 0` | setup ERRORS uncounted | read `errors` + per-product `success` | playbook §1 |
 | skipped real-DB tests | a skip reads as a pass | count skips; skip reason names the missing harness | playbook §4a |
 | `setdefault` env | ambient `.env` wins; may reach prod | `own_test_env` | `check_conftest_env_setdefault` |
-| retries turn red green | flaky becomes pass | §8 step 5 | target state (CI) |
+| retries turn red green | flaky becomes pass | §8 step 5 | closed by `failOnFlakyTests` (CI) |
 | "absent from ciphertext" with a short needle | chance | long distinctive needle | discipline |
 | a poll helper that returns on timeout | the test asserts on a stale state | fail loudly on deadline | §13 |
 

@@ -5,6 +5,10 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
+  // Retries exist to capture a trace (trace: 'on-first-retry'), never to decide: a spec that
+  // failed then passed is flaky and fails the job. Quarantine = test.fixme + NOC-REMEDIATE[flaky]
+  // (14-day expiry, pending owner confirmation). KB § PATTERNS/compliance/test-engineering-canon.md §8
+  failOnFlakyTests: !!process.env.CI,
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'github' : 'html',
   use: {
