@@ -1,5 +1,7 @@
 # 02 — ERP Frontend Context
 
+> ⚠️ **ASLEEP PRODUCT (marked 2026-11-05).** `erp-imobiliario` is not in `deploy/fleet/active-scope.txt` (catalog `ativo=false`): no CI job, keeper or gate checks it, and per `KB § PATTERNS/architect/product-working-scope.md` it is not touched. This doc describes the product as last documented — reference only; re-verify against the code before relying on it if the product is woken.
+
 > Path: `products/erp-imobiliario/frontend/src/` · Port: 8080 · 60 pages · 63 hooks · API: `VITE_BACKEND_API_URL`
 > Standard frontend patterns (toast, hooks, auth init, dates): see `../PATTERNS/frontend/frontend.md`.
 

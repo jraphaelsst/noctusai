@@ -9,7 +9,7 @@
 > import { UploadErro } from "@noctusai/lib/components";
 > import { useUploadDocumento } from "@noctusai/lib/upload-refusal";
 >
-> // props.onUpload: (file: File, tipo: string) => Promise<unknown>   ← the container returns mutateAsync
+> // props.onUpload: (file: File, tipo: string) => Promise<unknown>   (the container returns mutateAsync)
 > const envio = useUploadDocumento((file: File, tipo: string) => onUpload(file, tipo), {
 >   aceitos: ["application/pdf"],            // optional client-side type check (F75b-safe)
 > });

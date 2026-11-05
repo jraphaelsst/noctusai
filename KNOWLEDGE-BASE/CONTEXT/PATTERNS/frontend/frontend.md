@@ -2,6 +2,8 @@
 
 React + TypeScript + Vite. All products follow the same shape.
 
+> House shape here; the general craft under it (React model, state, query keys, forms, accessibility, pt-BR formatting, performance, testing, security, UX copy) → `KB § PATTERNS/frontend/frontend-craft-canon.md`.
+
 ## Layer structure
 
 ```
@@ -36,8 +38,10 @@ State split:
 ## TanStack Query
 
 - `enabled: !!user` — never query before auth resolves.
-- `staleTime` — set appropriate (5–60s for most lists; 0 for write-heavy data).
-- `invalidateQueries` — invalidate by matching keys after mutations.
+- `staleTime` — the seed `createQueryClient` default is 5 min (`seed/lib/frontend/src/query-client.ts:63`); override per query only with a reason (a realtime stream owns the cache ⇒ `Infinity`). Seed defaults vs TanStack's → `KB § PATTERNS/frontend/frontend-craft-canon.md` §3.1.
+- **Writes write the cache — never invalidate-only.** A mutation puts what it knows into every entry it touches via `useCacheWriteMutation` (`@noctusai/lib/cache-writes`); `invalidateQueries` is only the background settle step after that write, never the write itself → `KB § PATTERNS/frontend/mutation-cache-writes.md`. Keys come from the entity's key factory so prefix writes reach every list → `KB § PATTERNS/frontend/frontend-craft-canon.md` §3.2.
+
+> **Fixed 2026-11-05 (always-doc-the-trim).** The two bullets above replaced "`staleTime` — set appropriate (5–60s for most lists; 0 for write-heavy data)" and "`invalidateQueries` — invalidate by matching keys after mutations": the first contradicted the seed's 5-min default, the second the never-invalidate-only rule (`mutation-cache-writes.md`, keeper `check_mutation_invalidate_only`).
 
 ### Job-progress polling — `jobPolling`, never a bare `refetchInterval`
 
@@ -68,9 +72,9 @@ Never inline hooks in page components, even for simple products. Products grow �
 
 ## `useMemo` ≠ a side-effect channel
 
-`useMemo` is for **deriving a value**, not for running effects. React may **elide / re-run** a memo computation freely (it's a perf hint, not a guarantee), so any *side effect* tucked inside it (set default selection, refresh history, fire a callback) **may not run** ∨ may run unexpectedly. Side effects belong in `useEffect` (runs on dependency change, deterministically). Bit 2026-05-25 in social-wiring `Upload.tsx` (two `useMemo`s used purely for side-effects — recipient-default-select + history-refresh — could be skipped; fixed → `useEffect`, commit `27f24b20`). Rule: if the body has no `return <derived value>` consumed in render, it's an effect — use `useEffect`.
+> **Moved 2026-11-05 (always-doc-the-trim, lossless).** The full section (rule, the 2026-05-25 social-wiring `Upload.tsx` incident, commit `27f24b20`) now lives in `KB § PATTERNS/frontend/frontend-craft-canon.md` §1.3 "Derive, don't sync", aligned with react.dev: derive in render, act in the event handler, `useEffect` only to synchronise with an external system — the old "side effects belong in `useEffect`" fix is refined there, not dropped.
 
-> Follow-up (open): `ts-morph` is NOT in the seed FE base devDeps (`seed/lib/frontend` · `seed/framework/frontend`) — add it so TypeScript AST edits (AST-first rule) work in product frontends without a per-product install. Surfaced by the same 2026-05-25 dispatch; see `project-history/worktree-salvage.ndjson` (`feat/sw-frontend-verify`).
+> Follow-up (open; re-checked 2026-11-05 — still absent from both `package.json`s): `ts-morph` is NOT in the seed FE base devDeps (`seed/lib/frontend` · `seed/framework/frontend`) — add it so TypeScript AST edits (AST-first rule) work in product frontends without a per-product install. Surfaced by the same 2026-05-25 dispatch; see `project-history/worktree-salvage.ndjson` (`feat/sw-frontend-verify`).
 
 ## Sidebar nav groups — collapsed by construction
 
