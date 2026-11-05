@@ -1,5 +1,7 @@
 -- Migration: 098_rename_monica_to_nosnolimiar
 -- Schema: public (core)
+-- noc:lock-timeout 30s
+-- (lock timeout: renames rows in hot platform tables during the owner-scheduled window; the 5s default is too tight.)
 --
 -- WHY: owner decision 2026-11-02 -- the live product `monica` (clinic CRM/ERP) is renamed to
 -- `nosnolimiar` ("Nós no Limiar"), the company that owns the practice. The slug, display name, host and
