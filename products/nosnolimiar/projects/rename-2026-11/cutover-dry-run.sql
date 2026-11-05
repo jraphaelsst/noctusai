@@ -137,7 +137,7 @@ END $$;
 -- membership rows of MT). A table still holding MT rows that is NOT in the allowlist below aborts the script.
 -- The allowlist is the ONLY set of tables this script knowingly lets the delete remove. Value = the maximum rows
 -- tolerated (recon 2026-11-02: exact; a larger count means data appeared since and must be looked at):
---   public.pipeline_stages.org_id               13  MT's signup-seeded default funnel template; Nós no Limiar has its own
+--   erp.pipeline_stages.org_id               13  MT's signup-seeded default funnel template; Nós no Limiar has its own
 --                                                   (guarded below: it must hold >= 1). Moving would duplicate stages.
 --   public.licenses.org_id                       2  MT's own licenses; NnL's license on nosnolimiar is guarded in section 0.
 --   public.org_memberships.org_id                1  MT's membership row of the user (home org just moved; the NnL
@@ -151,7 +151,7 @@ DECLARE
   v_mt  constant uuid := 'ad6ec2e2-b470-4044-884e-6345e4fe66d4';
   v_nnl constant uuid := 'fa80a1e0-1bcd-4c65-8a37-2162e8ffa688';
   v_allow constant jsonb := '{
-    "public.pipeline_stages.org_id": 13,
+    "erp.pipeline_stages.org_id": 13,
     "public.licenses.org_id": 2,
     "public.org_memberships.org_id": 1,
     "public.platform_org_selections.target_org_id": 13,
@@ -160,7 +160,7 @@ DECLARE
   f record; v_n bigint; v_cap bigint; v_key text; v_bad text := ''; v_tot bigint := 0;
 BEGIN
   -- NnL must own a funnel of its own, or the pipeline_stages cascade would leave the moved leads without stages.
-  EXECUTE 'SELECT count(*) FROM public.pipeline_stages WHERE org_id = $1' INTO v_n USING v_nnl;
+  EXECUTE 'SELECT count(*) FROM erp.pipeline_stages WHERE org_id = $1' INTO v_n USING v_nnl;
   IF v_n < 1 THEN RAISE EXCEPTION 'inventory: Nós no Limiar has no pipeline_stages -- move MT''s instead of cascading them'; END IF;
 
   FOR f IN

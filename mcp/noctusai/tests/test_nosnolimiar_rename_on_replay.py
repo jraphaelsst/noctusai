@@ -55,11 +55,12 @@ def test_dry_run_body_is_byte_identical_to_cutover():
 
 # ---------------------------------------------------------------- cutover section 6a inventory --------------------
 _INV_FIXTURE = f"""
-CREATE TABLE IF NOT EXISTS public.pipeline_stages (id serial PRIMARY KEY, org_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE);
+CREATE SCHEMA IF NOT EXISTS erp;
+CREATE TABLE IF NOT EXISTS erp.pipeline_stages (id serial PRIMARY KEY, org_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE);
 SET session_replication_role = replica;
 INSERT INTO public.organizations (id, nome, slug) VALUES ('{_MT}', 'Mônica Tangerino', 'inv-mt'), ('{_NNL}', 'Nós no Limiar', 'inv-nnl');
-INSERT INTO public.pipeline_stages (org_id) SELECT '{_MT}' FROM generate_series(1, 13);
-INSERT INTO public.pipeline_stages (org_id) SELECT '{_NNL}' FROM generate_series(1, 13);
+INSERT INTO erp.pipeline_stages (org_id) SELECT '{_MT}' FROM generate_series(1, 13);
+INSERT INTO erp.pipeline_stages (org_id) SELECT '{_NNL}' FROM generate_series(1, 13);
 INSERT INTO auth.users (id, email) VALUES ('11111111-1111-1111-1111-111111111111', 'inv@test');
 INSERT INTO public.org_memberships (id, user_id, org_id, org_role, status)
 VALUES ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', '{_MT}', 'owner', 'active');
@@ -91,7 +92,7 @@ def test_inventory_allows_the_allowlist_and_blocks_everything_else(pglite):
         _step("inv_multi", inv),
         # an allowlisted table over its cap is blocked as well
         _step("fixture_cap", "DROP TABLE public.zz_multi;"
-                             f"INSERT INTO public.pipeline_stages (org_id) VALUES ('{_MT}');"),
+                             f"INSERT INTO erp.pipeline_stages (org_id) VALUES ('{_MT}');"),
         _step("inv_cap", inv),
     ]
     res = mr._run_harness(steps, 900, None)
