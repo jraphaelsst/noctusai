@@ -1,7 +1,7 @@
 # DRE structure — the NoctusAI store income statement (Brazil, small e-commerce)
 
 > **Owner:** agent `accountant` (advisor). **Consumers:** `noctusai_lib.domain.finance` (DRE report, category→line mapping), commerce P4 (`projects/commerce-seed-p4/CONTRACT.md §10`), the owner's own bookkeeping questions.
-> **Status:** research-backed design, 2026-10-14. Not a substitute for the store's contador — see §6.
+> **Status:** research-backed design, 2026-10-14. Not a substitute for the store's contador — see §7.
 
 ## 0 · Evidence tiers (every claim below carries one)
 
@@ -17,6 +17,7 @@
 
 ## 1 · Which standard applies
 
+- **Statutory skeleton — Lei 6.404/1976 art. 187** [norma, Planalto verified 2026-11-05]: the DRE "discriminará" (I) receita bruta, deduções, abatimentos e impostos; (II) receita líquida, custo das mercadorias e serviços vendidos e lucro bruto; (III) despesas com vendas, despesas financeiras deduzidas das receitas, despesas gerais e administrativas e outras operacionais; (IV) lucro/prejuízo operacional, outras receitas e outras despesas; (V) resultado antes do IR e a provisão; (VI) participações; (VII) lucro/prejuízo líquido. The NBC TG lines below descend from it. https://www.planalto.gov.br/ccivil_03/leis/l6404consol.htm
 - **≤ R$ 4,8 mi/ano receita bruta → NBC TG 1002 (microentidades)** [norma]. DRE lines §5.1 (a)–(n). Accrual basis (competência) — cash flow is the only statement on cash basis. Source: https://www.dinamicasistemas.com.br/upload/files/NBCTG1002.pdf
 - **R$ 4,8 mi – 78 mi → NBC TG 1001 (pequenas e médias)** [norma]. Same line shape plus more disclosure. Source: https://www.ibet.com.br/wp-content/uploads/2022/01/NBCTG1001.pdf
 - **ITG 1000** (Res. CFC 1.418/2012) — revoked from 2023, but its Anexo 3 model DRE + chart of accounts is still the practitioner default and is the origin of the DAS rule below [norma, historic]. https://crcgo.org.br/wp-content/uploads/2022/12/ResolucaoCFC_-1418.pdf
@@ -123,4 +124,6 @@ The software prepares, classifies and exports (accountant checklist, CSV/OFX); i
 
 ## 8 · Could not verify (re-check before hardening)
 
-Official text of Res. CGSN 190/2026 · planalto.gov.br text of LC 123/Código Civil (mirrors used) · IN RFB 2.003/2021 + 2.004/2021 wording · any CRC publication on DAS placement . *(Resolved 2026-10-14: the seller receives the buyer-paid interest — our Price-table total is sent to Asaas as `totalValue` (`integrations/payments/checkout.py`), Asaas adds no interest itself: https://docs.asaas.com/docs/criar-uma-cobranca-parcelada.)*
+IN RFB 2.003/2021 + 2.004/2021 wording · any CRC publication on DAS placement · the final CFC-hosted text of NBC TG 1001/1002 (mirrors still cited in §1). *(Resolved 2026-10-14: the seller receives the buyer-paid interest — our Price-table total is sent to Asaas as `totalValue` (`integrations/payments/checkout.py`), Asaas adds no interest itself: https://docs.asaas.com/docs/criar-uma-cobranca-parcelada. Resolved 2026-10-14: official text of Res. CGSN 190/2026 — see §6. Resolved 2026-11-05: Planalto text of LC 123 arts. 3, 18 and 26 §2, Lei 6.404 art. 187 and EC 132 read at the primary source — `KB § PATTERNS/finance/br-tax-advisor-canon.md` §11; Código Civil arts. 1.179/1.182 still via mirrors.)*
+
+Tax regimes, the Reforma Tributária calendar, fiscal documents and the finance-organ module map → `KB § PATTERNS/finance/br-tax-advisor-canon.md`; managerial and SaaS metrics → `KB § PATTERNS/finance/managerial-and-saas-metrics.md`.
