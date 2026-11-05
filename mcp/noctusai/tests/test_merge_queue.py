@@ -337,3 +337,28 @@ def test_cli_merge_queue_status_does_not_crash_on_os_shadowing():
     r = subprocess.run([sys.executable, str(cli), "--merge-queue", "status", "--merge-queue-sha", "0" * 40],
                        capture_output=True, text=True, env=env, timeout=120)
     assert "UnboundLocalError" not in r.stderr, r.stderr[-500:]
+
+
+def test_a_green_half_does_not_reset_bisection_onto_fresh_entries(world):
+    """2026-11-05: batch -6 [a, bad] red -> -7 [a] green -> the limit RESET and -8 composed bad with
+    three innocent entries, turning their batch red too. Suspects now stay isolated until ejected."""
+    a = enqueue(world, "a", [("a.txt", "a\n")], 2000)
+    bad = enqueue(world, "bad", [("BREAK", "boom\n")], 2100)
+    fresh = [enqueue(world, f"f{i}", [(f"f{i}.txt", "x\n")], 2200 + i) for i in range(3)]
+    ci = FakeCI(world["origin"])
+    red_trees: list[list[str]] = []
+    orig = ci.red_if
+    def spy(tree):
+        red = orig(tree)
+        if red:
+            red_trees.append(tree)
+        return red
+    ci.red_if = spy
+    res = make_queue(world, ci).drain(batch_limit=2)
+    assert [x["slug"] for x in res.ejected] == ["bad"]
+    assert {x["slug"] for x in res.landed} == {"a", "f0", "f1", "f2"}
+    # the only red runs are the original batch [a, bad] and the singleton [bad] -- never bad + a fresh entry
+    for tree in red_trees:
+        assert not any(f"f{i}.txt" in tree for i in range(3)), tree
+    assert ci.last(bad)[0] == "failure"
+    assert all(ci.last(f)[0] == "success" for f in fresh)

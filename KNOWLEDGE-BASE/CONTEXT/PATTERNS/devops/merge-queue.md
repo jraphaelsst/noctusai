@@ -160,6 +160,20 @@ workflows.
 - **Bisection is "first half", not speculative.** A red batch of N retries its
   first ⌈N/2⌉. That is enough at our volume; Uber-style speculation is not
   warranted.
+- **The suspects stay isolated until the culprit is out (2026-11-05).** The
+  entries of a red batch are *suspects*. While any of them are still queued,
+  batches are drawn only from them:
+  - a green half clears its entries, and the rest are tested alone;
+  - a red singleton is ejected;
+  - only after that do fresh entries join a batch.
+
+  Before this, a green half reset the limit to a full batch, so the culprit
+  was re-composed with innocent entries and turned their batch red too. That
+  happened live: -6 red, -7 green, then -8 was the culprit plus 3 innocent
+  entries. Covered by
+  `test_a_green_half_does_not_reset_bisection_onto_fresh_entries`. The suspect
+  set lives for one drain run only. A new run starts clean and re-bisects if
+  needed.
 
 ## 8 · Related
 

@@ -333,13 +333,20 @@ class Queue:
     def drain(self, batch_limit: int = DEFAULT_BATCH, max_rounds: int = 12, dry_run: bool = False) -> Outcome:
         res = Outcome()
         limit = batch_limit
+        # Bisection state: the refs of a red batch not yet proven clean. While any remain queued, batches
+        # are drawn ONLY from them -- a green half must not reset to a full batch, or the untested half
+        # (holding the culprit) is re-composed with fresh entries and turns their batch red too
+        # (2026-11-05: red -6, green -7, then -8 = culprit + 3 innocent entries).
+        suspects: list[str] = []
         for n in range(1, max_rounds + 1):
             self.fetch()
             queue = self.entries()
             if not queue:
                 self.log("queue empty")
                 break
-            batch = queue[:limit]
+            suspects = [r for r in suspects if any(e.ref == r for e in queue)]
+            pool = [e for e in queue if e.ref in suspects] if suspects else queue
+            batch = pool[:limit]
             base = self.dev_sha()
             self.log(f"round {n}: dev={base[:9]} batch={[e.slug for e in batch]} (queue {len(queue)})")
             if dry_run:
@@ -376,14 +383,19 @@ class Queue:
                         for wf in post_land_workflows(self.changed_paths(base, landed_sha)):
                             self.gh("workflow", "run", wf, "--ref", self.dev, "-R", self.repo, check=False)
                             rnd.setdefault("dispatched", []).append(wf)
-                    limit = batch_limit
+                    cleared = {e.ref for e in applied}
+                    suspects = [r for r in suspects if r not in cleared]
+                    # The culprit is in what is left: test the rest of the suspects (alone), else reset.
+                    limit = len(suspects) if suspects else batch_limit
                 elif ci["verdict"] == "red" and len(applied) == 1:
                     e = applied[0]
                     x = self._eject_info(e, "ci_red", f"Tests & Build red: {ci.get('failed_jobs', [])[:4]}")
                     self._finish_eject(x)
                     res.ejected.append(x)
-                    limit = batch_limit
+                    suspects = [r for r in suspects if r != e.ref]
+                    limit = len(suspects) if suspects else batch_limit
                 elif ci["verdict"] == "red":
+                    suspects = [e.ref for e in applied]
                     limit = next_batch_limit(limit, len(applied), green=False)
                     self.log(f"  batch red - bisecting: next batch limit {limit}")
                 else:
