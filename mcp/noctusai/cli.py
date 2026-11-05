@@ -3662,7 +3662,7 @@ def main():
     elif getattr(args, "merge_queue", None):
         from tools.noctus.dev import merge_queue as _mq
         if args.merge_queue == "status":
-            r = _mq.read_status(_mq._repo_from_remote(_mq._default_run, os.getcwd()), args.merge_queue_sha or "")
+            r = _mq.read_status(_mq._repo_from_remote(_mq._default_run, str(Path.cwd())), args.merge_queue_sha or "")
         else:
             r = _mq.queue_report()
         print(json.dumps(r, indent=2, default=str))

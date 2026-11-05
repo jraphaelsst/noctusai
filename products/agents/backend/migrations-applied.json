@@ -35,6 +35,11 @@
     "055_qualificacao_lote_tres.sql": "4fb83fb61bdcd3f60faf186681072a9da8da71c3e64a02711d41286b6651888a",
     "056_julia_v3_controles.sql": "65b228da1317c983308221238d340708c2929cdbafc4a7a67bbdab397e2f476f",
     "057_julia_v3_alertas_documentos.sql": "80e72a2aa742acf6f8557635629d25348c6a916ed80e46c6e1088a031f783196",
-    "058_agent_exemplar_referencia.sql": "a7d652277cfc7c59bd3286bdb66f3f3d5e315f8a1b5ca58f524dfed26c8bd392"
+    "058_agent_exemplar_referencia.sql": "a7d652277cfc7c59bd3286bdb66f3f3d5e315f8a1b5ca58f524dfed26c8bd392",
+    "059_spec_tipos_tipados.sql": "980349b0ce8db394dec15b2461a7adf6ac02f00b6ed1848aead228954500f740",
+    "060_agent_product_grants.sql": "e22ff739ba8b13a72ea96c46e6df8843ae8c9475cbe5fd96f11c22a29fb1b04f",
+    "061_status_pagina_conexoes_plataforma.sql": "f3b96604f551b6230799b301b0aba74caa4e68c58eedaeb27bdf77b3b583243b",
+    "062_org_specs_ator.sql": "e8e9bc4bb5601d0ac71f8c0c117c315be77211240485564a576ecfa784c265f5",
+    "063_conformidade_regras_piso.sql": "41cd5f1ff82ec1b2cf1aa9071502b92fd3c8e4c9e23ec6ea748c45f05c90d088"
   }
 }

@@ -15,6 +15,7 @@
     "093_credit_wallets.sql": "47f647fe4e388b725f17599b839ab7788c9236b502aba9bb7676be2921a54479",
     "094_brand_tokens_schema_not_null.sql": "eb287e3479daae311818cd30c2827b6b2ae832957e0d5c9c0b9cbe1d31d247e4",
     "096_noctus_users_telefone.sql": "5553a82eb2aab2d2568c90c7dc3b0036b4ce9dab8e4c93d7d43ec89eca1ea98d",
-    "097_dev_telemetry.sql": "43d61cc676b5e354820cfef99b487b0cc022e8e99d752358e4f213d3e2aa9848"
+    "097_dev_telemetry.sql": "43d61cc676b5e354820cfef99b487b0cc022e8e99d752358e4f213d3e2aa9848",
+    "099_service_accounts_m2m_tokens.sql": "b613f524e136f30752f2c5f8a106749e79af43a3601c261ce76474148310a5dd"
   }
 }

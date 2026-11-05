@@ -311,3 +311,18 @@ def test_read_status_maps_github_states():
     def run_none(cmd, cwd=None):
         return 0, "null", ""
     assert mq.read_status("o/r", "a" * 40, run=run_none)["state"] == "queued"
+
+
+def test_cli_merge_queue_status_does_not_crash_on_os_shadowing():
+    # 2026-11-05 (reported by noctusai-00): main() has a branch-local
+    # `import os`, which makes `os` a local name for the whole function, so
+    # `--merge-queue status` raised UnboundLocalError before doing anything.
+    import os as _os
+    import subprocess
+    import sys
+    from pathlib import Path
+    cli = Path(__file__).resolve().parents[1] / "cli.py"
+    env = {**_os.environ, "GH_TOKEN": "x", "NOCTUS_HOOK_QUIET": "1"}
+    r = subprocess.run([sys.executable, str(cli), "--merge-queue", "status", "--merge-queue-sha", "0" * 40],
+                       capture_output=True, text=True, env=env, timeout=120)
+    assert "UnboundLocalError" not in r.stderr, r.stderr[-500:]
