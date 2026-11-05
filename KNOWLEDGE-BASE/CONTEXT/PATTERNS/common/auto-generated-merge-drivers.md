@@ -16,7 +16,8 @@
 
 `scripts/hooks/merge-kb-counts.sh` (git invokes `driver %O %A %B %P`):
 
-1. run `cli.py --render-kb-counts %P --source %A --out <scratch>` → regenerates the `kb-counts` blocks belonging to `%P` deterministically from the tree, rewriting **`%A`'s content** (the churn, and any conflict markers that sat *between* the start/end markers). Nothing tracked is written;
+0. **3-way merge first:** `git merge-file -p %A %O %B > <merged>`. git does **not** pre-merge for a custom driver — `%A` is only *ours*. Until 2026-11-05 the driver rendered `%A` alone and reported success, which **silently discarded the other side's prose edits** to these docs: in a rebase *ours* is the upstream, so a branch's roster-row rename in `02-LANDSCAPE.md` vanished on every rebase (nosnolimiar, twice), and a queue composition could drop a peer's edit the same way;
+1. run `cli.py --render-kb-counts %P --source <merged> --out <scratch>` → regenerates the `kb-counts` blocks belonging to `%P` deterministically from the tree, rewriting **the merged content** (the churn, and any conflict markers that sat *between* the start/end markers). Nothing tracked is written;
 2. **marker guard** — if `<<<<<<<`/`=======`/`>>>>>>>` remain (a genuine PROSE edit conflict *outside* the blocks), leave `%A` exactly as git left it and **exit 1** so git surfaces the real conflict; else copy the render into `%A` and exit 0.
 
 Counts-only churn → silently correct. Real prose conflict → still surfaced. The safety hinge: the renderer only rewrites the **delimited block**, never the whole file (`mcp/noctusai/tools/kb_sync.py`).
@@ -34,7 +35,7 @@ Two details that matter if you touch this:
 - **The render goes to a file, never stdout.** `cli.py` prints a banner (and a `--worktree-path` override notice) to stdout before dispatch; piping the render would embed that in a KB doc. `--out` makes the driver immune to any present or future stdout noise.
 - **Failure degrades to surfacing the conflict**, never to a half-written doc: if python/the CLI is missing or the render exits non-zero, the driver falls through with the *unrendered* merge result, which still carries its markers and therefore still exits 1.
 
-Regression tests: `mcp/noctusai/tests/test_kb_sync.py::test_render_kb_counts_*` — purity (the on-disk file is byte-identical after a render), block-only rewriting, and that a prose conflict outside the block survives so the marker guard can fire. The shell half — what git actually invokes — is pinned by `mcp/noctusai/tests/test_merge_kb_counts_driver.py`: it runs the real driver in a throwaway repo against a recording stub CLI and asserts the exit-code contract (clean render → 0 + %A rewritten; markers remain / render fails → 1 + %A byte-identical; no %P → 1 without a CLI call) and that the driver writes %A and nothing else (clean `git status`, no temp leftover).
+Regression tests: `mcp/noctusai/tests/test_kb_sync.py::test_render_kb_counts_*` — purity (the on-disk file is byte-identical after a render), block-only rewriting, and that a prose conflict outside the block survives so the marker guard can fire. The shell half — what git actually invokes — is pinned by `mcp/noctusai/tests/test_merge_kb_counts_driver.py`: it runs the real driver in a throwaway repo against a recording stub CLI and asserts the exit-code contract (clean render → 0 + %A rewritten; markers remain / render fails → 1 + %A byte-identical; no %P → 1 without a CLI call), that the other side's non-overlapping prose edit survives (`test_other_sides_prose_edit_survives_the_merge`) and that same-line edits on both sides surface a conflict and that the driver writes %A and nothing else (clean `git status`, no temp leftover).
 
 ## Why not `merge=ours` / why not stop stamping
 

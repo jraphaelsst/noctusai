@@ -71,7 +71,14 @@ def fake_repo(tmp_path: Path) -> Path:
     return root
 
 
-def _run(repo: Path, tmp_path: Path, current: Path, pathname: str | None, mode: str):
+def _run(repo: Path, tmp_path: Path, current: Path, pathname: str | None, mode: str,
+         base: Path | None = None, other: Path | None = None):
+    """Invoke the driver as git does: %O %A %B %P. Default base/theirs = a copy of %A
+    (an identity 3-way merge), so tests that only care about the render see %A as-is."""
+    if base is None:
+        base = tmp_path / "base.md"; base.write_text(current.read_text())
+    if other is None:
+        other = tmp_path / "other.md"; other.write_text(current.read_text())
     scratch = tmp_path / "tmpdir"
     scratch.mkdir(exist_ok=True)
     log = tmp_path / "stub.log"
@@ -82,7 +89,7 @@ def _run(repo: Path, tmp_path: Path, current: Path, pathname: str | None, mode: 
         "STUB_LOG": str(log),
         "TMPDIR": str(scratch),
     }
-    args = ["bash", str(repo / "scripts/hooks/merge-kb-counts.sh"), "O", str(current), "B"]
+    args = ["bash", str(repo / "scripts/hooks/merge-kb-counts.sh"), str(base), str(current), str(other)]
     if pathname is not None:
         args.append(pathname)
     proc = subprocess.run(args, cwd=repo, env=env, capture_output=True, text=True)
@@ -104,7 +111,8 @@ def test_counts_only_conflict_resolves_into_A(fake_repo, tmp_path):
     assert len(calls) == 1
     argv = calls[0]
     assert argv[argv.index("--render-kb-counts") + 1] == "KB.md"
-    assert argv[argv.index("--source") + 1] == str(current)
+    # the render reads the 3-way MERGED scratch file, never %A directly
+    assert argv[argv.index("--source") + 1] != str(current)
     assert Path(argv[argv.index("--worktree-path") + 1]).resolve() == fake_repo.resolve()
 
 
@@ -139,3 +147,31 @@ def test_driver_writes_A_and_nothing_else(fake_repo, tmp_path, mode):
     _, _, scratch = _run(fake_repo, tmp_path, current, "KB.md", mode)
     assert _git(fake_repo, "status", "--porcelain") == ""
     assert list(scratch.iterdir()) == []
+
+
+# ── the real 3-way merge (regression: the driver used to render %A ALONE and drop the
+#    other side's prose — a rebased roster-row rename vanished twice, 2026-11-05) ──────
+_BASE_DOC = "# Doc\n| **Monica** | products/monica |\n\nfiller\n\n| total | 1 |\n"
+_OURS_DOC = "# Doc\n| **Monica** | products/monica |\n\nfiller\n\n| total | 2 |\n"          # upstream: counts only
+_THEIRS_DOC = "# Doc\n| **Nós no Limiar** | products/nosnolimiar |\n\nfiller\n\n| total | 1 |\n"  # branch: prose rename
+
+
+def test_other_sides_prose_edit_survives_the_merge(fake_repo, tmp_path):
+    base = tmp_path / "b.md"; base.write_text(_BASE_DOC)
+    other = tmp_path / "t.md"; other.write_text(_THEIRS_DOC)
+    current = _current(tmp_path, _OURS_DOC)
+    rc, _, _ = _run(fake_repo, tmp_path, current, "KB.md", "keep", base=base, other=other)
+    assert rc == 0
+    out = current.read_text()
+    assert "Nós no Limiar" in out and "**Monica**" not in out, out   # theirs' prose kept
+    assert "| total | 2 |" in out                                    # ours' change kept
+
+
+def test_same_line_prose_edits_on_both_sides_surface_a_conflict(fake_repo, tmp_path):
+    base = tmp_path / "b.md"; base.write_text(_BASE_DOC)
+    other = tmp_path / "t.md"; other.write_text(_THEIRS_DOC)
+    ours = _BASE_DOC.replace("**Monica**", "**Mônica T.**")
+    current = _current(tmp_path, ours)
+    rc, _, _ = _run(fake_repo, tmp_path, current, "KB.md", "keep", base=base, other=other)
+    assert rc == 1
+    assert current.read_text() == ours                                # %A untouched

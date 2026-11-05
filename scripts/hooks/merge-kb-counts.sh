@@ -14,7 +14,14 @@
 # from the merged tree is always the correct resolution.
 #
 # WHAT THIS DRIVER DOES (git invokes:  driver %O %A %B %P):
-#   1. ask the CLI to render %A's content with every kb-counts block that
+#   0. 3-WAY MERGE FIRST: `git merge-file` %A (ours) + %O (base) + %B (theirs)
+#      into a scratch file. %A is ONLY "ours" — git does NOT pre-merge for a
+#      custom driver. Rendering %A alone (the 2026-06..11-05 behaviour) silently
+#      discarded every prose edit from the other side: in a rebase "ours" is the
+#      upstream, so a branch's own roster-row rename vanished on every rebase
+#      (nosnolimiar 02-LANDSCAPE.md, lost twice: d6d53e3fc, 510f392cd), and a
+#      queue composition could drop a peer's edit the same way;
+#   1. ask the CLI to render the MERGED content with every kb-counts block that
 #      belongs to %P regenerated from the tree — `--render-kb-counts` writes
 #      ONLY to the `--out` scratch file we hand it, never to a tracked file;
 #   2. if NO conflict markers remain in that render → write it to %A, exit 0
@@ -48,7 +55,9 @@
 set -euo pipefail
 
 # %A current/ours-with-conflict (git wants the result written HERE);  %P real path.
+BASE="${1:?merge driver: missing %O}"
 CURRENT="${2:?merge driver: missing %A}"
+OTHER="${3:?merge driver: missing %B}"
 PATHNAME="${4:-}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -81,9 +90,22 @@ has_markers() { grep -qE '^(<<<<<<<|=======|>>>>>>>)' "$1" 2>/dev/null; }
 # `set -e` ones — a merge driver that litters temp files into the repo is the
 # same class of side effect this driver was rewritten to stop having.
 RENDERED="$(mktemp "${TMPDIR:-/tmp}/kb-counts-render.XXXXXX")"
-trap 'rm -f "$RENDERED" "$RENDERED.err"' EXIT
+MERGED="$(mktemp "${TMPDIR:-/tmp}/kb-counts-merged.XXXXXX")"
+trap 'rm -f "$RENDERED" "$RENDERED.err" "$MERGED"' EXIT
 
-# 1. Render %A's content with the counts blocks regenerated from the tree.
+# 0. Real 3-way merge of ours/base/theirs. Exit status = number of conflicts
+#    (>0 is expected: counts churn conflicts inside the generated blocks, which
+#    step 1 regenerates away); <0 / >127 is a real error → surface the conflict.
+set +e
+git merge-file -p -L ours -L base -L theirs "$CURRENT" "$BASE" "$OTHER" >"$MERGED"
+MF_RC=$?
+set -e
+if (( MF_RC < 0 || MF_RC > 127 )); then
+    echo "merge-kb-counts: git merge-file failed ($MF_RC) for $PATHNAME" >&2
+    exit 1
+fi
+
+# 1. Render the MERGED content with the counts blocks regenerated from the tree.
 #    Pure — nothing is written to the working tree. If python/the CLI is
 #    unavailable, or the render fails, exit 1 (a REAL conflict, %A untouched):
 #    the old fallback kept %A's stale counts and reported success, a silent
@@ -93,7 +115,7 @@ if ! { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; } || [[ ! -f "$CLI" ]
     echo "merge-kb-counts: no usable python ($PY) or CLI ($CLI); cannot re-derive counts for $PATHNAME" >&2
     exit 1
 fi
-if ! "$PY" "$CLI" --render-kb-counts "$PATHNAME" --source "$CURRENT" \
+if ! "$PY" "$CLI" --render-kb-counts "$PATHNAME" --source "$MERGED" \
         --out "$RENDERED" --worktree-path "$REPO_ROOT" >/dev/null 2>"$RENDERED.err"; then
     echo "merge-kb-counts: render of $PATHNAME failed (missing toolkit deps?); refusing to keep stale counts:" >&2
     tail -n 5 "$RENDERED.err" >&2 || true
