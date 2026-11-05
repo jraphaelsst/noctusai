@@ -263,7 +263,7 @@ Why not simply automate the restart: automating the restart would hide the cause
 
 - **Tooling slice** (agent `tooling-engineer`): one shared append helper on `origin/ledgers` for `alert-outcomes.ndjson`, `ops-actions.ndjson`, `problems.ndjson` and `watchdog-runs.ndjson`, exposed as `noctus.dev.*` tools, so the steward can write through a tool without gaining Write/Edit.
 - **Skill sync:** done 2026-11-05 — skill `noc-daily-ops` v1.1.0 carries the monthly/quarterly levels (§7), alert classification (§3, `inconclusive` until the outcome log exists) and the backup-age check (§6). Its step 5 wording (`branch_pointer action=list`) stays as it is until the git redesign settles branch-debt semantics.
-- **tmp-cleanup ownership** is claimed twice: `owner-operations.md` §2 lists tmp cleanup as an ops-steward L3 action, while `KB § PATTERNS/common/tmp-artifact-cleanup.md` and devops-engineer name orchestrator-operator as the sole caller. Resolution is deferred to Wave 3 (orchestrator-operator retirement). Until then the steward does **not** run `tmp_cleanup`.
+- **tmp-cleanup ownership** — RESOLVED 2026-11-05: ops-steward runs it weekly (orchestrator-operator retired). It used to be claimed twice (owner-operations §2 vs the retired orchestrator-operator).
 
 ---
 

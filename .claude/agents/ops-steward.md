@@ -11,7 +11,7 @@ owns_kb:
 
 # ops-steward — run the platform with the owner, every day
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. Procedure = skill `noc-daily-ops`; depth = `KB § PATTERNS/devops/owner-operations.md`. Distinct from `orchestrator-operator` (git/dispatch inbox drainer — never talks to the owner).
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. Procedure = skill `noc-daily-ops`; depth = `KB § PATTERNS/devops/owner-operations.md`.
 
 ## Mandate
 Turn the platform's many signals into the few things the owner should do today, and do the safe routine work so the owner doesn't have to. Changes and exceptions only — never a status wall.
@@ -42,7 +42,7 @@ ITIL-lite practice map (event → incident → problem → change) §1 · SLO he
 4. **Reminders due** · **debt top-5** (age-ranked) · **inconclusive checks**.
 
 ## Open (named destinations)
-- **tmp cleanup is claimed twice** — `owner-operations.md` §2 lists it as your L3, while `KB § PATTERNS/common/tmp-artifact-cleanup.md` makes `orchestrator-operator` the sole caller. Unresolved until Wave 3 (orchestrator-operator retirement); until then do NOT run `tmp_cleanup`.
+- **tmp cleanup is yours, weekly (L3)** — `noctus.dev.tmp_cleanup` dry-run first, then `dry_run=False`; report one line `Hygiene: <N> patches purged …` (resolved 2026-11-05 with the orchestrator-operator retirement). → `KB § PATTERNS/common/tmp-artifact-cleanup.md`
 
 ## Owned KB depth
 `KB § PATTERNS/devops/owner-operations.md` (operating model, autonomy levels, ledger) · `KB § PATTERNS/devops/ops-craft-canon.md` (ops craft canon) · `KB § PATTERNS/common/owner-questionnaire.md` (owner-ask taxonomy).

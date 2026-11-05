@@ -1,7 +1,7 @@
 """`noctus.dev.tmp_cleanup` — sweep retired engineer-dispatch patch artifacts.
 
-🔒 **ORCHESTRATOR-ONLY** — invoked by `.claude/agents/orchestrator-operator` as a standing
-end-of-tick step. Specialist agents (backend / frontend / devops / compliance / security /
+🔒 **OPS-ONLY** — invoked by agent `ops-steward` as a weekly L3 step (skill `noc-daily-ops`) or by
+the tech-lead session (orchestrator-operator retired 2026-11-05). Other specialist agents (backend / frontend / devops / compliance / security /
 architect / engineer-seed) MUST NOT call this tool, same shape as `release` / `deploy_pull` /
 `archive` (doc-discipline, not runtime-enforced — the methodology layer's call-restriction
 model). devops-engineer OWNS the KB doc (`tmp-artifact-cleanup.md`); it does NOT invoke the
@@ -20,8 +20,8 @@ A patch is **retired** (safe to delete) when:
    recognize (orchestrator-retired; salvage window passed), OR
 3. It is malformed (cannot be parsed by `git patch-id --stable`).
 
-`dry_run=True` (default) returns the planned action set without deleting. Orchestrator-operator
-invokes with `dry_run=False` at the end of every drain tick (see `.claude/agents/orchestrator-operator.md`).
+`dry_run=True` (default) returns the planned action set without deleting. ops-steward invokes
+with `dry_run=False` in the weekly routine (see skill `noc-daily-ops`).
 
 KB: `KB § PATTERNS/common/tmp-artifact-cleanup.md`.
 """
@@ -223,10 +223,10 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.tmp_cleanup",
         description=(
-            "🔒 ORCHESTRATOR-ONLY — DO NOT CALL FROM OTHER AGENTS (same shape as release / "
-            "deploy_pull / archive — doc-discipline, not runtime-enforced). The "
-            "orchestrator-operator invokes this with dry_run=False as a standing end-of-tick "
-            "step; specialist agents (backend / frontend / devops / compliance / security / "
+            "🔒 OPS-ONLY — DO NOT CALL FROM OTHER AGENTS (same shape as release / "
+            "deploy_pull / archive — doc-discipline, not runtime-enforced). ops-steward "
+            "(weekly, skill noc-daily-ops) or the tech-lead invokes this with dry_run=False; "
+            "other specialist agents (backend / frontend / devops / compliance / security / "
             "architect / engineer-seed) MUST NOT call it. "
             "Sweeps retired engineer-dispatch patch artifacts from /tmp/*.patch. A patch is "
             "retired when (a) its git-patch-id matches a patch-id on origin/dev (content "

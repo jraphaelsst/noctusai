@@ -21,7 +21,7 @@ Agent `ops-steward` owns this; the tech-lead session can run it inline (it is al
 7. **Act** only on L3 actions (`KB § PATTERNS/devops/owner-operations.md` §2); everything else becomes an L1 suggestion with the exact command.
 
 ## Weekly (Monday)
-Add: `noctus.dev.supabase_advisors`, `noctus.dev.latency_report`, `noctus.dev.detect_stale_caches`, skill `noc-hygiene`, and the alert-usefulness review (acted ÷ (acted+noise+duplicate) per class over 4 weeks; a class < 50% ⇒ prune · fold into the brief · retune — owner picks), toil counts, open problem records, memory trend.
+Add: `noctus.dev.supabase_advisors`, `noctus.dev.latency_report`, `noctus.dev.detect_stale_caches`, skill `noc-hygiene`, `noctus.dev.tmp_cleanup` (dry-run, then `dry_run=False` — L3), and the alert-usefulness review (acted ÷ (acted+noise+duplicate) per class over 4 weeks; a class < 50% ⇒ prune · fold into the brief · retune — owner picks), toil counts, open problem records, memory trend.
 
 ## Monthly (first Monday) · Quarterly
 - **Monthly:** SLO report per product (budget used, incidents, burn alerts) · DORA five · cost per product + month-over-month delta · toil budget · days since the last restore drill per store (> 90 ⇒ Today: schedule the drill, L1 to devops-engineer) · off-host copy exists per store · autonomy promotions/demotions due · open postmortem actions.

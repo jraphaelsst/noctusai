@@ -302,7 +302,7 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 | New product scaffold | `noctus.dev.scaffold_product` | `mcp__noctusai__noctus_dev_scaffold_product` | seed-first contract |
 | Testing-ground / sandbox workspace | `noctus.dev.create_testing_ground` | `mcp__noctusai__noctus_dev_create_testing_ground` | sibling workspace |
 | Project close / archive | `noctus.dev.archive` | `mcp__noctusai__noctus_dev_archive(project-path)` | project lifecycle |
-| Inbox-drain for autonomous operator | `orchestrator-operator` subagent | `Agent(subagent_type="orchestrator-operator", ...)` after writing tasks to the `## Pending` section of `.claude/dispatcher.md` | Option D (in-pilot) |
+| Inbox-drain for autonomous operator | `orchestrator-operator` subagent | `Agent(subagent_type="orchestrator-operator", ...)` after writing tasks to the `## Pending` section of `.claude/dispatcher.md` | RETIRED 2026-11-05 (agent deleted; CI merge queue replaced it) |
 | Clean archive (D-2+ folders) | `archive-clean.sh` | `python mcp/noctusai/cli.py --archive-clean --force` after dry-run | housekeeping |
 | Disk audit + cleanup | `mole.sh` orchestrator | `python mcp/noctusai/cli.py --mole scan` (all scopes, read-only) → `... sweep <scope> --force` | custodial |
 

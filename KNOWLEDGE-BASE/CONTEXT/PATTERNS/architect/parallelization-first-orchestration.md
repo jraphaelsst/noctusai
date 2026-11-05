@@ -39,7 +39,7 @@
 - [[self-branching-mode]] (the absolute "never work on `dev`" primitive — the substrate parallelization rides on).
 - [[dispatch-engineer-tuning]] (the per-engine efficiency layer; the dispatch tax this rule reasons about).
 - [[master-tree-parallel-batches]] (the multi-product orchestrator).
-- `.claude/agents/` (the actual specialist roster — architect/security/compliance-reviewer/backend-engineer/frontend-engineer/devops-engineer/engineer-seed/skill-scout/orchestrator-operator).
+- `.claude/agents/` (the actual specialist roster — listed in `KB § 06-AGENTS.md` and CLAUDE.md §2; 18 agents as of 2026-11-05).
 
 ## Anti-patterns
 - **Generalist-by-default** — the tech-lead handling everything inline because "it's just code." Specialist dispatch + the small dispatch tax pay back on wall-clock + quality for any non-trivial work.

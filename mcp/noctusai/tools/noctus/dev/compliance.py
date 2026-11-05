@@ -19284,7 +19284,7 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
 # authoring discipline so new skills/agents conform by construction.
 _HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer", "agents-security", "accountant", "legal-advisor"})
 _HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-seed", "integrations-engineer", "ai-engineer", "test-engineer", "tooling-engineer"})
-# Other agents (orchestrator-operator, skill-scout, ops-steward, reverse-engineer, product-designer) have specialized contracts and
+# Other agents (skill-scout, ops-steward, reverse-engineer, product-designer) have specialized contracts and
 # are skipped by check_agent_archetype_contract.
 
 # ── Agent-context architecture (Stage-4 2026-05-26, agent-context-architecture) ──
@@ -19292,7 +19292,7 @@ _HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "
 # `owns_kb:` in frontmatter; the keeper enforces existence + body-pointer mirror +
 # exclusive ownership. The unowned-allowlist below names KB paths that are
 # universal commons (no single owner) — every agent inherits via CLAUDE.md §1.
-# Procedure-doc carve-out: orchestrator-operator + engineer-seed own no KB
+# Procedure-doc carve-out: engineer-seed owns no KB
 # (they ARE protocols); skill-scout is a meta-scout (owns no KB).
 _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     # §1 family indexes + the GC pattern (2026-08-03 harness-audit re-author).
@@ -19356,7 +19356,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
 # Their frontmatter MUST declare `owns_kb: []` explicitly (no ambiguity).
-_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed", "orchestrator-operator"})
+_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed"})
 
 # Repo-root-relative untracked allowlist for check_git_leftovers — files that
 # may legitimately appear at depth 1 untracked. Anything else trips the keeper.
@@ -19501,7 +19501,7 @@ def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
         tool layer, not just discipline).
       - EXECUTORS (backend-engineer, frontend-engineer, engineer-seed) —
         body should reference the `engineer-seed` protocol.
-    Other agents (orchestrator-operator, skill-scout) have specialized
+    Other agents (skill-scout, ops-steward, reverse-engineer, product-designer) have specialized
     contracts and are skipped. Update the archetype sets when new agents land.
     """
     issues: list[dict] = []
@@ -19669,7 +19669,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": rel,
                 "issue": (
                     f"Meta-agent `{stem}` declares non-empty `owns_kb:` — "
-                    f"meta-agents (engineer-seed, orchestrator-operator) "
+                    f"meta-agents (engineer-seed) "
                     f"own no KB territory. Declare `owns_kb: []`."
                 ),
                 "severity": "high",
