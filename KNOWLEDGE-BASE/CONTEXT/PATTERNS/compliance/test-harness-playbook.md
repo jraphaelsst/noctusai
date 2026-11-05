@@ -322,7 +322,7 @@ and the mock is canon §4 (`KB § PATTERNS/compliance/test-engineering-canon.md`
   fixture rows written into production, real leads routed to them).
 - **Teardown must not swallow.** Clean up per test; never `except Exception: pass` around a
   delete — that is exactly how the prod orgs leaked. FK-ordered cleanup lists live next to the
-  fixture (`core/backend/tests/realdb/conftest.py:31-40`).
+  fixture (`products/core/backend/tests/realdb/conftest.py:31-40`).
 - **Adopters today:** `products/{adconnect,core,erp-imobiliario,orbity,personal-finance,social-wiring,therapy-platform}/backend/tests/realdb/`
   (7 dirs, 2026-11-05; of the awake products, only `core` and `social-wiring`).
 - **Not adopted:** container Postgres (testcontainers). Propose it before adding a dependency

@@ -167,16 +167,16 @@ excluded, pure `e.stopPropagation()` wrappers excluded), 2026-11-05:
 | `seed/lib/frontend/src` | 11 | 6 |
 
 Not all are defects — three kinds, read each site before calling it:
-- **Backdrop of a modal** (`seed/.../ui/Dialog.tsx:116`, `SideDrawer.tsx:157`): a pointer convenience
-  next to Esc — fine. When the backdrop belongs to a **hand-rolled** modal (`core/.../admin/AdminPlans.tsx:176`,
+- **Backdrop of a modal** (`seed/lib/frontend/src/design-system/ui/Dialog.tsx:116`, `SideDrawer.tsx:157`): a pointer convenience
+  next to Esc — fine. When the backdrop belongs to a **hand-rolled** modal (`products/core/frontend/src/pages/admin/AdminPlans.tsx:176`,
   `social-wiring/.../Conexoes.tsx:243`, most core admin sites), the defect is the modal (no focus
   management), not the click — route to the Radix dialog.
 - **Done right**: `role="button"` + `tabIndex={0}` + Enter/Space handler (`social-wiring/.../esteira/PostCardFace.tsx:49-58`,
-  `seed/.../card-hub/CardHubFace.tsx:93-102`) — accessible, though a native `<button>` would be simpler.
-- **Mouse-only content** — the real defects: `core/.../pages/Dashboard.tsx:250-261` (the product
+  `seed/lib/frontend/src/components/card-hub/CardHubFace.tsx:93-102`) — accessible, though a native `<button>` would be simpler.
+- **Mouse-only content** — the real defects: `products/core/frontend/src/pages/Dashboard.tsx:250-261` (the product
   launcher card: no role, no tabIndex, no key handler — a keyboard user cannot open a product from the
-  core dashboard) and `seed/.../integrations/IntegrationCard.tsx:424-427` (`role="article"` + `onClick`
-  opening the account modal). `seed/.../kanban/KanbanCard.tsx:104-113` deliberately leaves Enter/Space
+  core dashboard) and `seed/lib/frontend/src/design-system/integrations/IntegrationCard.tsx:424-427` (`role="article"` + `onClick`
+  opening the account modal). `seed/lib/frontend/src/components/kanban/KanbanCard.tsx:104-113` deliberately leaves Enter/Space
   to dnd-kit's keyboard drag; whether keyboard users can still OPEN a card needs a walkthrough (§5).
 The earlier "25 sites in four active FEs" (frontend canon §7) and "54 in product FEs" (audit) used
 different scopes and single-line greps; use this table and re-run before quoting.

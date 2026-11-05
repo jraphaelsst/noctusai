@@ -580,7 +580,7 @@ control instead of consulting `agents-security`.
 - Anthropic — Batch processing — https://platform.claude.com/docs/en/build-with-claude/batch-processing — 50% off, 100 000 requests / 256 MB, 24 h, 29-day results, not ZDR (§ 6). Accessed 2026-11-05.
 - Lewis et al. — Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (NeurIPS 2020) — https://arxiv.org/abs/2005.11401 — parametric + non-parametric memory, provenance, updating knowledge (§ 7). Accessed 2026-11-05.
 - Hamel Husain — Your AI Product Needs Evals (2024-03-29) — https://hamel.dev/blog/posts/evals/ — look at your data, log traces (§ 8). Accessed 2026-11-05.
-- OpenTelemetry — GenAI semantic conventions (moved repo, status Development) — https://github.com/open-telemetry/semantic-conventions-genai — `docs/gen-ai/anthropic.md`, `gen-ai-agent-spans.md`, `gen-ai-metrics.md` (§ 8). Accessed 2026-11-05. (The old `opentelemetry.io/docs/specs/semconv/gen-ai/` pages now only point here.)
+- OpenTelemetry — GenAI semantic conventions (moved repo, status Development) — https://github.com/open-telemetry/semantic-conventions-genai — upstream pages docs/gen-ai/anthropic.md, gen-ai-agent-spans.md, gen-ai-metrics.md in that repo (§ 8). Accessed 2026-11-05. (The old `opentelemetry.io/docs/specs/semconv/gen-ai/` pages now only point here.)
 - OWASP — Top 10 for LLM Applications 2025 — https://genai.owasp.org/llm-top-10/ — LLM01-LLM10 names (§ 11, pointer only). Accessed 2026-11-05.
 
 ## Composes-with
