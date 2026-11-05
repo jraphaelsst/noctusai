@@ -125,7 +125,7 @@ products/agents/backend/app/
   `regras_seguranca_sem_parametros` blocks publish); allowlists come from `ValoresOrg.limpos` (validated specs only);
   `studio/normalizador_texto.py` is the one invisible-character / de-obfuscation module (schema boundary + detectors +
   `spec_formatos`); `valor_sem_ferramenta` blocks an unbacked R$ / %; `opt_out_palavras` opts a lead out on an exact
-  `PARAR|SAIR|STOP|CANCELAR|NÃO QUERO MAIS` with no model call; `contexto.estado.texto_base` / `atendente_nome` are
+  `PARAR|SAIR|STOP|CANCELAR|NÃO QUERO MAIS` with no model call, in EVERY conversation state (paused / handed over / agent off / killed / draining too: the refusal path records it via the same `aplicar_encerramento` and answers `encerrar`+`opt_out`; see julia-v2 CONTRACT §5.2); `contexto.estado.texto_base` / `atendente_nome` are
   validated like a spec; `encaminhada: true` messages are marked for the model and never evidence.
 - Provenance + leak tripwires (migration 046, `channels/proveniencia.py`, `stores/marcadores.py`; GUARDRAILS B2/B7):
   authorship is structural, never inferred from text. Lead lines stay one plain `user` message; human / other-agent /

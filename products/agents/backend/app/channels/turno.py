@@ -339,6 +339,60 @@ async def _parar_pelo_lead(turno: JuliaTurno, palavra: str) -> _Tentativa:
     return _Tentativa(textos=[confirmacao] if confirmacao else [])
 
 
+#: Statuses of a REFUSED turn on which a lead's stop word is still honoured (the opt-out is consent withdrawal, valid in
+#: every conversation state): ``lead_opt_out`` already is one, ``reengajamento_ignorado`` has no lead words, and
+#: ``controle_indisponivel`` never reaches here (503).
+STATUS_RECUSA_SEM_OPT_OUT = frozenset({"lead_opt_out", "reengajamento_ignorado", "controle_indisponivel"})
+
+
+async def opt_out_em_conversa_recusada(
+    *, svc: ServicosCanal, prep: Preparado | None, agent: Any, org_id: UUID, thread: Any, lote_lead: list[str],
+    participante: Any,
+) -> ResultadoTurno | None:
+    """The STOP word in a conversation the controls REFUSED (paused / handed to a broker / another agent's / agent
+    off / platform kill / draining). The lead's opt-out is honoured in EVERY state, so it runs BEFORE the refusal is
+    answered: the SAME recording as the in-turn backstop (:func:`aplicar_encerramento` -> ``OptOutService``: lead-wide
+    opt-out, every participation ended, the owner's in-app notice) and the SAME ``encerrar`` (``lead_opt_out`` +
+    reason) + ``opt_out`` action shape SW consumes (it alerts the responsible in-app and by WhatsApp with the reason).
+
+    ``None`` = nothing to do (not a stop word / no thread / the rule is off) and the refusal stands exactly as before.
+    The confirmation text is sent when the agent is live (``prep`` present): the lead gets one acknowledgement even
+    though a human owns the chat; with the agent off (``prep`` is ``None``: no compiled content) nothing is sent, the
+    opt-out and the alert still happen. No model call."""
+    if thread is None or thread.lead_ref_id is None:
+        return None
+    try:
+        regra = svc.conformidade.regras(org_id, agent.id).get("opt_out_palavras")
+    except Exception:  # noqa: BLE001 -- an unreadable rule must not hide the code-side floor (PARAR / SAIR / ...)
+        logger.exception("agents.channel.opt_out.regra_ilegivel org_id=%s thread_id=%s", org_id, thread.id)
+        regra = None
+    palavra = conf.palavra_de_parar(lote_lead, regra)
+    if palavra is None:
+        return None
+    conteudo = prep.compiled.conteudo if prep is not None else None
+    turno = JuliaTurno(
+        org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=thread.lead_ref_id,
+        conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash if prep is not None else "",
+        padrao=None, qual=None, threads=svc.threads, skills=None, sw=None, ident=None, handoff_destino=None,
+        limites=None, mensagens_lead=[], sinais=None, lote_lead=list(lote_lead),
+        opt_out=OptOutService(svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
+    )
+    await aplicar_encerramento(
+        turno, MOTIVO_LEAD_PEDIU_PARAR, opt_out=True, motivo_texto=f'"{palavra}"', origem_opt_out=OPT_OUT_PALAVRA_CHAVE,
+        trecho=palavra)
+    confirmacao = ""
+    if conteudo is not None:
+        confirmacao = conteudo.texto("runtime.confirmacao_opt_out").strip()
+        if not confirmacao:
+            logger.error("agents.channel.opt_out.confirmacao_ausente thread_id=%s", thread.id)
+    atual = await asyncio.to_thread(svc.threads.get_participante, org_id, thread.id, agent.id)
+    return ResultadoTurno(
+        partes_texto=confirmacao, actions=_numerar(turno.actions), status="encerrado",
+        participante_estado=atual.estado if atual is not None else (participante.estado if participante else None),
+        violacoes=[Violacao("opt_out_palavras", "registrar", {"palavra": palavra})],
+    )
+
+
 def _textos_com_valor(turno: JuliaTurno, ct: Any, estado: Any, lote_lead: list[str], mensagens_lead: list[str]) -> list[str]:
     """Where a figure of a reply may come from (``valor_sem_ferramenta``): this turn's tool results, the lead's own
     words (never a forwarded message or media text), the agent's earlier replies in this thread, the dossier."""
