@@ -48,9 +48,9 @@ export function conversaParaThread(c: Conversa): ChatThread {
   };
 }
 
-interface Props { connectionId: string; autoReplyEnabled: boolean }
+interface Props { connectionId: string }
 
-export function ConversasPanel({ connectionId, autoReplyEnabled }: Props) {
+export function ConversasPanel({ connectionId }: Props) {
   const [params, setParams] = useSearchParams();
   const view = params.get("view") === "kanban" ? "kanban" : "lista";
   const [aba, setAba] = useState<Aba>("todas");
@@ -124,7 +124,6 @@ export function ConversasPanel({ connectionId, autoReplyEnabled }: Props) {
           <ThreadsFeedContext.Provider value={feed}>
             <WhatsAppChatWindow
               connectionId={connectionId}
-              autoReplyEnabled={autoReplyEnabled}
               className="min-w-0 flex-1"
               selectedThreadId={selecionado}
               onSelectThread={setSelecionado}

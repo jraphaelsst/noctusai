@@ -52,6 +52,13 @@ class TestKnownPatterns:
         assert has_secret(content) is True
         assert find_secret(content) == "github_pat"
 
+    def test_noc_api_token(self):
+        content = "NOCTUS_TOKEN=noc_" + "ab12" * 16
+        assert find_secret(content) == "noc_api_token"
+
+    def test_short_noc_identifier_is_not_a_match(self):
+        assert has_secret("the noc_probe helper and noc_status") is False
+
     def test_aws_access_key_id(self):
         content = "AKIAABCDEFGHIJKLMNOP"
         assert has_secret(content) is True

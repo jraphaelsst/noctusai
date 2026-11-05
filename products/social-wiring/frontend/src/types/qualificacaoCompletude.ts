@@ -130,8 +130,8 @@ export const FALTANDO_LABELS: Record<string, string> = {
   nacionalidade: "Nacionalidade",
   profissao: "Profissão",
   estado_civil: "Estado civil",
-  rg: "RG",
-  rg_orgao_expedidor: "Órgão expedidor do RG",
+  rg: "RG (opcional)",
+  rg_orgao_expedidor: "Órgão expedidor do RG (opcional)",
   cpf: "CPF",
   endereco: "Endereço completo",
   regime_bens: "Regime de bens",
@@ -163,6 +163,9 @@ export interface QualificacaoCompletude {
   estado_civil: EstadoCivil | null;
   completo: boolean;
   faltando: string[];
+  /** Non-blocking notes (e.g. an RG read only from the CNH). RG is optional
+   *  [owner decision 2026-11-04]. */
+  avisos?: string[];
   conjuge: ConjugeCompletude | null;
 }
 

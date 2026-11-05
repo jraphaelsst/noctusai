@@ -25,7 +25,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol, Union
@@ -57,6 +57,9 @@ from app.studio.textos_registry import CODIGOS_RECUSA_OPCIONAIS, MOTIVOS_HANDOFF
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "OPT_OUT_PALAVRA_CHAVE",
+    "OPT_OUT_PEDIDO_DO_LEAD",
+    "aplicar_encerramento",
     "enriquecer_schema",
     "executar_handoff",
     "finalizar_conclusao",
@@ -418,16 +421,18 @@ class SkillsComSpecs:
 
     _CAMPOS = ("descricao", "corpo", "conteudo", "titulo")
 
-    def __init__(self, inner: SkillFonte, valores: Mapping[str, str]) -> None:
+    def __init__(self, inner: SkillFonte, valores: Mapping[str, str], fenced: Collection[str] = ()) -> None:
         self._inner = inner
         self._valores = dict(valores)
+        #: free-text keys: ``[dado: chave]`` here, the value only in the prompt's data section (Julia-line E3)
+        self._fenced = frozenset(fenced)
 
     def _resolver(self, out: dict[str, Any]) -> dict[str, Any]:
         from app.studio.especificacoes import resolver_texto
 
         if out.get("erro"):
             return out
-        return {k: (resolver_texto(v, self._valores) if k in self._CAMPOS and isinstance(v, str) else v)
+        return {k: (resolver_texto(v, self._valores, self._fenced) if k in self._CAMPOS and isinstance(v, str) else v)
                 for k, v in out.items()}
 
     async def abrir(self, nome: str) -> dict[str, Any]:
@@ -482,6 +487,9 @@ class JuliaTurno:
     parar: str | None = None  # the motivo_codigo of the safe stop (limite_recusas / falhas_repetidas)
     registrou_criterios: set[str] = field(default_factory=set)
     links_vistos: set[str] = field(default_factory=set)
+    #: The (successful) tool results of THIS turn as the model read them: the only figures (R$ / %) a reply may repeat
+    #: besides the lead's own words (``valor_sem_ferramenta``).
+    resultados_texto: list[str] = field(default_factory=list)
     codigos_vistos: set[str] = field(default_factory=set)
     #: The CPF / RG just registered this turn (normalised) -- the turn masks them in the thread's stored rows once it
     #: settles (guardrails B8.4). Memory only: never serialised, never in a repr.
@@ -1012,34 +1020,9 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         if opt_out and t.opt_out is None:
             logger.error("agents.channel.opt_out_indisponivel org_id=%s thread_id=%s", t.org_id, t.thread_id)
             return _falha_sw(t)
-        if not t.encerrou:
-            moved = await asyncio.to_thread(
-                t.threads.transicionar, t.org_id, t.thread_id, t.agent_id, de=("ativo",), para="encerrado",
-                ator_tipo="agente", motivo=a.motivo)
-            if not moved:
-                logger.info("agents.channel.encerrar_ja_movido thread_id=%s", t.thread_id)
-            t.encerrou = True
-            t.acao(type="encerrar", motivo=a.motivo)
-        if opt_out and not any(x.get("lead_opt_out") for x in t.actions):
-            # also when an earlier ``encerrar`` already ended this agent for another motive: the lead's request to
-            # stop is what must not be lost (the turn's single ``encerrar`` action is upgraded to the opt-out).
-            await _registrar_opt_out(motivo_texto or "")
-            for x in t.actions:
-                if x.get("type") == "encerrar":
-                    x.update(motivo=a.motivo, lead_opt_out=True)
-                    break
+        await aplicar_encerramento(
+            t, a.motivo, opt_out=opt_out, motivo_texto=motivo_texto, origem_opt_out=OPT_OUT_PEDIDO_DO_LEAD, trecho=a.trecho)
         return _ok(mensagem=t.texto("ferramenta.resultado.encerrado_opt_out" if opt_out else "ferramenta.resultado.encerrado"))
-
-    async def _registrar_opt_out(motivo_texto: str) -> None:
-        """The lead asked to stop: a LEAD-level opt-out (every agent stops) + the owner's record + notice. The
-        lead's own words are what this turn received (the batch -- ``_encerrar`` refuses without it)."""
-        lead = await asyncio.to_thread(t.threads.get_lead_ref, t.org_id, t.lead_ref_id)
-        if lead is None:  # the thread has a lead (aplicar_controles links it); reaching here is a bug to see
-            raise RuntimeError("encerrar: lead_ref not found")
-        palavras = "\n".join(t.lote_lead)
-        await asyncio.to_thread(
-            t.opt_out.registrar, t.org_id, lead.ref_externa, origem="agente", motivo=motivo_texto,
-            mensagem_lead=palavras[:OPT_OUT_MENSAGEM_MAX] or None, agent_id=t.agent_id, thread_id=t.thread_id)
 
     async def _captacao(a: CaptacaoArgs) -> _Resultado:
         t.acao(type="captacao", descricao=_limpo(a.descricao, 1000), endereco=_limpo(a.endereco, 300),
@@ -1150,7 +1133,10 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         if res.falha:
             t.erros += 1
         _parar_se_estourou()
-        return ToolResult(call.call_id, _json(res.payload), res.erro)
+        saida = _json(res.payload)
+        if not res.erro:
+            t.resultados_texto.append(saida)
+        return ToolResult(call.call_id, saida, res.erro)
 
     def _resumo(nome: str, args: dict[str, Any]) -> str:
         # Operational one-liner for the admin timeline: the tool NAME only, never an argument value.
@@ -1207,6 +1193,51 @@ async def _relatorio(t: JuliaTurno, motivo: str, perfil: Mapping[str, Any]) -> d
                 t.ident.faltando, t.org_id, t.lead_ref_id, obrigatorios_do_padrao(t.padrao.criterios))
         t.relatorio = await montar_relatorio(t, motivo=motivo, perfil=perfil, faltando_ident=faltando)
     return t.relatorio
+
+
+async def registrar_opt_out_do_lead(t: JuliaTurno, motivo_texto: str) -> None:
+    """The lead asked to stop: a LEAD-level opt-out (every agent stops) + the owner's record + notice. The lead's own
+    words are what this turn received (the batch -- ``encerrar`` refuses without it, the STOP backstop IS it)."""
+    lead = await asyncio.to_thread(t.threads.get_lead_ref, t.org_id, t.lead_ref_id)
+    if lead is None:  # the thread has a lead (aplicar_controles links it); reaching here is a bug to see
+        raise RuntimeError("encerrar: lead_ref not found")
+    palavras = "\n".join(t.lote_lead)
+    await asyncio.to_thread(
+        t.opt_out.registrar, t.org_id, lead.ref_externa, origem="agente", motivo=motivo_texto,
+        mensagem_lead=palavras[:OPT_OUT_MENSAGEM_MAX] or None, agent_id=t.agent_id, thread_id=t.thread_id)
+
+
+#: Why an opt-out happened, as the turn response reports it to SW (``encerrar`` action, ``opt_out_origem``).
+OPT_OUT_PALAVRA_CHAVE = "palavra_chave"  # the deterministic STOP backstop (an exact PARAR / SAIR / ...)
+OPT_OUT_PEDIDO_DO_LEAD = "pedido_do_lead"  # the model's ``encerrar(lead_pediu_parar)`` on the lead's words
+TRECHO_OPT_OUT_MAX = 200
+
+
+async def aplicar_encerramento(
+    t: JuliaTurno, motivo: str, *, opt_out: bool, motivo_texto: str | None,
+    origem_opt_out: str = OPT_OUT_PEDIDO_DO_LEAD, trecho: str | None = None,
+) -> None:
+    """End this agent's participation and, for an opt-out, record it lead-wide. ONE implementation for the model's
+    ``encerrar`` tool and the deterministic STOP backstop (``channels/turno.py``), so both leave the same record."""
+    if not t.encerrou:
+        moved = await asyncio.to_thread(
+            t.threads.transicionar, t.org_id, t.thread_id, t.agent_id, de=("ativo",), para="encerrado",
+            ator_tipo="agente", motivo=motivo)
+        if not moved:
+            logger.info("agents.channel.encerrar_ja_movido thread_id=%s", t.thread_id)
+        t.encerrou = True
+        t.acao(type="encerrar", motivo=motivo)
+    if opt_out and not any(x.get("lead_opt_out") for x in t.actions):
+        # also when an earlier ``encerrar`` already ended this agent for another motive: the lead's request to
+        # stop is what must not be lost (the turn's single ``encerrar`` action is upgraded to the opt-out).
+        await registrar_opt_out_do_lead(t, motivo_texto or "")
+        for x in t.actions:
+            if x.get("type") == "encerrar":
+                x.update(motivo=motivo, lead_opt_out=True, opt_out_origem=origem_opt_out,
+                         trecho=_limpo(trecho, TRECHO_OPT_OUT_MAX))
+                break
+        # the explicit report SW consumes (discriminator ``type``, like every action)
+        t.acao(type="opt_out", motivo=origem_opt_out, trecho=_limpo(trecho, TRECHO_OPT_OUT_MAX))
 
 
 async def executar_handoff(

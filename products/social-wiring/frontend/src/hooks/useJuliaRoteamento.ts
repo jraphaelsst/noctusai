@@ -1,10 +1,10 @@
 /**
  * Julia › Agente = LINE ROUTING only (julia-v2 CONTRACT Q4, white-label per org).
  *
- *   GET /api/julia/roteamento                          org member: the org's WhatsApp lines + handoff default + agents link
+ *   GET /api/julia/roteamento                          org member: the org's WhatsApp lines + handoff default
  *   PUT /api/julia/roteamento/linhas/{connection_id}   admin: {alimenta, destino_handoff_user_id?}
  *
- * How Julia BEHAVES is configured in the agents app; SW only decides which numbers feed her and who is told when
+ * How Julia BEHAVES is maintained by the platform; SW only decides which numbers feed her and who is told when
  * a lead goes to a human. Loading = two signals off `data` (never `isLoading`).
  */
 import { useQuery } from "@tanstack/react-query";
@@ -18,7 +18,8 @@ export interface LinhaRoteamento {
   /** "this number feeds the agent" (the routing switch; NOT the agent's own on/off, which lives in agents). */
   alimenta: boolean;
   alimenta_desde: string | null;
-  numeros_autorizados: number;
+  /** Informational only: it no longer gates turning the line on. */
+  numeros_autorizados?: number;
   /** null = the default (the org owner). */
   destino_handoff_user_id: string | null;
 }
@@ -26,8 +27,6 @@ export interface LinhaRoteamento {
 export interface Roteamento {
   linhas: LinhaRoteamento[];
   destino_handoff_padrao: { tipo: string; user_id: string | null };
-  /** Base URL of the agents app, resolved server-side. Null = unresolvable. */
-  agents_url: string | null;
 }
 
 export interface LinhaUpdate {
@@ -67,9 +66,4 @@ export function useAtualizarLinha() {
       },
     ],
   });
-}
-
-/** Where Julia is configured, in the agents app (Studio). Null when the agents URL is unresolvable. */
-export function urlConfigurarJulia(agentsUrl: string | null | undefined): string | null {
-  return agentsUrl ? `${agentsUrl.replace(/\/$/, "")}/studio/julia` : null;
 }

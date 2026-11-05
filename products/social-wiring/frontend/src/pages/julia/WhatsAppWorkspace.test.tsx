@@ -163,11 +163,11 @@ describe("Julia WhatsApp — connection states", () => {
     expect(lastShellProps).toBeNull();
   });
 
-  it("shows the empty state (link to Conexões) when there are no connections", async () => {
+  it("shows the empty state (link to Agente#whatsapp) when there are no connections", async () => {
     mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: false, isError: false });
     const { getByText } = await renderRoute("conversas");
-    expect(getByText("Nenhuma conexão WhatsApp")).toBeTruthy();
-    expect(getByText("Conexões")).toBeTruthy();
+    expect(getByText("Nenhuma linha de WhatsApp")).toBeTruthy();
+    expect((getByText("Agente") as HTMLAnchorElement).getAttribute("href")).toBe("/julia/agente#whatsapp");
     expect(lastShellProps).toBeNull();
   });
 });
@@ -191,7 +191,7 @@ describe("Julia WhatsApp — /julia/conversas", () => {
     const { getByTestId } = await renderView();
     expect(getByTestId("chat-window-stub")).toBeTruthy();
     expect(lastChatWindowProps.connectionId).toBe("conn-9");
-    expect(lastChatWindowProps.autoReplyEnabled).toBe(true);
+    expect(lastChatWindowProps.autoReplyEnabled).toBeUndefined();
     expect(lastConfigPanelProps).toBeNull();
   });
 });

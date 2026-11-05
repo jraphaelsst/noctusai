@@ -54,7 +54,8 @@ def test_an_org_turn_opens_the_skill_with_the_orgs_values(chan):
     body = chan.turn(turn_body("Oi", ids=["s1"])).json()
     assert body["status"] == "respondido", body
     [aberta] = [r for r in tool_results(chan.provider) if r.get("nome") == "qualificar-lead"]
-    assert aberta["corpo"] == "Apresente a Imobiliária Aurora e pergunte o prazo."
+    # free text is fenced (E3): the opened skill body points at the data section instead of inlining the value
+    assert aberta["corpo"] == "Apresente a [dado: agencia] e pergunte o prazo."
     assert "{{org." not in str(tool_results(chan.provider))
 
 
@@ -71,4 +72,5 @@ def test_a_pinned_library_skill_counts_its_placeholders_for_the_spec_check():
     assert "spec_nao_usada" not in codigos            # agencia is used by the pinned skill
     assert "spec_nao_declarada" in codigos            # regioes is used by it and never declared
     org = compile_prompt(replace(base, version=replace(base.version, skill_refs=(ref,)), org_specs={"agencia": "Aurora"}))
-    assert "`ofertar` — Quando ofertar na Aurora." in org.texto  # the index line is resolved for the org
+    assert "`ofertar` — Quando ofertar na [dado: agencia]." in org.texto  # resolved for the org; free text is fenced (E3)
+    assert '"agencia": "Aurora"' in org.texto

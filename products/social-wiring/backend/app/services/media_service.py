@@ -52,6 +52,11 @@ BUSY_ESPERA_MAX_S = 10.0
 MAX_BYTES_PADRAO = 64 * 1024 * 1024
 
 
+class MediaHostRefused(Exception):
+    """P1-4: a media URL whose host is not the line's WAHA base (after the rewrite) -- the sender chose it, so it is never fetched
+    (SSRF into the internal network / a metered third party)."""
+
+
 class MediaTooLarge(Exception):
     """The body (or its declared length) is over the cap: the read stopped, nothing was kept."""
 
@@ -83,6 +88,7 @@ PLACEHOLDERS_MIDIA: dict[str, str] = {
     "sem_url": "Mídia recebida; o arquivo não ficou disponível.",
     "bloqueado": "Mídia recebida de um número bloqueado; não foi processada.",
     "limite_entrada": "Mídia recebida acima do limite de mensagens; não foi processada.",
+    "host_nao_permitido": "Mídia recebida; o arquivo não está disponível para processamento.",
     "falhou": "Mídia recebida; não foi possível processá-la.",
 }
 
@@ -714,6 +720,9 @@ class MediaService:
             return recusa("tipo_nao_suportado")
         if not url:
             return recusa("sem_url")
+        if not self.url_de_midia_permitida(url):
+            logger.warning("lead media refused: the URL is not a file on the line's WAHA host")
+            return recusa("host_nao_permitido")
         if reservar is not None:
             escopo = reservar()
             if escopo:
@@ -868,7 +877,12 @@ class MediaService:
         points elsewhere.
         """
         resolved_url = self._rewrite_waha_url(url)
-        headers = self._waha_headers() if self._e_host_do_waha(resolved_url) else {}
+        if not self.url_de_midia_permitida(url):
+            # Only the host/path of the line's own WAHA is ever fetched. The inbound `media.url` is attacker-controlled text: a
+            # non-WAHA host (cloud metadata, a LAN address, a metered API) is refused before any request is made.
+            logger.warning("media: download refused -- the URL is not a file on the line's WAHA host (ref=%s)", ref_log(urlparse(url).netloc if url else ""))
+            raise MediaHostRefused("host_fora_do_waha")
+        headers = self._waha_headers()
         async with httpx.AsyncClient(timeout=60, follow_redirects=False, transport=self._transport) as client:
             async with client.stream("GET", resolved_url, headers=headers) as response:
                 response.raise_for_status()
@@ -893,6 +907,23 @@ class MediaService:
         if not base.netloc:
             return False
         return (alvo.scheme, alvo.netloc.lower()) == (base.scheme, base.netloc.lower())
+
+    def url_de_midia_permitida(self, url: str) -> bool:
+        """True only for a file URL on the line's WAHA base host (after the rewrite). The check every fetch goes through, and the one the
+        lead path asks BEFORE it reserves media budget."""
+        resolved = self._rewrite_waha_url(url)
+        return self._e_host_do_waha(resolved) and self._e_caminho_de_arquivo_do_waha(resolved)
+
+    @staticmethod
+    def _e_caminho_de_arquivo_do_waha(url: str) -> bool:
+        """WAHA serves media under `/api/files/...` or `/api/{session}/files/...`; anything else on the WAHA host (its admin API, sessions,
+        screenshots) carries the API key too, so it is not a media URL. No dot-segments."""
+        try:
+            path = urlparse(url).path
+        except ValueError:
+            return False
+        partes = path.split("/")
+        return path.startswith("/api/") and "files" in partes and ".." not in partes and "." not in partes
 
     def _rewrite_waha_url(self, url: str) -> str:
         """Map an externally-emitted WAHA URL onto our internal base.
@@ -1173,16 +1204,27 @@ def _rasterize_pdf_pages(
 
 
 def make_media_service(org_id: Any = None) -> MediaService:
-    """Default factory using product settings — used by webhook + chat
-    routers so they don't have to know the construction details. ``org_id``
-    selects whose Anthropic key (Chaves de API) pays for vision / text."""
+    """Default factory -- used by webhook + chat routers so they don't have to know the construction details. ``org_id``
+    selects whose Anthropic key (Chaves de API) pays for vision / text. The WAHA host + key that media URLs are rewritten
+    onto and downloaded with come from the org's own line (`julia_linha.linha_da_org`, decrypted). No line -> no WAHA host (an absolute media URL still downloads; a relative
+    one cannot) and the reason is logged -- never an env fallback."""
+    base_url, api_key = "", ""
+    try:
+        if org_id is not None:
+            from app.services.julia_linha import linha_da_org  # noqa: PLC0415
+
+            linha = linha_da_org(org_id)
+            base_url, api_key = linha.base_url, linha.api_key or ""
+    except Exception as exc:  # noqa: BLE001 -- SemLinha / LinhaAmbigua / store failure: named below
+        motivo = getattr(exc, "motivo", type(exc).__name__)
+        logger.warning("media: no WhatsApp line for org=%s (%s) -- inbound media is read without a WAHA host", org_id, motivo)
     return MediaService(
-        waha_base_url=settings.waha_base_url,
-        waha_api_key=settings.waha_api_key,
+        waha_base_url=base_url,
+        waha_api_key=api_key,
         org_id=org_id,
         vision_model=settings.media_vision_model,
         text_model=settings.chatbot_llm_model,
     )
 
 
-__all__ = ["MediaService", "MediaTooLarge", "MidiaLead", "midia_recusada", "PLACEHOLDERS_MIDIA", "PROMPT_DOCUMENTO_LEAD_PADRAO", "ResolvedMedia", "make_media_service"]
+__all__ = ["MediaHostRefused", "MediaService", "MediaTooLarge", "MidiaLead", "midia_recusada", "PLACEHOLDERS_MIDIA", "PROMPT_DOCUMENTO_LEAD_PADRAO", "ResolvedMedia", "make_media_service"]

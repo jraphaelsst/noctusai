@@ -18,8 +18,17 @@ import { useItensGerados } from "@/hooks/studio/useGeracoes";
 
 const CHAVE_RE = /^[a-z][a-z0-9_]{1,63}$/;
 const TIPOS: ReadonlyArray<{ valor: string; rotulo: string }> = [
-  { valor: "texto", rotulo: "Texto curto" },
+  { valor: "texto", rotulo: "Texto" },
+  { valor: "texto_curto", rotulo: "Texto curto" },
   { valor: "texto_longo", rotulo: "Texto longo" },
+  { valor: "url", rotulo: "Link (URL)" },
+  { valor: "dominios", rotulo: "Domínios" },
+  { valor: "contatos", rotulo: "Contatos" },
+  { valor: "cnpj", rotulo: "CNPJ" },
+  { valor: "creci", rotulo: "CRECI" },
+  { valor: "horario", rotulo: "Horário" },
+  { valor: "duracao", rotulo: "Duração" },
+  { valor: "lista", rotulo: "Lista" },
 ];
 const INPUT_CLASS =
   "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50";

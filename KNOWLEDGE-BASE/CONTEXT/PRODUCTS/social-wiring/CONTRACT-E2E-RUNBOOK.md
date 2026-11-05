@@ -1,5 +1,8 @@
 # SW contract generation — e2e validation runbook (real deal replay)
 
+> **RG is optional for contract parties (owner decision, 2026-11-04):** "make RG optional for contract parties" — building on the earlier rule "contracts… rg + cpf, whichever is available, only displaying on the contract values that exist. If not available, don't show empty data." CPF stays MANDATORY; `rg` / `rg_orgao_expedidor` are NOT in `documento_checklist_service._CAMPOS_QUALIFICACAO_CONTRATO` (never `faltando`). An RG that is present but incomplete only WARNS (`RG_SEM_ORGAO_EXPEDIDOR`, `RG_ORGAO_SEM_UF`, `RG_SEM_DIGITO_VERIFICADOR` for a CNH-only RG; `RG_IGUAL_CPF` is not a check — CIN uses the CPF number). A CPF-only party qualifies by the CPF alone (`frases.identidade_texto` returns "" with no RG). The card checklist shows RG / órgão as "(opcional)".
+
+
 > **What this is.** The repeatable procedure for replaying a *real, already-signed* deal through
 > social-wiring in prod — lead → uploads → extraction → typed data → readiness → generation → score
 > against the signed contract — so the document extractors and the generator are validated on real
@@ -67,7 +70,7 @@ noctus.dev.contract_e2e_pack numero=<n> action=stage confirm=true dest=<session 
 | 1.1 | Upload the matrícula | imóvel → Documentos do imóvel (tipo Matrícula) | `imovel_documentos`: `extracao_matricula`, `tipo_documento_matricula`, `emitida_em` vs the page's certification date |
 | 1.2 | Espelho IPTU (Guia de IPTU) · CND IPTU · CND condomínio | same card, pick the tipo first | `inscricao_imobiliaria`; CND `emitida_em`/`resultado` |
 | 0.4 | **Novo lead**: buyer titular, phone (from the proposal), imóvel, corretor | Funil → Novo lead | card in Qualificação (search it — new cards don't surface at the top) |
-| 2.1 | Titular identity doc (CNH/RG/CIN slot) | card → Geral → Dados obrigatórios | nome/CPF/RG/órgão/nascimento; a CNH never carries the RG check digit — the checklist flags it |
+| 2.1 | Titular identity doc (CNH/RG/CIN slot) | card → Geral → Dados obrigatórios | nome/CPF/nascimento (RG/órgão optional since 2026-11-04); a CNH never carries the RG check digit — the checklist flags it |
 | 2.2 | Typed data (email, profissão, gênero, RG DV, nacionalidade, mãe, estado civil, endereço) | Dados do cliente → pencil | setting `Casado(a)` reveals the marriage-certidão slot |
 | 2.3 | Marriage certidão → cônjuge | Dados do cliente → Certidão de casamento | `extracao_conjuges` has 2 entries; spouse auto-linked; regime + data do casamento applied |
 | 2.4 | Cônjuge (if not auto-linked): Cônjuge tab → Adicionar cônjuge by CPF; upload its CNH; typed data | Cônjuge tab | same as 2.1/2.2 |

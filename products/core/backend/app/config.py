@@ -104,13 +104,7 @@ class Settings(ProductSettings):
     # token) — same early-dev-bypass posture as `community_turnstile_secret`.
     website_turnstile_secret: str = ""
 
-    # WAHA (shared platform instance — same `WAHA_BASE_URL`/`WAHA_API_KEY`
-    # env vars every other WAHA-consuming product reads; see `.env.example`
-    # § WAHA). Empty `waha_base_url` → `get_whatsapp_client` returns
-    # `FakeWahaClient` (logs instead of sends — safe for dev).
-    waha_base_url: str = ""
-    waha_api_key: str = ""
-    waha_session: str = "default"
+    # No WAHA settings: core owns no WhatsApp line (julia-line contract §A4, 2026-11-04).
 
     # ─── Platform transcription API (projects/transcription-api) ──────────
     # Backend behind the seed `make_transcriber()`: local_whisper | openai |

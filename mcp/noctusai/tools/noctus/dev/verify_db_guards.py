@@ -1372,37 +1372,55 @@ _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
 )
 
 
-_JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE = GuardProbe(
-    id="whatsapp_connections.agente_leads_ativo.exige_autorizados",
+# NOTE: the 258 `whatsapp_connections_agente_exige_autorizados` CHECK (and its probe) were retired by SW migration 318 -- the
+# One Chat operator bot is gone, so Julia needs no authorized number (CONTRACT julia-line B3). A probe for a dropped guard
+# would report `permitted` forever, so it is deleted, not kept.
+
+_JULIA_MENSAGEM_ORIGEM_PROBE = GuardProbe(
+    id="conversation_messages.origem.valores",
     product="social-wiring",
     schema=_SW_SCHEMA,
-    guard_name="whatsapp_connections_agente_exige_autorizados",
+    guard_name="conversation_messages_origem_check",
     kind="write_refusal",
-    migrations=("258_lais_agente_roteamento.sql",),
+    migrations=("318_julia_linha_roteamento.sql",),
     rationale=(
-        "Julia (the lead agent) on a line whose `authorized_numbers` is EMPTY would hand every "
-        "lead to the operator bot and its tools: an empty list means 'everyone is authorized' "
-        "to the One Chat gate. The invariant `agente_leads_ativo => authorized_numbers "
-        "non-empty` is enforced on every write by this CHECK (it spans both columns, so "
-        "emptying the list while Julia is on is refused too). CHECK fires before the unique "
-        "indexes, so a throwaway row borrowing an existing (org_id, user_id) is safe."
+        "`origem` (lead | julia | humano | interno) is what the human-takeover rule reads to tell SW's own echo "
+        "(Julia's bubble, a system staff notice) from a person typing: an unknown value would be read as 'not mine' and "
+        "pause a lead's chat, or the reverse. CHECK fires before any FK/unique, so a throwaway row borrowing an existing "
+        "org_id is safe."
     ),
     sql=_insert_check_probe(
         schema=_SW_SCHEMA,
-        table="whatsapp_connections",
-        columns_sql=(
-            "org_id, user_id, label, base_url, encrypted_api_key, webhook_token, "
-            "authorized_numbers, agente_leads_ativo, agente_leads_ativado_em, agente_leads_key"
-        ),
-        values_sql=(
-            "org_id, user_id, 'noc-probe', 'https://noc-probe.invalid', 'x', 'noc-probe-token', "
-            "'[]'::jsonb, true, now(), 'lead-imob'"
-        ),
+        table="conversation_messages",
+        columns_sql="org_id, session_id, direction, body, origem",
+        values_sql="org_id, 'noc-probe', 'inbound', 'noc-probe', 'bogus'",
         fixture_from=f"{_SW_SCHEMA}.whatsapp_connections",
-        fixture_description=(
-            f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (org_id, user_id) from"
-        ),
-        guard_fragment='constraint "whatsapp_connections_agente_exige_autorizados"',
+        fixture_description=f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an org_id from",
+        guard_fragment='constraint "conversation_messages_origem_check"',
+    ),
+)
+
+
+_JULIA_CHAT_CATEGORIA_PROBE = GuardProbe(
+    id="whatsapp_chats.categoria.valores",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="whatsapp_chats_categoria_check",
+    kind="write_refusal",
+    migrations=("318_julia_linha_roteamento.sql",),
+    rationale=(
+        "`categoria` (lead | equipe) is the privacy gate that keeps a colleague's chat away from Julia "
+        "(`avaliar_elegibilidade` refuses `equipe`): an unknown value would be read as neither and fall through to the lead "
+        "path. CHECK fires before the (connection_id, chat_id) key, so a throwaway row borrowing an existing connection is safe."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="whatsapp_chats",
+        columns_sql="connection_id, org_id, chat_id, categoria",
+        values_sql="id, org_id, 'noc-probe', 'bogus'",
+        fixture_from=f"{_SW_SCHEMA}.whatsapp_connections",
+        fixture_description=f"no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (id, org_id) from",
+        guard_fragment='constraint "whatsapp_chats_categoria_check"',
     ),
 )
 
@@ -1464,6 +1482,48 @@ _JULIA_CONEXAO_TRANSPORTE_PROBE = GuardProbe(
         ),
         guard_fragment='constraint "whatsapp_connections_transporte_valido"',
     ),
+)
+
+
+_JULIA_CONEXAO_SESSAO_UNICA_PROBE = GuardProbe(
+    id="whatsapp_connections.waha_session.unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_sw_whatsapp_connections_waha_session",
+    kind="write_refusal",
+    migrations=("321_whatsapp_connections_session_unique_hide_secrets.sql",),
+    rationale=(
+        "One WAHA session = one line across ALL orgs: two lines on the same (base_url, session_name) read each other's chats and send "
+        "as each other's number. The create route pre-checks (409 `sessao_ja_vinculada`); this partial UNIQUE index is the backstop "
+        "under a race. Two throwaway WAHA rows (distinct label + webhook_token, so no OTHER unique fires first) borrow an "
+        "existing (org_id, user_id)."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_user_id uuid;
+BEGIN
+  SELECT org_id, user_id INTO v_org_id, v_user_id FROM {_SW_SCHEMA}.whatsapp_connections LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in {_SW_SCHEMA}.whatsapp_connections to borrow an (org_id, user_id) from';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, session_name, encrypted_api_key, webhook_token, transporte)
+    VALUES (v_org_id, v_user_id, 'noc-probe-a', 'https://noc-probe.invalid', 'noc-probe-session', 'x', 'noc-probe-token-a', 'waha');
+    INSERT INTO {_SW_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, session_name, encrypted_api_key, webhook_token, transporte)
+    VALUES (v_org_id, v_user_id, 'noc-probe-b', 'https://noc-probe.invalid', 'noc-probe-session', 'x', 'noc-probe-token-b', 'waha');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: two WAHA lines on one session succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%uq_sw_whatsapp_connections_waha_session%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
 )
 
 
@@ -4562,6 +4622,23 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "Lais A2 (migration 025, contract §10.1 M2): this UNIQUE is the idempotency "
             "key — without it a re-sent webhook batch would run a second model turn "
             "(and bill it) instead of replaying the stored reply."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_version_specs.tipo_is_a_typed_format",
+        guard_name="agent_version_specs_tipo_check",
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_version_specs (org_id, version_id, chave, rotulo, tipo) "
+            "VALUES (v_org, v_version, 'noc_probe', 'NOC probe', 'instrucao');"
+        ),
+        guard_fragment="agent_version_specs_tipo_check",
+        what="an org-spec declaration with a tipo outside the typed formats",
+        migrations=("012_agent_studio_definitions.sql", "031_julia_v2_conteudo.sql", "059_spec_tipos_tipados.sql"),
+        requires_table="agent_version_specs",
+        rationale=(
+            "Julia-line E1 (migration 059): an org's spec value is validated by its declared tipo; a tipo the validator "
+            "(app/studio/spec_formatos.py) does not know would be stored unchecked and compiled as free text."
         ),
     ),
 )
@@ -11400,8 +11477,46 @@ _CORE_BRAND_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE = GuardProbe(
+    id="agents.grants.one_live_unique",
+    product="agents",
+    schema=_AGENTS_SCHEMA,
+    guard_name="idx_agent_product_grants_one_live",
+    kind="write_refusal",
+    migrations=("060_agent_product_grants.sql",),
+    rationale=(
+        "Julia-line D1: ONE live (pendente/ativo) platform grant per (org, agent, product). The service pre-checks and answers "
+        "409 grant_exists; this partial unique index is the backstop under a race (two concurrent creates would otherwise both "
+        "mint and deliver a credential pair for the same wiring)."
+    ),
+    sql=_do_block(f"""
+BEGIN
+  IF to_regclass('{_AGENTS_SCHEMA}.agent_product_grants') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_product_grants does not exist (migration 060 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO {_AGENTS_SCHEMA}.agent_product_grants (org_id, agent_id, agent_key, product, status)
+    VALUES ('00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-00000000a002', 'noc-probe', 'noc-probe', 'ativo');
+    INSERT INTO {_AGENTS_SCHEMA}.agent_product_grants (org_id, agent_id, agent_key, product, status)
+    VALUES ('00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-00000000a002', 'noc-probe', 'noc-probe', 'pendente');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a second live grant for the same (org, agent, product) succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%idx_agent_product_grants_one_live%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
+    _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,
     _ONUS_CREDOR_PAREADO_PROBE,
@@ -11419,9 +11534,11 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _JULIA_RELATORIO_CHAVE_UNIQUE_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
     _NOCTUS_USERS_TELEFONE_E164_PROBE,
-    _JULIA_AGENTE_EXIGE_AUTORIZADOS_PROBE,
+    _JULIA_MENSAGEM_ORIGEM_PROBE,
+    _JULIA_CHAT_CATEGORIA_PROBE,
     _JULIA_AGENTE_EXIGE_ATIVADO_EM_PROBE,
     _JULIA_CONEXAO_TRANSPORTE_PROBE,
+    _JULIA_CONEXAO_SESSAO_UNICA_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,

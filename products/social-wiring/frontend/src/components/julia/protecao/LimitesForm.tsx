@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { useSalvarConfigProtecao, type ChaveLimite, type ConfigEntrada, type ConfigProtecao } from "@/hooks/useJuliaProtecao";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 
@@ -46,7 +45,6 @@ export function LimitesForm({ config }: { config: ConfigProtecao }) {
     return v;
   });
   const [autoAtivo, setAutoAtivo] = useState(config.bloqueio_auto_ativo);
-  const [prompt, setPrompt] = useState(config.prompt_documento_lead ?? "");
   const [erro, setErro] = useState<string | null>(null);
 
   const invalidos = CAMPOS.flatMap((g) => g.itens).filter((i) => {
@@ -54,11 +52,11 @@ export function LimitesForm({ config }: { config: ConfigProtecao }) {
     const [lo, hi] = config.faixas[i.chave];
     return valores[i.chave].trim() === "" || !Number.isInteger(n) || n < lo || n > hi;
   });
-  const promptCurto = prompt.trim().length > 0 && prompt.trim().length < 20;
 
   function enviar() {
     setErro(null);
-    const campos: ConfigEntrada = { bloqueio_auto_ativo: autoAtivo, prompt_documento_lead: prompt.trim() === "" ? null : prompt.trim() };
+    // The document-reading prompt is NoctusAI's (read-only below): it is never part of this save.
+    const campos: ConfigEntrada = { bloqueio_auto_ativo: autoAtivo };
     for (const g of CAMPOS) for (const i of g.itens) campos[i.chave] = Number(valores[i.chave]);
     salvar.mutate(campos, {
       onSuccess: () => toast.success("Limites salvos."),
@@ -110,14 +108,15 @@ export function LimitesForm({ config }: { config: ConfigProtecao }) {
           O que a IA é instruída a devolver quando um lead envia uma imagem ou PDF. Deixe vazio para usar o texto padrão (só o tipo do
           documento e um resumo que não identifica ninguém).
         </p>
-        <Textarea
-          value={prompt} rows={6} maxLength={4000} placeholder={config.prompt_documento_padrao}
-          onChange={(e) => setPrompt(e.target.value)} data-testid="limite-prompt" aria-label="Texto de leitura de documentos"
-        />
-        {promptCurto && <p className="text-xs text-destructive" data-testid="prompt-curto">Use ao menos 20 caracteres, ou deixe vazio.</p>}
+        <p className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm" data-testid="limite-prompt">
+          {config.prompt_documento_lead?.trim() ? config.prompt_documento_lead : config.prompt_documento_padrao}
+        </p>
+        <p className="text-xs text-muted-foreground" data-testid="prompt-nota-suporte">
+          Este texto é configurado pela equipe NoctusAI. Para alterar, fale com o suporte.
+        </p>
       </fieldset>
       {erro && <p role="alert" className="text-sm text-destructive" data-testid="limites-erro">{erro}</p>}
-      <Button onClick={enviar} disabled={invalidos.length > 0 || promptCurto || salvar.isPending} data-testid="limites-salvar">
+      <Button onClick={enviar} disabled={invalidos.length > 0 || salvar.isPending} data-testid="limites-salvar">
         {salvar.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
         Salvar limites
       </Button>

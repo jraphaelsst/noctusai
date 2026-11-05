@@ -1,7 +1,7 @@
 """ApiTokenResolver Protocol + in-memory Fake + ``hash_token`` helper +
 the ``SupabaseApiTokenResolver`` Real adapter.
 
-Product / automation callers authenticate with opaque ``pk_*`` bearer
+Product / automation callers authenticate with opaque ``noc_*`` (legacy ``pk_*``) bearer
 tokens that resolve to an ``AuthContext`` with ``caller_kind ==
 "product"``. The raw secret is shown to the user **exactly once** (at
 mint time); the database stores only the SHA-256 digest. Lookup
@@ -27,6 +27,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from noctusai_lib.api.auth._blocking import run_blocking
+from noctusai_lib.api.auth._token_prefixes import has_api_token_prefix
 from noctusai_lib.api.auth.session.types import AuthContext
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,8 @@ class FakeApiTokenResolver:
     """
 
     def __init__(self) -> None:
-        # token_hash -> (api_token_id, org_id, scopes, revoked)
-        self._tokens: dict[str, tuple[UUID, UUID, list[str], bool]] = {}
+        # token_hash -> (api_token_id, org_id, scopes, revoked, issuer)
+        self._tokens: dict[str, tuple[UUID, UUID, list[str], bool, str | None]] = {}
 
     def register(
         self,
@@ -93,6 +94,7 @@ class FakeApiTokenResolver:
         org_id: UUID,
         scopes: list[str] | None = None,
         api_token_id: UUID | None = None,
+        issuer: str | None = None,
     ) -> UUID:
         """Register a token (test helper).
 
@@ -101,7 +103,7 @@ class FakeApiTokenResolver:
         """
         token_id = api_token_id or uuid4()
         digest = hash_token(secret)
-        self._tokens[digest] = (token_id, org_id, list(scopes or []), False)
+        self._tokens[digest] = (token_id, org_id, list(scopes or []), False, issuer)
         return token_id
 
     def revoke(self, secret: str) -> None:
@@ -110,15 +112,15 @@ class FakeApiTokenResolver:
         entry = self._tokens.get(digest)
         if entry is None:
             return
-        token_id, org_id, scopes, _was_revoked = entry
-        self._tokens[digest] = (token_id, org_id, scopes, True)
+        token_id, org_id, scopes, _was_revoked, issuer = entry
+        self._tokens[digest] = (token_id, org_id, scopes, True, issuer)
 
     async def resolve(self, token_secret: str) -> AuthContext | None:
         digest = hash_token(token_secret)
         entry = self._tokens.get(digest)
         if entry is None:
             return None
-        token_id, org_id, scopes, revoked = entry
+        token_id, org_id, scopes, revoked, issuer = entry
         if revoked:
             return None
         return AuthContext(
@@ -128,6 +130,7 @@ class FakeApiTokenResolver:
             scopes=list(scopes),
             raw_token=str(token_id),
             api_token_id=token_id,
+            issuer=issuer,
         )
 
 
@@ -159,7 +162,8 @@ class SupabaseApiTokenResolver:
         # Cheap pre-filter — the dep already gates on this prefix but
         # ``ApiTokenResolver`` is a Protocol callers may invoke directly,
         # so we re-check here for defense in depth.
-        if not token_secret.startswith("pk_"):
+        # NOC-REMEDIATE[pk-prefix-cutoff]: accepts noc_ and legacy pk_.
+        if not has_api_token_prefix(token_secret):
             return None
 
         digest = hash_token(token_secret)

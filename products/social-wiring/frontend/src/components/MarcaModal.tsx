@@ -544,7 +544,6 @@ function AddWaConnectionDialog({
   onClose: () => void;
 }) {
   const [label, setLabel] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const { create } = useWhatsAppConnectionMutations();
@@ -552,16 +551,23 @@ function AddWaConnectionDialog({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!label.trim() || !apiKey.trim()) {
-      setError("Label e API Key são obrigatórios.");
+    if (!label.trim()) {
+      setError("O nome da conexão é obrigatório.");
       return;
     }
     try {
-      const line = await create.mutateAsync({ label: label.trim(), api_key: apiKey.trim(), marca_id: marcaId });
+      const line = await create.mutateAsync({ label: label.trim(), marca_id: marcaId });
       toast.success("Conexão criada. Escaneie o QR para parear.");
       onCreated(line);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Erro ao criar conexão.");
+      const status = (err as { status?: number } | null)?.status;
+      setError(
+        status === 403
+          ? "Somente a equipe NoctusAI pode criar linhas de WhatsApp."
+          : status === 409
+            ? "Esta sessão do WhatsApp já está vinculada a uma linha."
+            : err instanceof Error ? err.message : "Erro ao criar conexão.",
+      );
     }
   }
 
@@ -583,16 +589,6 @@ function AddWaConnectionDialog({
               onChange={(e) => setLabel(e.target.value)}
               placeholder="Ex: WhatsApp Vendas"
               autoFocus
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="wac-key">WAHA API Key</Label>
-            <Input
-              id="wac-key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="••••••••"
             />
           </div>
           {error && (
@@ -1137,7 +1133,6 @@ function ChatTab({ client }: { client: Marca }) {
       {selectedLine ? (
         <WhatsAppChatWindow
           connectionId={selectedLine.id}
-          autoReplyEnabled={selectedLine.auto_reply_enabled}
           className="mt-1"
         />
       ) : (

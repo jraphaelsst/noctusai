@@ -330,10 +330,10 @@ class TestRequirePermissionProductTokenDenied:
         permission_repo = FakePermissionGrantRepository()
         app, _store, resolver = _build_app(core_rows=[], permission_repo=permission_repo)
         org_id = uuid4()
-        resolver.register("pk_live_zzz", org_id=org_id, scopes=[])
+        resolver.register("noc_live_zzz", org_id=org_id, scopes=[])
         client = TestClient(app)
 
-        resp = client.get("/permission", headers={"Authorization": "Bearer pk_live_zzz"})
+        resp = client.get("/permission", headers={"Authorization": "Bearer noc_live_zzz"})
 
         assert resp.status_code == 403
         assert resp.json()["detail"]["code"] == "permission_denied"

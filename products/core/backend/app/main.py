@@ -27,6 +27,7 @@ from app.routers import settings as settings_router
 from app.routers import credentials as credentials_router
 from app.routers import admin_cache as admin_cache_router
 from app.routers import admin_llm_usage as admin_llm_usage_router
+from app.routers import admin_usage as admin_usage_router
 from app.routers import admin_llm_spend as admin_llm_spend_router
 from app.routers import usage
 from app.routers import users
@@ -42,6 +43,9 @@ from app.routers.website_html import website_html_middleware
 from app.routers import transcriptions as transcriptions_router
 from app.routers import brand as brand_router
 from app.routers import credits as credits_router
+from app.routers import admin_tokens as admin_tokens_router
+from app.auth_context import LazyAuditWriter, build_tokens_router
+from noctusai_lib.api.auth.session import ApiTokenAuditMiddleware
 from app.routers import admin_credits as admin_credits_router
 from app.services.brand.wiring import start_brand_worker, stop_brand_worker
 from app.services.transcription_api.errors import TranscricaoErro, transcricao_erro_handler
@@ -127,6 +131,7 @@ app = create_product_app(
         credentials_router.router,
         admin_cache_router.router,
         admin_llm_usage_router.router,
+        admin_usage_router.router,
         admin_llm_spend_router.router,
         usage.router,
         users.router,
@@ -142,8 +147,14 @@ app = create_product_app(
         brand_router.router,
         credits_router.router,
         admin_credits_router.router,
+        # M2M tokens: seed mint/list/revoke/rotate/scopes (platform admins) + the MFA switch.
+        build_tokens_router(),
+        admin_tokens_router.router,
     ],
 )
+
+# Every resolved product-token call -> api_token_audit (best-effort, never alters the response).
+app.add_middleware(ApiTokenAuditMiddleware, audit_writer=LazyAuditWriter())
 
 app.add_exception_handler(TranscricaoErro, transcricao_erro_handler)
 

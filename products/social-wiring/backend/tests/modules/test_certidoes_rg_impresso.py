@@ -118,7 +118,7 @@ class TestRgSoSpTemDv:
         def faltando(orgao):
             c = {"nome_oficial": "M", "rg": "18104746", "rg_origem": "cnh",
                  "rg_orgao_expedidor": orgao, "cpf": CPF}
-            return "rg" in svc.campos_faltando(c, "identidade", {})
+            return bool(svc._RESSALVAS["rg_so_da_cnh"]["pendente"](c, {}))
 
         assert faltando("SSP/SP") and faltando("SSP-SP")
         assert not faltando("SSP AM") and not faltando("SSP/RJ") and not faltando("SSP/MG")

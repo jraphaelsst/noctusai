@@ -28,6 +28,7 @@ Adversarial security for LLM agents exposed to the public, multi-tenant and tool
 - **Every row carries a framework tag** (LLM0x:2025 · ASI0x · ATLAS AML.T…) so uncovered classes are visible. → `KB § PATTERNS/security/ai-agent-security-canon.md` §2
 - **Every agent surface is in scope** — channel, runtime sandbox, `public_ask`, BYOK credentials, memory/RAG, MCP — and our own dev-agent harness. → `KB § PATTERNS/security/ai-agent-security-canon.md` §6-§8, §13
 - **Report attack-success-rate, not pass/fail.** Generated + adaptive multi-turn attacks per content hash; the starter set gates publish. → `KB § PATTERNS/security/ai-agent-security-canon.md` §9
+- **Leaks are their own audit: every door × every secret/data class.** Model reply, tool I/O, API/error bodies, browser DB reads, logs/telemetry, staff channels, outbound calls, dev tooling/transcripts, git/builds, Studio, exports; "hidden in the UI" is not a guard; plant-the-secret tests prove it. → `KB § PATTERNS/security/ai-agent-threat-model.md` §3.4
 - **Status lives in the audit record, doctrine in the canon.** DEFENDED needs file:line on `origin/dev` plus a test; unmerged work reads "in progress on `<branch>`, not on dev". → `KB § PATTERNS/security/audits/julia-2026-11.md`
 - **The catalog is the checklist, and the template seed.** Walk every class; every new agent inherits §5 must-haves — propose additions there. → `KB § PATTERNS/security/ai-agent-threat-model.md` §4-§5
 - **Baseline trio for any LLM-tool product.** Sanitize / validate / rate-limit. → `KB § PATTERNS/security/llm-bot-security.md`

@@ -109,9 +109,8 @@ class TestDerivarIsPure:
         it names the fields still missing."""
         so_cpf = {"cpf": "412.954.238-98"}
         assert svc.derivar(so_cpf, frozenset({"cnh"}))["identidade"] is False
-        assert svc.campos_faltando(so_cpf, "identidade") == [
-            "nome_oficial", "rg", "rg_orgao_expedidor",
-        ]
+        # [Owner decision 2026-11-04] RG / órgão are optional — never missing.
+        assert svc.campos_faltando(so_cpf, "identidade") == ["nome_oficial"]
 
         sem_cpf = {k: v for k, v in IDENTIDADE_COMPLETA.items() if k != "cpf"}
         assert svc.derivar(sem_cpf, frozenset())["identidade"] is False
@@ -121,7 +120,7 @@ class TestDerivarIsPure:
         assert svc.campos_faltando(IDENTIDADE_COMPLETA, "identidade") == []
 
         assert svc.campos_faltando({"rg": "  ", "cpf": None}, "identidade") == [
-            "nome_oficial", "rg", "rg_orgao_expedidor", "cpf",
+            "nome_oficial", "cpf",
         ]
 
     def test_a_cin_rg_equal_to_its_cpf_satisfies_identidade(self):
@@ -161,17 +160,18 @@ class TestIdentidadeCompletaPorQualquerDocumento:
         assert svc.derivar(rg, frozenset({"rg"}))["identidade"] is True
 
     def test_cnh_alone_with_its_rg_unconfirmed_is_incomplete_and_says_why(self):
-        """A CNH prints the RG without its check digit — an RG resting only on
-        an unconfirmed CNH reading does not count, and the line says so."""
+        """A CNH prints the RG without its check digit. [Owner decision
+        2026-11-04: RG optional] it no longer blocks the item; the ressalva is
+        still reported so the card can say why the number is unconfirmed."""
         cnh = {**IDENTIDADE_COMPLETA, "rg": "52.179.965", "rg_origem": "cnh"}
         docs = {"cnh": {"tipo_documento": "cnh", "extracao_rg": "52.179.965"}}
-        assert svc.derivar(cnh, frozenset(docs), docs)["identidade"] is False
-        assert svc.campos_faltando(cnh, "identidade", docs) == ["rg"]
+        assert svc.derivar(cnh, frozenset(docs), docs)["identidade"] is True
+        assert svc.campos_faltando(cnh, "identidade", docs) == []
         extras = svc._extras_do_item(
             next(i for i in svc.ITENS if i["key"] == "identidade"), cnh, docs
         )
         assert extras["ressalvas"] == {"rg": "rg_so_da_cnh"}
-        assert extras["faltando_rotulos"][0].startswith("RG com dígito verificador")
+        assert extras["faltando"] == []
 
     def test_cnh_rg_confirmed_by_a_human_completes_it(self):
         cnh = {
@@ -195,10 +195,13 @@ class TestIdentidadeCompletaPorQualquerDocumento:
         docs = {"rg": {"tipo_documento": "rg", "extracao_rg": "52.179.965-X"}}
         assert svc.campos_faltando(cnh, "identidade", docs) == []
 
-    def test_cnh_rg_contradicted_by_the_rg_card_stays_incomplete(self):
+    def test_cnh_rg_contradicted_by_the_rg_card_keeps_the_ressalva_but_is_not_missing(self):
         cnh = {**IDENTIDADE_COMPLETA, "rg": "52.179.965", "rg_origem": "cnh"}
         docs = {"rg": {"tipo_documento": "rg", "extracao_rg": "11.222.333-3"}}
-        assert svc.campos_faltando(cnh, "identidade", docs) == ["rg"]
+        assert svc.campos_faltando(cnh, "identidade", docs) == []
+        assert svc._ressalvas_pendentes(
+            next(i for i in svc.ITENS if i["key"] == "identidade"), cnh, docs
+        ) == {"rg": "rg_so_da_cnh"}
 
     def test_a_typed_rg_is_trusted_whatever_document_is_on_file(self):
         manual = {**IDENTIDADE_COMPLETA, "rg_origem": "manual"}
@@ -217,26 +220,26 @@ class TestIdentidadeCompletaPorQualquerDocumento:
             svc.CAMPOS_DOCUMENTO_IDENTIDADE
         )
 
-    def test_an_empty_rg_is_missing_not_a_ressalva(self):
-        """A ressalva disqualifies a FILLED value; an empty one is plainly
-        missing and carries the plain label."""
+    def test_an_empty_rg_is_optional_not_missing_nor_a_ressalva(self):
+        """[Owner decision 2026-11-04] an empty RG is simply absent: not
+        `faltando`, no ressalva, listed under `opcionais`."""
         dados = {**IDENTIDADE_COMPLETA, "rg": None, "rg_origem": "cnh"}
         extras = svc._extras_do_item(
             next(i for i in svc.ITENS if i["key"] == "identidade"), dados, {}
         )
-        assert extras["faltando"] == ["rg"]
+        assert extras["faltando"] == []
         assert extras["ressalvas"] == {}
-        assert extras["faltando_rotulos"] == ["RG"]
+        assert "rg" in extras["opcionais"]
 
     def test_missing_fields_with_a_pending_reading_are_named(self):
-        dados = {k: v for k, v in IDENTIDADE_COMPLETA.items() if k != "rg_orgao_expedidor"}
+        dados = {k: v for k, v in IDENTIDADE_COMPLETA.items() if k != "cpf"}
         extras = svc._extras_do_item(
             next(i for i in svc.ITENS if i["key"] == "identidade"),
-            dados, {}, {"rg_orgao_expedidor": {"valor": "SSP-SP"}},
+            dados, {}, {"cpf": {"valor": "412.954.238-98"}},
         )
-        assert extras["faltando"] == ["rg_orgao_expedidor"]
-        assert extras["faltando_com_sugestao"] == ["rg_orgao_expedidor"]
-        assert extras["faltando_rotulos"] == ["Órgão expedidor do RG"]
+        assert extras["faltando"] == ["cpf"]
+        assert extras["faltando_com_sugestao"] == ["cpf"]
+        assert extras["faltando_rotulos"] == ["CPF"]
 
 
 class TestIdentidadeValoresEditaveis:
@@ -582,7 +585,7 @@ class TestIdentidadeFollowsTheNumbers:
         scoped.set_table_data("cliente_documentos", [_doc(cid, "cnh")])
         item = _items(client, cid)["identidade"]
         assert item["concluido"] is False
-        assert item["faltando"] == ["nome_oficial", "rg", "rg_orgao_expedidor", "cpf"]
+        assert item["faltando"] == ["nome_oficial", "cpf"]
 
     def test_a_cnh_only_rg_is_reported_through_the_route(self, client, scoped):
         """The ressalva reaches the card: the route reads `rg_origem` /
@@ -590,8 +593,8 @@ class TestIdentidadeFollowsTheNumbers:
         cid = _seed(scoped, **{**IDENTIDADE_COMPLETA, "rg_origem": "cnh"})
         scoped.set_table_data("cliente_documentos", [_doc(cid, "cnh")])
         item = _items(client, cid)["identidade"]
-        assert item["concluido"] is False
-        assert item["faltando"] == ["rg"]
+        assert item["concluido"] is True  # RG optional (owner 2026-11-04)
+        assert item["faltando"] == []
         assert item["ressalvas"] == {"rg": "rg_so_da_cnh"}
 
     def test_another_clients_document_is_not_listed_on_this_one(self, client, scoped):

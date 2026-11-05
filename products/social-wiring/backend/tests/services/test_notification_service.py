@@ -68,12 +68,22 @@ class _MockSupabase:
         return MagicMock(data=[])
 
 
+def _fake_line(org_id):
+    """The org's line as `julia_linha.linha_da_org` would return it (empty base_url -> the seed FakeWahaClient)."""
+    from types import SimpleNamespace
+
+    from app.services.julia_linha import LinhaDaOrg
+
+    return LinhaDaOrg(org_id=org_id, connection=SimpleNamespace(
+        id=uuid4(), base_url="", api_key="k", session_name="default", org_id=org_id))
+
+
 def _service(admin, **overrides) -> NotificationService:
     base = dict(
         admin_supabase=admin,
         smtp_host="smtp.test", smtp_port=465,
         smtp_user="bot@test", smtp_password="sekret",
-        waha_base_url="", waha_api_key="", waha_session="default",
+        line_resolver=_fake_line,
     )
     base.update(overrides)
     return NotificationService(**base)
@@ -175,7 +185,7 @@ class TestEmailDispatch:
 class TestWhatsAppDispatch:
     @pytest.mark.asyncio
     async def test_whatsapp_only_recipient_dispatches_via_fake(self):
-        """Empty waha_base_url → FakeWahaClient.send_text logs but
+        """A line with no base_url → FakeWahaClient.send_text logs but
         doesn't raise. Should count as success."""
         admin = _MockSupabase()
         rid = str(uuid4())
@@ -190,7 +200,7 @@ class TestWhatsAppDispatch:
             "is_active": True,
         }])
 
-        svc = _service(admin)             # waha_base_url="" → FakeWahaClient
+        svc = _service(admin)             # the org line has no base_url → FakeWahaClient
         outcome = await svc.notify_upload(job_id=uuid4())
         assert outcome.attempted == 1
         assert outcome.succeeded == 1
@@ -509,7 +519,7 @@ def _svc(admin):
     from app.services.notification_service import NotificationService
     return NotificationService(
         admin_supabase=admin, smtp_host="", smtp_port=0, smtp_user="",
-        smtp_password="", waha_base_url="", waha_api_key="", waha_session="",
+        smtp_password="", line_resolver=_fake_line,
     )
 
 
@@ -617,7 +627,7 @@ def _svc_with_gmail(admin, gmail, capture=None):
 
     return NotificationService(
         admin_supabase=admin, smtp_host="", smtp_port=0, smtp_user="",
-        smtp_password="", waha_base_url="", waha_api_key="", waha_session="",
+        smtp_password="", line_resolver=_fake_line,
         gmail_sender_factory=factory,
     )
 
@@ -707,7 +717,7 @@ async def test_no_mailbox_falls_back_rather_than_silently_succeeding():
 
     svc = NotificationService(
         admin_supabase=admin, smtp_host="", smtp_port=0, smtp_user="",
-        smtp_password="", waha_base_url="", waha_api_key="", waha_session="",
+        smtp_password="", line_resolver=_fake_line,
         gmail_sender_factory=lambda **_kw: None,
         # SMTP unconfigured — exactly prod's real state.
         email_service_factory=_raise_unconfigured,

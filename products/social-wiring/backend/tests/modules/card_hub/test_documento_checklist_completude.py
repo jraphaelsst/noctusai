@@ -63,9 +63,37 @@ class TestCamposObrigatoriosDaPessoa:
         assert out["completo"] is False
         for campo in (
             "nome_oficial", "nacionalidade", "profissao", "estado_civil",
-            "rg", "rg_orgao_expedidor", "cpf", "endereco",
+            "cpf", "endereco",
         ):
             assert campo in out["faltando"], campo
+        # [Owner decision, 2026-11-04] RG is optional for contract parties.
+        assert "rg" not in out["faltando"]
+        assert "rg_orgao_expedidor" not in out["faltando"]
+
+    def test_cpf_only_party_is_complete(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [_qualificado(cid, rg=None, rg_orgao_expedidor=None)],
+        )
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert out["completo"] is True
+        assert out["faltando"] == []
+
+    def test_rg_without_orgao_is_complete(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes", [_qualificado(cid, rg_orgao_expedidor=None)]
+        )
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert out["completo"] is True
+
+    def test_missing_cpf_still_blocks(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [_qualificado(cid, cpf=None)])
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert out["completo"] is False
+        assert out["faltando"] == ["cpf"]
 
     def test_a_channel_supplied_nome_does_not_satisfy_nome_oficial(
         self, client, scoped

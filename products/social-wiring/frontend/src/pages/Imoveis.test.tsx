@@ -28,6 +28,10 @@ vi.mock("@/hooks/useImoveis", async (importOriginal) => {
     useImovelFiltros: mockUseImovelFiltros,
     useCaracteristicas: mockUseCaracteristicas,
     useSyncImoveis: mockUseSyncImoveis,
+    // The "Última atualização do Vista" line has its own suite (VistaAtualizacaoLine.test.tsx): inert here.
+    useUltimaAtualizacaoVista: () => ({ data: undefined, showSkeleton: false, isRefreshing: false, isError: false, refetch: vi.fn() }),
+    useAtualizarVista: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useInvalidarImoveis: () => vi.fn(),
   };
 });
 

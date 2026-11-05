@@ -112,12 +112,12 @@ export function EnvioWizard({
         <div className="h-20 animate-pulse rounded bg-muted" data-testid="estagios-skeleton" />
       ) : estagios.isError ? (
         <div className="space-y-2 rounded-md border border-destructive/40 p-3 text-sm" data-testid="estagios-erro">
-          <p className="text-destructive">Não foi possível carregar as etapas de qualificação do app de agentes.</p>
+          <p className="text-destructive">Não foi possível carregar as etapas de qualificação da Julia.</p>
           <Button variant="outline" size="sm" onClick={() => estagios.refetch()}>Tentar de novo</Button>
         </div>
       ) : lista.length === 0 ? (
         <p className="text-sm text-muted-foreground" data-testid="estagios-vazio">
-          O app de agentes ainda não tem etapas de qualificação publicadas para a sua organização.
+          A Julia ainda não tem etapas de qualificação publicadas para a sua organização.
         </p>
       ) : (
         <div className="space-y-3">

@@ -55,6 +55,7 @@ from app.routers.studio_agents_router import (
 )
 from app.channels.token_audit import TokenAudit
 from app.schemas.studio_conteudo import (
+    AtorAtestado,
     ContentTokenCreateRequest,
     ContentTokenInfoOut,
     ContentTokenOut,
@@ -68,6 +69,7 @@ from app.schemas.studio_conteudo import (
     FerramentasOut,
     FerramentasReplaceRequest,
     OrgSpecsOut,
+    SpecInvalidaOut,
     OrgStatusOut,
     OrgSpecsUpdateRequest,
     OrgSpecValorOut,
@@ -96,7 +98,7 @@ from app.stores.studio_definitions_conteudo import (
     SpecDefInput,
     TextoInput,
 )
-from app.studio.especificacoes import conflitos_com_regras_fixas, validar_valor
+from app.studio.especificacoes_service import ConfigValidacao, config_atual, validar as validar_specs, violacoes_armazenadas
 from app.routers.studio_geracoes_router import get_geracao_agendador_dep, get_geracao_deps_dep
 from app.studio import geracao as engine
 from app.studio.plataforma import ensure_definicao
@@ -348,14 +350,27 @@ def _resolved(store, ctx: AuthContext, key: str, versao: str = "ativa"):
         raise http_error(404, "version_not_found", "Versão não encontrada.") from exc
 
 
-def _org_specs_out(key: str, r) -> OrgSpecsOut:
+def get_spec_validacao_dep() -> ConfigValidacao:
+    """``SPEC_VALIDATION_MODE`` + public hosts, read per request (tests override this dependency)."""
+    return config_atual()
+
+
+def _org_specs_out(key: str, r, config: ConfigValidacao) -> OrgSpecsOut:
+    invalidas = violacoes_armazenadas({d.chave: d.tipo for d in r.specs_declaradas}, r.valores, config=config)
     return OrgSpecsOut(
         agent_key=key,
         version_id=r.versao.id if r.versao else None,
         versao=r.versao.versao if r.versao else None,
         declaradas=[_spec_out(d) for d in r.specs_declaradas],
-        valores=[OrgSpecValorOut(chave=s.chave, valor=s.valor, updated_at=s.updated_at) for s in r.specs_org],
+        valores=[
+            OrgSpecValorOut(
+                chave=s.chave, valor=s.valor, updated_at=s.updated_at, updated_by=s.updated_by, updated_by_nome=s.updated_by_nome,
+            )
+            for s in r.specs_org
+        ],
         faltando=list(r.faltando),
+        invalidas=[SpecInvalidaOut(**v.to_dict()) for v in invalidas],
+        modo_validacao=config.modo,
     )
 
 
@@ -364,20 +379,40 @@ def get_org_specs(
     key: str,
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_definition_store_dep),
+    config: ConfigValidacao = Depends(get_spec_validacao_dep),
 ) -> OrgSpecsOut:
     """Org admin only: which org specs the definition asks for (label + help — the FORM, never a
     prompt), this org's values and what is still missing."""
-    _, r = _resolved(store, ctx, key, "ativa")
-    return _org_specs_out(key, r)
+    return ler_org_specs(store, ctx, key, config)
 
 
 @router.put("/agents/{key}/specs", response_model=OrgSpecsOut)
 def update_org_specs(
-    key: str, payload: OrgSpecsUpdateRequest, ctx: AuthContext = Depends(require_admin),
+    key: str, payload: OrgSpecsUpdateRequest, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
+    config: ConfigValidacao = Depends(get_spec_validacao_dep),
 ) -> OrgSpecsOut:
     """The org owner/admin sets ITS values. Keys must be declared by the definition (the active or the
     draft version); each value is capped by its declaration's type. A blank value clears the spec."""
+    return aplicar_org_specs(store, ctx, key, payload.valores, config)
+
+
+def ler_org_specs(store, ctx: AuthContext, key: str, config: ConfigValidacao) -> OrgSpecsOut:
+    """The org's specs view -- shared by the studio GET and the channel (SW) GET."""
+    _, r = _resolved(store, ctx, key, "ativa")
+    return _org_specs_out(key, r, config)
+
+
+def aplicar_org_specs(
+    store, ctx: AuthContext, key: str, valores: dict[str, str], config: ConfigValidacao, *, ator: AtorAtestado | None = None,
+) -> OrgSpecsOut:
+    """THE org-spec write path (Julia-line CONTRACT §E2): the studio PUT and the channel/SW PUT both land
+    here, so the declared-keys rule, :func:`validar_specs`, the report/block rollout and the audit never fork.
+
+    ``ator`` is the PRODUCT-ATTESTED person (channel path only; the channel token vouches for it). The row's
+    ``updated_by`` is that person and ``updated_by_token`` the channel token; the studio path records the signed-in
+    human and no token. The audit carries both."""
+    payload = OrgSpecsUpdateRequest(valores=valores)
     agent = resolve_agent(store, ctx.org_id, key, allow_instancia=True)
     if agent.definition_scope == "instancia":
         definition = store.get_agent_by_id(agent.definition_agent_id)
@@ -397,28 +432,37 @@ def update_org_specs(
         raise http_error(
             422, "spec_nao_declarada", "Especificações não declaradas pela definição: " + ", ".join(desconhecidas) + ".",
         )
-    for chave, valor in payload.valores.items():
-        try:
-            validar_valor(declaradas[chave].tipo, valor)
-        except ValueError as exc:
-            raise http_error(422, "invalid_field", f"{chave}: {exc}") from exc
-        conflitos = conflitos_com_regras_fixas(valor)
-        if conflitos:
-            raise http_error(
-                422, "spec_conflita_com_regra_fixa",
-                f"{chave}: o texto contradiz uma regra fixa da plataforma ({', '.join(conflitos)}).",
-                conflitos=conflitos,
-            )
-    antes = {s.chave for s in store.list_org_specs(ctx.org_id, key)}
+    antes_valores = {s.chave: s.valor for s in store.list_org_specs(ctx.org_id, key)}
+    res = validar_specs(
+        {c: d.tipo for c, d in declaradas.items()}, payload.valores, armazenados=antes_valores, config=config,
+    )
+    if res.violacoes:
+        lista = [v.to_dict() for v in res.violacoes]
+        if config.bloqueia:
+            primeira = res.violacoes[0]
+            raise http_error(422, primeira.codigo, primeira.mensagem, violacoes=lista)
+        # report mode (rollout): the write is accepted, never silently -- keys + codes only (values are business data).
+        logger.warning(
+            "spec_validation_mode=report: %d invalid org-spec value(s) accepted for agent %s org %s: %s",
+            len(lista), key, ctx.org_id, [(v["chave"], v["codigo"], v["motivo"]) for v in lista],
+        )
+    antes = set(antes_valores)
     with store_errors():
-        store.upsert_org_specs(ctx.org_id, key, dict(payload.valores), actor=actor_id(ctx))
-    # keys only (values are the org's business data, not audit payload)
+        store.upsert_org_specs(
+            ctx.org_id, key, dict(res.valores), actor=ator.user_id if ator else actor_id(ctx),
+            actor_nome=(ator.nome or ator.email) if ator else None, actor_token=ctx.api_token_id if ator else None,
+        )
+    # keys only (values are the org's business data, not audit payload); a product write names BOTH the token and the person
+    depois: dict[str, Any] = {"chaves": sorted(payload.valores)}
+    if ator:
+        depois["token_id"] = str(ctx.api_token_id)
+        depois["ator"] = {k: v for k, v in (("user_id", str(ator.user_id)), ("nome", ator.nome), ("email", ator.email)) if v}
     store.append_audit(
-        ctx.org_id, agent.id, actor_id(ctx), "specs_org_editadas",
-        {"chaves": sorted(antes)}, {"chaves": sorted(payload.valores)},
+        ctx.org_id, agent.id, ator.user_id if ator else actor_id(ctx), "specs_org_editadas",
+        {"chaves": sorted(antes)}, depois,
     )
     _, r = _resolved(store, ctx, key)
-    return _org_specs_out(key, r)
+    return _org_specs_out(key, r, config)
 
 
 @router.get("/agents/{key}/compilado", response_model=CompiladoOrgOut)
@@ -773,4 +817,6 @@ def grant_platform_definition_org(
     )
 
 
-__all__ = ["router", "require_content_write", "SCOPE_STUDIO_CONTENT_WRITE"]
+__all__ = [
+    "router", "require_content_write", "SCOPE_STUDIO_CONTENT_WRITE", "aplicar_org_specs", "ler_org_specs", "get_spec_validacao_dep",
+]

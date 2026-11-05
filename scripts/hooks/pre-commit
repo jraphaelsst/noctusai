@@ -999,6 +999,20 @@ if [[ -n "$STAGED_UPLOAD_ROUTES" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-ter. LLM usage-context gate (blocking) ─────────────────
+# Keeper `check_llm_usage_context_entry` + `KB § PATTERNS/backend/llm-usage.md` § 0.1. A metered LLM
+# call in a product backend whose file has no `llm_usage_context` scope records ai_usage.agent_key NULL
+# (2026-11-04: NULL on every row for 30 days). Allowlist-with-reason lives in compliance.py.
+STAGED_LLM_CTX=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|mcp/noctusai/tools/noctus/dev/compliance\.py)$' || true)
+if [[ -n "$STAGED_LLM_CTX" ]] && have_py; then
+    echo "[pre-commit] product backend .py staged — checking LLM usage-context scope..."
+    if ! "$PY" "$CLI" --check-llm-usage-context-entry --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] LLM-USAGE-CONTEXT check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Wrap the agent entry point in llm_usage_context(agent_key=..., conversation_id=...) or allowlist the file WITH a reason. See KB § PATTERNS/backend/llm-usage.md § 0.1." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies-quater. Mutation invalidate-only gate (blocking, ratchet) ──
 # Keeper `check_mutation_invalidate_only` (2026-10-21): a useMutation that neither draws its change nor
 # writes the server's answer makes the screen wait for write + refetch. Baselined per file in

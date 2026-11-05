@@ -216,16 +216,6 @@ class TestEligibility:
 
 # ── H3 / H1 / 11.3 switch preconditions ─────────────────────────────────────
 class TestSwitchPreconditions:
-    @pytest.mark.parametrize("numbers", [[], None, ["", "  "]])
-    def test_empty_authorized_numbers_is_a_409(self, numbers):
-        with pytest.raises(AppException) as ei:
-            julia.exigir_autorizados(numbers)
-        assert (ei.value.status_code, ei.value.code) == (409, "authorized_numbers_required")
-
-    def test_a_listed_number_passes(self):
-        julia.exigir_autorizados(["+5511999990000"])
-        julia.exigir_autorizados(["123@lid"])  # operators may list raw @lid ids
-
     @pytest.mark.parametrize("secret", ["", "   ", None])
     def test_no_hmac_secret_is_a_409(self, world, secret):
         cfg = world.cfg.model_copy(update={"waha_webhook_hmac_secret": secret or ""})
@@ -338,17 +328,25 @@ class TestLimiter:
 
 
 class TestOwnEcho:
-    def test_a_registered_id_is_her_own(self, world):
-        julia.registrar_envio_proprio(world.redis, "wamid.1")
-        assert julia.eh_eco_proprio(world.redis, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, provider_message_id="wamid.1")
+    @pytest.mark.parametrize("origem,eco", [("julia", True), ("interno", True), ("humano", False), ("lead", False), (None, False)])
+    def test_only_what_sw_itself_produced_is_its_own_echo(self, origem, eco):
+        assert julia.origem_e_eco_proprio(origem) is eco
 
-    def test_an_unknown_id_with_no_send_in_flight_is_a_human(self, world):
-        assert not julia.eh_eco_proprio(world.redis, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, provider_message_id="wamid.9")
+    def test_with_no_send_in_flight_it_is_a_human(self, world):
+        assert not julia.envio_em_curso(world.redis, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT)
 
     def test_an_echo_beating_our_bookkeeping_is_covered_by_the_in_flight_flag(self, world):
         julia.marcar_envio_em_curso(world.redis, CONNECTION_ID, LEAD_CHAT)
-        assert julia.eh_eco_proprio(world.redis, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT, provider_message_id="not-yet-registered")
-        assert not julia.eh_eco_proprio(world.redis, connection_id=CONNECTION_ID, chat_id="other@c.us", provider_message_id="x")
+        assert julia.envio_em_curso(world.redis, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT)
+        assert not julia.envio_em_curso(world.redis, connection_id=CONNECTION_ID, chat_id="other@c.us")
+
+    def test_redis_is_optional_none_or_failing_reads_as_not_in_flight(self):
+        class Down:
+            def get(self, *_a):
+                raise ConnectionError("down")
+
+        assert julia.envio_em_curso(None, connection_id=CONNECTION_ID, chat_id=LEAD_CHAT) is False
+        assert julia.envio_em_curso(Down(), connection_id=CONNECTION_ID, chat_id=LEAD_CHAT) is False
 
     def test_the_flag_is_shortened_not_dropped_when_the_send_ends(self, world):
         julia.marcar_envio_em_curso(world.redis, CONNECTION_ID, LEAD_CHAT)
@@ -418,7 +416,11 @@ class TestAgentsToken:
         monkeypatch.setenv("PRODUCT_URL_AGENTS", "https://agents.example.test")
         store = _store(world)
         api_keys_store.put_api_key(store, ORG_ID, "agents", "pk_org_a")
-        assert isinstance(julia.resolve_agents_client(ORG_ID, cfg=world.cfg, store=store), HttpAgentsClient)
+        from app.services.julia_grant_sink import HealthRecordingAgentsClient
+
+        client = julia.resolve_agents_client(ORG_ID, cfg=world.cfg, store=store)
+        # the real client, wrapped so every agents call records the connection health (S8)
+        assert isinstance(client, HealthRecordingAgentsClient) and isinstance(client.inner, HttpAgentsClient)
         assert julia.resolve_agents_client(OTHER_ORG_ID, cfg=world.cfg, store=store) is None  # prod: org B has none
 
     def test_dev_without_a_token_resolves_the_fake(self, world, monkeypatch):

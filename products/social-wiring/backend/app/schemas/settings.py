@@ -104,7 +104,6 @@ class KeysStatus(BaseModel):
     frontend_base_url: KeyStatusEntry
     openai_api_key: KeyStatusEntry
     openai_chat_model: KeyStatusEntry
-    whatsapp_chatbot_enabled: KeyStatusEntry
     encryption_key: KeyStatusEntry
     smtp_user: KeyStatusEntry
     smtp_password: KeyStatusEntry
@@ -113,8 +112,6 @@ class KeysStatus(BaseModel):
     waha_dashboard_url: KeyStatusEntry
     waha_webhook_url: KeyStatusEntry
     waha_webhook_hmac_secret: KeyStatusEntry
-    vista_base_url: KeyStatusEntry
-    vista_api_key: KeyStatusEntry
     database_backend: KeyStatusEntry
     supabase_url: KeyStatusEntry
     supabase_service_role_key: KeyStatusEntry
@@ -341,6 +338,9 @@ class ApiKeyStatus(StrictHttpModel):
     input_type: str
     placeholder: str
     configured: bool
+    #: True = managed by the platform (a delivered grant): show masked, no paste
+    #: field; PUT/DELETE answer 409 ``gerenciada_pela_plataforma``.
+    read_only: bool = False
     #: Non-empty makes this a CHOICE, not a free-text field: the UI renders
     #: a switch over these and the write path refuses anything else. Empty
     #: for every ordinary key, so the frontend can branch on it alone.

@@ -56,14 +56,15 @@ describe("limites", () => {
     expect((screen.getByTestId("limite-midia_limite_conexao_dia") as HTMLInputElement).value).toBe("200");
   });
 
-  it("saves the whole set with numbers, the toggle and a null prompt when empty", async () => {
+  it("saves the numbers and the toggle, and never sends the prompt", async () => {
     setup();
     fireEvent.change(await screen.findByTestId("limite-entrada_limite"), { target: { value: "5" } });
     fireEvent.click(screen.getByTestId("limites-salvar"));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     const [url, body] = api.put.mock.calls[0];
     expect(url).toBe("/api/julia/protecao/config");
-    expect(body).toMatchObject({ entrada_limite: 5, entrada_janela_s: 60, midia_limite_chat_dia: 10, bloqueio_auto_ativo: true, prompt_documento_lead: null });
+    expect(body).toMatchObject({ entrada_limite: 5, entrada_janela_s: 60, midia_limite_chat_dia: 10, bloqueio_auto_ativo: true });
+    expect(body).not.toHaveProperty("prompt_documento_lead");
     expect(toast.success).toHaveBeenCalled();
   });
 
@@ -82,16 +83,13 @@ describe("limites", () => {
     expect(salvar.disabled).toBe(false);
   });
 
-  it("the operator can edit the lead document prompt; a too-short one is refused before sending", async () => {
+  it("the lead document prompt is read-only text with the support note: no textarea", async () => {
     setup();
     const prompt = await screen.findByTestId("limite-prompt");
-    fireEvent.change(prompt, { target: { value: "curto" } });
-    expect(screen.getByTestId("prompt-curto")).toBeTruthy();
-    expect((screen.getByTestId("limites-salvar") as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(prompt, { target: { value: "Devolva só o tipo do documento e um resumo curto, sem dados pessoais." } });
-    fireEvent.click(screen.getByTestId("limites-salvar"));
-    await waitFor(() => expect(api.put).toHaveBeenCalled());
-    expect(api.put.mock.calls[0][1].prompt_documento_lead).toContain("só o tipo do documento");
+    expect(prompt.tagName).not.toBe("TEXTAREA");
+    expect(prompt.textContent?.length).toBeGreaterThan(0);
+    expect(screen.getByTestId("prompt-nota-suporte").textContent).toContain("configurado pela equipe NoctusAI");
+    expect(document.querySelectorAll("textarea")).toHaveLength(0);
   });
 
   it("shows the server refusal inline", async () => {

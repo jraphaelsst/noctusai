@@ -182,6 +182,8 @@ class Pessoa:
     certidao_estado_civil_emitida_em: Optional[date] = None
     #: Keys from `documento_checklist_service.completude_contratual`.
     faltando_qualificacao: list[str] = field(default_factory=list)
+    #: Non-blocking keys from the same call (`completude_contratual["avisos"]`).
+    avisos_qualificacao: list[str] = field(default_factory=list)
     #: Migration 116 closed spec §6.1 #18: certidões are reachable for EVERY
     #: party, the titular included (`certidoes_por_cliente`). An empty list is
     #: therefore "none issued yet" — a real, nameable gap — never "unreachable".
@@ -194,6 +196,10 @@ class Pessoa:
     #: [Migration 193] `atendimento_partes.representa_parte_id` — the PJ
     #: party (its `parte_id`) this person signs for (papel 'representante').
     representa_parte_id: Optional[str] = None
+    #: [Security M1] Identity fields (`cpf` / `rg` / `rg_orgao_expedidor`) that a WhatsApp-origin document extraction
+    #: wrote and no human has confirmed yet -- they must not print in a contract (`derivacao._identidade_verificada`
+    #: blocks). Empty = every identity field is typed, confirmed, or from a non-WhatsApp source.
+    identidade_nao_verificada: list[str] = field(default_factory=list)
 
 
 @dataclass

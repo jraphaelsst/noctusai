@@ -226,6 +226,9 @@ class VistaRecordUnpublished(VistaUpstreamError):
         )
         super().__init__(200, body, endpoint)
         self.codigo = codigo
+        #: Keys the 200 body carried. EMPTY = a code that does not exist (`[]`); non-empty (e.g. `Corretor`) = a record
+        #: that exists but is unpublished -- the discriminator `refresh_imovel` uses.
+        self.payload_keys = list(payload_keys)
 
 
 class VistaTimeout(VistaError):

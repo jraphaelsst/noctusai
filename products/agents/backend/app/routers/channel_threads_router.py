@@ -65,6 +65,7 @@ from app.dependencies import (
     get_org_llm_key_resolver_dep,
     get_realtime_bus_dep,
     require_admin,
+    require_platform_content_admin,
     require_channel_status,
     require_channel_turn,
     require_member,
@@ -584,7 +585,7 @@ def studio_agent_controle(
 def studio_set_agent_controle(
     agent_key: str,
     payload: ControleUpdateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     studio_store=Depends(get_studio_definition_store_dep),
     controles=Depends(get_agent_controle_store_dep),
     threads=Depends(get_thread_store_dep),

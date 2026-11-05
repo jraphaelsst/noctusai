@@ -224,6 +224,63 @@ class TestDestino:
         assert [n for n in world.notifications() if n["metadata"]["tipo"] == svc.KIND_RELATORIO_FALHOU]
 
 
+# ── opt-out notices (go-live) ───────────────────────────────────────────────
+class TestOptOut:
+    def _acao(self, seq=0, motivo="pedido_do_lead", trecho="não quero mais receber mensagens"):
+        return JuliaAction(type="opt_out", seq=seq, payload={"motivo": motivo, "trecho": trecho})
+
+    async def test_one_in_app_notice_and_one_interno_whatsapp_each_with_the_reason(self, world):
+        world.agents = FakeAgentsClient([_ok("Tudo bem, não vou mais te escrever.", actions=[self._acao()])])
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["para de me mandar mensagem"]))
+        notices = [n for n in world.notifications() if n["metadata"].get("tipo") == svc.KIND_OPT_OUT]
+        assert len(notices) >= 1 and len({n["user_id"] for n in notices}) == len(notices)  # one per admin, not one per attempt
+        msg = notices[0]["message"]
+        assert "pediu para não receber mais mensagens" in msg and "motivo: pedido do próprio lead" in msg
+        assert "+5511988887777" not in msg and "Ana" in msg  # phone masked, name reduced
+        (texto,) = _para_destino(world)
+        assert "Motivo: pedido do próprio lead" in texto and "não quero mais receber mensagens" in texto
+        assert "+5511988887777" not in texto and "+5511*****7777" in texto
+        assert world.rows("julia_eventos", tipo="opt_out_notificado")
+        assert not world.rows("julia_eventos", tipo="acao_sem_handler")
+
+    async def test_the_keyword_reason_is_named(self, world):
+        world.agents = FakeAgentsClient([_ok("ok", actions=[self._acao(motivo="palavra_chave", trecho="PARAR")])])
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["PARAR"]))
+        assert "Motivo: palavra-chave de parada" in _para_destino(world)[0]
+
+    async def test_the_lead_words_are_sanitized(self, world):
+        world.agents = FakeAgentsClient([_ok("ok", actions=[self._acao(trecho="parem, ligue 11 97777-6666 ou veja http://golpe.test")])])
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["parem"]))
+        texto = _para_destino(world)[0]
+        assert "97777-6666" not in texto and "golpe.test" not in texto
+
+    async def test_a_replay_notifies_once(self, world):
+        key = buffer_lead(world, LEAD_CHAT, ["parar"], ids=["m1"])
+        world.agents = FakeAgentsClient([_ok("ok", actions=[self._acao()])])
+        await _run(world, key)
+        before = len([n for n in world.notifications() if n["metadata"].get("tipo") == svc.KIND_OPT_OUT])
+        world.agents = FakeAgentsClient([_ok("ok", actions=[self._acao()])])
+        buffer_lead(world, LEAD_CHAT, ["parar"], ids=["m1"], start=1)
+        await _run(world, key)
+        assert len([n for n in world.notifications() if n["metadata"].get("tipo") == svc.KIND_OPT_OUT]) == before
+        assert len(_para_destino(world)) == 1 and len(world.rows("julia_relatorios")) == 1
+
+    async def test_no_destination_is_a_named_logged_reason_and_the_in_app_notice_still_lands(self, world, caplog):
+        world.sw.set_table_data("julia_relatorio_destino", [])
+        world.agents = FakeAgentsClient([_ok("ok", actions=[self._acao()])])
+        with caplog.at_level("ERROR"):
+            await _run(world, buffer_lead(world, LEAD_CHAT, ["parar"]))
+        assert _para_destino(world) == []
+        assert "sem_destino" in caplog.text
+        assert [n for n in world.notifications() if n["metadata"].get("tipo") == svc.KIND_OPT_OUT]
+
+    def test_masking(self):
+        assert svc.mascarar_nome("Maria Souza Lima") == "Maria L."
+        assert svc.mascarar_nome(None) == "sem nome"
+        assert svc.mascarar_telefone("+5511988887777") == "+5511*****7777"
+        assert svc.mascarar_telefone("") == "sem telefone"
+
+
 # ── alerts ──────────────────────────────────────────────────────────────────
 class TestAlerta:
     def _alerta(self, seq=0, tipo="lead_insatisfeito"):

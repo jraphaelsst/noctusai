@@ -49,6 +49,7 @@ def sqlite_db(tmp_path: Path) -> SQLiteClient:
         ack INTEGER,
         acked_at TEXT,
         chat_id TEXT,
+        origem TEXT CHECK (origem IS NULL OR origem IN ('lead', 'julia', 'humano', 'interno')),
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX idx_session ON conversation_messages(session_id, created_at DESC);
@@ -297,3 +298,43 @@ class TestAsMessageDto:
         assert dto["body"] == "oi"
         assert dto["ack"] is None
         assert dto["acked_at"] is None
+
+
+class TestOrigemAndInternoHelper:
+    """Migration 318: `origem` + the pre-written internal send whose WAHA echo dedups on the REAL UNIQUE(provider_message_id)."""
+
+    def _store(self, db):
+        return MessageStore(admin_supabase=db, org_id=_ORG_ID)
+
+    def test_record_stamps_origem_and_rejects_an_unknown_one(self, sqlite_db):
+        store = self._store(sqlite_db)
+        stored = store.record(session_id="s", direction="inbound", body="oi", provider_message_id="w1", origem="lead")
+        assert stored.origem == "lead" and store.origem_por_provider_id("w1") == "lead"
+        with pytest.raises(ValueError):
+            store.record(session_id="s", direction="inbound", body="x", provider_message_id="w2", origem="operador")
+
+    def test_a_row_without_origem_reads_as_none_never_a_guess(self, sqlite_db):
+        store = self._store(sqlite_db)
+        store.record(session_id="s", direction="outbound", body="x", provider_message_id="old")
+        assert store.origem_por_provider_id("old") is None and store.origem_por_provider_id("nope") is None
+        assert store.origem_por_provider_id(None) is None
+
+    def test_the_interno_helper_prewrites_the_row_so_the_echo_is_a_duplicate(self, sqlite_db):
+        store = self._store(sqlite_db)
+        stored = store.registrar_interno_enviado(connection_id=UUID(int=7), chat_id="5511977770009@c.us", body="Relatório", provider_message_id="wamid.int")
+        assert stored is not None and (stored.origem, stored.direction, stored.chat_id) == ("interno", "outbound", "5511977770009@c.us")
+        assert store.origem_por_provider_id("wamid.int") == "interno"
+        with pytest.raises(DuplicateMessage):  # WAHA's `fromMe` echo of the same send
+            store.record(session_id="s", direction="outbound", body="Relatório", provider_message_id="wamid.int", origem="humano")
+
+    def test_an_echo_that_won_the_race_is_promoted_to_interno(self, sqlite_db):
+        store = self._store(sqlite_db)
+        store.record(session_id="s", direction="outbound", body="Relatório", provider_message_id="wamid.race", origem="humano", chat_id="c@c.us")
+        stored = store.registrar_interno_enviado(connection_id=UUID(int=7), chat_id="c@c.us", body="Relatório", provider_message_id="wamid.race")
+        assert stored is not None and stored.origem == "interno" and store.origem_por_provider_id("wamid.race") == "interno"
+        assert len(sqlite_db.schema("social_wiring").table("conversation_messages").select("id").execute().data) == 1
+
+    def test_no_provider_id_writes_nothing(self, sqlite_db, caplog):
+        store = self._store(sqlite_db)
+        assert store.registrar_interno_enviado(connection_id=UUID(int=7), chat_id="c@c.us", body="x", provider_message_id=None) is None
+        assert sqlite_db.schema("social_wiring").table("conversation_messages").select("id").execute().data == []

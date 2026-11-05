@@ -43,7 +43,7 @@ export default function ImovelConstrucaoSection({
   if (nada) return null;
 
   return (
-    <SectionCard title="Construção e estado" editLabel="Editar construção e estado">
+    <SectionCard title="Construção e estado">
       {anoConstrucao !== null && (
         <Fact icon={<Calendar className="h-4 w-4" />} label="Ano de construção" value={formatCount(anoConstrucao)} />
       )}

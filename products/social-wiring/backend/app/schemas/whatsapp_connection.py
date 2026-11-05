@@ -36,24 +36,23 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
+from noctusai_lib.api import StrictHttpModel
 from pydantic import BaseModel, Field
 
 
 # ─── CRUD ────────────────────────────────────────────────────────────────
-class WhatsAppConnectionCreate(BaseModel):
-    """Inbound create payload.
+class WhatsAppConnectionCreate(StrictHttpModel):
+    """Inbound create payload (platform admins only).
 
-    Only ``label`` and ``api_key`` are meaningful — ``base_url``,
-    ``session_name``, and ``webhook_url`` are derived server-side and ignored
-    if present. Extra fields are silently dropped (pydantic default) so
-    existing callers that still pass them do not break.
+    Only ``label`` (+ the optional ``marca_id``) is accepted. ``base_url``, ``session_name``, ``webhook_url`` AND the WAHA API key
+    are server-derived (the key is the server's own ``WAHA_API_KEY``): a key typed by a caller would let them provision a line
+    against a WAHA session they do not own. ``extra="forbid"`` -- a body that still carries ``api_key`` is a 422.
 
     ``marca_id`` (migration 017): optional UUID linking the new connection
     to an existing cliente.  Absent / null = unassigned.
     """
 
     label: str = Field(..., min_length=1, max_length=120)
-    api_key: str = Field(..., min_length=1, max_length=2048)
     # Migration 017 — optional cliente ownership at creation time.
     marca_id: Optional[UUID] = Field(
         default=None,
@@ -78,13 +77,11 @@ class BoundChat(BaseModel):
     label: str = Field(default="", max_length=200)
 
 
-class WhatsAppConnectionUpdate(BaseModel):
+class WhatsAppConnectionUpdate(StrictHttpModel):
+    """PATCH body (org admins). ``base_url`` / ``session_name`` / ``webhook_url`` / the WAHA key are server-derived and NOT editable:
+    repointing a line is how a member hijacked another tenant's session. ``extra="forbid"`` -- sending any of them is a 422."""
+
     label: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    # Re-supply the key only when rotating it; absent = keep the stored one.
-    api_key: Optional[str] = Field(default=None, min_length=1, max_length=2048)
-    base_url: Optional[str] = Field(default=None, max_length=2048)
-    session_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    webhook_url: Optional[str] = Field(default=None, max_length=2048)
     # Per-connection intake config (migration 016).
     # Use model_fields_set to distinguish "not supplied" from "supplied as []".
     # None (field absent from request) = keep current value.
@@ -151,22 +148,6 @@ class WhatsAppConnectionOut(BaseModel):
     marca_id: Optional[UUID] = None
 
 
-class WhatsAppConnectionApiKeyOut(BaseModel):
-    """The decrypted API key for ONE line — returned ONLY by the explicit,
-    owner-scoped reveal endpoint (``GET /{id}/api-key``).
-
-    This is the single deliberate exception to the "secret never rides a
-    response" rule that governs every other DTO here: the reveal is an explicit
-    user action (the eye toggle in the connection modal), owner-scoped by the
-    same auth+store filter as every live op, and never returned on a list/get
-    path. Treat it as sensitive — it carries the plaintext WAHA ``X-Api-Key``.
-    """
-
-    connection_id: UUID
-    api_key: str
-
-
-# ─── Live WAHA state (per line) ──────────────────────────────────────────
 class WhatsAppConnectionStatusOut(BaseModel):
     connection_id: UUID
     status: Optional[str] = Field(
@@ -222,8 +203,11 @@ DEFAULT_WHATSAPP_WEBHOOK_EVENTS: list[str] = [
 ]
 
 
-class WhatsAppWebhookConfigRequest(BaseModel):
-    url: str = Field(..., min_length=1, max_length=2048)
+class WhatsAppWebhookConfigRequest(StrictHttpModel):
+    """Re-wire the line's webhook. The URL is ALWAYS the line's own ``<product url>/api/whatsapp/webhook/<its token>``: ``url`` may
+    be omitted (the server sets it) and is refused (422) when it is anything else."""
+
+    url: Optional[str] = Field(default=None, max_length=2048)
     events: list[str] = Field(
         default_factory=lambda: list(DEFAULT_WHATSAPP_WEBHOOK_EVENTS)
     )

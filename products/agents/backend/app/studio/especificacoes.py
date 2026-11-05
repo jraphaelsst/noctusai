@@ -14,16 +14,14 @@ Pure functions, no IO.
 from __future__ import annotations
 
 import re
-from typing import Mapping
-
-from app.studio.models import LIMITS, SPEC_TIPOS
+from typing import Collection, Mapping
 
 __all__ = [
     "ORG_PLACEHOLDER",
     "SPEC_CHAVE_RE",
     "placeholders_org",
+    "marcador_dado",
     "resolver_texto",
-    "validar_valor",
     "conflitos_com_regras_fixas",
 ]
 
@@ -37,22 +35,25 @@ def placeholders_org(texto: str | None) -> set[str]:
     return set(ORG_PLACEHOLDER.findall(texto or ""))
 
 
-def resolver_texto(texto: str, valores: Mapping[str, str]) -> str:
+def marcador_dado(chave: str) -> str:
+    """What a FREE-TEXT org value looks like inside the definition's text (CONTRACT §E3): a visible, inert pointer."""
+    return f"[dado: {chave}]"
+
+
+def resolver_texto(texto: str, valores: Mapping[str, str], fenced: Collection[str] = ()) -> str:
     """``texto`` with every ``{{org.chave}}`` replaced by ``valores[chave]`` (``""`` when the org
     has no value — whether that is allowed is the declaration's ``obrigatoria``, checked by the
-    caller, never papered over here)."""
+    caller, never papered over here). A key in ``fenced`` (free text, untrusted — §E3) that HAS a value is never
+    inlined: it becomes ``[dado: chave]`` and the value travels in the compiler's data section."""
     if not texto or "{{" not in texto:
         return texto
-    return ORG_PLACEHOLDER.sub(lambda m: valores.get(m.group(1), ""), texto)
 
+    def sub(m: re.Match[str]) -> str:
+        chave = m.group(1)
+        valor = valores.get(chave, "")
+        return marcador_dado(chave) if valor and chave in fenced else valor
 
-def validar_valor(tipo: str, valor: str) -> None:
-    """Size cap of an org's value by the declaration's type (the 031 CHECK is the 20 000 backstop)."""
-    if tipo not in SPEC_TIPOS:
-        raise ValueError(f"tipo must be one of {SPEC_TIPOS}; got {tipo!r}")
-    limite = LIMITS[f"org_spec.valor.{tipo}"]
-    if len(valor) > limite:
-        raise ValueError(f"o valor excede {limite} caracteres ({len(valor)})")
+    return ORG_PLACEHOLDER.sub(sub, texto)
 
 
 #: Deterministic lint of an org's text against the platform-locked rules (AI disclosure, opt-out,

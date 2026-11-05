@@ -254,3 +254,66 @@ class TestCertidaoUnica:
     def test_half_filled_unica_names_its_own_gap(self):
         av = _avaliar(1, self._com_unica(numero=None))
         assert "certidao.certidao_unica_sp.numero" in {f["campo"] for f in av.faltando}
+
+
+# ─── 6. identification under the signature / in the qualification (julia-v3, owner 2026-11-03) ──────
+
+
+class TestDocumentosDeAssinaturaEQualificacao:
+    """CPF and/or RG under the name -- both, only CPF, only RG, neither -- and the qualification never prints a
+    dangling RG clause."""
+
+    CPF = "CPF 111.444.777-35"
+
+    def _p(self, **campos):
+        base = dict(cpf="11144477735", rg="12.345.678-9", rg_orgao="SSP/SP", identidade_tipo=None)
+        base.update(campos)
+        return replace(fx.variante(1).compradores[0], **base)
+
+    def test_both_cpf_and_rg(self):
+        assert frases.assinante_fisico(self._p())["documento"] == f"{self.CPF} · RG 12.345.678-9 SSP/SP"
+
+    def test_only_cpf(self):
+        assert frases.assinante_fisico(self._p(rg=None, rg_orgao=None))["documento"] == self.CPF
+
+    def test_only_rg(self):
+        assert frases.assinante_fisico(self._p(cpf=None))["documento"] == "RG 12.345.678-9 SSP/SP"
+
+    def test_neither_prints_nothing(self):
+        assert frases.assinante_fisico(self._p(cpf=None, rg=None, rg_orgao=None))["documento"] == ""
+
+    def test_an_rg_without_orgao_has_no_dangling_dash_or_space(self):
+        assert frases.assinante_fisico(self._p(rg_orgao=None))["documento"] == f"{self.CPF} · RG 12.345.678-9"
+
+    def test_a_foreign_party_prints_rne_without_the_issuing_body(self):
+        p = self._p(identidade_tipo="rne", rg="W-573.678-Z", rg_orgao="DIREX")
+        assert frases.assinante_fisico(p)["documento"] == f"{self.CPF} · RNE W-573.678-Z"
+
+    def test_a_witness_is_cpf_only_the_form_and_the_model_carry_no_rg(self):
+        assert frases.testemunha_documento_linha("11144477735") == self.CPF
+        assert frases.testemunha_documento_linha(None) == ""
+
+    def test_the_qualification_omits_the_rg_clause_when_there_is_no_rg(self):
+        for rg, orgao in [(None, None), ("", "SSP/SP"), ("  ", None)]:
+            p = self._p(rg=rg, rg_orgao=orgao)
+            assert frases.identidade_texto(p) == ""
+            texto = frases.texto_pessoa(p, em_nucleo=False)
+            assert "RG" not in texto and "cédula" not in texto and "portad" not in texto
+            assert " no CPF/MF 111.444.777-35" in texto and ", e " not in texto and " e inscrit" not in texto
+
+    def test_the_qualification_with_an_rg_is_unchanged(self):
+        texto = frases.texto_pessoa(self._p(), em_nucleo=False)
+        assert "da cédula de identidade RG 12.345.678-9-SSP-SP e " in texto and "no CPF/MF 111.444.777-35" in texto
+
+    def test_readiness_asks_a_party_for_the_cpf_never_the_rg(self):
+        """[Owner decision, 2026-11-04] RG is optional for every contract party: readiness asks for the CPF and never
+        for the RG / órgão (absent RG => clause omitted, qualification by CPF); a witness needs the CPF alone."""
+        from app.modules.card_hub import documento_checklist_service as dc
+
+        campos = set(dc._CAMPOS_QUALIFICACAO_CONTRATO)
+        assert "cpf" in campos
+        assert not ({"rg", "rg_orgao_expedidor"} & campos)
+        d = fx.variante(1)
+        t1, t2 = d.testemunhas
+        av = _avaliar(1, replace(d, testemunhas=[replace(t1, rg=None), replace(t2, rg=None)]))
+        assert av.pronto, (av.faltando, av.bloqueios)

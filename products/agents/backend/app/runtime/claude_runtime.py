@@ -73,6 +73,8 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
+from noctusai_lib.integrations.llm import llm_usage_context, record_usage
+
 from app.runtime import gate
 from app.runtime.academia_api import AcademiaApi, AcademiaNotFoundError
 from app.runtime.slots import SlotPool, TurnSlot
@@ -711,6 +713,46 @@ STUDIO_RESUME_TRUNCATED_TEXT = (
 )
 
 
+
+async def _meter_sdk_result(spec: AgentSpec, ctx: TurnContext, message: Any) -> None:
+    """Record one SDK turn in the central ledger (`public.ai_usage`) — the SDK talks to Anthropic outside the
+    seed LLM client, so without this the cost of every `claude_sdk` agent (Bia-academia ...) is invisible.
+
+    A `ResultMessage` is the WHOLE turn's aggregate (once per turn), so recording here cannot double count.
+    Tokens are priced from the seed catalog like any other call; counts the SDK did not report stay NULL (never
+    0) and the SDK's own `total_cost_usd` rides in `extra` as a cross-check. Never raises (billing telemetry must
+    not fail the turn). An ephemeral turn has no conversation row -> conversation_id stays null."""
+    try:
+        usage = message.usage or {}
+        entrada, saida = usage.get("input_tokens"), usage.get("output_tokens")
+        extra: dict[str, Any] = {"runtime": "claude_sdk"}
+        if message.total_cost_usd is not None:
+            extra["sdk_total_cost_usd"] = message.total_cost_usd
+        if entrada is None or saida is None:
+            extra["tokens_unmeasured"] = True
+        with llm_usage_context(
+            product="agents",
+            agent_key=spec.key,
+            conversation_id=None if ctx.ephemeral else str(ctx.conversation_id),
+            org_id=str(ctx.org_id),
+        ):
+            await record_usage(
+                provider="anthropic",
+                model=spec.model,
+                operation="chat",
+                prompt_tokens=entrada,
+                completion_tokens=saida,
+                total_tokens=(entrada + saida) if entrada is not None and saida is not None else None,
+                org_id=str(ctx.org_id),
+                cache_creation_input_tokens=usage.get("cache_creation_input_tokens"),
+                cache_read_input_tokens=usage.get("cache_read_input_tokens"),
+                status="error" if getattr(message, "is_error", False) else "ok",
+                extra=extra,
+            )
+    except Exception:  # noqa: BLE001 -- telemetry only; logged, the turn is unaffected
+        logger.warning("claude_runtime: could not record SDK usage (agent=%s)", spec.key, exc_info=True)
+
+
 class ClaudeAgentSdkRuntime:
     """Real :class:`~app.runtime.types.AgentRuntime`."""
 
@@ -1113,6 +1155,7 @@ class ClaudeAgentSdkRuntime:
                         result_holder["tokens_entrada"] = usage.get("input_tokens")
                         result_holder["tokens_saida"] = usage.get("output_tokens")
                         result_holder["tokens_cache_leitura"] = usage.get("cache_read_input_tokens")
+                        await _meter_sdk_result(spec, ctx, message)
             finally:
                 await driver.queue.put(_PUMP_DONE)  # type: ignore[arg-type]
 

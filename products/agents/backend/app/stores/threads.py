@@ -1224,6 +1224,8 @@ class HistoricoItem:
     midia: dict[str, Any] | None = None
     #: The lead's text was cut to the size cap (``messages.meta.truncado``).
     truncado: bool = False
+    #: The lead FORWARDED it (``messages.meta.encaminhada``): rendered marked, never the lead's own words.
+    encaminhada: bool = False
 
 
 def mapa_agentes(studio_store: Any, org_id: UUID) -> dict[UUID, tuple[str, str]]:
@@ -1252,7 +1254,8 @@ def historico_do_agente(
         meta = getattr(r, "meta", None) or {}
         if r.role == "user" and (r.texto or meta.get("midia")):
             out.append(HistoricoItem(
-                "lead", r.texto, r.created_at, midia=meta.get("midia"), truncado=bool(meta.get("truncado"))))
+                "lead", r.texto, r.created_at, midia=meta.get("midia"), truncado=bool(meta.get("truncado")),
+                encaminhada=bool(meta.get("encaminhada"))))
         elif r.role == "assistant" and r.texto and r.texto.strip():
             if r.agent_id is None or r.agent_id == agent_id:
                 out.append(HistoricoItem("proprio", r.texto, r.created_at))
@@ -1272,6 +1275,7 @@ def historico_do_agente(
 
 def rotular_historico(
     itens: Sequence[HistoricoItem], *, tag: str, rotulo_midia: str | None = None, rotulo_truncado: str | None = None,
+    rotulo_encaminhada: str | None = None,
 ) -> list[tuple[str, str]]:
     """Chat-history lines ``(role, texto)`` from classified items, by AUTHORSHIP (never by a typed prefix):
 
@@ -1303,6 +1307,8 @@ def rotular_historico(
                 if not rotulo_truncado or not rotulo_truncado.strip():
                     raise ValueError("rotulo_ausente: historico.rotulo_truncado")
                 partes.append(lit_json({rotulo_truncado.strip(): True}))
+            if it.encaminhada:  # the DB label when filled, else the bare data key: a mark, never prose
+                partes.append(lit_json({(rotulo_encaminhada or "").strip() or "encaminhada": True}))
             out.append(("user", "\n".join(partes)))
         elif it.origem == "humano":
             out.append(("system", envelope(tag, {

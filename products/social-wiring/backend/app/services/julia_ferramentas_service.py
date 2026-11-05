@@ -6,7 +6,7 @@ Registry of tool implementations (waves 1 / 5 / 12 replace one line each, the ro
     Ferramenta = Callable[[Any, UUID, dict], Any]      # (scoped client, org_id, validated args) -> JSON data
     ARGS[nome]  -> the StrictHttpModel the router validates the body with
 
-  buscar_imoveis           F      Vista mirror `imoveis`, at most 5 results; v2: structured query, similar_a,
+  buscar_imoveis           F      the org's catalog (Vista mirror `imoveis`, or Vista LIVE: `julia_catalogo_service`), at most 5 results; v2: structured query, similar_a,
                                   excluir_codigos, one-axis-at-a-time widening (`julia_busca_imoveis`)
   imovel_campanha          v2     the lead's campaign listing (explicit `codigo`, or the contato's
                                   `codigo_imovel_campanha` via `interacao_id`)
@@ -30,26 +30,17 @@ from pydantic import Field, model_validator
 from noctusai_lib.api import StrictHttpModel
 
 from app.services import julia_busca_imoveis as busca
-from app.services import julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado
+from app.services import julia_catalogo_service, julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado
+from app.services.julia_catalogo_service import COLUNAS, FETCH_BUSCA, TABLE, publicado as _publicado  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-TABLE = "imoveis"
 LIMITE_MAX = 5
 LIMITE_PADRAO = 3
-#: Rows read for one search (PostgREST caps at 1000 anyway); `restantes_estimados` is a lower bound past this.
-FETCH_BUSCA = 500
 DESTAQUES_MAX = 3
 #: Rows fetched before the unpublished ones are dropped in Python (`exibir_no_site` is nullable, so
 #: a SQL `<> false` would also drop the NULLs). Bounded; the answer is still capped at `limite`.
 OVERFETCH = 60
-#: The ONLY columns a tool may read from `imoveis` (no owner / agent / internal columns).
-COLUNAS = (
-    "codigo, titulo, categoria, status, finalidades, bairro, cidade, uf, valor_venda, valor_locacao, "
-    "valor_condominio, valor_iptu, dormitorios, suites, vagas, area_total, area_privativa, "
-    "descricao_web, caracteristicas, exibir_no_site, logradouro, numero, data_atualizacao, empreendimento, "
-    "pavimentos"
-)
 #: Allow-list for the empreendimento tool (a subset of `COLUNAS` + the two development columns).
 COLUNAS_EMPREENDIMENTO = (
     "codigo, titulo, categoria, empreendimento, construtora, bairro, cidade, valor_venda, valor_locacao, "
@@ -129,11 +120,6 @@ def _titulo(row: dict[str, Any]) -> str:
     return (row.get("titulo") or row.get("categoria") or "Imóvel").strip()
 
 
-def _publicado(row: dict[str, Any]) -> bool:
-    """Julia never offers a listing the agency hides from its own site."""
-    return row.get("exibir_no_site") is not False
-
-
 def _preco(row: dict[str, Any], operacao: Optional[str]) -> Optional[float]:
     if operacao == "aluguel":
         return _num(row.get("valor_locacao"))
@@ -169,14 +155,6 @@ def regioes_adjacentes(client: Any, org_id: UUID) -> dict[str, tuple[str, ...]]:
     nothing to widen with and is skipped -- 2026-10-20
     """
     return {}
-
-
-def _um(client: Any, org_id: UUID, codigo: str) -> Optional[dict[str, Any]]:
-    rows = (
-        client.table(TABLE).select(COLUNAS).eq("org_id", str(org_id)).eq("codigo_norm", codigo.strip().upper())
-        .limit(1).execute().data or []
-    )
-    return rows[0] if rows and _publicado(rows[0]) else None
 
 
 def _destaques(r: dict[str, Any], prioritarios: tuple[str, ...]) -> list[str]:
@@ -226,7 +204,8 @@ def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> ComMeta:
     cannot verify (pets, proximidades, ...): they did not filter the result and Julia must confirm them. `restantes_estimados` = listings that passed at the final widening level and were not
     returned (a lower bound when more than FETCH_BUSCA candidates exist)."""
     a = BuscarImoveisArgs(**args)
-    ancora = _um(client, org_id, a.similar_a) if a.similar_a else None
+    catalogo = julia_catalogo_service.catalogo_da_org(client, org_id)
+    ancora = catalogo.um(a.similar_a) if a.similar_a else None
     excluir = [*a.excluir_codigos, *([a.similar_a] if a.similar_a else [])]
     regioes = [*([a.bairro] if a.bairro else []), *a.bairros]
     tipo, preco_min, preco_max = a.tipo, a.preco_min, a.preco_max
@@ -244,23 +223,13 @@ def buscar_imoveis(client: Any, org_id: UUID, args: dict[str, Any]) -> ComMeta:
         desejaveis=tuple([*a.itens_desejaveis, *a.caracteristicas]),
         condominio=(ancora or {}).get("empreendimento"), adjacentes=regioes_adjacentes(client, org_id),
     )
-    col = "valor_venda" if a.operacao == "compra" else "valor_locacao"
-    qb = client.table(TABLE).select(COLUNAS).eq("org_id", str(org_id)).contains("finalidades", ["venda" if a.operacao == "compra" else "aluguel"])
-    if busca.piso(q) is not None:
-        qb = qb.gte(col, busca.piso(q))
-    if busca.teto_largo(q) is not None:
-        qb = qb.lte(col, busca.teto_largo(q))
-    if busca.quartos_minimos_largos(q) is not None:
-        qb = qb.gte("dormitorios", busca.quartos_minimos_largos(q))
-    if q.vagas_min is not None:
-        qb = qb.gte("vagas", q.vagas_min)
-    rows = [r for r in (qb.order("data_atualizacao", desc=True).limit(FETCH_BUSCA).execute().data or []) if _publicado(r)]
+    rows = catalogo.candidatos(q)
     res = busca.buscar(rows, q, limite=a.limite, excluir=excluir)
     meta: dict[str, Any] = {"restantes_estimados": res.restantes, "relaxado": res.relaxado,
                             "itens_nao_verificaveis": res.itens_nao_verificaveis}
     if a.similar_a:
         meta["similar_a_encontrado"] = ancora is not None
-    return ComMeta(_itens(client, org_id, res.linhas, a.operacao, (*a.itens_essenciais, *a.itens_desejaveis, *a.caracteristicas)), meta)
+    return ComMeta(_itens(client, org_id, catalogo.completar(res.linhas), a.operacao, (*a.itens_essenciais, *a.itens_desejaveis, *a.caracteristicas)), meta)
 
 
 def imovel_campanha(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dict[str, Any]]:
@@ -280,7 +249,7 @@ def imovel_campanha(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dic
                 .eq("id", str(inter[0]["contato_id"])).limit(1).execute().data or []
             )
             codigo = (contato[0].get("codigo_imovel_campanha") or "").strip() if contato else None
-    r = _um(client, org_id, codigo) if codigo else None
+    r = julia_catalogo_service.catalogo_da_org(client, org_id).um(codigo) if codigo else None
     if r is None:
         return []
     operacao = a.operacao or ("compra" if r.get("valor_venda") is not None else "aluguel")
@@ -289,13 +258,9 @@ def imovel_campanha(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dic
 
 def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str, Any]:
     a = DetalhesImovelArgs(**args)
-    rows = (
-        client.table(TABLE).select(COLUNAS).eq("org_id", str(org_id)).eq("codigo_norm", a.codigo.strip().upper())
-        .limit(1).execute().data or []
-    )
-    if not rows or not _publicado(rows[0]):
+    r = julia_catalogo_service.catalogo_da_org(client, org_id).um(a.codigo)
+    if r is None:
         return {"codigo": a.codigo.strip(), "encontrado": False}
-    r = rows[0]
     # Wave 1 ("Meu negócio › Endereço e IPTU"): both default to withheld until the org opts in.
     politica = julia_conhecimento_service.politica_endereco_iptu(client, org_id)
     mostrar_iptu = politica["usar_iptu"]
@@ -334,7 +299,11 @@ def consultar_empreendimento(client: Any, org_id: UUID, args: dict[str, Any]) ->
 
     SW has no separate catalogue: Vista sends `Empreendimento` + `Construtora` per listing and the sync
     stores them on `imoveis` (migration 040), so a development IS the set of published listings sharing
-    that name. Same allow-list + published-only rules as `buscar_imoveis` (no owner data, ever)."""
+    that name. Same allow-list + published-only rules as `buscar_imoveis` (no owner data, ever).
+
+    NOC-REMEDIATE[julia-empreendimento-vista-live]: still reads the mirror even for an org whose catalog source is
+    `vista` (`Empreendimento` is a detalhes-only Vista field, so a live development roll-up needs a per-listing
+    detalhes walk); the other three listing tools are live -- 2026-11-03"""
     a = ConsultarEmpreendimentoArgs(**args)
     rows = (
         client.table(TABLE).select(COLUNAS_EMPREENDIMENTO).eq("org_id", str(org_id))

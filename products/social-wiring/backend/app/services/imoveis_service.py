@@ -33,6 +33,9 @@ from uuid import UUID
 
 from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_property_data
 from noctusai_lib.integrations import rate_limit
+from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
+
+from app.services import imoveis_descoberta, vista_divergencias
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,31 @@ __all__ = [
 # which the model already carries, so passing it through would add a second
 # spelling of the same fact to the domain object.
 _ROW_ONLY_COLUMNS = frozenset({"org_id", "sincronizado_em", "codigo_norm"})
+
+
+#: THE columns the sync may write on `social_wiring.imoveis` -- Vista-sourced ONLY. Everything WE own lives in other tables
+#: (imovel_dados 118/149/158/202/300, imovel_captacao 226, the duplicate pairs, proprietario links, documents,
+#: julia_proprietarios_contatos) and in `created_at` / `updated_at` / `codigo_norm` of this one; the upsert refuses a
+#: row carrying anything outside this set (`_assert_so_vista`), so a future column can never be written by accident.
+COLUNAS_VISTA = frozenset({
+    "org_id", "codigo", "codigo_imobiliaria", "titulo", "categoria", "status", "finalidades", "cep", "logradouro",
+    "numero", "complemento", "bairro", "cidade", "uf", "empreendimento", "latitude", "longitude", "valor_venda",
+    "valor_locacao", "area_total", "area_privativa", "area_construida", "dormitorios", "suites", "vagas",
+    "banheiro_social", "foto_destaque", "fotos", "corretores", "construtora", "data_cadastro", "data_atualizacao",
+    "caracteristicas", "caracteristicas_raw", "vista_raw", "sincronizado_em", "descricao_web", "observacoes",
+    "valor_condominio", "valor_iptu", "ano_construcao", "situacao", "ocupacao", "pavimentos", "posicao", "elevador",
+    "portaria", "exclusivo", "aceita_permuta", "aceita_financiamento", "destaque_web", "super_destaque_web",
+    "exibir_no_site", "chave", "zona", "regiao", "area_terreno", "closet", "frente", "fundos", "referencia",
+    "matricula_vista", "inscricao_municipal", "video_destaque", "tour_360",
+})
+
+
+def _assert_so_vista(rows: list[dict]) -> None:
+    """Refuse (loudly) a row that carries a column the sync does not own."""
+    for row in rows:
+        extra = set(row) - COLUNAS_VISTA
+        if extra:
+            raise ValueError(f"imoveis sync: refusing to write non-Vista column(s) {sorted(extra)} on social_wiring.imoveis")
 
 
 class ImoveisLookupError(Exception):
@@ -79,6 +107,17 @@ _REGISTRY_TABLE = "imovel_registry"
 # production.
 DEFAULT_SYNC_CONCURRENCY = 6
 VISTA_RATE_BUCKET = "vista"
+#: The per-code refresh runs 4 at a time (owner/coordinator 2026-11-03): ~2k detalhes calls per tier, not a burst.
+DETALHES_CONCURRENCY = 4
+#: A listing is "vitrine" (shown to the public, refreshed every run) when its Status is one of these and it is not hidden.
+STATUS_VITRINE = frozenset({"venda", "aluguel", "venda e aluguel"})
+#: Circuit breaker for the per-code path (the twin of migration 064's): never mark more than this share (and at least
+#: this many) of the walked codes as removed in one run -- a Vista hiccup must not delist the catalog.
+REMOVIDOS_MAX_PCT = 20.0
+REMOVIDOS_MIN_ABS = 50
+_LOTE = 100
+#: Fields only `listar` carries: a detalhes-only refresh keeps the mirror's existing value for them.
+_CAMPOS_SO_LISTAR = ("foto_destaque", "banheiro_social", "codigo_imobiliaria")
 
 # `Imovel` field name → the Vista wire key it was coerced from, for the two
 # fields `normalize_place_name` canonicalizes (seed
@@ -176,6 +215,23 @@ class SyncReport:
     registry_ativos: int = 0
     registry_delistados: int = 0
     registry_failures: list[str] = field(default_factory=list)
+    # Which path ran and how it ended (the Vista `listar` outage made the path a fact worth reporting).
+    caminho: str = "listar"  # listar | detalhes
+    escopo: Optional[str] = None  # detalhes path: vitrine | resto | todos
+    status: str = ""  # "" = derive from `complete`; ok | incompleto | listar_vazio | removidos_excessivos
+    listar_vazio_pagina: bool = False
+    novos: int = 0
+    atualizados: int = 0
+    inalterados: int = 0
+    removidos: int = 0
+    removidos_codigos: list[str] = field(default_factory=list)
+    descobertos: list[str] = field(default_factory=list)
+    sonda_falhas: list[str] = field(default_factory=list)
+    chamadas: dict[str, int] = field(default_factory=dict)
+    # Vista-vs-ours divergences opened this run (TRANSITIONAL -- `vista_divergencias`, NOC-REMEDIATE[transicao-vista-divergencias]).
+    divergencias_linhas: list[dict] = field(default_factory=list)
+    divergencias_erros: list[str] = field(default_factory=list)
+    divergencias_comparadas: int = 0
 
     @property
     def complete(self) -> bool:
@@ -190,8 +246,28 @@ class SyncReport:
         """
         return not self.page_failures and not self.detalhes_failed
 
+    @property
+    def status_final(self) -> str:
+        return self.status or ("ok" if self.complete else "incompleto")
+
     def as_dict(self) -> dict:
         return {
+            "caminho": self.caminho,
+            "escopo": self.escopo,
+            "status": self.status_final,
+            "novos": self.novos,
+            "atualizados": self.atualizados,
+            "inalterados": self.inalterados,
+            "removidos": self.removidos,
+            "removidos_codigos": self.removidos_codigos[:100],
+            "falhas": len(self.detalhes_failed) + len(self.page_failures),
+            "descobertos": self.descobertos,
+            "sonda_falhas": self.sonda_falhas,
+            "chamadas": dict(self.chamadas),
+            "divergencias_novas": len(self.divergencias_linhas),
+            "divergencias": [{"codigo": r["codigo"], "campo": r["campo"]} for r in self.divergencias_linhas[:50]],
+            "divergencias_erros": self.divergencias_erros[:20],
+            "divergencias_comparadas": self.divergencias_comparadas,
             "total_reported": self.total_reported,
             "pages_fetched": self.pages_fetched,
             "upserted": self.upserted,
@@ -547,6 +623,7 @@ class ImovelSyncService:
         *,
         concurrency: int = DEFAULT_SYNC_CONCURRENCY,
         duplicate_detector: Optional[Callable[..., Any]] = None,
+        sonda_max_falhas: int = imoveis_descoberta.SONDA_MAX_FALHAS_PADRAO,
     ):
         self._client = client
         self._adapter = adapter
@@ -554,6 +631,8 @@ class ImovelSyncService:
         # DI seam for the possível-duplicado step (CONTRACT §8.6); `None` =
         # `duplicatas_service.detectar`.
         self._duplicate_detector = duplicate_detector
+        self._sonda_max_falhas = max(1, sonda_max_falhas)
+        self._div: Optional[vista_divergencias.Execucao] = None
 
     def _table(self):
         return self._client.schema(_SCHEMA).table(_TABLE)
@@ -574,14 +653,26 @@ class ImovelSyncService:
         report = SyncReport()
         started = datetime.now(timezone.utc)
         report.started_at = started.isoformat()
+        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
         # {"cidade": {canonical: {raw spellings seen}}, "empreendimento": {...}}
         place_name_variants: dict[str, dict[str, set[str]]] = {
             field_name: {} for field_name in _PLACE_NAME_WIRE_KEYS
         }
 
         first = await self._fetch_page(1, page_size, report)
-        if first is None:
+        vazio_com_espelho = (
+            (first is None and report.listar_vazio_pagina) or (first is not None and not first.items)
+        ) and self._mirror_tem_linhas(org_id)
+        if first is None or vazio_com_espelho:
             report.finished_at = datetime.now(timezone.utc).isoformat()
+            if vazio_com_espelho:
+                # 🔴 `listar` says "nothing" while the mirror holds the catalog: that is Vista going silent (2026-10-23
+                # on), not an empty agency. Refuse to go on -- the registry sweep would mark the WHOLE catalog removed.
+                report.status = "listar_vazio"
+                logger.error(
+                    "imoveis sync: Vista `listar` returned NO rows for org=%s while the mirror has rows -- refusing to "
+                    "sweep the registry (it would delist the whole catalog). status=listar_vazio", org_id,
+                )
             return report
 
         report.total_reported = first.total
@@ -611,6 +702,7 @@ class ImovelSyncService:
         report.duration_seconds = (finished - started).total_seconds()
 
         _log_place_name_merges(org_id, place_name_variants)
+        self._fechar_divergencias(report)
 
         # Registry sweep — AFTER the upserts, and only on a complete run.
         #
@@ -621,7 +713,13 @@ class ImovelSyncService:
         # sold — sweeping then would delist the catalog wholesale and stamp
         # snapshots over live listings. A skipped sweep costs one night of
         # lag; a wrong sweep costs the truth.
-        if report.complete:
+        if report.complete and report.upserted == 0 and self._mirror_tem_linhas(org_id):
+            report.status = "listar_vazio"
+            logger.error(
+                "imoveis sync: `listar` pages upserted NOTHING for org=%s while the mirror has rows -- refusing to sweep "
+                "the registry. status=listar_vazio", org_id,
+            )
+        elif report.complete:
             self._sweep_registry(org_id, synced_at, report)
             self._detect_duplicates(org_id)
         else:
@@ -647,6 +745,256 @@ class ImovelSyncService:
             )
         return report
 
+
+    # ─── Per-code refresh (modo="detalhes") ─────────────────────────────
+    #
+    # `/imoveis/listar` is the only endpoint that enumerates the catalog; when Vista leaves it silent (2026-10-23 on) the
+    # mirror is kept current one CODE at a time from `/imoveis/detalhes`, through the same `vista_to_imovel` mapping and
+    # the same `_imovel_to_row` upsert as the listar path. The tiers keep the call volume sane: every 2h only the
+    # "vitrine" (public, still listed) codes + discovery; once a day the rest (sold / suspended / hidden / removed).
+
+    def _mirror_tem_linhas(self, org_id: UUID) -> bool:
+        resp = (
+            self._table().select("codigo").eq("org_id", str(org_id)).limit(1).execute()
+        )
+        return bool(resp.data)
+
+    def _paginado(self, tabela: Callable[[], Any], colunas: str, org_id: UUID, ordem: str, filtro: Optional[Callable[[Any], Any]] = None) -> list[dict]:
+        saida: list[dict] = []
+        inicio = 0
+        while True:
+            q = tabela().select(colunas).eq("org_id", str(org_id))
+            if filtro:
+                q = filtro(q)
+            rows = q.order(ordem).range(inicio, inicio + 999).execute().data or []
+            saida.extend(rows)
+            if len(rows) < 1000:
+                return saida
+            inicio += 1000
+
+    def _indice_espelho(self, org_id: UUID) -> dict[str, dict]:
+        """norm(codigo) -> the mirror columns the refresh needs (paged: PostgREST caps a select at 1000 rows)."""
+        rows = self._paginado(
+            self._table, "codigo, status, exibir_no_site, data_atualizacao, sincronizado_em, "
+            + ", ".join(_CAMPOS_SO_LISTAR), org_id, "codigo",
+        )
+        return {r["codigo"].strip().upper(): r for r in rows if r.get("codigo")}
+
+    def _removidos_no_registro(self, org_id: UUID) -> set[str]:
+        rows = self._paginado(
+            self._registry_table, "codigo_canonical", org_id, "codigo_canonical",
+            filtro=lambda q: q.eq("ativo_no_vista", False).not_.is_("delistado_em", "null"),
+        )
+        return {r["codigo_canonical"] for r in rows}
+
+    @staticmethod
+    def _e_vitrine(linha: dict) -> bool:
+        return (linha.get("status") or "").strip().lower() in STATUS_VITRINE and linha.get("exibir_no_site") is not False
+
+    async def sync_detalhes(
+        self,
+        org_id: UUID,
+        *,
+        escopo: str = "vitrine",
+        descobrir: bool = True,
+        descobridores: Optional[list[imoveis_descoberta.Descobridor]] = None,
+        forcar: bool = False,
+    ) -> SyncReport:
+        """Refresh the mirror code by code from `/imoveis/detalhes`.
+
+        `escopo`: `vitrine` (public listings still listed), `resto` (everything else in the mirror: sold, suspended,
+        hidden, removed -- so a come-back is noticed) or `todos`. Discovery of NEW codes runs with `vitrine`/`todos`
+        when `descobrir` (default seams: `/imoveis/destaques` + the forward probe).
+
+        Writes ONLY Vista columns of `imoveis` (`_assert_so_vista`) and the lifecycle columns of `imovel_registry`;
+        never deletes a row. A code Vista no longer has is marked removed in the registry the way the sweep marks it
+        (`ativo_no_vista=false`, `delistado_em`, snapshot) -- behind a circuit breaker -- and a transport failure is a
+        reported failure, never a removal. A code whose detalhes `DataAtualizacao` equals the mirror's is only touched
+        (`sincronizado_em`), unless `forcar`.
+        """
+        if escopo not in ("vitrine", "resto", "todos"):
+            raise ValueError(f"escopo must be vitrine|resto|todos, got {escopo!r}")
+        report = SyncReport(caminho="detalhes", escopo=escopo)
+        started = datetime.now(timezone.utc)
+        report.started_at = synced_at = started.isoformat()
+        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
+        place_name_variants: dict[str, dict[str, set[str]]] = {k: {} for k in _PLACE_NAME_WIRE_KEYS}
+
+        espelho = self._indice_espelho(org_id)
+        fora = self._removidos_no_registro(org_id)
+        alvo: list[str] = []
+        for norm, linha in espelho.items():
+            vitrine = self._e_vitrine(linha) and norm not in fora
+            if escopo == "todos" or (escopo == "vitrine") == vitrine:
+                alvo.append(linha["codigo"])
+
+        buscados: dict[str, Optional[Imovel]] = {c: None for c in alvo}
+        if descobrir and escopo in ("vitrine", "todos"):
+            conhecidos = set(espelho)
+            for descobridor in (descobridores if descobridores is not None else self._descobridores_padrao()):
+                try:
+                    achados = await descobridor(self._adapter, conhecidos, report)
+                except Exception as exc:
+                    report.sonda_falhas.append(f"{getattr(descobridor, '__name__', 'descobridor')}: {type(exc).__name__}")
+                    logger.warning("imoveis discovery %s failed for org=%s: %s", getattr(descobridor, "__name__", "?"), org_id, exc)
+                    continue
+                for codigo, imovel in achados.items():
+                    if codigo.strip().upper() not in conhecidos and codigo not in buscados:
+                        buscados[codigo] = imovel
+                        report.descobertos.append(codigo)
+
+        obtidos: dict[str, Imovel] = {c: i for c, i in buscados.items() if i is not None}
+        sumiram: list[str] = []
+        ocultos: list[str] = []
+        sem = asyncio.Semaphore(min(self._concurrency, DETALHES_CONCURRENCY))
+
+        async def um(codigo: str) -> None:
+            async with sem:
+                await rate_limit.acquire_async(VISTA_RATE_BUCKET)
+                report.chamadas["detalhes"] = report.chamadas.get("detalhes", 0) + 1
+                try:
+                    obtidos[codigo] = await self._adapter.refresh_imovel(codigo)
+                except VistaNotFound:
+                    sumiram.append(codigo)
+                except VistaRecordUnpublished:
+                    ocultos.append(codigo)
+                except Exception as exc:
+                    report.detalhes_failed.append(codigo)
+                    logger.warning("imoveis refresh: detalhes failed for %s (%s)", codigo, type(exc).__name__)
+
+        await asyncio.gather(*(um(c) for c, i in buscados.items() if i is None))
+        report.total_reported = len(buscados)
+        report.detalhes_fetched = len(obtidos)
+
+        mudaram: list[Imovel] = []
+        iguais: list[str] = []
+        for codigo, imovel in obtidos.items():
+            atual = espelho.get(codigo.strip().upper())
+            if atual is None:
+                report.novos += 1
+                mudaram.append(imovel)
+                continue
+            for campo in _CAMPOS_SO_LISTAR:  # a detalhes-only read has none of these: keep what the mirror has
+                if getattr(imovel, campo) is None and atual.get(campo) is not None:
+                    imovel = imovel.model_copy(update={campo: atual[campo]})
+            if (
+                not forcar and imovel.data_atualizacao is not None and atual.get("sincronizado_em")
+                and str(atual.get("data_atualizacao") or "")[:10] == imovel.data_atualizacao.isoformat()
+            ):
+                iguais.append(imovel.codigo)
+            else:
+                report.atualizados += 1
+                mudaram.append(imovel)
+        report.inalterados = len(iguais)
+
+        for imovel in mudaram:
+            _record_place_name_variants(imovel, place_name_variants)
+        for i in range(0, len(mudaram), _LOTE):
+            lote = mudaram[i:i + _LOTE]
+            rows = [_imovel_to_row(im, org_id, synced_at) for im in lote]
+            _assert_so_vista(rows)
+            self._table().upsert(rows, on_conflict="org_id,codigo").execute()
+            report.upserted += len(rows)
+            self._upsert_registry(lote, org_id, synced_at, report)
+        for i in range(0, len(iguais), _LOTE):
+            self._table().update({"sincronizado_em": synced_at}).eq("org_id", str(org_id)).in_("codigo", iguais[i:i + _LOTE]).execute()
+        self._reativar_registro(org_id, [im.codigo for im in obtidos.values()], synced_at, report)
+        self._divergencias(list(obtidos.values()))
+        self._fechar_divergencias(report)
+
+        self._marcar_removidos(org_id, sumiram, ocultos, espelho, synced_at, report, caminhados=len(buscados))
+
+        finished = datetime.now(timezone.utc)
+        report.finished_at = finished.isoformat()
+        report.duration_seconds = (finished - started).total_seconds()
+        _log_place_name_merges(org_id, place_name_variants)
+        if report.complete and (report.novos or report.atualizados):
+            self._detect_duplicates(org_id)
+        log = logger.info if report.status_final == "ok" else logger.warning
+        log(
+            "imoveis refresh (detalhes/%s) org=%s: %s — new=%d updated=%d unchanged=%d removed=%d failed=%d calls=%s",
+            escopo, org_id, report.status_final, report.novos, report.atualizados, report.inalterados, report.removidos,
+            len(report.detalhes_failed), report.chamadas,
+        )
+        return report
+
+    def _divergencias(self, imoveis: list[Imovel]) -> None:
+        """THE call site of the transitional Vista-vs-ours divergence check (no-op when the org's flag is off)."""
+        if self._div is None or not imoveis:
+            return
+        link = None
+        try:
+            from app.services import julia_conhecimento_service
+
+            link = julia_conhecimento_service.link_imovel_fn(self._client.schema(_SCHEMA), self._div.org_id)
+        except Exception as exc:  # a link is a convenience; the divergence is not
+            logger.warning("vista divergences: site link unavailable (%s)", type(exc).__name__)
+        vista_divergencias.verificar(self._div, imoveis, link_site=link)
+
+    def _fechar_divergencias(self, report: SyncReport) -> None:
+        if self._div is not None:
+            report.divergencias_linhas = list(self._div.novas)
+            report.divergencias_erros = list(self._div.erros)
+            report.divergencias_comparadas = self._div.comparadas
+
+    def _descobridores_padrao(self) -> list[imoveis_descoberta.Descobridor]:
+        return [imoveis_descoberta.por_destaques, imoveis_descoberta.criar_sonda(self._sonda_max_falhas)]
+
+    def _reativar_registro(self, org_id: UUID, codigos: list[str], synced_at: str, report: SyncReport) -> None:
+        """Seen at Vista this run => active again (the sweep's step 1, per code). Lifecycle columns ONLY."""
+        canon = sorted({c.strip().upper() for c in codigos if c and c.strip()})
+        for i in range(0, len(canon), _LOTE):
+            try:
+                (
+                    self._registry_table()
+                    .update({"ativo_no_vista": True, "ultimo_visto_no_vista_em": synced_at, "delistado_em": None})
+                    .eq("org_id", str(org_id)).in_("codigo_canonical", canon[i:i + _LOTE]).execute()
+                )
+            except Exception as exc:
+                report.registry_failures.append(f"reativar: {type(exc).__name__}: {exc}")
+                logger.warning("imoveis refresh: registry reactivation failed for org=%s: %s", org_id, exc)
+
+    def _marcar_removidos(
+        self, org_id: UUID, sumiram: list[str], ocultos: list[str], espelho: dict[str, dict],
+        synced_at: str, report: SyncReport, *, caminhados: int,
+    ) -> None:
+        """Mark what Vista no longer shows, the way the sweep does (registry: inactive + `delistado_em` + snapshot).
+        Never deletes. Refused (status `removidos_excessivos`) past the circuit breaker."""
+        todos = sorted({c for c in [*sumiram, *ocultos]})
+        if not todos:
+            return
+        limite = max(REMOVIDOS_MIN_ABS, caminhados * REMOVIDOS_MAX_PCT / 100.0)
+        if len(todos) > limite:
+            report.status = "removidos_excessivos"
+            logger.error(
+                "imoveis refresh: %d of %d codes look removed for org=%s (> %.0f%%/%d) -- refusing to mark them; this is "
+                "a Vista fault until proven otherwise", len(todos), caminhados, org_id, REMOVIDOS_MAX_PCT, REMOVIDOS_MIN_ABS,
+            )
+            return
+        for codigo in todos:
+            canon = codigo.strip().upper()
+            linha = (
+                self._table().select("titulo, categoria, status, bairro, cidade, uf, valor_venda, valor_locacao, dormitorios, area_total, foto_destaque")
+                .eq("org_id", str(org_id)).eq("codigo", codigo).limit(1).execute().data or [{}]
+            )[0]
+            snap = {f"snap_{k}": v for k, v in linha.items()}
+            try:
+                (
+                    self._registry_table()
+                    .update({"ativo_no_vista": False, "delistado_em": synced_at, "snap_em": synced_at, **snap})
+                    .eq("org_id", str(org_id)).eq("codigo_canonical", canon).eq("ativo_no_vista", True).execute()
+                )
+            except Exception as exc:
+                report.registry_failures.append(f"remover {codigo}: {type(exc).__name__}: {exc}")
+                continue
+            report.removidos += 1
+            report.removidos_codigos.append(codigo)
+        if ocultos:
+            # Vista says ExibirNoSite=Nao: the one Vista-sourced column that tells every reader of the mirror to hide it.
+            for i in range(0, len(ocultos), _LOTE):
+                self._table().update({"exibir_no_site": False, "sincronizado_em": synced_at}).eq("org_id", str(org_id)).in_(
+                    "codigo", ocultos[i:i + _LOTE]).execute()
+
     def _detect_duplicates(self, org_id: UUID) -> None:
         """Possível-duplicado detection (manual imóveis vs the fresh catalog) —
         a SEPARATE step after a COMPLETE sync (an incomplete run has a partial
@@ -661,11 +1009,14 @@ class ImovelSyncService:
 
     async def _fetch_page(self, page_no: int, page_size: int, report: SyncReport):
         await rate_limit.acquire_async(VISTA_RATE_BUCKET)
+        report.chamadas["listar"] = report.chamadas.get("listar", 0) + 1
         try:
             page = await self._adapter.list_imoveis(
                 page=page_no, page_size=page_size, with_detalhes=False
             )
         except Exception as exc:
+            if page_no == 1 and isinstance(exc, VistaNotFound):
+                report.listar_vazio_pagina = True
             # Recorded, never swallowed — `report.complete` goes False and
             # the caller sees which pages are missing.
             report.page_failures.append(f"page {page_no}: {type(exc).__name__}: {exc}")
@@ -690,6 +1041,7 @@ class ImovelSyncService:
         rows = [_imovel_to_row(i, org_id, synced_at) for i in imoveis]
         if not rows:
             return
+        _assert_so_vista(rows)
         self._table().upsert(rows, on_conflict="org_id,codigo").execute()
         report.upserted += len(rows)
 
@@ -700,6 +1052,7 @@ class ImovelSyncService:
         # because the catalog later showed it to us. The sweep, not this,
         # maintains the lifecycle columns.
         self._upsert_registry(imoveis, org_id, synced_at, report)
+        self._divergencias(imoveis)
 
     def _registry_table(self):
         return self._client.schema(_SCHEMA).table(_REGISTRY_TABLE)
@@ -786,6 +1139,8 @@ class ImovelSyncService:
         async def enrich_one(index: int, imovel: Imovel) -> None:
             async with sem:
                 await rate_limit.acquire_async(VISTA_RATE_BUCKET)
+                report.chamadas["listar"] = report.chamadas.get("listar", 0) + 1  # get_imovel = one listar row ...
+                report.chamadas["detalhes"] = report.chamadas.get("detalhes", 0) + 1  # ... + one detalhes
                 try:
                     full = await self._adapter.get_imovel(imovel.codigo)
                 except Exception as exc:

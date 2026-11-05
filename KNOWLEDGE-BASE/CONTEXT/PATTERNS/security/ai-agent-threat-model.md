@@ -91,6 +91,45 @@ Moved to the dated audit record (`KB § PATTERNS/security/audits/julia-2026-11.m
 "today" is a point-in-time claim. The catalog keeps the rule: DEFENDED requires file:line on `origin/dev`
 plus a regression test.
 
+### 3.4 Leaks — what can leak, through which door, and the guard
+
+A leak is any path by which a secret, another party's data, or our own internals reaches someone who must not
+have it. It is a separate class from injection: most leaks need no attacker at all, only a careless door.
+Audit EVERY door below for EVERY secret/data class; "hidden in the UI" is not a guard (owner, 2026-11-04:
+"no point hiding its display and leaving it visible in the structure").
+
+**What can leak**
+
+| Class | Examples |
+|---|---|
+| Platform secrets | grant/channel/tools tokens (`noc_`/`pk_`), WAHA API key, WAHA webhook HMAC key, Supabase service-role key, LLM provider keys, `ENCRYPTION_KEY` |
+| The agent's internals | compiled prompt, skills, platform-fixed texts, guard patterns, canaries, tool schemas, eval criteria |
+| Other parties' data | another lead's messages/name/phone, another org's catalog/specs/leads (cross-tenant), staff phone numbers, internal reports/alerts, credit/consent evidence |
+| Personal data (LGPD) | lead phone/LID, CPF/RG in documents, addresses, audio transcripts, images |
+
+**Through which door — and the required guard**
+
+| Door | Guard | Where / status |
+|---|---|---|
+| The model's reply to the public | No other lead's or org's data in context (per-thread history, org from the token); staff numbers and reports never in the lead context; prompt treated as non-secret but canaries + extraction escalation; contact/link allowlists from validated specs | A:`channels/turno.py`, `conformidade.py`, `texto_seguro.py` · cross-lead/cross-org eval cases required |
+| Tool arguments and results | Org from the token, never the body; results scoped to the org; strict schemas; nothing secret returned to the model | A:`channels/tool_registry.py`, SW:`julia_ferramentas_router.py` |
+| HTTP API responses and error bodies | Secret fields never in response models (SecretStr / `repr=False` / `hide_input_in_errors`); masked first4+last4 only; no reveal endpoints; generic 5xx bodies (no `{exc}` echo) | SW grant sink + `TestSecretNeverLeaves`; connection key reveal removed (2026-11-04); `{exc}` echo in connections router (IP) |
+| Browser / direct DB reads (PostgREST) | Column-level REVOKE on secret columns from `anon`/`authenticated`; all secret readers use the service role; nothing secret in `VITE_*` | SW 319 (`credentials`), 320 (`whatsapp_connections` webhook_token/api_key, IP) |
+| Logs and telemetry | Never log tokens, headers, raw phones, message bodies of leads; mask IDs; exception logs carry the class, not the payload; `ai_usage`/telemetry rows carry counts, never prompts or secrets | SW log-hygiene tests; raw `sender` log masked (IP) |
+| Staff-bound channels (reports, alerts, opt-out notices, in-app) | Sanitize lead text before it reaches staff (second-order injection); mask identity in notifications; send only to the org's own staff | A:`texto_seguro.para_equipe`, SW:`julia_relatorio_service.py` |
+| Webhooks and outbound calls | Secrets only in headers to pinned hosts; media downloads host-pinned (the key never goes to a lead-controlled URL); no redirects | SW:`media_service.py`, `julia_transporte.py`; connection base_url server-derived (IP) |
+| Dev tooling and agent transcripts (MCP tools, CLI output, scratchpad, PR text) | **Every connector tool result passes `_kit.redact.redact_secret_fields` before it reaches a model** (2026-11-04: `waha.session.get` returned `hmac.key` in clear into a session transcript; the key must be rotated); scratchpad files never committed; secrets scan keeper on commits | `mcp/_kit/redact.py` + `bootstrap.run_stdio_server`; the `noctusai` FastMCP server does not use this bootstrap yet — follow-up |
+| Git and builds | Secret-scan keeper (incl. `noc_` rule); `.env*` ignored; no secret baked into images or SPA bundles | seed secrets scan, `spa_smoke` |
+| Studio / admin surfaces | Compiled prompt, prompt-by-hash, eval transcripts: platform-admin only; tenant org admins get a strict 403 on agent internals | A:`studio_conteudo_router.py` (writes platform-only, IP) |
+| Backups, exports, eval datasets | Eval cases use synthetic data only; exports scoped per org; no production lead text in fixtures or KB | process rule |
+
+**Leak response (when one happens):** 1) rotate the secret at its source first, then at every consumer;
+2) find the door and close it structurally (a guard, not a reminder); 3) add the regression test that plants
+the secret and asserts it never crosses that door; 4) record it here with the date.
+
+**Known incidents:** 2026-11-04 — WAHA webhook HMAC key printed by `waha.session.get` into an agent
+transcript. Door closed by `_kit.redact` (all connectors); key rotation pending owner go.
+
 ## 4. Must-have checklist before ANY agent goes public
 
 - [ ] Webhook HMAC secret set on provider AND product; unsigned refused (strict `== 401`); replay window; session match.
@@ -109,6 +148,8 @@ plus a regression test.
 - [ ] Provider component patched, internal-only; key rotated if ever shared.
 - [ ] Eval security suite (section 6) green on the current content hash.
 - [ ] Legal: price/commitment liability (CDC), LGPD intake (`lgpd.md`), platform ToS fit (unofficial API ban risk).
+
+- [ ] **Leak audit (§3.4):** every door × every secret/data class checked; planted-secret tests on API, logs, DB reads and tool output.
 
 ## 5. Agent-creator template — security must-haves
 

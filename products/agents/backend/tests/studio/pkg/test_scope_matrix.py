@@ -83,6 +83,22 @@ CONTENT_WRITE_ROUTES = {
     # the complete-agent recipe (agent-creation guide): the readiness read and the explicit skill re-pin
     ("GET", "/api/studio/agents/{key}/prontidao"),
     ("POST", "/api/studio/agents/{key}/draft/skills-biblioteca/atualizar"),
+    # go-live hardening (owner decision): Julia's core is edited ONLY by a platform admin or this platform content token --
+    # every Studio write that used to be an org-level `require_admin` moved here (pinned in tests/studio/def/test_platform_only_writes.py)
+    ("POST", "/api/studio/agents"),
+    ("PATCH", "/api/studio/agents/{key}"),
+    ("POST", "/api/studio/agents/{key}/draft"),
+    ("PATCH", "/api/studio/agents/{key}/draft"),
+    ("DELETE", "/api/studio/agents/{key}/draft"),
+    ("POST", "/api/studio/agents/{key}/draft/skills"),
+    ("PATCH", "/api/studio/agents/{key}/draft/skills/{skill_id}"),
+    ("DELETE", "/api/studio/agents/{key}/draft/skills/{skill_id}"),
+    ("PUT", "/api/studio/agents/{key}/draft/skills/{skill_id}/files"),
+    ("PUT", "/api/studio/agents/{key}/draft/skills/{skill_id}/files/batch"),
+    ("DELETE", "/api/studio/agents/{key}/draft/skills/{skill_id}/files/{file_id}"),
+    ("PUT", "/api/studio/agents/{key}/specs"),
+    ("PUT", "/api/studio/agents/{agent_key}/controle"),
+    ("POST", "/api/agents/{key}/toggle"),
 }
 
 #: Deleting an agent: reachable ONLY with the dedicated `studio:agent-delete` scope (minted with

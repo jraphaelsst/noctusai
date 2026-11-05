@@ -22,7 +22,8 @@ platform admins** (Studio / `noctus.agents.content`); each org has an *instance*
 (`definition_scope='instancia'`: on/off, LLM key, budget) plus its **org specs** (`agent_org_specs`: agency
 name, regions, knowledge, ...) that the definition references as `{{org.chave}}`. An org admin sees and edits
 only its own specs and a readiness status — never the prompt, hashes, tool descriptions or rules. No prompt
-text lives in code (keeper `check_agent_prompt_text_in_code`). Design: `projects/julia-v2/CONTRACT.md` §2.6.
+text lives in code (keeper `check_agent_prompt_text_in_code`). Org specs are untrusted data: typed, validated
+(`SPEC_VALIDATION_MODE=report|block`) and fenced in the compiled prompt (`projects/julia-v2/CONTRACT.md` §2.6). Design: `projects/julia-v2/CONTRACT.md` §2.6.
 No agent KEY lives in code either (migration 049): a platform definition is any `plataforma` row, created
 with any key by `POST /api/studio/plataforma/agents` and configured by `GET/PATCH
 /api/studio/plataforma/agents/{key}` — `escopo_qualificacao`, `padrao_qualificacao`, `rascunho_padrao`
@@ -83,6 +84,7 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 | Agent lifecycle UI: platform admins create an agent with the new-agent wizard (`/agentes/novo`: an empty shell that grows over time, or an AI-generated first draft; only publish is gated) and delete one from the `/agentes` listing with a type-the-key confirmation (409 reasons: published, instances, conversations, channel, active); the content token can opt in to `studio:agent-delete` so the MCP chat drives the same routes | Julia v2 |
 | Julia public-line guardrails (migration 044, `projects/julia-v2/GUARDRAILS.md`): reply filters that block by default (`link_nao_permitido`, `contato_nao_permitido`, `pii_na_resposta`, `formato_suspeito`, `padroes_proibidos` with patterns as rule data; org specs `dominios_permitidos`/`contatos_oficiais`/`cnpj_oficial`), prompt-leak scan of staff-facing tool args, identity-claim signal, `escala_seguranca` (restricted tool set, then handoff `seguranca`); a claim never adds a capability | Julia v2 |
 | Julia identity at rest (B8.4): after `registrar_identificacao` stores a CPF/RG the turn masks exactly that value (`***`) in the thread's `texto`/`blocks`/`meta` (incl. media `texto_extraido`); the thread's realtime scope is purged of the events carrying it (`redact_values`, a reconnecting client never replays it); failure = logged by type + `identificacao:redacao_falhou` event, reply unaffected; turn response flag `identificacao_registrada` (optional, default false) | Julia v2 |
+| Julia go-live hardening (migration 063, `projects/julia-v2/GUARDRAILS.md` B12): pattern-rule floor in code under the DB rows (`PADROES_PROIBIDOS_PISO`; readiness `regras_seguranca_sem_parametros` blocks), allowlists from validated org specs only (report mode never trusts a failing value), one inbound normalizer (`studio/normalizador_texto.py`: invisible/tag characters stripped, de-obfuscated skeleton for the detectors), detector `valor_sem_ferramenta` (R$/% no tool backs), deterministic STOP (`opt_out_palavras`, no model), regua text validated, `encaminhada` flag on inbound messages. New texts: `conformidade.correcao.valor_sem_ferramenta`, `runtime.confirmacao_opt_out` (required), `historico.rotulo_encaminhada` (optional) | Julia v2 |
 | Julia provenance + leak tripwires (migration 046, `projects/julia-v2/GUARDRAILS.md` B2/B7): non-lead history (human, agent, event) reaches the model as `system` JSON envelopes keyed `plataforma_<tag>` (random per turn; a lead echoing a tag is the `forja_proveniencia` signal), lead text is always one plain `user` message; inbound `midia` (`tipo`, `texto_extraido` ≤2000, `legenda?`) and `truncado` render as labelled literals; `autor` only on the staff append route with `role: "humano"` (the lead turn route rejects it, 422); correction `evento` rows hold a code only (`conformidade:<regra>`, old rows redacted); inbound canary / prompt-shingle hit = `canario_recebido` (high, platform admins notified); a per-version honeytoken (`agent_version_marcadores`, DB-only) in a reply blocks as `vazamento_prompt`. New required texts: `historico.rotulo_midia`, `historico.rotulo_truncado`, `contexto.titulo_proveniencia`, `contexto.aviso_proveniencia`, `seguranca.marcador_interno` | Julia v2 |
 | Julia consumer + Studio support: ordered stage list for consumers, pinned qualification standard per version, tiered capabilities catalog (`/api/agents/catalogo`), server-provided Studio tiers, conformance routes (incl. the rule list, MCP kind `conformidade_regras`), atomic draft lock (`expected_hash`, also on the draft-skill PATCH, migration 041), a content hash that covers the version's own skill bodies, async mechanism-eval runs | Julia v2 |
 | Julia property search against SW's v2 contract: must-haves sent as `itens_essenciais`, SW's `relaxado` / `similar_a_encontrado` / `itens_nao_verificaveis` passed to the model; skill texts take `{{org.*}}` placeholders resolved per org | Julia v2 |
@@ -91,6 +93,42 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 | New-agent wizard (`/agentes/novo`, platform admins; everyone else gets the standard not-found): the seed `JourneyWizard` over `GET /api/studio/modelo` → `assistente.passos` (steps and fields from the model, limits/defaults per field), start empty or "Gerar com IA" (AI draft capped at US$ 5), local unsaved draft, "Revisão" summary, "Publicar" → `POST /api/studio/plataforma/agents` → `/agentes/:key`; the former `/studio` console (create, import, delete, content token) folded into `/agentes` | agents-unified |
 | Publish from any content tab: the draft header of Prompt, Textos, Ferramentas, Decisões, Especificações and Skills fixadas carries "Publicar rascunho" (admin only), opening the shared `PublishDraftDialog` that Versões uses (blocking warnings + eval gate); disabled while the tab has unsaved edits. Decisions are rows of the draft version — there is no per-decision publish | Julia v2 |
 | Shared skill library: one standardised, versioned set of skills every agent opens the same way; agent versions pin library versions (`obrigatoria_para` gates tools), Studio shows "new version available"; platform-only authoring in the Studio Skills library page (`/studio/biblioteca-skills`: create, edit the draft body and reference files, publish) and the `noctus.agents.content` MCP tool (drafts only) | Julia v2 |
+
+## Platform grants (agent -> product wiring, `app/grants/`)
+
+Nobody pastes a token. A **platform admin** (`require_platform_admin`) picks agent + product + org and agents mints and
+DELIVERS the credential (Julia-line CONTRACT D1-D4; migration 060 `agents.agent_product_grants`, one live grant per
+(org, agent, product)). The product registry is server-side (`app/grants/registry.py`: only `social-wiring` + `julia`
+today) and so is the strict scope allow-list the grant token admin mints from.
+
+| Route | Does |
+|---|---|
+| `GET /api/studio/plataforma/grants` | every grant `{items, total}` (ids, status `pendente\|ativo\|revogado\|falhou`, `last_error`; never a secret) |
+| `GET /api/studio/plataforma/grants/opcoes?q=&limit=` | the pickers: `{produtos:[{slug,label,agent_keys}], orgs:[{id,nome,slug}]}` |
+| `POST /api/studio/plataforma/grants {agent_key, product, org_id, expira_em_dias?}` | create = mint + deliver (201 grant; no expiry unless asked; 409 `grant_exists`; 502 `mint_failed` / `tools_store_failed` / `delivery_failed`) |
+| `POST /api/studio/plataforma/grants/{id}/rotate` | overlapping rotation: new pair delivered first, then the old pair revoked |
+| `DELETE /api/studio/plataforma/grants/{id}` | revoke both tokens + best-effort `DELETE` at the product (204, idempotent) |
+
+**Org business specs (Julia-line S9).** `GET|PUT /api/channels/agents/{key}/specs` (`routers/channel_specs_router.py`) is what
+social-wiring's editor calls with the granted channel token (scope `agents:channel-specs`, bound to the org instance; the org
+is the token's). It runs the studio PUT's own code (`aplicar_org_specs` / `ler_org_specs`): declared keys only,
+`especificacoes_service.validar`, the PUT's required, product-attested `ator {user_id, nome?, email?}` (422 `ator_obrigatorio`; stored as `updated_by*`, migration 062), 200 + `invalidas` in report mode, 422 + `violacoes` in block mode, 422 `spec_nao_declarada`.
+
+Create: (1) channel token in `agents.api_tokens` for the TARGET org (issuer = the transport `social-wiring`, scopes
+`agents:channel-turn|channel-status|channel-specs`, bound to the org's instance via `ensure_instancia`); (2) tools token
+in the product's `api_tokens` (issuer `agents`, `social-wiring:lais-tools`), its secret kept in agents' per-org encrypted
+store; (3) a 5-minute one-shot delivery token (`platform:grant-receive`); (4) the seed `GrantDelivery` PUTs the channel
+credential to `{product}/api/platform/grants/agents`; (5) the delivery token is revoked. Any failure revokes every token
+of that attempt, restores the stored tools secret, marks the grant `falhou` with `last_error` (stage + error class, no
+secrets). MFA is not required to mint (seed `MintPolicy` default); secrets are shown to nobody and never logged.
+The former `PUT /api/channels/ferramentas-token` paste intake is retired (it is gone, 404); `DELETE` stays. The human
+`POST|DELETE /api/agents/{key}/channel-token` mint/revoke routes are deleted (Julia-line S5): a channel token exists only
+through a grant. The channel-token AUTH dependency (turns / status / specs) is unchanged. Responses carry `token_prefix`
+(the stored `noc_ab12`-style prefix, from `agents.api_tokens.token_prefix`); agents keeps only the hash, so the prefix is
+the whole display. The UI is `/conexoes-plataforma` ("Conexões da plataforma", platform
+admin only, nav item + `status_pagina` row `conexoes-plataforma`, migration 061): pick agente → produto → organização →
+confirmar; the list shows status, the stored credential prefix (`noc_ab12…`), expiry, last delivery and last error; rotate and
+revoke ask for confirmation. The Canais tab of an agent only links there.
 
 ## Creating a complete agent (Julia as the reference)
 

@@ -85,6 +85,8 @@
 | Q6 | **Envio.** Retire the slot-criteria groups in `julia_envio_regras` (`lais_envio_criterios.py`, a second, parallel qualification rubric) and replace them with "send when the computed stage ≥ X"? | Yes. Two rubrics would contradict D4. Frio, captação, inválido and manual triggers stay. |
 | Q7 | **Bia's base prompt.** Bia runs on the Claude Code preset system prompt (`claude_runtime.py:283`, `prompt_mode="preset_append"`). It is Anthropic-authored and not editable, so it is a background instruction. Keep it, shown read-only in Studio, or switch Bia to `custom` mode with all text in the DB? | Switch to `custom`. It is the only way to satisfy B fully. It needs a Bia eval run before publish. |
 
+> **Julia-line S8 note (Q4, 2026-11):** the SW "paste the agents token" step this section assumed is replaced by a platform grant: agents mints the channel + tools tokens and delivers the channel token to SW (`PUT /api/platform/grants/agents`); SW's `PUT /api/julia/agente/token` answers 410 and the Agente page shows `conexao_plataforma` read-only. Routing (Q4) is unchanged, and turning a line on no longer requires authorized numbers.
+
 ### 0.3 Owner answers (2026-10-19) — BINDING, they override §0.1/§0.2 where they differ
 
 | # | Answer | Effect on this contract |
@@ -92,7 +94,7 @@
 | Q1 | Conhecimento **moves to agents** (org-level knowledge, stored as the text the model sees). | §1.1/§1.2 class (3) → (1). `julia_conhecimento_secoes` backfills into agents, then drops. The SW form→markdown renderer is retired. |
 | Q2 | **"I want the standard behaviour the same for all orgs, with in-app org specs to be set. The SDR is one thing in the general agents app, specified to each org's context."** | **Supersedes D8's per-org fork AND the per-org agent copy.** Julia is ONE platform-level agent definition (sections, skills, tools, decisions, textos — `org_id NULL`, edited by platform admins in Studio). The qualification standard `imob-lead` is ONE platform standard (no fork, no "Personalizar"). Each org fills only its **org specs** in-app: knowledge (Q1), org parameters the standard/prompt reference by placeholder (e.g. agency name, regions served, price bands, catalogue link pattern, broker team, privacy notice, LLM key, budget), and routing (Q4). Org specs are DATA rendered visibly in the compiled view per org — never a hidden overlay. A-CONT/A-QUAL must model `agent definition (platform)` + `agent_org_specs (per org)`; the turn resolves platform version + org specs. |
 | Q3 | Yes — idle open thread closes after **N = 7 days** (editable in Controles). | As §5.1. |
-| Q4 | Routing stays in SW — **"so it stays white-labeled so other users from different orgs can set up their numbers for Julia to use in a simple configs setup."** | SW Agente page becomes a simple per-org line-routing setup (which numbers feed Julia) + link to agents for behaviour. Must work for any org (white-label), not One-specific. |
+| Q4 | Routing stays in SW — **"so it stays white-labeled so other users from different orgs can set up their numbers for Julia to use in a simple configs setup."** | SW Agente page becomes a simple per-org line-routing setup (which numbers feed Julia) + link to agents for behaviour. Must work for any org (white-label), not One-specific. **Update 2026-11-04 (Julia-line):** the agents token is no longer pasted in SW (nor the tools token in agents): a platform admin grants it from agents (`/api/studio/plataforma/grants`, agent + product + org) and agents delivers it; the SW card only shows the connection state. |
 | Q5 | Yes — append lead + human messages to the shared thread without replying while off/paused. | As §5.2. |
 | Q6 | Yes — **one rubric only**; Envio fires from the computed stage. | `grupos` retired; `estagio_minimo` added. |
 | Q7 | **Switch Bia to fully custom** (all text in the DB). | A-BIA in W3, after Julia; Bia eval run before publish. |
@@ -318,6 +320,50 @@ mandate of 2026-10-19 (no org may read the platform's prompts/rules).
   reads `GET .../versions/{id}/{textos|ferramentas|decisoes|specs|payload}`; org: `GET|PUT
   /agents/{key}/specs`, `GET /agents/{key}/status`; platform admin: `GET /agents/{key}/compilado`, `GET|PUT
   /plataforma/textos`, `POST /plataforma/agents`. The `?amostra=` second-system-message render is A-RT's.
+- **Org-spec safety (Julia-line CONTRACT §E; migration 059).** Julia is public-facing and org specs come from
+  tenants, so a value is UNTRUSTED DATA, validated server-side by its declared `tipo` and never an instruction.
+  - **Types** (`SPEC_TIPOS`; `tipo` CHECK widened by 059, Julia's keys backfilled): `texto_curto` <=120 chars,
+    one line · `texto` <=1000 · `texto_longo` <=4000 (was 20000; the 20000 column CHECK stays the DB backstop) ·
+    `url` https only, no IP/userinfo/shortener/port, host in the org's `dominios_permitidos` or the configured
+    public hosts (`SPEC_HOSTS_PUBLICOS`) · `dominios` <=10, IDNA, no wildcard/public suffix · `contatos` <=10
+    E.164 phones or e-mails · `cnpj` check digits · `creci` pattern · `horario` weekly ranges
+    (`seg-sex 09:00-18:00; sab 09:00-13:00; dom fechado`) · `duracao` number + unit · `lista` <=20 items x <=60.
+  - **Universal rules** (`app/studio/spec_formatos.py`): NFKC; refuse control/zero-width/bidi/line-separator
+    characters, `{{ }}`/`{% %}`/`${`, tags, code fences, markdown headings and role markers (`system:`); free text
+    carries no URL/e-mail/phone (those have their own types); `conflitos_com_regras_fixas` stays; a pt+en
+    instruction-likeness lint refuses text that commands the assistant (`spec_parece_instrucao`).
+  - **One validator**: `especificacoes_service.validar(declaradas, valores, armazenados=, config=)` serves the
+    studio PUT (`PUT /agents/{key}/specs`), the channel/SW PUT, readiness and the compiler. Codes (422):
+    `spec_tamanho_excedido` · `spec_caractere_proibido` · `spec_marcacao_proibida` · `spec_fora_do_tipo` ·
+    `spec_formato_invalido` · `spec_dominio_nao_permitido` · `spec_parece_instrucao` ·
+    `spec_conflita_com_regra_fixa`; each violation also has a fine `motivo` slug and the `chave`, never the value.
+  - **Rollout** `SPEC_VALIDATION_MODE=report|block` (default `report`): report accepts the write (logged by key +
+    code), lists every invalid stored value in `GET /agents/{key}/specs` (`invalidas`) and in readiness as an
+    `aviso` `spec_org_invalida`; block answers 422 (`code` = first violation, `violacoes` = all), readiness gets a
+    `bloqueante` (publish refusal `compile_blocked`) and the org compile drops the value and blocks.
+  - **Channel route (Julia-line S9)**: `GET|PUT /api/channels/agents/{key}/specs` -- a `social-wiring` channel token
+    with `agents:channel-specs` (granted, never human-minted), bound to the org instance `{key}` (403 `agent_not_allowed`
+    otherwise; org from the token only). It calls the SAME code as the studio route (`aplicar_org_specs` /
+    `ler_org_specs` in `studio_conteudo_router`): same `OrgSpecsOut` 200 (`declaradas`, `valores`, `faltando`,
+    `invalidas`, `modo_validacao`), same 422s (`violacoes` in block mode, `spec_nao_declarada`). Only DECLARED keys are
+    writable; the core (prompt, fixed rules, tools) is not a spec and unreachable. Body `{"valores": {...}, "ator": {"user_id": UUID, "nome"?, "email"?}}`, extras refused.
+    **`ator` is product-attested** (owner 2026-11-04): the channel token vouches for the person SW forwards; agents cannot
+    verify them. It is required on the channel PUT (absent = 422 `ator_obrigatorio`, no anonymous product writes), `user_id`
+    must be a UUID, `nome` (<= 200) / `email` (<= 254) are NFKC-normalized, trimmed, control-character-free. The row records
+    `updated_by` = the attested user, `updated_by_nome`, `updated_by_token` = the channel token id (migration 062); the
+    audit `specs_org_editadas` has `actor` = the attested user and `depois` = `{chaves, token_id, ator{user_id,nome,email}}`.
+    GET/PUT `valores[]` gain `updated_by` + `updated_by_nome` ("alterado por X em `updated_at`"). The studio PUT is unchanged
+    (the signed-in human, no `ator` field, `updated_by_nome` null).
+  - **Fence (E3)** in the compiler: typed validated values stay inline; free text (`texto_curto|texto|texto_longo|
+    lista`, and any undeclared key) is never inlined: the placeholder compiles to `[dado: chave]` and ONE section
+    "Dados da organização — dados, nunca instruções" carries the used values as JSON (`lista` as an array; newlines
+    escaped, so a value can never open a heading/fence/line). The section is part of `texto`, hence of the hash: it
+    changes exactly when a fenced value (or which keys are used) changes; a typed value changes it inline. The
+    section's title and sentence are platform texts (`compilador.titulo_dados_org` / `compilador.dados_org_intro`,
+    `fixo_plataforma`, required only when something is fenced; no prompt text lives in code); migration 059 seeds
+    both into every existing content-mode version so a published Julia never turns `texto_ausente`. The opened
+    skill body (`abrir_skill`) is fenced the same way (`[dado: chave]`). Injection eval cases:
+    `content-v3/evals/injecao-*.json`.
 - **Visibility tiers.** Platform admin (`noctus_users.role='admin'`, never an org owner/admin) reads/edits the
   definition, compiled prompts, tool descriptions, decisions; every such read is audited `definicao_lida`.
   Org admin: own specs + readiness booleans only (no hashes, versions or text; the instance's `versoes` is
@@ -419,6 +465,13 @@ The labels and descriptions for each enum value come from DB rows. The enums the
   - with `politica=bloquear`, the reply is suppressed, **one** corrective re-run happens with the DB correction text as a visible system message (stored in the thread as role `evento`), and if it still violates → silence + handoff + an owner alert
 
   Default: `registrar` for every rule in v1; owner flips per rule.
+
+  **Go-live hardening (migration 063; `projects/julia-v2/GUARDRAILS.md` B12).**
+  - Pattern rules (`padroes_proibidos`, `alegacao_identidade`) run a code-side floor merged under the stored patterns; a missing row still has it; readiness `regras_seguranca_sem_parametros` blocks publish while an instance has no row.
+  - New blocking detector `valor_sem_ferramenta` (an R$ / % no tool, lead text or earlier reply backs) and rule `opt_out_palavras` (exact `PARAR|SAIR|STOP|CANCELAR|NÃO QUERO MAIS` opts out without the model; text `runtime.confirmacao_opt_out`).
+  - Inbound lead text is normalised at the schema boundary (invisible/tag characters stripped); detectors also read a de-obfuscated skeleton; a reply carrying invisible characters is blocked (`formato_suspeito`).
+  - Allowlists are built from VALIDATED org specs only (report mode never trusts a failing value); `texto_base` / `atendente_nome` are validated like a spec and dropped when invalid.
+  - A turn message may carry `encaminhada: true`: forwarded text is marked for the model and is never evidence for consent / opt-out / data-subject tools.
 - **E4 evals as the publish gate.** `eval_cases` gains:
   - `roteiro JSONB` (multi-turn lead messages + fixture catalogue/estado)
   - `asserts JSONB`, deterministic and code-checked: `ferramentas_incluem`, `ferramentas_proibidas`, `estagio_final`, `criterios_registrados`, `ofertas_por_lote<=n`, `sem_violacoes`
@@ -1013,6 +1066,11 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
 - Delivery: new `julia_envio_gate` flow **`interno`** (staff notice, not a lead send): requires only that the line exists and is a WAHA
   line — NOT gate 1, so an alert still reaches the owner while Julia is being switched off. Sent from the org's
   Julia line through `send_paragraphs`. Keeper `test_julia_envio_gate_keeper` stays green.
+- **One line, staff routing (owner 2026-11-04; SW CONTRACT julia-line §B).** The "One Chat" operator bot is retired: Julia's number carries leads and staff notices only, and **SW** (not agents) routes by sender before any agent call.
+  - Staff = active `julia_staff` rows ∪ phones of active members of the line-owning org (core `noctus_users.telefone`). A staff or member message is stored (chat `categoria='equipe'`, message `origem='interno'`), the admins get an in-app notice, and it **never reaches agents** — no turn, no thread append, no participant.
+  - `authorized_numbers` plays no part: Julia is switched on without it. A staff chat is never eligible for Julia and a `fromMe` message in it is never a takeover.
+  - SW-sent staff notices (reports, alerts) are written with `origem='interno'` keyed by `provider_message_id`, so WAHA's `fromMe` echo is a duplicate and is never mistaken for a human taking over (durable; no Redis key).
+  - What agents sees on the channel is unchanged: lead turns (`POST /api/channels/leads/...`) and the human-takeover append/pause for a **lead** chat only.
 - Settings API: `GET|PUT /api/julia/relatorio-destino` — `GET` → `{modo, usuario_id, usuario_nome, telefone_resolvido|null}`;
   `PUT {modo: 'usuario'|'responsavel', usuario_id?}` (org admin, strict 401/403).
 - Webhook HMAC (security L2): in prod `WAHA_WEBHOOK_HMAC_SECRET` is unset and the shared WAHA does not sign, so SW enforces only when the
@@ -1042,7 +1100,7 @@ org's "fase de testes" switch is on** says she is in a testing phase; then she o
   Same output `_item` shape and privacy allow-list; `exibir_no_site`-equivalent filter; `similar_a`,
   `excluir_codigos`, widening (`relaxado`) and `esgotado` semantics unchanged. Vista error ⇒ tool error
   `catalogo_indisponivel` (no silent fallback to the mirror).
-- Vista key is env-level today ⇒ `NOC-REMEDIATE[vista-key-per-org]` at the adapter construction.
+- Vista credentials are **per org, in the encrypted `CredentialStore`** (provider `vista`, bundle `{base_url, api_key}`; owner 2026-11-03: keys live in the DB, not `.env`), set by an org admin via `PUT /api/integracoes/vista` (Settings › Chaves API › Vista CRM); no `.env` fallback — an org without a record gets `catalogo_indisponivel`. Resolves `NOC-REMEDIATE[vista-key-per-org]`.
 - Links unchanged: the org's `link_imovel` template (`{site}/imovel/{codigo}`).
 - Docs: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` gains the Julia field map (Vista field → `_item` key) and the
   filter map (tool arg → Vista `filter`).

@@ -91,7 +91,7 @@ class TestToggleAgent:
         _seed_member(agents_client, role="member")
         resp = agents_client.post("/api/agents/bia/toggle", json={"ativo": True})
         assert resp.status_code == 403
-        assert resp.json()["code"] == "role_missing"
+        assert resp.json()["code"] == "platform_admin_required"
 
     def test_admin_can_toggle_bia(self, agents_client):
         _seed_member(agents_client, role="admin")

@@ -36,7 +36,7 @@ export interface ConfigProtecao {
   padroes: Record<string, unknown>;
   prompt_documento_padrao: string;
 }
-export type ConfigEntrada = Partial<Omit<ConfigProtecao, "padrao" | "faixas" | "padroes" | "prompt_documento_padrao">>;
+export type ConfigEntrada = Partial<Omit<ConfigProtecao, "padrao" | "faixas" | "padroes" | "prompt_documento_padrao" | "prompt_documento_lead">>;
 
 export interface Bloqueio {
   id: string;

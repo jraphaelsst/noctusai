@@ -30,8 +30,8 @@ Failure semantics differ ON PURPOSE between the two:
 
 Reuses, never reimplements: the seed email integration
 (`noctusai_lib.integrations.email.send_to_one` — Resend/SMTP, 3-tier
-credential chain, dry-run when unconfigured) and social-wiring's existing
-WAHA sender (`noctusai_lib.integrations.whatsapp.get_whatsapp_client` +
+credential chain, dry-run when unconfigured) and social-wiring's
+WAHA sender, always on the org's own line (`app.services.julia_linha.linha_da_org`; `get_whatsapp_client` +
 `chat_id_for_phone` — the SAME factory `app.services.notification_service`
 and `app.services.whatsapp_outbound` already use)."""
 from __future__ import annotations
@@ -167,18 +167,15 @@ class MultiChannelBatchReadyNotifier:
         core_client: Callable[[], Any],
         repo: PhotoEditingRepository,
         preferences: NotificationPreferencesRepository,
-        waha_base_url: str = "",
-        waha_api_key: str = "",
-        waha_session: str = "default",
+        line_resolver: Optional[Callable[[str], Any]] = None,
         whatsapp_client_factory: Optional[Callable[..., Any]] = None,
         send_email: Optional[EmailSenderFn] = None,
     ) -> None:
         self._core_client = core_client
         self._repo = repo
         self._preferences = preferences
-        self._waha_base_url = waha_base_url
-        self._waha_api_key = waha_api_key
-        self._waha_session = waha_session
+        # The org's WhatsApp line (`julia_linha.linha_da_org` by default) -- the only WAHA credential source.
+        self._line_resolver = line_resolver
         # DI seam for WAHA — resolved lazily (not captured eagerly) so a
         # test's explicit factory or the module-level `get_whatsapp_client`
         # patch both stay live, same rationale as
@@ -213,11 +210,15 @@ class MultiChannelBatchReadyNotifier:
 
         subject, html, text = _email_body(notice, title, body)
         whatsapp_text = f"{title}\n\n{body}"
-        whatsapp_client = (
-            self._build_whatsapp_client()
-            if any(r.whatsapp_number for r in recipients)
-            else None
-        )
+        whatsapp_client = None
+        if any(r.whatsapp_number for r in recipients):
+            try:
+                whatsapp_client = await asyncio.to_thread(self._build_whatsapp_client, notice.org_id)
+            except Exception as exc:  # noqa: BLE001 -- SemLinha / LinhaAmbigua: named, never silent; email + in-app go on
+                logger.warning(
+                    "edicao_fotos: lote %s -- WhatsApp não enviado para a org %s (%s)",
+                    notice.lote_id, notice.org_id, getattr(exc, "motivo", type(exc).__name__),
+                )
         tasks: list[Awaitable[bool]] = []
         for recipient in recipients:
             if recipient.email:
@@ -291,13 +292,14 @@ class MultiChannelBatchReadyNotifier:
             logger.exception("edicao_fotos: falha ao enviar email de lote pronto para %s", to)
             return False
 
-    def _build_whatsapp_client(self) -> Any:
-        factory = self._whatsapp_client_factory or get_whatsapp_client
-        return factory(
-            base_url=self._waha_base_url,
-            api_key=self._waha_api_key,
-            session=self._waha_session,
-        )
+    def _build_whatsapp_client(self, org_id: str) -> Any:
+        from app.services.julia_linha import linha_da_org  # noqa: PLC0415
+
+        if self._line_resolver is not None:
+            line = self._line_resolver(org_id)
+        else:
+            line = linha_da_org(org_id)
+        return line.waha_client(self._whatsapp_client_factory or get_whatsapp_client)
 
     async def _send_whatsapp_logged(self, client: Any, phone: str, text: str) -> bool:
         try:

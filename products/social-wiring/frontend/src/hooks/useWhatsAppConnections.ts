@@ -4,9 +4,7 @@
  * Wraps the product `/api/whatsapp/connections` router (per-user "lines"):
  * list/create/update/delete + per-line live ops (status / QR / start /
  * restart / logout / webhook). One line = one WAHA server URL + session +
- * API key; the API key is write-only on every path EXCEPT the explicit,
- * owner-scoped reveal (`useRevealApiKey` → GET /{id}/api-key), used only by the
- * eye toggle in the connection modal.
+ * API key; the API key is server-side only (never typed in, never returned).
  *
  * Built on @tanstack/react-query (v5) directly — same engine the seed
  * single-session hooks use, here for the multi-line surface. queryFns never
@@ -82,13 +80,12 @@ export interface WhatsAppConnectionQr {
 }
 
 /**
- * Create payload — backend derives session_name, base_url, and webhook_url.
- * Only label + api_key are user-supplied. `client_id` is optional; when
+ * Create payload — backend derives session_name, base_url, webhook_url AND the WAHA key (server-side; never typed here).
+ * Only the label is user-supplied. `marca_id` is optional; when
  * supplied the new connection is immediately owned by that marca.
  */
 export interface CreateConnectionBody {
   label: string;
-  api_key: string;
   /** Assign to a marca on creation. */
   marca_id?: string | null;
 }
@@ -96,14 +93,12 @@ export interface CreateConnectionBody {
 /**
  * Update payload — user-editable fields.
  * - label: human-readable name
- * - api_key: write-only rotation (omit to leave unchanged)
  * - authorized_numbers: E.164 allowlist — [] means nobody (operator-only bot)
  * - bound_chats: listened chat list — [] means "all chats"
  * base_url, session_name, and webhook_url are backend-derived; not sent.
  */
 export interface UpdateConnectionBody {
   label?: string;
-  api_key?: string;
   authorized_numbers?: string[];
   bound_chats?: { chat_id: string; label: string }[];
 }
@@ -114,12 +109,6 @@ export interface WebhookResult {
   url: string;
   events: string[];
   status: string | null;
-}
-
-/** Decrypted API key for one line — returned ONLY by the reveal endpoint. */
-export interface ApiKeyReveal {
-  connection_id: string;
-  api_key: string;
 }
 
 const BASE = "/api/whatsapp/connections";
@@ -162,12 +151,6 @@ export function useWhatsAppConnectionMutations() {
   });
 
   return { create, update, remove };
-}
-
-export function useRevealApiKey() {
-  return useMutation<ApiKeyReveal, unknown, string>({ // noc-allow: invalidate-only — reveals the key on click (a read of a secret): writes nothing and must never be cached
-    mutationFn: (id) => api.get<ApiKeyReveal>(`${BASE}/${id}/api-key`),
-  });
 }
 
 // ─── Per-line live state ─────────────────────────────────────────────────────

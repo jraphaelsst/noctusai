@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 
 import { ApiError } from "@noctusai/lib";
-import { QueryErrorState, RetryableError } from "@noctusai/lib/components";
+import { QueryErrorState, RetryableError, SourceBadge } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import { ImovelContratoContainer } from "@/components/ImovelContratoContainer";
-import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
 import ImovelAreasSection from "@/components/imovel/ImovelAreasSection";
 import ImovelAvaliacaoSection from "@/components/imovel/ImovelAvaliacaoSection";
 import ImovelCartorioCard from "@/components/imovel/ImovelCartorioCard";
@@ -54,6 +53,9 @@ import ImovelCondicoesComerciaisSection from "@/components/imovel/ImovelCondicoe
 import ImovelConstrucaoSection from "@/components/imovel/ImovelConstrucaoSection";
 import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
 import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
+import { DivergenciaCampoBadge, ImovelDivergenciasVista } from "@/components/imovel/ImovelDivergenciasVista";
+import { ImovelNotasCard } from "@/components/imovel/ImovelNotasCard";
+import { VistaSyncProvider } from "@/components/imovel/VistaSyncContext";
 import { ImovelInteressadosCard } from "@/components/imovel/ImovelInteressadosCard";
 import { ImovelProprietariosCard } from "@/components/imovel/ImovelProprietariosCard";
 import { ImovelSimilaresCard } from "@/components/imovel/ImovelSimilaresCard";
@@ -180,6 +182,7 @@ export default function ImovelDetalhes() {
     solicitacao.isPending || solicitacao.isFetching;
 
   return (
+    <VistaSyncProvider value={imovel.sincronizado_em ?? null}>
     <div className="space-y-6 p-6">
       <Button asChild variant="ghost" size="sm" className="-ml-2">
         <Link to="/imoveis">
@@ -225,7 +228,9 @@ export default function ImovelDetalhes() {
                 Editar
               </Button>
             ) : (
-              <EditPlaceholderButton label="Editar cabeçalho" />
+              // Vista has no write route on this key (CONTRACT § 4): the header is
+              // a mirror, so say so instead of offering an editor that opens nothing.
+              <SourceBadge source="Vista" syncedAt={imovel.sincronizado_em} />
             )}
           </div>
           <h1 className="max-w-3xl text-2xl font-semibold tracking-tight">
@@ -293,6 +298,9 @@ export default function ImovelDetalhes() {
         </div>
       </div>
 
+      {/* Transitional + removable: Vista-vs-ours divergences a human decides. */}
+      {codigo && <ImovelDivergenciasVista codigo={codigo} />}
+
       {codigo && temDuplicatas && (
         <ImovelDuplicatasSection codigo={codigo} temPendentes={temDuplicatas} />
       )}
@@ -357,6 +365,15 @@ export default function ImovelDetalhes() {
             saving={dadosMutation.isPending}
             error={dadosMutation.error?.message ?? null}
             onSave={(patch) => dadosMutation.mutate(patch)}
+            mirror={{ area_terreno: imovel.area_terreno, area_construida: imovel.area_construida }}
+            rowBadge={(campo) =>
+              codigo ? (
+                <DivergenciaCampoBadge
+                  codigo={codigo}
+                  campos={[campo, campo.replace(/_m2$/, "")]}
+                />
+              ) : null
+            }
           />
 
           {/* § 5.7 Condições comerciais */}
@@ -543,6 +560,9 @@ export default function ImovelDetalhes() {
           {codigo && <ImovelInteressadosCard codigo={codigo} />}
           {codigo && <ImovelSimilaresCard codigo={codigo} />}
 
+          {/* Our own notes — owned, full CRUD (migration 315). */}
+          {codigo && <ImovelNotasCard codigo={codigo} />}
+
           {/* § 5.13 Metadados */}
           <ImovelMetadadosSection
             dataCadastro={imovel.data_cadastro}
@@ -561,5 +581,6 @@ export default function ImovelDetalhes() {
                   />
       )}
     </div>
+    </VistaSyncProvider>
   );
 }

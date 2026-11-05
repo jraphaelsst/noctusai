@@ -604,6 +604,8 @@ class TestAgentsStudioProbes:
         # uq_agents_conversations_channel_ref: dropped by migration 035, probe retired (successor uq_agents_threads_channel)
         "uq_agents_channel_inbound_msg",
         "agent_audit_log_identifica_agente",
+        # Julia-line E1 (migration 059): an org spec's tipo must be a typed format.
+        "agent_version_specs_tipo_check",
     }
     _MIGRATIONS = {
         ("012_agent_studio_definitions.sql",),
@@ -614,6 +616,7 @@ class TestAgentsStudioProbes:
         ("012_agent_studio_definitions.sql", "024_llm_provider_runtime.sql"),
         ("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
         ("012_agent_studio_definitions.sql", "048_agent_lifecycle_delete.sql"),
+        ("012_agent_studio_definitions.sql", "031_julia_v2_conteudo.sql", "059_spec_tipos_tipados.sql"),
     }
 
     @staticmethod
@@ -624,7 +627,8 @@ class TestAgentsStudioProbes:
             if p.product == "agents" and not p.id.startswith("agents_editorial.")
             and not p.id.endswith(".anon_holds_no_sequence_privilege")
             # browser-read lockdown (036) = catalog state assertions, no fixture; own file asserts them
-            and not p.id.startswith(("agents.content_tables.", "agents.status_pagina."))
+            and not p.id.startswith(("agents.content_tables.", "agents.status_pagina.", "agents.grants."))
+            # Julia-line 060 platform grant ledger: one-live unique, own probe (service-role table, no agent fixture)
             # Julia v2 031-040: own group, proven on the real chain in test_agents_julia_v2_probes_on_replay.py
             and p not in _AGENTS_JULIA_V2_PROBES
             and p not in _AGENTS_GERACAO_PROBES

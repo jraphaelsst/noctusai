@@ -38,6 +38,7 @@ import hmac
 import logging
 import re
 import unicodedata
+from decimal import Decimal, InvalidOperation
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -46,7 +47,10 @@ from uuid import UUID
 from noctusai_lib.primitives.identificador import cnpj_dv_valido, cpf_dv_valido
 
 from app.qualificacao.matcher import normalizar
+from app.studio.normalizador_texto import esqueleto, tem_caractere_oculto
 from app.stores.conformidade import (
+    PALAVRAS_PARAR_PISO,
+    PISO_DE_PADROES,
     POLITICA_PADRAO,
     ConformidadeStore,
     Impressao,
@@ -74,7 +78,10 @@ __all__ = [
     "link_nao_permitido",
     "nivel_seguranca",
     "padroes_proibidos",
+    "padroes_efetivos",
+    "palavra_de_parar",
     "pii_na_resposta",
+    "valor_sem_ferramenta",
     "sinal_alegacao",
     "casar_padroes",
     "detectar_vazamento",
@@ -420,6 +427,8 @@ def formato_suspeito(resposta: str, max_chars: int = 1200, max_bullets: int = 6)
     if not resposta or not resposta.strip():
         return None
     achado: dict[str, Any] = {}
+    if tem_caractere_oculto(resposta):  # zero-width / bidi / tag characters: nothing a person reads, a channel for data
+        achado["caractere_oculto"] = True
     if _B64.search(resposta) or _HEX.search(resposta):
         achado["codificado"] = True
     if "```" in resposta or "~~~" in resposta:
@@ -441,9 +450,29 @@ def formato_suspeito(resposta: str, max_chars: int = 1200, max_bullets: int = 6)
     return achado or None
 
 
+def _alvos(textos: Iterable[str]) -> list[str]:
+    """Each text as written (NFKC) AND its de-obfuscated skeleton (zero-width, confusables, spaced letters, accents):
+    a pattern meets both, so an obfuscated phrasing is no way around it."""
+    out: list[str] = []
+    for t in textos:
+        plano = unicodedata.normalize("NFKC", t)
+        out.append(plano)
+        sk = esqueleto(t)
+        if sk != plano.casefold():
+            out.append(sk)
+    return out
+
+
+def padroes_efetivos(regra: str, parametros: Mapping[str, Any] | None) -> list[str]:
+    """The patterns a pattern rule runs: the code-side FLOOR first, then the stored ones (the DB adds, never removes)."""
+    piso = PISO_DE_PADROES.get(regra, ())
+    guardados = [p for p in ((parametros or {}).get("padroes") or []) if isinstance(p, str) and p not in piso]
+    return [*piso, *guardados]
+
+
 def contar_padroes(textos: Iterable[str], padroes: Iterable[str]) -> int:
     """How many DISTINCT regexes of ``padroes`` match any of ``textos`` (broken patterns logged + skipped)."""
-    alvos = [unicodedata.normalize("NFKC", t) for t in textos]
+    alvos = _alvos(textos)
     n = 0
     for p in padroes:
         try:
@@ -461,6 +490,102 @@ def padroes_proibidos(resposta: str, padroes: Iterable[str]) -> dict[str, Any] |
     verification codes, payment requests, protected traits) found in the reply. Counts only."""
     n = contar_padroes([resposta], padroes)
     return {"padroes": n} if n else None
+
+
+# ── an amount the tools never returned (P1-2) ──────────────────────────────
+
+_ESCALAS = {"mil": Decimal(1000), "k": Decimal(1000), "mi": Decimal(10) ** 6, "milhao": Decimal(10) ** 6,
+            "milhoes": Decimal(10) ** 6, "bi": Decimal(10) ** 9, "bilhao": Decimal(10) ** 9, "bilhoes": Decimal(10) ** 9}
+_NUMERO = r"\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?"
+_ESCALA_RX = r"(?:\s*(mil(?:h(?:ao|oes|\u00e3o|\u00f5es))?|mi|bi(?:lh(?:ao|oes))?|k)\b)?"  # noc-allow: prompt-text-in-code -- a regex of scale words, detection structure never read by a model
+_DINHEIRO = re.compile(rf"(?:r\$|reais?\s*:?)\s*({_NUMERO}){_ESCALA_RX}|({_NUMERO}){_ESCALA_RX}\s*(?:reais|real)\b", re.IGNORECASE)
+_PORCENTO = re.compile(rf"({_NUMERO})\s*(?:%|por\s*cento|percent)", re.IGNORECASE)
+_QUALQUER_NUMERO = re.compile(rf"(?<![\w.,])({_NUMERO}){_ESCALA_RX}", re.IGNORECASE)
+_CENTAVOS = Decimal("0.01")
+
+
+def _candidatos(tok: str) -> set[Decimal]:
+    """The values a numeric token can mean (pt-BR ``1.234,50`` / ``450.000``, JSON ``450000.5``): ambiguity yields
+    every reading, so a legitimately backed amount is never refused for its spelling."""
+    out: set[Decimal] = set()
+    try:
+        if "," in tok and "." in tok:
+            out.add(Decimal(tok.replace(".", "").replace(",", ".")))
+        elif "," in tok:
+            out.add(Decimal(tok.replace(",", ".")))
+            if re.fullmatch(r"\d{1,3}(,\d{3})+", tok):
+                out.add(Decimal(tok.replace(",", "")))
+        elif "." in tok:
+            out.add(Decimal(tok))
+            if re.fullmatch(r"\d{1,3}(\.\d{3})+", tok):
+                out.add(Decimal(tok.replace(".", "")))
+        else:
+            out.add(Decimal(tok))
+    except InvalidOperation:
+        return set()
+    return {v.quantize(_CENTAVOS) for v in out}
+
+
+def _escalado(base: set[Decimal], escala: str | None) -> set[Decimal]:
+    if not escala:
+        return base
+    fator = _ESCALAS.get(normalizar(escala).replace(" ", ""), Decimal(1))
+    return {(v * fator).quantize(_CENTAVOS) for v in base}
+
+
+def _valores_do_texto(texto: str) -> set[Decimal]:
+    out: set[Decimal] = set()
+    for m in _QUALQUER_NUMERO.finditer(texto):
+        base = _candidatos(m.group(1))
+        out |= base | _escalado(base, m.group(2))
+    return out
+
+
+def valor_sem_ferramenta(resposta: str, textos_com_valor: Iterable[str]) -> dict[str, Any] | None:
+    """Every ``R$`` amount and every percentage of the reply must be a number that appears in ``textos_com_valor`` (this
+    thread's tool results, the lead's own words, the agent's earlier replies, the dossier). A price or a discount
+    nobody returned is invented. ``detalhe`` holds the count of unbacked figures, never the figures."""
+    if not resposta or not resposta.strip():
+        return None
+    permitidos: set[Decimal] = set()
+    for t in textos_com_valor:
+        if isinstance(t, str) and t:
+            permitidos |= _valores_do_texto(unicodedata.normalize("NFKC", t))
+    sem: set[tuple[str, Decimal]] = set()
+    for alvo in _alvos([resposta]):
+        for m in _DINHEIRO.finditer(alvo):
+            tok, escala = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            cand = _escalado(_candidatos(tok), escala)
+            if cand and not (cand & permitidos):
+                sem.add(("valor", min(cand)))
+        for m in _PORCENTO.finditer(alvo):
+            cand = _candidatos(m.group(1))
+            if cand and not (cand & permitidos):
+                sem.add(("percentual", min(cand)))
+    return {"valores": len(sem)} if sem else None
+
+
+# ── deterministic STOP (P1-3) ───────────────────────────────────────────────
+
+
+def _forma_exata(texto: str) -> str:
+    """A message reduced to its words: skeleton, no punctuation, single spaces (``"  Parar!! "`` -> ``"parar"``)."""
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", esqueleto(texto))).strip()
+
+
+def palavra_de_parar(mensagens_lead: Iterable[str], regra: RegraConfig | None) -> str | None:
+    """The stop word when a message of the lead's batch IS (exactly, normalised) one of ``PARAR|SAIR|STOP|CANCELAR|
+    NÃO QUERO MAIS`` or a word of the rule's ``parametros.palavras`` -- a sentence merely CONTAINING it is not a match
+    (the model weighs those). ``None`` when none, or when the rule is switched off."""
+    if regra is not None and not regra.ativo:
+        return None
+    extras = [p for p in ((regra.parametros if regra else None) or {}).get("palavras") or [] if isinstance(p, str)]
+    palavras = {_forma_exata(p) for p in (*PALAVRAS_PARAR_PISO, *extras)} - {""}
+    for m in mensagens_lead:
+        forma = _forma_exata(m)
+        if forma in palavras:
+            return forma
+    return None
 
 
 # ── input side + deterministic escalation (patterns are data, with a code-side floor for extraction) ──
@@ -500,8 +625,7 @@ def casar_padroes(textos: Iterable[str], padroes: Iterable[str]) -> int:
             logger.error("agents.conformidade.padrao_invalido")
     n = 0
     for t in textos:
-        alvo = unicodedata.normalize("NFKC", t)
-        if any(rx.search(alvo) for rx in rxs):
+        if any(rx.search(alvo) for alvo in _alvos([t]) for rx in rxs):
             n += 1
     return n
 
@@ -516,11 +640,11 @@ def sinal_extracao(mensagens_lead: Sequence[str], regra: RegraConfig | None) -> 
 
 def sinal_alegacao(mensagens_lead: Sequence[str], regra: RegraConfig | None) -> dict[str, Any] | None:
     """INPUT side, signal only: the lead CLAIMS to be someone (owner, broker, support, police, lawyer). The
-    patterns are rule data (``parametros.padroes``) -- no code floor, a rule with none never fires. A claim is
+    patterns are the code-side floor (``stores.conformidade.PADROES_ALEGACAO_PISO``) plus the rule's ``parametros.padroes``. A claim is
     only ever counted (``escala_seguranca``); nothing in code branches on it to grant anything."""
-    if regra is None or not regra.ativo:
+    if regra is not None and not regra.ativo:
         return None
-    n = casar_padroes(mensagens_lead, list((regra.parametros or {}).get("padroes") or []))
+    n = casar_padroes(mensagens_lead, padroes_efetivos("alegacao_identidade", regra.parametros if regra else None))
     return {"mensagens": n} if n else None
 
 
@@ -576,6 +700,16 @@ class EntradaConformidade:
     dominios_permitidos: Iterable[str] = ()
     contatos_permitidos: Iterable[str] = ()
     cnpjs_proprios: Iterable[str] = ()
+    #: The texts whose numbers a reply may repeat (``valor_sem_ferramenta``): this thread's tool results, the lead's own
+    #: words, the agent's earlier replies, the dossier values.
+    textos_com_valor: Iterable[str] = ()
+
+
+def _pior(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The union of two detector findings (the as-written reply and its de-obfuscated copy): per key, the larger count."""
+    if not a or not b:
+        return a or b
+    return {k: max(a.get(k, 0), b.get(k, 0)) for k in {*a, *b}}
 
 
 def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
@@ -607,11 +741,13 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
             e.resposta, e.criterios_preenchidos, e.registrados_no_turno)))
     if e.resposta.strip():
         if ativa("link_nao_permitido") is not None:
-            achados.append(("link_nao_permitido", link_nao_permitido(
-                e.resposta, e.links_permitidos, e.dominios_permitidos)))
+            achados.append(("link_nao_permitido", _pior(
+                link_nao_permitido(e.resposta, e.links_permitidos, e.dominios_permitidos),
+                link_nao_permitido(esqueleto(e.resposta), e.links_permitidos, e.dominios_permitidos))))
         if ativa("contato_nao_permitido") is not None:
-            achados.append(("contato_nao_permitido", contato_nao_permitido(
-                e.resposta, e.contatos_permitidos, e.mensagens_lead)))
+            achados.append(("contato_nao_permitido", _pior(
+                contato_nao_permitido(e.resposta, e.contatos_permitidos, e.mensagens_lead),
+                contato_nao_permitido(esqueleto(e.resposta), e.contatos_permitidos, e.mensagens_lead))))
         if ativa("pii_na_resposta") is not None:
             achados.append(("pii_na_resposta", pii_na_resposta(e.resposta, e.cnpjs_proprios)))
         if (r := ativa("formato_suspeito")) is not None:
@@ -620,7 +756,9 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
                 e.resposta, _inteiro(p.get("max_chars"), 1200), _inteiro(p.get("max_bullets"), 6))))
         if (r := ativa("padroes_proibidos")) is not None:
             achados.append(("padroes_proibidos", padroes_proibidos(
-                e.resposta, (r.parametros or {}).get("padroes") or [])))
+                e.resposta, padroes_efetivos("padroes_proibidos", r.parametros))))
+        if ativa("valor_sem_ferramenta") is not None:
+            achados.append(("valor_sem_ferramenta", valor_sem_ferramenta(e.resposta, e.textos_com_valor)))
     return [
         Violacao(nome, e.regras[nome].politica, detalhe)
         for nome, detalhe in achados if detalhe is not None

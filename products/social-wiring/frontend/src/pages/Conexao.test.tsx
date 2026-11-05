@@ -2,10 +2,10 @@
  * Conexao.tsx — unit tests for the WAHA connections UI.
  *
  * Covers:
- *   1. Create form has exactly 2 inputs (Nome + API key); no session/server/webhook.
- *   2. Create submit button disabled when either field is empty.
- *   3. Create submit button enabled when both fields filled.
- *   4. Create mutation payload is { label, api_key } — no extra fields.
+ *   1. Create form has exactly 1 input (Nome): the WAHA key is server-side, no session/server/webhook.
+ *   2. Create submit button disabled when the name is empty.
+ *   3. Create submit button enabled when the name is filled.
+ *   4. Create mutation payload is { label } — no key, no extra fields.
  *   5. After successful create the create dialog closes and the detail/QR dialog
  *      opens with autoStart=true (detail dialog is rendered).
  *   6. Empty-state card renders when no connections.
@@ -35,7 +35,6 @@ const mockUseWhatsAppConnectionStatus = vi.fn();
 const mockUseWhatsAppConnectionQr = vi.fn();
 const mockUseWhatsAppConnectionActions = vi.fn();
 const mockRecoverMutate = vi.fn();
-const mockUseRevealApiKey = vi.fn();
 const mockUseConnectionChats = vi.fn();
 const mockUseToggleAutoReply = vi.fn();
 
@@ -46,7 +45,6 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnectionQr: mockUseWhatsAppConnectionQr,
   useRecoverConnection: () => ({ mutate: mockRecoverMutate, isPending: false }),
   useWhatsAppConnectionActions: mockUseWhatsAppConnectionActions,
-  useRevealApiKey: mockUseRevealApiKey,
   useConnectionChats: mockUseConnectionChats,
   useToggleAutoReply: mockUseToggleAutoReply,
 }));
@@ -144,10 +142,6 @@ beforeEach(() => {
   mockUseWhatsAppConnectionQr.mockReturnValue({ data: null });
   mockUseWhatsAppConnectionActions.mockReturnValue(makeDefaultActions());
   mockRecoverMutate.mockClear();
-  mockUseRevealApiKey.mockReturnValue({
-    mutateAsync: vi.fn().mockResolvedValue({ connection_id: "c", api_key: "revealed-key" }),
-    isPending: false,
-  });
   mockUseConnectionChats.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUseToggleAutoReply.mockReturnValue({ mutate: vi.fn(), isPending: false });
 });
@@ -181,18 +175,18 @@ describe("WhatsAppConnections — empty + loading states", () => {
   });
 });
 
-describe("CreateConnectionDialog — trimmed form (2 fields)", () => {
+describe("CreateConnectionDialog — trimmed form (name only)", () => {
   it("opens create dialog on Nova conexão click", async () => {
     const { getByTestId, fireEvent } = await renderWhatsAppConnections();
     fireEvent.click(getByTestId("btn-nova-conexao"));
     expect(getByTestId("dialog")).toBeTruthy();
   });
 
-  it("create dialog renders exactly the label and api_key inputs", async () => {
-    const { getByTestId, fireEvent, queryByPlaceholderText } = await renderWhatsAppConnections();
+  it("create dialog renders only the label input — there is no API key field", async () => {
+    const { getByTestId, queryByTestId, fireEvent, queryByPlaceholderText } = await renderWhatsAppConnections();
     fireEvent.click(getByTestId("btn-nova-conexao"));
     expect(getByTestId("create-conn-label")).toBeTruthy();
-    expect(getByTestId("create-conn-apikey")).toBeTruthy();
+    expect(queryByTestId("create-conn-apikey")).toBeNull();
     // session / server / webhook inputs must NOT exist
     expect(queryByPlaceholderText(/default/i)).toBeNull();
     expect(queryByPlaceholderText(/servidor waha/i)).toBeNull();
@@ -206,29 +200,17 @@ describe("CreateConnectionDialog — trimmed form (2 fields)", () => {
     expect(submitBtn.disabled).toBe(true);
   });
 
-  it("submit button is disabled when api_key is empty", async () => {
-    const { getByTestId, fireEvent } = await renderWhatsAppConnections();
-    fireEvent.click(getByTestId("btn-nova-conexao"));
-    const labelInput = getByTestId("create-conn-label") as HTMLInputElement;
-    fireEvent.change(labelInput, { target: { value: "Test" } });
-    const submitBtn = getByTestId("create-conn-submit") as HTMLButtonElement;
-    expect(submitBtn.disabled).toBe(true);
-  });
-
-  it("submit button is enabled when both fields are filled", async () => {
+  it("submit button is enabled when the name is filled", async () => {
     const { getByTestId, fireEvent } = await renderWhatsAppConnections();
     fireEvent.click(getByTestId("btn-nova-conexao"));
     fireEvent.change(getByTestId("create-conn-label") as HTMLInputElement, {
       target: { value: "Atendimento SP" },
     });
-    fireEvent.change(getByTestId("create-conn-apikey") as HTMLInputElement, {
-      target: { value: "my-api-key-123" },
-    });
     const submitBtn = getByTestId("create-conn-submit") as HTMLButtonElement;
     expect(submitBtn.disabled).toBe(false);
   });
 
-  it("create mutation receives only { label, api_key } — no extra fields", async () => {
+  it("create mutation receives only { label } — no key, no extra fields", async () => {
     const createMutate = vi.fn();
     mockUseWhatsAppConnectionMutations.mockReturnValue({
       ...makeDefaultMutations(),
@@ -240,14 +222,12 @@ describe("CreateConnectionDialog — trimmed form (2 fields)", () => {
     fireEvent.change(getByTestId("create-conn-label") as HTMLInputElement, {
       target: { value: "Atendimento SP" },
     });
-    fireEvent.change(getByTestId("create-conn-apikey") as HTMLInputElement, {
-      target: { value: "secret-key" },
-    });
     fireEvent.click(getByTestId("create-conn-submit"));
 
     expect(createMutate).toHaveBeenCalledOnce();
     const [body] = createMutate.mock.calls[0];
-    expect(body).toEqual({ label: "Atendimento SP", api_key: "secret-key" });
+    expect(body).toEqual({ label: "Atendimento SP" });
+    expect(body).not.toHaveProperty("api_key");
     // Must NOT contain session_name, base_url, or webhook_url
     expect(body).not.toHaveProperty("session_name");
     expect(body).not.toHaveProperty("base_url");
@@ -274,9 +254,6 @@ describe("Create → QR auto-flow", () => {
     fireEvent.click(getByTestId("btn-nova-conexao"));
     fireEvent.change(getByTestId("create-conn-label") as HTMLInputElement, {
       target: { value: "Atendimento SP" },
-    });
-    fireEvent.change(getByTestId("create-conn-apikey") as HTMLInputElement, {
-      target: { value: "secret-key" },
     });
     fireEvent.click(getByTestId("create-conn-submit"));
 
@@ -325,9 +302,6 @@ describe("Create → QR auto-flow", () => {
     rtl.fireEvent.click(getByTestId("btn-nova-conexao"));
     rtl.fireEvent.change(getByTestId("create-conn-label") as HTMLInputElement, {
       target: { value: "Test" },
-    });
-    rtl.fireEvent.change(getByTestId("create-conn-apikey") as HTMLInputElement, {
-      target: { value: "key" },
     });
     rtl.fireEvent.click(getByTestId("create-conn-submit"));
 
@@ -396,11 +370,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
     expect(getByTestId("paired-success")).toBeTruthy();
   });
 
-  it("API key field: masked by default → eye reveals → pencil enters edit mode", async () => {
-    const revealMutate = vi
-      .fn()
-      .mockResolvedValue({ connection_id: "conn-1", api_key: "revealed-key" });
-    mockUseRevealApiKey.mockReturnValue({ mutateAsync: revealMutate, isPending: false });
+  it("there is no API key field at all: not shown, not editable, not replaceable", async () => {
     const line = makeLine();
     mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
 
@@ -408,21 +378,10 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
     const { getByText, getByTestId, queryByTestId } = await renderWhatsAppConnections();
     rtl.fireEvent.click(getByText("Atendimento SP").closest("button")!);
 
-    // Masked by default; no editable input yet.
-    expect((getByTestId("edit-conn-apikey-display") as HTMLInputElement).value).toBe("••••••••");
-    expect(queryByTestId("edit-conn-apikey")).toBeNull();
-
-    // Eye → reveal the stored key via the owner-scoped endpoint.
-    await rtl.act(async () => {
-      rtl.fireEvent.click(getByTestId("btn-apikey-reveal"));
-    });
-    expect(revealMutate).toHaveBeenCalledWith(line.id);
-    expect((getByTestId("edit-conn-apikey-display") as HTMLInputElement).value).toBe("revealed-key");
-
-    // Pencil → edit (rotate) mode: an editable input replaces the masked display.
-    rtl.fireEvent.click(getByTestId("btn-apikey-edit"));
-    expect(queryByTestId("edit-conn-apikey")).toBeTruthy();
-    expect(queryByTestId("edit-conn-apikey-display")).toBeNull();
+    expect(getByTestId("edit-conn-label")).toBeTruthy();
+    for (const id of ["edit-conn-apikey-display", "edit-conn-apikey", "btn-apikey-reveal", "btn-apikey-edit"]) {
+      expect(queryByTestId(id)).toBeNull();
+    }
   });
 });
 

@@ -801,11 +801,15 @@ export interface DocumentoChecklistItem {
    * read-only). Absent on every other item.
    */
   documentos?: IdentidadeSlot[];
-  /** The identity item only — which of its fields (`nome_oficial`, `rg`,
-   *  `rg_orgao_expedidor`, `cpf`) are still missing, and their labels
-   *  (index-aligned). Empty when satisfied. */
+  /** The identity item only — which of its REQUIRED fields (`nome_oficial`,
+   *  `cpf`) are still missing, and their labels (index-aligned). Empty when
+   *  satisfied. [Owner decision 2026-11-04] RG / órgão are optional and never
+   *  listed here — see `opcionais`. */
   faltando?: string[];
   faltando_rotulos?: string[];
+  /** The identity item only — optional identity columns (`rg`,
+   *  `rg_orgao_expedidor`): shown as "(opcional)", never missing. */
+  opcionais?: string[];
   /** The identity item only — `field -> rule` for a FILLED field that still
    *  does not count (today `rg -> "rg_so_da_cnh"`: an RG read only off a CNH,
    *  unconfirmed). Its entry in `faltando_rotulos` explains what to do. */

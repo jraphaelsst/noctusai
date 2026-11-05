@@ -309,8 +309,8 @@ describe("os dados de identidade aparecem na linha, não só os arquivos", () =>
       },
     });
     expect(getByTestId(`${P}-dados-cpf`).textContent).toBe("CPF: 123.456.789-09");
-    expect(getByTestId(`${P}-dados-rg`).textContent).toBe("RG: 12.345.678-9");
-    expect(getByTestId(`${P}-dados-rg_orgao_expedidor`).textContent).toBe("Órgão expedidor: SSP/SP");
+    expect(getByTestId(`${P}-dados-rg`).textContent).toBe("RG (opcional): 12.345.678-9");
+    expect(getByTestId(`${P}-dados-rg_orgao_expedidor`).textContent).toBe("Órgão expedidor (opcional): SSP/SP");
     // The file column still (truthfully) says no file was uploaded.
     expect(getByTestId(`${P}-rg-valor`).textContent).toBe("—");
   });

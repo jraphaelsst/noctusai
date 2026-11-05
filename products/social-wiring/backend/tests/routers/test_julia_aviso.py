@@ -36,15 +36,19 @@ def _mock(org_role):
     return mock_sb
 
 
-def _client_for(org_role, org_name="Empresa Exemplo"):
+def _client_for(org_role, org_name="Empresa Exemplo", plataforma=None):
+    plataforma = (org_role == "owner") if plataforma is None else plataforma
     mock_sb = _mock(org_role)
     with (
         patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
     ):
-        from app.dependencies import get_scoped_admin_client
+        from app.dependencies import get_platform_admin_check, get_scoped_admin_client
         from app.main import app
+
+        # the notice text is written by NoctusAI only: `admin_client` is a platform admin, `org_admin_client` is the refused one
+        app.dependency_overrides[get_platform_admin_check] = lambda: (lambda uid: plataforma)
 
         bind_consent_module_to_mock(mock_sb)
         mock_sb.set_table_data(
@@ -56,11 +60,17 @@ def _client_for(org_role, org_name="Empresa Exemplo"):
         # the platform default opening message is a DATA row (migration julia_v2_espelhos), not a string in code
         c.sw.set_table_data("julia_textos_padrao", [{"chave": "mensagem_inicial", "conteudo": MENSAGEM_INICIAL_MIGRACAO}])
         yield c
+        app.dependency_overrides.pop(get_platform_admin_check, None)
 
 
 @pytest.fixture
 def admin_client():
     yield from _client_for("owner")
+
+
+@pytest.fixture
+def org_admin_client():
+    yield from _client_for("owner", plataforma=False)
 
 
 @pytest.fixture
@@ -94,6 +104,14 @@ class TestAuth:
 
     def test_member_can_read(self, member_client):
         assert member_client.get(ADMIN, headers=_h()).status_code == 200
+
+    def test_an_org_admin_who_is_not_a_platform_admin_is_403_edicao_restrita(self, org_admin_client):
+        r = org_admin_client.put(ADMIN, json=_body(), headers=_h())
+        assert r.status_code == 403 and "edicao_restrita_plataforma" in r.text
+        assert org_admin_client.get(ADMIN, headers=_h()).status_code == 200
+
+    def test_a_platform_admin_writes(self, admin_client):
+        assert admin_client.put(ADMIN, json=_body(), headers=_h()).status_code == 200
 
     def test_member_cannot_write(self, member_client):
         assert member_client.put(ADMIN, json=_body(), headers=_h()).status_code == 403

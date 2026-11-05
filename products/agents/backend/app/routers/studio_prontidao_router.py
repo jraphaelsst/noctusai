@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.dependencies import get_geracao_store_dep, get_skills_store_dep, require_platform_content_admin
+from app.dependencies import (
+    get_conformidade_store_dep,
+    get_geracao_store_dep,
+    get_skills_store_dep,
+    require_platform_content_admin,
+)
 from app.routers.qualificacao_router import get_padrao_store_dep
 from app.routers.studio_agents_router import (
     audit_definition_read,
@@ -40,6 +45,7 @@ def get_prontidao(
     geracoes=Depends(get_geracao_store_dep),
     evals=Depends(get_eval_store_dep),
     controles=Depends(get_prontidao_controles_dep),
+    conformidade=Depends(get_conformidade_store_dep),
 ) -> ProntidaoOut:
     agent = resolve_agent(store, ctx.org_id, key)
     draft = resolve_draft(store, ctx.org_id, agent)
@@ -47,6 +53,7 @@ def get_prontidao(
     p = avaliar(
         store=store, catalog=catalog, org_id=ctx.org_id, agent=agent, draft=draft, gate=gate, padroes=padroes,
         skills=skills, geracoes=geracoes, evals=evals, controles=controles,
+        conformidade=conformidade,
     )
     return ProntidaoOut(
         agent_key=p.agent_key, version_id=p.version_id, hash=p.hash, pronto_para_publicar=p.pronto_para_publicar,

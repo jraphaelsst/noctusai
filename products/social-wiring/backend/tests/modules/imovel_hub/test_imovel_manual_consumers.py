@@ -260,8 +260,9 @@ class TestIsolamento:
 
         assert report.complete is True and report.upserted == 1
         assert [n for n, _ in rec.rpcs] == ["sweep_imovel_registry"]
-        # the sync only ever addresses the mirror and the registry
-        assert set(rec.tabelas) <= {"imoveis", "imovel_registry"}
+        # the sync only ever addresses the mirror and the registry -- plus the per-org flag row of the TRANSITIONAL Vista
+        # divergence check (`vista_divergencias`, off => it reads nothing else and writes nothing)
+        assert set(rec.tabelas) <= {"imoveis", "imovel_registry", "vista_divergencias_config"}
         # the manual registry row is untouched; captação + deal refs untouched
         registry = {r["codigo_canonical"]: r for r in scoped.table("imovel_registry")._data}
         assert registry["SW-0001"] == next(r for r in antes["imovel_registry"] if r["codigo_canonical"] == "SW-0001")

@@ -25,7 +25,7 @@ export default function ImovelMidiaSection({
   if (!fotoDestaque && !tour360 && !videoDestaque) return null;
 
   return (
-    <SectionCard title="Mídia" editLabel="Editar mídia" contentClassName="flex flex-wrap gap-2">
+    <SectionCard title="Mídia" contentClassName="flex flex-wrap gap-2">
       {fotoDestaque && (
         <Button asChild variant="outline" size="sm">
           <a href={fotoDestaque} target="_blank" rel="noopener noreferrer">

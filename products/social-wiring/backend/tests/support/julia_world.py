@@ -21,6 +21,7 @@ from noctusai_lib.testing import MockSupabaseClient
 from app.clients.agents import FakeAgentsClient
 from app.config import SocialWiringSettings
 from app.services.julia_lead_turn_service import LeadDeps
+from app.services.julia_linha import LinhaDaOrg
 from app.services.message_store import MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord
@@ -230,6 +231,7 @@ class World:
             agents_client_factory=lambda org_id: self.agents,
             waha_factory=lambda **kw: self.waha,
             connection_lookup=self.record,
+            linha_resolver=lambda org_id: LinhaDaOrg(org_id=org_id, connection=self.record(UUID(CONNECTION_ID))),
             chat_store_factory=lambda org_id: WhatsAppChatStore(admin_supabase=self.admin, org_id=org_id),
             message_store_factory=lambda org_id: MessageStore(admin_supabase=self.admin, org_id=org_id),
             redis=self.redis, bus=self.bus, sleep=sleep,

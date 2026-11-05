@@ -52,6 +52,9 @@ import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
 import ImovelDuplicadoBadge from "@/components/imovel/ImovelDuplicadoBadge";
 import ImovelManualBadge from "@/components/imovel/ImovelManualBadge";
 import ImovelManualModal from "@/components/imovel/ImovelManualModal";
+import VistaAtualizacaoLine from "@/components/imovel/VistaAtualizacaoLine";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
+import { isOrgAdmin } from "@noctusai/lib";
 import {
   caracteristicaLabel,
   formatArea,
@@ -84,6 +87,8 @@ export default function Imoveis() {
   const filtros = useImovelFiltros();
   const caracteristicas = useCaracteristicas();
   const sync = useSyncImoveis();
+  const sso = useEffectiveSSOContext();
+  const podeAtualizar = isOrgAdmin(sso);
 
   // First load only — `isPending && !data`, never `isLoading` (TanStack v5's
   // `isLoading` is false mid-refetch, so an isEmpty branch keyed on it renders
@@ -132,26 +137,14 @@ export default function Imoveis() {
 
   async function handleSync() {
     try {
-      const result = await sync.mutateAsync(true);
-      if (result.complete) {
-        toast.success(
-          `${result.upserted} imóveis sincronizados em ${Math.round(result.duration_seconds)}s.`,
-        );
-      } else {
-        // Never report a partial sync as success. The imóveis whose detalhes
-        // failed have no características and will silently miss every amenity
-        // filter — the user needs to know that before trusting the results.
-        toast.warning(
-          `${result.upserted} sincronizados, mas ${result.detalhes_failed_count} sem detalhes` +
-            `${result.page_failures.length ? ` e ${result.page_failures.length} página(s) com falha` : ""}. ` +
-            `Esses imóveis ficam sem características. Tente sincronizar novamente.`,
-          { duration: 10000 },
-        );
-      }
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Falha ao sincronizar com o Vista.",
+      const r = await sync.mutateAsync({ modo: "auto" });
+      toast.info(
+        r.ja_em_andamento
+          ? "Já existe uma atualização em andamento."
+          : "Atualização do Vista iniciada. Pode levar alguns minutos.",
       );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Falha ao iniciar a atualização do Vista.");
     }
   }
 
@@ -173,21 +166,10 @@ export default function Imoveis() {
           <Plus className="mr-2 h-4 w-4" />
           Cadastrar imóvel
         </Button>
-        <Button onClick={handleSync} disabled={sync.isPending} variant="outline">
-          {sync.isPending ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Sincronizando… (pode levar alguns minutos)
-            </>
-          ) : (
-            <>
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Sincronizar
-            </>
-          )}
-        </Button>
         </div>
       </div>
+
+      <VistaAtualizacaoLine podeAtualizar={podeAtualizar} />
 
       {/* Mounted only while open: the modal owns its mutations (a fresh draft
           per open, no query client needed until the user asks for it). */}

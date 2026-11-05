@@ -37,7 +37,6 @@ export function JuliaLigadaBanner({ status }: { status: JuliaStatusAgente | null
 function Linha({ linha, isAdmin }: { linha: LinhaRoteamento; isAdmin: boolean }) {
   const atualizar = useAtualizarLinha();
   const [erro, setErro] = useState<string | null>(null);
-  const bloqueadoLigar = linha.numeros_autorizados === 0 && !linha.alimenta;
   const id = `julia-ligada-${linha.connection_id}`;
 
   function alternar(v: boolean) {
@@ -65,16 +64,11 @@ function Linha({ linha, isAdmin }: { linha: LinhaRoteamento; isAdmin: boolean })
           <Switch
             id={id}
             checked={linha.alimenta}
-            disabled={!isAdmin || atualizar.isPending || bloqueadoLigar}
+            disabled={!isAdmin || atualizar.isPending}
             onCheckedChange={alternar}
           />
         </div>
       </div>
-      {bloqueadoLigar && (
-        <p className="text-xs text-warning-foreground" data-testid="motivo-desabilitado">
-          Cadastre ao menos um número autorizado nesta linha (Configurações) para poder ligar a Julia.
-        </p>
-      )}
       {erro && (
         <p role="alert" className="text-sm text-destructive" data-testid="linha-erro">
           {erro}
@@ -105,7 +99,7 @@ export function JuliaLigadaCard({
         <JuliaLigadaBanner status={status} />
         {linhas.length === 0 ? (
           <p className="text-sm text-muted-foreground" data-testid="ligada-sem-linhas">
-            Nenhuma linha de WhatsApp. Adicione uma em Conexões para poder ligar a Julia.
+            Nenhuma linha de WhatsApp. Conecte o WhatsApp da Julia no cartão abaixo para poder ligá-la.
           </p>
         ) : (
           <ul className="space-y-3">

@@ -6,11 +6,12 @@ write routes are REPLACE-SET (the body is the whole set for that table of the dr
 """
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from app.studio.models import LIMITS, SPEC_TIPOS
 from noctusai_lib.api import StrictHttpModel
@@ -101,6 +102,38 @@ class OrgSpecsUpdateRequest(StrictHttpModel):
     valores: dict[str, str]
 
 
+class AtorAtestado(StrictHttpModel):
+    """The person behind a change made through a PRODUCT (social-wiring). It is product-attested: the channel token
+    vouches for it, agents cannot verify the person -- so it is shaped hard (UUID, NFKC, capped, no control characters)
+    and only ever read from a channel token's request, never from the studio's."""
+
+    user_id: UUID
+    nome: str | None = None
+    email: str | None = None
+
+    @field_validator("nome", "email", mode="before")
+    @classmethod
+    def _texto(cls, v: Any, info: ValidationInfo) -> Any:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("texto esperado")
+        limpo = unicodedata.normalize("NFKC", v).strip()
+        if any(unicodedata.category(c).startswith("C") for c in limpo):
+            raise ValueError("caractere de controle")
+        if len(limpo) > (200 if info.field_name == "nome" else 254):
+            raise ValueError("texto longo demais")
+        return limpo or None
+
+
+class OrgSpecsChannelUpdateRequest(StrictHttpModel):
+    """The channel (SW) PUT: ``valores`` as the studio's, plus the attested acting user (required -- no anonymous
+    product writes; the route answers 422 ``ator_obrigatorio`` when it is absent)."""
+
+    valores: dict[str, str]
+    ator: AtorAtestado | None = None
+
+
 class PlataformaTextosRequest(StrictHttpModel):
     itens: dict[str, str]
 
@@ -168,6 +201,18 @@ class OrgSpecValorOut(BaseModel):
     chave: str
     valor: str
     updated_at: datetime | None = None
+    #: Who changed it last: the noc user id, and the display name when a social-wiring change attested one.
+    updated_by: UUID | None = None
+    updated_by_nome: str | None = None
+
+
+class SpecInvalidaOut(BaseModel):
+    """A stored org-spec value that fails the typed/safety rules (CONTRACT §E2) -- never carries the value."""
+
+    chave: str
+    codigo: str
+    motivo: str
+    mensagem: str
 
 
 class OrgSpecsOut(BaseModel):
@@ -180,6 +225,9 @@ class OrgSpecsOut(BaseModel):
     declaradas: list[SpecDefOut]
     valores: list[OrgSpecValorOut]
     faltando: list[str]
+    #: Stored values that fail validation (report mode lists them; block mode refuses new ones).
+    invalidas: list[SpecInvalidaOut] = []
+    modo_validacao: str = "report"
 
 
 class OrgStatusOut(BaseModel):

@@ -63,12 +63,12 @@ from uuid import NAMESPACE_OID, UUID, uuid5
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
     get_whatsapp_client,
 )
-from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.realtime import create_sse_router
 
 from app.config import SocialWiringSettings, settings
@@ -79,6 +79,7 @@ from app.dependencies import (
     get_current_user_org,
     get_settings,
     get_scoped_admin_client,
+    require_platform_admin,
 )
 from app.schemas.whatsapp_connection import (
     AutoReplyToggleOut,
@@ -93,7 +94,6 @@ from app.schemas.whatsapp_connection import (
     MessageOut,
     MessagesPage,
     SendMessageRequest,
-    WhatsAppConnectionApiKeyOut,
     WhatsAppConnectionCreate,
     WhatsAppConnectionOut,
     WhatsAppConnectionQrOut,
@@ -107,6 +107,7 @@ from app.services.credential_vault import CredentialStoreError, EncryptionNotCon
 from app.services.message_store import MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import (
+    SessaoJaVinculada,
     WhatsAppConnectionRecord,
     WhatsAppConnectionStore,
     build_whatsapp_connection_store,
@@ -122,8 +123,6 @@ from app.services.whatsapp_realtime import (
 )
 
 from app.services import chat_cliente_link
-from app.services import julia_agente_service as julia
-from app.services import julia_staff_service
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +143,9 @@ def get_connection_store(
             get_admin_client(), encryption_key=cfg.encryption_key
         )
     except EncryptionNotConfigured as exc:
+        logger.error("whatsapp connections: encryption not configured (%s)", type(exc).__name__)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="WhatsApp credentials are not configured on this server"
         ) from exc
 
 
@@ -300,14 +300,22 @@ def _require_record(
             decrypt=decrypt,
         )
     except CredentialStoreError as exc:
+        logger.error("whatsapp connections: credential decrypt failed for line %s (%s)", connection_id, type(exc).__name__)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="connection credentials unreadable"
         ) from exc
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="connection not found"
         )
     return record
+
+
+def _require_org_admin(auth: tuple, request: Request | None, context: str) -> UUID:
+    """403 unless the caller is an admin of the org they act in (the auth tuple's org, never a home-org role). Every MUTATION of a
+    line goes through this: a plain member can read the inbox, not repoint, restart, unlink or delete the company's number."""
+    require_org_admin_for(get_core_client(), auth, request, context)
+    return coerce_org_uuid(auth[2])
 
 
 def _waha_client(record: WhatsAppConnectionRecord, factory: Any):
@@ -353,24 +361,27 @@ def list_connections(
 @router.post("", response_model=WhatsAppConnectionOut, status_code=status.HTTP_201_CREATED)
 async def create_connection(
     body: WhatsAppConnectionCreate,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(require_platform_admin),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg: SocialWiringSettings = Depends(get_settings),
     waha_factory: Any = Depends(get_waha_client_factory),
 ) -> WhatsAppConnectionOut:
-    """Create a new WAHA connection line.
+    """Create a new WAHA connection line (PLATFORM ADMINS only: provisioning binds a WAHA session to an org).
 
-    Accepts ONLY ``label`` and ``api_key``; every other field is derived
-    server-side:
+    Accepts ONLY ``label`` (+ ``marca_id``); every other field is derived
+    server-side, including the WAHA API key (the server's own ``WAHA_API_KEY`` -- never a key from the body):
 
     - ``base_url``      — ``cfg.waha_base_url`` (the shared WAHA server).
                           Empty → 503 (no WAHA configured).
-    - ``session_name``  — ``cfg.waha_session`` (``"default"`` by default).
+    - ``session_name``  — ``"default"`` (one session per WAHA server).
                           WAHA Core only permits the single ``default`` session,
                           so the line drives it directly. (On WAHA Plus, where
                           multiple named sessions are allowed, point
                           ``WAHA_SESSION`` at a per-tenant value to isolate
                           accounts.)
+    - ``api_key``       — ``cfg.waha_api_key``. Empty → 503.
+    - ``(base_url, session_name)`` is UNIQUE across orgs (migration 321): a session already bound to a line → 409
+                          ``sessao_ja_vinculada``.
     - ``webhook_token`` — ``secrets.token_urlsafe(24)`` opaque routing token.
     - ``webhook_url``   — ``resolve_product_url('social-wiring') + /api/whatsapp/webhook/{token}``.
                           ValueError from resolver → 503.
@@ -389,11 +400,17 @@ async def create_connection(
             detail="WAHA server not configured (WAHA_BASE_URL is empty)",
         )
 
+    api_key = (cfg.waha_api_key or "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WAHA server not configured (WAHA_API_KEY is empty)",
+        )
+
     # ── 2. Resolve the WAHA session name ───────────────────────────────
-    # WAHA Core supports ONLY the single "default" session, so we drive the
-    # configured session (default: "default") rather than minting a unique
-    # per-connection name. WAHA Plus users can repoint WAHA_SESSION per tenant.
-    session_name = (cfg.waha_session or "default").strip()
+    # WAHA Core supports ONLY the single "default" session, so we drive it
+    # rather than minting a unique per-connection name.
+    session_name = "default"
 
     # ── 3. Mint webhook token + build public URL ────────────────────────
     webhook_token = secrets.token_urlsafe(24)
@@ -411,26 +428,40 @@ async def create_connection(
     webhook_url = f"{product_base}/api/whatsapp/webhook/{webhook_token}"
 
     # ── 4. Persist ─────────────────────────────────────────────────────
-    record = store.create_connection(
-        org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
-        label=body.label.strip(),
-        base_url=base_url,
-        api_key=body.api_key.strip(),
-        session_name=session_name,
-        webhook_url=webhook_url,
-        webhook_token=webhook_token,
-        # Migration 017 — thread optional cliente id through at creation.
-        marca_id=body.marca_id,
+    # One WAHA session = one line, across ALL orgs: a second org on the same session would read the first one's chats and send
+    # as its number. Checked here (the friendly 409) and enforced by the migration-321 UNIQUE index (the race).
+    conflito = HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="sessao_ja_vinculada",
     )
+    if await anyio.to_thread.run_sync(
+        lambda: store.session_is_bound(base_url=base_url, session_name=session_name)
+    ):
+        logger.warning("whatsapp connections: create refused -- session already bound (session=%s)", session_name)
+        raise conflito
+    try:
+        record = store.create_connection(
+            org_id=coerce_org_uuid(raw_org),
+            user_id=_coerce_user_uuid(user),
+            label=body.label.strip(),
+            base_url=base_url,
+            api_key=api_key,
+            session_name=session_name,
+            webhook_url=webhook_url,
+            webhook_token=webhook_token,
+            # Migration 017 — thread optional cliente id through at creation.
+            marca_id=body.marca_id,
+        )
+    except SessaoJaVinculada as exc:
+        logger.warning("whatsapp connections: create refused -- session already bound (race, session=%s)", session_name)
+        raise conflito from exc
 
     # ── 5. Wire WAHA: start session then register webhook ───────────────
-    # Build the client directly from the request-time plain key (the stored
-    # record has api_key=None; we have the plain key in body). This avoids
-    # an unnecessary decrypt round-trip and keeps the pattern clean.
+    # Build the client directly from the server key (the stored record has
+    # api_key=None). This avoids an unnecessary decrypt round-trip.
     client = waha_factory(
         base_url=base_url or None,
-        api_key=body.api_key.strip(),
+        api_key=api_key,
         session=session_name,
     )
     # start_session tolerates 409/422 (already started) internally.
@@ -459,7 +490,7 @@ async def create_connection(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"WAHA webhook registration failed: {exc}",
+            detail="WAHA webhook registration failed",
         ) from exc
 
     return _out(record)
@@ -471,36 +502,17 @@ def update_connection(
     body: WhatsAppConnectionUpdate,
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
+    request: Request = None,
 ) -> WhatsAppConnectionOut:
-    user, _token, raw_org = auth
-    org_id = coerce_org_uuid(raw_org)
+    org_id = _require_org_admin(auth, request, "A conexão do WhatsApp")
     # 404 early if the line isn't the caller's.
-    current = _require_record(store, connection_id=connection_id, org_id=org_id)
+    _require_record(store, connection_id=connection_id, org_id=org_id)
 
-    # 🔴 H3 (contract 10.1): with Julia on, an EMPTY authorized list would mean
-    # "everyone is authorized" — every lead would reach the operator bot. The list
-    # PUT is one of the three places the invariant is enforced (switch · this ·
-    # the DB CHECK, migration 258).
-    if (
-        current.agente_leads_ativo
-        and "authorized_numbers" in body.model_fields_set
-        and body.authorized_numbers is not None
-    ):
-        julia.exigir_autorizados(body.authorized_numbers)
-
-    # Use model_fields_set to distinguish "field absent from request" (keep
-    # current value) from "field supplied as []" (clear → means allow-all /
-    # listen-to-all).  We must NOT treat an explicit [] as "not supplied".
+    # `authorized_numbers` is LEGACY (the One Chat operator bot is retired, 2026-11-04): nothing reads it any more and Julia needs no
+    # authorized number to be on. The column is still writable until SW-B drops it (S12, after deploy).
     _extra: dict = {}
     if "authorized_numbers" in body.model_fields_set and body.authorized_numbers is not None:
-        # The org STAFF list is where operators are edited now (owner 2026-10-21): the numbers sent here become (or stay) operator
-        # staff and the connection's `authorized_numbers` is written back as the MIRROR of that list. Staff is a privilege, so this
-        # is an org-admin action.
-        require_org_admin_for(get_core_client(), auth, None, "Alterar os números autorizados (One Chat)")
-        espelho = julia_staff_service.sincronizar_de_lista(
-            get_scoped_admin_client("social_wiring"), get_core_client(), org_id, str(user.id), body.authorized_numbers,
-        )
-        _extra["authorized_numbers"] = espelho.get(str(connection_id), current.authorized_numbers)
+        _extra["authorized_numbers"] = list(body.authorized_numbers)
     if "bound_chats" in body.model_fields_set and body.bound_chats is not None:
         _extra["bound_chats"] = [bc.model_dump(mode="json") for bc in body.bound_chats]
     # Migration 017 — marca_id three-state via _UNSET sentinel.
@@ -514,10 +526,6 @@ def update_connection(
         connection_id=connection_id,
         org_id=org_id,
         label=body.label.strip() if body.label is not None else None,
-        base_url=body.base_url.strip() if body.base_url is not None else None,
-        session_name=body.session_name.strip() if body.session_name is not None else None,
-        api_key=body.api_key.strip() if body.api_key is not None else None,
-        webhook_url=body.webhook_url if body.webhook_url is not None else None,
         **_extra,
     )
     if record is None:
@@ -532,11 +540,12 @@ def delete_connection(
     connection_id: UUID,
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
+    request: Request = None,
 ) -> Response:
-    user, _token, raw_org = auth
+    org_id = _require_org_admin(auth, request, "A conexão do WhatsApp")
     deleted = store.delete_connection(
         connection_id=connection_id,
-        org_id=coerce_org_uuid(raw_org),
+        org_id=org_id,
     )
     if not deleted:
         raise HTTPException(
@@ -566,37 +575,10 @@ async def get_connection_status(
     except Exception as exc:  # noqa: BLE001 — surfaced in DTO, not swallowed
         logger.warning("WAHA status probe failed for line %s: %s", connection_id, exc)
         return WhatsAppConnectionStatusOut(
-            connection_id=connection_id, session=record.session_name, error=str(exc)
+            connection_id=connection_id, session=record.session_name, error="WAHA status unavailable"
         )
     return _status_from_session(
         payload, connection_id=connection_id, session=record.session_name
-    )
-
-
-@router.get("/{connection_id}/api-key", response_model=WhatsAppConnectionApiKeyOut)
-def reveal_connection_api_key(
-    connection_id: UUID,
-    auth: tuple = Depends(get_current_user_org),
-    store: WhatsAppConnectionStore = Depends(get_connection_store),
-) -> WhatsAppConnectionApiKeyOut:
-    """Reveal the decrypted API key for ONE owner-scoped line.
-
-    The single, deliberate place a stored secret leaves the backend — gated by
-    the same org scope as every live op (``org_id`` filter) and
-    driven only by an explicit user action (the eye toggle in the connection
-    modal). A decrypt failure (ENCRYPTION_KEY drift / tampered ciphertext)
-    surfaces as 503 via ``_require_record(decrypt=True)``; a non-owner / missing
-    line is 404. Reveal-only: never call this on a list/get path.
-    """
-    user, _token, raw_org = auth
-    record = _require_record(
-        store,
-        connection_id=connection_id,
-        org_id=coerce_org_uuid(raw_org),
-        decrypt=True,
-    )
-    return WhatsAppConnectionApiKeyOut(
-        connection_id=connection_id, api_key=record.api_key or ""
     )
 
 
@@ -623,9 +605,10 @@ async def get_connection_qr(
             connection_id=connection_id, scannable=False, status=exc.status
         )
     except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
+        logger.warning("WAHA QR fetch failed for line %s (%s)", connection_id, type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"WAHA QR fetch failed: {exc}",
+            detail="WAHA QR fetch failed",
         ) from exc
     return WhatsAppConnectionQrOut(
         connection_id=connection_id,
@@ -642,14 +625,15 @@ async def _session_action(
     auth: tuple,
     action: str,
     waha_factory: Any,
+    request: Request | None = None,
 ) -> WhatsAppConnectionStatusOut:
     """Shared driver for start / restart / logout — call the action, then
-    re-read + return the live session state. WAHA failures → 502."""
-    user, _token, raw_org = auth
+    re-read + return the live session state. WAHA failures → 502. ADMIN only (a member must not unlink the company's number)."""
+    org_id = await anyio.to_thread.run_sync(_require_org_admin, auth, request, "A conexão do WhatsApp")
     record = _require_record(
         store,
         connection_id=connection_id,
-        org_id=coerce_org_uuid(raw_org),
+        org_id=org_id,
         decrypt=True,
     )
     client = _waha_client(record, waha_factory)
@@ -657,9 +641,10 @@ async def _session_action(
         await getattr(client, action)()
         payload = await client.get_session()
     except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
+        logger.warning("WAHA %s failed for line %s (%s)", action, connection_id, type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"WAHA {action} failed: {exc}",
+            detail=f"WAHA {action} failed",
         ) from exc
     return _status_from_session(
         payload, connection_id=connection_id, session=record.session_name
@@ -672,10 +657,11 @@ async def start_connection(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    request: Request = None,
 ) -> WhatsAppConnectionStatusOut:
     return await _session_action(
         connection_id=connection_id, store=store, auth=auth,
-        action="start_session", waha_factory=waha_factory,
+        action="start_session", waha_factory=waha_factory, request=request,
     )
 
 
@@ -685,10 +671,11 @@ async def restart_connection(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    request: Request = None,
 ) -> WhatsAppConnectionStatusOut:
     return await _session_action(
         connection_id=connection_id, store=store, auth=auth,
-        action="restart_session", waha_factory=waha_factory,
+        action="restart_session", waha_factory=waha_factory, request=request,
     )
 
 
@@ -698,10 +685,11 @@ async def logout_connection(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    request: Request = None,
 ) -> WhatsAppConnectionStatusOut:
     return await _session_action(
         connection_id=connection_id, store=store, auth=auth,
-        action="logout_session", waha_factory=waha_factory,
+        action="logout_session", waha_factory=waha_factory, request=request,
     )
 
 
@@ -711,6 +699,7 @@ async def recover_connection(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    request: Request = None,
 ) -> WhatsAppConnectionRecoverOut:
     """Run the seed's start→restart→logout+start recovery ladder and return
     the converged session state. This is the UI's PRIMARY reconnect action
@@ -725,20 +714,21 @@ async def recover_connection(
     ``SCAN_QR_CODE``. The ladder converges regardless of which single rung
     is individually "the fix" for a given session's state.
     """
-    user, _token, raw_org = auth
+    org_id = await anyio.to_thread.run_sync(_require_org_admin, auth, request, "A conexão do WhatsApp")
     record = _require_record(
         store,
         connection_id=connection_id,
-        org_id=coerce_org_uuid(raw_org),
+        org_id=org_id,
         decrypt=True,
     )
     client = _waha_client(record, waha_factory)
     try:
         outcome = await client.recover_session()
     except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
+        logger.warning("WAHA recover failed for line %s (%s)", connection_id, type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"WAHA recover failed: {exc}",
+            detail="WAHA recover failed",
         ) from exc
 
     bus = get_whatsapp_bus(settings.redis_url)
@@ -768,20 +758,40 @@ async def configure_connection_webhook(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
+    request: Request = None,
 ) -> WhatsAppWebhookResultOut:
-    user, _token, raw_org = auth
-    org_id = coerce_org_uuid(raw_org)
+    """Re-register the line's inbound webhook. ADMIN only, and the URL is never the caller's: it is the line's own
+    ``<product url>/api/whatsapp/webhook/<its token>``. A body ``url`` that is anything else is a 422 (a member could otherwise
+    point the line's inbound traffic at a server they control)."""
+    org_id = await anyio.to_thread.run_sync(_require_org_admin, auth, request, "A conexão do WhatsApp")
     record = _require_record(
         store, connection_id=connection_id, org_id=org_id, decrypt=True
     )
+    if not record.webhook_token:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="connection has no webhook token; recreate the line"
+        )
+    try:
+        product_base = resolve_product_url("social-wiring")
+    except ValueError as exc:
+        logger.error("Cannot resolve social-wiring product URL for webhook: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Cannot build webhook URL: product URL not configured"
+        ) from exc
+    url = f"{product_base}/api/whatsapp/webhook/{record.webhook_token}"
+    if body.url is not None and body.url.strip().rstrip("/") != url:
+        logger.warning("whatsapp connections: webhook URL refused for line %s -- not the line's own URL", connection_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="webhook_url_invalida"
+        )
     client = _waha_client(record, waha_factory)
-    url = body.url.strip()
     try:
         result = await client.set_webhook(url, body.events)
     except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
+        logger.warning("WAHA webhook config failed for line %s (%s)", connection_id, type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"WAHA webhook config failed: {exc}",
+            detail="WAHA webhook config failed",
         ) from exc
     # Persist the last-wired webhook so the line remembers it across reloads.
     (await anyio.to_thread.run_sync(lambda: store.update_connection(
@@ -963,8 +973,9 @@ async def mark_chat_read(
             up_to_message_id=body.up_to_message_id,
         )))
     except ValueError as exc:
+        logger.info("whatsapp connections: mark_read refused for line %s (%s)", connection_id, type(exc).__name__)
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            status_code=status.HTTP_404_NOT_FOUND, detail="chat not found"
         ) from exc
 
     bus = get_whatsapp_bus(settings.redis_url)
@@ -1108,12 +1119,12 @@ async def send_message(
         result = await client.send_text(chat_id, texto)
     except Exception as exc:
         logger.error(
-            "WAHA send_text failed for connection %s chatId %s: %s",
-            connection_id, chat_id, exc,
+            "WAHA send_text failed for connection %s (%s)",
+            connection_id, type(exc).__name__,
         )
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"error": {"code": "waha_send_failed", "message": str(exc)}},
+            content={"error": {"code": "waha_send_failed", "message": "WAHA send failed"}},
         )
 
     # Persist outbound tagged with connection_id. Do NOT persist on failure
@@ -1144,6 +1155,7 @@ async def send_message(
         # the user just sent is invisible in its own thread permanently, not
         # merely until the echo lands.
         chat_id=chat_id,
+        origem="humano",  # typed by a person in Conversas; its `fromMe` echo is a duplicate of THIS row
     )
 
     # Fold the send into the conversation row + push it to subscribers, exactly

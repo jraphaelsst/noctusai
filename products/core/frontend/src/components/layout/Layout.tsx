@@ -26,6 +26,7 @@ import {
   Search,
   Coins,
   Activity,
+  Gauge,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { CoreHeader } from './CoreHeader';
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
           { name: 'Faturamento', href: '/admin/billing', icon: Wallet },
           { name: 'Financeiro', href: '/admin/financeiro', icon: Landmark },
           { name: 'Créditos de IA', href: '/admin/creditos', icon: Coins },
+          { name: 'Uso & Custos', href: '/admin/uso', icon: Gauge },
         ],
       },
       {
@@ -79,6 +81,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Settings,
         items: [
           { name: 'Chaves API', href: '/admin/api-keys', icon: KeyRound },
+          { name: 'Tokens de API', href: '/admin/tokens', icon: KeyRound },
           { name: 'Chaves LLM', href: '/api-keys', icon: Brain },
           { name: 'Webhooks', href: '/admin/webhooks', icon: Webhook },
           { name: 'Logout Behavior', href: '/admin/logout-behavior', icon: LogOut },

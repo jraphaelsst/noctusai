@@ -27,7 +27,8 @@ ORG = "test-org-123"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "julia_conhecimento.md"
 
 
-def _client_for(org_role):
+def _client_for(org_role, plataforma=None):
+    plataforma = (org_role == "owner") if plataforma is None else plataforma
     mock_sb = MockSupabaseClient()
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(org_id=ORG, org_role=org_role)))
     mock_sb.set_table_data("noctus_users", [{"id": TEST_USER_ID, "org_id": ORG, "org_role": org_role}])
@@ -36,18 +37,26 @@ def _client_for(org_role):
         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
     ):
-        from app.dependencies import get_scoped_admin_client
+        from app.dependencies import get_platform_admin_check, get_scoped_admin_client
         from app.main import app
 
         bind_consent_module_to_mock(mock_sb)
+        # Julia's content is written by NoctusAI only: the writing tests run as a platform admin, `org_admin` is the refused one.
+        app.dependency_overrides[get_platform_admin_check] = lambda: (lambda uid: plataforma)
         c = TestClient(app, raise_server_exceptions=True)
         c.sw = get_scoped_admin_client("social_wiring")
         yield c
+        app.dependency_overrides.pop(get_platform_admin_check, None)
 
 
 @pytest.fixture
 def admin():
     yield from _client_for("owner")
+
+
+@pytest.fixture
+def org_admin():
+    yield from _client_for("owner", plataforma=False)
 
 
 @pytest.fixture
@@ -98,6 +107,15 @@ class TestAuth:
 
     def test_put_without_token_is_exactly_401(self, admin):
         assert admin.put(f"{URL}/politicas", json={"dados": {}, "versao": 0}).status_code == 401
+
+    def test_an_org_admin_who_is_not_a_platform_admin_is_403_edicao_restrita_and_stores_nothing(self, org_admin):
+        r = org_admin.put(f"{URL}/telefones", json={"dados": VALIDOS["telefones"], "versao": 0}, headers=_h())
+        assert r.status_code == 403 and "edicao_restrita_plataforma" in r.text
+        assert org_admin.get(URL, headers=_h()).status_code == 200  # reading stays available
+
+    def test_a_platform_admin_writes(self, admin):
+        r = admin.put(f"{URL}/telefones", json={"dados": VALIDOS["telefones"], "versao": 0}, headers=_h())
+        assert r.status_code == 200
 
     def test_member_can_read(self, member):
         assert member.get(URL, headers=_h()).status_code == 200

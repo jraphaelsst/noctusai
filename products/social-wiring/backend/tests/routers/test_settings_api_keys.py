@@ -780,3 +780,31 @@ class TestTheProviderChoice:
         )
         assert entry["configured"] is False
         assert entry["hint"] is None
+
+
+class TestAgentsKeyIsPlatformManaged:
+    """Julia-line D5: `agents` is DELIVERED by the platform, never pasted or removed from this card."""
+
+    URL = "/api/settings/api-keys/agents"
+
+    def test_a_paste_is_refused_409_and_nothing_is_stored(self, admin_client, store_override, no_platform_tier):
+        resp = admin_client.put(self.URL, json={"value": "pk_pasted_value_123"}, headers=_auth_header())
+        assert resp.status_code == 409 and "gerenciada_pela_plataforma" in resp.text
+        assert store_override.get(ORG_ID, provider_for("agents")) is None
+
+    def test_a_delete_is_refused_409_and_the_delivered_token_survives(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        store_override.put(ORG_ID, provider_for("agents"), {"value": "noc_delivered_token_value"})
+        resp = admin_client.delete(self.URL, headers=_auth_header())
+        assert resp.status_code == 409 and "gerenciada_pela_plataforma" in resp.text
+        assert store_override.get(ORG_ID, provider_for("agents")) is not None
+
+    def test_it_is_listed_read_only_and_masked_first4_last4(self, admin_client, store_override, no_platform_tier):
+        store_override.put(ORG_ID, provider_for("agents"), {"value": "noc_delivered_token_value"})
+        resp = admin_client.get("/api/settings/api-keys", headers=_auth_header())
+        item = next(i for i in resp.json()["items"] if i["key"] == "agents")
+        assert item["read_only"] is True and item["configured"] is True
+        assert item["hint"] == "noc_...alue"
+        assert "noc_delivered_token_value" not in resp.text
+        assert all(i["read_only"] is False for i in resp.json()["items"] if i["key"] != "agents")

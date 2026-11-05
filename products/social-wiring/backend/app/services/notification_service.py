@@ -121,9 +121,7 @@ class NotificationService:
         smtp_port: int,
         smtp_user: str,
         smtp_password: str,
-        waha_base_url: str,
-        waha_api_key: str,
-        waha_session: str,
+        line_resolver: "Callable[[UUID], Any] | None" = None,
         email_service_factory: "Callable[..., EmailService] | None" = None,
         whatsapp_client_factory: "Callable[..., Any] | None" = None,
         gmail_sender_factory: "Callable[..., Any] | None" = None,
@@ -133,9 +131,9 @@ class NotificationService:
         self._smtp_port = smtp_port
         self._smtp_user = smtp_user
         self._smtp_password = smtp_password
-        self._waha_base_url = waha_base_url
-        self._waha_api_key = waha_api_key
-        self._waha_session = waha_session
+        # DI seam for the org's WhatsApp line (``julia_linha.linha_da_org`` by default): the ONLY WAHA credential
+        # source -- there is no env sender (julia-line CONTRACT A2).
+        self._line_resolver = line_resolver
         # DI seam for the SMTP wrapper. Defaults to the real ``EmailService``
         # class; tests inject a fake factory through the kwarg instead of
         # ``patch("...notification_service.EmailService")``. Per
@@ -567,7 +565,18 @@ class NotificationService:
         email_service = self._try_build_gmail_sender(
             org_id=org_id, marca_id=marca_id
         ) or self._try_build_email_service()
-        whatsapp_client = self._build_whatsapp_client()
+        # WhatsApp only when someone has a number; an org without a line gets a named `sem_linha` failure row per
+        # recipient (email + in-app continue) -- never the env, never another org's line.
+        whatsapp_client = None
+        linha_erro: str | None = None
+        if any(r.get("whatsapp_number") for r in recipients):
+            try:
+                whatsapp_client = await asyncio.to_thread(self._build_whatsapp_client, org_id)
+            except Exception as exc:  # noqa: BLE001 -- SemLinha / LinhaAmbigua / store failure: all named below
+                linha_erro = getattr(exc, "motivo", None) or f"linha_indisponivel: {type(exc).__name__}"
+                logger.warning(
+                    "notification (%s): WhatsApp skipped for org=%s -- %s", kind, org_id, linha_erro,
+                )
 
         # Dispatch per recipient × per channel. Tasks gathered in
         # parallel so a slow SMTP server doesn't serialize all sends.
@@ -582,7 +591,14 @@ class NotificationService:
                     message=message,
                     kind=kind,
                 ))
-            if recipient.get("whatsapp_number"):
+            if recipient.get("whatsapp_number") and linha_erro is not None:
+                self._log(
+                    upload_job_id=upload_job_id, org_id=org_id, recipient_id=recipient["id"],
+                    channel="whatsapp", status="failed", error_message=linha_erro,
+                )
+                outcome.attempted += 1
+                outcome.failed += 1
+            elif recipient.get("whatsapp_number"):
                 tasks.append(self._send_whatsapp_logged(
                     whatsapp_client=whatsapp_client,
                     upload_job_id=upload_job_id,
@@ -591,7 +607,7 @@ class NotificationService:
                     message=message,
                 ))
 
-        outcome.attempted = len(tasks)
+        outcome.attempted += len(tasks)
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException) or result is False:
@@ -830,20 +846,16 @@ class NotificationService:
             )
             return None
 
-    def _build_whatsapp_client(self):
-        """Always returns SOMETHING — the resolved factory (explicit DI
-        seam, else the module-level ``get_whatsapp_client``) falls back
-        to ``FakeWahaClient`` when ``waha_base_url`` is empty (logs
-        instead of sends, safe for dev). The default lookup happens HERE
-        (not captured in ``__init__``) so ``patch("...notification_
-        service.get_whatsapp_client")`` in the existing test suite keeps
-        working — see the constructor comment."""
-        factory = self._whatsapp_client_factory or get_whatsapp_client
-        return factory(
-            base_url=self._waha_base_url,
-            api_key=self._waha_api_key,
-            session=self._waha_session,
-        )
+    def _resolve_line(self, org_id: UUID) -> Any:
+        """The org's line (raises ``SemLinha`` / ``LinhaAmbigua``)."""
+        from app.services.julia_linha import linha_da_org  # noqa: PLC0415
+
+        return (self._line_resolver or (lambda org: linha_da_org(org, admin_client=self._admin)))(org_id)
+
+    def _build_whatsapp_client(self, org_id: UUID):
+        """A WAHA client bound to the org's own line. The factory (explicit DI seam, else the module-level
+        ``get_whatsapp_client``) is looked up HERE so ``patch("...notification_service.get_whatsapp_client")`` stays live."""
+        return self._resolve_line(org_id).waha_client(self._whatsapp_client_factory or get_whatsapp_client)
 
     def _build_upload_message(self, job: dict[str, Any]) -> dict[str, str]:
         """Compose the notification body — a small dict with subject /
@@ -1136,15 +1148,12 @@ class NotificationService:
 
 
 # ─── construction ───────────────────────────────────────────────────────────
-#: The seven channel-credential attributes every caller has to forward.
+#: The SMTP channel-credential attributes every caller has to forward.
 _CHANNEL_ATTRS = (
     "smtp_host",
     "smtp_port",
     "smtp_user",
     "smtp_password",
-    "waha_base_url",
-    "waha_api_key",
-    "waha_session",
 )
 
 

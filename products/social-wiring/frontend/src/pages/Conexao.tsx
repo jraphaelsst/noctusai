@@ -80,10 +80,9 @@ function StatusBadge({ status, paired }: { status: string | null; paired: boolea
   );
 }
 
-// ─── Create form (Nome + API key only) ───────────────────────────────────────
+// ─── Create form (Nome only: the WAHA key is server-side) ───────────────────────────────────────
 interface CreateFormState {
   label: string;
-  api_key: string;
 }
 
 // ─── Create modal ────────────────────────────────────────────────────────────
@@ -98,9 +97,9 @@ function CreateConnectionDialog({
   onSubmit: (form: CreateFormState) => void;
   pending: boolean;
 }) {
-  const [form, setForm] = useState<CreateFormState>({ label: "", api_key: "" });
+  const [form, setForm] = useState<CreateFormState>({ label: "" });
   const set = (patch: Partial<CreateFormState>) => setForm((f) => ({ ...f, ...patch }));
-  const canSubmit = form.label.trim() && form.api_key.trim() && !pending;
+  const canSubmit = form.label.trim() && !pending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -108,7 +107,7 @@ function CreateConnectionDialog({
         <DialogHeader>
           <DialogTitle>Nova conexão WhatsApp</DialogTitle>
           <DialogDescription>
-            Informe um nome e a API key. O QR code abre automaticamente para
+            Informe um nome. O QR code abre automaticamente para
             você parear o WhatsApp.
           </DialogDescription>
         </DialogHeader>
@@ -122,19 +121,6 @@ function CreateConnectionDialog({
               placeholder="Ex: Atendimento SP"
               disabled={pending}
               data-testid="create-conn-label"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="conn-apikey">API key *</Label>
-            <Input
-              id="conn-apikey"
-              type="password"
-              value={form.api_key}
-              onChange={(e) => set({ api_key: e.target.value })}
-              placeholder="X-Api-Key da instância WAHA"
-              disabled={pending}
-              autoComplete="off"
-              data-testid="create-conn-apikey"
             />
           </div>
         </div>
@@ -215,7 +201,6 @@ export function WhatsAppConnections() {
   const onCreateSubmit = (form: CreateFormState) => {
     const body: CreateConnectionBody = {
       label: form.label.trim(),
-      api_key: form.api_key.trim(),
     };
     create.mutate(body, {
       onSuccess: (newLine) => {
@@ -224,7 +209,14 @@ export function WhatsAppConnections() {
         setJustCreated(newLine);
         toast.success("Conexão criada — escaneie o QR para parear");
       },
-      onError: (e: any) => toast.error(e?.message ?? "Falha ao criar conexão"),
+      onError: (e: any) =>
+        toast.error(
+          e?.status === 403
+            ? "Somente a equipe NoctusAI pode criar linhas de WhatsApp."
+            : e?.status === 409
+              ? "Esta sessão do WhatsApp já está vinculada a uma linha."
+              : (e?.message ?? "Falha ao criar conexão"),
+        ),
     });
   };
 

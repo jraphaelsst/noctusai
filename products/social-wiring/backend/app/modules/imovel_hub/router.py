@@ -47,6 +47,7 @@ from app.modules.imovel_hub import captacao_service as captacao_svc
 from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.imovel_hub import duplicatas_service as duplicatas_svc
+from app.modules.imovel_hub import notas_service as notas_svc
 from app.modules.imovel_hub import vinculo_service as vinculo_svc
 from app.modules.imovel_hub import matricula_extracao_service as matricula_svc
 from app.modules.imovel_hub.deps import (
@@ -66,6 +67,7 @@ from app.modules.imovel_hub.schemas import (
     ImovelDocumentoExtracaoPatchBody,
     ImovelManualIn,
     ImovelManualPatch,
+    ImovelNotaBody,
     RegistrarImovelBody,
     ReferenciasPatchBody,
 )
@@ -658,6 +660,59 @@ def delete_certidao_manual_route(
     """Drop the typed record; the newest upload of that tipo answers again."""
     _user, org_id = _auth_parts(auth)
     return docs_svc.remover_certidao_manual(client, org_id, codigo.upper(), tipo)
+
+
+# ─── Internal notes (migration 315) — owned, full CRUD ────────────────────
+
+
+@router.get("/{codigo}/notas")
+def list_notas_route(
+    codigo: str,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Our internal notes on this imóvel, newest first → `{items, total}`."""
+    _user, org_id = _auth_parts(auth)
+    return notas_svc.listar(client, org_id, codigo.upper())
+
+
+@router.post("/{codigo}/notas", status_code=status.HTTP_201_CREATED)
+def create_nota_route(
+    codigo: str,
+    body: ImovelNotaBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return notas_svc.criar(
+        client, org_id, codigo.upper(), texto=body.texto, usuario_id=getattr(user, "id", None)
+    )
+
+
+@router.patch("/{codigo}/notas/{nota_id}")
+def patch_nota_route(
+    codigo: str,
+    nota_id: UUID,
+    body: ImovelNotaBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return notas_svc.atualizar(
+        client, org_id, codigo.upper(), nota_id,
+        texto=body.texto, usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.delete("/{codigo}/notas/{nota_id}")
+def delete_nota_route(
+    codigo: str,
+    nota_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return notas_svc.remover(client, org_id, codigo.upper(), nota_id)
 
 
 # ─── D1 conflicts (migration 154) ─────────────────────────────────────────

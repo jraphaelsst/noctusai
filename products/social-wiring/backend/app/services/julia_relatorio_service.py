@@ -66,6 +66,7 @@ STATUS_ENVIO = ("pendente", "enviado", "falhou", "sem_destino", "limitado")
 
 KIND_SEM_DESTINO = "julia_relatorio_sem_destino"
 KIND_ALERTA = "julia_alerta"
+KIND_OPT_OUT = "julia_opt_out"
 KIND_RELATORIO_FALHOU = "julia_relatorio_falhou"
 KIND_DOCUMENTO_FALHOU = "julia_documento_falhou"
 
@@ -82,6 +83,8 @@ ALERTA_ROTULOS = {
     "desvio": "desvio de conduta",
     "outro": "alerta",
 }
+#: `opt_out.motivo` (agents' closed enum) as the human reason of the notices.
+OPT_OUT_MOTIVOS = {"palavra_chave": "palavra-chave de parada", "pedido_do_lead": "pedido do próprio lead"}
 IDENTIFICACAO_ROTULOS = {"cpf": "CPF", "rg": "RG", "email": "e-mail", "documento_enviado": "documento enviado"}
 REACOES = {"gostou": "gostou", "nao_gostou": "não gostou", "sem_reacao": "sem reação"}
 
@@ -457,22 +460,36 @@ def avisar_in_app(
 
 # ── delivery ────────────────────────────────────────────────────────────────
 class InternoSender:
-    """`send_paragraphs`' `intake` seam for a STAFF notice: sends through the connection's own WAHA client and registers the
-    message id as Julia's own so the `fromMe` echo is never mistaken for a human taking over. Not a lead send: nothing is
-    recorded as a lead outbound."""
+    """`send_paragraphs`' `intake` seam for a STAFF notice: sends through the org line's WAHA client and PRE-WRITES the outbound row
+    (`origem='interno'`, keyed by the provider id WAHA returned) via `MessageStore.registrar_interno_enviado`, so WAHA's `fromMe`
+    echo trips UNIQUE(provider_message_id) and is never mistaken for a human taking over Julia's line. Not a lead send: nothing is
+    recorded as a lead outbound. The send is bracketed by the in-flight flag (`marcar_envio_em_curso` / `encerrar_envio`) so an
+    echo that beats the row write is still recognised."""
 
-    def __init__(self, *, connection: Any, waha: Any, redis: Any, liberacao: julia_envio_gate.Liberacao):
+    def __init__(self, *, connection: Any, waha: Any, redis: Any, liberacao: julia_envio_gate.Liberacao, message_store: Any):
         self._c = connection
         self._waha = waha
         self._redis = redis
         self._liberacao = liberacao
+        self._store = message_store
 
     async def send_reply(self, sender: str, text: str) -> None:
         from app.schemas.whatsapp import extract_waha_message_id
 
         julia_envio_gate.conferir(self._liberacao, self._c.id)  # the outbound gate (flow `interno`) passed for this line
-        result = await self._waha.send_text(sender, text)
-        julia.registrar_envio_proprio(self._redis, extract_waha_message_id(result) if isinstance(result, dict) else None)
+        julia.marcar_envio_em_curso(self._redis, self._c.id, sender)
+        try:
+            result = await self._waha.send_text(sender, text)
+        finally:
+            julia.encerrar_envio(self._redis, self._c.id, sender)
+        provider_id = extract_waha_message_id(result) if isinstance(result, dict) else None
+        try:
+            self._store.registrar_interno_enviado(
+                connection_id=self._c.id, chat_id=sender, body=text, provider_message_id=provider_id,
+                structured_payload={"fluxo": "interno"},
+            )
+        except Exception as exc:  # the notice WAS delivered: a failed pre-write must be loud, not a failed send
+            logger.error("julia: internal send delivered but its row was not pre-written org=%s (%s)", self._c.org_id, type(exc).__name__)
 
 
 def _primeira_do_periodo(servicos: Any, assunto: str, org_id: UUID | str, *, limite: int = 1, periodo: str = "dia") -> bool:
@@ -502,6 +519,10 @@ class ServicosInternos:
     redis: Any
     cfg: Any
     documento_intake: Optional[Callable[..., Any]] = None
+    #: `(org_id) -> MessageStore` (default: over the service-role client) -- the `interno` pre-write.
+    message_store_factory: Optional[Callable[[Any], Any]] = None
+    #: `(org_id) -> LinhaDaOrg` (default: `julia_linha.linha_da_org`).
+    linha_resolver: Optional[Callable[[Any], Any]] = None
 
 
 def _conexao(servicos: Any, connection_id: UUID | str) -> Any:
@@ -562,9 +583,13 @@ async def _enviar_texto(servicos: Any, connection: Any, numero: str, texto: str,
     except julia_envio_gate.EnvioBloqueado as exc:  # already logged + `envio_bloqueado` event by the gate
         return f"bloqueado: {exc.motivo}"
     try:
-        waha = servicos.waha_factory(base_url=connection.base_url or None, api_key=connection.api_key, session=connection.session_name)
+        from app.services.julia_linha import linha_da_conexao
+
+        waha = linha_da_conexao(connection).waha_client(servicos.waha_factory)
         chat = (await waha.resolve_chat_id(numero)).chat_id
-        sender = InternoSender(connection=connection, waha=waha, redis=servicos.redis, liberacao=liberacao)
+        sender = InternoSender(
+            connection=connection, waha=waha, redis=servicos.redis, liberacao=liberacao,
+            message_store=_message_store(servicos, connection.org_id))
         esperadas = len(split_for_whatsapp(texto, enabled=True))
         enviadas = await send_paragraphs(
             intake=sender, sender=chat, text=texto, delay_seconds=float(servicos.cfg.whatsapp_paragraph_delay_seconds), split=True)
@@ -575,15 +600,32 @@ async def _enviar_texto(servicos: Any, connection: Any, numero: str, texto: str,
     return None
 
 
+def _message_store(servicos: Any, org_id: Any) -> Any:
+    factory = getattr(servicos, "message_store_factory", None)
+    if factory is not None:
+        return factory(org_id)
+    from app.dependencies import get_admin_client
+    from app.services.message_store import MessageStore
+
+    return MessageStore(admin_supabase=get_admin_client(), org_id=UUID(str(org_id)))
+
+
 async def enviar_aviso_interno(servicos: Any, org_id: UUID | str, numero: str, texto: str) -> Optional[str]:
-    """A short staff notice (the destination confirmation code, the "your number was replaced" warning) from the org's Julia line:
-    its WAHA line that is on Julia, else its first. None on success, else the error label (also `sem_linha`)."""
-    rows = servicos.scoped.table("whatsapp_connections").select("id,agente_leads_ativo").eq("org_id", str(org_id)).execute().data or []
-    rows.sort(key=lambda r: (r.get("agente_leads_ativo") is not True, str(r.get("id"))))
-    connection = servicos.connection_lookup(UUID(str(rows[0]["id"]))) if rows else None
-    if connection is None:
-        return "sem_linha"
-    return await _enviar_texto(servicos, connection, numero, texto)
+    """A short staff notice (the destination confirmation code, the "your number was replaced" warning) from the org's ONE line,
+    resolved through `julia_linha.linha_da_org`. None on success, else the error label (`sem_linha` / `linha_ambigua` when the
+    org has no usable line -- logged, never a fallback)."""
+    import asyncio
+
+    from app.services.julia_linha import LinhaIndisponivel, linha_da_org
+
+    resolver = getattr(servicos, "linha_resolver", None) or (lambda org: linha_da_org(org, admin_client=getattr(servicos, "admin", None)))
+    try:
+        linha = await asyncio.to_thread(resolver, org_id)
+    except LinhaIndisponivel as exc:
+        motivo = exc.motivo
+        logger.error("julia: staff notice not sent org=%s: %s", org_id, motivo)
+        return motivo
+    return await _enviar_texto(servicos, linha.connection, numero, texto)
 
 
 def _falha(servicos: Any, client: Any, connection: Any, contato: dict[str, Any], row: dict[str, Any], erro: str) -> str:
@@ -686,7 +728,7 @@ async def processar_acoes(
     recorded as an `acao_falhou` event, never raised, never stopping the next."""
     novas = {a["seq"] for a in resumo_acoes if a.get("estado") != "repetida"}
     for acao in result.julia_actions:
-        if acao.seq not in novas or acao.type not in ("lead_pronto", "alerta", "documento_identificacao"):
+        if acao.seq not in novas or acao.type not in ("lead_pronto", "alerta", "documento_identificacao", "opt_out"):
             continue
         try:
             contato = _contato_do_chat(servicos.scoped, connection, chat_id)
@@ -697,6 +739,8 @@ async def processar_acoes(
                 await _conclusao(servicos, connection, contato, acao, result, lote_hash)
             elif acao.type == "alerta":
                 await _alerta(servicos, connection, contato, chat_id, acao, result, lote_hash)
+            elif acao.type == "opt_out":
+                await _opt_out(servicos, connection, contato, chat_id, acao, result, lote_hash)
             else:
                 await processar_documento(servicos, connection=connection, contato=contato, chat_id=chat_id, payload=acao.payload)
         except Exception as exc:
@@ -732,6 +776,62 @@ async def _alerta(servicos: Any, connection: Any, contato: dict[str, Any], chat_
         servicos, connection=connection, contato=contato, tipo=TIPO_ALERTA, texto=texto, dados=dados,
         thread_id=result.thread, chave=f"{lote_hash}:{acao.seq}",
     )
+
+
+def mascarar_nome(nome: Any) -> str:
+    """`Maria Souza` -> `Maria S.`: the first name and the initial of the rest (the staff recognises the lead, the notice carries no full name)."""
+    partes = _limpar_nome(nome).split()
+    if not partes:
+        return "sem nome"
+    return partes[0] if len(partes) == 1 else f"{partes[0]} {partes[-1][0]}."
+
+
+def mascarar_telefone(telefone: Any) -> str:
+    """`+5511988887777` -> `+5511*****7777`: country + area code and the last 4 digits only."""
+    bruto = str(telefone or "").strip()
+    digitos = re.sub(r"\D", "", bruto)
+    if len(digitos) < 8:
+        return "sem telefone"
+    return f"+{digitos[:4]}{'*' * (len(digitos) - 8)}{digitos[-4:]}"
+
+
+async def _opt_out(servicos: Any, connection: Any, contato: dict[str, Any], chat_id: str, acao: Any, result: Any, lote_hash: str) -> None:
+    """The lead asked to stop being contacted (agents recorded the opt-out and sends the `opt_out` action): tell the org ADMINS in-app
+    and the report destination by WhatsApp (outbound flow `interno`) -- ONE notice per opt-out action (the ledger makes a replay
+    `repetida`, and the report row's `chave` makes the WhatsApp one idempotent). Every skipped leg is a named, logged reason."""
+    motivo = acao.payload.get("motivo")
+    motivo_txt = OPT_OUT_MOTIVOS.get(motivo, "não informado")
+    trecho = _s(acao.payload.get("trecho"), 300)
+    quem = f"{mascarar_nome(contato.get('nome'))} ({mascarar_telefone(contato.get('telefone_e164'))})"
+    org_id = connection.org_id
+    titulo = "Lead pediu para não receber mais mensagens"
+    mensagem = f"Lead {quem} pediu para não receber mais mensagens — motivo: {motivo_txt}."
+    try:
+        admins = notificacoes.admins_da_org(servicos.core_client, org_id)
+        if not admins:
+            logger.error("julia: opt-out in-app notice not written org=%s: sem_destinatarios", org_id)
+        else:
+            write_in_app(
+                servicos.core_client, user_ids=admins, kind=KIND_OPT_OUT, title=titulo, message=mensagem[:500],
+                metadata={"link": f"/julia/conversas?chat={quote(chat_id, safe='')}", "contato_id": str(contato["id"]), "chat_id": chat_id, "julia": True},
+                org_id=org_id,
+            )
+    except Exception as exc:
+        logger.error("julia: opt-out in-app notice failed org=%s (%s)", org_id, type(exc).__name__)
+    linhas = [f"🚫 Julia — pedido para parar de receber mensagens", f"Lead: {quem}", f"Motivo: {motivo_txt}"]
+    if trecho:
+        linhas.append(f"O lead disse: “{trecho}”")
+    link = link_da_conversa(chat_id)
+    if link:
+        linhas.append(f"Conversa: {link}")
+    dados = {"tipo_alerta": "opt_out", "motivo": motivo, "descricao": mensagem, "trecho": trecho or None}
+    row = await _gerar_e_entregar(
+        servicos, connection=connection, contato=contato, tipo=TIPO_ALERTA, texto="\n".join(linhas), dados=dados,
+        thread_id=result.thread, chave=f"opt_out:{lote_hash}:{acao.seq}",
+    )
+    if row is not None and row.get("envio_status") == "sem_destino":
+        logger.error("julia: opt-out WhatsApp notice has no destination org=%s: sem_destino", org_id)
+    eventos.emitir(servicos.scoped, org_id, "opt_out_notificado", contato["id"], {"motivo": motivo})
 
 
 # ── identification document ─────────────────────────────────────────────────

@@ -38,7 +38,7 @@ export default function ImovelAreasSection({
   if (nada) return null;
 
   return (
-    <SectionCard title="Áreas" editLabel="Editar áreas">
+    <SectionCard title="Áreas">
       {areaTotal !== null && (
         <Fact icon={<Ruler className="h-4 w-4" />} label="Área total" value={formatArea(areaTotal)} />
       )}

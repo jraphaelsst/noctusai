@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 
@@ -258,6 +259,14 @@ class SeedSettings(ProductSettings):
     # `STUDIO_MECANISMO_RUN_BUDGET_USD` env override. A run that reaches it is cut short and never
     # opens the publish gate.
     studio_mecanismo_run_budget_usd: float = 5.00
+
+    # ── Org-spec safety (Julia-line CONTRACT §E; app.studio.especificacoes_service) ─────────────
+    # `SPEC_VALIDATION_MODE`: `report` (S4 rollout default) accepts every write and lists each invalid stored value in
+    # readiness as an `aviso` `spec_org_invalida`; `block` answers 422 on write and a `bloqueante` in readiness, and the
+    # compiler drops the invalid value. Never silent in either mode.
+    spec_validation_mode: Literal["report", "block"] = "report"
+    # Comma-separated public hosts (social-wiring's own) a `url` spec may point to besides the org's `dominios_permitidos`.
+    spec_hosts_publicos: str = ""
 
     # ── Public ask (projects/limiar-open-question S3) ──────────────────
     # The anonymous `POST /api/public/ask/{app_slug}` surface. OFF by default:

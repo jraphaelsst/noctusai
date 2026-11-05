@@ -151,9 +151,16 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #: settle a marriage), so they stay their own concerns. A test pins this
 #: tuple as a subsequence of the contract's, and pins
 #: `contrato_gerador.derivacao._CHAVES_DO_DOCUMENTO_DE_IDENTIDADE` to it.
-CAMPOS_DOCUMENTO_IDENTIDADE: tuple[str, ...] = (
-    "nome_oficial", "rg", "rg_orgao_expedidor", "cpf",
-)
+#:
+#: [Owner decision, 2026-11-04 — "make RG optional for contract parties"]
+#: `rg` / `rg_orgao_expedidor` left this REQUIRED set (CPF stays mandatory);
+#: they are `CAMPOS_IDENTIDADE_OPCIONAIS` — still read, still shown, still
+#: printed when present, never listed as missing.
+CAMPOS_DOCUMENTO_IDENTIDADE: tuple[str, ...] = ("nome_oficial", "cpf")
+
+#: The identity columns shown as "(opcional)" — present ⇒ printed in the
+#: contract; absent ⇒ silently omitted (no "faltando", no blocking).
+CAMPOS_IDENTIDADE_OPCIONAIS: tuple[str, ...] = ("rg", "rg_orgao_expedidor")
 
 ITENS: tuple[dict[str, Any], ...] = (
     {"key": "nome_completo", "label": "Nome Completo",
@@ -181,12 +188,13 @@ ITENS: tuple[dict[str, Any], ...] = (
     # fields are still missing.
     {"key": "identidade", "label": "Documento de identidade (RG/CPF, CNH ou CIN)",
      "campos_todos": CAMPOS_DOCUMENTO_IDENTIDADE,
+     "campos_opcionais": CAMPOS_IDENTIDADE_OPCIONAIS,
      "ressalvas": ("rg_so_da_cnh",),
      "documentos": ("rg", "cnh", "cin"),
      "documentos_legado": ("cpf",),
      "dica": (
          "Basta um documento (RG/CPF, CNH ou CIN), desde que dele se leiam "
-         "nome, CPF, RG e órgão expedidor; se faltar algum, envie outro."
+         "nome e CPF (RG e órgão expedidor são opcionais); se faltar algum, envie outro."
      )},
     # P0c contract §F/§H8 — scoped to certificandos only (vendedores, their
     # cônjuges, and compradores/cônjuges when the deal `tem_permuta`); see
@@ -270,8 +278,8 @@ _IDENTIDADE_ROTULOS: dict[str, str] = {
 #: checklist and the contract refusal name a field the same way.
 _IDENTIDADE_CAMPO_ROTULOS: dict[str, str] = {
     "nome_oficial": "Nome oficial",
-    "rg": "RG",
-    "rg_orgao_expedidor": "Órgão expedidor do RG",
+    "rg": "RG (opcional)",
+    "rg_orgao_expedidor": "Órgão expedidor do RG (opcional)",
     "cpf": "CPF",
 }
 
@@ -402,6 +410,7 @@ _CLIENTE_COLUNAS = tuple(
     dict.fromkeys(
         [col for i in ITENS for col in i.get("campos", ())]
         + [col for i in ITENS for col in i.get("campos_todos", ())]
+        + [col for i in ITENS for col in i.get("campos_opcionais", ())]
         + [
             col
             for i in ITENS
@@ -611,6 +620,7 @@ def _extras_do_item(
                 for c in faltando
             ],
             "ressalvas": ressalvas,
+            "opcionais": list(item.get("campos_opcionais", ())),
             "faltando_com_sugestao": [c for c in faltando if (sugestoes or {}).get(c)],
             "documentos": _identidade_slots(item, documentos),
             "dica": item.get("dica"),
@@ -936,7 +946,8 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         por_chave = {i["key"]: i for i in ITENS}
         for linha in itens:
             definicao = por_chave[linha["key"]]
-            if removidos & {*definicao.get("campos", ()), *definicao.get("campos_todos", ()), linha["key"]}:
+            if removidos & {*definicao.get("campos", ()), *definicao.get("campos_todos", ()),
+                              *definicao.get("campos_opcionais", ()), linha["key"]}:
                 linha["documento_removido"] = True
 
     return {
@@ -981,7 +992,7 @@ def valores_editaveis(cliente: Optional[dict]) -> dict:
     # by COLUMN (`nome_oficial`, `rg`, `rg_orgao_expedidor`, `cpf`), which is
     # the shape the "Dados pessoais" form already reads.
     for item in ITENS:
-        for col in item.get("campos_todos", ()):
+        for col in (*item.get("campos_todos", ()), *item.get("campos_opcionais", ())):
             valor = (cliente or {}).get(col)
             valores[col] = valor if _preenchido(valor) else None
     # Form-only columns (no checklist item). `setdefault`: a column an item
@@ -1106,13 +1117,20 @@ def marcar(
 # function rather than bending the checklist's pinned "verbatim contract"
 # item list to fit them.
 
+#: [Owner decision, 2026-11-04] "make RG optional for contract parties" (and,
+#: earlier: "rg + cpf, whichever is available, only displaying on the contract
+#: values that exist"). `rg` / `rg_orgao_expedidor` are therefore NOT in this
+#: blocking set: CPF stays mandatory, a present RG still prints, and an
+#: incomplete one (no órgão / órgão without UF / CNH-only without check digit)
+#: only WARNS in the contract derivation. The columns are still READ
+#: (`_COLUNAS_QUALIFICACAO_CONTRATO`).
+#:
 #: The columns a signed instrument needs from ONE party, beyond what
 #: `_ENDERECO_CAMPOS_OBRIGATORIOS` / the married-state branch below add.
 #: `nome_oficial` specifically — not `nome_completo` — because the document
 #: name is the legal one; see the section docstring.
 _CAMPOS_QUALIFICACAO_CONTRATO: tuple[str, ...] = (
-    "nome_oficial", "nacionalidade", "profissao", "estado_civil",
-    "rg", "rg_orgao_expedidor", "cpf",
+    "nome_oficial", "nacionalidade", "profissao", "estado_civil", "cpf",
 )
 
 #: `endereco` is satisfied only when every one of these is filled — a street
@@ -1246,13 +1264,15 @@ def completude_contratual(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     cliente = _cliente_row_qualificacao(client, org_id, cliente_id)
     faltando = _faltantes_qualificacao(cliente or {})
     # The identidade item's `rg_so_da_cnh` ressalva — the SAME rule the card
-    # checklist ticks with (`campos_faltando`), so a CNH-only RG with no
-    # check digit is missing here too. Documents are read only when the RG
-    # is filled (an empty one is already `rg` above).
-    if cliente and "rg" not in faltando and "rg" in campos_faltando(
-        cliente, "identidade", _documentos_por_tipo(client, org_id, cliente_id)
+    # checklist ticks with (`campos_faltando`). [Owner decision, 2026-11-04]
+    # RG is optional, so a CNH-only RG with no check digit is an AVISO
+    # (`avisos`), no longer a blocking `faltando`. Documents are read only
+    # when the RG is filled.
+    avisos: list[str] = []
+    if cliente and _preenchido(cliente.get("rg")) and _RESSALVAS["rg_so_da_cnh"]["pendente"](
+        cliente, _documentos_por_tipo(client, org_id, cliente_id)
     ):
-        faltando.append(CHAVE_RG_SO_DA_CNH)
+        avisos.append(CHAVE_RG_SO_DA_CNH)
 
     conjuge_info: Optional[dict] = None
     estado_civil = _estado_civil_normalizado((cliente or {}).get("estado_civil"))
@@ -1290,6 +1310,7 @@ def completude_contratual(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         "estado_civil": estado_civil,
         "completo": not faltando,
         "faltando": faltando,
+        "avisos": avisos,
         "conjuge": conjuge_info,
         "certidao_estado_civil": certidao_estado_civil,
     }

@@ -96,7 +96,11 @@ def _scene(role="owner"):
         async def nome():
             return "Aurora"
 
+        from app.dependencies import get_platform_admin_check
+
         bind_consent_module_to_mock(world.root)
+        # Julia's knowledge is written by NoctusAI only: the owner scene stands for a platform admin here
+        app.dependency_overrides[get_platform_admin_check] = lambda: (lambda uid: role == "owner")
         app.dependency_overrides[r.get_cloud_db] = lambda: world.sw
         app.dependency_overrides[get_conhecimento_client] = lambda: world.sw
         app.dependency_overrides[get_nome_agente] = nome
@@ -106,7 +110,7 @@ def _scene(role="owner"):
             lambda conn: tr.transporte_da_conexao(conn, waha_factory=lambda **kw: world.waha, cloud_client_factory=lambda **kw: meta))
         yield Scene(TestClient(app), world, meta)
         for dep in (r.get_cloud_db, get_conhecimento_client, get_nome_agente, get_connection_store,
-                    r.get_imoveis_service, r.get_transporte_factory):
+                    r.get_imoveis_service, r.get_transporte_factory, get_platform_admin_check):
             app.dependency_overrides.pop(dep, None)
 
 

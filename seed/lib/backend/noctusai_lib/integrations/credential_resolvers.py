@@ -58,6 +58,7 @@ from noctusai_lib.integrations.google_calendar.credentials import (
     OAuthCalendarCredentials,
 )
 from noctusai_lib.integrations.meta.credentials import OAuthMetaCredentials
+from noctusai_lib.integrations.vista.client import VistaConfigError
 from noctusai_lib.security.oauth.types import OAuthCallbackResult
 from noctusai_lib.security.token_store import CredentialStore
 
@@ -69,6 +70,7 @@ logger = logging.getLogger(__name__)
 CALENDAR_PROVIDER = "google_calendar"
 META_PROVIDER = "meta"
 DRIVE_PROVIDER = "google_drive"
+VISTA_PROVIDER = "vista"
 
 
 # ─── Read side — CredentialStore → adapter resolver Protocols ─────────────
@@ -255,6 +257,30 @@ class CredentialStoreMetaResolver:
 ProviderMap = dict[str, str]
 
 
+class VistaCredentialResolver:
+    """Per-org Vista credentials from a `CredentialStore`: `get(org_id) -> (base_url, api_key)`.
+
+    Bundle: `{"base_url": ..., "api_key": ...}` under `(org_id, VISTA_PROVIDER)`. There is NO environment fallback
+    and no null return: an org with no usable record raises `VistaConfigError` ("Vista não configurada para esta
+    empresa"), which every consumer maps to its own 503. A row that exists but will not decrypt raises the store's
+    `CredentialDecryptError` (a rotated ENCRYPTION_KEY is not "not configured")."""
+
+    MENSAGEM = "Vista não configurada para esta empresa"
+
+    def __init__(self, store: CredentialStore, *, provider: str = VISTA_PROVIDER) -> None:
+        self._store = store
+        self._provider = provider
+
+    def get(self, org_id: str) -> tuple[str, str]:
+        stored = self._store.get(str(org_id), self._provider) if org_id else None
+        tokens = (stored.tokens if stored is not None else None) or {}
+        base_url = str(tokens.get("base_url") or "").strip()
+        api_key = str(tokens.get("api_key") or "").strip()
+        if not base_url or not api_key:
+            raise VistaConfigError(self.MENSAGEM)
+        return base_url, api_key
+
+
 def make_token_persisting_callback(
     store: CredentialStore,
     *,
@@ -315,5 +341,7 @@ __all__ = [
     "CredentialStoreMetaResolver",
     "DRIVE_PROVIDER",
     "META_PROVIDER",
+    "VISTA_PROVIDER",
+    "VistaCredentialResolver",
     "make_token_persisting_callback",
 ]

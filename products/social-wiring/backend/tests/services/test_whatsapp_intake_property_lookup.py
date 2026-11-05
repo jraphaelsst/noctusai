@@ -94,9 +94,6 @@ def _row(codigo: str, **kw) -> dict:
 def _make_intake(admin_supabase, org_id=ORG) -> WhatsAppIntakeService:
     redis_stub = MagicMock()
     return WhatsAppIntakeService(
-        waha_base_url="https://waha.example.com",
-        waha_api_key="test-key",
-        waha_session="default",
         redis_client=redis_stub,
         authorized_numbers=[],
         crm_service=None,  # unused for lookups after P2.5 — see delivery note

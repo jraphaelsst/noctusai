@@ -749,6 +749,10 @@ def decisao_outra_pessoa(
     return None
 
 
+#: Proposal sources the automatic resolver must NEVER decide (a human always does) -- see `vista_divergencias`.
+ORIGENS_DECISAO_HUMANA = frozenset({"vista_sync"})
+
+
 def resolver_divergencia(
     campo: str,
     *,
@@ -807,6 +811,13 @@ def resolver_divergencia(
     path: a weak proposal against a stored value that is neither human nor
     read with real confidence needs a human.
     """
+    if origem_proposto in ORIGENS_DECISAO_HUMANA:
+        # Owner 2026-11-04 ("we human decide which data is true"): a Vista-vs-ours divergence is NEVER settled by a
+        # rule -- not by validators, corroboration or source tier. Source-based, so it holds for any campo.
+        return Decisao(
+            vencedor=None, regra="decisao_humana", requer_humano=True,
+            motivo=f"divergência com o Vista ({origem_proposto}): quem decide é uma pessoa",
+        )
     decisao = _resolver(
         campo,
         valor_atual=valor_atual, origem_atual=origem_atual,

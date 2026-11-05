@@ -37,6 +37,11 @@ def test_every_imovel_hub_route_requires_auth(anon_client):
     assert {
         ("put", "/api/imoveis/{codigo}/certidoes/{tipo}/manual"),
         ("delete", "/api/imoveis/{codigo}/certidoes/{tipo}/manual"),
+        # Migration 315 — owned notes CRUD.
+        ("get", "/api/imoveis/{codigo}/notas"),
+        ("post", "/api/imoveis/{codigo}/notas"),
+        ("patch", "/api/imoveis/{codigo}/notas/{nota_id}"),
+        ("delete", "/api/imoveis/{codigo}/notas/{nota_id}"),
     } <= paths
 
     for method, path in sorted(paths):
@@ -44,6 +49,7 @@ def test_every_imovel_hub_route_requires_auth(anon_client):
             path.replace("{codigo}", _CODIGO)
             .replace("{documento_id}", _DOCUMENTO_ID)
             .replace("{transacao_id}", _DOCUMENTO_ID)
+            .replace("{nota_id}", _DOCUMENTO_ID)
             .replace("{tipo}", "cnd_iptu")
         )
         kwargs = {}
@@ -52,7 +58,7 @@ def test_every_imovel_hub_route_requires_auth(anon_client):
         # a 422 — exactly the false-green this file exists to refuse), and
         # `TestClient.delete()` has no `json` parameter at all, which is why
         # the DELETE route carries its `motivo` as a query param.
-        if method in {"patch", "put"}:
+        if method in {"patch", "put"} or (method == "post" and path.endswith("/notas")):
             kwargs["json"] = {}
         resp = getattr(anon_client, method)(concrete, **kwargs)
         assert resp.status_code == 401, (

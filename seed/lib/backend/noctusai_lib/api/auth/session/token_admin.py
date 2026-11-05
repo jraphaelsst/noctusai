@@ -1,4 +1,4 @@
-"""Service-side ``pk_*`` product-token administration — mint / look up / revoke
+"""Service-side ``noc_*`` product-token administration — mint / look up / revoke
 a token in ANY product's ``<schema>.api_tokens`` table.
 
 WHY
@@ -38,6 +38,11 @@ from typing import Any, Optional, Protocol
 from uuid import UUID, uuid4
 
 from noctusai_lib.api.auth.session.api_tokens import hash_token
+from noctusai_lib.api.auth.session.token_policy import (
+    NEW_TOKEN_PREFIX,
+    TOKEN_SCOPES,
+    TokenScopeAllowList,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +60,18 @@ __all__ = [
 ]
 
 API_TOKENS_TABLE = "api_tokens"
-_PREFIX_LEN = 11  # ``pk_`` + 8 hex chars — the UI-display prefix
+_PREFIX_LEN = 12  # ``noc_`` + 8 hex chars — the UI-display prefix
+_LEGACY_PREFIX_LEN = 11  # ``pk_`` + 8 hex chars (legacy tokens)
 
 
 def token_prefix(secret: str) -> str:
     """The display prefix the seed stores in ``api_tokens.token_prefix``."""
-    return secret[:_PREFIX_LEN]
+    return secret[: _PREFIX_LEN if secret.startswith(NEW_TOKEN_PREFIX) else _LEGACY_PREFIX_LEN]
 
 
 def mint_token_secret() -> tuple[str, str]:
-    """Return ``(raw_secret, prefix)`` for a fresh ``pk_*`` token (256 bits)."""
-    raw = f"pk_{secrets.token_hex(32)}"
+    """Return ``(raw_secret, prefix)`` for a fresh ``noc_*`` token (256 bits)."""
+    raw = f"{NEW_TOKEN_PREFIX}{secrets.token_hex(32)}"
     return raw, token_prefix(raw)
 
 
@@ -82,10 +88,11 @@ def build_api_token_row(
     human_personal: bool = False,
     minted_by: Optional[UUID] = None,
     issuer: Optional[str] = None,
+    service_account_id: Optional[UUID] = None,
 ) -> dict[str, Any]:
     """The ``api_tokens`` insert payload (SEED-1 columns, contract §B.0).
 
-    ``issuer`` is only included when set — the column exists on every
+    ``issuer`` / ``service_account_id`` are only included when set — the column exists on every
     SEED-1 table, but the seed route never set it, and omitting a ``None``
     keeps that route's payload byte-identical to before.
     """
@@ -108,6 +115,10 @@ def build_api_token_row(
     }
     if issuer is not None:
         row["issuer"] = issuer
+    # Only a product whose ``api_tokens`` has the column (core: ``service_account_id``)
+    # may pass this; omitted otherwise so every other schema's payload is unchanged.
+    if service_account_id is not None:
+        row["service_account_id"] = str(service_account_id)
     return row
 
 
@@ -132,7 +143,7 @@ class ApiTokenInfo:
 @dataclass(frozen=True)
 class MintedApiToken:
     """Returned once by :meth:`ProductTokenAdmin.mint`. ``secret`` is the
-    raw ``pk_*`` value — the caller stores it and never echoes it."""
+    raw ``noc_*`` value — the caller stores it and never echoes it."""
 
     info: ApiTokenInfo
     secret: str
@@ -156,7 +167,8 @@ class ProductTokenAdmin(Protocol):
         issuer: Optional[str] = None,
         minted_by: Optional[UUID] = None,
     ) -> MintedApiToken:
-        """Insert a new token row. ``expires_at=None`` mints a token that never
+        """Refuses scopes outside the allow-list (``UnknownTokenScopeError``).
+        Insert a new token row. ``expires_at=None`` mints a token that never
         expires (the verifier treats a NULL ``expires_at`` as no expiry).
         Raises on any write failure."""
         ...
@@ -223,7 +235,8 @@ class FakeProductTokenAdmin:
     ``fail_mint`` / ``fail_revoke`` simulate a write failure.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, scope_allow_list: Optional[TokenScopeAllowList] = None) -> None:
+        self._scope_allow_list = scope_allow_list or TOKEN_SCOPES
         self.rows: dict[str, list[dict[str, Any]]] = {}
         self.fail_mint = False
         self.fail_revoke = False
@@ -267,6 +280,7 @@ class FakeProductTokenAdmin:
     ) -> MintedApiToken:
         if self.fail_mint:
             raise RuntimeError("fake mint failure")
+        scopes = self._scope_allow_list.validate(scopes)
         raw, _ = mint_token_secret()
         row = build_api_token_row(
             token_id=uuid4(),
@@ -309,8 +323,11 @@ class SupabaseProductTokenAdmin:
     ``pk_*`` tokens through ``SupabaseApiTokenResolver``.
     """
 
-    def __init__(self, admin_client: Any) -> None:
+    def __init__(
+        self, admin_client: Any, scope_allow_list: Optional[TokenScopeAllowList] = None,
+    ) -> None:
         self._sb = admin_client
+        self._scope_allow_list = scope_allow_list or TOKEN_SCOPES
 
     def _table(self, schema: str):
         return self._sb.schema(schema).table(API_TOKENS_TABLE)
@@ -338,6 +355,7 @@ class SupabaseProductTokenAdmin:
         issuer: Optional[str] = None,
         minted_by: Optional[UUID] = None,
     ) -> MintedApiToken:
+        scopes = self._scope_allow_list.validate(scopes)
         raw, _ = mint_token_secret()
         row = build_api_token_row(
             token_id=uuid4(),
@@ -381,8 +399,14 @@ class SupabaseProductTokenAdmin:
         return revoked
 
 
-def make_product_token_admin(admin_client: Any = None) -> ProductTokenAdmin:
-    """Real when a service-role client is supplied; the Fake otherwise."""
+def make_product_token_admin(
+    admin_client: Any = None, *, scope_allow_list: Optional[TokenScopeAllowList] = None,
+) -> ProductTokenAdmin:
+    """Real when a service-role client is supplied; the Fake otherwise.
+
+    ``scope_allow_list`` defaults to the process-global ``TOKEN_SCOPES``.
+    Minting is the only write path, so the allow-list lives here.
+    """
     if admin_client is None:
-        return FakeProductTokenAdmin()
-    return SupabaseProductTokenAdmin(admin_client)
+        return FakeProductTokenAdmin(scope_allow_list)
+    return SupabaseProductTokenAdmin(admin_client, scope_allow_list)

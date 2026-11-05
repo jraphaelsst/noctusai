@@ -91,8 +91,8 @@ export interface IdentidadeChecklistRowProps {
  *  is left out: it has its own "Nome no documento" block below the list. */
 const DADOS_IDENTIDADE: ReadonlyArray<{ campo: keyof DadosPessoais; rotulo: string }> = [
   { campo: "cpf", rotulo: "CPF" },
-  { campo: "rg", rotulo: "RG" },
-  { campo: "rg_orgao_expedidor", rotulo: "Órgão expedidor" },
+  { campo: "rg", rotulo: "RG (opcional)" },
+  { campo: "rg_orgao_expedidor", rotulo: "Órgão expedidor (opcional)" },
 ];
 
 export function IdentidadeChecklistRow({

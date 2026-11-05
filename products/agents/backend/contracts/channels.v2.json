@@ -123,6 +123,11 @@
             "title": "At",
             "type": "string"
           },
+          "encaminhada": {
+            "default": false,
+            "title": "Encaminhada",
+            "type": "boolean"
+          },
           "midia": {
             "anyOf": [
               {
@@ -850,11 +855,40 @@
             "title": "Motivo",
             "type": "string"
           },
+          "opt_out_origem": {
+            "anyOf": [
+              {
+                "enum": [
+                  "palavra_chave",
+                  "pedido_do_lead"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Opt Out Origem"
+          },
           "seq": {
             "default": 0,
             "minimum": 0,
             "title": "Seq",
             "type": "integer"
+          },
+          "trecho": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trecho"
           },
           "type": {
             "const": "encerrar",
@@ -1010,6 +1044,49 @@
           "intencoes_visita"
         ],
         "title": "LeadProntoActionOut",
+        "type": "object"
+      },
+      "OptOutActionOut": {
+        "description": "The lead opted out (STOP backstop or the model's ``encerrar(lead_pediu_parar)``): emitted ALONGSIDE the\n``encerrar`` action so SW can tell the owner, in-app and on WhatsApp, with the reason.",
+        "properties": {
+          "motivo": {
+            "enum": [
+              "palavra_chave",
+              "pedido_do_lead"
+            ],
+            "title": "Motivo",
+            "type": "string"
+          },
+          "seq": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "trecho": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trecho"
+          },
+          "type": {
+            "const": "opt_out",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "motivo"
+        ],
+        "title": "OptOutActionOut",
         "type": "object"
       },
       "ParticipanteOut": {
@@ -1320,6 +1397,7 @@
               "handoff": "#/$defs/HandoffActionOut",
               "intencao_visita": "#/$defs/IntencaoVisitaActionOut",
               "lead_pronto": "#/$defs/LeadProntoActionOut",
+              "opt_out": "#/$defs/OptOutActionOut",
               "solicitacao_titular": "#/$defs/SolicitacaoTitularActionOut"
             },
             "propertyName": "type"
@@ -1339,6 +1417,9 @@
             },
             {
               "$ref": "#/$defs/EncerrarActionOut"
+            },
+            {
+              "$ref": "#/$defs/OptOutActionOut"
             },
             {
               "$ref": "#/$defs/ConsentimentoCreditoActionOut"

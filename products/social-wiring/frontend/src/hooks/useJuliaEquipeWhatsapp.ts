@@ -34,8 +34,8 @@ export const ROTULO_PAPEL: Record<PapelEquipe, string> = {
   admin: "Administrador", operador: "Operador", corretor: "Corretor", atendente: "Atendente", outro: "Outro",
 };
 export const EXPLICACAO_PAPEL: Record<PapelEquipe, string> = {
-  admin: "Pode usar o One Chat (agente operador) pelo próprio WhatsApp.",
-  operador: "Pode usar o One Chat (agente operador) pelo próprio WhatsApp.",
+  admin: "Equipe: nunca é tratado como lead; a mensagem na linha pública é guardada e os admins são avisados.",
+  operador: "Equipe: nunca é tratado como lead; a mensagem na linha pública é guardada e os admins são avisados.",
   corretor: "Equipe: nunca é tratado como lead; a mensagem na linha pública é guardada e os admins são avisados.",
   atendente: "Equipe: nunca é tratado como lead; a mensagem na linha pública é guardada e os admins são avisados.",
   outro: "Equipe: nunca é tratado como lead; a mensagem na linha pública é guardada e os admins são avisados.",

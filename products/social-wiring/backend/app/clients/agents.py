@@ -77,6 +77,9 @@ class TurnMessage:
     #: The extraction NEVER rides inside `texto` (a typed "[Audio transcrito] ..." is just lead text). `texto` may be empty when
     #: `midia` is set. None = a plain text message.
     midia: Optional[dict[str, Any]] = None
+    #: P1-8: WhatsApp marked this message as FORWARDED. The lead did not write it, so agents treats its text as quoted material
+    #: (never as the lead's own words / instructions).
+    encaminhada: bool = False
 
 
 #: `gatilho` of a turn: a lead message, or a re-engagement the SW timers fire (no lead message).
@@ -131,6 +134,10 @@ class TurnRequest:
 
 def _mensagem_wire(m: "TurnMessage") -> dict[str, Any]:
     out: dict[str, Any] = {"texto": m.texto, "provider_message_id": m.provider_message_id, "at": m.at.isoformat()}
+    if m.encaminhada:
+        # Sent only when true (absent = false on agents): an agents build that does not know the field yet (strict schema) keeps
+        # accepting every ordinary turn during the deploy window; only a forwarded message needs the new agents.
+        out["encaminhada"] = True
     if m.midia:
         out["midia"] = dict(m.midia)
     return out
@@ -321,6 +328,16 @@ class ResumoResult:
     custo_usd: Optional[float] = None
     tokens_entrada: Optional[int] = None
     tokens_saida: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class EspecificacoesResposta:
+    """agents' org-specs answer, PASSED THROUGH (Julia-line S9): the SW screen shows agents' per-field messages, so the
+    body is never re-modelled here. ``status`` is 200 (``declaradas`` / ``valores`` / ``faltando`` / ``invalidas`` /
+    ``modo_validacao``) or 422 (``code`` + ``detail`` + ``violacoes`` -- block mode, or ``spec_nao_declarada``)."""
+
+    status: int
+    corpo: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -605,6 +622,12 @@ class AgentsClient(Protocol):
 
     async def put_ferramentas_token(self, token: str) -> None: ...
 
+    async def especificacoes(self, agent_key: str) -> EspecificacoesResposta: ...
+
+    async def salvar_especificacoes(
+        self, agent_key: str, valores: dict[str, str], ator: dict[str, str],
+    ) -> EspecificacoesResposta: ...
+
     async def uso(self, mes: str) -> AgentUso: ...
 
     # ── the shared thread (julia-v2 section 8.2) ──
@@ -747,6 +770,12 @@ class FakeAgentsClient:
         self.leads_apagados: list[str] = []
         self.thread_reads: list[str] = []
         self.feedbacks: list[dict[str, Any]] = []
+        #: org specs (Julia-line S9): the declared keys (chave -> tipo), the org's values, the scripted replies, the writes
+        self.especificacoes_declaradas: dict[str, str] = {"agencia": "texto", "regioes": "texto_longo"}
+        self.especificacoes_valores: dict[str, str] = {}
+        self.especificacoes_script: list[EspecificacoesResposta] = []
+        self.especificacoes_salvas: list[tuple[str, dict[str, str]]] = []
+        self.especificacoes_atores: list[dict[str, str]] = []  # the attested acting user of each save
 
     def _maybe_fail(self, method: str) -> None:
         if method in self.errors:
@@ -828,6 +857,44 @@ class FakeAgentsClient:
                 raise nxt
             return nxt
         return DecisaoResult(escolha=req.opcoes[0], motivo="decisão de teste", regra="padrao_da_versao", custo_usd=0.0)
+
+    async def especificacoes(self, agent_key: str) -> EspecificacoesResposta:
+        self._maybe_fail("especificacoes")
+        return EspecificacoesResposta(200, self._especificacoes_corpo(agent_key))
+
+    async def salvar_especificacoes(
+        self, agent_key: str, valores: dict[str, str], ator: dict[str, str],
+    ) -> EspecificacoesResposta:
+        """Scripted (``especificacoes_script``) or an in-memory echo of the declared keys; an undeclared key is agents' 422."""
+        self._maybe_fail("salvar_especificacoes")
+        self.especificacoes_salvas.append((agent_key, dict(valores)))
+        self.especificacoes_atores.append(dict(ator))
+        if self.especificacoes_script:
+            return self.especificacoes_script.pop(0)
+        desconhecidas = sorted(set(valores) - set(self.especificacoes_declaradas))
+        if desconhecidas:
+            return EspecificacoesResposta(422, {
+                "code": "spec_nao_declarada",
+                "detail": "Especificações não declaradas pela definição: " + ", ".join(desconhecidas) + ".",
+            })
+        for chave, valor in valores.items():
+            if valor.strip():
+                self.especificacoes_valores[chave] = valor
+            else:
+                self.especificacoes_valores.pop(chave, None)
+        return EspecificacoesResposta(200, self._especificacoes_corpo(agent_key))
+
+    def _especificacoes_corpo(self, agent_key: str) -> dict[str, Any]:
+        declaradas = [
+            {"chave": c, "rotulo": c.replace("_", " ").title(), "descricao": "", "tipo": t, "obrigatoria": True, "exemplo": None}
+            for c, t in self.especificacoes_declaradas.items()
+        ]
+        return {
+            "agent_key": agent_key, "declaradas": declaradas,
+            "valores": [{"chave": c, "valor": v, "updated_by_nome": None} for c, v in self.especificacoes_valores.items()],
+            "faltando": [c for c in self.especificacoes_declaradas if c not in self.especificacoes_valores],
+            "invalidas": [], "modo_validacao": "report",
+        }
 
     async def uso(self, mes: str) -> AgentUso:
         self.uso_calls.append(mes)
@@ -1495,6 +1562,40 @@ class HttpAgentsClient(AgentsHttpTransport):
             raise ValueError("put_ferramentas_token needs a token")
         await self._send("PUT", "/api/channels/ferramentas-token", json={"token": token})
 
+    async def especificacoes(self, agent_key: str) -> EspecificacoesResposta:
+        """`GET /api/channels/agents/{key}/specs` (``agents:channel-specs``): the declared specs + this org's values."""
+        body = await self._send("GET", f"/api/channels/agents/{quote(agent_key, safe='')}/specs")
+        return EspecificacoesResposta(200, body if isinstance(body, dict) else {})
+
+    async def salvar_especificacoes(
+        self, agent_key: str, valores: dict[str, str], ator: dict[str, str],
+    ) -> EspecificacoesResposta:
+        """`PUT /api/channels/agents/{key}/specs` with the ACTING USER (``ator`` = ``{user_id, nome?, email?}``, product-attested by
+        this client's channel token -- agents answers 422 ``ator_obrigatorio`` without it): agents' 200 AND its 422 (the per-field violations) come back
+        verbatim -- anything else is the usual typed error."""
+        path = f"/api/channels/agents/{quote(agent_key, safe='')}/specs"
+        try:
+            async with self._client() as client:
+                response = await client.request("PUT", path, json={"valores": valores, "ator": ator})
+        except httpx.HTTPError as exc:
+            raise AgentsTimeout(f"agents unreachable: {type(exc).__name__}") from exc
+        corpo_403 = None
+        if response.status_code == 403:
+            # agents refuses channel-token writes of Julia's content (`edicao_restrita_plataforma`): that is an ANSWER to pass through,
+            # not a rejected token (any other 403 is).
+            try:
+                corpo_403 = response.json()
+            except ValueError:
+                corpo_403 = None
+            corpo_403 = corpo_403 if isinstance(corpo_403, dict) and "edicao_restrita_plataforma" in str(corpo_403) else None
+        if response.status_code not in (200, 422) and corpo_403 is None:
+            self._raise_for_status(response)
+        try:
+            corpo = corpo_403 if corpo_403 is not None else response.json()
+        except ValueError as exc:
+            raise AgentsUpstreamError("agents returned a non-JSON body") from exc
+        return EspecificacoesResposta(response.status_code, corpo if isinstance(corpo, dict) else {})
+
     # ── the shared thread (julia-v2 section 8.2) ──
     async def buscar_thread(
         self, *, connection_id: Optional[str] = None, chat_id: Optional[str] = None, lead_ref: Optional[str] = None,
@@ -1682,7 +1783,7 @@ __all__ = [
     "Action", "AgentNotFound", "AgentStatus", "AgentUnavailable", "AgentUso", "AgentsBadRequest", "AgentsClient",
     "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid", "AgentsUpstreamError",
     "AppendResult", "CapacityExceeded", "ConsentInfo", "ControleIndisponivel", "ControleInfo", "ConversationNotFound",
-    "DecisaoRequest", "DecisaoResult", "DeletionRequest", "DeletionResult", "EstagioInfo", "FAKE_ESTAGIOS", "FakeAgentsClient",
+    "DecisaoRequest", "DecisaoResult", "EspecificacoesResposta", "DeletionRequest", "DeletionResult", "EstagioInfo", "FAKE_ESTAGIOS", "FakeAgentsClient",
     "GATILHOS", "GATILHO_MENSAGEM", "GATILHO_REENGAJAMENTO", "HandoffAction", "HandoffNotFound", "HandoffRecord",
     "HttpAgentsClient", "IdempotencyConflict", "JuliaAction", "LeadDesconhecido", "LeadSemQualificacao", "LlmNotConfigured",
     "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ParticipanteInfo", "ParticipanteNotFound", "QualificacaoEstado",

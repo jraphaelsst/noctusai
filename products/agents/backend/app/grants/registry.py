@@ -1,0 +1,84 @@
+"""Server-side registry of the products an agent can be granted to, and of the token scopes a grant mints.
+
+Nothing here comes from request input: the product slug in a request is only a KEY into :data:`GRANT_PRODUCTS`,
+and every scope / issuer / label a grant mints is read from this module (CONTRACT D4: "scopes come only from
+server-side registries"). Adding a product = adding one :class:`GrantProduct` here, in the same commit as the
+product's receiver sink.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from app.clients.social_wiring import JULIA_TOOLS_TOKEN_KEY
+from app.dependencies import GRANT_CHANNEL_TOKEN_SCOPES
+from noctusai_lib.api.auth.session import GRANT_RECEIVE_SCOPE, TokenScopeAllowList
+
+__all__ = [
+    "GRANT_CHANNEL_SCOPES",
+    "GRANT_PRODUCTS",
+    "GRANT_TOKEN_SCOPES",
+    "GRANT_ISSUER",
+    "GrantProduct",
+    "get_grant_product",
+    "list_grant_products",
+]
+
+#: The issuer agents stamps on the tokens it mints INTO a product schema (tools token, delivery token) and the
+#: ``{issuer}`` of the receiver path (``PUT /api/platform/grants/agents``).
+GRANT_ISSUER = "agents"
+
+
+
+@dataclass(frozen=True)
+class GrantProduct:
+    """One grantable product."""
+
+    slug: str
+    label: str
+    #: The product's Postgres schema (where its ``api_tokens`` live).
+    schema: str
+    #: ``issuer`` stamped on the CHANNEL token (agents' own ``api_tokens``): the transport allowed to drive the agent.
+    channel_issuer: str
+    #: Scope + label of the TOOLS token minted into the product's ``api_tokens`` (agents calls the product's read
+    #: tools with it). Mirrors the product's own constants (``julia_contexto_service.TOOLS_TOKEN_*``).
+    tools_scope: str
+    tools_label: str
+    #: The name the tools token's SECRET is stored under in agents' per-org encrypted credential store (read back by
+    #: ``resolve_julia_tools_token``).
+    tools_secret_name: str
+    #: Agent keys that can be granted to this product.
+    agent_keys: tuple[str, ...]
+
+
+GRANT_PRODUCTS: dict[str, GrantProduct] = {
+    "social-wiring": GrantProduct(
+        slug="social-wiring",
+        label="Social Wiring",
+        schema="social_wiring",
+        channel_issuer="social-wiring",
+        tools_scope="social-wiring:lais-tools",
+        tools_label="agents · ferramentas julia",
+        tools_secret_name=JULIA_TOOLS_TOKEN_KEY,
+        agent_keys=("julia",),
+    ),
+}
+
+
+def get_grant_product(slug: str) -> GrantProduct | None:
+    return GRANT_PRODUCTS.get(slug)
+
+
+def list_grant_products() -> list[GrantProduct]:
+    return sorted(GRANT_PRODUCTS.values(), key=lambda p: p.slug)
+
+
+#: The scopes a grant mints on its CHANNEL token (agents schema): turn + status + the org-specs scope
+#: (``app.dependencies.GRANT_CHANNEL_TOKEN_SCOPES``).
+GRANT_CHANNEL_SCOPES: tuple[str, ...] = tuple(sorted(GRANT_CHANNEL_TOKEN_SCOPES))
+
+#: STRICT allow-list of the scopes the grant service may mint (channel + each product's tools scope + the delivery
+#: scope). The grant token admin refuses anything else (``UnknownTokenScopeError``).
+GRANT_TOKEN_SCOPES = TokenScopeAllowList(
+    [*GRANT_CHANNEL_SCOPES, GRANT_RECEIVE_SCOPE, *(p.tools_scope for p in GRANT_PRODUCTS.values())],
+    strict=True,
+)
