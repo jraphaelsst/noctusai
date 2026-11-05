@@ -229,6 +229,10 @@ generalization for any channel:
   hardening block is pinned (`check_prod_compose_hardening_parity`; SEC-C isolation proof
   `.github/workflows/agents-secc-ci.yml`). Missing piece to verify per audit: **network egress
   allow-list** for runtime jobs (model provider + declared tool hosts only).
+  Proof-harness note: the proof's `health_endpoint_200` waits `HEALTH_READY_TIMEOUT_S` (180s) because
+  the app only listens after `on_startup` exhausts its retries against the placeholder Supabase host
+  (~68s measured); a 45s wait was red for weeks (`curl_rc=56 code=000`). A failing check now prints
+  the container state + `docker logs` to the CI log. Never shorten the wait or demote the check.
 - **BYOK keys (`A:credentials/`).** Org keys stored server-side, never returned to browsers, never in
   logs/repr; key testers call **fixed** vendor URLs (`api_key_testers.py:57,64`). A user-supplied base URL
   would make a tester an SSRF/exfil oracle (it would send the org's key to the attacker's host) — refuse

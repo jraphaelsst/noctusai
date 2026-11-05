@@ -111,6 +111,19 @@ PLACEHOLDER_ENV = {
 }
 
 
+# The app does not LISTEN until the seed lifespan's `on_startup` returns, and
+# this harness points Supabase at an unresolvable placeholder host, so every
+# startup step (slot sweep, orphan approvals/eval/geracao/mecanismo sweeps)
+# exhausts `_STARTUP_RETRY_DELAYS` (1+3+9s) in `products/agents/backend/
+# app/main.py` before the port opens: measured ~68s locally with 5 failing
+# steps. Until then the published port is accepted by docker-proxy and reset
+# (curl rc=56, code=000). The old 45s wait expired before uvicorn listened.
+# Sized from that measurement with ~2.5x margin for a cold CI runner; the
+# loop still exits early if the container dies. `/api/health` is 200 while
+# degraded (startup_hook_error), so passing here never hides an app crash.
+HEALTH_READY_TIMEOUT_S = 180
+
+
 @dataclass
 class CheckResult:
     name: str
@@ -474,9 +487,15 @@ class Proof:
         port = self._published_port()
         if port is None:
             return self.record("health_endpoint_200", False, detail="no published port found")
-        deadline = time.time() + 45
+        deadline = time.time() + HEALTH_READY_TIMEOUT_S
         last_detail = ""
         while time.time() < deadline:
+            running = _run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", self.main_container], timeout=10
+            )
+            if running.stdout.strip() == "false":
+                last_detail += " (container exited before answering)"
+                break
             proc = _run(
                 ["curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", f"http://127.0.0.1:{port}/api/health"],
                 timeout=10,
@@ -485,7 +504,25 @@ class Proof:
             if proc.returncode == 0 and proc.stdout.strip() == "200":
                 return self.record("health_endpoint_200", True, detail=last_detail)
             time.sleep(2)
+        # Fail loudly: a red health check with no app output is undiagnosable
+        # (this check was red for weeks with only "curl_rc=56 code=000").
+        self._dump_container_diagnostics()
         return self.record("health_endpoint_200", False, detail=last_detail)
+
+    def _dump_container_diagnostics(self) -> None:
+        """Print the main container's state + app log tail to stdout (CI log)."""
+        state = _run(
+            ["docker", "inspect", "-f",
+             "status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}",
+             self.main_container],
+            timeout=15,
+        )
+        logs = _run(["docker", "logs", "--tail", "200", self.main_container], timeout=30)
+        print(f"--- health_endpoint_200 FAILED: container state: {state.stdout.strip() or state.stderr.strip()}")
+        print(f"--- docker logs --tail 200 {self.main_container} (stdout+stderr):")
+        print(logs.stdout)
+        print(logs.stderr)
+        print("--- end container logs")
 
     def check_uvicorn_identity(self) -> bool:
         find_pid_script = (
