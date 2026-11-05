@@ -10,6 +10,8 @@ Names: schema `monica` -> `nosnolimiar` · host `monica.noctusai.com` (retired, 
 
 ## Phase B — before the window (no prod change)
 
+> **🔴 Sequencing: this branch lands on `dev` ONLY at the start of the window.** Once it is on `dev`, the next prod ship by *any* session blesses it, and `migrate_product core sha=<blessed>` applies **core 098**. That renames the catalog slug in place while the old `monica` container is still serving, which effectively opens the cutover window early. Enqueue it (`task_branch action=enqueue slug=nosnolimiar-rename`) immediately before B2, and only once the owner has scheduled the window. It was enqueued and then withdrawn on 2026-11-05 for exactly this reason. Its review is done: slice score logged, findings fixed through 9573e4bab.
+
 | Step | Command | Rollback |
 |---|---|---|
 | B0 | `deploy/consent/nosnolimiar.prod.yml` committed in HEAD (tech-lead, after the owner types the phrase); then the wiring commit | n/a |
