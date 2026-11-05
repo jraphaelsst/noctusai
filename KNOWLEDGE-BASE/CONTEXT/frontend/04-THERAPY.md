@@ -1,5 +1,7 @@
 # 04 — Therapy Platform Frontend
 
+> ⚠️ **ASLEEP PRODUCT (marked 2026-11-05).** `therapy-platform` is not in `deploy/fleet/active-scope.txt` (catalog `ativo=false`): no CI job, keeper or gate checks it, and per `KB § PATTERNS/architect/product-working-scope.md` it is not touched. This doc describes the product as last documented — reference only; re-verify against the code before relying on it if the product is woken.
+
 > Path: `products/therapy-platform/frontend/src/` · Port: 8095 · 50+ pages · 30 hooks · Auth: Direct Supabase Auth
 > Standard frontend patterns: see `../PATTERNS/frontend/frontend.md`.
 > Vite build: 596 KB main bundle (post-wiring close 2026-05-11).
