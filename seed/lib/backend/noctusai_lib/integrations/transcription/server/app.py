@@ -28,6 +28,7 @@ from noctusai_lib.integrations.transcription.server.media import (
     decode_to_float32,
     probe_bytes,
 )
+from noctusai_lib.api.access_tiers import access_tier
 
 log = logging.getLogger("noctus.transcriber")
 
@@ -131,6 +132,7 @@ def create_app(
         return {"status": "ok", "modelo": engine.model_name}
 
     @app.post("/v1/probe")
+    @access_tier('service', reason='shared bearer token checked by _authorized()')
     async def probe(request: Request):
         if not _authorized(request):
             return _err(401, "nao_autorizado", "token invalido")
@@ -153,6 +155,7 @@ def create_app(
         }
 
     @app.post("/v1/transcribe")
+    @access_tier('service', reason='shared bearer token checked by _authorized()')
     async def transcribe(
         request: Request,
         language: str = Query("pt"),

@@ -28,6 +28,8 @@ from typing import Any, Callable
 
 from fastapi import APIRouter
 
+from noctusai_lib.api.access_tiers import make_router
+
 from noctusai_lib.integrations.meta import _meta_api
 from noctusai_lib.integrations.meta._meta_api import (
     META_KITCHEN_SINK_SCOPES,
@@ -38,6 +40,7 @@ from noctusai_lib.integrations.meta.types import MetaAdapter
 
 def make_meta_router(
     *,
+    platform_admin_dep: Callable[..., Any],
     get_adapter: Callable[[str | None], MetaAdapter],
     app_id: str | None = None,
     app_secret: str | None = None,
@@ -47,13 +50,21 @@ def make_meta_router(
 ) -> APIRouter:
     """Build the Meta introspection router.
 
+    `platform_admin_dep` is REQUIRED and must be the platform-admin gate
+    (e.g. `require_platform_admin`): the routes take an `org_id` query
+    parameter and report that org's connected Meta identity, page counts
+    and granted scopes, so they are operator diagnostics (tier `platform`),
+    never an anonymous or any-member surface (OWASP API1 BOLA / API5 BFLA).
+    The router is built with `make_router(tier="platform")`, which also
+    keeps it out of the public OpenAPI schema.
+
     `get_adapter(org_id)` is the consumer-supplied callable returning
     a `MetaAdapter` (typically `lambda org: get_meta_adapter(...)`).
     `app_id` / `app_secret` enable the Graph-discovered scope layer
     (they query `/{app-id}/permissions`); absent → that layer is
     `None` and the kitchen-sink is the effective fallback."""
 
-    router = APIRouter(prefix=prefix, tags=["meta"])
+    router = make_router(tier="platform", guard=platform_admin_dep, prefix=prefix, tags=["meta"])
 
     @router.get("/status")
     def meta_status(org_id: str | None = None) -> dict[str, Any]:

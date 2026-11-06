@@ -59,6 +59,7 @@ from noctusai_lib.primitives.roles import (
     MANAGE_TEAM_ROLES,
 )
 from noctusai_seed.team_policy import DEFAULT_TEAM_POLICY, NEVER_INVITABLE_ROLE, TeamPolicy
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ def _create_notificacoes_router(deps) -> APIRouter:
     router = APIRouter(prefix="/api/notificacoes", tags=["Notificacoes"])
 
     @router.get("")
+    @access_tier('org', reason='deps.get_current_user_and_fetch authenticates the bearer; rows filtered by user_id')
     async def listar(
         authorization: Optional[str] = Header(None),
         page: int = Query(1, ge=1),
@@ -132,6 +134,7 @@ def _create_notificacoes_router(deps) -> APIRouter:
         return {"data": items, "total": result.count or 0, "page": page, "page_size": page_size}
 
     @router.get("/contagem")
+    @access_tier('org', reason='deps.get_current_user_and_fetch authenticates the bearer; rows filtered by user_id')
     async def contagem(authorization: Optional[str] = Header(None)):
         core = deps.get_core_client()
 
@@ -387,6 +390,7 @@ def _create_team_router(
         return await run_blocking(_create_and_send)
 
     @router.get("/accept/validate")
+    @access_tier('public', reason='invite landing: one-time invitation token is the credential', category='auth')
     async def validate_invite(token: str = Query(...)):
         admin = deps.get_admin_client()
         result = validate_invitation(admin, _INVITATIONS_TABLE, token)

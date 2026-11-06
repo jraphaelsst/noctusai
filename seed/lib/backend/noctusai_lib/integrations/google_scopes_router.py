@@ -41,6 +41,8 @@ from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Query
 
+from noctusai_lib.api.access_tiers import make_router
+
 from noctusai_lib.integrations.google_scopes import (
     GOOGLE_KITCHEN_SINK_SCOPES,
     diagnose_consent_screen_gaps,
@@ -60,6 +62,7 @@ ConfiguredScopesProvider = Callable[[], str | None]
 
 def google_scopes_router(
     *,
+    platform_admin_dep: Callable[..., object],
     configured_scopes: ConfiguredScopesProvider,
     access_token_resolver: AccessTokenResolver | None = None,
     kitchen_sink: list[str] | None = None,
@@ -68,6 +71,10 @@ def google_scopes_router(
     """Build the `/api/google/scopes` introspection router.
 
     Args:
+        platform_admin_dep: REQUIRED platform-admin gate (e.g.
+            `require_platform_admin`). The route probes any `tenant_id`'s
+            stored Google token, so it is operator diagnostics (tier
+            `platform`), never anonymous (OWASP API1 BOLA / API5 BFLA).
         configured_scopes: returns the product's raw `GOOGLE_OAUTH_SCOPES`
             env value (`"auto"`, empty, or an explicit list string).
         access_token_resolver: optional async callable returning a
@@ -84,7 +91,7 @@ def google_scopes_router(
         A FastAPI `APIRouter` exposing `GET {prefix}/scopes`.
     """
     sink = kitchen_sink if kitchen_sink is not None else GOOGLE_KITCHEN_SINK_SCOPES
-    router = APIRouter(prefix=prefix, tags=["google-scopes"])
+    router = make_router(tier="platform", guard=platform_admin_dep, prefix=prefix, tags=["google-scopes"])
 
     @router.get("/scopes")
     async def get_google_scopes(  # noqa: D401 — endpoint

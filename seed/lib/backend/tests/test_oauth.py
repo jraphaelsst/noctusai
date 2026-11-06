@@ -422,6 +422,11 @@ def test_make_oauth_provider_google_requires_credentials():
 # ───────────────────────────── oauth_router ────────────────────────────────
 
 
+def _state_ok(state: str) -> bool:
+    """Stand-in for the product's signed-state verifier: accepts everything."""
+    return True
+
+
 def _test_auth(authorization: str | None = Header(default=None)):
     """Stand-in for a product's `get_current_user_org`: 401 without a bearer."""
     if authorization != "Bearer org-a":
@@ -437,7 +442,7 @@ def _build_app_with_router(*providers, on_callback=None, authed=True, **kw):
     app = FastAPI()
     app.include_router(
         oauth_router(
-            *providers, on_callback=on_callback, auth_dependency=_test_auth, **kw
+            *providers, on_callback=on_callback, auth_dependency=_test_auth, verify_state=_state_ok, **kw
         )
     )
     return TestClient(app, headers=_AUTH if authed else None)
@@ -445,14 +450,14 @@ def _build_app_with_router(*providers, on_callback=None, authed=True, **kw):
 
 def test_oauth_router_requires_at_least_one_provider():
     with pytest.raises(ValueError, match="at least one"):
-        oauth_router(auth_dependency=_test_auth)
+        oauth_router(auth_dependency=_test_auth, verify_state=_state_ok)
 
 
 def test_oauth_router_rejects_duplicate_provider_names():
     a = FakeOAuthProvider(name="dup")
     b = FakeOAuthProvider(name="dup")
     with pytest.raises(ValueError, match="duplicate provider name"):
-        oauth_router(a, b, auth_dependency=_test_auth)
+        oauth_router(a, b, auth_dependency=_test_auth, verify_state=_state_ok)
 
 
 def test_oauth_router_authorize_returns_url():
@@ -752,7 +757,7 @@ def test_oauth_router_custom_prefix_mounts_all_endpoints_there():
     """A custom prefix moves every endpoint; the old /api/oauth path 404s."""
     fake = FakeOAuthProvider(name="vendor-a")
     app = FastAPI()
-    app.include_router(oauth_router(fake, prefix="/custom/auth", auth_dependency=_test_auth))
+    app.include_router(oauth_router(fake, prefix="/custom/auth", auth_dependency=_test_auth, verify_state=_state_ok))
     client = TestClient(app)
 
     ok = client.get(
@@ -793,7 +798,7 @@ def test_oauth_router_callback_paths_preserves_legacy_absolute_path():
             yt,
             cal,
             on_callback=hook,
-            auth_dependency=_test_auth,
+            auth_dependency=_test_auth, verify_state=_state_ok,
             prefix="/api/oauth",
             callback_paths={
                 "youtube": "/api/youtube/oauth/callback",
@@ -845,7 +850,7 @@ def test_oauth_router_callback_paths_unknown_provider_raises():
     fake = FakeOAuthProvider(name="vendor-a")
     with pytest.raises(ValueError, match="unknown provider"):
         oauth_router(
-            fake, callback_paths={"not-registered": "/x/cb"}, auth_dependency=_test_auth
+            fake, callback_paths={"not-registered": "/x/cb"}, auth_dependency=_test_auth, verify_state=_state_ok
         )
 
 
@@ -854,7 +859,7 @@ def test_oauth_router_callback_paths_default_none_is_full_back_compat():
     <prefix>/{provider}/callback; identical to the pre-seam behavior."""
     fake = FakeOAuthProvider(name="vendor-a")
     app = FastAPI()
-    app.include_router(oauth_router(fake, callback_paths=None, auth_dependency=_test_auth))
+    app.include_router(oauth_router(fake, callback_paths=None, auth_dependency=_test_auth, verify_state=_state_ok))
     client = TestClient(app)
     resp = client.get(
         "/api/oauth/vendor-a/callback",
@@ -1154,3 +1159,34 @@ def test_oauth_router_refresh_and_revoke_blocked_when_token_not_in_caller_org():
         "/api/oauth/vendor-a/revoke", json={"token": "tok"}
     ).status_code == 403
     assert fake.revoked_tokens == []
+
+
+def test_oauth_router_refuses_a_state_the_product_did_not_issue():
+    """Login-CSRF guard: an unverified `state` is a 400 BEFORE the code is exchanged or a consent URL is built."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    app = FastAPI()
+    app.include_router(
+        oauth_router(
+            fake,
+            auth_dependency=_test_auth,
+            verify_state=lambda state: state == "issued-state",
+            callback_paths={"vendor-a": "/api/vendor-a/oauth/callback"},
+        )
+    )
+    client = TestClient(app)
+    params = {"code": "c", "state": "forged", "redirect_uri": "r"}
+    assert client.get("/api/vendor-a/oauth/callback", params=params).status_code == 400
+    assert client.get("/api/oauth/vendor-a/authorize", params={"state": "forged", "redirect_uri": "r"}).status_code == 400
+    ok = client.get("/api/vendor-a/oauth/callback", params={**params, "state": "issued-state"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["ok"] is True
+
+
+def test_oauth_router_default_callback_refuses_unverified_state():
+    fake = FakeOAuthProvider(name="vendor-a")
+    app = FastAPI()
+    app.include_router(oauth_router(fake, auth_dependency=_test_auth, verify_state=lambda _s: False))
+    resp = TestClient(app).get(
+        "/api/oauth/vendor-a/callback", params={"code": "c", "state": "forged", "redirect_uri": "r"}
+    )
+    assert resp.status_code == 400

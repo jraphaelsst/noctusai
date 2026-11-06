@@ -18,6 +18,11 @@ from noctusai_lib.integrations.google_scopes import GOOGLE_KITCHEN_SINK_SCOPES
 from noctusai_lib.integrations.google_scopes_router import google_scopes_router
 
 
+def _platform_admin_ok() -> None:
+    """Stand-in for `require_platform_admin` that lets the caller through."""
+    return None
+
+
 def _client(
     *, configured: str, token: str | None, with_resolver: bool = True
 ) -> TestClient:
@@ -27,6 +32,7 @@ def _client(
     app = FastAPI()
     app.include_router(
         google_scopes_router(
+            platform_admin_dep=_platform_admin_ok,
             configured_scopes=lambda: configured,
             access_token_resolver=resolver if with_resolver else None,
         )
@@ -64,3 +70,25 @@ class TestGoogleScopesEndpoint:
         assert body["configured"] == ["openid", "email"]
         # Kitchen-sink layer is independent of the configured value.
         assert body["kitchen_sink"] == GOOGLE_KITCHEN_SINK_SCOPES
+
+
+class TestGoogleScopesAccess:
+    """OWASP API1/API5: the route probes any tenant's stored token, so it is platform-only."""
+
+    def test_refuses_anonymous_and_non_admin_and_is_not_in_schema(self) -> None:
+        from fastapi import HTTPException
+
+        def deny_401() -> None:
+            raise HTTPException(status_code=401, detail="unauthenticated")
+
+        def deny_403() -> None:
+            raise HTTPException(status_code=403, detail="platform_admin_required")
+
+        for gate, expected in ((deny_401, 401), (deny_403, 403)):
+            app = FastAPI()
+            app.include_router(
+                google_scopes_router(platform_admin_dep=gate, configured_scopes=lambda: "auto")
+            )
+            client = TestClient(app)
+            assert client.get("/api/google/scopes?tenant_id=t1").status_code == expected
+            assert "/api/google/scopes" not in client.get("/openapi.json").json()["paths"]

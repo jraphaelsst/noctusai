@@ -83,7 +83,13 @@ class _FakeResponse:
         return self._payload if self._is_text else str(self._payload)
 
 
+def _platform_admin_ok():
+    """Stand-in for `require_platform_admin` that lets the caller through."""
+    return None
+
+
 def _router(adapter, **kw):
+    kw.setdefault("platform_admin_dep", _platform_admin_ok)
     return make_meta_router(get_adapter=lambda _org: adapter, **kw)
 
 
@@ -1091,6 +1097,25 @@ class TestRouter:
         data = resp.json()
         assert "pages_show_list" in data["kitchen_sink_fallback"]
         assert "pages_show_list" in data["configured"]
+
+    def test_routes_refuse_anonymous_and_non_admin_and_stay_out_of_schema(self):
+        """OWASP API1/API5: the diagnostics take an `org_id`, so they sit behind the platform gate."""
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+
+        def deny_401():
+            raise HTTPException(status_code=401, detail="unauthenticated")
+
+        def deny_403():
+            raise HTTPException(status_code=403, detail="platform_admin_required")
+
+        for gate, expected in ((deny_401, 401), (deny_403, 403)):
+            app = FastAPI()
+            app.include_router(_router(FakeMetaAdapter(), platform_admin_dep=gate))
+            client = TestClient(app)
+            assert client.get("/api/meta/status?org_id=other-org").status_code == expected
+            assert client.get("/api/meta/scopes?org_id=other-org").status_code == expected
+            assert "/api/meta/status" not in client.get("/openapi.json").json()["paths"]
 
 
 # ─── TestMetaGraphErrorPermission ─────────────────────────────────────────

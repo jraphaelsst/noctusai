@@ -287,10 +287,10 @@ def create_mfa_router(
             actor=AuditActor(user_id=caller.user_id, org_id=caller.org_id, role="admin"),
         ))
 
-    @router.post("/admin/reset/{user_id}")
+    @router.post("/admin/reset/{user_id}", include_in_schema=False)
     async def mfa_admin_reset(user_id: str, request: Request,
                               caller: _Caller = Depends(get_caller)) -> dict[str, int]:
-        role = await asyncio.to_thread(resolve_platform_admin_role, deps.get_core_client(), caller.user_id)
+        role = await asyncio.to_thread(lambda: resolve_platform_admin_role(deps.get_core_client(), caller.user_id))
         if role != "admin":
             raise _err(403, "Restrito a administradores da plataforma NoctusAI", "platform_admin_required")
         if caller.aal != "aal2":
