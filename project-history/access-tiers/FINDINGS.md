@@ -2,13 +2,13 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1208 open / in-progress**, 19 fixed, 1 accepted (1228 total).
+**1209 open / in-progress**, 19 fixed, 1 accepted (1229 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
 | academia-de-reciclagem | 32 | 0 | 0 | 32 | 0 | 0 |
 | adconnect | 30 | 0 | 0 | 30 | 0 | 0 |
-| agents | 22 | 0 | 0 | 22 | 0 | 5 |
+| agents | 23 | 0 | 0 | 23 | 0 | 5 |
 | commerce | 61 | 0 | 0 | 61 | 0 | 0 |
 | community | 35 | 0 | 0 | 35 | 0 | 0 |
 | core | 53 | 0 | 0 | 53 | 0 | 0 |
@@ -66,6 +66,7 @@
 | AT-1541441b | agents | `products/agents/backend/app/routers/studio_geracoes_router.py (5 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-4a456b50 | agents | `products/agents/backend/app/routers/studio_import_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-f3021066 | agents | `products/agents/backend/app/routers/studio_knowledge_router.py (10 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
+| AT-eae56506 | agents | `products/agents/backend/app/routers/studio_metricas_router.py (4 routes)` | platform | platform-in-public-schema | medium | open | keeper 2026-11-06 |
 | AT-f2aabc8a | agents | `products/agents/backend/app/routers/studio_package_sync_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-13808e32 | agents | `products/agents/backend/app/routers/studio_padrao_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-682c3df8 | agents | `products/agents/backend/app/routers/studio_prontidao_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |

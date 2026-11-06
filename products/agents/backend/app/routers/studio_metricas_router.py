@@ -10,15 +10,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import Depends, Query
 
 from app.dependencies import get_turn_metrics_store_dep, require_platform_admin
 from app.routers.studio_agents_router import get_studio_definition_store_dep, resolve_agent
 from app.stores.turn_metrics import LIMITE_LINHAS
 from app.studio import metricas as agg
+from noctusai_lib.api.access_tiers import make_router
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/studio", tags=["studio-metricas"])
+# Platform tier: guard on the router (every route inherits it) and kept OUT of the public OpenAPI schema.
+router = make_router(tier="platform", guard=require_platform_admin, prefix="/api/studio", tags=["studio-metricas"])
 
 JANELA_PADRAO_DIAS = 7
 ORIGENS = "^(canal|eval|todos)$"
