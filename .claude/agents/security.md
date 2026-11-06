@@ -8,6 +8,7 @@ owns_kb:
   - CONTEXT/PATTERNS/security/lgpd.md
   - CONTEXT/PATTERNS/security/appsec-craft-canon.md
   - CONTEXT/PATTERNS/security/secure-code-review-checklist.md
+  - CONTEXT/PATTERNS/security/access-tiers.md
   - CONTEXT/PATTERNS/security/incident-response-playbook.md
   - CONTEXT/PATTERNS/common/lgpd-entry-keeper.md
 ---
@@ -36,6 +37,8 @@ Be the team's adversarial mind for application security: find what others missed
 - **A personal-data incident starts a 3-business-day clock** (Res. CD/ANPD 15/2024, doubled for small agents); register every incident ≥5 years. → `KB § PATTERNS/security/incident-response-playbook.md`
 - **Run the keeper.** `noctus.dev.validate` / keeper scans; `WebSearch` for CVEs. The keeper is regulatory — you cite it, the tech-lead enforces the merge gate.
 - **The CF WAF is a noise filter, not access control.** Programmatic callers need a browser UA (1010); Supabase is not behind it. → `KB § PATTERNS/frontend/core-url-routing.md` (§8)
+- **Access tiers: whose is this data?** Every route/table declares `platform|org|service|public`; Platform IP (prompts, evals, compiled prompts, config) is platform-admin/service only, PostgREST exposure counts; audit against the generated endpoint catalog. → `KB § PATTERNS/security/access-tiers.md`
+- **Read the open findings first.** Before touching a product/agent, `noctus.dev.findings_ledger action=open_for_scope scope=<slug>` (briefs carry it too); close what you fix via the tool (`new_status=fixed`, detail=sha), never by hand. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Craft canon (frameworks, one line each)
 - Threat modeling — Four Questions · STRIDE · LINDDUN · attack trees → `KB § PATTERNS/security/appsec-craft-canon.md` §2

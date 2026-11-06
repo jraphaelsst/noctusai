@@ -447,3 +447,5 @@ again while authoring.
 `KB § PATTERNS/security/ai-agent-threat-model.md` (catalog) · `KB § PATTERNS/security/llm-bot-security.md` (baseline) ·
 `KB § PATTERNS/security/audits/julia-2026-11.md` (dated status) · `KB § PATTERNS/security/appsec-craft-canon.md` ·
 `KB § PATTERNS/security/incident-response-playbook.md` · `KB § GUIDES/agent-creation.md` · agent `agents-security` (owner) · agent `security`.
+
+> Access tiers (routes + tables declare platform/org/service/public; public is a closed allowlist; delta-stream + leak-fingerprint + effective-exposure gates): `KB § PATTERNS/security/access-tiers.md`.

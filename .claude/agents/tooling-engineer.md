@@ -23,6 +23,7 @@ owns_kb:
   - CONTEXT/PATTERNS/common/push-time-embedding-gate.md
   - CONTEXT/INTEGRATIONS/openai-mcp.md
   - CONTEXT/PATTERNS/common/keeper-pattern-cache.md
+  - CONTEXT/PATTERNS/common/living-findings-ledgers.md
   - CONTEXT/PATTERNS/common/keeper-check-before-docing.md
   - CONTEXT/PATTERNS/common/cache-locking-discipline.md
   - CONTEXT/PATTERNS/common/cache-auto-freshness.md
@@ -90,7 +91,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Craft** → `KB § PATTERNS/tooling/tooling-craft-canon.md`.
 **MCP toolkit** → `KB § PATTERNS/architect/mcp-tool-conventions.md` · `KB § PATTERNS/architect/mcp-first-scripts.md` · `KB § PATTERNS/architect/dev-toolkit-scaffolders.md` · `KB § PATTERNS/architect/noc-graph.md` · `KB § PATTERNS/architect/component-bundle-tool.md` · `KB § INTEGRATIONS/openai-mcp.md` · `KB § PATTERNS/common/harness-mods.md`.
 **Caches + vectors** → `KB § PATTERNS/common/cache-portable-architecture.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/vectorize-embed-cache-framework.md` · `KB § PATTERNS/common/cache-locking-discipline.md` · `KB § PATTERNS/common/cache-auto-freshness.md` · `KB § PATTERNS/common/cache-telemetry.md` · `KB § PATTERNS/common/kb-vector-search.md` · `KB § PATTERNS/common/code-embeddings.md` · `KB § PATTERNS/common/memory-embeddings.md` · `KB § PATTERNS/common/corpus-embeddings.md` · `KB § PATTERNS/common/push-time-embedding-gate.md` · `KB § PATTERNS/common/vector-baseline.md` · `KB § PATTERNS/common/vector-cost-tracking.md` · `KB § PATTERNS/common/vector-calibration.md` · `KB § PATTERNS/common/unified-query.md`.
-**Keepers + scanners** → `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md` · `KB § PATTERNS/common/extractor-correctness-vs-mirror.md` · `KB § PATTERNS/common/code-recurrence-baseline.md` · `KB § PATTERNS/common/scan-repetition-semantic.md` · `KB § PATTERNS/common/doc-to-code-drift.md` · `KB § PATTERNS/common/engineer-output-linter.md` · `KB § PATTERNS/common/auto-author-scaffolds.md` · `KB § PATTERNS/common/absorption-tracking.md`.
+**Keepers + scanners** → `KB § PATTERNS/common/living-findings-ledgers.md` · `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md` · `KB § PATTERNS/common/extractor-correctness-vs-mirror.md` · `KB § PATTERNS/common/code-recurrence-baseline.md` · `KB § PATTERNS/common/scan-repetition-semantic.md` · `KB § PATTERNS/common/doc-to-code-drift.md` · `KB § PATTERNS/common/engineer-output-linter.md` · `KB § PATTERNS/common/auto-author-scaffolds.md` · `KB § PATTERNS/common/absorption-tracking.md`.
 
 ## Composes-with (commons + cross-domain)
 `.claude/agents/engineer-seed.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/ast.md` · `KB § PATTERNS/common/agent-context-architecture.md` · `KB § PATTERNS/architect/noc-graph.md` (architect-owned) · `KB § PATTERNS/common/vectorize-embed-cache-framework.md` (devops-owned) · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` · `drift-fix-on-contact.md` · `dispatch-with-project-and-notes.md`.

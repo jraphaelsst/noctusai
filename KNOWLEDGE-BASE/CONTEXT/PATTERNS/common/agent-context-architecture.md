@@ -136,6 +136,10 @@ The agent-context architecture composes with [[drift-fix-on-contact]] in two spe
 1. **A domain pointer broken on-contact** (a `KB § <owned>` pointer 404s when an agent tries to follow it) ⇒ the agent **pauses, resolves the pointer (fix KB or fix agent body), surfaces if blocked, continues paused work**. Silent-skip = silent error.
 2. **A new KB lesson landing under owned territory without an agent-body pointer** is itself drift — keeper blocks on commit; the author resolves on-contact by adding the pointer line same commit.
 
+## Open findings are injected, not listed
+
+An agent file carries NO findings line: the SessionStart/SubagentStart hook injects the open rows of every living ledger for the agent's target (a new `.claude/agents/*.md` gets it by construction). An agent with an eval loop of its own registers a ledger via `noctus.dev.findings_ledger action=scaffold`. → `KB § PATTERNS/common/living-findings-ledgers.md`
+
 ## Anti-patterns
 
 - **Bake KB body INTO agent file.** The fat-charter trap — duplicates depth, drift factory, expensive auto-load. The agent file is an INDEX; KB is the body.

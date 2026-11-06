@@ -179,3 +179,5 @@ Accessed 2026-11-05.
 `KB § PATTERNS/security/appsec-craft-canon.md` (method + severity) · `KB § PATTERNS/security/webhook-signatures.md` ·
 `KB § PATTERNS/security/lgpd.md` · `KB § PATTERNS/security/ai-agent-security-canon.md` ·
 `KB § PATTERNS/backend/database-rls.md` · agent `security` (owner) · agent `compliance-reviewer` (quality/methodology review — this is the security half).
+
+> Access tiers (routes + tables declare platform/org/service/public; public is a closed allowlist; delta-stream + leak-fingerprint + effective-exposure gates): `KB § PATTERNS/security/access-tiers.md`.

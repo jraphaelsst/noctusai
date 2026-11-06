@@ -26,13 +26,15 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, status
 
 from app.dependencies import (
     coerce_org_uuid,
     get_current_user_org,
     get_user_client,
 )
+from noctusai_lib.api.access_tiers import make_router
+
 from app.schemas.example import (
     ExampleCreate,
     ExampleListResponse,
@@ -43,7 +45,8 @@ from app.services.example_service import ExampleService, ExampleServiceError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/example", tags=["example"])
+# Typed router: `tier=` is REQUIRED (access tiers: platform | org | service | public). Org-owned data -> "org".
+router = make_router(tier="org", guard=get_current_user_org, prefix="/api/example", tags=["example"])
 
 
 @router.get("", response_model=ExampleListResponse)

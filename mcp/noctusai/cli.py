@@ -267,6 +267,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-waha-instances-render-sync", action="store_true", help="deploy/fleet/compose.waha.yml must equal the render of deploy/fleet/waha-instances.yml (one WAHA Core container per number, declared as data). Severity high. KB § CONTEXT/INTEGRATIONS/whatsapp.md.")
+    parser.add_argument("--check-access-tier-routes", action="store_true", help="BLOCKING keeper (access tiers, owner directive 2026-11-05): every route of every ACTIVE product resolves to a tier (platform|service|org|public) and Platform IP (studio/agents definitions, evals, prompts, admin) never sits behind a weaker dependency. Ratcheted by deploy/security/access-tier-baseline.json. KB § PATTERNS/security/access-tiers.md.")
+    parser.add_argument("--check-access-tier-tables", action="store_true", help="BLOCKING keeper: a Platform-IP table has no authenticated/anon grant and no non-admin TO authenticated policy in the migration chain (PostgREST exposure counts); with --paths (staged ADDED migrations) every new table must declare COMMENT ON TABLE ... IS 'tier:x'. Ratcheted. KB § PATTERNS/security/access-tiers.md.")
+    parser.add_argument("--check-access-tier-streams", action="store_true", help="BLOCKING keeper: a route publishing message.delta-style partial LLM output to a browser must pass it through the leak filter (FiltroDeltas). Ratcheted. KB § PATTERNS/security/access-tiers.md.")
+    parser.add_argument("--check-access-tier-fingerprint", action="store_true", help="BLOCKING keeper: every prompt-derived source (compiled text, textos, tool descriptions, decisions, skill bodies/files) is a leak-fingerprint source at the texto_fonte_do_prompt seam, and every agent tool is classified prompt-derived or not. Ratcheted.")
+    parser.add_argument("--access-tier-exposure", metavar="JSON_FILE", default=None, help="Diff EFFECTIVE prod exposure (rows of the read-only queries, saved as JSON {grants,policies,db_schemas}) against declared Platform-IP tables; 'queries' prints the SQL to run through the supabase connector. Exit 1 on drift or unmeasured input.")
+    parser.add_argument("--access-tier-catalog", action="store_true", help="Generate the endpoint access-tier catalog (every HTTP endpoint of the active products: tier, gates, Platform IP, verdict). --write regenerates project-history/access-tiers/endpoint-catalog.md.")
+    parser.add_argument("--write", action="store_true", help="With --access-tier-catalog: write the generated catalog file instead of printing the summary.")
+    parser.add_argument("--check-access-tier-ledger", action="store_true", help="BLOCKING keeper: the living access-tier findings ledger (project-history/access-tiers/findings.ndjson) agrees with the scanners: a NEW finding needs a row, a row marked fixed must not still be seen, an open row the scanners no longer see must be closed.")
+    parser.add_argument("--check-findings-ledgers", action="store_true", help="BLOCKING keeper over EVERY registered living findings ledger (access-tier, Julia's mistakes, ...): a status that disagrees with the latest scan fails (new finding without a row, a row marked fixed that is still seen, an open row no longer seen). KB § PATTERNS/common/living-findings-ledgers.md.")
+    parser.add_argument("--check-findings-ledger-visibility", action="store_true", help="Backstop: the findings-injection hook is registered for SessionStart + SubagentStart and every registered ledger is on the roster it reads (visibility is injected by construction; nobody should hit this).")
+    parser.add_argument("--findings-ledger-sarif", metavar="LEDGER", default=None, help="Export the ledger as SARIF 2.1.0 to stdout (or --out FILE) for GitHub code scanning (codeql-action/upload-sarif).")
+    parser.add_argument("--findings-ledger-reconcile", metavar="LEDGER", default=None, help="The ledger's registered scanner writes it: add new rows, close fixed ones, reopen regressions (the tool is the only writer).")
+    parser.add_argument("--access-tier-reconcile", action="store_true", help="Scanners write the findings ledger: add new findings, close fixed ones, reopen regressions (never hand-edit the ledger). With --access-tier-exposure FILE it reconciles the EFFECTIVE prod findings instead.")
+    parser.add_argument("--found-by", default="keeper", help="With --access-tier-reconcile: who found it (keeper | audit | exposure-tool | <agent>).")
     parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
@@ -1171,6 +1185,71 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
         sys.exit(1)
+    elif args.check_access_tier_routes or args.check_access_tier_tables or args.check_access_tier_streams or args.check_access_tier_fingerprint or args.check_access_tier_ledger or args.check_findings_ledgers or args.check_findings_ledger_visibility:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import (
+            check_access_tier_fingerprint, check_access_tier_ledger, check_findings_ledger_visibility, check_findings_ledgers, check_access_tier_routes, check_access_tier_streams,
+            check_access_tier_tables)
+        if args.check_findings_ledger_visibility:
+            issues, label = check_findings_ledger_visibility(repo_root=REPO_ROOT), "findings-visibility"
+        elif args.check_findings_ledgers:
+            issues, label = check_findings_ledgers(repo_root=REPO_ROOT), "findings-ledger drift"
+        elif args.check_access_tier_ledger:
+            issues, label = check_access_tier_ledger(repo_root=REPO_ROOT), "access-tier ledger"
+        elif args.check_access_tier_streams:
+            issues, label = check_access_tier_streams(repo_root=REPO_ROOT), "access-tier stream"
+        elif args.check_access_tier_fingerprint:
+            issues, label = check_access_tier_fingerprint(repo_root=REPO_ROOT), "leak-fingerprint"
+        elif args.check_access_tier_routes:
+            issues = check_access_tier_routes(repo_root=REPO_ROOT)
+            label = "access-tier route"
+        else:
+            issues = check_access_tier_tables(
+                repo_root=REPO_ROOT, paths=[p for p in (args.paths or "").split(",") if p] or None)
+            label = "access-tier table"
+        if not issues:
+            print(f"  {GREEN}✓ no new {label} violation (baseline respected).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} {label} finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
+        sys.exit(1)
+    elif args.access_tier_exposure:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import access_tier_findings, access_tiers
+        if args.access_tier_exposure == "queries":
+            print(json.dumps(access_tiers.EXPOSURE_QUERIES, indent=1))
+            sys.exit(0)
+        out = access_tiers.diff_exposure(json.loads(Path(args.access_tier_exposure).read_text(encoding="utf-8")), REPO_ROOT)
+        if args.access_tier_reconcile:
+            out["ledger"] = access_tier_findings.reconcile_effective(out, REPO_ROOT, found_by=args.found_by)
+        print(json.dumps(out, indent=1, ensure_ascii=False))
+        sys.exit(0 if out["ok"] else 1)
+    elif args.findings_ledger_sarif:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import findings_ledger
+        doc = json.dumps(findings_ledger.export_sarif(args.findings_ledger_sarif, REPO_ROOT), indent=1, ensure_ascii=False)
+        if getattr(args, "out", None):
+            Path(args.out).write_text(doc + "\n", encoding="utf-8")
+        else:
+            print(doc)
+        sys.exit(0)
+    elif args.findings_ledger_reconcile:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import findings_ledger
+        out = findings_ledger.reconcile(args.findings_ledger_reconcile, REPO_ROOT, found_by=args.found_by)
+        print(json.dumps(out, indent=1))
+        sys.exit(0 if out.get("ok") else 1)
+    elif args.access_tier_reconcile:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import access_tier_findings
+        print(json.dumps(access_tier_findings.reconcile(REPO_ROOT, found_by=args.found_by), indent=1))
+        sys.exit(0)
+    elif args.access_tier_catalog:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import access_tiers
+        print(json.dumps(access_tiers.access_tier_catalog(write=bool(getattr(args, "write", False)), worktree_path=str(REPO_ROOT)), indent=1, ensure_ascii=False))
+        sys.exit(0)
     elif args.check_org_owned_definition_not_instanciavel:
         from settings import REPO_ROOT
         from tools.noctus.dev.compliance import check_org_owned_definition_not_instanciavel
