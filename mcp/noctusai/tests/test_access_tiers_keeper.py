@@ -514,3 +514,10 @@ class TestCatalog:
         root = _tree(tmp_path, _HEAD + "@router.get('/pricing')\n@limiter.limit('1/s')\n@access_tier('public', reason='r', category='pricing-checkout')\ndef p(): ...\n")
         md = at.render_catalog(root)
         assert "Public routes by category" in md and "pricing-checkout (1)" in md and "API docs exposure" in md
+
+
+class TestWiringScannerKnowsMakeRouter:
+    def test_prefix_regex_reads_the_typed_constructor(self):
+        from tools.noctus.dev.scan_wiring import _APIROUTER_PREFIX_RE
+        m = _APIROUTER_PREFIX_RE.search('router = make_router(tier="org", guard=get_current_user_org, prefix="/api/example")')
+        assert m and m.group("prefix") == "/api/example"
