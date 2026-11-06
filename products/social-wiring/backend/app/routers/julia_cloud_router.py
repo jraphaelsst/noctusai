@@ -372,7 +372,7 @@ async def primeiro_contato(
     resultado = await julia_disparos_service.primeiro_contato_meta(
         db, org_id, connection=conexao, transporte=fabrica(conexao), telefone=body.telefone, nome=body.nome,
         abordagem=body.abordagem, contexto=contexto,
-        contato_id=contato["id"] if contato else None, agents=agents,
+        contato_id=contato["id"] if contato else None, agents=agents, core=get_core_client(),
     )
     return {"data": resultado}
 

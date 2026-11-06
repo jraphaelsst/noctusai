@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -147,18 +148,21 @@ class TestInternalEcho:
         assert rt.w.chat_row()["agente_pausado"] is True
 
 
+AGORA = datetime.now(timezone.utc)
+
+
 class TestEligibilityRefusesEquipe:
     def test_a_staff_chat_is_never_eligible_even_if_it_owns_a_conversation(self, rt):
         _julia_scene(rt)
         rec = rt.w.record(CONNECTION_ID)
         for estado in ({"categoria": "equipe"}, {"categoria": "equipe", "agente_conversation_id": "11111111-1111-4111-8111-111111111111"}):
-            r = asyncio.run(julia.avaliar_elegibilidade(client=rt.w.sw, connection=rec, chat_id=STAFF_CHAT, chat_state={"created_at": None, **estado}))
+            r = julia.avaliar_elegibilidade(connection=rec, chat_state={"created_at": None, **estado}, mensagem_em=AGORA)
             assert (r.elegivel, r.motivo) == (False, "equipe")
 
     def test_a_lead_chat_is_unchanged(self, rt):
         _julia_scene(rt)
         rec = rt.w.record(CONNECTION_ID)
-        r = asyncio.run(julia.avaliar_elegibilidade(client=rt.w.sw, connection=rec, chat_id=LEAD_CHAT, chat_state={"categoria": "lead", "created_at": None}))
+        r = julia.avaliar_elegibilidade(connection=rec, chat_state={"categoria": "lead", "created_at": None}, mensagem_em=AGORA)
         assert r.elegivel and r.motivo == "new"
 
 

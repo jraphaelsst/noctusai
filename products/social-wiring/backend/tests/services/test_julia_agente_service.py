@@ -1,12 +1,11 @@
 """`julia_agente_service` -- the policy shared by the webhook, the worker and the routes.
 
-Contract: 11.1 (snapshot + eligibility), 10.1 H3 (switch invariants), M4 (limiter), L3 (own echo),
+Contract: 11.1 (eligibility; the snapshot was removed 2026-11-05), 10.1 H3 (switch invariants), M4 (limiter), L3 (own echo),
 11.3 (disclosure/link), 11.4 (handoff target), the org's `api_key:agents` token.
 """
 from __future__ import annotations
 
 import pytest
-from noctusai_lib.integrations.whatsapp.fake_adapter import FakeWahaClient
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.services import julia_agente_service as julia
@@ -34,184 +33,70 @@ def world() -> World:
     return w
 
 
-def _chats(n: int, *, suffix: str = "@c.us", start: int = 0):
-    return [{"id": {"_serialized": f"55119{i:08d}{suffix}"}, "name": f"c{i}"} for i in range(start, start + n)]
+# ── eligibility: "answer anyone who writes AFTER go-live" (owner 2026-11-05) ─────────────────────────────
+DEPOIS = "2026-10-10T12:00:00+00:00"
+ANTES = "2026-09-30T23:59:59+00:00"
 
 
-# ── 11.1 snapshot ───────────────────────────────────────────────────────────
-class TestSnapshotListing:
-    async def test_pages_to_the_END(self):
-        waha = FakeWahaClient()
-        waha.fake_chat_list = _chats(250)
-        ids = await julia.listar_todos_os_chats(waha, page_size=100)
-        assert len(ids) == 250 and len(set(ids)) == 250
-
-    async def test_an_exact_multiple_of_the_page_size_needs_the_empty_page_to_stop(self):
-        waha = FakeWahaClient()
-        waha.fake_chat_list = _chats(200)
-        assert len(await julia.listar_todos_os_chats(waha, page_size=100)) == 200
-
-    async def test_zero_chats_is_a_valid_complete_snapshot(self):
-        assert await julia.listar_todos_os_chats(FakeWahaClient()) == []
-
-    async def test_accepts_plain_string_ids_and_serialized_ids(self):
-        waha = FakeWahaClient()
-        waha.fake_chat_list = [{"id": "5511900000001@c.us"}, {"id": {"_serialized": "5511900000002@c.us"}}]
-        assert await julia.listar_todos_os_chats(waha) == ["5511900000001@c.us", "5511900000002@c.us"]
-
-    async def test_a_listing_error_fails_closed(self):
-        class Down(FakeWahaClient):
-            async def list_chats(self, limit=50, offset=0):
-                raise RuntimeError("WAHA 422: session not WORKING")
-
-        with pytest.raises(julia.SnapshotFalhou):
-            await julia.listar_todos_os_chats(Down())
-
-    async def test_an_error_on_a_LATER_page_fails_closed_never_a_partial_snapshot(self):
-        class FlakyOnSecondPage(FakeWahaClient):
-            async def list_chats(self, limit=50, offset=0):
-                if offset >= limit:
-                    raise TimeoutError("read timeout")
-                return await super().list_chats(limit, offset)
-
-        waha = FlakyOnSecondPage()
-        waha.fake_chat_list = _chats(150)
-        with pytest.raises(julia.SnapshotFalhou):
-            await julia.listar_todos_os_chats(waha, page_size=100)
-
-    async def test_a_chat_with_no_id_is_incomplete(self):
-        waha = FakeWahaClient()
-        waha.fake_chat_list = [{"id": "5511900000001@c.us"}, {"name": "ghost"}]
-        with pytest.raises(julia.SnapshotFalhou):
-            await julia.listar_todos_os_chats(waha)
-
-    async def test_a_server_that_ignores_offset_is_detected_not_looped_forever(self):
-        class IgnoresOffset(FakeWahaClient):
-            async def list_chats(self, limit=50, offset=0):
-                return self.fake_chat_list[:limit]
-
-        waha = IgnoresOffset()
-        waha.fake_chat_list = _chats(300)
-        with pytest.raises(julia.SnapshotFalhou):
-            await julia.listar_todos_os_chats(waha, page_size=100)
-
-    async def test_running_out_of_pages_is_incomplete(self):
-        waha = FakeWahaClient()
-        waha.fake_chat_list = _chats(500)
-        with pytest.raises(julia.SnapshotFalhou):
-            await julia.listar_todos_os_chats(waha, page_size=100, max_pages=3)
-
-    async def test_a_non_list_body_fails_closed(self):
-        class Weird(FakeWahaClient):
-            async def list_chats(self, limit=50, offset=0):
-                return {"error": "x"}
-
-        with pytest.raises(julia.SnapshotFalhou):
-            await julia.listar_todos_os_chats(Weird())
-
-
-class TestAliases:
-    def test_phone_chat_gets_the_other_suffix_and_its_lid(self):
-        out = julia.expandir_aliases(
-            ["5511988887777@c.us"], [{"lid": "123@lid", "pn": "5511988887777@c.us"}]
-        )
-        assert set(out) == {"5511988887777@c.us", "5511988887777@s.whatsapp.net", "123@lid"}
-
-    def test_lid_chat_gets_its_phone_forms(self):
-        out = julia.expandir_aliases(["123@lid"], [{"lid": "123@lid", "pn": "5511988887777@c.us"}])
-        assert {"123@lid", "5511988887777@c.us", "5511988887777@s.whatsapp.net"} <= set(out)
-
-    def test_no_lid_map_keeps_only_the_phone_forms(self):
-        assert set(julia.expandir_aliases(["5511988887777@c.us"], [])) == {
-            "5511988887777@c.us", "5511988887777@s.whatsapp.net"}
-
-    def test_groups_and_unmapped_lids_are_kept_verbatim(self):
-        assert julia.expandir_aliases(["120363@g.us", "999@lid"], []) == ["120363@g.us", "999@lid"]
-
-    def test_order_preserving_and_deduplicated(self):
-        out = julia.expandir_aliases(["a@c.us", "a@c.us"], [])
-        assert len(out) == len(set(out))
-
-    async def test_the_snapshot_stores_every_form_once_and_is_insert_only(self, world):
-        ids = julia.expandir_aliases(["5511988887777@c.us"], [{"lid": "123@lid", "pn": "5511988887777@c.us"}])
-        n1 = julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=ids)
-        n2 = julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=ids)
-        assert (n1, n2) == (3, 0)
-        rows = world.sw.table("julia_agente_chats_preexistentes").select("*").execute().data
-        assert {r["chat_id"] for r in rows} == set(ids)
-        assert all(r["org_id"] == ORG_ID and r["connection_id"] == CONNECTION_ID for r in rows)
-
-    async def test_a_big_snapshot_is_inserted_in_batches(self, world):
-        ids = [f"55119{i:08d}@c.us" for i in range(1203)]
-        assert julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=ids) == 1203
-
-
-# ── 11.1 eligibility ────────────────────────────────────────────────────────
 class TestEligibility:
-    async def _ask(self, world, chat_id=LEAD_CHAT, *, state="auto", resolver=None):
-        conn = world.record(CONNECTION_ID)
-        if state == "auto":
-            row = world.chat_row(chat_id)
-            state = {"agente_conversation_id": row.get("agente_conversation_id"), "created_at": row["created_at"]} if row else None
-        return await julia.avaliar_elegibilidade(
-            client=world.sw, connection=conn, chat_id=chat_id, chat_state=state, resolver_alias=resolver)
+    def _ask(self, world, *, state=None, quando=DEPOIS, avaliacao=False):
+        return julia.avaliar_elegibilidade(
+            connection=world.record(CONNECTION_ID), chat_state=state, mensagem_em=quando, avaliacao=avaliacao)
 
-    async def test_a_brand_new_chat_is_eligible(self, world):
-        r = await self._ask(world, "5511900001111@c.us", state=None)
+    async def test_a_brand_new_chat_writing_after_go_live_is_eligible(self, world):
+        r = self._ask(world)
         assert (r.elegivel, r.motivo) == (True, "new")
 
-    async def test_a_chat_in_the_snapshot_is_not(self, world):
-        julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
-        world.seed_chat(created_at="2026-10-14T00:00:00+00:00")
-        r = await self._ask(world)
-        assert (r.elegivel, r.motivo) == (False, "snapshot")
+    async def test_a_chat_that_existed_before_go_live_is_answered_when_it_writes_after(self, world):
+        r = self._ask(world, state={"agente_conversation_id": None, "created_at": "2026-09-01T00:00:00+00:00"})
+        assert (r.elegivel, r.motivo) == (True, "new")
 
-    async def test_the_other_phone_suffix_of_a_snapshotted_chat_is_not(self, world):
-        julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=["5511988887777@s.whatsapp.net"])
-        r = await self._ask(world, "5511988887777@c.us", state=None)
-        assert r.elegivel is False and r.motivo == "snapshot"
+    async def test_a_chat_listed_in_the_old_snapshot_table_is_still_answered(self, world):
+        # nothing reads the dead snapshot table any more (NOC-REMEDIATE[drop-julia-snapshot])
+        world.sw.table("julia_agente_chats_preexistentes").insert(
+            {"org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": LEAD_CHAT, "capturado_em": ATIVADO_EM}).execute()
+        assert self._ask(world).elegivel is True
 
-    async def test_a_lid_alias_of_a_snapshotted_phone_chat_is_not(self, world):
-        julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=["5511988887777@c.us"])
+    async def test_a_message_stamped_before_go_live_is_never_answered(self, world):
+        r = self._ask(world, quando=ANTES)
+        assert (r.elegivel, r.motivo) == (False, "mensagem_anterior")
 
-        async def resolver(lid):
-            return "5511988887777"
+    async def test_the_cut_off_also_binds_a_chat_Julia_already_owns(self, world):
+        r = self._ask(world, quando=ANTES, state={"agente_conversation_id": "11111111-1111-4111-8111-111111111111"})
+        assert (r.elegivel, r.motivo) == (False, "mensagem_anterior")
 
-        r = await self._ask(world, "123@lid", state=None, resolver=resolver)
-        assert (r.elegivel, r.motivo) == (False, "snapshot")
+    @pytest.mark.parametrize("quando", [None, "lixo"])
+    async def test_an_unreadable_message_time_fails_closed(self, world, quando):
+        r = self._ask(world, quando=quando)
+        assert (r.elegivel, r.motivo) == (False, "mensagem_sem_horario")
 
-    async def test_a_lid_whose_phone_is_unknown_and_not_snapshotted_is_eligible(self, world):
-        async def resolver(lid):
-            return None
-
-        assert (await self._ask(world, "777@lid", state=None, resolver=resolver)).elegivel is True
-
-    async def test_a_chat_row_older_than_ativado_em_is_not_even_if_the_snapshot_missed_it(self, world):
-        world.seed_chat(created_at="2026-09-01T00:00:00+00:00")
-        assert ATIVADO_EM > "2026-09-01"
-        r = await self._ask(world)
-        assert (r.elegivel, r.motivo) == (False, "chat_anterior")
-
-    async def test_a_chat_row_newer_than_ativado_em_is_eligible(self, world):
-        world.seed_chat(created_at="2026-10-10T00:00:00+00:00")
-        assert (await self._ask(world)).elegivel is True
-
-    async def test_a_chat_Julia_already_owns_stays_eligible_even_if_it_is_in_the_snapshot(self, world):
-        julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id=CONNECTION_ID, chat_ids=[LEAD_CHAT])
-        world.seed_chat(created_at="2026-09-01T00:00:00+00:00", agente_conversation_id="11111111-1111-4111-8111-111111111111")
-        r = await self._ask(world)
+    async def test_a_chat_Julia_already_owns_stays_eligible(self, world):
+        r = self._ask(world, state={"agente_conversation_id": "11111111-1111-4111-8111-111111111111"})
         assert (r.elegivel, r.motivo) == (True, "owned")
 
     async def test_no_ativado_em_fails_closed(self, world):
         world.sw.set_table_data("whatsapp_connections", [])
         world._connections = []
         world.seed_connection(agente_leads_ativado_em=None)
-        r = await self._ask(world, "5511900001111@c.us", state=None)
+        r = self._ask(world)
         assert (r.elegivel, r.motivo) == (False, "sem_ativado_em")
 
-    async def test_the_snapshot_is_per_connection(self, world):
-        julia.gravar_snapshot(world.sw, org_id=ORG_ID, connection_id="00000000-0000-4000-8000-0000000000ff", chat_ids=["5511900001111@c.us"])
-        assert (await self._ask(world, "5511900001111@c.us", state=None)).elegivel is True
+    async def test_a_staff_chat_is_refused(self, world):
+        r = self._ask(world, state={"categoria": "equipe"})
+        assert (r.elegivel, r.motivo) == (False, "equipe")
+
+    async def test_an_evaluation_listed_staff_chat_is_eligible_but_only_past_the_equipe_rule(self, world):
+        r = self._ask(world, state={"categoria": "equipe"}, avaliacao=True)
+        assert (r.elegivel, r.motivo) == (True, "avaliacao")
+        assert self._ask(world, state={"categoria": "equipe"}, avaliacao=True, quando=ANTES).motivo == "mensagem_anterior"
+        sem = julia.avaliar_elegibilidade(connection=_sem_ativado(), chat_state=None, mensagem_em=DEPOIS, avaliacao=True)
+        assert (sem.elegivel, sem.motivo) == (False, "sem_ativado_em")
+
+
+def _sem_ativado():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(id=CONNECTION_ID, agente_leads_ativado_em=None)
 
 
 # ── H3 / H1 / 11.3 switch preconditions ─────────────────────────────────────

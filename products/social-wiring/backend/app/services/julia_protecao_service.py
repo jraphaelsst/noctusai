@@ -39,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 T_CONFIG = "julia_protecao_config"
 T_BLOQUEIOS = "julia_numeros_bloqueados"
-T_PERMITIDOS = "julia_permitidos"
 ROTULO_MAX = 120
 GATILHOS_AUTO = ("entrada_flood", "limite_taxa", "loop_detectado")
 KIND_BLOQUEIO = "julia_bloqueio_automatico"
@@ -58,7 +57,6 @@ PADRAO: dict[str, Any] = {
     "bloqueio_auto_janela_min": 60,
     "bloqueio_auto_duracao_min": 1440,
     "prompt_documento_lead": None,
-    "permitidos_ativo": False,
 }
 #: field -> (min, max): the same ranges as the migration's CHECKs (the UI form is built from this too)
 FAIXAS: dict[str, tuple[int, int]] = {
@@ -109,8 +107,6 @@ def salvar_config(client: Any, org_id: UUID | str, user_id: str, campos: dict[st
             patch[k] = v
     if "bloqueio_auto_ativo" in campos and campos["bloqueio_auto_ativo"] is not None:
         patch["bloqueio_auto_ativo"] = bool(campos["bloqueio_auto_ativo"])
-    if "permitidos_ativo" in campos and campos["permitidos_ativo"] is not None:
-        patch["permitidos_ativo"] = bool(campos["permitidos_ativo"])
     if "prompt_documento_lead" in campos:
         p = campos["prompt_documento_lead"]
         p = (p or "").strip() or None
@@ -211,91 +207,6 @@ def listar_bloqueios(client: Any, org_id: UUID | str, *, somente_ativos: bool = 
     if somente_ativos:  # an expired automatic block is not "active" any more
         rows = [r for r in rows if not (_parse(r.get("expira_em")) and _parse(r["expira_em"]) <= agora)]
     return sorted(rows, key=lambda r: str(r.get("criado_em") or ""), reverse=True)
-
-
-# ── allowlist ("lista de permitidos", owner 2026-11-05) ─────────────────────
-# "add the allowlist with a switch on/off, so I can set my own number so she only replies to me at first. The list, when empty,
-# answers all numbers." Switch ON + a non-empty list => only listed numbers are Julia's; switch OFF or an empty list => nobody is
-# filtered. A listed number is an explicit opt-in (it bypasses the 11.1 snapshot / previous-chat rules, see `avaliar_elegibilidade`).
-def chave_permitido(valor: Any) -> Optional[str]:
-    """The allowlist key of a number: its phone digits made CANONICAL for Brazil so the forms a person types and the forms WhatsApp
-    delivers meet: `+55`/`55` optional (a 10-11 digit number is a BR national number), and the mobile 9th digit optional (a 12-digit
-    `55 DDD 8-digits` whose first local digit is 6-9 is a mobile and gets the 9). Landlines (local digit 2-5) are left alone.
-    None for anything that is not a 10-15 digit phone (a LID, text, a group). The blocklist keeps EXACT digits (`chave_numero`);
-    this wider match is allowlist-only, where a miss would lock the owner out of Julia."""
-    from app.services import julia_staff_service as staff
-
-    d = staff.normalizar_telefone(valor)
-    if d is None:
-        return None
-    if len(d) in (10, 11):
-        d = "55" + d
-    if d.startswith("55") and len(d) == 12 and d[4] in "6789":
-        d = d[:4] + "9" + d[4:]
-    return d
-
-
-def chaves_permitidas(*identificadores: Any) -> set[str]:
-    """Every canonical allowlist key a sender can be matched by (the chat id, the sender and any resolved alias)."""
-    return {k for k in (chave_permitido(i) for i in identificadores) if k}
-
-
-def _permitido_saida(row: dict[str, Any]) -> dict[str, Any]:
-    return {"id": row.get("id"), "numero": row.get("numero"), "rotulo": row.get("rotulo"), "criado_em": row.get("criado_em")}
-
-
-def listar_permitidos(client: Any, org_id: UUID | str) -> list[dict[str, Any]]:
-    rows = client.table(T_PERMITIDOS).select("*").eq("org_id", str(org_id)).execute().data or []
-    return [_permitido_saida(r) for r in sorted(rows, key=lambda r: str(r.get("criado_em") or ""), reverse=True)]
-
-
-def adicionar_permitido(client: Any, org_id: UUID | str, ator_user_id: str, *, numero: str, rotulo: Optional[str] = None) -> dict[str, Any]:
-    chave = chave_permitido(numero)
-    if chave is None:
-        raise AppException("numero_invalido", "Informe um número de WhatsApp com DDI e DDD.", status_code=422)
-    r = " ".join((rotulo or "").split()) or None
-    if r is not None and len(r) > ROTULO_MAX:
-        raise AppException("rotulo_invalido", f"O rótulo deve ter até {ROTULO_MAX} caracteres.", status_code=422)
-    if client.table(T_PERMITIDOS).select("id").eq("org_id", str(org_id)).eq("numero", chave).limit(1).execute().data:
-        raise AppException("numero_ja_permitido", "Este número já está na lista de permitidos.", status_code=409)
-    linha = {"id": str(uuid.uuid4()), "org_id": str(org_id), "numero": chave, "rotulo": r, "criado_por": str(ator_user_id),
-             "criado_em": _agora_iso()}
-    res = client.table(T_PERMITIDOS).insert(linha).execute().data or []
-    if not res:
-        raise RuntimeError("julia: allowlist entry not stored")
-    logger.info("julia: number allowlisted by an admin org=%s ref=%s", org_id, ref(chave))
-    return _permitido_saida(res[0])
-
-
-def remover_permitido(client: Any, org_id: UUID | str, permitido_id: UUID | str) -> dict[str, Any]:
-    rows = client.table(T_PERMITIDOS).select("*").eq("id", str(permitido_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
-    if not rows:
-        raise AppException("permitido_nao_encontrado", "Número não encontrado na lista de permitidos.", status_code=404)
-    client.table(T_PERMITIDOS).delete().eq("id", str(permitido_id)).eq("org_id", str(org_id)).execute()
-    logger.info("julia: number removed from the allowlist org=%s ref=%s", org_id, ref(rows[0]["numero"]))
-    return {"ok": True}
-
-
-async def situacao_permitidos(
-    client: Any, org_id: UUID | str, *, chat_id: str, sender: str, resolver_alias: Any = None,
-) -> str:
-    """Where does this sender stand against the org's allowlist? `livre` (switch OFF or list empty: nobody is filtered),
-    `permitido` (listed, any alias form, incl. the phone a `@lid` resolves to) or `fora` (the switch is ON, the list is not empty
-    and the sender is not on it). RAISES when the config or the list cannot be read -- the caller fails CLOSED (not eligible)."""
-    if not obter_config(client, org_id).get("permitidos_ativo"):
-        return "livre"
-    chaves_lista = {r["numero"] for r in client.table(T_PERMITIDOS).select("numero").eq("org_id", str(org_id)).execute().data or []}
-    if not chaves_lista:
-        return "livre"
-    ids: list[Any] = [chat_id, sender]
-    for lid in {x for x in (chat_id, sender) if is_lid(x)}:
-        if resolver_alias is not None:
-            phone = resolver_alias(lid)
-            if hasattr(phone, "__await__"):
-                phone = await phone
-            if phone:
-                ids.append(phone)
-    return "permitido" if chaves_permitidas(*ids) & chaves_lista else "fora"
 
 
 # ── per-number inbound rate limit ───────────────────────────────────────────
@@ -462,7 +373,7 @@ def triar_entrada(
 
 
 __all__ = [
-    "FAIXAS", "GATILHOS_AUTO", "PADRAO", "Triagem", "eh_numero_da_lista", "triar_entrada", "adicionar_permitido", "bloquear", "bloqueio_ativo", "chave_numero", "chave_permitido", "chaves_permitidas", "listar_permitidos",
-    "remover_permitido", "situacao_permitidos", "desbloquear", "listar_bloqueios",
+    "FAIXAS", "GATILHOS_AUTO", "PADRAO", "Triagem", "eh_numero_da_lista", "triar_entrada", "bloquear", "bloqueio_ativo", "chave_numero", 
+    "desbloquear", "listar_bloqueios",
     "notificar_bloqueio", "obter_config", "permitir_entrada", "ref", "registrar_infracao", "reservar_midia", "salvar_config",
 ]

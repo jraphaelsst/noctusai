@@ -76,13 +76,13 @@ class TestListar:
 
 
 class TestAlimentar:
-    def test_turning_a_number_on_runs_every_precondition_and_snapshots(self, admin):
+    def test_turning_a_number_on_runs_every_precondition_and_takes_no_snapshot(self, admin):
         _off_connection(admin.w)
         admin.w.waha.fake_chat_list = [{"id": "5511988887777@c.us"}]
         r = admin.put(LINHA, {"alimenta": True})
         assert r.status_code == 200 and r.json()["data"]["alimenta"] is True
         assert admin.conn()["agente_leads_ativo"] is True
-        assert "5511988887777@c.us" in admin.snapshot_ids()  # 11.1: chats that already existed are never Julia's
+        assert admin.snapshot_ids() == set()  # owner 2026-11-05: chats that already existed ARE answered when they write after go-live
 
     def test_empty_authorized_numbers_no_longer_block_it_julia_line_D5(self, admin):
         _off_connection(admin.w, authorized_numbers=[])

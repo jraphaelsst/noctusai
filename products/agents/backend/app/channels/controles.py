@@ -224,7 +224,7 @@ def decidir(
 
     # ── evaluation mode (Julia v3 §12.12): on = answers ONLY the allow-listed numbers. Decided after the kill and the
     # mode (``desligado`` keeps its own status), before anything touches the thread: an outsider never opens a thread
-    # or a participant, and a contact without a (valid) phone is refused too. Every trigger. ``None`` = unreadable. ──
+    # or a participant and its message is NEVER stored (not even on an existing thread: it must not surface when testing ends), and a contact without a (valid) phone is refused too. Every trigger. ``None`` = unreadable. ──
     if modo != "desligado":
         if modo_avaliacao is None:
             return Decisao(
@@ -233,7 +233,7 @@ def decidir(
         if modo_avaliacao:
             numero = normalizar_e164(telefone_e164)
             if numero is None or numero not in {normalizar_e164(n) for n in avaliacao_numeros}:
-                return _recusa(STATUS_RESTRITO_AVALIACAO, persistir=thread is not None and gatilho == "mensagem")
+                return _recusa(STATUS_RESTRITO_AVALIACAO, persistir=False)  # owner 2026-11-05: NEVER stored in her history
 
     # ── the lead withdrew consent: nobody answers, nobody follows up (an existing thread still records) ──
     if thread is not None and thread.lead_opt_out:
@@ -433,7 +433,7 @@ def aplicar_controles(
         # Evaluation mode: the allow-list is noc USERS; their phones are read now, for this turn only (never cached,
         # so a phone edited in noc applies on the next message). Unresolvable => nobody is allowed (fail closed).
         numeros_avaliacao = (
-            numeros_de_avaliacao(org_id, controle.avaliacao_usuarios, usuarios_avaliacao)
+            numeros_de_avaliacao(controle.avaliacao_org_id or org_id, controle.avaliacao_usuarios, usuarios_avaliacao)  # the CORE's org
             if controle.modo_avaliacao else ()
         )
         propria = next((p for p in participantes if p.agent_id == agent_id), None)

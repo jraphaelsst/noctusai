@@ -244,7 +244,7 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
         </Badge>
         {emAvaliacao && (
           <span className="rounded-md border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900" data-testid="controle-avaliacao-badge">
-            Em avaliação — responde só a {comTelefone.length} número(s)
+            {c.avaliacao_herdada ? "Julia em fase de testes" : `Em avaliação — responde só a ${comTelefone.length} número(s)`}
           </span>
         )}
         <span className="text-xs text-muted-foreground">{c.aceita_novos_leads ? "Aceita novos leads" : "Não aceita novos leads"}</span>
@@ -292,81 +292,90 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
         <p className="text-xs text-muted-foreground">Quando ligada, a Julia avisa que está em fase de testes ao se desculpar por um erro ou insatisfação.</p>
       </div>
 
-      <div className="space-y-2" data-testid="controle-avaliacao">
-        <div className="flex items-center gap-2 text-sm">
-          <Switch
-            checked={emAvaliacao}
-            disabled={!isAdmin || set.isPending || (!emAvaliacao && comTelefone.length === 0)}
-            aria-label="Modo de avaliação"
-            data-testid="controle-avaliacao-switch"
-            onCheckedChange={(v) => void salvarAvaliacao({ modo_avaliacao: v, avaliacao_usuarios: usuarios }, v ? "Modo de avaliação ligado." : "Modo de avaliação desligado.")}
-          />
-          Modo de avaliação
+      {c.avaliacao_herdada ? (
+        <div className="space-y-1" data-testid="controle-avaliacao-herdada">
+          <p className="text-sm font-medium">{emAvaliacao ? "Julia em fase de testes" : "Julia fora da fase de testes"}</p>
+          <p className="text-xs text-muted-foreground">
+            A fase de testes é uma só, definida no núcleo da Julia pela NoctusAI, e vale para todas as empresas. Não é configurada por instância.
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground">Com a Julia ligada, ela responde SÓ aos números abaixo. Os demais contatos não recebem resposta. Desligue quando o fluxo estiver validado.</p>
-        {!emAvaliacao && comTelefone.length === 0 && (
-          <p className="text-xs text-amber-700" data-testid="controle-avaliacao-dica">Escolha ao menos um membro com WhatsApp cadastrado no noc para ligar o modo de avaliação.</p>
-        )}
-        <ul className="space-y-1" data-testid="controle-avaliacao-lista">
-          {usuarios.map((id) => {
-            const r = resolvidoPor.get(id);
-            return (
-              <li key={id} className="flex flex-wrap items-center gap-2 text-sm" data-testid={`controle-avaliacao-membro-${id}`}>
-                <span>{nomeDe(id)}</span>
-                {r?.telefone && <span className="tabular-nums text-muted-foreground">{r.telefone}</span>}
-                {r && !r.telefone && (
-                  <a
-                    href={`${env.CORE_URL}/settings`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-md border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
-                    data-testid={`controle-avaliacao-sem-whatsapp-${id}`}
+      ) : (
+        <div className="space-y-2" data-testid="controle-avaliacao">
+          <div className="flex items-center gap-2 text-sm">
+            <Switch
+              checked={emAvaliacao}
+              disabled={!isAdmin || set.isPending || (!emAvaliacao && comTelefone.length === 0)}
+              aria-label="Modo de avaliação"
+              data-testid="controle-avaliacao-switch"
+              onCheckedChange={(v) => void salvarAvaliacao({ modo_avaliacao: v, avaliacao_usuarios: usuarios }, v ? "Modo de avaliação ligado." : "Modo de avaliação desligado.")}
+            />
+            Modo de avaliação
+          </div>
+          <p className="text-xs text-muted-foreground">Com a Julia ligada, ela responde SÓ aos números abaixo. Os demais contatos não recebem resposta. Desligue quando o fluxo estiver validado.</p>
+          {!emAvaliacao && comTelefone.length === 0 && (
+            <p className="text-xs text-amber-700" data-testid="controle-avaliacao-dica">Escolha ao menos um membro com WhatsApp cadastrado no noc para ligar o modo de avaliação.</p>
+          )}
+          <ul className="space-y-1" data-testid="controle-avaliacao-lista">
+            {usuarios.map((id) => {
+              const r = resolvidoPor.get(id);
+              return (
+                <li key={id} className="flex flex-wrap items-center gap-2 text-sm" data-testid={`controle-avaliacao-membro-${id}`}>
+                  <span>{nomeDe(id)}</span>
+                  {r?.telefone && <span className="tabular-nums text-muted-foreground">{r.telefone}</span>}
+                  {r && !r.telefone && (
+                    <a
+                      href={`${env.CORE_URL}/settings`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-md border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
+                      data-testid={`controle-avaliacao-sem-whatsapp-${id}`}
+                    >
+                      Sem WhatsApp — cadastre no noc
+                    </a>
+                  )}
+                  {isAdmin && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={set.isPending || (emAvaliacao && comTelefone.length === 1 && !!r?.telefone)}
+                      title={emAvaliacao && comTelefone.length === 1 && !!r?.telefone ? "Desligue o modo de avaliação para remover o último número." : undefined}
+                      aria-label={`Remover ${nomeDe(id)}`}
+                      onClick={() => void salvarAvaliacao({ avaliacao_usuarios: usuarios.filter((x) => x !== id) }, "Membro removido.")}
+                    >
+                      Remover
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {isAdmin && (
+            membros.showSkeleton ? (
+              <StudioLoading rows={1} testId="controle-avaliacao-membros-skeleton" />
+            ) : membros.isError && !membros.data ? (
+              <StudioError error={membros.error} onRetry={membros.refetch} />
+            ) : (
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label htmlFor="controle-avaliacao-membro" className="mb-1 block text-xs font-medium">Membro permitido</label>
+                  <select
+                    id="controle-avaliacao-membro"
+                    className="h-9 w-64 rounded-md border border-input bg-background px-3 text-sm"
+                    value={novoMembro}
+                    onChange={(e) => setNovoMembro(e.target.value)}
                   >
-                    Sem WhatsApp — cadastre no noc
-                  </a>
-                )}
-                {isAdmin && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={set.isPending || (emAvaliacao && comTelefone.length === 1 && !!r?.telefone)}
-                    title={emAvaliacao && comTelefone.length === 1 && !!r?.telefone ? "Desligue o modo de avaliação para remover o último número." : undefined}
-                    aria-label={`Remover ${nomeDe(id)}`}
-                    onClick={() => void salvarAvaliacao({ avaliacao_usuarios: usuarios.filter((x) => x !== id) }, "Membro removido.")}
-                  >
-                    Remover
-                  </Button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-        {isAdmin && (
-          membros.showSkeleton ? (
-            <StudioLoading rows={1} testId="controle-avaliacao-membros-skeleton" />
-          ) : membros.isError && !membros.data ? (
-            <StudioError error={membros.error} onRetry={membros.refetch} />
-          ) : (
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <label htmlFor="controle-avaliacao-membro" className="mb-1 block text-xs font-medium">Membro permitido</label>
-                <select
-                  id="controle-avaliacao-membro"
-                  className="h-9 w-64 rounded-md border border-input bg-background px-3 text-sm"
-                  value={novoMembro}
-                  onChange={(e) => setNovoMembro(e.target.value)}
-                >
-                  <option value="">{disponiveis.length ? "Escolha um membro…" : "Todos os membros já foram escolhidos"}</option>
-                  {disponiveis.map((m) => <option key={m.id} value={m.id}>{m.nome || m.email}</option>)}
-                </select>
+                    <option value="">{disponiveis.length ? "Escolha um membro…" : "Todos os membros já foram escolhidos"}</option>
+                    {disponiveis.map((m) => <option key={m.id} value={m.id}>{m.nome || m.email}</option>)}
+                  </select>
+                </div>
+                <Button size="sm" variant="outline" disabled={!novoMembro || set.isPending} onClick={adicionarMembro} data-testid="controle-avaliacao-adicionar">
+                  Adicionar
+                </Button>
               </div>
-              <Button size="sm" variant="outline" disabled={!novoMembro || set.isPending} onClick={adicionarMembro} data-testid="controle-avaliacao-adicionar">
-                Adicionar
-              </Button>
-            </div>
-          )
-        )}
-      </div>
+            )
+          )}
+        </div>
+      )}
 
       {isAdmin && (
         <div className="flex flex-wrap items-end gap-2">
