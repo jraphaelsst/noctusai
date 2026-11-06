@@ -83,6 +83,67 @@ def _extract_section(text: str, header_name: str) -> str | None:
     return text[start:end].strip()
 
 
+# ── outcome tags (owner rule 2026-11-05: errors are FIXED on contact) ─────────
+# Every `drift-found:` bullet ends with exactly one tag:
+#   [fixed <sha>] | [fixing → feat/<slug>] | [deferred → <destination> because <reason>]
+# destination ∈ NOC-REMEDIATE[<class>] marker path · roadmap path
+# (project-history/roadmaps/…) · owner reminder (MEMORY-reminders) · owner-decision ask.
+_TAG_TAIL = re.compile(r"\[((?:fixed|fixing|deferred)\b(?:[^\[\]]|\[[^\[\]]*\])*)\]\s*$", re.IGNORECASE)
+_FIXED_RE = re.compile(r"^fixed\s+([0-9a-f]{7,40})$", re.IGNORECASE)
+_FIXING_RE = re.compile(r"^fixing\s*(?:→|->)\s*(feat/[\w./-]+)$")
+_DEFERRED_RE = re.compile(r"^deferred\s*(?:→|->)\s*(.+?)\s+because\s+(.+)$", re.IGNORECASE | re.DOTALL)
+_DEST_RES = (
+    re.compile(r"NOC-REMEDIATE\[[\w.-]+\]"),
+    re.compile(r"project-history/roadmaps/\S+"),
+    re.compile(r"MEMORY-reminders", re.IGNORECASE),
+    re.compile(r"owner[- ]decision", re.IGNORECASE),
+)
+MIN_DEFER_REASON = 10
+TAG_SHAPE = (
+    "[fixed <sha>] | [fixing → feat/<slug>] | "
+    "[deferred → <NOC-REMEDIATE[class] | project-history/roadmaps/… | "
+    "MEMORY-reminders | owner-decision> because <reason ≥10 chars>]"
+)
+
+
+def parse_outcome_tag(bullet: str) -> dict[str, Any] | None:
+    """Parse the trailing outcome tag of a footer bullet.
+
+    Returns {outcome: fixed|fixing|deferred, ref, reason?} or None when the
+    bullet carries no valid tag (bare, garbled, destination-less deferral,
+    reason < MIN_DEFER_REASON chars).
+    """
+    m = _TAG_TAIL.search(bullet.strip())
+    if not m:
+        return None
+    body = m.group(1).strip()
+    if (f := _FIXED_RE.match(body)):
+        return {"outcome": "fixed", "ref": f.group(1)}
+    if (f := _FIXING_RE.match(body)):
+        return {"outcome": "fixing", "ref": f.group(1)}
+    if (f := _DEFERRED_RE.match(body)):
+        dest, reason = f.group(1).strip(), f.group(2).strip()
+        if len(reason) < MIN_DEFER_REASON or not any(r.search(dest) for r in _DEST_RES):
+            return None
+        return {"outcome": "deferred", "ref": dest, "reason": reason}
+    return None
+
+
+def untagged_drift_bullets(body: str) -> list[str]:
+    """Bullets of a drift-found body lacking a valid outcome tag (sentinels skipped)."""
+    bad: list[str] = []
+    for ln in body.splitlines():
+        m = re.match(r"^\s*(?:[-*]|[0-9]+\.)\s+(.*\S)\s*$", ln)
+        if not m:
+            continue
+        t = m.group(1).strip()
+        if t.lower().strip(".").strip("()") in _EMPTY_SENTINELS or t.lower() in _EMPTY_SENTINELS:
+            continue
+        if parse_outcome_tag(t) is None:
+            bad.append(t)
+    return bad
+
+
 def _looks_empty(body: str) -> bool:
     """True if section body is empty OR matches a sentinel ('none', 'n/a', ...).
 
@@ -116,6 +177,7 @@ def lint_return(text: str) -> dict[str, Any]:
             "ok": False,
             "missing": ["drift-found", "scoped-improvement"],
             "empty": [],
+            "untagged": [],
             "warnings": ["empty input text"],
         }
 
@@ -145,13 +207,22 @@ def lint_return(text: str) -> dict[str, Any]:
             "engineer return"
         )
 
-    ok = not missing and not empty
-    return {
+    untagged: list[str] = []
+    drift_body = _extract_section(text, "drift-found")
+    if drift_body:
+        untagged = untagged_drift_bullets(drift_body)
+
+    ok = not missing and not empty and not untagged
+    result: dict[str, Any] = {
         "ok": ok,
         "missing": missing,
         "empty": empty,
+        "untagged": untagged,
         "warnings": warnings,
     }
+    if untagged:
+        result["expected_tag_shape"] = TAG_SHAPE
+    return result
 
 
 # ── MCP registration ─────────────────────────────────────────────────────────
@@ -161,11 +232,13 @@ def register(server) -> None:
         description=(
             "Check a dispatched-engineer return text for the mandatory "
             "two-leg footer (drift-found + scoped-improvement). Surfaces "
-            "missing sections, empty sections, and format-drift warnings. "
+            "missing sections, empty sections, drift bullets lacking the outcome "
+            "tag ([fixed <sha>] | [fixing → feat/<slug>] | [deferred → "
+            "<destination> because <reason>]) and format-drift warnings. "
             "Use BEFORE integrating an engineer's work — catches "
             "compliance-gap returns mechanically instead of via social "
             "contract. Returns "
-            "{ok, missing: [...], empty: [...], warnings: [...]}. "
+            "{ok, missing, empty, untagged, warnings}. "
             "KB § CONTEXT/PATTERNS/common/engineer-output-linter.md."
         ),
     )

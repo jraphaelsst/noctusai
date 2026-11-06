@@ -228,7 +228,7 @@ default timestamp tolerance; live-mode retries for up to three days.
 - **Verify** — the 5-pin contract (`KB § PATTERNS/security/webhook-signatures.md`): `webhook_endpoint(...)`
   with a per-request secret resolver, explicit `bypass_when_unset`, `@limiter.limit`, strict-status
   tests. The seed default still accepts unsigned requests (CRITICAL log) when the secret is unset unless
-  `WEBHOOK_REQUIRE_SIGNATURE=1` (`security/webhook_signatures.py:52-87`) — the open P0, HELD as an owner-timed step (2026-11-05): flipping the default to refuse in a deploy context was tried and reverted — merge-queue batch `mq-candidate/42047199280-2` failed social-wiring, whose shared WAHA does not sign yet (L2 2026-11-03, `NOC-REMEDIATE[waha-hmac-prod]`), and ~20 live mounts use this verifier with no prod secret inventory. Order: inventory every mount's prod secret → provision → `WEBHOOK_REQUIRE_SIGNATURE=1` per product → then flip the default.
+  `WEBHOOK_REQUIRE_SIGNATURE=1` (`security/webhook_signatures.py:52-87`) — the open P0, HELD as an owner-timed step (2026-11-05): flipping the default to refuse in a deploy context was tried and reverted — merge-queue batch `mq-candidate/42047199280-2` failed social-wiring, whose shared WAHA does not sign yet (L2 2026-11-03, `NOC-REMEDIATE[waha-hmac-prod]`), and ~20 live mounts use this verifier with no prod secret inventory. Order: inventory every mount's prod secret → provision → `WEBHOOK_REQUIRE_SIGNATURE=1` per product → then flip the default. APPROVED by the owner 2026-11-05; inventory done, phases tracked in `project-history/roadmaps/unsigned-webhook-rollout-2026-11.md`.
   New receivers pass `bypass_when_unset=False` for any route already live in prod, as the Meta leadgen
   receiver does (`products/social-wiring/backend/app/modules/meta_ads/routers/leadgen_router.py:20-26,180-186`).
 - **Replay window only where the timestamp is signed.** Stripe and Svix sign the timestamp, so the
@@ -300,28 +300,31 @@ application retries on library retries.
 
 **How it applies here — `rate_limit.py` is the one primitive.**
 - **Pace first** (`acquire`/`acquire_async` per vendor bucket), **back off on signal**
-  (`retry_with_backoff`, full jitter `uniform(0, min(cap, base·2^n))`, `rate_limit.py:398-404`),
-  honour the vendor's `Retry-After` via the `retry_after=` extractor (`:407-455`), `paced_call` paces
-  every attempt (`:458-481`). Buckets: `meta` 3 rps, `google` 8, `youtube` 3, `whatsapp` 5,
-  `whatsapp_groups` 0.2 (group mutation is the ban vector), `vista` 5, `llm` 8 (`:81-101`); env-tunable
-  `NOC_RL_<BUCKET>_RPS/_BURST`. Adoption: `KB § PATTERNS/common/outbound-rate-limiting.md`.
+  (`retry_with_backoff`, full jitter `uniform(0, min(cap, base·2^n))`, `rate_limit.py:412-418`),
+  honour the vendor's `Retry-After` via the `retry_after=` extractor (`:455-500`), `paced_call` paces
+  every attempt (`:503-528`). Buckets: `meta` 3 rps, `google` 8, `youtube` 3, `whatsapp` 5,
+  `whatsapp_groups` 0.2 (group mutation is the ban vector), `vista` 5, `llm` 8 (`:89-110`); env-tunable
+  `NOC_RL_<BUCKET>_RPS/_BURST/_MAX_RETRY_AFTER`. Adoption: `KB § PATTERNS/common/outbound-rate-limiting.md`.
 - **Only rate-limit signals are auto-retried** — the request was rejected, not processed, so retrying a
   write is safe. Timeouts may have landed and are never auto-retried by this layer
-  (`outbound-rate-limiting.md`; `_meta_api.py:40-46`).
-- **Two gaps in the primitive** (surface, don't hand-roll):
-  1. `parse_retry_after` handles delay-seconds only; the HTTP-date form returns `None` and falls back
-     to jittered backoff (`rate_limit.py:487-497`). RFC 9110 allows both.
-  2. The hinted delay is clamped to the bucket's `max_backoff` (60 s, `:445`; async twin `:378`). A vendor that says
-     `Retry-After: 3600` is retried after 60 s — ignoring the hint is exactly what extends a throttle
-     ("continued calls extend the recovery time", Meta "Rate limits"). Correct shape: if the hint
-     exceeds the budget, give up and reschedule (jobs organ `RescheduleLater`), don't retry early.
-- **Vendor-specific throttle classification.** Meta `MetaGraphError.is_rate_limited` covers platform
-  codes `{4, 17, 32, 613}` (`_meta_api.py:90-91`). Meta's Business Use Case limits — which apply to
-  Pages / Instagram / Lead Gen / Ads with system-user or Page tokens, i.e. our production path — throw
-  `80000–80014` (`80001` Pages, `80002` Instagram, `80004` Ads Management, `80005` Lead Gen, `80006`
-  Messenger, `80008` WhatsApp Business Management) and report `estimated_time_to_regain_access` in
-  `X-Business-Use-Case-Usage` (Meta "Rate limits"). **These are not classified as rate-limited today**
-  ⇒ a BUC throttle is surfaced as a hard error, not backed off. Seed fix candidate.
+  (`outbound-rate-limiting.md`; `_meta_api.py`).
+- **`Retry-After` is honoured in both RFC 9110 §10.2.3 forms** — `parse_retry_after` (`rate_limit.py:532`)
+  takes delay-seconds or HTTP-date (past date ⇒ `0.0`, garbage/negative/non-finite ⇒ `None` ⇒ jittered backoff).
+  A hinted wait is **not** clamped to `max_backoff` (`_choose_delay`, `:441-452`); past the bucket's
+  `max_retry_after` (default 300 s, `BucketConfig` `:74`, env `NOC_RL_<BUCKET>_MAX_RETRY_AFTER`) the call is
+  **not retried inline** — `RetryLater` (`:421`, carries `delay`, `retry_at`, `__cause__`) is raised for the
+  job layer to reschedule (`RescheduleLater`). An adapter whose callers already `except <VendorError>` passes `retry_later_factory=` so the raised object is BOTH: Meta raises `MetaRetryLater(MetaGraphError, RetryLater)` (`_meta_api.py`), so live `except MetaGraphError` handlers keep working. Callers with hint extractors must handle `RetryLater` (focus `_request`, OpenAI `_create_retrying` re-raise the provider error). Continuing early extends the throttle ("continued calls extend the
+  recovery time", Meta "Rate limits").
+- **Vendor-specific throttle classification.** Meta `MetaGraphError.is_rate_limited` covers platform codes
+  `{4, 17, 32, 613}` **and** the Business Use Case codes `80000–80014` (`_meta_api.py:128-137`; `80001` Pages,
+  `80002` Instagram, `80004` Ads Management, `80005` Lead Gen, `80006` Messenger, `80008` WABA mgmt). The wait comes from
+  `X-Business-Use-Case-Usage.estimated_time_to_regain_access` (**minutes** — `parse_buc_regain_seconds`,
+  `_meta_api.py:41`) and/or `Retry-After`, whichever is longer (`_retry_hint`, `:291`), exposed as
+  `MetaGraphError.retry_after` and fed to `retry_with_backoff` by `_meta_retry_after`.
+- **Jobs-layer retries are jittered too.** `domain/jobs/retry_policy.next_retry_at` applies full jitter
+  (seedable `rng=`; `jitter=False` for the exact ceiling) (`retry_policy.py:52`). **Open gap:** the Supabase
+  repo schedules backoff inside the SQL `fail_job` RPC (`jobs.sql.template:153`, applied copies in product
+  migrations) — still un-jittered; a generated-organ revision is needed.
 - **Read the usage headers, act before 100 %.** Meta throttles when `call_count`, `total_time` or
   `total_cputime` in `X-App-Usage` / `X-Business-Use-Case-Usage` reaches 100. Google Calendar: 600
   req/min/user, 10 000 req/min/project, a 1 000 000/day threshold, 403/429 `usageLimits`, and
@@ -347,7 +350,7 @@ application retries on library retries.
 - [ ] Goes through the vendor's seed client chokepoint, which calls `rate_limit` (one bucket per vendor; a hot sub-surface gets its own bucket, like `whatsapp_groups`).
 - [ ] Explicit timeout inside the caller's budget; request path ⇒ fits the budget or moves to a job.
 - [ ] Exactly one retry layer named in the docstring; jittered; rate-limit signals only, unless the call is idempotent or carries an idempotency key.
-- [ ] Vendor's throttle codes/headers classified (incl. Meta BUC `800xx`); `Retry-After` honoured, not clamped below the hint.
+- [ ] Vendor's throttle codes/headers classified (incl. Meta BUC `800xx`); `Retry-After` honoured (both forms), never clamped below the hint — past `max_retry_after` ⇒ `RetryLater`.
 - [ ] Daily quotas budgeted separately from per-second pacing.
 - [ ] Pagination by the vendor's terminator; cursors not persisted; sync tokens handle 410.
 - [ ] A throttle or outage leaves an honest state for the user, never a fabricated empty list.

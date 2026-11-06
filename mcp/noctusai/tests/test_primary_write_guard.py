@@ -172,6 +172,46 @@ def test_writes_outside_the_repo_are_none_of_our_business():
     assert _decide("Write", {"file_path": "/tmp/scratch/plan.md"}) is None
 
 
+OUTSIDE_MEM = "~/.claude/projects/x/memory"
+
+
+def test_relative_redirect_after_cd_outside_the_repo_is_allowed():
+    """2026-11-05: the redirect was resolved against the session cwd (primary)."""
+    cmd = (
+        f"cd {OUTSIDE_MEM} && cat >> note.md <<'EOF'\nbody\nEOF\n"
+        f"cd {PRIMARY} && git fetch -q origin && git log -1"
+    )
+    assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None
+
+
+def test_relative_redirect_after_cd_into_primary_is_still_refused():
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && echo x >> f"}, cwd=PRIMARY) is not None
+
+
+def test_a_second_write_after_returning_to_the_primary_is_refused():
+    cmd = f"cd {OUTSIDE_MEM} && cat >> f; cd {PRIMARY} && echo hi >> g"
+    verdict = _decide("Bash", {"command": cmd}, cwd=PRIMARY)
+    assert verdict is not None
+    assert any(t.endswith("/g") for t in verdict["targets"])
+    assert not any(t.endswith("/memory/f") for t in verdict["targets"])
+
+
+def test_an_unresolvable_cd_target_fails_closed_for_relative_redirects():
+    assert _decide("Bash", {"command": 'cd "$X" && echo x >> f'}, cwd=PRIMARY) is not None
+    cmd = f'cd {OUTSIDE_MEM} && cd "$X" && echo x >> f'
+    assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None
+    assert _decide("Bash", {"command": f"cd {OUTSIDE_MEM} && cd - && echo x >> f"}, cwd=PRIMARY) is not None
+
+
+def test_cd_tracking_keeps_the_guard_fast():
+    import time
+
+    cmd = " && ".join(f"cd {OUTSIDE_MEM} && echo {i} >> f{i}" for i in range(60))
+    t0 = time.perf_counter()
+    _decide("Bash", {"command": cmd}, cwd=PRIMARY)
+    assert time.perf_counter() - t0 < 1.0
+
+
 def test_plain_sed_is_a_reader_but_sed_dash_i_is_not():
     assert _decide("Bash", {"command": f"cd {PRIMARY} && sed -n '1,5p' CLAUDE.md"}) is None
     assert _decide("Bash", {"command": f"cd {PRIMARY} && sed -i.bak 's/a/b/' CLAUDE.md"}) is not None
@@ -1492,3 +1532,63 @@ def test_segments_respect_quotes_and_escapes_but_split_real_separators():
     assert _segments(r"echo 'x|y'; echo z\;w" + "\n" + "ls") == ["echo 'x|y'", r" echo z\;w", "ls"]
     # unbalanced quote: the old split (fail-conservative)
     assert _segments("cd 'unterminated && git commit") == ["cd 'unterminated ", " git commit"]
+
+
+# ---------------------------------------------------------------- bash_is_read_only (2026-11-05)
+# The PreToolUse hook skips the primary `git status` baseline for provably read-only Bash
+# (cold start 0.25s -> 0.09s; the baseline under load blew the 8s hook deadline). The
+# detector must stay CONSERVATIVE: any command that can write returns False.
+from tools.noctus.dev.primary_write_guard import bash_is_read_only  # noqa: E402
+
+
+@pytest.mark.parametrize("cmd", [
+    "ls -la",
+    "cat a.txt | grep foo | wc -l",
+    "git status --porcelain",
+    "git log --oneline -5",
+    "git diff --stat origin/dev...HEAD",
+    "git branch -a",
+    "git remote -v",
+    "git reflog",
+    "git reflog show HEAD",
+    "pwd",
+])
+def test_read_only_commands_are_detected(cmd):
+    assert bash_is_read_only(cmd) is True
+
+
+@pytest.mark.parametrize("cmd", [
+    "",
+    "echo hi > out.txt",
+    "cat a >> b",
+    "ls $(touch x)",
+    "ls `touch x`",
+    "ls && touch x",
+    "ls; rm -rf foo",
+    "sleep 5 &",
+    "touch x",
+    "rm x",
+    "sed -i s/a/b/ f",
+    "python3 script.py",
+    "git checkout -- f",
+    "git commit -m x",
+    "git branch newbranch",
+    "git branch -D old",
+    "git remote add up url",
+    "git reflog expire --expire=now --all",
+    "git reflog delete HEAD@{1}",
+    "git diff --output=patch.diff",
+    "git log --output=log.txt",
+    "ls\ntouch x",
+    "echo ${HOME}",
+])
+def test_writing_or_unknown_commands_are_not_read_only(cmd):
+    assert bash_is_read_only(cmd) is False
+
+
+def test_detector_is_fast():
+    import time
+    t0 = time.perf_counter()
+    for _ in range(2000):
+        bash_is_read_only("git log --oneline -5 | head -3")
+    assert time.perf_counter() - t0 < 1.0

@@ -151,7 +151,7 @@ stalls all traffic until the read finishes. `lock_timeout` bounds that wait.
 and in the KB before this doc (grep, 2026-11-05). Active-scope tables are small today, which is
 why this has not hurt yet; the agents conversation tables are the first that will grow.
 
-**Checklist.** [ ] every migration that alters an existing table starts with `SET lock_timeout = '3s';`
+**Checklist.** [ ] the runner applies `lock_timeout` 5s by default (§ 6.3); a file that needs longer says so with `-- noc:lock-timeout <v>`; every migration that alters an existing table may additionally start with `SET lock_timeout = '3s';`
 · [ ] no table rewrite on a table with live traffic · [ ] plain `CREATE INDEX` only on a table
 you can prove is small (state the row count in the file header, as 035 does at :23-26).
 
@@ -217,8 +217,8 @@ no longer reference the thing you drop.
 
 ### 6.2 Statement-level rules
 
-- **`SET lock_timeout = '3s';`** at the top of every migration that touches an existing table
-  (fail fast and retry instead of queueing in front of all traffic; § 4). Optionally
+- **`lock_timeout`** — the runner sets 5s by default (§ 6.3); a stricter `SET lock_timeout = '3s';` at
+  the top of a migration that touches an existing table is still fine (fail fast and retry instead of queueing in front of all traffic; § 4). Optionally
   `SET statement_timeout` for backfills.
 - **Constraints:** `ADD CONSTRAINT … NOT VALID` (no scan, brief lock) then
   `VALIDATE CONSTRAINT` (SHARE UPDATE EXCLUSIVE, traffic continues).
@@ -227,63 +227,61 @@ no longer reference the thing you drop.
 - **Backfills:** batches by primary-key range, each its own transaction, never one giant `UPDATE`.
 - **Defaults:** non-volatile default on `ADD COLUMN` is metadata-only; a volatile default rewrites.
 
-### 6.3 The house runner and the transaction-block problem
+### 6.3 The house runner, its default lock_timeout, and the directives
 
 `migrate_product` sends each pending file as **one** Management-API query
-(`mcp/noctusai/tools/noctus/dev/migrate_product.py:1542-1544`, executor at :595-625). Postgres
-runs a multi-statement simple-query message as **one implicit transaction** (protocol docs §
-Multiple Statements in a Simple Query). Consequences:
-- Good: a file is atomic — any error rolls back the whole file (pairs with
-  `migration-chain-replay.md`'s run-twice rule).
-- Bad: `CREATE INDEX CONCURRENTLY` is impossible inside a normal migration file; 035 reasoned this
-  out by hand (`035_julia_v2_threads_constraints.sql:23-26`).
-- A `SET lock_timeout` at the top of the file applies to that implicit transaction — exactly the
-  scope wanted.
+(`mcp/noctusai/tools/noctus/dev/migrate_product.py:1111-1146` `_apply_migration_sql`, executor
+`SupabaseMgmtExecutor`). Postgres runs a multi-statement simple-query message as **one implicit
+transaction** (protocol docs § Multiple Statements in a Simple Query). Consequences:
+- A file is atomic — any error rolls back the whole file (pairs with `migration-chain-replay.md`'s
+  run-twice rule).
+- **Default `lock_timeout` = 5s** (`migration_directives.py:25`). The runner prepends
+  `SET LOCAL lock_timeout = '5s';` to the SAME request, so it dies with the file's transaction and
+  never leaks onto the session or the separate ledger INSERT. Because of the prefix a transactional file is always a multi-statement request, so
+  `CONCURRENTLY` in it always fails — it needs the directive below. Blocked DDL fails fast instead of
+  queueing in front of live traffic. A file's own `SET lock_timeout` still wins (it runs later).
+- Ledger write (`INSERT INTO <schema>.schema_migrations`) is a separate request after success and
+  stays non-fatal (a WARNING) — a migration that renames its own schema depends on that.
 
-**Gap (named destination).** A runner directive (e.g. a first-line `-- noc:no-transaction`
-marker that makes `migrate_product` send each statement separately) is the root fix for
-`CONCURRENTLY`. It is a toolkit change touching the applied-record path, which sits in the
-git/merge redesign zone (`KB § PATTERNS/backend/migrate-product-mcp-tool.md:421`) — tracked in
-`project-history/roadmaps/agent-refinement-followups-2026-11.md` §2 (`feat/df-migration-runner`). Until it lands: plain index build
-only with a stated small row count, otherwise surface to the tech-lead.
+**Directives** — `-- noc:<name> [value]` comment lines in the file's LEADING comment block (before
+the first statement), parsed by `migration_directives.py:52` `parse_directives`. Strict: unknown
+name, bad/missing value, duplicate, or placement after the first statement refuses the whole batch
+BEFORE any DDL (`migrate_product.py:1597-1613`).
+- `-- noc:lock-timeout <v>` — override the default. `0` = off; else `<int>` + `ms|s|min|h|d`
+  (`30s`, `2min`). A bare number without unit is rejected (ambiguous).
+- `-- noc:no-transaction` — run outside the implicit transaction: the file is split on top-level
+  `;` (`migration_directives.py:94` `split_statements`, quote/`$tag$`/comment aware) and each
+  statement is its own request, so `CREATE INDEX CONCURRENTLY` / `DROP INDEX CONCURRENTLY` work.
+  `lock_timeout` is scoped PER STATEMENT (`migrate_product.py:1112` `_apply_migration_sql`): a
+  statement that cannot run in a transaction block goes BARE, with no guard
+  (`migration_directives.py:188` `needs_bare_request`: any `CONCURRENTLY` — CREATE/DROP INDEX,
+  REINDEX, REFRESH MATERIALIZED VIEW — plus `VACUUM`, `CLUSTER`, `DISCARD`, `ALTER SYSTEM`,
+  `CREATE/DROP DATABASE|TABLESPACE|SUBSCRIPTION`, `REINDEX DATABASE|SCHEMA|SYSTEM`); every other
+  statement is sent as `SET LOCAL lock_timeout = <lit>;\n<stmt>` in its own implicit
+  transaction, and `noc:lock-timeout` applies to those. The result's `unguarded_statements`
+  (`{file: [statement numbers]}`) names what ran without a guard. There is no session SET/RESET.
+  `BEGIN/COMMIT/SAVEPOINT…` inside such a file is refused. The ledger INSERT still runs only after
+  every statement succeeded.
 
-### 6.4 Migration checklist (one page)
+**Half-failed no-transaction file.** It is NOT atomic. Statements before the failing one stay
+applied, the ledger row is not written, the error says `statement i/n failed`. A failed
+`CONCURRENTLY` build leaves an `INVALID` index (CREATE INDEX docs): `DROP INDEX CONCURRENTLY IF
+EXISTS <name>` it or let the re-run do so. Therefore every statement of such a file must be
+idempotent (`IF NOT EXISTS` / `IF EXISTS`); the re-run replays from statement 1. Keep the file to
+the non-transactional statements and put `NOT VALID`/`VALIDATE` pairs in the same idempotent shape.
 
-- [ ] Authored via `noctus.dev.scaffold_migration`; idempotent (`IF NOT EXISTS`); runs twice on PGlite.
-- [ ] N-1 image works against this schema (no drop/rename/retype of anything N-1 reads).
-- [ ] `SET lock_timeout` when altering an existing table.
-- [ ] New constraint on existing data ⇒ `NOT VALID` + `VALIDATE`; precondition guard that `RAISE`s
-      when data is not clean (035 :33-51 is the reference shape).
-- [ ] Index on a non-trivial live table ⇒ `CONCURRENTLY` (needs the runner directive) or surface.
-- [ ] RLS + policies + grants in the same file; `SECURITY DEFINER` ⇒ `search_path` + `REVOKE`.
-- [ ] Data backfill batched; never mixed with a long DDL lock.
-- [ ] `schema_drift` / `predeploy_check` green after apply.
+PGlite replay (`mcp/noctusai/node/migration_replay/replay.mjs`) honours `noc:no-transaction`
+(statement-by-statement, twice) so `CONCURRENTLY` files replay green. `scaffold_migration`'s
+generated body carries a hint comment about both directives.
 
-**Anti-patterns.** Rename-in-place; drop-in-the-same-deploy; "it's a small table" without a count;
-a backfill `UPDATE` over the whole table in the same file as the DDL; no `lock_timeout`.
-
----
-
-## 7 · Escalation
-
-Per `KB § PATTERNS/architect/dispatch-engineer-tuning.md` § 4·1: a migration on a large or hot
-table, a constraint/index/type change on existing data, or a new multi-table invariant is
-judgment-heavy work — the dispatcher should run it on Opus, and a Sonnet executor that meets one
-unannounced should surface rather than improvise.
-
-## Sources
-
-- PostgreSQL — Explicit Locking — https://www.postgresql.org/docs/current/explicit-locking.html — lock modes and conflicts (§ 4). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — ALTER TABLE — https://www.postgresql.org/docs/current/sql-altertable.html — `NOT VALID` / `VALIDATE` (SHARE UPDATE EXCLUSIVE), FK lock, `USING INDEX`, non-volatile default without rewrite (§ 4, § 6). Accessed 2026-11-05.
-- PostgreSQL — CREATE INDEX — https://www.postgresql.org/docs/current/sql-createindex.html — `CONCURRENTLY` cannot run in a transaction block (§ 6). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — Message Flow, Multiple Statements in a Simple Query — https://www.postgresql.org/docs/current/protocol-flow.html — implicit transaction block (§ 6.3). Accessed 2026-11-05.
-- PostgreSQL — Client Connection Defaults — https://www.postgresql.org/docs/current/runtime-config-client.html — `lock_timeout`, `statement_timeout` (§ 4, § 6). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — Transaction Isolation — https://www.postgresql.org/docs/current/transaction-iso.html — Read Committed default; retry on `40001` (§ 5). Accessed 2026-11-05.
-- PostgreSQL — SELECT, The Locking Clause — https://www.postgresql.org/docs/current/sql-select.html — `SKIP LOCKED` for queue-like tables (§ 5). Accessed 2026-11-05.
-- PostgreSQL — Using EXPLAIN — https://www.postgresql.org/docs/current/using-explain.html — plan reading (§ 2). Accessed 2026-11-05 (audit-verified).
-- PostgreSQL — Partial Indexes — https://www.postgresql.org/docs/current/indexes-partial.html — partial and partial-unique indexes (§ 1, § 2). Accessed 2026-11-05.
-- PostgreSQL — pg_stat_statements — https://www.postgresql.org/docs/current/pgstatstatements.html — ranking statements by execution time (§ 2). Accessed 2026-11-05.
-- Supabase — Row Level Security — https://supabase.com/docs/guides/database/postgres/row-level-security — `(select auth.uid())`, index policy columns (§ 3). Accessed 2026-11-05 (audit-verified).
-- Supabase — RLS Performance and Best Practices — https://supabase.com/docs/guides/troubleshooting/rls-performance-and-best-practices-Z5Jjwv — the six recommendations (§ 3). Accessed 2026-11-05.
-- PostgREST — Transactions — https://github.com/PostgREST/postgrest-docs/blob/main/docs/references/transactions.rst — every request runs inside a transaction; RAISE rolls back (§ 5). Accessed 2026-11-05 (docs.postgrest.org returned HTTP 429; content read from the docs source repo).
-- Martin Fowler — Parallel Change — https://martinfowler.com/bliki/ParallelChange.html — expand/migrate/contract (§ 6.1). Accessed 2026-11-05 (audit-verified).
+**Live evidence (2026-11-05, Supabase project `nyplttplcoyiiqjrvtiw`, data-free probes).**
+- No connection reuse: 5 Management-API requests returned 5 different `pg_backend_pid()`; after
+  `SET lock_timeout='7s'` the next requests read `0`. A session `SET` can never guard a later
+  request, so the first design (session SET + RESET) was a no-op and was removed.
+- A multi-statement request is a transaction block: `SET lock_timeout='5s'; DISCARD ALL;` failed
+  `25001 … cannot run inside a transaction block`; `DISCARD ALL;` alone succeeded. Hence a
+  CONCURRENTLY-class statement can never share a request with a SET — it runs bare.
+- Transactional path: `SET LOCAL` read `5s` inside the request and `0` after (no leak), also for a
+  file with its own `BEGIN;…COMMIT;`. It fires: a waiter on a `pg_advisory_xact_lock` held 8s by
+  another request, under `noc:lock-timeout 2s`, was cancelled with `55P03 canceling statement due
+  to lock timeout`.

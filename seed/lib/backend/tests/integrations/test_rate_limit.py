@@ -7,10 +7,13 @@ precise control.)
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.rate_limit import (
+    RetryLater,
     BucketConfig,
     TokenBucket,
     VirtualClock,
@@ -153,6 +156,106 @@ def test_honors_retry_after_hint():
 )
 def test_parse_retry_after(value, expected):
     assert parse_retry_after(value) == expected
+
+
+_NOW = datetime(2026, 10, 21, 7, 0, 0, tzinfo=timezone.utc)
+
+
+def test_parse_retry_after_http_date_future():
+    assert parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT", now=_NOW) == 28 * 60.0
+
+
+def test_parse_retry_after_http_date_past_is_zero():
+    assert parse_retry_after("Wed, 21 Oct 2026 06:00:00 GMT", now=_NOW) == 0.0
+
+
+@pytest.mark.parametrize("junk", ["", "   ", "soon", "nan", "inf", "-1", "Wed, 99 Foo 2026 99:99:99 GMT"])
+def test_parse_retry_after_garbage_is_none(junk):
+    assert parse_retry_after(junk, now=_NOW) is None
+
+
+def test_long_retry_after_is_not_clamped_to_max_backoff():
+    clk = VirtualClock()
+    calls = {"n": 0}
+
+    def fn():
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise _RateLimited(retry_after=120.0)  # > max_backoff (60), < max_retry_after
+        return "ok"
+
+    retry_with_backoff(
+        fn, bucket="meta", is_retryable=lambda e: isinstance(e, _RateLimited),
+        retry_after=lambda e: e.retry_after, clock=clk,
+    )
+    assert clk.monotonic() == pytest.approx(120.0, abs=1e-6)
+
+
+def test_retry_after_past_max_raises_retry_later_without_sleeping():
+    clk = VirtualClock()
+    calls = {"n": 0}
+
+    def fn():
+        calls["n"] += 1
+        raise _RateLimited(retry_after=3600.0)
+
+    with pytest.raises(RetryLater) as ei:
+        retry_with_backoff(
+            fn, bucket="meta", is_retryable=lambda e: isinstance(e, _RateLimited),
+            retry_after=lambda e: e.retry_after, clock=clk,
+        )
+    assert calls["n"] == 1  # not retried inline
+    assert clk.monotonic() == 0.0  # did not sleep
+    assert ei.value.delay == 3600.0
+    assert isinstance(ei.value.__cause__, _RateLimited)
+    assert 3590 < (ei.value.retry_at - datetime.now(timezone.utc)).total_seconds() <= 3600
+
+
+def test_max_retry_after_is_configurable_via_env(monkeypatch):
+    monkeypatch.setenv("NOC_RL_META_MAX_RETRY_AFTER", "5")
+    assert rate_limit._config_for("meta").max_retry_after == 5.0
+    with pytest.raises(RetryLater):
+        retry_with_backoff(
+            lambda: (_ for _ in ()).throw(_RateLimited(retry_after=10.0)),
+            bucket="meta", is_retryable=lambda e: isinstance(e, _RateLimited),
+            retry_after=lambda e: e.retry_after, clock=VirtualClock(),
+        )
+
+
+def test_retry_later_factory_lets_adapter_error_type_be_retry_later():
+    class VendorErr(Exception):
+        def __init__(self, msg):
+            Exception.__init__(self, msg)  # not super(): RetryLater is next in the MRO
+
+    class VendorLater(VendorErr, RetryLater):
+        def __init__(self, orig, bucket, delay):
+            VendorErr.__init__(self, str(orig))
+            self._set_retry_later(bucket, delay, orig)
+
+    def boom():
+        raise VendorErr("slow down")
+
+    with pytest.raises(VendorErr) as ei:
+        retry_with_backoff(
+            boom, bucket="meta", is_retryable=lambda e: isinstance(e, VendorErr),
+            retry_after=lambda e: 9999.0, clock=VirtualClock(),
+            retry_later_factory=lambda e, b, d: VendorLater(e, b, d),
+        )
+    assert isinstance(ei.value, RetryLater) and ei.value.delay == 9999.0
+    assert str(ei.value) == "slow down"
+
+
+def test_retry_later_async():
+    import asyncio
+
+    async def fn():
+        raise _RateLimited(retry_after=9999.0)
+
+    with pytest.raises(RetryLater):
+        asyncio.run(rate_limit.retry_with_backoff_async(
+            fn, bucket="meta", is_retryable=lambda e: isinstance(e, _RateLimited),
+            retry_after=lambda e: e.retry_after, clock=VirtualClock(),
+        ))
 
 
 # ─── async path ─────────────────────────────────────────────────────────────

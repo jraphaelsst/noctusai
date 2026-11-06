@@ -93,7 +93,7 @@ def _judge(payload: dict) -> dict | None:
         base_ctx = ctx if ctx is not None else guard.discover_context(str(REPO_ROOT))
         if base_ctx is not None:
             sid = payload.get("session_id")
-            if base_ctx.guarded:
+            if base_ctx.guarded and not guard.bash_is_read_only(str(tool_input.get("command") or "")):
                 guard.capture_pretool_baseline(base_ctx, sid)
             else:
                 guard.discard_pretool_baseline(base_ctx, sid)

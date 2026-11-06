@@ -44,6 +44,7 @@ import tempfile
 from typing import Any, Callable
 
 from deploy_state import DEPLOY_LOCAL_FILES
+from . import release_steward as _steward
 from ._vps_ssh import run_remote as _throttled_ssh
 
 # git subcommands the tool is allowed to run remotely. The drill NEVER needs
@@ -560,6 +561,9 @@ def register(server) -> None:
         mirror_caches: bool = True,
         mirror_dsn: str | None = None,
     ) -> dict:
+        refused = _steward.tool_refusal("noctus.dev.deploy_pull", {"confirm": confirm})
+        if refused is not None:
+            return refused
         return deploy_pull(
             target=target,
             ssh_host=ssh_host,

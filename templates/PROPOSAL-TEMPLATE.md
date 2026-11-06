@@ -40,7 +40,7 @@
 - s3-codified: {{target + 1-line description, or "none"}}
 - s4-keeper: {{target + 1-line description, or "none"}}
 
-**drift-found:** {{leftover OUTSIDE the brief — path + shape + suspected cause, or "(none observed)"}}
+**drift-found:** {{`- none`, or per bullet: leftover — path + shape + cause, ending in `[fixed <sha>]` | `[fixing → feat/<slug>]` | `[deferred → <destination> because <reason>]`}}
 **scoped-improvement:** {{slip/pattern observed IN your slice → suggested codification, or "(none surfaced)"}}
 -->
 

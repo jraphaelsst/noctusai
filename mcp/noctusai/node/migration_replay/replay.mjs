@@ -53,6 +53,9 @@ try {
 // search_path=pg_catalog, so pin Supabase's role default explicitly.
 const SESSION_RESET = `RESET ALL; SET search_path TO "$user", public, extensions;`;
 
+// Leading-comment-block directive (see migration_directives.py); header = blank/-- lines only.
+const NO_TX = /^(?:[ \t]*(?:--[^\n]*)?\n)*?[ \t]*--[ \t]*noc:no-transaction[ \t]*(?:\n|$)/;
+
 const errOf = (e) => ({ error: String(e.message || e).slice(0, 400), code: e.code || null });
 
 async function run(sql) {
@@ -84,7 +87,16 @@ try {
     const sql = step.sql.replace(STRIP_EXTENSIONS, '');
     const failures = [];
     let count = 0;
-    if (step.mode === 'file') {
+    if (step.mode === 'file' && NO_TX.test(sql)) {
+      // `-- noc:no-transaction` (migrate_product directive): the runner sends these
+      // statement by statement, so replay does too (CREATE INDEX CONCURRENTLY refuses a
+      // transaction block). Failures are apply/reapply failures like any file-mode step.
+      count = await statements(sql, 'apply', failures);
+      if (!failures.length && step.twice) {
+        await run(SESSION_RESET);
+        await statements(sql, 'reapply', failures);
+      }
+    } else if (step.mode === 'file') {
       const err = await run(sql);
       if (err) {
         failures.push({ phase: 'apply', stmt_index: null, stmt_head: null, ...err });

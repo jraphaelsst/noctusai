@@ -75,6 +75,13 @@ Code lives in:
    `merge-queue` commit status: `pending` (in a batch under test), `success`
    (landed as `<dev sha>`), or `failure` (ejected, with the reason). Silence is
    never a pass. `landed` reports `queued` until a verdict exists.
+   The steward may REBASE an entry before landing it (new shas, same content),
+   so once landed, `task_branch` decides "merged" by CONTENT, not ancestry:
+   every branch commit's patch-id is on `origin/dev` (`git cherry`), or a trial
+   merge of the branch into dev yields dev's own tree. Equivalent ⇒ pointer,
+   primary FF, worktree + branch teardown (the branch is then force-deleted,
+   safe because the content is proven on dev). Not equivalent ⇒ refused with
+   `missing_commits`, worktree untouched (it is never rebased or half-applied).
 3. **A batch is judged as one tree.** File-disjoint is not effect-disjoint
    (`methodology-execution-discipline.md`). The queue tests exactly the tree
    that `dev` will become.
@@ -87,6 +94,17 @@ Code lives in:
 
 ## 4 · How to work under the queue (the session rules)
 
+- **One elected steward runs the queue; everyone else files and keeps
+  building.** Before any queue/deploy action check your environment
+  (`ListAgents` + `release_steward action=status`). Only the steward enqueues,
+  runs `landed`, blesses, promotes and deploys; the `release-steward` hook
+  refuses everyone else and names the steward. A gated session does **not**
+  stop: it files `release_steward action=request slug=<slug>` (re-filing keeps
+  the latest `head_sha`) and continues building; the steward drains the whole
+  outbox in one pass so riders batch in the queue, then replies `LANDED <dev
+  sha>` / `EJECTED <reason>` / `DEPLOYED`. The steps below that say "enqueue" or
+  "`landed`" are the steward's; a non-steward session's equivalent is the
+  request. → `KB § PATTERNS/devops/release-steward.md`
 - **Small slices, enqueued as soon as they are green.** One branch is one
   concern. Do not build a long-lived multi-slice branch. jl-ship carried 14
   slices plus a train, and that is how 40% of the blocks were our own bugs
@@ -122,6 +140,7 @@ Code lives in:
   commit and rebases it with `--rebase-merges` (it used to do that only for
   `train-*` slugs, so feat/julia-golive was flattened and re-hit the conflicts
   its merge had already resolved).
+- **The drain registers the repo's custom merge drivers first** (`scripts/hooks/register-merge-drivers.sh`, after installing toolkit deps). `.gitattributes` only names a driver; unregistered on the runner, derived kb-counts blocks text-merge and eject parallel entries (2026-11-05). Keeper `check_merge_drivers_registered_in_ci`. Merge drivers run before git writes the merged tree (ort), so they re-derive counts against the pre-merge tree: after every composed entry the drain therefore re-runs `cli.py --update-kb-counts` in its worktree and commits changed derived paths as `chore(kb-counts): regenerate derived counts at compose [auto]`; a failing regen ejects the entry (`kb_counts_regen`), never continues silently. → `KB § PATTERNS/common/auto-generated-merge-drivers.md`
 
 ## 5 · Fallback: `task_branch action=integrate`
 
@@ -225,12 +244,63 @@ timeout.
   set lives for one drain run only. A new run starts clean and re-bisects if
   needed.
 
+- **Workflow-file entries cannot ride the queue (2026-11-05).** The drain
+  pushes `mq-candidate/*` with `github.token`, and GitHub refuses any pushed
+  *new* commit object that changes `.github/workflows/*` unless the token has
+  the `workflows` permission, which `GITHUB_TOKEN` can never have. A rebased or
+  merged entry that touches a workflow file was unpushable, and the drain
+  raised on the push, wedging the whole queue (17 entries `queued` for ~1.5h).
+  Now:
+  - compose ejects such an entry up front with kind `needs_workflow_token`
+    ("changes .github/workflows/* - the queue's token cannot push workflow
+    edits; land via the steward's workflow-file path") and continues;
+  - a fast-forward entry reuses its already-pushed commit, so it is not
+    pre-ejected;
+  - any rejected candidate push is caught, never raised: a "without `workflows`
+    permission" rejection ejects the workflow-touching entries with the same
+    reason; any other rejection ejects a lone entry (`push_rejected`, with the
+    stderr tail) or bisects a batch;
+  - the seam is the env var `MQ_PUSH_TOKEN` (see below); with it unset the
+    pre-eject above applies unchanged.
+
+  **The token path (2026-11-05).** The owner created a fine-grained PAT
+  (contents + workflows write), stored as the environment secret
+  `MQ_PUSH_TOKEN` of the GitHub environment `merge-queue`. When it is set the
+  queue is workflow-capable: the pre-eject is off, and for a batch whose
+  composed diff against dev touches `.github/workflows/` the candidate push and
+  the dev fast-forward go to `https://x-access-token:<tok>@github.com/<repo>.git`.
+  Every other batch pushes through the plain remote with `github.token`. Why
+  only workflow batches: a push made with a PAT triggers push workflows
+  (`test.yml`, seed-typecheck, agents-secc-ci fire on a push to dev) while a
+  `github.token` push does not, so using the PAT everywhere would double-run CI
+  on every landing. The token is redacted from every error, stderr tail and
+  status the drain surfaces (`redact()`).
+
+  **Why a dev-only environment and a kick job.** The environment's
+  deployment-branch policy allows only `dev`, so only a run whose workflow file
+  comes from dev can read the secret; a queued branch could otherwise edit
+  `merge-queue.yml` to print it. A run triggered by the `mq/**` push has the
+  queue branch as its ref, so `merge-queue.yml` is split: `kick` (push only, no
+  secrets, no environment) dispatches the workflow on dev, and `drain` (only on
+  `refs/heads/dev`, `environment: merge-queue`) does the work. The concurrency
+  group is on the drain job so a kick never waits behind a running drain.
+
+  Covered by `test_workflow_touching_entry_is_pre_ejected_and_the_rest_land`,
+  `test_workflow_token_seam_switches_the_pre_eject_off`,
+  `test_rejected_candidate_push_ejects_instead_of_raising`,
+  `test_workflow_permission_rejection_maps_to_the_workflow_reason`,
+  `test_workflow_batch_pushes_candidate_and_dev_via_the_token_url_and_lands`,
+  `test_non_workflow_batch_with_token_still_pushes_via_the_plain_remote`,
+  `test_token_never_surfaces_in_errors_statuses_or_verdicts`,
+  `test_merge_queue_workflow_splits_kick_from_the_dev_only_drain`.
+
 ## 8 · Related
 
 `KB § PATTERNS/common/self-branching-mode.md` (the worktree lifecycle around
 it) · `KB § PATTERNS/architect/branching-dispatch.md` (dispatch and trains) ·
 `KB § PATTERNS/devops/dev-main-ci-gates.md` (what CI gates) ·
-`KB § PATTERNS/devops/hardware-admission-budget.md` (the local slot gate, which
+`KB § PATTERNS/devops/release-steward.md` (who runs the queue: one elected
+session) · `KB § PATTERNS/devops/hardware-admission-budget.md` (the local slot gate, which
 now covers local checks only) · `KB § PATTERNS/common/methodology-execution-discipline.md`
 (per-branch green ≠ integration green).
 

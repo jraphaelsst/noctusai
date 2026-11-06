@@ -26,10 +26,9 @@ import socket
 import ssl
 import time
 import urllib.error
-from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, TypeVar
 
-from noctusai_lib.domain.jobs.retry_policy import RetryPolicy, next_retry_at
+from noctusai_lib.domain.jobs.retry_policy import RetryPolicy, backoff_ceiling_seconds
 
 T = TypeVar("T")
 
@@ -37,7 +36,6 @@ T = TypeVar("T")
 DEFAULT_POLICY = RetryPolicy(max_retries=3, backoff_seconds=1.0, backoff_multiplier=3.0, max_backoff_seconds=30.0)
 _RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 _MAX_RETRY_AFTER_S = 30.0
-_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 
 def classify(exc: BaseException) -> str | None:
@@ -65,7 +63,9 @@ def is_transient(exc: BaseException) -> bool:
 
 
 def _delay(attempt: int, policy: RetryPolicy, exc: BaseException, rng: Callable[[], float]) -> float:
-    base = (next_retry_at(attempt, policy, _EPOCH) - _EPOCH).total_seconds()
+    # The un-jittered 1/3/9 ceiling: this helper applies its own bounded jitter below,
+    # so the seed's full-jitter `next_retry_at` would jitter twice.
+    base = backoff_ceiling_seconds(attempt, policy)
     if isinstance(exc, urllib.error.HTTPError):
         ra = exc.headers.get("Retry-After") if exc.headers else None
         try:

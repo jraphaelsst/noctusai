@@ -262,14 +262,14 @@ idempotency key · [ ] the OWASP row for this endpoint is satisfied.
    `EXPLAIN (ANALYZE, BUFFERS)`.
 3. **RLS performance.** Use `(SELECT auth.uid())`, filter explicitly as well, and add
    `TO authenticated`. Service-role paths must carry their own org filter.
-4. **Locks.** Know which DDL takes ACCESS EXCLUSIVE. Use `SET lock_timeout` on every migration
-   that alters an existing table.
+4. **Locks.** Know which DDL takes ACCESS EXCLUSIVE. The runner defaults every migration to `lock_timeout` 5s (`-- noc:lock-timeout <v>` overrides); use a tighter `SET lock_timeout`
+   on a migration that alters a hot table.
 5. **Transactions.** Read Committed is the default, so check-then-act is a race. One PostgREST
    call is one transaction, which means an invariant that spans rows or tables needs one RPC.
 6. **Zero-downtime migrations.** The N-1 image must run on schema N because `deploy_image`
    auto-rolls back. Use expand → migrate → contract, `NOT VALID` → `VALIDATE`,
-   `CONCURRENTLY` (blocked today by the runner's implicit transaction,
-   `migrate_product.py:1542-1544`), and batched backfills.
+   `CONCURRENTLY` (via the `-- noc:no-transaction` file directive,
+   `migration_directives.py:52`; runner default `lock_timeout` 5s, `migrate_product.py:1111`), and batched backfills.
 
 ---
 
@@ -521,9 +521,10 @@ explains why it does not use `CONCURRENTLY` (:23-26): the runner sends the file 
 transaction. The plain build takes a SHARE lock and blocks writes for its duration.
 **Canon version.**
 ```sql
-SET lock_timeout = '3s';                      -- fail fast, never queue ahead of traffic
+SET lock_timeout = '3s';                      -- tighter than the runner's 5s default; fail fast, never queue ahead of traffic
 -- (precondition DO-block unchanged)
--- with a runner no-transaction directive:
+-- with a runner no-transaction directive (`-- noc:no-transaction` in the file's LEADING
+-- comment block; `-- noc:lock-timeout 30s` overrides the 5s default; statements idempotent):
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_agents_threads_channel
     ON agents.conversations (org_id, channel, channel_ref) WHERE tipo = 'thread_lead';
 DROP INDEX CONCURRENTLY IF EXISTS agents.uq_agents_conversations_channel_ref;

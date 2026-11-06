@@ -67,7 +67,8 @@ from noctusai_lib.integrations.meta.oauth_adapter import MetaOAuthAdapter
 
 
 class _FakeResponse:
-    def __init__(self, payload, status_code: int = 200, *, is_text=False):
+    def __init__(self, payload, status_code: int = 200, *, is_text=False, headers=None):
+        self.headers = httpx.Headers(headers or {})
         self._payload = payload
         self.status_code = status_code
         self._is_text = is_text
@@ -365,6 +366,112 @@ class TestGraphErrorParsing:
             assert MetaGraphError("x", code=c).is_auth_error
         for c in (4, 17, 32, 613):
             assert MetaGraphError("x", code=c).is_rate_limited
+
+    def test_buc_codes_80000_to_80014_are_rate_limited(self):
+        # Meta "Rate limits": Business Use Case throttles 80000-80014.
+        for c in range(80000, 80015):
+            e = MetaGraphError("buc", code=c)
+            assert e.is_rate_limited, c
+            assert not e.is_auth_error
+        assert not MetaGraphError("x", code=80015).is_rate_limited
+        assert not MetaGraphError("x", code=79999).is_rate_limited
+
+    def test_buc_header_estimated_time_to_regain_access_minutes(self):
+        import json
+
+        from noctusai_lib.integrations.meta import _meta_api
+
+        hdr = json.dumps({
+            "111": [{"type": "pages", "call_count": 100, "total_time": 90,
+                     "total_cputime": 80, "estimated_time_to_regain_access": 3}],
+            "222": [{"type": "instagram", "call_count": 5,
+                     "estimated_time_to_regain_access": 10}],
+        })
+        assert _meta_api.parse_buc_regain_seconds(hdr) == 600.0
+        assert _meta_api.parse_buc_regain_seconds(json.dumps(
+            {"1": [{"type": "pages", "estimated_time_to_regain_access": 0}]})) is None
+        for junk in (None, "", "not json", "[]", '{"1": "x"}'):
+            assert _meta_api.parse_buc_regain_seconds(junk) is None
+
+    def test_graph_error_carries_buc_and_retry_after_hint(self):
+        import json
+
+        from noctusai_lib.integrations.meta import _meta_api
+
+        body = {"error": {"message": "limit", "code": 80001, "type": "OAuthException"}}
+        buc = json.dumps({"1": [{"type": "pages", "estimated_time_to_regain_access": 2}]})
+        with pytest.raises(MetaGraphError) as exc:
+            _meta_api._raise_for_graph_error(
+                body, http_status=400,
+                headers=httpx.Headers({"X-Business-Use-Case-Usage": buc, "Retry-After": "30"}),
+            )
+        assert exc.value.is_rate_limited
+        assert exc.value.retry_after == 120.0  # BUC 2 min beats Retry-After 30s
+
+    def test_buc_throttle_is_backed_off_using_hint_then_succeeds(self):
+        from noctusai_lib.integrations import rate_limit
+        from noctusai_lib.integrations.meta import _meta_api
+
+        clk = rate_limit.VirtualClock()
+        rate_limit.set_default_clock(clk)
+        try:
+            err = {"error": {"message": "limit", "code": 80002}}
+            seq = [_FakeResponse(err, 400, headers={"Retry-After": "7"}),
+                   _FakeResponse({"ok": True}, 200)]
+            with patch.object(httpx, "get", side_effect=seq):
+                assert _meta_api.graph_get("me", access_token="x") == {"ok": True}
+            assert clk.monotonic() >= 7.0
+        finally:
+            rate_limit.reset_default_clock()
+
+    def test_buc_hint_past_inline_max_raises_retry_later(self):
+        from noctusai_lib.integrations import rate_limit
+        from noctusai_lib.integrations.meta import _meta_api
+
+        err = {"error": {"message": "limit", "code": 80004}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(
+            err, 400, headers={"Retry-After": "7200"},
+        )) as g:
+            with pytest.raises(rate_limit.RetryLater) as ei:
+                _meta_api.graph_get("act_1/campaigns", access_token="x")
+        assert g.call_count == 1
+        assert ei.value.delay == 7200.0
+
+    def test_retry_later_is_also_a_metagraph_error(self):
+        # social-wiring (live) maps `except MetaGraphError` -> clean HTTP error
+        # in ~20 handlers; a long throttle must NOT escape them as a 500.
+        from noctusai_lib.integrations import rate_limit
+        from noctusai_lib.integrations.meta import _meta_api
+
+        err = {"error": {"message": "limit", "code": 80001, "fbtrace_id": "T1"}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(
+            err, 400, headers={"X-Business-Use-Case-Usage":
+                               '{"1":[{"type":"pages","estimated_time_to_regain_access":120}]}'},
+        )):
+            with pytest.raises(rate_limit.RetryLater) as ei:
+                _meta_api.graph_get("1/feed", access_token="x")
+        e = ei.value
+        assert isinstance(e, MetaGraphError) and isinstance(e, rate_limit.RetryLater)
+        assert isinstance(e, _meta_api.MetaRetryLater)
+        assert e.is_rate_limited and e.code == 80001 and e.fbtrace_id == "T1"
+        assert e.http_status == 400 and e.retry_after == 7200.0 and e.delay == 7200.0
+        assert "limit" in str(e)
+        assert isinstance(e.__cause__, MetaGraphError)
+
+    def test_social_wiring_style_except_metagraph_error_catches_long_throttle(self):
+        from noctusai_lib.integrations.meta import _meta_api
+
+        def handler():
+            try:
+                _meta_api.graph_get("1/feed", access_token="x")
+            except MetaGraphError as exc:  # the live-router contract
+                return ("http-error", exc.is_rate_limited, exc.code)
+
+        err = {"error": {"message": "limit", "code": 80002}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(
+            err, 400, headers={"Retry-After": "7200"},
+        )):
+            assert handler() == ("http-error", True, 80002)
 
     def test_html_503_fallback_raises(self):
         from noctusai_lib.integrations.meta import _meta_api

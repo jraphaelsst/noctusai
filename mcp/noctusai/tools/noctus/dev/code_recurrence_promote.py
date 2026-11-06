@@ -125,6 +125,7 @@ def scan(
     # Build the set of unique anchors (one per chunk).
     anchors = [(p, idx, sym, k) for p, idx, sym, k, _txt, _vec in rows]
 
+    neighbors_of = ce.neighbor_index(rows)  # vectorized: one matvec per anchor
     seen_pairs: set[tuple[str, str, str, str]] = set()
     clusters: list[dict[str, Any]] = []
 
@@ -136,9 +137,7 @@ def scan(
         # on every single anchor — that redundant O(N) reload × O(N)
         # anchors was the dominant cost of `check_code_recurrence_drift`
         # (~1000s of ~1250s total in `test_all_products_compliant`).
-        neighbors = ce.code_neighbors(
-            path, symbol_name=symbol, top_k=top_k_per_file, rows=rows
-        )
+        neighbors = neighbors_of(path, symbol_name=symbol, top_k=top_k_per_file)
         for n in neighbors:
             score = n["score"]
             if score < threshold:

@@ -42,7 +42,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from noctusai_lib.integrations.rate_limit import Clock, paced_call, parse_retry_after
+from noctusai_lib.integrations.rate_limit import Clock, RetryLater, paced_call, parse_retry_after
 
 from .certificate import inspect_pkcs12
 from .errors import InvoiceNotFound, InvoiceProviderError
@@ -248,7 +248,9 @@ class FocusNFeInvoiceProvider:
                 retry_after=lambda e: getattr(e, "retry_after", None),
                 clock=self._clock,
             )
-        except _RateLimited:
+        except (_RateLimited, RetryLater):
+            # RetryLater = the vendor's Retry-After exceeded the inline max;
+            # same provider-level 429 outcome (retryable=True) for the caller.
             limited = True
         else:
             limited = False

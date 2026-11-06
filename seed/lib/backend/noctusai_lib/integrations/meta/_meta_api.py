@@ -23,6 +23,7 @@ layer, not part of the package's public surface.
 from __future__ import annotations
 
 import functools
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -35,6 +36,40 @@ from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.meta.types import TokenBundle
 
 _T = TypeVar("_T")
+
+
+def parse_buc_regain_seconds(header_value: Any) -> float | None:
+    """Seconds until Meta lifts a Business Use Case throttle, from the
+    `X-Business-Use-Case-Usage` header (JSON `{<id>: [{type, call_count,
+    total_time, total_cputime, estimated_time_to_regain_access}]}`;
+    `estimated_time_to_regain_access` is in MINUTES per Meta "Rate limits").
+    Returns the longest positive regain time across entries, or None when
+    the header is absent / unparseable / carries no active throttle."""
+    if not header_value:
+        return None
+    try:
+        data = json.loads(header_value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    worst = 0.0
+    for entries in data.values():
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                minutes = float(entry.get("estimated_time_to_regain_access") or 0)
+            except (TypeError, ValueError):
+                continue
+            worst = max(worst, minutes * 60.0)
+    return worst or None
+
+
+def _meta_retry_after(exc: BaseException) -> float | None:
+    """`retry_after=` extractor for `@_meta_paced_retry`: the exception's
+    Retry-After / BUC regain hint (None ⇒ jittered exponential backoff)."""
+    return getattr(exc, "retry_after", None)
 
 
 def _is_meta_rate_limited(exc: BaseException) -> bool:
@@ -58,6 +93,8 @@ def _meta_paced_retry(fn: Callable[..., _T]) -> Callable[..., _T]:
             lambda: fn(*args, **kwargs),
             bucket="meta",
             is_retryable=_is_meta_rate_limited,
+            retry_after=_meta_retry_after,
+            retry_later_factory=_meta_retry_later,
         )
 
     return wrapper
@@ -90,6 +127,15 @@ DEFAULT_MAX_PAGES = 5
 _AUTH_ERROR_CODES = {102, 190, 467}
 # Rate-limit Graph codes — per-app / per-user / per-page throttles.
 _RATE_LIMIT_CODES = {4, 17, 32, 613}
+# Business Use Case (BUC) rate-limit codes — Pages / Instagram / Ads / Lead
+# Gen / Messenger / WhatsApp Business Mgmt / Catalog throttles on system-user
+# or Page tokens (our production path). Meta "Rate limits" documents
+# 80000-80014 (80000 ads insights, 80001 pages, 80002 instagram, 80003 custom
+# audience, 80004 ads management, 80005 lead gen, 80006 messenger, 80008 WABA
+# mgmt, 80009 catalog mgmt, 80014 catalog batch). The request was REJECTED, so
+# retry is safe; the wait comes from `estimated_time_to_regain_access`.
+_BUC_RATE_LIMIT_CODES = frozenset(range(80000, 80015))
+_RATE_LIMIT_CODES = _RATE_LIMIT_CODES | _BUC_RATE_LIMIT_CODES
 # Permission Graph codes — the token / app lacks the capability for a
 # write or ads call. `10` = application does not have permission for
 # this action; `200` = permissions error (scope not granted). On a
@@ -153,8 +199,14 @@ class MetaGraphError(Exception):
         error_type: str | None = None,
         fbtrace_id: str | None = None,
         http_status: int | None = None,
+        retry_after: float | None = None,
     ) -> None:
-        super().__init__(message)
+        # Exception.__init__ directly: `MetaRetryLater` also inherits
+        # `RetryLater`, and a cooperative super() would route `message` there.
+        Exception.__init__(self, message)
+        # Seconds the vendor asked us to wait (Retry-After header, or BUC
+        # `estimated_time_to_regain_access`); None when no hint was sent.
+        self.retry_after = retry_after
         self.message = message
         self.code = code
         self.error_subcode = error_subcode
@@ -219,6 +271,31 @@ class MetaGraphError(Exception):
         )
 
 
+class MetaRetryLater(MetaGraphError, rate_limit.RetryLater):
+    """Graph throttle whose wait exceeds the bucket's inline maximum.
+
+    IS a `MetaGraphError` (same code / `is_rate_limited` / `retry_after`, so
+    every existing `except MetaGraphError` handler keeps its contract) AND a
+    `RetryLater` (the job layer reschedules at `.retry_at`)."""
+
+    def __init__(self, original: MetaGraphError, bucket: str, delay: float) -> None:
+        MetaGraphError.__init__(
+            self,
+            original.message,
+            code=original.code,
+            error_subcode=original.error_subcode,
+            error_type=original.error_type,
+            fbtrace_id=original.fbtrace_id,
+            http_status=original.http_status,
+            retry_after=delay,
+        )
+        self._set_retry_later(bucket, delay, original)
+
+
+def _meta_retry_later(exc: BaseException, bucket: str, delay: float) -> MetaRetryLater:
+    return MetaRetryLater(exc, bucket, delay)  # type: ignore[arg-type] — only MetaGraphError is retryable here
+
+
 class BusinessDiscoveryNotFound(MetaGraphError):
     """The username passed to ``business_discovery`` is unknown, private, or not
     an Instagram professional (business / creator) account."""
@@ -239,8 +316,22 @@ def is_business_discovery_not_found(exc: MetaGraphError) -> bool:
     return exc.code in _BUSINESS_DISCOVERY_NOT_FOUND_CODES
 
 
+def _retry_hint(headers: Any) -> float | None:
+    """Wait hint from response headers: BUC regain time and/or Retry-After,
+    whichever is longer (never retry before either says it is safe)."""
+    if headers is None:
+        return None
+    hints = [
+        h for h in (
+            parse_buc_regain_seconds(headers.get("x-business-use-case-usage")),
+            rate_limit.parse_retry_after(headers.get("retry-after")),
+        ) if h is not None
+    ]
+    return max(hints) if hints else None
+
+
 def _raise_for_graph_error(
-    payload: Any, *, http_status: int | None = None
+    payload: Any, *, http_status: int | None = None, headers: Any = None
 ) -> None:
     """Raise `MetaGraphError` if `payload` carries a Graph error
     envelope. Graph returns errors even on 200 OK, so this runs on
@@ -264,6 +355,7 @@ def _raise_for_graph_error(
         error_type=err.get("type"),
         fbtrace_id=err.get("fbtrace_id"),
         http_status=http_status,
+        retry_after=_retry_hint(headers),
     )
 
 
@@ -336,7 +428,7 @@ def graph_get(
     url = f"{base}/{version}/{path.lstrip('/')}"
     resp = _graph_request("GET", url, params=q, timeout=timeout)
     body = _parse_json(resp)
-    _raise_for_graph_error(body, http_status=resp.status_code)
+    _raise_for_graph_error(body, http_status=resp.status_code, headers=getattr(resp, "headers", None))
     if not isinstance(body, dict):
         raise MetaGraphError(
             f"Expected JSON object from {path}, got {type(body).__name__}",
@@ -373,7 +465,7 @@ def graph_paged(
     while next_url and pages < max_pages:
         resp = _graph_request("GET", next_url, timeout=timeout)
         nb = _parse_json(resp)
-        _raise_for_graph_error(nb, http_status=resp.status_code)
+        _raise_for_graph_error(nb, http_status=resp.status_code, headers=getattr(resp, "headers", None))
         if not isinstance(nb, dict):
             break
         rows.extend(nb.get("data") or [])
@@ -416,7 +508,7 @@ def graph_post(
     url = f"{base}/{version}/{path.lstrip('/')}"
     resp = _graph_request("POST", url, data=form, timeout=timeout)
     body = _parse_json(resp)
-    _raise_for_graph_error(body, http_status=resp.status_code)
+    _raise_for_graph_error(body, http_status=resp.status_code, headers=getattr(resp, "headers", None))
     if not isinstance(body, dict):
         raise MetaGraphError(
             f"Expected JSON object from {path}, got {type(body).__name__}",
@@ -453,7 +545,7 @@ def graph_delete(
     url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
     resp = _graph_request("DELETE", url, params=q, timeout=timeout)
     body = _parse_json(resp)
-    _raise_for_graph_error(body, http_status=resp.status_code)
+    _raise_for_graph_error(body, http_status=resp.status_code, headers=getattr(resp, "headers", None))
     if not isinstance(body, dict):
         raise MetaGraphError(
             f"Expected JSON object from {path}, got {type(body).__name__}",
@@ -653,7 +745,7 @@ def exchange_code_for_token_bundle(
         timeout=timeout,
     )
     body = _parse_json(resp)
-    _raise_for_graph_error(body, http_status=resp.status_code)
+    _raise_for_graph_error(body, http_status=resp.status_code, headers=getattr(resp, "headers", None))
     return _token_bundle_from_body(body)
 
 
@@ -685,7 +777,7 @@ def exchange_for_long_lived_bundle(
         timeout=timeout,
     )
     body = _parse_json(resp)
-    _raise_for_graph_error(body, http_status=resp.status_code)
+    _raise_for_graph_error(body, http_status=resp.status_code, headers=getattr(resp, "headers", None))
     return _token_bundle_from_body(body)
 
 
@@ -777,7 +869,7 @@ def exchange_ig_code_for_token(
         timeout=timeout,
     )
     body = _parse_json(resp)
-    _raise_for_graph_error(body, http_status=resp.status_code)
+    _raise_for_graph_error(body, http_status=resp.status_code, headers=getattr(resp, "headers", None))
     if isinstance(body, dict) and isinstance(body.get("data"), list) and body["data"]:
         body = body["data"][0]
     if not isinstance(body, dict) or not body.get("access_token"):
@@ -819,7 +911,7 @@ def exchange_ig_for_long_lived(
         timeout=timeout,
     )
     body = _parse_json(resp)
-    _raise_for_graph_error(body, http_status=resp.status_code)
+    _raise_for_graph_error(body, http_status=resp.status_code, headers=getattr(resp, "headers", None))
     if not isinstance(body, dict) or not body.get("access_token"):
         raise MetaGraphError(
             f"Expected an access_token from the IG long-lived exchange, "

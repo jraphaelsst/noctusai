@@ -43,8 +43,7 @@ def _reexec_under_venv() -> None:
     """
     import os
 
-    if os.environ.get("_NOCTUS_CLI_REEXEC") == "1":
-        return  # already re-execed once — don't loop; let the real error show
+    deps_ok = True
     try:
         # Probe BOTH deps the docstring names: a host python can carry pydantic
         # but never `noctusai_lib` (homebrew python3 does — the noc-harness mod
@@ -54,14 +53,49 @@ def _reexec_under_venv() -> None:
         # ... and the seed framework: a host env with the lib but not the framework (or the
         # framework missing from the venv) made verdicts depend on the launching python.
         import noctusai_seed  # noqa: F401
-        return
     except ImportError:
+        deps_ok = False
+    action, target = _venv_reexec_decision(
+        deps_ok, os.environ.get("_NOCTUS_CLI_REEXEC") == "1", _venv_candidates())
+    if action == "reexec":
+        os.environ["_NOCTUS_CLI_REEXEC"] = "1"
+        os.execv(target, [target, str(Path(__file__).resolve()), *sys.argv[1:]])
+    if action == "error":
+        print(target, file=sys.stderr)
+        sys.exit(2)
+
+
+def _venv_candidates() -> "list[Path]":
+    """This checkout's venv, then the PRIMARY checkout's (a worktree has no `.venv` of its own —
+    it is gitignored — so the documented `python mcp/noctusai/cli.py ...` died with
+    ModuleNotFoundError there; the pre-commit hook resolves it the same way)."""
+    import subprocess
+
+    here = Path(__file__).resolve().parent
+    out = [here / ".venv" / "bin" / "python"]
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                cwd=str(here), capture_output=True, text=True, timeout=10).stdout.strip()
+        if common:
+            out.append(Path(common).parent / "mcp" / "noctusai" / ".venv" / "bin" / "python")
+    except (OSError, subprocess.SubprocessError):
         pass
-    venv_py = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
-    if not venv_py.exists():
-        return  # fresh clone before `pip install` — fall through to import error
-    os.environ["_NOCTUS_CLI_REEXEC"] = "1"
-    os.execv(str(venv_py), [str(venv_py), str(Path(__file__).resolve()), *sys.argv[1:]])
+    return out
+
+
+def _venv_reexec_decision(deps_ok: bool, already_reexeced: bool, candidates: "list[Path]") -> "tuple[str, str]":
+    """Pure decision: ("run", "") | ("reexec", venv_python) | ("error", one-line message).
+    Deps importable -> run. Loop guard set -> run (let the real import error surface, never spin).
+    Deps missing + a venv python exists -> reexec. Else a clear exit-2 message, never a traceback."""
+    if deps_ok or already_reexeced:
+        return "run", ""
+    for c in candidates:
+        if Path(c).exists():
+            return "reexec", str(c)
+    want = candidates[0] if candidates else Path("mcp/noctusai/.venv/bin/python")
+    return "error", (f"cli.py: toolkit deps (noctusai_lib) not importable and no venv at {want}; "
+                     "create it: python3 -m venv mcp/noctusai/.venv && "
+                     "mcp/noctusai/.venv/bin/pip install -r mcp/noctusai/requirements.txt")
 
 
 _reexec_under_venv()
@@ -260,6 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--paths", default="", help=f"Comma-separated repo-relative paths to narrow a keeper's sweep (accepted by: {_paths_keepers}). Omitted, the keeper scans its full default scope.")
     parser.add_argument("--check-primary-checkout-commit", action="store_true", help="Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commit time and the cost lands later as a non-fast-forward at integrate/deploy. Ledger-only commits (project-history/) pass; escape hatch NOCTUS_ALLOW_PRIMARY_COMMIT=1. Severity high. MCP keeper check_primary_checkout_commit.")
     parser.add_argument("--check-git-hooks-bypass", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that hardcodes a git hooks bypass (`-c core.hooksPath=…`, `--config`/`--config-env` targeting core.hooksPath, a persistent `git config core.hooksPath <value>` SET, a `GIT_CONFIG_KEY_*=core.hooksPath` env-injection, or `--no-verify`/`-n` on commit/push). Static backstop for the PreToolUse `decide_git_bypass` gate (`primary_write_guard.py`) — born from a `-c core.hooksPath=<relative>` override that silently skipped every hook, exit 0, no warning, because git resolves a relative hooksPath against the cwd and a linked worktree's `.git` is a FILE. `.md` prose is out of scope (cannot execute); co-located allowlist for the one genuine non-bypass SET (bootstrap-seed-workspace.sh provisioning a separate sibling repo). Severity high. MCP keeper check_git_hooks_bypass.")
+    parser.add_argument("--check-merge-drivers-registered-in-ci", action="store_true", help="Keeper: every custom `merge=<name>` in .gitattributes must be registered by scripts/hooks/register-merge-drivers.sh, and .github/workflows/merge-queue.yml must invoke that script (an unregistered driver = plain text merge = queue ejections on derived kb-counts blocks, 2026-11-05). Severity high. MCP keeper check_merge_drivers_registered_in_ci.")
     parser.add_argument("--check-git-hook-file-tampering", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that removes, truncates, `chmod -x`'s, or overwrites a file under `.git/hooks/`, or writes `.git/config` directly (`rm`/`> `/`chmod`/`cp`/`mv`/`tee`/`echo … >>`). Sibling of check_git_hooks_bypass: that one is git-ARGV-shaped and cannot see a plain filesystem op that disables a hook exactly as effectively, with the same silent exit-0-no-error result. `chmod` is mode-aware (`+x` is a repair, not a violation). Static backstop for the PreToolUse `decide_hook_integrity` gate (`primary_write_guard.py`). Co-located allowlist for `scripts/hooks/install-hooks.sh`'s sanctioned remove-then-recreate-symlink reinstall flow. Severity high. MCP keeper check_git_hook_file_tampering.")
     parser.add_argument("--check-conftest-env-setdefault", action="store_true", help="Keeper: a product conftest that defers a CREDENTIAL/ENDPOINT env key to the ambient environment via `os.environ.setdefault`. Reads as 'provide a default', means 'whatever the developer exported wins'. p-studio 2026-08-19: the platform .env carries ASAAS_WEBHOOK_TOKEN= (present, EMPTY), so setdefault no-opped and 15 of 20 webhook tests went red under a loaded .env while all 20 passed in a plain shell. The same file deferred SUPABASE_SERVICE_ROLE_KEY and PROVEDOR_COBRANCA, so the real values would have built a real service-role client and a real payment adapter. A locally-generated Fernet session key is exempt. Remedy: noctusai_lib.testing.conftest_helpers.own_test_env. Severity high. MCP keeper check_conftest_env_setdefault.")
     parser.add_argument("--check-conflict-markers", action="store_true", help="Keeper: a tracked file committed with unresolved merge-conflict markers. Flags only when an opener (7+ '<') AND a closer (7+ '>') both appear at line start, so a lone '=======' Markdown underline or section divider is not a false positive. Found on origin/dev 2026-08-04 in a RENAMED migration, where git emits the 8-char marker variant that visual scanning misses; the header sat in a comment block so every semantic gate and the live schema both looked clean. Severity high. MCP keeper check_conflict_markers.")
@@ -401,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stamp-seed-version", action="store_true", help="Stamp short SHA + /VERSION SemVer into seed _version_static.py. MCP: noctus.dev.stamp_seed_version.")
     parser.add_argument("--check-version-bump", action="store_true", help="Gate MAJOR-bump authorization: refuse working-tree VERSION whose MAJOR exceeds HEAD's unless .major-bump-authorized marker exists. Autonomous PATCH/MINOR pass. KB § PATTERNS/common/versioning.md. MCP: noctus.dev.version_guard.")
     parser.add_argument("--render-project-history", action="store_true", help="Render project-history/ledger.ndjson → PROJECT-HISTORY.md (absorbed scripts/render-project-history.py). Pair --check for drift gate. MCP: noctus.dev.render_project_history.")
+    parser.add_argument("--check-project-history-staged", action="store_true", help="Pre-commit gate: a commit staging project-history/ledger.ndjson must stage the PROJECT-HISTORY.md rendered from that staged ledger (exit 1 + the fix command on drift).")
     parser.add_argument("--backfill-project-history", action="store_true", help="Stamp historical ledger rows from archive/ (absorbed scripts/backfill-project-history.py). Pair --dry. MCP: noctus.dev.backfill_project_history.")
     parser.add_argument("--gen-promotions-index", action="store_true", help="Regenerate a seed-workspace's derived PROMOTIONS.md (absorbed scripts/gen-promotions-index.py). Pair --check for the drift gate. MCP: noctus.dev.gen_promotions_index.")
     parser.add_argument("--archive-clean", action="store_true", help="Keep today+yesterday archive folders, classify D-2+ stale (absorbed scripts/archive-clean.sh). USER-INVOKED; pair --force to delete. MCP: noctus.dev.archive_clean.")
@@ -467,7 +503,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--migrate-product-allow-inactive", action="store_true", help="With --migrate-product: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--migrate-product-allow-stale-toolkit", action="store_true", help="With --migrate-product: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--task-branch", metavar="ACTION", choices=["status", "start", "enqueue", "landed", "integrate", "cleanup", "train", "sync_primary"], help="The self-branching-mode per-task git lifecycle. enqueue = the DEFAULT landing path (push to the CI merge queue, KB § PATTERNS/devops/merge-queue.md); landed = read the queue verdict + run the post-landing tail; integrate = the legacy local-gates path (queue-down fallback). DRY-RUN unless --task-branch-confirm. MCP: noctus.dev.task_branch. Also an R4 fresh-subprocess target for its mutating (start/integrate/cleanup, confirm=True) actions.")
-    parser.add_argument("--merge-queue", metavar="ACTION", choices=["list", "status"], help="Read-only view of the CI merge queue (the one path into dev): list = waiting entries + verdicts; status = one enqueued sha's verdict (--merge-queue-sha). MCP: noctus.dev.merge_queue. KB § PATTERNS/devops/merge-queue.md.")
+    parser.add_argument("--merge-queue", metavar="ACTION", choices=["list", "status", "watch"], help="Read-only view of the CI merge queue (the one path into dev): list = waiting entries + verdicts; status = one enqueued sha's verdict (--merge-queue-sha); watch = long-running, one flushed line per transition (MQ / MQ-LEFT / MQ-WATCH-ERROR; --merge-queue-interval). Every failure still prints a JSON object with status=error. MCP: noctus.dev.merge_queue. KB § PATTERNS/devops/merge-queue.md.")
+    parser.add_argument("--tunnel-config", metavar="ACTION", choices=["render", "check", "apply"], help="Make deploy/tunnel/ingress.yml canonical for the cloudflared tunnel: render = offline ingress block; check = read-only drift diff vs the LIVE VPS config; apply = backup + rewrite + restart (DRY-RUN unless --tunnel-config-confirm). MCP: noctus.dev.tunnel_config. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
+    parser.add_argument("--tunnel-config-confirm", action="store_true", help="With --tunnel-config=apply: actually write the live config + restart the tunnel (production mutation).")
+    parser.add_argument("--merge-queue-interval", type=float, default=60, help="With --merge-queue=watch: poll interval in seconds.")
     parser.add_argument("--merge-queue-sha", default=None, help="With --merge-queue=status: the enqueued sha.")
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
     parser.add_argument("--task-branch-train-order", default="given", choices=["given", "auto"], help="With --task-branch=train: merge order - 'given' (as listed) or 'auto' (least path-overlap first).")
@@ -484,6 +523,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
+    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
+    parser.add_argument("--steward-session-id", default=None, help="With --release-steward: the caller's session id (default $CLAUDE_CODE_SESSION_ID).")
+    parser.add_argument("--steward-name", default=None, help="With --release-steward claim/request: a human-readable session name (e.g. noctusai-51).")
+    parser.add_argument("--steward-reason", default=None, help="With --release-steward claim: why this session holds the lane.")
+    parser.add_argument("--steward-ttl-s", type=int, default=None, help="With --release-steward claim: heartbeat TTL in seconds (default 7200 / $NOCTUS_STEWARD_TTL_S).")
+    parser.add_argument("--steward-slug", default=None, help="With --release-steward request/ack: the feat/<slug> name.")
+    parser.add_argument("--steward-branch", default=None, help="With --release-steward request: the branch (default feat/<slug>).")
+    parser.add_argument("--steward-head-sha", default=None, help="With --release-steward request: the head sha to ship (default: resolved from the branch).")
+    parser.add_argument("--steward-products", default=None, help="With --release-steward request: comma-separated products touched.")
+    parser.add_argument("--steward-migrations", action="store_true", help="With --release-steward request: the delivery carries migrations.")
+    parser.add_argument("--steward-notes", default=None, help="With --release-steward request/ack/handoff/release: free-text notes.")
+    parser.add_argument("--steward-outcome", default=None, choices=["enqueued", "landed", "ejected", "deployed"], help="With --release-steward ack: the request's new outcome.")
+    parser.add_argument("--steward-dev-sha", default=None, help="With --release-steward ack: the dev sha it landed as.")
+    parser.add_argument("--steward-to-session-id", default=None, help="With --release-steward handoff: transfer the lane to this session id.")
+    parser.add_argument("--steward-to-name", default=None, help="With --release-steward handoff: offer the lane to this named session (it accepts with claim).")
+    parser.add_argument("--steward-include-done", action="store_true", help="With --release-steward inbox/mine: include finished requests.")
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
     parser.add_argument("--task-branch-post-dev-branch", default="dev", help="With --task-branch-post-integrate: the dev branch name.")
     parser.add_argument("--task-branch-post-remote", default="origin", help="With --task-branch-post-integrate: the remote.")
@@ -1749,6 +1804,17 @@ def main():
             print(f"  {GREEN}✓ git-hooks-bypass: clean (no tracked file hardcodes a hooks bypass).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} tracked file(s) hardcode a git hooks bypass:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_merge_drivers_registered_in_ci:
+        from tools.noctus.dev.compliance import check_merge_drivers_registered_in_ci
+        issues = check_merge_drivers_registered_in_ci()
+        if not issues:
+            print(f"  {GREEN}✓ merge-drivers-registered-in-ci: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} merge-driver registration gap(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
@@ -3497,9 +3563,21 @@ def main():
 
     elif args.render_project_history:
         from tools.noctus.dev.history import render_project_history
-        r = render_project_history(check=args.check)
+        # The caller's tree, not the primary's: LEDGER_ROOT is the history.py default for the MCP
+        # server (it has no caller cwd), but a CLI run inside a worktree must render THAT tree's
+        # files (invoking_tree = --worktree-path, else settings.REPO_ROOT when it is not the primary).
+        from tools.noctus.dev.auto_improvement import invoking_tree
+        r = render_project_history(check=args.check, worktree_path=invoking_tree(args.worktree_path))
         print(json.dumps(r, default=str))
         sys.exit(1 if (args.check and r.get("drift")) else 0)
+
+    elif args.check_project_history_staged:
+        from tools.noctus.dev.history import check_project_history_staged
+        r = check_project_history_staged(repo_root=REPO_ROOT)
+        print(json.dumps(r, default=str))
+        if r["drift"]:
+            print(f"[noc-guard:project-history-staged] ledger.ndjson is staged without the matching PROJECT-HISTORY.md. Fix: {r['fix']}", file=sys.stderr)
+        sys.exit(1 if r["drift"] else 0)
 
     elif args.backfill_project_history:
         from tools.noctus.dev.history import backfill_project_history
@@ -3702,14 +3780,46 @@ def main():
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
 
+    elif getattr(args, "tunnel_config", None):
+        from tools.noctus.dev.tunnel_config import tunnel_config as _tunnel_config
+        r = _tunnel_config(action=args.tunnel_config, worktree_path=args.worktree_path,
+                           confirm=bool(args.tunnel_config_confirm))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok", r.get("status") != "error") else 1)
+
     elif getattr(args, "merge_queue", None):
         from tools.noctus.dev import merge_queue as _mq
-        if args.merge_queue == "status":
-            r = _mq.read_status(_mq._repo_from_remote(_mq._default_run, str(Path.cwd())), args.merge_queue_sha or "")
-        else:
-            r = _mq.queue_report()
+        if args.merge_queue == "watch":
+            try:
+                _mq.watch_live(args.merge_queue_interval)
+            except KeyboardInterrupt:
+                sys.exit(0)
+        try:
+            if args.merge_queue == "status":
+                r = _mq.read_status(_mq._repo_from_remote(_mq._default_run, str(Path.cwd())), args.merge_queue_sha or "")
+            else:
+                r = _mq.queue_report()
+        except Exception as _exc:  # noqa: BLE001 - never a bare traceback: always a JSON object
+            r = _mq.error_report(_exc)
         print(json.dumps(r, indent=2, default=str))
-        sys.exit(0)
+        sys.exit(1 if r.get("status") == "error" else 0)
+
+    elif args.release_steward:
+        import os
+        from tools.noctus.dev import release_steward as _rs
+        _sid = args.steward_session_id or os.environ.get(_rs.SESSION_ENV)
+        _pid = os.environ.get("CLAUDE_PID")
+        r = _rs.run_action(
+            args.release_steward, _sid, claude_pid=int(_pid) if _pid and _pid.isdigit() else None,
+            child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
+            name=args.steward_name, reason=args.steward_reason, ttl_s=args.steward_ttl_s,
+            to_session_id=args.steward_to_session_id, to_name=args.steward_to_name, slug=args.steward_slug,
+            branch=args.steward_branch, head_sha=args.steward_head_sha,
+            products=[x.strip() for x in (args.steward_products or "").split(",") if x.strip()] or None,
+            migrations=args.steward_migrations, notes=args.steward_notes, outcome=args.steward_outcome,
+            dev_sha=args.steward_dev_sha, include_done=args.steward_include_done)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     elif args.task_branch_post_integrate:
         from tools.noctus.dev.task_branch import run_post_integrate

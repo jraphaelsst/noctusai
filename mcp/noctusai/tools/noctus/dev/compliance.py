@@ -2697,6 +2697,8 @@ def check_unknown_table_references(product_path: Path) -> list[dict]:
         except (OSError, UnicodeDecodeError) as exc:
             logger.debug("compliance: cannot read %s (%s)", py_file, exc)
             continue
+        if "table" not in source:
+            continue  # only a `.table(...)` call is flagged (exact prefilter)
         try:
             tree = ast.parse(source, filename=str(py_file))
         except SyntaxError as exc:
@@ -9695,6 +9697,8 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
             continue
         if _FLEET_SIZE_RATIONALE_RE.search(content):
             continue
+        if "len(" not in content:
+            continue  # a `len(...)` comparison is the only shape flagged (exact prefilter)
         try:
             tree = ast.parse(content, filename=str(py_path))
         except SyntaxError as exc:
@@ -9708,15 +9712,24 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
 
         # Map every node to its enclosing FunctionDef so we can check
         # whether the count is registry-derived in the same function.
-        func_src_by_node: dict[int, str] = {}
-        for fn in ast.walk(tree):
-            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                try:
-                    fn_src = ast.get_source_segment(content, fn) or ""
-                except (ValueError, TypeError):
-                    fn_src = ""
-                for child in ast.walk(fn):
-                    func_src_by_node[id(child)] = fn_src
+        # Lazy (2026-11-05 perf): the per-function source map walks every
+        # function's subtree (quadratic for nested defs) and slices source; only
+        # a Compare that already passed the cheap len/const/floor tests needs it.
+        func_src_by_node: dict[int, str] | None = None
+
+        def _fn_src_for(target: ast.AST) -> str:
+            nonlocal func_src_by_node
+            if func_src_by_node is None:
+                func_src_by_node = {}
+                for fn in ast.walk(tree):
+                    if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        try:
+                            fn_src = ast.get_source_segment(content, fn) or ""
+                        except (ValueError, TypeError):
+                            fn_src = ""
+                        for child in ast.walk(fn):
+                            func_src_by_node[id(child)] = fn_src
+            return func_src_by_node.get(id(target), "")
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Compare) or len(node.ops) != 1:
@@ -9740,7 +9753,7 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
                 continue
             if const_node.value < _FLEET_SIZE_FLOOR:
                 continue
-            fn_src = func_src_by_node.get(id(node), "")
+            fn_src = _fn_src_for(node)
             # Registry-derived in the enclosing function → computed, not
             # frozen → does not stale → suppress.
             if any(tok in fn_src for tok in _REGISTRY_DERIVED_TOKENS):
@@ -18425,6 +18438,8 @@ def check_canonical_organ_consumption(
 
                 # Check each canonical organ name.
                 for organ_name, seed_path in registry.items():
+                    if organ_name not in content:
+                        continue  # decl_pattern needs the literal name (exact prefilter)
                     # Match: function/const declaration (not import).
                     decl_pattern = (
                         r"(?:export\s+)?(?:function|const)\s+"
@@ -26302,4 +26317,49 @@ def check_stranded_branches(
             "severity": "warning",
         })
 
+    return issues
+
+
+_MERGE_DRIVER_BUILTINS = frozenset({"union", "binary", "text", "ours", "theirs"})
+_MERGE_DRIVERS_SCRIPT = "scripts/hooks/register-merge-drivers.sh"
+_MERGE_QUEUE_WORKFLOW = ".github/workflows/merge-queue.yml"
+
+
+def check_merge_drivers_registered_in_ci(repo_root: Path | None = None) -> list[dict]:
+    """Every custom `merge=<name>` in `.gitattributes` must be REGISTERED where
+    the merge queue runs it.
+
+    `.gitattributes` only names a driver; the body is per-repo git config. The
+    merge-queue runner never had it, so parallel entries touching the derived
+    kb-counts blocks text-merged and were ejected (2026-11-05, 4 entries).
+    Contract: `scripts/hooks/register-merge-drivers.sh` registers every custom
+    driver (`merge.<name>.driver`), and `merge-queue.yml` invokes that script.
+    Built-ins (union/binary/text) need no registration.
+    KB § PATTERNS/common/auto-generated-merge-drivers.md
+    """
+    import re
+
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    attrs = root / ".gitattributes"
+    if not attrs.is_file():
+        return issues
+    used = set(re.findall(r"\bmerge=([A-Za-z0-9_.-]+)", attrs.read_text(encoding="utf-8")))
+    custom = sorted(used - _MERGE_DRIVER_BUILTINS)
+    if not custom:
+        return issues
+
+    def issue(file: str, msg: str) -> dict:
+        return {"file": file, "issue": msg, "severity": "high"}
+
+    script = root / _MERGE_DRIVERS_SCRIPT
+    if not script.is_file():
+        return [issue(_MERGE_DRIVERS_SCRIPT, f"missing; .gitattributes maps custom merge driver(s) {custom}")]
+    body = script.read_text(encoding="utf-8")
+    for name in custom:
+        if not re.search(rf"merge\.{re.escape(name)}\.driver|\breg\s+{re.escape(name)}\b", body):
+            issues.append(issue(_MERGE_DRIVERS_SCRIPT, f"does not register merge driver '{name}' that .gitattributes maps"))
+    wf = root / _MERGE_QUEUE_WORKFLOW
+    if not wf.is_file() or "register-merge-drivers.sh" not in wf.read_text(encoding="utf-8"):
+        issues.append(issue(_MERGE_QUEUE_WORKFLOW, "does not invoke scripts/hooks/register-merge-drivers.sh; the queue drain would text-merge derived docs and eject entries"))
     return issues

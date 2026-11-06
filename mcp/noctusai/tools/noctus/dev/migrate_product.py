@@ -99,6 +99,20 @@ RETURN SHAPE
     error: str | None,
 }``
 
+FILE DIRECTIVES + LOCK TIMEOUT — ``migration_directives.py``
+-----------------------------------------------------------
+Every file runs under a default ``lock_timeout`` of 5s (blocked DDL fails fast
+instead of queueing behind live traffic). Transactional files get
+``SET LOCAL lock_timeout`` prepended in the SAME request (implicit transaction),
+so it never leaks onto the session or the separate ledger INSERT.
+Leading-comment directives: ``-- noc:lock-timeout <0|Nms|Ns|Nmin|Nh|Nd>``
+(override; ``0`` = off) and ``-- noc:no-transaction`` (statement-by-statement: each
+guarded with its own ``SET LOCAL``, except CONCURRENTLY/VACUUM-class statements which go bare;
+for ``CREATE INDEX CONCURRENTLY``; must be idempotent -- a half-failed file keeps its earlier
+statements).
+Malformed directives refuse the whole batch before any DDL. The ledger INSERT
+is unchanged and stays non-fatal (schema-renaming migrations rely on that).
+
 REPAIR MODE — ``repair_schema_migrations_ledger()``
 ----------------------------------------------------
 Moves ``schema_migrations`` rows stranded in a phantom schema (written back
@@ -217,8 +231,10 @@ from workspace import resolve_caller_root
 
 from . import _catalog_scope_guard
 from . import ledger_checksums as _ledger_checksums
+from . import release_steward as _steward
 from . import toolkit_freshness as _toolkit_freshness
 from . import _transient_retry
+from . import migration_directives as _directives
 
 logger = logging.getLogger(__name__)
 
@@ -1094,6 +1110,47 @@ def _schema_migrations_exists_sql(schema: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _apply_migration_sql(
+    executor: SqlExecutor, sql: str, directives: "_directives.Directives", stmts: list[str] | None,
+) -> dict[str, Any]:
+    """Run ONE migration file's DDL under the lock_timeout guard (NOT the ledger write).
+
+    Every Management-API request is a NEW backend connection (live-verified 2026-11-05,
+    project nyplttplcoyiiqjrvtiw: 5 requests, 5 pg_backend_pids; a session ``SET`` read back
+    ``0`` on the next request), so lock_timeout can only be scoped INSIDE one request.
+
+    Transactional file (default): ``SET LOCAL lock_timeout`` is prepended to the file's single
+    request (one implicit transaction); it dies with it and never touches the ledger INSERT.
+
+    ``-- noc:no-transaction`` file: ``stmts`` (pre-split, pre-validated) run one request each.
+    A statement that cannot run in a transaction block (``needs_bare_request``: CONCURRENTLY,
+    VACUUM, ...) is sent BARE -- a multi-statement request is a transaction block (live 25001),
+    so it cannot carry a SET; every other statement is ``SET LOCAL lock_timeout; <stmt>`` in its
+    own implicit transaction. The result lists ``unguarded`` statement numbers. A failure stops
+    the file; earlier statements stay applied, so the file must be idempotent.
+    """
+    lit = _directives.lock_timeout_literal(directives.lock_timeout)
+    if not directives.no_transaction:
+        return executor.execute(f"SET LOCAL lock_timeout = {lit};\n{sql}")
+    if stmts is None:
+        return {"ok": False, "rows": None, "error": "internal: no-transaction file without pre-split statements"}
+    unguarded: list[int] = []
+    for i, stmt in enumerate(stmts, start=1):
+        if _directives.needs_bare_request(stmt):
+            unguarded.append(i)
+            res = executor.execute(stmt)
+        else:
+            res = executor.execute(f"SET LOCAL lock_timeout = {lit};\n{stmt}")
+        if not res.get("ok"):
+            return {
+                "ok": False, "rows": None, "unguarded": unguarded,
+                "error": (f"statement {i}/{len(stmts)} failed (earlier statements stay applied; "
+                          f"drop any INVALID index and re-run -- the file must be idempotent): "
+                          f"{res.get('error') or 'unknown'}"),
+            }
+    return {"ok": True, "rows": None, "error": None, "unguarded": unguarded}
+
+
 _ERROR_STATUSES = frozenset({
     "error", "not_configured", "refused_stale_tree", _catalog_scope_guard.REFUSED_STATUS,
     "checksum_drift", "checksum_inconclusive",
@@ -1270,6 +1327,7 @@ def migrate_product(
             "skipped_already_applied": [],
             "pending": [],
             "error": None,
+            "unguarded_statements": {},
             "stale_tree": stale_tree,
             "allow_stale_tree": allow_stale_tree,
             "catalog_scope": catalog_scope,
@@ -1538,10 +1596,33 @@ def migrate_product(
             ),
         )
 
+    # Directives (`-- noc:no-transaction`, `-- noc:lock-timeout <v>`) are parsed and
+    # validated for EVERY pending file before any DDL runs: a malformed one refuses
+    # the whole batch, never half-applies it.
+    file_directives: dict[str, tuple[Any, list[str] | None]] = {}
+    for mig_file, sql, _csum in pending_sql:
+        try:
+            d = _directives.parse_directives(sql)
+            stmts = _directives.split_statements(sql) if d.no_transaction else None
+            if stmts is not None:
+                _directives.check_no_transaction_statements(stmts)
+        except _directives.DirectiveError as exc:
+            return _result(
+                "error",
+                skipped_already_applied=skipped,
+                pending=pending_names,
+                error=f"migration {mig_file.name}: {exc} (refused before applying any DDL)",
+            )
+        file_directives[mig_file.name] = (d, stmts)
+
     newly_applied: list[str] = []
+    unguarded_by_file: dict[str, list[int]] = {}  # no-tx statements that ran with NO lock_timeout
     for mig_file, sql, csum in pending_sql:
         logger.info("migrate_product: applying %s …", mig_file.name)
-        result = executor.execute(sql)
+        file_dir, file_stmts = file_directives[mig_file.name]
+        result = _apply_migration_sql(executor, sql, file_dir, file_stmts)
+        if result.get("unguarded"):
+            unguarded_by_file[mig_file.name] = result["unguarded"]
         if not result.get("ok"):
             logger.error(
                 "migrate_product: failed to apply %s: %s",
@@ -1553,6 +1634,7 @@ def migrate_product(
                 applied=newly_applied,
                 skipped_already_applied=skipped,
                 pending=[f.name for f in pending if f.name not in newly_applied],
+                unguarded_statements=unguarded_by_file,
                 error=f"migration {mig_file.name} failed: " + (result.get("error") or "unknown"),
             )
 
@@ -1600,6 +1682,7 @@ def migrate_product(
     return _result(
         "applied",
         applied=newly_applied,
+        unguarded_statements=unguarded_by_file,
         skipped_already_applied=skipped,
         checksum_verification=checksum_verification,
         applied_record=applied_record,
@@ -1945,6 +2028,9 @@ def register(server) -> None:
         allow_inactive: bool = False,
         allow_stale_toolkit: bool = False,
     ) -> dict:
+        refused = _steward.tool_refusal("noctus.dev.migrate_product", {"confirm": confirm})
+        if refused is not None:
+            return refused
         return migrate_product(
             product=product,
             confirm=confirm,

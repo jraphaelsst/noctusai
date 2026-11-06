@@ -17,6 +17,7 @@ where the carve-out applies).
 
 from __future__ import annotations
 
+import random
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -244,23 +245,23 @@ class TestRetryPolicy:
 
     def test_exponential_growth_first_retry(self):
         now = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
-        result = next_retry_at(0, DEFAULT_POLICY, now)
+        result = next_retry_at(0, DEFAULT_POLICY, now, jitter=False)
         # 1.0 * 2.0**0 = 1s.
         assert result == now + timedelta(seconds=1.0)
 
     def test_exponential_growth_subsequent_retries(self):
         now = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
         # retry_count=1 → 1.0 * 2.0**1 = 2s
-        assert next_retry_at(1, DEFAULT_POLICY, now) == now + timedelta(seconds=2.0)
+        assert next_retry_at(1, DEFAULT_POLICY, now, jitter=False) == now + timedelta(seconds=2.0)
         # retry_count=2 → 4s
-        assert next_retry_at(2, DEFAULT_POLICY, now) == now + timedelta(seconds=4.0)
+        assert next_retry_at(2, DEFAULT_POLICY, now, jitter=False) == now + timedelta(seconds=4.0)
         # retry_count=3 → 8s
-        assert next_retry_at(3, DEFAULT_POLICY, now) == now + timedelta(seconds=8.0)
+        assert next_retry_at(3, DEFAULT_POLICY, now, jitter=False) == now + timedelta(seconds=8.0)
 
     def test_cap_applied_at_max_backoff(self):
         now = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
         # 1.0 * 2**20 = ~1M seconds → capped at 300.
-        result = next_retry_at(20, DEFAULT_POLICY, now)
+        result = next_retry_at(20, DEFAULT_POLICY, now, jitter=False)
         assert result == now + timedelta(seconds=300.0)
 
     def test_custom_policy_respected(self):
@@ -272,7 +273,23 @@ class TestRetryPolicy:
         )
         now = datetime(2026, 5, 4, tzinfo=timezone.utc)
         # retry_count=2 → 2.0 * 3**2 = 18s
-        assert next_retry_at(2, policy, now) == now + timedelta(seconds=18.0)
+        assert next_retry_at(2, policy, now, jitter=False) == now + timedelta(seconds=18.0)
+
+    def test_full_jitter_within_zero_and_ceiling(self):
+        now = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
+        rng = random.Random(42)
+        for retry_count, ceiling in ((0, 1.0), (3, 8.0), (20, 300.0)):
+            for _ in range(200):
+                delay = (next_retry_at(retry_count, DEFAULT_POLICY, now, rng=rng) - now).total_seconds()
+                assert 0.0 <= delay <= ceiling
+
+    def test_full_jitter_is_seeded_and_spreads(self):
+        now = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
+        a = [next_retry_at(4, DEFAULT_POLICY, now, rng=random.Random(7)) for _ in range(2)]
+        assert a[0] == a[1]  # same seed -> same schedule
+        rng = random.Random(7)
+        spread = {next_retry_at(4, DEFAULT_POLICY, now, rng=rng) for _ in range(50)}
+        assert len(spread) > 40  # herd is de-synchronised, not one timestamp
 
     def test_negative_retry_count_raises(self):
         with pytest.raises(ValueError, match="retry_count must be >= 0"):
@@ -503,7 +520,8 @@ class TestFakeRepoMarkFailedRetry:
         assert re_claimed.last_error == "transient"
 
     def test_retry_honours_policy_backoff_via_scheduled_for(self):
-        repo = FakeJobRepository()
+        # Seed 2 -> first uniform() > 0.9 of ceiling (asserted below).
+        repo = FakeJobRepository(retry_rng=random.Random(2))
         _run(repo.enqueue(type="upload", payload={}))
         claimed = _run(repo.claim_next(worker_id="w-1"))
         policy = RetryPolicy(

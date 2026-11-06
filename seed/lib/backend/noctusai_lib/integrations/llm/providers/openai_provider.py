@@ -85,12 +85,21 @@ async def _create_retrying(create, *args: Any, bucket: str = "default", **kwargs
     """
     from noctusai_lib.integrations import rate_limit
 
-    return await rate_limit.retry_with_backoff_async(
-        lambda: create(*args, **kwargs),
-        bucket=bucket,
-        is_retryable=_is_retryable,
-        retry_after=_retry_after,
-    )
+    try:
+        return await rate_limit.retry_with_backoff_async(
+            lambda: create(*args, **kwargs),
+            bucket=bucket,
+            is_retryable=_is_retryable,
+            retry_after=_retry_after,
+        )
+    except rate_limit.RetryLater as later:
+        # Provider asked for a wait past the inline max. Every caller maps
+        # `OpenAIError` -> `LLMAPIError` (502); surface the ORIGINAL provider
+        # error so that contract holds instead of leaking `RetryLater` as a 500.
+        cause = later.__cause__
+        if isinstance(cause, OpenAIError):
+            raise cause from later
+        raise
 
 
 def _to_llm_error(exc: OpenAIError) -> LLMAPIError:

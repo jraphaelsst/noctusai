@@ -58,8 +58,21 @@ def _env_candidate_roots() -> list[Path]:
 
 
 def _source_env_for_key() -> None:
-    """Populate OPENAI_API_KEY (and siblings) into os.environ from `.env` when
-    absent — the MCP server process is launched without `source .env`."""
+    """Populate the provider API keys (``*_API_KEY``) into os.environ from
+    `.env` when absent — the MCP server process is launched without
+    `source .env`.
+
+    Scoped on purpose (2026-11-05 leak): the LLM `key_provider` only ever reads
+    ``<PROVIDER>_API_KEY``, so ONLY those names are sourced. This loop used to
+    copy the WHOLE `.env` (prod ``SUPABASE_URL`` included) into the process and
+    never restore it — every later in-process test/child then saw the live
+    project and the hermetic live-DB guard refused it. It also honours the
+    hermetic-session seam (``NO_ENV_FILE_VAR``) that ``env_bootstrap`` honours:
+    a test session must never inherit the platform `.env`."""
+    from noctusai_lib.config.settings import NO_ENV_FILE_VAR
+
+    if os.environ.get(NO_ENV_FILE_VAR, "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
     if os.environ.get("OPENAI_API_KEY"):
         return
     for root in _env_candidate_roots():
@@ -76,7 +89,7 @@ def _source_env_for_key() -> None:
                 continue
             k, _, v = line.partition("=")
             k, v = k.strip(), v.strip().strip('"').strip("'")
-            if k and k not in os.environ:
+            if k.endswith("_API_KEY") and k not in os.environ:
                 os.environ[k] = v
         if os.environ.get("OPENAI_API_KEY"):
             break

@@ -261,3 +261,25 @@ class TestPipeline:
         promo2 = crp.promote(scan_result["clusters"])
         assert len(promo2["promoted"]) == 0
         assert len(promo2["skipped"]) == scan_result["total_pairs"]
+
+
+# --- vectorized neighbor_index must equal the pure-Python code_neighbors ---
+
+def test_neighbor_index_matches_pure_python_neighbors():
+    import random
+    from tools.noctus.dev import code_embeddings as ce
+    rnd = random.Random(7)
+    rows = []
+    for i in range(40):
+        vec = [rnd.uniform(-1, 1) for _ in range(16)]
+        rows.append((f"p{i % 9}.py", i, f"sym{i % 5}", "function", "t", vec))
+    rows.append(("zero.py", 0, "z", "function", "t", [0.0] * 16))
+    rows.append(("p1.py", 99, "sym1", "function", "t", rows[3][5]))  # duplicate (path, symbol)
+    fast = ce.neighbor_index(rows)
+    for path, sym in [("p1.py", "sym1"), ("p3.py", ""), ("zero.py", "z"), ("missing.py", "")]:
+        slow = ce.code_neighbors(path, symbol_name=sym, top_k=4, rows=rows)
+        got = fast(path, symbol_name=sym, top_k=4)
+        assert [(d["path"], d["symbol_name"], d["chunk_idx"]) for d in got] == \
+               [(d["path"], d["symbol_name"], d["chunk_idx"]) for d in slow]
+        for g, w in zip(got, slow):
+            assert abs(g["score"] - w["score"]) < 1e-9

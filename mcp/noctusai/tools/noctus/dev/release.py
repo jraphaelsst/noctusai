@@ -114,6 +114,7 @@ _MIGRATION_PATH_RE = re.compile(r"^products/[^/]+/backend/migrations/")
 # Reuse the deploy_pull rebuild oracle so a promote tells you whether the VPS
 # pull will need a container rebuild — DRY, one source of truth.
 from tools.noctus.dev.deploy_pull import _rebuild_decision  # noqa: E402
+from tools.noctus.dev import release_steward as _steward  # noqa: E402
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness  # noqa: E402
 
 
@@ -1069,6 +1070,9 @@ def register(server) -> None:
         release_branch: str | None = None,
         allow_stale_toolkit: bool = False,
     ) -> dict:
+        refused = _steward.tool_refusal("noctus.dev.release", {"stage": stage, "confirm": confirm})
+        if refused is not None:
+            return refused
         return release(stage=stage, confirm=confirm, sha=sha, mode=mode,
                        release_branch=release_branch,
                        allow_stale_toolkit=allow_stale_toolkit)

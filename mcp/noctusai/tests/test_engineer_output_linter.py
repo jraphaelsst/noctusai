@@ -20,7 +20,7 @@ class TestLintReturn:
     def test_both_legs_present_with_bullets(self):
         text = (
             "drift-found:\n"
-            "  - the registration line got staged twice\n"
+            "  - the registration line got staged twice [fixed abc1234]\n"
             "\n"
             "scoped-improvement:\n"
             "  - extracted the helper to a constant\n"
@@ -50,7 +50,7 @@ class TestLintReturn:
 
     def test_missing_scoped_improvement(self):
         text = (
-            "drift-found:\n  - leftover token in another file\n"
+            "drift-found:\n  - leftover token in another file [fixed abc1234]\n"
         )
         r = eol.lint_return(text)
         assert r["ok"] is False
@@ -67,7 +67,7 @@ class TestLintReturn:
 
     def test_case_insensitive_headers(self):
         text = (
-            "Drift-Found:\n  - X\n\n"
+            "Drift-Found:\n  - X [fixed abc1234]\n\n"
             "Scoped-Improvement:\n  - Y\n"
         )
         r = eol.lint_return(text)
@@ -75,7 +75,7 @@ class TestLintReturn:
 
     def test_bold_wrapping_tolerated(self):
         text = (
-            "**drift-found:**\n  - x\n\n"
+            "**drift-found:**\n  - x [fixed abc1234]\n\n"
             "**scoped-improvement:**\n  - y\n"
         )
         r = eol.lint_return(text)
@@ -104,7 +104,7 @@ class TestSentinelDetection:
 class TestExtractSection:
     def test_extract_to_next_header(self):
         text = (
-            "drift-found:\n  - first\n  - second\n\n"
+            "drift-found:\n  - first [fixed abc1234]\n  - second [fixed abc1234]\n\n"
             "scoped-improvement:\n  - third\n"
         )
         df_body = eol._extract_section(text, "drift-found")
@@ -115,3 +115,50 @@ class TestExtractSection:
 
     def test_missing_section_returns_none(self):
         assert eol._extract_section("nothing here", "drift-found") is None
+
+
+def _ft(bullets: str) -> str:
+    return f"drift-found:\n{bullets}\n\nscoped-improvement:\n  - none\n"
+
+
+class TestOutcomeTags:
+    @pytest.mark.parametrize("tag", [
+        "[fixed abc1234]",
+        "[fixing \u2192 feat/fix-thing]",
+        "[fixing -> feat/fix-thing]",
+        "[deferred \u2192 NOC-REMEDIATE[tunnel-cli] because needs a CLI flag design]",
+        "[deferred \u2192 project-history/roadmaps/x.md because multi-session work]",
+        "[deferred \u2192 MEMORY-reminders because owner must approve spend]",
+        "[deferred \u2192 owner-decision because pick a vendor first]",
+    ])
+    def test_valid_tag_forms(self, tag):
+        r = eol.lint_return(_ft(f"  - something broke in a/b.py {tag}"))
+        assert r["ok"] is True, r
+        assert r["untagged"] == []
+
+    @pytest.mark.parametrize("bullet", [
+        "  - bare drift with no tag",
+        "  - garbled [fixd abc1234]",
+        "  - short sha [fixed ab]",
+        "  - fixing no branch [fixing \u2192 somewhere]",
+        "  - no destination [deferred because it is hard to do right now]",
+        "  - unknown destination [deferred \u2192 later because it is hard to do]",
+        "  - short reason [deferred \u2192 owner-decision because no]",
+    ])
+    def test_refused(self, bullet):
+        r = eol.lint_return(_ft(bullet))
+        assert r["ok"] is False
+        assert len(r["untagged"]) == 1
+        assert "expected_tag_shape" in r
+
+    def test_none_allowed(self):
+        assert eol.lint_return(_ft("  - none"))["ok"] is True
+
+    def test_improvement_tag_optional(self):
+        t = "drift-found:\n  - none\n\nscoped-improvement:\n  - did a thing\n"
+        assert eol.lint_return(t)["ok"] is True
+
+    def test_parse_outcome_tag_fields(self):
+        t = eol.parse_outcome_tag("x [deferred \u2192 owner-decision because pick a vendor first]")
+        assert t["outcome"] == "deferred" and t["reason"] == "pick a vendor first"
+        assert eol.parse_outcome_tag("x [fixed abc1234]") == {"outcome": "fixed", "ref": "abc1234"}

@@ -187,7 +187,7 @@ _BULLET_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+(.*\S)\s*$")
 
 def parse_footer(text: str) -> dict[str, list[dict[str, Any]]]:
     """Extract bullet lines of the two footer sections as {text, target}."""
-    from .engineer_output_linter import _extract_section  # noqa: PLC0415
+    from .engineer_output_linter import _extract_section, parse_outcome_tag  # noqa: PLC0415
     out: dict[str, list[dict[str, Any]]] = {"drifts": [], "improvements": []}
     for header, key in (("drift-found", "drifts"), ("scoped-improvement", "improvements")):
         body = _extract_section(text, header)
@@ -199,7 +199,11 @@ def parse_footer(text: str) -> dict[str, list[dict[str, Any]]]:
                 continue
             t = m.group(1).strip()
             pm = _PATH_RE.search(t)
-            out[key].append({"text": t, "target": pm.group(0) if pm else None})
+            item: dict[str, Any] = {"text": t, "target": pm.group(0) if pm else None}
+            tag = parse_outcome_tag(t)
+            if tag:
+                item["outcome"], item["ref"] = tag["outcome"], tag["ref"]
+            out[key].append(item)
     return out
 
 
@@ -259,6 +263,11 @@ def build_score_row(
         if lint["missing"]:
             return {"ok": False, "refused": "missing-footer", "lint": lint,
                     "error": f"engineer return lacks footer section(s): {lint['missing']}"}
+        if lint.get("untagged"):
+            return {"ok": False, "refused": "untagged-drift", "lint": lint,
+                    "error": ("drift-found bullet(s) lack an outcome tag (errors are fixed on "
+                              f"contact; reporting is not fixing): {lint['untagged']}; "
+                              f"expected: {lint['expected_tag_shape']}")}
         parsed = parse_footer(engineer_return)
         if ai_logger is None:
             from .auto_improvement import log_entry as ai_logger  # noqa: PLC0415
@@ -290,8 +299,10 @@ def build_score_row(
         "rework_commits": int(sc.get("rework_commits") or 0),
         "rework_severity": {k: int((sc.get("rework_severity") or {}).get(k, 0)) for k in REWORK_SEVERITIES},
         "scope_changes": int(sc.get("scope_changes") or 0),
-        "drifts": [{"text": d.get("text"), "target": d.get("target"), "ai_ts": d.get("ai_ts")} for d in drifts],
-        "improvements": [{"text": d.get("text"), "target": d.get("target"), "ai_ts": d.get("ai_ts")} for d in improvements],
+        "drifts": [{"text": d.get("text"), "target": d.get("target"), "ai_ts": d.get("ai_ts"),
+                    "outcome": d.get("outcome"), "ref": d.get("ref")} for d in drifts],
+        "improvements": [{"text": d.get("text"), "target": d.get("target"), "ai_ts": d.get("ai_ts"),
+                          "outcome": d.get("outcome"), "ref": d.get("ref")} for d in improvements],
         "notes": sc.get("notes"),
     }
     return {"ok": True, "row": row}

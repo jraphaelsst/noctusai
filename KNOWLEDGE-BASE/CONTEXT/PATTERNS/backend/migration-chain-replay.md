@@ -26,6 +26,13 @@ the same rows would have refused it at commit time. The replay now reproduces it
 | **Fixtures** | Same JSON → `fixtures[]`: `{before, why, sql}` inserted just before the named file. A fresh DB is empty, and an empty table never trips a CHECK, so the rows a migration will meet in prod must be in the replay. `session_replication_role = replica` may leave a fixture's *own* references dangling. It never disables a CHECK. Rows a migration updates twice in one transaction need real FK parents, because Postgres re-checks the FK on such a row. |
 | **Verdict** | `green` · `red` · `inconclusive`. Not being able to MEASURE (no `node`, PGlite not installed, stubs failing, crash, timeout, a bad config) is `inconclusive`: never green, never a verdict on the migration. CLI exit 0 / 1 / 2. |
 
+## `-- noc:no-transaction` files
+
+A target file whose leading comment block carries `-- noc:no-transaction` (the `migrate_product`
+directive, `postgres-craft.md` § 6.3) is replayed statement-by-statement (and a second time for
+idempotency) in `replay.mjs`, mirroring how the runner sends it — `CREATE INDEX CONCURRENTLY`
+cannot run in the whole-file call. Failures still land in the target-file verdict.
+
 ## Statement-level replay: the transaction-control trap
 
 Statement replay must skip `BEGIN`/`COMMIT`, and detection must ignore leading

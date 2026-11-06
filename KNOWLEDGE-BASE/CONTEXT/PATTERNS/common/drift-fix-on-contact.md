@@ -1,10 +1,23 @@
-# Drift-fix-on-contact — pause, resolve, surface-if-blocked, continue
+# Drift-fix-on-contact — errors you touch are FIXED on contact
 
-**The rule.** When you bump into **drift** — git leftovers, broken methodology pointers, stale dispatcher entries, half-applied edits, an orphan branch, an artifact in the wrong place — you **pause, resolve in-flight, surface if blocked, update the docs the resolution touches, then continue the paused work**. Silent-skip = silent error. Codified 2026-05-26 after the recurring git-leftovers pattern persisted despite existing keepers.
+**The rule (owner, 2026-11-05, verbatim).** *"Why aren't you and other agents fixing issues in-flight? Y'all should be. We gotta stop bumping into errors and ignoring them. They must be fixed ON CONTACT."*
 
-**Why.** The user's prior framing was honest: *"We've been through this a thousand times and I still couldn't fix it."* Existing keepers (`check_branch_orphan`, `check_dispatcher_staleness`, `check_archive_staleness`, `check_clean_folder_violations`) catch drift **at commit gates** — but drift accumulates **between gates**, mid-session, where the existing rule "no silent errors" was too generic to fire on git-shape drift specifically. This pattern names the shape, names the drill, and adds the missing gate.
+**ON CONTACT means in-flight, by whoever touches it** (tech-lead, engineer, advisor, any session), **before moving on.** Reporting is not fixing: *logged*, *surfaced*, *noted*, *flagged in the footer*, *dispatched to the ledger* are all **not done**. A drift line with nothing behind it is the silent-error shape one level up.
 
-This composes with — does **NOT** replace — [[fix-on-contact for pre-existing debt]] (the broader rule for code/methodology debt). Git-leftovers + methodology-pointer drift are subspecies of the same instinct: **silent-skip is forbidden; on-contact resolution is mandatory**.
+**The only three exits** — every drift you bump into ends in exactly one:
+1. **Fixed** — resolved now, in a commit (`[fixed <sha>]`).
+2. **Fixing in a named branch** — a self-branch is already open for it (`[fixing → feat/<slug>]`).
+3. **Deferred to a named destination, with a reason** — `[deferred → <destination> because <reason ≥10 chars>]`, destination ∈ a `NOC-REMEDIATE[<class>]` marker path · a roadmap (`project-history/roadmaps/…`) · an owner reminder (`MEMORY-reminders`) · an owner-decision ask. "Too big", "not my slice", "later" without a destination are refusals, not deferrals.
+
+**Where the fix goes.** In its **own small self-branch** (`noc-self-branch`), landed through the CI steward — never bundled silently into an unrelated slice (that muddies file-disjoint hygiene and review). Small enough to fix in minutes ⇒ fix it; bigger ⇒ open the branch (or the roadmap) *now*, not "after".
+
+**The gate (mechanical, not social).** Every `drift-found:` bullet in an engineer return MUST end with one outcome tag from the three above; `noctus.dev.engineer_output_lint` returns `untagged` + `expected_tag_shape`, and `noctus.dev.dispatch_log_completion` REFUSES (`refused: untagged-drift`) an untagged return. Tags are stored on the slice-score drift rows (`outcome`, `ref`) and `team.agent_metrics` reports `drift_outcomes` + `drift_fixed_ratio` (fixed+fixing over all tagged) — the number we watch. `- none` stays valid. `scoped-improvement:` bullets may carry the same tags (parsed when present).
+
+**Why (2026-11-05 incidents).** The prior rule split roles: engineers *surface*, the tech-lead *resolves*. In practice the surface became the terminal state — engineers returned `drift-found:` lines (a tunnel_config with no CLI flag; TestSeedCompliance CPU-bound 7+ min; actionlint/shellcheck notes; the embedding-cache gate never green) and the tech-lead just logged them via `dispatch_log_completion`; a watcher's JSON parse error was noted and ignored; a stale derived file sat uncommitted for hours. Every one was fixable in-flight. Logging without fixing is accumulation, not resolution.
+
+**Roles (revised — supersedes the surface-don't-resolve split).** Whoever touches it fixes it. An engineer that hits drift **outside** its brief fixes it in a separate small self-branch (own worktree off `origin/dev`, own commit, never mixed into the slice) and tags `[fixed <sha>]` / `[fixing → feat/<slug>]`; only a true blocker (peer in flight on the files, irreversible, ambiguous ownership, needs owner money/decision) may be `[deferred → … because …]` with the destination actually created (marker written, roadmap row added, reminder filed). The tech-lead fixes what it touches the same way and treats any `[deferred]` tag as owed paperwork, not a closed item.
+
+Codified 2026-05-26 (git-leftovers pattern) and hardened 2026-11-05. Composes with, and is the specific form of, "no silent errors".
 
 ## What counts as drift (the trigger set)
 
@@ -45,35 +58,17 @@ The rule fires when, during ANY task, you observe:
 
 **The "doc" step is non-negotiable.** If your resolution discovered a missing keeper, a gap in a procedure, a phrasing fix in a KB doc — codify it in the same commit. Drift-fix without doc-update is half-resolution: the same drift returns next session.
 
-## Roles — who resolves vs who surfaces (the orchestration rule)
-
-The on-contact drill **splits by role** so dispatched background agents don't expand scope while the tech-lead carries the broad-context view that drift-resolution needs (user mandate 2026-05-26 — *"no more work being left behind"*):
-
-- **Tech-lead (the orchestrator)** — **RESOLVES on-contact.** Bumps into drift → applies the 5-step drill end-to-end in-session. Owns the doc-update + the commit + the integration. Non-negotiable: every observed leftover is resolved before the session ends, not parked.
-- **Background agents (dispatched engineers / advisors / scouts)** — **SURFACE to the tech-lead, never resolve unilaterally.** An engineer that spots drift OUTSIDE its `Files-to-modify:` brief returns a `drift-found:` line in its short-form report (worktree-relative path + observed shape + suspected cause) and continues its own slice. The tech-lead reads the surface and applies the drill at integration. **Scope expansion by the engineer is forbidden** — even if the drift "looks easy" — because (a) the engineer's worktree doesn't see the broad picture (peer activity, archived projects, cross-product impact), (b) the architect's batched view consolidates N drifts into one resolution pass, and (c) silent fix-and-continue in an engineer worktree muddies file-disjoint commit hygiene (mixes drift-fix into a feature commit).
-
-**Return-shape leg for engineers** — append a `drift-found:` line per observed leftover to the short-form return, then continue. The tech-lead routes in the next user turn (or batches into the next dispatch wave):
-
-```
-Status: ready
-Commits: <sha> <subject>   ← one per commit on your worker branch
-Tests: <pass/fail count if relevant>
-drift-found: <observed leftover — path + shape + suspected cause>
-drift-found: <... another, if any ...>
-```
-
-Mirrors [[no-silent-errors]] (surface ≠ resolve, but surface is mandatory) + `engineer-seed § 2` file-disjoint discipline (no scope expansion) + [[parallel-agent collision protocol]] (engineer doesn't litigate parallel state).
-
 ## Scoped auto-improvement — the engine behind surface-don't-resolve
 
-Every agent dispatch is also a **scoped auto-improvement pass**, not just a feature delivery (user mandate 2026-05-26 — *"agents are scoped auto-improving"*). At the end of a slice, each role evaluates **its own** mistakes / slips / surprise patterns / observed drift and hands them to the tech-lead. Different roles operate at different scopes — the rule says BOTH sides auto-improve, but each within its slice:
+Every agent dispatch is also a **scoped auto-improvement pass** (drift is FIXED on contact per the rule above; this section covers the slip/pattern leg), not just a feature delivery (user mandate 2026-05-26 — *"agents are scoped auto-improving"*). At the end of a slice, each role evaluates **its own** mistakes / slips / surprise patterns / observed drift and hands them to the tech-lead. Different roles operate at different scopes — the rule says BOTH sides auto-improve, but each within its slice:
 
-- **Engineer (scoped — slice-local)** — evaluates what slipped within the brief's scope: a regex that should have been AST, a Pydantic model that silent-dropped, a Read that should have hit the cache, a missed test, an N=2 recurrence the slice surfaced. The engineer **does NOT codify** (that's the tech-lead's broader-context job) — instead, the engineer returns those observations in the short-form's findings footer alongside `drift-found:` lines:
+- **Engineer (scoped — slice-local)** — evaluates what slipped within the brief's scope: a regex that should have been AST, a Pydantic model that silent-dropped, a Read that should have hit the cache, a missed test, an N=2 recurrence the slice surfaced. The engineer applies the cheap in-slice fix and **does NOT codify** (that's the tech-lead's broader-context job) — it returns those observations in the footer alongside `drift-found:` lines (each drift line outcome-tagged):
   ```
   Status: ready
   Commits: <sha> <subject>
   Tests: <pass/fail>
-  drift-found: <leftover — path + shape + suspected cause>
+  drift-found:
+  - <leftover — path + shape + cause> [fixed <sha>] | [fixing → feat/<slug>] | [deferred → <destination> because <reason>]
   scoped-improvement: <mistake/slip/pattern observed in MY slice → suggested codification>
   ```
 - **Tech-lead (broad — cross-cutting)** — auto-improves at the methodology level. Receives engineer surfaces + their own session observations + safety-net firings → routes through the codification pipeline (s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector) per [[methodology-codification-pipeline]]. The tech-lead is the one who decides WHICH observations cross the N≥2-triage / N≥3-must-formalize bar AND owns the durable doc-update.
@@ -81,10 +76,10 @@ Every agent dispatch is also a **scoped auto-improvement pass**, not just a feat
 **Why scope the engineer's auto-improvement.** An engineer's worktree-local view doesn't see (a) whether the slip is N=1 (slice-only) vs N≥3 (platform-wide), (b) what the right durable destination is (memory vs KB vs new keeper), (c) cross-product impact. Forcing the engineer to surface-not-codify keeps each role at its competence boundary. Mirrors [[safety-nets-become-learnings]] (the safety net firing IS the methodology working — but the codification happens at the tech-lead's level) + [[always-hardening-posture]] (continuous improvement is everyone's duty; *scope* is everyone's discipline).
 
 **The two-leg standing duty** — every dispatch returns both legs:
-1. `drift-found:` — observed leftover state the engineer didn't cause (resolution = tech-lead).
+1. `drift-found:` — observed leftover state the engineer didn't cause; each bullet outcome-tagged (fixed / fixing / deferred-with-destination).
 2. `scoped-improvement:` — observed mistake/slip/pattern the engineer's own work surfaced (codification = tech-lead).
 
-Absence of both legs is a positive claim (nothing observed) — quote it explicitly when true: `drift-found: (none observed)` · `scoped-improvement: (none surfaced)`. Silent absence reads as "didn't look" which is the silent-error shape.
+Absence of both legs is a positive claim (nothing observed) — quote it explicitly when true: `drift-found:` + `- none` · `scoped-improvement: (none surfaced)`. Silent absence reads as "didn't look" which is the silent-error shape.
 
 ## Worked examples
 
@@ -133,6 +128,7 @@ The keeper composes with the existing `check_branch_orphan` / `check_dispatcher_
 
 ## Anti-patterns
 
+- **"Logged it / flagged it in the footer."** Reporting ≠ fixing; the footer outcome tag is gated.
 - **"I'll deal with it later."** Later = next session = silent-error compounding. Resolve in-flight.
 - **Silent delete.** Deleting drift without a salvage check throws away signal. Salvage (record pointer) THEN delete, even for things you think are transient — the salvage ledger is the recoverable insurance.
 - **Resolve-without-doc-update.** The drift recurred *because* the doc didn't catch it; resolving without updating the doc keeps the drift one-session-away.
@@ -141,4 +137,4 @@ The keeper composes with the existing `check_branch_orphan` / `check_dispatcher_
 
 ## Composes with
 
-[[fix-on-contact for pre-existing debt]] (parent rule; this pattern is its git-shape + methodology-pointer specialization) · [[no silent errors]] (universal ancestor) · [[storage-hygiene]] (the salvage-before-delete leg) · [[self-branching-mode]] (resolution still self-branches) · [[noc-self-branch]] (the operational §0 residue sweep) · [[keeper-check-before-docing]] (drift-fix that touches a gated doc must query the keeper cache upfront) · [[agent-context-architecture]] (broken `owns_kb` pointers fall under this rule).
+CLAUDE.md §1 fix-on-contact rule (merged with this pattern 2026-11-05) · [[no silent errors]] (universal ancestor) · [[storage-hygiene]] (the salvage-before-delete leg) · [[self-branching-mode]] (resolution still self-branches) · [[noc-self-branch]] (the operational §0 residue sweep) · [[keeper-check-before-docing]] (drift-fix that touches a gated doc must query the keeper cache upfront) · [[agent-context-architecture]] (broken `owns_kb` pointers fall under this rule).

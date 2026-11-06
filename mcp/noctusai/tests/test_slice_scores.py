@@ -15,8 +15,8 @@ from tools.noctus.team import agent_metrics as am  # noqa: E402
 GOOD_Q = {"Q1": 4, "Q2": 3.5, "Q3": 3, "Q4": 3.5, "Q5": 4, "Q6": 3, "Q7": 4}
 FOOTER = """done.
 drift-found:
-- BE payload lacks blueprint in app/routers/viral.py
-- docs stale
+- BE payload lacks blueprint in app/routers/viral.py [fixed abc1234]
+- docs stale [fixing \u2192 feat/docs-fix]
 scoped-improvement:
 - add probe for compliance.py allowlist
 """
@@ -114,6 +114,20 @@ class TestFooter:
         assert row["drifts"][0]["ai_ts"] == "2026-11-04T00:00:01+00:00"
         assert row["improvements"][0]["ai_ts"] == "2026-11-04T00:00:03+00:00"
 
+    def test_outcome_recorded_in_score_row(self, ledgers):
+        r = dtl.log_completion("s", "a", 1, score=_score(), engineer_return=FOOTER,
+                               ai_logger=_FakeAI().log_entry)
+        d = r["score_row"]["drifts"]
+        assert (d[0]["outcome"], d[0]["ref"]) == ("fixed", "abc1234")
+        assert d[1]["outcome"] == "fixing"
+
+    def test_untagged_drift_refused(self, ledgers):
+        bad = FOOTER.replace(" [fixed abc1234]", "")
+        r = dtl.log_completion("s", "a", 1, score=_score(), engineer_return=bad)
+        assert r["ok"] is False and r["refused"] == "untagged-drift"
+        assert "BE payload" in r["error"]
+        assert not (ledgers / "dispatch-budget.ndjson").exists()
+
     def test_missing_footer_refused_not_raised(self, ledgers):
         r = dtl.log_completion("s", "a", 1, score=_score(), engineer_return="all good, no footer")
         assert r["ok"] is False and r["refused"] == "missing-footer"
@@ -143,7 +157,16 @@ class TestMetrics:
         assert s["rework_rate"] == 1.5  # (2+1)/2
         assert s["self_estimate_error_ratio"] == 2.5
         assert s["top_drifts"][0] == {"text": "x", "count": 2}
+        assert s["drift_fixed_ratio"] is None and s["drift_outcomes"]["untagged"] == 3
+
         assert "90/10" in out["cost_note"]
+
+    def test_fixed_ratio(self):
+        rows = [_row("be", "claude-sonnet-5-5", 4.0, drifts=[
+            {"text": "a", "outcome": "fixed"}, {"text": "b", "outcome": "deferred"},
+            {"text": "c", "outcome": "fixing"}])]
+        s = am.rollup(rows)["groups"][0]
+        assert s["drift_fixed_ratio"] == 0.667
 
     def test_cost_estimate(self):
         # 1M tokens: .9M in + .1M out

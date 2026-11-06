@@ -67,12 +67,13 @@ Commits: <sha> <subject>        ← one line per commit on feat/<slug> (git log 
 Tests: <the scoped check + pass/fail count>
 interpretation: <the ask restated + each load-bearing qualifier's chosen meaning>   ← §2 "Restate the ask"
 codification-events: s1=… s2=… s3=… s4=…   ← per PROJECT.md §4a.2; "none" per untouched stage
-drift-found: (none observed)               ← or one line per leftover OUTSIDE your slice
+drift-found:                                ← `- none` or one bullet per leftover; EACH ends in an outcome tag
+- <item> [fixed <sha>] | [fixing → feat/<slug>] | [deferred → <NOC-REMEDIATE[class] | project-history/roadmaps/… | MEMORY-reminders | owner-decision> because <reason ≥10 chars>]
 scoped-improvement: (none surfaced)        ← or one line per slip/pattern INSIDE your slice
 delivery-note: <filename>                  ← project-scoped only: noctus.dev.file_proposal(kind="delivery", project=…)
 ```
 
-- The last three legs are **mandatory even when clean** — absence is a positive claim; a missing line reads as "didn't look". `drift-found:` = git/methodology leftovers outside your files (you continue; the tech-lead resolves). `scoped-improvement:` = a recurrence, missing seed primitive, doc↔code drift, AST/MCP opportunity seen inside your slice (you surface; the tech-lead codifies). → `KB § PATTERNS/common/scoped-auto-improvement.md`
+- The last three legs are **mandatory even when clean** — absence is a positive claim; a missing line reads as "didn't look". `drift-found:` = errors/leftovers you bumped into — **fix on contact, don't just report**: fix in its own small self-branch (separate worktree + commit, never mixed into your slice) and tag `[fixed <sha>]`/`[fixing → feat/<slug>]`; defer only with a real destination + reason (`[deferred → … because …]`). An untagged bullet is refused by `engineer_output_lint` / `dispatch_log_completion`. `scoped-improvement:` = a recurrence, missing seed primitive, doc↔code drift, AST/MCP opportunity seen inside your slice (you surface; the tech-lead codifies). → `KB § PATTERNS/common/scoped-auto-improvement.md`
 - `blocked` / `partial` / any surprise ⇒ add the 5-category block (Errors · Mistakes-slips · Lessons · Interesting · Knowledge) + an architect-followup line. → `KB § PATTERNS/architect/branching-and-merging.md`
 
 ## 5. Safety — no exceptions

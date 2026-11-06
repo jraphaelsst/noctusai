@@ -63,15 +63,27 @@ POST_LAND_DISPATCH: tuple[tuple[str, tuple[str, ...]], ...] = (
                             "scripts/infra/build-base-images.sh", ".github/workflows/agents-secc-ci.yml")),
 )
 # A queue ref is `mq/<slug>--<sha7>`; the slug is everything before the last `--`.
+WORKFLOW_PREFIX = ".github/workflows/"
+PUSH_TOKEN_ENV = "MQ_PUSH_TOKEN"  # fine-grained PAT (contents+workflows write); env secret of the dev-only `merge-queue` environment
+# GitHub's wording when a token without the `workflows` permission pushes a new commit touching workflow files.
+WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
 ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
 
 Runner = Callable[..., "tuple[int, str, str]"]
 
 
+def redact(text: str, token: str = "") -> str:
+    """Strip the push token (explicit or from env) and any URL userinfo from text that may be surfaced."""
+    tok = token or os.environ.get(PUSH_TOKEN_ENV, "").strip()
+    if tok:
+        text = text.replace(tok, "***")
+    return re.sub(r"(https?://)[^/@\s]+@", r"\1***@", text or "")
+
+
 def _default_run(cmd: list[str], cwd: str | None = None, check: bool = False) -> tuple[int, str, str]:
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if check and p.returncode != 0:
-        raise RuntimeError(f"{' '.join(cmd)} -> {p.returncode}: {p.stderr.strip()[:500]}")
+        raise RuntimeError(redact(f"{' '.join(cmd)} -> {p.returncode}: {p.stderr.strip()[:500]}"))
     return p.returncode, p.stdout, p.stderr
 
 
@@ -142,6 +154,23 @@ def post_land_workflows(paths: list[str]) -> list[str]:
             if any(p.startswith(prefixes) for p in paths)]
 
 
+def touches_workflows(paths: list[str]) -> bool:
+    return any(p.strip().startswith(WORKFLOW_PREFIX) for p in paths)
+
+
+def is_workflow_rejection(stderr: str) -> bool:
+    return bool(WORKFLOW_REJECT_RE.search(stderr or ""))
+
+
+def push_token_from_env(env: dict[str, str] | None = None) -> str:
+    """The seam: a PAT with the `workflows` permission (env secret MQ_PUSH_TOKEN of the `merge-queue` environment)."""
+    return (env if env is not None else os.environ).get(PUSH_TOKEN_ENV, "").strip()
+
+
+WORKFLOW_EJECT_WHY = ("changes .github/workflows/* - the queue's token cannot push workflow edits; "
+                      "land via the steward's workflow-file path")
+
+
 def status_description(text: str) -> str:
     return text if len(text) <= 140 else text[:137] + "..."
 
@@ -152,19 +181,62 @@ class Queue:
     def __init__(self, repo: str, remote: str = "origin", dev: str = "dev",
                  run: Runner = _default_run, run_url: str = "", run_id: str = "local",
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
-                 workdir: str | None = None, log: Callable[[str], None] = print):
+                 workdir: str | None = None, log: Callable[[str], None] = print,
+                 workflow_token: bool | None = None, push_token: str | None = None,
+                 regen: Callable[[str], tuple[bool, str]] | None = None):
         self.repo, self.remote, self.dev = repo, remote, dev
+        self.regen = regen or self._regen_kb_counts
         self.run, self.run_url, self.run_id = run, run_url, run_id
         self.poll_s, self.timeout_s, self.sleep = poll_s, timeout_s, sleep
         self.workdir = workdir or os.getcwd()
         self.log = log
+        self.push_token = push_token_from_env() if push_token is None else push_token.strip()
+        # workflow-capable = a token is configured; the bool override exists for tests (no real token needed).
+        self.workflow_token = bool(self.push_token) if workflow_token is None else workflow_token
+
+    def _redact(self, text: str) -> str:
+        return redact(text, self.push_token)
+
+    def push_remote(self, workflow_batch: bool) -> str:
+        """Plain remote normally; the authenticated URL ONLY for a batch that needs the `workflows` permission
+        (a PAT push triggers push workflows, a github.token push does not - never double-run CI)."""
+        if workflow_batch and self.push_token and self.repo:
+            return f"https://x-access-token:{self.push_token}@github.com/{self.repo}.git"
+        return self.remote
+
+    def batch_needs_workflows(self, base: str, sha: str) -> bool:
+        return bool(self.push_token) and touches_workflows(self.changed_paths(base, sha))
 
     # git plumbing ------------------------------------------------------------
     def git(self, *args: str, cwd: str | None = None, check: bool = True) -> str:
         rc, out, err = self.run(["git", *args], cwd=cwd or self.workdir)
         if check and rc != 0:
-            raise RuntimeError(f"git {' '.join(args)} failed ({rc}): {err.strip()[:400]}")
+            raise RuntimeError(self._redact(f"git {' '.join(args)} failed ({rc}): {err.strip()[:400]}"))
         return out.strip()
+
+    def _regen_kb_counts(self, wt: str) -> tuple[bool, str]:
+        """Deterministic re-derivation of the kb-counts blocks in the drain worktree."""
+        cli = os.path.join(wt, "mcp", "noctusai", "cli.py")
+        rc, out, err = self.run([sys.executable, cli, "--update-kb-counts", "--worktree-path", wt], cwd=wt)
+        return rc == 0, (err or out).strip()[-400:]
+
+    def regen_and_commit_counts(self, wt: str) -> tuple[bool, str]:
+        """Merge drivers re-derive counts against the PRE-merge working tree
+        (ort runs them before checkout), so the composed block can be stale and
+        the batch goes red on the kb-counts drift check. Re-derive on the
+        composed head and commit ONLY derived paths. Returns (ok, reason)."""
+        ok, why = self.regen(wt)
+        if not ok:
+            return False, f"kb-counts regeneration failed: {why}"
+        porcelain = self.git("status", "--porcelain", "--", "KNOWLEDGE-BASE/", "CLAUDE.md", cwd=wt, check=False)
+        paths = [ln[3:].strip() for ln in porcelain.splitlines() if ln.strip()]
+        if not paths:
+            return True, ""
+        self.git("add", "--", *paths, cwd=wt)
+        self.git("commit", "-q", "-m", "chore(kb-counts): regenerate derived counts at compose [auto]",
+                 "--", *paths, cwd=wt)
+        self.log(f"  regenerated kb-counts at compose ({len(paths)} file(s))")
+        return True, ""
 
     def fetch(self) -> None:
         self.git("fetch", "--prune", self.remote,
@@ -196,7 +268,7 @@ class Queue:
     def gh(self, *args: str, check: bool = True) -> str:
         rc, out, err = self.run(["gh", *args], cwd=self.workdir)
         if check and rc != 0:
-            raise RuntimeError(f"gh {' '.join(args)} failed ({rc}): {err.strip()[:400]}")
+            raise RuntimeError(self._redact(f"gh {' '.join(args)} failed ({rc}): {err.strip()[:400]}"))
         return out.strip()
 
     def set_status(self, sha: str, state: str, description: str) -> None:
@@ -247,6 +319,12 @@ class Queue:
                     self.git("checkout", "--quiet", "--detach", head, cwd=wt)
                     ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
                     continue
+            ok, why = self.regen_and_commit_counts(wt)
+            if not ok:
+                self.run(["git", "reset", "--hard", "--quiet", head], cwd=wt)
+                self.git("checkout", "--quiet", "--detach", head, cwd=wt)
+                ejected.append(self._eject_info(e, "kb_counts_regen", why))
+                continue
             new_head = self.git("rev-parse", "HEAD", cwd=wt)
             collisions = new_migration_collisions(before_tree, self.tree_paths(new_head))
             if collisions:
@@ -255,6 +333,11 @@ class Queue:
                 ejected.append(self._eject_info(
                     e, "migration_collision",
                     f"migration number {c['number']} in {c['dir']} already taken: {c['files']} - renumber and re-enqueue"))
+                continue
+            if not self.workflow_token and new_head != e.sha and touches_workflows(self.changed_paths(head, new_head)):
+                # A NEW commit object (rebase/merge) changing a workflow file is unpushable with github.token.
+                self.git("reset", "--hard", "--quiet", head, cwd=wt)
+                ejected.append(self._eject_info(e, "needs_workflow_token", WORKFLOW_EJECT_WHY))
                 continue
             head = new_head
             applied.append(e)
@@ -311,7 +394,8 @@ class Queue:
     def land(self, cand_sha: str, tested_base: str, wt: str) -> tuple[bool, str]:
         """FF dev to the candidate. Returns (landed, sha_on_dev)."""
         for _ in range(5):
-            rc, _, err = self.run(["git", "push", self.remote, f"{cand_sha}:refs/heads/{self.dev}"], cwd=wt)
+            remote = self.push_remote(self.batch_needs_workflows(tested_base, cand_sha))
+            rc, _, err = self.run(["git", "push", remote, f"{cand_sha}:refs/heads/{self.dev}"], cwd=wt)
             if rc == 0:
                 return True, cand_sha
             self.fetch()
@@ -368,7 +452,15 @@ class Queue:
                         res.landed.append({"slug": e.slug, "dev": base})
                     continue
                 cand_ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}"
-                self.git("push", self.remote, f"{cand}:refs/heads/{cand_ref}")
+                remote = self.push_remote(self.batch_needs_workflows(base, cand))
+                rc, _, perr = self.run(["git", "push", remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
+                if rc != 0:
+                    # Never crash the drain on a rejected push (2026-11-05: it wedged the queue ~1.5h).
+                    if self._handle_push_rejection(applied, base, perr, res):
+                        suspects = [e.ref for e in applied
+                                    if not any(x["ref"] == e.ref for x in res.ejected)]
+                        limit = next_batch_limit(limit, len(applied), green=False) if suspects else batch_limit
+                    continue
                 for e in applied:
                     self.set_status(e.sha, "pending", f"testing in batch {cand_ref} ({len(applied)} entr{'y' if len(applied) == 1 else 'ies'})")
                 ci = self.dispatch_and_wait(cand_ref, cand, base)
@@ -411,6 +503,28 @@ class Queue:
                 self.run(["git", "worktree", "remove", "--force", wt], cwd=self.workdir)
         return res
 
+    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome) -> bool:
+        """A candidate push was rejected. Eject the culprit(s) and return True when the batch must still be
+        bisected (cause not attributable to a single entry)."""
+        stderr = self._redact(stderr or "")
+        tail = stderr.strip()[-300:]
+        if is_workflow_rejection(stderr):
+            culprits = [e for e in applied if touches_workflows(self.changed_paths(base, e.sha))]
+            kind, why = "needs_workflow_token", WORKFLOW_EJECT_WHY
+        else:
+            culprits = applied if len(applied) == 1 else []
+            kind, why = "push_rejected", f"candidate push rejected: {tail}"
+        if not culprits and len(applied) == 1:
+            culprits = applied
+        for e in culprits:
+            x = self._eject_info(e, kind, why)
+            self._finish_eject(x)
+            res.ejected.append(x)
+        left = [e for e in applied if e not in culprits]
+        if left:
+            self.log(f"  candidate push rejected ({kind}); {len(left)} entr{'y' if len(left) == 1 else 'ies'} stay queued")
+        return bool(left) and not culprits
+
     def _finish_land(self, e: Entry, dev_sha: str) -> None:
         self.set_status(e.sha, "success", f"landed in dev as {dev_sha[:9]}")
         self.delete_ref(e.ref)
@@ -430,15 +544,19 @@ def read_status(repo: str, sha: str, run: Runner = _default_run) -> dict[str, An
         return {"state": "unavailable", "detail": err.strip()[:300]}
     if not out.strip() or out.strip() == "null":
         return {"state": "queued", "detail": "no merge-queue verdict yet"}
-    s = json.loads(out)
+    try:
+        s = json.loads(out)
+    except json.JSONDecodeError as exc:  # a gh banner / partial body is "unavailable", never a crash
+        return {"state": "unavailable", "detail": f"unparseable gh output: {exc}: {out.strip()[:200]}"}
     state = {"success": "landed", "failure": "ejected", "error": "ejected"}.get(s.get("state"), "pending")
     m = re.search(r"landed in dev as ([0-9a-f]{7,40})", s.get("description") or "")
     return {"state": state, "description": s.get("description"), "url": s.get("target_url"),
             **({"dev_sha": m.group(1)} if m else {})}
 
 
-def queue_report(repo: str = "", run: Runner = _default_run, workdir: str | None = None) -> dict[str, Any]:
-    """Read-only: what is waiting in the queue, oldest first, with each entry's verdict."""
+def queue_snapshot(repo: str = "", run: Runner = _default_run, workdir: str | None = None) -> dict[str, Any]:
+    """The queue as it is NOW. RAISES on a git/gh failure (callers decide: `queue_report`
+    folds it into an error object, `watch` retries and keeps its last good snapshot)."""
     q = Queue(repo, run=run, workdir=workdir)
     q.repo = repo or _repo_from_remote(run, q.workdir)
     q.fetch()
@@ -446,6 +564,106 @@ def queue_report(repo: str = "", run: Runner = _default_run, workdir: str | None
     return {"status": "ok", "dev": q.dev_sha(), "count": len(entries),
             "entries": [{"slug": e.slug, "ref": e.ref, "sha": e.sha,
                          "verdict": read_status(q.repo, e.sha, run=run)} for e in entries]}
+
+
+def error_report(exc: BaseException) -> dict[str, Any]:
+    """The one shape every failure path prints: a JSON object with status=error (never a bare
+    traceback — 2026-11-05 a failed `git fetch` printed no JSON and the steward's scraper
+    died on `substring not found`, missing 6 transitions)."""
+    return {"status": "error", "error_type": type(exc).__name__, "error": str(exc)[:500]}
+
+
+def queue_report(repo: str = "", run: Runner = _default_run, workdir: str | None = None) -> dict[str, Any]:
+    """Read-only: what is waiting in the queue, oldest first, with each entry's verdict.
+    Never raises: a failure is `{status: "error", error_type, error}`."""
+    try:
+        return queue_snapshot(repo, run=run, workdir=workdir)
+    except Exception as exc:  # noqa: BLE001 - boundary: every failure becomes a JSON error object
+        return error_report(exc)
+
+
+def _fmt_entry_line(slug: str, sha: str, v: dict[str, Any]) -> str:
+    tail = " ".join(x for x in (str(v.get("description") or v.get("detail") or ""), str(v.get("url") or "")) if x)
+    return f"MQ {slug} {sha[:9]} -> {v.get('state', 'unknown')}: {tail}".rstrip()
+
+
+def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict[str, Any]],
+          interval: float = 60, sleep: Callable[[float], None] = time.sleep,
+          emit: Callable[[str], None] = lambda line: print(line, flush=True),
+          max_polls: int | None = None, attempts: int = 3, left_retries: int = 10) -> None:
+    """Long-running transition printer: ONE line per change, so a steward never diffs by hand.
+
+    `MQ <slug> <sha9> -> <state>: <desc> <url>` when a listed entry's verdict changes (and once
+    for each entry on first sight); `MQ-LEFT <slug> <sha9> -> landed <dev_sha> | ejected <reason>`
+    when an entry leaves the list (its final verdict is read by sha; a not-yet-readable verdict
+    is retried on later polls, never dropped). A failing read is retried with backoff, then
+    reported as `MQ-WATCH-ERROR <type>: <msg>` while the last good snapshot is KEPT, so the next
+    successful poll still reports every transition that happened in between. Never exits on a
+    transient error (only KeyboardInterrupt / `max_polls`, for tests)."""
+    known: dict[str, dict[str, Any]] = {}   # sha -> {slug, state, line}
+    leaving: dict[str, dict[str, Any]] = {}  # sha -> {slug, tries}
+    polls = 0
+    while max_polls is None or polls < max_polls:
+        polls += 1
+        report: dict[str, Any] | None = None
+        err: BaseException | None = None
+        for i in range(attempts):
+            try:
+                report = list_fn()
+                if report.get("status") == "error":
+                    err = RuntimeError(f"{report.get('error_type', 'Error')}: {report.get('error')}")
+                    report = None
+                else:
+                    err = None
+                    break
+            except Exception as exc:  # noqa: BLE001 - never die on a transient
+                err = exc
+            if i < attempts - 1:
+                sleep(min(2 ** i, interval))
+        if report is None:
+            emit(f"MQ-WATCH-ERROR {type(err).__name__}: {str(err)[:300]}")
+        else:
+            current = {e["sha"]: e for e in report.get("entries", [])}
+            for sha, e in current.items():
+                v = e.get("verdict", {})
+                prev = known.get(sha)
+                if v.get("state") == "unavailable" and prev:
+                    continue  # a flaky status read is not a transition
+                if prev is None or prev["state"] != v.get("state"):
+                    emit(_fmt_entry_line(e["slug"], sha, v))
+                known[sha] = {"slug": e["slug"], "state": v.get("state")}
+                leaving.pop(sha, None)
+            for sha in [s for s in known if s not in current]:
+                leaving[sha] = {"slug": known.pop(sha)["slug"], "tries": 0}
+        for sha in list(leaving):
+            slug = leaving[sha]["slug"]
+            try:
+                v = status_fn(sha)
+            except Exception as exc:  # noqa: BLE001
+                v = {"state": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
+            st = v.get("state")
+            if st == "landed":
+                emit(f"MQ-LEFT {slug} {sha[:9]} -> landed {v.get('dev_sha', '')}".rstrip())
+            elif st == "ejected":
+                emit(f"MQ-LEFT {slug} {sha[:9]} -> ejected {v.get('description') or v.get('detail') or ''}".rstrip())
+            else:
+                leaving[sha]["tries"] += 1
+                if leaving[sha]["tries"] >= left_retries:
+                    emit(f"MQ-LEFT {slug} {sha[:9]} -> unknown (no final verdict after {left_retries} polls: {st})")
+                else:
+                    continue
+            leaving.pop(sha, None)
+        if max_polls is not None and polls >= max_polls:
+            break
+        sleep(interval)
+
+
+def watch_live(interval: float = 60, run: Runner = _default_run, workdir: str | None = None) -> None:
+    """`watch` against the real repo: the list is read IN-PROCESS (no subprocess/JSON scrape)."""
+    wd = workdir or os.getcwd()
+    repo = _repo_from_remote(run, wd)
+    watch(lambda: queue_snapshot(repo, run=run, workdir=wd),
+          lambda sha: read_status(repo, sha, run=run), interval=interval)
 
 
 def _repo_from_remote(run: Runner, cwd: str) -> str:
@@ -487,12 +705,18 @@ def _summary(res: Outcome) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("command", choices=["drain", "list", "status"])
+    ap.add_argument("command", choices=["drain", "list", "status", "watch"])
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     ap.add_argument("--batch", type=int, default=DEFAULT_BATCH)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--sha", help="status: the enqueued sha")
+    ap.add_argument("--interval", type=float, default=60, help="watch: poll interval, seconds")
     a = ap.parse_args(argv)
+    if a.command == "watch":
+        try:
+            watch_live(a.interval)
+        except KeyboardInterrupt:
+            return 0
     if a.command == "status":
         print(json.dumps(read_status(a.repo, a.sha), indent=2))
         return 0

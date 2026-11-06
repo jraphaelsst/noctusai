@@ -145,6 +145,8 @@ separate gated prod-DB step). Memory: `feedback_rls_policy_self_reference`.
 
 Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql`, etc. These files are the **authoritative replay log** — the DB is mutable state and can be wiped; the files are what rebuild it.
 
+**Runner behaviour (lock_timeout + directives).** `migrate_product` applies every file under a default `lock_timeout` of 5s (`SET LOCAL`, same request, `migrate_product.py:1111`), so DDL blocked by live traffic fails fast. Two leading-comment directives (`migration_directives.py:52`): `-- noc:lock-timeout <0|Nms|Ns|Nmin|Nh|Nd>` (override; `0` = off) and `-- noc:no-transaction` (statement-by-statement, for `CREATE INDEX CONCURRENTLY`; the file must be idempotent because a half-failed run keeps its earlier statements). Malformed directives refuse the batch before any DDL. Full semantics: `KB § PATTERNS/backend/postgres-craft.md` § 6.3.
+
 **Rules:**
 - Idempotent: use `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS` where Postgres supports them.
 - RLS enabled in the same migration that creates the table. No "enable RLS later" follow-ups.

@@ -119,6 +119,29 @@ def _unique_commits_count(repo_root: Path, branch: str) -> int | None:
         return None
 
 
+def _tip_info(repo_root: Path) -> dict[str, tuple[float | None, str | None]]:
+    """`{branch: (age_days, tip_subject)}` for every origin/* ref in ONE git call."""
+    rc, out, _ = _run_git(
+        ["for-each-ref", "--format=%(refname:short)%09%(committerdate:unix)%09%(subject)",
+         "refs/remotes/origin/"],
+        cwd=repo_root,
+    )
+    info: dict[str, tuple[float | None, str | None]] = {}
+    if rc != 0:
+        return info
+    now_ts = datetime.now(timezone.utc).timestamp()
+    for ln in out.splitlines():
+        parts = ln.split("\t", 2)
+        if len(parts) < 3 or not parts[0].startswith("origin/"):
+            continue
+        try:
+            age = (now_ts - int(parts[1])) / 86400.0
+        except ValueError:
+            age = None
+        info[parts[0][len("origin/"):]] = (age, parts[2].strip() or None)
+    return info
+
+
 def _dev_subjects(repo_root: Path, max_count: int = 2000) -> frozenset[str]:
     """Return the set of commit subjects from origin/dev (last max_count)."""
     rc, out, _ = _run_git(
@@ -182,39 +205,42 @@ def classify_remote_branches(
 
     branches = _list_remote_branches(repo_root)
     dev_subs = _dev_subjects(repo_root)
+    tips = _tip_info(repo_root)   # ONE git call for every branch's age + subject
 
-    results: list[dict[str, Any]] = []
-    for branch in sorted(branches):
+    def _classify_one(branch: str) -> dict[str, Any]:
         if branch in _PROTECTED_BRANCHES:
-            results.append({
+            return {
                 "branch": branch,
                 "verdict": "protected",
                 "age_days": None,
                 "subject": None,
                 "unique_commits": None,
-            })
-            continue
-
-        age = _branch_age_days(repo_root, branch)
-        subject = _branch_tip_subject(repo_root, branch)
+            }
+        age, subject = tips.get(branch, (None, None))
+        if branch not in tips:  # for-each-ref could not answer: per-branch fallback
+            age = _branch_age_days(repo_root, branch)
+            subject = _branch_tip_subject(repo_root, branch)
         unique_count = _unique_commits_count(repo_root, branch)
 
-        # Squash-aware integration check — two independent heuristics:
-        # (1) git cherry: patch-level equivalence (catches cherry-pick replay)
-        # (2) subject match: squash-merged PRs keep the first commit's subject
-        integrated = False
-        if _is_integrated_by_cherry(repo_root, branch):
-            integrated = True
-        elif subject and subject in dev_subs:
-            integrated = True
-
-        results.append({
+        # Squash-aware integration check — two independent heuristics, OR-ed
+        # (order is free, so the cheap in-memory one goes first and skips the
+        # `git cherry` subprocess for squash-merged PRs):
+        # (1) subject match: squash-merged PRs keep the first commit's subject
+        # (2) git cherry: patch-level equivalence (catches cherry-pick replay)
+        integrated = bool(subject and subject in dev_subs) or _is_integrated_by_cherry(repo_root, branch)
+        return {
             "branch": branch,
             "verdict": "integrated" if integrated else "unique",
             "age_days": round(age, 1) if age is not None else None,
             "subject": subject,
             "unique_commits": unique_count,
-        })
+        }
+
+    # git subprocesses release the GIL: a small pool overlaps their latency
+    # (118 branches x several serial git calls was ~57s of a 6-minute scan).
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results: list[dict[str, Any]] = list(pool.map(_classify_one, sorted(branches)))
 
     return results
 
