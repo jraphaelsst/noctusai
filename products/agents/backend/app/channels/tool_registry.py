@@ -616,10 +616,36 @@ class _Resultado:
     erro: bool = False  # a refusal or failure the model should read as one
     recusa: bool = False  # counts against the refusal budget
     falha: bool = False  # counts against the tool-error budget
+    corrigivel: bool = False  # a CORRECTABLE refusal (``RECUSAS_CORRIGIVEIS``): guidance, not counted in ``recusas``
 
 
 def _ok(**payload: Any) -> _Resultado:
     return _Resultado({"ok": True, **payload})
+
+
+#: Refusal classes. CORRECTABLE = a procedural precondition the model can satisfy by a DIFFERENT call in the same turn
+#: (open the skill, use the search mode when there is no campaign code, offer before reacting): guidance, not abuse, so it
+#: does not spend ``max_recusas_por_turno`` -- the per-tool / per-turn call caps still bound a loop of them.
+#: COUNTED = everything else (evidence mismatch, forged/forbidden/abusive calls, caps, anything unclassified: fail-closed).
+#: Every code literal of this module (and ``CODIGOS_RECUSA``) sits in exactly one of the two (tested).
+RECUSAS_CORRIGIVEIS: frozenset[str] = frozenset({
+    "skill_nao_aberta", "skill_inexistente", "arquivo_inexistente", "sem_codigo_campanha", "imovel_nao_oferecido",
+})
+RECUSAS_CONTADAS: frozenset[str] = frozenset({
+    "sem_itens", "itens_demais", "versao_nao_publicada", "fonte_invalida", "criterio_repetido", "criterio_derivado",
+    "criterio_desconhecido", "nao_coletar", "fora_do_escopo", "valor_invalido", "opcao_invalida", "usar_identificacao",
+    "trecho_ausente", "trecho_longo", "trecho_curto", "trecho_nao_confere", "evento_invalido", "origem_invalida",
+    "codigo_invalido", "motivo_longo", "lote_invalido", "imovel_ja_oferecido", "estagio_nao_conclusivo",
+    "nao_pode_ofertar", "limite_ofertas", "identificacao_nao_devida", "campo_desconhecido", "valor_nao_confere",
+    "identificacao_indisponivel", "credito_inativo", "limite_recusas", "indisponivel", "motivo_texto_ausente",
+    "consentimento_sem_evidencia", "opt_out_sem_evidencia", "limite_ferramentas", "argumentos_invalidos",
+    "documento_nao_encontrado", "documento_sem_midia",
+})
+
+
+def classe_recusa(codigo: str) -> str:
+    """``corrigivel`` only for a code explicitly listed so; anything else (incl. unknown) is ``contada``."""
+    return "corrigivel" if codigo in RECUSAS_CORRIGIVEIS else "contada"
 
 
 def _recusa(t: JuliaTurno, codigo: str, **extra: Any) -> _Resultado:
@@ -632,7 +658,7 @@ def _recusa(t: JuliaTurno, codigo: str, **extra: Any) -> _Resultado:
             raise
         msg = codigo  # an optional row not written yet: the bare code, never prose from code
     return _Resultado({"ok": False, "codigo": codigo, "mensagem": msg, **{k: v for k, v in extra.items() if k != "skill"}},
-                      erro=True, recusa=True)
+                      erro=True, recusa=True, corrigivel=codigo in RECUSAS_CORRIGIVEIS)
 
 
 def _falha_sw(t: JuliaTurno) -> _Resultado:
@@ -1111,6 +1137,8 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         if _acima_do_limite_do_turno(call.name):  # over the per-turn cap: a refusal that counts against the budget
             res = _recusa(t, "limite_ferramentas")
             t.recusas += 1
+            logger.info("agents.channel.recusa org_id=%s ferramenta=%s codigo=limite_ferramentas classe=contada "
+                        "recusas=%d chamadas=%d", t.org_id, call.name, t.recusas, t.chamadas)
             _parar_se_estourou()
             return ToolResult(call.call_id, _json(res.payload), True)
         try:
@@ -1129,7 +1157,14 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             else:
                 res = await despacho[call.name](args)
         if res.recusa:
-            t.recusas += 1
+            classe = "corrigivel" if res.corrigivel else "contada"
+            if res.corrigivel:
+                # the corrected retry must not hit the per-tool cap; the global ``t.chamadas`` still bounds a loop
+                t.chamadas_por_ferramenta[call.name] -= 1
+            else:
+                t.recusas += 1
+            logger.info("agents.channel.recusa org_id=%s ferramenta=%s codigo=%s classe=%s recusas=%d chamadas=%d",
+                        t.org_id, call.name, res.payload.get("codigo") or "itens_recusados", classe, t.recusas, t.chamadas)
         if res.falha:
             t.erros += 1
         _parar_se_estourou()
