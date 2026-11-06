@@ -8132,7 +8132,7 @@ def _upload_route_extract_router_prefixes(tree: "ast.Module") -> dict:
             and isinstance(node.targets[0], ast.Name)
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
-            and node.value.func.id == "APIRouter"
+            and node.value.func.id in ("APIRouter", "make_router")   # make_router = the typed, tier-declaring constructor
         ):
             continue
         name = node.targets[0].id
