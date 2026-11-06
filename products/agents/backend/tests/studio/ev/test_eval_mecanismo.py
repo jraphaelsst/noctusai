@@ -456,7 +456,8 @@ def test_handoff_motivo_and_sem_handoff():
     assert _codes({"handoff_motivo": "pedido_humano"}, t) == []
     assert _codes({"handoff_motivo": "outro"}, t) == ["esperado:outro|obtido:pedido_humano"]
     assert _codes({"sem_handoff": True}, _traco()) == []
-    assert _codes({"sem_handoff": True}, t) == ["handoff:corretor"]
+    assert _codes({"sem_handoff": True}, t) == ["handoff:corretor:pedido_humano"]
+    assert _codes({"sem_handoff": True}, _traco(handoff=Handoff("dono_org"))) == ["handoff:dono_org:vazio"]
 
 
 def test_violacoes_incluem_is_the_converse_of_sem_violacoes():

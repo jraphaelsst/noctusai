@@ -25,6 +25,8 @@ from uuid import UUID
 from app.runtime.types import AgentSpec
 from app.stores.errors import NotFound
 from app.studio.bundles import client_bundle, compile_version
+from app.studio.especificacoes import placeholders_org_crus
+from app.studio.especificacoes_avaliacao import specs_de_avaliacao
 from app.studio.tools import studio_allowed_tools
 
 __all__ = [
@@ -71,6 +73,8 @@ def build_studio_spec(
     catalog: Any,
     persist: bool = True,
     org_specs: dict[str, str] | None = None,
+    specs_sinteticas: bool = False,
+    specs_fixture: dict[str, str] | None = None,
 ) -> AgentSpec:
     """The :class:`AgentSpec` for one studio turn (contract §E2).
 
@@ -118,10 +122,28 @@ def build_studio_spec(
         client = client_bundle(definitions, org_id, record)
 
     compiled = compile_version(definitions, catalog, org_id, agent, version, client, org_specs=org_specs)
-    if len(compiled.texto) > MAX_COMPILED_PROMPT_CHARS:
+    # (a REQUIRED org spec with no value is NOT a refusal: the compiler put the INDISPONIVEL sentinel in its place)
+    texto_do_modelo = compiled.texto
+    if org_specs is None and specs_sinteticas:
+        # A platform DEFINITION run with no org behind it (judge eval, Studio simulator): the model gets the
+        # definition compiled with SYNTHETIC spec values (the ONE helper), so no ``{{org.x}}`` is ever raw in its
+        # prompt. The stamped hash stays the definition's (specs are data; same as the mechanism eval).
+        declaradas = definitions.list_spec_defs(org_id, version.id)
+        if declaradas:
+            valores = specs_de_avaliacao(
+                declaradas, specs_fixture, {s.chave: s.valor for s in definitions.list_org_specs(org_id, agent.key)})
+            texto_do_modelo = compile_version(
+                definitions, catalog, org_id, agent, version, client, org_specs=valores).texto
+    if placeholders_org_crus(texto_do_modelo):
+        raise StudioSpecError(
+            "placeholder_cru",
+            "O prompt tem um {{org.…}} sem valor: nenhum placeholder cru chega ao modelo. "
+            "Declare a especificação (e preencha-a) ou remova o placeholder do texto.",
+        )
+    if len(texto_do_modelo) > MAX_COMPILED_PROMPT_CHARS:
         raise StudioSpecError(
             "prompt_too_large",
-            f"O prompt compilado tem {len(compiled.texto)} caracteres; o máximo por turno é "
+            f"O prompt compilado tem {len(texto_do_modelo)} caracteres; o máximo por turno é "
             f"{MAX_COMPILED_PROMPT_CHARS}.",
         )
 
@@ -148,7 +170,7 @@ def build_studio_spec(
         runtime="llm" if agent.runtime == "llm" else "claude_sdk",
         model=version.model,
         effort=version.effort,
-        prompt_append=compiled.texto,
+        prompt_append=texto_do_modelo,
         skills=(),
         tools=studio_allowed_tools(knowledge=knowledge, web_search=web_search),
         max_turns=version.max_turns,

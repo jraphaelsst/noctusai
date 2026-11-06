@@ -79,6 +79,7 @@ from uuid import UUID, uuid4
 from noctusai_lib.integrations.llm import llm_usage_context
 
 from app.channels.conformidade import GuardaVazamento
+from app.studio.especificacoes import placeholder_cru_em
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores._util import utcnow
 from app.studio.models import BUDGET_EXCEEDED_NOTA
@@ -452,6 +453,7 @@ class EvalRunner:
                 definitions=self._definitions,
                 catalog=self._catalog,
                 persist=False,
+                specs_sinteticas=True,  # the platform org has no spec values: the shared synthetic helper fills them
             )
         except StudioSpecError as exc:
             logger.warning("agents.eval.spec_refused org_id=%s run_id=%s code=%s", org_id, run.id, exc.code)
@@ -657,6 +659,9 @@ class EvalRunner:
             await slot.release()
         if not textos:
             raise _CaseError("O agente não produziu resposta.")
+        if any(placeholder_cru_em(t) for t in textos):  # never judged, never shown: a raw {{…}} / [dado: …] is a defect
+            logger.error("agents.eval.placeholder_cru run_id=%s case_id=%s", run.id, case_id)
+            raise _CaseError("A resposta trouxe um placeholder cru ({{…}} ou [dado: …]).")
         if self._guardar_vazamento:
             guarda = GuardaVazamento(spec.prompt_append)
             if any(guarda.verificar(t) for t in textos):

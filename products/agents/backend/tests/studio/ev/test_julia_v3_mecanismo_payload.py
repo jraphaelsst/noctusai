@@ -186,3 +186,21 @@ def test_textos_obrigatorios_do_go_live_estao_no_payload():
 def test_payload_nao_carrega_valor_de_pii_real():
     texto = _ARQ.read_text(encoding="utf-8")
     assert not re.search(r"\d{3}\.\d{3}\.\d{3}-\d{2}", texto)
+
+
+def test_espera_deploy_names_the_branch_that_ships_the_runtime():
+    """A case that cannot pass before a runtime change deploys says WHICH branch ships it, so a red run separates
+    "expected until deploy" from a regression without anyone re-deriving it."""
+    for c in _CASOS:
+        if "espera-deploy" in c["tags"]:
+            ramos = [t for t in c["tags"] if t.startswith("espera-deploy:")]
+            assert ramos and all(r.split(":", 1)[1].startswith("feat/") for r in ramos), c["slug"]
+
+
+def test_opt_out_de_varios_turnos_prova_que_o_primeiro_turno_nao_transferiu():
+    """A hand-off before the stop request pauses the thread and the STOP is never applied (feat/agents-optout-paused):
+    turn 1 asserts ``sem_handoff`` so a failure names that cause instead of a bare ``obtido:pausado``."""
+    for c in (c for c in _CASOS if "opt-out" in c["tags"] and "falso-positivo" not in c["tags"]):
+        turnos = c["roteiro"]["turnos"]
+        if len(turnos) >= 2:
+            assert turnos[0].get("esperar", {}).get("sem_handoff") is True, c["slug"]
