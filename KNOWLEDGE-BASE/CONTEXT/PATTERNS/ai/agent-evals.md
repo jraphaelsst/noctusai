@@ -379,6 +379,35 @@ commit (`A:studio/prontidao.py:55-57,460-467`).
 - Hamel Husain — Using LLM-as-a-Judge For Evaluation: A Complete Guide (2024-10-29, updated 2026-09-01) — https://hamel.dev/blog/posts/llm-judge/ — domain expert, binary + critiques, TPR/TNR, splits (§ 4, § 5). Accessed 2026-11-05.
 - Anthropic — Batch processing — https://platform.claude.com/docs/en/build-with-claude/batch-processing — 50% off, 24 h, not ZDR (§ 7). Accessed 2026-11-05.
 
+## 12 · Julia turn redesign: measured results and the red-team comparison (2026-11-05)
+
+**Runner.** The regression leg stays in-house: `products/agents/projects/julia-v2/tools/rodar_mecanismo_local.py` (mechanism, k=3, any
+partition count) and `rodar_juiz_local.py` (judge) drive `LiveEvalTurnDriver`, the real channel path (turno, controles, tools, state,
+history) against the real model; a generic harness cannot run that path. Both meter calls, tokens, cache-read share and cost.
+
+**Measured (claude-haiku-4-5, prod DRAFT, k=3).** Before = root dev code, After = this branch.
+
+| run | cases pass^3 | executions | US$ | LLM calls/turn | input tokens/turn | cache-read share |
+|---|---|---|---|---|---|---|
+| before (57 cases) | 53/57 | 162/171 | 1.236 | 1.22 | 28,354 | 96.2% |
+| after, temp 0.3, hist 20 (57) | 54/57 | 164/171 | 1.129 | 1.22 | 25,713 (-9.3%) | 96.1% |
+| 65 cases, temp 1.0, hist 20 | 57/65 | 179/195 | 1.413 | 1.24 | 27,050 | 96.3% |
+| 65 cases, temp 0.3, hist 20 | 57/65 | 178/195 | 1.344 | 1.21 | 26,331 | 96.6% |
+| 65 cases, temp 0.3, hist 40 | 61/65 | 183/195 | 1.465 | 1.27 | 27,566 | 96.1% |
+| 65 cases, all fixes, temp 0.3, hist 40 | 59/65 | 181/195 | 1.361 | 1.20 | 26,140 | 96.3% |
+
+Reading: temperature 1.0 vs 0.3 is within noise (179 vs 178 executions); 0.3 is the default for lower variance and cost. History 40
+vs 20 gained 4 cases once and 2 in the final run: kept (it is also what the SW reference chat reads), but the effect is within a run-to-run
+swing of about 2 cases. Greeting cases at k=10 (20 turns each tree): 0 hand-offs before and after on this draft (the prod safe-stop did
+not reproduce here: no gated tool was called); calls/turn 1.65 -> 1.0, cost US$ 0.137 -> 0.061.
+
+**Red team: promptfoo vs the hand-written leak / skill-dump cases - OPEN, not adopted.** promptfoo 0.125.1 is installable, but a fair
+measurement needs (a) its red-team plugins (prompt-extraction, PII, hijacking, excessive-agency) pointed at a non-prod Julia endpoint or a
+provider wrapper over the real path, and (b) a model key inside promptfoo's own process for attack generation and grading. Neither was
+available without materialising credentials (denied by the permission layer), so no coverage / findings / US$ / time / maintenance numbers
+exist. Nothing was adopted unmeasured. To close: wrap `LiveEvalTurnDriver` as a promptfoo Python provider, pin the version, cap the
+spend, and compare against `mec-injecao-*`, `mec-skill-dump-*` and the leak rule on the same hash.
+
 ## Composes-with
 
 `KB § PATTERNS/ai/ai-engineering-canon.md` · `KB § PATTERNS/security/ai-agent-security-canon.md` §9 ·

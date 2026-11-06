@@ -70,6 +70,7 @@ async def main() -> None:
     ap.add_argument("--modelo")
     ap.add_argument("--extra", action="append", default=[], help="more case files ({itens: [...]}), e.g. cases read from the draft")
     ap.add_argument("--trace", help="append one JSON line per turn (lead, bubbles, tools, actions) to this file")
+    ap.add_argument("--sem-regra", help="diagnostic: switch one conformance rule off in the eval world")
     ap.add_argument("--parte", default="1/1", help="i/n: run the i-th of n slices of the cases (parallel processes)")
     ap.add_argument("--limite-usd", type=float, default=1.0)
     ap.add_argument("--out", required=True)
@@ -89,6 +90,17 @@ async def main() -> None:
     medido = Medido(get_provider("anthropic"))
     driver = make_live_eval_driver_factory(provider_impl=medido)()
     driver.definir_agente("julia")
+    if a.sem_regra:  # DIAGNOSTIC only: see the reply a rule would have blocked (never a way to pass a case)
+        orig_mundo = driver._conformidade_do_mundo
+
+        def _sem(org_id, agent_id):
+            fake = orig_mundo(org_id, agent_id)
+            r = fake.regras(org_id, agent_id)[a.sem_regra]
+            fake.definir_regra(org_id, agent_id, a.sem_regra, ativo=False, politica=r.politica,
+                               mensagem_correcao_texto_chave=r.mensagem_correcao_texto_chave, parametros=dict(r.parametros))
+            return fake
+
+        driver._conformidade_do_mundo = _sem
     if a.trace:
         original = driver.executar_turno
 

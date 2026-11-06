@@ -210,7 +210,7 @@ def get_llm_runtime(
         ),
         tools_factory=tools_factory,
         provider_impl=provider_impl,
-        history_messages=int(getattr(settings, "llm_history_messages", 20) or 20),
+        history_messages=int(getattr(settings, "llm_history_messages", 40) or 40),
         max_iterations=int(getattr(settings, "llm_max_tool_iterations", 6) or 6),
         bound_org_id=org_id,
     )

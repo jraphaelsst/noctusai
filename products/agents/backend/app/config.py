@@ -194,8 +194,9 @@ class SeedSettings(ProductSettings):
     # `app.runtime.llm_runtime.LlmTurnLimiter`); a full limiter is a 429
     # `capacidade`.
     llm_turn_capacity: int = 8
-    # Memory per turn: the last N stored messages of the conversation.
-    llm_history_messages: int = 20
+    # Memory per turn: the last N stored messages of the conversation. 40 (was 20): measured on the Julia mechanism suite at
+    # k=3 (61/65 cases vs 57/65, DECISAO-SKILL-AUTOLOAD.md); the SW "One Chat" reference also reads 40.
+    llm_history_messages: int = 40
     # Cap on tool-call rounds per turn (also bounded by the version's
     # `max_turns`).
     llm_max_tool_iterations: int = 6

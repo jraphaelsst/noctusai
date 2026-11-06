@@ -507,10 +507,27 @@ async def executar(
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
     historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
+    dados_da_org = tuple(valores.values())
+    ativas = [x for x in svc.studio_store.list_skills(r.definicao.org_id, r.versao.id) if x.ativo]
+    arquivos = svc.studio_store.list_version_skill_files(r.definicao.org_id, r.versao.id)
+    #: every ACTIVE skill body and file of the version (the library's pinned skills join as they are loaded), 24-token window
+    texto_skills = conf.texto_fonte_do_prompt(
+        None, [x.corpo for x in ativas if getattr(x, "corpo", None)],
+        [f.conteudo for f in arquivos if getattr(f, "conteudo", None)], so_skills=True)
+
+    memo: dict[int, Any] = {}
+
+    def _derivada() -> Any:
+        n = len(turno.textos_derivados)  # recomputed only when a tool handed the model new skill text
+        if n not in memo:
+            memo[n] = conf.impressao_derivada([texto_skills, *turno.textos_derivados])
+        return memo[n]
+
     def _vazou_texto(texto: str) -> bool:
+        texto = conf.mascarar_dados_da_org(texto, dados_da_org)
         return conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None or (
             conf.detectar_vazamento(
-                texto, canario_do_prompt=None, impressao=conf.impressao_derivada(turno.textos_derivados)) is not None)
+                texto, canario_do_prompt=None, impressao=_derivada()) is not None)
 
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
@@ -592,7 +609,7 @@ async def executar(
         resposta = "\n\n".join(x for x in t.textos if x and x.strip())
         return _marcadores_da_resposta(resposta, prep.marcador, tag, regras) + conf.avaliar_resposta(conf.EntradaConformidade(
             resposta=resposta, mensagens_lead=lote_lead, regras=regras,
-            canario=prep.canario, impressao=prep.impressao, impressao_derivada=conf.impressao_derivada(turno.textos_derivados),
+            canario=prep.canario, impressao=prep.impressao, dados_da_org=dados_da_org, impressao_derivada=_derivada(),
             codigos_permitidos=turno.codigos_vistos | codigos_da_thread,
             links_permitidos={*turno.links_vistos, *links_anteriores},
             participante_segue_ativo=not (turno.transferiu or turno.concluiu or turno.encerrou),

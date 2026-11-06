@@ -285,7 +285,7 @@ class LiveEvalTurnDriver:
             budget_guard=make_budget_guard(messages=messages, daily_cap_usd=self._daily_cap),
             tools_factory=_com_diario(self._tools_factory, diario),
             provider_impl=self._provider_impl,
-            history_messages=self._historico or int(getattr(settings, "llm_history_messages", 20) or 20),
+            history_messages=self._historico or int(getattr(settings, "llm_history_messages", 40) or 40),
             max_iterations=int(getattr(settings, "llm_max_tool_iterations", 6) or 6),
         )
         conformidade = self._conformidade_do_mundo(org_id, definicao.id)

@@ -641,13 +641,27 @@ class EvalRunner:
             driver.definir_modelo(run.modelo_geracao)
         try:
             async with asyncio.timeout(self._turn_timeout):
-                out = await driver.executar_turno(ThreadState(contexto_caso=case.contexto or None), case.entrada)
+                out = await driver.executar_turno(self._thread_do_caso(case, ThreadState), case.entrada)
         except TimeoutError as exc:
             raise _CaseError("O turno do agente excedeu o tempo limite.") from exc
         texto = "\n\n".join(b for b in out.bolhas if b.strip())
         if not texto.strip():
-            raise _CaseError("O agente não produziu resposta.")
+            # codes only (never a text): WHY there is no reply -- a hand-off, a blocked reply, a stop
+            motivo = ",".join([*out.acoes, *(f"{v.regra}:{v.detalhe}" for v in out.violacoes)]) or "silencio"
+            raise _CaseError(f"O agente não produziu resposta ({motivo}).")
         return texto[:MAX_SAIDA_CHARS], TurnCost(custo_usd=out.custo_usd)
+
+    @staticmethod
+    def _thread_do_caso(case: Any, thread_cls: Any) -> Any:
+        """The case's starting world. A case with a ``roteiro`` (``estado_inicial``, ``catalogo``, ``fixture``) seeds the SAME
+        engine state a mechanism case does -- a narrative ``contexto`` alone cannot make the criteria the lead "already gave"
+        true for the engine, and the state block then contradicts it (the dossier says empty)."""
+        roteiro = getattr(case, "roteiro", None) or {}
+        from app.studio.eval_mecanismo import _estado_inicial
+
+        return thread_cls(
+            catalogo=tuple(roteiro.get("catalogo") or ()), estado=_estado_inicial(roteiro),
+            fixture=dict(roteiro.get("fixture") or {}), contexto_caso=case.contexto or None)
 
     async def _agent_answer(self, org_id: UUID, run: Any, spec: AgentSpec, case: Any) -> tuple[str, TurnCost]:
         pelo_canal = await self._resposta_pelo_canal(run, spec, case)
