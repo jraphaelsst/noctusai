@@ -422,6 +422,57 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-auth-boundary-false-green": {
+   "severity": "warning",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "auth-boundary tests must not pair 401 with a maskable code (404/422)",
+   "mechanism": "api:assert_tier_contract (generated strict 401/403 for every documented route) - this gate guards the remaining HAND-WRITTEN assertions",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "cli exit wrapper",
+   "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
+   "api_review": {
+    "verdict": "overlap",
+    "note": "Hand-written auth assertions; the schema-driven contract test (access-tiers) generates strict 401/403 for EVERY documented route. Narrow this to the remaining hand-written tests once it lands; one property, one gate."
+   },
+   "shadow": {
+    "since": "2026-11-05",
+    "fires": 2,
+    "true_positives": 2,
+    "effective_fp": 0.0,
+    "promote_when": ">=5 findings over >=7 days with 0 effective FP"
+   }
+  },
+  "keeper:check-auth-dep-anti-pattern": {
+   "severity": "warning",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "route auth dependency anti-patterns",
+   "mechanism": "api:make_get_current_user_org factory (KB § PATTERNS/backend/backend.md Auth canonical pattern)",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet",
+   "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
+   "api_review": {
+    "verdict": "gap",
+    "note": "Tier-blind: asks 'has auth'. With make_router(tier=) the property is 'declared tier'. Refine to require a tier (access-tiers owns)."
+   }
+  },
   "keeper:check-auto-improvement-cache-freshness": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -2671,6 +2722,24 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-workflow-actionlint": {
+   "mechanism": "none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is the framework-native check)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-06",
+   "shadow": null
+  },
+  "keeper:check-workflow-cli-flags-exist": {
+   "mechanism": "none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is the framework-native check)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-06",
+   "shadow": null
+  },
   "keeper:check-workflow-job-timeouts": {
    "severity": "",
    "kind": "keeper",
@@ -2687,6 +2756,15 @@
    },
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-workflow-mcp-requirements-path": {
+   "mechanism": "none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is the framework-native check)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-06",
+   "shadow": null
   },
   "keeper:verify-kb-sync": {
    "severity": "",
@@ -2705,57 +2783,6 @@
    "class": "wall",
    "telemetry": "cli exit wrapper -> guard-events.ndjson",
    "remediation": "NOC-REMEDIATE[gate-wall] destination: kb_sync already runs at integrate; add it to the pre-commit auto-fix path (regenerate + restage, then verify)."
-  },
-  "keeper:check-auth-boundary-false-green": {
-   "severity": "warning",
-   "kind": "keeper-batch",
-   "wired_in": [
-    "compliance.py sweep"
-   ],
-   "standard": "auth-boundary tests must not pair 401 with a maskable code (404/422)",
-   "mechanism": "api:assert_tier_contract (generated strict 401/403 for every documented route) - this gate guards the remaining HAND-WRITTEN assertions",
-   "owner": "backend-engineer",
-   "placement": "warn",
-   "firings": {
-    "count": 0,
-    "sessions": 0
-   },
-   "class": "unmeasured",
-   "telemetry": "cli exit wrapper",
-   "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
-   "api_review": {
-    "verdict": "overlap",
-    "note": "Hand-written auth assertions; the schema-driven contract test (access-tiers) generates strict 401/403 for EVERY documented route. Narrow this to the remaining hand-written tests once it lands; one property, one gate."
-   },
-   "shadow": {
-    "since": "2026-11-05",
-    "fires": 2,
-    "true_positives": 2,
-    "effective_fp": 0.0,
-    "promote_when": ">=5 findings over >=7 days with 0 effective FP"
-   }
-  },
-  "keeper:check-auth-dep-anti-pattern": {
-   "severity": "warning",
-   "kind": "keeper-batch",
-   "wired_in": [
-    "compliance.py sweep"
-   ],
-   "standard": "route auth dependency anti-patterns",
-   "mechanism": "api:make_get_current_user_org factory (KB § PATTERNS/backend/backend.md Auth canonical pattern)",
-   "owner": "backend-engineer",
-   "placement": "warn",
-   "firings": {
-    "count": 0,
-    "sessions": 0
-   },
-   "class": "unmeasured",
-   "telemetry": "NONE yet",
-   "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
-   "api_review": {
-    "verdict": "gap",
-    "note": "Tier-blind: asks 'has auth'. With make_router(tier=) the property is 'declared tier'. Refine to require a tier (access-tiers owns)."
-   }
   }
  },
  "decisions": [

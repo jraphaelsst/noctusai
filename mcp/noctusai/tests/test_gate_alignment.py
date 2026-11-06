@@ -154,6 +154,12 @@ class TestDeclare:
         assert ga.declare_gate("keeper:check-x", "scaffold: s", "o", source="KB §", root=root)["ok"] is True
         assert ga.load_inventory(root)["gates"]["keeper:check-x"]["new"] is True
 
+    def test_existing_gate_skips_the_new_gate_requirements(self, tmp_path):
+        root = _tree(tmp_path, {"gates": {}})
+        assert ga.declare_gate("keeper:check-x", "none (hand-written yaml, nothing to scaffold)", "o",
+                               placement="blocking", existing=True, root=root)["ok"]
+        assert ga.triad_issues(root) == []
+
 
 class TestNewDependencyJustified:
     @pytest.fixture()

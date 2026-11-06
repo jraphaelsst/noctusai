@@ -282,7 +282,8 @@ def refresh_baseline(root: Path | None = None) -> dict:
 
 
 def declare_gate(gate: str, mechanism: str, owner: str, *, standard: str = "",
-                 placement: str = "warn", source: str = "", root: Path | None = None) -> dict:
+                 placement: str = "warn", source: str = "", existing: bool = False,
+                 root: Path | None = None) -> dict:
     """Write/replace one inventory row. Refuses an invalid mechanism (no silent-null)."""
     root = root or REPO_ROOT
     if not mechanism_ok(mechanism):
@@ -295,7 +296,7 @@ def declare_gate(gate: str, mechanism: str, owner: str, *, standard: str = "",
     inv = load_inventory(root)
     row = inv["gates"].get(gate, {})
     row.update({"mechanism": mechanism, "owner": owner, "placement": placement,
-                "standard": standard or row.get("standard", ""), "new": row.get("new", gate not in inv["gates"]),
+                "standard": standard or row.get("standard", ""), "new": False if existing else row.get("new", gate not in inv["gates"]),
                 "declared": _dt.date.today().isoformat()})
     if source:
         row["source"] = source
@@ -494,13 +495,15 @@ def register(server) -> None:
         ),
     )
     def _gate_alignment(action: str = "walls", gate: str = "", mechanism: str = "", owner: str = "",
-                        placement: str = "warn", file: bool = False, worktree_path: str = "") -> dict:
+                        placement: str = "warn", file: bool = False, existing: bool = False,
+                        worktree_path: str = "") -> dict:
         return run_action(action, gate=gate, mechanism=mechanism, owner=owner, placement=placement,
-                          file=file, root=Path(worktree_path) if worktree_path else None)
+                          file=file, existing=existing, root=Path(worktree_path) if worktree_path else None)
 
 
 def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str = "",
-               placement: str = "warn", file: bool = False, root: Path | None = None) -> dict:
+               placement: str = "warn", file: bool = False, existing: bool = False,
+               root: Path | None = None) -> dict:
     root = root or REPO_ROOT
     if action == "walls":
         rep = walls_report(root)
@@ -511,7 +514,7 @@ def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str =
         issues = triad_issues(root)
         return {"ok": not issues, "issues": issues, "burn_down": burn_down(root)}
     if action == "declare":
-        return declare_gate(gate, mechanism, owner, placement=placement, root=root)
+        return declare_gate(gate, mechanism, owner, placement=placement, existing=existing, root=root)
     if action == "sources":
         return sources_report(root)
     if action == "matrix":

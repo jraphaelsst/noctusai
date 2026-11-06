@@ -303,6 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gate", default=None, help="With --gate-alignment declare: the gate id (keeper:check-x | guard:x | ci:x).")
     parser.add_argument("--mechanism", default=None, help="With --gate-alignment declare: pointer to the construction leg, or 'none (reason)'.")
     parser.add_argument("--owner", default=None, help="With --gate-alignment declare: the agent/file that owns the gate.")
+    parser.add_argument("--existing", action="store_true", help="With --gate-alignment declare: the gate already lives on dev (landed by another branch): declare its row without the new-gate shadow/source/matrix requirements.")
     parser.add_argument("--placement", default="warn", help="With --gate-alignment declare: blocking|warn|report (new gates start warn = shadow).")
     parser.add_argument("--check-gate-triad", action="store_true", help="Meta-gate (build triad, 2026-11-05): every wired gate is declared in the gate inventory with a construction mechanism (or 'none (reason)') and an owner, every decision-matrix row has its legs, and every gate maps to a row. Legacy gates without a mechanism sit in a SHRINK-ONLY baseline. Severity high. Fix: `--gate-alignment declare ...`. KB § PATTERNS/common/gate-methodology-sync.md.")
     parser.add_argument("--check-new-dependency-justified", action="store_true", help="Keeper (measured comparison, 2026-11-05, WARN-first shadow): a NEW dependency added to a package.json/requirements file needs a COMPARISON RECORD (job, in-repo alternative, >=2 numeric metrics, decision) in mcp/noctusai/dependency-additions.json - the gate checks the record, never whether the tool is standard. `--paths` = staged files. Severity medium. KB § PATTERNS/common/gate-methodology-sync.md.")
@@ -2028,7 +2029,7 @@ def main():
     elif args.gate_alignment is not None:
         from tools.noctus.dev.gate_alignment import run_action
         _ga = run_action(args.gate_alignment, gate=args.gate or "", mechanism=args.mechanism or "",
-                         owner=args.owner or "", placement=args.placement, file=args.file_walls)
+                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing)
         print(json.dumps(_ga, indent=1, ensure_ascii=False))
         sys.exit(0 if _ga.get("ok", True) else 1)
     elif args.check_gate_triad:

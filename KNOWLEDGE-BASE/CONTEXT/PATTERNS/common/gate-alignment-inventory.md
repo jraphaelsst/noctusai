@@ -2,7 +2,7 @@
 
 > Generated from `gate-alignment-inventory.json` by `python mcp/noctusai/cli.py --gate-alignment render`. Method and rules: `KB § PATTERNS/common/gate-methodology-sync.md`. Firing counts are measured from 943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events (upper-bound-free: tool results only, one count per tool call).
 
-Totals by class: **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 156 gates). Mechanism burn-down: {'gates': 156, 'declared': 39, 'declared_none_justified': 7, 'undeclared_baseline': 117}.
+Totals by class: **?** 3, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 159 gates). Mechanism burn-down: {'gates': 159, 'declared': 42, 'declared_none_justified': 10, 'undeclared_baseline': 117}.
 
 | Gate | Standard | Construction mechanism | Owner | Firings (sessions) | Class |
 |---|---|---|---|---:|---|
@@ -162,6 +162,9 @@ Totals by class: **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7,
 | `keeper:check-tunnel-ingress-snapshot-sync` | deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this as | **NONE** | devops-engineer | 0 (0) | never-fires |
 | `keeper:check-version-bump` | Gate MAJOR-bump authorization: refuse working-tree VERSION whose MAJOR exceeds HEAD's unless .major-bump-autho | **NONE** | devops-engineer | 0 (0) | never-fires |
 | `keeper:check-waha-instances-render-sync` | deploy/fleet/compose.waha.yml must equal the render of deploy/fleet/waha-instances.yml (one WAHA Core containe | **NONE** | backend-engineer | 0 (0) | never-fires |
+| `keeper:check-workflow-actionlint` |  | none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is th | devops-engineer | 0 (0) | ? |
+| `keeper:check-workflow-cli-flags-exist` |  | none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is th | devops-engineer | 0 (0) | ? |
+| `keeper:check-workflow-mcp-requirements-path` |  | none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is th | devops-engineer | 0 (0) | ? |
 
 ## Route auth / exposure gates re-judged for a publicly documented API
 
