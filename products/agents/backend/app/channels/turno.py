@@ -507,6 +507,9 @@ async def executar(
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
     historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
+    def _impressao_efetiva() -> Any:
+        return conf.impressao_com(prep.impressao, turno.textos_derivados)
+
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
@@ -530,7 +533,7 @@ async def executar(
                 thread_id=thread.id)
             if svc.resumo_factory is not None else None),
         guarda_campos=(
-            (lambda texto: conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None)
+            (lambda texto: conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=_impressao_efetiva()) is not None)
             if leak is not None and leak.ativo else None),
     )
     # deterministic STOP backstop (P1-3): a message that IS exactly "PARAR" / "SAIR" / ... opts the lead out WITHOUT the
@@ -587,7 +590,7 @@ async def executar(
         resposta = "\n\n".join(x for x in t.textos if x and x.strip())
         return _marcadores_da_resposta(resposta, prep.marcador, tag, regras) + conf.avaliar_resposta(conf.EntradaConformidade(
             resposta=resposta, mensagens_lead=lote_lead, regras=regras,
-            canario=prep.canario, impressao=prep.impressao,
+            canario=prep.canario, impressao=_impressao_efetiva(),
             codigos_permitidos=turno.codigos_vistos | codigos_da_thread,
             links_permitidos={*turno.links_vistos, *links_anteriores},
             participante_segue_ativo=not (turno.transferiu or turno.concluiu or turno.encerrou),

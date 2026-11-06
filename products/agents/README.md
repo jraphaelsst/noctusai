@@ -185,3 +185,5 @@ cd products/agents/frontend && npx vite build
 ## Julia turn (2026-11-05 redesign)
 
 A tool tied to a skill is auto-loaded for the turn (no `skill_nao_aberta` refusal); a procedural stop is a silent re-run, then fallback + operator alert, never a hand-off; the compiled prompt of a published version is cached per (version, specs, standard); judge cases run on the real channel path; the channel temperature is per version (default 0.3). See `projects/julia-v2/DECISAO-SKILL-AUTOLOAD.md`.
+
+Leak fingerprint: skill bodies/files handed to the model in a turn are added to the reply check (`conformidade.impressao_com`), and the check also reads the de-obfuscated reply.

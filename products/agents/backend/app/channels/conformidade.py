@@ -85,6 +85,7 @@ __all__ = [
     "sinal_alegacao",
     "casar_padroes",
     "detectar_vazamento",
+    "impressao_com",
     "garantir_impressao",
     "impressao_de",
     "sinal_extracao",
@@ -184,6 +185,21 @@ def garantir_impressao(
     nova = impressao_de(version_id, texto_fonte_do_prompt(compiled), k)
     store.salvar_impressao(org_id, nova)
     return nova
+
+
+def impressao_com(impressao: Impressao | None, textos: Iterable[str]) -> Impressao | None:
+    """``impressao`` extended with the fingerprint of ``textos`` (the prompt-derived text a tool returned to the model THIS
+    turn: skill bodies and files, rendered for the org). A reply can only reproduce what the model read, and skills reach
+    it as tool results, outside the compiled text the stored fingerprint covers."""
+    extra: set[int] = set()
+    k = impressao.shingle_tokens if impressao is not None else SHINGLE_TOKENS
+    for t in textos:
+        extra |= shingles_de(t, k)
+    if not extra:
+        return impressao
+    if impressao is None:
+        return Impressao(UUID(int=0), k, frozenset(extra))
+    return Impressao(impressao.version_id, k, impressao.shingles | frozenset(extra))
 
 
 def detectar_vazamento(
@@ -722,8 +738,10 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
         return r if r is not None and r.ativo else None
 
     if (r := ativa("vazamento_prompt")) is not None:
-        achados.append(("vazamento_prompt", detectar_vazamento(
-            e.resposta, canario_do_prompt=e.canario, impressao=e.impressao)))
+        # the as-written reply AND its de-obfuscated copy (spaced / dotted / homoglyph spellings), like the link and contact checks
+        achados.append(("vazamento_prompt", _pior(
+            detectar_vazamento(e.resposta, canario_do_prompt=e.canario, impressao=e.impressao),
+            detectar_vazamento(esqueleto(e.resposta), canario_do_prompt=e.canario, impressao=e.impressao))))
     if (r := ativa("imovel_sem_ferramenta")) is not None and e.resposta.strip():
         achados.append(("imovel_sem_ferramenta", imovel_sem_ferramenta(
             e.resposta, e.codigos_permitidos, (r.parametros or {}).get("padrao_codigo"))))

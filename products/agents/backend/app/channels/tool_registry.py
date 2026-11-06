@@ -490,6 +490,9 @@ class JuliaTurno:
     skills_carregadas: set[str] = field(default_factory=set)
     #: Refusals / errors / calls spent by attempts BEFORE the current one (a corrective re-run starts clean).
     recusas_anteriores: int = 0
+    #: Prompt-derived text tools handed to the model THIS turn (skill bodies / files, rendered for the org): added to the
+    #: leak fingerprint, because a skill reaches the model as a tool result, outside the compiled text. Kept across re-runs.
+    textos_derivados: list[str] = field(default_factory=list)
     parar: str | None = None  # the motivo_codigo of the safe stop (limite_recusas / falhas_repetidas)
     registrou_criterios: set[str] = field(default_factory=set)
     links_vistos: set[str] = field(default_factory=set)
@@ -1043,6 +1046,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             return _recusa(t, "skill_inexistente", disponiveis=out.get("disponiveis", []))
         await asyncio.to_thread(t.threads.registrar_abertura_skill, t.org_id, t.thread_id, a.nome, t.compiled_hash)
         t.skills_carregadas.add(a.nome)
+        t.textos_derivados += [str(out[c]) for c in ("corpo", "descricao") if out.get(c)]
         return _ok(**out)
 
     async def _ler_arquivo(a: LerArquivoSkillArgs) -> _Resultado:
@@ -1050,6 +1054,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         out = await t.skills.ler_arquivo(a.nome, a.caminho)
         if out.get("erro"):
             return _recusa(t, "arquivo_inexistente", disponiveis=out.get("disponiveis", []))
+        t.textos_derivados += [str(out[c]) for c in ("conteudo", "titulo") if out.get(c)]
         return _ok(**out)
 
     # ── actions ──
@@ -1166,6 +1171,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             t.skills_carregadas.add(skill)
             await asyncio.to_thread(t.threads.registrar_abertura_skill, t.org_id, t.thread_id, skill, t.compiled_hash)
             corpo = str(aberta.get("corpo") or "")
+            t.textos_derivados.append(corpo)
             out.append({"skill": skill, "corpo": corpo[:PROCEDIMENTO_MAX_CHARS]})
         return out
 
