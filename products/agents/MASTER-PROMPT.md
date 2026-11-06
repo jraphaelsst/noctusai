@@ -95,6 +95,9 @@ products/agents/backend/app/
   thread under the CURRENT compiled hash (`obrigatoria_skill` on the row, or the shared library's `obrigatoria_para`
   through `SkillFonte`), `trecho` in the lead's own words, `pode_ofertar`, `pode_concluir`, offered-before-react,
   identity only when the standard says so. Refusals are typed codes; the wording is `ferramenta.resultado.recusa.<codigo>`.
+  Refusals are two classes (`RECUSAS_CORRIGIVEIS` / `RECUSAS_CONTADAS`, fail-closed): a CORRECTABLE one (skill not opened,
+  no campaign code, react before offered, unknown skill/file) is guidance and does NOT spend `max_recusas_por_turno` (the
+  it also refunds the per-tool call count, the global `max_chamadas_ferramenta_turno` still bounds a loop); every other code counts. The refusal log line carries `classe=`.
   Past `max_recusas_por_turno` / `max_erros_ferramenta_por_turno` the toolset stops the turn (`should_stop`) and the turn
   ends in a hand-off to the org owner + a flagged event (silence, or the DB text `runtime.parada_segura`).
 - Julia v3 (CONTRACT §12): `sinalizar_alerta` (-> `agents.thread_alertas`, action `alerta`, one per tipo per turn),
@@ -125,7 +128,7 @@ products/agents/backend/app/
   `regras_seguranca_sem_parametros` blocks publish); allowlists come from `ValoresOrg.limpos` (validated specs only);
   `studio/normalizador_texto.py` is the one invisible-character / de-obfuscation module (schema boundary + detectors +
   `spec_formatos`); `valor_sem_ferramenta` blocks an unbacked R$ / %; `opt_out_palavras` opts a lead out on an exact
-  `PARAR|SAIR|STOP|CANCELAR|NÃO QUERO MAIS` with no model call; `contexto.estado.texto_base` / `atendente_nome` are
+  `PARAR|PARE|PARA|PAREM|SAIR|SAI|STOP|CANCELAR|CHEGA|NÃO QUERO MAIS` with no model call, in EVERY conversation state (paused / handed over / agent off / killed / draining too: the refusal path records it via the same `aplicar_encerramento` and answers `encerrar`+`opt_out`; see julia-v2 CONTRACT §5.2); `contexto.estado.texto_base` / `atendente_nome` are
   validated like a spec; `encaminhada: true` messages are marked for the model and never evidence.
 - Provenance + leak tripwires (migration 046, `channels/proveniencia.py`, `stores/marcadores.py`; GUARDRAILS B2/B7):
   authorship is structural, never inferred from text. Lead lines stay one plain `user` message; human / other-agent /

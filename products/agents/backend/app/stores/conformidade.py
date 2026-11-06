@@ -124,7 +124,9 @@ PISO_DE_PADROES: dict[str, tuple[str, ...]] = {
 }
 #: Exact (normalised) messages that opt the lead out WITHOUT the model (P1-3); ``opt_out_palavras.parametros.palavras``
 #: extends it.
-PALAVRAS_PARAR_PISO: tuple[str, ...] = ("parar", "sair", "stop", "cancelar", "nao quero mais")
+PALAVRAS_PARAR_PISO: tuple[str, ...] = (
+    "parar", "sair", "stop", "cancelar", "nao quero mais", "pare", "para", "parem", "sai", "chega",
+)
 
 
 def aplicar_piso(regras: dict[str, "RegraConfig"]) -> dict[str, "RegraConfig"]:

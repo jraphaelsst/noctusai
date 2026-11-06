@@ -574,8 +574,8 @@ def _forma_exata(texto: str) -> str:
 
 
 def palavra_de_parar(mensagens_lead: Iterable[str], regra: RegraConfig | None) -> str | None:
-    """The stop word when a message of the lead's batch IS (exactly, normalised) one of ``PARAR|SAIR|STOP|CANCELAR|
-    NÃO QUERO MAIS`` or a word of the rule's ``parametros.palavras`` -- a sentence merely CONTAINING it is not a match
+    """The stop word when a message of the lead's batch IS (exactly, normalised) one of ``PARAR|PARE|PARA|PAREM|SAIR|SAI|
+    STOP|CANCELAR|CHEGA|NÃO QUERO MAIS`` or a word of the rule's ``parametros.palavras`` -- a sentence merely CONTAINING it is not a match
     (the model weighs those). ``None`` when none, or when the rule is switched off."""
     if regra is not None and not regra.ativo:
         return None
