@@ -26,6 +26,10 @@ Proof: converting all 20 exact overrides to carets produced **zero lockfile chan
 
 `overrides` is the odd one out: it **wins over all three**, silently, fleet-wide. That is why it is gated.
 
+## Gate 0 — a NEW dependency or replacing an in-repo mechanism (measure, don't assume)
+
+Compare the candidate with whatever in-repo mechanism covers the same job on stated metrics (recall/precision, speed, cost in money and tokens, maintenance, integration fit, security) and record a short decision record **with numbers** in `mcp/noctusai/dependency-additions.json`: `{"npm:<name>"|"pip:<name>": {"job", "in_repo_alternative" (or "none" + "reason"), "metrics": {>=2, numeric}, "decision": "adopt|keep|switch", "date"}}`. Switch only when the standard tool wins on the metrics that matter; unmeasured means no switch. The keeper `check_new_dependency_justified` (warn-first) checks the record exists, never whether the tool is "standard". → `KB § PATTERNS/common/gate-methodology-sync.md` (Measured comparison)
+
 ## Gate 1 — adding/raising a constraint (a CVE, a needed feature)
 
 1. Prefer the **direct dependency**. Only reach for `overrides` when the vulnerable package is **transitive** and no direct bump pulls the fix.

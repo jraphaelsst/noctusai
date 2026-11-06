@@ -1,0 +1,2992 @@
+{
+ "measured_over": "943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events",
+ "gates": {
+  "ci:agents-secc-ci": {
+   "severity": "",
+   "kind": "ci",
+   "wired_in": [
+    "github-actions"
+   ],
+   "standard": "",
+   "mechanism": "none (end-to-end container verdict; no static construction possible)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "CI run history"
+  },
+  "ci:embedding-cache-gate": {
+   "severity": "",
+   "kind": "ci",
+   "wired_in": [
+    "github-actions"
+   ],
+   "standard": "",
+   "mechanism": "write-path: pre-commit embedding refresh (cache-auto-freshness)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "CI run history"
+  },
+  "ci:merge-queue": {
+   "severity": "",
+   "kind": "ci",
+   "wired_in": [
+    "github-actions"
+   ],
+   "standard": "",
+   "mechanism": "none (independent verdict on the merged tree; construction lives in task_branch)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "CI run history"
+  },
+  "ci:seed-typecheck": {
+   "severity": "",
+   "kind": "ci",
+   "wired_in": [
+    "github-actions"
+   ],
+   "standard": "",
+   "mechanism": "none (a type-checker is the framework-native check; nothing to scaffold)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "CI run history"
+  },
+  "ci:test": {
+   "severity": "",
+   "kind": "ci",
+   "wired_in": [
+    "github-actions"
+   ],
+   "standard": "",
+   "mechanism": "none (independent verdict on the merged tree; the construction legs live in the keepers it re-runs)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "CI run history",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Hosts trivy-fs/bandit SARIF; their findings should flow to the shared ledger (SARIF) - access-tiers owns the mapping."
+   }
+  },
+  "guard:access-tier": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ],
+   "standard": "",
+   "mechanism": "api:noctusai_lib.api.access_tiers · KB § PATTERNS/security/access-tiers.md",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 1
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "guard:executor-dispatch": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ],
+   "standard": "",
+   "mechanism": "tool:task_branch start (creates the worktree the guard requires)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 44,
+    "sessions": 22
+   },
+   "class": "wall",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: dispatch skill/template pre-fills worktree_path from task_branch start (noc-branch-dispatch)."
+  },
+  "guard:harness-signature": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PostToolUse"
+   ],
+   "standard": "",
+   "mechanism": "none (advisory PostToolUse measurement leg; it never blocks)",
+   "owner": "tooling-engineer",
+   "placement": "report",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
+  },
+  "guard:heavy-run": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ],
+   "standard": "",
+   "mechanism": "tool:hw_admission (the deny message names the wrapped command)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 72,
+    "sessions": 22
+   },
+   "class": "wall",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one."
+  },
+  "guard:primary-write": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ],
+   "standard": "",
+   "mechanism": "tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session-start-worktree-sweep.py",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 134,
+    "sessions": 43
+   },
+   "class": "wall",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: task_branch auto-isolation at dispatch (agents start in a worktree by injection); measure primary-dirt delta (leg already in flight, see section below)."
+  },
+  "guard:primary-write-post": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PostToolUse"
+   ],
+   "standard": "",
+   "mechanism": "none (advisory PostToolUse measurement leg; it never blocks)",
+   "owner": "tooling-engineer",
+   "placement": "report",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
+  },
+  "guard:release-steward": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ],
+   "standard": "",
+   "mechanism": "tool:release_steward (decide() shared by the tool and the hook)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 2
+   },
+   "class": "real-drift-catch",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
+  },
+  "guard:test-seams": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ],
+   "standard": "",
+   "mechanism": "none (a monkeypatch is an in-line choice; the write-time judge of the ADDED lines is the earliest possible point)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 18,
+    "sessions": 9
+   },
+   "class": "wall",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall]: construction leg missing; owner to ship (see pattern wall table)"
+  },
+  "keeper:check-access-tier-fingerprint": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper: every prompt-derived source (compiled text, textos, tool descriptions, decisions, skill bodies/files) is a leak-fingerprint source at the texto_fonte_do_prompt seam, and every agent tool is classified prompt-derived or not.",
+   "mechanism": "api:texto_fonte_do_prompt seam (channels/conformidade.py)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-access-tier-routes": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper (access tiers, owner directive 2026-11-05): every route of every ACTIVE product resolves to a tier (platform|service|org|public) and Platform IP (studio/agents definitions, evals, prompts, admin) never sits behind a weaker d",
+   "mechanism": "api:noctusai_lib.api.access_tiers (DEP_TIERS, @access_tier, make_router(tier=)) · guard:access-tier at write time",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-access-tier-streams": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper: a route publishing message.delta-style partial LLM output to a browser must pass it through the leak filter (FiltroDeltas). Ratcheted. KB § PATTERNS/security/access-tiers.md.",
+   "mechanism": "api:FiltroDeltas leak filter (LEAK_FILTER_NAMES)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-access-tier-tables": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper: a Platform-IP table has no authenticated/anon grant and no non-admin TO authenticated policy in the migration chain (PostgREST exposure counts); with --paths (staged ADDED migrations) every new table must declare COMMENT ON",
+   "mechanism": "tool:scaffold_migration (tier comment + explicit REVOKE) · guard:access-tier at write time",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-agent-archetype-contract": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-agent-context-cache-freshness": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-agent-format": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-agent-kb-alignment": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-agent-prompt-text-in-code": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (Julia v2 D3): prompt text — ToolSpec(description=...), SectionInput(conteudo=...), *_SYSTEM = ..., long UPPER_CASE string constants — must not live in products/agents/backend/app/{channels,studio,runtime} (+ routers/channels_router.",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 7,
+    "sessions": 5
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-ai-feature-completeness": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-async-handler-sync-db": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (2026-10-21): an async def route handler that calls the SYNC supabase client directly (.execute() / .auth.* / .storage ops, not awaited) blocks the event loop for the whole round-trip, so concurrent requests serialize (orbity stairca",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 4,
+    "sessions": 4
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-auth-boundary-false-green": {
+   "severity": "warning",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "auth-boundary tests must not pair 401 with a maskable code (404/422)",
+   "mechanism": "api:assert_tier_contract (generated strict 401/403 for every documented route) - this gate guards the remaining HAND-WRITTEN assertions",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "cli exit wrapper",
+   "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
+   "api_review": {
+    "verdict": "overlap",
+    "note": "Hand-written auth assertions; the schema-driven contract test (access-tiers) generates strict 401/403 for EVERY documented route. Narrow this to the remaining hand-written tests once it lands; one property, one gate."
+   },
+   "shadow": {
+    "since": "2026-11-05",
+    "fires": 2,
+    "true_positives": 2,
+    "effective_fp": 0.0,
+    "promote_when": ">=5 findings over >=7 days with 0 effective FP"
+   }
+  },
+  "keeper:check-auth-dep-anti-pattern": {
+   "severity": "warning",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "route auth dependency anti-patterns",
+   "mechanism": "api:make_get_current_user_org factory (KB § PATTERNS/backend/backend.md Auth canonical pattern)",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet",
+   "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
+   "api_review": {
+    "verdict": "gap",
+    "note": "Tier-blind: asks 'has auth'. With make_router(tier=) the property is 'declared tier'. Refine to require a tier (access-tiers owns)."
+   }
+  },
+  "keeper:check-auto-improvement-cache-freshness": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-branch-orphan": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-branch-tree-mirror": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-push"
+   ],
+   "standard": "Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severi",
+   "mechanism": "write-path: branch_pointer._write_row writes both files",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-cache-uses-locking-helper": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-canonical-organ-consumption": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-ci-test-matrix-coverage": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: .github/workflows/test.yml's product-backend-tests / product-frontend-tests `matrix: product:` lists must include every product that QUALIFIES (has real test files for that suite) — a missing entry means that product's tests silentl",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 7,
+    "sessions": 6
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-claude-md-router": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: CLAUDE.md router discipline — §1 rules are ONE line (rule + `→` pointer, no inlined bodies) and the whole file stays under the word budget. Exits 1 on any violation. Pre-commit gate when CLAUDE.md is staged. MCP keeper check_claude_",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 5,
+    "sessions": 4
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-codification-debt": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-codification-pipeline-health": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-commands-listed-in-router": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-config-extends-product-settings": {
+   "severity": "critical",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-conflict-markers": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a tracked file committed with unresolved merge-conflict markers. Flags only when an opener (7+ '<') AND a closer (7+ '>') both appear at line start, so a lone '=======' Markdown underline or section divider is not a false positive. ",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 2
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-conftest-env-setdefault": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a product conftest that defers a CREDENTIAL/ENDPOINT env key to the ambient environment via `os.environ.setdefault`. Reads as 'provide a default', means 'whatever the developer exported wins'. p-studio 2026-08-19: the platform .env ",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-consent-routes-mounted": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "KB § PATTERNS/frontend/consent-routes-mandate.md (consent routes are seed-mounted, never re-declared)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Legal/consent is a public-allowlist category: derive the allowlist's consent entries from this mandate (single source), not a second hand list."
+   }
+  },
+  "keeper:check-contextualize-alignment": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-contract-field-provenance-map": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "social-wiring's F5 contract generator (card_hub/contrato_gerador) emits ~140 distinct dotted placeholder tokens (AST-derived: modelo_texto.py's TEMPLATE string + contexto.montar_contexto's + derivacao.derivar_switches's return-dict keys — n",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-db-guard-registry-static": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (2026-11-05): offline invariants of verify_db_guards DEFAULT_REGISTRY - unique ids, every probe migration file exists, a recognised sentinel, rollback-wrapped SQL is BEGIN;/one DO block/ROLLBACK;. Sub-second; pre-commit runs it when ",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-dependabot-product-coverage": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: .github/dependabot.yml must carry an npm block for every products/<slug>/frontend with a package.json, no block may point at a directory whose package.json no longer exists, and every npm block must carry the 8-entry fleet-major `ig",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-detector-has-regression-test": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every check_* detector in compliance.py has a `class Test<DetectorCamel>` regression test. Exits 1 on any detector without one. Pre-commit gate when compliance.py or a mcp/noctusai/tests/test_check_*.py is staged (it used to block o",
+   "mechanism": "tool:scaffold_keeper (emits the Test<Detector> class)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-doc-staleness": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit",
+    "pre-push"
+   ],
+   "standard": "Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over ",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-eight-way-sync": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_list",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 46,
+    "sessions": 24
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: propagate-on-write for the 8 surfaces (a doc-sync tool that edits all surfaces in one call)."
+  },
+  "keeper:check-embed-funnel-self-configures": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-engineer-slice-scored": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-push"
+   ],
+   "standard": "Backstop for the task_branch integrate slice-score gate: landed engineer slices (branch-tree pointer) with no slice-scores.ndjson row. Blocks only on this session's own pointers. KB § CONTEXT/PATTERNS/common/dispatch-token-log.md.",
+   "mechanism": "write-path: task_branch integrate refuses slice_unscored",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-every-test-file-is-gated": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-fe-route-missing": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-files-outlined": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "frontend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-findings-ledger-visibility": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Backstop: the findings-injection hook is registered for SessionStart + SubagentStart and every registered ledger is on the roster it reads (visibility is injected by construction; nobody should hit this).",
+   "mechanism": "injection: scripts/hooks/claude-inject-open-findings.py (SessionStart + SubagentStart)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-findings-ledgers": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper over EVERY registered living findings ledger (access-tier, Julia's mistakes, ...): a status that disagrees with the latest scan fails (new finding without a row, a row marked fixed that is still seen, an open row no longer s",
+   "mechanism": "tool:findings_ledger (reconcile is the only writer; scanners decide what is still real)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-frontend-config-paths": {
+   "severity": "critical",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-frontend-entrypoint": {
+   "severity": "critical",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-gate-triad": {
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "meta-gate: every gate declares construction leg + owner; decision matrix complete",
+   "mechanism": "tool:scaffold_keeper (requires mechanism+owner) · tool:gate_alignment declare",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "new": true,
+   "source": "KB § PATTERNS/common/gate-methodology-sync.md (Sources & how they map)",
+   "shadow": {
+    "since": "2026-11-05",
+    "fires": 0,
+    "fix_rate": null,
+    "note": "zero false positives by construction: baseline-ratcheted, so it cannot fire on legacy state"
+   },
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (shadow)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-git-hook-file-tampering": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-git-hooks-bypass": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-git-leftovers": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-gitignore-drift": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-guard-hooks-registered": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-push"
+   ],
+   "standard": "Every scripts/hooks/claude-guard-*.py must be referenced by a hook entry in .claude/settings.json (unregistered guard = silent no-op).",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-guc-carveout-guard-hand-written": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a NEW migration may not hand-write a trigger function that gates a table mutation on a transaction-local flag (current_setting('<ns>.<flag>', true) = 'on'); render it with noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (ma",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-hand-copied-org-admin": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: awake product frontends must not hand-copy the org-admin UX gate (`isProductAdmin || org.role owner/admin`) — use useIsOrgAdmin()/isOrgAdmin(ctx) from @noctusai/lib. Severity high; blocking.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-handrolled-core-url": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-hardcoded-product-slug-set": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instea",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-harness-mod": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a Claude Code mod (.claude/mods/*) is a UX layer over the canonical Python gates, never a gate. (a) marketplace.json <-> plugin.json (name+version) <-> settings.json enabledPlugins/extraKnownMarketplaces, every mods/* folder listed;",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 3,
+    "sessions": 3
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-harness-mod-integrity": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-hashlib-usedforsecurity": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a weak-hash call (hashlib.md5/sha1/new(\"md5\"|\"sha1\", ...)) in the Bandit scope (products/*/backend/app + seed/lib/backend/noctusai_lib) used for a non-security purpose MUST pass usedforsecurity=False, or Bandit B324 (High) hard-fail",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-job-start-without-handoff": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-kb-semantic-drift": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: surfaces when live owns_kb validation diverges from latest ratified baseline by > threshold. Severity WARNING. Suggests ratification when no baseline exists yet.",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-keeper-cache-freshness": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-ledger-drain-after-settle": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-push"
+   ],
+   "standard": "Keeper (pre-push HARD-BLOCK): every append-only project-history ledger written during a task_branch run must have a stage that SHIPS it — the drain leg must exist in BOTH the integrate and cleanup result paths AND run AFTER cache_settle. Cl",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-ledger-pii": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (severity critical, no suppression marker): personal data (CPF/CNPJ with valid check digit, BR phone, non-team email, labelled RG / nascimento / casamento date) in a permanent ledger or history file (project-history/**, findings.md, ",
+   "mechanism": "api:tools/noctus/dev/_pii_guard.assert_no_pii (ledger writers refuse)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 2
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-lgpd-entry-removal-range": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-license-gate-by-construction": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (round 2, 2026-10-06): the license gate holds BY CONSTRUCTION — no active product hand-rolls an org dependency that skips the seed trusted resolver, opts out (enforce_license=False / own configure_license_gate / license_checker=), an",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 4,
+    "sessions": 3
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-llm-usage-context-entry": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a metered LLM call (chat_with_tools/chat_completion*/run_tool_loop) in products/<slug>/backend/app whose file has no llm_usage_context scope records ai_usage.agent_key NULL (per-agent/per-session cost lost). Allowlist with reasons i",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-lying-loading-state": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: TanStack Query v5 `isLoading` is FALSE during a background refetch (`isLoading === isPending && isFetching`); a `loading=`/`isLoading=` JSX prop or a hand-rolled `!X.isLoading && ... .length === 0` guard falls through to its EMPTY b",
+   "mechanism": "",
+   "owner": "frontend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-mcp-tools-reject-unknown-args": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: `build_server()` must call `install_strict_tool_arguments(server)` AFTER `register_all`. FastMCP registers its handler with validate_input=False, so the lowlevel server never validates a call against the advertised inputSchema and p",
+   "mechanism": "api:install_strict_tool_arguments (after register_all)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 2
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-memory-md-index": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-merge-drivers-registered-in-ci": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every custom `merge=<name>` in .gitattributes must be registered by scripts/hooks/register-merge-drivers.sh, and .github/workflows/merge-queue.yml must invoke that script (an unregistered driver = plain text merge = queue ejections ",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-methodology-doc-refs": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-migration-applied-ledger-drift": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-push"
+   ],
+   "standard": "Keeper (pre-push, DB round-trip, warning-only): per product, migration files on disk MINUS rows recorded in <real schema>.schema_migrations, intersected with names present in supabase_migrations.schema_migrations — the set applied through a",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-migration-guard-has-probe": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (gate↔methodology-sync backstop for noctus.dev.verify_db_guards, 2026-09-18): a migration that defines a genuine guard (a trigger function that RAISE EXCEPTIONs, a named CHECK/UNIQUE constraint) must have a corresponding GuardProbe r",
+   "mechanism": "tool:scaffold_migration (guard_probe_stubs) · organ guard_probes in noctusai_lib/domain/<organ>/guards.py",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 85,
+    "sessions": 22
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "FIXED 2026-11-05: scaffold_migration returns guard_probe_stubs (ready GuardProbe) + the gate message names it. Re-measure next loop."
+  },
+  "keeper:check-migration-number-collision": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: two migrations claiming the same numeric prefix. Leg A (high) = duplicate ON DISK in one product — apply-order is undefined. Leg B (warning) = the same number used by DIFFERENT files across local branches; whichever merges second mu",
+   "mechanism": "tool:scaffold_migration (next_migration_number reserves across disk/origin/branches)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-migration-number-refs-in-tests": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER (\"217_x.sql\", migrations/217_) — task_branch integrate renumbers colliding migrations, breaking the test. Use noctusai_lib.testing.migrat",
+   "mechanism": "api:noctusai_lib.testing.migrations.migration_path · tool:scaffold_migration (reference_in_tests)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 48,
+    "sessions": 21
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "FIXED 2026-11-05: scaffold_migration returns reference_in_tests (migration_path snippet). Re-measure next loop."
+  },
+  "keeper:check-migration-untyped-empty-array": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: untyped empty `ARRAY[]` (no ::type) in migration SQL fails on apply with 42P18. Severity high; blocking.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 2
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-mock-schema-validation": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-model-dump-json-mode": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (2026-10-15, orbity live 502): in ACTIVE products' backend/app, a pydantic `.model_dump()` without mode=\"json\" must not flow into a supabase .insert/.update/.upsert or a create_/update_/upsert_/insert_ (and pt-BR criar/atualizar/inse",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 3,
+    "sessions": 3
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-mutation-family-write": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "frontend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-mutation-invalidate-only": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (2026-10-21): a TanStack useMutation({...}) that neither draws its change (onMutate) nor writes the server's answer (setQueryData) makes the screen wait for write + refetch (orbity lead note ~2 s late). RATCHET against mcp/noctusai/t",
+   "mechanism": "",
+   "owner": "frontend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 12,
+    "sessions": 5
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall]: construction leg missing; owner to ship (see pattern wall table)"
+  },
+  "keeper:check-name-on-nome-select": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-new-dependency-justified": {
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "a NEW dependency carries a measured comparison record (never \"is it standard\")",
+   "mechanism": ".claude/skills/noc-dep-update/SKILL.md (gate 0 + comparison-record template) · mcp/noctusai/dependency-additions.json",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "new": true,
+   "source": "KB § PATTERNS/common/gate-methodology-sync.md (Sources & how they map)",
+   "shadow": {
+    "since": "2026-11-05",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (shadow)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-new-org-table-rls": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVO",
+   "mechanism": "tool:scaffold_migration (with_table emits the rls_subquery_policy)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 4,
+    "sessions": 3
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "overlap",
+    "note": "Delta gate for org_id tables; D4 'RLS on every non-public table' is the general property. Keep as the org-specific delta; the general gate owns the rest."
+   }
+  },
+  "keeper:check-no-authenticated-grant-on-content-tables": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: an agents migration (>= 036) must not GRANT SELECT or CREATE POLICY TO authenticated/anon on a table outside the browser-readable allowlist (the agents schema is PostgREST-exposed; security finding C2). Severity critical; blocking.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "gap",
+    "note": "Scoped to agents migrations >=036 only: other PostgREST-exposed schemas are unscanned. Subsume into the D4 DB-defaults keeper (access-tiers), then retire this one."
+   },
+   "retire": "NOC-REMEDIATE[gate-retire]: superseded by keeper:check-access-tier-tables; alias period then remove"
+  },
+  "keeper:check-no-direct-llm-sdk-import": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (D26): refuse direct `anthropic`/`openai` SDK imports in active products' backend app code. LLM calls go through `noctusai_lib.integrations.llm`, which records every call into the central ledger public.ai_usage (attributed + priced, ",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-no-metadata-authz": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 3,
+    "sessions": 3
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Backend-only scan; holds with a public route list (a user-writable claim is exploitable either way)."
+   }
+  },
+  "keeper:check-no-vendor-study-in-git": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-not-configured-carries-marker": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every *NotConfigured / *NaoConfigurado exception class in the seed or an active product's backend/app/ must subclass noctusai_lib.primitives.not_configured.IntegrationNotConfigured (directly or via a marked in-scope base) — unmarked",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 13,
+    "sessions": 7
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall]: construction leg missing; owner to ship (see pattern wall table)"
+  },
+  "keeper:check-org-identity-function-parity": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (SEC-2 customer-role isolation, 2026-09-28): every re-declaration of the shared public.current_org_id()/current_user_org_id()/current_org_role()/is_customer()/current_customer_org_id() in any migration must equal the canonical render",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 6,
+    "sessions": 4
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-org-owned-definition-not-instanciavel": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-org-picker-ready-policies": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (org picker): a product whose migration chain last sets products.org_picker_ready=true must have no policy (latest definition) still using public.current_org_id()/current_user_org_id()/an inline noctus_users org subquery -- convert t",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-org-role-without-org-id": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (B3): resolve_org_role/is_org_admin/require_org_admin_role called without org_id= decide admin in the HOME org, not the request's selected org. Severity high; blocking.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 5,
+    "sessions": 4
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Authz correctness on selected org; unchanged."
+   }
+  },
+  "keeper:check-out-of-contract-trees": {
+   "severity": "critical",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-outlined": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every STAGED .py/.ts/.tsx must be AST-outline-able (no SyntaxError / parse failure). Exits 1 on any un-outline-able staged file. Used by the pre-commit hook so the platform stays AST-readable + narrow-read/AST-first tooling always f",
+   "mechanism": "",
+   "owner": "frontend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-override-is-range": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every npm `overrides` entry must be a RANGE (^/~/>=), never an exact version. An exact override wins over every peer range and direct dep, can never be upgraded by npm install, and is invisible in the dependency list — while adding ",
+   "mechanism": ".claude/skills/noc-dep-update/SKILL.md (decision gates)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 4,
+    "sessions": 4
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-path-references": {
+   "severity": "critical",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-phase-state": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by the pre-commit hook to block commits that ship mismatch.",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-phase-state-consistency": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-piped-exit-code-pattern": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: verdict-channel-integrity — flags `$?` read off a PIPELINE (reads the LAST stage's exit status, not the judged command's), a pipe into tail/head/grep/sed/awk/cat used directly as an if/&&/|| condition, and either shape with no effec",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 2
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-postgrest-schema-qualified-table": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a Supabase/PostgREST client is ALREADY schema-bound, so `.table(name)`/`.from_(name)` resolves RELATIVE to that schema and never parses a dot as a separator. `db.table(f\"{deps._db.schema}.invitations\")` therefore asks for `<schema>.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 4,
+    "sessions": 4
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-postgrest-unbounded-query": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: PostgREST silently caps ANY select at `db-max-rows` (Supabase default 1 000) — no error, no warning, `response.data` just comes back short. SEVEN instances shipped to production in one session (2026-08-13/14): portal-roi reported 1 ",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-predeploy-leg-verify-or-block": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-primary-checkout-commit": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commi",
+   "mechanism": "guard:primary-write (the write is denied before a commit exists)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 2
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-private-accent-fold": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: no private unicodedata NFKD/NFD accent fold outside noctusai_lib.primitives.accents. Severity high; blocking.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-private-unique-violation-predicate": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: no private PostgREST unique-violation predicate outside noctusai_lib.primitives.postgrest_errors. Severity high; blocking.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-prod-cache-reachable": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-prod-compose-env-manifest-sync": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "deploy/fleet/env.fleet.keys must document every ${VAR} docker-compose.prod.yml + compose.infra.prod.yml interpolate from deploy/fleet/.env.fleet (compose-parse-time, NOT the root .env env_file: loads) — and a secret-shaped var (*_KEY/*_TOKE",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-prod-compose-hardening-parity": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "deploy/fleet/docker-compose.prod.yml's agents + academia-de-reciclagem security blocks (cap_drop/cap_add/security_opt/read_only/tmpfs/mem_limit) must stay byte-identical to noctus.dev.propagate's _C_HARDENING_AGENTS/_C_HARDENING_ACADEMIA — ",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-prod-exposure-consent": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Prod-promotion consent gate: a product's FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the production-promotion decision (:latest ships it with no later ",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 6,
+    "sessions": 5
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Exposure-surface registration is the owner's decision; unchanged by public docs."
+   }
+  },
+  "keeper:check-product-declared-imports": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every RUNTIME third-party import in an active product's backend/app/ — plus IMPLIED deps (fastapi Form/File/UploadFile → python-multipart, pydantic EmailStr → email-validator) — must be declared by that product's requirements.txt or",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-product-guide-cochange": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-product-guide-cochange-range": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-product-icon-registered": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-product-lockfile-dep-sync": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (pack",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-product-service-worker": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-product-source-build-dep-pip-seam": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-project-history-staged": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Pre-commit gate: a commit staging project-history/ledger.ndjson must stage the PROJECT-HISTORY.md rendered from that staged ledger (exit 1 + the fix command on drift).",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-redis-client-via-seam": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every Redis client (redis.Redis/StrictRedis/from_url/ConnectionPool.from_url, aioredis) in seed/** backend and ACTIVE products' backend must be built by noctusai_lib.integrations.redis (the auth seam) — AST, tests/fakeredis exempt. ",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-root-requirements-superset": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-schema-wide-anon-grant": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (severity critical, NO allowlist / suppression marker — same posture as --check-storage-bucket-public): flags a schema-wide table GRANT or default-privilege GRANT naming `anon`. Leg A — `GRANT ... ON ALL TABLES IN SCHEMA <s> TO ...an",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Critical, no allowlist; no overlap with tier keepers (grants vs routes)."
+   }
+  },
+  "keeper:check-secdef-migration-revokes-execute": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.",
+   "mechanism": "KB § PATTERNS/backend/migration-sql-security-gates.md (migration carries the REVOKE lockdown)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 5,
+    "sessions": 4
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Static twin of verify_db_guards secdef probe: two ends of one property, intentional (commit + predeploy)."
+   }
+  },
+  "keeper:check-section-7-placeholder-consistency": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-seed-compliance": {
+   "severity": "critical",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-seed-declared-imports": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every RUNTIME third-party import in seed/*/backend/<pkg>/ must name a distribution declared in THAT package's pyproject.toml. Static — never consults the installed environment, which is the thing that lies. Generalises the 2026-09-0",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 3,
+    "sessions": 3
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-seed-template-sync": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: templates/product-seed/ must equal products/seed/ rendered by the sync (copy + placeholders), EXCEPT the declared divergences in templates/product-seed-divergences.json — whose content is exempt but whose template file must still ex",
+   "mechanism": "write-path: pre-commit syncs products/seed -> templates/product-seed",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-seed-test-root-ci-coverage": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-seed-version-propagation": {
+   "severity": "critical",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-settings-di-regression": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-silent-refusal": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (2026-10-24, N=4: F75b F76 F78 F86): a refusal the user never sees — a query's empty branch (rows.length === 0 / isEmpty=) reachable while the query is in ERROR (a failed search read as 'Nenhum … encontrado' + 'Cadastrar novo'), or a",
+   "mechanism": "",
+   "owner": "frontend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 12,
+    "sessions": 8
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall]: construction leg missing; owner to ship (see pattern wall table)"
+  },
+  "keeper:check-skill-format": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-skills-listed-in-router": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper sub-leg of check_eight_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Procedure skills' line; every skill named in CLAUDE.md MUST exist on disk. Severity high.",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-slowapi-with-pep563": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-stale-after-write": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keepers (2026-10-24) check_mutation_family_write + check_job_start_without_handoff, one scan: (a) a raw useMutation that setQueryData's a key whose family (reads whose key EXTENDS it, derived from the product's own query keys) it never refr",
+   "mechanism": "",
+   "owner": "frontend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 3,
+    "sessions": 3
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-stale-branch-pointers": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-push"
+   ],
+   "standard": "Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers whose branch landed on origin/dev and whose worktree is gone. Blocks only on pointers owned by this session (CLAUDE_CODE_SESSION_ID);",
+   "mechanism": "write-path: task_branch start/integrate/cleanup write the transitions",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-stand-in-conformance": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: a test double (mock/wrapper) must satisfy the same CONTRACT as the real thing it replaces. Built against THREE same-day production failures (2026-09-22) where a stand-in was more permissive than the real thing, so the suite stayed g",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-standard-routers-audit": {
+   "severity": "warning",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "standard routers mounted per product",
+   "mechanism": "api:create_product_app standard_routers opt-in (seed)",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet",
+   "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
+   "api_review": {
+    "verdict": "gap",
+    "note": "Per-product router audit; must require tier-declared routers, and cover products it skips (active-only scope is unsafe once the full route list is public)."
+   }
+  },
+  "keeper:check-status-pagina-role-parity": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-storage-bucket-public": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper (severity critical, NO allowlist / suppression marker / accept-with-rationale escape hatch — owner directive 2026-09-17): flags any path to a public Supabase Storage bucket. Leg A — a migration's `INSERT INTO storage.buckets` / `UPDA",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Critical, no allowlist; storage exposure is not covered by route tiers."
+   }
+  },
+  "keeper:check-table-has-rls": {
+   "severity": "high",
+   "kind": "keeper-batch",
+   "wired_in": [
+    "compliance.py sweep"
+   ],
+   "standard": "",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "unmeasured",
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-tunnel-ingress-snapshot-sync": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE confi",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Hostname routing source-of-truth; unchanged."
+   }
+  },
+  "keeper:check-upload-route-body-override": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every UploadFile-declaring route under products/<slug>/backend/app/ (any annotation shape — UploadFile, list[UploadFile]/List[UploadFile], UploadFile | None, Optional[UploadFile], Annotated[UploadFile, File(...)]) must have a matchi",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 10,
+    "sessions": 7
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: seed upload-route factory that sets the body limit by construction.",
+   "api_review": {
+    "verdict": "keep",
+    "note": "Fires 10x/7 sessions = wall by threshold; construction leg missing (seed upload-route factory). NOC-REMEDIATE[gate-wall]."
+   }
+  },
+  "keeper:check-version-bump": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Gate MAJOR-bump authorization: refuse working-tree VERSION whose MAJOR exceeds HEAD's unless .major-bump-authorized marker exists. Autonomous PATCH/MINOR pass. KB § PATTERNS/common/versioning.md. MCP: noctus.dev.version_guard.",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-waha-instances-render-sync": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "deploy/fleet/compose.waha.yml must equal the render of deploy/fleet/waha-instances.yml (one WAHA Core container per number, declared as data). Severity high. KB § CONTEXT/INTEGRATIONS/whatsapp.md.",
+   "mechanism": "",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "never-fires",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-workflow-actionlint": {
+   "mechanism": "none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is the framework-native check)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-06",
+   "shadow": null
+  },
+  "keeper:check-workflow-cli-flags-exist": {
+   "mechanism": "none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is the framework-native check)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-06",
+   "shadow": null
+  },
+  "keeper:check-workflow-job-timeouts": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Keeper: every GitHub Actions job (no `uses:`) must declare timeout-minutes <= ceiling (merge-queue drain 360), and every apt/apt-get step a step timeout. 2026-11-05: a hung apt step with no timeout held a merge-queue batch (and 13 queued en",
+   "mechanism": "",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 1,
+    "sessions": 1
+   },
+   "class": "real-drift-catch",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-workflow-mcp-requirements-path": {
+   "mechanism": "none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is the framework-native check)",
+   "owner": "devops-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-06",
+   "shadow": null
+  },
+  "keeper:verify-kb-sync": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Verify CLAUDE.md pointers + KB INDEX.md are in sync",
+   "mechanism": "tool:kb_sync (regenerates counts; task_branch integrate runs it)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 15,
+    "sessions": 14
+   },
+   "class": "wall",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: kb_sync already runs at integrate; add it to the pre-commit auto-fix path (regenerate + restage, then verify)."
+  }
+ },
+ "decisions": [
+  {
+   "id": "D1",
+   "decision": "Access tiers on every route and table, platform-wide, default deny. Route construction = `make_router(tier=)` over FastAPI APIRouter `dependencies=` (framework-native; to be MEASURED against alternatives)",
+   "home": "KB § PATTERNS/security/access-tiers.md",
+   "construction": "api:noctusai_lib.api.access_tiers (DEP_TIERS, @access_tier, make_router(tier=)); seed example routers gated",
+   "gate": "keeper:check-access-tier-routes + guard:access-tier (write time)",
+   "telemetry": "gate events (cli wrapper, guard-events) + access-tier ledger",
+   "branch": "feat/access-tiers-gate",
+   "gates": [
+    "keeper:check-access-tier-routes",
+    "guard:access-tier"
+   ]
+  },
+  {
+   "id": "D2",
+   "decision": "Closed public allowlist (landing+nav, login/signup/reset, pricing/checkout/thank-you w/o PII sans one-time token, legal/consent, lead forms); webhooks/OAuth callbacks/health in a service/signed tier",
+   "home": "KB § PATTERNS/security/access-tiers.md",
+   "construction": "closed PUBLIC_CATEGORIES allowlist in noctusai_lib.api.access_tiers (landing, auth, pricing-checkout, legal-consent, lead-capture); webhooks/OAuth/health in the signed tier",
+   "gate": "keeper:check-access-tier-routes (admin-looking path behind org/public; unclear)",
+   "telemetry": "gate events + access-tier ledger",
+   "branch": "feat/access-tiers-gate",
+   "gates": [
+    "keeper:check-access-tier-routes"
+   ]
+  },
+  {
+   "id": "D3",
+   "decision": "/docs and /openapi.json are not public in prod",
+   "home": "KB § PATTERNS/security/access-tiers.md (API docs are public)",
+   "construction": "make_router(tier=\"platform\") sets include_in_schema=False",
+   "gate": "keeper:check-access-tier-routes (class platform-in-public-schema) + assert_tier_contract",
+   "telemetry": "access-tier ledger (schema section)",
+   "branch": "feat/access-tiers-gate",
+   "gates": [
+    "keeper:check-access-tier-routes"
+   ]
+  },
+  {
+   "id": "D4",
+   "decision": "DB defaults: RLS on, no browser grants on non-public tables, no anon/PUBLIC read on token/secret/PII, no inactive schema in pgrst.db_schemas; scaffold emits per-table role-matrix test",
+   "home": "KB § PATTERNS/security/access-tiers.md · KB § PATTERNS/backend/database-rls.md",
+   "construction": "tool:scaffold_migration (tier comment + explicit REVOKE, no browser GRANT by default)",
+   "gate": "keeper:check-access-tier-tables + existing grant/RLS/bucket keepers",
+   "telemetry": "gate events + access-tier ledger",
+   "branch": "feat/access-tiers-gate",
+   "gates": [
+    "keeper:check-access-tier-tables",
+    "keeper:check-no-authenticated-grant-on-content-tables",
+    "keeper:check-schema-wide-anon-grant",
+    "keeper:check-new-org-table-rls"
+   ]
+  },
+  {
+   "id": "D5",
+   "decision": "Effective-state production check = Supabase advisor (candidate, to be MEASURED) + our own SQL, scheduled and pre-deploy",
+   "home": "KB § PATTERNS/security/access-tiers.md",
+   "construction": "tool:noctus.dev.access_tier_exposure (read-only effective-state queries diffed against declared tiers); Supabase advisor = candidate to MEASURE (decision record in the access-tiers pattern)",
+   "gate": "keeper:check-findings-ledgers (drift is a ledger row; unmeasured is never green); noc-daily-ops step 2b",
+   "telemetry": "access-tier ledger metrics snapshot",
+   "branch": "feat/access-tiers-gate",
+   "gates": [
+    "keeper:check-findings-ledgers"
+   ]
+  },
+  {
+   "id": "D6",
+   "decision": "One shared living findings ledger exported as SARIF 2.1.0 (candidate standard format, to be MEASURED against the home-grown shape) uploaded to code scanning; baselineState reconcile; suppressions with justification+owner+expiry",
+   "home": "KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "tool:findings_ledger (single writer; export_sarif = SARIF 2.1.0)",
+   "gate": "keeper:check-findings-ledgers",
+   "telemetry": "ledger metrics; gate-walls ledger plugs in the same way",
+   "branch": "feat/access-tiers-gate",
+   "gates": [
+    "keeper:check-findings-ledgers"
+   ]
+  },
+  {
+   "id": "D7",
+   "decision": "Ledger visibility injected at agent start and dispatch and in every template",
+   "home": "KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "injection: scripts/hooks/claude-inject-open-findings.py (SessionStart + SubagentStart) + ledger roster in templates",
+   "gate": "keeper:check-findings-ledger-visibility",
+   "telemetry": "gate events",
+   "branch": "feat/access-tiers-gate",
+   "gates": [
+    "keeper:check-findings-ledger-visibility"
+   ]
+  },
+  {
+   "id": "D8",
+   "decision": "Julia continuous evals on the real turn path (content-change, schedule, handoff triggers; every mistake becomes a permanent case; MODEL/STRUCTURAL/CONTENT attribution; same ledger)",
+   "home": "KB agents-eval pattern",
+   "construction": "eval harness on the real turn path",
+   "gate": "pending:feat/julia-turn-redesign",
+   "telemetry": "pending:feat/julia-turn-redesign",
+   "branch": "feat/julia-turn-redesign",
+   "gates": [
+    "pending:feat/julia-turn-redesign"
+   ]
+  },
+  {
+   "id": "D9",
+   "decision": "Red-team leg with promptfoo ONLY if it measures better than in-repo; else a recorded reason",
+   "home": "KB agents-eval pattern",
+   "construction": "comparison record (decision 12) then harness",
+   "gate": "pending:feat/julia-turn-redesign",
+   "telemetry": "pending:feat/julia-turn-redesign",
+   "branch": "feat/julia-turn-redesign",
+   "gates": [
+    "pending:feat/julia-turn-redesign"
+   ]
+  },
+  {
+   "id": "D10",
+   "decision": "The triad for every enforceable thing: construction + backstop gate + alignment telemetry; walls ranking; meta-gate",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Build triad) · §1 Gate↔methodology line",
+   "construction": "tool:scaffold_keeper requires mechanism+owner and emits the inventory row; tool:gate_alignment declare",
+   "gate": "keeper:check-gate-triad",
+   "telemetry": "guard-events.ndjson + noctus.dev.gate_alignment walls",
+   "branch": "feat/gate-alignment",
+   "gates": [
+    "keeper:check-gate-triad"
+   ]
+  },
+  {
+   "id": "D11",
+   "decision": "Gate admission/demotion by measured precision: warn-only shadow, effective-FP <= ~10%, owner, actionable refusals",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Admission & demotion)",
+   "construction": "declare_gate defaults placement=warn; shadow record required for a new blocking gate",
+   "gate": "keeper:check-gate-triad",
+   "telemetry": "gate_alignment.gate_stats effective_fp; walls demote flag",
+   "branch": "feat/gate-alignment",
+   "gates": [
+    "keeper:check-gate-triad"
+   ]
+  },
+  {
+   "id": "D12",
+   "decision": "Measured comparison, not standard-by-default: in-repo vs standard tool compared on stated metrics; switch only when the standard wins on the metrics that matter; unmeasured = no switch. SARIF, FastAPI dependency wrapper, Supabase advisor, promptfoo are CANDIDATES to measure",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Measured comparison) · skill noc-dep-update gate 0",
+   "construction": "comparison-record template in noc-dep-update; mcp/noctusai/dependency-additions.json",
+   "gate": "keeper:check-new-dependency-justified",
+   "telemetry": "warn-first shadow events via cli wrapper",
+   "branch": "feat/gate-alignment",
+   "gates": [
+    "keeper:check-new-dependency-justified"
+   ]
+  },
+  {
+   "id": "D13",
+   "decision": "Research-first is the default for EVERY request: specialists' reliable sources are read (not link-checked), cited in the deliverable, unverified items marked; tool choice follows the measured-switch rule",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Sources & how they map; How to apply step 0) · engineer-seed.md + advisor agents L1 line",
+   "construction": "standing line in .claude/agents/engineer-seed.md and the 7 advisor agents; pattern-authoring checklist step 0; scaffold_keeper requires `source`",
+   "gate": "keeper:check-gate-triad (new gates carry `source`) + report-only `--gate-alignment sources` (KB deliverables without a sources section; never blocks code commits)",
+   "telemetry": "sources report output; gate-triad events",
+   "branch": "feat/gate-alignment",
+   "gates": [
+    "keeper:check-gate-triad"
+   ]
+  },
+  {
+   "id": "D14",
+   "decision": "Public-API-docs readiness: every documented route gated and protected by old+new gates with no gap and no duplicate (each property one gate)",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (matrix) + access-tiers pattern",
+   "construction": "make_router(tier=) + assert_tier_contract (schema-driven) + old gates re-judged in `api_review`",
+   "gate": "old (re-judged at predicate level): auth-boundary-false-green (keep, shadow), auth-dep-anti-pattern + standard-routers-audit (functional, out of the exposure set), consent-routes-mounted, no-authenticated-grant (retire after alias), new-org-table-rls, schema-wide-anon-grant, storage-bucket-public, secdef-revokes-execute, no-metadata-authz · new: access-tier routes/tables/streams/fingerprint + guard:access-tier",
+   "telemetry": "gate events (cli wrapper) · `api_review` verdicts in the inventory",
+   "branch": "feat/gate-alignment (old-gate review) + feat/access-tiers-gate (new)",
+   "gates": [
+    "keeper:check-auth-boundary-false-green",
+    "keeper:check-consent-routes-mounted",
+    "keeper:check-schema-wide-anon-grant",
+    "keeper:check-storage-bucket-public",
+    "keeper:check-access-tier-routes",
+    "keeper:check-access-tier-tables",
+    "guard:access-tier"
+   ]
+  },
+  {
+   "id": "D15",
+   "decision": "False-alarm gates are researched and fixed, not just demoted: containment by demotion -> research with read+cited primary sources -> detector fix with FP/TP regression tests -> re-measure -> re-promote; ledger row + expiry while demoted",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop, step 4)",
+   "construction": "declare_gate/inventory `demoted` block (since, expiry, destination) is the only way to hold a gate demoted",
+   "gate": "keeper:check-gate-triad (fails a demoted gate without destination, or past expiry)",
+   "telemetry": "gate_alignment walls: demote flag from measured effective-FP > 10%",
+   "branch": "feat/gate-alignment",
+   "gates": [
+    "keeper:check-gate-triad"
+   ]
+  },
+  {
+   "id": "D16",
+   "decision": "Gate-wall misalignment is a finding by construction: walls, expired demotions and pending matrix legs live in the shared `gate-walls` findings ledger (deterministic scanner over the committed inventory)",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop) · KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "tool:findings_ledger register_ledger (gate_wall_findings.py); noc-daily-ops / noc-hygiene run `--gate-alignment walls --file-walls`",
+   "gate": "keeper:check-findings-ledgers (covers the gate-walls ledger)",
+   "telemetry": "ledger rows + SARIF export",
+   "branch": "feat/gate-alignment",
+   "gates": [
+    "keeper:check-findings-ledgers"
+   ]
+  }
+ ]
+}

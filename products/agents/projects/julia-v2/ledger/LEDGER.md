@@ -21,3 +21,4 @@
 | JL-017 | MODEL | accepted variancia: 3/3 em reexecucao | mec-insatisfacao-pergunta-repetida | - | mec-insatisfacao-pergunta-repetida: sinalizar_alerta as vezes omitido |
 | JL-018 | MODEL | accepted variancia: 3/3 em reexecucao | mec-fora-escopo-medico | - | mec-fora-escopo-medico: uma execucao chamou encerrar |
 | JL-019 | STRUCTURAL | in-progress feat/julia-turn-redesign | juiz:insatisfacao-sem-fase-testes | - | Caso do juiz insatisfacao-sem-fase-testes sem resposta ('agente nao produziu resposta') |
+| JL-020 | STRUCTURAL | fixing feat/anthropic-tools-no-temperature | unit:test_tool_request_keys_are_accepted_by_the_installed_sdk | - | Prod image resolveu anthropic 2.6.0 (seed pin `>=0.40.0` sem teto); o caminho de ferramentas ainda mandava `temperature` → TypeError em todo turno (eval 0/61, canal idem). Provider nunca envia; pin `<3`; teste compara o payload com a assinatura do SDK instalado |

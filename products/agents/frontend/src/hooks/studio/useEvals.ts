@@ -142,6 +142,8 @@ export function useEvalRun(agentKey: string, runId: string | null) {
     if (notifiedFor.current === runId) return;
     notifiedFor.current = runId;
     qc.invalidateQueries({ queryKey: studioKeys.detail(agentKey) });
+    // The readiness checklist's judge item (`eval_juiz_*`) is derived from this run.
+    qc.invalidateQueries({ queryKey: studioKeys.prontidao(agentKey) });
   }, [agentKey, qc, runId, status]);
 
   return {

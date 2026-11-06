@@ -291,11 +291,11 @@ def _router_defs(tree: ast.Module) -> dict[str, dict[str, Any]]:
             for t in n.targets:
                 if isinstance(t, ast.Name):
                     gdeps = [k.value for k in n.value.keywords if k.arg == "guard"]   # make_router(guard=<dep>) == Depends(<dep>)
-                    hidden = any(k.arg == "include_in_schema" and isinstance(k.value, ast.Constant) and k.value.value is False for k in n.value.keywords)
-                    # make_router(tier="platform") defaults include_in_schema=False BY CONSTRUCTION (access_tiers.make_router),
-                    # unless the call explicitly says otherwise.
-                    if rtier == "platform" and not any(k.arg == "include_in_schema" for k in n.value.keywords):
-                        hidden = True
+                    explicit = next((k.value.value for k in n.value.keywords
+                                     if k.arg == "include_in_schema" and isinstance(k.value, ast.Constant)), None)
+                    # make_router(tier="platform") defaults include_in_schema=False (access_tiers.make_router) -- the
+                    # form this keeper's own message prescribes must not read as exposed.
+                    hidden = explicit is False or (explicit is None and rtier == "platform")
                     out[t.id] = {"prefix": prefix, "deps": _deps_of_kw(n.value) + gdeps, "tier": rtier, "category": rcat, "hidden": hidden}
     return out
 

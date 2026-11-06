@@ -298,6 +298,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-migration-applied-ledger-drift", action="store_true", help="Keeper (pre-push, DB round-trip, warning-only): per product, migration files on disk MINUS rows recorded in <real schema>.schema_migrations, intersected with names present in supabase_migrations.schema_migrations — the set applied through a path that never recorded it (the 2026-09 erp-imobiliario/personal-finance/therapy-platform phantom-schema incident, and any future gap of the same shape, e.g. the Supabase Management API's apply_migration path). Requires a resolvable supabase_access_token; when none resolves this SKIPS loudly (prints SKIPPED, never reads as a pass) rather than returning a silent empty result. MCP keeper check_migration_applied_ledger_drift.")
     parser.add_argument("--check-storage-bucket-public", action="store_true", help="Keeper (severity critical, NO allowlist / suppression marker / accept-with-rationale escape hatch — owner directive 2026-09-17): flags any path to a public Supabase Storage bucket. Leg A — a migration's `INSERT INTO storage.buckets` / `UPDATE storage.buckets SET public = true`. Leg B — any `get_public_url(` / `getPublicUrl(` call site (only makes sense against a public bucket; must be zero platform-wide). Leg C — a runtime `create_bucket(...)` passing `public=True`. THE INCIDENT: erp-certidoes (102 CPF-bearing objects) + erp-geral were public, and the /object/public/{bucket}/{path} route bypasses storage.objects RLS entirely — 17 policies gave zero protection. The sanctioned alternative (named in every finding) is a short-TTL signed URL minted at read time — StorageService.get_signed_url / noctusai_lib.integrations.storage. MCP keeper check_storage_bucket_public. KB § PATTERNS/backend/database-rls.md § Storage buckets — never public.")
     parser.add_argument("--check-db-guard-registry-static", action="store_true", help="Keeper (2026-11-05): offline invariants of verify_db_guards DEFAULT_REGISTRY - unique ids, every probe migration file exists, a recognised sentinel, rollback-wrapped SQL is BEGIN;/one DO block/ROLLBACK;. Sub-second; pre-commit runs it when verify_db_guards.py or a migration is staged. Severity high.")
+    parser.add_argument("--gate-alignment", nargs="?", const="walls", default=None, metavar="ACTION", help="Gate alignment (build triad: construction + backstop gate + telemetry; KB § PATTERNS/common/gate-methodology-sync.md). ACTION = walls (default: rank gates firing in normal flow + effective false-positive rate; add --file-walls to hand them to the findings feed) | triad (run the meta-gate) | sources (report-only: changed KB docs with no sources section) | matrix (decision coverage) | declare (--gate G --mechanism M --owner O [--placement blocking|warn|report]) | render | refresh-baseline. Also exposed as MCP noctus.dev.gate_alignment.")
+    parser.add_argument("--file-walls", action="store_true", help="With --gate-alignment walls: append SARIF-shaped wall findings to the ledger feed.")
+    parser.add_argument("--gate", default=None, help="With --gate-alignment declare: the gate id (keeper:check-x | guard:x | ci:x).")
+    parser.add_argument("--mechanism", default=None, help="With --gate-alignment declare: pointer to the construction leg, or 'none (reason)'.")
+    parser.add_argument("--owner", default=None, help="With --gate-alignment declare: the agent/file that owns the gate.")
+    parser.add_argument("--existing", action="store_true", help="With --gate-alignment declare: the gate already lives on dev (landed by another branch): declare its row without the new-gate shadow/source/matrix requirements.")
+    parser.add_argument("--placement", default="warn", help="With --gate-alignment declare: blocking|warn|report (new gates start warn = shadow).")
+    parser.add_argument("--check-gate-triad", action="store_true", help="Meta-gate (build triad, 2026-11-05): every wired gate is declared in the gate inventory with a construction mechanism (or 'none (reason)') and an owner, every decision-matrix row has its legs, and every gate maps to a row. Legacy gates without a mechanism sit in a SHRINK-ONLY baseline. Severity high. Fix: `--gate-alignment declare ...`. KB § PATTERNS/common/gate-methodology-sync.md.")
+    parser.add_argument("--check-new-dependency-justified", action="store_true", help="Keeper (measured comparison, 2026-11-05, WARN-first shadow): a NEW dependency added to a package.json/requirements file needs a COMPARISON RECORD (job, in-repo alternative, >=2 numeric metrics, decision) in mcp/noctusai/dependency-additions.json - the gate checks the record, never whether the tool is standard. `--paths` = staged files. Severity medium. KB § PATTERNS/common/gate-methodology-sync.md.")
     parser.add_argument("--check-migration-guard-has-probe", action="store_true", help="Keeper (gate↔methodology-sync backstop for noctus.dev.verify_db_guards, 2026-09-18): a migration that defines a genuine guard (a trigger function that RAISE EXCEPTIONs, a named CHECK/UNIQUE constraint) must have a corresponding GuardProbe registered — otherwise the guard is 'structurally verified' only, the exact class of bug verify_db_guards exists to catch. Statement-scoped detection (noctusai_lib.testing.migration_parser's dollar-quote/string-aware statement walker, not a naive grep) — ignores comments/string literals and a passive updated_at-style trigger (no RAISE, refuses nothing). `--paths` (staged-files idiom, same as --check-storage-bucket-public) scopes to migrations actually touched in this commit — diff-scoped, never a full-corpus retroactive sweep, so it is forward-looking only. Co-located allowlist `_GUARD_PROBE_ALLOWLIST` in compliance.py for a guard that genuinely cannot be probed (e.g. RLS, which this tool's Management-API SqlExecutor structurally bypasses). Severity high. MCP keeper check_migration_guard_has_probe.")
     parser.add_argument("--check-ledger-pii", action="store_true", help="Keeper (severity critical, no suppression marker): personal data (CPF/CNPJ with valid check digit, BR phone, non-team email, labelled RG / nascimento / casamento date) in a permanent ledger or history file (project-history/**, findings.md, *.ndjson). Findings name file:line + kind, never the value. Runtime twin: tools/noctus/dev/_pii_guard.assert_no_pii on every ledger writer. Born from the 2026-10-19 LGPD incident (valid CPF + phone in auto-improvement.ndjson, replicated to origin/ledgers).")
     parser.add_argument("--check-schema-wide-anon-grant", action="store_true", help="Keeper (severity critical, NO allowlist / suppression marker — same posture as --check-storage-bucket-public): flags a schema-wide table GRANT or default-privilege GRANT naming `anon`. Leg A — `GRANT ... ON ALL TABLES IN SCHEMA <s> TO ...anon...`. Leg B — `ALTER DEFAULT PRIVILEGES IN SCHEMA <s> GRANT ... ON TABLES TO ...anon...`. Sequence grants are deliberately exempt (no row data). THE INCIDENT (2026-09-20): the seed's own `001_seed.sql` used to grant `ALL` on every current+future table to `anon`, propagated into 9 product schemas; in the live `social_wiring` schema this let `anon` read+write 4 out-of-band backup tables (21,567 rows of names/emails/birthdates) that never got an RLS policy. Comments are stripped before matching (noctusai_lib.testing.migration_parser), so a migration's own prose citing the historical shape never trips it. `--paths` (staged-files idiom) scopes to files touched in this commit — diff-scoped, same reasoning as --check-storage-bucket-public (immutable pre-fix `001_*.sql` history stays on disk forever and would otherwise permanently redden a full-tree sweep). MCP keeper check_schema_wide_anon_grant. KB § PATTERNS/backend/database-rls.md.")
@@ -2017,6 +2026,31 @@ def main():
         print(f"  {RED}✗ {len(high)} db-guard-registry finding(s) — CI would eject this.{RESET}")
         sys.exit(1)
 
+    elif args.gate_alignment is not None:
+        from tools.noctus.dev.gate_alignment import run_action
+        _ga = run_action(args.gate_alignment, gate=args.gate or "", mechanism=args.mechanism or "",
+                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing)
+        print(json.dumps(_ga, indent=1, ensure_ascii=False))
+        sys.exit(0 if _ga.get("ok", True) else 1)
+    elif args.check_gate_triad:
+        from tools.noctus.dev.compliance import check_gate_triad
+        issues = check_gate_triad()
+        if not issues:
+            print(f"  {GREEN}✓ gate-triad: every gate declares its construction leg, owner and decision row.{RESET}"); sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} gate-triad issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_new_dependency_justified:
+        from tools.noctus.dev.compliance import check_new_dependency_justified
+        _paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_new_dependency_justified(paths=_paths)
+        if not issues:
+            print(f"  {GREEN}✓ new-dependency-justified: no unjustified new dependency.{RESET}"); sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} new-dependency issue(s) (warn-first):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
     elif args.check_migration_guard_has_probe:
         from tools.noctus.dev.compliance import check_migration_guard_has_probe
         # `--paths` scopes to THIS commit's staged migration files (same
@@ -4445,6 +4479,26 @@ def main():
         print(f"  Tests: {len(tc['issues'])} gaps")
 
     print()
+
+
+def _record_gate_exit(code) -> None:
+    try:
+        from tools.noctus.dev.gate_alignment import record_cli_exit
+        record_cli_exit(sys.argv[1:], code)
+    except Exception as exc:  # telemetry never changes a verdict
+        print(f"gate telemetry skipped: {exc}", file=sys.stderr)
+
+
+_main_untimed = main
+
+
+def main():  # noqa: F811 - gate telemetry (build triad, leg c): every --check-*/--verify-* run is one event
+    try:
+        _main_untimed()
+    except SystemExit as _exit:
+        _record_gate_exit(_exit.code)
+        raise
+    _record_gate_exit(0)
 
 
 if __name__ == "__main__":

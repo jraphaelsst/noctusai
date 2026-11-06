@@ -25651,6 +25651,100 @@ def check_private_accent_fold(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+def check_gate_triad(repo_root: Path | None = None) -> list[dict]:
+    """Meta-gate of the BUILD TRIAD (`KB § PATTERNS/common/gate-methodology-sync.md`):
+    every wired gate is declared in the gate inventory with a CONSTRUCTION mechanism
+    (or `none (reason)`) and an owner; every decision-matrix row has all its legs and a
+    real gate; every new gate maps to a row. Legacy gates with no mechanism yet sit in
+    a shrink-only baseline (`gate-triad-baseline.json`) - a burn-down, never a grandfather.
+    Severity high. Fix: `python mcp/noctusai/cli.py --gate-alignment declare ...`."""
+    from . import gate_alignment
+    return gate_alignment.triad_issues(repo_root or REPO_ROOT)
+
+
+def _manifest_dep_names(path: str, text: str) -> set[str]:
+    names: set[str] = set()
+    if path.endswith("package.json"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return names
+        for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+            names |= {f"npm:{n}" for n in (data.get(key) or {})}
+    else:
+        for line in text.splitlines():
+            m = re.match(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)", line)
+            if m and not line.lstrip().startswith(("#", "-")):
+                names.add(f"pip:{m.group(1).lower().replace('_', '-')}")
+    return names
+
+
+def _comparison_record_gap(note: Any) -> str:
+    """Why a dependency note is not a valid comparison record ('' when it is)."""
+    if not isinstance(note, dict):
+        return "the entry must be an object"
+    if not str(note.get("job", "")).strip():
+        return "missing `job` (what the dependency is for)"
+    if str(note.get("decision", "")).strip() not in ("adopt", "keep", "switch"):
+        return "`decision` must be adopt|keep|switch"
+    alt = str(note.get("in_repo_alternative", "")).strip()
+    if not alt:
+        return "missing `in_repo_alternative` (the in-repo mechanism it competes with, or \"none\")"
+    metrics = note.get("metrics")
+    if alt.lower() != "none" and not (isinstance(metrics, dict) and len(metrics) >= 2
+                                       and all(re.search(r"\d", str(v)) for v in metrics.values())):
+        return ("an in-repo alternative exists, so the record needs >=2 `metrics` WITH NUMBERS "
+                "(recall/precision, latency, cost, maintenance, integration fit, security). Unmeasured means no switch")
+    if alt.lower() == "none" and not str(note.get("reason", "")).strip():
+        return "no in-repo alternative: add a `reason` (what was checked and found missing)"
+    return ""
+
+
+def check_new_dependency_justified(paths: list[str] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Measured comparison, not standard-by-default (owner, 2026-11-05): a dependency NEW to the
+    whole repo (in no tracked manifest at HEAD) must carry a COMPARISON RECORD in
+    `mcp/noctusai/dependency-additions.json`:
+    `{"npm:<name>"|"pip:<name>": {"job", "in_repo_alternative" (name|"none"), "metrics" {>=2, with numbers:
+    coverage/recall, precision, speed, cost money+tokens, maintenance, integration fit, security},
+    "decision" adopt|keep|switch, "reason", "date"}}`. The gate checks that the record exists and is
+    measured - it NEVER checks whether the tool is "standard". Diff-scoped (`paths` = staged manifests).
+    WARN-first (shadow): severity medium. Construction leg: `noc-dep-update` gate 0 + record template."""
+    root = repo_root or REPO_ROOT
+    if not paths:
+        return []
+    manifests = [p for p in paths if p.endswith("package.json") or re.search(r"requirements[^/]*\.txt$", p)]
+    if not manifests:
+        return []
+
+    def _git(*args: str) -> str:
+        r = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=60)
+        return r.stdout if r.returncode == 0 else ""
+
+    known: set[str] = set()
+    for tracked in _git("ls-files", "*package.json", "*requirements*.txt").splitlines():
+        known |= _manifest_dep_names(tracked, _git("show", f"HEAD:{tracked}"))
+    notes_file = root / "mcp/noctusai/dependency-additions.json"
+    try:
+        notes = json.loads(notes_file.read_text(encoding="utf-8")) if notes_file.exists() else {}
+    except ValueError:
+        notes = {}
+    issues: list[dict] = []
+    for rel in manifests:
+        try:
+            now = _manifest_dep_names(rel, (root / rel).read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        for dep in sorted(now - known):
+            gap = _comparison_record_gap(notes.get(dep)) if dep in notes else "no comparison record"
+            if not gap:
+                continue
+            issues.append({"file": rel, "severity": "medium", "issue": (
+                f"{dep} is new to the repo and has no valid comparison record ({gap}). Compare it with any in-repo "
+                "mechanism on stated metrics (recall/precision, speed, cost, maintenance, fit, security) and record "
+                "numbers in mcp/noctusai/dependency-additions.json (skill noc-dep-update, gate 0).")})
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # ACCESS TIERS (owner directive 2026-11-05): every route and every table declares who may touch it;
 # undeclared is refused. Logic + registry in `access_tiers.py` / `noctusai_lib.api.access_tiers`; these are the

@@ -10,6 +10,7 @@ Agent `ops-steward` owns this; the tech-lead session can run it inline (it is al
 
 ## Workflow (daily)
 
+- **Gate alignment (daily, recurrent loop):** `python mcp/noctusai/cli.py --gate-alignment walls --file-walls` ranks gates firing in normal flow, files SARIF-shaped wall findings, and lists pending matrix legs; a wall is a missing construction leg, not an agent error. → `KB § PATTERNS/common/gate-methodology-sync.md` (Alignment loop)
 1. **Reminders first** — open `MEMORY-reminders.md` items + any reminder the tech-lead owes in this session's memory (e.g. "AI agents on mechanical reports").
 2. **Health** — `noctus.dev.prod_watchdog` (state), `noctus.dev.deploy_verify` (revision drift), `noctus.dev.smoke_fleet`. A check that cannot run ⇒ `inconclusive`, never green.
 2b. **Exposure drift** — `noctus.dev.access_tier_exposure` (no args = the 3-4 read-only queries; run them through the supabase connector, pass the rows back): any browser grant / non-admin policy on a Platform-IP table, an anon policy on a secret/PII table, an inactive product's schema served ⇒ Exception (`KB § PATTERNS/security/access-tiers.md`). An unmeasured input ⇒ `inconclusive`, never green.

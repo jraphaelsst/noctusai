@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mockUse = vi.fn();
 vi.mock("@/hooks/studio/useProntidao", () => ({ useProntidao: () => mockUse() }));
 
+vi.mock("@/components/studio/ProntidaoAcao", async (orig) => ({ ...(await orig<object>()), ProntidaoAcao: ({ codigo }: { codigo: string }) => <button type="button">acao-{codigo}</button> }));
+
 import { ProntidaoPanel } from "@/components/studio/ProntidaoPanel";
 
 afterEach(cleanup);
@@ -49,5 +51,14 @@ describe("ProntidaoPanel", () => {
     mockUse.mockReturnValue(view({ isError: true, error: new Error("falhou") }));
     render(<ProntidaoPanel agentKey="a" />);
     expect(screen.queryByTestId("prontidao-titulo")).toBeNull();
+  });
+
+  it("renders a button instead of the API-path text for fixable items", () => {
+    mockUse.mockReturnValue(view({ data: { pronto_para_publicar: false, itens: [
+      { codigo: "mecanismo_hash_diferente", grupo: "avaliacoes", severidade: "bloqueante", mensagem: "Suíte velha", acao_sugerida: "Clique em Rodar suíte de mecanismo" },
+    ] } }));
+    render(<ProntidaoPanel agentKey="a" />);
+    expect(screen.getByRole("button", { name: "acao-mecanismo_hash_diferente" })).toBeTruthy();
+    expect(screen.queryByTestId("prontidao-acao-mecanismo_hash_diferente")).toBeNull();
   });
 });

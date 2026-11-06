@@ -94,7 +94,11 @@ class TestEventVocabulary:
         assert events[0]["payload"] == {
             "role": "assistant", "texto": "Oi! Comprar ou alugar?", "blocks": [],
         }
-        assert events[1]["payload"] == {
+        payload = events[1]["payload"]
+        # the per-turn meter (agents.turn_metrics) rides on the same final event
+        meter = {k: payload.pop(k) for k in ("llm_ms", "tool_ms", "llm_calls", "tools_ms", "prompt_bytes")}
+        assert meter["llm_calls"] == 1 and meter["tools_ms"] == {} and meter["prompt_bytes"] > 0
+        assert payload == {
             "status": "ociosa", "sdk_session_id": None, "custo_usd": 0.0021,
             "tokens_entrada": 120, "tokens_saida": 30, "tokens_cache_leitura": 40, "esgotou_loop": False,
         }

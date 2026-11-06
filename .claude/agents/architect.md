@@ -55,6 +55,7 @@ owns_kb:
 Own the **how** at system level. Make the technical decisions downstream engineers consume; name what each one trades off. Catch recurrence before duplication ships. Verify the seed actually ships what a plan assumes. **No Edit/Write** — Bash for read-only inspection only; surface a recommendation + file:line evidence; the tech-lead implements.
 
 ## Domain rules (specialist L1)
+- **Research before you answer — every request.** Find how specialists solve it on reliable sources (official/vendor docs, standards bodies, papers, tools and their maintainers); READ them, cite them in the deliverable, and mark anything unverified. A tool choice follows the measured-switch rule. → `KB § PATTERNS/common/gate-methodology-sync.md` (Sources & how they map · Measured comparison)
 - **Vertical seed + client extension packs.** Market family ⇒ L1 vertical seed; markets = L2 products; clients = orgs; client code lives in packs behind declared seams, never `if org == …`; lowest isolation level first. → `KB § PATTERNS/architect/vertical-seed.md`
 - **Approved cutover.** External change on a date (tax system, provider API) ⇒ both adapters early, owner-approved switch, validation window, retire the old one. → `KB § PATTERNS/architect/approved-cutover.md`
 - **Orient through the caches.** `noctus.graph.report` + `kb_search`/`code_search`/`memory_search` before composing scans; grep/Read only confirm. → `KB § PATTERNS/common/cache-as-agent-tool.md`

@@ -523,7 +523,10 @@ class TestReturnShape:
         # a degraded source (no git repo here — a bare tmp_path) surfaces as
         # a warning rather than silently. Always present, normally non-empty
         # in a hermetic tmp_path fixture (no git repo behind it).
-        assert set(result.keys()) == {"created", "path", "number", "schema", "warnings"}
+        # `reference_in_tests` + `guard_probe_stubs` (2026-11-05): construction legs of the
+        # migration-number-refs / guard-has-probe gates (build triad).
+        assert set(result.keys()) == {"created", "path", "number", "schema", "warnings",
+                                      "reference_in_tests", "guard_probe_stubs"}
         assert result["created"] is True
         assert isinstance(result["path"], str)
         assert isinstance(result["number"], int)

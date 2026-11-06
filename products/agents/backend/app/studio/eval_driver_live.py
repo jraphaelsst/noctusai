@@ -209,7 +209,7 @@ class LiveEvalTurnDriver:
         self, *, studio_store: Any, catalog: Any, padroes: Any, agent_key: str | None = None,
         key_resolver: Callable[[str, UUID], str | None] | None = None, provider_impl: Any | None = None,
         skills_factory: Any | None = None, tools_factory: Callable[[Any, Any], Any] | None = None,
-        daily_cap_usd: float = 0.0, conformidade: Any | None = None,
+        daily_cap_usd: float = 0.0, conformidade: Any | None = None, metricas: Any | None = None,
     ) -> None:
         self._studio = studio_store
         self._catalog = catalog
@@ -223,6 +223,8 @@ class LiveEvalTurnDriver:
         #: READ side of the conformance config (rules + abuse limits of the definition's row); copied into the
         #: per-execution Fake so the suite runs under the rules that run in production. ``None`` = code defaults.
         self._conformidade = conformidade
+        #: ``agents.turn_metrics`` store: every eval turn books its cost / speed / size tagged ``origem='eval'``.
+        self._metricas = metricas
         self._mundo: _Mundo | None = None
         self._modelo: str | None = None
         self._temperatura: float | None = None
@@ -296,7 +298,7 @@ class LiveEvalTurnDriver:
             notificacoes=FakeNotificationSink(),  # an eval never notifies a real owner
             # the channel route always wires an alert store; without one ``sinalizar_alerta`` is not offered and the
             # ``info_indisponivel`` alert is never raised, so the suite would judge a toolset prod does not run
-            alertas=FakeThreadAlertaStore(),
+            alertas=FakeThreadAlertaStore(), metricas=self._metricas,
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
         externo = f"eval-{uuid4()}"
@@ -386,7 +388,7 @@ class LiveEvalTurnDriver:
             res = await turno_mod.executar(
                 svc=m.svc, prep=prep, agent=m.agent, org_id=m.org_id, thread=th, runtime=m.runtime, slot=slot,
                 bus=m.bus, contexto=None, gatilho="mensagem", lote_lead=[mensagem_lead], ultima_resposta_em=agora,
-                agora=agora, nota_caso=thread.contexto_caso)
+                agora=agora, nota_caso=thread.contexto_caso, origem="eval")
         finally:
             await slot.release()
         m.turnos += 1
@@ -462,6 +464,7 @@ def make_live_eval_driver_factory(
         from app.qualificacao.store import get_padrao_store
         from app.stores.conformidade import get_conformidade_store
         from app.stores.studio_definitions import get_studio_definition_store
+        from app.stores.turn_metrics import get_turn_metrics_store
         from app.stores.studio_knowledge import get_studio_knowledge_store
         from app.studio.catalog import StoreKnowledgeCatalog
 
@@ -469,7 +472,7 @@ def make_live_eval_driver_factory(
             studio_store=studio_store or get_studio_definition_store(settings),
             catalog=catalog or StoreKnowledgeCatalog(get_studio_knowledge_store(settings)),
             padroes=padroes or get_padrao_store(settings),
-            **{"conformidade": get_conformidade_store(settings), **kw},
+            **{"conformidade": get_conformidade_store(settings), "metricas": get_turn_metrics_store(settings), **kw},
         )
 
     return _factory
