@@ -438,6 +438,20 @@ async def postgrest_exception_handler(request: Request, exc: Exception) -> JSONR
             content=format_error_response("NOT_FOUND", "Recurso não encontrado"),
         )
 
+    # 42501: insufficient_privilege (RLS WITH CHECK / USING refusal, missing GRANT) -> 403.
+    # An authorisation refusal is the caller's, not a server fault: a 500 here made the
+    # SPA say "servidor instável" for a row the caller may not write (acting-as incident
+    # 2026-11-06). The raw Postgres text names tables/policies, so it is logged, not sent.
+    if pg_code == "42501":
+        logger.warning(f"PostgREST permission refusal (RLS/grant): {message}")
+        return JSONResponse(
+            status_code=403,
+            content=format_error_response(
+                "FORBIDDEN",
+                "Você não tem permissão para realizar esta operação nesta organização.",
+            ),
+        )
+
     # 23505: unique constraint violation -> 409
     if pg_code == "23505":
         logger.warning(f"PostgREST unique violation: {message}")

@@ -300,14 +300,19 @@ async def extrair_matricula(
         )
         vinculo = {"arquivo_origem_id": arquivo["id"]}
 
-    # 🔴 `org_id` is deliberately absent: migration 092 defaults the column
-    # to `public.current_org_id()`, the same trusted source RLS reads. The
-    # app never names the org on a write, so it can never name the wrong one.
+    # 🔴 `org_id` is the EFFECTIVE org of `get_current_user_org` (the trusted
+    # noctus_users row, or the platform picker's selected org while staff act).
+    # It used to be omitted, relying on `DEFAULT public.current_org_id()` --
+    # HOME-ONLY -- so a platform admin acting as another org stamped their
+    # HOME org and the picker-aware WITH CHECK (`current_org_id_for`) refused
+    # the row (prod 2026-11-06). Naming it is safe: RLS still checks it equals
+    # the org the DB resolves for this JWT, so a forged value is refused.
     result = await anyio.to_thread.run_sync(
         lambda: (
             db.table(TABLE)
             .insert(
                 {
+                    "org_id": org_id,
                     "user_id": user.id,
                     "nome_arquivo": file.filename or "matricula.pdf",
                     "tamanho_bytes": len(pdf_bytes),

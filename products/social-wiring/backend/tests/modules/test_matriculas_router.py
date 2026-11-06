@@ -24,6 +24,7 @@ from noctusai_lib.integrations.documents.transcription import (
     Transcription,
 )
 
+from app.dependencies import coerce_org_uuid
 from app.main import app as _app
 from app.modules.matriculas import router as _router_mod
 from app.modules.matriculas.deps import (
@@ -157,22 +158,22 @@ class TestExtrairMatricula:
         assert resp.status_code == 200
         assert resp.json()["data"]["nome_arquivo"] == "matricula.pdf"
 
-    def test_o_insert_nao_manda_org_id(self, client):
-        """🔴 The org-source-of-truth hardening, asserted where it lives.
-
-        Migration 092 defaults `org_id` to `public.current_org_id()` — the
-        same trusted table RLS reads. If this handler ever starts sending an
-        org again it is sourcing it from the request, which is the exact
-        drift that 500'd ERP's uploader for freshly-provisioned users
-        (erp incident 2026-07-07 → migration 038)."""
+    def test_o_insert_manda_a_org_efetiva(self, client):
+        """🔴 Acting-as incident (prod 2026-11-06). The column DEFAULT
+        (`public.current_org_id()`) is HOME-ONLY while the policy WITH CHECK is
+        picker-aware (`current_org_id_for`), so an INSERT that omits `org_id`
+        stamps a platform admin's HOME org and is refused by RLS while they act
+        as another org. The route must name the EFFECTIVE org (the one
+        `get_current_user_org` resolved); RLS still rejects any value that is
+        not the org the DB resolves for the JWT."""
         client.mock_supabase.set_table_data("matricula_extracoes", [])
         client.post("/api/matriculas/extrair", files=_PDF)
 
         payloads = client.mock_supabase.table("matricula_extracoes").inserted_payloads
         assert payloads, "the upload must insert a row"
-        assert "org_id" not in payloads[-1], (
-            "org must come from the DB default, never from the request"
-        )
+        assert str(coerce_org_uuid(payloads[-1]["org_id"])) == str(
+            coerce_org_uuid("test-org-123")
+        ), "the insert must carry the effective org, not rely on the HOME-only default"
         assert payloads[-1]["status"] == "pendente"
         assert payloads[-1]["tamanho_bytes"] == len(b"%PDF-1.0 fake")
 
