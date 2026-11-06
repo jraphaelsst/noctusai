@@ -50,6 +50,7 @@ from app.channels import admissao, extracao
 from app.channels import turno as turno_mod
 from app.channels.bubbles import split_into_bubbles
 from app.channels.controles import ControleIndisponivel, LeadIdentidade, aplicar_controles
+from app.stores.agent_controles import NucleoIndisponivel
 from app.channels.retention import ChannelRetention
 from app.config import settings
 from app.dependencies import (
@@ -510,7 +511,11 @@ def channel_agent_status(
     # response still reports provider/model as null.
     basis = active or studio_store.get_draft(r.definicao.org_id, r.definicao.id)
     configured = bool(basis is not None and key_resolver(basis.provider, ctx.org_id))
-    controle = controles.get(ctx.org_id, agent.id)
+    try:
+        controle = controles.get(ctx.org_id, agent.id)
+    except NucleoIndisponivel as exc:  # the testing state (Julia's core) is unreadable: fail closed
+        logger.exception("agents.status.nucleo_indisponivel org_id=%s agent=%s", ctx.org_id, agent.key)
+        raise ControleIndisponivel().as_http_exception() from exc
     desligado_plataforma = bool(plataforma.get(agent.key).desligado)
     svc = turno_mod.ServicosCanal(
         studio_store=studio_store, catalog=catalog, conversations=None, messages=None, threads=threads,

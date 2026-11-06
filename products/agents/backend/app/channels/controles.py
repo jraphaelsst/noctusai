@@ -433,7 +433,7 @@ def aplicar_controles(
         # Evaluation mode: the allow-list is noc USERS; their phones are read now, for this turn only (never cached,
         # so a phone edited in noc applies on the next message). Unresolvable => nobody is allowed (fail closed).
         numeros_avaliacao = (
-            numeros_de_avaliacao(org_id, controle.avaliacao_usuarios, usuarios_avaliacao)
+            numeros_de_avaliacao(controle.avaliacao_org_id or org_id, controle.avaliacao_usuarios, usuarios_avaliacao)  # the CORE's org
             if controle.modo_avaliacao else ()
         )
         propria = next((p for p in participantes if p.agent_id == agent_id), None)

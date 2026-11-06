@@ -79,9 +79,17 @@ class TestServico:
         assert run() == {"u1"}
         assert len(lidas) == 3
 
-    def test_a_julia_staff_number_is_never_an_evaluation_member(self):
-        r = staff.Remetente("julia_staff", "Bia", "corretor", "staff:u1")
-        assert asyncio.run(aval.membro_em_avaliacao(FakeAgentsClient(controle=_controle("u1")), ORG_ID, "julia", r)) is False
+    def test_a_sender_is_an_evaluator_only_while_the_mode_is_on_and_by_phone(self, rt):
+        _julia_scene(rt)
+        from tests.support.julia_world import OWNER_TELEFONE
+
+        forma = OWNER_TELEFONE.lstrip("+")
+        on = FakeAgentsClient(controle=_controle(OWNER_ID))
+        run = lambda c, f: asyncio.run(aval.numero_em_avaliacao(c, rt.w.core, ORG_ID, "julia", f))
+        assert run(on, [forma]) is True
+        assert run(on, ["5511900000000"]) is False
+        assert run(FakeAgentsClient(controle=_controle(OWNER_ID, modo_avaliacao=False)), [forma]) is False
+        assert run(FakeAgentsClient(controle=AgentsTimeout("t")), [forma]) is False
 
 
 class TestThroughTheWebhook:
@@ -146,6 +154,32 @@ class TestThroughTheWebhook:
         rt.post(_msg(chat=LEAD_CHAT, mid="av6"), signed=True)
         rt.post(_msg(chat=LEAD_CHAT, mid="av7"), signed=True)
         assert lidas == ["julia", "julia"] and len(rt.lead_memory()) == 2
+
+
+class TestEvaluatorOfAnotherOrg:
+    """The evaluation list is NoctusAI's (the core's): an evaluator is NOT a member of the company whose line they write to."""
+
+    OUTRO_ID = "00000000-0000-4000-8000-0000000000ab"
+    OUTRO_ORG = "00000000-0000-4000-8000-0000000000ac"
+    FONE = "5511977771234"
+
+    def _avaliador(self, rt):
+        rows = rt.w.core.table("noctus_users").select("*").execute().data or []
+        rt.w.core.set_table_data("noctus_users", rows + [{"id": self.OUTRO_ID, "org_id": self.OUTRO_ORG, "org_role": "owner", "nome": "Avaliador", "telefone": f"+{self.FONE}"}])
+
+    def test_an_evaluator_who_is_not_staff_of_the_company_passes_while_testing_is_on(self, rt):
+        _julia_scene(rt)
+        self._avaliador(rt)
+        rt.w.agents._controle = _controle(self.OUTRO_ID)
+        rt.post(_msg(chat=f"{self.FONE}@c.us", mid="ev1", body="teste"), signed=True)
+        assert len(rt.lead_memory(f"{self.FONE}@c.us")) == 1
+
+    def test_the_same_person_is_blocked_when_not_on_the_list(self, rt):
+        _julia_scene(rt)
+        self._avaliador(rt)
+        rt.w.agents._controle = _controle(OWNER_ID)
+        rt.post(_msg(chat=f"{self.FONE}@c.us", mid="ev2", body="teste"), signed=True)
+        assert rt.lead_memory(f"{self.FONE}@c.us") == [] and rt.w.agents.turns == []
 
 
 class TestBlockedAtIntake:

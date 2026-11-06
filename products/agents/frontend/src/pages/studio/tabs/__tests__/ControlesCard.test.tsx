@@ -80,6 +80,15 @@ describe("ControlesCard", () => {
     expect(btn.disabled).toBe(true);
   });
 
+  it("an instance shows the core's testing switch as a read-only badge, with no switch or list", async () => {
+    installFetch([{ method: "GET", path: P, body: { ...CONTROLE, modo_avaliacao: true, avaliacao_herdada: true, avaliacao_usuarios: [] } }]);
+    renderWith(<ControlesCard agentKey={KEY} />);
+    expect((await screen.findByTestId("controle-avaliacao-badge")).textContent).toBe("Julia em fase de testes");
+    expect(screen.getByTestId("controle-avaliacao-herdada").textContent).toContain("núcleo da Julia");
+    expect(screen.queryByTestId("controle-avaliacao-switch")).toBeNull();
+    expect(screen.queryByTestId("controle-avaliacao-lista")).toBeNull();
+  });
+
   it("consequencia() names the drain days", () => {
     expect(consequencia("drenando", CONTROLE, 5)).toContain("5 dia(s)");
   });

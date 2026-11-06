@@ -101,7 +101,7 @@ from app.schemas.channel_threads import (
 from app.routers.qualificacao_router import get_qualificacao_service_dep
 from app.schemas.channels import ChannelRef
 from app.stores._util import utcnow
-from app.stores.agent_controles import get_agent_controle_store, normalizar_usuarios
+from app.stores.agent_controles import NucleoIndisponivel, get_agent_controle_store, normalizar_usuarios
 from app.stores.errors import Conflict, NotFound, TurnInProgress
 from app.stores.threads import OutroAgenteAtivo, mapa_agentes
 from app.studio.resolucao import conteudo_status, resolve_agent_for_org
@@ -470,13 +470,15 @@ def _resolvidos(org_id: UUID, ids: list[UUID], usuarios: Any, *, admin: bool) ->
 
 def _controle_out(
     org_id: UUID, agent: Any, controles: Any, threads: Any, *,
-    usuarios: Any = None, admin: bool = False,
+    usuarios: Any = None, admin: bool = False, ocultar_herdada: bool = False,
 ) -> ControleOut:
+    """``ocultar_herdada``: the Studio view of an INSTANCE shows the core's switch as a read-only flag but NOT the evaluators' list
+    (it belongs to NoctusAI); the channel read (SW) is not hidden: SW needs the ids to gate."""
     controle = controles.get(org_id, agent.id)
     drenagem = progresso_dreno(
         threads.list_abertos(org_id, agent.id), controle.dreno_inatividade_dias, utcnow()
     )
-    ids = list(controle.avaliacao_usuarios)
+    ids = [] if (ocultar_herdada and controle.avaliacao_herdada) else list(controle.avaliacao_usuarios)
     resolvidos, erro = _resolvidos(org_id, ids, usuarios, admin=admin) if usuarios is not None else ([], False)
     return ControleOut(
         agent_key=agent.key,
@@ -486,6 +488,7 @@ def _controle_out(
         fase_testes=controle.fase_testes,
         modo_avaliacao=controle.modo_avaliacao,
         avaliacao_usuarios=ids,
+        avaliacao_herdada=controle.avaliacao_herdada,
         avaliacao_resolvidos=resolvidos,
         avaliacao_resolucao_erro=erro,
         threads_abertas=drenagem["abertas"],
@@ -565,7 +568,11 @@ def channel_agent_controle(
     a listed org member through its own staff (`equipe`) filter while testing; SW never decides the mode and never gates on a
     cached copy of this -- the turn endpoint decides (outsiders get `restrito_avaliacao` there)."""
     agent = _agente_do_token(studio_store, ctx, agent_key)
-    return _controle_out(ctx.org_id, agent, controles, threads)
+    try:
+        return _controle_out(ctx.org_id, agent, controles, threads)
+    except NucleoIndisponivel as exc:
+        logger.exception("agents.controle.nucleo_indisponivel org_id=%s agent=%s", ctx.org_id, agent_key)
+        raise ControleIndisponivel().as_http_exception() from exc
 
 
 @router.get("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
@@ -580,7 +587,7 @@ def studio_agent_controle(
 ) -> ControleOut:
     agent = _agente_por_chave(studio_store, ctx.org_id, agent_key)
     return _controle_out(
-        ctx.org_id, agent, controles, threads, usuarios=usuarios, admin=_e_admin_da_org(ctx, request))
+        ctx.org_id, agent, controles, threads, usuarios=usuarios, admin=_e_admin_da_org(ctx, request), ocultar_herdada=True)
 
 
 @router.put("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
@@ -606,6 +613,14 @@ def studio_set_agent_controle(
         raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
     # Only the flags change (modo equal to the current one, no new drain days): no mode transition, so none of its
     # preconditions apply either. Covers the testing-phase switch and the evaluation mode + allow-list.
+    # The testing switch is ONE switch on Julia's core (owner 2026-11-05), editable only by NoctusAI platform admins (never by a
+    # content token) and only on the core's own page: an instance refuses it.
+    if payload.modo_avaliacao is not None or payload.avaliacao_usuarios is not None:
+        if ctx.caller_kind == "product":
+            raise _err(403, "platform_admin_required", "Somente um administrador da plataforma NoctusAI altera a fase de testes.")
+        if atual.avaliacao_herdada:
+            raise _err(409, "avaliacao_somente_no_nucleo",
+                       "A fase de testes é uma só, no núcleo da Julia (organização NoctusAI); ela vale para todas as empresas.")
     # validate the evaluation allow-list BEFORE any change lands (a bad list must not half-apply)
     _validar_avaliacao(ctx.org_id, atual, payload, usuarios)
     tem_flags = any(v is not None for v in (payload.fase_testes, payload.modo_avaliacao, payload.avaliacao_usuarios))
