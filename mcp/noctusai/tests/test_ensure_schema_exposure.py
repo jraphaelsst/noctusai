@@ -303,3 +303,130 @@ class TestRosterResolution:
 
         assert result["status"] == "in_sync"
         assert result["roster_source"] == "explicit"
+
+
+# ---------------------------------------------------------------------------
+# action='prune' — removal of asleep products' schemas (AT-847e83bb)
+# ---------------------------------------------------------------------------
+
+
+class _StatefulFake(FakeSqlExecutor):
+    """FakeSqlExecutor whose ALTER ROLE really changes what the next read
+    returns (a test double, so the post-apply verify re-read is exercised)."""
+
+    def execute(self, sql: str):
+        if sql.startswith("ALTER ROLE authenticator SET pgrst.db_schemas='"):
+            csv = sql.split("='", 1)[1].rsplit("';", 1)[0]
+            self.preset_rows[_EXPOSED_ROWS_KEY] = [{"setconfig": [f"pgrst.db_schemas={csv}"]}]
+        return super().execute(sql)
+
+
+def _prune_fixture(tmp_path):
+    products = _make_products_dir(tmp_path)
+    _make_main_py(products, "agents", "agents")
+    _make_main_py(products, "erp-imobiliario", "erp")  # asleep
+    _make_main_py(products, "orbity", "orbity")  # asleep
+    (products / "core").mkdir()  # schema 'core' is protected infra
+    return products
+
+
+def _exposed_fake(cls, exposed):
+    return cls(preset_rows={_EXPOSED_ROWS_KEY: [{"setconfig": [f"pgrst.db_schemas={','.join(exposed)}"]}]})
+
+
+def _prune(tmp_path, exposed, *, confirm=False, active=None, fake=None):
+    products = _prune_fixture(tmp_path)
+    fake = fake or _exposed_fake(_StatefulFake, exposed)
+    result = check_schema_exposure(
+        action="prune",
+        confirm=confirm,
+        executor=fake,
+        products_dir=products,
+        live_products_fn=lambda: ["agents"],
+        active_products=active if active is not None else {"agents", "core"},
+    )
+    return result, fake
+
+
+def _writes(fake):
+    return [s for s in fake.executed if s.startswith(("ALTER", "NOTIFY"))]
+
+
+class TestPruneAction:
+    def test_dry_run_plans_only_asleep_schemas_and_writes_nothing(self, tmp_path):
+        result, fake = _prune(tmp_path, ["public", "graphql_public", "core", "agents", "erp", "orbity"])
+        assert result["status"] == "planned"
+        assert result["to_drop"] == [
+            {"schema": "erp", "products": ["erp-imobiliario"]},
+            {"schema": "orbity", "products": ["orbity"]},
+        ]
+        assert result["new_exposed_schemas"] == ["public", "graphql_public", "core", "agents"]
+        assert result["sql"] == [
+            "ALTER ROLE authenticator SET pgrst.db_schemas='public,graphql_public,core,agents';",
+            "NOTIFY pgrst,'reload config';",
+        ]
+        assert _writes(fake) == []
+
+    def test_excludes_active_and_protected_schemas(self, tmp_path):
+        # orbity woken up -> kept; public/core/seed protected even though seed has no declaration.
+        result, _ = _prune(
+            tmp_path, ["public", "core", "seed", "agents", "erp", "orbity"], active={"agents", "orbity"}
+        )
+        assert {d["schema"] for d in result["to_drop"]} == {"erp"}
+        assert {"public", "core", "seed", "agents", "orbity"} <= set(result["new_exposed_schemas"])
+
+    def test_unattributable_schema_is_refused_not_dropped(self, tmp_path):
+        result, _ = _prune(tmp_path, ["public", "agents", "erp", "mystery"])
+        assert [r["schema"] for r in result["refused"]] == ["mystery"]
+        assert "mystery" in result["new_exposed_schemas"]
+        assert "erp" not in result["new_exposed_schemas"]
+
+    def test_slug_fallback_attribution_is_refused(self, tmp_path):
+        products = _prune_fixture(tmp_path)
+        (products / "daily-life").mkdir()  # no main.py -> slug-guess schema
+        result = check_schema_exposure(
+            action="prune",
+            executor=_exposed_fake(_StatefulFake, ["agents", "daily_life"]),
+            products_dir=products,
+            live_products_fn=lambda: ["agents"],
+            active_products={"agents"},
+        )
+        assert result["status"] == "up_to_date"
+        assert [r["schema"] for r in result["refused"]] == ["daily_life"]
+
+    def test_shared_schema_with_one_active_owner_is_kept(self, tmp_path):
+        products = _prune_fixture(tmp_path)
+        _make_main_py(products, "twin", "erp")  # active product also declares erp
+        result = check_schema_exposure(
+            action="prune",
+            executor=_exposed_fake(_StatefulFake, ["agents", "erp"]),
+            products_dir=products,
+            live_products_fn=lambda: ["agents"],
+            active_products={"agents", "twin"},
+        )
+        assert result["status"] == "up_to_date"
+        assert "erp" in result["kept"]
+
+    def test_confirm_applies_notifies_and_verifies(self, tmp_path):
+        result, fake = _prune(tmp_path, ["public", "agents", "erp"], confirm=True)
+        assert result["status"] == "pruned" and result["applied"] is True
+        assert _writes(fake) == [
+            "ALTER ROLE authenticator SET pgrst.db_schemas='public,agents';",
+            "NOTIFY pgrst,'reload config';",
+        ]
+
+    def test_verify_failure_is_loud(self, tmp_path):
+        # Plain FakeSqlExecutor: ALTER "succeeds" but the re-read is unchanged.
+        fake = _exposed_fake(FakeSqlExecutor, ["public", "agents", "erp"])
+        result, _ = _prune(tmp_path, [], confirm=True, fake=fake)
+        assert result["status"] == "error" and "verify FAILED" in result["error"]
+
+    def test_idempotent_when_nothing_to_prune(self, tmp_path):
+        result, fake = _prune(tmp_path, ["public", "core", "agents"], confirm=True)
+        assert result["status"] == "up_to_date"
+        assert _writes(fake) == []
+
+    def test_missing_active_scope_refuses(self, tmp_path):
+        from tools.noctus.dev import ensure_schema_exposure as mod
+
+        assert mod._read_active_scope(tmp_path / "absent.txt") is None
