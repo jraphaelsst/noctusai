@@ -190,3 +190,13 @@ class TestConstructionLegs:
         spec = importlib.util.spec_from_file_location("gfc", REAL_ROOT / "scripts/hooks/_guard_failclosed.py")
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
         assert "worktrees" not in mod.EVENT_LOG.parts
+
+
+class TestCliTelemetryWrapper:
+    def test_real_cli_logs_a_gate_run_and_keeps_exit_code(self, tmp_path):
+        log = tmp_path / "ev.ndjson"
+        env = {**__import__("os").environ, "NOCTUS_GUARD_EVENT_LOG": str(log)}
+        r = subprocess.run([sys.executable, str(REAL_ROOT / "mcp/noctusai/cli.py"), "--check-gate-triad"],
+                           capture_output=True, text=True, env=env, cwd=REAL_ROOT, timeout=300)
+        rows = [json.loads(l) for l in log.read_text().splitlines()]
+        assert r.returncode == 0 and rows[-1]["guard"] == "keeper:check-gate-triad" and rows[-1]["outcome"] == "pass"

@@ -4375,6 +4375,18 @@ def _record_gate_exit(code) -> None:
         print(f"gate telemetry skipped: {exc}", file=sys.stderr)
 
 
+_main_untimed = main
+
+
+def main():  # noqa: F811 - gate telemetry (build triad, leg c): every --check-*/--verify-* run is one event
+    try:
+        _main_untimed()
+    except SystemExit as _exit:
+        _record_gate_exit(_exit.code)
+        raise
+    _record_gate_exit(0)
+
+
 if __name__ == "__main__":
     # Structural backstop, NOT a diagnosis: a crash under a bare (non-venv)
     # interpreter was observed ONCE to print a traceback and still exit 0
@@ -4392,9 +4404,7 @@ if __name__ == "__main__":
     # untouched so every existing `sys.exit(N)` call site keeps its code.
     try:
         main()
-    except SystemExit as _exit:
-        # Gate telemetry (build triad, leg c): every --check-*/--verify-* run is one event.
-        _record_gate_exit(_exit.code)
+    except SystemExit:
         raise
     except BaseException:
         traceback.print_exc()
