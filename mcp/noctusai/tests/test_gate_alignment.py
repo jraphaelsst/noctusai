@@ -142,7 +142,8 @@ class TestTelemetryAndWalls:
         assert out["ok"] if "ok" in out else True
         assert gl.check("gate-walls", root) == []
         sarif = gl.export_sarif("gate-walls", root)
-        assert {r["ruleId"] for run in sarif["runs"] for r in run["results"]} <= {"wall", "demoted-expired", "matrix-pending"}
+        rules = {r["ruleId"] for run in sarif["runs"] for r in run["results"]}
+        assert rules and rules <= {"walls", "wall", "demoted-expired", "matrix-pending"}
 
 
 class TestDeclare:
