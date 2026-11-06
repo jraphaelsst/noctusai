@@ -42,6 +42,7 @@
     "062_org_specs_ator.sql": "e8e9bc4bb5601d0ac71f8c0c117c315be77211240485564a576ecfa784c265f5",
     "063_conformidade_regras_piso.sql": "41cd5f1ff82ec1b2cf1aa9071502b92fd3c8e4c9e23ec6ea748c45f05c90d088",
     "064_agent_product_grants_especificacoes_editor.sql": "bad3bbbaabab6f9f35ff14ae4d1650ec905ede6b8770252ac880d7f89d220617",
-    "065_avaliacao_somente_no_nucleo.sql": "f16e63ff04927d76730bb0034a8a46167da52b0b2d352f3ca8398e73ded91bd4"
+    "065_avaliacao_somente_no_nucleo.sql": "f16e63ff04927d76730bb0034a8a46167da52b0b2d352f3ca8398e73ded91bd4",
+    "066_turn_metrics.sql": "1d2a4da2794af07b2edd6a55e706e92b16b715a0edb837759cac9cd1228488d2"
   }
 }

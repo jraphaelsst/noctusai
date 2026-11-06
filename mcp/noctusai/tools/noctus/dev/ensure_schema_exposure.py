@@ -44,6 +44,22 @@ pgrst.db_schemas='<old ∪ missing>'` (APPEND-ONLY — union, never a schema
 removed by this tool; removal is the `DROP SCHEMA` runbook's job, which
 has its own safe-order procedure) then `NOTIFY pgrst,'reload config'`.
 
+action='prune' (2026-11-06, closes access-tier finding AT-847e83bb: the `erp`
+schema of the ASLEEP product erp-imobiliario stayed exposed): the one
+sanctioned REMOVAL path. DRY-RUN by default (confirm=False returns the plan:
+current list, schemas to drop, owning products, the exact SQL). ASLEEP is
+DERIVED, never hand-listed: a product dir under products/ that is in neither
+`deploy/fleet/active-scope.txt` (catalog `ativo=true`, any scope) nor the
+live catalog roster. A schema is dropped from the list ONLY when (a) it is
+attributed by the product's own `create_product_app(schema=...)` declaration
+(a slug-fallback guess never qualifies), (b) EVERY product declaring it is
+asleep, and (c) it is not Supabase/platform infra (`_PROTECTED_SCHEMAS`).
+An exposed schema nobody declares, or one attributed only by slug guess, is
+REFUSED and listed (`refused`), never silently kept or dropped. confirm=True
+runs ALTER ROLE + NOTIFY, then RE-READS the list and fails loudly unless
+exactly the planned schemas are gone. This tool never DROPs a schema; the
+`DROP SCHEMA` runbook (KB § GUIDES/production-deploy.md § 6) stays separate.
+
 Requires a Supabase Personal Access Token, resolved the SAME DB-first way
 `noctus.dev.migrate_product` resolves it (reuses `make_sql_executor`).
 Returns `not_configured` (never a silent skip) when no token resolves —
@@ -65,6 +81,15 @@ from . import migrate_product as _mp
 logger = logging.getLogger(__name__)
 
 _EXPOSED_SCHEMAS_SETTING = "pgrst.db_schemas"
+
+#: Supabase / platform-infra schemas prune must never remove, whatever the
+#: product tree says. These are NOT product-derived (no create_product_app
+#: declaration owns them), so a closed constant is the honest source.
+_PROTECTED_SCHEMAS = frozenset({
+    "public", "graphql_public", "graphql", "extensions", "auth", "storage",
+    "realtime", "vault", "pgbouncer", "supabase_functions", "net", "cron",
+    "core", "seed",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +162,152 @@ def _resolve_roster(
 
 
 # ---------------------------------------------------------------------------
+# Prune (removal of asleep products' schemas)
+# ---------------------------------------------------------------------------
+
+
+def _read_active_scope(path: Path | None = None) -> set[str] | None:
+    """Slugs in `deploy/fleet/active-scope.txt` (catalog `ativo=true`, any
+    scope, plus `core`). ``None`` when the file is missing/empty — prune then
+    REFUSES (it cannot tell asleep from active, and guessing is the failure)."""
+    p = path or (_mp.PRODUCTS_DIR.parent / "deploy" / "fleet" / "active-scope.txt")
+    if not p.exists():
+        return None
+    slugs = {
+        line.strip()
+        for line in p.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    return slugs or None
+
+
+def _running_products_default() -> set[str]:
+    """Slugs with a RUNNING prod container, via the helper behind
+    noctus.vps.ps (`vps.ps`, throttled SSH). Raises on failure."""
+    from . import vps as _vps
+
+    res = _vps.ps()
+    if not res.get("ok"):
+        raise RuntimeError(res.get("error") or "vps.ps failed")
+    return {c["name"][len(_vps.CONTAINER_PREFIX):] for c in res["containers"]}
+
+
+def plan_prune(
+    exposed: list[str],
+    owners: dict[str, list[dict[str, str]]],
+    active: set[str],
+    running: set[str] | None = None,
+) -> dict[str, Any]:
+    """Pure planner. ``owners``: schema -> [{product, schema_source}] for every
+    product on disk. Returns {to_drop, refused, kept}. A schema is dropped only
+    if declared (main_py_declaration) and owned exclusively by asleep products."""
+    to_drop: list[dict[str, Any]] = []
+    refused: list[dict[str, Any]] = []
+    kept: list[str] = []
+    for schema in exposed:
+        if schema in _PROTECTED_SCHEMAS:
+            kept.append(schema)
+            continue
+        own = owners.get(schema, [])
+        if not own:
+            refused.append({"schema": schema, "reason": "no product declares this schema (unattributable)"})
+            continue
+        if any(o["product"] in active for o in own):
+            kept.append(schema)
+            continue
+        up = sorted(o["product"] for o in own if o["product"] in (running or ()))
+        if up:
+            refused.append({"schema": schema, "reason": "container running", "products": up})
+            continue
+        if any(o["schema_source"] != "main_py_declaration" for o in own):
+            refused.append({
+                "schema": schema,
+                "reason": "attributed only by slug-name guess, not a create_product_app(schema=...) declaration",
+                "products": sorted(o["product"] for o in own),
+            })
+            continue
+        to_drop.append({"schema": schema, "products": sorted(o["product"] for o in own)})
+    return {"to_drop": to_drop, "refused": refused, "kept": kept}
+
+
+def _prune(
+    *,
+    executor: _mp.SqlExecutor,
+    confirm: bool,
+    products_dir: Path | None,
+    live_products_fn: Any,
+    active_products: set[str] | None,
+    running_products_fn: Any,
+    result: Any,
+) -> dict[str, Any]:
+    active = active_products if active_products is not None else _read_active_scope()
+    if active is None:
+        return result(
+            "unavailable",
+            error="deploy/fleet/active-scope.txt missing/empty — cannot derive the asleep set; REFUSING to guess.",
+        )
+    # A catalog-asleep product can still be RUNNING in prod: read the real
+    # container set; unreadable => unavailable, never "none running".
+    try:
+        running = set((running_products_fn or _running_products_default)())
+    except Exception as exc:  # noqa: BLE001 — any read failure refuses, never assumes empty
+        return result("unavailable", error=f"could not read running prod containers: {exc} — REFUSING to assume none are running.")
+    live, roster_source, warning = _resolve_roster(None, live_products_fn)
+    if live is not None:
+        active = set(active) | set(live)  # live is already ⊆ active; belt and braces
+    base = products_dir or _mp.PRODUCTS_DIR
+    owners: dict[str, list[dict[str, str]]] = {}
+    for d in sorted(p for p in base.iterdir() if p.is_dir()):
+        schema, source = _mp._resolve_schema(d.name, None, base)
+        owners.setdefault(schema, []).append({"product": d.name, "schema_source": source})
+
+    fetch = executor.execute(_exposed_schemas_sql())
+    if not fetch.get("ok"):
+        return result("error", warning=warning, error="could not read authenticator's pgrst.db_schemas: " + (fetch.get("error") or "unknown error"))
+    exposed = _parse_exposed_schemas(fetch.get("rows"))
+    if exposed is None:
+        return result("error", warning=warning, error="authenticator has no pgrst.db_schemas override — nothing to prune and nothing to verify against.")
+
+    plan = plan_prune(exposed, owners, active, running)
+    drop = {d["schema"] for d in plan["to_drop"]}
+    new_exposed = [s for s in exposed if s not in drop]
+    extra: dict[str, Any] = {
+        "exposed_schemas": exposed,
+        "to_drop": plan["to_drop"],
+        "refused": plan["refused"],
+        "kept": plan["kept"],
+        "roster_source": roster_source,
+        "warning": warning,
+    }
+    if not drop:
+        return result("up_to_date", new_exposed_schemas=exposed, **extra)
+    if not new_exposed:
+        return result("error", error="prune would leave an empty exposed list — refusing.", **extra)
+
+    sql = [_alter_role_sql(new_exposed), _RELOAD_CONFIG_SQL]
+    extra["sql"] = sql
+    if not confirm:
+        return result("planned", new_exposed_schemas=new_exposed, **extra)
+
+    alter = executor.execute(sql[0])
+    if not alter.get("ok"):
+        return result("error", error="ALTER ROLE failed: " + (alter.get("error") or "unknown error"), **extra)
+    reload_ = executor.execute(sql[1])
+    if not reload_.get("ok"):
+        extra["warning"] = (warning + "; " if warning else "") + "NOTIFY reload failed: " + (reload_.get("error") or "unknown")
+    after = _parse_exposed_schemas(executor.execute(_exposed_schemas_sql()).get("rows"))
+    if after is None or set(after) != set(new_exposed):
+        return result(
+            "error",
+            error=f"post-apply verify FAILED: expected {sorted(new_exposed)}, read back {after}",
+            applied=True,
+            new_exposed_schemas=new_exposed,
+            **extra,
+        )
+    return result("pruned", applied=True, new_exposed_schemas=new_exposed, **extra)
+
+
+# ---------------------------------------------------------------------------
 # Core function
 # ---------------------------------------------------------------------------
 
@@ -150,12 +321,18 @@ def check_schema_exposure(
     executor: _mp.SqlExecutor | None = None,
     products_dir: Path | None = None,
     live_products_fn: Any = None,
+    active_products: set[str] | None = None,
+    running_products_fn: Any = None,
 ) -> dict[str, Any]:
     """Compare every checked product's declared DB schema against the
     `authenticator` role's exposed-schemas list; optionally close the gap.
 
     Args:
-        action:        'check' (default, read-only) | 'apply'.
+        action:        'check' (default, read-only) | 'apply' | 'prune'.
+        running_products_fn: Injection seam returning the slugs with a running
+                       prod container (action='prune'; default = vps.ps).
+        active_products: Injection seam for the `active-scope.txt` set
+                       (action='prune' only).
         confirm:       For action='apply' — False (default) = dry-run
                        (returns the planned new exposed-list, writes
                        nothing). True = actually ALTER ROLE + NOTIFY.
@@ -171,12 +348,12 @@ def check_schema_exposure(
         status, action, exposed_schemas, checked, missing, applied,
         new_exposed_schemas, roster_source, warning, error
     """
-    if action not in ("check", "apply"):
+    if action not in ("check", "apply", "prune"):
         return {
             "ok": False,
             "status": "error",
             "action": action,
-            "error": f"unknown action {action!r} — must be 'check' or 'apply'",
+            "error": f"unknown action {action!r} — must be 'check', 'apply' or 'prune'",
         }
 
     def _result(status: str, **overrides: Any) -> dict[str, Any]:
@@ -209,6 +386,17 @@ def check_schema_exposure(
                 "Store it DB-first in platform_settings (key='supabase_access_token', "
                 "global scope) — or set env SUPABASE_ACCESS_TOKEN in the MCP .env."
             ),
+        )
+
+    if action == "prune":
+        return _prune(
+            executor=executor,
+            confirm=confirm,
+            products_dir=products_dir,
+            live_products_fn=live_products_fn,
+            active_products=active_products,
+            running_products_fn=running_products_fn,
+            result=_result,
         )
 
     # ── Resolve roster ──────────────────────────────────────────────────
@@ -330,7 +518,15 @@ def register(server) -> None:
             "returns the planned new exposed-list); confirm=True runs ALTER "
             "ROLE authenticator SET pgrst.db_schemas=... (APPEND-ONLY — union "
             "with the current list, never removes a schema) then NOTIFY "
-            "pgrst,'reload config'. Pass products=[...] to scope to an "
+            "pgrst,'reload config'. action='prune' is the ONLY removal path: "
+            "DRY-RUN by default (plan = current list, to_drop + owning "
+            "products, refused, exact sql); drops only schemas declared "
+            "solely by ASLEEP products (not in active-scope.txt / live "
+            "catalog), never infra/core/seed schemas, REFUSES unattributable "
+            "ones, and any whose owning product has a RUNNING prod container "
+            "(reason 'container running'; unreadable => unavailable); "
+            "confirm=True applies, NOTIFYs and re-reads to verify. "
+            "Pass products=[...] to scope to an "
             "explicit set instead of the catalog roster. Requires a Supabase "
             "Personal Access Token, resolved DB-first the same way "
             "migrate_product resolves it; returns not_configured (never a "
@@ -360,5 +556,6 @@ __all__ = [
     "_parse_exposed_schemas",
     "_alter_role_sql",
     "_resolve_roster",
+    "plan_prune",
     "register",
 ]
