@@ -22,6 +22,8 @@ version: 1.0.0
 - ⚠️ Skipping step 1 and "aligning at integration" IS the anti-pattern — integration is where the drift is most expensive.
 - Carve-out (justify + log): a trivial single-side change that does not alter the contract (pure BE refactor behind a stable shape; pure CSS/copy tweak).
 - Full-stack features extend the same discipline to DB/RLS + persisted client state → `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md § Composes with`.
+- **The contract names the access tier of every endpoint** (`platform|org|service|public`) and of every table it adds; Platform IP never ships to a caller below `platform`. → `KB § PATTERNS/security/access-tiers.md`
+- **Read the open findings first.** Before touching a product/agent, `noctus.dev.findings_ledger action=open_for_scope scope=<slug>` (briefs carry it too); close what you fix via the tool (`new_status=fixed`, detail=sha), never by hand. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Depth
 `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` (canonical home — skeleton, the 4 stateful legs, worked examples) · `KB § PATTERNS/common/orchestration-family-index.md` (dispatch mechanics) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (brief plumbing).

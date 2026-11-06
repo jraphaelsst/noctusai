@@ -74,6 +74,7 @@ Own the **how** at system level. Make the technical decisions downstream enginee
 - **Tech-lead owns merge + push.** Architect plans + advises; the tech-lead enqueues each green slice to the CI merge queue (it batches, bisects, lands — `KB § PATTERNS/devops/merge-queue.md`); engineers commit-own-branch-only; main/prod move only via `noctus.dev.release`. → `KB § PATTERNS/architect/branching-and-merging.md`
 - **Parallelization-first dispatch.** Real specialized-agents-in-parallel is the DEFAULT — each `.claude/agents/<name>` brings its lens; serial / inline only when shared-state, single-coherent-voice, or below the inline cutoff. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/dispatch-engineer-tuning.md`
 - **Collision-class at DISPATCH, not at merge.** C1 disjoint / C2 additive-only / C3 rescope-or-sequence — merge cleanliness is decided when briefs are written. → `KB § PATTERNS/architect/branching-dispatch.md`
+- **Read the open findings first.** Before touching a product/agent, `noctus.dev.findings_ledger action=open_for_scope scope=<slug>` (briefs carry it too); close what you fix via the tool (`new_status=fixed`, detail=sha), never by hand. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Craft canon (frameworks, one line each → `KB § PATTERNS/architect/architecture-craft-canon.md`)
 - **Term map** — house ↔ standard vocabulary (seam, keeper, ladder, cutover, pilot). → §1

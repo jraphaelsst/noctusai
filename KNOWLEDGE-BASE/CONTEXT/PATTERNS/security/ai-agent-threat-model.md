@@ -239,3 +239,5 @@ Re-audit (agent `agents-security`): on every NEW agent, on every channel or tool
 ## Composes-with
 
 `KB § PATTERNS/security/ai-agent-security-canon.md` (method) · `KB § PATTERNS/security/llm-bot-security.md` · `webhook-signatures.md` · `lgpd.md` · `KB § GUIDES/agent-creation.md` · `KB § PATTERNS/common/agent-context-architecture.md` · agent `agents-security` (owner) · agent `security` (generic).
+
+> Access tiers (routes + tables declare platform/org/service/public; public is a closed allowlist; delta-stream + leak-fingerprint + effective-exposure gates): `KB § PATTERNS/security/access-tiers.md`.

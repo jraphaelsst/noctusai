@@ -267,6 +267,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-waha-instances-render-sync", action="store_true", help="deploy/fleet/compose.waha.yml must equal the render of deploy/fleet/waha-instances.yml (one WAHA Core container per number, declared as data). Severity high. KB § CONTEXT/INTEGRATIONS/whatsapp.md.")
+    parser.add_argument("--check-access-tier-routes", action="store_true", help="BLOCKING keeper (access tiers, owner directive 2026-11-05): every route of every ACTIVE product resolves to a tier (platform|service|org|public) and Platform IP (studio/agents definitions, evals, prompts, admin) never sits behind a weaker dependency. Ratcheted by deploy/security/access-tier-baseline.json. KB § PATTERNS/security/access-tiers.md.")
+    parser.add_argument("--check-access-tier-tables", action="store_true", help="BLOCKING keeper: a Platform-IP table has no authenticated/anon grant and no non-admin TO authenticated policy in the migration chain (PostgREST exposure counts); with --paths (staged ADDED migrations) every new table must declare COMMENT ON TABLE ... IS 'tier:x'. Ratcheted. KB § PATTERNS/security/access-tiers.md.")
+    parser.add_argument("--check-access-tier-streams", action="store_true", help="BLOCKING keeper: a route publishing message.delta-style partial LLM output to a browser must pass it through the leak filter (FiltroDeltas). Ratcheted. KB § PATTERNS/security/access-tiers.md.")
+    parser.add_argument("--check-access-tier-fingerprint", action="store_true", help="BLOCKING keeper: every prompt-derived source (compiled text, textos, tool descriptions, decisions, skill bodies/files) is a leak-fingerprint source at the texto_fonte_do_prompt seam, and every agent tool is classified prompt-derived or not. Ratcheted.")
+    parser.add_argument("--access-tier-exposure", metavar="JSON_FILE", default=None, help="Diff EFFECTIVE prod exposure (rows of the read-only queries, saved as JSON {grants,policies,db_schemas}) against declared Platform-IP tables; 'queries' prints the SQL to run through the supabase connector. Exit 1 on drift or unmeasured input.")
+    parser.add_argument("--access-tier-catalog", action="store_true", help="Generate the endpoint access-tier catalog (every HTTP endpoint of the active products: tier, gates, Platform IP, verdict). --write regenerates project-history/access-tiers/endpoint-catalog.md.")
+    parser.add_argument("--write", action="store_true", help="With --access-tier-catalog: write the generated catalog file instead of printing the summary.")
+    parser.add_argument("--check-access-tier-ledger", action="store_true", help="BLOCKING keeper: the living access-tier findings ledger (project-history/access-tiers/findings.ndjson) agrees with the scanners: a NEW finding needs a row, a row marked fixed must not still be seen, an open row the scanners no longer see must be closed.")
+    parser.add_argument("--check-findings-ledgers", action="store_true", help="BLOCKING keeper over EVERY registered living findings ledger (access-tier, Julia's mistakes, ...): a status that disagrees with the latest scan fails (new finding without a row, a row marked fixed that is still seen, an open row no longer seen). KB § PATTERNS/common/living-findings-ledgers.md.")
+    parser.add_argument("--check-findings-ledger-visibility", action="store_true", help="Backstop: the findings-injection hook is registered for SessionStart + SubagentStart and every registered ledger is on the roster it reads (visibility is injected by construction; nobody should hit this).")
+    parser.add_argument("--findings-ledger-sarif", metavar="LEDGER", default=None, help="Export the ledger as SARIF 2.1.0 to stdout (or --out FILE) for GitHub code scanning (codeql-action/upload-sarif).")
+    parser.add_argument("--findings-ledger-reconcile", metavar="LEDGER", default=None, help="The ledger's registered scanner writes it: add new rows, close fixed ones, reopen regressions (the tool is the only writer).")
+    parser.add_argument("--access-tier-reconcile", action="store_true", help="Scanners write the findings ledger: add new findings, close fixed ones, reopen regressions (never hand-edit the ledger). With --access-tier-exposure FILE it reconciles the EFFECTIVE prod findings instead.")
+    parser.add_argument("--found-by", default="keeper", help="With --access-tier-reconcile: who found it (keeper | audit | exposure-tool | <agent>).")
     parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
@@ -325,6 +339,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-hardcoded-product-slug-set", action="store_true", help="Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instead — a frozen literal goes stale the moment the fleet changes (product added/removed/consolidated/never-deployed) and can silently misattribute failures OR abort an entire build. Opt-out: a `slug-literal-ok`/`registry-exempt`/`not-a-product-set` rationale comment. Severity warning. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-lockfile-dep-sync", action="store_true", help="Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (package.json declaration) yet still breaks a clean `npm ci` (Rollup/Vite import-resolution failure), invisible in dev where an already-populated node_modules masks the gap. N=3 in one week: @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-dependabot-product-coverage", action="store_true", help="Keeper: .github/dependabot.yml must carry an npm block for every products/<slug>/frontend with a package.json, no block may point at a directory whose package.json no longer exists, and every npm block must carry the 8-entry fleet-major `ignore:` guard (unguarded/partially-guarded is the actual hole). 2026-08-13 incident: igig (live since 2026-08-09), orbity, and products/seed had ZERO Dependabot coverage — nothing was watching those directories. Fix: --refresh-dependabot-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
+    parser.add_argument("--check-kb-vector-canonical", action="store_true", help="Keeper: the KB vector cache is an index over the markdown KB, never a content store (orphan rows, stale source_sha). Advisory (warnings, exit 0). Run by embedding-cache-gate.yml.")
+    parser.add_argument("--check-workflow-cli-flags-exist", action="store_true", help="Keeper: every `cli.py --<flag>` a .github/workflows run: block invokes must be defined by this parser (derived from its AST). Severity high. KB § PATTERNS/devops/dev-main-ci-gates.md.")
+    parser.add_argument("--check-workflow-mcp-requirements-path", action="store_true", help="Keeper: every workflow `pip install -r <file>` must resolve to an existing file from the step's working directory (toolkit requirements: mcp/noctusai/requirements.txt). Severity high. KB § PATTERNS/devops/dev-main-ci-gates.md.")
+    parser.add_argument("--check-workflow-actionlint", action="store_true", help="Run actionlint (+shellcheck) over .github/workflows. Binary absent => INCONCLUSIVE (exit 0 locally, never a silent pass); add --actionlint-require (CI) to make absent exit 1. KB § PATTERNS/devops/dev-main-ci-gates.md.")
+    parser.add_argument("--actionlint-require", action="store_true", help="With --check-workflow-actionlint: a missing actionlint binary is a failure, not inconclusive.")
     parser.add_argument("--check-workflow-job-timeouts", action="store_true", help="Keeper: every GitHub Actions job (no `uses:`) must declare timeout-minutes <= ceiling (merge-queue drain 360), and every apt/apt-get step a step timeout. 2026-11-05: a hung apt step with no timeout held a merge-queue batch (and 13 queued entries) for 1.5h+. Severity high. KB § PATTERNS/devops/merge-queue.md.")
     parser.add_argument("--check-ci-test-matrix-coverage", action="store_true", help="Keeper: .github/workflows/test.yml's product-backend-tests / product-frontend-tests `matrix: product:` lists must include every product that QUALIFIES (has real test files for that suite) — a missing entry means that product's tests silently never run in CI. 2026-08-13: igig/orbity/seed backend suites + orbity's frontend suite were never collected. Fix: --refresh-ci-matrix-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-seed-test-root-ci-coverage", action="store_true", help="Keeper: every seed/*/backend with pytest files and every seed/*/frontend with vitest specs must have a workflow step that RUNS that suite. Sibling of --check-ci-test-matrix-coverage, whose domain is products/* and so could never see these. 2026-09-09: seed/lib/backend (3637 tests), seed/framework/backend (203) and seed/lib/frontend (375) had NO job at all — the packages every product imports were the only ones ungated. Matches on the RUN command, not on working-directory: seed-typecheck.yml visited seed/lib/frontend for months running only tsc. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
@@ -1172,6 +1191,71 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
         sys.exit(1)
+    elif args.check_access_tier_routes or args.check_access_tier_tables or args.check_access_tier_streams or args.check_access_tier_fingerprint or args.check_access_tier_ledger or args.check_findings_ledgers or args.check_findings_ledger_visibility:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import (
+            check_access_tier_fingerprint, check_access_tier_ledger, check_findings_ledger_visibility, check_findings_ledgers, check_access_tier_routes, check_access_tier_streams,
+            check_access_tier_tables)
+        if args.check_findings_ledger_visibility:
+            issues, label = check_findings_ledger_visibility(repo_root=REPO_ROOT), "findings-visibility"
+        elif args.check_findings_ledgers:
+            issues, label = check_findings_ledgers(repo_root=REPO_ROOT), "findings-ledger drift"
+        elif args.check_access_tier_ledger:
+            issues, label = check_access_tier_ledger(repo_root=REPO_ROOT), "access-tier ledger"
+        elif args.check_access_tier_streams:
+            issues, label = check_access_tier_streams(repo_root=REPO_ROOT), "access-tier stream"
+        elif args.check_access_tier_fingerprint:
+            issues, label = check_access_tier_fingerprint(repo_root=REPO_ROOT), "leak-fingerprint"
+        elif args.check_access_tier_routes:
+            issues = check_access_tier_routes(repo_root=REPO_ROOT)
+            label = "access-tier route"
+        else:
+            issues = check_access_tier_tables(
+                repo_root=REPO_ROOT, paths=[p for p in (args.paths or "").split(",") if p] or None)
+            label = "access-tier table"
+        if not issues:
+            print(f"  {GREEN}✓ no new {label} violation (baseline respected).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} {label} finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
+        sys.exit(1)
+    elif args.access_tier_exposure:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import access_tier_findings, access_tiers
+        if args.access_tier_exposure == "queries":
+            print(json.dumps(access_tiers.EXPOSURE_QUERIES, indent=1))
+            sys.exit(0)
+        out = access_tiers.diff_exposure(json.loads(Path(args.access_tier_exposure).read_text(encoding="utf-8")), REPO_ROOT)
+        if args.access_tier_reconcile:
+            out["ledger"] = access_tier_findings.reconcile_effective(out, REPO_ROOT, found_by=args.found_by)
+        print(json.dumps(out, indent=1, ensure_ascii=False))
+        sys.exit(0 if out["ok"] else 1)
+    elif args.findings_ledger_sarif:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import findings_ledger
+        doc = json.dumps(findings_ledger.export_sarif(args.findings_ledger_sarif, REPO_ROOT), indent=1, ensure_ascii=False)
+        if getattr(args, "out", None):
+            Path(args.out).write_text(doc + "\n", encoding="utf-8")
+        else:
+            print(doc)
+        sys.exit(0)
+    elif args.findings_ledger_reconcile:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import findings_ledger
+        out = findings_ledger.reconcile(args.findings_ledger_reconcile, REPO_ROOT, found_by=args.found_by)
+        print(json.dumps(out, indent=1))
+        sys.exit(0 if out.get("ok") else 1)
+    elif args.access_tier_reconcile:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import access_tier_findings
+        print(json.dumps(access_tier_findings.reconcile(REPO_ROOT, found_by=args.found_by), indent=1))
+        sys.exit(0)
+    elif args.access_tier_catalog:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import access_tiers
+        print(json.dumps(access_tiers.access_tier_catalog(write=bool(getattr(args, "write", False)), worktree_path=str(REPO_ROOT)), indent=1, ensure_ascii=False))
+        sys.exit(0)
     elif args.check_org_owned_definition_not_instanciavel:
         from settings import REPO_ROOT
         from tools.noctus.dev.compliance import check_org_owned_definition_not_instanciavel
@@ -2329,6 +2413,35 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
+        sys.exit(1 if blocking else 0)
+
+    elif args.check_kb_vector_canonical:
+        from tools.noctus.dev.compliance import check_kb_vector_canonical
+        issues = check_kb_vector_canonical()
+        if not issues:
+            print(f"  {GREEN}✓ kb-vector-canonical: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} kb-vector-canonical issue(s) (warnings, not blockers):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i.get('severity','warning')}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(0)
+
+    elif args.check_workflow_cli_flags_exist or args.check_workflow_mcp_requirements_path or args.check_workflow_actionlint:
+        from tools.noctus.dev import compliance as _c
+        if args.check_workflow_cli_flags_exist:
+            name, issues = "workflow-cli-flags-exist", _c.check_workflow_cli_flags_exist()
+        elif args.check_workflow_mcp_requirements_path:
+            name, issues = "workflow-mcp-requirements-path", _c.check_workflow_mcp_requirements_path()
+        else:
+            name, issues = "workflow-actionlint", _c.check_workflow_actionlint(require=args.actionlint_require)
+        blocking = [i for i in issues if i.get("severity") != "inconclusive"]
+        if not issues:
+            print(f"  {GREEN}✓ {name}: clean.{RESET}")
+            sys.exit(0)
+        for i in issues:
+            col = YELLOW if i.get("severity") == "inconclusive" else RED
+            print(f"    {col}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        print(f"  {RED if blocking else YELLOW}{'✗' if blocking else '?'} {len(issues)} {name} issue(s).{RESET}")
         sys.exit(1 if blocking else 0)
 
     elif args.check_workflow_job_timeouts:

@@ -11,6 +11,7 @@ The **learning posture** rules (safety nets · friction on both axes · always-h
 - **Persistent-files absorption.** findings.md/PROJECT.md/lessons MUST land in KB/memory BEFORE archive — recovery pointer + absorption both legs. → `KB § PATTERNS/common/persistent-files-absorption.md`
 - **Learn-before-archive.** Before any destructive op preserve what would be LOST; tool `noctus.dev.salvage_before_delete`. → `KB § PATTERNS/common/learn-before-archive.md`
 - **Roadmap tracking — multi-session project plans.** Multi-slice initiatives live in `project-history/roadmaps/<slug>-YYYY-MM.md` (durable, mutable — `projects/` is ephemeral, ndjson is event-shaped). Goal + slice table + decision log + retrospective. Absorb lessons → KB/memory. → `KB § PATTERNS/common/roadmap-tracking.md`
+- **Living findings ledgers.** Every burn-down (security access-tier, Julia's mistakes, the next audit) is a typed instance of ONE mechanism: NDJSON + summary, written only by `noctus.dev.findings_ledger`, a registered scanner/eval decides whether a row is still real, one drift keeper fails status-vs-reality, open rows reach every brief. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Why a family line
 

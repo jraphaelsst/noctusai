@@ -27,6 +27,8 @@ An agent's definition is **data** (rows owned by the platform org); the generato
 - The generator never invents a standard, a skill, a spec value, a mechanism case, a control, a tool name outside the registry. A gap stays a gap.
 - Cost cap US$ 5 per generation run. Briefing `exemplos` and generated eval fixtures must be synthetic (PII is refused).
 - `pronto_para_publicar` mirrors the gate except the human judge-suite override; do not treat a green view as a publish.
+- **An agent definition is Platform IP (tier `platform`).** Its prompt/sections/skills/evals are platform-admin/service only: no member-level route, no `authenticated` grant on the definition tables. → `KB § PATTERNS/security/access-tiers.md`
+- **Give the agent its ledger.** An agent with an eval loop registers a findings ledger (`noctus.dev.findings_ledger action=scaffold`) so its mistakes are tracked, not remembered. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Depth
 `KB § GUIDES/agent-creation.md` (artifacts ↔ Julia map, gate table, security, what never comes from AI) · `products/agents/README.md` · `projects/julia-v2/CONTRACT.md` · skill `noc-mcp-tool` (the tool's own conventions).
