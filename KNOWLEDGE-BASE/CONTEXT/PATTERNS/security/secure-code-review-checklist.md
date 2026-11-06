@@ -70,6 +70,13 @@ Legend: **K** = keeper-covered (pre-commit/CI) · **M** = manual · ASVS chapter
 | 3.15 | PostgREST table names schema-relative; selects bounded | K `check_postgrest_schema_qualified_table`, `check_postgrest_unbounded_query` |
 | 3.16 | Raw SQL with input uses `format('%I'/'%L')` / parameters, never f-strings; ILIKE input escaped + length-capped | M |
 | 3.17 | GUC carve-out guards use the template, not hand-written | K `check_guc_carveout_guard_hand_written` |
+| 3.18 | Exposure verdict from EFFECTIVE state: replay the whole migration chain or query live `role_table_grants` / `pg_policies` (never a partial read) | M (appsec canon §8 rules 10-11) |
+| 3.19 | No `TO authenticated` policy with an org-membership-only check on a Platform-IP table; grants match the API tier | M + live query (appsec canon §8 rule 11) |
+| 3.20 | Exposed schemas (`pgrst.db_schemas`) list only intended schemas; Data API / auto-expose settings reviewed | M (rule 13) |
+| 3.21 | SECURITY DEFINER / any function in an exposed schema: EXECUTE granted only to intended roles (RPC door); `pg_graphql` exposure checked | M + K `check_secdef_migration_revokes_execute` (rule 14) |
+| 3.22 | Supabase security advisors (`get_advisors`) run and triaged | M (rule 17) |
+| 3.23 | Column privileges used only for secret columns that cannot move to a no-grant table | M (rule 15) |
+
 
 ## 4 · Webhooks and inbound integrations (V4, V13) — `KB § PATTERNS/security/webhook-signatures.md`
 
@@ -153,6 +160,7 @@ Legend: **K** = keeper-covered (pre-commit/CI) · **M** = manual · ASVS chapter
 | 10.6 | Tests never monkeypatch our own guard | K `check_no_self_monkeypatch` |
 | 10.7 | Cross-tenant negative test exists for every new org-scoped route | M |
 | 10.8 | Every new keeper ships its regression test | K `check_detector_has_regression_test` |
+| 10.9 | Logs/Sentry: no tokens, session ids, connection strings, keys, prompt text or raw PII (removed, masked or hashed); Sentry server-side scrubbing on, SDK `before_send` scrubs prompts | M (OWASP Logging Cheat Sheet; AC-6.9: privileged reads are logged) |
 
 ---
 
@@ -173,6 +181,7 @@ Accessed 2026-11-05.
 - OWASP ASVS 5.0.0 chapters — https://github.com/OWASP/ASVS/tree/master/5.0/en — chapter tags (fetched).
 - OWASP API Security Top 10 2023 — https://api-security.owasp.org/editions/2023/en/0x11-t10/ — API1/3/5 labels (audit-verified).
 - Keeper inventory — `mcp/noctusai/tools/noctus/dev/compliance.py` on `origin/dev` 0a6052430 (read 2026-11-05).
+- Supabase Securing your API / column-level security / Storage access control; PostgREST schemas + auth; NIST 800-53 AC-3/AC-6; OWASP Logging Cheat Sheet — READ 2026-11-05, contributions listed in `appsec-craft-canon.md` §16 (rows 3.18-3.23, 10.9).
 
 ## Composes-with
 
