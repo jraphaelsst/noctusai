@@ -347,13 +347,25 @@ async def require_publish_write(
         return ctx
     return await require_platform_admin(ctx=ctx, request=request, response=response)
 
-require_publish_read = require_scopes(
+_publish_read_base = require_scopes(
     SCOPE_STUDIO_PUBLISH,
     user_roles=MEMBER_ROLES,
     get_auth_context=get_auth_context,
     get_core_client=get_core_client,
     restrict="any",
 )
+
+
+async def require_publish_read(
+    ctx: AuthContext = Depends(_publish_read_base), request: Request = None, response: Response = None,
+) -> AuthContext:
+    """Eval runs / results (the definition's outputs -- the platform's IP): a NoctusAI PLATFORM admin (403
+    ``platform_admin_required`` for any org member, owner/admin included) or a ``studio:publish`` product token
+    (dev-advisor agents only, enforced by the route). The role gate is the member floor so a platform admin who is
+    only a ``member`` of the org still reads."""
+    if ctx.caller_kind == "product":
+        return ctx
+    return await require_platform_admin(ctx=ctx, request=request, response=response)
 
 
 # Credenciais e integrações + Configurações do agente (2026-09-16): the
