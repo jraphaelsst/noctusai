@@ -495,4 +495,13 @@ cd products/agents/frontend && npx vite build
 - Backend: `noctusai_lib` + `noctusai_seed`; `claude-agent-sdk` (planned, M4)
 - Frontend: `@noctusai/lib` + `@noctusai/seed`
 
+
+## Julia turn redesign (2026-11-05)
+
+Skill gate -> auto-load (`DECISAO-SKILL-AUTOLOAD.md` under `projects/julia-v2/`): `tool_registry._handler` opens a tool's skill for the turn and attaches `procedimento_obrigatorio`; `JuliaTurno.skills_carregadas` is turn-scoped and `reiniciar_tentativa()` resets budgets for a re-run. `turno.executar` splits the stop causes (`PARADAS_PROCEDURAIS`: silent re-run, fallback + `alertar_operacao`, no hand-off). `turno._compilar` caches published compiles (`ESTATISTICAS`, `limpar_cache_compilacao`). `EvalRunner` takes a `turn_driver_factory` so judge cases run on `LiveEvalTurnDriver` (`ThreadState.contexto_caso` -> state block; `definir_modelo/temperatura/historico` are A/B knobs). Version temperature: `tool_policy.temperature`, default 0.3 — inert on Anthropic models since API 2026-10-21 (the provider never sends it; JL-020).
+
+Leak fingerprint (turn redesign): `JuliaTurno.textos_derivados` collects every skill body / file the tools hand the model; `conformidade.impressao_com` adds them to the fingerprint for the turn's reply check, and `avaliar_resposta` runs `vazamento_prompt` on `esqueleto(resposta)` too.
+
 - Grants are per (agent, product, org) with a personal token; channel requests re-check the grant is live (`assert_channel_grant_live`). Staff edit an org's specs only under a live grant (`/api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs`, migration 064 `especificacoes_editor`).
+
+- **Turn metrics (migration 066, CONTRACT §14):** `agents.turn_metrics`, one row per turn (cost from the summed priced D25 events, speed, UTF-8 payload bytes), written once at the end of `turno.executar` and never failing the turn; read ONLY by platform admins through `/api/studio/agents/{key}/metricas*`; shown only in the agents app (agent page section `metricas`, `frontend/src/pages/studio/tabs/MetricasTab.tsx`; the section is registered in `studio/modelo.py` `SECOES_PAGINA`, tier `plataforma`).

@@ -43,6 +43,7 @@ from app.dependencies import (
     get_notification_sink_dep,
     get_relatorio_resumo_factory_dep,
     get_thread_alerta_store_dep,
+    get_turn_metrics_store_dep,
     get_skills_factory_dep,
     get_token_audit_dep,
 )
@@ -69,6 +70,7 @@ from app.stores.usuarios_avaliacao import FakeUsuariosAvaliacao
 from app.stores.channel_inbound import FakeChannelInboundStore
 from app.stores.conformidade import FakeConformidadeStore
 from app.stores.thread_alertas import FakeThreadAlertaStore
+from app.stores.turn_metrics import FakeTurnMetricsStore
 from app.stores.threads import FakeThreadStore
 from app.studio.catalog import StoreKnowledgeCatalog
 from tests.channels.julia_v2 import JULIA_KEY, montar_julia_v2, publicar_padrao
@@ -141,6 +143,7 @@ class ChannelHarness:
         #: the org's owner/admin the lead opt-out notice goes to (the Fake sink; never the real core)
         self.notificacoes = FakeNotificationSink(org_admins={rt_.org_id: [str(UUID(int=0xA11CE))]})
         self.alertas = FakeThreadAlertaStore()
+        self.metricas = FakeTurnMetricsStore()
         #: the hand-off report's narrative generator (the ``/resumo`` LLM call) -- a Fake: it never touches ``provider``
         self.resumo_relatorio = FakeResumoRelatorio()
         self.sw = FakeSocialWiringClient()
@@ -270,6 +273,7 @@ def chan(rt):
         get_skills_factory_dep: lambda: h.skills_factory,
         get_notification_sink_dep: lambda: h.notificacoes,
         get_thread_alerta_store_dep: lambda: h.alertas,
+        get_turn_metrics_store_dep: lambda: h.metricas,
         get_relatorio_resumo_factory_dep: lambda: h.resumo_relatorio,
         get_org_llm_key_resolver_dep: lambda: (lambda provider, org: h.keys.get((provider, org))),
         get_product_token_admin_dep: lambda: h.token_admin,

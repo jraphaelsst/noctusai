@@ -596,6 +596,13 @@ def get_thread_alerta_store_dep():
     return get_thread_alerta_store(settings)
 
 
+def get_turn_metrics_store_dep():
+    """``agents.turn_metrics`` -- one row per agent turn: cost, speed, size (migration 066)."""
+    from app.stores.turn_metrics import get_turn_metrics_store
+
+    return get_turn_metrics_store(settings)
+
+
 def get_relatorio_resumo_factory_dep():
     """The narrative generator of a hand-off report (CONTRACT §12.4): the ``/resumo`` LLM call. A test overrides
     this seam with a Fake (never a patch)."""

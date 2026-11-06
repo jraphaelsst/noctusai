@@ -2,19 +2,19 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1224 open / in-progress**, 3 fixed, 1 accepted (1228 total).
+**1209 open / in-progress**, 19 fixed, 1 accepted (1229 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
 | academia-de-reciclagem | 32 | 0 | 0 | 32 | 0 | 0 |
 | adconnect | 30 | 0 | 0 | 30 | 0 | 0 |
-| agents | 24 | 0 | 2 | 22 | 2 | 3 |
+| agents | 23 | 0 | 0 | 23 | 0 | 5 |
 | commerce | 61 | 0 | 0 | 61 | 0 | 0 |
 | community | 35 | 0 | 0 | 35 | 0 | 0 |
 | core | 53 | 0 | 0 | 53 | 0 | 0 |
 | daily-life | 16 | 0 | 0 | 16 | 0 | 0 |
 | dev-team | 6 | 0 | 0 | 6 | 0 | 0 |
-| erp-imobiliario | 201 | 2 | 6 | 193 | 0 | 0 |
+| erp-imobiliario | 187 | 0 | 1 | 186 | 0 | 14 |
 | igig | 71 | 0 | 0 | 71 | 0 | 0 |
 | monica | 22 | 0 | 0 | 22 | 0 | 0 |
 | orbity | 62 | 0 | 0 | 62 | 0 | 0 |
@@ -30,15 +30,6 @@
 
 | id | scope | target | tier | class | sev | status | found |
 |---|---|---|---|---|---|---|---|
-| AT-5d90688d | erp-imobiliario | `erp.portal_acessos` | none | policy-secret | critical | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-af2a4272 | erp-imobiliario | `erp.portal_tokens` | none | policy-secret | critical | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-32fc092f | agents | `source:skill_files` | none | leak-fingerprint | high | in-progress feat/julia-turn-redesign | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-289ca892 | agents | `source:skills` | none | leak-fingerprint | high | in-progress feat/julia-turn-redesign | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-418d68d1 | erp-imobiliario | `erp.meta_periodos` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-999c2102 | erp-imobiliario | `erp.metas_configuracao` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-d3d36c2c | erp-imobiliario | `erp.metas_empresa` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-b87d15b7 | erp-imobiliario | `erp.regras_pontuacao` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-a8c3505d | erp-imobiliario | `erp.site_config` | none | policy-pii | high | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-847e83bb | erp-imobiliario | `schema erp served by the data API while erp-imobiliario is ativo=false` | none | inactive-schema-served | high | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-2c294215 | academia-de-reciclagem | `POST /api/public/interessados` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-b291cdb1 | academia-de-reciclagem | `products/academia-de-reciclagem/backend/app/routers/content_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
@@ -75,6 +66,7 @@
 | AT-1541441b | agents | `products/agents/backend/app/routers/studio_geracoes_router.py (5 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-4a456b50 | agents | `products/agents/backend/app/routers/studio_import_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-f3021066 | agents | `products/agents/backend/app/routers/studio_knowledge_router.py (10 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
+| AT-eae56506 | agents | `products/agents/backend/app/routers/studio_metricas_router.py (4 routes)` | platform | platform-in-public-schema | medium | open | keeper 2026-11-06 |
 | AT-f2aabc8a | agents | `products/agents/backend/app/routers/studio_package_sync_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-13808e32 | agents | `products/agents/backend/app/routers/studio_padrao_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-682c3df8 | agents | `products/agents/backend/app/routers/studio_prontidao_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
@@ -298,7 +290,7 @@
 ## Bulk (defence in depth: browser grants on tables without `tier:org|public`)
 
 - social-wiring: 310
-- erp-imobiliario: 162
+- erp-imobiliario: 155
 - therapy-platform: 114
 - igig: 66
 - commerce: 61

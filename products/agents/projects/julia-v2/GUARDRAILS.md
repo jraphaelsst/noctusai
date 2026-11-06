@@ -305,6 +305,14 @@ E30 plus the positive controls (E20, E21) keep the guardrails from over-blocking
 - [Resolução COFECI 1.065/2007](https://www.normasbrasil.com.br/norma/resolucao-1065-2007_105573.html) · [Lei 7.716/89 commentary](https://emporiododireito.com.br/leitura/lei-federal-n-7-716-89-comentada-define-os-crimes-resultantes-de-preconceito-de-raca-ou-de-cor)
 - [Falsa imobiliária golpe SP (portas.com.br)](https://portas.com.br/noticias/falsa-imobiliaria-em-sp-aplica-golpe-de-r-31-mil/) · [CRECI-ES alerta golpes](https://crecies.gov.br/o-creci-es-alerta-os-corretores-capixabas-sobre-se-proteger-de-golpes-virtuais) · [Golpe do boleto falso (SBT/Comprova)](https://sbtnews.sbt.com.br/noticia/brasil/como-identificar-o-golpe-do-boleto-falso-e-evitar-prejuizos)
 
+
+## Turn redesign addendum (2026-11-05)
+
+- The per-turn REFUSAL budget (`max_recusas_por_turno`) now spends only on real violations (evidence mismatch, forged / forbidden / abusive calls, caps); a skill being closed is not one (auto-load).
+- A budget stop is PROCEDURAL: silent re-run, then fallback text + operator alert (`alerta` / `erro_agente`, code only). A customer-facing hand-off stays reserved for an explicit request for a person, out-of-scope, a security escalation, a data-subject request, or a compliance block that survives the corrective re-run.
+- `procedimento_obrigatorio` is guidance: it is excluded from the figures a reply may repeat (`valor_sem_ferramenta`).
+- Leak fingerprint covers prompt-derived TOOL RESULTS: every skill body / file / description handed to the model in the turn (`JuliaTurno.textos_derivados`, auto-load included) is added to the fingerprint for that turn's reply check and tool-argument guard (`conformidade.impressao_com`), and the leak check also runs on `esqueleto(resposta)` (de-obfuscated), like the link and contact checks. Mechanism cases `mec-skill-dump-direto` / `-parafraseado` (iter4 folder) pin it.
+
 ## B13. Prompt-exposure closure (security audit 2026-11)
 
 - **Browser reads (P1-A).** Migration 036 already makes every `agents` definition, eval and knowledge table service-role only (`REVOKE ALL ... FROM PUBLIC, anon, authenticated`, browser policies dropped, 001's default privileges revoked); only `status_pagina` stays readable (read-only). The audit's premise (a surviving `TO authenticated` read policy) was stale. Proof now covers the whole chain: `mcp/noctusai/tests/test_agents_browser_lockdown_probes_on_replay.py` runs the replay and asserts a SELECT as `authenticated` and as `anon` is refused on each definition/eval/knowledge table. The tables left readable to org users are none in `agents` except `status_pagina` (page flags, no content): an org's own conversations are served by the backend with the service-role client after the org check, not by PostgREST.

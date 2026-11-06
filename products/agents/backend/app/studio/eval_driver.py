@@ -92,6 +92,9 @@ class ThreadState:
     historico: tuple[Mensagem, ...] = ()
     #: fixture knobs the roteiro hands to the driver (agent controls, lead flags, ...)
     fixture: dict[str, Any] = field(default_factory=dict)
+    #: a JUDGE case's free-text ``contexto`` (what the case says about the situation): rendered into the turn's STATE
+    #: block (system message 2, where the real turn's facts live) -- never into the lead's message
+    contexto_caso: str | None = None
 
 
 @dataclass(frozen=True)

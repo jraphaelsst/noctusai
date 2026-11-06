@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import logging
 import re
 import time
 from collections.abc import Sequence
@@ -38,6 +39,8 @@ from app.studio.eval_driver import (
     reiniciar,
 )
 from noctusai_lib.primitives.identificador import cnpj_dv_valido, cpf_dv_valido
+
+logger = logging.getLogger(__name__)
 
 from app.studio.eval_sinteticos import TokenSinteticoDesconhecido, validar_tokens
 
@@ -615,6 +618,9 @@ async def _executar_execucao(
         try:
             outcome = await driver.executar_turno(thread, turno["lead"])
         except Exception as exc:  # a driver failure is a RESULT (erro), never swallowed or re-raised as a pass
+            # The result keeps only the class name (it is shown to admins); the traceback goes to the log, or a
+            # prod-only failure is undiagnosable (2026-11-06: 61/61 `erro_turno1:TypeError`, no trace anywhere).
+            logger.exception("eval_mecanismo: driver falhou no turno %d (execucao %d)", i + 1, indice)
             falhas.append(Falha("driver", f"erro_turno{i + 1}:{type(exc).__name__}"))
             return pronto("erro")
         custo += outcome.custo_usd or 0.0

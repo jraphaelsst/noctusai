@@ -262,7 +262,7 @@ class TestDraftOnlyWrites:
         assert plat.get(f"{BASE}/julia/versions/{vid}/decisoes").json()["itens"] == []
         assert len(plat.get(f"{BASE}/julia/versions/{vid}/specs").json()["itens"]) == 2
         payload = plat.get(f"{BASE}/julia/versions/{vid}/payload").json()
-        assert "{{org.agencia}}" in payload["texto"] and "`handoff`" in payload["texto"]
+        assert "{{org.agencia}}" in payload["texto"]
         origens = {m["origem"]["tipo"] for m in payload["manifest"]}
         assert {"secao", "auto", "texto", "ferramenta"} <= origens
 

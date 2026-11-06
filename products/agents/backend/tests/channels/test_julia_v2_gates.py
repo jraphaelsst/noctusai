@@ -138,22 +138,23 @@ class TestTheRegistryIsSchemaInCodeWordsInRows:
 
 
 class TestSkillGating:
-    def test_a_gated_tool_refuses_until_the_skill_is_opened_in_this_thread(self, gated):
+    def test_a_gated_tool_is_never_refused_for_a_closed_skill_the_server_loads_it(self, gated):
+        """AUTO-LOAD (DECISAO-SKILL-AUTOLOAD.md): the first call to a tool tied to a skill runs, and its result carries
+        the skill's procedure. The tool's own preconditions still decide; the second call carries no repeat."""
         chan = gated
         chan.use_provider(FakeProvider(tool_responses=[
             step(call("registrar_perfil", itens=[PERFIL_OPERACAO])),
-            step(call("abrir_skill", nome="qualificar-lead")),
-            step(call("registrar_perfil", itens=[PERFIL_OPERACAO])),
+            step(call("avaliar_lead")),
+            step(call("registrar_perfil", itens=[{**PERFIL_OPERACAO, "valor": "aluguel", "trecho": "Quero comprar"}])),
             say("Entendi. Qual o bairro?"),
         ]))
         body = chan.turn(turn_body("Quero comprar um apartamento")).json()
         r = tool_results(chan.provider)
-        assert r[0] == {"ok": False, "codigo": "skill_nao_aberta",
-                        "mensagem": "txt:ferramenta.resultado.recusa.skill_nao_aberta qualificar-lead"} or (
-            r[0]["codigo"] == "skill_nao_aberta" and "qualificar-lead" in r[0]["mensagem"])
-        assert r[1]["ok"] is True and r[1]["nome"] == "qualificar-lead"  # abrir_skill returns the skill body
-        assert r[2]["aceitos"] == ["operacao"]
-        assert body["qualificacao"]["faltando"]  # computed from the record the gate let through
+        assert r[0]["ok"] is True and r[0]["aceitos"] == ["operacao"]
+        assert [p["skill"] for p in r[0]["procedimento_obrigatorio"]] == ["qualificar-lead"]
+        assert "procedimento_obrigatorio" not in r[2]  # turn-scoped: read once in this turn
+        assert "skill_nao_aberta" not in json.dumps(r)
+        assert body["qualificacao"]["faltando"]
 
     def test_the_opening_is_recorded_per_thread_and_compiled_hash(self, gated):
         chan = gated
@@ -167,26 +168,26 @@ class TestSkillGating:
         assert not chan.threads.skill_aberta(chan.org_id, tid, "ofertar-imoveis", h)
         assert not chan.threads.skill_aberta(chan.org_id, tid, "qualificar-lead", "sha256:outro")
 
-    def test_a_new_publish_means_the_skill_must_be_opened_again(self, gated):
-        from app.stores.studio_definitions import SectionInput
-        from app.studio.catalog import StoreKnowledgeCatalog
-        from tests.channels.julia_v2 import PLAT_ORG
-        from tests.studio.rt.fakes import publish
-
+    def test_the_procedure_is_delivered_again_in_every_turn(self, gated):
+        """Turn-scoped, not thread-scoped: history is text-only, so a skill opened on turn 1 is NOT in the context of turn 5."""
         chan = gated
-        chan.use_provider(FakeProvider(tool_responses=[step(call("abrir_skill", nome="qualificar-lead")), say("Oi?")]))
-        chan.turn(turn_body("Quero comprar", ids=["a"]))
-        studio = chan.rt.studio
-        draft = studio.create_draft(PLAT_ORG, chan.world.definicao.id, chan.version.id, chan.rt.user_id)
-        studio.replace_sections(PLAT_ORG, draft.id, [SectionInput("persona", "Persona", 10, "Persona v2.")])
-        publish(studio, PLAT_ORG, chan.world.definicao, draft.id, chan.rt.user_id,
-                catalog=StoreKnowledgeCatalog(chan.rt.knowledge))
+        chan.use_provider(FakeProvider(tool_responses=[step(call("avaliar_lead")), say("Oi?"), say("Oi de novo?")]))
+        chan.turn(turn_body("Oi", ids=["a"]))
         chan.use_provider(FakeProvider(tool_responses=[
             step(call("registrar_perfil", itens=[PERFIL_OPERACAO])), say("Qual o bairro?")]))
         chan.turn(turn_body("Quero comprar", ids=["b"]))
-        assert tool_results(chan.provider)[0]["codigo"] == "skill_nao_aberta"
+        assert "procedimento_obrigatorio" in tool_results(chan.provider)[0]
 
-    def test_the_shared_library_can_gate_a_tool_through_obrigatoria_para(self, chan):
+    def test_no_tool_is_gated_only_by_a_skill_and_the_refusal_code_is_gone(self):
+        import inspect
+
+        from app.channels import tool_registry as tr
+
+        fonte = inspect.getsource(tr)
+        assert '_recusa(t, "skill_nao_aberta"' not in fonte
+        assert "skill_nao_aberta" not in tr.RECUSAS_CORRIGIVEIS | tr.RECUSAS_CONTADAS
+
+    def test_the_shared_library_can_tie_a_tool_to_a_skill_through_obrigatoria_para(self, chan):
         """A-SKILLS plugs in through the ``SkillFonte`` interface; faked here."""
 
         class Biblioteca:
@@ -201,12 +202,11 @@ class TestSkillGating:
 
         chan.seed_agent()
         chan.skills_factory = lambda *a: Biblioteca()
-        chan.use_provider(FakeProvider(tool_responses=[
-            step(call("avaliar_lead")), step(call("abrir_skill", nome="qualificar-lead")), step(call("avaliar_lead")),
-            say("Qual o bairro?")]))
+        chan.use_provider(FakeProvider(tool_responses=[step(call("avaliar_lead")), say("Qual o bairro?")]))
         chan.turn(turn_body("Oi"))
         r = tool_results(chan.provider)
-        assert r[0]["codigo"] == "skill_nao_aberta" and r[2]["ok"] is True and "estagio" in r[2]
+        assert r[0]["ok"] is True and "estagio" in r[0]
+        assert r[0]["procedimento_obrigatorio"] == [{"skill": "qualificar-lead", "corpo": "..."}]
 
 
 class TestOtherGates:
@@ -305,42 +305,46 @@ class TestRetryBudgetAndSafeStop:
         return [step(call("abrir_skill", nome="qualificar-lead")),
                 *[step(call("registrar_perfil", itens=[falso])) for _ in range(n)]]
 
-    def test_after_two_refusals_in_a_turn_the_turn_stops_with_a_handoff_and_a_flagged_event(self, gated):
+    def test_two_refusals_in_a_turn_are_retried_silently_with_no_handoff(self, gated):
+        """A tool slip is not the lead's problem: the turn re-runs ONCE on fresh budgets; no hand-off, a booked signal."""
         chan = gated
-        chan.use_provider(FakeProvider(tool_responses=[*self._refusals(2), step(call("avaliar_lead")), say("nunca")]))
+        chan.use_provider(FakeProvider(tool_responses=[*self._refusals(2), say("Qual o bairro que você procura?")]))
         body = chan.turn(turn_body("Quero comprar")).json()
-        recusados = [x["codigo"] for r in tool_results(chan.provider) for x in r.get("recusados", [])]
-        assert recusados == ["trecho_nao_confere"]  # the 2nd result is never re-sent: the stop answers first
-        assert body["status"] == "handoff" and body["reply"]["partes"] == []  # silence: no text row, no code text
-        [h] = body["actions"]
-        assert (h["type"], h["motivo_codigo"]) == ("handoff", "limite_recusas")
-        assert h["motivo"] == "txt:escalonamento.resumo limite_recusas".replace("{motivo_codigo}", "limite_recusas")
-        assert body["participante"]["estado"] == "pausado"
+        assert body["status"] == "respondido" and body["reply"]["partes"] == ["Qual o bairro que você procura?"]
+        assert not [a for a in body["actions"] if a["type"] == "handoff"]
+        assert body["participante"]["estado"] != "pausado"
         assert {"regra": "parada_segura", "politica": "registrar", "bloqueada": False} in body["conformidade"]["violacoes"]
-        [nota] = chan.threads.list_handoffs(chan.org_id, UUID(body["thread_id"]))
-        assert nota.motivo_codigo == "limite_recusas" and nota.para.tipo == "papel"
-        calls = [c for c in chan.provider.calls if c["method"] == "chat_with_tools"]
-        assert len(calls) == 3  # skill + 2 refusals; the next chat is answered by the stop, WITHOUT reaching the provider
 
-    def test_the_stop_replies_with_the_db_text_when_the_owner_wrote_one(self, chan):
+    def test_a_second_slip_gives_fallback_silence_and_an_operator_alert_never_a_handoff(self, gated):
+        chan = gated
+        chan.use_provider(FakeProvider(tool_responses=[*self._refusals(2), *self._refusals(2)[1:], say("nunca")]))
+        body = chan.turn(turn_body("Quero comprar")).json()
+        assert body["status"] == "silencio" and body["reply"]["partes"] == []
+        assert not [a for a in body["actions"] if a["type"] == "handoff"]
+        [alerta] = [a for a in body["actions"] if a["type"] == "alerta"]
+        assert (alerta["tipo"], alerta["descricao"]) == ("erro_agente", "parada_segura:limite_recusas")
+        assert body["participante"]["estado"] != "pausado"
+        assert chan.threads.list_handoffs(chan.org_id, UUID(body["thread_id"])) == []
+
+    def test_the_second_slip_replies_with_the_db_fallback_text_when_the_owner_wrote_one(self, chan):
         from app.stores.studio_definitions_conteudo import TextoInput
 
         chan.seed_agent(obrigatoria={"registrar_perfil": "qualificar-lead"},
-                        textos_extra=[TextoInput("runtime.parada_segura", "Já chamo alguém da equipe.")])
-        chan.use_provider(FakeProvider(tool_responses=[*self._refusals(2), say("nunca")]))
+                        textos_extra=[TextoInput("runtime.resposta_fallback", "Pode repetir, por favor?")])
+        chan.use_provider(FakeProvider(tool_responses=[*self._refusals(2), *self._refusals(2)[1:], say("nunca")]))
         body = chan.turn(turn_body("Quero comprar")).json()
-        assert body["reply"]["partes"] == ["Já chamo alguém da equipe."] and body["status"] == "handoff"
+        assert body["reply"]["partes"] == ["Pode repetir, por favor?"]
+        assert not [a for a in body["actions"] if a["type"] == "handoff"]
 
-    def test_repeated_tool_errors_stop_the_turn_too(self, gated):
+    def test_repeated_tool_errors_are_a_procedural_stop_too(self, gated):
         chan = gated
         chan.sw.julia_fail = True
         chan.conformidade.definir_limites(chan.org_id, chan.agent.id, max_erros_ferramenta_por_turno=2)
-        # SW tools answer "indisponivel" (a failure, not a refusal): detalhes_imovel x2
+        # SW tools answer "indisponivel" (a failure, not a refusal): detalhes_imovel x2, then the silent re-run answers
         chan.use_provider(FakeProvider(tool_responses=[
-            step(call("detalhes_imovel", codigo="A1")), step(call("detalhes_imovel", codigo="A2")), say("nunca")]))
+            step(call("detalhes_imovel", codigo="A1")), step(call("detalhes_imovel", codigo="A2")), say("Já te respondo!")]))
         body = chan.turn(turn_body("Oi")).json()
-        [h] = body["actions"]
-        assert h["motivo_codigo"] == "falhas_repetidas" and body["status"] == "handoff"
+        assert body["status"] == "respondido" and not [a for a in body["actions"] if a["type"] == "handoff"]
 
     def test_the_budget_is_data(self, gated):
         chan = gated
@@ -354,17 +358,17 @@ class TestRecusaCorrigivelNaoGastaOOrcamento:
     """A refusal the model fixes with a DIFFERENT call in the same turn is guidance, not abuse (Julia prod eval,
     2026-11-05: a greeting + two correctable refusals handed the lead off)."""
 
-    def test_two_correctable_refusals_then_a_valid_call_complete_with_no_handoff(self, gated):
+    def test_correctable_refusals_then_a_valid_call_complete_with_no_handoff(self, gated):
         chan = gated
         chan.use_provider(FakeProvider(tool_responses=[
-            step(call("oferecer_imoveis", modo="campanha")),            # skill ofertar-imoveis not opened
-            step(call("registrar_perfil", itens=[PERFIL_OPERACAO])),    # skill qualificar-lead not opened
+            step(call("oferecer_imoveis", modo="campanha")),            # no campaign code (correctable)
+            step(call("oferecer_imoveis", modo="campanha")),            # again (correctable, free)
             step(call("avaliar_lead")),                                 # the valid call
             say("Oi! Em que posso ajudar?")]))
         body = chan.turn(turn_body("Oi, vi o anúncio")).json()
         codigos = [r["codigo"] for r in tool_results(chan.provider) if r.get("codigo")]
-        assert codigos == ["skill_nao_aberta", "skill_nao_aberta"]
-        assert body["status"] == "respondido" and body["actions"] == []
+        assert codigos[:2] == ["sem_codigo_campanha", "sem_codigo_campanha"] or "nao_pode_ofertar" in codigos
+        assert body["status"] == "respondido"
         assert "limite_recusas" not in json.dumps(body)
 
     def test_a_correctable_refusal_does_not_spend_the_per_tool_budget(self, gated):
@@ -386,24 +390,23 @@ class TestRecusaCorrigivelNaoGastaOOrcamento:
         assert chan.qual.codigos_oferecidos(chan.org_id, chan.lead_ref().id)  # the offer happened
         assert body["status"] == "respondido"
 
-    def test_two_counted_refusals_still_stop_the_turn(self, gated):
+    def test_two_counted_refusals_stop_the_attempt_and_the_rerun_answers(self, gated):
         chan = gated
         chan.use_provider(FakeProvider(tool_responses=[
             step(call("abrir_skill", nome="qualificar-lead")),
             *[step(call("registrar_perfil", itens=[{**PERFIL_OPERACAO, "trecho": "nunca dito"}])) for _ in range(2)],
-            say("nunca")]))
+            say("Oi, tudo bem?")]))
         body = chan.turn(turn_body("Oi")).json()
-        assert body["status"] == "handoff" and body["actions"][0]["motivo_codigo"] == "limite_recusas"
+        assert body["status"] == "respondido" and not [a for a in body["actions"] if a["type"] == "handoff"]
 
-    def test_an_unbounded_correctable_loop_still_hits_the_call_cap(self, gated):
+    def test_the_call_cap_bites_even_when_nothing_is_refused_for_a_skill(self, gated):
         chan = gated
         chan.conformidade.definir_limites(chan.org_id, chan.agent.id, max_chamadas_ferramenta_turno=4)
-        chan.use_provider(FakeProvider(tool_responses=[
-            *[step(call("registrar_perfil", itens=[PERFIL_OPERACAO])) for _ in range(8)], say("nunca")]))
+        chan.use_provider(FakeProvider(tool_responses=[*[step(call("avaliar_lead")) for _ in range(8)], say("ok")]))
         body = chan.turn(turn_body("Quero comprar")).json()
         codigos = [r["codigo"] for r in tool_results(chan.provider) if r.get("codigo")]
-        assert codigos[:4] == ["skill_nao_aberta"] * 4 and "limite_ferramentas" in codigos  # correctable ones free, the cap bites
-        assert body["status"] == "handoff" or body["status"] == "silencio"
+        assert "limite_ferramentas" in codigos
+        assert not [a for a in body["actions"] if a["type"] == "handoff"]
 
     def test_a_correctable_refusal_does_not_count_and_a_counted_one_does(self):
         from app.channels.tool_registry import _recusa
@@ -412,7 +415,7 @@ class TestRecusaCorrigivelNaoGastaOOrcamento:
             def texto(self, *a, **k):
                 return "x"
 
-        assert _recusa(T(), "skill_nao_aberta", skill="s").corrigivel is True
+        assert _recusa(T(), "sem_codigo_campanha").corrigivel is True
         assert _recusa(T(), "trecho_nao_confere").corrigivel is False
         assert _recusa(T(), "codigo_inventado_novo").corrigivel is False  # unclassified: fail-closed
 
@@ -426,7 +429,7 @@ class TestClassificacaoDasRecusas:
         from app.studio.textos_registry import CODIGOS_RECUSA, CODIGOS_RECUSA_OPCIONAIS
 
         tree = ast.parse(inspect.getsource(tr))
-        usados: set[str] = set(CODIGOS_RECUSA) | set(CODIGOS_RECUSA_OPCIONAIS)
+        usados: set[str] = (set(CODIGOS_RECUSA) | set(CODIGOS_RECUSA_OPCIONAIS)) - {"skill_nao_aberta"}  # retired code
         for n in ast.walk(tree):
             if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_recusa" and len(n.args) > 1:
                 a = n.args[1]
@@ -441,7 +444,7 @@ class TestClassificacaoDasRecusas:
         assert tr.RECUSAS_CORRIGIVEIS.isdisjoint(tr.RECUSAS_CONTADAS)
         sem_classe = usados - tr.RECUSAS_CORRIGIVEIS - tr.RECUSAS_CONTADAS
         assert not sem_classe, f"unclassified refusal codes: {sorted(sem_classe)}"
-        assert {"skill_nao_aberta", "sem_codigo_campanha"} <= tr.RECUSAS_CORRIGIVEIS
+        assert {"sem_codigo_campanha", "skill_inexistente"} <= tr.RECUSAS_CORRIGIVEIS
         assert {"trecho_nao_confere", "consentimento_sem_evidencia", "limite_ferramentas"} <= tr.RECUSAS_CONTADAS
 
 

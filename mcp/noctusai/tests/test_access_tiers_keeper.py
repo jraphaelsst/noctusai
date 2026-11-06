@@ -489,6 +489,16 @@ class TestOpenApiContract:
         hidden = src.replace("APIRouter(prefix='/api/p')", "APIRouter(prefix='/api/p', include_in_schema=False)")
         assert at.analyze_schema_exposure(_tree(tmp_path / "h", hidden)) == []
 
+    def test_make_router_platform_is_hidden_by_default(self, tmp_path):
+        """make_router(tier='platform') defaults include_in_schema=False: the prescribed form is not a finding,
+        and an explicit include_in_schema=True on it still is."""
+        src = ("from noctusai_lib.api.access_tiers import make_router\nfrom app.dependencies import *\n"
+               "router = make_router(tier='platform', guard=require_platform_admin, prefix='/api/p')\n"
+               "@router.get('/y')\ndef y(): ...\n")
+        assert at.analyze_schema_exposure(_tree(tmp_path, src)) == []
+        shown = src.replace("prefix='/api/p')", "prefix='/api/p', include_in_schema=True)")
+        assert len(at.analyze_schema_exposure(_tree(tmp_path / "s", shown))) == 1
+
 
 class TestAccessTierLedger:
     def test_clean_when_ledger_matches_and_flags_a_new_finding(self, tmp_path):

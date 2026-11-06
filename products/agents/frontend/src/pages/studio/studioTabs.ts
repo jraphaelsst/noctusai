@@ -32,6 +32,7 @@ export const STUDIO_TABS = [
   { id: "controles", label: "Controles" },
   { id: "conversas", label: "Conversas" },
   { id: "conformidade", label: "Conformidade" },
+  { id: "metricas", label: "Métricas" },
 ] as const;
 
 export type StudioTabId = (typeof STUDIO_TABS)[number]["id"];
@@ -59,6 +60,7 @@ export const JULIA_TABS: readonly StudioTabId[] = [
   "controles",
   "conversas",
   "conformidade",
+  "metricas",
 ];
 
 /** `canais` follows the agent's own `usa_canais` flag (API data) — never its key. */
@@ -104,6 +106,7 @@ const PLATAFORMA_TABS: readonly StudioTabId[] = [
   "avaliacoes",
   "configuracoes",
   "conformidade",
+  "metricas",
   "conversas",
   "versoes",
   "compilado",

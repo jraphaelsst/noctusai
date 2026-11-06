@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from app.channels import admissao
+from app.channels import admissao, metricas
 from app.channels import conformidade as conf
 from app.studio.especificacoes import completar_indisponiveis, placeholder_cru_em
 from app.channels.contexto import Dossie, render_contexto_system
@@ -39,6 +40,7 @@ from app.channels.tool_registry import (
     SkillFonte,
     SkillsComSpecs,
     SkillsDaVersao,
+    alertar_operacao,
     aplicar_encerramento,
     executar_handoff,
     finalizar_conclusao,
@@ -47,6 +49,7 @@ from app.config import settings
 from app.qualificacao.models import LeadSinais, VersaoPadrao
 from app.qualificacao.prompt import qualificacao_data
 from app.realtime import conversation_scope, get_bus, publish_event
+from noctusai_lib.integrations.llm.usage import coletar_uso
 from noctusai_lib.realtime import redact_values
 from app.runtime.llm_runtime import service_principal_id
 from app.runtime.types import AgentSpec, TurnContext
@@ -57,7 +60,9 @@ from app.stores.studio_definitions_conteudo import OrgSpecRecord
 from app.stores.threads import HandoffDestino, contexto_thread, mapa_agentes, rotular_historico
 from app.studio.especificacoes_service import config_atual, preparar as preparar_valores
 from app.studio.plataforma import escopo_de, padrao_de
-from app.studio.resolucao import AgenteResolvido, Carimbo, carimbo, compile_for_org, conteudo_status, resolve_agent_for_org
+from app.studio.resolucao import (
+    AgenteResolvido, Carimbo, carimbo, compile_for_org, conteudo_status, org_specs_hash, resolve_agent_for_org,
+)
 from app.studio.spec import MAX_COMPILED_PROMPT_CHARS
 
 logger = logging.getLogger(__name__)
@@ -117,6 +122,8 @@ class ServicosCanal:
     #: ``relatorio.ResumoFactory``: builds the narrative generator of the hand-off report; ``None`` = no LLM call
     #: for the report (``resumo_conversa`` stays ``None``).
     resumo_factory: Any | None = None
+    #: ``agents.turn_metrics`` store (migration 066): one row per turn, written at its end; ``None`` = not recorded.
+    metricas: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +138,50 @@ class Preparado:
     escopo: str | None
     #: The version's honeytoken (``None`` only when its store failed, which is logged).
     marcador: str | None = None
+
+
+#: Channel turns sample at a LOW temperature: a lead-facing agent that follows a procedure has no use for the
+#: variance that ``1.0`` buys (measured on the mechanism suite, ``DECISAO-SKILL-AUTOLOAD.md`` §3). The version can
+#: override it with ``tool_policy.temperature`` (0.0 .. 1.0).
+TEMPERATURA_CANAL_PADRAO = 0.3
+
+#: ``(definition org, compiled hash)`` already stored as proof of use (the row is write-once): once per hash per process.
+_PROMPTS_SALVOS: set[tuple[UUID, str]] = set()
+
+#: Compile cache of a PUBLISHED version: ``(definition org, version id, org-specs hash, standard version id) ->
+#: (compiled prompt, content complete)``. A published version is immutable, so the key is the whole input: a publish
+#: (new version id), a spec write (new specs hash) and a new standard version (new id) each MISS by construction -- no
+#: explicit invalidation to forget. A DRAFT (an eval run) is never cached: it changes under the key. Bounded (FIFO).
+_COMPILADOS: dict[tuple[UUID, UUID, str, Any], tuple[Any, tuple[str, ...]]] = {}
+_COMPILADOS_MAX = 64
+#: How often a turn compiled / hit the cache / stored the proof of use (tests and the ops log read it).
+ESTATISTICAS = {"compilou": 0, "reaproveitou": 0, "salvou_prompt": 0}
+
+
+def limpar_cache_compilacao() -> None:
+    """Drop the compile cache and the proof-of-use memo (tests; an operator after a manual DB fix)."""
+    _COMPILADOS.clear()
+    _PROMPTS_SALVOS.clear()
+
+
+#: The stop causes that are a PROCEDURAL / TOOL slip of the model (refusal budget, tool-error budget): silent re-run,
+#: then fallback + operator alert -- never a customer-facing hand-off.
+PARADAS_PROCEDURAIS = frozenset({"limite_recusas", "falhas_repetidas"})
+
+
+def temperatura_da_versao(versao: Any) -> float:
+    """The version's sampling temperature for a channel turn: ``tool_policy.temperature`` clamped to [0, 1], else the default."""
+    bruto = (getattr(versao, "tool_policy", None) or {}).get("temperature")
+    if isinstance(bruto, bool) or not isinstance(bruto, (int, float)):
+        return TEMPERATURA_CANAL_PADRAO
+    return min(1.0, max(0.0, float(bruto)))
+
+
+def _texto_opcional(conteudo: Any, chave: str) -> str:
+    try:
+        return conteudo.texto(chave).strip()
+    except Exception:  # noqa: BLE001 -- an optional row the version has not written: the silent outcome
+        return ""
 
 
 def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
@@ -165,12 +216,23 @@ def _compilar(
     if r.versao is None:
         raise TurnoRecusado(409, "no_active_version", "O agente não tem versão publicada.")
     padrao = padrao_do_turno(svc, r)
-    compiled = compile_for_org(svc.studio_store, svc.catalog, r, qualificacao=qualificacao_data(padrao))
-    status = conteudo_status(svc.studio_store, svc.catalog, r, compiled=compiled)
+    publicada = getattr(r.versao, "status", None) in ("ativa", "substituida")
+    chave = (r.definicao.org_id, r.versao.id, org_specs_hash(r), padrao.id)
+    if publicada and chave in _COMPILADOS:
+        compiled, avisos = _COMPILADOS[chave]
+        ESTATISTICAS["reaproveitou"] += 1
+    else:
+        compiled = compile_for_org(svc.studio_store, svc.catalog, r, qualificacao=qualificacao_data(padrao))
+        avisos = tuple(conteudo_status(svc.studio_store, svc.catalog, r, compiled=compiled).avisos_bloqueantes)
+        ESTATISTICAS["compilou"] += 1
+        if publicada and padrao.id is not None:
+            if len(_COMPILADOS) >= _COMPILADOS_MAX:
+                _COMPILADOS.pop(next(iter(_COMPILADOS)))
+            _COMPILADOS[chave] = (compiled, avisos)  # the BLOCKING warnings, not a verdict: ``tolerar_specs_faltando`` is per call
     # A REQUIRED org spec with no value is readiness (publish), not a refusal at turn time: the prompt carries the
     # INDISPONIVEL sentinel for it and the turn alerts the org (``alertar_info_indisponivel``). ``conteudo_completo``
     # (what SW / Studio show) stays strict.
-    bloqueantes = set(status.avisos_bloqueantes) - ({"spec_org_faltando"} if tolerar_specs_faltando else set())
+    bloqueantes = set(avisos) - ({"spec_org_faltando"} if tolerar_specs_faltando else set())
     if bloqueantes:
         raise TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.")
     return r, padrao, compiled
@@ -213,11 +275,14 @@ def preparar(
     r, padrao, compiled = _compilar(svc, org_id, agent, versao=versao, specs=specs, tolerar_specs_faltando=True)
     if len(compiled.texto) > MAX_COMPILED_PROMPT_CHARS:
         raise TurnoRecusado(409, "prompt_too_large", "O prompt compilado passa do limite de tamanho.")
-    try:  # proof of use (§A7), under the org that owns the version's rows
-        svc.studio_store.save_compiled_prompt(
-            r.definicao.org_id, hash=compiled.hash, version_id=r.versao.id, client_id=None,
-            texto=compiled.texto, manifest=compiled.manifest_json(),
-        )
+    try:  # proof of use (§A7), under the org that owns the version's rows; write-once, so once per process is enough
+        if (r.definicao.org_id, compiled.hash) not in _PROMPTS_SALVOS:
+            svc.studio_store.save_compiled_prompt(
+                r.definicao.org_id, hash=compiled.hash, version_id=r.versao.id, client_id=None,
+                texto=compiled.texto, manifest=compiled.manifest_json(),
+            )
+            _PROMPTS_SALVOS.add((r.definicao.org_id, compiled.hash))
+            ESTATISTICAS["salvou_prompt"] += 1
     except Exception:  # noqa: BLE001 -- proof-of-use must not stop a lead's reply; it must be seen
         logger.exception("agents.channel.compiled_prompt_not_saved org_id=%s hash=%s", org_id, compiled.hash)
     marca = carimbo(svc.studio_store, svc.catalog, r, compiled=compiled)
@@ -232,6 +297,7 @@ def preparar(
         tools=(),
         max_turns=r.versao.max_turns, prompt_mode="custom", toolset="studio", agent_id=agent.id,
         version_id=r.versao.id, compiled_hash=compiled.hash, web_search=False, knowledge=False, client_id=None,
+        temperature=temperatura_da_versao(r.versao),
     )
     k = conf.shingle_tokens_da_regra(svc.conformidade.regras(org_id, agent.id).get("vazamento_prompt"))
     impressao = conf.garantir_impressao(svc.conformidade, r.definicao.org_id, r.versao.id, compiled, k)
@@ -261,6 +327,7 @@ class _Tentativa:
     blocks: list[dict[str, Any]] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     esgotou: bool = False
+    tools_ms: dict[str, int] = field(default_factory=dict)
 
 
 def _urls(texto: str) -> set[str]:
@@ -419,7 +486,9 @@ async def _rodar(runtime: Any, spec: AgentSpec, ctx: TurnContext, slot: Any, nom
         elif kind in ("tool.started", "tool.finished"):
             t.blocks = _apply_tool_event(t.blocks, kind, evt)
         elif kind == "session.status":
-            t.usage = {k: evt.get(k) for k in ("custo_usd", "tokens_entrada", "tokens_saida")}
+            t.usage = {k: evt.get(k) for k in (
+                "custo_usd", "tokens_entrada", "tokens_saida", "llm_ms", "tool_ms", "llm_calls", "prompt_bytes")}
+            t.tools_ms = dict(evt.get("tools_ms") or {})
             t.esgotou = bool(evt.get("esgotou_loop"))
         else:
             logger.warning("agents.channel.turn.unknown_event kind=%s", kind)
@@ -449,9 +518,71 @@ def _numerar(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def executar(
+    *, origem: str = "canal", mensagem_entrada_id: UUID | None = None, entrada_em: datetime | None = None,
+    **kw: Any,
+) -> ResultadoTurno:
+    """Run one turn (:func:`_executar`) and record its cost / speed / size in ``agents.turn_metrics`` (migration 066).
+
+    The metrics row is written ONCE, after the turn, success or failure: a raising turn still books the money its
+    priced events spent. A failed write is logged and never changes the turn's outcome (:func:`metricas.registrar_turno`).
+    ``origem`` is ``canal`` for a real channel turn, ``eval`` for the eval / mechanism driver."""
+    svc: ServicosCanal = kw["svc"]
+    inicio = time.perf_counter()
+    medida: dict[str, Any] = {}
+    status, erro_classe, resultado = "ok", None, None
+    with coletar_uso() as eventos:
+        try:
+            resultado = await _executar(medida=medida, **kw)
+            return resultado
+        except BaseException as exc:
+            status, erro_classe = "erro", type(exc).__name__
+            raise
+        finally:
+            _registrar_metricas(
+                svc, kw, eventos, medida, resultado, status, erro_classe, origem=origem,
+                mensagem_entrada_id=mensagem_entrada_id, entrada_em=entrada_em,
+                turno_ms=int((time.perf_counter() - inicio) * 1000))
+
+
+def _registrar_metricas(
+    svc: ServicosCanal, kw: dict[str, Any], eventos: list[Any], medida: dict[str, Any], resultado: ResultadoTurno | None,
+    status: str, erro_classe: str | None, *, origem: str, mensagem_entrada_id: UUID | None, entrada_em: datetime | None,
+    turno_ms: int,
+) -> None:
+    if svc.metricas is None:
+        return
+    try:
+        prep, agent, thread, agora = kw["prep"], kw["agent"], kw["thread"], kw["agora"]
+        lote_entrada = kw.get("lote_entrada")
+        lote = (kw.get("lote_lead") or []) if lote_entrada is None else lote_entrada
+        usage = resultado.usage if resultado is not None else {}
+        acoes = resultado.actions if resultado is not None else []
+        entrada = sum(metricas.tamanho_bytes(t) for t in lote)
+        resposta = metricas.tamanho_bytes(resultado.partes_texto) if resultado is not None else 0
+        row = metricas.montar_registro(
+            org_id=kw["org_id"], agent=agent, versao_id=prep.carimbo.definition_version_id,
+            compiled_hash=prep.carimbo.compiled_hash, thread_id=thread.id, mensagem_entrada_id=mensagem_entrada_id,
+            mensagem_resposta_id=resultado.message_id if resultado is not None else None, origem=origem,
+            gatilho=kw.get("gatilho"), eventos=eventos,
+            medida={**medida, **{k: usage.get(k) for k in ("llm_ms", "tool_ms", "prompt_bytes", "llm_calls")}},
+            turno_ms=turno_ms,
+            intake_ms=max(0, int((agora - entrada_em).total_seconds() * 1000)) if entrada_em is not None else None,
+            inbound_bytes=entrada, reply_bytes=resposta,
+            db_bytes=entrada + resposta + metricas.tamanho_bytes(medida.get("blocks")),
+            status=status, erro_classe=erro_classe, turno_status=resultado.status if resultado is not None else None,
+            handoff=any(a.get("type") == "handoff" for a in acoes), tools=medida.get("tools") or (),
+        )
+    except Exception:  # noqa: BLE001 -- building the row must not fail the turn either: seen in the log
+        logger.exception("agents.turn_metrics.montagem_falhou")
+        return
+    metricas.registrar_turno(svc.metricas, row)
+
+
+async def _executar(
     *, svc: ServicosCanal, prep: Preparado, agent: Any, org_id: UUID, thread: Any, runtime: Any, slot: Any,
     bus: Any, contexto: Any | None, gatilho: str, lote_lead: list[str], ultima_resposta_em: datetime | None,
-    agora: datetime, lote_entrada: list[str] | None = None,
+    agora: datetime, lote_entrada: list[str] | None = None, nota_caso: str | None = None,
+    medida: dict[str, Any] | None = None,
 ) -> ResultadoTurno:
     """Run the model for ``thread`` and settle everything the turn does. ``lote_lead`` are the texts of the
     batch just stored (empty for a re-engagement) that the lead SAID (typed + spoken); ``lote_entrada`` adds the text
@@ -508,6 +639,28 @@ async def executar(
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
     historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
+    dados_da_org = tuple(valores.values())
+    ativas = [x for x in svc.studio_store.list_skills(r.definicao.org_id, r.versao.id) if x.ativo]
+    arquivos = svc.studio_store.list_version_skill_files(r.definicao.org_id, r.versao.id)
+    #: every ACTIVE skill body and file of the version (the library's pinned skills join as they are loaded), 24-token window
+    texto_skills = conf.texto_fonte_do_prompt(
+        None, [x.corpo for x in ativas if getattr(x, "corpo", None)],
+        [f.conteudo for f in arquivos if getattr(f, "conteudo", None)], so_skills=True)
+
+    memo: dict[int, Any] = {}
+
+    def _derivada() -> Any:
+        n = len(turno.textos_derivados)  # recomputed only when a tool handed the model new skill text
+        if n not in memo:
+            memo[n] = conf.impressao_derivada([texto_skills, *turno.textos_derivados])
+        return memo[n]
+
+    def _vazou_texto(texto: str) -> bool:
+        texto = conf.mascarar_dados_da_org(texto, dados_da_org)
+        return conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None or (
+            conf.detectar_vazamento(
+                texto, canario_do_prompt=None, impressao=_derivada()) is not None)
+
     turno = JuliaTurno(
         org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=lead_ref_id,
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
@@ -532,7 +685,7 @@ async def executar(
                 thread_id=thread.id)
             if svc.resumo_factory is not None else None),
         guarda_campos=(
-            (lambda texto: conf.detectar_vazamento(texto, canario_do_prompt=prep.canario, impressao=prep.impressao) is not None)
+            _vazou_texto
             if leak is not None and leak.ativo else None),
     )
     # deterministic STOP backstop (P1-3): a message that IS exactly "PARAR" / "SAIR" / ... opts the lead out WITHOUT the
@@ -566,6 +719,8 @@ async def executar(
         fuso=(contexto.fuso if contexto is not None else "America/Sao_Paulo"), estado=estado_sw, dossie=dossie,
         tag=tag, fase_testes=fase_testes,
     )
+    if nota_caso:  # an eval case's situation lives in the state block, exactly where a real turn's facts live
+        contexto_system = f"{contexto_system}\n\n{nota_caso.strip()}"
     ctx = TurnContext(
         org_id=org_id, conversation_id=thread.id, requested_by=service_principal_id(agent.id),
         instance_id="", sdk_session_id=None, contexto=contexto, julia=turno, contexto_system=contexto_system,
@@ -589,7 +744,7 @@ async def executar(
         resposta = "\n\n".join(x for x in t.textos if x and x.strip())
         return _marcadores_da_resposta(resposta, prep.marcador, tag, regras) + conf.avaliar_resposta(conf.EntradaConformidade(
             resposta=resposta, mensagens_lead=lote_lead, regras=regras,
-            canario=prep.canario, impressao=prep.impressao,
+            canario=prep.canario, impressao=prep.impressao, dados_da_org=dados_da_org, impressao_derivada=_derivada(),
             codigos_permitidos=turno.codigos_vistos | codigos_da_thread,
             links_permitidos={*turno.links_vistos, *links_anteriores},
             participante_segue_ativo=not (turno.transferiu or turno.concluiu or turno.encerrou),
@@ -615,6 +770,13 @@ async def executar(
                 violacoes.append(Violacao("opt_out_palavras", "registrar", {"palavra": parada}))
             else:
                 t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
+                if turno.parar in PARADAS_PROCEDURAIS:
+                    # a procedural / tool slip of the model is never the lead's problem: ONE silent re-run on fresh budgets
+                    # (the compliance re-run's twin); only a second slip reaches the settle block below
+                    violacoes.append(Violacao("parada_segura", "registrar", {"motivo": turno.parar, "tentativa": 1}))
+                    tentativas.append(t1)
+                    turno.reiniciar_tentativa()
+                    t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
             tentativas.append(t1)
             violacoes += [Violacao(r, "sinal", d) for r, d in turno.sinais_ferramenta]
             achados = [] if (turno.parar or parada is not None) else _avaliar(t1)
@@ -626,6 +788,7 @@ async def executar(
                 # the thread keeps the CODE only: the wording is prompt text and travels in `mensagem_correcao` alone
                 svc.messages.add(
                     org_id, thread.id, "evento", codigo_evento_correcao(bl), agent_id=agent.id, lead_ref_id=lead_ref_id)
+                turno.reiniciar_tentativa()  # the corrected re-run starts with fresh refusal / call budgets and loaded skills
                 t2 = await _rodar(runtime, prep.spec, replace(ctx, mensagem_correcao=correcao), slot, None)
                 tentativas.append(t2)
                 achados2 = [] if turno.parar else _avaliar(t2)
@@ -646,9 +809,16 @@ async def executar(
             turno, "conformidade", conteudo.texto("conformidade.handoff_resumo").replace("{regra}", bloqueios[0].regra))
     if turno.parar:
         violacoes.append(Violacao("parada_segura", "registrar", {"motivo": turno.parar}))
-        await executar_handoff(
-            turno, turno.parar, conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", turno.parar))
-        texto_final = conteudo.texto("runtime.parada_segura").strip()
+        if turno.parar in PARADAS_PROCEDURAIS:
+            # the second slip in a row: NO customer-facing hand-off (the lead did nothing wrong, and a person taking
+            # over for a tool slip is the exact failure this turn's design removed). The lead gets the DB fallback
+            # text (or silence when the version has none) and the operator gets an alert to look at the thread.
+            await alertar_operacao(turno, f"parada_segura:{turno.parar}")
+            texto_final = _texto_opcional(conteudo, "runtime.resposta_fallback")
+        else:
+            await executar_handoff(
+                turno, turno.parar, conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", turno.parar))
+            texto_final = _texto_opcional(conteudo, "runtime.parada_segura")
     if turno.campos_substituidos:  # B3.6: a lead-influenced tool argument reproduced the prompt (codes only)
         violacoes.append(Violacao(
             "vazamento_prompt", conf.politica_efetiva(regras, "vazamento_prompt"),
@@ -663,6 +833,14 @@ async def executar(
     for t in tentativas:
         usage = _somar(usage, t.usage)
     blocks = [b for t in tentativas for b in t.blocks]
+    if medida is not None:
+        tools_ms: dict[str, int] = {}
+        for t in tentativas:
+            for nome, ms in t.tools_ms.items():
+                tools_ms[nome] = tools_ms.get(nome, 0) + int(ms)
+        medida.update(
+            tools_ms=tools_ms, blocks=blocks,
+            tools=[b["name"] for b in blocks if b.get("kind") == "tool" and b.get("name")])
     final = await _persistir(svc, prep, agent, org_id, thread, contexto, texto_final, blocks, usage, bus, tag)
     identificacao_registrada = turno.identificacao_registrada
     await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id, bus)

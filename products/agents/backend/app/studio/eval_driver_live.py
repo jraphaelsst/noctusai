@@ -209,7 +209,7 @@ class LiveEvalTurnDriver:
         self, *, studio_store: Any, catalog: Any, padroes: Any, agent_key: str | None = None,
         key_resolver: Callable[[str, UUID], str | None] | None = None, provider_impl: Any | None = None,
         skills_factory: Any | None = None, tools_factory: Callable[[Any, Any], Any] | None = None,
-        daily_cap_usd: float = 0.0, conformidade: Any | None = None,
+        daily_cap_usd: float = 0.0, conformidade: Any | None = None, metricas: Any | None = None,
     ) -> None:
         self._studio = studio_store
         self._catalog = catalog
@@ -223,12 +223,29 @@ class LiveEvalTurnDriver:
         #: READ side of the conformance config (rules + abuse limits of the definition's row); copied into the
         #: per-execution Fake so the suite runs under the rules that run in production. ``None`` = code defaults.
         self._conformidade = conformidade
+        #: ``agents.turn_metrics`` store: every eval turn books its cost / speed / size tagged ``origem='eval'``.
+        self._metricas = metricas
         self._mundo: _Mundo | None = None
+        self._modelo: str | None = None
+        self._temperatura: float | None = None
+        self._historico: int | None = None
 
     def definir_agente(self, agent_key: str) -> None:
         """The agent this run evaluates (the suite route sets it from its path -- no agent key lives in code); a
         fixture's own ``agent_key`` still wins per thread."""
         self._agent_key = agent_key
+
+    def definir_modelo(self, modelo: str | None) -> None:
+        """Run the turns on ``modelo`` instead of the version's (the cheaper-iteration override; the hash is unaffected)."""
+        self._modelo = modelo
+
+    def definir_temperatura(self, temperatura: float | None) -> None:
+        """A/B knob: overrides the version's temperature for this driver's turns (``None`` = the version's own)."""
+        self._temperatura = temperatura
+
+    def definir_historico(self, mensagens: int | None) -> None:
+        """A/B knob: how many history messages the turn's runtime reads (``None`` = the setting)."""
+        self._historico = mensagens
 
     @property
     def tipo(self) -> str:
@@ -270,7 +287,7 @@ class LiveEvalTurnDriver:
             budget_guard=make_budget_guard(messages=messages, daily_cap_usd=self._daily_cap),
             tools_factory=_com_diario(self._tools_factory, diario),
             provider_impl=self._provider_impl,
-            history_messages=int(getattr(settings, "llm_history_messages", 20) or 20),
+            history_messages=self._historico or int(getattr(settings, "llm_history_messages", 40) or 40),
             max_iterations=int(getattr(settings, "llm_max_tool_iterations", 6) or 6),
         )
         conformidade = self._conformidade_do_mundo(org_id, definicao.id)
@@ -281,7 +298,7 @@ class LiveEvalTurnDriver:
             notificacoes=FakeNotificationSink(),  # an eval never notifies a real owner
             # the channel route always wires an alert store; without one ``sinalizar_alerta`` is not offered and the
             # ``info_indisponivel`` alert is never raised, so the suite would judge a toolset prod does not run
-            alertas=FakeThreadAlertaStore(),
+            alertas=FakeThreadAlertaStore(), metricas=self._metricas,
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
         externo = f"eval-{uuid4()}"
@@ -359,6 +376,10 @@ class LiveEvalTurnDriver:
                 participante_estado=self._participante_estado(m, th), valores_terceiros=m.sinteticos.terceiros())
 
         prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs)
+        if self._modelo or self._temperatura is not None:  # cheaper / A-B iteration; never changes the compiled hash
+            prep = replace(prep, spec=replace(
+                prep.spec, model=self._modelo or prep.spec.model,
+                temperature=prep.spec.temperature if self._temperatura is None else self._temperatura))
         await m.runtime.preflight(prep.spec.provider, m.org_id)
         slot = m.runtime.try_reserve()
         if slot is None:
@@ -367,7 +388,7 @@ class LiveEvalTurnDriver:
             res = await turno_mod.executar(
                 svc=m.svc, prep=prep, agent=m.agent, org_id=m.org_id, thread=th, runtime=m.runtime, slot=slot,
                 bus=m.bus, contexto=None, gatilho="mensagem", lote_lead=[mensagem_lead], ultima_resposta_em=agora,
-                agora=agora)
+                agora=agora, nota_caso=thread.contexto_caso, origem="eval")
         finally:
             await slot.release()
         m.turnos += 1
@@ -443,6 +464,7 @@ def make_live_eval_driver_factory(
         from app.qualificacao.store import get_padrao_store
         from app.stores.conformidade import get_conformidade_store
         from app.stores.studio_definitions import get_studio_definition_store
+        from app.stores.turn_metrics import get_turn_metrics_store
         from app.stores.studio_knowledge import get_studio_knowledge_store
         from app.studio.catalog import StoreKnowledgeCatalog
 
@@ -450,7 +472,7 @@ def make_live_eval_driver_factory(
             studio_store=studio_store or get_studio_definition_store(settings),
             catalog=catalog or StoreKnowledgeCatalog(get_studio_knowledge_store(settings)),
             padroes=padroes or get_padrao_store(settings),
-            **{"conformidade": get_conformidade_store(settings), **kw},
+            **{"conformidade": get_conformidade_store(settings), "metricas": get_turn_metrics_store(settings), **kw},
         )
 
     return _factory

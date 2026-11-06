@@ -84,3 +84,26 @@ async def test_chat_completion_stream_does_not_send_temperature():
     ]
     assert chunks == ["ok"]
     assert "temperature" not in client.messages.sent
+
+
+def test_tool_request_never_sends_temperature():
+    """The tool-calling path (channel turns) drops temperature too: API 2026-10-21 rejects it, SDK 2.x removed it."""
+    from noctusai_lib.integrations.llm.providers.anthropic_provider import build_anthropic_request
+
+    for temp in (None, 1.0, 0.3, -2):
+        assert "temperature" not in build_anthropic_request([], [], model="m", temperature=temp)
+
+
+def test_tool_request_keys_are_accepted_by_the_installed_sdk():
+    """Every kwarg we send must exist on the INSTALLED SDK's `messages.create` — the prod image resolves the newest
+    allowed SDK, so a removed parameter must fail here (CI) and not as a TypeError on every live turn."""
+    import inspect
+
+    from anthropic.resources.messages import AsyncMessages
+    from noctusai_lib.integrations.llm.providers.anthropic_provider import build_anthropic_request
+    from noctusai_lib.integrations.llm.tool_calling import ToolSpec
+
+    accepted = set(inspect.signature(AsyncMessages.create).parameters)
+    tool = ToolSpec(name="t", description="d", parameters={"type": "object", "properties": {}})
+    payload = build_anthropic_request([], [tool], model="m", tool_choice="required", temperature=0.3)
+    assert set(payload) <= accepted, sorted(set(payload) - accepted)

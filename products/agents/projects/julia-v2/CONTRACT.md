@@ -1223,3 +1223,33 @@ from noc." Per org agent instance, agents-only (SW needs only the new status).
   `+55 11 *****-3365` for members (ids stay readable). A failed noc lookup never fails the read: every id comes back with
   `nome`/`telefone` null and `avaliacao_resolucao_erro: true`.
 - TurnStatus gains `restrito_avaliacao` (SW treats it like `agente_desligado`: nothing sent).
+
+
+## 13 · Turn redesign (2026-11-05) - supersedes the skill gate of §3.4
+
+Full record: `DECISAO-SKILL-AUTOLOAD.md`. In short: (1) a tool tied to a skill is never refused for the skill being closed - the server auto-loads it for THIS turn and the result carries `procedimento_obrigatorio`; `skill_nao_aberta` is retired (optional text row kept, never emitted); (2) a procedural stop (`limite_recusas`, `falhas_repetidas`) = one silent re-run on fresh budgets, then fallback text + an operator `alerta` (`erro_agente`), never a hand-off; (3) the corrective re-run starts with fresh counters; (4) the compiled prompt of a published version is cached per (version, org specs, standard) and its proof of use saved once per hash; (5) the `# Ferramentas` block no longer repeats the tool lines; (6) judge cases run on the channel driver with `contexto` in the state block; (7) `tool_policy.temperature`, default 0.3.
+
+
+## 14 · Turn metrics (2026-11-06) - cost, speed and size per agent turn, platform admins only
+
+**Owner brief:** a "full tracking system" for agent conversations - cost, speed, disk (KB/MB), per message and reply - shown ONLY in the agents app, on a Julia/agent metrics page for NoctusAI platform admins. No other product reads or shows these figures.
+
+**Storage - migration 066, `agents.turn_metrics`** (service-role only; no grant to authenticated/anon). One row per agent turn (inbound -> reply), written ONCE at the end of `turno.executar` (success or error), fire-and-forget safe: a failed write is `logger.exception`-logged and never fails the turn. No FK on thread/agent/version (an eval thread is ephemeral; a metrics row never blocks a delete). Rows carry the org INSTANCE's `agent_id` and the `agent_key`; the page reads by `agent_key` across orgs.
+- LLM columns are the SUM of the turn's priced central-ledger `UsageEvent`s (`coletar_uso()`, D25): `llm_calls, tokens_entrada (= prompt + cache read + cache write), tokens_saida, tokens_cache_leitura, tokens_cache_escrita, custo_usd, modelos[], price_versions[]`. Never re-priced; not a second ledger.
+- Speed (ms): `turno_ms` (wall, whole `executar`), `llm_ms` (inside provider calls), `tool_ms` + `tools_ms{tool: ms}` (inside tool handlers), `intake_ms` (oldest inbound of the batch -> turn start; NULL for eval).
+- Size (UTF-8 payload bytes, NOT on-disk Postgres size): `inbound_bytes` (the lead's text of the batch), `reply_bytes` (sum of the reply), `prompt_bytes` (all messages of the model request, summed over re-runs), `db_bytes` (inbound + reply + tool blocks JSON persisted for the turn), `media_bytes` (always NULL: media is not persisted by agents).
+- Outcome: `status ok|erro`, `erro_classe` (exception class name only), `turno_status`, `handoff`, `tools[]`, `gatilho`, `origem canal|eval` (the eval driver tags `eval`).
+- The runtime's final `session.status` event gains `llm_ms, tool_ms, llm_calls, tools_ms, prompt_bytes` (additive).
+
+**Endpoints** (`/api/studio`, `require_platform_admin`: 401 no credential, 403 `platform_admin_required` for any tenant member or product token; 404 `agent_not_found`). Query: `desde`/`ate` (ISO datetime, default last 7 days to now), `org_id` (optional), `origem=canal|eval|todos` (default `canal`; anything else 422). Reads are capped at 20000 rows; `truncado:true` when hit.
+
+| Path | Top-level keys |
+|---|---|
+| `GET /agents/{key}/metricas` | `agent_key, janela{desde,ate}, origem, org_id, truncado, resumo, serie_diaria[], por_versao[], por_org[]` |
+| `GET /agents/{key}/metricas/turnos?limite(1..200,50)&pagina(1)` | header keys + `total, pagina, limite, itens[]` (newest first) |
+| `GET /agents/{key}/metricas/threads?limite` | header keys + `total, itens[]` (per-thread `resumo`, costliest first, each `{thread_id, ...resumo}`) |
+| `GET /agents/{key}/metricas/threads/{thread_id}?origem(todos)` | `agent_key, thread_id, origem, truncado, resumo, turnos[]` (oldest first) |
+
+`resumo` keys: `turnos, turnos_erro, handoffs, llm_calls, custo_usd, custo_por_turno_usd, tokens_entrada, tokens_saida, tokens_cache_leitura, tokens_cache_escrita, cache_leitura_share (0..1), turno_ms_p50/p95, llm_ms_p50/p95, tool_ms_p50/p95 (null when empty), inbound_bytes, reply_bytes, prompt_bytes, db_bytes, armazenamento_bytes`. `serie_diaria[]` = `{dia: "YYYY-MM-DD" (UTC), ...resumo}` oldest first; `por_versao[]` = `{compiled_hash, ...resumo}`; `por_org[]` = `{org_id, ...resumo}`. Percentiles: linear interpolation. Turn item (`itens[]` / `turnos[]`): `id, criado_em, org_id, agent_key, version_id, compiled_hash, thread_id, mensagem_entrada_id, mensagem_resposta_id, origem, gatilho, status, erro_classe, turno_status, handoff, ferramentas[], llm{chamadas,tokens_entrada,tokens_saida,tokens_cache_leitura,tokens_cache_escrita,cache_leitura_share,custo_usd,modelos[],price_versions[]}, velocidade{turno_ms,llm_ms,tool_ms,ferramentas_ms{},intake_ms}, tamanho{inbound_bytes,reply_bytes,prompt_bytes,db_bytes,media_bytes}`.
+
+TypeScript types for the page: `frontend/src/api/studio/types-metricas.ts`. Code: `app/channels/metricas.py` (row building + safe write), `app/stores/turn_metrics.py`, `app/studio/metricas.py` (pure aggregation), `app/routers/studio_metricas_router.py`.

@@ -85,6 +85,8 @@ __all__ = [
     "sinal_alegacao",
     "casar_padroes",
     "detectar_vazamento",
+    "impressao_derivada",
+    "mascarar_dados_da_org",
     "garantir_impressao",
     "impressao_de",
     "sinal_extracao",
@@ -144,15 +146,21 @@ def canario(org_id: UUID, version_id: UUID, *, segredo: str = "") -> str:
     return hmac.new(chave, f"{org_id}:{version_id}".encode("utf-8"), hashlib.sha256).hexdigest()[:20]
 
 
-def texto_fonte_do_prompt(compiled: Any) -> str:
+def texto_fonte_do_prompt(
+    compiled: Any, skills: Iterable[str] = (), skill_files: Iterable[str] = (), *, so_skills: bool = False,
+) -> str:
     """Everything the model is told that must not be repeated: the compiled prompt plus the content rows
-    that ride outside it (texts, tool descriptions, decision rules)."""
-    partes = [compiled.texto]
+    that ride outside it (texts, tool descriptions, decision rules) and the SKILL texts it reads as tool results
+    (``skills`` = the bodies, ``skill_files`` = the reference files, rendered for the org). ``so_skills`` returns only the
+    skill part: it is fingerprinted with a longer window than the prompt (:data:`SHINGLE_TOKENS_DERIVADO`), because a skill
+    teaches example sentences the agent legitimately says."""
+    partes = [] if so_skills else [compiled.texto]
     cont = getattr(compiled, "conteudo", None)
-    if cont is not None:
+    if cont is not None and not so_skills:
         partes += [t.conteudo for t in cont.textos if t.conteudo]
         partes += [f.descricao for f in cont.ferramentas if f.ativo and f.descricao]
         partes += [d.regra for d in cont.decisoes if d.regra]
+    partes += list(skills) + list(skill_files)
     return "\n".join(p for p in partes if p)
 
 
@@ -184,6 +192,47 @@ def garantir_impressao(
     nova = impressao_de(version_id, texto_fonte_do_prompt(compiled), k)
     store.salvar_impressao(org_id, nova)
     return nova
+
+
+#: Window of the fingerprint of SKILL text handed to the model in a turn. Longer than the prompt's: a skill teaches example
+#: sentences the agent legitimately says ("Pronto, registrei sua preferencia..."), and a 12-token window blocked those replies
+#: (measured: ``mec-visita-nao-agenda``). A dump of the procedure still reproduces runs far longer than 24 tokens.
+SHINGLE_TOKENS_DERIVADO = 24
+
+
+_DADO_DA_ORG = "dadodaorg"  # a token that is in no prompt
+
+
+def mascarar_dados_da_org(resposta: str, valores: Iterable[str]) -> str:
+    """``resposta`` (normalised) with every occurrence of an org spec value (opening hours, agency name, regions...) replaced by one
+    neutral token. The prompt carries those values as data precisely so the agent can tell the lead: quoting the org's own hours
+    is not a prompt leak (measured: it blocked a legitimate 'when do they call back' answer twice and handed the lead off). Done
+    on the REPLY, because the fingerprint windows that straddle the data (key name + value) cannot be subtracted afterwards."""
+    toks = _tokens(resposta)
+    for v in sorted((x for x in valores if isinstance(x, str)), key=len, reverse=True):
+        vt = _tokens(v)
+        if len(vt) < 2:
+            continue
+        i, out = 0, []
+        while i < len(toks):
+            if toks[i:i + len(vt)] == vt:
+                out.append(_DADO_DA_ORG)
+                i += len(vt)
+            else:
+                out.append(toks[i])
+                i += 1
+        toks = out
+    return " ".join(toks)
+
+
+def impressao_derivada(textos: Iterable[str], k: int = SHINGLE_TOKENS_DERIVADO) -> Impressao | None:
+    """The fingerprint of the prompt-derived text a tool returned to the model THIS turn (skill bodies / files rendered for the
+    org). A reply can only reproduce what the model read, and skills reach it as tool results, outside the compiled text the
+    stored fingerprint covers. ``None`` when nothing was handed over."""
+    todos: set[int] = set()
+    for t in textos:
+        todos |= shingles_de(t, k)
+    return Impressao(UUID(int=0), k, frozenset(todos)) if todos else None
 
 
 def detectar_vazamento(
@@ -703,6 +752,10 @@ class EntradaConformidade:
     #: The texts whose numbers a reply may repeat (``valor_sem_ferramenta``): this thread's tool results, the lead's own
     #: words, the agent's earlier replies, the dossier values.
     textos_com_valor: Iterable[str] = ()
+    #: fingerprint of the skill text handed to the model this turn (:func:`impressao_derivada`)
+    impressao_derivada: Impressao | None = None
+    #: the org's spec values: quoting them is not a leak (:func:`mascarar_dados_da_org`)
+    dados_da_org: Iterable[str] = ()
 
 
 def _pior(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -710,6 +763,12 @@ def _pior(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, Any] 
     if not a or not b:
         return a or b
     return {k: max(a.get(k, 0), b.get(k, 0)) for k in {*a, *b}}
+
+
+def _vazou(resposta: str, canario_: str | None, impressao: Impressao | None, derivada: Impressao | None) -> dict[str, Any] | None:
+    return _pior(
+        detectar_vazamento(resposta, canario_do_prompt=canario_, impressao=impressao),
+        detectar_vazamento(resposta, canario_do_prompt=None, impressao=derivada))
 
 
 def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
@@ -722,8 +781,10 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
         return r if r is not None and r.ativo else None
 
     if (r := ativa("vazamento_prompt")) is not None:
-        achados.append(("vazamento_prompt", detectar_vazamento(
-            e.resposta, canario_do_prompt=e.canario, impressao=e.impressao)))
+        # the as-written reply AND its de-obfuscated copy (spaced / dotted / homoglyph spellings), like the link and contact checks
+        achados.append(("vazamento_prompt", _pior(
+            _vazou(mascarar_dados_da_org(e.resposta, e.dados_da_org), e.canario, e.impressao, e.impressao_derivada),
+            _vazou(mascarar_dados_da_org(esqueleto(e.resposta), e.dados_da_org), e.canario, e.impressao, e.impressao_derivada))))
     if (r := ativa("imovel_sem_ferramenta")) is not None and e.resposta.strip():
         achados.append(("imovel_sem_ferramenta", imovel_sem_ferramenta(
             e.resposta, e.codigos_permitidos, (r.parametros or {}).get("padrao_codigo"))))

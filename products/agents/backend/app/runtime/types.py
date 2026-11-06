@@ -86,6 +86,9 @@ class AgentSpec:
     tools: tuple[str, ...]  # the tool names this spec may call
     max_turns: int  # default 40
     prompt_mode: Literal["preset_append", "custom"] = "preset_append"
+    #: Sampling temperature for this spec's turns; ``None`` = the runtime's default. A channel turn sets it from the version
+    #: (``tool_policy.temperature``, default 0.3 -- ``channels.turno.TEMPERATURA_CANAL_PADRAO``).
+    temperature: float | None = None
     #: Lais A1 (contract §2): which provider runs the turn. `anthropic` keeps
     #: every pre-existing spec (Bia-academia, studio claude_sdk agents)
     #: byte-identical; `openai` is only ever produced for a version that
