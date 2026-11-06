@@ -2,16 +2,16 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1222 open / in-progress**, 5 fixed, 1 accepted (1228 total).
+**1118 open / in-progress**, 109 fixed, 1 accepted (1228 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
 | academia-de-reciclagem | 32 | 0 | 0 | 32 | 0 | 0 |
 | adconnect | 30 | 0 | 0 | 30 | 0 | 0 |
-| agents | 22 | 0 | 0 | 22 | 0 | 5 |
+| agents | 1 | 0 | 0 | 1 | 0 | 26 |
 | commerce | 61 | 0 | 0 | 61 | 0 | 0 |
 | community | 35 | 0 | 0 | 35 | 0 | 0 |
-| core | 53 | 0 | 0 | 53 | 0 | 0 |
+| core | 14 | 0 | 0 | 14 | 0 | 39 |
 | daily-life | 16 | 0 | 0 | 16 | 0 | 0 |
 | dev-team | 6 | 0 | 0 | 6 | 0 | 0 |
 | erp-imobiliario | 201 | 2 | 6 | 193 | 0 | 0 |
@@ -21,8 +21,8 @@
 | p-studio | 20 | 0 | 0 | 20 | 0 | 0 |
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
-| seed | 30 | 0 | 0 | 30 | 0 | 0 |
-| social-wiring | 343 | 0 | 0 | 343 | 0 | 0 |
+| seed | 17 | 0 | 0 | 17 | 0 | 13 |
+| social-wiring | 312 | 0 | 0 | 312 | 0 | 31 |
 | store | 14 | 0 | 0 | 14 | 0 | 0 |
 | therapy-platform | 162 | 0 | 0 | 162 | 0 | 0 |
 
@@ -56,27 +56,6 @@
 | AT-c2c5d34d | adconnect | `POST /admin/reward-rules` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-ae30bffc | adconnect | `POST /financial/webhook/stripe` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-1cadd7c5 | agents | `POST /api/public/ask/{app_slug}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-978354cd | agents | `products/agents/backend/app/routers/admin_credentials_router.py (7 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-a365c534 | agents | `products/agents/backend/app/routers/agent_settings_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-3f794fed | agents | `products/agents/backend/app/routers/agents_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-2a7aaf09 | agents | `products/agents/backend/app/routers/catalogo_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-7b5cedea | agents | `products/agents/backend/app/routers/channel_threads_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-3efd3188 | agents | `products/agents/backend/app/routers/plataforma_controle_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-dbbe10cb | agents | `products/agents/backend/app/routers/plataforma_grants_router.py (5 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-151e0c8a | agents | `products/agents/backend/app/routers/plataforma_org_specs_router.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-c79cc875 | agents | `products/agents/backend/app/routers/qualificacao_router.py (14 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-466be68c | agents | `products/agents/backend/app/routers/skills_biblioteca_router.py (16 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-62a94d12 | agents | `products/agents/backend/app/routers/studio_agents_router.py (22 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-5c9c70b7 | agents | `products/agents/backend/app/routers/studio_clients_router.py (7 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-92704949 | agents | `products/agents/backend/app/routers/studio_conteudo_router.py (22 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-8af9903e | agents | `products/agents/backend/app/routers/studio_evals_router.py (6 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-1541441b | agents | `products/agents/backend/app/routers/studio_geracoes_router.py (5 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-4a456b50 | agents | `products/agents/backend/app/routers/studio_import_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-f3021066 | agents | `products/agents/backend/app/routers/studio_knowledge_router.py (10 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-f2aabc8a | agents | `products/agents/backend/app/routers/studio_package_sync_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-13808e32 | agents | `products/agents/backend/app/routers/studio_padrao_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-682c3df8 | agents | `products/agents/backend/app/routers/studio_prontidao_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-43b155e4 | agents | `products/agents/backend/app/routers/studio_ui_router.py (6 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-388fc832 | community | `GET /api/aplicacoes/formulario` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-a92585e0 | community | `GET /api/eu` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-7b042bb9 | community | `GET /api/planos/publicos` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
@@ -85,50 +64,11 @@
 | AT-3ad0324b | community | `POST /api/checkout` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-7cdd01ed | community | `POST /api/webhooks/asaas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-32325372 | community | `POST /api/webhooks/stripe` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-7bc1ba49 | core | `DELETE /api/transcriptions/{transcricao_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-33216bfb | core | `GET /` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-8a5fe707 | core | `GET /api/auth/oauth/providers` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-cbb3cbf9 | core | `GET /api/billing/plans` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-59c51160 | core | `GET /api/transcriptions` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-46a9806c | core | `GET /api/transcriptions/_stats` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-e6b0828a | core | `GET /api/transcriptions/{transcricao_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-a0cb3737 | core | `GET /api/website/plans` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-3e7b50eb | core | `GET /api/website/settings` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-d68465cb | core | `POST /api/auth/login` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-05d35db1 | core | `POST /api/auth/oauth/callback` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-ae85e764 | core | `POST /api/auth/refresh` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-d0148f2e | core | `POST /api/auth/signup` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-bf8a4693 | core | `POST /api/billing/webhook` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f5caf40f | core | `POST /api/billing/webhooks/asaas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-dd50b1e8 | core | `POST /api/sso/session` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-b25ac125 | core | `POST /api/transcriptions` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-e59e815d | core | `POST /api/website/events` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f6152b5a | core | `POST /api/website/leads` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-60a03f43 | core | `products/core/backend/app/routers/admin_cache.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-10d53c0b | core | `products/core/backend/app/routers/admin_credits.py (9 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-c998564f | core | `products/core/backend/app/routers/admin_llm_spend.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-3d8c968c | core | `products/core/backend/app/routers/admin_llm_usage.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-4a00f7cb | core | `products/core/backend/app/routers/admin_operations.py (6 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-6bf0e437 | core | `products/core/backend/app/routers/admin_tokens.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-d49f96dc | core | `products/core/backend/app/routers/admin_usage.py (4 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-3b7c4ae8 | core | `products/core/backend/app/routers/analytics.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-f981ad17 | core | `products/core/backend/app/routers/api_keys.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-e2adef59 | core | `products/core/backend/app/routers/audit_digest.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-27a6fe8b | core | `products/core/backend/app/routers/audit_logs.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-4cbc3a5d | core | `products/core/backend/app/routers/billing_admin.py (15 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-2d9fb3bf | core | `products/core/backend/app/routers/fleet_control.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-c1f925d3 | core | `products/core/backend/app/routers/licenses.py (4 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-c95ba579 | core | `products/core/backend/app/routers/plans.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-788d5878 | core | `products/core/backend/app/routers/platform_templates.py (9 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-d82d86c6 | core | `products/core/backend/app/routers/products.py (6 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-59c3c3a6 | core | `products/core/backend/app/routers/settings.py (4 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-9cba2249 | core | `products/core/backend/app/routers/sso.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-4e50d018 | core | `products/core/backend/app/routers/subscriptions.py (5 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-c20c84ab | core | `products/core/backend/app/routers/templates.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-78d67bc8 | core | `products/core/backend/app/routers/usage.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-5d23924f | core | `products/core/backend/app/routers/users.py (4 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-b6cb74c7 | core | `products/core/backend/app/routers/webhooks.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-5c81c42f | core | `products/core/backend/app/routers/website_admin.py (10 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-83a0df65 | core | `schema public: browser-role SELECT on 50 of 73` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-30780c95 | erp-imobiliario | `GET /api/banco/conciliacao` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-089385e0 | erp-imobiliario | `GET /api/banco/extratos` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
@@ -183,52 +123,8 @@
 | AT-360287d2 | p-studio | `schema p_studio: browser-role SELECT on 15` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-3a8de25b | personal-finance | `schema personal-finance: browser-role SELECT on 19 of 20` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-fe44eb6e | pilates | `schema pilates: browser-role SELECT on 7` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
-| AT-12b07c57 | seed | `DELETE /{client_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-3bfd9e49 | seed | `GET /api/team` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-2df307df | seed | `GET /api/team/accept/validate` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-d07f1062 | seed | `GET /api/team/contagem` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-4310bb83 | seed | `GET /scopes` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f252e8d9 | seed | `GET /scopes` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-03b96823 | seed | `GET /status` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-947c33d9 | seed | `GET {}/{provider}/authorize` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-4d4cca79 | seed | `GET {}/{provider}/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-b2345dca | seed | `POST /api/auth/login` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-7550eac7 | seed | `POST /api/auth/mfa/admin/reset/{user_id}` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f64885d3 | seed | `POST /v1/probe` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f1e86501 | seed | `POST /v1/transcribe` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-8f2f5295 | seed | `POST /{client_id}/payments` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-90efe06a | seed | `seed/lib/backend/noctusai_lib/domain/commerce/router.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-97dabad8 | social-wiring | `GET /api/chat/history/{session_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f8a01056 | social-wiring | `GET /api/email-marketing/confirm/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-b448afdb | social-wiring | `GET /api/email-marketing/t/c/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-5741ebff | social-wiring | `GET /api/email-marketing/unsubscribe/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-a9cb4232 | social-wiring | `GET /api/integrations/accounts/gmail/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-7134a2a2 | social-wiring | `GET /api/integrations/accounts/google_drive/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-33aa2b06 | social-wiring | `GET /api/integrations/accounts/instagram/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-603c0e74 | social-wiring | `GET /api/integrations/accounts/meta/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-a5ea1821 | social-wiring | `GET /api/integrations/accounts/youtube/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-5876033c | social-wiring | `GET /api/integrations/providers` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-4c9b5441 | social-wiring | `GET /api/media-creation/treinamentos/admin` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-177b5f84 | social-wiring | `GET /api/meta/ads/sync/{job_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-d8168622 | social-wiring | `GET /api/meta/leadgen/webhook` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-dbf8eb9e | social-wiring | `GET /api/portals/imovelweb/callback` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f46b46bd | social-wiring | `GET /api/public/julia/privacidade/{slug}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-1bcc8a18 | social-wiring | `GET /api/youtube/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-abe738be | social-wiring | `POST /api/chat/message` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-f240fe97 | social-wiring | `POST /api/chat/reset/{session_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-7c0e92e2 | social-wiring | `POST /api/chat/upload-file` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-977283b3 | social-wiring | `POST /api/email-marketing/confirm/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-5e99673b | social-wiring | `POST /api/email-marketing/unsubscribe/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-5fd1ef09 | social-wiring | `POST /api/portals/imovelweb/callback/register` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-ea7eeac1 | social-wiring | `POST /api/webhooks/assinatura/{provedor}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-57d58f5c | social-wiring | `products/social-wiring/backend/app/modules/edicao_fotos/routers/configuracoes.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-1d942e30 | social-wiring | `products/social-wiring/backend/app/modules/edicao_fotos/routers/curadores.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-053aed9a | social-wiring | `products/social-wiring/backend/app/modules/edicao_fotos/routers/modelos.py (6 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-b55569a4 | social-wiring | `products/social-wiring/backend/app/modules/edicao_fotos/routers/processamento.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-701b55d2 | social-wiring | `products/social-wiring/backend/app/modules/media_creation/routers/biblioteca.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-fa764a19 | social-wiring | `products/social-wiring/backend/app/modules/media_creation/routers/treinamentos.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-deaec74f | social-wiring | `products/social-wiring/backend/app/modules/transcricoes/router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
-| AT-c55011e6 | social-wiring | `products/social-wiring/backend/app/routers/whatsapp_connections_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-971a905f | social-wiring | `schema imobi_scheduling: browser-role SELECT on 16 tables` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-8f3316f0 | social-wiring | `schema media_scheduling: browser-role SELECT on 14` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-d56ff6ea | store | `GET /api/admin/pedidos` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
