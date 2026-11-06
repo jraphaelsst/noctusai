@@ -507,3 +507,10 @@ class TestFindingsLedgerVisibility:
 class TestFindingsLedgersAll:
     def test_all_ledgers_agree_with_reality_on_the_real_tree(self):
         assert check_findings_ledgers(REPO) == []
+
+
+class TestCatalog:
+    def test_catalog_renders_with_public_categories_and_docs_sections(self, tmp_path):
+        root = _tree(tmp_path, _HEAD + "@router.get('/pricing')\n@limiter.limit('1/s')\n@access_tier('public', reason='r', category='pricing-checkout')\ndef p(): ...\n")
+        md = at.render_catalog(root)
+        assert "Public routes by category" in md and "pricing-checkout (1)" in md and "API docs exposure" in md

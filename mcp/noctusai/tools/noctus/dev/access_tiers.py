@@ -1112,7 +1112,7 @@ def render_catalog(root: Path | None = None) -> str:
         f"**{s['total']} endpoints.** Tier: " + ", ".join(f"{k} {v}" for k, v in sorted(s["by_tier"].items())) +
         ". Verdict: " + ", ".join(f"{k} {v}" for k, v in sorted(s["by_verdict"].items())) + ".",
         f"Table findings (Platform-IP exposure, anon/PUBLIC policies on secret/PII tables, open `USING (true)`): {len(tv['findings'])}; "
-        f"browser grants on tables without `tier:org|public`: {len(tv['grant_findings'])} (per table in burn-down.json); {tv['tables_scanned']} tables scanned.",
+        f"browser grants on tables without `tier:org|public`: {len(tv['grant_findings'])} (per table in findings.ndjson); {tv['tables_scanned']} tables scanned.",
         "",
         "| product | endpoints | " + " | ".join(["platform", "service", "org", "public", "UNCLASSIFIED"]) + " |",
         "|---|---:|" + "---:|" * 5,
@@ -1121,7 +1121,9 @@ def render_catalog(root: Path | None = None) -> str:
         L.append(f"| {p} | {sum(c.values())} | " + " | ".join(str(c.get(t, 0)) for t in ("platform", "service", "org", "public", "UNCLASSIFIED")) + " |")
     L += ["", "## Too-open and unclear (the work list; each row is one remediation marker)", ""]
     flagged = [r for r in routes if r.verdict != "ok"]
-    since = _read_baseline(root).get("since") or "2026-11-05"
+    from tools.noctus.dev import findings_ledger as _gl
+
+    since = min((r["found_at"] for r in _gl.load(_gl.get("access-tier"), root).values()), default="2026-11-05")
     for r in sorted(flagged, key=lambda r: (r.verdict != "too-open", r.product, r.path)):
         L.append(
             f"- NOC-REMEDIATE[access-tier]: {r.product} `{r.method} {r.path}` is {r.verdict} (tier {r.tier or 'none'}; "

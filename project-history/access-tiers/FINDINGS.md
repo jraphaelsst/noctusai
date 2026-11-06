@@ -2,13 +2,13 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1226 open / in-progress**, 0 fixed, 1 accepted (1227 total).
+**1224 open / in-progress**, 3 fixed, 1 accepted (1228 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
 | academia-de-reciclagem | 32 | 0 | 0 | 32 | 0 | 0 |
 | adconnect | 30 | 0 | 0 | 30 | 0 | 0 |
-| agents | 26 | 0 | 5 | 21 | 5 | 0 |
+| agents | 24 | 0 | 2 | 22 | 2 | 3 |
 | commerce | 61 | 0 | 0 | 61 | 0 | 0 |
 | community | 35 | 0 | 0 | 35 | 0 | 0 |
 | core | 53 | 0 | 0 | 53 | 0 | 0 |
@@ -32,9 +32,6 @@
 |---|---|---|---|---|---|---|---|
 | AT-5d90688d | erp-imobiliario | `erp.portal_acessos` | none | policy-secret | critical | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-af2a4272 | erp-imobiliario | `erp.portal_tokens` | none | policy-secret | critical | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-29619abb | agents | `GET /api/studio/agents/{key}/evals/runs` | org | too-open | high | in-progress feat/agents-prompt-exposure-fixes (queued; not yet on dev) | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-7761a090 | agents | `GET /api/studio/agents/{key}/evals/runs/{run_id}` | org | too-open | high | in-progress feat/agents-prompt-exposure-fixes (queued; not yet on dev) | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-95e15ada | agents | `products/agents/backend/app/routers/conversations_router.py` | none | stream-leak-filter | high | in-progress feat/agents-prompt-exposure-fixes (queued; not yet on dev) | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-32fc092f | agents | `source:skill_files` | none | leak-fingerprint | high | in-progress feat/julia-turn-redesign | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-289ca892 | agents | `source:skills` | none | leak-fingerprint | high | in-progress feat/julia-turn-redesign | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-418d68d1 | erp-imobiliario | `erp.meta_periodos` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
@@ -68,6 +65,7 @@
 | AT-7b5cedea | agents | `products/agents/backend/app/routers/channel_threads_router.py (1 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-3efd3188 | agents | `products/agents/backend/app/routers/plataforma_controle_router.py (2 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-dbbe10cb | agents | `products/agents/backend/app/routers/plataforma_grants_router.py (5 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
+| AT-151e0c8a | agents | `products/agents/backend/app/routers/plataforma_org_specs_router.py (3 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-c79cc875 | agents | `products/agents/backend/app/routers/qualificacao_router.py (14 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-466be68c | agents | `products/agents/backend/app/routers/skills_biblioteca_router.py (16 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |
 | AT-62a94d12 | agents | `products/agents/backend/app/routers/studio_agents_router.py (22 routes)` | platform | platform-in-public-schema | medium | open | access-tiers-gate 2026-11-05 |

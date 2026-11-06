@@ -62,7 +62,7 @@ def current_rows(root: Path, sections: tuple[str, ...] = SCANNED) -> dict[str, d
 LEDGER = gl.register_ledger(gl.LedgerType(
     name=NAME, prefix="AT", path=str(LEDGER_REL), summary=str(SUMMARY_REL),
     extra={"tier": None, "class": None}, sections=SCANNED, scanner=lambda root: current_rows(root),
-    advisory=("policy-pii", "browser-grant"),   # heuristic classes: warn-only until measured precise
+    advisory=("policy-pii", "browser-grant"), on_reconcile=lambda root: snapshot_metrics(root),   # heuristic classes: warn-only until measured precise
 ))
 
 
@@ -96,9 +96,7 @@ def snapshot_metrics(root: Path | None = None) -> dict[str, Any]:
 
 
 def reconcile(root: Path | None = None, found_by: str = "keeper", **_: Any) -> dict[str, Any]:
-    out = gl.reconcile(NAME, root, found_by=found_by)
-    out["metrics"] = snapshot_metrics(root)
-    return out
+    return gl.reconcile(NAME, root, found_by=found_by)
 
 
 def check(root: Path | None = None) -> list[dict]:

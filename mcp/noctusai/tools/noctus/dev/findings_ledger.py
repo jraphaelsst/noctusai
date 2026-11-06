@@ -62,6 +62,8 @@ class LedgerType:
     #: classes from HEURISTIC checks: recorded in the ledger (reconcile) but warn-only -- a NEW one never fails `check`
     #: until the heuristic has measured precise (Google SRE-book ch.12: block only what is near-zero false-positive).
     advisory: tuple[str, ...] = ()
+    #: called with the repo root after every successful `reconcile` (e.g. append a metrics snapshot)
+    on_reconcile: Callable[[Path], Any] | None = None
 
 
 _REGISTRY: dict[str, LedgerType] = {}
@@ -189,6 +191,8 @@ def reconcile(name: str, root: Path | None = None, found_by: str = "scanner", ad
                 r.update(status="fixed", status_detail=sha, closed_at=_today())
                 closed += 1
     save(lt, rows, root)
+    if lt.on_reconcile is not None:
+        lt.on_reconcile(root)
     return {"ok": True, "ledger": name, "added": added, "closed": closed, "reopened": reopened, "total": len(rows),
             "open": sum(1 for r in rows.values() if r["status"] in ("open", "in-progress"))}
 

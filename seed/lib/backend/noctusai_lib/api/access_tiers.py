@@ -137,7 +137,6 @@ DEP_TIERS: dict[str, str] = {
     "require_org_admin_role_assured": "org",
     "require_permission": "org",
     "require_org_permission": "org",
-    "require_publish_read": "org",
     "require_admin_or_content_token": "org",
     "require_spend_reader": "org",
     "ctx_dep": "org",
