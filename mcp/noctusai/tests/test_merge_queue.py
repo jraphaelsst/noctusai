@@ -123,6 +123,9 @@ def make_queue(w, ci, regen=lambda wt: (True, "")):
                     workdir=w["runner"], log=lambda m: None, regen=regen)
 
 
+_NOREGEN = make_queue.__defaults__[0]  # same injected no-op regen for tests that build Queue directly
+
+
 def origin_dev(w):
     return sh(w["origin"], "git", "rev-parse", "refs/heads/dev")
 
@@ -403,7 +406,7 @@ def test_workflow_touching_entry_is_pre_ejected_and_the_rest_land(world):
 def test_workflow_token_seam_switches_the_pre_eject_off(world):
     _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
     _diverge_dev(world)
-    q = mq.Queue("o/r", run=FakeCI(world["origin"]), run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=FakeCI(world["origin"]), run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None, workflow_token=True)
     res = q.drain()
     assert res.ejected == [] and [x["slug"] for x in res.landed] == ["wf"]
@@ -418,7 +421,7 @@ def test_rejected_candidate_push_ejects_instead_of_raising(world):
             return 1, "", "! [remote rejected] x (pre-receive hook declined)"
         return ci(cmd, cwd=cwd)
 
-    q = mq.Queue("o/r", run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None)
     res = q.drain()
     assert res.landed == [] and res.ejected[0]["kind"] == "push_rejected"
@@ -437,7 +440,7 @@ def test_workflow_permission_rejection_maps_to_the_workflow_reason(world):
             return 1, "", "! [remote rejected] (refusing to allow a GitHub App to create or update workflow `x.yml` without `workflows` permission)"
         return ci(cmd, cwd=cwd)
 
-    q = mq.Queue("o/r", run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None, workflow_token=True)  # defeat the pre-check so the push itself is rejected
     res = q.drain()
     assert [x["slug"] for x in res.ejected] == ["wf"]
@@ -459,7 +462,7 @@ def _token_runner(world, ci, pushes):
             if cmd[2].startswith("https://x-access-token:"):
                 cmd = [*cmd[:2], world["origin"], *cmd[3:]]
         return ci(cmd, cwd=cwd)
-    return mq.Queue("o/r", run=run, run_id="7", poll_s=0, sleep=lambda s: None,
+    return mq.Queue("o/r", regen=_NOREGEN, run=run, run_id="7", poll_s=0, sleep=lambda s: None,
                     workdir=world["runner"], log=lambda m: None, push_token=TOK)
 
 
@@ -500,14 +503,14 @@ def test_token_never_surfaces_in_errors_statuses_or_verdicts(world):
             return 1, "", msg
         return ci(cmd, cwd=cwd)
 
-    q = mq.Queue("o/r", run=run, run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=run, run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None, push_token=TOK)
     res = q.drain()
     blob = json.dumps(res.ejected) + json.dumps(ci.statuses)
     assert res.ejected and TOK not in blob and bad in ci.statuses
     assert TOK not in q._redact(msg) and "***" in q._redact(msg)
     rc = lambda cmd, cwd=None: (1, "", msg)  # noqa: E731
-    q2 = mq.Queue("o/r", run=rc, workdir=world["runner"], log=lambda m: None, push_token=TOK)
+    q2 = mq.Queue("o/r", regen=_NOREGEN, run=rc, workdir=world["runner"], log=lambda m: None, push_token=TOK)
     with pytest.raises(RuntimeError) as ei:
         q2.git("push", f"https://x-access-token:{TOK}@github.com/o/r.git", "x")
     assert TOK not in str(ei.value)
