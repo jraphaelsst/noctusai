@@ -147,6 +147,21 @@ class TestAuthBoundaryFalseGreenNegative:
         issues = check_auth_boundary_false_green(product_path=product, products_dir=tmp_path)
         assert issues == []
 
+    def test_403_paired_with_mask_flagged(self, tmp_path: Path):
+        """The `platform_admin_required` 403 tests: `in (403, 404)` passes when the route is absent."""
+        product = _make_product_with_test(
+            tmp_path,
+            "def test_admin(client):\n    resp = client.get('/api/studio/x')\n    assert resp.status_code in (403, 404)\n",
+        )
+        assert len(check_auth_boundary_false_green(product_path=product, products_dir=tmp_path)) == 1
+
+    def test_403_in_wide_status_set_not_flagged(self, tmp_path: Path):
+        product = _make_product_with_test(
+            tmp_path,
+            "def test_x(client):\n    resp = client.get('/api/x')\n    assert resp.status_code in (200, 403, 422, 503)\n",
+        )
+        assert check_auth_boundary_false_green(product_path=product, products_dir=tmp_path) == []
+
     def test_clean_strict_eq_401_not_flagged(self, tmp_path: Path):
         """The fixed form — strict `== 401` — must never be flagged."""
         product = _make_product_with_test(

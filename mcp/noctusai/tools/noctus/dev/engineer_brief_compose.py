@@ -429,6 +429,25 @@ BEFORE_RETURNING_BLOCK = (
 )
 
 
+def _open_findings(target_files: list[str], degraded: list[str] | None) -> list[str]:
+    """Open rows of every registered living ledger for the product / agent scopes `target_files` touch."""
+    scopes: list[str] = []
+    for tf in target_files:
+        parts = tf.replace("\\", "/").split("/")
+        scope = parts[1] if parts[0] == "products" and len(parts) > 1 else ("seed" if parts[0] == "seed" else None)
+        if scope and scope not in scopes:
+            scopes.append(scope)
+    out: list[str] = []
+    try:
+        from tools.noctus.dev import findings_ledger
+
+        for sc in scopes:
+            out += findings_ledger.open_for_scope(sc)
+    except Exception as exc:  # noqa: BLE001 -- a brief without findings is degraded, never silent
+        _note(degraded, "findings_ledger", exc)
+    return out
+
+
 def _render_brief(
     *,
     description: str,
@@ -437,6 +456,7 @@ def _render_brief(
     kb_references: list[dict],
     auto_improvement_context: list[dict],
     recent_misses: list[dict] | None = None,
+    open_findings: list[str] | None = None,
 ) -> str:
     """Render the brief in dispatch-engineer-tuning §4d shape."""
     title_slug = description[:60].rstrip()
@@ -466,6 +486,11 @@ def _render_brief(
             short = (m.get("text") or "")[:160].replace("\n", " ")
             day = (m.get("ts") or "")[:10] or "?"
             lines.append(f"- [{m.get('kind', '?')}] {m.get('target', '*')} — {short} ({day})")
+
+    # Living findings ledgers (access-tier burn-down, Julia's mistakes, ...): the scope's open rows come first.
+    if open_findings:
+        lines += ["", "### Open findings in your scope (fix-on-contact; the ledger is written only by `noctus.dev.findings_ledger`)"]
+        lines += [f"- {ln.strip()}" for ln in open_findings]
 
     # Auto-improvement context block.
     if auto_improvement_context:
@@ -570,6 +595,9 @@ def compose_brief(
         score_rows=score_rows, degraded=degraded,
     )
 
+    # Step 5b: the open rows of every living findings ledger for the scopes the target files sit in.
+    open_findings = _open_findings(target_files, degraded)
+
     # Step 6: render.
     brief = _render_brief(
         description=description,
@@ -578,6 +606,7 @@ def compose_brief(
         kb_references=kb_refs,
         auto_improvement_context=ai_ctx,
         recent_misses=misses,
+        open_findings=open_findings,
     )
 
     return {
@@ -586,6 +615,7 @@ def compose_brief(
         "auto_improvement_context": ai_ctx,
         "kb_references": kb_refs,
         "recent_misses": misses,
+        "open_findings": open_findings,
         "degraded": degraded,
     }
 

@@ -31,6 +31,8 @@ version: 2.2.0
 - No `if org == …` in shared code; client differences are settings, then packs, then dedicated instances (`vertical-seed.md` §4).
 - Every write writes the cache — `useCacheWriteMutation` (or `createCrudHooks`), never an invalidate-only `useMutation`; the scaffold's `src/hooks/useExample.ts` is the reference shape and `check_mutation_invalidate_only` refuses the old one at commit (skill `noc-cache-writes` · `KB § PATTERNS/frontend/mutation-cache-writes.md`).
 - SSO + cross-product nav work by construction IF you resolve core's URL via `env.CORE_URL`/`env.CORE_API_URL` — never hand-roll `import.meta.env.VITE_CORE_* || "literal"` (`check_handrolled_core_url` keeper).
+- **Declare access tiers.** Each route resolves to `platform|org|service|public` (reuse the seed gate deps; `@access_tier` for the rest); each table gets `COMMENT ON TABLE … IS 'tier:x'`. → `KB § PATTERNS/security/access-tiers.md`
+- **Read the open findings first.** Before touching a product/agent, `noctus.dev.findings_ledger action=open_for_scope scope=<slug>` (briefs carry it too); close what you fix via the tool (`new_status=fixed`, detail=sha), never by hand. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Depth
 `KB § CONTEXT/GUIDES/new-product.md` · `KB § PATTERNS/architect/vertical-seed.md` · `KB § CONTEXT/03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/frontend/core-url-routing.md`.

@@ -39,6 +39,7 @@ Review code for code health, maintainability, test adequacy, standards + seed-co
 - **Verify on a clean `origin/dev` worktree.** A busy shared checkout yields phantom regressions (worktree-sensitivity). → `KB § PATTERNS/common/branching.md`
 - **Methodology codification pipeline ownership.** When a review surfaces an N≥2 recurrence or rule-gap, file the s1→s2→s3→s4 codification proposal — discipline → mechanism. → `KB § PATTERNS/common/methodology-codification-pipeline.md`
 - **Method trials.** A method under evaluation carries an open `noctus.dev.method_trial`; at review, check the verdict cites observations (no self-grading) and that adopt → s3 only, s4 after N≥5. → `KB § PATTERNS/common/method-trials.md`
+- **Review the access tier.** Ask "whose is this data?" of every new route/table; a Platform-IP surface behind a member-level gate or an `authenticated` grant is a blocking finding; check the endpoint catalog and the ratchet baseline only shrank. → `KB § PATTERNS/security/access-tiers.md`
 
 ## Craft canon (the judgement layer — depth in `KB § PATTERNS/compliance/code-review-craft.md`)
 - **Standard of review: approve once the change clearly improves code health, never wait for perfection; a `nitpick` never blocks.** Google's senior principle. → `code-review-craft.md §1`

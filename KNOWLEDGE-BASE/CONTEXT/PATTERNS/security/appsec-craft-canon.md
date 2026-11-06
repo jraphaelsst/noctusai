@@ -677,3 +677,5 @@ again while authoring.
 `KB § PATTERNS/security/ai-agent-security-canon.md` (agents-security) · `KB § PATTERNS/backend/database-rls.md` ·
 `KB § PATTERNS/backend/no-metadata-authz.md` · `KB § PATTERNS/compliance/auth-boundary-false-green.md` ·
 `KB § PATTERNS/devops/ci-security-gates.md` · agent `security` (owner).
+
+> Access tiers (routes + tables declare platform/org/service/public; public is a closed allowlist; delta-stream + leak-fingerprint + effective-exposure gates): `KB § PATTERNS/security/access-tiers.md`.

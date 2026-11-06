@@ -8312,7 +8312,7 @@ def _upload_route_extract_router_prefixes(tree: "ast.Module") -> dict:
             and isinstance(node.targets[0], ast.Name)
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
-            and node.value.func.id == "APIRouter"
+            and node.value.func.id in ("APIRouter", "make_router")   # make_router = the typed, tier-declaring constructor
         ):
             continue
         name = node.targets[0].id
@@ -25649,6 +25649,99 @@ def check_private_accent_fold(repo_root: Path | None = None) -> list[dict]:
                         "severity": "high",
                     })
     return issues
+
+
+# ---------------------------------------------------------------------------
+# ACCESS TIERS (owner directive 2026-11-05): every route and every table declares who may touch it;
+# undeclared is refused. Logic + registry in `access_tiers.py` / `noctusai_lib.api.access_tiers`; these are the
+# keeper entry points. Ratchet baseline `deploy/security/access-tier-baseline.json` (only shrinks).
+# KB § PATTERNS/security/access-tiers.md.
+# ---------------------------------------------------------------------------
+def check_access_tier_routes(repo_root: Path | None = None) -> list[dict]:
+    """Every route of every ACTIVE product resolves to an access tier (dependency chain, `@access_tier`, health
+    convention); Platform IP (studio/agents definitions, evals, prompts, admin) never sits behind a weaker dep.
+    BLOCKING for violations not in the ratchet baseline. KB § PATTERNS/security/access-tiers.md."""
+    from tools.noctus.dev import access_tiers
+
+    return access_tiers.check_routes(repo_root or REPO_ROOT)
+
+
+def check_access_tier_tables(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
+    """A Platform-IP table (registry glob or `COMMENT ON TABLE ... IS 'tier:platform'`) has no `authenticated`/`anon`
+    grant and no non-admin `TO authenticated|PUBLIC` policy in the migration chain (PostgREST exposure counts);
+    `paths` (staged ADDED migrations) additionally requires every NEW table to declare its tier. Ratcheted."""
+    from tools.noctus.dev import access_tiers
+
+    root = repo_root or REPO_ROOT
+    issues = access_tiers.check_tables(root)
+    if paths:
+        issues += access_tiers.check_new_tables_declared(root, paths)
+    return issues
+
+
+def check_access_tier_streams(repo_root: Path | None = None) -> list[dict]:
+    """A server route that publishes `message.delta`-style partial LLM output to a browser must pass it through the
+    leak filter (registry `LEAK_FILTER_NAMES`, agents `FiltroDeltas`). Ratcheted. KB § PATTERNS/security/access-tiers.md."""
+    from tools.noctus.dev import access_tiers
+
+    return access_tiers.check_streams(repo_root or REPO_ROOT)
+
+
+def check_access_tier_fingerprint(repo_root: Path | None = None) -> list[dict]:
+    """Everything prompt-derived that reaches the model is a leak-fingerprint source: the seam
+    (`texto_fonte_do_prompt`) references every registered source, and every tool in the tool registry is classified
+    prompt-derived or not. Ratcheted. KB § PATTERNS/security/access-tiers.md."""
+    from tools.noctus.dev import access_tiers
+
+    return access_tiers.check_fingerprint(repo_root or REPO_ROOT)
+
+
+def check_findings_ledgers(repo_root: Path | None = None) -> list[dict]:
+    """ONE drift keeper across EVERY registered living findings ledger (access-tier, Julia's mistakes, ...): a status
+    that disagrees with the latest scan fails. KB § PATTERNS/common/living-findings-ledgers.md."""
+    from tools.noctus.dev import findings_ledger
+
+    return findings_ledger.check_all(repo_root or REPO_ROOT)
+
+
+def check_access_tier_ledger(repo_root: Path | None = None) -> list[dict]:
+    """The living access-tier findings ledger agrees with what the scanners see: no NEW finding without a row, no row
+    marked fixed that the scanner still sees, no open/in-progress/accepted row the scanner no longer sees."""
+    from tools.noctus.dev import access_tier_findings
+
+    return access_tier_findings.check(repo_root or REPO_ROOT)
+
+
+def check_findings_ledger_visibility(repo_root: Path | None = None) -> list[dict]:
+    """Backstop for ledger visibility-by-construction: the injection hook is registered for SessionStart AND
+    SubagentStart in .claude/settings.json (so every agent -- a new `.claude/agents/*.md` included -- starts with its
+    target's open rows), and every registered ledger is on the roster the hook reads. Nobody should hit this."""
+    import json
+
+    root = repo_root or REPO_ROOT
+    out: list[dict] = []
+    script = "claude-inject-open-findings.py"
+    if not (root / "scripts" / "hooks" / script).exists():
+        out.append({"file": f"scripts/hooks/{script}", "issue": "the findings-injection hook script is missing", "severity": "high"})
+    try:
+        hooks = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8")).get("hooks", {})
+    except (OSError, json.JSONDecodeError):
+        hooks = {}
+    for ev in ("SessionStart", "SubagentStart"):
+        if script not in json.dumps(hooks.get(ev, [])):
+            out.append({"file": ".claude/settings.json", "severity": "high",
+                        "issue": f"{script} is not registered under {ev}: agents would start blind to the open findings of their target. KB § PATTERNS/common/living-findings-ledgers.md."})
+    try:
+        roster = json.loads((root / "project-history" / "findings-ledgers.json").read_text(encoding="utf-8")).get("ledgers", {})
+    except (OSError, json.JSONDecodeError):
+        roster = {}
+    from tools.noctus.dev import findings_ledger
+
+    for name, lt in sorted(findings_ledger.ledgers().items()):
+        if name not in roster and (root / lt.path).exists():
+            out.append({"file": "project-history/findings-ledgers.json", "severity": "high",
+                        "issue": f"ledger `{name}` has rows but is not on the roster the injection hook reads: run `cli.py --findings-ledger-reconcile {name}` (the tool writes the roster)."})
+    return out
 
 
 def register(server) -> None:

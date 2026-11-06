@@ -157,10 +157,12 @@ KNOWLEDGE-BASE/
 │   │   │   ├── leads-organ.md
 │   │   │   ├── lenses-applied-trailer.md
 │   │   │   ├── live-state-alignment.md
+│   │   │   ├── living-findings-ledgers.md
 │   │   │   ├── lgpd-entry-keeper.md
 │   │   │   ├── lgpd.md
 │   │   │   ├── ai-agent-threat-model.md
 │   │   │   ├── llm-bot-security.md
+│   │   │   ├── access-tiers.md
 │   │   │   ├── appsec-craft-canon.md
 │   │   │   ├── secure-code-review-checklist.md
 │   │   │   ├── incident-response-playbook.md
@@ -432,6 +434,8 @@ KNOWLEDGE-BASE/
 | Logging convention (when-to-log, level guide, no-`# silent-ok` rule, correlation IDs) | `CONTEXT/PATTERNS/backend/logging.md` |
 | Seed-lib layout (6 layers — primitives/config/testing/integrations/domain/api — where to put new helpers, where to find existing ones) | `CONTEXT/PATTERNS/architect/seed-lib-layout.md` |
 | Agent reading & research discipline (narrow-read first; Explore delegation rule forthcoming) | `CONTEXT/PATTERNS/common/agent-reading-discipline.md` |
+| Access tiers — every route and table declares who may touch it (`platform` Platform IP · `org` · `service` · `public`), undeclared refused (owner directive 2026-11-05): `noctusai_lib.api.access_tiers` registry + `@access_tier` + `COMMENT ON TABLE … IS 'tier:x'`, closed public allowlist, write-time guard + keepers `check_access_tier_routes/_tables/_streams/_fingerprint` (ratcheted burn-down), effective-state tool `noctus.dev.access_tier_exposure`, generated catalog + per-product burn-down `project-history/access-tiers/`, PostgREST exposure counts | `CONTEXT/PATTERNS/security/access-tiers.md` |
+| Living findings ledgers — ONE mechanism for every burn-down (security access-tier, Julia's mistakes, ...): typed NDJSON ledger + rendered summary, written only by `noctus.dev.findings_ledger` (append/update/query/reconcile/check/scaffold), each ledger registers a scanner/eval that decides whether a row is still real, ONE drift keeper `check_findings_ledgers` fails on status-vs-reality disagreement, open rows surface in every dispatch brief | `CONTEXT/PATTERNS/common/living-findings-ledgers.md` |
 | Webhook signature verification (the five shapes: Hub-Signature / hex HMAC (+ WAHA) / Svix / static header secret / Stripe SDK; constant-time compare; helper module in `noctusai_lib.security.webhook_signatures`) | `CONTEXT/PATTERNS/security/webhook-signatures.md` |
 | Accept-with-rationale catalog (durable home for every legitimate divergence on the platform — survives project folder deletion; how to add / retire entries) | `CONTEXT/PATTERNS/common/accept-with-rationale.md` |
 | Vendored skills (skill-scout) — never depend: bring external Claude Code / Agent Skills skills in-home only after content vetting (instruction override, network reach, exfiltration, harness tampering, scripts — OWASP LLM01/02/03/06), SPDX license decision table (no license ⇒ no permission; copyleft ⇒ never; source-available ⇒ author-in-home; Apache-2.0 LICENSE + NOTICE), origin-at-pinned-SHA (aggregators are indexes), the Agent Skills spec + best-practices quality bar (name ≤64, description ≤1024 third person, body <500 lines, one-level refs, ≥3 evals); **the vendored-skill register** + runtime-provided list + re-check triggers; adaptation recipe; escalation | `CONTEXT/PATTERNS/common/vendored-skills.md` |

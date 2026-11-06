@@ -357,6 +357,26 @@ def _build_with_table_block(schema: str, table: str) -> str:
         using="(SELECT auth.uid()) IS NOT NULL  -- TODO: tighten to ownership predicate",
     )
 
+    tier_block = (
+        f"-- Access tier (KB § PATTERNS/security/access-tiers.md): say whose this data is. platform = Platform IP (service role only);\n"
+        f"-- org = a customer's own data; service = machine-to-machine; public = intentionally anonymous (closed allowlist).\n"
+        f"COMMENT ON TABLE {schema}.{table} IS 'tier:org';  -- TODO: platform | org | service | public\n"
+        f"-- Explicit grants: never inherit the schema's default privileges. Safe default = NO browser grant (service role only).\n"
+        f"REVOKE ALL ON {schema}.{table} FROM anon, authenticated;\n"
+        f"-- GRANT SELECT ON {schema}.{table} TO authenticated;  -- ONLY for tier:org data the browser reads directly (RLS scopes the rows)"
+    )
+
+    matrix = (
+        f"-- ROLE-MATRIX TEST (pgTAP shape; run it in the realdb replay probes -- fill in the expected counts):\n"
+        f"--   for each role switch role + JWT claims, then assert which rows are visible and writable:\n"
+        f"--     anon                -> SET LOCAL ROLE anon;            expect SELECT 0 rows, INSERT/UPDATE/DELETE denied\n"
+        f"--     authenticated (own) -> SET LOCAL ROLE authenticated;   SELECT set_config('request.jwt.claims', '{{\"sub\":\"<user-in-org-A>\"}}', true);\n"
+        f"--                            expect: org-A rows only (tier:org) | denied (tier:platform)\n"
+        f"--     authenticated (other org) -> same with a user of org B; expect 0 rows of org A\n"
+        f"--     platform admin      -> claims of a noctus_users.role='admin' user; expect: visible only if the tier allows it\n"
+        f"--   SELECT count(*) FROM {schema}.{table};  -- one assertion per (role, operation)"
+    )
+
     return "\n\n".join(
         [
             f"-- ----- Table: {schema}.{table} -----",
@@ -367,6 +387,8 @@ def _build_with_table_block(schema: str, table: str) -> str:
             "-- Row-Level Security",
             rls_enable,
             rls_policy_stub,
+            tier_block,
+            matrix,
         ]
     )
 

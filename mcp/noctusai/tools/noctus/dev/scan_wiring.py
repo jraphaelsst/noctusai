@@ -430,7 +430,7 @@ _BE_ROUTE_RE = re.compile(
 # hang off it. We extract this PER FILE so each file's decorators are joined
 # to that file's own prefix (accurate, not over-generated).
 _APIROUTER_PREFIX_RE = re.compile(
-    r"APIRouter\s*\([^)]*?prefix\s*=\s*['\"](?P<prefix>[^'\"]*)['\"]",
+    r"(?:APIRouter|make_router)\s*\([^)]*?prefix\s*=\s*['\"](?P<prefix>[^'\"]*)['\"]",
     re.DOTALL,
 )
 # `include_router(<name>, prefix="/api/x")` — the secondary mount form (the
@@ -520,7 +520,7 @@ def _factory_shape(fn: ast.FunctionDef | ast.AsyncFunctionDef):
             isinstance(target, ast.Name)
             and isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
-            and call.func.id == "APIRouter"
+            and call.func.id in ("APIRouter", "make_router")   # make_router = the typed, tier-declaring constructor
         ):
             continue
         prefix_kw = next((kw for kw in call.keywords if kw.arg == "prefix"), None)
@@ -711,7 +711,7 @@ def _default_prefix_factory_routes(content: str) -> list[tuple[str, str]]:
                 continue
             call = stmt.value
             fname = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", None)
-            if fname != "APIRouter":
+            if fname not in ("APIRouter", "make_router"):
                 continue
             for kw in call.keywords:
                 if kw.arg == "prefix" and isinstance(kw.value, ast.Name) and kw.value.id in defaults:
