@@ -10,6 +10,7 @@ Keeper = regulatory (blocks commits). Hound/mole = curatorial (surfaces what to 
 
 ## Workflow
 
+- **Gate alignment sweep:** `--gate-alignment walls --file-walls` + `--gate-alignment triad` (burn-down of gates without a construction leg). → `KB § PATTERNS/common/gate-methodology-sync.md`
 1. **Code hygiene** — `noctus.hound.scan` = single entry for absorption (file-level) + fusion (cross-tool) + optimization (intra-file); emits `next_action` (default "what cleanup is urgent?").
 2. **Absorption sextet** (editing a product's services/routers/hooks, even unrelated work) — `scan_cross_product_helpers` + `scan_within_product_helpers` + `scan_service_line_recurrence` + `scan_block_patterns`. Within-product N=2 = architect-eyes; scanners threshold N≥3.
 3. **Storage hygiene** — `noctus.dev.mole` over artifacts · environments · stale `.claude/worktrees/agent-*/`. `sweep --force` is destructive (dry-run default; never deletes uncommitted/main/siblings/.env/migrations).

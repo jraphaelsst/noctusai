@@ -12,6 +12,7 @@ owns_kb:
   - CONTEXT/PATTERNS/architect/mcp-tool-conventions.md
   - CONTEXT/PATTERNS/architect/mcp-first-scripts.md
   - CONTEXT/PATTERNS/architect/dev-toolkit-scaffolders.md
+  - CONTEXT/PATTERNS/common/gate-alignment-inventory.md
   - CONTEXT/PATTERNS/architect/noc-graph.md
   - CONTEXT/PATTERNS/architect/component-bundle-tool.md
   - CONTEXT/PATTERNS/common/harness-mods.md
@@ -61,6 +62,7 @@ Build and keep the toolkit that every other agent and the owner run on (`mcp/`, 
 - **Harness mods are UX over Python gates, never a gate.** → `KB § PATTERNS/common/harness-mods.md`
 - **Verdicts are enumerated:** not-run is never green, and unmeasurable is never red. → `KB § PATTERNS/common/methodology-execution-discipline.md`
 - **Docs follow code in the same commit,** including tool descriptions and `--help`. → `KB § PATTERNS/common/doc-staleness-gate.md`
+- **Triad + alignment loop for anything enforceable:** construction leg (scaffold/template/write path/injection) + backstop gate + telemetry in ONE change; `scaffold_keeper` refuses without `mechanism`/`owner`/`source`; measure walls with `--gate-alignment walls`; false alarms are researched (cited sources) and fixed, not just demoted. → `KB § PATTERNS/common/gate-methodology-sync.md` (Build triad · Alignment loop)
 - **Merge machinery is not yours** (`task_branch`, merge queue, CI, ship/branch skills, hw budget): pointers only. → `KB § PATTERNS/devops/hardware-admission-budget.md`
 
 ## Domain rules — craft (→ `KB § PATTERNS/tooling/tooling-craft-canon.md`)
@@ -91,7 +93,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Craft** → `KB § PATTERNS/tooling/tooling-craft-canon.md`.
 **MCP toolkit** → `KB § PATTERNS/architect/mcp-tool-conventions.md` · `KB § PATTERNS/architect/mcp-first-scripts.md` · `KB § PATTERNS/architect/dev-toolkit-scaffolders.md` · `KB § PATTERNS/architect/noc-graph.md` · `KB § PATTERNS/architect/component-bundle-tool.md` · `KB § INTEGRATIONS/openai-mcp.md` · `KB § PATTERNS/common/harness-mods.md`.
 **Caches + vectors** → `KB § PATTERNS/common/cache-portable-architecture.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/vectorize-embed-cache-framework.md` · `KB § PATTERNS/common/cache-locking-discipline.md` · `KB § PATTERNS/common/cache-auto-freshness.md` · `KB § PATTERNS/common/cache-telemetry.md` · `KB § PATTERNS/common/kb-vector-search.md` · `KB § PATTERNS/common/code-embeddings.md` · `KB § PATTERNS/common/memory-embeddings.md` · `KB § PATTERNS/common/corpus-embeddings.md` · `KB § PATTERNS/common/push-time-embedding-gate.md` · `KB § PATTERNS/common/vector-baseline.md` · `KB § PATTERNS/common/vector-cost-tracking.md` · `KB § PATTERNS/common/vector-calibration.md` · `KB § PATTERNS/common/unified-query.md`.
-**Keepers + scanners** → `KB § PATTERNS/common/living-findings-ledgers.md` · `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md` · `KB § PATTERNS/common/extractor-correctness-vs-mirror.md` · `KB § PATTERNS/common/code-recurrence-baseline.md` · `KB § PATTERNS/common/scan-repetition-semantic.md` · `KB § PATTERNS/common/doc-to-code-drift.md` · `KB § PATTERNS/common/engineer-output-linter.md` · `KB § PATTERNS/common/auto-author-scaffolds.md` · `KB § PATTERNS/common/absorption-tracking.md`.
+**Keepers + scanners** → `KB § PATTERNS/common/gate-alignment-inventory.md` · `KB § PATTERNS/common/living-findings-ledgers.md` · `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md` · `KB § PATTERNS/common/extractor-correctness-vs-mirror.md` · `KB § PATTERNS/common/code-recurrence-baseline.md` · `KB § PATTERNS/common/scan-repetition-semantic.md` · `KB § PATTERNS/common/doc-to-code-drift.md` · `KB § PATTERNS/common/engineer-output-linter.md` · `KB § PATTERNS/common/auto-author-scaffolds.md` · `KB § PATTERNS/common/absorption-tracking.md`.
 
 ## Composes-with (commons + cross-domain)
 `.claude/agents/engineer-seed.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/ast.md` · `KB § PATTERNS/common/agent-context-architecture.md` · `KB § PATTERNS/architect/noc-graph.md` (architect-owned) · `KB § PATTERNS/common/vectorize-embed-cache-framework.md` (devops-owned) · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` · `drift-fix-on-contact.md` · `dispatch-with-project-and-notes.md`.

@@ -38,11 +38,31 @@ DEFAULT_DEADLINE_S = 8.0  # must stay below the `timeout` in .claude/settings.js
 #   jq -r .guard .claude/cache/guard-events.ndjson | sort | uniq -c
 # Gitignored (.claude/cache/), machine-local, append-only. A failed write is
 # reported on stderr and never changes the verdict.
-EVENT_LOG = Path(__file__).resolve().parents[2] / ".claude" / "cache" / "guard-events.ndjson"
+def _primary_root() -> Path:
+    """The PRIMARY checkout root, also when running inside a linked worktree.
+
+    A worktree's `.git` is a FILE (`gitdir: <primary>/.git/worktrees/<n>`); a
+    per-worktree log would scatter the firing history across trees and vanish
+    with each worktree's cleanup, defeating the alignment report (2026-11-05).
+    """
+    here = Path(__file__).resolve().parents[2]
+    dot_git = here / ".git"
+    try:
+        if dot_git.is_file():
+            gitdir = dot_git.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip()
+            parts = Path(gitdir).parts
+            if "worktrees" in parts:
+                return Path(*parts[: parts.index(".git")])
+    except (OSError, IndexError, ValueError):
+        pass
+    return here
+
+
+EVENT_LOG = _primary_root() / ".claude" / "cache" / "guard-events.ndjson"
 
 
 def log_event(name: str, outcome: str, reason: str, payload: dict[str, Any] | None,
-              log_path: Path | None = None) -> None:
+              log_path: Path | None = None, extra: dict[str, Any] | None = None) -> None:
     import datetime
     import os
     tool_input = (payload or {}).get("tool_input")
@@ -58,6 +78,8 @@ def log_event(name: str, outcome: str, reason: str, payload: dict[str, Any] | No
         "session": (payload or {}).get("session_id"),
         "cwd": (payload or {}).get("cwd") or os.getcwd(),
     }
+    if extra:  # kind / owner / source: the unified gate-event shape (gate_alignment)
+        row.update({k: v for k, v in extra.items() if k not in row})
     path = log_path or Path(os.environ.get("NOCTUS_GUARD_EVENT_LOG") or EVENT_LOG)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

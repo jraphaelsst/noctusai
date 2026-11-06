@@ -27,6 +27,7 @@ version: 2.2.0
 8. **Learning round close.** `noctus.dev.method_trial action=verdict` per trial; fold what changed into the guide, this skill (bump `version`) and the market spec library.
 
 ## Guardrails
+- **Build triad (anything enforceable):** ship construction (the correct build is the default) + backstop gate + telemetry in one change; research reliable sources first and cite them. → `KB § PATTERNS/common/gate-methodology-sync.md` (Build triad · Alignment loop)
 - "Scaffolded" ≠ "complete" — backend and frontend at the SAME maturity before commit.
 - No `if org == …` in shared code; client differences are settings, then packs, then dedicated instances (`vertical-seed.md` §4).
 - Every write writes the cache — `useCacheWriteMutation` (or `createCrudHooks`), never an invalidate-only `useMutation`; the scaffold's `src/hooks/useExample.ts` is the reference shape and `check_mutation_invalidate_only` refuses the old one at commit (skill `noc-cache-writes` · `KB § PATTERNS/frontend/mutation-cache-writes.md`).

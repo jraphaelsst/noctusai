@@ -10,6 +10,7 @@ A skill = `.claude/skills/<name>/SKILL.md`: frontmatter (`name` + `description`,
 
 ## Authoring conventions (noc)
 
+- **Build triad (anything enforceable):** ship construction (the correct build is the default) + backstop gate + telemetry in one change; research reliable sources first and cite them. → `KB § PATTERNS/common/gate-methodology-sync.md` (Build triad · Alignment loop)
 1. **Name = `noc-<verb-noun>`** for platform workflows (instantly spottable, clusters under `noc-`). Non-noc-specific meta-skills keep a plain name.
 2. **Description = what + when, third person, with trigger phrases** verbatim in quotes — house form: "Use when … — triggers '…', '…'." (≤1024 chars; the spec + best-practices bar is in `KB § PATTERNS/common/vendored-skills.md` §5).
 3. **Body = a thin WORKFLOW**, not a doc: numbered steps + which MCP tools to call in sequence + a `## Guardrails` + a `

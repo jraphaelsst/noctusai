@@ -8,6 +8,13 @@
     "class",
     "tier"
    ]
+  },
+  "gate-walls": {
+   "path": "project-history/gate-alignment/findings.ndjson",
+   "summary": "project-history/gate-alignment/FINDINGS.md",
+   "extra": [
+    "kind"
+   ]
   }
  }
 }

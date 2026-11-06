@@ -6,13 +6,36 @@ Makes the codification pipeline's Stage-4 a tool, not a ritual
 (check_files_outlined was hand-built end-to-end this session). Returns
 code (does not edit the 6k-line compliance.py programmatically) —
 agent pastes the detector before `def register`.
+
+BUILD TRIAD (KB § PATTERNS/common/gate-methodology-sync.md): a gate is never
+authored alone. This scaffolder REFUSES unless the caller names (a) the
+CONSTRUCTION leg that makes the compliant build the default (`mechanism`: a
+scaffold/template/write-path/injection/api pointer, or `none (reason)`), (b) an
+`owner`, and (c) the `source` read before codifying. It emits the inventory
+declaration (the meta-gate `check_gate_triad` fails without it), a WARN-first
+(shadow) pre-commit block, and relies on the cli exit wrapper for telemetry
+(every `--check-*` run is a gate event; walls rank in `noctus.dev.gate_alignment`).
 """
 from __future__ import annotations
 
+from .gate_alignment import mechanism_ok
 
-def scaffold_keeper(name: str, flag: str, severity: str = "high") -> dict:
+
+def scaffold_keeper(name: str, flag: str, severity: str = "high", *,
+                    mechanism: str = "", owner: str = "", source: str = "") -> dict:
     """`name` = snake detector noun (no `check_` prefix); `flag` = the
-    cli `--check-<flag>`. Returns detector/test/cli/precommit code."""
+    cli `--check-<flag>`. Returns detector/test/cli/precommit code plus the
+    triad declaration. Refuses without mechanism + owner + source."""
+    if not mechanism_ok(mechanism):
+        return {"ok": False, "error": (
+            "mechanism required: point at the CONSTRUCTION leg that makes the compliant build the default "
+            "(scaffold:/template:/write-path:/injection:/api:/tool: <pointer>, KB §, or a path), or "
+            "'none (<reason, >=12 chars>)'. A gate ships with its mechanism "
+            "(KB § PATTERNS/common/gate-methodology-sync.md).")}
+    if not owner.strip():
+        return {"ok": False, "error": "owner required: the agent/file that owns this gate (walls route to it)."}
+    if not source.strip():
+        return {"ok": False, "error": "source required: the standard/rule/paper read BEFORE codifying (cite it)."}
     fn = f"check_{name}"
     Cam = "".join(p.capitalize() for p in name.split("_"))
 
@@ -57,13 +80,24 @@ class Test{Cam}:
         f'    parser.add_argument("--check-{flag}", action="store_true", '
         f'help="Keeper: {name}. Exits 1 on any issue. Pre-commit gate.")'
     )
-    precommit_block = f'''# ─── Keeper: {name} (blocking) ───
+    precommit_block = f'''# ─── Keeper: {name} (WARN-first SHADOW — promote to blocking only after the shadow record) ───
 STAGED_X=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E 'TODO-pattern' || true)
 if [[ -n "$STAGED_X" ]]; then
-    "$PY" "$REPO_ROOT/mcp/noctusai/cli.py" --check-{flag} || {{ echo "[pre-commit] {name} FAILED." >&2; exit 1; }}
+    "$PY" "$REPO_ROOT/mcp/noctusai/cli.py" --check-{flag} || echo "[pre-commit] WARNING (shadow): {name} — see the fix it names." >&2
 fi'''
+    gate_id = f"keeper:check-{flag}"
+    declare_command = (
+        f"python mcp/noctusai/cli.py --gate-alignment declare --gate {gate_id} "
+        f"--mechanism {mechanism!r} --owner {owner!r} --placement warn"
+    )
     return {
         "ok": True,
+        "gate_id": gate_id,
+        "declare_command": declare_command,
+        "inventory_entry": {"mechanism": mechanism, "owner": owner, "source": source,
+                            "placement": "warn", "new": True,
+                            "shadow": {"since": "<YYYY-MM-DD>", "fires": 0, "fix_rate": None}},
+        "telemetry": "automatic: cli exit wrapper logs every --check-* run to guard-events.ndjson",
         "detector_code": detector,
         "test_code": test,
         "test_path": f"mcp/noctusai/tests/test_{name}.py",
@@ -73,8 +107,10 @@ fi'''
         "note": (
             f"Paste detector before `def register` in compliance.py; add "
             f"argparse line + dispatch block to cli.py; add the pre-commit "
-            f"block to scripts/hooks/pre-commit; three-way-sync the rule "
-            f"(KB+CLAUDE+memory) per the codification pipeline."
+            f"block to scripts/hooks/pre-commit (shadow = warn-only); RUN `declare_command` "
+            f"(check_gate_triad fails otherwise) and add a decision-matrix row; promote to blocking only "
+            f"after >=7 shadow days with effective-FP <=10% (gate_alignment walls); "
+            f"three-way-sync the rule (KB+CLAUDE+memory) per the codification pipeline."
         ),
     }
 
@@ -86,12 +122,15 @@ def register(server) -> None:
             "Emit a Stage-4 keeper as consumable code: check_<name> "
             "detector + colocated Test<CamelCase> + cli --check-<flag> "
             "argparse+dispatch + pre-commit gate block. Makes Stage-4 a "
-            "tool not a ritual. Returns code; agent pastes + fills the "
-            "predicate + three-way-syncs the rule."
+            "tool not a ritual. REQUIRES mechanism (the construction leg that makes "
+            "compliance the default, or 'none (reason)'), owner and source - a gate never ships "
+            "alone (build triad). Returns code + the gate-inventory declaration + a WARN-first "
+            "shadow pre-commit block; agent pastes, fills the predicate, runs declare_command."
         ),
     )
-    def _scaffold_keeper(name: str, flag: str, severity: str = "high") -> dict:
-        return scaffold_keeper(name, flag, severity=severity)
+    def _scaffold_keeper(name: str, flag: str, severity: str = "high", mechanism: str = "",
+                         owner: str = "", source: str = "") -> dict:
+        return scaffold_keeper(name, flag, severity=severity, mechanism=mechanism, owner=owner, source=source)
 
 
 __all__ = ["scaffold_keeper", "register"]

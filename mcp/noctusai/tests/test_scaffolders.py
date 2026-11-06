@@ -61,11 +61,26 @@ class TestScaffoldMcpTool:
 
 class TestScaffoldKeeper:
     def test_emitted_detector_and_test_compile(self):
-        out = sk.scaffold_keeper("files_xyz", "xyz")
+        out = sk.scaffold_keeper("files_xyz", "xyz", mechanism="scaffold: noctus.dev.scaffold_x",
+                                 owner="tooling-engineer", source="KB § PATTERNS/common/gate-methodology-sync.md")
         ast.parse(out["detector_code"])
         ast.parse(out["test_code"])
         assert "check_files_xyz" in out["detector_code"]
         assert "--check-xyz" in out["cli_argparse_line"]
+
+    def test_refuses_without_construction_leg_owner_or_source(self):
+        ok = dict(mechanism="scaffold: x", owner="o", source="s")
+        for bad in ({**ok, "mechanism": ""}, {**ok, "mechanism": "we will remember"},
+                    {**ok, "mechanism": "none (x)"}, {**ok, "owner": " "}, {**ok, "source": ""}):
+            out = sk.scaffold_keeper("files_xyz", "xyz", **bad)
+            assert out["ok"] is False and "required" in out["error"]
+
+    def test_none_with_reason_is_accepted_and_emits_triad_declaration(self):
+        out = sk.scaffold_keeper("files_xyz", "xyz", mechanism="none (an in-line choice, no construction possible)",
+                                 owner="tooling-engineer", source="s")
+        assert out["ok"] and out["gate_id"] == "keeper:check-xyz"
+        assert "--gate-alignment declare" in out["declare_command"] and "--placement warn" in out["declare_command"]
+        assert out["inventory_entry"]["new"] is True and "shadow" in out["precommit_block"]
 
     def test_registered(self):
         assert _rn(sk) == "noctus.dev.scaffold_keeper"

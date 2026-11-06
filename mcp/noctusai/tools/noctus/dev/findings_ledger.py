@@ -82,6 +82,8 @@ def ledgers() -> dict[str, LedgerType]:
 def _load_builtin() -> None:
     if "access-tier" not in _REGISTRY:
         from tools.noctus.dev import access_tier_findings  # noqa: F401  (registers on import)
+    if "gate-walls" not in _REGISTRY:
+        from tools.noctus.dev import gate_wall_findings  # noqa: F401  (registers on import)
 
 
 def get(name: str) -> LedgerType:

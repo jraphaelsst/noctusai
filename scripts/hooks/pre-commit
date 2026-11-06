@@ -508,6 +508,30 @@ if have_py && git diff --cached --name-only | grep -qE '(^mcp/noctusai/tools/noc
     fi
 fi
 
+# Keeper `check_gate_triad` — the META-GATE of the build triad (2026-11-05,
+# KB § PATTERNS/common/gate-methodology-sync.md). Every wired gate declares its
+# CONSTRUCTION leg + owner in the gate inventory; every decision-matrix row has
+# its legs. Runs when a gate, the inventory/baseline or the keepers change.
+STAGED_GATE_SURFACE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(scripts/hooks/(pre-commit|pre-push|claude-guard-[a-z-]+\.py)|\.claude/settings\.json|\.github/workflows/[a-z-]+\.yml|KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-(alignment-inventory|triad-baseline)\.json)$' || true)
+if [[ -n "$STAGED_GATE_SURFACE" ]] && have_py; then
+    echo "[pre-commit] Gate surface staged — checking the build triad (mechanism + owner + decision row)..."
+    if ! "$PY" "$CLI" --check-gate-triad --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] gate-triad check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A gate ships its construction leg in the same commit. Declare it:" >&2
+        echo "[pre-commit]   python mcp/noctusai/cli.py --gate-alignment declare --gate <id> --mechanism '<pointer | none (reason)>' --owner <agent>" >&2
+        echo "[pre-commit] (tool:scaffold_keeper emits the row.) KB § PATTERNS/common/gate-methodology-sync.md" >&2
+        exit 1
+    fi
+fi
+
+# Keeper `check_new_dependency_justified` — WARN-first shadow (never blocks): a NEW
+# dependency needs a measured comparison record in mcp/noctusai/dependency-additions.json.
+STAGED_MANIFESTS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '(^|/)(package\.json|requirements[^/]*\.txt)$' || true)
+if [[ -n "$STAGED_MANIFESTS" ]] && have_py; then
+    "$PY" "$CLI" --check-new-dependency-justified --paths "$(echo "$STAGED_MANIFESTS" | paste -sd, -)" --worktree-path "$REPO_ROOT" \
+        || echo "[pre-commit] WARNING (shadow, not blocking): new dependency without a comparison record — see skill noc-dep-update gate 0." >&2
+fi
+
 # Keeper `check_migration_guard_has_probe` — gate↔methodology-sync backstop
 # for `noctus.dev.verify_db_guards` (2026-09-18, "structure-green is not
 # behaviour-green"). A migration that defines a genuine guard (a trigger
@@ -530,6 +554,7 @@ if [[ -n "$STAGED_MIGRATIONS" ]] && have_py; then
         echo "[pre-commit] Add a GuardProbe to noctus.dev.verify_db_guards's DEFAULT_REGISTRY," >&2
         echo "[pre-commit] or (only if this guard genuinely cannot be probed) add a" >&2
         echo "[pre-commit] rationale-carrying entry to _GUARD_PROBE_ALLOWLIST in compliance.py." >&2
+        echo "[pre-commit] Construction path: scaffold_migration(with_guc_guard=...) returns a ready guard_probe_stubs entry." >&2
         exit 1
     fi
 fi

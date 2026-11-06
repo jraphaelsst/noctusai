@@ -480,6 +480,39 @@ def _build_sql(
     return "\n\n".join(parts) + "\n"
 
 
+def _guard_probe_stub(schema: str, guard: dict) -> dict:
+    """Construction leg of `check_migration_guard_has_probe`: a ready-to-paste
+    `GuardProbe` for a scaffolded GUC carve-out guard, so the behaviour proof
+    ships with the guard instead of being discovered at commit time.
+
+    The probe UPDATEs a borrowed row with the flag OFF and passes only when the
+    guard refuses with its own message (`refused`); anything else is `ambiguous`.
+    Complete the `-- TODO` lines (the row source) before registering.
+    """
+    table = guard["table"]
+    function = guard.get("function") or f"guard_{table}_append_only"
+    message = guard.get("error_message", "append_only")
+    pid = f"{schema}-{table}-guc-guard-refuses"
+    code = (
+        f'GuardProbe(\n'
+        f'    id="{pid}", product="<product-slug>", schema="{schema}",\n'
+        f'    guard_name="{function}", kind="write_refusal",\n'
+        f'    rationale="{schema}.{table} is write-protected except through the flag-setting SECURITY DEFINER function.",\n'
+        f'    sql="""DO $noc_probe$ BEGIN\n'
+        f'  -- TODO: pick an existing row: PERFORM 1 FROM {schema}.{table} LIMIT 1; IF NOT FOUND THEN RAISE EXCEPTION \'NOC_PROBE:no_fixture: empty\'; END IF;\n'
+        f'  BEGIN\n'
+        f'    UPDATE {schema}.{table} SET id = id;  -- flag OFF: the guard must refuse\n'
+        f'    RAISE EXCEPTION \'NOC_PROBE:permitted: guard did not fire\';\n'
+        f'  EXCEPTION WHEN OTHERS THEN\n'
+        f'    IF SQLERRM LIKE \'NOC_PROBE:permitted:%\' THEN RAISE;\n'
+        f'    ELSIF SQLERRM LIKE \'%{message}%\' THEN RAISE EXCEPTION \'NOC_PROBE:refused: %\', SQLERRM;\n'
+        f'    ELSE RAISE EXCEPTION \'NOC_PROBE:ambiguous: %\', SQLERRM; END IF;\n'
+        f'  END;\nEND $noc_probe$;""",\n)'
+    )
+    return {"guard_name": function, "register_in": "mcp/noctusai/tools/noctus/dev/verify_db_guards.py (DEFAULT_REGISTRY)",
+            "probe_code": code}
+
+
 def scaffold_migration(
     product_slug: str,
     migration_name: str,
@@ -640,6 +673,14 @@ def scaffold_migration(
         "number": next_n,
         "schema": resolved_schema,
         "warnings": warnings,
+        # Construction legs of two commit-time gates (gate-methodology-sync build triad):
+        # check_migration_number_refs_in_tests / check_migration_guard_has_probe.
+        "reference_in_tests": (
+            "from noctusai_lib.testing.migrations import migration_path; "
+            f"migration_path(root, \"{migration_name}\")  # never the NNN_ number: integrate renumbers"
+        ),
+        "guard_probe_stubs": [_guard_probe_stub(resolved_schema, {"schema": resolved_schema, **g})
+                              for g in (with_guc_guard or [])],
     }
 
 
