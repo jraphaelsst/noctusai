@@ -18,6 +18,7 @@ version: 1.0.0
 6. **Pre-commit-invoked logic** — absorb into the MCP tool; keep the hook as a thin `cli.py` shim (stable shell entry, single-sourced logic).
 
 ## Guardrails
+- **Build triad (anything enforceable):** ship construction (the correct build is the default) + backstop gate + telemetry in one change; research reliable sources first and cite them. → `KB § PATTERNS/common/gate-methodology-sync.md` (Build triad · Alignment loop)
 - ⚠️ `check_new_script_lacks_mcp_analog` trips on a new top-level `scripts/*.{sh,py}` without a manifest row — surface it, don't ship it undecided.
 - An already-shell capability with a plausible second consumer is a bystander MCP-first opportunity → apply-now or defer-with-destination (flag it; silent skip = silent-error shape).
 - Don't bare-Python around a missing tool from inside a dispatch — surface the allowlist gap instead.

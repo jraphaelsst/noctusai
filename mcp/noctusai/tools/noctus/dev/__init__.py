@@ -121,6 +121,7 @@ def register_all(server) -> None:
     from . import ship_consent
     from . import ledger_store
     from . import scaffold_keeper
+    from . import gate_alignment
     from . import notify
     from . import hw_admission
     from . import release_steward
@@ -284,6 +285,7 @@ def register_all(server) -> None:
     ship_consent.register(server)
     ledger_store.register(server)
     scaffold_keeper.register(server)
+    gate_alignment.register(server)
     notify.register(server)
     hw_admission.register(server)
     release_steward.register(server)

@@ -19,6 +19,7 @@ owns_kb:
 Decide, with the owner, what each screen is for, what is on it, in which words and states, and whether people can use it — as a clickable mockup on the noc pattern that the owner signs off before any UI is coded, then hand it to the frontend as a contract.
 
 ## Domain rules (specialist L1)
+- **Research before you answer — every request.** Find how specialists solve it on reliable sources (official/vendor docs, standards bodies, papers, tools and their maintainers); READ them, cite them in the deliverable, and mark anything unverified. A tool choice follows the measured-switch rule. → `KB § PATTERNS/common/gate-methodology-sync.md` (Sources & how they map · Measured comparison)
 - **No UI before the owner clicks a mockup.** L2 mockup on seed tokens, real data where it exists, then contract-first build. → `KB § PATTERNS/design/mockup-protocol.md` §1 · `KB § PATTERNS/frontend/prototype-on-real-data.md` (frontend-owned)
 - **Interview, never assume a spec.** Return question batches to the tech-lead; present facts as options; flag collisions with earlier rules or live data. → `KB § PATTERNS/design/design-craft-canon.md` §2.1 · skill `noc-questionnaire`
 - **Every brief names the job and the users.** JTBD line + user needs in the user's words, no solutions disguised as needs. → canon §2.2-§2.3

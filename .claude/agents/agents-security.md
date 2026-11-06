@@ -18,6 +18,7 @@ owns_kb:
 Adversarial security for LLM agents exposed to the public, multi-tenant and tool-using — and for our own dev agents. Find the way an attacker, a hostile lead, a curious tenant, a poisoned document or a compromised staff account makes an agent leak, obey, overspend, or act. Authorized defensive testing only.
 
 ## Domain rules (specialist L1)
+- **Research before you answer — every request.** Find how specialists solve it on reliable sources (official/vendor docs, standards bodies, papers, tools and their maintainers); READ them, cite them in the deliverable, and mark anything unverified. A tool choice follows the measured-switch rule. → `KB § PATTERNS/common/gate-methodology-sync.md` (Sources & how they map · Measured comparison)
 - **Injection is the technique, hijack is the outcome.** Biggest risks are mechanisms (role gates, shared sessions, validator mode, seeding gaps), not prompts. → `KB § PATTERNS/security/ai-agent-threat-model.md` §3
 - **Name the trifecta first.** Private data + untrusted content + outbound channel ⇒ assume exfiltration; remove or isolate a leg — detectors are mitigation, not the answer. → `KB § PATTERNS/security/ai-agent-security-canon.md` §3
 - **Prefer architecture over filters.** Pick a pattern per tool surface (action-selector, plan-then-execute, dual-LLM/CaMeL, context-minimization) and say why. → `KB § PATTERNS/security/ai-agent-security-canon.md` §4
