@@ -228,13 +228,24 @@ class Queue:
         ok, why = self.regen(wt)
         if not ok:
             return False, f"kb-counts regeneration failed: {why}"
-        porcelain = self.git("status", "--porcelain", "--", "KNOWLEDGE-BASE/", "CLAUDE.md", cwd=wt, check=False)
-        paths = [ln[3:].strip() for ln in porcelain.splitlines() if ln.strip()]
+        # RAW read (never self.git: it strips, eating the leading ' ' of a ' M <path>'
+        # first entry so [3:] cut 'KNOWLEDGE-BASE' to 'NOWLEDGE-BASE' — 2026-11-06 wedge).
+        # -z: NUL-separated, paths unquoted; each entry is 'XY <path>'.
+        rc, porcelain, err = self.run(["git", "status", "--porcelain", "-z", "--untracked-files=all", "--",
+                                       "KNOWLEDGE-BASE/", "CLAUDE.md"], cwd=wt)
+        if rc != 0:
+            return False, f"kb-counts status read failed ({rc}): {err.strip()[:300]}"
+        paths = [e[3:] for e in porcelain.split("\0") if len(e) > 3]
         if not paths:
             return True, ""
-        self.git("add", "--", *paths, cwd=wt)
-        self.git("commit", "-q", "-m", "chore(kb-counts): regenerate derived counts at compose [auto]",
-                 "--", *paths, cwd=wt)
+        # A failure here ejects the entry with the reason; it never crashes the drain
+        # (a crash wedges EVERY queued entry, not just this one).
+        for args in (["add", "--", *paths],
+                     ["commit", "-q", "-m", "chore(kb-counts): regenerate derived counts at compose [auto]",
+                      "--", *paths]):
+            rc, _out, err = self.run(["git", *args], cwd=wt)
+            if rc != 0:
+                return False, self._redact(f"kb-counts commit failed: git {args[0]} ({rc}): {err.strip()[:300]}")
         self.log(f"  regenerated kb-counts at compose ({len(paths)} file(s))")
         return True, ""
 
