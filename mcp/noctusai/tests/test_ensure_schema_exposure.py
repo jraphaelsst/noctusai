@@ -334,7 +334,7 @@ def _exposed_fake(cls, exposed):
     return cls(preset_rows={_EXPOSED_ROWS_KEY: [{"setconfig": [f"pgrst.db_schemas={','.join(exposed)}"]}]})
 
 
-def _prune(tmp_path, exposed, *, confirm=False, active=None, fake=None):
+def _prune(tmp_path, exposed, *, confirm=False, active=None, fake=None, running_fn=None):
     products = _prune_fixture(tmp_path)
     fake = fake or _exposed_fake(_StatefulFake, exposed)
     result = check_schema_exposure(
@@ -344,6 +344,7 @@ def _prune(tmp_path, exposed, *, confirm=False, active=None, fake=None):
         products_dir=products,
         live_products_fn=lambda: ["agents"],
         active_products=active if active is not None else {"agents", "core"},
+        running_products_fn=running_fn or (lambda: {"agents"}),
     )
     return result, fake
 
@@ -390,6 +391,7 @@ class TestPruneAction:
             products_dir=products,
             live_products_fn=lambda: ["agents"],
             active_products={"agents"},
+            running_products_fn=lambda: {"agents"},
         )
         assert result["status"] == "up_to_date"
         assert [r["schema"] for r in result["refused"]] == ["daily_life"]
@@ -403,6 +405,7 @@ class TestPruneAction:
             products_dir=products,
             live_products_fn=lambda: ["agents"],
             active_products={"agents", "twin"},
+            running_products_fn=lambda: {"agents"},
         )
         assert result["status"] == "up_to_date"
         assert "erp" in result["kept"]
@@ -430,3 +433,25 @@ class TestPruneAction:
         from tools.noctus.dev import ensure_schema_exposure as mod
 
         assert mod._read_active_scope(tmp_path / "absent.txt") is None
+
+
+class TestPruneRunningGuard:
+    def test_running_asleep_product_is_refused(self, tmp_path):
+        result, fake = _prune(
+            tmp_path, ["public", "agents", "erp", "orbity"], confirm=True,
+            running_fn=lambda: {"agents", "orbity"},
+        )
+        assert result["refused"] == [
+            {"schema": "orbity", "reason": "container running", "products": ["orbity"]}
+        ]
+        assert [d["schema"] for d in result["to_drop"]] == ["erp"]  # non-running asleep still drops
+        assert "orbity" in result["new_exposed_schemas"]
+        assert _writes(fake)[0] == "ALTER ROLE authenticator SET pgrst.db_schemas='public,agents,orbity';"
+
+    def test_running_set_read_failure_is_unavailable(self, tmp_path):
+        def _boom():
+            raise RuntimeError("ssh down")
+
+        result, fake = _prune(tmp_path, ["agents", "erp"], confirm=True, running_fn=_boom)
+        assert result["status"] == "unavailable" and "ssh down" in result["error"]
+        assert _writes(fake) == []

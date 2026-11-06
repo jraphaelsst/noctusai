@@ -181,10 +181,22 @@ def _read_active_scope(path: Path | None = None) -> set[str] | None:
     return slugs or None
 
 
+def _running_products_default() -> set[str]:
+    """Slugs with a RUNNING prod container, via the helper behind
+    noctus.vps.ps (`vps.ps`, throttled SSH). Raises on failure."""
+    from . import vps as _vps
+
+    res = _vps.ps()
+    if not res.get("ok"):
+        raise RuntimeError(res.get("error") or "vps.ps failed")
+    return {c["name"][len(_vps.CONTAINER_PREFIX):] for c in res["containers"]}
+
+
 def plan_prune(
     exposed: list[str],
     owners: dict[str, list[dict[str, str]]],
     active: set[str],
+    running: set[str] | None = None,
 ) -> dict[str, Any]:
     """Pure planner. ``owners``: schema -> [{product, schema_source}] for every
     product on disk. Returns {to_drop, refused, kept}. A schema is dropped only
@@ -202,6 +214,10 @@ def plan_prune(
             continue
         if any(o["product"] in active for o in own):
             kept.append(schema)
+            continue
+        up = sorted(o["product"] for o in own if o["product"] in (running or ()))
+        if up:
+            refused.append({"schema": schema, "reason": "container running", "products": up})
             continue
         if any(o["schema_source"] != "main_py_declaration" for o in own):
             refused.append({
@@ -221,6 +237,7 @@ def _prune(
     products_dir: Path | None,
     live_products_fn: Any,
     active_products: set[str] | None,
+    running_products_fn: Any,
     result: Any,
 ) -> dict[str, Any]:
     active = active_products if active_products is not None else _read_active_scope()
@@ -229,6 +246,12 @@ def _prune(
             "unavailable",
             error="deploy/fleet/active-scope.txt missing/empty — cannot derive the asleep set; REFUSING to guess.",
         )
+    # A catalog-asleep product can still be RUNNING in prod: read the real
+    # container set; unreadable => unavailable, never "none running".
+    try:
+        running = set((running_products_fn or _running_products_default)())
+    except Exception as exc:  # noqa: BLE001 — any read failure refuses, never assumes empty
+        return result("unavailable", error=f"could not read running prod containers: {exc} — REFUSING to assume none are running.")
     live, roster_source, warning = _resolve_roster(None, live_products_fn)
     if live is not None:
         active = set(active) | set(live)  # live is already ⊆ active; belt and braces
@@ -245,7 +268,7 @@ def _prune(
     if exposed is None:
         return result("error", warning=warning, error="authenticator has no pgrst.db_schemas override — nothing to prune and nothing to verify against.")
 
-    plan = plan_prune(exposed, owners, active)
+    plan = plan_prune(exposed, owners, active, running)
     drop = {d["schema"] for d in plan["to_drop"]}
     new_exposed = [s for s in exposed if s not in drop]
     extra: dict[str, Any] = {
@@ -299,12 +322,15 @@ def check_schema_exposure(
     products_dir: Path | None = None,
     live_products_fn: Any = None,
     active_products: set[str] | None = None,
+    running_products_fn: Any = None,
 ) -> dict[str, Any]:
     """Compare every checked product's declared DB schema against the
     `authenticator` role's exposed-schemas list; optionally close the gap.
 
     Args:
         action:        'check' (default, read-only) | 'apply' | 'prune'.
+        running_products_fn: Injection seam returning the slugs with a running
+                       prod container (action='prune'; default = vps.ps).
         active_products: Injection seam for the `active-scope.txt` set
                        (action='prune' only).
         confirm:       For action='apply' — False (default) = dry-run
@@ -369,6 +395,7 @@ def check_schema_exposure(
             products_dir=products_dir,
             live_products_fn=live_products_fn,
             active_products=active_products,
+            running_products_fn=running_products_fn,
             result=_result,
         )
 
@@ -496,7 +523,9 @@ def register(server) -> None:
             "products, refused, exact sql); drops only schemas declared "
             "solely by ASLEEP products (not in active-scope.txt / live "
             "catalog), never infra/core/seed schemas, REFUSES unattributable "
-            "ones; confirm=True applies, NOTIFYs and re-reads to verify. "
+            "ones, and any whose owning product has a RUNNING prod container "
+            "(reason 'container running'; unreadable => unavailable); "
+            "confirm=True applies, NOTIFYs and re-reads to verify. "
             "Pass products=[...] to scope to an "
             "explicit set instead of the catalog roster. Requires a Supabase "
             "Personal Access Token, resolved DB-first the same way "
