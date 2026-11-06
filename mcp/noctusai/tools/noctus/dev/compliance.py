@@ -6755,6 +6755,186 @@ def check_workflow_job_timeouts(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Workflow-content keepers (siblings of `check_workflow_job_timeouts`):
+#   (a) `check_workflow_cli_flags_exist` — every `cli.py --<flag>` a workflow
+#       runs must be a flag cli.py's argparse defines (2026-11 a workflow
+#       called a non-existent `--check-kb-vector-canonical`; the step failed
+#       only in CI). The flag set is DERIVED from cli.py's AST, never listed.
+#   (b) `check_workflow_mcp_requirements_path` — every `pip install -r <file>`
+#       must name a file that exists from the step's effective working dir
+#       (embedding-cache-gate installed a root-relative requirements path that
+#       did not exist, so the job never went green).
+# (c) actionlint+shellcheck is `scripts/ci/run_actionlint.sh` / `--check-actionlint`.
+# KB § PATTERNS/devops/dev-main-ci-gates.md.
+# ---------------------------------------------------------------------------
+
+_CLI_FLAG_RE = re.compile(r"(?<![\w-])(--[A-Za-z0-9][\w-]*)")
+
+
+def _cli_defined_flags(root: Path) -> set[str]:
+    """Every `--flag` string literal passed to an `add_argument(...)` call in
+    mcp/noctusai/cli.py (AST, so no import side effects)."""
+    cli = root / "mcp" / "noctusai" / "cli.py"
+    tree = ast.parse(cli.read_text(encoding="utf-8"))
+    flags: set[str] = {"--help"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument":
+            for a in node.args:
+                if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value.startswith("--"):
+                    flags.add(a.value)
+    return flags
+
+
+def _iter_workflow_steps(root: Path):
+    """Yield (rel_path, job_id, job, step_index, step) for every `run:` step;
+    unparseable workflows yield (rel, None, None, None, error-string)."""
+    import yaml
+
+    wf_dir = root / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return
+    for path in sorted(wf_dir.glob("*.y*ml")):
+        rel = str(path.relative_to(root))
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            yield rel, None, None, None, f"cannot parse workflow ({exc})"
+            continue
+        jobs = doc.get("jobs") if isinstance(doc, dict) else None
+        if not isinstance(jobs, dict):
+            continue
+        for job_id, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            for i, step in enumerate(job.get("steps") or []):
+                if isinstance(step, dict) and isinstance(step.get("run"), str):
+                    yield rel, job_id, job, i, step
+
+
+def _logical_lines(script: str) -> list[str]:
+    """Join backslash continuations; drop comment-only lines."""
+    joined = re.sub(r"\\\n\s*", " ", script)
+    return [ln for ln in joined.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+def check_workflow_cli_flags_exist(repo_root: Path | None = None) -> list[dict]:
+    """Every `cli.py --<flag>` in a workflow `run:` block must be a flag
+    defined by mcp/noctusai/cli.py's argparse (derived from its AST)."""
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    if not (root / "mcp" / "noctusai" / "cli.py").is_file():
+        return issues
+    defined = _cli_defined_flags(root)
+    for rel, job_id, _job, i, step in _iter_workflow_steps(root):
+        if job_id is None:
+            issues.append({"file": rel, "issue": step, "severity": "high"})
+            continue
+        for line in _logical_lines(step["run"]):
+            for m in re.finditer(r"\bcli\.py\b", line):
+                tail = re.split(r"&&|\|\||[|;)]", line[m.end():], maxsplit=1)[0]
+                for fm in _CLI_FLAG_RE.finditer(tail):
+                    flag = fm.group(1)
+                    if flag not in defined:
+                        label = step.get("name") or f"#{i}"
+                        issues.append({
+                            "file": rel,
+                            "issue": (
+                                f"job `{job_id}` step `{label}` runs `cli.py {flag}` but "
+                                f"mcp/noctusai/cli.py defines no such flag — the step would "
+                                f"fail only in CI. Use an existing flag or add it to cli.py."
+                            ),
+                            "severity": "high",
+                        })
+    return issues
+
+
+_PIP_REQ_RE = re.compile(r"\bpip3?\s+install\b[^\n]*?(?:\s-r\s*|\s--requirement[=\s]\s*)([^\s;&|)\"']+)")
+_CD_RE = re.compile(r"(?:^|[(;&|]\s*|&&\s*)cd\s+([^\s;&|)]+)")
+
+
+def check_workflow_mcp_requirements_path(repo_root: Path | None = None) -> list[dict]:
+    """Every `pip install -r <file>` in a workflow must resolve to an existing
+    file from the step's effective working directory (step `working-directory`
+    > job `defaults.run.working-directory` > repo root, plus `cd X` in the
+    script). Toolkit requirements live at mcp/noctusai/requirements.txt."""
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    for rel, job_id, job, i, step in _iter_workflow_steps(root):
+        if job_id is None:
+            continue  # parse error already reported by the other keepers
+        defaults = ((job.get("defaults") or {}).get("run") or {}).get("working-directory")
+        base = step.get("working-directory") or defaults or "."
+        cwd = base
+        for line in _logical_lines(step["run"]):
+            standalone = re.fullmatch(r"\s*cd\s+(\S+)\s*", line)
+            if standalone:
+                cwd = standalone.group(1)
+                continue
+            line_cwd = cwd
+            cds = list(_CD_RE.finditer(line))
+            pm = _PIP_REQ_RE.search(line)
+            if not pm:
+                continue
+            before = [c for c in cds if c.start() < pm.start()]
+            if before:
+                line_cwd = before[-1].group(1)
+            req = pm.group(1)
+            if "$" in req or "$" in line_cwd or "{{" in req:
+                continue  # dynamic — not statically resolvable
+            if not (root / line_cwd / req).is_file():
+                label = step.get("name") or f"#{i}"
+                issues.append({
+                    "file": rel,
+                    "issue": (
+                        f"job `{job_id}` step `{label}` runs `pip install -r {req}` from "
+                        f"`{line_cwd}` but that file does not exist. The toolkit requirements "
+                        f"are mcp/noctusai/requirements.txt (install from mcp/noctusai: it "
+                        f"carries `-e ../../seed/lib/backend`)."
+                    ),
+                    "severity": "high",
+                })
+    return issues
+
+
+def check_workflow_actionlint(repo_root: Path | None = None, require: bool = False) -> list[dict]:
+    """Run `actionlint` (which drives `shellcheck` over `run:` scripts) on
+    `.github/workflows`. Each finding is a `high` issue. When the binary is
+    absent the result is ONE `inconclusive` issue (never an empty/clean list);
+    `require=True` (CI) escalates that to `high`."""
+    import shutil
+    import subprocess
+
+    root = repo_root or REPO_ROOT
+    exe = shutil.which("actionlint")
+    if exe is None:
+        return [{
+            "file": ".github/workflows",
+            "issue": "actionlint binary not found — NOT CHECKED (inconclusive). `brew install actionlint shellcheck`; CI installs it.",
+            "severity": "high" if require else "inconclusive",
+        }]
+    if shutil.which("shellcheck") is None:
+        return [{
+            "file": ".github/workflows",
+            "issue": "shellcheck not found — actionlint would skip every run: script (inconclusive). `brew install shellcheck`.",
+            "severity": "high" if require else "inconclusive",
+        }]
+    wfs = sorted(str(f.relative_to(root)) for f in (root / ".github" / "workflows").glob("*.y*ml"))
+    if not wfs:
+        return []
+    proc = subprocess.run([exe, "-oneline", *wfs], cwd=root, capture_output=True, text=True, timeout=120)
+    if proc.returncode == 0:
+        return []
+    out = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if not out:
+        return [{"file": ".github/workflows", "issue": f"actionlint exit {proc.returncode}: {proc.stderr.strip()[:300]}", "severity": "high"}]
+    issues = []
+    for ln in out:
+        f, _, rest = ln.partition(":")
+        issues.append({"file": f, "issue": rest.strip(), "severity": "high"})
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_seed_test_root_ci_coverage` — the SAME "a test suite silently never
 # runs in CI" class as `check_ci_test_matrix_coverage` above, one directory
 # level out, where that keeper structurally cannot look.
@@ -18802,6 +18982,8 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_ci_test_matrix_coverage())
     # 2026-11-05: a job without timeout-minutes hung the whole merge queue.
     all_issues.extend(check_workflow_job_timeouts())
+    all_issues.extend(check_workflow_cli_flags_exist())
+    all_issues.extend(check_workflow_mcp_requirements_path())
     # 2026-10-19 owner order: stale docs fail CI (claims vs ratchet; coupling is range-scoped).
     all_issues.extend(check_doc_staleness())
     all_issues.extend(check_seed_test_root_ci_coverage())

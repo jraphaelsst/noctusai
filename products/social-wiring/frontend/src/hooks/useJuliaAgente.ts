@@ -92,8 +92,6 @@ const MENSAGENS_POR_CODIGO: Record<string, string> = {
     "O aviso de privacidade ainda está incompleto (nome da empresa e contato). Fale com o suporte NoctusAI para completá-lo antes de ligar a Julia.",
   url_publica_indisponivel:
     "Não foi possível montar o link público do aviso de privacidade. Fale com o suporte.",
-  snapshot_falhou:
-    "Não foi possível ler as conversas existentes deste número; a Julia continua desligada.",
   destinatario_invalido: "O destinatário do aviso precisa ser owner ou admin da organização.",
   agents_nao_configurado: "A Julia ainda não foi conectada pela plataforma. Peça ao suporte NoctusAI para conectá-la.",
   conversa_sem_agente: "A Julia ainda não atendeu esta conversa, então não há o que pausar ou retomar.",

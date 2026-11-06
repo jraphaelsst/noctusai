@@ -152,10 +152,12 @@ jobs:
              [ "${{ github.ref }}" = "refs/heads/main" ] || \
              [ "${{ github.ref }}" = "refs/heads/prod" ] || \
              [ "${GITHUB_REF#refs/heads/release/}" != "${GITHUB_REF}" ]; then
-            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
-            echo "shared_changed=true" >> "$GITHUB_OUTPUT"
-            echo "harness_changed=true" >> "$GITHUB_OUTPUT"
-            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            {
+              echo "run_heavy=true"
+              echo "shared_changed=true"
+              echo "harness_changed=true"
+              echo "changed_products=,"
+            } >> "$GITHUB_OUTPUT"
             echo "scope: workflow_dispatch or a release-branch ref → full suite, never scoped down"
             exit 0
           fi
@@ -202,35 +204,43 @@ jobs:
               echo "diff_base_verified=true" >> "$GITHUB_OUTPUT"
               BASE="$VERIFIED"
             else
-              echo "diff_base_verified=false" >> "$GITHUB_OUTPUT"
-              echo "run_heavy=true" >> "$GITHUB_OUTPUT"
-              echo "shared_changed=true" >> "$GITHUB_OUTPUT"
-              echo "harness_changed=true" >> "$GITHUB_OUTPUT"
-              echo "changed_products=," >> "$GITHUB_OUTPUT"
+              {
+                echo "diff_base_verified=false"
+                echo "run_heavy=true"
+                echo "shared_changed=true"
+                echo "harness_changed=true"
+                echo "changed_products=,"
+              } >> "$GITHUB_OUTPUT"
               echo "::warning::no heavy-green ancestor run found on ${GITHUB_REF_NAME} — failing toward coverage (full suite) instead of diffing against the unverified event.before (${BASE})"
               exit 0
             fi
           fi
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
-            echo "shared_changed=true" >> "$GITHUB_OUTPUT"
-            echo "harness_changed=true" >> "$GITHUB_OUTPUT"
-            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            {
+              echo "run_heavy=true"
+              echo "shared_changed=true"
+              echo "harness_changed=true"
+              echo "changed_products=,"
+            } >> "$GITHUB_OUTPUT"
             echo "scope: no usable diff base ($BASE — new branch or unreachable commit) → full suite"
             exit 0
           fi
 
           CHANGED="$(git diff --name-only "$BASE" "${{ github.sha }}")"
-          echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
+          echo "changed files:"
+          # shellcheck disable=SC2001  # sed line-prefix reads clearer than a ${var//} expansion
+          echo "$CHANGED" | sed 's/^/  /'
 
           # (a) A diff touching ONLY project-history/*.ndjson needs zero code
           # verification — every heavy job below skips via job-level `if:`.
           NON_LEDGER="$(echo "$CHANGED" | grep -vE '^project-history/.*\.ndjson$' || true)"
           if [ -z "$NON_LEDGER" ]; then
-            echo "run_heavy=false" >> "$GITHUB_OUTPUT"
-            echo "shared_changed=false" >> "$GITHUB_OUTPUT"
-            echo "harness_changed=false" >> "$GITHUB_OUTPUT"
-            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            {
+              echo "run_heavy=false"
+              echo "shared_changed=false"
+              echo "harness_changed=false"
+              echo "changed_products=,"
+            } >> "$GITHUB_OUTPUT"
             echo "scope: project-history/*.ndjson-only diff → every heavy job skipped"
             exit 0
           fi
@@ -260,8 +270,10 @@ jobs:
           # non-zero and the `if` reads a MATCH as no-match (2026-10-06: harness-mod-tests skipped
           # on the very commits that changed the mod; same latent false-negative here).
           if grep -qE '^(seed/|requirements.*\.txt$|\.github/|scripts/ci/|package(-lock)?\.json$|deploy/fleet/active-scope\.txt$)' <<< "$CHANGED"; then
-            echo "shared_changed=true" >> "$GITHUB_OUTPUT"
-            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            {
+              echo "shared_changed=true"
+              echo "changed_products=,"
+            } >> "$GITHUB_OUTPUT"
             echo "scope: shared root changed → every product matrix entry runs"
             exit 0
           fi
@@ -272,8 +284,10 @@ jobs:
           # segment match, never a substring false-positive (e.g. `core` vs
           # `core-x`).
           SLUGS="$(echo "$CHANGED" | sed -nE 's#^products/([^/]+)/.*#\1#p' | sort -u | tr '\n' ',')"
-          echo "shared_changed=false" >> "$GITHUB_OUTPUT"
-          echo "changed_products=,${SLUGS}" >> "$GITHUB_OUTPUT"
+          {
+            echo "shared_changed=false"
+            echo "changed_products=,${SLUGS}"
+          } >> "$GITHUB_OUTPUT"
           echo "scope: product-scoped diff → changed products: ${SLUGS:-none}"
 
   product-backend-tests:
@@ -1425,6 +1439,16 @@ jobs:
           fi
           echo "range: ${RANGE}"
           echo "range=${RANGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Keeper workflow content (cli flags exist / requirements paths resolve)
+        run: |
+          python mcp/noctusai/cli.py --check-workflow-cli-flags-exist
+          python mcp/noctusai/cli.py --check-workflow-mcp-requirements-path
+
+      - name: Install actionlint (pinned) and run it with shellcheck
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          PATH="$PWD:$PATH" python mcp/noctusai/cli.py --check-workflow-actionlint --actionlint-require
 
       - name: Keeper check_lgpd_entry_removal (range)
         run: python mcp/noctusai/cli.py --check-lgpd-entry-removal --lgpd-range "${{ steps.range.outputs.range }}"

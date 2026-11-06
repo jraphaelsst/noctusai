@@ -49,18 +49,18 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 53 | 115 | 266 | 219 | 681 | 10,442 |
+| Social Wiring | 53 | 116 | 266 | 219 | 682 | 10,464 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 14 | 22 | 28 | 23 | 53 | 899 |
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 10 | 25 | 191 |
-| Agents | 32 | 1 | 77 | 46 | 183 | 2,776 |
+| Agents | 32 | 1 | 77 | 46 | 183 | 2,786 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Monica | 2 | 1 | 15 | 0 | 8 | 37 |
-| **Total** | **353** | **423** | **877** | **532** | **1547** | **22,039** |
+| **Total** | **353** | **424** | **877** | **532** | **1548** | **22,071** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

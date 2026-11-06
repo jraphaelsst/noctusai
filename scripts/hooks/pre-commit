@@ -995,6 +995,19 @@ if [[ -n "$STAGED_WF" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-b. Workflow content keepers (blocking, only when workflows ──
+# change): cli.py flags a workflow calls must exist; pip -r paths must resolve;
+# actionlint+shellcheck (INCONCLUSIVE, loudly, when the binary is absent).
+if [[ -n "$STAGED_WF" ]] && have_py; then
+    echo "[pre-commit] workflow staged — checking cli flags / requirements paths / actionlint..."
+    for _wf_flag in --check-workflow-cli-flags-exist --check-workflow-mcp-requirements-path --check-workflow-actionlint; do
+        if ! "$PY" "$CLI" "$_wf_flag" --worktree-path "$REPO_ROOT"; then
+            echo "[pre-commit] $_wf_flag FAILED. Commit aborted. See KB § PATTERNS/devops/dev-main-ci-gates.md." >&2
+            exit 1
+        fi
+    done
+fi
+
 # ─── 6e-sexies-pre0. Not-configured exceptions carry the marker (blocking) ─
 # Keeper `check_not_configured_carries_marker` (2026-10-10): a new
 # `*NotConfigured`/`*NaoConfigurado` class without `IntegrationNotConfigured`

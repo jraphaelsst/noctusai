@@ -150,6 +150,7 @@ jobs:
           fi
           # A slug here that no longer exists in the fleet would silently never build.
           # Fail loudly instead (mirrors build-and-push.sh's own fleet-membership check).
+          # shellcheck disable=SC2086  # ACTIVE is an intentional word-split slug list
           for s in $ACTIVE; do
             if ! grep -qE "^  ${s}:" "$FLEET_COMPOSE"; then
               echo "::error::build-scope.txt lists '$s' but it is absent from $FLEET_COMPOSE — stale scope file. Regenerate with 'python mcp/noctusai/cli.py --refresh-build-scope'."

@@ -112,6 +112,7 @@ jobs:
           set -euo pipefail
           FILES="deploy/fleet/active-scope.txt deploy/fleet/build-scope.txt .github/dependabot.yml .github/workflows/test.yml"
           GLOBS=":(glob)products/*/docker-compose.yml :(glob)products/*/backend/Dockerfile"
+          # shellcheck disable=SC2086  # FILES/GLOBS are intentionally word-split path lists
           if git diff --quiet -- $FILES $GLOBS; then
             echo "scope files and derived artifacts already match the catalog — nothing to commit"
             echo "pushed=false" >> "$GITHUB_OUTPUT"
@@ -119,6 +120,7 @@ jobs:
           fi
           git config user.name "noctus-scope-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # shellcheck disable=SC2086  # same intentional word-split
           git add -- $FILES $GLOBS
           git commit -q -m "chore(scope): sync product scope from catalog — woke: ${WOKE:-none}; slept: ${SLEPT:-none}" \
             -m "Automated by sync-product-scope.yml (catalog trigger, migration 051)."

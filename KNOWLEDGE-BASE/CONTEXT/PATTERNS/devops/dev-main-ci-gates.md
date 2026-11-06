@@ -38,6 +38,7 @@ Security-gate specifics: `KB § PATTERNS/devops/ci-security-gates.md`.
 - **Caches stay fresh by automation** (pre-commit structural · pre-push/post-merge embedding · out-of-repo memory-embeddings always-attempt). Manual `--refresh-*` is the emergency stopgap, never the plan. → `KB § PATTERNS/common/cache-auto-freshness.md`.
 
 - **Every job is time-boxed.** A job with no `timeout-minutes` defaults to 360 min and one hung apt step stalled the whole merge queue (2026-11-05). Measured per-job values + keeper `check_workflow_job_timeouts` → `KB § PATTERNS/devops/merge-queue.md` § 6a.
+- **Workflow content is linted, not trusted (2026-11-05).** A workflow once called a non-existent `cli.py --check-kb-vector-canonical`, and `embedding-cache-gate` pip-installed a requirements path that did not exist, so neither ever went green. Keepers (pre-commit when a workflow is staged, the compliance sweep, and a `test.yml` job): `check_workflow_cli_flags_exist` (every `cli.py --flag` must be in cli.py's argparse, derived from its AST), `check_workflow_mcp_requirements_path` (every `pip install -r` file must exist from the step's working dir; toolkit set = `mcp/noctusai/requirements.txt`), and `check_workflow_actionlint` (`--check-workflow-actionlint`; actionlint + shellcheck over `run:` scripts; binary absent locally is **inconclusive**, loudly, never clean; CI passes `--actionlint-require`).
 
 ## Composes with
 

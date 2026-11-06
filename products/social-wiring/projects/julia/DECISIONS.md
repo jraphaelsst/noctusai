@@ -16,7 +16,7 @@
 | 2026-10-13 | Multi-tenant | SW will be sold to another client besides One Consultoria → every personal/tenant item (keys, tokens, numbers, persona, knowledge) is per-org configuration, never hard-coded; designed to swap. |
 | 2026-10-13 | Persona name | **Julia** (shown to leads). |
 | 2026-10-13 | Provider | **OpenAI now, switchable** by configuration (Anthropic account at its monthly limit until 2026-11-01). |
-| 2026-10-14 | Who Julia answers on the shared number | **Only chats that start after she is switched on** (snapshot of existing chats at switch-on; contract §11.1). |
+| 2026-10-14 | Who Julia answers on the shared number | **SUPERSEDED 2026-11-05**: anyone who writes AFTER go-live (older chats included), never a message stamped before `agente_leads_ativado_em`; testing mode (agents evaluation mode) = only the listed numbers; no snapshot, no SW allowlist (contract §11.1). |
 | 2026-10-14 | Privacy notice | **Create a page, don't propose** — per-org public notice at `/privacidade/<slug>`, default text now, owner refines later (contract §11.2). First message must disclose the virtual assistant and link it (§11.3). |
 | 2026-10-14 | Handoff notification | **The connection's owner for now, swappable for an admin.** Never a member-only, corretor, dev or jurídico (contract §11.4). |
 | 2026-10-15 | Stage 3 (read conversations) | **Yes.** Owner authorizes reading Lais lead conversations for the mechanism study. Still blocked by the session's PII classifier (needs a permission rule on the owner's side, or anonymised excerpts pasted). Raw text never in the repo. |

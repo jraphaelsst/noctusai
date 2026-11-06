@@ -13,7 +13,7 @@ Contract: `specs/julia-agent-contract.md` (§11 wins over §10, §10 over §1–
 - [ ] Card "Aviso de privacidade": fill company name, contact e-mail, WhatsApp → the public page `/privacidade/<slug>` opens without login and shows them; leaving the link empty is refused.
 
 ### Switching on (One Chat number)
-- [ ] In "Julia nos números do WhatsApp", switch the number to "Julia ligada neste número" → only allowed with a non-empty authorized-numbers list; a snapshot of existing chats is taken (if it fails, nothing switches on).
+- [ ] In "Julia nos números do WhatsApp", switch the number to "Julia ligada neste número" → only allowed with a non-empty authorized-numbers list; NO snapshot is taken and nothing is sent; she answers anyone who writes after go-live (testing = agents evaluation mode only, SW has no allowlist).
 - [ ] An authorized number writing → still goes to One Chat (operator bot), never to Julia.
 - [ ] A chat that existed before switch-on → Julia stays silent.
 - [ ] A NEW number writing → Julia answers; her first message is the disclosure "Oi! Eu sou a Julia, assistente virtual da {empresa}. 😊 Como tratamos seus dados: {link}", then the answer.

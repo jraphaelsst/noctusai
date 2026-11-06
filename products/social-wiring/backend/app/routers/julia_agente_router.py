@@ -54,7 +54,6 @@ from app.rate_limit import limiter
 from app.routers.whatsapp_connections_router import (  # noqa: F401  (get_agents_client_factory: re-exported, same object)
     get_agents_client_factory,
     get_connection_store,
-    get_waha_client_factory,
 )
 from app.services import julia_agente_service as julia
 from app.services import julia_aviso_service as svc
@@ -272,13 +271,13 @@ async def post_verificar_conexao(
 
 
 async def aplicar_conexao(
-    *, record: WhatsAppConnectionRecord, org_id: UUID, store: WhatsAppConnectionStore, cfg: Any, waha_factory: Any,
+    *, record: WhatsAppConnectionRecord, org_id: UUID, store: WhatsAppConnectionStore, cfg: Any,
     ativo: bool, key: Optional[str], handoff_definido: bool, handoff_alvo: Optional[UUID],
     agents_client_factory: Any = None,
 ) -> WhatsAppConnectionRecord:
     """THE line-routing change (used by `PUT /roteamento/linhas/{id}`; the legacy `PUT /agente/conexoes/{id}` is retired): the "this number feeds the agent" switch + the handoff notification target.
-    Turning it ON checks every precondition, then takes the 11.1 snapshot of the WAHA session's chats; if the snapshot
-    cannot be proven complete the switch stays OFF (502 ``snapshot_falhou``). Before any of that, the GATE (owner 2026-11-05): it
+    Turning it ON checks every precondition and stamps ``agente_leads_ativado_em`` (go-live). It takes NO snapshot of the existing chats and
+    sends NOTHING: Julia answers anyone who writes after go-live and never messages old contacts (owner 2026-11-05). Before that, the GATE: it
     only goes ON when agents reports Julia PUBLISHED and ON -- 409 ``julia_nao_publicada`` / ``julia_desligada_no_agents``, 503
     ``agents_indisponivel`` (fail closed: no client / token, or an unreadable status). Turning it OFF never checks anything. This is TRANSPORT config (julia-v2 Q4):
     it decides which numbers reach the agent, never how the agent behaves (that is agents' Controles)."""
@@ -299,41 +298,18 @@ async def aplicar_conexao(
         # The agents gate first (one authenticated status call): nothing below runs for a Julia that would not answer anyway.
         client = agents_client_factory(org_id) if agents_client_factory is not None else None
         await julia.exigir_julia_ligada_no_agents(client, key)
-        # H1 / 11.3 preconditions first (cheap, no network), THEN the snapshot. (H3, authorized numbers, is no longer a precondition: Julia-line D5.)
+        # H1 / 11.3 preconditions (cheap, no network). (H3, authorized numbers, is no longer a precondition: Julia-line D5.)
         julia.exigir_hmac_configurado(cfg)
         aviso = svc.obter_ou_criar(get_scoped_admin_client("social_wiring"), core, org_id)
         julia.exigir_aviso_completo(aviso)
         julia.public_privacy_link(aviso)
 
-        waha = waha_factory(base_url=record.base_url or None, api_key=record.api_key, session=record.session_name)
-        try:
-            chat_ids = await julia.listar_todos_os_chats(waha)
-        except julia.SnapshotFalhou as exc:
-            logger.error("julia: snapshot failed conn=%s: %s — switch stays OFF", connection_id, exc)
-            raise AppException(
-                "snapshot_falhou",
-                "Não foi possível listar as conversas existentes do número. A Julia continua desligada.",
-                status_code=502,
-            ) from exc
-        try:
-            lids = await waha.list_lids()
-        except Exception:
-            logger.warning("julia: list_lids failed — snapshot keeps phone forms only", exc_info=True)
-            lids = []
-        # Snapshot rows first, flag last: the switch is never on without a complete
-        # snapshot (PostgREST has no multi-statement transaction; this ordering is
-        # the fail-closed equivalent — an orphaned snapshot only EXCLUDES chats).
-        julia.gravar_snapshot(
-            get_scoped_admin_client("social_wiring"), org_id=org_id, connection_id=connection_id,
-            chat_ids=julia.expandir_aliases(chat_ids, lids),
-        )
         patch.update(
             agente_leads_ativo=True, agente_leads_key=key,
             agente_leads_ativado_em=datetime.now(timezone.utc).isoformat(),
         )
     elif ativo:
-        # Already on: key / handoff changes only; never re-snapshot (it would not
-        # change who is excluded, and `ativado_em` must keep meaning "first on").
+        # Already on: key / handoff changes only; `ativado_em` must keep meaning "first on".
         patch["agente_leads_key"] = key
     else:
         patch.update(agente_leads_ativo=False, agente_leads_key=key)

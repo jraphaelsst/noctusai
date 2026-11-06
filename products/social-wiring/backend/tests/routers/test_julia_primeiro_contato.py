@@ -12,7 +12,7 @@ from cryptography.fernet import Fernet
 from noctusai_lib.integrations.whatsapp import FakeMetaCloudClient
 from noctusai_lib.testing import MockSupabaseClient
 
-from app.clients.agents import AgentsTimeout, DecisaoResult, FakeAgentsClient
+from app.clients.agents import AgentsTimeout, ControleInfo, DecisaoResult, FakeAgentsClient
 from app.modules.meta_ads.services.leadgen_webhook_service import (
     STATUS_PROCESSED,
     LeadgenWebhookService,
@@ -21,10 +21,10 @@ from app.modules.meta_ads.services.leadgen_webhook_service import (
 from app.services import julia_primeiro_contato_service as svc
 from app.services import julia_transporte as tr
 from app.services.whatsapp_connection_store import build_whatsapp_connection_store
-from tests.support.julia_world import CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, World
+from tests.support.julia_world import ADMIN_ID, CONNECTION_ID, ENCRYPTION_KEY, ORG_ID, OWNER_ID, OWNER_TELEFONE, World
 
 TEL = "+5511988887777"
-LEAD = {"id": "lead-1", "full_name": "Ana Teste", "phone": TEL, "answers": {}}
+LEAD = {"id": "lead-1", "full_name": "Ana Teste", "phone": TEL, "answers": {}, "created_time": "2026-10-10T12:00:00+00:00"}  # after go-live
 
 
 class Cena:
@@ -53,7 +53,7 @@ class Cena:
         self.agents = agents
         return asyncio.run(svc.iniciar(
             self.w.sw, ORG_ID, lead, store=self.store, transporte_factory=self.factory,
-            contexto={"nome_julia": "Aurora", "nome_imobiliaria": "Imob"}, agents=agents))
+            contexto={"nome_julia": "Aurora", "nome_imobiliaria": "Imob"}, agents=agents, core=self.w.core))
 
     def eventos(self):
         return self.w.sw.table("julia_eventos").select("*").execute().data or []
@@ -142,6 +142,106 @@ class TestIniciar:
         assert r == {"status": "erro"}
 
 
+def _teste(*usuarios, ligado=True):
+    return ControleInfo(agent_key="julia", modo="ligado", aceita_novos_leads=True, modo_avaliacao=ligado,
+                        avaliacao_usuarios=tuple(str(u) for u in usuarios))
+
+
+class TestPrimeiroContatoSoParaLeadsNovos:
+    """Owner 2026-11-05: Julia DOES open conversations -- but only with leads that arrive (a lead-form event) after go-live."""
+
+    def _pronta(self, cena):
+        cena.cloud()
+        cena.modelo()
+
+    def test_a_form_submitted_before_go_live_is_never_contacted(self, cena):
+        self._pronta(cena)
+        r = cena.rodar({**LEAD, "created_time": "2026-09-30T23:59:59+00:00"})
+        assert r == {"status": "anterior_ao_golive"}
+        assert cena.meta.sent_templates == [] and cena.w.waha.sent_messages == [] and cena.contatos() == []
+        assert [e["payload"]["status"] for e in cena.eventos()] == ["anterior_ao_golive"]
+
+    @pytest.mark.parametrize("quando", [None, "lixo"])
+    def test_an_unreadable_submission_time_fails_closed(self, cena, quando):
+        self._pronta(cena)
+        assert cena.rodar({**LEAD, "created_time": quando})["status"] == "anterior_ao_golive"
+        assert cena.meta.sent_templates == []
+
+    def test_switching_julia_on_contacts_nobody_the_first_contact_only_runs_per_incoming_lead(self, cena):
+        self._pronta(cena)
+        # the lead base already holds contacts/leads from before go-live; nothing in the activation path calls `iniciar`
+        assert cena.meta.sent_templates == [] and cena.w.waha.sent_messages == [] and cena.eventos() == []
+
+
+class TestModoDeTeste:
+    """Testing mode = agents' evaluation mode (the only switch): first contact goes ONLY to a listed number; OFF = everybody."""
+
+    def _rodar(self, cena, controle, lead=LEAD):
+        cena.cloud()
+        cena.modelo()
+        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="neutra", regra="versao")], controle=controle)
+        return cena.rodar(lead, agents=agents)
+
+    def test_testing_off_contacts_everybody(self, cena):
+        assert self._rodar(cena, _teste(OWNER_ID, ligado=False))["status"] == "enviado"
+
+    def test_the_mode_is_a_live_state_off_contacts_the_stranger_on_again_refuses_the_same_stranger(self, cena):
+        cena.cloud()
+        cena.modelo()
+        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="neutra", regra="versao")] * 3, controle=_teste(OWNER_ID, ligado=False))
+
+        def lead(n):
+            return {**LEAD, "id": f"lead-{n}", "phone": f"+551197000000{n}"}
+
+        assert cena.rodar(lead(1), agents=agents)["status"] == "enviado"                    # OFF: new lead contacted
+        agents._controle = _teste(OWNER_ID)                                                 # flipped back ON
+        r = cena.rodar(lead(2), agents=agents)
+        assert r["status"] == "restrito_avaliacao"                                          # restricted at once
+        agents._controle = _teste(OWNER_ID, ligado=False)                                   # OFF again
+        assert cena.rodar(lead(3), agents=agents)["status"] == "enviado"
+        assert len(cena.meta.sent_templates) == 2
+
+    def test_testing_on_a_number_not_on_the_list_gets_no_first_contact(self, cena):
+        r = self._rodar(cena, _teste(OWNER_ID))
+        assert r["status"] == "restrito_avaliacao"
+        assert cena.meta.sent_templates == [] and cena.w.waha.sent_messages == []
+        assert [e["payload"]["status"] for e in cena.eventos()] == ["restrito_avaliacao"]
+
+    def test_testing_on_a_stranger_lead_sends_nothing_to_anyone_not_even_the_greeting_to_the_owner(self, cena):
+        r = self._rodar(cena, _teste(OWNER_ID))
+        assert r["status"] == "restrito_avaliacao"
+        assert cena.meta.sent_templates == [] and cena.w.waha.sent_messages == []
+        assert len(cena.contatos()) == 1, "the lead is still registered in Julia's list"
+        assert cena.agents.decisoes == [], "no approach decision is asked for a withheld greeting"
+
+    def test_testing_on_the_listed_number_gets_it(self, cena):
+        lead = {**LEAD, "phone": OWNER_TELEFONE}
+        assert self._rodar(cena, _teste(OWNER_ID), lead)["status"] == "enviado"
+        assert len(cena.meta.sent_templates) == 1
+
+    def test_testing_on_a_member_who_is_not_listed_gets_none(self, cena):
+        lead = {**LEAD, "phone": OWNER_TELEFONE}
+        assert self._rodar(cena, _teste(ADMIN_ID), lead)["status"] == "restrito_avaliacao"
+        assert cena.meta.sent_templates == []
+
+    def test_testing_on_with_an_empty_list_contacts_nobody(self, cena):
+        assert self._rodar(cena, _teste())["status"] == "restrito_avaliacao"
+
+    def test_an_unreadable_controle_fails_closed_and_is_logged(self, cena, caplog):
+        with caplog.at_level("ERROR"):
+            r = self._rodar(cena, AgentsTimeout("down"))
+        assert r["status"] == "avaliacao_indisponivel" and cena.meta.sent_templates == []
+        assert "no evaluation bypass" in caplog.text
+
+    def test_testing_on_without_a_core_client_fails_closed(self, cena):
+        cena.cloud()
+        cena.modelo()
+        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="neutra", regra="versao")], controle=_teste(OWNER_ID))
+        r = asyncio.run(svc.iniciar(cena.w.sw, ORG_ID, {**LEAD, "phone": OWNER_TELEFONE}, store=cena.store,
+                                    transporte_factory=cena.factory, agents=agents))
+        assert r["status"] == "avaliacao_indisponivel" and cena.meta.sent_templates == []
+
+
 class TestAbordagem:
     def test_sw_holds_no_local_rule_any_more(self):
         """julia-v2 D13: the rule lives in agents' DB (`agent_version_decisoes`); SW keeps neither a default rule text nor a
@@ -187,7 +287,8 @@ class TestAbordagem:
     def test_agents_not_configured_sends_nothing_either(self, cena):
         cena.cloud()
         cena.modelo("Abordagem neutra")
-        assert cena.rodar(agents=None)["status"] == "decisao_indisponivel" and cena.meta.sent_templates == []
+        # no agents client: the testing-mode state cannot be read, so the greeting is withheld (fail closed) before the decision is asked
+        assert cena.rodar(agents=None)["status"] == "avaliacao_indisponivel" and cena.meta.sent_templates == []
 
     def test_no_model_call_while_the_line_is_not_cloud(self, cena):
         cena.modelo()
@@ -221,6 +322,42 @@ class TestLeadgenLeg:
                                   publisher=_noop_publisher, julia_primeiro_contato=intake)
         asyncio.run(s.fan_out(self._processado()))
         assert chamadas == [(str(ORG_ID), "lead-1")]
+
+    @pytest.mark.parametrize("testando", [False, True])
+    def test_testing_mode_withholds_only_the_greeting_registration_and_notification_always_run(self, cena, testando):
+        """Owner 2026-11-05: testing mode NEVER blocks lead intake. With it ON and a non-listed Meta-form lead the lead is registered
+        in Julia's list and the team is notified exactly as with it OFF; only the greeting to the lead is withheld."""
+        cena.cloud()
+        cena.modelo()
+        agents = FakeAgentsClient(decisao_script=[DecisaoResult(escolha="neutra", regra="versao")],
+                                  controle=_teste(OWNER_ID, ligado=testando))
+
+        class Notificador:
+            def __init__(self):
+                self.calls = []
+
+            async def notify_new_lead(self, *, org_id, lead, marca_id=None):
+                self.calls.append((org_id, lead["id"]))
+
+        publicados = []
+
+        async def publisher(**kw):
+            publicados.append(kw["lead"]["id"])
+
+        async def intake(org_id, lead):
+            return await svc.iniciar(cena.w.sw, org_id, lead, store=cena.store, transporte_factory=cena.factory,
+                                     contexto={"nome_julia": "Aurora", "nome_imobiliaria": "Imob"}, agents=agents, core=cena.w.core)
+
+        notifier = Notificador()
+        s = LeadgenWebhookService(admin_supabase=MockSupabaseClient(), notifier_factory=lambda **kw: notifier,
+                                  publisher=publisher, julia_primeiro_contato=intake)
+        out = asyncio.run(s.fan_out(self._processado()))
+        assert out == {"notified": True, "published": True}   # identical with testing ON and OFF
+        assert publicados == ["lead-1"] and notifier.calls == [(ORG_ID, "lead-1")]
+        assert len(cena.contatos()) == 1                       # registered in Julia's list either way
+        assert len(cena.meta.sent_templates) == (0 if testando else 1)
+        assert cena.w.waha.sent_messages == []
+        assert [e["payload"]["status"] for e in cena.eventos()] == (["restrito_avaliacao"] if testando else ["enviado"])
 
     def test_a_failing_julia_leg_never_breaks_the_fan_out(self):
         async def intake(org_id, lead):
