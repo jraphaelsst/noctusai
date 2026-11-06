@@ -232,9 +232,10 @@ def build_anthropic_request(
 ) -> dict[str, Any]:
     """The exact kwargs sent to `client.messages.create`.
 
-    `temperature` is forwarded ONLY on this tool-calling path and ONLY when it differs from the API default (1.0): a
-    caller that never sets one sends nothing (so a model that rejects the parameter keeps working), a caller that
-    asks for a lower one gets it (the channel turns run at 0.3). `chat_completion` still drops it (see there)."""
+    `temperature` is accepted for signature parity with the other providers and NEVER sent: Messages API version
+    2026-10-21 rejects `temperature`/`top_p`/`top_k` with a 400, and the anthropic SDK 2.x removed them from
+    `messages.create()` (a TypeError before any request — the 2026-11-06 prod outage of every tool-calling turn).
+    `test_tool_request_keys_are_accepted_by_the_installed_sdk` pins the payload to the installed SDK signature."""
     system, convo = to_anthropic_messages(messages)
     payload: dict[str, Any] = {
         "model": model,
@@ -242,8 +243,7 @@ def build_anthropic_request(
         "messages": convo,
         "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
     }
-    if temperature is not None and temperature != 1.0:
-        payload["temperature"] = min(1.0, max(0.0, float(temperature)))
+    del temperature  # never sent — see the docstring
     if tools:
         payload["tools"] = to_anthropic_tools(tools)
         if tool_choice != "auto":
