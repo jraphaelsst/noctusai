@@ -19,7 +19,7 @@ from app.modules.edicao_fotos.deps import get_grant_repository, require_platform
 from app.modules.edicao_fotos.errors import api_error
 from app.modules.edicao_fotos.schemas import CuradorCreateBody
 
-router = APIRouter(prefix="/api/edicao-fotos/curadores", tags=["edicao-fotos"])
+router = APIRouter(prefix="/api/edicao-fotos/curadores", tags=["edicao-fotos"], include_in_schema=False)
 
 #: `ids -> {id: {"nome", "email"}}` for the ids that exist.
 UserDirectory = Callable[[list[str]], dict[str, dict]]

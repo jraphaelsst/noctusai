@@ -4,6 +4,13 @@ import { act, renderHook } from "@testing-library/react";
 
 import { PENDING_POLL_MS, useChat } from "./useChat";
 
+// The chat API is access tier `org`: every call must carry the session's bearer token.
+vi.mock("@noctusai/seed/infra", () => ({
+  supabase: {
+    auth: { getSession: async () => ({ data: { session: { access_token: "tok-123" } } }) },
+  },
+}));
+
 const CLOUDFLARE_PAGE =
   '<!DOCTYPE html><html><head><title>noctusai.com | 502: Bad gateway</title></head><body>cf</body></html>';
 
@@ -52,6 +59,27 @@ describe("useChat.sendMessage errors", () => {
     });
 
     expect(result.current.error).toBe(message);
+  });
+});
+
+describe("useChat auth", () => {
+  it("sends the session bearer token on message, history and reset", async () => {
+    window.localStorage.setItem("ytcrawler:chat:session_id", "web:abc");
+    const fetchMock = vi.fn(async () => jsonResponse(200, { session_id: "web:abc", reply: "ok", messages: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useChat());
+
+    await act(async () => {
+      await result.current.sendMessage("oi");
+    });
+    await act(async () => {
+      await result.current.reset();
+    });
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    for (const call of fetchMock.mock.calls as unknown as [string, RequestInit][]) {
+      expect((call[1].headers as Record<string, string>).Authorization).toBe("Bearer tok-123");
+    }
   });
 });
 

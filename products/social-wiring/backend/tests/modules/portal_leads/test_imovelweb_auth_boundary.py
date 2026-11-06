@@ -87,10 +87,33 @@ def test_the_public_route_still_refuses_an_unsigned_call(http_client):
     assert resp.status_code == 401
 
 
-def test_the_registration_route_is_confirm_gated(http_client):
-    """Authenticated is not enough for the integrator-wide write.
+#: Integrator-wide: they read / rewrite the vendor configuration for EVERY agency, so they are platform-tier
+#: (OWASP API5 BFLA) -- an ordinary org member is a strict 403, not just "authenticated".
+PLATFORM_ROUTES = [
+    ("GET", "/api/portals/imovelweb/callback"),
+    ("POST", "/api/portals/imovelweb/callback/register"),
+]
 
-    Anonymous is 401 (above). Authenticated-but-unconfirmed must be 412 —
+
+@pytest.mark.parametrize("method,path", PLATFORM_ROUTES)
+def test_integrator_wide_routes_refuse_a_non_platform_admin(http_client, method, path):
+    from app.dependencies import get_platform_admin_check
+    from app.main import app
+
+    app.dependency_overrides[get_platform_admin_check] = lambda: (lambda _user_id: False)
+    try:
+        resp = http_client.request(method, path, json={"confirm": True},
+                                   headers={"Authorization": "Bearer test-token"})
+    finally:
+        app.dependency_overrides.pop(get_platform_admin_check, None)
+
+    assert resp.status_code == 403
+
+
+def test_the_registration_route_is_confirm_gated(http_client):
+    """Platform-admin is not enough for the integrator-wide write.
+
+    Anonymous is 401 (above). Platform-admin-but-unconfirmed must be 412 —
     and the gate has to be evaluated BEFORE the vendor client is built, so
     that "no confirm" means nothing happened rather than something failed
     afterwards.
@@ -105,9 +128,12 @@ def test_the_registration_route_is_confirm_gated(http_client):
 
             return _boom
 
+    from app.dependencies import get_platform_admin_check
+
     app.dependency_overrides[imovelweb_webhook.get_imovelweb_adapter] = (
         lambda: _ExplodingAdapter()
     )
+    app.dependency_overrides[get_platform_admin_check] = lambda: (lambda _user_id: True)
     try:
         resp = http_client.post(
             "/api/portals/imovelweb/callback/register",
@@ -116,6 +142,7 @@ def test_the_registration_route_is_confirm_gated(http_client):
         )
     finally:
         app.dependency_overrides.pop(imovelweb_webhook.get_imovelweb_adapter, None)
+        app.dependency_overrides.pop(get_platform_admin_check, None)
 
     assert resp.status_code == 412
     assert "NO side-effect" in resp.json()["error"]

@@ -23,7 +23,6 @@ built via ``get_user_client(token)`` inside the route body — the seed's
 from __future__ import annotations
 
 import logging
-import secrets
 from urllib.parse import urljoin
 from uuid import UUID
 
@@ -31,6 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
+from app.routers._oauth_state import sign_oauth_state, verify_oauth_state
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
@@ -155,7 +155,7 @@ def get_youtube_auth_url(
     org_id = coerce_org_uuid(raw_org)
     supabase = get_user_client(token)
     yt = _build_youtube_service(supabase)
-    state = f"{org_id}:{secrets.token_urlsafe(16)}"
+    state = sign_oauth_state(org_id)
     auth_url, code_verifier = yt.get_auth_url(state=state)
     redis_client = _pkce_redis_client()
     if redis_client is not None and code_verifier:
@@ -221,19 +221,8 @@ def youtube_oauth_callback(
             detail="OAuth callback missing code or state.",
         )
 
-    org_part, _, _nonce = state.partition(":")
-    if not org_part:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token malformed.",
-        )
-    try:
-        org_id = UUID(org_part)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Verify-then-use: the org comes ONLY from a state WE signed at oauth/start (login-CSRF guard).
+    org_id = verify_oauth_state(state)
 
     yt = _build_youtube_service(supabase)
     store = _build_credential_store(supabase)

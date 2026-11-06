@@ -10,15 +10,20 @@
  * choice, "publicado"), so while the server reports a pending upload the
  * hook re-reads the history every `PENDING_POLL_MS`.
  *
- * No auth header for now — the chat endpoint is intentionally open per
- * the current product brief. When auth lands, the backend will derive
- * org_id from the JWT and this hook will gain the supabase token like
- * useUpload does.
+ * Every call carries the Supabase bearer token (access tier `org`): the
+ * backend derives the org from it and namespaces the session by that org.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { extractErrorMessage } from "@noctusai/lib/api";
+import { supabase } from "@noctusai/seed/infra";
 
 import { apiUrl } from "@/lib/apiBase";
+
+async function getAuthHeader(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export interface ChatHistoryItem {
   role: "user" | "assistant";
@@ -75,7 +80,8 @@ export function useChat() {
     if (!sid) return;
     try {
       const res = await fetch(
-        apiUrl(`/api/chat/history/${encodeURIComponent(sid)}`)
+        apiUrl(`/api/chat/history/${encodeURIComponent(sid)}`),
+        { headers: await getAuthHeader() }
       );
       if (!res.ok) return;
       const data = await res.json();
@@ -124,6 +130,7 @@ export function useChat() {
         }
         const res = await fetch(apiUrl("/api/chat/message"), {
           method: "POST",
+          headers: await getAuthHeader(),
           body: form,
         });
         if (!res.ok) {
@@ -166,7 +173,7 @@ export function useChat() {
     try {
       const res = await fetch(
         apiUrl(`/api/chat/reset/${encodeURIComponent(sessionId)}`),
-        { method: "POST" }
+        { method: "POST", headers: await getAuthHeader() }
       );
       if (!res.ok) {
         const data = await res.json().catch(() => null);

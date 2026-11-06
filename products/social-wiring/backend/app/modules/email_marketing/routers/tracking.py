@@ -22,6 +22,7 @@ from app.config import settings
 from app.dependencies import get_admin_client, get_settings
 from app.modules.email_marketing.services.click_tracking import verify_token
 from app.rate_limit import limiter
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/email-marketing/t", tags=["Tracking"])
@@ -31,6 +32,7 @@ _STATUS_KEPT = {"clicked", "bounced", "complained"}
 
 
 @router.get("/c/{token}")
+@access_tier('service', reason='HMAC-signed click-tracking token (verify_token), rate-limited')
 @limiter.limit(settings.webhook_rate_limit)
 def click_redirect(request: Request, token: str, cfg=Depends(get_settings)):
     data = verify_token(cfg.jwt_secret, token)

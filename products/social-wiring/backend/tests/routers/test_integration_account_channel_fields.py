@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 from app.services.integration_account_service import (
     IntegrationAccountService,
 )
+from app.routers._oauth_state import sign_oauth_state, verify_oauth_state_full
 from app.sqlite_client import SQLiteClient
 
 _ORG_A = "00000000-0000-4000-8000-000000000001"
@@ -299,7 +300,7 @@ class TestOAuthCallbackChannelInfo:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-chaninfo"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/youtube/oauth/callback"
                 f"?code=auth-code&state={state}",

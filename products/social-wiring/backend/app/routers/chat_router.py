@@ -8,10 +8,12 @@ is the session id shape:
 - WhatsApp: ``5511974693365@c.us`` (the sender's phone JID)
 - Platform: ``web:<uuid>`` issued by the frontend on first message
 
-The endpoint is unauthenticated for now per the user's direction (the
-frontend route itself is auth-gated). When a real auth model lands we
-swap the ``session_id`` parameter for an org-scoped key derived from
-the JWT.
+Access tier ``org`` (OWASP API1 BOLA / API2 broken authentication): every route sits
+behind ``get_current_user_org``. The org comes from the authenticated session -- never a
+"default org" -- and the Redis session key is namespaced by that org, so one org can
+never read, reset or continue another org's conversation by guessing a ``session_id``.
+(Until 2026-11 this surface was anonymous and acted for the first org with a YouTube
+credential.)
 """
 from __future__ import annotations
 
@@ -24,12 +26,13 @@ from uuid import UUID
 import redis
 from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.integrations.redis import make_redis_client
+from noctusai_lib.api.access_tiers import make_router
 from noctusai_lib.primitives.exceptions import AppException
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.dependencies import get_admin_client
+from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.services.chatbot_service import ChatbotService, append_memory
 from app.services.conversation_module import route_inbound
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured
@@ -42,7 +45,7 @@ from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceE
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+router = make_router(tier="org", guard=get_current_user_org, prefix="/api/chat", tags=["chat"])
 
 _UPLOAD_DIR = Path("/tmp/uploads")
 _WEB_SESSION_PREFIX = "web:"
@@ -80,7 +83,7 @@ def _make_redis() -> redis.Redis:
     return make_redis_client(settings.redis_url, decode_responses=True)
 
 
-def _build_intake() -> WhatsAppIntakeService:
+def _build_intake(org_id: UUID) -> WhatsAppIntakeService:
     """Mirror of the WhatsApp router's wiring. Returns the same
     intake-service shape; raises HTTPException(503) on misconfig so the
     frontend gets actionable feedback instead of a silent failure."""
@@ -101,11 +104,7 @@ def _build_intake() -> WhatsAppIntakeService:
     except (EncryptionNotConfigured, YouTubeServiceError) as exc:
         logger.warning("YouTube service unavailable for chat: %s", exc)
 
-    # No JWT context, so the chat surface uses the seed default org
-    # (the local-dev org in SQLite mode; the first connected YouTube
-    # org in Supabase mode — same shape as the WhatsApp router).
-    org_id = _resolve_default_org(admin_supabase) or UUID(settings.local_dev_org_id)
-
+    # ``org_id`` is the AUTHENTICATED caller's org (``get_current_user_org``).
     # That org's own Vista credential; none -> manual titles (never an env key).
     crm = vista_credenciais.adapter_ou_none(org_id)
 
@@ -120,24 +119,6 @@ def _build_intake() -> WhatsAppIntakeService:
     )
 
 
-def _resolve_default_org(admin_supabase) -> UUID | None:
-    try:
-        response = (
-            admin_supabase
-            .schema("social_wiring")
-            .table("credentials")
-            .select("org_id")
-            .eq("provider", "youtube")
-            .limit(1)
-            .execute()
-        )
-        if response.data:
-            return UUID(response.data[0]["org_id"])
-    except Exception as exc:
-        logger.error("failed to resolve default org for chat: %s", exc)
-    return None
-
-
 def _ensure_web_session(session_id: str | None) -> str:
     """Normalize to a ``web:<uuid>`` session id. Generates one if blank."""
     if not session_id:
@@ -147,11 +128,22 @@ def _ensure_web_session(session_id: str | None) -> str:
     return session_id
 
 
+def _org_session(external_session: str, org_id: UUID) -> str:
+    """Org-namespaced Redis session key: ``web:<uuid>|<org_id>``. The client only ever sees
+    (and sends) the external ``web:<uuid>``; another org's id never maps to this key."""
+    return f"{external_session}|{org_id}"
+
+
+def _caller_org(auth: tuple) -> UUID:
+    return coerce_org_uuid(auth[2])
+
+
 # ─── POST /api/chat/upload-file — stage-only ───────────────────────────
 @router.post("/upload-file", response_model=FileStaged)
 def stage_chat_file(
     file: UploadFile = File(...),
     session_id: str = Form(""),
+    auth: tuple = Depends(get_current_user_org),
 ) -> FileStaged:
     """Stream a video file to disk and register it under a file_id.
 
@@ -166,8 +158,8 @@ def stage_chat_file(
             detail="upload missing filename",
         )
 
-    normalized_session = _ensure_web_session(session_id)
-    intake = _build_intake()
+    org_id = _caller_org(auth)
+    intake = _build_intake(org_id)
 
     try:
         with stage_browser_upload(
@@ -205,6 +197,7 @@ async def chat_message(
     text: str = Form(""),
     session_id: str = Form(""),
     file: UploadFile | None = File(None),
+    auth: tuple = Depends(get_current_user_org),
 ) -> ChatReply:
     """One chat turn for the platform UI — code first, model last.
 
@@ -219,8 +212,10 @@ async def chat_message(
     the text has a property code; otherwise passed to the model as
     context). Other attachments are resolved to text for the model.
     """
-    normalized_session = _ensure_web_session(session_id)
-    intake = await run_blocking(_build_intake)
+    org_id = _caller_org(auth)
+    external_session = _ensure_web_session(session_id)
+    normalized_session = _org_session(external_session, org_id)
+    intake = await run_blocking(_build_intake, org_id)
     file_id: str | None = None
     extra_context: str | None = None
 
@@ -368,7 +363,7 @@ async def chat_message(
 
     pending = await intake.get_pending_upload(normalized_session)
     return ChatReply(
-        session_id=normalized_session,
+        session_id=external_session,
         reply=reply,
         file_id=file_id,
         pending=pending if pending.get("found") else None,
@@ -377,11 +372,13 @@ async def chat_message(
 
 # ─── GET /api/chat/history/{session_id} ────────────────────────────────
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
-async def chat_history(session_id: str) -> ChatHistoryResponse:
+async def chat_history(session_id: str, auth: tuple = Depends(get_current_user_org)) -> ChatHistoryResponse:
     """Return the recent conversation memory for the platform UI to
     render after a refresh. Caps at MAX_MEMORY_ITEMS items (12)."""
-    normalized = _ensure_web_session(session_id)
-    intake = await run_blocking(_build_intake)
+    org_id = _caller_org(auth)
+    external = _ensure_web_session(session_id)
+    normalized = _org_session(external, org_id)
+    intake = await run_blocking(_build_intake, org_id)
     chatbot = ChatbotService(
         redis_client=intake.redis_client,
         intake_service=intake,
@@ -390,7 +387,7 @@ async def chat_history(session_id: str) -> ChatHistoryResponse:
     )
     pending = await intake.get_pending_upload(normalized)
     return ChatHistoryResponse(
-        session_id=normalized,
+        session_id=external,
         messages=[ChatHistoryItem(**m) for m in chatbot.load_history()],
         pending=pending if pending.get("found") else None,
     )
@@ -398,9 +395,10 @@ async def chat_history(session_id: str) -> ChatHistoryResponse:
 
 # ─── POST /api/chat/reset/{session_id} ─────────────────────────────────
 @router.post("/reset/{session_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-async def chat_reset(session_id: str) -> None:
-    normalized = _ensure_web_session(session_id)
-    intake = await run_blocking(_build_intake)
+async def chat_reset(session_id: str, auth: tuple = Depends(get_current_user_org)) -> None:
+    org_id = _caller_org(auth)
+    normalized = _org_session(_ensure_web_session(session_id), org_id)
+    intake = await run_blocking(_build_intake, org_id)
     chatbot = ChatbotService(
         redis_client=intake.redis_client,
         intake_service=intake,

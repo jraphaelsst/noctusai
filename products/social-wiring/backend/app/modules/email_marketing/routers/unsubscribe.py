@@ -9,6 +9,7 @@ from app.dependencies import get_admin_client
 from app.config import settings
 from noctusai_lib.security import signed_tokens
 from app.modules.email_marketing.services.unsubscribe_links import TOKEN_PURPOSE, make_token
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/email-marketing/unsubscribe', tags=["Unsubscribe"])
@@ -50,6 +51,7 @@ def verify_token(token: str) -> dict | None:
 
 
 @router.get("/{token}")
+@access_tier('service', reason='HMAC-signed unsubscribe link token (verify_token)')
 def unsubscribe_page(token: str):
     """Render unsubscribe confirmation — returns token info for frontend to display."""
     data = verify_token(token)
@@ -59,6 +61,7 @@ def unsubscribe_page(token: str):
 
 
 @router.post("/{token}")
+@access_tier('service', reason='HMAC-signed unsubscribe link token (verify_token); RFC 8058 one-click target')
 def process_unsubscribe(token: str):
     """Process the unsubscribe — mark contact as unsubscribed, create audit record.
 

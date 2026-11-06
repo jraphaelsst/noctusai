@@ -58,6 +58,7 @@ from app.modules.card_hub.deps import (
     get_storage_backend,
 )
 from app.rate_limit import limiter
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ router = APIRouter(prefix="/api/webhooks/assinatura", tags=["webhooks"])
 
 
 @router.post("/{provedor}")
+@access_tier('service', reason='provider signature verified by adapter.validar_webhook', category='webhook')
 @limiter.limit(settings.webhook_rate_limit)
 async def post_assinatura_webhook(
     provedor: str,

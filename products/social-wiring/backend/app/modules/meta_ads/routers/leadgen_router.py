@@ -69,6 +69,7 @@ from app.rate_limit import limiter
 from app.routers._meta_common import handle_meta_graph_error
 from app.services.meta import MetaAdapter, get_meta_adapter
 from app.services.meta_leads_realtime import get_meta_leads_bus, meta_leads_scope
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ async def _resolve_meta_app_secret(request: Request, body: bytes) -> ResolvedSec
 
 # ─── public: GET handshake ───────────────────────────────────────────────
 @router.get("/webhook", response_class=PlainTextResponse)
+@access_tier('service', reason='Meta hub.verify_token handshake, constant answer on mismatch', category='webhook')
 @limiter.limit(settings.webhook_rate_limit)
 def leadgen_verify(
     request: Request,

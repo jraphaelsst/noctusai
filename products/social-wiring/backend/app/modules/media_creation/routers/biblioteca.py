@@ -346,12 +346,12 @@ def _optout_out(row: dict) -> dict:
     return {k: row.get(k) for k in ("id", "handle", "motivo", "origem", "solicitado_em", "registrado_por", "created_at")}
 
 
-@router.get("/admin/optouts")
+@router.get("/admin/optouts", include_in_schema=False)
 def list_optouts(auth=Depends(require_platform_admin)):
     return success_response([_optout_out(r) for r in biblioteca_optout.listar(get_admin_client())])
 
 
-@router.post("/admin/optouts")
+@router.post("/admin/optouts", include_in_schema=False)
 async def criar_optout(
     body: OptoutCreate,
     auth=Depends(require_platform_admin),
@@ -370,7 +370,7 @@ async def criar_optout(
     return success_response({"optout": _optout_out(row), "criado": criado, "purgados": purgados})
 
 
-@router.delete("/admin/optouts/{optout_id}", status_code=204)
+@router.delete("/admin/optouts/{optout_id}", status_code=204, include_in_schema=False)
 def remover_optout(optout_id: uuid.UUID, auth=Depends(require_platform_admin)):
     if not biblioteca_optout.remover(get_admin_client(), str(optout_id)):
         raise HTTPException(status_code=404, detail="Opt-out não encontrado")
