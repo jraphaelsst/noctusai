@@ -16,7 +16,9 @@ import ast
 from collections.abc import Iterator
 
 # 404 = route absent; 422 = body validation fires before the auth dep.
-# 403 is deliberately EXCLUDED (a second legitimate auth outcome).
+# `in (401, 403)` is NOT flagged (both are real auth outcomes), but a 403 paired with a mask IS: `in (403, 404)` /
+# `in (403, 422)` passes via route-absent / validation-before-auth just like the 401 form (the
+# `platform_admin_required` 403 tests of the access-tier gates).
 _AUTH_FALSE_GREEN_MASKABLE = frozenset({404, 422})
 
 
@@ -35,8 +37,8 @@ def _is_false_green_compare(node: ast.Compare) -> int | None:
         for elt in comparator.elts
         if isinstance(elt, ast.Constant) and isinstance(elt.value, int)
     }
-    if 401 not in constants:
-        return None
+    if 401 not in constants and not (403 in constants and constants <= {403, *_AUTH_FALSE_GREEN_MASKABLE}):
+        return None  # a 403-only form must be a pure auth/mask set: `in (200, 403, 422)` is not an auth test
     masks = constants & _AUTH_FALSE_GREEN_MASKABLE
     if 404 in masks:
         return 404

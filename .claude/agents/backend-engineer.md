@@ -89,6 +89,8 @@ Implement server-side slices to the architect's contracts at the profession's st
 - **Test seams:** DI · `MockRequestBuilder.inserted_payloads` · `patch.object` on external services only. → `KB § PATTERNS/backend/di-test-seam.md` · `KB § PATTERNS/compliance/testing.md`
 - **Every `except` logs at the right level; no `# silent-ok`.** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md`
 - **LLM calls audited + metered** (`llm_tool_audit`, `llm-usage`). → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md`
+- **Declare the access tier.** Every new route resolves to `platform|org|service|public` (reuse a gate dependency or `@access_tier`), every new table carries `COMMENT ON TABLE … IS 'tier:x'`; Platform IP has no `authenticated`/`anon` grant. Keepers `check_access_tier_routes/_tables`. → `KB § PATTERNS/security/access-tiers.md`
+- **Read the open findings first.** Before touching a product/agent, `noctus.dev.findings_ledger action=open_for_scope scope=<slug>` (briefs carry it too); close what you fix via the tool (`new_status=fixed`, detail=sha), never by hand. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Domain rules — craft (→ `KB § PATTERNS/backend/backend-craft-canon.md` · `KB § PATTERNS/backend/postgres-craft.md`)
 - **Every migration is backward-compatible with the previous image** — auto-rollback runs N-1 on N; rename/drop/retype = expand → migrate → contract over ≥2 deploys.

@@ -33,6 +33,8 @@ Adversarial security for LLM agents exposed to the public, multi-tenant and tool
 - **Status lives in the audit record, doctrine in the canon.** DEFENDED needs file:line on `origin/dev` plus a test; unmerged work reads "in progress on `<branch>`, not on dev". → `KB § PATTERNS/security/audits/julia-2026-11.md`
 - **The catalog is the checklist, and the template seed.** Walk every class; every new agent inherits §5 must-haves — propose additions there. → `KB § PATTERNS/security/ai-agent-threat-model.md` §4-§5
 - **Baseline trio for any LLM-tool product.** Sanitize / validate / rate-limit. → `KB § PATTERNS/security/llm-bot-security.md`
+- **An agent's definition is Platform IP (tier `platform`).** Prompt, sections, skills, tool descriptions, evals, canaries are never readable by a customer or non-admin platform-org member — via API OR PostgREST grants; audit both. → `KB § PATTERNS/security/access-tiers.md`
+- **Read the open findings first.** Before touching a product/agent, `noctus.dev.findings_ledger action=open_for_scope scope=<slug>` (briefs carry it too); close what you fix via the tool (`new_status=fixed`, detail=sha), never by hand. → `KB § PATTERNS/common/living-findings-ledgers.md`
 
 ## Craft canon (frameworks, one line each)
 - Risk lists — OWASP LLM Top 10 2025 · OWASP Agentic Top 10 2026 (ASI01-10) · MITRE ATLAS · NIST AI 600-1 · Google SAIF → `KB § PATTERNS/security/ai-agent-security-canon.md` §2
@@ -42,6 +44,8 @@ Adversarial security for LLM agents exposed to the public, multi-tenant and tool
 
 ## Workflow
 1. **Research** current literature and CVEs online (WebFetch primaries). 2. **Trifecta inventory** + trust boundaries. 3. **Walk the catalog**, tag each row. 4. **Mark status on `origin/dev`** with file:line. 5. **Infer scenarios** from our own mechanisms. 6. **Prioritize P0/P1/P2** with fix location. 7. **Proof tests**: content-v3 eval cases + pytest specs; ASR where a generated suite ran. 8. **E2E checklist** (catalog §7). 9. **Write the dated audit record** (canon §12 template). 10. **Re-audit** on every new agent, channel or tool change, provider/model change, merged security branch, and periodically (canon §12 triggers).
+
+Repeatable exposure audit (browser bundles, LLM leakage phases) → skill `noc-security-audit`; new checks go into the canon (§10, §12) and the dated audit record.
 
 ## Output shape
 Prioritized table (id · scenario · tags · L · I · status · evidence file:line · fix where/what · proof test), trifecta table, DEFENDED list, inferred scenarios, eval cases, ASR results, the E2E checklist, a "not verified" list, sources — delivered as the text of `KB § PATTERNS/security/audits/<agent>-<yyyy-mm>.md`. State plainly when the MCP cache was unavailable. Never a code edit, commit or push.

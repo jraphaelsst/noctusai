@@ -752,6 +752,49 @@ if [[ -n "$STAGED_AGENT_DEFS" ]] && have_py; then
     fi
 fi
 
+# ── access tiers (owner directive 2026-11-05): every route + table declares who may touch it; undeclared is refused ──
+# (a) a backend route file / dependency / the tier registry staged -> every ACTIVE product's routes still resolve to a
+#     tier and no Platform IP sits behind a weaker gate (ratchet: deploy/security/access-tier-baseline.json);
+# (b) a migration staged -> no Platform-IP table exposed to authenticated/anon, and every NEW table declares its tier.
+# KB § PATTERNS/security/access-tiers.md. Declare with @access_tier(...) / COMMENT ON TABLE ... IS 'tier:x'.
+STAGED_TIER_ROUTES=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/(framework|lib)/backend/.*\.py|seed/lib/backend/noctusai_lib/api/access_tiers\.py|deploy/security/access-tier-baseline\.json)$' || true)
+if [[ -n "$STAGED_TIER_ROUTES" ]] && have_py; then
+    echo "[pre-commit] backend route surface staged — checking every route resolves to an access tier..."
+    if ! "$PY" "$CLI" --check-access-tier-routes --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] ACCESS-TIER routes failed. Put Platform IP behind a platform-admin dependency, or declare @access_tier(...) (noctusai_lib.api.access_tiers). See KB § PATTERNS/security/access-tiers.md." >&2
+        exit 1
+    fi
+fi
+# (c) LLM output streaming + leak-fingerprint coverage (same ratchet baseline): a delta published to a browser goes through the leak
+#     filter; every prompt-derived source + every agent tool is registered at the fingerprint seam.
+STAGED_TIER_LLM=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/lib/backend/.*\.py|seed/lib/backend/noctusai_lib/api/access_tiers\.py|deploy/security/access-tier-baseline\.json)$' || true)
+if [[ -n "$STAGED_TIER_LLM" ]] && have_py; then
+    for _tier_flag in --check-access-tier-streams --check-access-tier-fingerprint; do
+        if ! "$PY" "$CLI" "$_tier_flag" --worktree-path "$REPO_ROOT"; then
+            echo "[pre-commit] ACCESS-TIER ($_tier_flag) failed: route LLM deltas through the leak filter (FiltroDeltas); register every prompt-derived source at texto_fonte_do_prompt and classify every agent tool (access_tiers.py PROMPT_DERIVED_TOOLS / NOT_PROMPT_DERIVED_TOOLS). See KB § PATTERNS/security/access-tiers.md." >&2
+            exit 1
+        fi
+    done
+fi
+# (d) the living findings ledgers agree with the scanners (access-tier burn-down, Julia's mistakes, ...): a status that disagrees with
+#     reality fails. Fix: `cli.py --findings-ledger-reconcile <ledger>` (the tool is the only writer; never hand-edit a ledger).
+STAGED_LEDGER_SURFACE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/.*\.(py|sql)|seed/(framework|lib)/backend/.*\.py|project-history/(access-tiers|julia)/.*)$' || true)
+if [[ -n "$STAGED_LEDGER_SURFACE" ]] && have_py; then
+    if ! "$PY" "$CLI" --check-findings-ledgers --worktree-path "$REPO_ROOT" || ! "$PY" "$CLI" --check-findings-ledger-visibility --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] FINDINGS-LEDGER drift. Run: python mcp/noctusai/cli.py --findings-ledger-reconcile <ledger> (access-tier | ...) and stage the result. See KB § PATTERNS/common/living-findings-ledgers.md." >&2
+        exit 1
+    fi
+fi
+STAGED_TIER_MIGRATIONS=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/migrations/.*\.sql|seed/lib/backend/noctusai_lib/api/access_tiers\.py|deploy/security/access-tier-baseline\.json)$' || true)
+if [[ -n "$STAGED_TIER_MIGRATIONS" ]] && have_py; then
+    echo "[pre-commit] migration staged — checking Platform-IP tables are service-role only and new tables declare a tier..."
+    _TIER_NEW=$(git diff --cached --name-only --diff-filter=A 2>/dev/null | grep -E '^products/[^/]+/backend/migrations/.*\.sql$' | paste -sd, - || true)
+    if ! "$PY" "$CLI" --check-access-tier-tables --paths "$_TIER_NEW" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] ACCESS-TIER tables failed. REVOKE authenticated/anon on Platform-IP tables (service role only) and add COMMENT ON TABLE <t> IS 'tier:platform|org|service|public'. See KB § PATTERNS/security/access-tiers.md." >&2
+        exit 1
+    fi
+fi
+
 # ── prod compose hardening blocks stay in lockstep with the propagate source ──
 # agents' + academia-de-reciclagem's deploy/fleet/docker-compose.prod.yml
 # security blocks (cap_drop/read_only/tmpfs/...) must be byte-identical to

@@ -92,6 +92,20 @@ Data Privacy · Information Integrity · Information Security · Human-AI Config
 Component Integration (plus Harmful Bias, Dangerous/Hateful content and Obscene content for the
 content-policy side). **Google SAIF:** use its risk-to-control map as a cross-check for agent controls
 (rogue actions, insecure output, sensitive disclosure).
+**LLM07 System Prompt Leakage — what the sources prescribe (read 2026-11-05).** OWASP LLM07:2025: the
+system prompt must not be treated as a secret or a security control; keep credentials, roles and
+permission structure out of it; enforce behaviour with independent deterministic guardrails and
+authorization outside the model; use least-privilege agents. ATLAS ids for the attack side: AML.T0056
+Extract LLM System Prompt · AML.T0069.002 Discover LLM System Information: System Prompt · AML.T0084.001
+Discover AI Agent Configuration: Tool Definitions · AML.T0068 LLM Prompt Obfuscation · AML.T0083 Credentials
+from AI Agent Configuration · AML.T0086 Exfiltration via AI Agent Tool Invocation. Anthropic (reduce prompt
+leak): try output screening/post-processing first, drop unneeded proprietary detail, audit periodically, and
+only leak-proof when necessary because it can degrade the task. SAIF controls that map here: Output
+Validation and Sanitization, Agent Permissions, Agent Observability (logging agent actions), Application
+Access Management, Red Teaming.
+
+**Our catalog ↔ frameworks.**
+
 
 **Our catalog ↔ frameworks.**
 
@@ -289,6 +303,18 @@ generalization for any channel:
   writes "garanto 10% de desconto" is an offer. Hence the `valor_sem_ferramenta` rule: every R$/percentage
   must equal a number from this thread's tool results or the lead's own text. Comparable foreign
   precedent: Moffatt v. Air Canada (chatbot statements bind the company).
+- **Fingerprint coverage = everything that reaches the model** (2026-11-05 P1-B): system prompt, sections,
+  skill bodies, tool descriptions AND tool results. A canary only on the compiled prompt misses the other
+  four paths. Detection runs on de-obfuscated text (NFKC, Cf/tag/bidi strip, base64/spacing/translation)
+  and on paraphrase (n-gram/embedding similarity against protected text), not just exact match.
+- **Guard before stream** (P1-C): no delta leaves before the output guard has judged it; a guard that runs
+  after streaming can only log. Buffer the first window or retract the stream on a hit.
+- **Extraction is rate-limited:** many extraction-shaped attempts per session/org trip restricted mode
+  (the `Extraction escalation` row); OpenAI safety guidance adds capping input and output length and
+  preferring vetted/validated outputs over free generation where possible.
+- **The prompt is not the secret** (LLM07) ⇒ the secret is the *access path*: Platform IP sits behind
+  platform-admin/service-role (`appsec-craft-canon.md` §8 rule 18), and the model is never the only gate.
+
 
 ## 11 · Privacy for agents (LGPD)
 
@@ -309,6 +335,30 @@ generalization for any channel:
 PARTIAL = defense exists with a known gap. OPEN = no defense. UNVERIFIED = could not reach (say why).
 **In progress on `<branch>`, not on dev** = work exists only on an unmerged branch — never counted as
 defended.
+**Step 1 of every exposure audit — access-tier inventory** (OWASP ASVS 8.1.1-8.1.2: the access rules are
+documented; 8.2.1-8.2.3 enforce function/data/field level; NIST AC-3, AC-6). Classify every HTTP route and
+every browser-reachable table as **platform / org / public / service**, default deny; Platform IP (agent
+prompts, sections, skills, tool descriptions, evals, compiled prompts, canaries, runtime config) is
+platform-admin or service-role only. Tooling: the access-tiers keeper + endpoint catalog (`noctus.dev` tool)
+being built on `feat/access-tiers-gate` (pattern `access-tiers`; not on dev until it lands); fallback:
+grep routers and their auth dependencies. Then walk the doors in order: routes (tier) → browser/network
+(`appsec-craft-canon.md` §11b) → direct DB (`appsec-craft-canon.md` §8 rules 10-17) → model path (§10) →
+tokens/secrets → logs/telemetry (`secure-code-review-checklist.md` §10) → tests that keep it fixed (strict
+`== 401/403`, one regression test per finding, keepers). Advisors: `security` runs the AppSec doors,
+`agents-security` the model path; the runner is skill `noc-security-audit`.
+
+**Effective state, not inferred state (2026-11-05 lesson).** An exposure verdict must come from the
+EFFECTIVE state: replay the whole migration chain, or query live `role_table_grants` / `pg_policies`
+(`appsec-craft-canon.md` §8 rule 11). Static reading of a few migrations is "inferred" at most and must not
+be ranked as a finding. P1-A (agents tables "readable via PostgREST") was a false positive for exactly this
+reason: migration 036 had revoked the browser privileges and the audit read only 001/012/020/031.
+
+**Each audit finding also feeds the canon:** add the new check to the matching section here (or the
+appsec canon / threat model) in the same change as the dated record, and say so in the record.
+
+**Re-audit triggers (added 2026-11-05):** a new product, agent or route batch; a report that a competitor or
+third party can see internals.
+
 
 **Evidence rules.** Verify against `origin/dev` (`git merge-base --is-ancestor <branch> origin/dev` for
 branch claims); cite file:line; name the test; date everything; say plainly when a cache/tool was
@@ -441,9 +491,20 @@ again while authoring.
 - CDC, Lei 8.078/1990 — https://www.planalto.gov.br/ccivil_03/leis/l8078compilado.htm — Arts. 30, 35 (fetched).
 - LGPD, Lei 13.709/2018 — https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm — Arts. 20, 33 (audit-verified).
 - Res. CD/ANPD 19/2024 analysis — https://www.mattosfilho.com.br/unico/regulamentacao-transferencia-internacional-dados/ (secondary — re-verify).
+- OWASP LLM07:2025 System Prompt Leakage — https://genai.owasp.org/llmrisk/llm072025-system-prompt-leakage/ — READ 2026-11-05: prompt is not a secret; external guardrails; least-privilege agents (§2).
+- OWASP LLM01:2025 Prompt Injection — https://genai.owasp.org/llmrisk/llm01-prompt-injection/ — READ: constrain behaviour, validate output formats, input/output filtering, least privilege, human approval for high-risk actions, segregate untrusted content, adversarial testing (§9, §10).
+- MITRE ATLAS technique ids — `dist/ATLAS.yaml` in mitre-atlas/atlas-data — READ (ids/names grepped): T0056, T0069.002, T0084.001, T0068, T0083, T0086 (§2).
+- Google SAIF controls — https://saif.google/secure-ai-framework/controls — READ: control-to-risk map for injection, sensitive disclosure, output handling, access control (§2).
+- Anthropic, Reduce prompt leak — https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-prompt-leak — READ: monitoring/post-processing first, avoid unneeded proprietary detail, audit regularly (§10).
+- OpenAI, Safety best practices — https://developers.openai.com/api/docs/guides/safety-best-practices — READ: red-team, cap input/output, constrain inputs, prefer vetted outputs (§10).
+- Simon Willison, The lethal trifecta — re-READ 2026-11-05: three legs; remove a leg rather than trust guardrails ("95%" is a failing grade) (§3).
+- Exposure-audit sources for Supabase, PostgREST, OWASP API 2023, ASVS V8, NIST, Logging, Sentry: `KB § PATTERNS/security/appsec-craft-canon.md` §16.
+
 
 ## Composes-with
 
 `KB § PATTERNS/security/ai-agent-threat-model.md` (catalog) · `KB § PATTERNS/security/llm-bot-security.md` (baseline) ·
 `KB § PATTERNS/security/audits/julia-2026-11.md` (dated status) · `KB § PATTERNS/security/appsec-craft-canon.md` ·
 `KB § PATTERNS/security/incident-response-playbook.md` · `KB § GUIDES/agent-creation.md` · agent `agents-security` (owner) · agent `security`.
+
+> Access tiers (routes + tables declare platform/org/service/public; public is a closed allowlist; delta-stream + leak-fingerprint + effective-exposure gates): `KB § PATTERNS/security/access-tiers.md`.

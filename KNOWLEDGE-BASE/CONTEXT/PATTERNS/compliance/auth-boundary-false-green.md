@@ -23,7 +23,10 @@ Two codes mask the auth boundary:
   test stays green.
 
 `403` is **not** a mask (it is a second legitimate auth outcome —
-authenticated-but-forbidden), so `in (401, 403)` is not flagged.
+authenticated-but-forbidden), so `in (401, 403)` is not flagged. But a 403 test
+paired with a mask (`in (403, 404)` / `in (403, 422)`, e.g. the
+`platform_admin_required` tests of the access-tier gates) IS flagged: it passes
+when the route is absent. Assert strict `== 403` + `code == 'platform_admin_required'`.
 
 ## Canonical example
 

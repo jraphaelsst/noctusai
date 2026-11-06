@@ -126,13 +126,23 @@ class TestTelemetryAndWalls:
         rep = ga.walls_report(root, events=noisy)
         assert any(w["gate"] == "keeper:check-y" and w["demote"] for w in rep["walls"])
 
-    def test_wall_findings_are_sarif_shaped_and_deduped(self, tmp_path):
-        rep = {"walls": [{"gate": "keeper:check-x", "firings": 12, "sessions": 5, "effective_fp": 0.0, "wall": True,
-                          "demote": False, "mechanism": "", "owner": "o"}], "pending_matrix": []}
-        assert ga.file_wall_findings(rep, tmp_path)["findings_written"] == 1
-        assert ga.file_wall_findings(rep, tmp_path)["findings_written"] == 0
-        row = json.loads((tmp_path / ga.WALL_FINDINGS_REL).read_text().splitlines()[0])
-        assert row["ruleId"] == "keeper:check-x" and row["baselineState"] == "new" and row["suppressions"] == []
+    def test_gate_walls_ledger_rows_come_from_the_committed_inventory_and_reconcile(self, tmp_path):
+        from tools.noctus.dev import findings_ledger as gl
+        from tools.noctus.dev import gate_wall_findings as gw
+        inv = {"gates": {
+            "keeper:check-x": {**GOOD, "class": "wall", "firings": {"count": 50, "sessions": 9}, "remediation": "NOC-REMEDIATE[gate-wall] ship the scaffold"},
+            "keeper:check-fixed": {**GOOD, "class": "wall", "firings": {"count": 20, "sessions": 9}, "remediation": "FIXED 2026-11-05"},
+            "guard:kept": {**GOOD, "mechanism": "none (an in-line choice, nothing to scaffold)", "class": "wall", "firings": {"count": 20, "sessions": 9}},
+            "keeper:check-dem": {**GOOD, "placement": "demoted", "demoted": {"since": "2026-01-01", "expiry": "2026-02-01", "destination": "d"}}}}
+        root = _tree(tmp_path, inv, hook_flags=())
+        rows = gw.current_rows(root)
+        assert set(rows) == {"wall:keeper:check-x", "demoted:keeper:check-dem"}
+        assert rows["wall:keeper:check-x"]["severity"] == "high" and rows["wall:keeper:check-x"]["scope"] == "tooling-engineer"
+        out = gl.reconcile("gate-walls", root, found_by="test")
+        assert out["ok"] if "ok" in out else True
+        assert gl.check("gate-walls", root) == []
+        sarif = gl.export_sarif("gate-walls", root)
+        assert {r["ruleId"] for run in sarif["runs"] for r in run["results"]} <= {"wall", "demoted-expired", "matrix-pending"}
 
 
 class TestDeclare:

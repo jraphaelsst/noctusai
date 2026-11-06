@@ -63,12 +63,14 @@ REGRAS = (
     "escala_loop", "injecao_ferramenta",
     # P1-2 / P1-3 (Julia go-live hardening): an R$ / % in a reply that no tool or lead produced; the deterministic STOP
     "valor_sem_ferramenta", "opt_out_palavras",
+    # a raw ``{{…}}`` / ``[dado: …]`` in a reply (a spec that never resolved): structural, always on
+    "placeholder_cru",
 )
 #: The detectors that block by default: a reply that leaks the prompt or carries an unvetted link, contact,
 #: identity number, encoded/structured payload or a forbidden pattern never reaches the lead.
 DETECTORES_BLOQUEANTES = (
     "vazamento_prompt", "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito",
-    "padroes_proibidos", "valor_sem_ferramenta",
+    "padroes_proibidos", "valor_sem_ferramenta", "placeholder_cru",
 )
 #: SECURITY-class rules: switching one off (or loosening it) opens an attack path, so only a HUMAN platform admin may
 #: change them -- never the ``studio:content-write`` token (the MCP path) that an agent or a leaked secret can hold.
@@ -122,7 +124,9 @@ PISO_DE_PADROES: dict[str, tuple[str, ...]] = {
 }
 #: Exact (normalised) messages that opt the lead out WITHOUT the model (P1-3); ``opt_out_palavras.parametros.palavras``
 #: extends it.
-PALAVRAS_PARAR_PISO: tuple[str, ...] = ("parar", "sair", "stop", "cancelar", "nao quero mais")
+PALAVRAS_PARAR_PISO: tuple[str, ...] = (
+    "parar", "sair", "stop", "cancelar", "nao quero mais", "pare", "para", "parem", "sai", "chega",
+)
 
 
 def aplicar_piso(regras: dict[str, "RegraConfig"]) -> dict[str, "RegraConfig"]:

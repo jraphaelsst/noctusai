@@ -81,6 +81,8 @@ def register_all(server) -> None:
     from . import knowledge_bundle_export
     from . import build_scope
     from . import product_scope
+    from . import access_tiers
+    from . import findings_ledger
     from . import spa_smoke
     from . import latency_report
     from . import perf_probe
@@ -245,6 +247,8 @@ def register_all(server) -> None:
     knowledge_bundle_export.register(server)
     build_scope.register(server)
     product_scope.register(server)
+    access_tiers.register(server)
+    findings_ledger.register(server)
     spa_smoke.register(server)
     latency_report.register(server)
     perf_probe.register(server)

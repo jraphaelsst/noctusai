@@ -90,6 +90,24 @@
     "note": "Hosts trivy-fs/bandit SARIF; their findings should flow to the shared ledger (SARIF) - access-tiers owns the mapping."
    }
   },
+  "guard:access-tier": {
+   "severity": "",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ],
+   "standard": "",
+   "mechanism": "api:noctusai_lib.api.access_tiers · KB § PATTERNS/security/access-tiers.md",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 2,
+    "sessions": 1
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
   "guard:executor-dispatch": {
    "severity": "",
    "kind": "guard",
@@ -212,6 +230,78 @@
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
    "remediation": "NOC-REMEDIATE[gate-wall]: construction leg missing; owner to ship (see pattern wall table)"
+  },
+  "keeper:check-access-tier-fingerprint": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper: every prompt-derived source (compiled text, textos, tool descriptions, decisions, skill bodies/files) is a leak-fingerprint source at the texto_fonte_do_prompt seam, and every agent tool is classified prompt-derived or not.",
+   "mechanism": "api:texto_fonte_do_prompt seam (channels/conformidade.py)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-access-tier-routes": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper (access tiers, owner directive 2026-11-05): every route of every ACTIVE product resolves to a tier (platform|service|org|public) and Platform IP (studio/agents definitions, evals, prompts, admin) never sits behind a weaker d",
+   "mechanism": "api:noctusai_lib.api.access_tiers (DEP_TIERS, @access_tier, make_router(tier=)) · guard:access-tier at write time",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-access-tier-streams": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper: a route publishing message.delta-style partial LLM output to a browser must pass it through the leak filter (FiltroDeltas). Ratcheted. KB § PATTERNS/security/access-tiers.md.",
+   "mechanism": "api:FiltroDeltas leak filter (LEAK_FILTER_NAMES)",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-access-tier-tables": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper: a Platform-IP table has no authenticated/anon grant and no non-admin TO authenticated policy in the migration chain (PostgREST exposure counts); with --paths (staged ADDED migrations) every new table must declare COMMENT ON",
+   "mechanism": "tool:scaffold_migration (tier comment + explicit REVOKE) · guard:access-tier at write time",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
   },
   "keeper:check-agent-archetype-contract": {
    "severity": "high",
@@ -779,6 +869,42 @@
    },
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-findings-ledger-visibility": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "Backstop: the findings-injection hook is registered for SessionStart + SubagentStart and every registered ledger is on the roster it reads (visibility is injected by construction; nobody should hit this).",
+   "mechanism": "injection: scripts/hooks/claude-inject-open-findings.py (SessionStart + SubagentStart)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
+  },
+  "keeper:check-findings-ledgers": {
+   "severity": "",
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit"
+   ],
+   "standard": "BLOCKING keeper over EVERY registered living findings ledger (access-tier, Julia's mistakes, ...): a status that disagrees with the latest scan fails (new finding without a row, a row marked fixed that is still seen, an open row no longer s",
+   "mechanism": "tool:findings_ledger (reconcile is the only writer; scanners decide what is still real)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "firings": {
+    "count": 0,
+    "sessions": 0
+   },
+   "class": "new (unmeasured)",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "note": "landed by feat/access-tiers-gate; no firing history yet"
   },
   "keeper:check-frontend-config-paths": {
    "severity": "critical",
@@ -1499,7 +1625,8 @@
    "api_review": {
     "verdict": "gap",
     "note": "Scoped to agents migrations >=036 only: other PostgREST-exposed schemas are unscanned. Subsume into the D4 DB-defaults keeper (access-tiers), then retire this one."
-   }
+   },
+   "retire": "NOC-REMEDIATE[gate-retire]: superseded by keeper:check-access-tier-tables; alias period then remove"
   },
   "keeper:check-no-direct-llm-sdk-import": {
    "severity": "",
@@ -2397,7 +2524,7 @@
     "compliance.py sweep"
    ],
    "standard": "standard routers mounted per product",
-   "mechanism": "",
+   "mechanism": "api:create_product_app standard_routers opt-in (seed)",
    "owner": "backend-engineer",
    "placement": "warn",
    "firings": {
@@ -2586,7 +2713,7 @@
     "compliance.py sweep"
    ],
    "standard": "auth-boundary tests must not pair 401 with a maskable code (404/422)",
-   "mechanism": "",
+   "mechanism": "api:assert_tier_contract (generated strict 401/403 for every documented route) - this gate guards the remaining HAND-WRITTEN assertions",
    "owner": "backend-engineer",
    "placement": "warn",
    "firings": {
@@ -2594,11 +2721,18 @@
     "sessions": 0
    },
    "class": "unmeasured",
-   "telemetry": "NONE yet",
+   "telemetry": "cli exit wrapper",
    "finding": "route-auth keeper is WARNING severity = advisory only; re-judged in api_review (access-tiers owns the tier-aware replacement)",
    "api_review": {
     "verdict": "overlap",
     "note": "Hand-written auth assertions; the schema-driven contract test (access-tiers) generates strict 401/403 for EVERY documented route. Narrow this to the remaining hand-written tests once it lands; one property, one gate."
+   },
+   "shadow": {
+    "since": "2026-11-05",
+    "fires": 2,
+    "true_positives": 2,
+    "effective_fp": 0.0,
+    "promote_when": ">=5 findings over >=7 days with 0 effective FP"
    }
   },
   "keeper:check-auth-dep-anti-pattern": {
@@ -2608,7 +2742,7 @@
     "compliance.py sweep"
    ],
    "standard": "route auth dependency anti-patterns",
-   "mechanism": "",
+   "mechanism": "api:make_get_current_user_org factory (KB § PATTERNS/backend/backend.md Auth canonical pattern)",
    "owner": "backend-engineer",
    "placement": "warn",
    "firings": {
@@ -2628,48 +2762,50 @@
   {
    "id": "D1",
    "decision": "Access tiers on every route and table, platform-wide, default deny. Route construction = `make_router(tier=)` over FastAPI APIRouter `dependencies=` (framework-native; to be MEASURED against alternatives)",
-   "home": "KB access-tiers pattern + §1 Gate line (access-tiers)",
-   "construction": "make_router(tier=) factory; bare route decorator restricted",
-   "gate": "pending:feat/access-tiers-gate (access-tier keepers)",
-   "telemetry": "pending:feat/access-tiers-gate",
+   "home": "KB § PATTERNS/security/access-tiers.md",
+   "construction": "api:noctusai_lib.api.access_tiers (DEP_TIERS, @access_tier, make_router(tier=)); seed example routers gated",
+   "gate": "keeper:check-access-tier-routes + guard:access-tier (write time)",
+   "telemetry": "gate events (cli wrapper, guard-events) + access-tier ledger",
    "branch": "feat/access-tiers-gate",
    "gates": [
-    "pending:feat/access-tiers-gate"
+    "keeper:check-access-tier-routes",
+    "guard:access-tier"
    ]
   },
   {
    "id": "D2",
    "decision": "Closed public allowlist (landing+nav, login/signup/reset, pricing/checkout/thank-you w/o PII sans one-time token, legal/consent, lead forms); webhooks/OAuth callbacks/health in a service/signed tier",
-   "home": "KB access-tiers pattern",
-   "construction": "public allowlist is the only way to declare a public route",
-   "gate": "pending:feat/access-tiers-gate",
-   "telemetry": "pending:feat/access-tiers-gate",
+   "home": "KB § PATTERNS/security/access-tiers.md",
+   "construction": "closed PUBLIC_CATEGORIES allowlist in noctusai_lib.api.access_tiers (landing, auth, pricing-checkout, legal-consent, lead-capture); webhooks/OAuth/health in the signed tier",
+   "gate": "keeper:check-access-tier-routes (admin-looking path behind org/public; unclear)",
+   "telemetry": "gate events + access-tier ledger",
    "branch": "feat/access-tiers-gate",
    "gates": [
-    "pending:feat/access-tiers-gate"
+    "keeper:check-access-tier-routes"
    ]
   },
   {
    "id": "D3",
    "decision": "/docs and /openapi.json are not public in prod",
-   "home": "KB access-tiers pattern",
-   "construction": "seed app factory disables docs outside dev",
-   "gate": "pending:feat/access-tiers-gate",
-   "telemetry": "pending:feat/access-tiers-gate",
+   "home": "KB § PATTERNS/security/access-tiers.md (API docs are public)",
+   "construction": "make_router(tier=\"platform\") sets include_in_schema=False",
+   "gate": "keeper:check-access-tier-routes (class platform-in-public-schema) + assert_tier_contract",
+   "telemetry": "access-tier ledger (schema section)",
    "branch": "feat/access-tiers-gate",
    "gates": [
-    "pending:feat/access-tiers-gate"
+    "keeper:check-access-tier-routes"
    ]
   },
   {
    "id": "D4",
    "decision": "DB defaults: RLS on, no browser grants on non-public tables, no anon/PUBLIC read on token/secret/PII, no inactive schema in pgrst.db_schemas; scaffold emits per-table role-matrix test",
-   "home": "KB database-rls + migration-sql-security-gates",
-   "construction": "tool:scaffold_migration emits RLS + role-matrix test (access-tiers branch extends it)",
-   "gate": "keeper:check-no-authenticated-grant-on-content-tables, keeper:check-schema-wide-anon-grant, keeper:check-storage-bucket-public, keeper:check-new-org-table-rls + access-tier keepers (pending)",
-   "telemetry": "gate events via cli wrapper",
+   "home": "KB § PATTERNS/security/access-tiers.md · KB § PATTERNS/backend/database-rls.md",
+   "construction": "tool:scaffold_migration (tier comment + explicit REVOKE, no browser GRANT by default)",
+   "gate": "keeper:check-access-tier-tables + existing grant/RLS/bucket keepers",
+   "telemetry": "gate events + access-tier ledger",
    "branch": "feat/access-tiers-gate",
    "gates": [
+    "keeper:check-access-tier-tables",
     "keeper:check-no-authenticated-grant-on-content-tables",
     "keeper:check-schema-wide-anon-grant",
     "keeper:check-new-org-table-rls"
@@ -2678,37 +2814,37 @@
   {
    "id": "D5",
    "decision": "Effective-state production check = Supabase advisor (candidate, to be MEASURED) + our own SQL, scheduled and pre-deploy",
-   "home": "KB access-tiers pattern",
-   "construction": "tool: effective-state check (access-tiers branch)",
-   "gate": "pending:feat/access-tiers-gate",
-   "telemetry": "pending:feat/access-tiers-gate",
+   "home": "KB § PATTERNS/security/access-tiers.md",
+   "construction": "tool:noctus.dev.access_tier_exposure (read-only effective-state queries diffed against declared tiers); Supabase advisor = candidate to MEASURE (decision record in the access-tiers pattern)",
+   "gate": "keeper:check-findings-ledgers (drift is a ledger row; unmeasured is never green); noc-daily-ops step 2b",
+   "telemetry": "access-tier ledger metrics snapshot",
    "branch": "feat/access-tiers-gate",
    "gates": [
-    "pending:feat/access-tiers-gate"
+    "keeper:check-findings-ledgers"
    ]
   },
   {
    "id": "D6",
    "decision": "One shared living findings ledger exported as SARIF 2.1.0 (candidate standard format, to be MEASURED against the home-grown shape) uploaded to code scanning; baselineState reconcile; suppressions with justification+owner+expiry",
-   "home": "KB findings-ledger pattern",
-   "construction": "noctus.dev.findings_ledger (single writer)",
-   "gate": "pending:feat/access-tiers-gate",
-   "telemetry": "gate wall findings already emitted as SARIF results (gate_alignment.file_wall_findings)",
+   "home": "KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "tool:findings_ledger (single writer; export_sarif = SARIF 2.1.0)",
+   "gate": "keeper:check-findings-ledgers",
+   "telemetry": "ledger metrics; gate-walls ledger plugs in the same way",
    "branch": "feat/access-tiers-gate",
    "gates": [
-    "pending:feat/access-tiers-gate"
+    "keeper:check-findings-ledgers"
    ]
   },
   {
    "id": "D7",
    "decision": "Ledger visibility injected at agent start and dispatch and in every template",
-   "home": "KB findings-ledger pattern",
-   "construction": "SessionStart/dispatch injection + templates",
-   "gate": "pending:feat/access-tiers-gate",
-   "telemetry": "pending:feat/access-tiers-gate",
+   "home": "KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "injection: scripts/hooks/claude-inject-open-findings.py (SessionStart + SubagentStart) + ledger roster in templates",
+   "gate": "keeper:check-findings-ledger-visibility",
+   "telemetry": "gate events",
    "branch": "feat/access-tiers-gate",
    "gates": [
-    "pending:feat/access-tiers-gate"
+    "keeper:check-findings-ledger-visibility"
    ]
   },
   {
@@ -2787,8 +2923,8 @@
    "id": "D14",
    "decision": "Public-API-docs readiness: every documented route gated and protected by old+new gates with no gap and no duplicate (each property one gate)",
    "home": "KB § PATTERNS/common/gate-methodology-sync.md (matrix) + access-tiers pattern",
-   "construction": "make_router(tier=) + schema-driven contract test (pending) · old gates re-judged in `api_review`",
-   "gate": "old: auth-boundary-false-green (narrow), auth-dep-anti-pattern (require tier), standard-routers-audit, consent-routes-mounted, no-authenticated-grant (subsume), new-org-table-rls, schema-wide-anon-grant, storage-bucket-public, secdef-revokes-execute, no-metadata-authz, upload-route-body-override · new: pending:feat/access-tiers-gate (tier keeper, schema-leak keeper, contract test)",
+   "construction": "make_router(tier=) + assert_tier_contract (schema-driven) + old gates re-judged in `api_review`",
+   "gate": "old (re-judged at predicate level): auth-boundary-false-green (keep, shadow), auth-dep-anti-pattern + standard-routers-audit (functional, out of the exposure set), consent-routes-mounted, no-authenticated-grant (retire after alias), new-org-table-rls, schema-wide-anon-grant, storage-bucket-public, secdef-revokes-execute, no-metadata-authz · new: access-tier routes/tables/streams/fingerprint + guard:access-tier",
    "telemetry": "gate events (cli wrapper) · `api_review` verdicts in the inventory",
    "branch": "feat/gate-alignment (old-gate review) + feat/access-tiers-gate (new)",
    "gates": [
@@ -2796,7 +2932,9 @@
     "keeper:check-consent-routes-mounted",
     "keeper:check-schema-wide-anon-grant",
     "keeper:check-storage-bucket-public",
-    "pending:feat/access-tiers-gate"
+    "keeper:check-access-tier-routes",
+    "keeper:check-access-tier-tables",
+    "guard:access-tier"
    ]
   },
   {
@@ -2809,6 +2947,18 @@
    "branch": "feat/gate-alignment",
    "gates": [
     "keeper:check-gate-triad"
+   ]
+  },
+  {
+   "id": "D16",
+   "decision": "Gate-wall misalignment is a finding by construction: walls, expired demotions and pending matrix legs live in the shared `gate-walls` findings ledger (deterministic scanner over the committed inventory)",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop) · KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "tool:findings_ledger register_ledger (gate_wall_findings.py); noc-daily-ops / noc-hygiene run `--gate-alignment walls --file-walls`",
+   "gate": "keeper:check-findings-ledgers (covers the gate-walls ledger)",
+   "telemetry": "ledger rows + SARIF export",
+   "branch": "feat/gate-alignment",
+   "gates": [
+    "keeper:check-findings-ledgers"
    ]
   }
  ]

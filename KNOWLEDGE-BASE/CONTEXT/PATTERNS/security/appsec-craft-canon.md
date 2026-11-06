@@ -212,6 +212,13 @@ Misconfiguration · API9 Improper Inventory Management · API10 Unsafe Consumpti
 Why API1/3/5 dominate here: every product holds a **service-role client** that bypasses RLS, so the
 object-level check lives in Python, per query — exactly where it gets forgotten (§15 WE-3).
 
+### 5c-bis · Access-control requirements we audit against (read 2026-11-05)
+
+- **ASVS 5.0 V8 (Authorization):** 8.2.1 function-level access only for explicitly permitted consumers (= API5) · 8.2.2 data-item level, against IDOR/BOLA (= API1) · 8.2.3 field level (= API3 BOPLA) · 8.3.1 enforce at a trusted service layer, never in client-modifiable code · 8.3.3 decide on the ORIGINATING consumer's rights, not an intermediary's (service-role clients!) · 8.4.1 multi-tenant: an operation must not touch tenants the caller lacks rights to · 8.4.2 admin interfaces get layered protection, not "internal network" trust · 8.1.1-8.1.2 the rules for function/data/field access are DOCUMENTED (= our access-tier inventory, canon-ai §12).
+- **OWASP API 2023 prevention, in our terms:** API1 check ownership on every request that takes an object id, random ids help but never replace the check, test the authz logic · API3 return only the fields the role may see (no generic serializers), never auto-bind client input to internal objects, validate responses against a schema · API5 one authz module every function calls, deny by default, admin controllers inherit the admin check.
+- **NIST SP 800-53 r5 (OSCAL catalog, read):** AC-3 enforce approved authorizations per the access-control policy · AC-6 least privilege · AC-6.5 restrict privileged accounts · **AC-6.9 log the use of privileged functions** (so platform-admin/service-role reads of Platform IP must leave an audit trail).
+
+
 ### 5d · CWE hot list for our languages
 
 Python/FastAPI: CWE-639 (authz bypass via user-controlled key) · CWE-862/863 (missing/incorrect
@@ -356,6 +363,51 @@ PostgREST table, view, RPC function, Storage public/sign/authenticated route, se
    `noctus.dev.verify_db_guards`-style tooling against a disposable DB. Status: proposed, not built —
    name it in findings as the missing proof.
 
+10. **Exposure verdicts come from EFFECTIVE state, never from a partial migration read.** A chain of
+    migrations is a program: a later one (revoke, drop policy) overrides an earlier one. Replay the whole
+    chain on a disposable DB, or query the live grants/policies, BEFORE ranking. Reading a few migrations
+    is "inferred" at most (lesson 2026-11-05, P1-A false positive: `agents` browser grants had been revoked
+    by migration 036 while 001/012/020/031 still showed them).
+11. **Effective-state queries (read-only, run in this order):**
+    `select rolname, rolconfig from pg_roles where rolname='authenticator'` (`pgrst.db_schemas` = what is
+    exposed; PostgREST serves ONLY listed schemas, first = default, switched by `Accept-Profile` /
+    `Content-Profile`; `pg_catalog`/`information_schema` cannot be listed) ·
+    `select table_schema,table_name,grantee,privilege_type from information_schema.role_table_grants where grantee in ('anon','authenticated')` ·
+    `select schemaname,tablename,policyname,cmd,roles,qual from pg_policies` (flag `TO authenticated` with
+    an org-membership-only `qual` on a Platform-IP table: every member of any org reads it) ·
+    `pg_tables.rowsecurity=false` · views without `security_invoker` · `select id,public from storage.buckets`
+    plus `pg_policies where schemaname='storage'` · column privileges
+    (`information_schema.column_privileges`). Then the live check: customer JWT + anon key against
+    `/rest/v1/<table>` with `Accept-Profile: <schema>`; expected 401/403/empty for every Platform-IP table.
+12. **PostgREST role model (read):** `authenticator` logs in with minimal rights and does `SET LOCAL ROLE`
+    to the JWT `role` claim (or `anon` when absent); authorization is the database's job, so a table
+    grant is an API decision. Keep `authenticator` NOINHERIT, and grant it only the roles it must impersonate.
+13. **Data API surface (Supabase "Securing your API", read):** put the intended API in a dedicated schema
+    and keep internals unexposed; if no client uses REST/GraphQL, turn the Data API off; turn off
+    "Automatically expose new tables" so new objects carry no default grants (functions still get EXECUTE
+    via PUBLIC, revoke separately); RLS does not cover functions, so every callable function needs its own
+    EXECUTE decision. The page does not say whether new projects may opt out of schema exposure; check the
+    project setting instead of assuming.
+14. **RPC and GraphQL are separate doors.** `SECURITY DEFINER` functions in an exposed schema are callable
+    via `/rest/v1/rpc/<fn>` by anyone holding EXECUTE (default PUBLIC): list with
+    `select p.proname, p.prosecdef, has_function_privilege('anon',p.oid,'execute'), has_function_privilege('authenticated',p.oid,'execute') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname = any(<exposed schemas>)`.
+    If `pg_graphql` is installed (`select extname from pg_extension`), `/graphql/v1` introspection exposes
+    the same tables: audit it as a second read path (grants decide, not the route).
+15. **Column privileges** narrow what RLS cannot (RLS is row-only). Supabase calls them advanced and
+    recommends policies first; caveats: a table-level grant still wins over a column revoke, and `select *`
+    fails for restricted roles. For secret columns prefer "no browser grant on the table".
+16. **Storage (read):** public buckets need no policy and are world-readable (our rule: never public);
+    private buckets are closed until `storage.objects` policies open them; upsert needs SELECT+UPDATE too;
+    scope by bucket/path/user id; listing needs its own care (operation-aware SELECT).
+17. **Run the Supabase advisors** (`get_advisors` type=security via the Supabase MCP, or the dashboard
+    linter) as a cheap cross-check on every exposure audit: it flags RLS-off tables, SECURITY DEFINER
+    views, mutable search_path, exposed auth users. It is a floor, not the verdict (rule 10).
+18. **Platform IP is a data class.** Agent prompts, sections, skills, tool descriptions, evals, compiled
+    prompts, canaries and runtime config are platform-admin or service-role only; classify by access tier
+    (platform / org / public / service, default deny — `KB § PATTERNS/security/ai-agent-security-canon.md` §12 step 1;
+    pattern `access-tiers` lands with `feat/access-tiers-gate`).
+
+
 **Anti-patterns.** Approving "17 org-scoped policies" on a public bucket. A view added for a dashboard
 with a default `GRANT SELECT TO authenticated`. Fixing RLS recursion by switching the endpoint to service
 role.
@@ -453,6 +505,16 @@ fleet). Rotating a secret without searching where the old one went.
   `noctus.vps.exec` hard-deny + read-allowlist + confirm gate (`mcp/noctusai/tools/noctus/dev/vps_exec.py:1-20`).
 
 ---
+
+### 11b · Browser and network exposure (what a stranger sees in devtools)
+
+Source: OWASP API3 (excessive data in responses), LLM07 (the prompt is not a secret), our 2026-11-05 audit.
+1. **Which routes return Platform IP, and which SPA pages fetch them** (`grep` the route in
+   `products/*/frontend` and `lib`): a page that fetches a prompt hands it to every viewer, whatever the UI hides.
+2. **Bundles:** `curl -s https://<host>/ | grep -oE 'assets/[^"]+\.js'`; per asset `curl -s <asset> | grep -c sourceMappingURL`
+   (prod must be 0) and `curl -sI <asset>.map` (expect 404). Grep bundles for known prompt phrases and canary tokens; nothing sensitive in `VITE_*`.
+3. **Error bodies:** force 401/403/404/422/500 on a route sample; bodies carry no stack, SQL, table or file names, config.
+
 
 ## 12 · Security testing
 
@@ -596,6 +658,17 @@ again while authoring.
 - Aqua, Trivy supply chain attack — https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know — CVE-2026-33634, pin by SHA (audit-verified).
 - SLSA build levels — https://slsa.dev/spec/v1.0/levels — provenance target (audit-verified).
 - Res. CD/ANPD 15/2024 (text) — https://www.legisweb.com.br/legislacao/?id=458235 — art. 5 relevance criteria used by the LGPD multiplier (fetched; secondary host of the DOU text).
+- Supabase, Securing your API — https://supabase.com/docs/guides/api/securing-your-api — READ 2026-11-05: dedicated API schema, Data API off switch, no auto-exposure of new tables, EXECUTE-via-PUBLIC trap, RLS does not cover functions (§8 rule 13).
+- Supabase, column-level security — https://supabase.com/docs/guides/database/postgres/column-level-security — READ: row-only RLS vs column privileges, table-grant-wins and `select *` caveats (rule 15).
+- Supabase, Storage access control — https://supabase.com/docs/guides/storage/security/access-control — READ: public buckets need no policy, private are deny-by-default, upsert needs SELECT+UPDATE (rule 16).
+- PostgREST, schemas — https://docs.postgrest.org/en/stable/references/api/schemas.html (read via the repo source, the site returned 429) — `db-schemas`, `Accept-Profile`/`Content-Profile`, PGRST106, catalog schemas not listable (rule 11).
+- PostgREST, authentication — same host, `references/auth` (read via the PostgREST repo docs source, auth reference) — authenticator/anon/user roles, `SET LOCAL ROLE` impersonation (rule 12).
+- OWASP API Security 2023 API1/API3/API5 pages — https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization (and 0xa3, 0xa5) — READ: prevention lists summarised in §5c-bis.
+- OWASP ASVS 5.0 V8 Authorization — https://github.com/OWASP/ASVS/blob/master/5.0/en/0x17-V8-Authorization.md — READ: requirement ids 8.1.x-8.4.x in §5c-bis.
+- NIST SP 800-53 r5 OSCAL catalog — https://github.com/usnistgov/oscal-content (SP800-53 rev5 JSON) — READ: AC-3, AC-6, AC-6.5, AC-6.9 statements (§5c-bis).
+- OWASP Logging Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html — READ: tokens, session ids, connection strings, keys, sensitive PII must be removed/masked/hashed before logging (checklist §10).
+- Sentry, scrubbing sensitive data — https://docs.sentry.io/security-legal-pii/scrubbing/ — READ: documents server-side/advanced scrubbing only; SDK-side `before_send`/`send_default_pii` live in the SDK docs (NOT read; verify when auditing telemetry).
+
 
 ## Composes-with
 
@@ -604,3 +677,5 @@ again while authoring.
 `KB § PATTERNS/security/ai-agent-security-canon.md` (agents-security) · `KB § PATTERNS/backend/database-rls.md` ·
 `KB § PATTERNS/backend/no-metadata-authz.md` · `KB § PATTERNS/compliance/auth-boundary-false-green.md` ·
 `KB § PATTERNS/devops/ci-security-gates.md` · agent `security` (owner).
+
+> Access tiers (routes + tables declare platform/org/service/public; public is a closed allowlist; delta-stream + leak-fingerprint + effective-exposure gates): `KB § PATTERNS/security/access-tiers.md`.

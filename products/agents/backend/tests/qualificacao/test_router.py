@@ -8,7 +8,8 @@ from uuid import UUID, uuid4
 import pytest
 from cryptography.fernet import Fernet
 
-from app.dependencies import get_auth_context
+from app.dependencies import get_auth_context, get_grant_store_dep
+from app.grants.store import FakeGrantStore, Grant
 from app.qualificacao.lead_store import FakeLeadQualificacaoStore
 from app.qualificacao.service import ItemPerfil, QualificacaoService
 from app.qualificacao.store import FakePadraoStore
@@ -249,12 +250,23 @@ def test_strict_bodies_and_key_shapes(qc):
 
 # ── GET /api/channels/leads/{ref}/qualificacao ──────────────────────────────
 
+_GRANTS = FakeGrantStore()
+
+
 def _channel_auth(scopes, org=DEFAULT_ORG_ID, issuer="social-wiring"):
+    """A channel token of ``AGENTE`` in ``org`` whose grant is live (the request-time liveness check reads ``_GRANTS``)."""
     from app.main import app
 
+    _GRANTS._rows.clear()
+    row = Grant(
+        id=uuid4(), org_id=org, agent_id=AGENTE, agent_key="julia", product="social-wiring", status="ativo",
+        channel_token_id=UUID(int=9),
+    )
+    _GRANTS._rows[row.id] = row
+    app.dependency_overrides[get_grant_store_dep] = lambda: _GRANTS
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         org_id=org, caller_kind="product", user_id=None, scopes=list(scopes), raw_token="t",
-        api_token_id=UUID(int=9), issuer=issuer,
+        api_token_id=UUID(int=9), issuer=issuer, principal_agent_id=AGENTE,
     )
 
 
@@ -264,6 +276,7 @@ def chan_auth():
 
     yield _channel_auth
     app.dependency_overrides.pop(get_auth_context, None)
+    app.dependency_overrides.pop(get_grant_store_dep, None)
 
 
 def _seed_lead(qc, org=DEFAULT_ORG_ID):

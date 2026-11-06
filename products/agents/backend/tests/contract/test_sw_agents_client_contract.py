@@ -69,6 +69,7 @@ def wired(chan):  # noqa: F811
         expires_at=None, principal_agent_id=agent.id, issuer="social-wiring",
     )
     token = minted.secret
+    chan.seed_grant(token_id=minted.info.id, org_id=chan.org_id, agent_id=agent.id, status="ativo")  # the grant the token was minted for
     resolver = SupabaseApiTokenResolver(
         MockSupabaseClient(list(chan.token_admin.rows["agents"]), schema="agents"), schema="agents"
     )

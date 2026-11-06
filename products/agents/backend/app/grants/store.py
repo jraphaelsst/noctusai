@@ -33,7 +33,7 @@ LIVE_STATUSES = ("pendente", "ativo")
 STALE_PENDING = timedelta(minutes=15)
 _COLUMNS = (
     "id, org_id, agent_id, agent_key, product, status, channel_token_id, product_token_id, expires_at, "
-    "created_by, created_at, revoked_by, revoked_at, last_delivered_at, last_error"
+    "created_by, created_at, revoked_by, revoked_at, last_delivered_at, last_error, especificacoes_editor"
 )
 
 
@@ -58,6 +58,14 @@ class Grant:
     revoked_at: datetime | None = None
     last_delivered_at: datetime | None = None
     last_error: str | None = None
+    #: Who fills the org's agent specs under this grant (migration 064): ``plataforma`` (staff, Studio) | ``org`` (reserved).
+    especificacoes_editor: str = "plataforma"
+
+    def is_live(self, now: datetime | None = None) -> bool:
+        """The grant authorizes anything only while ``ativo`` and not expired (NULL expiry = never)."""
+        if self.status != "ativo":
+            return False
+        return self.expires_at is None or self.expires_at > (now or utcnow())
 
 
 class GrantStore(Protocol):
@@ -67,6 +75,10 @@ class GrantStore(Protocol):
 
     def get(self, grant_id: UUID) -> Grant:
         """Raises :class:`NotFound`."""
+        ...
+
+    def find_by_channel_token(self, channel_token_id: UUID) -> Grant | None:
+        """The grant whose CHANNEL token this is (the request-time liveness check), or ``None``."""
         ...
 
     def begin(
@@ -105,7 +117,7 @@ def _row_grant(row: dict[str, Any]) -> Grant:
         expires_at=db_ts(row.get("expires_at")), created_by=_uuid(row.get("created_by")),
         created_at=db_ts(row.get("created_at")), revoked_by=_uuid(row.get("revoked_by")),
         revoked_at=db_ts(row.get("revoked_at")), last_delivered_at=db_ts(row.get("last_delivered_at")),
-        last_error=row.get("last_error"),
+        last_error=row.get("last_error"), especificacoes_editor=row.get("especificacoes_editor") or "plataforma",
     )
 
 
@@ -126,6 +138,9 @@ class FakeGrantStore:
             return self._rows[grant_id]
         except KeyError as exc:
             raise NotFound(f"grant {grant_id}") from exc
+
+    def find_by_channel_token(self, channel_token_id: UUID) -> Grant | None:
+        return next((g for g in self._rows.values() if g.channel_token_id == channel_token_id), None)
 
     def begin(self, *, org_id, agent_id, agent_key, product, expires_at, created_by) -> Grant:
         now = utcnow()
@@ -183,6 +198,10 @@ class SupabaseGrantStore:
 
     def get(self, grant_id: UUID) -> Grant:
         return self._one(self._t().select(_COLUMNS).eq("id", str(grant_id)).limit(1))
+
+    def find_by_channel_token(self, channel_token_id: UUID) -> Grant | None:
+        rows = self._t().select(_COLUMNS).eq("channel_token_id", str(channel_token_id)).limit(1).execute().data or []
+        return _row_grant(rows[0]) if rows else None
 
     def begin(self, *, org_id, agent_id, agent_key, product, expires_at, created_by) -> Grant:
         from app.stores._db_errors import StudioConflict, exec_query

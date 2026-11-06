@@ -32,6 +32,7 @@ from app.routers.studio_agents_router import (
     get_studio_definition_store_dep,
     router as studio_agents_router,
 )
+from app.routers.plataforma_org_specs_router import router as plataforma_org_specs_router
 from app.routers.studio_clients_router import router as studio_clients_router
 from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_evals_router import router as studio_evals_router
@@ -44,7 +45,9 @@ from app.routers.studio_ui_router import router as studio_ui_router
 from app.routers.qualificacao_router import get_padrao_store_dep
 from app.qualificacao.store import FakePadraoStore
 from app.stores.conformidade import FakeConformidadeStore
-from app.dependencies import get_conformidade_store_dep
+from app.dependencies import get_conformidade_store_dep, get_grant_store_dep, get_org_directory_dep
+from app.grants.orgs import FakeOrgDirectory
+from app.grants.store import FakeGrantStore
 from app.studio import bundles as studio_bundles
 from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.studio.models import FakeEvalGate, FakeKnowledgeCatalog
@@ -70,6 +73,9 @@ class StudioHarness:
         #: the qualification standards (A-RT2): a platform definition publishes only with a published standard
         self.padroes = FakePadraoStore()
         self.conformidade = FakeConformidadeStore()
+        #: the product grants + the org directory the staff org-specs picker reads
+        self.grants = FakeGrantStore()
+        self.orgs = FakeOrgDirectory()
         self.org_id = DEFAULT_ORG_ID
         self.user_id = DEFAULT_USER_ID
 
@@ -121,6 +127,7 @@ def _build_app() -> FastAPI:
     app.include_router(studio_agents_router)
     app.include_router(studio_clients_router)
     app.include_router(studio_conteudo_router)
+    app.include_router(plataforma_org_specs_router)
     app.include_router(studio_geracoes_router)
     app.include_router(studio_prontidao_router)
     app.include_router(skills_biblioteca_router)
@@ -144,6 +151,8 @@ def studio(client) -> StudioHarness:
     app.dependency_overrides[get_knowledge_catalog_dep] = lambda: harness.catalog
     app.dependency_overrides[get_padrao_store_dep] = lambda: harness.padroes
     app.dependency_overrides[get_conformidade_store_dep] = lambda: harness.conformidade
+    app.dependency_overrides[get_grant_store_dep] = lambda: harness.grants
+    app.dependency_overrides[get_org_directory_dep] = lambda: harness.orgs
     from tests.channels.julia_v2 import publicar_padrao
 
     harness.padrao_versao_id = publicar_padrao(harness.padroes)

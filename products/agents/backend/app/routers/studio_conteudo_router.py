@@ -405,13 +405,15 @@ def ler_org_specs(store, ctx: AuthContext, key: str, config: ConfigValidacao) ->
 
 def aplicar_org_specs(
     store, ctx: AuthContext, key: str, valores: dict[str, str], config: ConfigValidacao, *, ator: AtorAtestado | None = None,
+    origem: dict[str, Any] | None = None,
 ) -> OrgSpecsOut:
     """THE org-spec write path (Julia-line CONTRACT §E2): the studio PUT and the channel/SW PUT both land
     here, so the declared-keys rule, :func:`validar_specs`, the report/block rollout and the audit never fork.
 
     ``ator`` is the PRODUCT-ATTESTED person (channel path only; the channel token vouches for it). The row's
     ``updated_by`` is that person and ``updated_by_token`` the channel token; the studio path records the signed-in
-    human and no token. The audit carries both."""
+    human and no token. The audit carries both. ``origem`` (platform-staff path) is merged into the audit's ``depois``
+    (who acted on whose behalf); the row's ``updated_by`` stays the acting human either way."""
     payload = OrgSpecsUpdateRequest(valores=valores)
     agent = resolve_agent(store, ctx.org_id, key, allow_instancia=True)
     if agent.definition_scope == "instancia":
@@ -457,6 +459,10 @@ def aplicar_org_specs(
     if ator:
         depois["token_id"] = str(ctx.api_token_id)
         depois["ator"] = {k: v for k, v in (("user_id", str(ator.user_id)), ("nome", ator.nome), ("email", ator.email)) if v}
+    if origem:
+        depois.update(origem)
+        # the diff by KEY (values are the org's business data, not audit payload): which declared keys changed
+        depois["chaves_alteradas"] = sorted(c for c, v in res.valores.items() if antes_valores.get(c) != v)
     store.append_audit(
         ctx.org_id, agent.id, ator.user_id if ator else actor_id(ctx), "specs_org_editadas",
         {"chaves": sorted(antes)}, depois,

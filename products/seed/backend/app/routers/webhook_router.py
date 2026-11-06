@@ -46,7 +46,8 @@ See ``KB § PATTERNS/webhook-signatures.md`` for the full pattern doc.
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import HTTPException, Request
+from noctusai_lib.api.access_tiers import make_router
 
 from noctusai_lib.security.webhook_signatures import (
     ResolvedSecret,
@@ -58,7 +59,8 @@ from app.config import settings
 from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+# Signed vendor webhook: tier service (the handler runs a signature verification via webhook_endpoint).
+router = make_router(tier="service", category="webhook", prefix="/api/webhooks", tags=["webhooks"])
 
 
 async def _resolve_example_secret(request: Request, body: bytes) -> ResolvedSecret:

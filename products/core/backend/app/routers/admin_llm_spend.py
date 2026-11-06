@@ -19,6 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
+from noctusai_lib.api.access_tiers import access_tier
 from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
@@ -99,6 +100,7 @@ def get_spend_calculator() -> Callable[[str], Awaitable[dict]]:
 
 
 @router.get("/{org_id}")
+@access_tier("org", reason="an org owner/admin reads THEIR OWN org spend (require_spend_reader); not Platform IP")
 async def get_spend_status(
     org_id: str = Depends(require_spend_reader),
     calcular: Callable[[str], Awaitable[dict]] = Depends(get_spend_calculator),

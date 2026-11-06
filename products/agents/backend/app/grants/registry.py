@@ -49,6 +49,14 @@ class GrantProduct:
     #: Agent keys that can be granted to this product.
     agent_keys: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        # One tools scope + one stored secret per product means ONE agent per entry: a second agent's tools token must
+        # never be the first one's (a token never reaches another agent). Granting a second agent to a product = a
+        # separate entry with its OWN ``tools_scope`` / ``tools_secret_name`` (and the product's own receiver), not
+        # a longer tuple here.
+        if len(self.agent_keys) != 1:
+            raise ValueError(f"grant product {self.slug!r}: exactly one agent per tools token config")
+
 
 GRANT_PRODUCTS: dict[str, GrantProduct] = {
     "social-wiring": GrantProduct(

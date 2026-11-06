@@ -17,7 +17,7 @@ works. This module owns (c) and the check that (a)+(c) were declared:
                      gate is declared in the inventory with a mechanism, an
                      owner, a placement and (when new) a shadow record. Legacy
                      gates with no mechanism yet sit in a SHRINK-ONLY baseline.
-* `file_wall_findings` - hands walls to the findings ledger.
+* `file_wall_findings` - reconciles the `gate-walls` living findings ledger (`gate_wall_findings.py`).
 
 Stdlib-only at import (the cli wrapper imports it on every `--check-*` exit).
 KB § PATTERNS/common/gate-methodology-sync.md (Build triad · Sources).
@@ -37,7 +37,6 @@ _PATTERN_DIR = Path("KNOWLEDGE-BASE/CONTEXT/PATTERNS/common")
 INVENTORY_REL = _PATTERN_DIR / "gate-alignment-inventory.json"
 BASELINE_REL = _PATTERN_DIR / "gate-triad-baseline.json"
 RENDERED_REL = _PATTERN_DIR / "gate-alignment-inventory.md"
-WALL_FINDINGS_REL = Path(".claude/cache/gate-wall-findings.ndjson")
 
 # Tunables (Tricorder, Sadowski et al.: keep effective false positives <= ~10%).
 WALL_MIN_FIRINGS = 10          # a gate refusing this often in normal flow is a wall
@@ -439,57 +438,12 @@ def walls_report(root: Path | None = None, events: list[dict] | None = None,
             "walls": walls, "pending_matrix": pending, "ranked": rows[:25], "burn_down": burn_down(root)}
 
 
-def file_wall_findings(report: dict, root: Path | None = None) -> dict:
-    """Append one finding per wall/noisy gate to the wall-findings ndjson (dedup per day+gate).
-
-    NOC-REMEDIATE[ledger-plug]: plug into `noctus.dev.findings_ledger` once it lands from
-    `feat/access-tiers-gate`; rows are already SARIF 2.1.0 results (ruleId/baselineState/suppressions), the ledger mapping is owned by that branch.
-    """
-    root = root or REPO_ROOT
-    path = root / WALL_FINDINGS_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
-    today = _dt.date.today().isoformat()
-    seen = set()
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                r = json.loads(line)
-                seen.add((r["properties"]["date"], r["ruleId"]))
-            except (ValueError, KeyError, TypeError):
-                continue
-    wrote = 0
-    with open(path, "a", encoding="utf-8") as fh:
-        for w in report["walls"]:
-            if (today, w["gate"]) in seen:
-                continue
-            what = "noisy (effective false positives above threshold - demote to warn)" if w["demote"] \
-                else "wall (fires in normal flow - its construction leg is missing or broken)"
-            # One SARIF 2.1.0 `result` per line (OASIS): ruleId = gate id, baselineState = reconcile state,
-            # suppressions = tracked escape hatches (state + justification). Owner/numbers ride in properties.
-            fh.write(json.dumps({
-                "ruleId": w["gate"], "level": "warning", "kind": "fail",
-                "baselineState": "new",
-                "message": {"text": f"{w['gate']} is a {what}: {w['firings']} firings / {w['sessions']} sessions, "
-                                    f"effective-FP {w['effective_fp']}. Mechanism: {w['mechanism'] or 'NONE'}. "
-                                    "Ship the construction leg, re-measure (gate-methodology-sync alignment loop)."},
-                "suppressions": [],
-                "properties": {"date": today, "category": "gate-wall", "owner": w["owner"] or "tooling-engineer",
-                               "firings": w["firings"], "sessions": w["sessions"],
-                               "effective_fp": w["effective_fp"]}},
-                ensure_ascii=False) + "\n")
-            wrote += 1
-        for pm in report.get("pending_matrix", []):
-            rid = f"matrix:{pm['decision']}:{pm['leg']}"
-            if (today, rid) in seen:
-                continue
-            fh.write(json.dumps({
-                "ruleId": rid, "level": "note", "kind": "open", "baselineState": "new",
-                "message": {"text": f"Decision {pm['decision']} leg `{pm['leg']}` is {pm['pending']} - not landed yet."},
-                "suppressions": [],
-                "properties": {"date": today, "category": "matrix-pending", "owner": pm["pending"].split(":", 1)[1]}},
-                ensure_ascii=False) + "\n")
-            wrote += 1
-    return {"findings_written": wrote, "path": str(WALL_FINDINGS_REL)}
+def file_wall_findings(root: Path | None = None) -> dict:
+    """Hand walls to the shared living findings ledger (`gate-walls`, `gate_wall_findings.py`): the ledger's own
+    scanner decides what is still real, so this is a reconcile, never a hand-written row."""
+    from tools.noctus.dev import findings_ledger as gl
+    from tools.noctus.dev import gate_wall_findings  # noqa: F401  (registers the ledger)
+    return gl.reconcile("gate-walls", root or REPO_ROOT, found_by="gate_alignment")
 
 
 def render_markdown(root: Path | None = None) -> str:
@@ -551,7 +505,7 @@ def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str =
     if action == "walls":
         rep = walls_report(root)
         if file:
-            rep["filed"] = file_wall_findings(rep, root)
+            rep["filed"] = file_wall_findings(root)
         return {"ok": True, **rep}
     if action == "triad":
         issues = triad_issues(root)
