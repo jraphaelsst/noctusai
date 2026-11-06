@@ -40,6 +40,8 @@
     "060_agent_product_grants.sql": "e22ff739ba8b13a72ea96c46e6df8843ae8c9475cbe5fd96f11c22a29fb1b04f",
     "061_status_pagina_conexoes_plataforma.sql": "f3b96604f551b6230799b301b0aba74caa4e68c58eedaeb27bdf77b3b583243b",
     "062_org_specs_ator.sql": "e8e9bc4bb5601d0ac71f8c0c117c315be77211240485564a576ecfa784c265f5",
-    "063_conformidade_regras_piso.sql": "41cd5f1ff82ec1b2cf1aa9071502b92fd3c8e4c9e23ec6ea748c45f05c90d088"
+    "063_conformidade_regras_piso.sql": "41cd5f1ff82ec1b2cf1aa9071502b92fd3c8e4c9e23ec6ea748c45f05c90d088",
+    "064_agent_product_grants_especificacoes_editor.sql": "bad3bbbaabab6f9f35ff14ae4d1650ec905ede6b8770252ac880d7f89d220617",
+    "065_avaliacao_somente_no_nucleo.sql": "f16e63ff04927d76730bb0034a8a46167da52b0b2d352f3ca8398e73ded91bd4"
   }
 }

@@ -70,7 +70,7 @@ class TestTheRegistryIsSchemaInCodeWordsInRows:
         assert props["motivo_codigo"]["description"].startswith("reason code pedido_humano: asks for a person")
         assert props["motivo_codigo"]["enum"] == [
             "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
-            "seguranca", "direito_titular"]
+            "seguranca", "direito_titular", "info_indisponivel"]
         item = tools["registrar_perfil"].parameters["properties"]["itens"]
         assert item["description"] == "answers" and item["items"]["properties"]["trecho"]["description"] == "lead's words"
         for name in ("abrir_skill", "avaliar_lead", "registrar_perfil", "oferecer_imoveis", "handoff", "encerrar"):

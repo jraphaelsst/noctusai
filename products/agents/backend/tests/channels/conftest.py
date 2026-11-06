@@ -32,6 +32,7 @@ from app.dependencies import (
     SCOPE_CHANNEL_TURN,
     get_auth_context,
     get_channel_inbound_store_dep,
+    get_grant_store_dep,
     get_channel_llm_runtime_dep,
     get_channel_retention_dep,
     get_conformidade_store_dep,
@@ -45,6 +46,7 @@ from app.dependencies import (
     get_skills_factory_dep,
     get_token_audit_dep,
 )
+from app.grants.store import FakeGrantStore, Grant
 from app.notifications import FakeNotificationSink
 from app.qualificacao.ident_store import FakeIdentificacaoStore
 from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
@@ -150,6 +152,8 @@ class ChannelHarness:
         self.daily_cap_usd = 0.0
         self.token_admin = FakeProductTokenAdmin()
         self.audit = FakeTokenAudit()
+        #: the grant ledger the request-time liveness check reads (every ``as_token`` call seeds ITS token's grant)
+        self.grants = FakeGrantStore()
         self.agent: Any = None
         self.version: Any = None
 
@@ -192,14 +196,33 @@ class ChannelHarness:
         app.dependency_overrides[get_channel_llm_runtime_dep] = lambda: runtime
 
     # ── auth
+    def seed_grant(
+        self, *, token_id: UUID, org_id: UUID, agent_id: UUID | None, status: str | None, expires_at: datetime | None = None,
+        agent_key: str = "julia", product: str = "social-wiring",
+    ) -> None:
+        """The grant row THIS channel token was minted for (``status=None`` = the token has no grant at all)."""
+        for gid in [g.id for g in self.grants.list() if g.channel_token_id == token_id]:
+            del self.grants._rows[gid]
+        if status is None or agent_id is None:
+            return
+        row = Grant(
+            id=uuid4(), org_id=org_id, agent_id=agent_id, agent_key=agent_key, product=product, status=status,
+            channel_token_id=token_id, expires_at=expires_at, created_at=datetime.now(timezone.utc),
+        )
+        self.grants._rows[row.id] = row
+
     @contextmanager
     def as_token(
         self, *scopes: str, issuer: str | None = "social-wiring", principal: UUID | None | object = _MISSING,
-        org_id: UUID | None = None,
+        org_id: UUID | None = None, grant: str | None = "ativo", grant_expires_at: datetime | None = None,
     ) -> Iterator[None]:
         from app.main import app
 
         principal_id = (self.agent.id if self.agent is not None else uuid4()) if principal is _MISSING else principal
+        self.seed_grant(
+            token_id=UUID(int=9), org_id=org_id or self.org_id, agent_id=principal_id, status=grant,
+            expires_at=grant_expires_at,
+        )
         saved = app.dependency_overrides.get(get_auth_context, _MISSING)
         app.dependency_overrides[get_auth_context] = lambda: AuthContext(
             org_id=org_id or self.org_id, caller_kind="product", user_id=None, scopes=list(scopes or BOTH),
@@ -251,6 +274,7 @@ def chan(rt):
         get_org_llm_key_resolver_dep: lambda: (lambda provider, org: h.keys.get((provider, org))),
         get_product_token_admin_dep: lambda: h.token_admin,
         get_token_audit_dep: lambda: h.audit,
+        get_grant_store_dep: lambda: h.grants,
     }
     saved = {k: app.dependency_overrides.get(k, _MISSING) for k in (*bindings, get_channel_llm_runtime_dep, get_llm_runtime_dep)}
     app.dependency_overrides.update(bindings)

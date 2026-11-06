@@ -75,6 +75,21 @@ jobs:
         run: |
           git config user.name "noctus-merge-queue"
           git config user.email "noctus-merge-queue@users.noreply.github.com"
+      # The merge drivers .gitattributes names (kb-counts, lgpd-warnings) are
+      # per-repo git CONFIG, never committed: without registering them here the
+      # drain's merge/rebase text-merges the derived kb-counts blocks and ejects
+      # every parallel entry on a 02-LANDSCAPE.md conflict (2026-11-05). The
+      # kb-counts driver re-renders via cli.py, so the toolkit deps are needed.
+      # KB § PATTERNS/common/auto-generated-merge-drivers.md
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: mcp/noctusai/requirements.txt
+      - name: Install toolkit deps (merge drivers re-render via cli.py)
+        run: (cd mcp/noctusai && pip install -r requirements.txt)
+      - name: Register merge drivers
+        run: bash scripts/hooks/register-merge-drivers.sh "$GITHUB_WORKSPACE"
       - name: Drain
         env:
           GH_TOKEN: ${{ github.token }}

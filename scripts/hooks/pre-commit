@@ -399,6 +399,16 @@ if [[ -n "$STAGED_ALL" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-ter. merge drivers registered in CI (blocking, only when touched) ──
+# Keeper `check_merge_drivers_registered_in_ci`: .gitattributes names the
+# drivers, register-merge-drivers.sh defines them, merge-queue.yml must run it.
+if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/register-merge-drivers\.sh|\.github/workflows/merge-queue\.yml),'; then
+    if ! "$PY" "$CLI" --check-merge-drivers-registered-in-ci; then
+        echo "[pre-commit] merge-drivers-registered-in-ci FAILED. Commit aborted." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6b-quater. conftest env ownership (blocking, only when a conftest is ──
 # staged) ─────────────────────────────────────────────────────────────────
 # Keeper `check_conftest_env_setdefault`. `os.environ.setdefault` in a conftest

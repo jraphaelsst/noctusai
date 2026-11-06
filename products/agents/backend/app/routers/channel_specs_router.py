@@ -37,7 +37,12 @@ def get_channel_specs_write_enabled_dep() -> bool:
     not by a channel token. Re-enabling the SW write is flipping this one value (``aplicar_org_specs`` and the ``ator``
     plumbing stay). A DI seam so a test can open it without patching the route.
 
-    NOC-REMEDIATE[channel-specs-write]: return True when social-wiring may edit its org's specs again (S9).
+    The sanctioned staff path for ANY company (incl. orgs with no agents license) is
+    ``PUT /api/studio/plataforma/agents/{key}/orgs/{org_id}/specs`` (platform admin, audited with the real actor;
+    ``app.routers.plataforma_org_specs_router``). SW stays read-only on this route.
+
+    NOC-REMEDIATE[channel-specs-write]: return True when social-wiring may edit its org's specs again (S9) -- the
+    staff route above is the supported way until then.
     """
     return False
 

@@ -120,8 +120,14 @@ Audit EVERY door below for EVERY secret/data class; "hidden in the UI" is not a 
 | Webhooks and outbound calls | Secrets only in headers to pinned hosts; media downloads host-pinned (the key never goes to a lead-controlled URL); no redirects | SW:`media_service.py`, `julia_transporte.py`; connection base_url server-derived (IP) |
 | Dev tooling and agent transcripts (MCP tools, CLI output, scratchpad, PR text) | **Every connector tool result passes `_kit.redact.redact_secret_fields` before it reaches a model** (2026-11-04: `waha.session.get` returned `hmac.key` in clear into a session transcript; the key must be rotated); scratchpad files never committed; secrets scan keeper on commits | `mcp/_kit/redact.py` + `bootstrap.run_stdio_server`; the `noctusai` FastMCP server does not use this bootstrap yet — follow-up |
 | Git and builds | Secret-scan keeper (incl. `noc_` rule); `.env*` ignored; no secret baked into images or SPA bundles | seed secrets scan, `spa_smoke` |
-| Studio / admin surfaces | Compiled prompt, prompt-by-hash, eval transcripts: platform-admin only; tenant org admins get a strict 403 on agent internals | A:`studio_conteudo_router.py` (writes platform-only, IP) |
+| Studio / admin surfaces | Compiled prompt, prompt-by-hash, eval transcripts and eval-run results: platform-admin only (reads AND writes; any tenant member, owner/admin included, gets a strict 403); the `agents` definition/eval/knowledge tables are service-role only at the DB (migration 036, replay-tested), so PostgREST cannot bypass the API; streamed `message.delta` is released only behind the leak guard (`FiltroDeltas`) | A:`studio_conteudo_router.py` (writes platform-only, IP) |
 | Backups, exports, eval datasets | Eval cases use synthetic data only; exports scoped per org; no production lead text in fixtures or KB | process rule |
+| Direct DB state (PostgREST/GraphQL/RPC) | Browser roles hold NO grant on Platform-IP tables; policies `TO authenticated` never rely on org membership alone for them; verdict from effective state (live `role_table_grants` + `pg_policies`, or full chain replay) | `appsec-craft-canon.md` §8 rules 10-17; probe test `mcp/noctusai/tests/test_agents_browser_lockdown_probes_on_replay.py` (26 tables) |
+| Everything that reaches the model | Canary/fingerprint covers system prompt, sections, **skill bodies**, tool descriptions and **tool results**, not only the compiled prompt (2026-11-05 P1-B gap); checks run on de-obfuscated AND paraphrased text (OWASP LLM07: the prompt is not a secret, so canaries are detection, the guard is code) | ATLAS T0056, T0069.002, T0068 |
+| Streaming transport | No token/delta leaves the server before the output guard has judged the text (buffer, or guard per chunk with retract); a guard that runs after streaming only logs the leak (2026-11-05 P1-C) | fixed on `feat/agents-prompt-exposure-fixes`, not on dev until merged |
+| Browser bundle and error bodies | No prompt text or `sourceMappingURL` in prod assets; generic error bodies | `appsec-craft-canon.md` §11b |
+| Extraction rate | Repeated probing (many near-identical extraction attempts per session/org) is rate-limited and escalates to restricted mode; Anthropic: monitor/screen outputs first, leak-proofing prompts costs task quality | `ai-agent-security-canon.md` §10 |
+
 
 **Leak response (when one happens):** 1) rotate the secret at its source first, then at every consumer;
 2) find the door and close it structurally (a guard, not a reminder); 3) add the regression test that plants
@@ -198,6 +204,8 @@ Proof tests (pytest), minimum: non-admin gets strict 403 on every connection mut
 8. **Abuse smoke:** 8 rapid "oi" yields rate-limit plus a human notice; run the security eval suite.
 9. **Off switch:** product toggle off, lead message stored, no turn, queued job refused at send; platform control off, nothing sent; revoke grant, product shows `revogada`/`desconectada` and turns get 401.
 10. **Opt-out:** send `PARAR`; opt-out recorded, owner notified in-app and on WhatsApp with the reason.
+11. **Exposure smoke (2026-11-05):** as a customer (non-platform-admin) JWT, request each Platform-IP table via `/rest/v1/<t>` with `Accept-Profile` and each Platform-IP route: all strict 401/403/empty; grep prod bundles for `sourceMappingURL` and a canary; stream a prompt-extraction attempt and confirm the first delta is guarded; plant a canary in a skill body and in a tool result and confirm both are caught.
+
 
 ## 8. Re-audit cadence
 
@@ -225,6 +233,8 @@ Re-audit (agent `agents-security`): on every NEW agent, on every channel or tool
 - Unofficial API ban risk (zylos.ai): https://zylos.ai/research/2026-01-26-whatsapp-api-automation and ChatDaddy ban types: https://help.chatdaddy.tech/article/ban-type-distribution
 - Consumidor Moderno, erro de IA e o CDC: https://consumidormoderno.com.br/cmresponde-erro-ia-consumidor/
 - Confidata, 15 controles LGPD para agentes de IA: https://confidata.com.br/blog/agentes-de-ia-empresa-lgpd-controles
+- READ 2026-11-05 for the leak rows: OWASP LLM07:2025 (https://genai.owasp.org/llmrisk/llm072025-system-prompt-leakage/), Anthropic reduce-prompt-leak (https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-prompt-leak), Google SAIF controls (https://saif.google/secure-ai-framework/controls) — contributions in `ai-agent-security-canon.md` §16.
+
 
 ## Composes-with
 

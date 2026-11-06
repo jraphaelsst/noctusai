@@ -69,7 +69,7 @@ def test_an_outsider_is_refused_in_every_mode_and_trigger_without_creating_anyth
     d = _d(modo, thread, PART if thread else None, gatilho, telefone_e164=FORA)
     assert d.status == STATUS_RESTRITO_AVALIACAO
     assert (d.executar_llm, d.criar_thread, d.transicao, d.http_status) == (False, False, None, 200)
-    assert d.persistir_inbound is (thread is not None and gatilho == "mensagem")
+    assert d.persistir_inbound is False  # owner 2026-11-05: a blocked message is never stored, not even on an existing thread
 
 
 @pytest.mark.parametrize("telefone", [None, "", "sem numero"])
@@ -218,16 +218,22 @@ def test_the_lookup_runs_once_per_turn_and_never_when_the_mode_is_off(chan):
     assert chan.usuarios.leituras == 1
 
 
-def test_an_existing_thread_of_an_outsider_records_the_message_and_stays_silent(chan):
+def test_an_existing_thread_of_an_outsider_stores_nothing_and_it_never_surfaces_when_testing_ends(chan):
     chan.seed_agent()
     assert chan.turn(turn_body("Oi", ids=["a1"])).json()["status"] == "respondido"
     _avaliacao(chan, _dono(chan, "+5511111110000"))
     calls = len(chan.provider.calls)
-    resp = chan.turn(turn_body("Voltei", ids=["a2"]))
-    assert resp.json()["status"] == "restrito_avaliacao" and resp.json()["thread_id"] is not None
-    assert len(chan.provider.calls) == calls
-    rows = chan.rt.stores.messages.list(chan.org_id, UUID(resp.json()["thread_id"]), limite=50)
-    assert any(m.role == "user" and "Voltei" in m.texto for m in rows)
+    resp = chan.turn(turn_body("Voltei com segredo", ids=["a2"]))
+    assert resp.json()["status"] == "restrito_avaliacao"
+    assert len(chan.provider.calls) == calls  # no LLM, no tool, no memory work
+    tid = UUID(resp.json()["thread_id"])
+    rows = chan.rt.stores.messages.list(chan.org_id, tid, limite=50)
+    assert not any("segredo" in (m.texto or "") for m in rows)
+    chan.controles.set_avaliacao(chan.org_id, chan.agent.id, modo_avaliacao=False)   # testing ends
+    assert chan.turn(turn_body("Quero visitar", ids=["a3"])).json()["status"] == "respondido"
+    assert not any("segredo" in (m.texto or "") for m in chan.rt.stores.messages.list(chan.org_id, tid, limite=50))
+    assert not any("segredo" in str(c) for c in chan.provider.calls), "never in the model context"
+
 
 
 def test_the_mode_off_again_opens_the_agent(chan):
@@ -237,7 +243,19 @@ def test_the_mode_off_again_opens_the_agent(chan):
     assert chan.turn(turn_body("Oi")).json()["status"] == "respondido"
 
 
-def test_status_reports_the_flag_never_the_users_or_numbers(chan):
+def test_the_mode_is_a_live_state_stranger_answered_when_off_refused_again_when_flipped_on(chan):
+    """Owner 2026-11-05: testing mode is read on every turn, never latched."""
+    chan.seed_agent()
+    dono = _dono(chan, "+5511111110000")
+    _avaliacao(chan, dono)
+    assert chan.turn(turn_body("Oi")).json()["status"] == "restrito_avaliacao"
+    chan.controles.set_avaliacao(chan.org_id, chan.agent.id, modo_avaliacao=False)
+    assert chan.turn(turn_body("Tem apartamento?")).json()["status"] == "respondido"
+    chan.controles.set_avaliacao(chan.org_id, chan.agent.id, modo_avaliacao=True)
+    assert chan.turn(turn_body("E de dois quartos?")).json()["status"] == "restrito_avaliacao"
+
+
+def test_status_reports_the_flag_and_the_controle_read_the_user_ids_never_numbers(chan):
     from app.dependencies import SCOPE_CHANNEL_STATUS
 
     chan.seed_agent()
@@ -246,7 +264,10 @@ def test_status_reports_the_flag_never_the_users_or_numbers(chan):
         body = chan.request("GET", "/api/channels/agents/julia/status").json()
         ctl = chan.request("GET", "/api/channels/agents/julia/controle").json()
     assert body["modo_avaliacao"] is True and not [k for k in body if k.startswith("avaliacao")]
-    assert ctl["modo_avaliacao"] is True and ctl["avaliacao_usuarios"] == []
+    # the controle read hands SW the evaluation USER IDS (so SW can let a listed member through its staff filter) -- no phone, no name
+    assert ctl["modo_avaliacao"] is True and ctl["avaliacao_usuarios"] == [str(u) for u in chan.controles.get(chan.org_id, chan.agent.id).avaliacao_usuarios]
+    assert ctl["avaliacao_usuarios"] and ctl["avaliacao_resolvidos"] == []
+    assert "5511" not in str(ctl)
 
 
 # ── the Studio controle ─────────────────────────────────────────────────────
@@ -401,3 +422,104 @@ def test_no_users_means_no_lookup_and_no_error(chan):
     chan.seed_agent()
     body = chan.rt.client.get(CTL).json()
     assert (body["avaliacao_resolvidos"], body["avaliacao_resolucao_erro"], chan.usuarios.leituras) == ([], False, 0)
+
+
+# ── ONE testing switch, on Julia's CORE; every company instance obeys it (owner 2026-11-05) ──────────────────────
+
+
+def _nucleo(chan, *, ligado: bool, telefone: str = "+5511111110000"):
+    """Make `chan.agent` an INSTANCE of a core living in the NoctusAI org; the evaluator is a NoctusAI user (not a user of the company)."""
+    from dataclasses import replace
+
+    core_org, core_agent = uuid4(), uuid4()
+    chan.controles.vincular_nucleo(chan.org_id, chan.agent.id, core_org, core_agent)
+    evaluator = chan.usuarios.add(core_org, uuid4(), nome="Avaliador NoctusAI", telefone=telefone)
+    chan.controles.set_avaliacao(core_org, core_agent, modo_avaliacao=ligado, usuarios=[evaluator])
+    return core_org, core_agent, evaluator, replace
+
+
+def test_core_on_blocks_a_stranger_on_the_companys_instance_and_stores_nothing(chan):
+    chan.seed_agent()
+    _nucleo(chan, ligado=True)
+    calls = len(chan.provider.calls)
+    resp = chan.turn(turn_body("Oi, quero um apartamento"))
+    assert resp.json()["status"] == "restrito_avaliacao" and resp.json()["thread_id"] is None
+    assert len(chan.provider.calls) == calls
+
+
+def test_core_off_answers_the_same_stranger(chan):
+    chan.seed_agent()
+    core_org, core_agent, evaluator, _ = _nucleo(chan, ligado=True)
+    assert chan.turn(turn_body("Oi", ids=["c1"])).json()["status"] == "restrito_avaliacao"
+    chan.controles.set_avaliacao(core_org, core_agent, modo_avaliacao=False)
+    assert chan.turn(turn_body("Oi de novo", ids=["c2"])).json()["status"] == "respondido"
+    chan.controles.set_avaliacao(core_org, core_agent, modo_avaliacao=True)   # flipped back ON: restricted at once
+    assert chan.turn(turn_body("E agora?", ids=["c3"])).json()["status"] == "restrito_avaliacao"
+
+
+def test_an_evaluator_of_the_core_passes_on_any_companys_instance(chan):
+    chan.seed_agent()
+    _nucleo(chan, ligado=True, telefone="+5511999990000")   # the contact of turn_body()
+    assert chan.turn(turn_body("Oi")).json()["status"] == "respondido"
+
+
+def test_an_instance_level_flag_is_ignored(chan):
+    """The instance's OWN columns are dead: ON there changes nothing while the core is OFF, and OFF there frees nobody while the core is ON."""
+    from dataclasses import replace
+
+    chan.seed_agent()
+    core_org, core_agent, evaluator, _ = _nucleo(chan, ligado=False)
+    propria = chan.controles._propria(chan.org_id, chan.agent.id)
+    chan.controles._rows[(chan.org_id, chan.agent.id)] = replace(propria, modo_avaliacao=True, avaliacao_usuarios=(uuid4(),))
+    assert chan.controles.get(chan.org_id, chan.agent.id).modo_avaliacao is False
+    assert chan.turn(turn_body("Oi", ids=["i1"])).json()["status"] == "respondido"
+    chan.controles.set_avaliacao(core_org, core_agent, modo_avaliacao=True)
+    chan.controles._rows[(chan.org_id, chan.agent.id)] = replace(propria, modo_avaliacao=False)
+    assert chan.turn(turn_body("Oi de novo", ids=["i2"])).json()["status"] == "restrito_avaliacao"
+
+
+def test_an_unresolvable_core_fails_closed(chan):
+    chan.seed_agent()
+    chan.controles.vincular_nucleo(chan.org_id, chan.agent.id, uuid4(), uuid4())   # the core row does not exist
+    calls = len(chan.provider.calls)
+    resp = chan.turn(turn_body("Oi"))
+    assert resp.status_code == 503 and len(chan.provider.calls) == calls
+
+
+def test_the_instance_cannot_write_the_switch_the_core_page_does(chan):
+    chan.seed_agent()
+    core_org, core_agent, _evaluator, _ = _nucleo(chan, ligado=False)
+    resp = chan.rt.client.put(CTL, json={"modo": "ligado", "modo_avaliacao": True})
+    assert resp.status_code == 409 and _code(resp) == "avaliacao_somente_no_nucleo"
+    assert chan.controles.get(core_org, core_agent).modo_avaliacao is False
+    from app.stores.agent_controles import AvaliacaoSomenteNoNucleo
+
+    with pytest.raises(AvaliacaoSomenteNoNucleo):
+        chan.controles.set_avaliacao(chan.org_id, chan.agent.id, modo_avaliacao=True)
+
+
+def test_the_instance_view_shows_the_core_flag_read_only_and_hides_the_evaluators(chan):
+    chan.seed_agent()
+    _nucleo(chan, ligado=True)
+    body = chan.rt.client.get(CTL).json()
+    assert body["modo_avaliacao"] is True and body["avaliacao_herdada"] is True
+    assert body["avaliacao_usuarios"] == [] and body["avaliacao_resolvidos"] == []
+
+
+def test_the_channel_read_hands_sw_the_cores_state_and_ids(chan):
+    from app.dependencies import SCOPE_CHANNEL_STATUS
+
+    chan.seed_agent()
+    _core_org, _core_agent, evaluator, _ = _nucleo(chan, ligado=True)
+    with chan.as_token(SCOPE_CHANNEL_STATUS):
+        ctl = chan.request("GET", "/api/channels/agents/julia/controle").json()
+    assert ctl["modo_avaliacao"] is True and ctl["avaliacao_usuarios"] == [str(evaluator)]
+
+
+def test_the_channel_read_fails_closed_when_the_core_is_unresolvable(chan):
+    from app.dependencies import SCOPE_CHANNEL_STATUS
+
+    chan.seed_agent()
+    chan.controles.vincular_nucleo(chan.org_id, chan.agent.id, uuid4(), uuid4())
+    with chan.as_token(SCOPE_CHANNEL_STATUS):
+        assert chan.request("GET", "/api/channels/agents/julia/controle").status_code == 503

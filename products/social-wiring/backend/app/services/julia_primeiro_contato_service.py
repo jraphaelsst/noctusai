@@ -34,8 +34,9 @@ from noctusai_lib.primitives.phone import normalize_phone
 
 from app.clients.agents import AgentsClient, AgentsClientError, DecisaoRequest
 from app.modules.leads.services.meta_ingest_service import codigo_do_meta_lead
-from app.services.julia_agente_service import DEFAULT_AGENT_KEY
+from app.services.julia_agente_service import DEFAULT_AGENT_KEY, parse_instante
 from app.services import (
+    julia_avaliacao_service,
     julia_contatos_service as contatos,
     julia_disparos_service,
     julia_eventos_service as eventos,
@@ -96,6 +97,13 @@ def escolher_conexao(store: Any, org_id: UUID | str) -> Optional[Any]:
     return linhas[0] if linhas else None
 
 
+def _chegou_depois_do_golive(lead: dict[str, Any], conexao: Any) -> bool:
+    """Did the lead-form submission happen at/after go-live? Anything unreadable (either time) is NO -- fail closed."""
+    ativado = parse_instante(getattr(conexao, "agente_leads_ativado_em", None))
+    enviado = parse_instante(lead.get("created_time"))
+    return ativado is not None and enviado is not None and enviado >= ativado
+
+
 async def _registrar_opt_in(agents: Optional[AgentsClient], contato_id: Any) -> None:
     """The lead gave their number in a Meta lead form: the messaging-policy opt-in agents records (`formulario_meta`).
     Best-effort: a failure is logged and never stops the intake."""
@@ -119,16 +127,23 @@ def _registrar(client: Any, org_id: UUID | str, contato_id: Any, status: str, mo
 async def iniciar(
     client: Any, org_id: UUID | str, lead: dict[str, Any], *, store: Any,
     transporte_factory: Callable[[Any], julia_transporte.Transporte],
-    contexto: Optional[dict[str, str]] = None, agents: Optional[AgentsClient] = None,
+    contexto: Optional[dict[str, str]] = None, agents: Optional[AgentsClient] = None, core: Any = None,
 ) -> dict[str, Any]:
     """Take one freshly ingested Meta lead (`meta_ads_leads` row: `full_name`, `phone`, `answers`...) into Julia.
 
     Returns `{status, ...}`: `julia_desligada` | `sem_telefone` | `ja_em_atendimento` | `enviado` |
-    `transporte_indisponivel` | `modelo_nao_aprovado` | `decisao_indisponivel` | `erro`."""
+    `transporte_indisponivel` | `modelo_nao_aprovado` | `decisao_indisponivel` | `anterior_ao_golive` |
+    `restrito_avaliacao` | `avaliacao_indisponivel` | `erro`.
+
+    First contact is for NEW incoming leads only (owner 2026-11-05): a form submitted BEFORE `agente_leads_ativado_em` (Meta's
+    `created_time`; unreadable => refused, fail closed) is never contacted, e.g. a retried event of an old lead."""
     try:
         conexao = escolher_conexao(store, org_id)
         if conexao is None:
             return {"status": "julia_desligada"}
+        if not _chegou_depois_do_golive(lead, conexao):
+            _registrar(client, org_id, None, "anterior_ao_golive")
+            return {"status": "anterior_ao_golive"}
         telefone = normalize_phone(lead.get("phone"))
         if not telefone:
             _registrar(client, org_id, None, "sem_telefone")
@@ -149,6 +164,17 @@ async def iniciar(
         contatos.abrir_interacao(client, org_id, contato)
         await _registrar_opt_in(agents, contato["id"])
 
+        # TESTING MODE (owner 2026-11-05) withholds ONLY the greeting: the lead is already stored and announced (leadgen ingest + fan-out),
+        # and the contato / interacao / opt-in above are registration, which always runs. With evaluation mode ON only a listed number is
+        # greeted; for anyone else nothing is decided, sent, or sent to the owner instead. Read live on every attempt (never cached);
+        # unreadable = withheld.
+        restrito = await julia_avaliacao_service.restricao_primeiro_contato(
+            agents, core, org_id, getattr(conexao, "agente_leads_key", None) or DEFAULT_AGENT_KEY, telefone)
+        if restrito is not None:
+            logger.info("julia: first-contact greeting withheld org=%s line=%s motivo=%s", org_id, conexao.id, restrito)
+            _registrar(client, org_id, contato["id"], restrito)
+            return {"status": restrito, "contato_id": contato["id"]}
+
         cloud = julia_transporte.cloud_configurada(conexao)
         # Ask the agent's rule only when a template can actually go out (no model spend while the line waits for Meta).
         decisao = (await escolher_abordagem(lead, agents) if cloud
@@ -160,7 +186,7 @@ async def iniciar(
             client, org_id, connection=conexao,
             transporte=transporte_factory(conexao) if cloud else None,
             telefone=telefone, nome=nome, abordagem=decisao["abordagem"], contexto=contexto, contato_id=contato["id"],
-            agents=agents,
+            agents=agents, core=core,
         )
         if resultado.get("enviado"):
             contatos.registrar_outbound(client, contato["id"])
@@ -194,7 +220,7 @@ async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any]) -> dict[
         }
         return await iniciar(
             get_scoped_admin_client("social_wiring"), org, lead, store=store,
-            transporte_factory=julia_transporte.transporte_da_conexao, contexto=contexto, agents=agents,
+            transporte_factory=julia_transporte.transporte_da_conexao, contexto=contexto, agents=agents, core=get_core_client(),
         )
     except Exception as exc:
         logger.error("julia: could not wire the meta lead intake (org=%s) (%s)", org_id, type(exc).__name__)

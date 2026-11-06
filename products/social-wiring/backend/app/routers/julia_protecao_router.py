@@ -5,18 +5,12 @@
   GET   /api/julia/protecao/bloqueios?historico     admin  {data:{items}}                                 (active; `historico=true` = lifted too)
   POST  /api/julia/protecao/bloqueios {numero,motivo,duracao_min?}  admin  (manual block; permanent unless `duracao_min`)
   POST  /api/julia/protecao/bloqueios/{id}/desbloquear  admin
-  GET   /api/julia/protecao/permitidos              admin  {data:{ativo, items:[{id,numero,rotulo,criado_em}]}}   (the allowlist)
-  POST  /api/julia/protecao/permitidos {numero,rotulo?}  admin  201 {data:item}
-  DELETE /api/julia/protecao/permitidos/{id}        admin  {data:{ok:true}}
-  (the allowlist switch is `permitidos_ativo` on PUT/GET /config)
 
 All org-admin actions. The limits and the blocklist are data per org (migration 298); the webhook reads them on every inbound.
-ALLOWLIST (migration 323, owner 2026-11-05: "so she only replies to me at first. The list, when empty, answers all numbers"):
-`permitidos_ativo` ON + a non-empty list => a sender not on it is not Julia's (the webhook keeps today's behaviour, motivo
-`fora_da_lista_de_permitidos`); OFF or an empty list => nobody is filtered; an unreadable list with the switch ON fails CLOSED.
-A listed number bypasses the 11.1 snapshot / previous-chat rules (explicit opt-in); staff, the blocklist and opt-out still win.
-The number is stored as canonical BR digits (`+55` and the mobile 9th digit optional on input and on the inbound side).
-Typed errors: 422 `numero_invalido` (allowlist too) / `rotulo_invalido`, 409 `numero_ja_permitido`, 404 `permitido_nao_encontrado`, 422 `valor_invalido` / `prompt_invalido` / `motivo_obrigatorio` / `numero_invalido`, 409 `numero_da_equipe` /
+NO ALLOWLIST (owner 2026-11-05): the testing phase is AGENTS' evaluation mode only (agents > Controles); SW has no allowlist.
+The `julia_permitidos` table / `permitidos_ativo` column of migration 323 are dead schema kept for the rolling deploy
+(NOC-REMEDIATE[drop-julia-permitidos]: drop them in a follow-up migration once no N-1 image reads them).
+Typed errors: 422 `valor_invalido` / `prompt_invalido` / `motivo_obrigatorio` / `numero_invalido`, 409 `numero_da_equipe` /
 `numero_ja_bloqueado` / `bloqueio_ja_desfeito`, 404 `bloqueio_nao_encontrado`.
 """
 # No `from __future__ import annotations`: FastAPI body/param models are resolved from the signature.
@@ -59,7 +53,6 @@ class ConfigIn(StrictHttpModel):
     bloqueio_auto_limiar: Optional[int] = None
     bloqueio_auto_janela_min: Optional[int] = None
     bloqueio_auto_duracao_min: Optional[int] = None
-    permitidos_ativo: Optional[bool] = None
     prompt_documento_lead: Optional[str] = Field(default=None, max_length=prot.PROMPT_MAX + 1000)
 
 
@@ -67,11 +60,6 @@ class BloqueioIn(StrictHttpModel):
     numero: str = Field(min_length=1, max_length=40)
     motivo: str = Field(min_length=1, max_length=prot.MOTIVO_MAX)
     duracao_min: Optional[int] = Field(default=None, ge=1, le=525600)
-
-
-class PermitidoIn(StrictHttpModel):
-    numero: str = Field(min_length=1, max_length=40)
-    rotulo: Optional[str] = Field(default=None, max_length=prot.ROTULO_MAX * 2)
 
 
 def _org(auth: tuple) -> UUID:
@@ -139,31 +127,3 @@ def desbloquear(
 ) -> dict[str, Any]:
     _admin(auth, request, core, "O desbloqueio de números")
     return {"data": prot.desbloquear(client, _org(auth), str(auth[0].id), bloqueio_id)}
-
-
-@router.get("/permitidos")
-def listar_permitidos(
-    request: Request = None, auth: tuple = Depends(get_current_user_org), client: Any = Depends(get_protecao_client),
-    core: Any = Depends(get_protecao_core),
-) -> dict[str, Any]:
-    _admin(auth, request, core, "A lista de números permitidos")
-    org = _org(auth)
-    return {"data": {"ativo": bool(prot.obter_config(client, org).get("permitidos_ativo")), "items": prot.listar_permitidos(client, org)}}
-
-
-@router.post("/permitidos", status_code=201)
-def permitir(
-    corpo: PermitidoIn, request: Request = None, auth: tuple = Depends(get_current_user_org),
-    client: Any = Depends(get_protecao_client), core: Any = Depends(get_protecao_core),
-) -> dict[str, Any]:
-    _admin(auth, request, core, "A lista de números permitidos")
-    return {"data": prot.adicionar_permitido(client, _org(auth), str(auth[0].id), numero=corpo.numero, rotulo=corpo.rotulo)}
-
-
-@router.delete("/permitidos/{permitido_id}")
-def remover_permitido(
-    permitido_id: UUID, request: Request = None, auth: tuple = Depends(get_current_user_org),
-    client: Any = Depends(get_protecao_client), core: Any = Depends(get_protecao_core),
-) -> dict[str, Any]:
-    _admin(auth, request, core, "A lista de números permitidos")
-    return {"data": prot.remover_permitido(client, _org(auth), permitido_id)}

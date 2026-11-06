@@ -88,7 +88,7 @@ from app.routers.whatsapp_connections_router import get_waha_client_factory
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload, mensagem_encaminhada
 from app.services import julia_agente_service as julia
 from app.services.identidade_mascara import ref as ref_log
-from app.services import julia_conversas_service, julia_origem_service, julia_protecao_service, julia_staff_service, julia_thread_service
+from app.services import julia_avaliacao_service, julia_conversas_service, julia_origem_service, julia_protecao_service, julia_staff_service, julia_thread_service
 from app.services.conversation_module import get_conversation_module
 from app.services.media_service import MidiaLead, make_media_service, midia_recusada
 from app.services.message_store import DuplicateMessage, MessageStore, StoredMessage
@@ -354,6 +354,7 @@ async def _handle_lead_message(
     *, connection, entrada, chat_id: str, sender: str, message_body: str,
     provider_message_id: str, push_name: str | None, cfg,
     midia: dict | None = None, referral: dict | None = None, encaminhada: bool = False,
+    mensagem_em: datetime | None = None, avaliacao: bool = False,
 ) -> bool:
     """The lead path for ONE inbound. Returns True when the message was handled here
     (enqueued for Julia, or deliberately held because a human has the chat), False
@@ -368,19 +369,8 @@ async def _handle_lead_message(
     chat_store = WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=connection.org_id)
     try:
         state = chat_store.get_agente_state(connection_id=connection.id, chat_id=chat_id)
-        # Allowlist (owner 2026-11-05): switch ON + a non-empty list => only listed numbers are Julia's.
-        lista = await julia_protecao_service.situacao_permitidos(
-            get_scoped_admin_client("social_wiring"), connection.org_id, chat_id=chat_id, sender=sender,
-            resolver_alias=entrada.phone_do_lid,
-        )
-        if lista == "fora":
-            logger.info("Julia: chat %s not eligible (fora_da_lista_de_permitidos) — unchanged behaviour", ref_log(chat_id))
-            return False
-        elegibilidade = await julia.avaliar_elegibilidade(
-            client=get_scoped_admin_client("social_wiring"), connection=connection,
-            chat_id=chat_id, chat_state=state,
-            resolver_alias=entrada.phone_do_lid,
-            permitido=lista == "permitido",
+        elegibilidade = julia.avaliar_elegibilidade(
+            connection=connection, chat_state=state, mensagem_em=mensagem_em, avaliacao=avaliacao,
         )
     except Exception as exc:
         # Eligibility is a PRIVACY decision (11.1): when it cannot be made, the chat is
@@ -456,11 +446,15 @@ async def _resolver_midia_do_lead(
         return midia_recusada(mimetype, filename, "falhou", legenda=legenda)
 
 
-async def _classificar_remetente(connection, *, entrada, chat_id: str, sender: str):
+async def _classificar_remetente(connection, *, entrada, chat_id: str, sender: str, agents_client_factory=None, cfg=None):
     """B1 (CONTRACT julia-line): is whoever wrote on the line STAFF of the org that owns it? Staff = active `julia_staff` rows plus the
-    phones of the org's active members (core `noctus_users.telefone`); a `Remetente` for staff, None for a lead. Decided by the NUMBER
-    only (a LID is resolved to its phone first, and only when the org has any staff number at all), never by what the message says.
-    A failed lookup treats the sender as a lead (never staff -- it is logged, ids only)."""
+    phones of the org's active members (core `noctus_users.telefone`); decided by the NUMBER only (a LID is resolved to its phone first,
+    and only when the org has any staff number at all), never by what the message says.
+
+    Returns `(remetente, avaliacao)`: `remetente` is the staff verdict (None = a lead); `avaliacao` is True when an org MEMBER is on
+    agents' evaluation list while evaluation mode is ON (owner 2026-11-05: the testing phase) -- then the sender is a LEAD (`remetente`
+    None) so agents' gate answers it, and the flag lets it past the `equipe` refusal of the eligibility rule. An unreadable controle
+    keeps the staff verdict (fail closed, logged). A failed staff lookup treats the sender as a lead (never staff -- logged, ids only)."""
     client = get_scoped_admin_client("social_wiring")
     try:
         core = get_core_client()
@@ -470,23 +464,43 @@ async def _classificar_remetente(connection, *, entrada, chat_id: str, sender: s
             if resolvido:
                 extras.append(resolvido)
         remetente = julia_staff_service.classificar_remetente(client, core, connection.org_id, julia_staff_service.formas_do_remetente(*extras))
-        if remetente is not None:
-            # Owner 2026-11-05: a number on the allowlist (switch ON) is a LEAD even when it is staff -- the owner lists their own
-            # number to test Julia, and their phone is an org member's. Unreadable allowlist => keep the staff verdict.
-            try:
-                lista = await julia_protecao_service.situacao_permitidos(
-                    client, connection.org_id, chat_id=chat_id, sender=sender, resolver_alias=entrada.phone_do_lid,
-                )
-            except Exception as exc:
-                logger.error("Julia: allowlist unreadable conn=%s (%s) -- staff verdict kept", connection.id, type(exc).__name__)
-                lista = None
-            if lista == "permitido":
-                logger.info("Julia: staff number on the allowlist conn=%s -- treated as a lead", connection.id)
-                return None
-        return remetente
+        if remetente is not None and connection.agente_leads_ativo:
+            agents = (agents_client_factory or (lambda org_id: julia.resolve_agents_client(org_id, cfg=cfg or settings)))(connection.org_id)
+            if await julia_avaliacao_service.numero_em_avaliacao(
+                agents, core, connection.org_id, connection.agente_leads_key or julia.DEFAULT_AGENT_KEY,
+                julia_staff_service.formas_do_remetente(*extras),
+            ):
+                logger.info("Julia: evaluator on the core's list conn=%s -- treated as a lead (testing phase)", connection.id)
+                return None, True
+        return remetente, False
     except Exception as exc:
         logger.error("Julia: staff lookup failed conn=%s (%s) -- the sender is treated as a lead", connection.id, type(exc).__name__)
-        return None
+        return None, False
+
+
+async def _bloqueado_pelo_teste(connection, *, entrada, chat_id: str, sender: str, agents_client_factory=None, cfg=None) -> bool:
+    """TESTING MODE gate at SW's intake (owner 2026-11-05), asked BEFORE any media AI call and BEFORE agents is called: with agents'
+    evaluation mode ON a LEAD who is not on the evaluation list is blocked -- the message is never forwarded to Julia (no agents
+    thread/turn/LLM call, nothing stored in her history, no reply, no reroute to the owner). The state is read live on every inbound
+    (never cached, never latched); unreadable or undecidable = blocked (fail closed, logged). The SW inbox still shows the message."""
+    try:
+        extras = [chat_id, sender]
+        if julia.is_lid(sender) or julia.is_lid(chat_id):
+            resolvido = await entrada.phone_do_lid(chat_id if julia.is_lid(chat_id) else sender)
+            if resolvido:
+                extras.append(resolvido)
+        agents = (agents_client_factory or (lambda org_id: julia.resolve_agents_client(org_id, cfg=cfg or settings)))(connection.org_id)
+        motivo = await julia_avaliacao_service.restricao_para_formas(
+            agents, get_core_client(), connection.org_id, connection.agente_leads_key or julia.DEFAULT_AGENT_KEY,
+            julia_staff_service.formas_do_remetente(*extras),
+        )
+    except Exception as exc:
+        logger.error("Julia: testing-mode gate failed conn=%s (%s) -- inbound blocked", connection.id, type(exc).__name__)
+        return True
+    if motivo is not None:
+        logger.info("Julia: inbound blocked org=%s conn=%s chat=%s reason=%s", connection.org_id, connection.id, ref_log(chat_id), motivo)
+        return True
+    return False
 
 
 def _avisar_equipe_na_linha(*, connection, remetente, cfg) -> None:
@@ -610,6 +624,12 @@ def _motivo_envelope_fora_da_janela(body: Any, envelope, *, agora: float | None 
     if delta < -WEBHOOK_MAX_FUTURE_S:
         return "timestamp_futuro"
     return None
+
+
+def _mensagem_em(payload: Any) -> datetime | None:
+    """When WhatsApp stamped the message (not when the event was emitted) -- the go-live cut-off compares THIS. None = unreadable."""
+    ts = _epoch_s(getattr(payload, "timestamp", None))
+    return datetime.fromtimestamp(ts, tz=timezone.utc) if ts is not None else None
 
 
 async def _process_waha_body(
@@ -756,10 +776,17 @@ async def _process_waha_body(
 
     # 🔴 B1 (CONTRACT julia-line): who wrote on the line, asked BEFORE any media AI call or agents call. Staff is decided by the
     # NUMBER only (a LID is resolved to its phone first), against the julia_staff rows + the org members' core phones.
-    remetente = None
+    remetente, avaliacao = None, False
     if not is_group:
-        remetente = await _classificar_remetente(connection, entrada=entrada, chat_id=chat_id, sender=sender)
+        remetente, avaliacao = await _classificar_remetente(
+            connection, entrada=entrada, chat_id=chat_id, sender=sender, agents_client_factory=agents_client_factory, cfg=cfg)
     equipe = remetente is not None
+    # Testing mode: a lead who is not on agents' evaluation list never reaches Julia (nor a media AI call). A listed member (`avaliacao`)
+    # already passed the very same list.
+    bloqueado_teste = False
+    if connection.agente_leads_ativo and not is_group and not from_me and not equipe and not avaliacao:
+        bloqueado_teste = await _bloqueado_pelo_teste(
+            connection, entrada=entrada, chat_id=chat_id, sender=sender, agents_client_factory=agents_client_factory, cfg=cfg)
 
     # Media-aware inbound: if the payload carries media (audio note,
     # photo, video, document), resolve it to enriched text BEFORE the
@@ -791,7 +818,7 @@ async def _process_waha_body(
                 "equipe", dict(julia_protecao_service.PADRAO), None, connection.org_id, connection.id)
         else:
             triagem = await _triar_lead(connection, chat_id=chat_id, sender=sender, cfg=cfg)
-    if media_url and not from_me and triagem is not None and triagem.estado != "equipe":
+    if media_url and not from_me and triagem is not None and triagem.estado != "equipe" and not bloqueado_teste:
         midia_lead = await _resolver_midia_do_lead(
             triagem, chat_id=chat_id, url=media_url, mimetype=media_mimetype, filename=media_filename,
             legenda=legenda_original, cfg=cfg,
@@ -951,7 +978,7 @@ async def _process_waha_body(
     # ── Julia routing (contract section 5, 10.1 H3, 10.2 B3, 11.1) ──────────────
     # AFTER dedup / media→text / record, a LEAD only: blocked / over-limit senders stop here; otherwise Julia answers when the
     # switch is on and the chat is eligible. Anything else is stored and left alone (the One Chat operator bot is retired).
-    if connection.agente_leads_ativo and not is_group:
+    if connection.agente_leads_ativo and not is_group and not bloqueado_teste:
         if triagem is not None and triagem.estado in ("bloqueado", "limitado"):
             # recorded above (it is in the inbox); never reaches agents or an AI call (GUARDRAILS B5)
             return Response(status_code=status.HTTP_200_OK)
@@ -963,6 +990,7 @@ async def _process_waha_body(
             midia=midia_lead.para_agents() if midia_lead is not None else None,
             referral=julia_origem_service.extrair_referral_ctwa(body),
             encaminhada=mensagem_encaminhada(payload),
+            mensagem_em=_mensagem_em(payload), avaliacao=avaliacao,
         )
     return Response(status_code=status.HTTP_200_OK)
 

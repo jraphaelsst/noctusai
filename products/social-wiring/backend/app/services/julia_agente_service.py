@@ -7,7 +7,7 @@ IO collaborators as arguments, so the webhook, the worker and the tests share ON
 implementation of each rule:
 
   * routing keys / buffer key                       (section 5, 10.2 B2)
-  * the switch: invariants + the 11.1 snapshot      (5, 10.1 H1/H3, 11.1)
+  * the switch: invariants                          (5, 10.1 H1/H3)
   * eligibility of a chat for Julia                 (11.1)
   * the sliding-window limiter                      (10.1 M4)
   * own-echo registry for human takeover            (10.1 L3, 10.2 B4)
@@ -34,7 +34,6 @@ from noctusai_lib.api.auth.session.scopes import ADMIN_ORG_ROLES, resolve_org_me
 from noctusai_lib.config.deploy_config import is_deploy_context
 from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.domain.notifications import write_in_app
-from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.integrations.redis import make_redis_client
 from noctusai_lib.integrations.whatsapp.inbox.ingest import is_non_conversation_jid
 from noctusai_lib.primitives.accents import fold_accents_ascii
@@ -51,10 +50,9 @@ AGENTS_KEY_NAME = "agents"  # `api_key:agents` in the per-org credentials store
 HANDOFF_KIND = "julia_handoff"
 MOTIVO_MAX = 280
 
-SNAPSHOT_TABLE = "julia_agente_chats_preexistentes"
-SNAPSHOT_PAGE = 100
-SNAPSHOT_MAX_PAGES = 500
-_INSERT_BATCH = 500
+#: DEAD since 2026-11-05 (owner: Julia answers anyone who writes AFTER go-live). Nothing reads or writes the table any more; it
+#: stays only because an N-1 image still does during a rolling deploy.
+#: NOC-REMEDIATE[drop-julia-snapshot]: follow-up migration drops `julia_agente_chats_preexistentes` once no N-1 image uses it.
 
 LEAD_PREFIX = "lead:"
 
@@ -516,106 +514,8 @@ def notificar_handoff(
     )
 
 
-# ── 11.1: snapshot of chats that existed when Julia was switched on ─────────
-class SnapshotFalhou(Exception):
-    """The WAHA chat listing failed or could not be proven complete."""
-
-
-def _jid_of_chat(chat: Any) -> Optional[str]:
-    """WAHA shapes: `{"id": "<jid>"}` or `{"id": {"_serialized": "<jid>"}}`."""
-    if not isinstance(chat, dict):
-        return None
-    raw = chat.get("id")
-    if isinstance(raw, dict):
-        raw = raw.get("_serialized")
-    raw = (raw or "").strip() if isinstance(raw, str) else ""
-    return raw or None
-
-
-async def listar_todos_os_chats(waha: Any, *, page_size: int = SNAPSHOT_PAGE, max_pages: int = SNAPSHOT_MAX_PAGES) -> list[str]:
-    """Every chat id of the WAHA session, paged to the END. Fails CLOSED: any listing
-    error, an entry with no id, a server that ignores `offset` (a full page of ids
-    already seen) or running out of pages raises `SnapshotFalhou`."""
-    seen: dict[str, None] = {}
-    for page_no in range(max_pages):
-        try:
-            page = await waha.list_chats(limit=page_size, offset=page_no * page_size)
-        except Exception as exc:  # noqa: BLE001 -- any failure => fail closed, named below
-            raise SnapshotFalhou(f"WAHA chat listing failed: {type(exc).__name__}") from exc
-        if not isinstance(page, list):
-            raise SnapshotFalhou("WAHA chat listing returned a non-list body")
-        ids = [_jid_of_chat(c) for c in page]
-        if any(i is None for i in ids):
-            raise SnapshotFalhou("WAHA returned a chat with no id")
-        fresh = [i for i in ids if i not in seen]
-        if page and not fresh:
-            raise SnapshotFalhou("WAHA ignored the pagination offset (page already seen)")
-        for i in fresh:
-            seen[i] = None
-        if len(page) < page_size:
-            return list(seen)
-    raise SnapshotFalhou(f"chat listing not exhausted after {max_pages} pages")
-
-
-def expandir_aliases(chat_ids: list[str], lids: list[dict[str, Any]]) -> list[str]:
-    """Snapshot ids + the other phone suffix + the `@lid`/phone twin WAHA exposes
-    (`list_lids`: `{lid, pn}`), de-duplicated, order-preserving."""
-    lid_to_pn: dict[str, str] = {}
-    pn_to_lids: dict[str, list[str]] = {}
-    for entry in lids or []:
-        lid = str((entry or {}).get("lid") or "").strip()
-        pn = str((entry or {}).get("pn") or "").strip()
-        d = phone_digits(pn) if pn else None
-        if lid and d:
-            lid_to_pn[lid] = d
-            pn_to_lids.setdefault(d, []).append(lid)
-    out: dict[str, None] = {}
-    for cid in chat_ids:
-        out[cid] = None
-        d = phone_digits(cid)
-        if d is None and is_lid(cid):
-            d = lid_to_pn.get(cid)
-        if d:
-            for form in phone_forms(d):
-                out[form] = None
-            for lid in pn_to_lids.get(d, []):
-                out[lid] = None
-    return list(out)
-
-
-def gravar_snapshot(client: Any, *, org_id: UUID, connection_id: UUID, chat_ids: list[str]) -> int:
-    """Insert the ids not yet in the snapshot (PK (connection_id, chat_id)); returns the
-    number inserted. Existing rows stay -- a chat excluded once stays excluded."""
-    existing = {
-        r["chat_id"]
-        for r in iter_paged_rows(
-            lambda a, b: client.table(SNAPSHOT_TABLE).select("chat_id")
-            .eq("connection_id", str(connection_id)).order("chat_id").range(a, b).execute().data,
-            id_key="chat_id", label="julia snapshot",
-        )
-    }
-    novos = [c for c in chat_ids if c not in existing]
-    now = datetime.now(timezone.utc).isoformat()
-    for i in range(0, len(novos), _INSERT_BATCH):
-        client.table(SNAPSHOT_TABLE).insert([
-            {"org_id": str(org_id), "connection_id": str(connection_id), "chat_id": c, "capturado_em": now}
-            for c in novos[i : i + _INSERT_BATCH]
-        ]).execute()
-    return len(novos)
-
-
-def snapshot_contem(client: Any, connection_id: UUID, candidatos: set[str]) -> bool:
-    if not candidatos:
-        return False
-    resp = (
-        client.table(SNAPSHOT_TABLE).select("chat_id")
-        .eq("connection_id", str(connection_id)).in_("chat_id", sorted(candidatos)).limit(1).execute()
-    )
-    return bool(resp.data)
-
-
 # ── 11.1: eligibility ───────────────────────────────────────────────────────
-def _ts(value: Any) -> Optional[datetime]:
+def parse_instante(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if not value or not isinstance(value, str):
@@ -630,56 +530,41 @@ def _ts(value: Any) -> Optional[datetime]:
 @dataclass(frozen=True)
 class Elegibilidade:
     elegivel: bool
-    motivo: str  # owned | new | permitido | snapshot | chat_anterior | sem_ativado_em | equipe
+    motivo: str  # owned | new | avaliacao | mensagem_anterior | mensagem_sem_horario | sem_ativado_em | equipe
 
 
-async def avaliar_elegibilidade(
+def avaliar_elegibilidade(
     *,
-    client: Any,
     connection: Any,
-    chat_id: str,
     chat_state: Optional[dict[str, Any]],
-    resolver_alias: Optional[Callable[[str], Any]] = None,
-    permitido: bool = False,
+    mensagem_em: Optional[datetime] = None,
+    avaliacao: bool = False,
 ) -> Elegibilidade:
-    """Is this chat Julia's? (contract 11.1)
+    """Is this chat Julia's? (owner 2026-11-05: "she answers anyone who writes AFTER go-live; she does not message old leads")
 
-    * a STAFF chat (`categoria='equipe'`, migration 318) is never Julia's -- refused before anything else, even if it somehow owns
-      a conversation;
-    * a chat Julia already owns (`agente_conversation_id`) stays eligible;
-    * not in the snapshot (by ANY of its identifier forms, including the phone a
-      `@lid` resolves to) AND
-    * its `whatsapp_chats` row was not created before `agente_leads_ativado_em`.
-    Anything uncertain (no `ativado_em`) is NOT eligible -- fail closed.
-
-    `permitido=True` (owner decision 2026-11-05): the sender is on the org's allowlist while its switch is ON -- an EXPLICIT
-    opt-in (the owner lists his own number so Julia answers only him at first, and that number almost certainly has a chat
-    with the line already). It bypasses the snapshot and previous-chat rules (`snapshot`, `chat_anterior`) AND a chat earlier marked staff (`equipe`):
-    the owner's own number is an org member's, so it was staff before it was listed. `sem_ativado_em` still refuses; the blocklist and opt-out are applied by the caller / agents.
+    * a STAFF chat (`categoria='equipe'`, migration 318) is never Julia's -- refused first, even if it somehow owns a conversation --
+      EXCEPT `avaliacao=True`: the sender is on agents' evaluation list while evaluation mode is ON (the testing phase; the owner's
+      own number is an org member's, so it is staff otherwise). That bypasses `equipe` and nothing else;
+    * no `agente_leads_ativado_em` => not eligible (fail closed), unless the chat is already Julia's;
+    * a message WhatsApp timestamped BEFORE `agente_leads_ativado_em` is never answered (a backlog / replayed webhook of an old
+      message); no readable timestamp => refused too (fail closed);
+    * everything else is eligible, INCLUDING a contact whose chat predates go-live: Julia only ever REPLIES to what arrives after
+      go-live, she never opens a conversation (the snapshot / previous-chat refusals were removed).
     """
-    if chat_state and chat_state.get("categoria") == "equipe" and not permitido:
+    if chat_state and chat_state.get("categoria") == "equipe" and not avaliacao:
         return Elegibilidade(False, "equipe")
-    if chat_state and chat_state.get("agente_conversation_id"):
-        return Elegibilidade(True, "owned")
-    ativado = _ts(connection.agente_leads_ativado_em)
+    owned = bool(chat_state and chat_state.get("agente_conversation_id"))
+    ativado = parse_instante(connection.agente_leads_ativado_em)
     if ativado is None:
-        return Elegibilidade(False, "sem_ativado_em")
-    if permitido:
-        return Elegibilidade(True, "permitido")
-    candidatos = chat_aliases(chat_id)
-    if is_lid(chat_id) and resolver_alias is not None:
-        phone = resolver_alias(chat_id)
-        if hasattr(phone, "__await__"):
-            phone = await phone
-        d = digits_of_phone_like(str(phone)) if phone else None
-        if d:
-            candidatos.update(phone_forms(d))
-    if snapshot_contem(client, connection.id, candidatos):
-        return Elegibilidade(False, "snapshot")
-    criado = _ts((chat_state or {}).get("created_at"))
-    if criado is not None and criado < ativado:
-        return Elegibilidade(False, "chat_anterior")
-    return Elegibilidade(True, "new")
+        return Elegibilidade(True, "owned") if owned else Elegibilidade(False, "sem_ativado_em")
+    quando = parse_instante(mensagem_em)
+    if quando is None:
+        return Elegibilidade(False, "mensagem_sem_horario")
+    if quando < ativado:
+        return Elegibilidade(False, "mensagem_anterior")
+    if owned:
+        return Elegibilidade(True, "owned")
+    return Elegibilidade(True, "avaliacao" if avaliacao else "new")
 
 
 # ── 10.1 M4: sliding-window limiter (works on the buffer's redis surface) ───
@@ -897,14 +782,14 @@ async def apagar_dados_do_chat(
 
 __all__ = [
     "DEFAULT_AGENT_KEY", "Elegibilidade", "HANDOFF_KIND", "LEAD_PREFIX", "MOTIVOS_HANDOFF",
-    "ResultadoApagar", "SlidingWindowLimiter", "SnapshotFalhou",
-    "agents_token_for_org", "apagar_dados_do_chat", "avaliar_elegibilidade", "chat_aliases",
+    "ResultadoApagar", "SlidingWindowLimiter",
+    "agents_token_for_org", "parse_instante", "apagar_dados_do_chat", "avaliar_elegibilidade", "chat_aliases",
     "destinatario_do_handoff", "encerrar_envio", "envio_em_curso",
     "exigir_aviso_completo", "exigir_destinatario_valido", "exigir_hmac_configurado",
-    "expandir_aliases", "gravar_snapshot", "is_group_chat", "is_lid",
-    "lead_key", "limpar_erro_link", "listar_todos_os_chats", "ler_erro_link",
+    "is_group_chat", "is_lid",
+    "lead_key", "limpar_erro_link", "ler_erro_link",
     "marcar_envio_em_curso", "mensagem_inicial_pronta", "reiniciar_janela_de_eco", "motivo_codigo_do_handoff", "notificar_handoff", "origem_e_eco_proprio", "parse_lead_key",
     "permitir_turno", "phone_digits", "public_privacy_link",
-    "registrar_erro_link", "resolve_agents_client", "sanitize_motivo", "snapshot_contem",
+    "registrar_erro_link", "resolve_agents_client", "sanitize_motivo",
     "usuario_e_admin_da_org",
 ]

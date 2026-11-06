@@ -29,7 +29,8 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import AgentsClient
-from app.services import julia_envio_gate, julia_modelos_service, julia_transporte
+from app.services import julia_avaliacao_service, julia_envio_gate, julia_modelos_service, julia_transporte
+from app.services.julia_agente_service import DEFAULT_AGENT_KEY
 from app.services.julia_transporte import Transporte
 
 logger = logging.getLogger(__name__)
@@ -451,7 +452,7 @@ ABORDAGENS = {"comercial": "abordagem comercial", "neutra": "abordagem neutra"}
 async def primeiro_contato_meta(
     db: Any, org_id: UUID | str, *, connection: Any, transporte: Optional[Transporte], telefone: str,
     nome: Optional[str], abordagem: Optional[str], contexto: Optional[dict[str, str]] = None,
-    contato_id: Optional[UUID | str] = None, agents: Optional[AgentsClient] = None,
+    contato_id: Optional[UUID | str] = None, agents: Optional[AgentsClient] = None, core: Any = None,
 ) -> dict[str, Any]:
     """Meta lead-form lead -> Julia's first contact as the approved "Abordagem comercial|neutra" template
     (category `primeiro_contato`). Cloud only: without it the hook returns `transporte_indisponivel` and the
@@ -459,7 +460,9 @@ async def primeiro_contato_meta(
     The outbound gate (`julia_envio_gate`, flow `primeiro_contato`) runs first: Julia on for the line + an approved
     first-contact modelo, then (a lead known to SW, `contato_id`) the opt-out leg -- agents' consent state, fail-closed:
     a lead who asked to stop, or whose state could not be read, returns `motivo` `lead_opt_out` /
-    `opt_out_nao_verificavel`. A refusal returns its reason as `motivo`. A send to a phone with no SW lead
+    `opt_out_nao_verificavel`. TESTING MODE (owner 2026-11-05; agents' evaluation mode, the only switch): while it is ON the first
+    contact goes ONLY to a number on the evaluation list -- anyone else is `restrito_avaliacao`, an unreadable controle is
+    `avaliacao_indisponivel` (fail closed); OFF = no restriction. A refusal returns its reason as `motivo`. A send to a phone with no SW lead
     (`contato_id` None: the operator's manual test) has no consent record to read and says so in the log."""
     if abordagem is not None and abordagem not in ABORDAGENS:
         raise AppException("abordagem_invalida", "abordagem deve ser comercial ou neutra.", status_code=422)
@@ -478,6 +481,11 @@ async def primeiro_contato_meta(
             return {"enviado": False, "motivo": exc.motivo}
     else:
         logger.info("julia: primeiro contato to a phone with no SW lead -- no opt-out record to read (org=%s)", org_id)
+    restrito = await julia_avaliacao_service.restricao_primeiro_contato(
+        agents, core, org_id, getattr(connection, "agente_leads_key", None) or DEFAULT_AGENT_KEY, telefone)
+    if restrito is not None:
+        logger.info("julia: primeiro contato not sent org=%s motivo=%s", org_id, restrito)
+        return {"enviado": False, "motivo": restrito}
     if not julia_transporte.cloud_configurada(connection) or transporte is None:
         return {"enviado": False, "motivo": "transporte_indisponivel"}
     if abordagem is None:  # a template cannot go out without the decision (agents' rule picks it; SW holds no fallback)

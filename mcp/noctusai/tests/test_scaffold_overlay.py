@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from env_bootstrap import gate_subprocess_env
 from tools.noctus.dev import scaffold as scaffold_module
 from tools.noctus.dev.scaffold import scaffold_product
 from tools.noctus.dev.scaffold_overlay import OverlayError, load_overlay, organ_render_order
@@ -106,9 +107,14 @@ class TestErpOverlay:
     def test_scaffolded_backend_imports_and_its_wiring_tests_pass(self, scaffolded):
         tmp, target, _result = scaffolded
         (tmp / "seed").symlink_to(REPO_ROOT / "seed")  # the product conftest finds the seed at <root>/seed
+        # Hermetic by construction: the child is a product test session, so it must
+        # never inherit the platform .env (its live-DB guard refuses a prod
+        # SUPABASE_URL, exit 4). `gate_subprocess_env` strips what `.env` injected;
+        # the explicit SUPABASE_* scrub covers a parent that got it by any other route.
+        env = {k: v for k, v in gate_subprocess_env(REPO_ROOT).items() if not k.startswith("SUPABASE_")}
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "tests/test_erp_wiring.py", "-q", "-p", "no:cacheprovider"],
-            cwd=target / "backend", capture_output=True, text=True, timeout=240,
+            cwd=target / "backend", capture_output=True, text=True, timeout=240, env=env,
         )
         assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-1500:]
 

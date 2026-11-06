@@ -4,15 +4,15 @@
    "ferramenta": "sinalizar_alerta",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Avisa a equipe pelo WhatsApp quando o lead demonstra insatisfação, quando você percebe que errou (informação errada, pergunta repetida, entendeu mal o pedido) ou quando a conversa saiu do rumo. Chame no mesmo turno em que perceber, no máximo um alerta por tipo por turno. Depois peça desculpas em uma frase e pergunte se o lead prefere falar com uma pessoa da equipe. Não use para uma simples mudança de ideia do lead.",
+   "descricao": "Avisa a equipe pelo WhatsApp quando o lead demonstra insatisfação ou reclama, xinga, ofende ou assedia, quando você percebe que errou (informação errada, pergunta repetida, entendeu mal o pedido) ou quando a conversa saiu do rumo. Chame no mesmo turno em que perceber, antes de responder, no máximo um alerta por tipo por turno. Depois responda em uma frase (desculpas, ou um limite calmo diante de ofensa ou assédio) e pergunte se o lead prefere falar com uma pessoa da equipe ou seguir vendo imóveis. Não use para uma simples mudança de ideia do lead nem para pedido de parar de receber mensagens.",
    "parametros": {
     "tipo": "Natureza do alerta.",
-    "tipo.lead_insatisfeito": "o lead demonstra irritação, frustração ou reclama do atendimento",
-    "tipo.erro_agente": "você percebeu que errou",
-    "tipo.desvio": "a conversa saiu do rumo e você não consegue trazer de volta",
-    "tipo.outro": "outro motivo para a equipe olhar a conversa",
+    "trecho": "Palavras do lead que motivaram o alerta. Opcional.",
     "descricao": "O que aconteceu, objetivo e para a equipe, em até 500 caracteres. Sem dados pessoais.",
-    "trecho": "Palavras do lead que motivaram o alerta. Opcional."
+    "tipo.outro": "assédio, conteúdo sexual ou outro motivo para a equipe olhar a conversa",
+    "tipo.desvio": "a conversa saiu do rumo e você não consegue trazer de volta",
+    "tipo.erro_agente": "você percebeu que errou",
+    "tipo.lead_insatisfeito": "o lead demonstra irritação ou frustração, reclama do atendimento, xinga ou ofende"
    }
   },
   {
@@ -73,7 +73,8 @@
     "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor",
     "motivo_codigo.fora_do_escopo": "pedido fora do mercado imobiliário em que o lead insiste",
     "motivo_codigo.direito_titular": "pedido do lead sobre os próprios dados (já registrado com registrar_solicitacao_titular)",
-    "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada"
+    "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada",
+    "motivo_codigo.info_indisponivel": "o lead insistiu em uma informação da imobiliária que a Julia não tem (dado não preenchido) e aceitou falar com uma pessoa"
    }
   },
   {
@@ -90,12 +91,28 @@
    "ferramenta": "oferecer_imoveis",
    "ativo": true,
    "obrigatoria_skill": "ofertar-imoveis",
-   "descricao": "Busca no catálogo da imobiliária e registra o próximo lote de imóveis para mostrar (até 3, nunca repete os já enviados), usando o perfil registrado. Só funciona quando avaliar_lead indica pode_ofertar (o modo campanha, do imóvel do anúncio, funciona na abertura). Devolve o lote com código, título, tipo, bairro, cidade, preço, quartos e link, ou esgotado quando não há mais opções. Depois consulte detalhes_imovel de cada imóvel para trazer condomínio e IPTU.",
+   "descricao": "Busca no catálogo da imobiliária e registra o próximo lote de imóveis para mostrar (até 3, nunca repete os já enviados), usando o perfil registrado. Só funciona quando avaliar_lead indica pode_ofertar. O modo campanha só existe quando o estado mostra o código do imóvel da campanha: sem esse código não chame o modo campanha (a ferramenta recusa, e recusas seguidas encerram a sua resposta e transferem o lead); pergunte ao lead qual imóvel ou o que ele procura. Devolve o lote com código, título, tipo, bairro, cidade, preço, quartos e link, ou esgotado quando não há mais opções. Depois consulte detalhes_imovel de cada imóvel para trazer condomínio e IPTU.",
    "parametros": {
     "modo": "Qual busca fazer.",
     "limite": "Quantos imóveis no lote. Opcional: o padrão é o tamanho de lote do padrão de qualificação (3).",
-    "modo.campanha": "o imóvel do anúncio de onde o lead veio",
+    "modo.campanha": "o imóvel do anúncio de onde o lead veio; só quando o estado mostra o código do imóvel da campanha",
     "modo.similares": "o próximo lote de imóveis parecidos com o imóvel do anúncio ou com o imóvel ideal descrito pelo lead"
+   }
+  },
+  {
+   "ferramenta": "encerrar",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Encerra o atendimento nesta conversa. Pedido para parar de receber mensagens (\"pare\", \"para\", \"sai\", \"chega\", \"STOP\", \"não me manda mais nada\", em qualquer idioma ou no meio de outra frase): sempre `motivo` `lead_pediu_parar`, com `trecho` e `motivo_texto`. Use também em caso de engano ou spam, e quando ofensa ou assédio continua depois do limite (`invalido`). Antes, uma frase curta de despedida; para um pedido de parar, confirme que não vai mais enviar mensagens.",
+   "parametros": {
+    "motivo": "Por que encerrar.",
+    "trecho": "Obrigatório com lead_pediu_parar: as palavras exatas do lead nesta mensagem pedindo para parar.",
+    "motivo.outro": "outro motivo",
+    "motivo_texto": "Obrigatório com lead_pediu_parar: o que o lead pediu, numa frase curta.",
+    "motivo.invalido": "engano, número errado ou spam",
+    "motivo.lead_encerrou": "o lead encerrou a conversa, sem pedir para não ser mais contatado",
+    "motivo.sem_interesse": "o lead disse que não tem mais interesse",
+    "motivo.lead_pediu_parar": "o lead pediu para não ser mais contatado; vale para todos os atendentes e fica registrado para a equipe"
    }
   }
  ]

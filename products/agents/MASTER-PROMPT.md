@@ -68,6 +68,7 @@ products/agents/backend/app/
   `contact.phone_e164` is not among the resolved phones (or has none) ⇒ `restrito_avaliacao`, every trigger, no LLM,
   inbound stored only for an existing thread, never a new thread/participant. Unreadable flag ⇒ 503.
   `GET /api/channels/agents/{key}/status` carries `modo_avaliacao` only. The org controle GET/PUT add `avaliacao_resolvidos` (users from noc; full phone to org admins, masked to members) + `avaliacao_resolucao_erro` (lookup failed: null name/phone, never a 500).
+  **One testing switch on Julia's core, obeyed by every company instance (owner 2026-11-05; migration 065):** the state lives ONLY on the core (`definition_scope='plataforma'` row; an instance reaches it via `definition_agent_id`); an instance's own `modo_avaliacao`/`avaliacao_usuarios` columns are dead (`NOC-REMEDIATE[drop-instance-modo-avaliacao]`). `SupabaseAgentControleStore.get` returns the core's state (`avaliacao_herdada=True`, `avaliacao_org_id`=core org, where the NoctusAI evaluators' phones are resolved); an unresolvable core raises `NucleoIndisponivel` ⇒ 503 `controle_indisponivel`. Only a NoctusAI platform admin writes it, on the core page (instance PUT ⇒ 409 `avaliacao_somente_no_nucleo`; `set_agent_avaliacao` refuses instances). A blocked (`restrito_avaliacao`) message is never persisted. The instance view shows a read-only "Julia em fase de testes" badge.
 
 ### Platform grants (Julia-line S3) — how a product gets its credential
 
@@ -128,7 +129,7 @@ products/agents/backend/app/
   `regras_seguranca_sem_parametros` blocks publish); allowlists come from `ValoresOrg.limpos` (validated specs only);
   `studio/normalizador_texto.py` is the one invisible-character / de-obfuscation module (schema boundary + detectors +
   `spec_formatos`); `valor_sem_ferramenta` blocks an unbacked R$ / %; `opt_out_palavras` opts a lead out on an exact
-  `PARAR|PARE|PARA|PAREM|SAIR|SAI|STOP|CANCELAR|CHEGA|NÃO QUERO MAIS` with no model call; `contexto.estado.texto_base` / `atendente_nome` are
+  `PARAR|PARE|PARA|PAREM|SAIR|SAI|STOP|CANCELAR|CHEGA|NÃO QUERO MAIS` with no model call, in EVERY conversation state (paused / handed over / agent off / killed / draining too: the refusal path records it via the same `aplicar_encerramento` and answers `encerrar`+`opt_out`; see julia-v2 CONTRACT §5.2); `contexto.estado.texto_base` / `atendente_nome` are
   validated like a spec; `encaminhada: true` messages are marked for the model and never evidence.
 - Provenance + leak tripwires (migration 046, `channels/proveniencia.py`, `stores/marcadores.py`; GUARDRAILS B2/B7):
   authorship is structural, never inferred from text. Lead lines stay one plain `user` message; human / other-agent /
@@ -500,3 +501,5 @@ cd products/agents/frontend && npx vite build
 Skill gate -> auto-load (`DECISAO-SKILL-AUTOLOAD.md` under `projects/julia-v2/`): `tool_registry._handler` opens a tool's skill for the turn and attaches `procedimento_obrigatorio`; `JuliaTurno.skills_carregadas` is turn-scoped and `reiniciar_tentativa()` resets budgets for a re-run. `turno.executar` splits the stop causes (`PARADAS_PROCEDURAIS`: silent re-run, fallback + `alertar_operacao`, no hand-off). `turno._compilar` caches published compiles (`ESTATISTICAS`, `limpar_cache_compilacao`). `EvalRunner` takes a `turn_driver_factory` so judge cases run on `LiveEvalTurnDriver` (`ThreadState.contexto_caso` -> state block; `definir_modelo/temperatura/historico` are A/B knobs). Version temperature: `tool_policy.temperature`, default 0.3.
 
 Leak fingerprint (turn redesign): `JuliaTurno.textos_derivados` collects every skill body / file the tools hand the model; `conformidade.impressao_com` adds them to the fingerprint for the turn's reply check, and `avaliar_resposta` runs `vazamento_prompt` on `esqueleto(resposta)` too.
+
+- Grants are per (agent, product, org) with a personal token; channel requests re-check the grant is live (`assert_channel_grant_live`). Staff edit an org's specs only under a live grant (`/api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs`, migration 064 `especificacoes_editor`).

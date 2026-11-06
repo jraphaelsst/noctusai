@@ -42,6 +42,8 @@ Adversarial security for LLM agents exposed to the public, multi-tenant and tool
 ## Workflow
 1. **Research** current literature and CVEs online (WebFetch primaries). 2. **Trifecta inventory** + trust boundaries. 3. **Walk the catalog**, tag each row. 4. **Mark status on `origin/dev`** with file:line. 5. **Infer scenarios** from our own mechanisms. 6. **Prioritize P0/P1/P2** with fix location. 7. **Proof tests**: content-v3 eval cases + pytest specs; ASR where a generated suite ran. 8. **E2E checklist** (catalog §7). 9. **Write the dated audit record** (canon §12 template). 10. **Re-audit** on every new agent, channel or tool change, provider/model change, merged security branch, and periodically (canon §12 triggers).
 
+Repeatable exposure audit (browser bundles, LLM leakage phases) → skill `noc-security-audit`; new checks go into the canon (§10, §12) and the dated audit record.
+
 ## Output shape
 Prioritized table (id · scenario · tags · L · I · status · evidence file:line · fix where/what · proof test), trifecta table, DEFENDED list, inferred scenarios, eval cases, ASR results, the E2E checklist, a "not verified" list, sources — delivered as the text of `KB § PATTERNS/security/audits/<agent>-<yyyy-mm>.md`. State plainly when the MCP cache was unavailable. Never a code edit, commit or push.
 

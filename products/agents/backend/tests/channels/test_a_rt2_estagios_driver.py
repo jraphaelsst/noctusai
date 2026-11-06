@@ -119,6 +119,22 @@ class TestLiveDriver:
         # the SW the tools talked to is the fixture one: nothing reached a real tenant
         assert [n for n, _a in driver._mundo.sw.chamadas] == ["buscar_imoveis"]
 
+    def test_sinalizar_alerta_is_offered_and_records_like_the_channel_route(self, chan):
+        """The channel route wires an alert store (``alertas=``); a world without one does not offer the tool, so
+        every mechanism case asserting ``sinalizar_alerta`` (insult, harassment, info_indisponivel) failed by
+        construction (run e631f98e: ``ausente:sinalizar_alerta`` 0/2)."""
+        chan.seed_agent(publish=False)
+        provider = FakeProvider(tool_responses=[
+            step(call("sinalizar_alerta", tipo="lead_insatisfeito", descricao="Lead ofendeu a assistente.")),
+            say("Sinto muito pela experiência. Prefere falar com uma pessoa da equipe?"),
+        ])
+        driver = _driver(chan, provider)
+
+        out = asyncio.run(driver.executar_turno(ThreadState(), "Você é uma inútil!"))
+
+        assert [(t.nome, t.ok) for t in out.ferramentas] == [("sinalizar_alerta", True)]
+        assert [a.tipo for a in driver._mundo.svc.alertas._rows] == ["lead_insatisfeito"]
+
     def test_the_world_is_rebuilt_per_execution_and_never_touches_the_shared_stores(self, chan):
         chan.seed_agent(publish=False)
         provider = FakeProvider(tool_responses=[

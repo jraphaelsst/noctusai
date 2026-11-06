@@ -53,7 +53,7 @@ from app.studio.models import ConteudoBundle
 from app.stores.skills_biblioteca import FERRAMENTAS_DE_ABERTURA
 from app.stores.threads import OPT_OUT_MENSAGEM_MAX
 from app.stores.thread_alertas import TIPOS_ALERTA
-from app.studio.textos_registry import CODIGOS_RECUSA_OPCIONAIS, MOTIVOS_HANDOFF
+from app.studio.textos_registry import CODIGOS_RECUSA_OPCIONAIS, MOTIVO_INFO_INDISPONIVEL, MOTIVOS_HANDOFF
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,7 @@ __all__ = [
     "SkillsDaVersao",
     "TextoAusente",
     "ToolDef",
+    "alertar_info_indisponivel",
     "make_channel_tools_factory",
     "montar_tool_specs",
     "obrigatorias_por_ferramenta",
@@ -546,6 +547,8 @@ class JuliaTurno:
     links_por_codigo: dict[str, str] = field(default_factory=dict)
     #: The report built for this turn's hand-off / conclusion.
     relatorio: dict[str, Any] | None = None
+    #: REQUIRED org specs with no value (the prompt carries the INDISPONIVEL sentinel for them): drives the alerts.
+    specs_faltando: tuple[str, ...] = ()
 
     def proteger_args(self, nome: str, args: BaseModel) -> BaseModel:
         """The lead-influenced arguments that reach humans, scanned for the prompt: a hit replaces the field
@@ -1339,6 +1342,44 @@ async def aplicar_encerramento(
         t.acao(type="opt_out", motivo=origem_opt_out, trecho=_limpo(trecho, TRECHO_OPT_OUT_MAX))
 
 
+#: ``trecho`` prefix of a missing-spec alert: the machine key the dedupe reads (never shown to a lead).
+_PREFIXO_ALERTA_INFO = "info_indisponivel"
+ETAPAS_INFO_INDISPONIVEL = ("aviso", "redirecionado")
+
+
+async def alertar_info_indisponivel(t: JuliaTurno, etapa: str) -> bool:
+    """Tell the org (the existing ``alerta`` action: in-app + WhatsApp via SW) that a REQUIRED org spec is missing
+    for this lead's conversation -- ``aviso``: the agent is answering "I will check" without it; ``redirecionado``: the
+    lead was handed to a person because of it. Dedupe: each ``(thread, etapa, chave)`` alerts once; the pending keys of
+    a step go in ONE alert. Never raises (a lost alert is logged and the turn goes on). Returns whether one was raised."""
+    if not t.specs_faltando or t.alertas is None or etapa not in ETAPAS_INFO_INDISPONIVEL:
+        if t.specs_faltando and t.alertas is None:
+            logger.error("agents.channel.info_indisponivel_sem_alertas thread_id=%s", t.thread_id)
+        return False
+    try:
+        previos = await asyncio.to_thread(t.alertas.listar, t.org_id, t.thread_id)
+        ja = {
+            c for p in previos if (p.trecho or "").startswith(f"{_PREFIXO_ALERTA_INFO}:{etapa}:")
+            for c in p.trecho.split(":", 2)[2].split(",")
+        }
+        pendentes = [c for c in t.specs_faltando if c not in ja]
+        if not pendentes:
+            return False
+        chaves = ", ".join(pendentes)
+        try:
+            descricao = t.texto(f"ferramenta.alerta.info_indisponivel.{etapa}", chaves=chaves)
+        except TextoAusente:  # optional rows: an older version alerts with the bare code (never prose from code)
+            descricao = f"{_PREFIXO_ALERTA_INFO}:{etapa}: {chaves}"
+        rec = await asyncio.to_thread(
+            t.alertas.registrar, t.org_id, t.thread_id, t.agent_id, tipo="outro", descricao=descricao[:ALERTA_DESCRICAO_MAX],
+            trecho=f"{_PREFIXO_ALERTA_INFO}:{etapa}:{','.join(pendentes)}")
+        t.acao(type="alerta", tipo="outro", descricao=descricao[:ALERTA_DESCRICAO_MAX], alerta_id=str(rec.id))
+        return True
+    except Exception:  # noqa: BLE001 -- a lost alert must be seen, never stop a lead's reply
+        logger.exception("agents.channel.info_indisponivel_alerta_falhou thread_id=%s etapa=%s", t.thread_id, etapa)
+        return False
+
+
 async def executar_handoff(
     t: JuliaTurno, motivo_codigo: str, resumo: str, *, para_estado: str = "pausado",
 ) -> None:
@@ -1362,6 +1403,8 @@ async def executar_handoff(
     t.transferiu = True
     t.resumo_handoff = resumo
     t.acao(type="handoff", motivo_codigo=motivo_codigo, motivo=resumo, relatorio=relatorio)
+    if motivo_codigo == MOTIVO_INFO_INDISPONIVEL:  # the second notice: the lead was redirected because of the missing info
+        await alertar_info_indisponivel(t, "redirecionado")
 
 
 async def finalizar_conclusao(t: JuliaTurno, lead_pronto: Mapping[str, Any]) -> None:

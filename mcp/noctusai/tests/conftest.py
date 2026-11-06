@@ -191,6 +191,49 @@ def ledger_repo(tmp_path, monkeypatch):
     yield bare, clone, show
 
 
+_LIVE_DB_ENV_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_setup(item):
+    """Snapshot the live-DB variables before ANY fixture of this test runs."""
+    item._live_db_env_before = {k: os.environ.get(k) for k in _LIVE_DB_ENV_KEYS}
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Fail LOUDLY, at the test that caused it, when a test leaves a live-DB
+    variable behind in the process environment.
+
+    2026-11-05: `_llm_bootstrap._source_env_for_key` copied the whole platform
+    `.env` (prod SUPABASE_URL) into os.environ and never restored it; ~5000
+    tests later a child pytest (test_scaffold_overlay) inherited it and the
+    hermetic live-DB guard refused it -- a failure nowhere near its cause.
+
+    A hook wrapper, not an autouse fixture: the check must run after EVERY
+    fixture finalizer (monkeypatch's restore included). As a fixture its
+    teardown order relative to monkeypatch depended on fixture instantiation
+    order, and it flagged `monkeypatch.setenv` itself as a leak.
+    """
+    result = yield
+    before = getattr(item, "_live_db_env_before", None)
+    if before is None:
+        return result
+    leaked = [k for k in _LIVE_DB_ENV_KEYS if os.environ.get(k) != before[k]]
+    for k in leaked:  # restore so one leaker is one failure, not a cascade
+        if before[k] is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = before[k]
+    assert not leaked, (
+        f"{item.nodeid} leaked {leaked} into os.environ. Use monkeypatch.setenv/"
+        "delenv, or stop the code under test from sourcing the platform .env "
+        "(see env_bootstrap.load_repo_env + NO_ENV_FILE_VAR)."
+    )
+    return result
+
+
 @pytest.fixture(autouse=True)
 def _isolate_guard_event_log(tmp_path, monkeypatch):
     """Guard runs in tests (and the hook subprocesses they spawn, which inherit

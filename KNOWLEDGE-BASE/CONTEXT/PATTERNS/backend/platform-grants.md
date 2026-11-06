@@ -42,3 +42,9 @@ Still deferred: the `CallerKind` `service` principal in `AuthContext` (the FK is
 ## Orchestration (control-plane side, per contract D2/D4)
 
 Mint channel token, mint product tools token, mint one-shot delivery token (5 min, scope `GRANT_RECEIVE_SCOPE`), `deliver`, revoke the delivery token. Any failure revokes every token of the attempt. Rotate = deliver the new pair, then revoke the old. Revoke = revoke both, then best-effort `revoke` delivery.
+
+## One token per (agent, product, org) -- a token never reaches another agent (owner 2026-11-05)
+
+A grant row (`agents.agent_product_grants`) is the unit of authority: one `(org_id, agent_key, product)` with its OWN personal channel token (`principal_agent_id` = that org's instance of that agent) and its own product tools token. Several agents, products and orgs = several grants, each token minted separately; an agent's token never opens another agent's routes (e.g. Julia's SW token cannot address Bia, even in the same org), and a tools token / stored secret belongs to one agent (`GrantProduct` allows exactly one agent key; a second agent gets its own scope + secret entry).
+
+Enforced at request time, not only at mint: the channel gate (`_require_channel` -> `assert_channel_grant_live`) looks the token's grant up (`GrantStore.find_by_channel_token`) and refuses (403 `grant_inativo`) unless it is `ativo` and not expired, and (403 `agent_not_allowed`) unless it names this very `(org, agent)`; routes that address an agent/thread/hand-off additionally require `principal_agent_id` to match. A revoked or expired grant therefore stops the agent's turns AND spec edits at once. The grant also names who edits the org's specs (`especificacoes_editor`: `plataforma` = NoctusAI staff from Studio via `PUT /api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs`, needs a LIVE grant AND the platform-admin login; `org` is reserved, not built). The product (SW) stays read-only for specs.

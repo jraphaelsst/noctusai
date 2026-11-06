@@ -50,6 +50,7 @@ from app.channels import admissao, extracao
 from app.channels import turno as turno_mod
 from app.channels.bubbles import split_into_bubbles
 from app.channels.controles import ControleIndisponivel, LeadIdentidade, aplicar_controles
+from app.stores.agent_controles import NucleoIndisponivel
 from app.channels.retention import ChannelRetention
 from app.config import settings
 from app.dependencies import (
@@ -376,7 +377,31 @@ async def run_channel_turn(
                     msg_store=msg_store, inbound=inbound, conv_store=conv_store)
                 for rec in novos:
                     await publish_event(thread.id, "message.new", turno_mod.mensagem_publica(rec), bus=bus)
-            resp = _resposta_sem_turno(ctl.status, thread, agent, ctl.participante)
+            # An opt-out is honoured in EVERY state (LGPD): a stop word is recorded + the responsible alerted BEFORE the
+            # refusal (paused / handed over / off / draining) answers; any other message is refused exactly as before.
+            resp = None
+            if (
+                thread is not None and payload.gatilho == "mensagem" and plan.new
+                and ctl.status not in turno_mod.STATUS_RECUSA_SEM_OPT_OUT
+            ):
+                lote_parar = [t for m in batch for t in m.falas_do_lead()]
+                feito = await turno_mod.opt_out_em_conversa_recusada(
+                    svc=svc, prep=prep, agent=agent, org_id=org_id, thread=thread, lote_lead=lote_parar,
+                    participante=ctl.participante)
+                if feito is not None:
+                    logger.info("agents.channel.turn.opt_out_em_recusa org_id=%s status=%s", org_id, ctl.status)
+                    resp = ChannelTurnResponse(
+                        thread_id=thread.id, conversation_id=thread.id, status=feito.status,
+                        reply={"partes": split_into_bubbles(feito.partes_texto)}, actions=feito.actions,
+                        participante=(
+                            {"agent_key": agent.key, "estado": feito.participante_estado}
+                            if feito.participante_estado else None),
+                        conformidade={"violacoes": [
+                            {"regra": v.regra, "politica": v.politica, "bloqueada": v.bloqueada}
+                            for v in feito.violacoes]},
+                    )
+            if resp is None:
+                resp = _resposta_sem_turno(ctl.status, thread, agent, ctl.participante)
             if thread is not None and ids:
                 (await anyio.to_thread.run_sync(lambda: inbound.set_reply(org_id, connection_id, ids, resp.model_dump(mode="json"))))
             return resp
@@ -510,7 +535,11 @@ def channel_agent_status(
     # response still reports provider/model as null.
     basis = active or studio_store.get_draft(r.definicao.org_id, r.definicao.id)
     configured = bool(basis is not None and key_resolver(basis.provider, ctx.org_id))
-    controle = controles.get(ctx.org_id, agent.id)
+    try:
+        controle = controles.get(ctx.org_id, agent.id)
+    except NucleoIndisponivel as exc:  # the testing state (Julia's core) is unreadable: fail closed
+        logger.exception("agents.status.nucleo_indisponivel org_id=%s agent=%s", ctx.org_id, agent.key)
+        raise ControleIndisponivel().as_http_exception() from exc
     desligado_plataforma = bool(plataforma.get(agent.key).desligado)
     svc = turno_mod.ServicosCanal(
         studio_store=studio_store, catalog=catalog, conversations=None, messages=None, threads=threads,

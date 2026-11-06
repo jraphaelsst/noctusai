@@ -27,11 +27,13 @@ from zoneinfo import ZoneInfo
 
 from app.channels import admissao
 from app.channels import conformidade as conf
+from app.studio.especificacoes import completar_indisponiveis, placeholder_cru_em
 from app.channels.contexto import Dossie, render_contexto_system
 from app.channels import proveniencia as prov
 from app.channels.opt_out import OptOutService
 from app.channels.tool_registry import (
     MOTIVO_LEAD_PEDIU_PARAR,
+    alertar_info_indisponivel,
     OPT_OUT_PALAVRA_CHAVE,
     JuliaTurno,
     SkillFonte,
@@ -146,7 +148,7 @@ _PROMPTS_SALVOS: set[tuple[UUID, str]] = set()
 #: (compiled prompt, content complete)``. A published version is immutable, so the key is the whole input: a publish
 #: (new version id), a spec write (new specs hash) and a new standard version (new id) each MISS by construction -- no
 #: explicit invalidation to forget. A DRAFT (an eval run) is never cached: it changes under the key. Bounded (FIFO).
-_COMPILADOS: dict[tuple[UUID, UUID, str, Any], tuple[Any, bool]] = {}
+_COMPILADOS: dict[tuple[UUID, UUID, str, Any], tuple[Any, tuple[str, ...]]] = {}
 _COMPILADOS_MAX = 64
 #: How often a turn compiled / hit the cache / stored the proof of use (tests and the ops log read it).
 ESTATISTICAS = {"compilou": 0, "reaproveitou": 0, "salvou_prompt": 0}
@@ -195,7 +197,7 @@ def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
 
 def _compilar(
     svc: ServicosCanal, org_id: UUID, agent: Any, *, versao: UUID | str = "ativa",
-    specs: Mapping[str, str] | None = None,
+    specs: Mapping[str, str] | None = None, tolerar_specs_faltando: bool = False,
 ) -> tuple[AgenteResolvido, VersaoPadrao, Any]:
     """Resolve + compile FOR THE ORG with the pinned standard; refuses (typed) when there is nothing to run
     or the content is incomplete. No side effect. ``versao``/``specs`` serve the eval driver (a DRAFT, with
@@ -213,17 +215,21 @@ def _compilar(
     publicada = getattr(r.versao, "status", None) in ("ativa", "substituida")
     chave = (r.definicao.org_id, r.versao.id, org_specs_hash(r), padrao.id)
     if publicada and chave in _COMPILADOS:
-        compiled, completo = _COMPILADOS[chave]
+        compiled, avisos = _COMPILADOS[chave]
         ESTATISTICAS["reaproveitou"] += 1
     else:
         compiled = compile_for_org(svc.studio_store, svc.catalog, r, qualificacao=qualificacao_data(padrao))
-        completo = conteudo_status(svc.studio_store, svc.catalog, r, compiled=compiled).completo
+        avisos = tuple(conteudo_status(svc.studio_store, svc.catalog, r, compiled=compiled).avisos_bloqueantes)
         ESTATISTICAS["compilou"] += 1
-        if publicada and completo and padrao.id is not None:
+        if publicada and padrao.id is not None:
             if len(_COMPILADOS) >= _COMPILADOS_MAX:
                 _COMPILADOS.pop(next(iter(_COMPILADOS)))
-            _COMPILADOS[chave] = (compiled, completo)
-    if not completo:
+            _COMPILADOS[chave] = (compiled, avisos)  # the BLOCKING warnings, not a verdict: ``tolerar_specs_faltando`` is per call
+    # A REQUIRED org spec with no value is readiness (publish), not a refusal at turn time: the prompt carries the
+    # INDISPONIVEL sentinel for it and the turn alerts the org (``alertar_info_indisponivel``). ``conteudo_completo``
+    # (what SW / Studio show) stays strict.
+    bloqueantes = set(avisos) - ({"spec_org_faltando"} if tolerar_specs_faltando else set())
+    if bloqueantes:
         raise TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.")
     return r, padrao, compiled
 
@@ -262,7 +268,7 @@ def preparar(
     """Everything a turn needs that does not depend on the lead. Raises :class:`TurnoRecusado` (409) BEFORE
     anything is persisted: ``no_active_version`` · ``qualificacao_indisponivel`` · ``conteudo_incompleto`` ·
     ``prompt_too_large``."""
-    r, padrao, compiled = _compilar(svc, org_id, agent, versao=versao, specs=specs)
+    r, padrao, compiled = _compilar(svc, org_id, agent, versao=versao, specs=specs, tolerar_specs_faltando=True)
     if len(compiled.texto) > MAX_COMPILED_PROMPT_CHARS:
         raise TurnoRecusado(409, "prompt_too_large", "O prompt compilado passa do limite de tamanho.")
     try:  # proof of use (§A7), under the org that owns the version's rows; write-once, so once per process is enough
@@ -401,6 +407,60 @@ async def _parar_pelo_lead(turno: JuliaTurno, palavra: str) -> _Tentativa:
     return _Tentativa(textos=[confirmacao] if confirmacao else [])
 
 
+#: Statuses of a REFUSED turn on which a lead's stop word is still honoured (the opt-out is consent withdrawal, valid in
+#: every conversation state): ``lead_opt_out`` already is one, ``reengajamento_ignorado`` has no lead words, and
+#: ``controle_indisponivel`` never reaches here (503).
+STATUS_RECUSA_SEM_OPT_OUT = frozenset({"lead_opt_out", "reengajamento_ignorado", "controle_indisponivel"})
+
+
+async def opt_out_em_conversa_recusada(
+    *, svc: ServicosCanal, prep: Preparado | None, agent: Any, org_id: UUID, thread: Any, lote_lead: list[str],
+    participante: Any,
+) -> ResultadoTurno | None:
+    """The STOP word in a conversation the controls REFUSED (paused / handed to a broker / another agent's / agent
+    off / platform kill / draining). The lead's opt-out is honoured in EVERY state, so it runs BEFORE the refusal is
+    answered: the SAME recording as the in-turn backstop (:func:`aplicar_encerramento` -> ``OptOutService``: lead-wide
+    opt-out, every participation ended, the owner's in-app notice) and the SAME ``encerrar`` (``lead_opt_out`` +
+    reason) + ``opt_out`` action shape SW consumes (it alerts the responsible in-app and by WhatsApp with the reason).
+
+    ``None`` = nothing to do (not a stop word / no thread / the rule is off) and the refusal stands exactly as before.
+    The confirmation text is sent when the agent is live (``prep`` present): the lead gets one acknowledgement even
+    though a human owns the chat; with the agent off (``prep`` is ``None``: no compiled content) nothing is sent, the
+    opt-out and the alert still happen. No model call."""
+    if thread is None or thread.lead_ref_id is None:
+        return None
+    try:
+        regra = svc.conformidade.regras(org_id, agent.id).get("opt_out_palavras")
+    except Exception:  # noqa: BLE001 -- an unreadable rule must not hide the code-side floor (PARAR / SAIR / ...)
+        logger.exception("agents.channel.opt_out.regra_ilegivel org_id=%s thread_id=%s", org_id, thread.id)
+        regra = None
+    palavra = conf.palavra_de_parar(lote_lead, regra)
+    if palavra is None:
+        return None
+    conteudo = prep.compiled.conteudo if prep is not None else None
+    turno = JuliaTurno(
+        org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=thread.lead_ref_id,
+        conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash if prep is not None else "",
+        padrao=None, qual=None, threads=svc.threads, skills=None, sw=None, ident=None, handoff_destino=None,
+        limites=None, mensagens_lead=[], sinais=None, lote_lead=list(lote_lead),
+        opt_out=OptOutService(svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
+    )
+    await aplicar_encerramento(
+        turno, MOTIVO_LEAD_PEDIU_PARAR, opt_out=True, motivo_texto=f'"{palavra}"', origem_opt_out=OPT_OUT_PALAVRA_CHAVE,
+        trecho=palavra)
+    confirmacao = ""
+    if conteudo is not None:
+        confirmacao = conteudo.texto("runtime.confirmacao_opt_out").strip()
+        if not confirmacao:
+            logger.error("agents.channel.opt_out.confirmacao_ausente thread_id=%s", thread.id)
+    atual = await asyncio.to_thread(svc.threads.get_participante, org_id, thread.id, agent.id)
+    return ResultadoTurno(
+        partes_texto=confirmacao, actions=_numerar(turno.actions), status="encerrado",
+        participante_estado=atual.estado if atual is not None else (participante.estado if participante else None),
+        violacoes=[Violacao("opt_out_palavras", "registrar", {"palavra": palavra})],
+    )
+
+
 def _textos_com_valor(turno: JuliaTurno, ct: Any, estado: Any, lote_lead: list[str], mensagens_lead: list[str]) -> list[str]:
     """Where a figure of a reply may come from (``valor_sem_ferramenta``): this turn's tool results, the lead's own
     words (never a forwarded message or media text), the agent's earlier replies in this thread, the dossier."""
@@ -503,7 +563,10 @@ async def executar(
     #: allowlists are RULES: built only from values that passed the validator (report mode keeps an invalid value as
     #: data, it never lets it widen what a reply may link or cite)
     valores = prep_specs.limpos
-    skills: SkillFonte | None = SkillsComSpecs(fonte, prep_specs.valores, prep_specs.fenced)
+    # a REQUIRED spec with no value reads ``[dado: chave]`` in a skill text too (the sentinel is in the prompt's data block)
+    valores_skill, fenced_skill, _ = completar_indisponiveis(
+        [d.chave for d in r.specs_declaradas if d.obrigatoria], prep_specs.valores, prep_specs.fenced)
+    skills: SkillFonte | None = SkillsComSpecs(fonte, valores_skill, fenced_skill)
     sw = svc.sw if (svc.sw is not None and svc.sw.julia_tools_available(org_id)) else None
     leak = regras.get("vazamento_prompt")
     historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
@@ -540,6 +603,7 @@ async def executar(
             svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
         modo_restrito=nivel != "normal",
         alertas=svc.alertas,
+        specs_faltando=tuple(prep.compiled.specs_faltando),
         alertas_desde=max(
             (r.created_at for r in historico_previo if r.role == "assistant" and r.created_at is not None),
             default=None),
@@ -604,6 +668,8 @@ async def executar(
     codigos_da_thread = {e.codigo_imovel.casefold() for e in eventos} | ({campanha.casefold()} if campanha else set())
     tentativas: list[_Tentativa] = []
     bloqueios: list[Violacao] = []
+    if parada is None and turno.specs_faltando:  # the org learns the agent is answering without a required spec
+        await alertar_info_indisponivel(turno, "aviso")
 
     def _avaliar(t: _Tentativa) -> list[Violacao]:
         resposta = "\n\n".join(x for x in t.textos if x and x.strip())
@@ -812,6 +878,10 @@ def _marcadores_da_resposta(resposta: str, marcador: str | None, tag: str, regra
     """The honeytoken in the reply is a prompt leak (``vazamento_prompt``, the rule's own policy: it blocks by
     default); the turn's provenance tag in the reply is a forgery signal."""
     out: list[Violacao] = []
+    cru = placeholder_cru_em(resposta)
+    if cru:  # structural + always on (no rule row can switch it off): a raw placeholder is never sent
+        logger.error("agents.channel.placeholder_cru n=%s", len(cru))
+        out.append(Violacao("placeholder_cru", conf.politica_efetiva(regras, "placeholder_cru"), {"n": len(cru)}))
     if prov.marcador_em([resposta], marcador):
         out.append(Violacao("vazamento_prompt", conf.politica_efetiva(regras, "vazamento_prompt"), {prov.MARCADOR_HONEYTOKEN: True}))
     if tag and tag in resposta:

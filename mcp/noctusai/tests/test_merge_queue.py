@@ -117,9 +117,13 @@ def enqueue(w, slug, files, when, base="origin/dev"):
     return sha
 
 
-def make_queue(w, ci):
+def make_queue(w, ci, regen=lambda wt: (True, "")):
+    # regen injected: the real one shells out to cli.py --update-kb-counts (absent in tmp repos)
     return mq.Queue("o/r", run=ci, run_id="7", poll_s=0, sleep=lambda s: None,
-                    workdir=w["runner"], log=lambda m: None)
+                    workdir=w["runner"], log=lambda m: None, regen=regen)
+
+
+_NOREGEN = make_queue.__defaults__[0]  # same injected no-op regen for tests that build Queue directly
 
 
 def origin_dev(w):
@@ -402,7 +406,7 @@ def test_workflow_touching_entry_is_pre_ejected_and_the_rest_land(world):
 def test_workflow_token_seam_switches_the_pre_eject_off(world):
     _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
     _diverge_dev(world)
-    q = mq.Queue("o/r", run=FakeCI(world["origin"]), run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=FakeCI(world["origin"]), run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None, workflow_token=True)
     res = q.drain()
     assert res.ejected == [] and [x["slug"] for x in res.landed] == ["wf"]
@@ -417,7 +421,7 @@ def test_rejected_candidate_push_ejects_instead_of_raising(world):
             return 1, "", "! [remote rejected] x (pre-receive hook declined)"
         return ci(cmd, cwd=cwd)
 
-    q = mq.Queue("o/r", run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None)
     res = q.drain()
     assert res.landed == [] and res.ejected[0]["kind"] == "push_rejected"
@@ -436,7 +440,7 @@ def test_workflow_permission_rejection_maps_to_the_workflow_reason(world):
             return 1, "", "! [remote rejected] (refusing to allow a GitHub App to create or update workflow `x.yml` without `workflows` permission)"
         return ci(cmd, cwd=cwd)
 
-    q = mq.Queue("o/r", run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None, workflow_token=True)  # defeat the pre-check so the push itself is rejected
     res = q.drain()
     assert [x["slug"] for x in res.ejected] == ["wf"]
@@ -458,7 +462,7 @@ def _token_runner(world, ci, pushes):
             if cmd[2].startswith("https://x-access-token:"):
                 cmd = [*cmd[:2], world["origin"], *cmd[3:]]
         return ci(cmd, cwd=cwd)
-    return mq.Queue("o/r", run=run, run_id="7", poll_s=0, sleep=lambda s: None,
+    return mq.Queue("o/r", regen=_NOREGEN, run=run, run_id="7", poll_s=0, sleep=lambda s: None,
                     workdir=world["runner"], log=lambda m: None, push_token=TOK)
 
 
@@ -499,14 +503,14 @@ def test_token_never_surfaces_in_errors_statuses_or_verdicts(world):
             return 1, "", msg
         return ci(cmd, cwd=cwd)
 
-    q = mq.Queue("o/r", run=run, run_id="7", poll_s=0, sleep=lambda s: None,
+    q = mq.Queue("o/r", regen=_NOREGEN, run=run, run_id="7", poll_s=0, sleep=lambda s: None,
                  workdir=world["runner"], log=lambda m: None, push_token=TOK)
     res = q.drain()
     blob = json.dumps(res.ejected) + json.dumps(ci.statuses)
     assert res.ejected and TOK not in blob and bad in ci.statuses
     assert TOK not in q._redact(msg) and "***" in q._redact(msg)
     rc = lambda cmd, cwd=None: (1, "", msg)  # noqa: E731
-    q2 = mq.Queue("o/r", run=rc, workdir=world["runner"], log=lambda m: None, push_token=TOK)
+    q2 = mq.Queue("o/r", regen=_NOREGEN, run=rc, workdir=world["runner"], log=lambda m: None, push_token=TOK)
     with pytest.raises(RuntimeError) as ei:
         q2.git("push", f"https://x-access-token:{TOK}@github.com/o/r.git", "x")
     assert TOK not in str(ei.value)
@@ -528,3 +532,72 @@ def test_merge_queue_workflow_splits_kick_from_the_dev_only_drain():
     assert step_env["MQ_PUSH_TOKEN"] == "${{ secrets.MQ_PUSH_TOKEN }}"
     assert drain["concurrency"]["cancel-in-progress"] is False and "concurrency" not in wf
     assert json.dumps(drain).count("secrets.") == 1  # only the drain step reads the PAT
+
+
+# ── kb-counts regeneration at compose ───────────────────────────────────────
+
+def _compose_one(w, regen):
+    sha = enqueue(w, "kc", [("a.txt", "a\n")], 5000)
+    q = make_queue(w, FakeCI(w["origin"]), regen=regen)
+    q.fetch()
+    base = q.dev_sha()
+    wt = str(Path(w["runner"]).parent / "wt")
+    head, applied, ejected = q.compose(q.entries(), base, wt)
+    return q, wt, base, head, applied, ejected
+
+
+def test_compose_commits_regenerated_counts_when_they_change(world):
+    def regen(wt):
+        p = Path(wt) / "KNOWLEDGE-BASE" / "doc.md"
+        p.parent.mkdir(exist_ok=True)
+        p.write_text("count=derived\n")
+        return True, ""
+    q, wt, base, head, applied, ejected = _compose_one(world, regen)
+    assert [e.slug for e in applied] == ["kc"] and not ejected
+    assert sh(wt, "git", "log", "-1", "--format=%s", head) == "chore(kb-counts): regenerate derived counts at compose [auto]"
+    assert sh(wt, "git", "show", f"{head}:KNOWLEDGE-BASE/doc.md") == "count=derived"
+
+
+def test_compose_commits_a_regenerated_TRACKED_file_first_in_status(world):
+    """The real CI shape (2026-11-06 wedge): regen MODIFIES a tracked count file, so
+    `git status --porcelain` starts with ' M <path>'. A stripped output ate that
+    leading space and `ln[3:]` cut the path to 'NOWLEDGE-BASE/...' -> every drain crashed."""
+    enqueue(world, "kc", [("KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md", "count=stale\n")], 5000)
+    q = make_queue(world, FakeCI(world["origin"]),
+                   regen=lambda wt: ((Path(wt) / "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md").write_text("count=derived\n"), (True, ""))[1])
+    q.fetch()
+    base = q.dev_sha()
+    wt = str(Path(world["runner"]).parent / "wt")
+    head, applied, ejected = q.compose(q.entries(), base, wt)
+    assert [e.slug for e in applied] == ["kc"] and not ejected
+    assert sh(wt, "git", "show", f"{head}:KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md") == "count=derived"
+
+
+def test_a_failing_counts_commit_ejects_the_entry_never_crashes_the_drain(world):
+    enqueue(world, "kc", [("KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md", "count=stale\n")], 5000)
+    ci = FakeCI(world["origin"])
+
+    def run(cmd, cwd=None):
+        if cmd[:2] == ["git", "commit"] and "regenerate derived counts" in " ".join(map(str, cmd)):
+            return 1, "", "fatal: simulated commit failure"
+        return ci(cmd, cwd=cwd)
+    q = make_queue(world, run,
+                   regen=lambda wt: ((Path(wt) / "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md").write_text("count=derived\n"), (True, ""))[1])
+    q.fetch()
+    base = q.dev_sha()
+    head, applied, ejected = q.compose(q.entries(), base, str(Path(world["runner"]).parent / "wt"))
+    assert applied == [] and ejected[0]["kind"] == "kb_counts_regen"
+    assert "simulated commit failure" in ejected[0]["why"]
+
+
+def test_compose_makes_no_commit_when_counts_unchanged(world):
+    q, wt, base, head, applied, ejected = _compose_one(world, lambda wt: (True, ""))
+    assert [e.slug for e in applied] == ["kc"]
+    assert "regenerate derived counts" not in sh(wt, "git", "log", "--format=%s", f"{base}..{head}")
+
+
+def test_compose_ejects_with_reason_when_regeneration_fails(world):
+    q, wt, base, head, applied, ejected = _compose_one(world, lambda wt: (False, "No module named noctusai_lib"))
+    assert applied == [] and head == base
+    assert ejected[0]["kind"] == "kb_counts_regen"
+    assert "noctusai_lib" in ejected[0]["why"]

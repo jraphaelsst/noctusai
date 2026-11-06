@@ -66,3 +66,46 @@ def test_no_studio_write_route_is_gated_by_an_org_level_dependency():
         if any(c in org_level for c in chamadas(r.dependant)):
             ofensores.append((sorted(r.methods), r.path))
     assert not ofensores, ofensores
+
+
+# P2-B: the eval-run READS serve the definition's outputs (platform IP): the same tier as the writes.
+LEITURAS_DE_EVAL = [
+    ("GET", "/api/studio/agents/julia/evals/runs"),
+    ("GET", "/api/studio/agents/julia/evals/runs/00000000-0000-0000-0000-000000000001"),
+]
+
+
+@pytest.mark.parametrize("metodo,url", LEITURAS_DE_EVAL)
+@pytest.mark.parametrize("role", ["member", "admin", "owner"])
+def test_a_tenant_org_member_gets_a_strict_403_on_eval_run_reads(studio, metodo, url, role):
+    studio.as_org_admin_only(role)
+    resp = studio.get(url)
+    assert resp.status_code == 403, (role, url, resp.text)
+    assert resp.json()["code"] == "platform_admin_required"
+
+
+@pytest.mark.parametrize("metodo,url", LEITURAS_DE_EVAL)
+def test_a_platform_admin_passes_the_eval_run_read_gate(studio, metodo, url):
+    resp = studio.get(url)
+    assert resp.status_code != 403, (url, resp.text)
+
+
+def test_no_eval_route_is_gated_by_the_member_floor_alone():
+    """Static: every ``/evals`` route (any method) is behind a platform-admin gate, never the bare member scope."""
+    ofensores = []
+
+    def chamadas(dep):
+        yield dep.call
+        for sub in dep.dependencies:
+            yield from chamadas(sub)
+
+    permitidos = {
+        deps.require_publish_read, deps.require_publish_write, deps.require_platform_admin,
+        deps.require_platform_content_admin,
+    }
+    for r in app.routes:
+        if not getattr(r, "dependant", None) or "/evals" not in r.path or not r.path.startswith("/api/studio"):
+            continue
+        if not any(c in permitidos for c in chamadas(r.dependant)):
+            ofensores.append((sorted(r.methods), r.path))
+    assert not ofensores, ofensores

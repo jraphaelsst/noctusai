@@ -105,7 +105,7 @@ Envelope: success = `{"data": …}` (+ `"total"` on lists); errors = FastAPI `{"
 **Side effects of `POST /leads` (state after the call):**
 1. The lead row exists (or an existing lead with the same `dedupe_key` got a `form_submit` activity and updated fields), with a `created` or `form_submit` activity.
 2. Fan-out runs **after commit, async, best-effort**:
-   - e-mail notify via seed `integrations/email` to `WEBSITE_LEADS_NOTIFY_EMAIL` (if set);
+   - in-app notice (`lead_novo`, bell) to the platform org's owners/admins, linking `/admin/website/leads/<id>`; **no e-mail is sent for leads** (owner 2026-11-05) — `WEBSITE_LEADS_NOTIFY_EMAIL` is the owner daily brief's address only;
    - ~~WAHA text alert~~ removed 2026-11-04 (julia-line §A4): if `WEBSITE_SALES_WHATSAPP` is still set, a `sem_linha_da_plataforma` failure is recorded instead of sending;
    - `outbound_webhook` POST to `WEBSITE_LEADS_WEBHOOK_URL` (if set; for n8n).
    Each failure appends a `fanout_failed` activity with `{channel, error}`. **Never silent, never blocks the 201.**

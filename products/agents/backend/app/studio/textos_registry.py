@@ -30,6 +30,7 @@ __all__ = [
     "CODIGOS_RECUSA",
     "CODIGOS_RECUSA_OPCIONAIS",
     "MOTIVOS_HANDOFF",
+    "MOTIVO_INFO_INDISPONIVEL",
     "MOTIVOS_HANDOFF_SERVIDOR",
     "APLICA_A",
     "CONDICOES",
@@ -135,8 +136,10 @@ CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = ("documento_nao_encontrado", "docume
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
     "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
-    "seguranca", "direito_titular",
+    "seguranca", "direito_titular", "info_indisponivel",
 )
+#: The hand-off reason of a lead who insisted on information the org never filled in (a REQUIRED spec with no value).
+MOTIVO_INFO_INDISPONIVEL = "info_indisponivel"
 #: Values only the SERVER writes (deterministic escalation / safety stops).
 MOTIVOS_HANDOFF_SERVIDOR: tuple[str, ...] = (
     "falhas_repetidas", "conformidade", "qualificacao_concluida", "limite_recusas",
@@ -222,6 +225,11 @@ TEXTOS.update({
         "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito", "padroes_proibidos",
         "valor_sem_ferramenta",
     )},
+    # structural guard (a raw placeholder in a reply): optional so an older version without the row still publishes
+    "conformidade.correcao.placeholder_cru": _canal("conformidade", obrigatoria=False),
+    # alerts to the org when a REQUIRED org spec is missing (optional rows: an older version alerts with the bare code)
+    "ferramenta.alerta.info_indisponivel.aviso": _canal("ferramenta", "chaves", obrigatoria=False),
+    "ferramenta.alerta.info_indisponivel.redirecionado": _canal("ferramenta", "chaves", obrigatoria=False),
     "conformidade.handoff_resumo": _canal("conformidade", "regra"),
     "escalonamento.resumo": _canal("escalonamento", "motivo_codigo"),
 })

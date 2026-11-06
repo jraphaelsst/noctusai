@@ -164,7 +164,7 @@ jobs:
             echo "scope: no usable base ($BEFORE) → ACTIVE SET '$ACTIVE'"; exit 0
           fi
           CHANGED="$(git diff --name-only "$BEFORE" "${{ github.sha }}")"
-          echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
+          echo "changed files:"; printf '  %s\n' "${CHANGED//$'\n'/$'\n'  }"
           # here-string, NEVER `echo "$CHANGED" | grep -q` under `set -o pipefail`: grep -q exits on
           # the first match, echo of a large diff takes SIGPIPE, pipefail makes the pipeline
           # non-zero and the `if` reads a MATCH as no-match (2026-10-06: harness-mod-tests skipped
@@ -181,7 +181,7 @@ jobs:
           # Intersect with the active set — and SAY what was dropped (no silent caps).
           KEEP=""; DROP=""
           for s in $SLUGS; do
-            if printf '%s\n' $ACTIVE | grep -qx "$s"; then KEEP="$KEEP $s"; else DROP="$DROP $s"; fi
+            if grep -qx "$s" <<< "${ACTIVE// /$'\n'}"; then KEEP="$KEEP $s"; else DROP="$DROP $s"; fi
           done
           KEEP="$(echo "$KEEP" | sed 's/^ *//;s/ *$//')"; DROP="$(echo "$DROP" | sed 's/^ *//;s/ *$//')"
           [ -n "$DROP" ] && echo "::notice::skipping inactive product(s): $DROP — changed, but not in deploy/fleet/build-scope.txt. Activate them (or use workflow_dispatch) to build."

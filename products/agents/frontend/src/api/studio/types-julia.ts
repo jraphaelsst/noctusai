@@ -271,6 +271,8 @@ export interface Controle {
   /** Noc (core) user ids allowed to get answers; their WhatsApp is read from noc, never typed here. */
   avaliacao_usuarios?: string[];
   avaliacao_resolvidos?: AvaliacaoResolvido[];
+  /** True on a company INSTANCE: the evaluation state is Julia's CORE's (one testing switch for every company), read-only here. */
+  avaliacao_herdada?: boolean;
 }
 export interface AvaliacaoResolvido {
   usuario_id: string;
