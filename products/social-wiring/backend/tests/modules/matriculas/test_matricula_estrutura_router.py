@@ -66,7 +66,9 @@ class TestUploadLinkedToAnImovel:
         payload = client.mock_supabase.table("matricula_extracoes").inserted_payloads[-1]
         assert payload["codigo"] == CODIGO
         assert payload["imovel_documento_id"] == docs[0]["id"]
-        assert "org_id" not in payload, "org must come from the DB default"
+        assert str(payload["org_id"]) == ORG_ID, (
+            "the insert names the effective (acting) org, not the HOME-only default"
+        )
 
     def test_the_transcription_persists_text_and_acts(
         self, client, scoped, fake_storage, fake_extractor, stub_transcriber, background_db
