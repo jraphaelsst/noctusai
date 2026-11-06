@@ -6,6 +6,7 @@
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { Badge } from "@noctusai/lib/design-system";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { ProntidaoAcao, acaoDoItem } from "@/components/studio/ProntidaoAcao";
 import { useProntidao } from "@/hooks/studio/useProntidao";
 import {
   PRONTIDAO_GRUPO_LABEL,
@@ -25,7 +26,7 @@ export function contarBloqueantes(p: Prontidao): number {
   return p.itens.filter((i) => i.severidade === "bloqueante").length;
 }
 
-export function ProntidaoLista({ prontidao }: { prontidao: Prontidao }) {
+export function ProntidaoLista({ prontidao, agentKey }: { prontidao: Prontidao; agentKey?: string }) {
   const n = contarBloqueantes(prontidao);
   const pronto = prontidao.pronto_para_publicar && n === 0;
   const grupos = new Map<ProntidaoGrupo, ProntidaoItem[]>();
@@ -52,14 +53,18 @@ export function ProntidaoLista({ prontidao }: { prontidao: Prontidao }) {
               {itens.map((i) => (
                 <li key={`${i.codigo}-${i.mensagem}`} className="flex items-start gap-2 text-sm" data-testid={`prontidao-item-${i.codigo}`}>
                   {ICON[i.severidade]}
-                  <span>
+                  <div>
                     {i.mensagem}
-                    {i.acao_sugerida && (
+                    {agentKey && acaoDoItem(i.codigo) ? (
+                      <ProntidaoAcao codigo={i.codigo} agentKey={agentKey} />
+                    ) : (
+                      i.acao_sugerida && (
                       <span className="block text-xs text-muted-foreground" data-testid={`prontidao-acao-${i.codigo}`}>
                         {i.acao_sugerida}
                       </span>
+                      )
                     )}
-                  </span>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -85,7 +90,7 @@ export function ProntidaoPanel({ agentKey, override }: { agentKey: string; overr
         <StudioError error={q.error} onRetry={q.refetch} />
       ) : prontidao ? (
         <>
-          <ProntidaoLista prontidao={prontidao} />
+          <ProntidaoLista prontidao={prontidao} agentKey={agentKey} />
           {q.isError && <p className="text-xs text-destructive">Não foi possível atualizar a checklist.</p>}
         </>
       ) : null}

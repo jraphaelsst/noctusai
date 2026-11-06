@@ -72,7 +72,7 @@ shaped by the exemplar's *structure*, marking Julia as an **exemplar** (§4) is 
    Stale skill pins: `action=atualizar_skills` (`POST .../draft/skills-biblioteca/atualizar`) re-pins every skill to its newest
    published version — an **explicit** act (a pin never moves by itself; a published version stays immutable).
 8. **Run the evaluations on the current hash** — judge suite (`POST .../evals/runs`, no `case_ids`, the version's own model) and,
-   for a channel agent, the mechanism suite (`POST .../mecanismo-runs`, LIVE driver). Any later edit changes the hash and
+   for a channel agent, the mechanism suite (`POST .../mecanismo-runs`, LIVE driver). Any later edit changes the hash and In the studio these are buttons in the "Prontidão para publicar" panel (Rodar avaliação completa / Rodar suíte de mecanismo / Ligar agente); no readiness item shows an API path.
    invalidates the run; `prontidao` says `eval_juiz_hash_diferente` / `mecanismo_hash_diferente`.
 9. **Publish — a human act.** `POST .../draft/publish` (UI "Publicar rascunho"). The MCP token never publishes. A 409 carries the same
    `prontidao` list, so one refusal shows everything still owed.
