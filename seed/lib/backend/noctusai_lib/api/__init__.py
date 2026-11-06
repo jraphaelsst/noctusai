@@ -30,21 +30,61 @@ dep-direction rule.)
 
 See `KB § PATTERNS/seed-lib-layout.md` for the full layer model.
 """
-from noctusai_lib.api.auth.session import (
-    ApiTokenResolver,
-    AuthContext,
-    CallerKind,
-    ExpiredSessionError,
-    FakeApiTokenResolver,
-    FakeSessionStore,
-    InvalidCredentialsError,
-    LegacyJwtResolver,
-    RevokedApiTokenError,
-    SessionStore,
-    hash_token,
-    make_get_auth_context,
-)
-from noctusai_lib.api.schemas import StrictHttpModel
+from __future__ import annotations
+
+import importlib
+from typing import TYPE_CHECKING, Any
+
+# Lazy (PEP 562): importing a light submodule such as
+# `noctusai_lib.api.access_tiers` (stdlib-only, used by the transcriber
+# image which ships no PyJWT) must not eagerly pull in `api.auth`
+# (jwt, fastapi, licensing). Names resolve on first access.
+if TYPE_CHECKING:
+    from noctusai_lib.api.auth.session import (
+        ApiTokenResolver,
+        AuthContext,
+        CallerKind,
+        ExpiredSessionError,
+        FakeApiTokenResolver,
+        FakeSessionStore,
+        InvalidCredentialsError,
+        LegacyJwtResolver,
+        RevokedApiTokenError,
+        SessionStore,
+        hash_token,
+        make_get_auth_context,
+    )
+    from noctusai_lib.api.schemas import StrictHttpModel
+
+_LAZY: dict[str, str] = {
+    "ApiTokenResolver": "noctusai_lib.api.auth.session",
+    "AuthContext": "noctusai_lib.api.auth.session",
+    "CallerKind": "noctusai_lib.api.auth.session",
+    "ExpiredSessionError": "noctusai_lib.api.auth.session",
+    "FakeApiTokenResolver": "noctusai_lib.api.auth.session",
+    "FakeSessionStore": "noctusai_lib.api.auth.session",
+    "InvalidCredentialsError": "noctusai_lib.api.auth.session",
+    "LegacyJwtResolver": "noctusai_lib.api.auth.session",
+    "RevokedApiTokenError": "noctusai_lib.api.auth.session",
+    "SessionStore": "noctusai_lib.api.auth.session",
+    "hash_token": "noctusai_lib.api.auth.session",
+    "make_get_auth_context": "noctusai_lib.api.auth.session",
+    "StrictHttpModel": "noctusai_lib.api.schemas",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(module), name)
+    globals()[name] = value  # cache: later access bypasses __getattr__
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_LAZY})
+
 
 __all__ = [
     "ApiTokenResolver",
