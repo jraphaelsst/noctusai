@@ -487,7 +487,7 @@ def list_studio_agents(
     return AgentListOut(items=[_summary(store, ctx.org_id, a) for a in store.list_agents(ctx.org_id)])
 
 
-@router.post("/agents", response_model=AgentSummaryOut, status_code=status.HTTP_201_CREATED)
+@router.post("/agents", response_model=AgentSummaryOut, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def create_studio_agent(
     payload: StudioAgentCreateRequest,
     ctx: AuthContext = Depends(require_platform_content_admin),
@@ -542,7 +542,7 @@ _EXCLUSAO_MENSAGENS = {
 }
 
 
-@router.delete("/agents/{key}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/agents/{key}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 def delete_studio_agent(
     key: str,
     ctx: AuthContext = Depends(require_agent_delete),
@@ -573,7 +573,7 @@ def delete_studio_agent(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.patch("/agents/{key}", response_model=AgentSummaryOut)
+@router.patch("/agents/{key}", response_model=AgentSummaryOut, include_in_schema=False)
 def update_studio_agent(
     key: str,
     payload: StudioAgentUpdateRequest,
@@ -590,7 +590,7 @@ def update_studio_agent(
 # ── versions ────────────────────────────────────────────────────────────────
 
 
-@router.get("/agents/{key}/versions/{version_id}", response_model=VersionDetailOut)
+@router.get("/agents/{key}/versions/{version_id}", response_model=VersionDetailOut, include_in_schema=False)
 def get_version(
     key: str,
     version_id: UUID,
@@ -611,7 +611,7 @@ def get_version(
     return out.model_copy(update={"mecanismo": resumo})
 
 
-@router.get("/agents/{key}/draft", response_model=VersionDetailOut)
+@router.get("/agents/{key}/draft", response_model=VersionDetailOut, include_in_schema=False)
 def get_draft(
     key: str,
     ctx: AuthContext = Depends(require_platform_content_admin),
@@ -627,7 +627,7 @@ def get_draft(
     return _version_detail(store, gate, ctx.org_id, draft)
 
 
-@router.post("/agents/{key}/draft", response_model=VersionDetailOut, status_code=status.HTTP_201_CREATED)
+@router.post("/agents/{key}/draft", response_model=VersionDetailOut, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def create_draft(
     key: str,
     payload: DraftCreateRequest,
@@ -648,7 +648,7 @@ def create_draft(
     return _version_detail(store, gate, ctx.org_id, draft)
 
 
-@router.delete("/agents/{key}/draft", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/agents/{key}/draft", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 def discard_draft(
     key: str,
     ctx: AuthContext = Depends(require_platform_content_admin),
@@ -661,7 +661,7 @@ def discard_draft(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.patch("/agents/{key}/draft", response_model=VersionDetailOut)
+@router.patch("/agents/{key}/draft", response_model=VersionDetailOut, include_in_schema=False)
 def update_draft(
     key: str,
     payload: DraftUpdateRequest,
@@ -679,7 +679,7 @@ def update_draft(
     return _version_detail(store, gate, ctx.org_id, draft)
 
 
-@router.put("/agents/{key}/draft/sections", response_model=VersionDetailOut)
+@router.put("/agents/{key}/draft/sections", response_model=VersionDetailOut, include_in_schema=False)
 def replace_draft_sections(
     key: str,
     payload: SectionsReplaceRequest,
@@ -714,7 +714,7 @@ def replace_draft_sections(
 # ── skills + files ──────────────────────────────────────────────────────────
 
 
-@router.post("/agents/{key}/draft/skills", response_model=SkillOut, status_code=status.HTTP_201_CREATED)
+@router.post("/agents/{key}/draft/skills", response_model=SkillOut, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def create_draft_skill(
     key: str,
     payload: SkillCreateRequest,
@@ -733,7 +733,7 @@ def create_draft_skill(
     return _skill_out(skill, [])
 
 
-@router.patch("/agents/{key}/draft/skills/{skill_id}", response_model=SkillOut)
+@router.patch("/agents/{key}/draft/skills/{skill_id}", response_model=SkillOut, include_in_schema=False)
 def update_draft_skill(
     key: str,
     skill_id: UUID,
@@ -753,7 +753,7 @@ def update_draft_skill(
     return _skill_out(skill, files)
 
 
-@router.delete("/agents/{key}/draft/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/agents/{key}/draft/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 def delete_draft_skill(
     key: str,
     skill_id: UUID,
@@ -769,7 +769,7 @@ def delete_draft_skill(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.put("/agents/{key}/draft/skills/{skill_id}/files", response_model=SkillFileMetaOut)
+@router.put("/agents/{key}/draft/skills/{skill_id}/files", response_model=SkillFileMetaOut, include_in_schema=False)
 def upsert_draft_skill_file(
     key: str,
     skill_id: UUID,
@@ -790,7 +790,7 @@ def upsert_draft_skill_file(
 
 @router.put(
     "/agents/{key}/draft/skills/{skill_id}/files/batch", response_model=SkillFilesBatchResultOut,
-)
+include_in_schema=False)
 def upsert_draft_skill_files_batch(
     key: str,
     skill_id: UUID,
@@ -837,7 +837,7 @@ def upsert_draft_skill_files_batch(
     )
 
 
-@router.get("/agents/{key}/skills/{skill_id}/files/{file_id}", response_model=SkillFileOut)
+@router.get("/agents/{key}/skills/{skill_id}/files/{file_id}", response_model=SkillFileOut, include_in_schema=False)
 def get_skill_file(
     key: str,
     skill_id: UUID,
@@ -852,7 +852,7 @@ def get_skill_file(
     return SkillFileOut(id=f.id, caminho=f.caminho, titulo=f.titulo, conteudo=f.conteudo)
 
 
-@router.delete("/agents/{key}/draft/skills/{skill_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/agents/{key}/draft/skills/{skill_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 def delete_draft_skill_file(
     key: str,
     skill_id: UUID,
@@ -873,7 +873,7 @@ def delete_draft_skill_file(
 # ── compile / diff ──────────────────────────────────────────────────────────
 
 
-@router.get("/agents/{key}/versions/{version_id}/compiled", response_model=CompiledOut)
+@router.get("/agents/{key}/versions/{version_id}/compiled", response_model=CompiledOut, include_in_schema=False)
 def get_compiled(
     key: str,
     version_id: UUID,
@@ -906,7 +906,7 @@ def _diff_states(a: dict[str, tuple], b: dict[str, tuple]) -> list[tuple[str, st
     return out
 
 
-@router.get("/agents/{key}/versions/{version_a}/diff/{version_b}", response_model=DiffOut)
+@router.get("/agents/{key}/versions/{version_a}/diff/{version_b}", response_model=DiffOut, include_in_schema=False)
 def diff_versions(
     key: str,
     version_a: UUID,
@@ -952,7 +952,7 @@ def diff_versions(
 # ── publish ─────────────────────────────────────────────────────────────────
 
 
-@router.post("/agents/{key}/draft/publish", response_model=VersionDetailOut)
+@router.post("/agents/{key}/draft/publish", response_model=VersionDetailOut, include_in_schema=False)
 def publish_draft(
     key: str,
     payload: PublishRequest,
@@ -1161,7 +1161,7 @@ class MecanismoRunOut(BaseModel):
 
 @router.post(
     "/agents/{key}/draft/mecanismo-runs", response_model=MecanismoRunIniciadaOut, status_code=status.HTTP_202_ACCEPTED,
-)
+include_in_schema=False)
 async def run_mecanismo_suite(
     key: str,
     request: Request,
@@ -1209,7 +1209,7 @@ async def run_mecanismo_suite(
     return MecanismoRunIniciadaOut(run_id=run_id, compiled_hash=compiled.hash, driver=driver.tipo, status="executando")
 
 
-@router.get("/agents/{key}/mecanismo-runs/{run_id}", response_model=MecanismoRunOut, response_model_by_alias=True)
+@router.get("/agents/{key}/mecanismo-runs/{run_id}", response_model=MecanismoRunOut, response_model_by_alias=True, include_in_schema=False)
 def get_mecanismo_run(
     key: str,
     run_id: UUID,
@@ -1251,7 +1251,7 @@ def get_mecanismo_run(
 # ── prompts by hash ─────────────────────────────────────────────────────────
 
 
-@router.get("/prompts/{prompt_hash}", response_model=PromptByHashOut)
+@router.get("/prompts/{prompt_hash}", response_model=PromptByHashOut, include_in_schema=False)
 def get_prompt_by_hash(
     prompt_hash: str,
     ctx: AuthContext = Depends(require_platform_admin),

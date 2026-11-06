@@ -30,7 +30,7 @@ from app.schemas.admin import (
 from app.stores.errors import NotFound
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/admin/credentials", tags=["admin-credentials"])
+router = APIRouter(prefix="/api/admin/credentials", tags=["admin-credentials"], include_in_schema=False)
 
 
 def _out(status: CredentialStatus) -> CredentialOut:

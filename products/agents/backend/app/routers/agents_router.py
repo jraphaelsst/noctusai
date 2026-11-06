@@ -79,7 +79,7 @@ async def list_agents(
     return AgentListOut(items=items, total=len(items))
 
 
-@router.post("/{key}/toggle", response_model=AgentOut)
+@router.post("/{key}/toggle", response_model=AgentOut, include_in_schema=False)
 async def toggle_agent(
     key: str,
     payload: AgentToggleRequest,

@@ -185,7 +185,7 @@ def _regra_valida(regra: str) -> None:
         raise http_error(404, "regra_not_found", "Regra não encontrada.")
 
 
-@router.get("/agents/{key}/conformidade/regras", response_model=RegrasOut)
+@router.get("/agents/{key}/conformidade/regras", response_model=RegrasOut, include_in_schema=False)
 def listar_regras(
     key: str, org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_content_admin),
@@ -197,7 +197,7 @@ def listar_regras(
     return RegrasOut(items=[_regra_out(regras[r]) for r in REGRAS])
 
 
-@router.get("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut)
+@router.get("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut, include_in_schema=False)
 def ler_regra(
     key: str, regra: str, org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_content_admin),
@@ -209,7 +209,7 @@ def ler_regra(
     return _regra_out(conformidade.regras(alvo_org, agent.id)[regra])
 
 
-@router.put("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut)
+@router.put("/agents/{key}/conformidade/regras/{regra}", response_model=RegraOut, include_in_schema=False)
 def definir_regra(
     key: str, regra: str, payload: RegraIn, org_id: UUID | None = Query(default=None),
     ctx: AuthContext = Depends(require_platform_content_admin),
@@ -265,7 +265,7 @@ def _avisar_regra_desligada(sink, ctx: AuthContext, alvo_org: UUID, agent, regra
         logger.exception("agents.conformidade.regra_desligada_aviso_falhou regra=%s", regra)
 
 
-@router.get("/agents/{key}/conformidade/violacoes", response_model=ViolacoesOut)
+@router.get("/agents/{key}/conformidade/violacoes", response_model=ViolacoesOut, include_in_schema=False)
 def listar_violacoes(
     key: str, pagina: int = Query(default=1, ge=1, le=200), tamanho: int = Query(default=50, ge=1, le=200),
     thread_id: UUID | None = Query(default=None), org_id: UUID | None = Query(default=None),
@@ -367,7 +367,7 @@ class TextoRegistroOut(BaseModel):
     aparece_quando: str
 
 
-@router.get("/textos/registro", response_model=list[TextoRegistroOut])
+@router.get("/textos/registro", response_model=list[TextoRegistroOut], include_in_schema=False)
 def registro_textos(ctx: AuthContext = Depends(require_platform_admin)) -> list[TextoRegistroOut]:
     return [
         TextoRegistroOut(
@@ -432,7 +432,7 @@ def _percorrer(schema: dict[str, Any], defs: dict[str, Any], prefixo: str, obrig
     return out
 
 
-@router.get("/ferramentas/registro", response_model=list[FerramentaRegistroOut])
+@router.get("/ferramentas/registro", response_model=list[FerramentaRegistroOut], include_in_schema=False)
 def registro_ferramentas(ctx: AuthContext = Depends(require_platform_admin)) -> list[FerramentaRegistroOut]:
     from app.channels.tool_registry import TOOLS
 

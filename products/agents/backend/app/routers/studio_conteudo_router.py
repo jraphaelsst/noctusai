@@ -191,7 +191,7 @@ def _definition_version(store, ctx: AuthContext, key: str, version_id: UUID):
 # ── reads (a version's content tables) ──────────────────────────────────────
 
 
-@router.get("/agents/{key}/versions/{version_id}/textos", response_model=TextosOut)
+@router.get("/agents/{key}/versions/{version_id}/textos", response_model=TextosOut, include_in_schema=False)
 def list_textos(
     key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -201,7 +201,7 @@ def list_textos(
     return TextosOut(version_id=v.id, itens=[_texto_out(r) for r in store.list_textos(ctx.org_id, v.id)])
 
 
-@router.get("/agents/{key}/versions/{version_id}/ferramentas", response_model=FerramentasOut)
+@router.get("/agents/{key}/versions/{version_id}/ferramentas", response_model=FerramentasOut, include_in_schema=False)
 def list_ferramentas(
     key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -211,7 +211,7 @@ def list_ferramentas(
     return FerramentasOut(version_id=v.id, itens=[_ferramenta_out(r) for r in store.list_ferramentas(ctx.org_id, v.id)])
 
 
-@router.get("/agents/{key}/versions/{version_id}/decisoes", response_model=DecisoesOut)
+@router.get("/agents/{key}/versions/{version_id}/decisoes", response_model=DecisoesOut, include_in_schema=False)
 def list_decisoes(
     key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -221,7 +221,7 @@ def list_decisoes(
     return DecisoesOut(version_id=v.id, itens=[_decisao_out(r) for r in store.list_decisoes(ctx.org_id, v.id)])
 
 
-@router.get("/agents/{key}/versions/{version_id}/specs", response_model=SpecsOut)
+@router.get("/agents/{key}/versions/{version_id}/specs", response_model=SpecsOut, include_in_schema=False)
 def list_spec_defs(
     key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -234,7 +234,7 @@ def list_spec_defs(
 # ── draft-only replace-set writes ───────────────────────────────────────────
 
 
-@router.put("/agents/{key}/draft/textos", response_model=TextosOut)
+@router.put("/agents/{key}/draft/textos", response_model=TextosOut, include_in_schema=False)
 def replace_draft_textos(
     key: str, payload: TextosReplaceRequest, ctx: AuthContext = Depends(require_content_write),
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
@@ -250,7 +250,7 @@ def replace_draft_textos(
     return TextosOut(version_id=draft.id, itens=[_texto_out(r) for r in rows])
 
 
-@router.put("/agents/{key}/draft/ferramentas", response_model=FerramentasOut)
+@router.put("/agents/{key}/draft/ferramentas", response_model=FerramentasOut, include_in_schema=False)
 def replace_draft_ferramentas(
     key: str, payload: FerramentasReplaceRequest, ctx: AuthContext = Depends(require_content_write),
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
@@ -270,7 +270,7 @@ def replace_draft_ferramentas(
     return FerramentasOut(version_id=draft.id, itens=[_ferramenta_out(r) for r in rows])
 
 
-@router.put("/agents/{key}/draft/decisoes", response_model=DecisoesOut)
+@router.put("/agents/{key}/draft/decisoes", response_model=DecisoesOut, include_in_schema=False)
 def replace_draft_decisoes(
     key: str, payload: DecisoesReplaceRequest, ctx: AuthContext = Depends(require_content_write),
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
@@ -290,7 +290,7 @@ def replace_draft_decisoes(
     return DecisoesOut(version_id=draft.id, itens=[_decisao_out(r) for r in rows])
 
 
-@router.put("/agents/{key}/draft/specs", response_model=SpecsOut)
+@router.put("/agents/{key}/draft/specs", response_model=SpecsOut, include_in_schema=False)
 def replace_draft_spec_defs(
     key: str, payload: SpecsReplaceRequest, ctx: AuthContext = Depends(require_content_write),
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
@@ -313,7 +313,7 @@ def replace_draft_spec_defs(
 # ── the full "what the model receives" view of a version ────────────────────
 
 
-@router.get("/agents/{key}/versions/{version_id}/payload", response_model=ConteudoPayloadOut)
+@router.get("/agents/{key}/versions/{version_id}/payload", response_model=ConteudoPayloadOut, include_in_schema=False)
 def get_payload(
     key: str, version_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep), catalog=Depends(get_knowledge_catalog_dep),
@@ -386,7 +386,7 @@ def get_org_specs(
     return ler_org_specs(store, ctx, key, config)
 
 
-@router.put("/agents/{key}/specs", response_model=OrgSpecsOut)
+@router.put("/agents/{key}/specs", response_model=OrgSpecsOut, include_in_schema=False)
 def update_org_specs(
     key: str, payload: OrgSpecsUpdateRequest, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -471,7 +471,7 @@ def aplicar_org_specs(
     return _org_specs_out(key, r, config)
 
 
-@router.get("/agents/{key}/compilado", response_model=CompiladoOrgOut)
+@router.get("/agents/{key}/compilado", response_model=CompiladoOrgOut, include_in_schema=False)
 def get_compiled_for_org(
     key: str,
     versao: Literal["ativa", "rascunho"] = Query(default="ativa"),
@@ -512,7 +512,7 @@ def get_org_status(
 # ── platform ────────────────────────────────────────────────────────────────
 
 
-@router.get("/plataforma/textos", response_model=PlataformaTextosOut)
+@router.get("/plataforma/textos", response_model=PlataformaTextosOut, include_in_schema=False)
 def list_textos_plataforma(
     ctx: AuthContext = Depends(require_platform_admin), store=Depends(get_studio_definition_store_dep),
 ) -> PlataformaTextosOut:
@@ -522,7 +522,7 @@ def list_textos_plataforma(
     ])
 
 
-@router.put("/plataforma/textos", response_model=PlataformaTextosOut)
+@router.put("/plataforma/textos", response_model=PlataformaTextosOut, include_in_schema=False)
 def set_textos_plataforma(
     payload: PlataformaTextosRequest, ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -534,7 +534,7 @@ def set_textos_plataforma(
     ])
 
 
-@router.post("/plataforma/content-token", response_model=ContentTokenOut, status_code=status.HTTP_201_CREATED)
+@router.post("/plataforma/content-token", response_model=ContentTokenOut, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def mint_content_token(
     payload: ContentTokenCreateRequest, response: Response, ctx: AuthContext = Depends(require_platform_admin),
     token_admin: ProductTokenAdmin = Depends(get_product_token_admin_dep),
@@ -589,7 +589,7 @@ def _content_tokens(token_admin: ProductTokenAdmin, org_id: UUID):
     )
 
 
-@router.get("/plataforma/content-tokens", response_model=ContentTokensOut)
+@router.get("/plataforma/content-tokens", response_model=ContentTokensOut, include_in_schema=False)
 def list_content_tokens(
     response: Response, ctx: AuthContext = Depends(require_platform_admin),
     token_admin: ProductTokenAdmin = Depends(get_product_token_admin_dep),
@@ -610,7 +610,7 @@ def list_content_tokens(
     ])
 
 
-@router.delete("/plataforma/content-token/{token_id}", response_model=ContentTokenInfoOut)
+@router.delete("/plataforma/content-token/{token_id}", response_model=ContentTokenInfoOut, include_in_schema=False)
 def revoke_content_token(
     token_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
     token_admin: ProductTokenAdmin = Depends(get_product_token_admin_dep),
@@ -677,7 +677,7 @@ def _conflict_flat(exc: StudioConflict) -> HTTPException:
     return _flat(409, exc.code, str(exc))
 
 
-@router.post("/plataforma/agents", status_code=status.HTTP_201_CREATED, response_model=PlataformaAgentOut)
+@router.post("/plataforma/agents", status_code=status.HTTP_201_CREATED, response_model=PlataformaAgentOut, include_in_schema=False)
 async def create_platform_definition(
     payload: PlataformaAgentCreateRequest, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep), deps: engine.Dependencias = Depends(get_geracao_deps_dep),
@@ -728,7 +728,7 @@ async def create_platform_definition(
     return _definicao_out(agent, geracao)
 
 
-@router.get("/plataforma/agents/{key}", response_model=PlataformaAgentOut)
+@router.get("/plataforma/agents/{key}", response_model=PlataformaAgentOut, include_in_schema=False)
 def get_platform_definition_config(
     key: str, ctx: AuthContext = Depends(require_platform_content_admin), store=Depends(get_studio_definition_store_dep),
 ) -> PlataformaAgentOut:
@@ -737,7 +737,7 @@ def get_platform_definition_config(
     return _definicao_out(_definicao_ou_404(store, key))
 
 
-@router.patch("/plataforma/agents/{key}", response_model=PlataformaAgentOut)
+@router.patch("/plataforma/agents/{key}", response_model=PlataformaAgentOut, include_in_schema=False)
 def update_platform_definition_config(
     key: str, payload: PlataformaAgentUpdateRequest, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -767,7 +767,7 @@ class ExemplarRequest(StrictHttpModel):
     exemplar: bool
 
 
-@router.put("/plataforma/agentes/{key}/exemplar", response_model=PlataformaAgentOut)
+@router.put("/plataforma/agentes/{key}/exemplar", response_model=PlataformaAgentOut, include_in_schema=False)
 def set_platform_definition_exemplar(
     key: str, payload: ExemplarRequest, ctx: AuthContext = Depends(require_platform_admin),
     store=Depends(get_studio_definition_store_dep),
@@ -794,7 +794,7 @@ def set_platform_definition_exemplar(
     return _definicao_out(updated)
 
 
-@router.get("/plataforma/agents/{key}/grants", response_model=PlataformaGrantsOut)
+@router.get("/plataforma/agents/{key}/grants", response_model=PlataformaGrantsOut, include_in_schema=False)
 def list_platform_definition_grants(
     key: str, ctx: AuthContext = Depends(require_platform_content_admin), store=Depends(get_studio_definition_store_dep),
 ) -> PlataformaGrantsOut:
@@ -803,7 +803,7 @@ def list_platform_definition_grants(
     return PlataformaGrantsOut(key=key, instanciavel=agent.instanciavel, org_ids=store.list_definition_grants(agent.id))
 
 
-@router.post("/plataforma/agents/{key}/grants", status_code=status.HTTP_201_CREATED, response_model=PlataformaGrantsOut)
+@router.post("/plataforma/agents/{key}/grants", status_code=status.HTTP_201_CREATED, response_model=PlataformaGrantsOut, include_in_schema=False)
 def grant_platform_definition_org(
     key: str, payload: PlataformaGrantRequest, ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_studio_definition_store_dep),

@@ -124,7 +124,7 @@ def _draft(store: PadraoStore, versao_id: UUID):
 
 # ── reads (any org member) ──────────────────────────────────────────────────
 
-@router.get("/api/qualificacao/padroes")
+@router.get("/api/qualificacao/padroes", include_in_schema=False)
 def listar_padroes(
     ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -134,7 +134,7 @@ def listar_padroes(
     ]}
 
 
-@router.get("/api/qualificacao/padroes/{chave}/versoes")
+@router.get("/api/qualificacao/padroes/{chave}/versoes", include_in_schema=False)
 def listar_versoes(
     chave: str, ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -148,7 +148,7 @@ def listar_versoes(
     ]}
 
 
-@router.get("/api/qualificacao/versoes/{versao_id}")
+@router.get("/api/qualificacao/versoes/{versao_id}", include_in_schema=False)
 def obter_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin), store: PadraoStore = Depends(get_padrao_store_dep),
 ) -> dict[str, Any]:
@@ -158,7 +158,7 @@ def obter_versao(
 
 # ── writes (platform admin) ─────────────────────────────────────────────────
 
-@router.post("/api/qualificacao/padroes", status_code=201)
+@router.post("/api/qualificacao/padroes", status_code=201, include_in_schema=False)
 def criar_padrao(
     body: PadraoCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -168,7 +168,7 @@ def criar_padrao(
     return {"id": str(p.id), "chave": p.chave, "nome": p.nome, "descricao": p.descricao}
 
 
-@router.post("/api/qualificacao/padroes/{chave}/versoes", status_code=201)
+@router.post("/api/qualificacao/padroes/{chave}/versoes", status_code=201, include_in_schema=False)
 def criar_rascunho(
     chave: str, body: RascunhoCreate, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -179,7 +179,7 @@ def criar_rascunho(
         return versao_out(store.obter_versao(vid))
 
 
-@router.patch("/api/qualificacao/versoes/{versao_id}")
+@router.patch("/api/qualificacao/versoes/{versao_id}", include_in_schema=False)
 def atualizar_versao(
     versao_id: UUID, body: VersaoPatch, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -190,7 +190,7 @@ def atualizar_versao(
         return versao_out(store.obter_versao(versao_id))
 
 
-@router.delete("/api/qualificacao/versoes/{versao_id}", status_code=204)
+@router.delete("/api/qualificacao/versoes/{versao_id}", status_code=204, include_in_schema=False)
 def descartar_rascunho(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -201,7 +201,7 @@ def descartar_rascunho(
     return Response(status_code=204)
 
 
-@router.put("/api/qualificacao/versoes/{versao_id}/criterios/{chave}")
+@router.put("/api/qualificacao/versoes/{versao_id}/criterios/{chave}", include_in_schema=False)
 def salvar_criterio(
     versao_id: UUID, chave: str, body: CriterioIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -216,7 +216,7 @@ def salvar_criterio(
         return versao_out(store.obter_versao(versao_id))
 
 
-@router.delete("/api/qualificacao/versoes/{versao_id}/criterios/{chave}")
+@router.delete("/api/qualificacao/versoes/{versao_id}/criterios/{chave}", include_in_schema=False)
 def remover_criterio(
     versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -227,7 +227,7 @@ def remover_criterio(
         return versao_out(store.obter_versao(versao_id))
 
 
-@router.put("/api/qualificacao/versoes/{versao_id}/estagios/{chave}")
+@router.put("/api/qualificacao/versoes/{versao_id}/estagios/{chave}", include_in_schema=False)
 def salvar_estagio(
     versao_id: UUID, chave: str, body: EstagioIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -242,7 +242,7 @@ def salvar_estagio(
         return versao_out(store.obter_versao(versao_id))
 
 
-@router.delete("/api/qualificacao/versoes/{versao_id}/estagios/{chave}")
+@router.delete("/api/qualificacao/versoes/{versao_id}/estagios/{chave}", include_in_schema=False)
 def remover_estagio(
     versao_id: UUID, chave: str, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -253,7 +253,7 @@ def remover_estagio(
         return versao_out(store.obter_versao(versao_id))
 
 
-@router.put("/api/qualificacao/versoes/{versao_id}/parametros")
+@router.put("/api/qualificacao/versoes/{versao_id}/parametros", include_in_schema=False)
 def salvar_parametros(
     versao_id: UUID, body: ParametrosIn, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -272,7 +272,7 @@ def _erros_de_publicacao(store: PadraoStore, versao_id: UUID) -> list[dict[str, 
     return erros
 
 
-@router.post("/api/qualificacao/versoes/{versao_id}/validar")
+@router.post("/api/qualificacao/versoes/{versao_id}/validar", include_in_schema=False)
 def validar_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_content_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),
@@ -283,7 +283,7 @@ def validar_versao(
     return {"ok": not erros, "erros": erros}
 
 
-@router.post("/api/qualificacao/versoes/{versao_id}/publicar")
+@router.post("/api/qualificacao/versoes/{versao_id}/publicar", include_in_schema=False)
 def publicar_versao(
     versao_id: UUID, ctx: AuthContext = Depends(require_platform_admin),
     store: PadraoStore = Depends(get_padrao_store_dep),

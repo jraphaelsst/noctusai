@@ -38,7 +38,7 @@ from app.schemas.studio import (
 from app.stores.errors import NotFound
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/studio/agents/{key}/clients", tags=["studio"])
+router = APIRouter(prefix="/api/studio/agents/{key}/clients", tags=["studio"], include_in_schema=False)
 
 
 def _entry_out(e) -> ClientEntryOut:

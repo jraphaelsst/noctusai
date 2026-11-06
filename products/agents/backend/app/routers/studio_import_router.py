@@ -32,7 +32,7 @@ from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
 from app.studio.importer import AgentBundle, ImportRefused, import_bundle
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/studio/agents", tags=["studio-import"])
+router = APIRouter(prefix="/api/studio/agents", tags=["studio-import"], include_in_schema=False)
 
 #: The body-cap pattern ``app.main`` registers (whole-segment wildcard).
 IMPORT_BODY_LIMIT_PATTERN = "/api/studio/agents/*/import"

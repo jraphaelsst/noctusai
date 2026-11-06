@@ -38,7 +38,7 @@ from noctusai_lib.api.auth.session import AuthContext
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/studio", tags=["studio-padrao"])
+router = APIRouter(prefix="/api/studio", tags=["studio-padrao"], include_in_schema=False)
 
 __all__ = ["router", "estampar_padrao_no_rascunho"]
 

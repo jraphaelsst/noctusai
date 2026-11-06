@@ -40,7 +40,7 @@ from app.stores.errors import NotFound
 from app.studio.especificacoes_service import ConfigValidacao
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(tags=["plataforma-org-specs"])
+router = APIRouter(tags=["plataforma-org-specs"], include_in_schema=False)
 
 _BASE = "/api/studio/plataforma/agents/{key}/products/{product}/orgs"
 EDITOR_PLATAFORMA = "plataforma"

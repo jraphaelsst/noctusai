@@ -15,7 +15,7 @@ from app.schemas.admin import AgentSettingOut, AgentSettingsOut, AgentSettingsPa
 from app.services.runtime_settings import RuntimeSettingsError, RuntimeSettingsService
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/admin/agent-settings", tags=["admin-agent-settings"])
+router = APIRouter(prefix="/api/admin/agent-settings", tags=["admin-agent-settings"], include_in_schema=False)
 
 
 def _out(views) -> AgentSettingsOut:

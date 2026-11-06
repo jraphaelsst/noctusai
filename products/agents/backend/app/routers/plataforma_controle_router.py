@@ -23,7 +23,7 @@ from app.stores.plataforma_controles import MOTIVO_MAX
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(tags=["plataforma-controle"])
+router = APIRouter(tags=["plataforma-controle"], include_in_schema=False)
 
 _CHAVE = r"^[a-z0-9]+([-_][a-z0-9]+)*$"
 

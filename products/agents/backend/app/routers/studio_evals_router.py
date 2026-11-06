@@ -72,7 +72,7 @@ from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
 from app.stores.studio_evals import EvalCaseInput, _UNSET
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/studio/agents", tags=["studio-evals"])
+router = APIRouter(prefix="/api/studio/agents", tags=["studio-evals"], include_in_schema=False)
 
 #: ``(org_id, agent, version) -> compiled hash`` — see module docstring.
 CurrentHash = Callable[[UUID, StudioAgentRecord, VersionRecord], str]

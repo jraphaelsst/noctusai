@@ -120,7 +120,7 @@ def listar_catalogo(
     return out
 
 
-@router.put("/catalogo/{key}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/catalogo/{key}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 def salvar_entrada_catalogo(
     key: str,
     payload: CatalogoEntradaIn,

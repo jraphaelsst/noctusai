@@ -48,7 +48,7 @@ from app.stores.skills_biblioteca import (
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(tags=["skills-biblioteca"])
+router = APIRouter(tags=["skills-biblioteca"], include_in_schema=False)
 
 _CHAVE = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 _TOOL_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")

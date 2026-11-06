@@ -590,7 +590,7 @@ def studio_agent_controle(
         ctx.org_id, agent, controles, threads, usuarios=usuarios, admin=_e_admin_da_org(ctx, request), ocultar_herdada=True)
 
 
-@router.put("/api/studio/agents/{agent_key}/controle", response_model=ControleOut)
+@router.put("/api/studio/agents/{agent_key}/controle", response_model=ControleOut, include_in_schema=False)
 def studio_set_agent_controle(
     agent_key: str,
     payload: ControleUpdateRequest,
