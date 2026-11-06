@@ -48,6 +48,13 @@ export const studioKeys = {
   canal: (key: string) => ["studio", key, "canal"] as const,
   threadMensagens: (key: string, threadId: string) => ["studio", key, "canal", "mensagens", threadId] as const,
   conformidade: (key: string) => ["studio", key, "conformidade"] as const,
+  metricasAll: (key: string) => ["studio", key, "metricas"] as const,
+  metricas: (key: string, f: object) => ["studio", key, "metricas", "resumo", f] as const,
+  metricasTurnos: (key: string, f: object, pagina: number, limite: number) =>
+    ["studio", key, "metricas", "turnos", f, pagina, limite] as const,
+  metricasThreads: (key: string, f: object) => ["studio", key, "metricas", "threads", f] as const,
+  metricasThread: (key: string, threadId: string, origem: string) =>
+    ["studio", key, "metricas", "thread", threadId, origem] as const,
   bibliotecaRefs: (key: string, vid: string) => ["studio", key, "biblioteca-refs", vid] as const,
   plataformaTextos: () => ["studio", "__plataforma__", "textos"] as const,
   contentTokens: () => ["studio", "__plataforma__", "content-tokens"] as const,

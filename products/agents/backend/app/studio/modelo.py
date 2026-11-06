@@ -153,6 +153,7 @@ SECOES_PAGINA: tuple[SecaoPagina, ...] = (
     _area("configuracoes", "configuracoes"),
     SecaoPagina("qualificacao", "Qualificação", "operacao", "plataforma", _DEFINICAO, exige=("linhas",)),
     SecaoPagina("conformidade", "Conformidade", "operacao", "plataforma", _DEFINICAO, exige=("linhas",)),
+    SecaoPagina("metricas", "Métricas", "operacao", "plataforma", _DEFINICAO),
     SecaoPagina("conhecimento", "Conhecimento", "operacao", "plataforma", ("org",)),
     SecaoPagina("clientes", "Clientes", "operacao", "plataforma", ("org",), exige=("runtime",)),
     SecaoPagina("canais", "Canais", "operacao", "plataforma", _DEFINICAO, exige=("canais",)),

@@ -52,6 +52,7 @@ const SECOES: Record<string, Secao> = {
   controles: studioTab(() => import("@/pages/studio/tabs/ControlesTab")),
   conversas: studioTab(() => import("@/pages/studio/tabs/ConversasTab")),
   conformidade: studioTab(() => import("@/pages/studio/tabs/ConformidadeTab")),
+  metricas: studioTab(() => import("@/pages/studio/tabs/MetricasTab")),
 };
 /** Sections whose renderer depends on the agent's ORIGIN (data), not its key. */
 const CONVERSAR_LEGADO: Secao = lazy(() => import("./secoes/ConversarLegadoSecao"));
