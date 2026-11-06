@@ -558,6 +558,38 @@ def test_compose_commits_regenerated_counts_when_they_change(world):
     assert sh(wt, "git", "show", f"{head}:KNOWLEDGE-BASE/doc.md") == "count=derived"
 
 
+def test_compose_commits_a_regenerated_TRACKED_file_first_in_status(world):
+    """The real CI shape (2026-11-06 wedge): regen MODIFIES a tracked count file, so
+    `git status --porcelain` starts with ' M <path>'. A stripped output ate that
+    leading space and `ln[3:]` cut the path to 'NOWLEDGE-BASE/...' -> every drain crashed."""
+    enqueue(world, "kc", [("KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md", "count=stale\n")], 5000)
+    q = make_queue(world, FakeCI(world["origin"]),
+                   regen=lambda wt: ((Path(wt) / "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md").write_text("count=derived\n"), (True, ""))[1])
+    q.fetch()
+    base = q.dev_sha()
+    wt = str(Path(world["runner"]).parent / "wt")
+    head, applied, ejected = q.compose(q.entries(), base, wt)
+    assert [e.slug for e in applied] == ["kc"] and not ejected
+    assert sh(wt, "git", "show", f"{head}:KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md") == "count=derived"
+
+
+def test_a_failing_counts_commit_ejects_the_entry_never_crashes_the_drain(world):
+    enqueue(world, "kc", [("KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md", "count=stale\n")], 5000)
+    ci = FakeCI(world["origin"])
+
+    def run(cmd, cwd=None):
+        if cmd[:2] == ["git", "commit"] and "regenerate derived counts" in " ".join(map(str, cmd)):
+            return 1, "", "fatal: simulated commit failure"
+        return ci(cmd, cwd=cwd)
+    q = make_queue(world, run,
+                   regen=lambda wt: ((Path(wt) / "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md").write_text("count=derived\n"), (True, ""))[1])
+    q.fetch()
+    base = q.dev_sha()
+    head, applied, ejected = q.compose(q.entries(), base, str(Path(world["runner"]).parent / "wt"))
+    assert applied == [] and ejected[0]["kind"] == "kb_counts_regen"
+    assert "simulated commit failure" in ejected[0]["why"]
+
+
 def test_compose_makes_no_commit_when_counts_unchanged(world):
     q, wt, base, head, applied, ejected = _compose_one(world, lambda wt: (True, ""))
     assert [e.slug for e in applied] == ["kc"]
