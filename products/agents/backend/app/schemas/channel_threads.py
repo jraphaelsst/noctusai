@@ -289,6 +289,8 @@ class ControleOut(BaseModel):
     #: channel token read returns the IDS only -- no phones, no names -- so SW can tell a listed member from other staff).
     modo_avaliacao: bool = False
     avaliacao_usuarios: list[UUID] = Field(default_factory=list)
+    #: True on a company INSTANCE: the evaluation state above is Julia's CORE's (one testing switch for every company), read-only here.
+    avaliacao_herdada: bool = False
     #: The same users resolved from noc (name + phone, masked unless the caller is an org admin).
     avaliacao_resolvidos: list[AvaliacaoResolvidoOut] = Field(default_factory=list)
     #: The lookup in noc failed: ``avaliacao_resolvidos`` carries ``nome``/``telefone`` null per id.

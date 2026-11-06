@@ -4,6 +4,10 @@ allowlist. Agents stays the enforcing gate (an outsider gets `restrito_avaliacao
 the owner's own number is an org MEMBER's, so SW's staff filter (`equipe`) would stop it before it ever reached agents' gate.
 A member who is on agents' evaluation list WHILE the mode is ON is therefore let through as a lead; every other member stays staff.
 
+ONE switch, on Julia's CORE in the agents app (owner 2026-11-05): agents resolves the core of this company's instance and returns the
+core's state on the instance's own token, so SW reads it exactly as before and every company obeys the same switch. The listed users are
+NoctusAI evaluators (not members of the company): their phones are resolved from core `noctus_users.telefone` by user id.
+
 Read shape: `GET /api/channels/agents/{key}/controle` -> `modo_avaliacao: bool`, `avaliacao_usuarios: [noctus user id]` (ids, never phones).
 
 Testing mode is a LIVE on/off STATE (owner 2026-11-05), never a latch: it is read from agents on EVERY staff inbound and EVERY
@@ -76,25 +80,34 @@ async def restricao_para_formas(
             logger.error("julia: evaluation mode ON but no core client to read the listed phones org=%s -- first contact refused", org_id)
             return MOTIVO_INDISPONIVEL
         return MOTIVO_RESTRITO
-    from app.services import julia_staff_service as staff
-
     try:
-        membros = staff.telefones_de_membros(core, org_id)
+        avaliadores = telefones_dos_avaliadores(core, ids)
     except Exception as exc:  # noqa: BLE001 -- fail closed, named in the log
-        logger.error("julia: evaluation phones unreadable org=%s (%s) -- first contact refused", org_id, type(exc).__name__)
+        logger.error("julia: evaluation phones unreadable org=%s (%s) -- contact blocked", org_id, type(exc).__name__)
         return MOTIVO_INDISPONIVEL
-    for forma in formas:
-        if forma in membros and membros[forma]["id"] in ids:
-            return None
+    if any(forma in avaliadores for forma in formas):
+        return None
     return MOTIVO_RESTRITO
 
 
-async def membro_em_avaliacao(
-    client: Any, org_id: UUID | str, agent_key: str, remetente: Any,
-) -> bool:
-    """Is this staff `Remetente` an org MEMBER on agents' evaluation list (mode ON)? A `julia_staff` number never is."""
-    origem: Optional[str] = getattr(remetente, "origem", None)
-    if origem != "membro":
+def telefones_dos_avaliadores(core: Any, ids: frozenset[str]) -> frozenset[str]:
+    """The phone digits of the listed evaluators, from core `noctus_users.telefone` by user id (they are NoctusAI users, so this is NOT
+    scoped to the company's org). Raises on a read failure; the callers fail closed."""
+    from noctusai_lib.integrations.persistence.table_reads import resolve_user_phones
+
+    from app.services import julia_staff_service as staff
+
+    return frozenset(d for d in (staff.normalizar_telefone(t) for t in resolve_user_phones(core, ids).values()) if d)
+
+
+async def numero_em_avaliacao(client: Any, core: Any, org_id: UUID | str, agent_key: str, formas: list[str]) -> bool:
+    """Is this sender (phone digits `formas`) an evaluator on agents' list WHILE testing mode is ON? Lets an evaluator past SW's own
+    `equipe` filter on any company's line, and ONLY then. Unreadable state / phones => False (no bypass), logged."""
+    lido = await ler_avaliacao(client, org_id, agent_key)
+    if lido is None or not lido[0] or not lido[1] or core is None:
         return False
-    user_id = str(remetente.chave).partition(":")[2]
-    return bool(user_id) and user_id in await usuarios_em_avaliacao(client, org_id, agent_key)
+    try:
+        return any(forma in telefones_dos_avaliadores(core, lido[1]) for forma in formas)
+    except Exception as exc:  # noqa: BLE001 -- fail closed
+        logger.error("julia: evaluation phones unreadable org=%s (%s) -- no evaluation bypass", org_id, type(exc).__name__)
+        return False

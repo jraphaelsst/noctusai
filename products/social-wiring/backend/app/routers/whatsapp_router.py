@@ -466,10 +466,11 @@ async def _classificar_remetente(connection, *, entrada, chat_id: str, sender: s
         remetente = julia_staff_service.classificar_remetente(client, core, connection.org_id, julia_staff_service.formas_do_remetente(*extras))
         if remetente is not None and connection.agente_leads_ativo:
             agents = (agents_client_factory or (lambda org_id: julia.resolve_agents_client(org_id, cfg=cfg or settings)))(connection.org_id)
-            if await julia_avaliacao_service.membro_em_avaliacao(
-                agents, connection.org_id, connection.agente_leads_key or julia.DEFAULT_AGENT_KEY, remetente,
+            if await julia_avaliacao_service.numero_em_avaliacao(
+                agents, core, connection.org_id, connection.agente_leads_key or julia.DEFAULT_AGENT_KEY,
+                julia_staff_service.formas_do_remetente(*extras),
             ):
-                logger.info("Julia: member on agents' evaluation list conn=%s -- treated as a lead (testing phase)", connection.id)
+                logger.info("Julia: evaluator on the core's list conn=%s -- treated as a lead (testing phase)", connection.id)
                 return None, True
         return remetente, False
     except Exception as exc:

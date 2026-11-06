@@ -29,7 +29,9 @@ __all__ = [
     "DRENO_DIAS_PADRAO",
     "MODOS",
     "AgentControleStore",
+    "AvaliacaoSomenteNoNucleo",
     "ControleRecord",
+    "NucleoIndisponivel",
     "FakeAgentControleStore",
     "SupabaseAgentControleStore",
     "get_agent_controle_store",
@@ -71,6 +73,16 @@ MODOS = ("ligado", "drenando", "desligado")
 DRENO_DIAS_PADRAO = 7
 
 
+class AvaliacaoSomenteNoNucleo(ValueError):
+    """The testing switch (evaluation mode + list) is ONE switch on Julia's core (the ``plataforma`` definition row); an
+    INSTANCE (a company's own row) never carries it (owner 2026-11-05)."""
+
+
+class NucleoIndisponivel(RuntimeError):
+    """An instance's core (``definition_agent_id``) could not be resolved or read: the testing state is unknown, so every
+    caller fails CLOSED (``controle_indisponivel``, nothing is sent)."""
+
+
 @dataclass(frozen=True)
 class ControleRecord:
     agent_id: UUID
@@ -82,6 +94,12 @@ class ControleRecord:
     #: 056 evaluation mode (Julia v3 §12.12): while on, the agent answers only the phones (from noc) of the listed users.
     modo_avaliacao: bool = False
     avaliacao_usuarios: tuple[UUID, ...] = ()
+    #: The org that OWNS the evaluation list (the core's org: the evaluators are NoctusAI users, not the company's). ``None`` =
+    #: this row's own org. For an instance the three evaluation fields above are the CORE's, never the instance's own
+    #: columns (NOC-REMEDIATE[drop-instance-modo-avaliacao]: the instance columns are dead, an old image still reads them).
+    avaliacao_org_id: UUID | None = None
+    #: True for an instance: the evaluation state is inherited from Julia's core and is read-only here.
+    avaliacao_herdada: bool = False
 
     @property
     def aceita_novos_leads(self) -> bool:
@@ -140,24 +158,38 @@ class FakeAgentControleStore:
         self.auditoria_fase_testes: list[tuple[UUID, UUID | None, bool, bool]] = []
         #: ``(agent_id, actor, antes, depois)`` per evaluation change: ``(modo, n_usuarios)`` pairs.
         self.auditoria_avaliacao: list[tuple[UUID, UUID | None, tuple[bool, int], tuple[bool, int]]] = []
+        #: instance (org, agent) -> its core (org, agent); an entry whose core row is absent models an unresolvable core.
+        self._nucleos: dict[tuple[UUID, UUID], tuple[UUID, UUID]] = {}
+
+    def vincular_nucleo(self, org_id: UUID, agent_id: UUID, nucleo_org_id: UUID, nucleo_agent_id: UUID) -> None:
+        """Declare ``(org_id, agent_id)`` an INSTANCE of the core ``(nucleo_org_id, nucleo_agent_id)``."""
+        self._nucleos[(org_id, agent_id)] = (nucleo_org_id, nucleo_agent_id)
+
+    def _propria(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
+        return self._rows.get((org_id, agent_id), ControleRecord(agent_id, org_id, "desligado", DRENO_DIAS_PADRAO))
 
     def get(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
         if self.falha is not None:
             raise self.falha
-        return self._rows.get(
-            (org_id, agent_id), ControleRecord(agent_id, org_id, "desligado", DRENO_DIAS_PADRAO)
-        )
+        propria = self._propria(org_id, agent_id)
+        nucleo = self._nucleos.get((org_id, agent_id))
+        if nucleo is None:
+            return propria
+        if nucleo not in self._rows:
+            raise NucleoIndisponivel(f"core {nucleo[1]} of instance {agent_id} not found")
+        n = self._rows[nucleo]
+        return replace(propria, modo_avaliacao=n.modo_avaliacao, avaliacao_usuarios=n.avaliacao_usuarios,
+                       avaliacao_org_id=n.org_id, avaliacao_herdada=True)
 
     def set(
         self, org_id: UUID, agent_id: UUID, *, modo: str, dreno_inatividade_dias: int | None = None,
         actor: UUID | None = None,
     ) -> ControleRecord:
         _validate(modo, dreno_inatividade_dias)
-        before = self.get(org_id, agent_id)
-        rec = ControleRecord(
-            agent_id, org_id, modo,
-            dreno_inatividade_dias if dreno_inatividade_dias is not None else before.dreno_inatividade_dias,
-            before.fase_testes, before.modo_avaliacao, before.avaliacao_usuarios,
+        before = self._propria(org_id, agent_id)
+        rec = replace(
+            before, modo=modo,
+            dreno_inatividade_dias=dreno_inatividade_dias if dreno_inatividade_dias is not None else before.dreno_inatividade_dias,
         )
         self._rows[(org_id, agent_id)] = rec
         if (rec.modo, rec.dreno_inatividade_dias) != (before.modo, before.dreno_inatividade_dias):
@@ -171,7 +203,7 @@ class FakeAgentControleStore:
     def set_fase_testes(
         self, org_id: UUID, agent_id: UUID, valor: bool, *, actor: UUID | None = None
     ) -> ControleRecord:
-        before = self.get(org_id, agent_id)
+        before = self._propria(org_id, agent_id)
         rec = replace(before, fase_testes=bool(valor))
         self._rows[(org_id, agent_id)] = rec
         if before.fase_testes != rec.fase_testes:
@@ -183,7 +215,9 @@ class FakeAgentControleStore:
         usuarios: list[UUID] | None = None, actor: UUID | None = None,
     ) -> ControleRecord:
         novos = normalizar_usuarios(usuarios) if usuarios is not None else None
-        before = self.get(org_id, agent_id)
+        if (org_id, agent_id) in self._nucleos:
+            raise AvaliacaoSomenteNoNucleo("the testing switch lives on Julia's core, not on a company instance")
+        before = self._propria(org_id, agent_id)
         rec = replace(
             before,
             modo_avaliacao=before.modo_avaliacao if modo_avaliacao is None else bool(modo_avaliacao),
@@ -206,12 +240,33 @@ class SupabaseAgentControleStore:
     def get(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
         rows = (
             self._client.schema(_SCHEMA).table("agents")
-            .select("id, org_id, modo_operacao, dreno_inatividade_dias, fase_testes, modo_avaliacao, avaliacao_usuarios")
+            .select("id, org_id, modo_operacao, dreno_inatividade_dias, fase_testes, modo_avaliacao, avaliacao_usuarios, "
+                    "definition_scope, definition_agent_id")
             .eq("id", str(agent_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
         )
         if not rows:
             raise NotFound(f"agent {agent_id} not found for org {org_id}")
-        return self._record(rows[0])
+        row = rows[0]
+        if row.get("definition_scope") != "instancia":
+            return self._record(row)
+        # An INSTANCE never carries the testing state: it is the CORE's (031 FK ``definition_agent_id`` -> the ``plataforma``
+        # definition row). Unresolvable / not a core => NucleoIndisponivel (every caller fails closed).
+        nucleo = None
+        if row.get("definition_agent_id"):
+            nucleos = (
+                self._client.schema(_SCHEMA).table("agents")
+                .select("id, org_id, definition_scope, modo_avaliacao, avaliacao_usuarios")
+                .eq("id", str(row["definition_agent_id"])).limit(1).execute().data or []
+            )
+            nucleo = nucleos[0] if nucleos else None
+        if nucleo is None or nucleo.get("definition_scope") != "plataforma":
+            raise NucleoIndisponivel(f"core of instance {agent_id} could not be resolved")
+        return replace(
+            self._record(row),
+            modo_avaliacao=bool(nucleo.get("modo_avaliacao", False)),
+            avaliacao_usuarios=tuple(UUID(str(u)) for u in (nucleo.get("avaliacao_usuarios") or ())),
+            avaliacao_org_id=UUID(str(nucleo["org_id"])), avaliacao_herdada=True,
+        )
 
     def set(
         self, org_id: UUID, agent_id: UUID, *, modo: str, dreno_inatividade_dias: int | None = None,
@@ -238,6 +293,8 @@ class SupabaseAgentControleStore:
         usuarios: list[UUID] | None = None, actor: UUID | None = None,
     ) -> ControleRecord:
         novos = normalizar_usuarios(usuarios) if usuarios is not None else None
+        if self.get(org_id, agent_id).avaliacao_herdada:
+            raise AvaliacaoSomenteNoNucleo("the testing switch lives on Julia's core, not on a company instance")
         exec_rpc(self._client, _SCHEMA, "set_agent_avaliacao", {
             "p_org_id": str(org_id), "p_agent_id": str(agent_id),
             "p_modo_avaliacao": None if modo_avaliacao is None else bool(modo_avaliacao),
