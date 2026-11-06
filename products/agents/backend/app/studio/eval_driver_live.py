@@ -467,7 +467,11 @@ def make_live_eval_driver_factory(
         from app.stores.turn_metrics import get_turn_metrics_store
         from app.stores.studio_knowledge import get_studio_knowledge_store
         from app.studio.catalog import StoreKnowledgeCatalog
+        from app.dependencies import get_skills_factory_dep
 
+        # the eval world serves the SAME skill source as the channel: the pinned shared-library skills. Without it
+        # ``abrir_skill`` found nothing for a library-pinned agent, so a case judged a turn production never has (JL-021)
+        kw.setdefault("skills_factory", get_skills_factory_dep())
         return LiveEvalTurnDriver(
             studio_store=studio_store or get_studio_definition_store(settings),
             catalog=catalog or StoreKnowledgeCatalog(get_studio_knowledge_store(settings)),

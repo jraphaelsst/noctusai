@@ -180,6 +180,8 @@ class TestLiveDriver:
         try:
             driver = get_eval_turn_driver()
             assert isinstance(driver, LiveEvalTurnDriver) and driver.tipo == "live"
+            # JL-021: the eval world serves the channel's skill source (pinned library skills), never "no skills"
+            assert driver._skills_factory is not None
         finally:
             configure_eval_turn_driver(None)
 

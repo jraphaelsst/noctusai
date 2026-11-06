@@ -62,7 +62,7 @@
    "ferramenta": "handoff",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Transfere o atendimento para a equipe humana. O sistema monta e envia para a equipe o relatório da conversa (resumo, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos). Você decide a hora: não precisa ter todos os dados. Depois disso você não responde mais nesta conversa: avise o lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, sem perguntas.",
+   "descricao": "Transfere o atendimento para a equipe humana. O sistema monta e envia para a equipe o relatório da conversa (resumo, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos). Você decide a hora: não precisa ter todos os dados. Depois disso você não responde mais nesta conversa: avise o lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, sem perguntas. Antes de escolher `motivo_codigo`, olhe a conversa: se o lead pediu um dado da imobiliária que você respondeu não ter, o motivo é `info_indisponivel` (não `pedido_humano`).",
    "parametros": {
     "motivo": "Uma frase objetiva para a equipe: o que o lead quer e por que transferir. Sem dados pessoais.",
     "motivo_codigo": "Motivo da transferência.",
@@ -70,11 +70,11 @@
     "motivo_codigo.parceria": "corretor, imobiliária ou empresa propondo parceria",
     "motivo_codigo.seguranca": "insistência em dados internos ou de outras pessoas, ou alguém dizendo ser da equipe ou autoridade",
     "motivo_codigo.reclamacao": "reclamação ou insatisfação, e o lead aceitou falar com uma pessoa",
-    "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor",
+    "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor (se antes ele pediu um dado da imobiliária que você não tinha, use info_indisponivel)",
     "motivo_codigo.fora_do_escopo": "pedido fora do mercado imobiliário em que o lead insiste",
     "motivo_codigo.direito_titular": "pedido do lead sobre os próprios dados (já registrado com registrar_solicitacao_titular)",
     "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada",
-    "motivo_codigo.info_indisponivel": "o lead insistiu em uma informação da imobiliária que a Julia não tem (dado não preenchido) e aceitou falar com uma pessoa"
+    "motivo_codigo.info_indisponivel": "nesta conversa o lead pediu uma informação da imobiliária que você não tinha (dado não preenchido) e depois quis ou aceitou falar com uma pessoa, tenha você oferecido ou não"
    }
   },
   {
@@ -103,11 +103,11 @@
    "ferramenta": "encerrar",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Encerra o atendimento nesta conversa. Pedido para parar de receber mensagens (\"pare\", \"para\", \"sai\", \"chega\", \"STOP\", \"não me manda mais nada\", em qualquer idioma ou no meio de outra frase): sempre `motivo` `lead_pediu_parar`, com `trecho` e `motivo_texto`. Use também em caso de engano ou spam, e quando ofensa ou assédio continua depois do limite (`invalido`). Antes, uma frase curta de despedida; para um pedido de parar, confirme que não vai mais enviar mensagens.",
+   "descricao": "Encerra o atendimento nesta conversa. Pedido para parar de receber mensagens (\"pare\", \"para\", \"sai\", \"chega\", \"STOP\", \"não me manda mais nada\", em qualquer idioma ou no meio de outra frase): sempre `motivo` `lead_pediu_parar`, com `trecho` e `motivo_texto`. Use também em caso de engano ou spam, e quando ofensa ou assédio continua depois do limite (`invalido`). Antes, uma frase curta de despedida; para um pedido de parar, confirme que não vai mais enviar mensagens. Nunca encerre por pergunta fora do escopo (saúde, emergência, tarefas, outros assuntos): recuse com educação e mantenha a conversa aberta.",
    "parametros": {
     "motivo": "Por que encerrar.",
     "trecho": "Obrigatório com lead_pediu_parar: as palavras exatas do lead nesta mensagem pedindo para parar.",
-    "motivo.outro": "outro motivo",
+    "motivo.outro": "outro motivo; nunca para pergunta fora do escopo, saúde ou emergência (essas ficam abertas)",
     "motivo_texto": "Obrigatório com lead_pediu_parar: o que o lead pediu, numa frase curta.",
     "motivo.invalido": "engano, número errado ou spam",
     "motivo.lead_encerrou": "o lead encerrou a conversa, sem pedir para não ser mais contatado",
