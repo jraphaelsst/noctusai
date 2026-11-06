@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from noctusai_lib.config.settings import NO_ENV_FILE_VAR  # noqa: E402
 import noctusai_lib.integrations.llm as _llm_mod  # noqa: E402
 import noctusai_lib.integrations.llm.client as _client_mod  # noqa: E402
 
@@ -33,14 +34,30 @@ def _reset_bootstrap_flag(monkeypatch):
 class TestSourceEnv:
     def test_sources_key_from_dot_env_when_absent(self, monkeypatch, tmp_path):
         (tmp_path / ".env").write_text(
-            '# comment\nOPENAI_API_KEY="sk-from-env-file"\nOTHER=ignored\n',
+            '# comment\nOPENAI_API_KEY="sk-from-env-file"\nOTHER=ignored\nSUPABASE_URL=https://prod.supabase.co\n',
             encoding="utf-8",
         )
         monkeypatch.setattr(lb, "_env_candidate_roots", lambda: [tmp_path])
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv(NO_ENV_FILE_VAR, raising=False)  # the seed plugin sets it for the whole session
+        for k in ("OPENAI_API_KEY", "OTHER", "SUPABASE_URL"):
+            monkeypatch.setenv(k, "x")  # records the original so teardown restores it
+            monkeypatch.delenv(k)
         lb._source_env_for_key()
         import os
         assert os.environ.get("OPENAI_API_KEY") == "sk-from-env-file"
+        # Only provider keys are sourced -- the rest of the .env (the 2026-11-05
+        # leak: prod SUPABASE_URL) must never reach the process.
+        assert "SUPABASE_URL" not in os.environ and "OTHER" not in os.environ
+
+    def test_hermetic_session_sources_nothing(self, monkeypatch, tmp_path):
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-from-file\n", encoding="utf-8")
+        monkeypatch.setattr(lb, "_env_candidate_roots", lambda: [tmp_path])
+        monkeypatch.setenv(NO_ENV_FILE_VAR, "1")
+        monkeypatch.setenv("OPENAI_API_KEY", "x")
+        monkeypatch.delenv("OPENAI_API_KEY")
+        lb._source_env_for_key()
+        import os
+        assert "OPENAI_API_KEY" not in os.environ
 
     def test_does_not_overwrite_existing_key(self, monkeypatch, tmp_path):
         (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-from-file\n", encoding="utf-8")
