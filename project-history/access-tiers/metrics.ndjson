@@ -1,1 +1,2 @@
 {"anon_readable_secret_or_pii_tables": 7, "date": "2026-11-05", "fixed_total": 3, "open_total": 1224, "platform_ip_tables_exposed": 0, "public_undeclared_routes": 0, "routes_too_open": 0, "routes_unclassified": 189, "sha": "4e21e6249", "tables_with_browser_grant": 960}
+{"anon_readable_secret_or_pii_tables": 7, "date": "2026-11-06", "fixed_total": 5, "open_total": 1222, "platform_ip_tables_exposed": 0, "public_undeclared_routes": 0, "routes_too_open": 0, "routes_unclassified": 189, "sha": "f6e2ad918", "tables_with_browser_grant": 960}

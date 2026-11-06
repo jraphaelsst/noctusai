@@ -2,13 +2,13 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1224 open / in-progress**, 3 fixed, 1 accepted (1228 total).
+**1222 open / in-progress**, 5 fixed, 1 accepted (1228 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
 | academia-de-reciclagem | 32 | 0 | 0 | 32 | 0 | 0 |
 | adconnect | 30 | 0 | 0 | 30 | 0 | 0 |
-| agents | 24 | 0 | 2 | 22 | 2 | 3 |
+| agents | 22 | 0 | 0 | 22 | 0 | 5 |
 | commerce | 61 | 0 | 0 | 61 | 0 | 0 |
 | community | 35 | 0 | 0 | 35 | 0 | 0 |
 | core | 53 | 0 | 0 | 53 | 0 | 0 |
@@ -32,8 +32,6 @@
 |---|---|---|---|---|---|---|---|
 | AT-5d90688d | erp-imobiliario | `erp.portal_acessos` | none | policy-secret | critical | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-af2a4272 | erp-imobiliario | `erp.portal_tokens` | none | policy-secret | critical | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-32fc092f | agents | `source:skill_files` | none | leak-fingerprint | high | in-progress feat/julia-turn-redesign | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-289ca892 | agents | `source:skills` | none | leak-fingerprint | high | in-progress feat/julia-turn-redesign | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-418d68d1 | erp-imobiliario | `erp.meta_periodos` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-999c2102 | erp-imobiliario | `erp.metas_configuracao` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-d3d36c2c | erp-imobiliario | `erp.metas_empresa` | none | policy-open | high | open | access-tiers-gate (initial scan) 2026-11-05 |
