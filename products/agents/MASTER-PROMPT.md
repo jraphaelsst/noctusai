@@ -490,3 +490,5 @@ cd products/agents/frontend && npx vite build
 
 - Backend: `noctusai_lib` + `noctusai_seed`; `claude-agent-sdk` (planned, M4)
 - Frontend: `@noctusai/lib` + `@noctusai/seed`
+
+- Grants are per (agent, product, org) with a personal token; channel requests re-check the grant is live (`assert_channel_grant_live`). Staff edit an org's specs only under a live grant (`/api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs`, migration 064 `especificacoes_editor`).

@@ -108,6 +108,8 @@ today) and so is the strict scope allow-list the grant token admin mints from.
 | `POST /api/studio/plataforma/grants {agent_key, product, org_id, expira_em_dias?}` | create = mint + deliver (201 grant; no expiry unless asked; 409 `grant_exists`; 502 `mint_failed` / `tools_store_failed` / `delivery_failed`) |
 | `POST /api/studio/plataforma/grants/{id}/rotate` | overlapping rotation: new pair delivered first, then the old pair revoked |
 | `DELETE /api/studio/plataforma/grants/{id}` | revoke both tokens + best-effort `DELETE` at the product (204, idempotent) |
+| `GET /api/studio/plataforma/agents/{key}/products/{product}/orgs` | staff picker: orgs with a LIVE grant + status/`editavel` (platform admin) |
+| `GET\|PUT /api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs` | NoctusAI staff fill that org's agent specs; needs the admin login AND a grant `ativo`+unexpired for exactly (org, key, product) with `especificacoes_editor='plataforma'` (migration 064; else 409 `sem_concessao_ativa` / `editor_nao_plataforma`); audit = the real admin |
 
 **Org business specs (Julia-line S9).** `GET|PUT /api/channels/agents/{key}/specs` (`routers/channel_specs_router.py`) is what
 social-wiring's editor calls with the granted channel token (scope `agents:channel-specs`, bound to the org instance; the org
@@ -180,3 +182,5 @@ model only records criterion values through tools; **score and stage are compute
 cd products/agents/backend && pytest
 cd products/agents/frontend && npx vite build
 ```
+
+**Personal tokens.** A grant is one (agent, product, org) with its own channel token; every `/api/channels/*` request also checks the token's grant is live and names this (org, agent) (403 `grant_inativo` / `agent_not_allowed`), so a revoked grant stops turns and edits at once and a token never reaches another agent.
