@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from app.channels import admissao
+from app.channels import admissao, metricas
 from app.channels import conformidade as conf
 from app.studio.especificacoes import completar_indisponiveis, placeholder_cru_em
 from app.channels.contexto import Dossie, render_contexto_system
@@ -48,6 +49,7 @@ from app.config import settings
 from app.qualificacao.models import LeadSinais, VersaoPadrao
 from app.qualificacao.prompt import qualificacao_data
 from app.realtime import conversation_scope, get_bus, publish_event
+from noctusai_lib.integrations.llm.usage import coletar_uso
 from noctusai_lib.realtime import redact_values
 from app.runtime.llm_runtime import service_principal_id
 from app.runtime.types import AgentSpec, TurnContext
@@ -120,6 +122,8 @@ class ServicosCanal:
     #: ``relatorio.ResumoFactory``: builds the narrative generator of the hand-off report; ``None`` = no LLM call
     #: for the report (``resumo_conversa`` stays ``None``).
     resumo_factory: Any | None = None
+    #: ``agents.turn_metrics`` store (migration 066): one row per turn, written at its end; ``None`` = not recorded.
+    metricas: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -323,6 +327,7 @@ class _Tentativa:
     blocks: list[dict[str, Any]] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     esgotou: bool = False
+    tools_ms: dict[str, int] = field(default_factory=dict)
 
 
 def _urls(texto: str) -> set[str]:
@@ -481,7 +486,9 @@ async def _rodar(runtime: Any, spec: AgentSpec, ctx: TurnContext, slot: Any, nom
         elif kind in ("tool.started", "tool.finished"):
             t.blocks = _apply_tool_event(t.blocks, kind, evt)
         elif kind == "session.status":
-            t.usage = {k: evt.get(k) for k in ("custo_usd", "tokens_entrada", "tokens_saida")}
+            t.usage = {k: evt.get(k) for k in (
+                "custo_usd", "tokens_entrada", "tokens_saida", "llm_ms", "tool_ms", "llm_calls", "prompt_bytes")}
+            t.tools_ms = dict(evt.get("tools_ms") or {})
             t.esgotou = bool(evt.get("esgotou_loop"))
         else:
             logger.warning("agents.channel.turn.unknown_event kind=%s", kind)
@@ -511,9 +518,71 @@ def _numerar(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def executar(
+    *, origem: str = "canal", mensagem_entrada_id: UUID | None = None, entrada_em: datetime | None = None,
+    **kw: Any,
+) -> ResultadoTurno:
+    """Run one turn (:func:`_executar`) and record its cost / speed / size in ``agents.turn_metrics`` (migration 066).
+
+    The metrics row is written ONCE, after the turn, success or failure: a raising turn still books the money its
+    priced events spent. A failed write is logged and never changes the turn's outcome (:func:`metricas.registrar_turno`).
+    ``origem`` is ``canal`` for a real channel turn, ``eval`` for the eval / mechanism driver."""
+    svc: ServicosCanal = kw["svc"]
+    inicio = time.perf_counter()
+    medida: dict[str, Any] = {}
+    status, erro_classe, resultado = "ok", None, None
+    with coletar_uso() as eventos:
+        try:
+            resultado = await _executar(medida=medida, **kw)
+            return resultado
+        except BaseException as exc:
+            status, erro_classe = "erro", type(exc).__name__
+            raise
+        finally:
+            _registrar_metricas(
+                svc, kw, eventos, medida, resultado, status, erro_classe, origem=origem,
+                mensagem_entrada_id=mensagem_entrada_id, entrada_em=entrada_em,
+                turno_ms=int((time.perf_counter() - inicio) * 1000))
+
+
+def _registrar_metricas(
+    svc: ServicosCanal, kw: dict[str, Any], eventos: list[Any], medida: dict[str, Any], resultado: ResultadoTurno | None,
+    status: str, erro_classe: str | None, *, origem: str, mensagem_entrada_id: UUID | None, entrada_em: datetime | None,
+    turno_ms: int,
+) -> None:
+    if svc.metricas is None:
+        return
+    try:
+        prep, agent, thread, agora = kw["prep"], kw["agent"], kw["thread"], kw["agora"]
+        lote_entrada = kw.get("lote_entrada")
+        lote = (kw.get("lote_lead") or []) if lote_entrada is None else lote_entrada
+        usage = resultado.usage if resultado is not None else {}
+        acoes = resultado.actions if resultado is not None else []
+        entrada = sum(metricas.tamanho_bytes(t) for t in lote)
+        resposta = metricas.tamanho_bytes(resultado.partes_texto) if resultado is not None else 0
+        row = metricas.montar_registro(
+            org_id=kw["org_id"], agent=agent, versao_id=prep.carimbo.definition_version_id,
+            compiled_hash=prep.carimbo.compiled_hash, thread_id=thread.id, mensagem_entrada_id=mensagem_entrada_id,
+            mensagem_resposta_id=resultado.message_id if resultado is not None else None, origem=origem,
+            gatilho=kw.get("gatilho"), eventos=eventos,
+            medida={**medida, **{k: usage.get(k) for k in ("llm_ms", "tool_ms", "prompt_bytes", "llm_calls")}},
+            turno_ms=turno_ms,
+            intake_ms=max(0, int((agora - entrada_em).total_seconds() * 1000)) if entrada_em is not None else None,
+            inbound_bytes=entrada, reply_bytes=resposta,
+            db_bytes=entrada + resposta + metricas.tamanho_bytes(medida.get("blocks")),
+            status=status, erro_classe=erro_classe, turno_status=resultado.status if resultado is not None else None,
+            handoff=any(a.get("type") == "handoff" for a in acoes), tools=medida.get("tools") or (),
+        )
+    except Exception:  # noqa: BLE001 -- building the row must not fail the turn either: seen in the log
+        logger.exception("agents.turn_metrics.montagem_falhou")
+        return
+    metricas.registrar_turno(svc.metricas, row)
+
+
+async def _executar(
     *, svc: ServicosCanal, prep: Preparado, agent: Any, org_id: UUID, thread: Any, runtime: Any, slot: Any,
     bus: Any, contexto: Any | None, gatilho: str, lote_lead: list[str], ultima_resposta_em: datetime | None,
     agora: datetime, lote_entrada: list[str] | None = None, nota_caso: str | None = None,
+    medida: dict[str, Any] | None = None,
 ) -> ResultadoTurno:
     """Run the model for ``thread`` and settle everything the turn does. ``lote_lead`` are the texts of the
     batch just stored (empty for a re-engagement) that the lead SAID (typed + spoken); ``lote_entrada`` adds the text
@@ -764,6 +833,14 @@ async def executar(
     for t in tentativas:
         usage = _somar(usage, t.usage)
     blocks = [b for t in tentativas for b in t.blocks]
+    if medida is not None:
+        tools_ms: dict[str, int] = {}
+        for t in tentativas:
+            for nome, ms in t.tools_ms.items():
+                tools_ms[nome] = tools_ms.get(nome, 0) + int(ms)
+        medida.update(
+            tools_ms=tools_ms, blocks=blocks,
+            tools=[b["name"] for b in blocks if b.get("kind") == "tool" and b.get("name")])
     final = await _persistir(svc, prep, agent, org_id, thread, contexto, texto_final, blocks, usage, bus, tag)
     identificacao_registrada = turno.identificacao_registrada
     await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id, bus)

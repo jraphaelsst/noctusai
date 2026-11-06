@@ -89,6 +89,14 @@ scope had zero callers, so both columns were NULL on every row.
   runtime method that opens the scope itself (`channels_router.py` → `structured_extract`) is allowlisted with that
   reason; the Studio generator (`geracao.py`) opens the scope directly.
 
+### 0.2 Per-turn view for agents (2026-11-06)
+
+The agents app keeps ONE row per agent turn in `agents.turn_metrics` (migration 066) for the platform-admin metrics page: tokens, cache
+read/write and `custo_usd` are the SUM of the turn's own events collected with `coletar_uso()` around `turno.executar` (the same priced
+`UsageEvent`s the sink got; nothing is re-priced, no second ledger), plus wall/LLM/tool ms and UTF-8 payload bytes. It is a
+view of the money, not a billing source; read only by `require_platform_admin` and shown only in the agents app. A failed write is
+logged and never fails the turn. Contract: `products/agents/projects/julia-v2/CONTRACT.md` §14.
+
 ---
 
 ## 1. Architecture

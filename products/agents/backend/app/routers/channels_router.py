@@ -64,6 +64,7 @@ from app.dependencies import (
     get_notification_sink_dep,
     get_relatorio_resumo_factory_dep,
     get_thread_alerta_store_dep,
+    get_turn_metrics_store_dep,
     get_org_llm_key_resolver_dep,
     get_realtime_bus_dep,
     get_skills_factory_dep,
@@ -283,6 +284,7 @@ async def run_channel_turn(
     skills_factory=Depends(get_skills_factory_dep),
     notificacoes=Depends(get_notification_sink_dep),
     alertas=Depends(get_thread_alerta_store_dep),
+    metricas=Depends(get_turn_metrics_store_dep),
     resumo_factory=Depends(get_relatorio_resumo_factory_dep),
 ) -> ChannelTurnResponse:
     org_id = ctx.org_id
@@ -295,6 +297,7 @@ async def run_channel_turn(
         studio_store=studio_store, catalog=catalog, conversations=conv_store, messages=msg_store, threads=threads,
         controles=controles, conformidade=conformidade, qual=qual, padroes=padroes, ident=ident, sw=sw,
         skills_factory=skills_factory, notificacoes=notificacoes, alertas=alertas, resumo_factory=resumo_factory,
+        metricas=metricas,
     )
 
     existing = (await anyio.to_thread.run_sync(lambda: conv_store.find_thread(org_id, payload.channel, channel_ref)))
@@ -433,6 +436,8 @@ async def run_channel_turn(
                 svc=svc, prep=prep, agent=agent, org_id=org_id, thread=thread, runtime=runtime, slot=slot, bus=bus,
                 contexto=payload.contexto, gatilho=payload.gatilho, lote_lead=lote_lead, lote_entrada=lote_entrada,
                 ultima_resposta_em=ultima, agora=agora,
+                mensagem_entrada_id=novos[-1].id if novos else None,
+                entrada_em=min((m.at for m in batch), default=None),
             )
         except LlmRuntimeError as exc:
             logger.warning(

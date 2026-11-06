@@ -42,6 +42,7 @@ import contextlib
 import functools
 import inspect
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -276,9 +277,12 @@ class LlmToolRuntime:
 
         toolset = self._tools_factory(spec, ctx) if self._tools_factory is not None else None
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        #: per-turn speed meter (agents.turn_metrics): wall ms inside provider calls / inside tool handlers
+        medida: dict[str, Any] = {"llm_ms": 0, "tool_ms": 0, "llm_calls": 0, "tools_ms": {}}
 
         async def _handler(call: ToolCall) -> ToolResult:
             assert toolset is not None
+            t0 = time.perf_counter()
             queue.put_nowait(("event", {
                 "event": "tool.started",
                 "payload": {
@@ -298,6 +302,9 @@ class LlmToolRuntime:
                     ctx.org_id, ctx.conversation_id, call.name,
                 )
                 result = ToolResult(call.call_id, toolset.falha or _TOOL_FAILED_JSON, is_error=True)
+            ms = int((time.perf_counter() - t0) * 1000)
+            medida["tool_ms"] += ms
+            medida["tools_ms"][call.name] = medida["tools_ms"].get(call.name, 0) + ms
             queue.put_nowait(("event", {
                 "event": "tool.finished",
                 "payload": {
@@ -340,10 +347,18 @@ class LlmToolRuntime:
         if prompt:
             messages.append(ChatMessage.user(prompt))
 
+        #: bytes of the FIRST request's messages (system + context + history + user): what the turn sent the model
+        prompt_bytes = sum(len((m.content or "").encode("utf-8")) for m in messages)
+
         async def _chat(msgs: Any, specs_: Any) -> Any:
             if toolset is not None and toolset.should_stop is not None and toolset.should_stop():
                 return ChatToolsResponse(text="", tool_calls=(), usage=LLMUsage(), finish_reason="stop")
-            return await chat(msgs, specs_)
+            t0 = time.perf_counter()
+            try:
+                return await chat(msgs, specs_)
+            finally:
+                medida["llm_ms"] += int((time.perf_counter() - t0) * 1000)
+                medida["llm_calls"] += 1
 
         async def _run() -> None:
             try:
@@ -406,6 +421,9 @@ class LlmToolRuntime:
                 "tokens_entrada": usage.prompt_tokens,
                 "tokens_saida": usage.completion_tokens,
                 "tokens_cache_leitura": usage.cache_read_tokens,
+                "llm_ms": medida["llm_ms"], "tool_ms": medida["tool_ms"], "llm_calls": medida["llm_calls"],
+                "tools_ms": dict(medida["tools_ms"]),
+                "prompt_bytes": prompt_bytes,
                 "esgotou_loop": bool(getattr(result, "exhausted", False)),
             },
         }
