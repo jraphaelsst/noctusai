@@ -1056,3 +1056,4 @@
 {"ts": "2026-11-04", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/_merged-tip-baseline-bbb8ed3af", "branch": null, "sha": null, "reason": "merged-to-dev"}
 {"ts": "2026-11-05", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/_merged-tip-baseline-0a6052430", "branch": null, "sha": null, "reason": "merged-to-dev"}
 {"ts": "2026-11-05", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/gitleaks-ledger-checksums", "branch": null, "sha": null, "reason": "merged-to-dev"}
+{"ts": "2026-11-06", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/_merged-tip-baseline-69ad1bba9", "branch": null, "sha": null, "reason": "merged-to-dev"}
