@@ -43,7 +43,7 @@ from noctusai_lib.security.webhook_signatures import (
 )
 
 from app.config import settings
-from app.dependencies import coerce_org_uuid, get_current_user_org_unified
+from app.dependencies import coerce_org_uuid, get_current_user_org_unified, require_platform_admin
 from app.modules.leads.deps import get_leads_client
 from app.modules.portal_leads.services import (
     imovelweb_callback_service,
@@ -274,9 +274,10 @@ def backfill_imovelweb_leads_route(
     return imovelweb_ingest_service.backfill_imovelweb_leads(client, org_id)
 
 
-@router.get("/callback")
+@router.get("/callback", include_in_schema=False)
 async def read_imovelweb_callback_config(
     auth: tuple = Depends(get_current_user_org_unified),
+    _platform: tuple = Depends(require_platform_admin),
     adapter: Any = Depends(get_imovelweb_adapter),
 ) -> JSONResponse:
     """Read the registration back from the vendor — the health check.
@@ -297,9 +298,10 @@ async def read_imovelweb_callback_config(
     return JSONResponse(result)
 
 
-@router.post("/callback/register")
+@router.post("/callback/register", include_in_schema=False)
 async def register_imovelweb_callback(
     auth: tuple = Depends(get_current_user_org_unified),
+    _platform: tuple = Depends(require_platform_admin),
     adapter: Any = Depends(get_imovelweb_adapter),
     body: dict = Body(default_factory=dict),
 ) -> JSONResponse:

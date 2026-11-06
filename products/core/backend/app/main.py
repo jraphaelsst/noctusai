@@ -53,6 +53,7 @@ from app.services.transcription_api.wiring import (
     start_transcription_worker,
     stop_transcription_worker,
 )
+from noctusai_lib.api.access_tiers import access_tier
 
 configure_scheduler()
 
@@ -171,6 +172,7 @@ app.middleware("http")(website_html_middleware)
 
 
 @app.get("/")
+@access_tier('service', reason='liveness banner: static platform name/version, no data', category='health')
 def root():
     return {
         "platform": "NoctusAI",

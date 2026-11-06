@@ -37,38 +37,42 @@ from noctusai_lib.security.webhook_signatures import compute_hmac_sha256_hex
 
 from app.config import settings
 
-__all__ = ["sign_oauth_state", "verify_oauth_state"]
+__all__ = ["sign_oauth_state", "verify_oauth_state", "verify_oauth_state_full"]
 
 
-def sign_oauth_state(org_id: UUID) -> str:
-    """Build a tamper-evident OAuth ``state`` token: ``{org_id}:{nonce}:{hmac}``.
+def sign_oauth_state(org_id: UUID, marca_id: str = "") -> str:
+    """Build a tamper-evident OAuth ``state`` token.
+
+    Without ``marca_id``: ``{org_id}:{nonce}:{hmac}`` (the calendar / org-level shape). With it (the
+    multi-account flows carry the client the new account links to through the redirect):
+    ``{org_id}:{nonce}:{marca_id}:{hmac}`` -- the marca is INSIDE the signed payload, so it can't be swapped.
 
     ``org_id`` MUST be the org resolved from the caller's authenticated
-    session — never a caller-supplied value — or the signature just
+    session -- never a caller-supplied value -- or the signature just
     certifies an attacker-chosen org.
     """
     nonce = secrets.token_urlsafe(16)
-    payload = f"{org_id}:{nonce}"
+    payload = f"{org_id}:{nonce}:{marca_id}" if marca_id else f"{org_id}:{nonce}"
     sig = compute_hmac_sha256_hex(payload.encode("utf-8"), settings.jwt_secret)
     return f"{payload}:{sig}"
 
 
-def verify_oauth_state(state: str) -> UUID:
-    """Verify + decode a state token minted by :func:`sign_oauth_state`.
+def verify_oauth_state_full(state: str) -> tuple[UUID, str]:
+    """Verify + decode a state token -> ``(org_id, marca_id_or_empty)``.
 
-    Raises ``400`` on malformed shape OR signature mismatch — never
-    returns an org_id that wasn't verified. Constant-time compare
-    (``hmac.compare_digest``) so a timing side-channel can't help an
-    attacker forge the tag.
+    Raises ``400`` on malformed shape OR signature mismatch -- never returns an
+    org_id that wasn't verified. Constant-time compare (``hmac.compare_digest``)
+    so a timing side-channel can't help an attacker forge the tag. Accepts the
+    3-part (no marca) and 4-part (with marca) shapes of :func:`sign_oauth_state`.
     """
     parts = state.split(":")
-    if len(parts) != 3:
+    if len(parts) not in (3, 4):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state token malformed.",
         )
-    org_part, nonce, sig = parts
-    payload = f"{org_part}:{nonce}"
+    sig = parts[-1]
+    payload = ":".join(parts[:-1])
     expected = compute_hmac_sha256_hex(payload.encode("utf-8"), settings.jwt_secret)
     if not sig or not hmac.compare_digest(expected, sig):
         raise HTTPException(
@@ -76,9 +80,14 @@ def verify_oauth_state(state: str) -> UUID:
             detail="OAuth state token failed signature verification.",
         )
     try:
-        return UUID(org_part)
+        return UUID(parts[0]), (parts[2] if len(parts) == 4 else "")
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
+
+
+def verify_oauth_state(state: str) -> UUID:
+    """Verify + decode a state token to its org (``verify_oauth_state_full`` minus the marca)."""
+    return verify_oauth_state_full(state)[0]

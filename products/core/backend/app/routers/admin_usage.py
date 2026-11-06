@@ -16,7 +16,7 @@ from noctusai_lib.api.auth.session.types import AuthContext
 from app.services import dev_usage
 from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
 
-router = APIRouter(prefix="/api/admin/usage", tags=["Admin · Usage"])
+router = APIRouter(prefix="/api/admin/usage", tags=["Admin · Usage"], include_in_schema=False)
 
 _FROM = Query(None, alias="from", description="ISO-8601 start (default now-7d)")
 _TO = Query(None, description="ISO-8601 end (default now)")

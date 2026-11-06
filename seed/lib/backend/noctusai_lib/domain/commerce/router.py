@@ -393,16 +393,16 @@ def commerce_staff_router(
         return success_response(refund)
 
     # ── hosts (platform admin only) ──
-    @router.get("/hosts", name="commerce_list_hosts", dependencies=[Depends(platform_admin_dep)])
+    @router.get("/hosts", name="commerce_list_hosts", include_in_schema=False, dependencies=[Depends(platform_admin_dep)])
     async def list_hosts_route(ctx: CommerceContext = Depends(ctx_dep)) -> dict:
         return success_response(hosts_svc.list_hosts(ctx.db, ctx.org_id))
 
-    @router.post("/hosts", status_code=201, name="commerce_add_host", dependencies=[Depends(platform_admin_dep)])
+    @router.post("/hosts", status_code=201, name="commerce_add_host", include_in_schema=False, dependencies=[Depends(platform_admin_dep)])
     async def add_host_route(body: HostBody, ctx: CommerceContext = Depends(ctx_dep)) -> dict:
         return success_response(hosts_svc.add_host(ctx.db, ctx.org_id, body.hostname, is_primary=body.is_primary))
 
     @router.delete(
-        "/hosts/{hostname}", status_code=204, name="commerce_delete_host", dependencies=[Depends(platform_admin_dep)]
+        "/hosts/{hostname}", status_code=204, name="commerce_delete_host", include_in_schema=False, dependencies=[Depends(platform_admin_dep)]
     )
     async def delete_host_route(hostname: str, ctx: CommerceContext = Depends(ctx_dep)) -> Response:
         hosts_svc.delete_host(ctx.db, ctx.org_id, hostname)

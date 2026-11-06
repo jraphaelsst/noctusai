@@ -33,7 +33,7 @@ from app.services.credits import purchases, reports, wallets
 from app.services.credits.pricing import PRICING_TABLE, list_pricing
 from app.services.trusted_auth import require_platform_admin_dep
 
-router = APIRouter(prefix="/api/admin/credits", tags=["Admin · Credits"])
+router = APIRouter(prefix="/api/admin/credits", tags=["Admin · Credits"], include_in_schema=False)
 
 
 def _org_or_404(ctx: BillingContext, org_id: str) -> dict[str, Any]:

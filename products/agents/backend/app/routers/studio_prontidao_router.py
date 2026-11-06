@@ -30,7 +30,7 @@ from app.schemas.studio_prontidao import ProntidaoItemOut, ProntidaoOut
 from app.studio.prontidao import avaliar
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/studio", tags=["studio-prontidao"])
+router = APIRouter(prefix="/api/studio", tags=["studio-prontidao"], include_in_schema=False)
 
 
 @router.get("/agents/{key}/prontidao", response_model=ProntidaoOut)

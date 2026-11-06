@@ -92,7 +92,7 @@ async def put_org_settings_route(
     return org_configuracoes_out(saved, platform)
 
 
-@router.get("/plataforma")
+@router.get("/plataforma", include_in_schema=False)
 async def get_platform_settings_route(
     _actor: Actor = Depends(require_platform_admin),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
@@ -100,7 +100,7 @@ async def get_platform_settings_route(
     return platform_settings_out(await ports.repo.get_platform_settings(), ports.config)
 
 
-@router.put("/plataforma")
+@router.put("/plataforma", include_in_schema=False)
 async def put_platform_settings_route(
     body: PlatformSettingsBody,
     _actor: Actor = Depends(require_platform_admin),

@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subscriptions", tags=["Subscriptions"])
 
 
-@router.get("")
+@router.get("", include_in_schema=False)
 async def listar_subscriptions(authorization: Optional[str] = Header(None)):
     """List all subscriptions (admin only)."""
     await get_current_admin(authorization)
@@ -72,7 +72,7 @@ async def get_my_subscription(authorization: Optional[str] = Header(None)):
     return {"data": subscription}
 
 
-@router.get("/org/{org_id}")
+@router.get("/org/{org_id}", include_in_schema=False)
 async def get_org_subscription(org_id: str, authorization: Optional[str] = Header(None)):
     """Get a specific org's subscription (admin only)."""
     await get_current_admin(authorization)
@@ -84,7 +84,7 @@ async def get_org_subscription(org_id: str, authorization: Optional[str] = Heade
     return {"data": result.data or []}
 
 
-@router.post("")
+@router.post("", include_in_schema=False)
 async def criar_subscription(body: SubscriptionCreate, authorization: Optional[str] = Header(None)):
     """Create/assign a subscription to an org (admin only)."""
     user, token = await get_current_admin(authorization)
@@ -140,7 +140,7 @@ async def criar_subscription(body: SubscriptionCreate, authorization: Optional[s
     return {"data": result.data[0]}
 
 
-@router.patch("/{subscription_id}")
+@router.patch("/{subscription_id}", include_in_schema=False)
 async def atualizar_subscription(
     subscription_id: str, body: SubscriptionUpdate,
     authorization: Optional[str] = Header(None)
@@ -185,7 +185,7 @@ async def atualizar_subscription(
     return {"data": updated_record}
 
 
-@router.delete("/{subscription_id}")
+@router.delete("/{subscription_id}", include_in_schema=False)
 async def cancelar_subscription(subscription_id: str, authorization: Optional[str] = Header(None)):
     """Cancel a subscription (admin only)."""
     await get_current_admin(authorization)

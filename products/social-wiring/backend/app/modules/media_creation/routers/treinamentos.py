@@ -17,6 +17,7 @@ from app.dependencies import (
 )
 from app.modules.media_creation.schemas.perfil_criacao import TreinamentoCreate, TreinamentoUpdate
 from app.modules.media_creation.services.treinamentos_service import TreinamentoError, TreinamentosService
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/media-creation/treinamentos", tags=["Media Creation — Treinamentos"])
@@ -37,12 +38,13 @@ def listar_treinamentos(auth=Depends(get_current_user_org), is_admin=Depends(get
 
 
 @router.get("/admin")
+@access_tier('org', reason="returns the caller's own is_admin flag, nothing else")
 def treinamentos_admin(auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check)):
     """Whether the caller may edit (drives the FE edit controls; the writes enforce it themselves)."""
     return success_response({"is_admin": bool(is_admin(str(auth[0].id)))})
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, include_in_schema=False)
 def criar_treinamento(body: TreinamentoCreate, auth=Depends(require_platform_admin)):
     try:
         return success_response(_svc(auth).criar(**body.model_dump(mode="json")))
@@ -50,7 +52,7 @@ def criar_treinamento(body: TreinamentoCreate, auth=Depends(require_platform_adm
         _raise(exc)
 
 
-@router.put("/{treinamento_id}")
+@router.put("/{treinamento_id}", include_in_schema=False)
 def atualizar_treinamento(
     treinamento_id: uuid.UUID, body: TreinamentoUpdate, auth=Depends(require_platform_admin),
 ):
@@ -65,7 +67,7 @@ def atualizar_treinamento(
         _raise(exc)
 
 
-@router.delete("/{treinamento_id}", status_code=204)
+@router.delete("/{treinamento_id}", status_code=204, include_in_schema=False)
 def excluir_treinamento(treinamento_id: uuid.UUID, auth=Depends(require_platform_admin)):
     try:
         _svc(auth).excluir(str(treinamento_id))

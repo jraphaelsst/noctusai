@@ -18,7 +18,7 @@ from app.services import team_memberships
 from noctusai_lib.primitives.responses import paginated_response, success_response, ok_response, calculate_pagination
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/users", tags=["Admin Users"])
+router = APIRouter(prefix="/api/admin/users", tags=["Admin Users"], include_in_schema=False)
 
 
 @router.get("")

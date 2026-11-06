@@ -83,6 +83,7 @@ from noctusai_lib.api.auth.session import (
     mint_token_secret,
     resolve_org_membership,
 )
+from noctusai_lib.api.access_tiers import access_tier
 
 _API_TOKEN_MAX_EXPIRY_DAYS = 90
 
@@ -481,6 +482,7 @@ def create_auth_router(
     # ── Session lifecycle ──────────────────────────────────────────────
 
     @auth_router.post("/login", response_model=LoginResponse)
+    @access_tier('public', reason='email/password login', category='auth')
     async def login(body: LoginRequest, response: Response) -> LoginResponse:
         """Authenticate against Supabase, mint a server-side session, set
         the HttpOnly cookie. The browser never sees the JWT or refresh

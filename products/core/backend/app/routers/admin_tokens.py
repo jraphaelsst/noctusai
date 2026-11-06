@@ -19,7 +19,7 @@ from noctusai_lib.api.schemas import StrictHttpModel
 from app.services import api_tokens
 from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
 
-router = APIRouter(prefix="/api/admin/tokens", tags=["Admin · Tokens"])
+router = APIRouter(prefix="/api/admin/tokens", tags=["Admin · Tokens"], include_in_schema=False)
 
 
 class TokenSettingsBody(StrictHttpModel):

@@ -40,7 +40,6 @@ OAuth redirect target: all three callbacks redirect to ``/clientes?account_creat
 from __future__ import annotations
 
 import logging
-import secrets
 from typing import Any, Optional
 from urllib.parse import urljoin
 from uuid import UUID
@@ -71,6 +70,7 @@ from app.dependencies import (
     get_user_client,
 )
 from app.config import SocialWiringSettings
+from app.routers._oauth_state import sign_oauth_state, verify_oauth_state_full
 from app.services.app_config_store import resolve_instagram_app_creds, resolve_meta_app_creds
 from app.services.credential_vault import (
     CredentialStoreError,
@@ -246,7 +246,7 @@ def _require_account(
 
 # ─── Provider registry ────────────────────────────────────────────────────────
 @router.get("/providers")
-def list_providers() -> list[dict]:
+def list_providers(_auth: tuple = Depends(get_current_user_org)) -> list[dict]:
     """Return the v1 provider registry (display_name, oauth_supported,
     manual_key_fields, etc.). FE uses this to build the "Connect account"
     picker without hardcoding provider configs."""
@@ -640,7 +640,7 @@ def youtube_oauth_start(
     # State format: {org_id}:{nonce}:{client_id_or_empty}
     # Neither org_id (UUID) nor token_urlsafe() output ever contain ":" so the
     # three-part split in the callback is unambiguous.
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
+    state = sign_oauth_state(org_id, marca_id_str)
     # Seed OAuthProvider methods are async; this endpoint is sync (AnyIO worker
     # thread), so bridge via asyncio.run — the same pattern the callback uses
     # for the YouTube client. `provider` (real GoogleProvider or an injected
@@ -698,22 +698,8 @@ def youtube_oauth_callback(
     # State format: {org_id}:{nonce}:{client_id_or_empty} (migration 017 extended)
     # Older two-part states "{org_id}:{nonce}" have no third segment → client_id_part = "".
     # Split on the FIRST ":" then the LAST ":" to handle both two-part and three-part forms.
-    parts = state.split(":")
-    if len(parts) < 2 or not parts[0]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token malformed.",
-        )
-    org_part = parts[0]
-    # Third segment (index 2) is marca_id when present; empty string = no link.
-    marca_id_part = parts[2] if len(parts) >= 3 else ""
-    try:
-        org_id = UUID(org_part)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Verify-then-use: the org (and marca) come ONLY from a state WE signed at oauth/start (login-CSRF guard).
+    org_id, marca_id_part = verify_oauth_state_full(state)
 
     # Parse marca_id from state (may be empty when caller sent no marca_id).
     _callback_marca_id: Optional[UUID] = None
@@ -1085,7 +1071,7 @@ def meta_oauth_start(
     redirect_uri = _build_ia_meta_redirect_uri(cfg)
     # Neither org_id (UUID) nor token_urlsafe() output ever contain ":" so the
     # three-part split in the callback is unambiguous (mirrors YouTube's state).
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
+    state = sign_oauth_state(org_id, marca_id_str)
 
     from urllib.parse import urlencode
 
@@ -1147,21 +1133,9 @@ def meta_oauth_callback(
         )
 
     # State format: {org_id}:{nonce}:{client_id_or_empty} (mirrors YouTube's).
-    parts = state.split(":")
-    if len(parts) < 2 or not parts[0]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token malformed.",
-        )
-    try:
-        org_id = UUID(parts[0])
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Verify-then-use: the org (and marca) come ONLY from a state WE signed at oauth/start (login-CSRF guard).
+    org_id, marca_id_part = verify_oauth_state_full(state)
 
-    marca_id_part = parts[2] if len(parts) >= 3 else ""
     _callback_marca_id: Optional[UUID] = None
     if marca_id_part:
         try:
@@ -1460,7 +1434,7 @@ def instagram_oauth_start(
         marca_id_str = str(body.marca_id)
 
     redirect_uri = _build_ia_instagram_redirect_uri(cfg)
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
+    state = sign_oauth_state(org_id, marca_id_str)
     auth_url = build_ig_authorize_url(
         app_id=app_id,
         redirect_uri=redirect_uri,
@@ -1509,21 +1483,9 @@ def instagram_oauth_callback(
             detail="OAuth callback missing code or state.",
         )
 
-    parts = state.split(":")
-    if len(parts) < 2 or not parts[0]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token malformed.",
-        )
-    try:
-        org_id = UUID(parts[0])
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Verify-then-use: the org (and marca) come ONLY from a state WE signed at oauth/start (login-CSRF guard).
+    org_id, marca_id_part = verify_oauth_state_full(state)
 
-    marca_id_part = parts[2] if len(parts) >= 3 else ""
     _callback_marca_id: Optional[UUID] = None
     if marca_id_part:
         try:
@@ -1864,7 +1826,7 @@ def gmail_oauth_start(
         marca_id_str = str(body.marca_id)
 
     redirect_uri = _build_ia_google_redirect_uri(cfg, "gmail")
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
+    state = sign_oauth_state(org_id, marca_id_str)
     auth_result = asyncio.run(
         provider.authorization_url(
             state=state, scopes=_GMAIL_OAUTH_SCOPES, redirect_uri=redirect_uri
@@ -1911,21 +1873,8 @@ def gmail_oauth_callback(
             detail="OAuth callback missing code or state.",
         )
 
-    parts = state.split(":")
-    if len(parts) < 2 or not parts[0]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token malformed.",
-        )
-    org_part = parts[0]
-    marca_id_part = parts[2] if len(parts) >= 3 else ""
-    try:
-        org_id = UUID(org_part)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Verify-then-use: the org (and marca) come ONLY from a state WE signed at oauth/start (login-CSRF guard).
+    org_id, marca_id_part = verify_oauth_state_full(state)
 
     _callback_marca_id: Optional[UUID] = None
     if marca_id_part:
@@ -2102,7 +2051,7 @@ def drive_oauth_start(
         marca_id_str = str(body.marca_id)
 
     redirect_uri = _build_ia_google_redirect_uri(cfg, "google_drive")
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
+    state = sign_oauth_state(org_id, marca_id_str)
     auth_result = asyncio.run(
         provider.authorization_url(
             state=state, scopes=_DRIVE_OAUTH_SCOPES, redirect_uri=redirect_uri
@@ -2150,21 +2099,8 @@ def drive_oauth_callback(
             detail="OAuth callback missing code or state.",
         )
 
-    parts = state.split(":")
-    if len(parts) < 2 or not parts[0]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token malformed.",
-        )
-    org_part = parts[0]
-    marca_id_part = parts[2] if len(parts) >= 3 else ""
-    try:
-        org_id = UUID(org_part)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Verify-then-use: the org (and marca) come ONLY from a state WE signed at oauth/start (login-CSRF guard).
+    org_id, marca_id_part = verify_oauth_state_full(state)
 
     _callback_marca_id: Optional[UUID] = None
     if marca_id_part:

@@ -35,7 +35,7 @@ from app.modules.edicao_fotos.deps import (
 )
 from app.modules.edicao_fotos.schemas import ProcessamentoBody
 
-router = APIRouter(prefix="/api/edicao-fotos/processamento", tags=["edicao-fotos"])
+router = APIRouter(prefix="/api/edicao-fotos/processamento", tags=["edicao-fotos"], include_in_schema=False)
 
 
 class ProbeMemory:

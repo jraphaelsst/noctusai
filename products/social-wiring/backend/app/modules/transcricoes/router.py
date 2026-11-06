@@ -81,7 +81,7 @@ async def submit_transcricao(
         return erro_response(exc)
 
 
-@router.get("/_stats")
+@router.get("/_stats", include_in_schema=False)
 async def transcricoes_stats(
     auth=Depends(require_platform_admin),
     storage: StorageBackend = Depends(get_transcricao_storage),

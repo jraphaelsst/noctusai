@@ -66,7 +66,7 @@ from app.stores.studio_knowledge import (
 from app.studio.models import LIST_QUERY_MAX, SEARCH_QUERY_MAX
 from noctusai_lib.api.auth.session import AuthContext
 
-router = APIRouter(prefix="/api/studio/agents", tags=["studio-knowledge"])
+router = APIRouter(prefix="/api/studio/agents", tags=["studio-knowledge"], include_in_schema=False)
 
 #: The body-cap pattern ``app.main`` registers (whole-segment wildcard,
 #: same shape as ``studio_import_router.IMPORT_BODY_LIMIT_PATTERN``).

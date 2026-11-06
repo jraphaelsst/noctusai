@@ -60,7 +60,7 @@ async def listar_audit_logs(
     }
 
 
-@router.get("/api/admin/audit-logs")
+@router.get("/api/admin/audit-logs", include_in_schema=False)
 async def admin_listar_audit_logs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),

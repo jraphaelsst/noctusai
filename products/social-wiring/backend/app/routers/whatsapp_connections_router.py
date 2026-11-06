@@ -358,7 +358,7 @@ def list_connections(
     return [_out(r) for r in records]
 
 
-@router.post("", response_model=WhatsAppConnectionOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=WhatsAppConnectionOut, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_connection(
     body: WhatsAppConnectionCreate,
     auth: tuple = Depends(require_platform_admin),

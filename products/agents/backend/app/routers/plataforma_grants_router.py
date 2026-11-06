@@ -40,7 +40,7 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.grants import GrantDelivery
 from noctusai_lib.api.auth.session import AuthContext, ProductTokenAdmin
 
-router = APIRouter(tags=["plataforma-grants"])
+router = APIRouter(tags=["plataforma-grants"], include_in_schema=False)
 
 _BASE = "/api/studio/plataforma/grants"
 _CHAVE = r"^[a-z0-9]+([-_][a-z0-9]+)*$"

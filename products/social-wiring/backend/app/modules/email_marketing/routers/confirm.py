@@ -18,6 +18,7 @@ from app.dependencies import get_admin_client, get_settings
 from app.modules.email_marketing.services.contact_service import ContactService
 from app.modules.email_marketing.services.email_optin import verify_token
 from app.rate_limit import limiter
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/email-marketing/confirm", tags=["Double opt-in"])
@@ -33,6 +34,7 @@ def _verified(cfg, token: str) -> dict:
 
 
 @router.get("/{token}")
+@access_tier('service', reason='HMAC-signed double-opt-in link token (verify_token), rate-limited')
 @limiter.limit(settings.webhook_rate_limit)
 def confirmation_info(request: Request, token: str, cfg=Depends(get_settings)):
     data = _verified(cfg, token)
@@ -40,6 +42,7 @@ def confirmation_info(request: Request, token: str, cfg=Depends(get_settings)):
 
 
 @router.post("/{token}")
+@access_tier('service', reason='HMAC-signed double-opt-in link token (verify_token), rate-limited')
 @limiter.limit(settings.webhook_rate_limit)
 def confirm_email(request: Request, token: str, cfg=Depends(get_settings)):
     data = _verified(cfg, token)

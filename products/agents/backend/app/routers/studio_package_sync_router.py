@@ -118,7 +118,7 @@ def put_project_sources(
     return SourcesSyncOut(**result)
 
 
-@router.get("/{key}/projects", response_model=ProjectListOut)
+@router.get("/{key}/projects", response_model=ProjectListOut, include_in_schema=False)
 def list_projects(
     key: str,
     ctx: AuthContext = Depends(require_platform_admin),
@@ -184,7 +184,7 @@ def list_learnings(
     return LearningListOut(items=[_learning_out(r) for r in rows])
 
 
-@router.patch("/{key}/learnings/{learning_id}", response_model=LearningOut)
+@router.patch("/{key}/learnings/{learning_id}", response_model=LearningOut, include_in_schema=False)
 def review_learning(
     key: str,
     learning_id: UUID,

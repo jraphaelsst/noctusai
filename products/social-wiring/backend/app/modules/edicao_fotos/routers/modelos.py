@@ -112,7 +112,7 @@ def _admin_rows() -> list[dict[str, Any]]:
     return rows
 
 
-@router.get("/catalogo")
+@router.get("/catalogo", include_in_schema=False)
 def list_catalogo_route(_actor: Actor = Depends(require_platform_admin)) -> dict:
     return {"items": _admin_rows()}
 
@@ -129,7 +129,7 @@ def _price(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
-@router.put("/catalogo/{modelo_id}")
+@router.put("/catalogo/{modelo_id}", include_in_schema=False)
 async def put_catalogo_route(
     modelo_id: str,
     body: ModeloCatalogoBody,
@@ -181,7 +181,7 @@ async def put_catalogo_route(
     return {**row, "recarregado": recarregado}
 
 
-@router.get("/catalogo/{modelo_id}/versoes")
+@router.get("/catalogo/{modelo_id}/versoes", include_in_schema=False)
 async def list_versoes_route(
     modelo_id: str,
     kind: str = Query("image_edit"),
@@ -195,7 +195,7 @@ async def list_versoes_route(
     return {"items": [modelo_versao_out(v) for v in versions]}
 
 
-@router.get("/etapas")
+@router.get("/etapas", include_in_schema=False)
 async def get_etapas_route(
     _actor: Actor = Depends(require_platform_admin),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
@@ -204,7 +204,7 @@ async def get_etapas_route(
     return etapas_out(step_models_view(platform, ports.config))
 
 
-@router.put("/etapas")
+@router.put("/etapas", include_in_schema=False)
 async def put_etapas_route(
     body: ModelosEtapasBody,
     _actor: Actor = Depends(require_platform_admin),
@@ -229,7 +229,7 @@ async def put_etapas_route(
     return etapas_out(step_models_view(platform, ports.config))
 
 
-@router.post("/notas/gerar", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/notas/gerar", status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
 async def gerar_notas_route(
     _actor: Actor = Depends(require_platform_admin),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),

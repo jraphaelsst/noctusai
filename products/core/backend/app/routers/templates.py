@@ -14,7 +14,7 @@ from fastapi import APIRouter, Header, HTTPException
 from app.dependencies import get_current_admin
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/template-scaffolds", tags=["Admin Template Scaffolds"])
+router = APIRouter(prefix="/api/admin/template-scaffolds", tags=["Admin Template Scaffolds"], include_in_schema=False)
 
 # Templates live at repo root /templates/
 TEMPLATES_DIR = Path(__file__).resolve().parents[4] / "templates"

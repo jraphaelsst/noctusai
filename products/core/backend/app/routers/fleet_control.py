@@ -33,7 +33,7 @@ from noctusai_lib.domain.fleet_control import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/fleet", tags=["Admin · Fleet Control"])
+router = APIRouter(prefix="/api/fleet", tags=["Admin · Fleet Control"], include_in_schema=False)
 
 
 class FleetVerb(str, Enum):

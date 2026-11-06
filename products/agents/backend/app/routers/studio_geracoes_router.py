@@ -41,7 +41,7 @@ from noctusai_lib.api.auth.session import AuthContext
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/studio", tags=["studio-geracoes"])
+router = APIRouter(prefix="/api/studio", tags=["studio-geracoes"], include_in_schema=False)
 
 
 def get_geracao_agendador_dep(request: Request) -> Callable[[Any], None]:

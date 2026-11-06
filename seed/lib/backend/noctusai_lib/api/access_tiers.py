@@ -193,6 +193,7 @@ PLATFORM_TABLES: tuple[str, ...] = (
     "agents.compiled_prompts", "agents.agent_prompt_sections", "agents.agent_skills", "agents.agent_skill_files",
     "agents.agent_versions", "agents.agent_version_*", "agents.eval_*", "agents.knowledge_*",
     "agents.agent_audit_log", "agents.agent_skill_*", "agents.skill_*", "agents.agent_canar*",
+    "agents.turn_metrics",  # per-turn LLM cost/speed/size (066): service role only, platform-admin endpoints
 )
 
 #: A policy / grant is safe when its text proves a platform-admin check.

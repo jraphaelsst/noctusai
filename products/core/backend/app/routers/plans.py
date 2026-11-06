@@ -44,7 +44,7 @@ async def get_plan(plan_id: str, authorization: Optional[str] = Header(None)):
     return {"data": result.data}
 
 
-@router.post("")
+@router.post("", include_in_schema=False)
 async def criar_plan(body: PlanCreate, authorization: Optional[str] = Header(None)):
     """Create a new plan (admin only)."""
     await get_current_admin(authorization)
@@ -66,7 +66,7 @@ async def criar_plan(body: PlanCreate, authorization: Optional[str] = Header(Non
     return {"data": result.data[0]}
 
 
-@router.patch("/{plan_id}")
+@router.patch("/{plan_id}", include_in_schema=False)
 async def atualizar_plan(plan_id: str, body: PlanUpdate, authorization: Optional[str] = Header(None)):
     """Update a plan (admin only)."""
     await get_current_admin(authorization)
@@ -84,7 +84,7 @@ async def atualizar_plan(plan_id: str, body: PlanUpdate, authorization: Optional
     return {"data": result.data[0]}
 
 
-@router.delete("/{plan_id}")
+@router.delete("/{plan_id}", include_in_schema=False)
 async def deletar_plan(plan_id: str, authorization: Optional[str] = Header(None)):
     """Soft delete a plan (admin only)."""
     await get_current_admin(authorization)

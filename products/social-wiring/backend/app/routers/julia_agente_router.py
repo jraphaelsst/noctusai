@@ -61,6 +61,7 @@ from app.services.conversation_module import get_conversation_module
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionRecord, WhatsAppConnectionStore
 from app.services.whatsapp_realtime import EVENT_CHAT_UPSERT, get_whatsapp_bus, publish_whatsapp_event
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ def _saida_admin(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/api/public/julia/privacidade/{slug}")
+@access_tier('public', reason='public privacy notice by slug (notice fields only)', category='legal-consent')
 @limiter.limit(settings.webhook_rate_limit)
 def get_aviso_publico(slug: str, request: Request) -> dict[str, Any]:
     """Public notice by slug. Returns ONLY the notice fields (never org ids,

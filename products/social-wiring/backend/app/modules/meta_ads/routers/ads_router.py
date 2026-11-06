@@ -317,9 +317,12 @@ _SYNC_JOBS: dict[str, dict[str, Any]] = {}
 _SYNC_JOBS_LOCK = threading.Lock()
 
 
-def _set_job(job_id: str, *, status_: str, detail: str | None = None) -> None:
+def _set_job(job_id: str, *, status_: str, detail: str | None = None, org_id: UUID | None = None) -> None:
+    """Record a job's state. ``org_id`` (set when the job is started) is kept across later updates so the
+    status poll can refuse another org's job."""
     with _SYNC_JOBS_LOCK:
-        _SYNC_JOBS[job_id] = {"status": status_, "detail": detail}
+        prev = _SYNC_JOBS.get(job_id) or {}
+        _SYNC_JOBS[job_id] = {"status": status_, "detail": detail, "org_id": str(org_id) if org_id is not None else prev.get("org_id")}
 
 
 def _get_job(job_id: str) -> dict[str, Any] | None:
@@ -1293,7 +1296,7 @@ def start_lead_sync(
     when ``leads_retrieval`` is not granted — forms still sync."""
     org_id, adapter = org_and_adapter
     job_id = str(uuid.uuid4())
-    _set_job(job_id, status_="running")
+    _set_job(job_id, status_="running", org_id=org_id)
     threading.Thread(
         target=_run_lead_sync_job,
         kwargs={"job_id": job_id, "org_id": org_id, "adapter": adapter},
@@ -1311,7 +1314,7 @@ def start_sync(
     org_id, adapter = org_and_adapter
     ad_account_id = _require_ad_account_id()
     job_id = str(uuid.uuid4())
-    _set_job(job_id, status_="running")
+    _set_job(job_id, status_="running", org_id=org_id)
     thread = threading.Thread(
         target=_run_sync_job,
         kwargs={
@@ -1328,9 +1331,10 @@ def start_sync(
 
 
 @router.get("/sync/{job_id}", response_model=AdsSyncStatusOut)
-def get_sync_status(job_id: str):
+def get_sync_status(job_id: str, auth: tuple = Depends(get_current_user_org)):
     job = _get_job(job_id)
-    if job is None:
+    # Another org's job is a 404, never a 403: the id's existence is not disclosed (OWASP API1 BOLA).
+    if job is None or job.get("org_id") != str(coerce_org_uuid(auth[2])):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="sync job not found"
         )

@@ -69,6 +69,7 @@ TokenAuthorizer = Callable[[Any, str, str], Awaitable[bool]]
 def oauth_router(
     *providers: OAuthProvider,
     auth_dependency: Callable[..., Any],
+    verify_state: Callable[[str], bool],
     token_authorizer: TokenAuthorizer | None = None,
     on_callback: CallbackHook | None = None,
     prefix: str = "/api/oauth",
@@ -85,6 +86,12 @@ def oauth_router(
             `get_current_user_org`) guarding `POST refresh` / `POST revoke`;
             no/invalid auth -> 401 from the dependency. These endpoints act
             on a bearer token at the vendor, so they are never anonymous.
+        verify_state: REQUIRED `(state) -> bool` -- true only for a ``state`` this
+            product issued (signed / nonce-bound). It runs BEFORE the callback
+            exchanges the code and before `authorize` hands out a consent URL;
+            False -> 400. Without it the `state` round-trip is decoration and the
+            callback is open to login-CSRF (OWASP OAuth 2.0 Security BCP; an
+            attacker lands their own credential in a victim's org).
         token_authorizer: optional async `(auth, provider, token) -> bool`
             org-scope check; False -> 403. Consumers whose tokens are stored
             per org plug the "does this token belong to the caller's org"
@@ -153,6 +160,11 @@ def oauth_router(
         if name not in registry:
             raise HTTPException(status_code=404, detail=f"unknown provider: {name}")
         return registry[name]
+
+    def verify_state_or_400(state: str) -> None:
+        """Refuse a `state` this product did not issue (400) -- verify-then-use."""
+        if not verify_state(state):
+            raise HTTPException(status_code=400, detail="invalid oauth state")
 
     async def _enforce_token_scope(auth: Any, provider: str, token: str) -> None:
         if token_authorizer is not None and not await token_authorizer(
@@ -244,6 +256,7 @@ def oauth_router(
         (FastAPI's standard list-from-query convention). `state` and
         `redirect_uri` are required.
         """
+        verify_state_or_400(state)
         impl = _resolve(provider)
         auth_url = await impl.authorization_url(
             state=state, scopes=scopes, redirect_uri=redirect_uri
@@ -273,6 +286,7 @@ def oauth_router(
         they 404 here so the legacy registered redirect URI is the only
         callback surface for them.
         """
+        verify_state_or_400(state)
         if provider in overrides:
             raise HTTPException(
                 status_code=404,
@@ -303,6 +317,7 @@ def oauth_router(
             error: str | None = Query(default=None),
             redirect_uri: str = Query(...),
         ) -> dict:
+            verify_state_or_400(state)
             return await _run_callback(
                 provider=provider_name,
                 state=state,

@@ -1053,14 +1053,29 @@ class TestSync:
 
     def test_sync_status_unknown_job_returns_404(self, client):
         tc, _mock_sb, _caching = client
+        _override_session_org(_ORG_A)
         resp = tc.get("/api/meta/ads/sync/does-not-exist")
         assert resp.status_code == 404, resp.text
 
     def test_sync_status_reachable_after_start(self, client):
         tc, _mock_sb, _caching = client
         _override_adapter(_ORG_A, _seeded_adapter())
+        _override_session_org(_ORG_A)
         started = tc.post("/api/meta/ads/sync", json={"mode": "incremental"})
         job_id = started.json()["job_id"]
         resp = tc.get(f"/api/meta/ads/sync/{job_id}")
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] in ("running", "done", "error")
+
+    def test_sync_status_of_another_orgs_job_is_404(self, client):
+        """OWASP API1 BOLA: a job id is not a capability -- org B polling org A's job gets a 404."""
+        tc, _mock_sb, _caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        _override_session_org(_ORG_A)
+        job_id = tc.post("/api/meta/ads/sync", json={"mode": "incremental"}).json()["job_id"]
+        _override_session_org(_ORG_B)
+        assert tc.get(f"/api/meta/ads/sync/{job_id}").status_code == 404
+
+    def test_sync_status_requires_a_session(self, client):
+        tc, _mock_sb, _caching = client
+        assert tc.get("/api/meta/ads/sync/any-job").status_code == 401

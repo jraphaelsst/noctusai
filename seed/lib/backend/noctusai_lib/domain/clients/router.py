@@ -36,6 +36,7 @@ from .errors import FILTRO_INVALIDO, invalid
 from .schemas import ClientBody, ClientPatch, PaymentBody, ScheduleBody, SchedulePatch, SessionBody, SessionPatch
 from .service import ClientsService
 from .store import ClientFilters, ClientsStore
+from noctusai_lib.api.access_tiers import access_tier
 
 MAX_PAGE = 200
 
@@ -149,6 +150,7 @@ def create_clients_router(
         return success_response(service.update(org_id, str(client_id), body.model_dump(exclude_unset=True), is_admin=is_admin))
 
     @router.delete("/{client_id}", status_code=204, name="clients_delete")
+    @access_tier('org', reason='admin_svc: org-admin gate, org-scoped')
     def delete_route(client_id: UUID, ctx=Depends(admin_svc)) -> Response:
         service, org_id, _uid, _admin = ctx
         service.delete(org_id, str(client_id))
@@ -186,6 +188,7 @@ def create_clients_router(
         return success_response(service.client_finance(org_id, str(client_id)))
 
     @router.post("/{client_id}/payments", name="clients_payment")
+    @access_tier('org', reason='admin_svc: org-admin gate, org-scoped')
     def payment_route(client_id: UUID, body: PaymentBody, ctx=Depends(admin_svc)) -> dict:
         service, org_id, uid, _admin = ctx
         return success_response(service.record_payment(org_id, str(client_id), body.model_dump(exclude_none=True), user_id=uid))

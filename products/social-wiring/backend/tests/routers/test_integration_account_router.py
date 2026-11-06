@@ -32,6 +32,7 @@ from app.services.integration_account_service import (
     IntegrationAccountService,
     build_integration_account_service,
 )
+from app.routers._oauth_state import sign_oauth_state, verify_oauth_state_full
 from app.sqlite_client import SQLiteClient
 
 _ORG_A = "00000000-0000-4000-8000-000000000001"
@@ -130,7 +131,7 @@ def _make_account(client, *, provider="youtube", label="My Channel", is_default=
 # ─── Provider registry ────────────────────────────────────────────────────────
 class TestProviders:
     def test_list_providers_returns_v1_set(self, client):
-        resp = client.get("/api/integrations/providers")
+        resp = client.get("/api/integrations/providers", headers=_auth_header())
         assert resp.status_code == 200
         providers = resp.json()
         ids = {p["id"] for p in providers}
@@ -157,7 +158,7 @@ class TestProviders:
         } == ids
 
     def test_youtube_provider_has_oauth_supported(self, client):
-        resp = client.get("/api/integrations/providers")
+        resp = client.get("/api/integrations/providers", headers=_auth_header())
         yt = next(p for p in resp.json() if p["id"] == "youtube")
         assert yt["oauth_supported"] is True
         assert len(yt["scopes"]) > 0
@@ -167,7 +168,7 @@ class TestProviders:
         listing/managing workflows needs the instance's public API root
         (base_url + X-N8N-API-KEY), not a single workflow's webhook trigger
         URL. webhook_url is no longer part of the credential."""
-        resp = client.get("/api/integrations/providers")
+        resp = client.get("/api/integrations/providers", headers=_auth_header())
         n8n = next(p for p in resp.json() if p["id"] == "n8n")
         assert n8n["oauth_supported"] is False
         field_names = {f["name"] for f in n8n["manual_key_fields"]}
@@ -417,7 +418,7 @@ class TestYouTubeOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce123"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/youtube/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -485,7 +486,7 @@ class TestYouTubeOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-reconnect"
+            state = sign_oauth_state(UUID(_ORG_A))
             for _ in range(2):  # connect the SAME channel twice
                 resp = client.get(
                     "/api/integrations/accounts/youtube/oauth/callback"
@@ -618,11 +619,8 @@ class TestYouTubeOAuthClientId:
 
         assert resp.status_code == 200, resp.text
         state = resp.json()["state"]
-        parts = state.split(":")
-        assert parts[0] == _ORG_A
-        # Third part should be empty (no client_id supplied).
-        assert len(parts) >= 3
-        assert parts[2] == ""
+        # Signed state (login-CSRF guard): decodes to the caller's org, no client_id supplied.
+        assert verify_oauth_state_full(state) == (UUID(_ORG_A), "")
 
     def test_callback_three_part_state_creates_account_with_client_id(
         self, client, ia_service
@@ -636,7 +634,7 @@ class TestYouTubeOAuthClientId:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
+            state = sign_oauth_state(UUID(_ORG_A), _FAKE_YT_CLIENT_ID)
             resp = client.get(
                 "/api/integrations/accounts/youtube/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -654,11 +652,8 @@ class TestYouTubeOAuthClientId:
         assert len(accounts) == 1
         assert str(accounts[0].marca_id) == _FAKE_YT_CLIENT_ID
 
-    def test_callback_two_part_state_creates_account_without_client_id(
-        self, client, ia_service
-    ):
-        """Callback with old-style state={org}:{nonce} (no third part) still
-        creates the account — backward-compatible, marca_id=None."""
+    def test_callback_unsigned_legacy_state_is_refused(self, client, ia_service):
+        """The pre-2026-11 unsigned ``{org}:{nonce}`` state is a forgery vector (login-CSRF): refused, nothing written."""
         from app.config import settings as _settings
         from app.main import app
 
@@ -666,10 +661,9 @@ class TestYouTubeOAuthClientId:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-compat"
             resp = client.get(
                 "/api/integrations/accounts/youtube/oauth/callback"
-                f"?code=auth-code&state={state}",
+                f"?code=auth-code&state={_ORG_A}:nonce-compat",
                 follow_redirects=False,
             )
         finally:
@@ -678,11 +672,23 @@ class TestYouTubeOAuthClientId:
                 if p is not None:
                     app.dependency_overrides[k] = p
 
-        assert resp.status_code in (302, 303), resp.text
+        assert resp.status_code == 400, resp.text
+        assert ia_service.list_accounts(org_id=UUID(_ORG_A), provider="youtube") == []
 
-        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="youtube")
-        assert len(accounts) == 1
-        assert accounts[0].marca_id is None
+
+# ─── Forged state: every multi-account callback verifies the signature BEFORE using the org ─────────
+@pytest.mark.parametrize("provider", ["youtube", "meta", "instagram", "gmail", "google_drive"])
+def test_callback_refuses_a_forged_state_for_another_org(client, provider):
+    """OWASP API1 BOLA / OAuth 2.0 Security BCP: a hand-made ``state=<victim-org>:<nonce>`` (unsigned) or one
+    signed for a different payload is a strict 400 -- the credential never lands under the victim's org."""
+    forged = f"{_ORG_B}:attacker-nonce"
+    resigned = f"{_ORG_B}:attacker-nonce:{'0' * 64}"
+    for state in (forged, resigned, f"{sign_oauth_state(UUID(_ORG_A))}x"):
+        resp = client.get(
+            f"/api/integrations/accounts/{provider}/oauth/callback?code=c&state={state}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400, (provider, state, resp.text)
 
 
 # ─── Legacy adoption endpoint ───────────────────────────────────────────────
@@ -746,7 +752,7 @@ class TestYouTubeRedirectClientes:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-redir"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/youtube/oauth/callback"
                 f"?code=code&state={state}",
@@ -871,7 +877,7 @@ class TestGmailOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:gmail-nonce"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/gmail/oauth/callback"
                 f"?code=gmail-code&state={state}",
@@ -902,7 +908,7 @@ class TestGmailOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:gmail-nonce2:{_FAKE_YT_CLIENT_ID}"
+            state = sign_oauth_state(UUID(_ORG_A), _FAKE_YT_CLIENT_ID)
             resp = client.get(
                 "/api/integrations/accounts/gmail/oauth/callback"
                 f"?code=gmail-code2&state={state}",
@@ -1033,7 +1039,7 @@ class TestDriveOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:drive-nonce"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/google_drive/oauth/callback"
                 f"?code=drive-code&state={state}",
@@ -1064,7 +1070,7 @@ class TestDriveOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:drive-nonce2:{_FAKE_YT_CLIENT_ID}"
+            state = sign_oauth_state(UUID(_ORG_A), _FAKE_YT_CLIENT_ID)
             resp = client.get(
                 "/api/integrations/accounts/google_drive/oauth/callback"
                 f"?code=drive-code2&state={state}",
@@ -1157,9 +1163,7 @@ class TestMetaOAuthStart:
         # branch). See META_IA_OAUTH_SCOPES note.
         assert "pages_messaging" not in body["auth_url"]
         assert _ORG_A in body["state"]
-        parts = body["state"].split(":")
-        assert len(parts) == 3
-        assert parts[2] == ""  # no client_id supplied → empty third segment
+        assert verify_oauth_state_full(body["state"]) == (UUID(_ORG_A), "")  # signed; no client_id supplied
 
     def test_start_503_when_app_creds_missing(self, client):
         from app.dependencies import get_settings
@@ -1279,7 +1283,7 @@ class TestMetaOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce123"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/meta/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -1312,7 +1316,7 @@ class TestMetaOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-reconnect"
+            state = sign_oauth_state(UUID(_ORG_A))
             for _ in range(2):
                 resp = client.get(
                     "/api/integrations/accounts/meta/oauth/callback"
@@ -1340,7 +1344,7 @@ class TestMetaOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
+            state = sign_oauth_state(UUID(_ORG_A), _FAKE_YT_CLIENT_ID)
             resp = client.get(
                 "/api/integrations/accounts/meta/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -1388,7 +1392,7 @@ class TestMetaOAuthCallback:
         prev = app.dependency_overrides.get(get_settings)
         app.dependency_overrides[get_settings] = lambda: fake_cfg
         try:
-            state = f"{_ORG_A}:nonce-noapp"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/meta/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -1448,9 +1452,7 @@ class TestInstagramOAuthStart:
         ):
             assert scope in body["auth_url"], scope
         assert _ORG_A in body["state"]
-        parts = body["state"].split(":")
-        assert len(parts) == 3
-        assert parts[2] == ""
+        assert verify_oauth_state_full(body["state"]) == (UUID(_ORG_A), "")
 
     def test_start_503_when_app_creds_missing(self, client):
         from app.dependencies import get_settings
@@ -1552,7 +1554,7 @@ class TestInstagramOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce123"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/instagram/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -1585,7 +1587,7 @@ class TestInstagramOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-reconnect"
+            state = sign_oauth_state(UUID(_ORG_A))
             for _ in range(2):
                 resp = client.get(
                     "/api/integrations/accounts/instagram/oauth/callback"
@@ -1610,7 +1612,7 @@ class TestInstagramOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
+            state = sign_oauth_state(UUID(_ORG_A), _FAKE_YT_CLIENT_ID)
             resp = client.get(
                 "/api/integrations/accounts/instagram/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -1646,7 +1648,7 @@ class TestInstagramOAuthCallback:
         prev = {k: app.dependency_overrides.get(k) for k in overrides}
         app.dependency_overrides.update(overrides)
         try:
-            state = f"{_ORG_A}:nonce-fallback"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/instagram/oauth/callback"
                 f"?code=auth-code&state={state}",
@@ -1693,7 +1695,7 @@ class TestInstagramOAuthCallback:
         prev = app.dependency_overrides.get(get_settings)
         app.dependency_overrides[get_settings] = lambda: fake_cfg
         try:
-            state = f"{_ORG_A}:nonce-noapp"
+            state = sign_oauth_state(UUID(_ORG_A))
             resp = client.get(
                 "/api/integrations/accounts/instagram/oauth/callback"
                 f"?code=auth-code&state={state}",

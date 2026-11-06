@@ -59,6 +59,7 @@ router = APIRouter(prefix="/api/sso", tags=["SSO"])
 
 from noctusai_lib.api.auth import SSOSessionCache
 from noctusai_lib.config.product_urls import resolve_product_url
+from noctusai_lib.api.access_tiers import access_tier
 
 # SEC-2 (2026-09-28): an end customer (org_role in CUSTOMER_ORG_ROLES) only
 # ever SSOs into a product whose catalog row declares `aceita_clientes`.
@@ -242,7 +243,7 @@ def _generate_sso_token_sync(response: Response, body: SSOTokenRequest, user, to
     )
 
 
-@router.post("/validate")
+@router.post("/validate", include_in_schema=False)
 @limiter.limit("20/minute")
 def validate_sso_token(
     request: Request,
@@ -517,6 +518,7 @@ def _release_sso_jti(db, jti: str) -> None:
 
 
 @router.post("/session", response_model=SSOSessionResponse)
+@access_tier('service', reason='single-use SSO JWT verified by verify_sso_token, audience + browser bound', category='oauth-callback')
 @limiter.limit("20/minute")
 def sso_session(request: Request, response: Response, body: SSOSessionRequest):
     """Exchange an SSO token for a Supabase session.

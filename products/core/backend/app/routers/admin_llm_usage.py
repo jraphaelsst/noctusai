@@ -32,7 +32,7 @@ from app.services.dev_usage import freshness
 from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/llm-usage", tags=["Admin · LLM Usage"])
+router = APIRouter(prefix="/api/admin/llm-usage", tags=["Admin · LLM Usage"], include_in_schema=False)
 
 _MAX_WINDOW_DAYS = 400
 

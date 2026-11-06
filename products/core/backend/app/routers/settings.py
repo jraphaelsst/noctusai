@@ -67,7 +67,7 @@ def _visible_value(row: dict) -> str:
 
 # ── Platform settings (admin only) ──────────────────────────────────────
 
-@router.get("/platform")
+@router.get("/platform", include_in_schema=False)
 async def listar_platform_settings(authorization: Optional[str] = Header(None)):
     """List all platform settings (admin only). Secret values are masked."""
     await get_current_admin(authorization)
@@ -83,7 +83,7 @@ async def listar_platform_settings(authorization: Optional[str] = Header(None)):
     return {"data": items}
 
 
-@router.put("/platform/{key}")
+@router.put("/platform/{key}", include_in_schema=False)
 async def upsert_platform_setting(
     key: str,
     body: PlatformSettingBody,
@@ -111,7 +111,7 @@ async def upsert_platform_setting(
     return {"data": result.data[0] if isinstance(result.data, list) else result.data}
 
 
-@router.delete("/platform/{key}")
+@router.delete("/platform/{key}", include_in_schema=False)
 async def deletar_platform_setting(
     key: str,
     authorization: Optional[str] = Header(None),
@@ -193,7 +193,7 @@ async def deletar_org_setting(
 
 # ── Key resolution ───────────────────────────────────────────────────────
 
-@router.get("/resolve/{key}")
+@router.get("/resolve/{key}", include_in_schema=False)
 async def resolver_setting(key: str, authorization: Optional[str] = Header(None)):
     """Resolve a setting: org-level → platform-level → None.
 

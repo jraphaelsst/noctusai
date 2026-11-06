@@ -52,7 +52,7 @@ from app.services.billing_config import (
 from app.services.billing_context import BillingContext, get_billing_context
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/billing", tags=["Admin · Billing"])
+router = APIRouter(prefix="/api/admin/billing", tags=["Admin · Billing"], include_in_schema=False)
 
 _STATUSES = ("incomplete", "trial", "active", "past_due", "grace", "canceled", "expired")
 

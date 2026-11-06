@@ -62,7 +62,7 @@ def get_fleet_prober() -> FleetProber:
     return probe_fleet
 
 
-@router.get("")
+@router.get("", include_in_schema=False)
 async def listar_products(
     authorization: Optional[str] = Header(None),
     include_inactive: bool = False,
@@ -133,7 +133,7 @@ async def get_product(product_id: str, authorization: Optional[str] = Header(Non
     return {"data": result.data}
 
 
-@router.post("")
+@router.post("", include_in_schema=False)
 async def criar_product(body: ProductCreate, authorization: Optional[str] = Header(None)):
     """Create a new product (platform admin only)."""
     user, token = await get_current_admin(authorization)
@@ -155,7 +155,7 @@ async def criar_product(body: ProductCreate, authorization: Optional[str] = Head
     return {"data": result.data[0]}
 
 
-@router.patch("/{product_id}")
+@router.patch("/{product_id}", include_in_schema=False)
 async def atualizar_product(
     product_id: str, body: ProductUpdate, authorization: Optional[str] = Header(None)
 ):
@@ -248,7 +248,7 @@ def _apply_activation(db, product_id: str, ativo: bool) -> dict:
     return result.data[0]
 
 
-@router.post("/{product_id}/activation")
+@router.post("/{product_id}/activation", include_in_schema=False)
 async def definir_activation(
     product_id: str,
     body: ProductActivation,
@@ -286,7 +286,7 @@ async def definir_activation(
     return {"data": row}
 
 
-@router.post("/{product_id}/deploy-scope")
+@router.post("/{product_id}/deploy-scope", include_in_schema=False)
 async def definir_deploy_scope(
     product_id: str,
     body: ProductDeployScope,
@@ -359,7 +359,7 @@ async def definir_deploy_scope(
     return {"data": result.data[0]}
 
 
-@router.delete("/{product_id}")
+@router.delete("/{product_id}", include_in_schema=False)
 async def desativar_product(
     product_id: str,
     request: Request,
