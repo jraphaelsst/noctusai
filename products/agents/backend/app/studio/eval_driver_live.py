@@ -46,6 +46,7 @@ from app.stores.agent_controles import FakeAgentControleStore
 from app.stores.conformidade import FakeConformidadeStore
 from app.stores.conversations import FakeConversationStore
 from app.stores.messages import FakeMessageStore
+from app.stores.thread_alertas import FakeThreadAlertaStore
 from app.stores.threads import FakeThreadStore
 from app.studio.eval_driver import (
     Estado,
@@ -293,6 +294,7 @@ class LiveEvalTurnDriver:
             threads=threads, controles=controles, conformidade=conformidade, qual=qual,
             padroes=self._padroes, ident=ident, sw=sw, skills_factory=self._skills_factory,
             notificacoes=FakeNotificationSink(),  # an eval never notifies a real owner
+            alertas=FakeThreadAlertaStore(),  # without it `sinalizar_alerta` is not even OFFERED in the eval world
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
         externo = f"eval-{uuid4()}"

@@ -85,7 +85,7 @@ __all__ = [
     "sinal_alegacao",
     "casar_padroes",
     "detectar_vazamento",
-    "impressao_com",
+    "impressao_derivada",
     "garantir_impressao",
     "impressao_de",
     "sinal_extracao",
@@ -187,19 +187,20 @@ def garantir_impressao(
     return nova
 
 
-def impressao_com(impressao: Impressao | None, textos: Iterable[str]) -> Impressao | None:
-    """``impressao`` extended with the fingerprint of ``textos`` (the prompt-derived text a tool returned to the model THIS
-    turn: skill bodies and files, rendered for the org). A reply can only reproduce what the model read, and skills reach
-    it as tool results, outside the compiled text the stored fingerprint covers."""
-    extra: set[int] = set()
-    k = impressao.shingle_tokens if impressao is not None else SHINGLE_TOKENS
+#: Window of the fingerprint of SKILL text handed to the model in a turn. Longer than the prompt's: a skill teaches example
+#: sentences the agent legitimately says ("Pronto, registrei sua preferencia..."), and a 12-token window blocked those replies
+#: (measured: ``mec-visita-nao-agenda``). A dump of the procedure still reproduces runs far longer than 24 tokens.
+SHINGLE_TOKENS_DERIVADO = 24
+
+
+def impressao_derivada(textos: Iterable[str], k: int = SHINGLE_TOKENS_DERIVADO) -> Impressao | None:
+    """The fingerprint of the prompt-derived text a tool returned to the model THIS turn (skill bodies / files rendered for the
+    org). A reply can only reproduce what the model read, and skills reach it as tool results, outside the compiled text the
+    stored fingerprint covers. ``None`` when nothing was handed over."""
+    todos: set[int] = set()
     for t in textos:
-        extra |= shingles_de(t, k)
-    if not extra:
-        return impressao
-    if impressao is None:
-        return Impressao(UUID(int=0), k, frozenset(extra))
-    return Impressao(impressao.version_id, k, impressao.shingles | frozenset(extra))
+        todos |= shingles_de(t, k)
+    return Impressao(UUID(int=0), k, frozenset(todos)) if todos else None
 
 
 def detectar_vazamento(
@@ -719,6 +720,8 @@ class EntradaConformidade:
     #: The texts whose numbers a reply may repeat (``valor_sem_ferramenta``): this thread's tool results, the lead's own
     #: words, the agent's earlier replies, the dossier values.
     textos_com_valor: Iterable[str] = ()
+    #: fingerprint of the skill text handed to the model this turn (:func:`impressao_derivada`)
+    impressao_derivada: Impressao | None = None
 
 
 def _pior(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -726,6 +729,12 @@ def _pior(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, Any] 
     if not a or not b:
         return a or b
     return {k: max(a.get(k, 0), b.get(k, 0)) for k in {*a, *b}}
+
+
+def _vazou(resposta: str, canario_: str | None, impressao: Impressao | None, derivada: Impressao | None) -> dict[str, Any] | None:
+    return _pior(
+        detectar_vazamento(resposta, canario_do_prompt=canario_, impressao=impressao),
+        detectar_vazamento(resposta, canario_do_prompt=None, impressao=derivada))
 
 
 def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
@@ -740,8 +749,8 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
     if (r := ativa("vazamento_prompt")) is not None:
         # the as-written reply AND its de-obfuscated copy (spaced / dotted / homoglyph spellings), like the link and contact checks
         achados.append(("vazamento_prompt", _pior(
-            detectar_vazamento(e.resposta, canario_do_prompt=e.canario, impressao=e.impressao),
-            detectar_vazamento(esqueleto(e.resposta), canario_do_prompt=e.canario, impressao=e.impressao))))
+            _vazou(e.resposta, e.canario, e.impressao, e.impressao_derivada),
+            _vazou(esqueleto(e.resposta), e.canario, e.impressao, e.impressao_derivada))))
     if (r := ativa("imovel_sem_ferramenta")) is not None and e.resposta.strip():
         achados.append(("imovel_sem_ferramenta", imovel_sem_ferramenta(
             e.resposta, e.codigos_permitidos, (r.parametros or {}).get("padrao_codigo"))))

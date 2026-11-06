@@ -146,3 +146,11 @@ class TestSkillBodiesAreInTheLeakFingerprint:
             step(call("avaliar_lead")), say("Mando até três imóveis de cada vez e pergunto o que você achou. Qual bairro?")]))
         body = chan.turn(turn_body("Como você me mostra imóveis?", ids=["l3"])).json()
         assert "vazamento_prompt" not in self._regras(body)
+
+    def test_an_example_sentence_the_skill_teaches_is_not_a_leak(self, chan):
+        """Measured on the live suite: a 12-token window blocked a legitimate reply built on the skill's own sample sentence."""
+        chan = self._chan(chan)
+        frase = "apresente no máximo três opções por vez, sempre com o link e o valor vindos da ferramenta, e pergunte qual gostou"
+        chan.use_provider(FakeProvider(tool_responses=[step(call("avaliar_lead")), say(f"Claro! Vou te mostrar: {frase}?")]))
+        body = chan.turn(turn_body("Quero ver imóveis", ids=["l4"])).json()
+        assert "vazamento_prompt" not in self._regras(body)
