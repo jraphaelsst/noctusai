@@ -142,7 +142,7 @@ class TestCompor:
             casos_comportamento=3, juiz=_juiz(), pins=(PinSkill("qualificar", 1, 2), PinSkill("fechar", 3, None))))
         itens = [i for i in p.itens if i.codigo == "skill_desatualizada"]
         assert [i.detalhe["skill"] for i in itens] == ["qualificar"]
-        assert "skills-biblioteca/atualizar" in itens[0].acao_sugerida and p.pronto_para_publicar
+        assert "Atualizar skills" in itens[0].acao_sugerida and p.pronto_para_publicar
 
     def test_expected_tools_without_a_row_and_unlabelled_parameters_are_advisory(self):
         esperadas = pr.ferramentas_esperadas(usa_canais=True, tem_skills=True, tool_policy={"knowledge": True}, com_padrao=True)
@@ -411,3 +411,12 @@ class TestGateParity:
         _preencher(plat)
         resp = plat.post(f"{BASE}/novo/draft/publish", json={})
         assert resp.status_code == 409 and resp.json()["code"] == "eval_required" and resp.json()["prontidao"] is None
+
+
+def test_no_suggested_action_shows_an_api_path():
+    """A human never sees an HTTP verb + path: every action is a button (or names a tab) in the studio."""
+    import inspect
+    import re
+
+    src = inspect.getsource(pr).split("from __future__", 1)[1]  # the module docstring is for developers
+    assert not re.findall(r"\b(?:POST|PUT|PATCH|DELETE)\s+(?:\.\.\.|/api)", src)

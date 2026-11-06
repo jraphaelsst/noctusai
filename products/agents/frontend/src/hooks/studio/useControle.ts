@@ -45,7 +45,7 @@ export function useSetControle(key: string) {
         commit: (_old, saved) => saved,
       },
     ],
-    invalidate: [studioKeys.orgStatus(key), studioKeys.list()],
+    invalidate: [studioKeys.orgStatus(key), studioKeys.list(), studioKeys.prontidao(key)],
   });
 }
 

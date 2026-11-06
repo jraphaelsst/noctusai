@@ -32,6 +32,8 @@ with any key by `POST /api/studio/plataforma/agents` and configured by `GET/PATC
 The only key literal left is the `lead-imob`→`julia` token alias (`app/channels/chaves_legadas.py`,
 `NOC-REMEDIATE[drop-lead-imob-alias]`).
 
+**Readiness actions**: every fixable item of `GET .../prontidao` renders a button in the studio's "Prontidão para publicar" panel (Rodar suíte de mecanismo, Rodar avaliação completa, Ligar agente, Atualizar skills); runs are polled to completion and the checklist is then refetched. `acao_sugerida` is human copy, never an API path.
+
 **AI-generated first drafts** (migration 049, `app/studio/geracao.py`): `POST
 /api/studio/agents/{key}/geracoes {briefing, areas?, forcar?, limite_usd≤5}` → 202, background job (plan
 call + one call per area: secoes, textos, ferramentas, decisoes, specs, skills, configuracoes), polled via

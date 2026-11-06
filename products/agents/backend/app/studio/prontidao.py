@@ -268,17 +268,17 @@ def rotulos_ausentes(ferramentas: tuple[FerramentaLinha, ...] | list[FerramentaL
 # ── the pure composer ───────────────────────────────────────────────────────
 
 _COMPILE_ACAO = {
-    "texto_ausente": "Preencha o texto/descrição que falta (PUT .../draft/textos ou .../draft/ferramentas).",
+    "texto_ausente": "Preencha o texto ou a descrição que falta (abas Textos e Ferramentas).",
     "placeholder_desconhecido": "Troque o placeholder por um permitido para aquela chave (o registro de textos lista os permitidos).",
     "ferramenta_desconhecida": "Use um nome do registro de ferramentas do código, ou remova a linha.",
     "skill_exigida_inexistente": "Fixe a skill exigida na biblioteca ou remova a exigência da ferramenta.",
     "decisao_sem_opcao_padrao": "Deixe exatamente uma opção marcada como padrão, com valores únicos.",
     "decisao_em_secao": "Mova a decisão para Decisões (regra e opções tipadas).",
-    "spec_nao_declarada": "Declare a especificação em Especificações da organização (PUT .../draft/specs).",
+    "spec_nao_declarada": "Declare a especificação na aba Especificações.",
     "spec_org_faltando": "A organização precisa preencher as especificações obrigatórias.",
-    "spec_org_invalida": "Corrija o valor da especificação (PUT .../specs): texto livre descreve a organização, não dá instruções.",
+    "spec_org_invalida": "Corrija o valor da especificação (aba Especificações): texto livre descreve a organização, não dá instruções.",
     "secao_vazia": "Escreva o conteúdo da seção ou desative-a.",
-    "sem_secoes": "Crie ao menos uma seção ativa (PUT .../draft/sections).",
+    "sem_secoes": "Crie ao menos uma seção ativa na aba Prompt.",
 }
 
 
@@ -312,7 +312,7 @@ def _padrao(e: Entrada) -> list[Item]:
         return [Item(
             "qualificacao_indisponivel", "padrao", "bloqueante",
             f"O padrão de qualificação '{e.padrao_chave}' não tem versão publicada: a publicação do agente é recusada.",
-            "Publique o padrão (PUT .../qualificacao-padroes) antes de publicar o agente.", "qualificacao_indisponivel",
+            "Publique o padrão na aba Qualificação antes de publicar o agente.", "qualificacao_indisponivel",
         )]
     itens = [Item(
         "padrao_fixado" if e.padrao_fixado else "padrao_sera_fixado", "padrao", "ok",
@@ -322,7 +322,7 @@ def _padrao(e: Entrada) -> list[Item]:
         itens.append(Item(
             "padrao_atualizacao_disponivel", "padrao", "aviso",
             f"Há uma versão mais nova do padrão '{e.padrao_chave}' do que a fixada no rascunho.",
-            "Mova o pin (PUT .../draft/qualificacao) e rode a avaliação de novo.",
+            "Atualize a versão do padrão na aba Qualificação e rode a avaliação de novo.",
         ))
     return itens
 
@@ -337,7 +337,7 @@ def _avaliacao(e: Entrada) -> list[Item]:
         itens.append(Item(
             "eval_sem_casos", "avaliacao", sev,
             f"O agente não tem casos de avaliação de comportamento ativos{nota}.",
-            "Gere (área 'evals') ou crie casos em POST .../evals/cases e rode a avaliação.", recusa,
+            "Gere os casos com a IA (área 'Avaliações') ou crie-os na aba Avaliações; depois rode a avaliação completa.", recusa,
             {"casos_comportamento": 0},
         ))
     else:
@@ -357,7 +357,7 @@ def _avaliacao(e: Entrada) -> list[Item]:
             }[motivo]
             itens.append(Item(
                 f"eval_juiz_{motivo}", "avaliacao", sev, msg + nota,
-                "Rode uma avaliação completa do rascunho (POST .../evals/runs, sem case_ids) com o modelo da versão. "
+                "Clique em Rodar avaliação completa (todos os casos, com o modelo da versão). "
                 "Só uma pessoa pode publicar com override.", recusa, det,
             ))
     if e.mecanismo.exigido:
@@ -372,7 +372,7 @@ def _avaliacao(e: Entrada) -> list[Item]:
             itens.append(Item(
                 f"mecanismo_{portao.codigo}", "avaliacao", "bloqueante",
                 "A suíte de mecanismo não está aprovada para o prompt atual (portão sem override).",
-                "Rode a suíte (POST .../mecanismo-runs, driver live) e corrija o que falhar.", "mecanismo_reprovado",
+                "Clique em Rodar suíte de mecanismo e corrija o que falhar.", "mecanismo_reprovado",
                 {"motivo": portao.codigo, "casos_mecanismo": e.mecanismo.casos_ativos},
             ))
     else:
@@ -380,7 +380,7 @@ def _avaliacao(e: Entrada) -> list[Item]:
             "mecanismo_nao_configurado", "avaliacao", "aviso" if e.usa_canais else "ok",
             "O agente não tem suíte de mecanismo (casos roteirizados com asserts determinísticos)."
             if e.usa_canais else "Agente sem canal: a suíte de mecanismo não é exigida.",
-            "Para um agente de canal, crie casos 'mecanismo' (evals_mecanismo) e passe a exigi-los." if e.usa_canais else None,
+            "Para um agente de canal, crie casos de mecanismo na aba Avaliações e passe a exigi-los." if e.usa_canais else None,
         ))
     return itens
 
@@ -390,7 +390,7 @@ def _skills(e: Entrada) -> list[Item]:
         Item(
             "skill_desatualizada", "skills", "aviso",
             f"A skill '{p.skill}' está fixada na versão {p.versao}; a versão {p.nova_versao} já foi publicada.",
-            "POST .../draft/skills-biblioteca/atualizar fixa todas as skills na versão publicada mais nova.",
+            "Clique em Atualizar skills para fixar todas na versão publicada mais nova.",
             detalhe={"skill": p.skill, "versao_fixada": p.versao, "nova_versao": p.nova_versao},
         )
         for p in e.pins if p.nova_versao is not None
@@ -409,7 +409,7 @@ def _ferramentas(e: Entrada) -> list[Item]:
             "ferramenta_sem_descricao", "ferramentas", "aviso",
             f"A ferramenta '{nome}' é esperada pela configuração ({e.ferramentas_esperadas[nome]}) e não tem linha de descrição: "
             "o modelo não a recebe.",
-            "Descreva a ferramenta (PUT .../draft/ferramentas) com a descrição e os rótulos dos parâmetros.",
+            "Descreva a ferramenta na aba Ferramentas, com a descrição e os rótulos dos parâmetros.",
             detalhe={"ferramenta": nome, "motivo": e.ferramentas_esperadas[nome]},
         ))
     for nome, faltam in sorted(e.rotulos_ausentes.items()):
@@ -430,7 +430,7 @@ def _periferia(e: Entrada) -> list[Item]:
         itens.append(Item(
             "spec_org_faltando", "especificacoes", "aviso",
             "A organização atual não preencheu especificações obrigatórias: " + ", ".join(e.specs_org_faltando) + ".",
-            "Preencha em PUT /api/studio/agents/{key}/specs (cada organização preenche as suas).",
+            "Preencha na aba Especificações (cada organização preenche as suas).",
             detalhe={"chaves": list(e.specs_org_faltando)},
         ))
     for chave, codigo, motivo, mensagem in e.specs_org_invalidas:
@@ -438,7 +438,7 @@ def _periferia(e: Entrada) -> list[Item]:
             "spec_org_invalida", "especificacoes", "bloqueante" if e.spec_bloqueia else "aviso",
             f"Especificação da organização '{chave}' inválida ({codigo}/{motivo}): {mensagem}"
             + ("" if e.spec_bloqueia else " (modo report: um valor tipado NÃO é usado no prompt nem nas listas de links/contatos; texto livre vai só como dado.)"),
-            f"Corrija a chave '{chave}' em PUT /api/studio/agents/{{key}}/specs ({motivo}); texto livre descreve a organização, não dá instruções.",
+            f"Corrija a chave '{chave}' na aba Especificações ({motivo}); texto livre descreve a organização, não dá instruções.",
             detalhe={"chave": chave, "codigo": codigo, "motivo": motivo, "modo": "block" if e.spec_bloqueia else "report"},
             recusa_publicacao="compile_blocked" if e.spec_bloqueia else None,
         ))
@@ -448,7 +448,7 @@ def _periferia(e: Entrada) -> list[Item]:
             "As regras de segurança desta instância estão sem linha gravada: "
             + ", ".join(e.regras_seguranca_sem_parametros)
             + ". (O piso da plataforma continua valendo em cada turno, mas a instância precisa das linhas.)",
-            "Aplique a migração 063 (cria as linhas de toda instância) ou grave a regra em PUT .../conformidade/regras/{regra}.",
+            "Grave a regra na aba Conformidade (a migração 063 cria as linhas de toda instância).",
             detalhe={"regras": list(e.regras_seguranca_sem_parametros)},
             recusa_publicacao="compile_blocked",
         ))
@@ -462,7 +462,7 @@ def _periferia(e: Entrada) -> list[Item]:
             itens.append(Item(
                 "geracao_area_nao_concluida", "geracao", "aviso",
                 f"Na última geração por IA, a área '{a.area}' terminou como '{a.status}'" + (f" ({a.erro})." if a.erro else "."),
-                f"Repita a área (POST .../geracoes/{{id}}/areas/{a.area}/repetir) ou escreva à mão.",
+                f"Repita a área na aba Geração com IA ou escreva à mão.",
                 detalhe={"area": a.area, "status": a.status, "erro": a.erro},
             ))
         if a.lacunas:
@@ -477,7 +477,7 @@ def _periferia(e: Entrada) -> list[Item]:
             itens.append(Item(
                 "controles_desligado", "operacao", "aviso",
                 "O agente de canal está 'desligado' (padrão de um agente novo): não responde a ninguém.",
-                "Depois de publicar, ligue-o em PUT /api/studio/agents/{key}/controle (modo 'ligado').",
+                "Depois de publicar, clique em Ligar agente.",
                 detalhe={"modo": e.controle_modo},
             ))
         else:
