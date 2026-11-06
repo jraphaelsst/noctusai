@@ -24,6 +24,12 @@ describe("visibleTabsFor", () => {
     expect(tabs).not.toContain("especificacoes-org");
   });
 
+  it("the per-company specs picker is for the platform operator only", () => {
+    expect(ids({ definition_scope: "plataforma", kind: "runtime" }, true, true)).toContain("especificacoes-empresas");
+    expect(ids({ definition_scope: "plataforma", kind: "runtime" }, true, false)).not.toContain("especificacoes-empresas");
+    expect(ids({ definition_scope: "instancia" }, true, true)).not.toContain("especificacoes-empresas");
+  });
+
   it("org instance, org admin: specs form, controls, conversations — and NO prompt/ferramentas/qualificação/textos/decisões", () => {
     const tabs = ids({ definition_scope: "instancia", kind: "runtime" }, true, false);
     expect(tabs).toEqual(["visao-geral", "especificacoes-org", "controles", "conversas"]);
@@ -43,7 +49,7 @@ describe("visibleTabsFor", () => {
   it("legacy / org-scope agents keep the pre-v2 set and never see Julia tabs", () => {
     const tabs = ids({ definition_scope: "org", kind: "runtime" }, true, true);
     expect(tabs).toContain("clientes");
-    for (const t of ["textos", "ferramentas", "decisoes", "qualificacao", "biblioteca", "especificacoes", "especificacoes-org", "controles", "conversas", "conformidade"]) {
+    for (const t of ["textos", "ferramentas", "decisoes", "qualificacao", "biblioteca", "especificacoes", "especificacoes-org", "especificacoes-empresas", "controles", "conversas", "conformidade"]) {
       expect(tabs).not.toContain(t);
     }
   });

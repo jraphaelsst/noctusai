@@ -26411,3 +26411,48 @@ def check_stranded_branches(
         })
 
     return issues
+
+
+_MERGE_DRIVER_BUILTINS = frozenset({"union", "binary", "text", "ours", "theirs"})
+_MERGE_DRIVERS_SCRIPT = "scripts/hooks/register-merge-drivers.sh"
+_MERGE_QUEUE_WORKFLOW = ".github/workflows/merge-queue.yml"
+
+
+def check_merge_drivers_registered_in_ci(repo_root: Path | None = None) -> list[dict]:
+    """Every custom `merge=<name>` in `.gitattributes` must be REGISTERED where
+    the merge queue runs it.
+
+    `.gitattributes` only names a driver; the body is per-repo git config. The
+    merge-queue runner never had it, so parallel entries touching the derived
+    kb-counts blocks text-merged and were ejected (2026-11-05, 4 entries).
+    Contract: `scripts/hooks/register-merge-drivers.sh` registers every custom
+    driver (`merge.<name>.driver`), and `merge-queue.yml` invokes that script.
+    Built-ins (union/binary/text) need no registration.
+    KB § PATTERNS/common/auto-generated-merge-drivers.md
+    """
+    import re
+
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    attrs = root / ".gitattributes"
+    if not attrs.is_file():
+        return issues
+    used = set(re.findall(r"\bmerge=([A-Za-z0-9_.-]+)", attrs.read_text(encoding="utf-8")))
+    custom = sorted(used - _MERGE_DRIVER_BUILTINS)
+    if not custom:
+        return issues
+
+    def issue(file: str, msg: str) -> dict:
+        return {"file": file, "issue": msg, "severity": "high"}
+
+    script = root / _MERGE_DRIVERS_SCRIPT
+    if not script.is_file():
+        return [issue(_MERGE_DRIVERS_SCRIPT, f"missing; .gitattributes maps custom merge driver(s) {custom}")]
+    body = script.read_text(encoding="utf-8")
+    for name in custom:
+        if not re.search(rf"merge\.{re.escape(name)}\.driver|\breg\s+{re.escape(name)}\b", body):
+            issues.append(issue(_MERGE_DRIVERS_SCRIPT, f"does not register merge driver '{name}' that .gitattributes maps"))
+    wf = root / _MERGE_QUEUE_WORKFLOW
+    if not wf.is_file() or "register-merge-drivers.sh" not in wf.read_text(encoding="utf-8"):
+        issues.append(issue(_MERGE_QUEUE_WORKFLOW, "does not invoke scripts/hooks/register-merge-drivers.sh; the queue drain would text-merge derived docs and eject entries"))
+    return issues

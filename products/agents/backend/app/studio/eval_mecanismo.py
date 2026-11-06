@@ -449,7 +449,9 @@ def avaliar_asserts(asserts: dict[str, Any], t: Traco, *, prefixo: str = "") -> 
                 falha(nome, f"esperado:{valor}|obtido:{t.handoff.motivo_codigo or 'vazio'}")
         elif nome == "sem_handoff":
             if t.handoff is not None:
-                falha(nome, f"handoff:{t.handoff.para}")
+                # the motivo says WHO handed off (the model's code, or the runtime's: conformidade, a safe stop such
+                # as limite_recusas); without it a turn-1 hand-off reads like any other (run 4e5ae0e0)
+                falha(nome, f"handoff:{t.handoff.para}:{t.handoff.motivo_codigo or 'vazio'}")
         elif nome == "violacoes_incluem":
             regras = {v.regra for v in t.violacoes}
             for r in valor:

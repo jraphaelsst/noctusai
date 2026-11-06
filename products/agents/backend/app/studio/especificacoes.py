@@ -14,12 +14,17 @@ Pure functions, no IO.
 from __future__ import annotations
 
 import re
-from typing import Collection, Mapping
+from typing import Collection, Iterable, Mapping
 
 __all__ = [
     "ORG_PLACEHOLDER",
     "SPEC_CHAVE_RE",
     "placeholders_org",
+    "SPEC_INDISPONIVEL",
+    "completar_indisponiveis",
+    "PLACEHOLDER_CRU",
+    "placeholder_cru_em",
+    "placeholders_org_crus",
     "marcador_dado",
     "resolver_texto",
     "conflitos_com_regras_fixas",
@@ -28,6 +33,43 @@ __all__ = [
 #: Same pattern as the migration 031 CHECK on ``agent_version_specs.chave`` / ``agent_org_specs.chave``.
 SPEC_CHAVE_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 ORG_PLACEHOLDER = re.compile(r"\{\{\s*org\.([a-z][a-z0-9_]*)\s*\}\}")
+
+
+#: ANY ``{{ ... }}`` (an org placeholder that never resolved, a typo'd one, a mustache the model invented) or a
+#: ``[dado: chave]`` pointer (the compiler's data-fence marker): inert INSIDE the prompt, where the intro text
+#: explains it, but never something a lead may read.
+PLACEHOLDER_CRU = re.compile(r"\{\{.*?\}\}|\[dado:[^\]]*\]", re.DOTALL)
+_ORG_CRU = re.compile(r"\{\{\s*org\.")
+
+
+def placeholder_cru_em(texto: str | None) -> list[str]:
+    """The raw placeholder forms a REPLY carries (``[]`` = clean). The one detector every output surface calls."""
+    return [m.group(0)[:60] for m in PLACEHOLDER_CRU.finditer(texto or "")]
+
+
+def placeholders_org_crus(texto: str | None) -> bool:
+    """Does a text bound for a MODEL still carry an unresolved ``{{org.…}}``? (The ``[dado:]`` pointer is
+    legitimate there: it is how a free-text spec travels, §E3.)"""
+    return bool(_ORG_CRU.search(texto or ""))
+
+
+#: The typed sentinel a REQUIRED spec with no (valid) value carries in the prompt's data block, in place of the value:
+#: ``[dado: chave]`` points at it. A TOKEN, not prose -- what the model does when it reads it is the content's
+#: section rule (``dado-indisponivel``), pinned to this literal by a test. Never a raw ``{{org.x}}``, never an empty hole.
+SPEC_INDISPONIVEL = "INDISPONIVEL"
+
+
+def completar_indisponiveis(
+    obrigatorias: Iterable[str], valores: Mapping[str, str], fenced: Collection[str],
+) -> tuple[dict[str, str], frozenset[str], tuple[str, ...]]:
+    """``(valores, fenced, faltando)`` with every required spec that has no value set to :data:`SPEC_INDISPONIVEL` and
+    fenced (so it reads ``[dado: chave]`` inline, the sentinel in the data block). ``faltando`` = those keys, sorted
+    -- the caller alerts on it. The ONE place the missing-required policy lives (compiler + channel skills)."""
+    valores = dict(valores)
+    faltando = tuple(sorted(c for c in obrigatorias if not (valores.get(c) or "").strip()))
+    for c in faltando:
+        valores[c] = SPEC_INDISPONIVEL
+    return valores, frozenset(fenced) | frozenset(faltando), faltando
 
 
 def placeholders_org(texto: str | None) -> set[str]:

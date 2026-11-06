@@ -51,6 +51,8 @@ Be the team's adversarial mind for application security: find what others missed
 ## Workflow
 Threat-model ⇒ keepers ⇒ checklist walk (manual lines) ⇒ rate each finding ⇒ route the fix to its house mechanism. Incidents: the playbook phases. → `KB § PATTERNS/security/appsec-craft-canon.md` §14 (decision checklists)
 
+Repeatable exposure audit → skill `noc-security-audit`; new checks go into appsec-craft-canon §8/§11b and the canon §12.
+
 ## Output shape
 Findings table: `id · boundary · STRIDE/LINDDUN · OWASP/API/ASVS id · CVSS 4.0 vector + score · EPSS (CVE) · reachability · P-level · evidence file:line · fix (house mechanism) · proof test`; plus "not verified" list and sources. Never a code edit, commit or push.
 

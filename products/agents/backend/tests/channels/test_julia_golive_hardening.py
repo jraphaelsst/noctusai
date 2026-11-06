@@ -233,17 +233,19 @@ class TestValorSemFerramenta:
 # ── P1-3: the deterministic STOP ────────────────────────────────────────────────────────────────────────
 
 class TestStopBackstop:
-    @pytest.mark.parametrize("texto", ["PARAR", " parar! ", "Stop", "SAIR.", "cancelar", "NÃO QUERO MAIS", "nao quero mais", "P A R A R"])
+    @pytest.mark.parametrize("texto", ["PARAR", " parar! ", "Stop", "SAIR.", "cancelar", "NÃO QUERO MAIS", "nao quero mais", "P A R A R",
+                                       "pare", "Para", "PAREM!", "Sai.", "chega!", "Chega!!", " sai! "])
     def test_exact_matches(self, texto):
         assert c.palavra_de_parar([texto], None)
 
-    @pytest.mark.parametrize("texto", ["quero parar de procurar casa em Cotia", "não quero mais apartamento, quero casa", "pare", ""])
+    @pytest.mark.parametrize("texto", ["quero parar de procurar casa em Cotia", "não quero mais apartamento, quero casa", "para onde?", "para quando?", "sai hoje o anúncio?",
+                                       "chega amanhã?", ""])
     def test_a_sentence_containing_the_word_is_not_a_match(self, texto):
         assert c.palavra_de_parar([texto], None) is None
 
     def test_the_rule_data_extends_the_words_and_can_switch_it_off(self):
-        extra = RegraConfig("opt_out_palavras", parametros={"palavras": ["chega"]})
-        assert c.palavra_de_parar(["Chega!"], extra) == "chega" and c.palavra_de_parar(["chega"], None) is None
+        extra = RegraConfig("opt_out_palavras", parametros={"palavras": ["basta"]})
+        assert c.palavra_de_parar(["Basta!"], extra) == "basta" and c.palavra_de_parar(["basta"], None) is None
         assert c.palavra_de_parar(["parar"], RegraConfig("opt_out_palavras", ativo=False)) is None
 
     def test_a_one_word_stop_opts_out_without_the_model(self, chan):

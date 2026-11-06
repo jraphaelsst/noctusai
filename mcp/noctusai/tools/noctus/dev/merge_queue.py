@@ -182,8 +182,10 @@ class Queue:
                  run: Runner = _default_run, run_url: str = "", run_id: str = "local",
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
                  workdir: str | None = None, log: Callable[[str], None] = print,
-                 workflow_token: bool | None = None, push_token: str | None = None):
+                 workflow_token: bool | None = None, push_token: str | None = None,
+                 regen: Callable[[str], tuple[bool, str]] | None = None):
         self.repo, self.remote, self.dev = repo, remote, dev
+        self.regen = regen or self._regen_kb_counts
         self.run, self.run_url, self.run_id = run, run_url, run_id
         self.poll_s, self.timeout_s, self.sleep = poll_s, timeout_s, sleep
         self.workdir = workdir or os.getcwd()
@@ -211,6 +213,41 @@ class Queue:
         if check and rc != 0:
             raise RuntimeError(self._redact(f"git {' '.join(args)} failed ({rc}): {err.strip()[:400]}"))
         return out.strip()
+
+    def _regen_kb_counts(self, wt: str) -> tuple[bool, str]:
+        """Deterministic re-derivation of the kb-counts blocks in the drain worktree."""
+        cli = os.path.join(wt, "mcp", "noctusai", "cli.py")
+        rc, out, err = self.run([sys.executable, cli, "--update-kb-counts", "--worktree-path", wt], cwd=wt)
+        return rc == 0, (err or out).strip()[-400:]
+
+    def regen_and_commit_counts(self, wt: str) -> tuple[bool, str]:
+        """Merge drivers re-derive counts against the PRE-merge working tree
+        (ort runs them before checkout), so the composed block can be stale and
+        the batch goes red on the kb-counts drift check. Re-derive on the
+        composed head and commit ONLY derived paths. Returns (ok, reason)."""
+        ok, why = self.regen(wt)
+        if not ok:
+            return False, f"kb-counts regeneration failed: {why}"
+        # RAW read (never self.git: it strips, eating the leading ' ' of a ' M <path>'
+        # first entry so [3:] cut 'KNOWLEDGE-BASE' to 'NOWLEDGE-BASE' — 2026-11-06 wedge).
+        # -z: NUL-separated, paths unquoted; each entry is 'XY <path>'.
+        rc, porcelain, err = self.run(["git", "status", "--porcelain", "-z", "--untracked-files=all", "--",
+                                       "KNOWLEDGE-BASE/", "CLAUDE.md"], cwd=wt)
+        if rc != 0:
+            return False, f"kb-counts status read failed ({rc}): {err.strip()[:300]}"
+        paths = [e[3:] for e in porcelain.split("\0") if len(e) > 3]
+        if not paths:
+            return True, ""
+        # A failure here ejects the entry with the reason; it never crashes the drain
+        # (a crash wedges EVERY queued entry, not just this one).
+        for args in (["add", "--", *paths],
+                     ["commit", "-q", "-m", "chore(kb-counts): regenerate derived counts at compose [auto]",
+                      "--", *paths]):
+            rc, _out, err = self.run(["git", *args], cwd=wt)
+            if rc != 0:
+                return False, self._redact(f"kb-counts commit failed: git {args[0]} ({rc}): {err.strip()[:300]}")
+        self.log(f"  regenerated kb-counts at compose ({len(paths)} file(s))")
+        return True, ""
 
     def fetch(self) -> None:
         self.git("fetch", "--prune", self.remote,
@@ -293,6 +330,12 @@ class Queue:
                     self.git("checkout", "--quiet", "--detach", head, cwd=wt)
                     ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
                     continue
+            ok, why = self.regen_and_commit_counts(wt)
+            if not ok:
+                self.run(["git", "reset", "--hard", "--quiet", head], cwd=wt)
+                self.git("checkout", "--quiet", "--detach", head, cwd=wt)
+                ejected.append(self._eject_info(e, "kb_counts_regen", why))
+                continue
             new_head = self.git("rev-parse", "HEAD", cwd=wt)
             collisions = new_migration_collisions(before_tree, self.tree_paths(new_head))
             if collisions:

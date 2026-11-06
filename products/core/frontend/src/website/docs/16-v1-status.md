@@ -20,7 +20,7 @@ The build and ship are owner-authorized. The website is **built and on `dev` at 
 - **Turn the site off/on:** Website → Configurações → Geral → `site_enabled` (admin). Off ⇒ the apex serves the old app landing again.
 - **WhatsApp CTAs:** set the number in Configurações. Until then, CTAs fall back to sign-up/waitlist.
 - **Hide a section:** the switch removes it from the HTML immediately. **Showing a section that was off at build time** (social proof, news, update card) reaches JS visitors immediately, but crawlers only see it after the next deploy (prerender limitation, contract §0 D5).
-- **Optional env** (prod `.env`): `WEBSITE_LEADS_NOTIFY_EMAIL` (`WEBSITE_SALES_WHATSAPP` is obsolete since 2026-11-04: no WhatsApp leg, julia-line §A4), `WEBSITE_LEADS_WEBHOOK_URL` / `_SECRET`, `WEBSITE_TURNSTILE_SECRET`, build arg `VITE_TURNSTILE_SITE_KEY`.
+- **Optional env** (prod `.env`): `WEBSITE_LEADS_NOTIFY_EMAIL` (owner daily brief only; never used for leads since 2026-11-05) (`WEBSITE_SALES_WHATSAPP` is obsolete since 2026-11-04: no WhatsApp leg, julia-line §A4), `WEBSITE_LEADS_WEBHOOK_URL` / `_SECRET`, `WEBSITE_TURNSTILE_SECRET`, build arg `VITE_TURNSTILE_SITE_KEY`.
 
 ## Known gaps → next steps
 
