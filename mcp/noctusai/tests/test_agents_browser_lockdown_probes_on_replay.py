@@ -4,7 +4,8 @@
    grants anything to anon/authenticated, no policy names them, ``status_pagina`` is read-only for the browser.
 2. With 036 replaced by a no-op the same probes report ``violation`` -- the probes are not vacuous (001's
    ``GRANT ALL`` + the ``*_select_own_org`` policies really do expose the schema without it).
-3. Behaviour, not just catalog: as ``authenticated`` a SELECT on a content table is refused (insufficient_privilege)
+3. Behaviour, not just catalog: as ``authenticated`` AND ``anon`` a SELECT on every definition / eval / knowledge
+   table (Julia's prompt, security finding P1-A) is refused (insufficient_privilege) after the WHOLE agents chain,
    and on ``status_pagina`` it succeeds.
 """
 from __future__ import annotations
@@ -22,15 +23,42 @@ _PROBES = vdg._AGENTS_BROWSER_LOCKDOWN_PROBES
 
 _BEHAVIOUR = "step:authenticated-cannot-select-content-but-can-read-status_pagina"
 _BEHAVIOUR_SQL = """
-DO $t$ BEGIN
+DO $t$
+DECLARE
+  t text;
+  -- Julia's definition (prompt, skills, versions, textos/ferramentas/decisoes/specs, the shared skill library),
+  -- eval and knowledge tables, and the audit log: service-role only, for ANY org member.
+  v_tables text[] := ARRAY[
+    'compiled_prompts', 'agent_prompt_sections', 'agent_skills', 'agent_skill_files', 'agent_versions',
+    'agent_version_textos', 'agent_version_ferramentas', 'agent_version_decisoes', 'agent_version_specs',
+    'agent_version_skill_refs', 'agent_version_marcadores', 'skills_biblioteca', 'skill_versoes',
+    'skill_versao_arquivos', 'textos_plataforma', 'eval_cases', 'eval_runs', 'eval_results',
+    'eval_mecanismo_runs', 'eval_mecanismo_execucoes', 'knowledge_collections', 'knowledge_documents',
+    'knowledge_revisions', 'agent_audit_log', 'conformidade_regras', 'definition_org_grants'
+  ];
+BEGIN
+  FOREACH t IN ARRAY v_tables LOOP
+    IF to_regclass(format('agents.%I', t)) IS NULL THEN
+      RAISE EXCEPTION 'ASSERT agents.% is not in the replayed chain (list drifted)', t;
+    END IF;
+    SET LOCAL ROLE authenticated;
+    BEGIN
+      EXECUTE format('SELECT 1 FROM agents.%I LIMIT 1', t);
+      RESET ROLE;
+      RAISE EXCEPTION 'ASSERT authenticated could SELECT agents.%', t;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RESET ROLE;
+    END;
+    SET LOCAL ROLE anon;
+    BEGIN
+      EXECUTE format('SELECT 1 FROM agents.%I LIMIT 1', t);
+      RESET ROLE;
+      RAISE EXCEPTION 'ASSERT anon could SELECT agents.%', t;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RESET ROLE;
+    END;
+  END LOOP;
   SET LOCAL ROLE authenticated;
-  BEGIN
-    PERFORM 1 FROM agents.agent_prompt_sections LIMIT 1;
-    RESET ROLE;
-    RAISE EXCEPTION 'ASSERT authenticated could SELECT agents.agent_prompt_sections';
-  EXCEPTION WHEN insufficient_privilege THEN
-    NULL;
-  END;
   PERFORM 1 FROM agents.status_pagina LIMIT 1;
   RESET ROLE;
 END $t$;

@@ -52,7 +52,7 @@ from app.config import settings
 from app.routers.qualificacao_router import get_qualificacao_service_dep
 from app.stores.conformidade import Violacao
 from app.stores.threads import mapa_agentes
-from app.studio.vazamento import chamador_e_admin_da_plataforma
+from app.studio.vazamento import FiltroDeltas, chamador_e_admin_da_plataforma
 from app.services.runtime_settings import get_runtime_settings_service
 from app.rate_limit import limiter
 from app.realtime import conversation_scope, get_bus, publish_event
@@ -845,6 +845,8 @@ async def _run_turn_background(
         else {}
     )
 
+    filtro_deltas = FiltroDeltas(guarda) if guarda is not None else None
+
     try:
         async with asyncio.timeout(settings.turn_timeout_seconds):
             conversation = conv_store.get_owned(org_id, conversation_id, owner_user_id)
@@ -871,6 +873,8 @@ async def _run_turn_background(
             async for event in runtime.run_turn(spec, turn_ctx, prompt, broker, slot=slot):
                 kind = event["event"]
                 evt_payload = event["payload"]
+                if kind == "message.new" and filtro_deltas is not None:
+                    filtro_deltas.mensagem_concluida()
 
                 if kind == "message.new" and guarda is not None and (
                     achado := guarda.verificar(evt_payload.get("texto", ""))
@@ -896,8 +900,16 @@ async def _run_turn_background(
                         conversation_id, "message.new", _message_payload(record), bus=bus
                     )
                 elif kind == "message.delta":
-                    # Contract §E.9 point 4: published only, never persisted.
-                    await publish_event(conversation_id, "message.delta", evt_payload, bus=bus)
+                    # Contract §E.9 point 4: published only, never persisted. With a leak guard active the stream is
+                    # released only behind the guard (FiltroDeltas), never ahead of it.
+                    if filtro_deltas is not None:
+                        liberado = filtro_deltas.alimentar(
+                            str(evt_payload.get("message_temp_id", "")), evt_payload.get("texto_parcial", ""))
+                        if liberado:
+                            await publish_event(
+                                conversation_id, "message.delta", {**evt_payload, "texto_parcial": liberado}, bus=bus)
+                    else:
+                        await publish_event(conversation_id, "message.delta", evt_payload, bus=bus)
                 elif kind in ("tool.started", "tool.finished"):
                     current_message_id, current_blocks = await _apply_and_publish_block_event(
                         org_id=org_id,
