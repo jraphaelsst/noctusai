@@ -6,6 +6,10 @@ the stubs lack), so the PRE-049 state of the seven tables is rebuilt from the ex
 file is replayed on top, twice (idempotency). Per-table role matrix, asserted on rows and on writes:
 anon / authenticated other org / authenticated owner org (+ service_role untouched).
 Non-vacuous: with 049 replaced by a no-op the same matrix FAILS.
+
+Table shapes follow PROD (2026-11-06): `metas_empresa` has NO org_id -- it is org-scoped through
+`periodo_id -> meta_periodos.org_id` (016). The first cut gave it an org_id here, the replay passed, and the real
+apply failed `42703 column "org_id" does not exist`; `test_fixture_shapes_match_the_erp_migrations` pins it now.
 """
 from __future__ import annotations
 
@@ -49,6 +53,12 @@ CREATE FUNCTION erp.current_org_id() RETURNS uuid LANGUAGE sql STABLE AS
 GRANT EXECUTE ON FUNCTION erp.current_org_id() TO anon, authenticated;
 """]
     for t, (cols, _c, _v) in TABLES.items():
+        if t == "metas_empresa":   # no org_id: scoped through its period (016)
+            out.append("CREATE TABLE erp.metas_empresa (id serial PRIMARY KEY, periodo_id int NOT NULL REFERENCES erp.meta_periodos(id), nome text);")
+            out.append("GRANT SELECT, INSERT, UPDATE, DELETE ON erp.metas_empresa TO anon, authenticated;")
+            out.append("ALTER TABLE erp.metas_empresa ENABLE ROW LEVEL SECURITY;")
+            out.append("GRANT ALL ON erp.metas_empresa TO service_role;")
+            continue
         pk = "org_id uuid PRIMARY KEY" if t == "metas_configuracao" else "id serial PRIMARY KEY, org_id uuid"
         out.append(f"CREATE TABLE erp.{t} ({pk}, {cols});")
         out.append(f"GRANT SELECT, INSERT, UPDATE, DELETE ON erp.{t} TO anon, authenticated;")
@@ -75,6 +85,9 @@ GRANT EXECUTE ON FUNCTION erp.current_org_id() TO anon, authenticated;
 def _seed_sql() -> str:
     rows = []
     for t, (_cols, c, v) in TABLES.items():
+        if t == "metas_empresa":
+            rows.append(f"INSERT INTO erp.metas_empresa (periodo_id, nome) SELECT id, {v} FROM erp.meta_periodos WHERE org_id = '{ORG_A}';")
+            continue
         rows.append(f"INSERT INTO erp.{t} (org_id, {c}) VALUES ('{ORG_A}', {v});")
     rows.append(f"INSERT INTO erp.regras_pontuacao (org_id, nome) VALUES (NULL, 'plataforma');")
     return "\n".join(rows)
@@ -84,27 +97,31 @@ def _matrix_sql() -> str:
     """Raises 'ASSERT ...' on any deviation from the post-049 contract."""
     b = ["DO $t$ DECLARE n int; BEGIN"]
     for t, (_cols, c, v) in TABLES.items():
+        # every seeded row of a table belongs to org A; metas_empresa reaches it through its period
+        own = "true" if t == "metas_empresa" else f"org_id = '{ORG_A}'"
+        ins = (f"INSERT INTO erp.metas_empresa (periodo_id, nome) VALUES (1, {v})" if t == "metas_empresa"
+               else f"INSERT INTO erp.{t} (org_id, {c}) VALUES ('{ORG_A}', {v})")
         # anon: no grant at all -> insufficient_privilege on read AND write
         b.append(f"""
   SET LOCAL ROLE anon;
   BEGIN PERFORM 1 FROM erp.{t}; RESET ROLE; RAISE EXCEPTION 'ASSERT anon read {t}';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   SET LOCAL ROLE anon;
-  BEGIN INSERT INTO erp.{t} (org_id, {c}) VALUES ('{ORG_A}', {v}); RESET ROLE; RAISE EXCEPTION 'ASSERT anon write {t}';
+  BEGIN {ins}; RESET ROLE; RAISE EXCEPTION 'ASSERT anon write {t}';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   RESET ROLE;
   -- authenticated, OTHER org: sees nothing of org A, cannot write into org A
   PERFORM set_config('request.jwt.claims', '{{"org_id":"{ORG_B}"}}', true);
   SET LOCAL ROLE authenticated;
-  SELECT count(*) INTO n FROM erp.{t} WHERE org_id = '{ORG_A}';
+  SELECT count(*) INTO n FROM erp.{t} WHERE {own};
   IF n <> 0 THEN RESET ROLE; RAISE EXCEPTION 'ASSERT other org reads % rows of {t}', n; END IF;
-  BEGIN INSERT INTO erp.{t} (org_id, {c}) VALUES ('{ORG_A}', {v}); RESET ROLE; RAISE EXCEPTION 'ASSERT other org writes {t}';
+  BEGIN {ins}; RESET ROLE; RAISE EXCEPTION 'ASSERT other org writes {t}';
   EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL; END;
   RESET ROLE;
   -- authenticated, OWNER org: reads own row, can write own row
   PERFORM set_config('request.jwt.claims', '{{"org_id":"{ORG_A}"}}', true);
   SET LOCAL ROLE authenticated;
-  SELECT count(*) INTO n FROM erp.{t} WHERE org_id = '{ORG_A}';
+  SELECT count(*) INTO n FROM erp.{t} WHERE {own};
   IF n < 1 THEN RESET ROLE; RAISE EXCEPTION 'ASSERT owner cannot read {t}'; END IF;
   RESET ROLE;
 """)
@@ -152,3 +169,18 @@ def test_matrix_fails_without_049(pglite):
     out = _run("SELECT 1;\n")
     assert out["step:fixture"] == [] and out["step:seed"] == []
     assert out["step:matrix"], "matrix passed with no migration: the test is vacuous"
+
+
+def test_fixture_shapes_match_the_erp_migrations():
+    """The fixture may only give a table an org_id the erp chain gives it (016 creates metas_empresa without one)."""
+    import re
+
+    chain = "\n".join(p.read_text(encoding="utf-8") for p in sorted(MIG.parent.glob("*.sql")) if p.name < MIG.name)
+    for t in TABLES:
+        m = re.search(rf"CREATE TABLE IF NOT EXISTS erp\.{t} \((.*?)\n\);", chain, re.S)
+        if m is None:
+            continue
+        has_org = re.search(r"\borg_id\b", m.group(1)) is not None or re.search(
+            rf"ALTER TABLE (?:IF EXISTS )?erp\.{t}\s+ADD COLUMN (?:IF NOT EXISTS )?org_id", chain) is not None
+        fixture_org = t != "metas_empresa"
+        assert has_org == fixture_org, f"{t}: chain org_id={has_org}, fixture org_id={fixture_org}"

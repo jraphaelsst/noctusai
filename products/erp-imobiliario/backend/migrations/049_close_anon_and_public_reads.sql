@@ -61,9 +61,11 @@ CREATE POLICY corretor_select_meta_periodos ON erp.meta_periodos
     USING (org_id = current_org_id());
 
 DROP POLICY IF EXISTS corretor_select_metas_empresa ON erp.metas_empresa;
+-- metas_empresa has NO org_id (016): it belongs to an org through its period (periodo_id -> meta_periodos.org_id).
 CREATE POLICY corretor_select_metas_empresa ON erp.metas_empresa
     FOR SELECT TO authenticated
-    USING (org_id = current_org_id());
+    USING (EXISTS (SELECT 1 FROM erp.meta_periodos p
+                   WHERE p.id = metas_empresa.periodo_id AND p.org_id = current_org_id()));
 
 DROP POLICY IF EXISTS corretor_select_metas_configuracao ON erp.metas_configuracao;
 CREATE POLICY corretor_select_metas_configuracao ON erp.metas_configuracao
