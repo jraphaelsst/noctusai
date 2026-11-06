@@ -22,7 +22,7 @@ from app.dependencies import get_current_admin
 from app.services import audit_digest_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["Audit Digest"])
+router = APIRouter(tags=["Audit Digest"], include_in_schema=False)
 
 
 @router.post("/api/admin/audit-digest/{org_id}")

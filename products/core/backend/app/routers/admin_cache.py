@@ -22,7 +22,7 @@ from noctusai_lib.integrations.llm.cache import flush_for_model
 from noctusai_lib.integrations.llm.models import all_providers, models_for
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/llm-cache", tags=["Admin · LLM Cache"])
+router = APIRouter(prefix="/api/admin/llm-cache", tags=["Admin · LLM Cache"], include_in_schema=False)
 
 
 def _validate_target(provider: str, model: str) -> None:

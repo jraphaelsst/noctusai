@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Usage"])
 
 
-@router.get("/api/admin/usage")
+@router.get("/api/admin/usage", include_in_schema=False)
 async def get_all_usage(authorization: Optional[str] = Header(None)):
     """Get latest usage metrics for all orgs and products (admin only)."""
     await get_current_admin(authorization)
@@ -31,7 +31,7 @@ async def get_all_usage(authorization: Optional[str] = Header(None)):
     return {"data": result.data or []}
 
 
-@router.get("/api/admin/usage/{org_id}")
+@router.get("/api/admin/usage/{org_id}", include_in_schema=False)
 async def get_org_usage(org_id: str, authorization: Optional[str] = Header(None)):
     """Get usage metrics for a specific org (admin only)."""
     await get_current_admin(authorization)
@@ -58,7 +58,7 @@ async def get_my_usage(authorization: Optional[str] = Header(None)):
     return {"data": result.data or []}
 
 
-@router.post("/api/admin/usage/snapshot")
+@router.post("/api/admin/usage/snapshot", include_in_schema=False)
 async def trigger_snapshot(authorization: Optional[str] = Header(None)):
     """Trigger a manual usage snapshot (admin only)."""
     await get_current_admin(authorization)

@@ -42,6 +42,7 @@ from app.services.billing_events import (
 )
 from app.schemas.billing import CheckoutRequest, PortalRequest, CancelRequest
 from app.schemas.billing_admin import SubscribeRequest
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
@@ -97,6 +98,7 @@ def _run_event(ctx: BillingContext, event: ParsedGatewayEvent) -> billing_webhoo
 
 
 @router.post("/webhook")
+@access_tier('service', reason='Stripe-Signature verified by parse_for_any_mode', category='webhook')
 @limiter.limit(settings.webhook_rate_limit)
 async def stripe_webhook(request: Request, ctx: BillingContext = Depends(get_billing_context)):
     """Receive and process Stripe webhook events.
@@ -132,6 +134,7 @@ async def stripe_webhook(request: Request, ctx: BillingContext = Depends(get_bil
 
 
 @router.post("/webhooks/asaas")
+@access_tier('service', reason='asaas-access-token verified by parse_for_any_mode', category='webhook')
 @limiter.limit(settings.webhook_rate_limit)
 async def asaas_webhook(request: Request, ctx: BillingContext = Depends(get_billing_context)):
     """Receive Asaas notifications (static `asaas-access-token` header).
@@ -162,6 +165,7 @@ async def asaas_webhook(request: Request, ctx: BillingContext = Depends(get_bill
 
 
 @router.get("/plans")
+@access_tier('public', reason='pricing page, explicit projection without secrets', category='pricing-checkout')
 @limiter.limit(DEFAULT_AUTH_RL)
 def public_plans(request: Request, ctx: BillingContext = Depends(get_billing_context)):
     """Sellable plans with their active prices + which gateways are offered.

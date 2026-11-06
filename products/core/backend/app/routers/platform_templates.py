@@ -27,7 +27,7 @@ from app.services.platform_templates.repository import (
 from app.services.platform_templates.sources import list_sources
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/templates", tags=["Admin · Templates"])
+router = APIRouter(prefix="/api/admin/templates", tags=["Admin · Templates"], include_in_schema=False)
 
 
 def get_service() -> svc.PlatformTemplateService:

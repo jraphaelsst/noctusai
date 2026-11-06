@@ -198,7 +198,7 @@ async def listar_deliveries(
     }
 
 
-@router.post("/deliveries/{delivery_id}/retry")
+@router.post("/deliveries/{delivery_id}/retry", include_in_schema=False)
 async def retry_webhook_delivery(
     delivery_id: str,
     authorization: Optional[str] = Header(None),
@@ -215,7 +215,7 @@ async def retry_webhook_delivery(
     return {"data": result}
 
 
-@router.post("/deliveries/purge-expired")
+@router.post("/deliveries/purge-expired", include_in_schema=False)
 async def purge_expired_webhook_deliveries(
     authorization: Optional[str] = Header(None),
 ):

@@ -31,6 +31,7 @@ from app.schemas.website import WebsiteEventCreate, WebsiteLeadCreate
 from app.services import website_leads_service, website_settings_service
 from app.services.website_lead_fanout import run_fanout
 from noctusai_lib.integrations.turnstile import make_turnstile_verifier
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/website", tags=["Website (public)"])
@@ -71,13 +72,17 @@ def _whatsapp_url(public_settings: dict, locale: str) -> Optional[str]:
 
 
 @router.get("/settings")
-def get_public_settings():
+@access_tier('public', reason='marketing site settings (public subset)', category='landing')
+@limiter.limit("120/minute")
+def get_public_settings(request: Request):
     version, data = website_settings_service.get_current()
     return {"data": website_settings_service.public_subset(data), "version": version}
 
 
 @router.get("/plans")
-def get_public_plans():
+@access_tier('public', reason='marketing site pricing teaser', category='landing')
+@limiter.limit("120/minute")
+def get_public_plans(request: Request):
     db = get_admin_client()
     result = (
         db.table("plans")
@@ -90,6 +95,7 @@ def get_public_plans():
 
 
 @router.post("/leads", status_code=201)
+@access_tier('public', reason='landing lead form (Turnstile when configured)', category='lead-capture')
 @limiter.limit("10/minute")
 async def create_lead(request: Request, body: WebsiteLeadCreate, background_tasks: BackgroundTasks):
     await _verify_turnstile(body.turnstile_token, request)
@@ -110,6 +116,7 @@ async def create_lead(request: Request, body: WebsiteLeadCreate, background_task
 
 
 @router.post("/events", status_code=status.HTTP_204_NO_CONTENT)
+@access_tier('public', reason='landing analytics beacon', category='landing')
 @limiter.limit("60/minute")
 def create_event(request: Request, body: WebsiteEventCreate):
     props = body.props or {}

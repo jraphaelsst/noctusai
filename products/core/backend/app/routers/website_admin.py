@@ -24,7 +24,7 @@ from app.schemas.website import (
 from app.services import audit_service, website_leads_service, website_settings_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/website", tags=["Website (admin)"])
+router = APIRouter(prefix="/api/admin/website", tags=["Website (admin)"], include_in_schema=False)
 
 _ADMIN_ONLY_KEYS = ("site_enabled", "signup_enabled")
 

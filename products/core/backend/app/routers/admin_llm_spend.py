@@ -111,7 +111,7 @@ async def get_spend_status(
     return {"data": {**status, "org_id": org_id}}
 
 
-@router.put("/{org_id}/budget")
+@router.put("/{org_id}/budget", include_in_schema=False)
 async def update_budget(
     org_id: str,
     body: BudgetUpdate,

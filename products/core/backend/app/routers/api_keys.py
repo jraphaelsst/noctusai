@@ -174,7 +174,7 @@ async def revogar_api_key(key_id: str, authorization: Optional[str] = Header(Non
     return {"data": result.data[0]}
 
 
-@router.get("/api/admin/api-keys")
+@router.get("/api/admin/api-keys", include_in_schema=False)
 async def admin_listar_api_keys(authorization: Optional[str] = Header(None)):
     """List ALL API keys across all orgs (admin only)."""
     await get_current_admin(authorization)

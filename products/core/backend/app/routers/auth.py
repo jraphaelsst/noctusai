@@ -23,6 +23,7 @@ from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_to
 from noctusai_lib.api.auth.org_selection import make_org_selection_store
 from noctusai_lib.primitives.phone import normalize_phone
 from noctusai_lib.config.product_urls import resolve_product_url
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -33,6 +34,7 @@ _make_org_slug = org_provisioning.make_org_slug
 
 
 @router.post("/signup")
+@access_tier('public', reason='self-serve signup', category='auth')
 @limiter.limit("10/minute")
 async def signup(request: Request, body: SignupRequest):
     """Register a new user and create their organization.
@@ -146,6 +148,7 @@ async def signup(request: Request, body: SignupRequest):
 
 
 @router.post("/login")
+@access_tier('public', reason='email/password login', category='auth')
 @limiter.limit("10/minute")
 async def login(request: Request, body: LoginRequest):
     """Login with email/password. Returns Supabase session."""
@@ -340,6 +343,7 @@ async def change_password(
 
 
 @router.post("/refresh")
+@access_tier('public', reason='refresh-token exchange; the refresh token is the credential', category='auth')
 @limiter.limit("10/minute")
 async def refresh_token(request: Request, body: RefreshRequest):
     """Exchange a refresh token for a new access token."""

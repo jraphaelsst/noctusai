@@ -15,6 +15,7 @@ from app.services.transcription_api import limits as L
 from app.services.transcription_api.errors import TranscricaoErro
 from app.services.transcription_api.service import Caller, caller_from_context
 from app.services.transcription_api.wiring import TranscricaoRuntime, get_runtime
+from noctusai_lib.api.access_tiers import access_tier
 
 router = APIRouter(prefix="/api/transcriptions", tags=["Transcriptions"])
 
@@ -64,6 +65,7 @@ async def _read_capped(arquivo: UploadFile, max_bytes: int) -> bytes:
 
 
 @router.post("", status_code=202)
+@access_tier('org', reason='pk_* product token or session via _submit_caller')
 async def enviar_transcricao(
     request: Request,
     arquivo: UploadFile = File(...),
@@ -85,7 +87,8 @@ async def enviar_transcricao(
 
 
 # NOTE: `_stats` MUST be declared before `/{transcricao_id}` or it is shadowed.
-@router.get("/_stats")
+@router.get("/_stats", include_in_schema=False)
+@access_tier('platform', reason='_admin_caller = require_platform_admin')
 def estatisticas(
     _caller: Caller = Depends(_admin_caller),
     rt: TranscricaoRuntime = Depends(get_runtime),
@@ -94,6 +97,7 @@ def estatisticas(
 
 
 @router.get("")
+@access_tier('org', reason='pk_* product token or session via _read_caller; caller-scoped')
 def listar_transcricoes(
     status: Optional[str] = None,
     limit: int = 20,
@@ -105,6 +109,7 @@ def listar_transcricoes(
 
 
 @router.get("/{transcricao_id}")
+@access_tier('org', reason="pk_* product token or session via _read_caller; another caller's job is 404")
 def obter_transcricao(
     transcricao_id: str,
     caller: Caller = Depends(_read_caller),
@@ -114,6 +119,7 @@ def obter_transcricao(
 
 
 @router.delete("/{transcricao_id}", status_code=204)
+@access_tier('org', reason='pk_* product token or session via _delete_caller')
 async def remover_transcricao(
     transcricao_id: str,
     caller: Caller = Depends(_delete_caller),

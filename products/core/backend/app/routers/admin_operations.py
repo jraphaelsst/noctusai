@@ -29,7 +29,7 @@ from noctusai_lib.primitives.timeutil import now_utc
 from app.services import operations_service, owner_brief_service
 from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
 
-router = APIRouter(prefix="/api/admin/operations", tags=["Admin · Operação"])
+router = APIRouter(prefix="/api/admin/operations", tags=["Admin · Operação"], include_in_schema=False)
 
 
 def get_llm_source():

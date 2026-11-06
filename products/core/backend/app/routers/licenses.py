@@ -33,7 +33,7 @@ async def listar_licenses(authorization: Optional[str] = Header(None)):
     return {"data": result.data or []}
 
 
-@router.get("/all")
+@router.get("/all", include_in_schema=False)
 async def listar_all_licenses(authorization: Optional[str] = Header(None)):
     """List ALL licenses with joined product/org data (platform admin only)."""
     user, token = await get_current_admin(authorization)
@@ -43,7 +43,7 @@ async def listar_all_licenses(authorization: Optional[str] = Header(None)):
     return {"data": result.data or []}
 
 
-@router.get("/product/{product_id}")
+@router.get("/product/{product_id}", include_in_schema=False)
 async def listar_licenses_por_produto(product_id: str, authorization: Optional[str] = Header(None)):
     """List licenses for a specific product (platform admin only)."""
     user, token = await get_current_admin(authorization)
@@ -53,7 +53,7 @@ async def listar_licenses_por_produto(product_id: str, authorization: Optional[s
     return {"data": result.data or []}
 
 
-@router.post("")
+@router.post("", include_in_schema=False)
 async def grant_license(body: LicenseGrant, authorization: Optional[str] = Header(None)):
     """Grant a product license to an organization (platform admin).
 
@@ -82,7 +82,7 @@ async def grant_license(body: LicenseGrant, authorization: Optional[str] = Heade
     return {"data": result.license}
 
 
-@router.delete("/{license_id}")
+@router.delete("/{license_id}", include_in_schema=False)
 async def revoke_license(license_id: str, authorization: Optional[str] = Header(None)):
     """Revoke a license (set status to revoked). Admin action — any source."""
     user, token = await get_current_admin(authorization)

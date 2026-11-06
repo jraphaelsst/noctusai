@@ -22,6 +22,7 @@ from app.dependencies import get_current_user
 from app.rate_limit import limiter
 from app.services import org_provisioning
 from app.schemas.oauth import OAuthCallbackBody
+from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth/oauth", tags=["OAuth"])
@@ -47,7 +48,9 @@ _make_org_slug = org_provisioning.make_org_slug
 
 
 @router.get("/providers")
-def list_providers():
+@access_tier('public', reason='login page provider buttons', category='auth')
+@limiter.limit("60/minute")
+def list_providers(request: Request):
     """List available OAuth providers with their Supabase redirect URLs."""
     supabase_url = settings.supabase_url
     redirect_to = f"{settings.app_base_url}/login"
