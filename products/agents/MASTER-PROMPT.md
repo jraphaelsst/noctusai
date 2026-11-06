@@ -493,3 +493,8 @@ cd products/agents/frontend && npx vite build
 
 - Backend: `noctusai_lib` + `noctusai_seed`; `claude-agent-sdk` (planned, M4)
 - Frontend: `@noctusai/lib` + `@noctusai/seed`
+
+
+## Julia turn redesign (2026-11-05)
+
+Skill gate -> auto-load (`DECISAO-SKILL-AUTOLOAD.md` under `projects/julia-v2/`): `tool_registry._handler` opens a tool's skill for the turn and attaches `procedimento_obrigatorio`; `JuliaTurno.skills_carregadas` is turn-scoped and `reiniciar_tentativa()` resets budgets for a re-run. `turno.executar` splits the stop causes (`PARADAS_PROCEDURAIS`: silent re-run, fallback + `alertar_operacao`, no hand-off). `turno._compilar` caches published compiles (`ESTATISTICAS`, `limpar_cache_compilacao`). `EvalRunner` takes a `turn_driver_factory` so judge cases run on `LiveEvalTurnDriver` (`ThreadState.contexto_caso` -> state block; `definir_modelo/temperatura/historico` are A/B knobs). Version temperature: `tool_policy.temperature`, default 0.3.

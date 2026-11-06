@@ -304,3 +304,10 @@ E30 plus the positive controls (E20, E21) keep the guardrails from over-blocking
 - [LGPD Arts. 18-19 commentary (Confidata)](https://confidata.com.br/blog/lgpd-comentada-13-prazos-decisoes-automatizadas)
 - [Resolução COFECI 1.065/2007](https://www.normasbrasil.com.br/norma/resolucao-1065-2007_105573.html) · [Lei 7.716/89 commentary](https://emporiododireito.com.br/leitura/lei-federal-n-7-716-89-comentada-define-os-crimes-resultantes-de-preconceito-de-raca-ou-de-cor)
 - [Falsa imobiliária golpe SP (portas.com.br)](https://portas.com.br/noticias/falsa-imobiliaria-em-sp-aplica-golpe-de-r-31-mil/) · [CRECI-ES alerta golpes](https://crecies.gov.br/o-creci-es-alerta-os-corretores-capixabas-sobre-se-proteger-de-golpes-virtuais) · [Golpe do boleto falso (SBT/Comprova)](https://sbtnews.sbt.com.br/noticia/brasil/como-identificar-o-golpe-do-boleto-falso-e-evitar-prejuizos)
+
+
+## Turn redesign addendum (2026-11-05)
+
+- The per-turn REFUSAL budget (`max_recusas_por_turno`) now spends only on real violations (evidence mismatch, forged / forbidden / abusive calls, caps); a skill being closed is not one (auto-load).
+- A budget stop is PROCEDURAL: silent re-run, then fallback text + operator alert (`alerta` / `erro_agente`, code only). A customer-facing hand-off stays reserved for an explicit request for a person, out-of-scope, a security escalation, a data-subject request, or a compliance block that survives the corrective re-run.
+- `procedimento_obrigatorio` is guidance: it is excluded from the figures a reply may repeat (`valor_sem_ferramenta`).

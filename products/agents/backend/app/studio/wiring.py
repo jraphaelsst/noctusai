@@ -109,6 +109,7 @@ def studio_eval_scheduler(
     by that same request, in that org, so the org scope is never taken from
     anything but the authenticated context."""
     from app.routers.conversations_router import INSTANCE_ID, _track_background_task
+    from app.studio.eval_driver import get_eval_turn_driver
     from app.studio.evals import EvalRunner
     from app.studio.vazamento import chamador_e_admin_da_plataforma
 
@@ -124,6 +125,7 @@ def studio_eval_scheduler(
         instance_id=INSTANCE_ID,
         turn_timeout_seconds=float(settings.turn_timeout_seconds),
         guardar_vazamento=not chamador_e_admin_da_plataforma(ctx),
+        turn_driver_factory=get_eval_turn_driver,
     )
     app_state = request.app.state
 

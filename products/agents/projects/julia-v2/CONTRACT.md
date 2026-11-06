@@ -1186,3 +1186,8 @@ from noc." Per org agent instance, agents-only (SW needs only the new status).
   `+55 11 *****-3365` for members (ids stay readable). A failed noc lookup never fails the read: every id comes back with
   `nome`/`telefone` null and `avaliacao_resolucao_erro: true`.
 - TurnStatus gains `restrito_avaliacao` (SW treats it like `agente_desligado`: nothing sent).
+
+
+## 13 · Turn redesign (2026-11-05) - supersedes the skill gate of §3.4
+
+Full record: `DECISAO-SKILL-AUTOLOAD.md`. In short: (1) a tool tied to a skill is never refused for the skill being closed - the server auto-loads it for THIS turn and the result carries `procedimento_obrigatorio`; `skill_nao_aberta` is retired (optional text row kept, never emitted); (2) a procedural stop (`limite_recusas`, `falhas_repetidas`) = one silent re-run on fresh budgets, then fallback text + an operator `alerta` (`erro_agente`), never a hand-off; (3) the corrective re-run starts with fresh counters; (4) the compiled prompt of a published version is cached per (version, org specs, standard) and its proof of use saved once per hash; (5) the `# Ferramentas` block no longer repeats the tool lines; (6) judge cases run on the channel driver with `contexto` in the state block; (7) `tool_policy.temperature`, default 0.3.

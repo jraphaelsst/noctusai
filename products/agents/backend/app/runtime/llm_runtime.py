@@ -315,7 +315,7 @@ class LlmToolRuntime:
             org_id=str(ctx.org_id),
             api_key=api_key,
             require_explicit_key=True,
-            temperature=self._temperature,
+            temperature=spec.temperature if getattr(spec, "temperature", None) is not None else self._temperature,
             max_tokens=self._max_tokens,
             provider_impl=self._provider_impl,
         )

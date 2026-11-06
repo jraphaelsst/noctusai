@@ -409,11 +409,15 @@ class EvalRunner:
         turn_timeout_seconds: float = 600.0,
         llm_runtime: Any = None,
         guardar_vazamento: bool = False,
+        turn_driver_factory: Callable[[], Any] | None = None,
     ) -> None:
         #: The prompt-leak detector on every output (Julia v2 IP protection): ON for a run started by a caller
         #: who is not a platform admin -- they can read the results, never the prompt.
         self._guardar_vazamento = guardar_vazamento
         self._llm_runtime = llm_runtime
+        #: ``() -> EvalTurnDriver | None``: the REAL channel turn path. A judge case of a channel agent runs through it.
+        self._turn_driver_factory = turn_driver_factory
+        self._agente: Any = None
         self._evals = evals
         self._runs = runs
         self._definitions = definitions
@@ -445,6 +449,7 @@ class EvalRunner:
 
     async def _execute_claimed(self, org_id: UUID, run: Any) -> None:
         agent = self._agent_by_id(org_id, run.agent_id)
+        self._agente = agent
         try:
             spec = build_studio_spec(
                 agent,
@@ -618,7 +623,36 @@ class EvalRunner:
                 raise _CaseError("Nenhuma vaga livre no executor do agente dentro do tempo limite.")
             await asyncio.sleep(self._slot_poll)
 
+    async def _resposta_pelo_canal(self, run: Any, spec: AgentSpec, case: Any) -> tuple[str, TurnCost] | None:
+        """A judge case of a CHANNEL agent runs the SAME path as the mechanism suite (``EvalTurnDriver``): the
+        channel tools, the state block, the org specs filled, the case ``contexto`` in the state block -- never a
+        ``<nota do sistema>`` in the lead's turn. ``None`` = this agent / this process has no such path."""
+        agente, fabrica = self._agente, self._turn_driver_factory
+        if fabrica is None or agente is None or not getattr(agente, "usa_canais", False) or spec.runtime != "llm":
+            return None
+        driver = fabrica()
+        if driver is None:
+            return None
+        from app.studio.eval_driver import ThreadState
+
+        driver.definir_agente(agente.key)
+        driver.nova_execucao()
+        if run.modelo_geracao and hasattr(driver, "definir_modelo"):
+            driver.definir_modelo(run.modelo_geracao)
+        try:
+            async with asyncio.timeout(self._turn_timeout):
+                out = await driver.executar_turno(ThreadState(contexto_caso=case.contexto or None), case.entrada)
+        except TimeoutError as exc:
+            raise _CaseError("O turno do agente excedeu o tempo limite.") from exc
+        texto = "\n\n".join(b for b in out.bolhas if b.strip())
+        if not texto.strip():
+            raise _CaseError("O agente não produziu resposta.")
+        return texto[:MAX_SAIDA_CHARS], TurnCost(custo_usd=out.custo_usd)
+
     async def _agent_answer(self, org_id: UUID, run: Any, spec: AgentSpec, case: Any) -> tuple[str, TurnCost]:
+        pelo_canal = await self._resposta_pelo_canal(run, spec, case)
+        if pelo_canal is not None:
+            return pelo_canal
         prompt = case.entrada
         if case.contexto:
             prompt = f"<nota do sistema>\n{case.contexto}\n</nota do sistema>\n\n{case.entrada}"

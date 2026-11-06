@@ -84,3 +84,13 @@ async def test_chat_completion_stream_does_not_send_temperature():
     ]
     assert chunks == ["ok"]
     assert "temperature" not in client.messages.sent
+
+
+def test_tool_request_forwards_temperature_only_when_it_differs_from_the_api_default():
+    """The tool-calling path (channel turns) may ask for a lower temperature; the default sends nothing at all."""
+    from noctusai_lib.integrations.llm.providers.anthropic_provider import build_anthropic_request
+
+    assert "temperature" not in build_anthropic_request([], [], model="m")
+    assert "temperature" not in build_anthropic_request([], [], model="m", temperature=1.0)
+    assert build_anthropic_request([], [], model="m", temperature=0.3)["temperature"] == 0.3
+    assert build_anthropic_request([], [], model="m", temperature=-2)["temperature"] == 0.0

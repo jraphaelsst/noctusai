@@ -228,9 +228,13 @@ def build_anthropic_request(
     model: str,
     max_tokens: Optional[int] = None,
     tool_choice: str = "auto",
+    temperature: Optional[float] = None,
 ) -> dict[str, Any]:
-    """The exact kwargs sent to `client.messages.create` (no `temperature`:
-    the SDK dropped it, see `chat_completion`)."""
+    """The exact kwargs sent to `client.messages.create`.
+
+    `temperature` is forwarded ONLY on this tool-calling path and ONLY when it differs from the API default (1.0): a
+    caller that never sets one sends nothing (so a model that rejects the parameter keeps working), a caller that
+    asks for a lower one gets it (the channel turns run at 0.3). `chat_completion` still drops it (see there)."""
     system, convo = to_anthropic_messages(messages)
     payload: dict[str, Any] = {
         "model": model,
@@ -238,6 +242,8 @@ def build_anthropic_request(
         "messages": convo,
         "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
     }
+    if temperature is not None and temperature != 1.0:
+        payload["temperature"] = min(1.0, max(0.0, float(temperature)))
     if tools:
         payload["tools"] = to_anthropic_tools(tools)
         if tool_choice != "auto":
@@ -385,7 +391,7 @@ class AnthropicProvider:
         *,
         model: str,
         api_key: str,
-        temperature: float = 1.0,  # noqa: ARG002 — SDK 1.x has no temperature
+        temperature: float = 1.0,
         max_tokens: Optional[int] = None,
         tool_choice: str = "auto",
         org_id: Optional[str] = None,
@@ -395,7 +401,7 @@ class AnthropicProvider:
 
         client = self._client_for(api_key)
         payload = build_anthropic_request(
-            messages, tools, model=model, max_tokens=max_tokens, tool_choice=tool_choice
+            messages, tools, model=model, max_tokens=max_tokens, tool_choice=tool_choice, temperature=temperature
         )
         try:
             response = await client.messages.create(**payload)

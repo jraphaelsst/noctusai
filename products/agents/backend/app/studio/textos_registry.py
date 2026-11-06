@@ -114,7 +114,7 @@ TEXTOS: dict[str, TextoSpec] = {
 #: Every machine refusal code a channel tool can answer with. The WORDING of each is the row
 #: ``ferramenta.resultado.recusa.<codigo>``; a tool result is ``{"ok": false, "codigo": ..., "mensagem": <row>}``.
 CODIGOS_RECUSA: tuple[str, ...] = (
-    "skill_nao_aberta", "skill_inexistente", "arquivo_inexistente",
+    "skill_inexistente", "arquivo_inexistente",
     "sem_itens", "itens_demais", "versao_nao_publicada", "fonte_invalida", "criterio_repetido",
     "criterio_derivado", "criterio_desconhecido", "nao_coletar", "fora_do_escopo", "valor_invalido",
     "opcao_invalida", "usar_identificacao",
@@ -129,7 +129,9 @@ CODIGOS_RECUSA: tuple[str, ...] = (
 )
 #: Julia v3 refusal codes whose row is OPTIONAL: a published version written before they existed keeps running
 #: (the tool answers with the bare code -- never prose from code) until its content gains the row.
-CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = ("documento_nao_encontrado", "documento_sem_midia")
+#: ``skill_nao_aberta`` is RETIRED (the server auto-loads a tool's skill, ``DECISAO-SKILL-AUTOLOAD.md``): never emitted; the row
+#: stays accepted so a draft that still carries it keeps validating.
+CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = ("documento_nao_encontrado", "documento_sem_midia", "skill_nao_aberta")
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
     "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
@@ -189,11 +191,12 @@ TEXTOS.update({
     "ferramenta.campo_removido": _canal("ferramenta"),
     "ferramenta.handoff.resumo_conclusao": _canal("ferramenta", "estagio", "score"),
     **{
-        f"ferramenta.resultado.recusa.{c}": _canal("ferramenta", *(("skill",) if c == "skill_nao_aberta" else ()))
+        f"ferramenta.resultado.recusa.{c}": _canal("ferramenta")
         for c in CODIGOS_RECUSA
     },
     **{
-        f"ferramenta.resultado.recusa.{c}": _canal("ferramenta", obrigatoria=False)
+        f"ferramenta.resultado.recusa.{c}": _canal(
+            "ferramenta", *(("skill",) if c == "skill_nao_aberta" else ()), obrigatoria=False)
         for c in CODIGOS_RECUSA_OPCIONAIS
     },
     # runtime ----------------------------------------------------------------------------------

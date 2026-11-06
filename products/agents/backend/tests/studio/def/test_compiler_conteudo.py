@@ -70,10 +70,10 @@ def _codes(c):
 
 
 class TestContentModeStrings:
-    def test_the_tools_block_lists_the_rows_not_code_text(self):
+    def test_the_tools_block_carries_the_flags_and_not_the_per_tool_lines(self):
         c = compile_prompt(_inp())
         assert "# Tools" in c.texto and "- sem web" in c.texto
-        assert "- `handoff` — Passa para uma pessoa." in c.texto
+        assert "`handoff`" not in c.texto  # the per-tool lines live in the provider's `tools`, never twice in the prompt
         assert not c.bloqueado or _codes(c) == set()
 
     def test_extraction_only_tools_never_reach_the_conversation_tools_block(self):
@@ -87,7 +87,7 @@ class TestContentModeStrings:
         base = _conteudo()
         c = compile_prompt(_inp(_conteudo(ferramentas=base.ferramentas + extra)))
         bloco = c.texto[c.texto.index("# Tools"):]
-        assert "`handoff`" in bloco and "registrar_resumo" not in bloco and "registrar_escolha" not in bloco
+        assert "registrar_resumo" not in bloco and "registrar_escolha" not in bloco and "`handoff`" not in bloco
         assert c.hash != compile_prompt(_inp(base)).hash  # the rows are still part of the hashed content
 
     def test_a_missing_required_text_is_blocking_never_a_default(self):
@@ -201,7 +201,7 @@ class TestOrgSpecs:
         a = compile_prompt(replace(i, org_specs={"agencia": "Aurora"}))
         b = compile_prompt(replace(i, org_specs={"agencia": "Bússola"}))
         # E3: `agencia` is free text -> never inlined; the value lives only in the data fence
-        assert "Atende [dado: agencia]." in a.texto and "Fala com [dado: agencia]." in a.texto and "{{org." not in a.texto
+        assert "Atende [dado: agencia]." in a.texto and "{{org." not in a.texto
         assert "Aurora" in a.texto and a.texto.count("Aurora") == 1
         assert a.conteudo.ferramentas[0].descricao == "Fala com [dado: agencia]."
         assert a.hash != b.hash != compile_prompt(i).hash

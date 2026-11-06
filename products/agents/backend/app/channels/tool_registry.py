@@ -14,8 +14,9 @@ bundle. A tool whose row is missing or inactive is not offered; there is no defa
 (``canal_limites``): past the budget the toolset *stops* the turn (:attr:`LlmToolset.should_stop`) and the
 caller applies the safe outcome (hand-off to the owner + a flagged event, or silence / the DB text).
 
-* required skill (``obrigatoria_skill`` on the tool row, or ``obrigatoria_para`` of a shared skill) not
-  opened in this thread under the CURRENT ``compiled_hash``;
+* a tool tied to a skill (``obrigatoria_skill`` on the tool row, or ``obrigatoria_para`` of a shared skill) is
+  NOT refused when the skill is closed: the server AUTO-LOADS it for this turn and the result carries the
+  procedure (``procedimento_obrigatorio``); the tool's own business preconditions still apply;
 * ``trecho`` not in the lead's own words; offering before ``pode_ofertar``; concluding before a
   ``conclusivo`` stage; reacting to a code never offered; identity asked before the standard says so.
 """
@@ -26,7 +27,7 @@ import json
 import logging
 import re
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, Protocol, Union
 from uuid import UUID
@@ -484,6 +485,11 @@ class JuliaTurno:
     actions: list[dict[str, Any]] = field(default_factory=list)
     recusas: int = 0
     erros: int = 0
+    #: Skills whose procedure the model has read IN THIS TURN (auto-loaded by the first call of a tool tied to it, or
+    #: opened with ``abrir_skill``). Turn-scoped on purpose: a thread-level flag outlives the context that held the text.
+    skills_carregadas: set[str] = field(default_factory=set)
+    #: Refusals / errors / calls spent by attempts BEFORE the current one (a corrective re-run starts clean).
+    recusas_anteriores: int = 0
     parar: str | None = None  # the motivo_codigo of the safe stop (limite_recusas / falhas_repetidas)
     registrou_criterios: set[str] = field(default_factory=set)
     links_vistos: set[str] = field(default_factory=set)
@@ -602,6 +608,23 @@ class JuliaTurno:
     def acao(self, **kw: Any) -> None:
         self.actions.append(dict(kw))
 
+    def reiniciar_tentativa(self) -> None:
+        """A corrective re-run is a NEW attempt: it starts with the refusal / error / call budgets and the loaded skills
+        of a fresh turn (the model of the re-run has not read the first attempt's tool results), while what the first
+        attempt DID (actions, offers, registered criteria) stays on the ledger."""
+        self.recusas_anteriores += self.recusas
+        self.recusas = 0
+        self.erros = 0
+        self.chamadas = 0
+        self.chamadas_por_ferramenta.clear()
+        self.skills_carregadas.clear()
+        self.parar = None
+
+
+#: The payload key carrying an auto-loaded skill's procedure, and its cap per skill.
+PROCEDIMENTO = "procedimento_obrigatorio"
+PROCEDIMENTO_MAX_CHARS = 4000
+
 
 # ── result shaping ──────────────────────────────────────────────────────────
 
@@ -629,7 +652,7 @@ def _ok(**payload: Any) -> _Resultado:
 #: COUNTED = everything else (evidence mismatch, forged/forbidden/abusive calls, caps, anything unclassified: fail-closed).
 #: Every code literal of this module (and ``CODIGOS_RECUSA``) sits in exactly one of the two (tested).
 RECUSAS_CORRIGIVEIS: frozenset[str] = frozenset({
-    "skill_nao_aberta", "skill_inexistente", "arquivo_inexistente", "sem_codigo_campanha", "imovel_nao_oferecido",
+    "skill_inexistente", "arquivo_inexistente", "sem_codigo_campanha", "imovel_nao_oferecido",
 })
 RECUSAS_CONTADAS: frozenset[str] = frozenset({
     "sem_itens", "itens_demais", "versao_nao_publicada", "fonte_invalida", "criterio_repetido", "criterio_derivado",
@@ -1019,6 +1042,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         if out.get("erro"):
             return _recusa(t, "skill_inexistente", disponiveis=out.get("disponiveis", []))
         await asyncio.to_thread(t.threads.registrar_abertura_skill, t.org_id, t.thread_id, a.nome, t.compiled_hash)
+        t.skills_carregadas.add(a.nome)
         return _ok(**out)
 
     async def _ler_arquivo(a: LerArquivoSkillArgs) -> _Resultado:
@@ -1125,6 +1149,29 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         return t.chamadas > lim.max_chamadas_ferramenta_turno or (
             nome in por_tool and t.chamadas_por_ferramenta[nome] > por_tool[nome])
 
+    async def _carregar_skills(nome: str) -> list[dict[str, Any]]:
+        """AUTO-LOAD (decision record ``julia-v2/DECISAO-SKILL-AUTOLOAD.md``): a tool tied to a skill never refuses
+        for the skill not being open. The server opens it for THIS turn (once) and the result carries the procedure
+        next to the tool's own answer. The tool's business preconditions stay in its handler."""
+        out: list[dict[str, Any]] = []
+        for skill in obrig.get(nome, ()):
+            if skill in t.skills_carregadas or t.skills is None:
+                continue
+            aberta = await t.skills.abrir(skill)
+            if aberta.get("erro"):  # a gate naming a skill the library lacks: seen, never a lead-facing refusal
+                logger.error("agents.channel.skill_obrigatoria_inexistente org_id=%s skill=%s ferramenta=%s",
+                             t.org_id, skill, nome)
+                t.skills_carregadas.add(skill)
+                continue
+            t.skills_carregadas.add(skill)
+            await asyncio.to_thread(t.threads.registrar_abertura_skill, t.org_id, t.thread_id, skill, t.compiled_hash)
+            corpo = str(aberta.get("corpo") or "")
+            out.append({"skill": skill, "corpo": corpo[:PROCEDIMENTO_MAX_CHARS]})
+        return out
+
+    def _com_procedimento(res: _Resultado, procedimentos: list[dict[str, Any]]) -> _Resultado:
+        return replace(res, payload={**res.payload, PROCEDIMENTO: procedimentos})
+
     async def _handler(call: ToolCall) -> ToolResult:
         if t.parar is not None:
             return ToolResult(call.call_id, _json({"ok": False, "codigo": "limite_recusas",
@@ -1147,15 +1194,10 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             res = await _recusar_args(call.name, exc)
         else:
             args = t.proteger_args(call.name, args)
-            falta = None
-            for skill in obrig.get(call.name, ()):
-                if not await asyncio.to_thread(t.threads.skill_aberta, t.org_id, t.thread_id, skill, t.compiled_hash):
-                    falta = skill
-                    break
-            if falta is not None:
-                res = _recusa(t, "skill_nao_aberta", skill=falta)
-            else:
-                res = await despacho[call.name](args)
+            procedimentos = await _carregar_skills(call.name)
+            res = await despacho[call.name](args)
+            if procedimentos:
+                res = _com_procedimento(res, procedimentos)
         if res.recusa:
             classe = "corrigivel" if res.corrigivel else "contada"
             if res.corrigivel:
@@ -1170,7 +1212,8 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         _parar_se_estourou()
         saida = _json(res.payload)
         if not res.erro:
-            t.resultados_texto.append(saida)
+            # the skill's procedure text is guidance, not a source of figures a reply may repeat
+            t.resultados_texto.append(_json({k: v for k, v in res.payload.items() if k != PROCEDIMENTO}))
         return ToolResult(call.call_id, saida, res.erro)
 
     def _resumo(nome: str, args: dict[str, Any]) -> str:
@@ -1184,6 +1227,21 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
 
 
 # ── server-side effects shared by the tools and the route's deterministic escalation ──
+
+
+async def alertar_operacao(t: JuliaTurno, codigo: str) -> None:
+    """An OPERATOR alert for a failure that is the agent's, not the lead's (a procedural stop): the thread's alert row
+    (``erro_agente``) and the ``alerta`` action SW forwards to the report destination. Codes only -- no lead text."""
+    alerta_id: str | None = None
+    if t.alertas is not None:
+        try:
+            rec = await asyncio.to_thread(
+                t.alertas.registrar, t.org_id, t.thread_id, t.agent_id, tipo="erro_agente", descricao=codigo)
+            alerta_id = str(rec.id)
+        except Exception:  # noqa: BLE001 -- the stop already happened; the alert row is best effort but SEEN
+            logger.exception("agents.channel.alerta_operacao_falhou thread_id=%s codigo=%s", t.thread_id, codigo)
+    logger.error("agents.channel.parada_procedural org_id=%s thread_id=%s codigo=%s", t.org_id, t.thread_id, codigo)
+    t.acao(type="alerta", tipo="erro_agente", descricao=codigo, alerta_id=alerta_id)
 
 
 async def _perfil_para_handoff(t: JuliaTurno) -> dict[str, Any]:

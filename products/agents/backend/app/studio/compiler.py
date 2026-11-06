@@ -26,7 +26,7 @@ The just-in-time layer (skill bodies, skill files, collections) is listed in
 CONTENT MODE (Julia v2, CONTRACT §2.1 rows 4-5): when ``version.conteudo`` is a bundle the
 compiler keeps ORDER and LAYOUT only — every human-readable string (block titles, intros, the
 tools lines, the client labels) is a row of ``agent_version_textos`` and the ``# Ferramentas``
-block lists the version's ``agent_version_ferramentas`` rows (name + DB description). A
+block carries the web/knowledge/skills flags only: the per-tool lines (name + description) live in the provider's ``tools``, one copy. A
 required string that is missing is a BLOCKING warning, never a default. The hash then covers
 ``texto`` AND every content row (``hash_payload``); ``conteudo is None`` (legacy agents) keeps
 the pre-v2 strings below and ``hash == prompt_hash(texto)`` byte for byte. Compiled FOR AN ORG
@@ -44,7 +44,7 @@ from typing import Any
 from app.studio.especificacoes import placeholders_org, resolver_texto
 from app.studio.especificacoes_service import preparar as preparar_valores
 from app.studio.spec_formatos import dividir_itens
-from app.studio.ferramentas_registry import ferramenta_conhecida, ferramenta_da_conversa, nome_no_modelo
+from app.studio.ferramentas_registry import ferramenta_conhecida, nome_no_modelo  # noqa: F401 -- nome_no_modelo is re-exported
 from app.studio.models import (
     ClientBundle,
     CollectionSummary,
@@ -201,7 +201,7 @@ def _collection_line(c: CollectionSummary, S: _Strings) -> str:
     return f"- `{c.slug}`{tag} — {c.nome}{desc} ({c.doc_count} {noun})"
 
 
-def _tools_block(web: bool, knowledge: bool, has_skills: bool, S: _Strings, ferramentas) -> str:
+def _tools_block(web: bool, knowledge: bool, has_skills: bool, S: _Strings) -> str:
     title = S("compilador.titulo_ferramentas", TOOLS_TITLE)
     if not S.conteudo:
         lines = [
@@ -224,14 +224,9 @@ def _tools_block(web: bool, knowledge: bool, has_skills: bool, S: _Strings, ferr
     ]
     if has_skills:
         lines.append(S("compilador.ferramenta_linha.skills_ativada", ""))
-    # The tools the version actually offers IN THE CONVERSATION: name + the DB description (CONTRACT §2.1 row 5).
-    # The extraction-only tools (``registrar_resumo`` / ``registrar_escolha``) are never offered on a turn.
-    # A tool-group row (``academia_kb_buscar``) is named as the model sees it (``mcp__academia__kb_buscar``).
-    lines += [
-        f"- `{nome_no_modelo(f.ferramenta)}` — {f.descricao.strip()}"
-        for f in sorted((f for f in ferramentas if f.ativo and ferramenta_da_conversa(f.ferramenta)),
-                        key=lambda f: f.ferramenta)
-    ]
+    # The per-tool lines (name + description) are NOT repeated here: the provider's ``tools`` parameter already carries
+    # every offered tool with its description, filtered by the turn's capabilities and restricted mode. A second copy in
+    # the prompt could only disagree with it (and cost its tokens on every turn); see ``DECISAO-SKILL-AUTOLOAD.md`` §4.
     return f"# {title}\n\n" + "\n".join(line for line in lines if line)
 
 
@@ -711,7 +706,6 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
         "ferramentas", tools_title, ManifestOrigin("auto", None, "tool_policy"),
         _tools_block(
             _policy_flag(inp.tool_policy, "web_search"), knowledge_on, bool(skills) or bool(refs), S,
-            cont.ferramentas if cont is not None else (),
         ),
     ))
 
