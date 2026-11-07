@@ -2,27 +2,27 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1104 open / in-progress**, 123 fixed, 1 accepted (1228 total).
+**1013 open / in-progress**, 214 fixed, 1 accepted (1228 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
-| academia-de-reciclagem | 32 | 0 | 0 | 32 | 0 | 0 |
+| academia-de-reciclagem | 19 | 0 | 0 | 19 | 0 | 13 |
 | adconnect | 30 | 0 | 0 | 30 | 0 | 0 |
 | agents | 1 | 0 | 0 | 1 | 0 | 26 |
-| commerce | 61 | 0 | 0 | 61 | 0 | 0 |
+| commerce | 48 | 0 | 0 | 48 | 0 | 13 |
 | community | 35 | 0 | 0 | 35 | 0 | 0 |
 | core | 14 | 0 | 0 | 14 | 0 | 39 |
 | daily-life | 16 | 0 | 0 | 16 | 0 | 0 |
 | dev-team | 6 | 0 | 0 | 6 | 0 | 0 |
 | erp-imobiliario | 187 | 0 | 1 | 186 | 0 | 14 |
-| igig | 71 | 0 | 0 | 71 | 0 | 0 |
-| monica | 22 | 0 | 0 | 22 | 0 | 0 |
-| orbity | 62 | 0 | 0 | 62 | 0 | 0 |
+| igig | 58 | 0 | 0 | 58 | 0 | 13 |
+| monica | 9 | 0 | 0 | 9 | 0 | 13 |
+| orbity | 49 | 0 | 0 | 49 | 0 | 13 |
 | p-studio | 20 | 0 | 0 | 20 | 0 | 0 |
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
-| seed | 17 | 0 | 0 | 17 | 0 | 13 |
-| social-wiring | 312 | 0 | 0 | 312 | 0 | 31 |
+| seed | 4 | 0 | 0 | 4 | 0 | 26 |
+| social-wiring | 299 | 0 | 0 | 299 | 0 | 44 |
 | store | 14 | 0 | 0 | 14 | 0 | 0 |
 | therapy-platform | 162 | 0 | 0 | 162 | 0 | 0 |
 
@@ -184,22 +184,22 @@
 
 ## Bulk (defence in depth: browser grants on tables without `tier:org|public`)
 
-- social-wiring: 310
+- social-wiring: 297
 - erp-imobiliario: 155
 - therapy-platform: 114
-- igig: 66
-- commerce: 61
-- orbity: 52
+- igig: 53
+- commerce: 48
 - personal-finance: 40
-- academia-de-reciclagem: 29
+- orbity: 39
 - community: 27
-- monica: 22
+- academia-de-reciclagem: 16
 - adconnect: 16
 - daily-life: 16
 - p-studio: 15
-- seed: 15
+- monica: 9
 - core: 8
 - dev-team: 6
+- seed: 2
 - store: 1
 
 ## Accepted (rationale on record)
