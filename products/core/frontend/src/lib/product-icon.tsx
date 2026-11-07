@@ -27,6 +27,8 @@ import {
   Recycle,
   UsersRound,
   ShoppingBag,
+  Camera,
+  Dumbbell,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -45,7 +47,18 @@ const ICONS: Record<string, LucideIcon> = {
   Recycle, // academia-de-reciclagem — knowledge workspace of the recycling-education project
   UsersRound, // community — online community management center
   ShoppingBag, // store — public sales pages for digital products
+  Camera, // p-studio — stored as lowercase 'camera' (resolved case-insensitively)
+  Dumbbell, // pilates — stored as lowercase 'dumbbell'
 };
+
+const ICONS_BY_LOWERCASE: Record<string, LucideIcon> = Object.fromEntries(
+  Object.entries(ICONS).map(([key, icon]) => [key.toLowerCase(), icon]),
+);
+
+/** Resolve a stored `icone` name to a registered icon, ignoring case (live rows are stored lowercase). */
+export function resolveProductIcon(name: string): LucideIcon | undefined {
+  return ICONS[name] ?? ICONS_BY_LOWERCASE[name.toLowerCase()];
+}
 
 // Size presets so the same component fits both the dashboard cards (md) and
 // dense admin table rows / inline headers (sm).
@@ -70,7 +83,7 @@ export function ProductIcon({
 }) {
   const preset = SIZES[size];
   // A registered name renders as an actual SVG icon.
-  const Icon = ICONS[name];
+  const Icon = resolveProductIcon(name);
   if (Icon) {
     return (
       <Icon
