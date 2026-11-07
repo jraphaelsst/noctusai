@@ -14,7 +14,7 @@
  * full path.
  */
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, matchPath, useLocation, UNSAFE_DataRouterStateContext } from "react-router-dom";
+import { Link, matchPath, useInRouterContext, useLocation, UNSAFE_DataRouterStateContext } from "react-router-dom";
 
 import {
   buildBreadcrumbTrail,
@@ -211,7 +211,15 @@ function crumbEntries(crumbs: Crumb[]): CrumbMenuEntry[] {
   );
 }
 
+/**
+ * Renders nothing outside a router: the seed `Header` mounts this, and a Header
+ * consumer without a router (tests, standalone pages) must not crash on `useLocation`.
+ */
 export function Breadcrumbs({ className }: { className?: string }) {
+  return useInRouterContext() ? <RoutedBreadcrumbs className={className} /> : null;
+}
+
+function RoutedBreadcrumbs({ className }: { className?: string }) {
   const registry = useContext(BreadcrumbRegistryContext);
   const { pathname } = useLocation();
   const handleCrumbs = useHandleCrumbs();

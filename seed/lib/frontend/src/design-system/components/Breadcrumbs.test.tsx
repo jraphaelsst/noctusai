@@ -105,11 +105,12 @@ describe("Breadcrumbs", () => {
 
   it("detail route with an unresolved crumb shows a generic word, never the id", () => {
     renderAt("/clientes/77", { routeCrumbs: [{ path: "/clientes/:id", crumb: () => undefined }] });
-    expect(screen.getByText("Detalhes")).toHaveAttribute("aria-current", "page");
-    expect(screen.queryByText(/77/)).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Você está em" });
+    expect(within(nav).getByText("Detalhes")).toHaveAttribute("aria-current", "page");
+    expect(within(nav).queryByText(/77/)).toBeNull();
   });
 
-  it("reads handle.crumb (string or function of loader data) from a data router", () => {
+  it("reads handle.crumb (string or function of loader data) from a data router", async () => {
     const router = createMemoryRouter(
       [
         {
@@ -132,7 +133,8 @@ describe("Breadcrumbs", () => {
         <RouterProvider router={router} />
       </BreadcrumbRegistryContext.Provider>,
     );
-    const nav = screen.getByRole("navigation", { name: "Você está em" });
+    // the data router runs its loader before the first match renders
+    const nav = await screen.findByRole("navigation", { name: "Você está em" });
     expect(within(nav).getByRole("link", { name: "Clientes" })).toBeInTheDocument();
     expect(within(nav).getByText("Ana Lima")).toHaveAttribute("aria-current", "page");
   });
@@ -140,6 +142,15 @@ describe("Breadcrumbs", () => {
   it("unknown route renders the fallback crumb, not an empty header", () => {
     renderAt("/nada/aqui");
     expect(screen.getByRole("navigation", { name: "Você está em" })).toHaveTextContent("Início");
+  });
+
+  it("renders nothing outside a router (a Header consumer with no router must not crash)", () => {
+    const { container } = render(
+      <BreadcrumbRegistryContext.Provider value={{ navGroups: NAV }}>
+        <Breadcrumbs />
+      </BreadcrumbRegistryContext.Provider>,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders nothing outside a shell registry", () => {
