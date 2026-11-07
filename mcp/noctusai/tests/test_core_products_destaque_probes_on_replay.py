@@ -1,4 +1,4 @@
-"""Core `products.destaque_no_site` (migration 100) GuardProbes executed against the REAL core chain
+"""Core `products.destaque_no_site` (migration 105) GuardProbes executed against the REAL core chain
 on PGlite: the range CHECK, the hidden-but-featured CHECK and the partial UNIQUE must each refuse a
 bad write and name their own constraint."""
 from __future__ import annotations

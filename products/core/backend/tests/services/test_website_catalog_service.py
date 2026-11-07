@@ -1,5 +1,5 @@
 """website_catalog_service — status derivation, filter, TTL cache, projection leak guard,
-router invalidation wiring, and migration 100 structure."""
+router invalidation wiring, and migration 105 structure."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -137,7 +137,7 @@ def test_product_update_accepts_exibir_no_site():
     assert ProductUpdate(exibir_no_site=False).model_dump(exclude_none=True) == {"exibir_no_site": False}
 
 
-def test_migration_100_structure():
+def test_migration_105_structure():
     sql = migration_sql(BACKEND / "migrations", "products_exibir_no_site")
     assert "exibir_no_site boolean NOT NULL DEFAULT true" in sql
     hidden = sql.split("UPDATE public.products SET exibir_no_site = false", 1)[1].split("AND exibir_no_site;", 1)[0]
@@ -234,7 +234,7 @@ def test_router_maps_refusal_and_allows_explicit_null():
     assert '"destaque_no_site" in body.model_fields_set' in src  # explicit null survives exclude_none
 
 
-def test_migration_100_destaque_constraints():
+def test_migration_105_destaque_constraints():
     sql = migration_sql(BACKEND / "migrations", "products_exibir_no_site")
     assert "destaque_no_site smallint" in sql
     assert "destaque_no_site BETWEEN 1 AND 6" in sql
@@ -300,7 +300,7 @@ def test_router_runs_exibir_check_and_schema_accepts_descricao_publica():
     assert ProductUpdate(descricao_publica="t").model_dump(exclude_none=True) == {"descricao_publica": "t"}
 
 
-def test_migration_100_public_description_seed_and_name_fix():
+def test_migration_105_public_description_seed_and_name_fix():
     sql = migration_sql(BACKEND / "migrations", "products_exibir_no_site")
     assert "descricao_publica text" in sql
     assert "'descricao_publica', descricao_publica" in sql  # site_catalog payload ships the public one
