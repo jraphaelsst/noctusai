@@ -17,7 +17,8 @@ Resolution order (first that works):
    install dirs (``/usr/lib/postgresql/*/bin`` -- present on GitHub's ubuntu runners --, Homebrew, Postgres.app).
    A fresh cluster is created in a temp dir, listening on a unix socket only (no TCP), and removed on exit.
 
-Nothing resolvable -> yields ``None``; the caller skips with a reason. A skip is not a pass.
+Nothing resolvable -> yields ``None``; the caller skips with a reason. A skip is not a pass -- so under
+``NOC_REQUIRE_REAL_PG=1`` (set in CI) nothing resolvable RAISES `RealPgUnavailable` instead.
 """
 from __future__ import annotations
 
@@ -29,6 +30,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Iterator, Optional
+
+from .pglite import REQUIRE_REAL_PG_ENV, RealPgUnavailable, real_pg_required
 
 __all__ = ["disposable_postgres", "find_pg_bin", "SUPABASE_ROLE_STUBS"]
 
@@ -81,6 +84,10 @@ def disposable_postgres() -> Iterator[Optional[str]]:
         return
     bin_dir = find_pg_bin()
     if bin_dir is None:
+        if real_pg_required():
+            raise RealPgUnavailable(
+                f"no Postgres server: NOCTUS_TEST_PG_DSN unset and no initdb/pg_ctl (NOCTUS_TEST_PG_BIN, PATH, "
+                f"{', '.join(_CANDIDATE_DIRS)}) while {REQUIRE_REAL_PG_ENV}=1")
         yield None
         return
     # A short path: the unix socket path must fit in ~100 bytes.

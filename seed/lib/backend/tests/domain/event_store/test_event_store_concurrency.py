@@ -20,9 +20,11 @@ import uuid
 import pytest
 
 from noctusai_lib.domain.event_store import EventStoreConfig, event_store_migration
+from noctusai_lib.testing.pglite import real_pg_required
 from noctusai_lib.testing.pgserver import SUPABASE_ROLE_STUBS, disposable_postgres
 
-psycopg2 = pytest.importorskip("psycopg2")
+# Under NOC_REQUIRE_REAL_PG=1 (CI) a missing driver is an ImportError, never a skip.
+psycopg2 = __import__("psycopg2") if real_pg_required() else pytest.importorskip("psycopg2")
 
 S = "es_conc"
 ORG = str(uuid.UUID(int=0xC1))

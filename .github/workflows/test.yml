@@ -488,8 +488,35 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
 
+      # 2026-11-07: the real-Postgres proofs (transition_log + event_store conformance on PGlite, the
+      # event_store two-connection concurrency tests on a throwaway initdb cluster) SKIPPED here — no node,
+      # no PGlite install — and a skip reads as green. Install the harness, then NOC_REQUIRE_REAL_PG=1 makes
+      # an unavailable harness FAIL (noctusai_lib.testing.pglite / .pgserver), never skip.
+      - name: Set up Node (PGlite harness — the toolkit's pinned PGlite)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "20"
+
+      - name: Install MCP toolkit node deps (PGlite)
+        working-directory: mcp/noctusai/node
+        run: npm ci --no-audit --no-fund
+
+      - name: Locate Postgres server binaries (two-connection proofs)
+        # ubuntu runners ship PostgreSQL under /usr/lib/postgresql/<v>/bin (not on PATH); pin the newest
+        # explicitly so a missing install fails HERE with a clear message instead of deep in a fixture.
+        run: |
+          bin=$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin 2>/dev/null | sort -V | tail -1)
+          if [ -z "$bin" ] || [ ! -x "$bin/initdb" ] || [ ! -x "$bin/pg_ctl" ]; then
+            echo "::error::no initdb/pg_ctl under /usr/lib/postgresql/*/bin — the event_store concurrency proofs cannot run"
+            exit 1
+          fi
+          echo "NOCTUS_TEST_PG_BIN=$bin" >> "$GITHUB_ENV"
+          "$bin/initdb" --version
+
       - name: Run tests
         working-directory: ${{ matrix.root }}
+        env:
+          NOC_REQUIRE_REAL_PG: "1"
         run: pytest --tb=short -q
 
   erp-frontend-build:
