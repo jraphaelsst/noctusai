@@ -24,7 +24,8 @@ clients.
 
 **Heavy work runs only when a machine-wide slot is free and the machine's measured
 capacity admits it.**
-- Heavy means: product pytest suites, vitest, playwright/e2e, vite build, and every
+- Heavy means: product pytest suites, vitest, playwright/e2e, vite build, local Whisper
+  transcription (fallback only; the server is the default), and every
   `gate_sweep` leg, `task_branch` merged-tip gate and `predeploy_check` run.
 - Light work never takes a slot: git, single tests, keepers, MCP reads, editing.
 
@@ -218,7 +219,13 @@ methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-close
 - **Matched** (per command segment, shlex token scan, so `cd x && pytest`, `a | pytest`,
   `(pytest)` and `bash -c "..."` are seen): `pytest` / `py.test` / `python -m pytest`,
   `vitest`, `playwright test`, `vite build`, `npm|pnpm|yarn [run] test|build[:x]`, and the
-  same behind `npx` / `pnpm exec`.
+  same behind `npx` / `pnpm exec` / `uv run [opts]`. Wrapper flags are skipped, so
+  `nice -n 10 pytest` is judged (2026-11-07; before, `-n` was read as the command).
+- **Local Whisper (2026-11-07, owner rule "transcription runs on the server"):** the
+  `whisper` / `faster-whisper` / `whisperx` CLIs, `python -m *whisper*` and
+  `python <…whisper….py>`. The deny message points to `noctus.transcription.transcribe` /
+  `.batch` (`segmentos=true`) FIRST. It offers the `--job whisper:local` wrapper only for
+  after a real server failure. → `KB § PATTERNS/common/instagram-content-analysis.md` §2.
 - **Allowed:** a segment that runs `hw_admission.py` (the wrapped command is its argument);
   `--collect-only` / `--co` / `--version` / `--help` / `-h`; commands that merely mention the
   word (`grep pytest f`, `echo "pytest"`).

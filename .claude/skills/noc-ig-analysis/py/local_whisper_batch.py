@@ -1,5 +1,8 @@
-# NOC-REMEDIATE[mcp-first]: skill-bundled local batch until knowledge-extractor exposes a batch MCP tool.
-# Run: nice -n 10 <knowledge-extractor>/backend/.venv/bin/python -I local_whisper_batch.py <mp3_dir> <out_dir>
+# FALLBACK ONLY (owner rule 2026-11-07): transcription runs on the server via noctus.transcription.transcribe /
+# .batch (segmentos=true for timestamps). Use this script ONLY when the server FAILS (error status, nao_configurado,
+# network errors after retries, service down), never "in parallel to be faster". KB § PATTERNS/common/instagram-content-analysis.md §2.
+# Run through the hardware gate: python mcp/noctusai/tools/noctus/dev/hw_admission.py run --job whisper:local -- \
+#   uv run --no-project --with faster-whisper python -I local_whisper_batch.py <mp3_dir> <out_dir>
 # Safe alongside noctus.transcription.batch: walks newest-numbered first and claims each stem with <stem>.local.lock.
 """Local faster-whisper, newest-numbered last: walk mp3s in REVERSE, skip any stem already transcribed."""
 import json, sys, time

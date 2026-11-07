@@ -14,6 +14,9 @@ WHAT IS MATCHED (per command segment; compound commands are split by shlex)
 `pytest` / `py.test` / `python -m pytest`, `vitest`, `playwright test`,
 `vite build`, `npm|pnpm|yarn [run] test|build[:x]` (incl. via `npx`/`pnpm exec`
 / `npm exec`), and the same nested in `bash|sh|zsh -c "<script>"`.
+Local Whisper (2026-11-07): `whisper`/`faster-whisper`/`whisperx` CLIs, `python -m *whisper*`,
+`python <…whisper….py>`, including behind `uv run [opts]`. The refusal points to the server
+(`noctus.transcription.*`) FIRST; the gate wrapper is offered only for a real server failure.
 
 WHAT IS ALLOWED
 ===============
@@ -65,6 +68,13 @@ _PKG = {"npm", "pnpm", "yarn", "bun"}
 _SHELLS = {"bash", "sh", "zsh"}
 _BENIGN = {"--collect-only", "--co", "--version", "--help", "-h"}
 _SCRIPT_TARGETS = {"test", "t", "tst", "build"}
+# Local speech-to-text: transcription runs on the server (noctus.transcription.*);
+# a local run is a fallback for a FAILED server only, and then it is heavy (2026-11-07).
+_WHISPER_CLIS = {"whisper", "whisper-ctranslate2", "faster-whisper", "whisperx"}
+# `uv run` options that take a value, so the value is not mistaken for the command.
+_UV_VALUE_OPTS = {"--with", "--with-requirements", "--with-editable", "--python", "-p",
+                  "--project", "--directory", "--extra", "--group", "--env-file", "--from",
+                  "--package", "--index", "--index-url"}
 
 
 _HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
@@ -178,6 +188,10 @@ def _strip_prefix(seg: list[str]) -> tuple[list[str], dict[str, str]]:
             i += 1
         elif os.path.basename(t) in _WRAPPERS:
             i += 1
+            # The wrapper's own flags (`nice -n 10`, `env -i`) are not the command;
+            # without this `nice -n 10 pytest` read `-n` as the command and slipped through.
+            while i < len(seg) and seg[i].startswith("-"):
+                i += 2 if seg[i] in {"-n", "-u", "-C", "-S"} and i + 1 < len(seg) else 1
         elif os.path.basename(t) == "timeout":
             i += 2 if i + 1 < len(seg) else 1
         else:
@@ -198,17 +212,30 @@ def _is_pkg_script(args: list[str]) -> bool:
 
 
 def _heavy_kind(words: list[str]) -> str | None:
-    """Return 'pytest'|'vitest'|'playwright'|'build' when `words` (prefix stripped) runs one."""
+    """Return 'pytest'|'vitest'|'playwright'|'build'|'whisper' when `words` (prefix stripped) runs one."""
     if not words:
         return None
     cmd = os.path.basename(words[0])
     args = words[1:]
     if cmd in {"pytest", "py.test"}:
         return "pytest"
+    if cmd in _WHISPER_CLIS:
+        return "whisper"
+    if cmd == "uv" and args[:1] == ["run"]:
+        i = 1
+        while i < len(args) and args[i].startswith("-"):
+            i += 2 if args[i] in _UV_VALUE_OPTS else 1
+        return _heavy_kind(args[i:])
     if re.fullmatch(r"python[\d.]*", cmd):
         for a, b in zip(args, args[1:]):
             if a == "-m" and b in {"pytest", "py.test"}:
                 return "pytest"
+            if a == "-m" and "whisper" in b:
+                return "whisper"
+        # `python -c "<code>"` is inline code (e.g. an import probe), never a script path.
+        script = "" if "-c" in args else next((a for a in args if not a.startswith("-")), "")
+        if "whisper" in os.path.basename(script).lower():
+            return "whisper"
         return None
     if cmd == "vitest":
         return "vitest"
@@ -290,6 +317,17 @@ def decide(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _msg(kind: str, words: list[str], command: str, why: str | None) -> str:
+    if kind == "whisper":
+        wrapped = f"{GATE} --job whisper:local -- {shlex.join(words)}"
+        return (
+            "local Whisper transcription refused: transcription runs on the SERVER. Use "
+            "noctus.transcription.transcribe (or .batch) with segmentos=true for timestamps. "
+            "Local is a fallback ONLY when the server FAILED (error status, nao_configurado, "
+            "network errors after retries, service down). Slow or queued is not failed. "
+            f"After a real server failure, run it through the gate:\n  {wrapped}\n"
+            "and record the server error in the report's method section. "
+            "Owner rule 2026-11-07. KB § PATTERNS/common/instagram-content-analysis.md §2"
+        )
     job = _suggest_job(kind, words, command)
     wrapped = f"{GATE} --job {job} -- {shlex.join(words)}"
     return (

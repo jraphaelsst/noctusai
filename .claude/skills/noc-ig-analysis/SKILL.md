@@ -1,6 +1,6 @@
 ---
 name: noc-ig-analysis
-description: Use when the owner wants an Instagram post or profile analysed — triggers "analyse this reel", "instagram post analysis", "complete full instagram post analysis", "transcription of the post and the comments", "analyse N reels from <account>", "study this profile's reels", "extract the patterns/structures they use", "learn from <creator>", "análise do post", "analisar os reels". Two modes: ONE post (transcript + every comment → value report) or a PROFILE (N reels → transcripts → reusable structures). Logged-in Chrome, API-in-page, local transcription, pt-BR artifact.
+description: Use when the owner wants an Instagram post or profile analysed — triggers "analyse this reel", "instagram post analysis", "complete full instagram post analysis", "transcription of the post and the comments", "analyse N reels from <account>", "study this profile's reels", "extract the patterns/structures they use", "learn from <creator>", "análise do post", "analisar os reels". Two modes: ONE post (transcript + every comment → value report) or a PROFILE (N reels → transcripts → reusable structures). Logged-in Chrome, API-in-page, server transcription (local only as fallback), pt-BR artifact.
 version: 1.0.0
 ---
 
@@ -17,9 +17,11 @@ Two modes, same extraction spine. **Post mode**: one post, its transcript and EV
    - Profile: open `/<user>/reels/`, run `IG.gridCodes('__codes', N+15)` and wait. Then `IG.infoAll('__codes','__meta')` and wait. Leave pinned reels out of "the N most recent" unless asked; they're old outliers.
    - Read data out with `IG.exportText(...)` + `get_page_text`. Keep only what you need: captions, metrics and comment text, never URLs.
 3. **Media: ask the owner first.** Give filename, count and approximate MB. Audio is the default; video is opt-in (about 3–4× the size). Then `IG.download(codes,'<prefix>','audio')` (or `'video'`, which takes the lowest rep). Chrome may ask once to allow multiple downloads. Move the files from `~/Downloads` into the scratchpad.
-4. **Transcribe.** Convert the DASH `.m4a` (`ffmpeg -i x.m4a -ac 1 -ar 16000 -b:a 48k x.mp3`), because the API rejects fragmented MP4 with `formato_invalido`. Then:
-   - one file, or a few → `noctus.transcription.transcribe`, or `noctus.transcription.batch src_dir out_dir` (resumable, 3 in flight, honours 429).
-   - **10 or more reels → local faster-whisper** with `py/local_whisper_batch.py` (Depth §2). It runs at about 0.5× realtime, so 50 reels take about 40 min. The API caps a caller at 20 submissions per hour, which puts 50 reels at ≥2.5 h. Killing the API client mid-run leaves its jobs holding the 3 in-flight slots.
+4. **Transcribe — ALWAYS on the server (owner rule, 2026-11-07).** Convert to mono 16 kHz mp3 first (`ffmpeg -i x.m4a -ac 1 -ar 16000 -b:a 48k x.mp3`), because the API rejects fragmented MP4 with `formato_invalido`. Then:
+   - one file or a few → `noctus.transcription.transcribe path segmentos=true` (timestamped segments for aligning frames).
+   - many → `noctus.transcription.batch src_dir out_dir segmentos=true` (resumable, 3 in flight, honours 429). The caps (20 submissions per hour) make 50 reels take ≥2.5 h; that is accepted. Start it early and work on comments and frames meanwhile.
+   - **Local faster-whisper is a FALLBACK ONLY**, used when the server FAILS: an `erro`/`falhou` status, `nao_configurado`, network errors after its retries, or the service is down. Server slowness or queueing is not failure. When you fall back, say so in the report's method section with the server error, and run `py/local_whisper_batch.py` through `hw_admission` (Depth §2). Never start a local run "in parallel to be faster".
+   - Killing the API client mid-run leaves its jobs holding the 3 in-flight slots; don't resubmit what is already queued.
    - **Delete the raw audio once the transcripts exist**, following the LGPD mitigation for third-party voice (`LGPD-WARNINGS.md`, Biblioteca de virais entry).
 5. **Visuals (video only).** `fps=1/6` contact sheet (`tile=10x2`), a 0–3 s hook strip (`fps=2,tile=6x1`), and a scene-cut count (`select='gt(scene,0.3)',showinfo`). These give on-screen hook text, captions style, cut rate and set. Reels shorter than 20 s with long captions are usually "caption reels" (text over music), and their transcript will be empty. Say so; don't treat it as a failure.
 6. **Analyse.**

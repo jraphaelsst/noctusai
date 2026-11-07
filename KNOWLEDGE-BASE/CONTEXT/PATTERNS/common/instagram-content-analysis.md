@@ -23,7 +23,10 @@ Output-filter constraints: never return CDN URLs or query strings, and render ex
 - The platform transcription API (`noctus.transcription.*`, core; contract `products/core/projects/transcription-api/CONTRACT.md` §3) rejects fragmented MP4 with `415 formato_invalido`, so convert to mono 16 kHz mp3 first.
   - Caps per caller: **20 submissions per rolling hour, 3 in flight, 180 min per 24 h**, POST 10/min. 50 reels therefore take ≥2.5 h. `noctus.transcription.batch` keeps within these caps and can resume.
   - A killed client leaves its jobs **in flight** on the server, still holding slots. Don't resubmit what is already queued.
-- Faster for 30+ reels: run local faster-whisper (sibling repo `knowledge-extractor/backend/.venv`, model `mobiuslabsgmbh/faster-whisper-large-v3-turbo` int8, `cpu_threads=4`, `nice`) at the same time, in reverse order, writing to the same `<stem>.txt` dir (claim with a `.local.lock`).
+- **Server-first is the rule (owner, 2026-11-07).** Every transcription goes through `noctus.transcription.*`, at any volume. Pass `segmentos=true` when timestamps are needed (both `transcribe` and `batch` return `[{start,end,text}]`). The VPS runs a dedicated faster-whisper worker (`deploy/services/transcriber/`), so this is the same model as a local run without spending the laptop's CPU.
+  - **Why.** On 2026-11-07 a local run of a 61 s reel didn't finish in 25 min. The laptop's load average was 100–150 from peer sessions, and the run slowed them down too. The server returned the same transcript in about 2 min. The laptop is shared and heavy jobs queue through `hw_admission`; the server is built for this job.
+  - **Local fallback, only when the server FAILS.** That means a failed job status, `nao_configurado`, network errors after retries, or the service being down. Slowness and queueing are not failures. Run `local_whisper_batch.py` from the skill (model `mobiuslabsgmbh/faster-whisper-large-v3-turbo` int8, `cpu_threads=4`, `nice`) through `hw_admission`, and record the server error in the report's method section. faster-whisper isn't installed in any repo venv. The model is cached under `~/.cache/huggingface`, so `uv run --no-project --with faster-whisper python -I …` works.
+  - **Backstop.** The heavy-run guard refuses an ungated local Whisper command, and its message points back to the server (`KB § PATTERNS/devops/hardware-admission-budget.md`). Each refusal is a line in `guard-events.ndjson`, which is the telemetry.
 - LGPD: this is third-party voice. Delete the raw audio once it's transcribed, and use the result to study structure only (`LGPD-WARNINGS.md`, Biblioteca de virais entry).
 
 ## 3 · Analysis vocabulary — reuse the platform's, don't invent one
@@ -51,5 +54,5 @@ A pt-BR HTML artifact in the IG-report series identity. Profile mode adds the tw
 
 **Lessons from the Lisiane run** (the first run under the skill):
 - Ranking on plays alone misled. 8 of the 12 reels above 40k plays had <1% likes per play (launch window + 5 s loops), so two axes are mandatory.
-- Local Whisper finished 50 reels in about 40 min. The API batch was stopped after its in-flight slots stayed occupied for about 15 min.
+- Local Whisper finished 50 reels in about 40 min. The API batch was stopped after its in-flight slots stayed occupied for about 15 min. *(Superseded 2026-11-07: the server is the rule even when it is slower. See §2.)*
 - The grid is virtualized: one end-of-scroll read returned 20 of 64 codes.

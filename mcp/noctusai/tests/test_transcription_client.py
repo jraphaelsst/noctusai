@@ -131,6 +131,24 @@ def test_transcribe_polls_to_concluida(audio):
     assert clock.sleeps == [5.0, 5.0]
 
 
+def test_transcribe_segmentos_sent_and_returned(audio):
+    clock = Clock()
+    seen = {}
+    segs = [{"start": 0.0, "end": 2.1, "text": "olá"}]
+
+    def h(req):
+        if req.method == "POST":
+            seen["body"] = req.content
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "olá",
+                                         "segmentos": segs, "duracao_s": 2.1, "rtf": 0.2})
+
+    out = client.transcribe(audio, segmentos=True, _transport=_t(h),
+                            _sleep=clock.sleep, _clock=clock.now)
+    assert b'name="segmentos"' in seen["body"] and b"true" in seen["body"]
+    assert out["segmentos"] == segs and out["texto"] == "olá"
+
+
 def test_poll_interval_switches_to_30s_after_a_minute(audio):
     clock = Clock()
 
