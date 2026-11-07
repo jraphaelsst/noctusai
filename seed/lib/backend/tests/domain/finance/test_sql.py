@@ -123,16 +123,24 @@ def test_every_table_is_org_scoped_with_rls(table):
     name = f"fin_{table}"
     assert re.search(r"\borg_id\s+UUID", _block(name)), f"{name} has no org_id"
     assert f"ALTER TABLE commerce.{name} ENABLE ROW LEVEL SECURITY" in SQL
-    assert f'"{name}_select_own_org"' in SQL
     assert re.search(rf'CREATE POLICY "service_role_bypass"\s+ON commerce\.{name}\b', SQL)
-    # No authenticated WRITE policy anywhere: the backend writes through the service role.
-    assert not re.search(rf"ON commerce\.{name}\s+FOR (INSERT|UPDATE|DELETE)", SQL)
+    # tier:org, served only through the API: no browser policy (the old SELECT one is dropped on re-apply),
+    # no browser privilege, explicit service-role grant -- never the schema's inherited defaults.
+    assert f"COMMENT ON TABLE commerce.{name} IS 'tier:org';" in SQL
+    assert f'DROP POLICY IF EXISTS "{name}_select_own_org" ON commerce.{name};' in SQL
+    assert not re.search(rf'CREATE POLICY "{name}_select_own_org"', SQL)
+    assert not re.search(rf"ON commerce\.{name}\s+FOR (SELECT|INSERT|UPDATE|DELETE)", SQL)
+    assert f"REVOKE ALL ON commerce.{name} FROM PUBLIC, anon, authenticated;" in SQL
+    assert f"GRANT ALL ON commerce.{name} TO service_role;" in SQL
+    assert not re.search(rf"GRANT [A-Z, ]+ ON commerce\.{name} TO (authenticated|anon)", SQL)
 
 
 def test_org_id_expr_defaults_to_org_picker_aware_function_and_is_overridable():
-    assert "org_id = (SELECT public.current_org_id_for('commerce'))" in SQL
-    custom = finance_migration(FinanceConfig(schema="commerce", org_id_expr="public.current_org_id()"), "commerce")
-    assert "org_id = (SELECT public.current_org_id())" in custom
+    # The finance tables carry no browser policy any more; the expression still drives the reminders organ's
+    # own-org policies and stays the one answer for "which org does this session act for".
+    assert FinanceConfig(schema="commerce").org_id_expr == "public.current_org_id_for('commerce')"
+    assert FinanceConfig(schema="commerce", org_id_expr="public.current_org_id()").org_id_expr == "public.current_org_id()"
+    assert "current_org_id_for('commerce')" not in SQL  # no table policy depends on it
 
 
 def test_enum_checks_match_the_python_enums():

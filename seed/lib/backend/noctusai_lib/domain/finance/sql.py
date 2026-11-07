@@ -5,10 +5,13 @@ imports / lines and gateway sync, whose services land in wave 2) plus the
 private attachments bucket, as one re-runnable migration body composed from
 `noctusai_lib.domain.sql_templates` (same conventions as `commerce_migration`):
 
-- `org_id UUID NOT NULL` on every table; RLS enabled; an `authenticated` SELECT
-  policy on `org_id = (SELECT <cfg.org_id_expr>)` plus the literal-named
-  `service_role_bypass`. The backend writes through the service-role client, so
-  no authenticated write policy exists.
+- `org_id UUID NOT NULL` on every table; RLS enabled; the literal-named
+  `service_role_bypass` and NO browser policy: the backend reads and writes
+  through the service-role client, so every table is `tier:org`, service-role
+  only (`REVOKE ALL ... FROM PUBLIC, anon, authenticated`, `GRANT ALL ... TO
+  service_role`), never the schema's inherited defaults. (Until 2026-11-07 the
+  tables carried an `authenticated` own-org SELECT policy nothing used; a
+  re-apply drops it.)
 - Forward-only and idempotent: `IF NOT EXISTS`, `DROP POLICY IF EXISTS` before
   each `CREATE POLICY`, guarded `ALTER`s (the chain replay applies a new file twice).
 - Money is integer cents (`BIGINT`: a company's totals outgrow R$ 21 M); dates
@@ -74,6 +77,8 @@ _NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
 SETTLE_RPC = "settle_entry_locked"
 REVERSE_RPC = "reverse_settlement_locked"
+#: The signed ledger sum (IN +, everything else -) behind `account_balance` and the cash-flow opening balance.
+LEDGER_SUM_RPC = "ledger_signed_sum"
 
 
 def rpc_name(cfg: FinanceConfig, base: str) -> str:
@@ -92,7 +97,14 @@ def _in_lines(*, with_unclassified: bool) -> str:
 
 
 def _section(title: str, schema: str, table: str, body: str, org: str, *, extra: str = "") -> str:
-    return f"-- {title}\n{body.strip()}\n{extra}{org_rls(schema, table, org)}"
+    """One table + its access posture (KB § PATTERNS/security/access-tiers.md): `tier:org` (a customer's own data)
+    served ONLY through the API -- the backend reads and writes with the service role, nothing in any frontend
+    reads `fin_*` through supabase-js, so the browser roles get no policy and no privilege (an `authenticated`
+    session is any org's member; the API applies the per-role masking a direct read would skip)."""
+    return (
+        f"-- {title}\n{body.strip()}\n{extra}COMMENT ON TABLE {schema}.{table} IS 'tier:org';\n"
+        f"{org_rls(schema, table, org, grants=True, authenticated_select=False)}"
+    )
 
 
 def _entries_additive(cfg: FinanceConfig, s: str, entries: str) -> str:
@@ -568,7 +580,47 @@ BEGIN
 END;
 $fn$;
 REVOKE ALL ON FUNCTION {s}.{reverse}(UUID, UUID, TEXT, UUID, DATE) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION {s}.{reverse}(UUID, UUID, TEXT, UUID, DATE) TO service_role;"""
+GRANT EXECUTE ON FUNCTION {s}.{reverse}(UUID, UUID, TEXT, UUID, DATE) TO service_role;
+
+{_ledger_sum_rpc(cfg, s)}"""
+
+
+# NOC-REMEDIATE[finance-ledger-sum-asleep-hosts]: the asleep finance hosts (academia-de-reciclagem, commerce, igig,
+# orbity) still carry a finance render WITHOUT `ledger_signed_sum`, and `account_balance` / `cashflow` now call it.
+# Waking one = `noctus.dev.render_organ_migration product=<p> organ=finance confirm=True` (its own
+# `assert_organ_migration_current` pin goes red until then) + apply before the image ships. -- 2026-11-07
+def _ledger_sum_rpc(cfg: FinanceConfig, s: str) -> str:
+    """The signed ledger sum as ONE number (event-sourcing-program P0): a balance read costs one round trip and
+    one row, not every ledger row since the account opened. `p_account_id` NULL = every account of the org;
+    `p_inclusive` picks `occurred_on <= p_on` (balance on a day) vs `< p_on` (opening of a period). Two branches,
+    so each query keeps a sargable `(org_id, account_id, occurred_on)` / `(org_id, ...)` predicate. Mirrors
+    `accounts.signed_ledger_cents` exactly (reversal rows are ordinary opposite-direction rows)."""
+    fn, ledger = rpc_name(cfg, LEDGER_SUM_RPC), f"{cfg.table_prefix}ledger"
+    signed = f"CASE WHEN direction = '{LedgerDirection.IN.value}' THEN amount_cents ELSE -amount_cents END"
+    return f"""-- Signed ledger sum: the balance / opening-balance aggregate computed in the database (one row back, not N).
+CREATE OR REPLACE FUNCTION {s}.{fn}(p_org_id UUID, p_account_id UUID, p_on DATE, p_inclusive BOOLEAN) RETURNS BIGINT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+{definer_search_path(s)}
+AS $fn$
+DECLARE
+    v_sum BIGINT;
+BEGIN
+    IF p_account_id IS NULL THEN
+        SELECT COALESCE(SUM({signed}), 0)::BIGINT INTO v_sum
+            FROM {s}.{ledger}
+            WHERE org_id = p_org_id AND occurred_on <= p_on AND (p_inclusive OR occurred_on < p_on);
+    ELSE
+        SELECT COALESCE(SUM({signed}), 0)::BIGINT INTO v_sum
+            FROM {s}.{ledger}
+            WHERE org_id = p_org_id AND account_id = p_account_id AND occurred_on <= p_on AND (p_inclusive OR occurred_on < p_on);
+    END IF;
+    RETURN v_sum;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION {s}.{fn}(UUID, UUID, DATE, BOOLEAN) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION {s}.{fn}(UUID, UUID, DATE, BOOLEAN) TO service_role;"""
 
 
 def finance_migration(cfg: FinanceConfig, schema: str) -> str:
@@ -592,4 +644,4 @@ def finance_migration(cfg: FinanceConfig, schema: str) -> str:
     return "\n\n".join(sections) + "\n"
 
 
-__all__ = ["APPEND_ONLY_TABLES", "FINANCE_TABLES", "REVERSE_RPC", "SETTLE_RPC", "finance_migration", "rpc_name"]
+__all__ = ["APPEND_ONLY_TABLES", "FINANCE_TABLES", "LEDGER_SUM_RPC", "REVERSE_RPC", "SETTLE_RPC", "finance_migration", "rpc_name"]

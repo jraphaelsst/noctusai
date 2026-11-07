@@ -42,7 +42,7 @@ products/monica/frontend/src/
 
 ### Database (schema `monica`)
 
-`status_pagina`, `invitations`, finance (`fin_*`, 012), `leads` (014), `whatsapp_connections|chats|messages` (015), CRM `status_pagina` rows (016), per-app switch `app_enabled`/`session_role` + `leads.edited_at` (017), pacientes `clients|client_schedules|client_sessions|client_payments` (018 — session receivables go through the finance `FinanceBooking` seam, source `external`, ref `clients:session:<id>`), `pacientes`/`pacientes_agenda` status_pagina rows (019). RLS org-scoped on `public.current_org_id_for('monica')`; browser roles read, the backend writes with the service role.
+`status_pagina`, `invitations`, finance (`fin_*`, 012), `leads` (014), `whatsapp_connections|chats|messages` (015), CRM `status_pagina` rows (016), per-app switch `app_enabled`/`session_role` + `leads.edited_at` (017), pacientes `clients|client_schedules|client_sessions|client_payments` (018 — session receivables go through the finance `FinanceBooking` seam, source `external`, ref `clients:session:<id>`), `pacientes`/`pacientes_agenda` status_pagina rows (019), finance rev2 (020 — the seed organ's `fin_ledger_signed_sum` balance RPC; `fin_*` become service-role only). RLS org-scoped on `public.current_org_id_for('monica')`; browser roles read (except `fin_*`, served only through the API), the backend writes with the service role.
 
 ## Rules
 

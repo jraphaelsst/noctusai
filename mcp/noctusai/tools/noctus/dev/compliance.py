@@ -13738,7 +13738,9 @@ _GRANT_TABLE_RE = re.compile(
     r"\bGRANT\s+(?P<privs>.+?)\s+ON\s+(?P<target>.+?)\s+TO\s+(?P<roles>[^;]+)",
     re.IGNORECASE | re.DOTALL,
 )
-_POLICY_RE = re.compile(
+#: `_AGENTS_` prefix is load-bearing: a bare `_POLICY_RE` is redefined further down this module (the storage-bucket
+#: keeper), and module globals resolve at CALL time -- this keeper silently ran the other regex until 2026-11-07.
+_AGENTS_POLICY_RE = re.compile(
     r"\bCREATE\s+POLICY\s+(?:\"[^\"]+\"|\w+)\s+ON\s+(?P<table>[\w\".]+)(?P<rest>.*)",
     re.IGNORECASE | re.DOTALL,
 )
@@ -13752,6 +13754,14 @@ def _agents_role_set(raw: str) -> set[str]:
 
 def _agents_bare_table(raw: str) -> str:
     return raw.strip().strip(";").split(".")[-1].strip('"').lower()
+
+
+def _agents_other_schema(raw: str) -> bool:
+    """True when the target is qualified with a schema OTHER than `agents` (e.g. `storage.objects`, whose bucket
+    policies are path-scoped object RLS behind the Storage API, not a table the agents PostgREST schema serves).
+    Unqualified names resolve through the migration's `SET search_path = agents, ...`, so they still count."""
+    parts = [s.strip().strip('"').lower() for s in raw.strip().strip(";").split(".")]
+    return len(parts) > 1 and parts[-2] != "agents"
 
 
 def _agents_browser_grant_findings(statement: str) -> list[tuple[str, str]]:
@@ -13771,9 +13781,12 @@ def _agents_browser_grant_findings(statement: str) -> list[tuple[str, str]]:
             if re.match(r"ALL\s+TABLES\b", target, re.IGNORECASE):
                 out.append(("*", "GRANT ... ON ALL TABLES IN SCHEMA to a browser role"))
             else:
-                out.extend((_agents_bare_table(t), "GRANT SELECT/ALL to a browser role") for t in target.split(","))
-    p = _POLICY_RE.match(st)
-    if p:
+                out.extend(
+                    (_agents_bare_table(t), "GRANT SELECT/ALL to a browser role")
+                    for t in target.split(",") if not _agents_other_schema(t)
+                )
+    p = _AGENTS_POLICY_RE.match(st)
+    if p and not _agents_other_schema(p.group("table")):
         t = _POLICY_TO_RE.search(p.group("rest"))
         if t and _agents_role_set(t.group("roles")) & _BROWSER_ROLES:
             out.append((_agents_bare_table(p.group("table")), "CREATE POLICY ... TO a browser role"))

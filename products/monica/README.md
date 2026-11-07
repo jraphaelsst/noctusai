@@ -22,7 +22,7 @@ Funil: **Lead → Atendimento → Negociação → Fechado**. Cada etapa tem uma
 
 - **Backend**: FastAPI via `create_product_app()` (porta 8020); `mount_leads` (gancho `on_stage_entered` → paciente), `mount_clients` (pacientes, sessões, horários, pagamentos), conexões + caixa de entrada do WhatsApp (`app/routers/whatsapp_router.py`), proxy `/api/contexto`, `mount_finance`.
 - **Frontend**: React via `createProductApp()` + `createProductLayout()` (porta 8240).
-- **Banco**: Supabase, schema `monica` (migrations 001–019: leads, pacientes (`clients`, `client_sessions`, `client_schedules`, `client_payments`), `whatsapp_connections|chats|messages`, finance, `status_pagina`).
+- **Banco**: Supabase, schema `monica` (migrations 001–020: leads, pacientes (`clients`, `client_sessions`, `client_schedules`, `client_payments`), `whatsapp_connections|chats|messages`, finance (012 + rev2 020: `fin_ledger_signed_sum`, tables service-role only), `status_pagina`).
 
 ## Configuração (nomes; valores só no `.env` do servidor)
 

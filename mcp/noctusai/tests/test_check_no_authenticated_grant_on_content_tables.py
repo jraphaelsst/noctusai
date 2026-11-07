@@ -54,6 +54,16 @@ class TestCheckNoAuthenticatedGrantOnContentTables:
         )
         assert check_no_authenticated_grant_on_content_tables(_repo(sql)) == []
 
+    def test_other_schema_targets_are_not_agents_tables(self):
+        # an organ's private bucket: path-scoped object RLS on storage.objects, not the agents PostgREST schema
+        sql = ('CREATE POLICY "finance-attachments_storage_select" ON storage.objects FOR SELECT TO authenticated '
+               "USING (bucket_id = 'finance-attachments');\nGRANT SELECT ON public.plans TO authenticated;")
+        assert check_no_authenticated_grant_on_content_tables(_repo(sql)) == []
+
+    def test_unqualified_and_agents_qualified_targets_still_flag(self):
+        sql = 'CREATE POLICY p ON t FOR SELECT TO authenticated USING (true);\nGRANT SELECT ON "agents"."u" TO anon;'
+        assert len(check_no_authenticated_grant_on_content_tables(_repo(sql))) == 2
+
     def test_function_and_sequence_grants_are_not_table_reads(self):
         sql = "GRANT EXECUTE ON FUNCTION agents.f() TO authenticated;\nGRANT USAGE ON SEQUENCE agents.s TO authenticated;"
         assert check_no_authenticated_grant_on_content_tables(_repo(sql)) == []

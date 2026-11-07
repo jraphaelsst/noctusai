@@ -2,9 +2,12 @@
 
 All three read through the org `Scope`, paging past PostgREST's 1 000-row cap. They
 are READ-ONLY and derive everything from entries + ledger (no stored aggregates).
-NOC-REMEDIATE[finance-report-sql-aggregates]: aggregation happens in Python after a
-bounded paged read; an org with millions of ledger rows wants DB-side aggregates (an
-RPC per report) -- move there when a real org crosses ~200k rows. -- 2026-10-13
+The cash-flow OPENING balance (all history before the period) is one signed SUM in
+Postgres (`<prefix>ledger_signed_sum`, event-sourcing-program P0) -- it no longer grows
+with the org's age. NOC-REMEDIATE[finance-report-sql-aggregates]: the in-period buckets
+and the DRE still aggregate in Python after a bounded paged read (cost grows with the
+PERIOD, not the history); move them to an RPC per report when a real org crosses ~200k
+rows in a reporting window. -- 2026-10-13
 """
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ from datetime import date
 from typing import Any, Optional
 
 from ._common import Scope, add_months, month_start, run_parallel, to_date, today
+from .accounts import ledger_signed_sum
 from .entries import mask_doc
 from .errors import invalid
 from .types import EntryDirection, EntryStatus, LedgerDirection, LedgerOrigin
@@ -59,10 +63,11 @@ def cashflow(s: Scope, date_from: date, date_to: date, *, account_id: Optional[A
 
     # Five independent reads -> ONE wall-clock round trip (was 5 sequential: ~125 ms warm, 250 ms cold).
     # `owned` is listed first so a foreign account id still raises its 422 before any data error.
-    _owned, all_accounts, before, period, open_entries = run_parallel(
+    # The pre-period ledger is ONE number summed in Postgres (`ledger_signed_sum`), never every row since day one.
+    _owned, all_accounts, before_cents, period, open_entries = run_parallel(
         (lambda: s.require_owned("accounts", account_id, what="Conta", field="account_id")) if acc else (lambda: None),
         lambda: s.rows("accounts"),
-        lambda: s.rows("ledger", refine=lambda q: ledger_filter(q).lt("occurred_on", date_from.isoformat())),
+        lambda: ledger_signed_sum(s, date_from, inclusive=False, account_id=acc),
         lambda: s.rows(
             "ledger",
             refine=lambda q: ledger_filter(q).gte("occurred_on", date_from.isoformat()).lte("occurred_on", date_to.isoformat()),
@@ -81,9 +86,7 @@ def cashflow(s: Scope, date_from: date, date_to: date, *, account_id: Optional[A
         for a in accounts
         if to_date(a.get("opening_date")) is None or to_date(a.get("opening_date")) < date_from
     )
-    opening += sum(
-        int(r["amount_cents"]) if r["direction"] == LedgerDirection.IN.value else -int(r["amount_cents"]) for r in before
-    )
+    opening += before_cents
 
     buckets = {m: {"month": m, "realized_in_cents": 0, "realized_out_cents": 0,
                    "projected_in_cents": 0, "projected_out_cents": 0} for m in _months(date_from, date_to)}
