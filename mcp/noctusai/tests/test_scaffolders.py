@@ -191,6 +191,14 @@ class TestScaffoldNoctusDevTarget:
         assert out["ok"] is False
         assert not (root / "mcp/noctusai/tools/noctus/dev/verify_db_guards.py").exists()
 
+    def test_every_render_combination_compiles(self):
+        from tools.noctus.dev import _scaffold_noctus_dev as core
+
+        for writes in (True, False):
+            for tree in (True, False):
+                ast.parse(core.render_module("demo_probe", "d", writes, tree))
+                ast.parse(core.render_test("demo_probe", writes, tree))
+
     def test_bad_inputs(self, tmp_path):
         assert smt.scaffold_mcp_tool(target="noctus.dev", name="Bad-Name")["ok"] is False
         assert smt.scaffold_mcp_tool(target="nope")["ok"] is False
