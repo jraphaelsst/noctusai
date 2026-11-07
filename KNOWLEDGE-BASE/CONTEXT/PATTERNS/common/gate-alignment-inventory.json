@@ -1561,6 +1561,23 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-motion-import-boundary": {
+   "mechanism": "KB § PATTERNS/frontend/marketing-organs-and-motion.md (api: @noctusai/lib/marketing MotionProvider)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: Motion (`motion`/`framer-motion`) may be imported ONLY via `@noctusai/lib/marketing` (provider carries reduced-motion; keeps motion out of app chunks).",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": {
+    "since": "2026-11-07",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "motion.dev docs (reduce motion; LazyMotion strict; bundle size) + MDN prefers-reduced-motion + KB § PATTERNS/frontend/marketing-organs-and-motion.md",
+   "wired_in": [
+    "pre-commit"
+   ]
+  },
   "keeper:check-mutation-family-write": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -2986,6 +3003,18 @@
    "branch": "feat/gate-alignment",
    "gates": [
     "keeper:check-findings-ledgers"
+   ]
+  },
+  {
+   "id": "D17",
+   "decision": "Motion enters the fleet through ONE subpath: `@noctusai/lib/marketing` (peer dep, landing chunks only); reduced-motion + LazyMotion strict live in its MotionProvider, so products cannot forget them",
+   "home": "KB § PATTERNS/frontend/marketing-organs-and-motion.md",
+   "construction": "api:@noctusai/lib/marketing MotionProvider (MotionConfig reducedMotion=\"user\" + LazyMotion strict) and the marketing organs",
+   "gate": "keeper:check-motion-import-boundary",
+   "telemetry": "gate events (cli wrapper, guard-events) + gate-walls ledger",
+   "branch": "feat/keeper-motion-import-boundary",
+   "gates": [
+    "keeper:check-motion-import-boundary"
    ]
   }
  ]
