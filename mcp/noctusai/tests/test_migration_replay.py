@@ -219,3 +219,72 @@ def test_no_transaction_directive_lets_concurrently_replay_green(tmp_path, pglit
 
     root = _repo(tmp_path / "notx", {"core": _CORE, "demo": {**base, "002_ix.sql": "-- noc:no-transaction\n" + ix}})
     assert _replay(root, "demo", [target])["status"] == "green"
+
+
+# ── the MCP entry replays the tree the caller names ───────────────────────────
+
+def _worktree(tmp_path: Path, name: str, chains) -> Path:
+    from workspace import MARKER_FILENAME
+
+    root = _repo(tmp_path / name, chains)
+    (root / ".git").write_text("gitdir: x\n")
+    (root / MARKER_FILENAME).write_text("")
+    return root
+
+
+def test_replay_for_caller_measures_the_named_worktree_not_the_server_tree(tmp_path, pglite):
+    primary = _repo(tmp_path / "primary", {"core": _CORE, "demo": {
+        "001_demo.sql": "CREATE SCHEMA demo;\nCREATE TABLE demo.t (id uuid);",
+    }})
+    wt = _worktree(tmp_path, "wt", {"core": _CORE, "demo": {
+        "001_demo.sql": "CREATE SCHEMA demo;\nCREATE TABLE demo.t (id uuid);",
+        "002_broken.sql": "ALTER TABLE demo.missing ADD COLUMN x int;",
+    }})
+    new = "products/demo/backend/migrations/002_broken.sql"
+    # RED before the fix: with no tree pin the tool replays the server's tree, where the new
+    # file does not exist, and reports a green about code that was never measured.
+    blind = mr.replay_for_caller(["demo"], [new], toolkit_root=primary)
+    assert blind["resolved_root"] == str(primary)
+    assert any("no worktree_path" in w for w in blind["warnings"])
+    assert blind["status"] != "red"
+    # GREEN after: pinning the worktree measures its new migration, which is broken.
+    seen = mr.replay_for_caller(["demo"], [new], worktree_path=str(wt), toolkit_root=primary)
+    assert seen["resolved_root"] == str(wt.resolve())
+    assert seen["status"] == "red", seen
+    assert seen["warnings"] == []
+
+
+def test_replay_for_caller_bad_worktree_is_inconclusive_never_green(tmp_path):
+    r = mr.replay_for_caller(["demo"], [], worktree_path=str(tmp_path / "nope"))
+    assert r["status"] == "inconclusive" and "not a directory" in r["error"]
+
+
+def _spy_node(tmp_path: Path) -> str:
+    """A stand-in `node` that reports which migration files the harness was asked to replay
+    (no PGlite needed): the verdict channel is the file list, i.e. WHICH TREE was measured."""
+    import sys
+
+    spy = tmp_path / "spy_node.py"
+    spy.write_text(
+        f"#!{sys.executable}\nimport json, sys\n"
+        "req = json.load(sys.stdin)\n"
+        "files = sorted(s['file'] for s in req['steps'] if s['product'] == 'demo')\n"
+        "print(json.dumps({'ok': False, 'error': 'REPLAYED ' + ','.join(files)}))\n"
+    )
+    spy.chmod(0o755)
+    return str(spy)
+
+
+def test_replay_for_caller_replays_the_named_tree_files(tmp_path):
+    primary = _repo(tmp_path / "primary", {"core": _CORE, "demo": {"001_demo.sql": "SELECT 1;"}})
+    wt = _worktree(tmp_path, "wt", {"core": _CORE, "demo": {"001_demo.sql": "SELECT 1;", "002_new.sql": "SELECT 2;"}})
+    spy = _spy_node(tmp_path)
+    new = "products/demo/backend/migrations/002_new.sql"
+    # RED before the fix: no tree pin => the server's tree is replayed; 002_new.sql is never seen.
+    blind = mr.replay_for_caller(["demo"], [new], toolkit_root=primary, node_bin=spy)
+    assert "002_new.sql" not in blind["products"][0]["error"]
+    assert blind["resolved_root"] == str(primary) and blind["warnings"]
+    # GREEN after: the pinned worktree's new migration is what the harness is handed.
+    seen = mr.replay_for_caller(["demo"], [new], worktree_path=str(wt), toolkit_root=primary, node_bin=spy)
+    assert "002_new.sql" in seen["products"][0]["error"]
+    assert seen["resolved_root"] == str(wt.resolve()) and seen["warnings"] == []
