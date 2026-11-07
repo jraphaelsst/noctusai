@@ -82,10 +82,14 @@ def _require_org(org_id: Any) -> str:
 # ───────────────────────────── reads ─────────────────────────────
 
 
-def _card_query(db: Any, cfg: FunnelConfig, org_id: str, select: str = "*"):
-    query = db.table(cfg.pipeline.card_table).select(select)
+def _card_query(db: Any, cfg: FunnelConfig, org_id: str, select: str | None = None):
+    """Every card READ goes through here: `card_select` (unless a caller needs
+    a narrower explicit select), then tenancy, then the product's `row_filter`."""
+    query = db.table(cfg.pipeline.card_table).select(select or cfg.card_select)
     if cfg.card_scoped_by_org:
         query = query.eq("org_id", _require_org(org_id))
+    if cfg.row_filter is not None:
+        query = cfg.row_filter(query)
     return query
 
 
@@ -96,7 +100,7 @@ def get_card_row(db: Any, cfg: FunnelConfig, org_id: str, card_id: str) -> dict:
     return rows[0]
 
 
-def _paged_cards(db: Any, cfg: FunnelConfig, org_id: str, build: Callable[[Any], Any], *, select: str = "*", label: str) -> list[dict]:
+def _paged_cards(db: Any, cfg: FunnelConfig, org_id: str, build: Callable[[Any], Any], *, select: str | None = None, label: str) -> list[dict]:
     def fetch_page(start: int, end: int):
         return build(_card_query(db, cfg, org_id, select)).order("id").range(start, end).execute().data
 
@@ -214,7 +218,10 @@ def board(
     dtos = {str(r["id"]): card_dto(cfg, r) for r in rows}
     if busca and busca.strip():
         needle = fold_accents_ascii(busca.strip()).lower()
-        rows = [r for r in rows if needle in _haystack(dtos[str(r["id"])])]
+        if cfg.search_haystack is not None:
+            rows = [r for r in rows if needle in fold_accents_ascii(str(cfg.search_haystack(r) or "")).lower()]
+        else:
+            rows = [r for r in rows if needle in _haystack(dtos[str(r["id"])])]
     colunas = group_into_colunas(
         cfg.pipeline,
         stages,
