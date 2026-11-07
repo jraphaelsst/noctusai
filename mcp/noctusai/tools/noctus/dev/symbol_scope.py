@@ -474,13 +474,32 @@ def ast_identical(old_source: str | None, new_source: str) -> bool:
     if old_source is None:
         return False
     try:
-        return ast.dump(ast.parse(old_source)) == ast.dump(ast.parse(new_source))
+        return _ast_equal(ast.parse(old_source), ast.parse(new_source))
     except (SyntaxError, RecursionError):
-        # RecursionError: `cli.py`'s ~500-branch `elif` dispatch nests If nodes
-        # past the recursion limit inside `ast.dump` (2026-11-07, every cli.py
-        # change crashed gate_sweep). "Not identical" is the conservative
-        # answer: no narrowing, every importing test runs.
+        # The comparison itself is iterative (_ast_equal); RecursionError can
+        # still come from ast.parse on pathological nesting. "Not identical" is
+        # the conservative answer: no narrowing, every importing test runs.
         return False
+
+
+def _ast_equal(a: ast.AST, b: ast.AST) -> bool:
+    """Structural AST equality ignoring position attributes -- ITERATIVE. `ast.dump` recurses once per
+    nesting level and blows the recursion limit on a long `elif` chain (mcp/noctusai/cli.py's dispatcher
+    nests >1000 `If` nodes), which crashed `gate_sweep` on any diff touching cli.py."""
+    stack: list[tuple[object, object]] = [(a, b)]
+    while stack:
+        x, y = stack.pop()
+        if isinstance(x, ast.AST) or isinstance(y, ast.AST):
+            if type(x) is not type(y):
+                return False
+            stack.extend((getattr(x, f, None), getattr(y, f, None)) for f in x._fields)  # type: ignore[union-attr]
+        elif isinstance(x, list) or isinstance(y, list):
+            if not (isinstance(x, list) and isinstance(y, list)) or len(x) != len(y):
+                return False
+            stack.extend(zip(x, y))
+        elif type(x) is not type(y) or x != y:
+            return False
+    return True
 
 
 def registry_reaching(source: str, toolkit_sources: Mapping[str, str] | None = None) -> set[str]:
