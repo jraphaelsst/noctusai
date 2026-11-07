@@ -1,0 +1,18 @@
+# Family: nfse
+# Row contract (see params/__init__.py): key, value, unit, scope{regime,anexo}, vigencia_de, vigencia_ate, norma, fonte_url[>=1],
+# tier, verificado_em, verificado_por, revalidar_em, notas. Money = int centavos; rates = Decimal as STRING (never a YAML float).
+# Rows are added only with a verified source -- never from memory.
+rows:
+  - key: nfse.nacional.obrigatoria_me_epp_desde
+    value: "2026-11-01"
+    unit: date
+    scope: {regime: [simples]}
+    vigencia_de: 2026-11-01
+    vigencia_ate: null
+    norma: "Res. CGSN 191/2026"
+    fonte_url: ["https://www.gov.br/nfse/pt-br"]
+    tier: orgao_oficial
+    verificado_em: 2026-11-07
+    verificado_por: "accountant (advisory 2026-11-07)"
+    revalidar_em: null
+    notas: "advisory 2026-11-07; re-verify the resolution text"

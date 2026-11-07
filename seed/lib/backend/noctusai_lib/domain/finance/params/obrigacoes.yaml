@@ -1,0 +1,18 @@
+# Family: obrigacoes
+# Row contract (see params/__init__.py): key, value, unit, scope{regime,anexo}, vigencia_de, vigencia_ate, norma, fonte_url[>=1],
+# tier, verificado_em, verificado_por, revalidar_em, notas. Money = int centavos; rates = Decimal as STRING (never a YAML float).
+# Rows are added only with a verified source -- never from memory.
+# One row carries both regimes (same norma, same value, same vigencia) -- split only if they ever diverge.
+rows:
+  - key: obrigacoes.das.dia_vencimento
+    value: 20
+    unit: dia_do_mes
+    scope: {regime: [simples, mei]}
+    vigencia_de: 2007-07-01
+    vigencia_ate: null
+    norma: "LC 123/2006 art. 21 III"
+    fonte_url: ["https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm"]
+    tier: norma
+    verificado_em: 2026-11-07
+    verificado_por: "accountant (advisory 2026-11-07)"
+    revalidar_em: null

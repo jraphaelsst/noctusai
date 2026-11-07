@@ -1,0 +1,18 @@
+# Family: mei (Microempreendedor Individual)
+# Row contract (see params/__init__.py): key, value, unit, scope{regime,anexo}, vigencia_de, vigencia_ate, norma, fonte_url[>=1],
+# tier, verificado_em, verificado_por, revalidar_em, notas. Money = int centavos; rates = Decimal as STRING (never a YAML float).
+# Rows are added only with a verified source -- never from memory.
+rows:
+  - key: mei.relatorio_mensal.dia_limite
+    value: 20
+    unit: dia_do_mes
+    scope: {regime: [mei]}
+    vigencia_de: 2018-01-01
+    vigencia_ate: null
+    norma: "Res. CGSN 140/2018 art. 106"
+    fonte_url: ["https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm"]
+    tier: norma
+    verificado_em: 2026-11-07
+    verificado_por: "accountant (advisory 2026-11-07)"
+    revalidar_em: null
+    notas: "Prazo do Relatório Mensal de Receitas Brutas (dia 20 do mês seguinte); obrigação distinta do vencimento do DAS."
