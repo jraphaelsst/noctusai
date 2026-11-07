@@ -14,6 +14,8 @@ Detectors (each is a function ``(...) -> detalhe | None``; ``None`` = clean):
   and nothing handed off / concluded / ended;
 * ``transferencia_sem_handoff`` -- the reply PROMISES a transfer to a person ("vou te transferir", "um especialista vai
   falar com você") although no ``handoff`` call happened in the turn (blocks by default: one corrective re-run);
+* ``insatisfacao_sem_alerta`` -- the LEAD's message complains about the service ("já te falei", "você não presta atenção")
+  and no ``sinalizar_alerta`` call succeeded in the turn (blocks by default; never on a stop request / hand-off / ``encerrar``);
 * ``perfil_citado_sem_registro`` -- the lead answered the criterion being asked (matched ONLY through the
   option synonyms the standard's rows list) and no ``registrar_perfil`` for it happened;
 * ``fallback_enviado`` -- the tool loop was exhausted (the reply is the fallback or nothing);
@@ -85,6 +87,7 @@ __all__ = [
     "pii_na_resposta",
     "valor_sem_ferramenta",
     "transferencia_sem_handoff",
+    "insatisfacao_sem_alerta",
     "sinal_alegacao",
     "casar_padroes",
     "detectar_vazamento",
@@ -658,6 +661,55 @@ def transferencia_sem_handoff(resposta: str, *, transferiu_no_turno: bool) -> di
     return {"promessas": n} if n else None
 
 
+# ── a complaint about the service nobody flagged ────────────────────────────
+
+#: Phrasings (accents folded: they run on the de-obfuscated skeleton too) of a lead complaining about the SERVICE: being
+#: made to repeat, not being heard, insults at the agent, "what a bad service". A change of mind ("na verdade quero casa") and
+#: neutral talk carry none of these anchors. The rule's ``parametros.padroes`` (regexes, data) extend the list.
+_INSATISFACAO_BASE: tuple[str, ...] = (
+    r"\bja\s+(?:te|lhe)\s+(?:falei|disse|informei|respondi|expliquei)\b",
+    r"\bja\s+(?:falei|disse|informei|respondi)\s+(?:isso|isto|que|acima|antes|tudo)\b",
+    r"\bja\s+(?:me\s+)?perguntou\s+(?:isso|isto|essa|esta)\b",
+    r"\bvoce\s+ja\s+me\s+(?:perguntou|pediu)\b",
+    r"\bnao\s+(?:(?:esta|ta)\s+)?(?:presta|prestando)\s+atencao\b",
+    r"\bnao\s+(?:(?:esta|ta)\s+)?me\s+(?:ouvindo|entendendo|escutando|ouve|escuta|entende|compreende)\b",
+    r"\bnao\s+foi\s+(?:isso|isto)\s+que\s+(?:eu\s+)?(?:pedi|perguntei|falei|disse|quis)\b",
+    r"\batendimento\s+(?:e\s+|ta\s+|esta\s+)?(?:muito\s+|bem\s+|tao\s+)?(?:ruim|pessimo|horrivel|terrivel|lixo)\b",
+    r"\b(?:voce|vc)\s+(?:e|eh)\s+(?:muito\s+|tao\s+|bem\s+)?(?:burr[ao]|inutil|idiot[ao]|estupid[ao]|incompetente|ridicul[ao])\b",
+    r"\bnao\s+entende\s+nada\b",
+    r"\bpela\s+(?:terceira|quarta|quinta|enesima|milesima)\s+vez\b",
+    r"\be\s+a\s+(?:terceira|quarta|quinta)\s+vez\b",
+    r"\bde\s+novo\s+(?:isso|essa\s+pergunta|a\s+mesma)\b",
+    r"\bcansad[oa]\s+de\s+repetir\b",
+    r"\bquantas\s+vezes\s+(?:vou|preciso|tenho\s+que)\s+(?:falar|dizer|repetir)\b",
+)
+#: A stop request goes to ``encerrar(lead_pediu_parar)`` (no alert): a complaint inside one never fires the rule. The EXACT stop
+#: words are :func:`palavra_de_parar`'s; these are the sentence forms.
+_PEDIDO_DE_PARAR = re.compile(
+    r"\bnao\s+quero\s+mais\s+(?:receber|mensagem|mensagens|contato|conversar|falar|atendimento)\b"
+    r"|\b(?:para|pare|parem)\s+de\s+(?:me\s+)?(?:mandar|enviar|chamar|ligar|incomodar|procurar)\b"
+    r"|\bnao\s+me\s+(?:mande|envie|chame|ligue|procure)\b"
+    r"|\bme\s+(?:tira|tire|remove|remova|exclui|exclua)\b|\bchega\s+de\s+mensagens?\b|\bdescadastr\w*|\bsai\s+fora\b", re.IGNORECASE)
+
+
+def insatisfacao_sem_alerta(
+    mensagens_lead: Sequence[str], *, alertou_no_turno: bool, encerrou_ou_transferiu: bool = False,
+    padroes: Iterable[str] = (), palavras_parar: RegraConfig | None = None,
+) -> dict[str, Any] | None:
+    """The lead's messages of this turn complain about the service (:data:`_INSATISFACAO_BASE` + ``padroes``) while no
+    ``sinalizar_alerta`` call succeeded in the turn. Never fires when the turn alerted, handed off or ended (the transfer / the
+    opt-out is the priority) or when the lead asks to stop (exact word or sentence form). ``detalhe`` is a message count."""
+    if alertou_no_turno or encerrou_ou_transferiu:
+        return None
+    msgs = [m for m in mensagens_lead if isinstance(m, str) and m.strip()]
+    if not msgs or palavra_de_parar(msgs, palavras_parar) is not None:
+        return None
+    if any(_PEDIDO_DE_PARAR.search(a) for a in _alvos(msgs)):
+        return None
+    n = casar_padroes(msgs, [*_INSATISFACAO_BASE, *padroes])
+    return {"mensagens": n} if n else None
+
+
 # ── deterministic STOP (P1-3) ───────────────────────────────────────────────
 
 
@@ -786,6 +838,11 @@ class EntradaConformidade:
     encerrou_ou_transferiu: bool = False
     #: a ``handoff`` call succeeded in THIS turn (``transferencia_sem_handoff`` never fires then)
     transferiu_no_turno: bool = False
+    #: ``insatisfacao_sem_alerta`` inputs: a ``sinalizar_alerta`` call succeeded / the turn ended the agent in THIS turn, and
+    #: the tool is offered at all (a turn that cannot alert is never blocked for not alerting)
+    alertou_no_turno: bool = False
+    encerrou_no_turno: bool = False
+    alerta_ofertado: bool = False
     criterio_perguntado: Any | None = None
     registrou_perfil: bool = False
     criterios_preenchidos: Mapping[str, str] = field(default_factory=dict)
@@ -846,6 +903,11 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
     if ativa("pergunta_repetida") is not None:
         achados.append(("pergunta_repetida", pergunta_repetida(
             e.resposta, e.criterios_preenchidos, e.registrados_no_turno)))
+    if (r := ativa("insatisfacao_sem_alerta")) is not None and e.alerta_ofertado:
+        achados.append(("insatisfacao_sem_alerta", insatisfacao_sem_alerta(
+            e.mensagens_lead, alertou_no_turno=e.alertou_no_turno,
+            encerrou_ou_transferiu=e.transferiu_no_turno or e.encerrou_no_turno,
+            padroes=padroes_efetivos("insatisfacao_sem_alerta", r.parametros), palavras_parar=e.regras.get("opt_out_palavras"))))
     if e.resposta.strip():
         if ativa("link_nao_permitido") is not None:
             achados.append(("link_nao_permitido", _pior(

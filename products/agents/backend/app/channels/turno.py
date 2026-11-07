@@ -44,6 +44,7 @@ from app.channels.tool_registry import (
     aplicar_encerramento,
     executar_handoff,
     finalizar_conclusao,
+    tools_ofertaveis,
 )
 from app.config import settings
 from app.qualificacao.models import LeadSinais, VersaoPadrao
@@ -750,6 +751,9 @@ async def _executar(
             participante_segue_ativo=not (turno.transferiu or turno.concluiu or turno.encerrou),
             encerrou_ou_transferiu=False,
             transferiu_no_turno=turno.transferiu,
+            alertou_no_turno=bool(turno.alertas_tipos), encerrou_no_turno=turno.encerrou,
+            alerta_ofertado=any(
+                f.ferramenta == "sinalizar_alerta" for f in tools_ofertaveis(turno.conteudo, turno.capacidades())),
             criterio_perguntado=padrao.criterio(estado0.proximo_criterio.chave) if estado0.proximo_criterio else None,
             registrou_perfil=bool(estado0.proximo_criterio and estado0.proximo_criterio.chave in turno.registrou_criterios),
             criterios_preenchidos={
