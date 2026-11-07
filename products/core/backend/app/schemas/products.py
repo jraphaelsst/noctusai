@@ -50,6 +50,8 @@ class ProductUpdate(StrictHttpModel):
     url_base: Optional[str] = None
     cor: Optional[str] = None
     logout_behavior: Optional[str] = None  # 'redirect' or 'signout'
+    # Public-site visibility (noctusai.com showcase), independent of ativo/deploy_scope.
+    exibir_no_site: Optional[bool] = None
 
     # NOTE: `ativo` and `deploy_scope` are DELIBERATELY absent.
     #
