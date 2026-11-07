@@ -463,6 +463,12 @@ class TestAstIdentical:
         assert not SS.ast_identical(None, BIG)
         assert not SS.ast_identical(BIG, BIG + "def (\n")
 
+    def test_ast_too_deep_to_dump_is_not_identical(self):
+        """cli.py's long `elif` dispatch nests past the recursion limit in
+        `ast.dump` (2026-11-07): answer 'not identical', never crash."""
+        deep = "if a == 0:\n    pass\n" + "".join(f"elif a == {i}:\n    pass\n" for i in range(1, 600))
+        assert not SS.ast_identical(deep, deep + "# c\n")
+
 
 class TestAstIdenticalEndToEnd(TestGateSweepEndToEnd):
     STEM_TEST = (
