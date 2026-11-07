@@ -9,11 +9,12 @@ from noctusai_lib.testing.migrations import migration_sql
 
 from app.services import website_catalog_service as svc
 
+KEYS = {"slug", "nome", "descricao", "icone", "destaque_no_site", "status"}
 BACKEND = Path(__file__).resolve().parents[2]
 
 ROWS = [
     {"slug": "a", "nome": "A", "descricao": "d", "icone": "i", "ativo": True, "deploy_scope": "live",
-     "exibir_no_site": True, "url_base": "https://a", "port": 8001},
+     "exibir_no_site": True, "destaque_no_site": 1, "url_base": "https://a", "port": 8001},
     {"slug": "b", "nome": "B", "descricao": None, "icone": None, "ativo": True, "deploy_scope": "dev",
      "exibir_no_site": True, "url_base": "https://b", "port": 8002},
     {"slug": "c", "nome": "C", "descricao": "x", "icone": "y", "ativo": False, "deploy_scope": "dev",
@@ -29,11 +30,16 @@ class _Query:
     def __init__(self, client):
         self._c = client
         self._eq: dict = {}
+        self._neq: dict = {}
 
     def select(self, *_a, **_k):
         return self
 
     def order(self, *_a, **_k):
+        return self
+
+    def neq(self, col, val):
+        self._neq[col] = val
         return self
 
     def eq(self, col, val):
@@ -42,7 +48,8 @@ class _Query:
 
     def execute(self):
         self._c.calls += 1
-        rows = [r for r in self._c.rows if all(r.get(k) == v for k, v in self._eq.items())]
+        rows = [r for r in self._c.rows if all(r.get(k) == v for k, v in self._eq.items())
+                and all(r.get(k) != v for k, v in self._neq.items())]
 
         class _R:
             data = rows
@@ -52,7 +59,7 @@ class _Query:
 
 class _Client:
     def __init__(self, rows):
-        self.rows = rows
+        self.rows = [{**r, "id": r.get("id", r["slug"])} for r in rows]
         self.calls = 0
 
     def table(self, name):
@@ -90,11 +97,11 @@ def test_list_public_filters_and_derives():
 def test_projection_keyset_and_no_internal_leak():
     out = svc.list_public(client=_Client(ROWS), now=0.0)
     for p in out:
-        assert set(p.model_dump()) == {"slug", "nome", "descricao", "icone", "status"}
+        assert set(p.model_dump()) == KEYS
     blob = repr([p.model_dump() for p in out])
     for leaked in ("ativo", "deploy_scope", "url_base", "port", "https://", "8001"):
         assert leaked not in blob
-    assert set(svc.CatalogProduct.model_fields) == {"slug", "nome", "descricao", "icone", "status"}
+    assert set(svc.CatalogProduct.model_fields) == KEYS
 
 
 def test_projection_schema_rejects_extra_fields():
@@ -134,7 +141,104 @@ def test_migration_100_structure():
     for slug in ("seed", "monica", "academia-de-reciclagem", "p-studio", "dev-team", "knowledge-extractor"):
         assert f"'{slug}'" in sql
     assert "FROM PUBLIC, anon, authenticated" in sql
-    assert "UPDATE OF ativo, deploy_scope, exibir_no_site, nome, descricao, icone" in sql
+    assert "UPDATE OF ativo, deploy_scope, exibir_no_site, destaque_no_site, nome, descricao, icone" in sql
     # 5 top-level client_payload keys (<= GitHub's 10); the projection is nested.
     for key in ("'active'", "'live'", "'site_catalog'", "'op'", "'at'"):
         assert key in sql
+
+
+# --- featured products (destaque_no_site) -----------------------------------------------------
+
+def _featured_rows(positions: dict, hidden=()):
+    return [
+        {"slug": s, "id": s, "nome": s.upper(), "exibir_no_site": s not in hidden,
+         "destaque_no_site": positions.get(s)}
+        for s in ("a", "b", "c", "d", "e", "f", "g", "h")
+    ]
+
+
+def test_list_public_exposes_destaque_no_site():
+    out = {p.slug: p.destaque_no_site for p in svc.list_public(client=_Client(ROWS), now=0.0)}
+    assert out == {"a": 1, "b": None, "c": None}
+
+
+def test_destaque_ok_free_position_and_unfeature():
+    db = _Client(_featured_rows({"a": 1}))
+    svc.check_destaque_write(db, "b", {"destaque_no_site": 2})  # free slot: allowed
+    svc.check_destaque_write(db, "a", {"destaque_no_site": None})  # un-feature: allowed
+    svc.check_destaque_write(db, "a", {"destaque_no_site": 1})  # re-saving own slot: allowed
+
+
+def test_destaque_rejects_duplicate_position_without_swapping():
+    db = _Client(_featured_rows({"a": 1}))
+    with pytest.raises(svc.DestaqueRefused) as exc:
+        svc.check_destaque_write(db, "b", {"destaque_no_site": 1})
+    assert exc.value.status_code == 409
+    assert "posição 1 já está ocupada por 'A'" in exc.value.detail
+    assert [r["destaque_no_site"] for r in db.rows if r["slug"] == "a"] == [1]  # untouched
+
+
+@pytest.mark.parametrize("pos", [7, 0, -1])
+def test_destaque_rejects_position_beyond_six(pos):
+    db = _Client(_featured_rows({}))
+    with pytest.raises(svc.DestaqueRefused) as exc:
+        svc.check_destaque_write(db, "a", {"destaque_no_site": pos})
+    assert exc.value.status_code == 422
+    assert "1 a 6" in exc.value.detail
+
+
+def test_destaque_rejects_seventh_entry_when_six_are_featured():
+    # Six are featured elsewhere; "g" has no slot: position 7 is out of range and any
+    # reused position 1..6 is a duplicate. Nothing is swapped.
+    db = _Client(_featured_rows({"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6}))
+    with pytest.raises(svc.DestaqueRefused) as seventh:
+        svc.check_destaque_write(db, "g", {"destaque_no_site": 7})
+    assert "1 a 6" in seventh.value.detail
+    with pytest.raises(svc.DestaqueRefused) as dup:
+        svc.check_destaque_write(db, "g", {"destaque_no_site": 6})
+    assert "já está ocupada" in dup.value.detail
+
+
+def test_destaque_rejects_hidden_product():
+    db = _Client(_featured_rows({}, hidden=("a",)))
+    with pytest.raises(svc.DestaqueRefused) as exc:
+        svc.check_destaque_write(db, "a", {"destaque_no_site": 1})
+    assert "oculto do site" in exc.value.detail
+    # same refusal when one PATCH hides and features together
+    db2 = _Client(_featured_rows({}))
+    with pytest.raises(svc.DestaqueRefused):
+        svc.check_destaque_write(db2, "a", {"exibir_no_site": False, "destaque_no_site": 1})
+
+
+def test_hiding_a_featured_product_is_refused():
+    db = _Client(_featured_rows({"a": 1}))
+    with pytest.raises(svc.DestaqueRefused) as exc:
+        svc.check_destaque_write(db, "a", {"exibir_no_site": False})
+    assert "Remova o destaque" in exc.value.detail
+    # explicit un-feature + hide in one PATCH is fine
+    svc.check_destaque_write(db, "a", {"exibir_no_site": False, "destaque_no_site": None})
+
+
+def test_unrelated_patch_does_no_lookup():
+    db = _Client(_featured_rows({"a": 1}))
+    svc.check_destaque_write(db, "a", {"nome": "x"})
+    assert db.calls == 0
+
+
+def test_router_maps_refusal_and_allows_explicit_null():
+    src = (BACKEND / "app" / "routers" / "products.py").read_text()
+    assert "check_destaque_write" in src and "DestaqueRefused" in src
+    assert '"destaque_no_site" in body.model_fields_set' in src  # explicit null survives exclude_none
+
+
+def test_migration_100_destaque_constraints():
+    sql = migration_sql(BACKEND / "migrations", "products_exibir_no_site")
+    assert "destaque_no_site smallint" in sql
+    assert "destaque_no_site BETWEEN 1 AND 6" in sql
+    assert "CHECK (destaque_no_site IS NULL OR exibir_no_site)" in sql
+    assert "UNIQUE INDEX" in sql
+    assert "ON public.products (destaque_no_site) WHERE destaque_no_site IS NOT NULL" in sql
+    for pos, slug in enumerate(("agents", "social-wiring", "erp-imobiliario", "commerce",
+                                "therapy-platform", "igig"), start=1):
+        assert f"('{slug}', {pos})" in sql
+    assert "NOT EXISTS (SELECT 1 FROM public.products WHERE destaque_no_site IS NOT NULL)" in sql
