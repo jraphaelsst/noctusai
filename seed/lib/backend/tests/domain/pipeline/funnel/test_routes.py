@@ -354,6 +354,55 @@ class TestLoseReopenArchive:
         assert fn.client.post(fn.url(f"/cards/{CARD}/perder"), json={"motivo_codigo": "preco"}, headers=HEADERS).status_code == 404
 
 
+class TestStatusEventsInHistory:
+    def _events(self, fn, cid):
+        return [(m["kind"], m["motivo"], m["de_etapa_id"], m["para_etapa_id"]) for m in fn.movimentos(cid) if m["kind"] != "entrada"]
+
+    def test_perder_writes_a_perdido_event_with_the_motivo(self, fn):
+        cid = fn.add_card(etapa="entrada")
+        fn.client.post(fn.url(f"/cards/{cid}/perder"), json={"motivo_codigo": "outro", "motivo_texto": "sumiu"}, headers=HEADERS)
+        e = fn.stages["entrada"]
+        assert self._events(fn, cid) == [("perdido", "Outro: sumiu", e, e)]
+        row = fn.movimentos(cid)[0]
+        assert row["org_id"] == fn.effective_org and row["responsavel_id"] == USER
+
+    def test_perder_without_text_records_the_reason_label(self, fn):
+        cid = fn.add_card(etapa="entrada")
+        fn.client.post(fn.url(f"/cards/{cid}/perder"), json={"motivo_codigo": "preco"}, headers=HEADERS)
+        assert self._events(fn, cid)[0][:2] == ("perdido", "Preço")
+
+    def test_reabrir_and_arquivar_write_their_events(self, fn):
+        cid = fn.add_card(etapa="entrada", status="perdido")
+        fn.client.post(fn.url(f"/cards/{cid}/reabrir"), headers=HEADERS)
+        fn.client.post(fn.url(f"/cards/{cid}/arquivar"), headers=HEADERS)
+        assert [e[0] for e in self._events(fn, cid)] == ["reaberto", "arquivado"]
+
+    def test_refused_and_no_op_calls_write_no_event(self, fn):
+        open_ = fn.add_card(etapa="entrada")
+        lost = fn.add_card(etapa="entrada", status="perdido")
+        archived = fn.add_card(etapa="entrada", status="arquivado")
+        fn.client.post(fn.url(f"/cards/{open_}/reabrir"), headers=HEADERS)  # no-op
+        fn.client.post(fn.url(f"/cards/{lost}/perder"), json={"motivo_codigo": "preco"}, headers=HEADERS)  # 409
+        fn.client.post(fn.url(f"/cards/{open_}/perder"), json={"motivo_codigo": "zzz"}, headers=HEADERS)  # 422
+        fn.client.post(fn.url(f"/cards/{archived}/arquivar"), headers=HEADERS)  # 409
+        assert fn.movimentos() == []
+
+    def test_card_in_no_stage_records_a_null_stage_event(self, fn):
+        cid = fn.add_card(etapa=None)
+        fn.client.post(fn.url(f"/cards/{cid}/arquivar"), headers=HEADERS)
+        assert self._events(fn, cid) == [("arquivado", None, None, None)]
+
+    def test_movimentos_endpoint_serves_the_event_kinds(self, fn):
+        cid = fn.add_card(etapa="entrada")
+        fn.client.post(fn.url(f"/cards/{cid}/perder"), json={"motivo_codigo": "preco"}, headers=HEADERS)
+        fn.client.post(fn.url(f"/cards/{cid}/reabrir"), headers=HEADERS)
+        for i, row in enumerate(fn.movimentos(cid)):
+            row["created_at"] = f"2026-02-0{i + 1}T00:00:00+00:00"
+        items = fn.client.get(fn.url(f"/cards/{cid}/movimentos"), headers=HEADERS).json()["data"]["items"]
+        assert [i["kind"] for i in items] == ["reaberto", "perdido"]
+        assert items[1]["motivo"] == "Preço" and items[1]["para_etapa"]["slug"] == "entrada"
+
+
 class TestActions:
     def test_action_returns_card_and_efeitos(self, fn):
         cid = fn.add_card(etapa="proposta")

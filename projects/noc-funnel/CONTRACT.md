@@ -61,6 +61,8 @@ Every write is `log_action`-ed; movimentos are append-only; **no write on a 4xx*
   `cards` is cut to `limite_por_etapa` (default 50, max 1000). Cards in no active stage appear in `/board/orfaos`.
 - **Movimentos.** Newest first; `de_etapa`/`para_etapa` are `{id,label,slug}|null` (a renamed stage reads renamed);
   `ator` is `{id,nome}|null`; `next_cursor` is opaque.
+- **Status events are history.** `perder`, `reabrir` and `arquivar` each append a movimento: item `kind` = `perdido` | `reaberto` | `arquivado` (stage moves and the entry row are `movimento`); both stage fields repeat the card's current stage (`null` for a card in no stage); `perdido` carries `motivo` = `"<reason label>"` or `"<reason label>: <free text>"`. No-op or refused calls write nothing. The history table needs the `kind` column (`pipeline_migration` adds it idempotently).
+- **Outcomes are statuses, not columns.** `FunnelConfig` refuses `ganho`/`perdido` in `pipeline.stage_roles`; `ganho` comes only from a product action, `perdido` from `/perder`.
 - **Access tier.** The board router is created `make_router(tier=cfg.tenancy, guard=auth_dependency)`: platform funnel
   => `platform` (platform-admin only); org funnel => `org`.
 
@@ -70,7 +72,7 @@ Every write is `log_action`-ed; movimentos are append-only; **no write on a 4xx*
 2. `mover-etapa` carries `extra` as a NESTED object (`{para_etapa_id, novo_indice?, motivo?, extra:{...}}`); only keys declared in `meta.gates[papel].inputs` reach the gate.
 3. `/movimentos` items are timeline-shaped (`kind:"movimento"`, `ocorrido_em`) plus `total` and `next_cursor`.
 4. `mover-etapa`, `perder`, `reabrir`, `arquivar`, PATCH return the bare Card DTO (inside `{data}`); `acoes/{codigo}` returns `{card, efeitos}`.
-5. DIVERGENCE (BE keeps the platform envelope): a 409 `gate_refused` is `{"error":{"code":"gate_refused","message":<first pendencia message>,"details":{"gate":..., "pendencias":[{codigo,mensagem}]}}}` -- NOT top-level `mensagem`/`pendencias`. FE should read `error.details.pendencias` / `error.message`.
+5. CANONICAL (decided by tech-lead): errors use the platform envelope `{"error":{"code","message","details"}}`; the consumer MUST mount the seed `app_exception_handler` (and `http_exception_handler`) or these render as 500/plain. A 409 `gate_refused` is `{"error":{"code":"gate_refused","message":<first pendencia message>,"details":{"gate":..., "pendencias":[{codigo,mensagem}]}}}` -- never top-level. The FE reads `error.details.pendencias` / `error.message`.
 6. `status` default `aberto`; `todos` supported.
 7. Filters (`busca`, `responsavel_id`, `limite_por_etapa`) are server-side.
 8. `meta.lost_reasons` drives the lose dialog; `motivo_obrigatorio`/`motivo_desconhecido` are 422 with `error.code`.

@@ -41,6 +41,10 @@ Tenancy = Literal["org", "platform"]
 #: maps each onto whatever the product's column actually stores.
 CANONICAL_STATUSES: tuple[str, ...] = ("aberto", "ganho", "perdido", "arquivado")
 
+#: Outcomes are STATUSES, never columns (owner decision 2026-11-07): a stage may not carry a
+#: won/lost role. `ganho` comes from a product action, `perdido` from `/perder`.
+FORBIDDEN_STAGE_ROLES = frozenset({"ganho", "perdido"})
+
 #: Columns the organ owns — a product may not expose them as editable `campos`
 #: (a PATCH could otherwise move a card between tenants, stages or statuses
 #: while skipping the gates and the history).
@@ -194,6 +198,12 @@ class FunnelConfig:
                 "getter filters the entity table by org_id, which a platform card table does not carry"
             )
 
+        outcome_roles = FORBIDDEN_STAGE_ROLES & set(self.pipeline.stage_roles)
+        if outcome_roles:
+            raise ValueError(
+                f"FunnelConfig: pipeline.stage_roles {sorted(outcome_roles)} -- outcomes are statuses, "
+                "not stage columns (use a product action for 'ganho' and /perder for 'perdido')"
+            )
         for papel in self.gates:
             if papel not in self.pipeline.stage_roles:
                 raise ValueError(

@@ -107,18 +107,22 @@ def _history(cfg: PipelineConfig, schema: str, tier: str) -> str:
     return f"""-- Stage-transition history. APPEND-ONLY: the trigger refuses UPDATE/DELETE.
 -- `entidade_id` is deliberately not an FK (one column cannot reference every
 -- pipeline's card table); `responsavel_id` is nullable (system moves) and not
--- an FK (the user table differs per product).
+-- an FK (the user table differs per product). `kind` = mover | entrada | perdido |
+-- reaberto | arquivado; status events repeat the card's current stage in both
+-- columns (`para_etapa_id` is NULL only for a card that sits in no stage).
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id         UUID NOT NULL,
     pipeline       TEXT NOT NULL,
     entidade_id    UUID NOT NULL,
 {cliente}    de_etapa_id    UUID REFERENCES {schema}.{st}(id),
-    para_etapa_id  UUID NOT NULL REFERENCES {schema}.{st}(id),
+    para_etapa_id  UUID REFERENCES {schema}.{st}(id),
+    kind           TEXT NOT NULL DEFAULT 'mover',
     responsavel_id UUID,
     motivo         TEXT,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {schema}.{t} ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'mover';
 CREATE INDEX IF NOT EXISTS idx_{t}_entidade ON {schema}.{t} (org_id, pipeline, entidade_id, created_at DESC);
 CREATE OR REPLACE FUNCTION {schema}.{t}_append_only()
 RETURNS TRIGGER

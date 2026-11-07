@@ -50,6 +50,8 @@ logger = logging.getLogger(__name__)
 
 #: Cards returned per column by default; counts and totals always cover ALL of them.
 LIMITE_CARDS_PADRAO = 50
+#: history `kind` column -> the `kind` served on a `/movimentos` item.
+_EVENT_KINDS = {"mover": "movimento", "entrada": "movimento", "perdido": "perdido", "reaberto": "reaberto", "arquivado": "arquivado"}
 _DTO_KEYS = frozenset(
     {"titulo", "subtitulo", "valor", "responsavel", "badges", "campos", "hub_entity_id", "status"}
 )
@@ -260,6 +262,27 @@ def _first_stage(db: Any, cfg: FunnelConfig, org_id: str) -> dict:
 # ───────────────────────────── writes ─────────────────────────────
 
 
+def _record_event(
+    db: Any, cfg: FunnelConfig, org_id: str, row: dict, kind: str, user_id: Any, motivo: str | None = None
+) -> None:
+    """Append a status event (perdido / reaberto / arquivado) to the history.
+    The card's current stage fills both stage columns."""
+    stage_id = str(row["etapa_id"]) if row.get("etapa_id") else None
+    event = {
+        "org_id": org_id,
+        "pipeline": cfg.pipeline.pipeline,
+        "entidade_id": str(row["id"]),
+        "de_etapa_id": stage_id,
+        "para_etapa_id": stage_id,
+        "kind": kind,
+        "responsavel_id": str(user_id) if user_id else None,
+        "motivo": motivo,
+    }
+    if cfg.pipeline.cliente_field:
+        event["cliente_id"] = row.get(cfg.pipeline.cliente_field)
+    db.table(cfg.pipeline.history_table).insert(event).execute()
+
+
 def _record_entry(db: Any, cfg: FunnelConfig, org_id: str, row: dict, stage_id: str, user_id: Any) -> None:
     """History row for a card ENTERING the board (`de_etapa_id` NULL) — without
     it a card's history starts at its first move and "how long did it sit in
@@ -270,6 +293,7 @@ def _record_entry(db: Any, cfg: FunnelConfig, org_id: str, row: dict, stage_id: 
         "entidade_id": str(row["id"]),
         "de_etapa_id": None,
         "para_etapa_id": stage_id,
+        "kind": "entrada",
         "responsavel_id": str(user_id) if user_id else None,
         "motivo": None,
     }
@@ -405,7 +429,7 @@ def lose_card(db: Any, cfg: FunnelConfig, ctx: PipelineContext, card_id: str, bo
     texto = (body.get("motivo_texto") or "").strip() or None
     if reason.exige_texto and texto is None:
         raise motivo_obrigatorio("motivo_texto")
-    return _update_card(
+    row = _update_card(
         db,
         cfg,
         org_id,
@@ -416,6 +440,8 @@ def lose_card(db: Any, cfg: FunnelConfig, ctx: PipelineContext, card_id: str, bo
             "motivo_perda": texto,
         },
     )
+    _record_event(db, cfg, org_id, current, "perdido", ctx.user_id, f"{reason.label}: {texto}" if texto else reason.label)
+    return row
 
 
 def reopen_card(db: Any, cfg: FunnelConfig, ctx: PipelineContext, card_id: str) -> tuple[dict, bool]:
@@ -432,6 +458,7 @@ def reopen_card(db: Any, cfg: FunnelConfig, ctx: PipelineContext, card_id: str) 
         card_id,
         {cfg.status_field: cfg.status_stored("aberto"), "motivo_perda_codigo": None, "motivo_perda": None},
     )
+    _record_event(db, cfg, org_id, current, "reaberto", ctx.user_id)
     return row, True
 
 
@@ -441,7 +468,9 @@ def archive_card(db: Any, cfg: FunnelConfig, ctx: PipelineContext, card_id: str)
     current = get_card_row(db, cfg, org_id, card_id)
     if cfg.status_canonical(current.get(cfg.status_field)) == "arquivado":
         raise card_fechado("arquivado")
-    return _update_card(db, cfg, org_id, card_id, {cfg.status_field: cfg.status_stored("arquivado")})
+    row = _update_card(db, cfg, org_id, card_id, {cfg.status_field: cfg.status_stored("arquivado")})
+    _record_event(db, cfg, org_id, current, "arquivado", ctx.user_id)
+    return row
 
 
 # ───────────────────────────── history ─────────────────────────────
@@ -496,7 +525,7 @@ def list_movimentos(
     items = [
         {
             "id": str(r["id"]),
-            "kind": "movimento",
+            "kind": _EVENT_KINDS.get(r.get("kind") or "mover", "movimento"),
             "ocorrido_em": r.get("created_at"),
             "de_etapa": labels.get(str(r["de_etapa_id"])) if r.get("de_etapa_id") else None,
             "para_etapa": labels.get(str(r.get("para_etapa_id"))),
