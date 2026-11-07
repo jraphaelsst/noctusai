@@ -7,7 +7,7 @@
  * (`LeadDetail.tsx`) for the activity timeline + quick actions.
  */
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Download, Mail, MessageCircle, TrendingUp, Users } from 'lucide-react';
 import {
   Badge, Button, EmptyState, ErrorState, FilterBar, Skeleton, StatTile, StatTileRow, TableSkeleton,
@@ -171,7 +171,15 @@ export function Leads() {
                   className="cursor-pointer border-t border-border hover:bg-muted/40"
                   onClick={() => navigate(`/admin/website/leads/${lead.id}`)}
                 >
-                  <td className="p-2 font-medium text-foreground">{lead.name}</td>
+                  <td className="p-2 font-medium text-foreground">
+                    <Link
+                      to={`/admin/website/leads/${lead.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {lead.name}
+                    </Link>
+                  </td>
                   <td>{SOURCE_LABEL[lead.source] ?? lead.source}</td>
                   <td><Badge variant="outline">{STAGE_LABEL[lead.stage] ?? lead.stage}</Badge></td>
                   <td>{lead.email ?? lead.phone_e164 ?? '—'}</td>

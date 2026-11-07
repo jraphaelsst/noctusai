@@ -39,7 +39,7 @@
 
     /* Muted System - Cinza suave pastel */
     --muted: 0 0% 94%;
-    --muted-foreground: 0 0% 50%;
+    --muted-foreground: 0 0% 42%;
 
     /* Accent - Cinza claro pastel para hovers */
     --accent: 210 20% 93%;
@@ -63,7 +63,7 @@
     --info-light: 217 60% 92%;
 
     /* System Colors */
-    --destructive: 0 60% 70%;
+    --destructive: 0 62% 45%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 0 0% 88%;
@@ -110,7 +110,7 @@
     --popover: 0 0% 11%;
     --popover-foreground: 0 0% 92%;
 
-    --primary: 220 10% 50%;
+    --primary: 220 10% 46%;
     --primary-foreground: 0 0% 100%;
     --primary-light: 220 10% 70%;
     --primary-dark: 220 10% 30%;
