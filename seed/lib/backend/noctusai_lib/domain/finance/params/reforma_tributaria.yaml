@@ -1,5 +1,279 @@
-# Family: reforma_tributaria
-# Row contract (see params/__init__.py): key, value, unit, scope{regime,anexo}, vigencia_de, vigencia_ate, norma, fonte_url[>=1],
-# tier, verificado_em, verificado_por, revalidar_em, notas. Money = int centavos; rates = Decimal as STRING (never a YAML float).
-# Rows are added only with a verified source -- never from memory.
-rows: []
+# Family: reforma_tributaria -- Reforma tributaria (EC 132 / LC 214): CBS, IBS, transicao ICMS/ISS, Simples.
+# Source: accountant online research 2026-11-07, converted programmatically (values untouched except: regime vocabulary
+# presumido/real -> lucro_presumido/lucro_real, empty scope -> regime ["*"], MEI CBS/IBS sub-centavo amounts unit text -> brl).
+# Row contract: see params/__init__.py and registry.py. Money = int centavos (brl = decimal reais); rates = Decimal strings.
+rows:
+- key: reforma.cbs.aliquota_teste
+  value: '0.009'
+  unit: ratio
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+  vigencia_de: 2026-01-01
+  vigencia_ate: 2026-12-31
+  norma: EC 132/2023, ADCT art. 125 caput
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Compensavel com PIS/Cofins (par. 1), senao outro tributo federal ou ressarcimento em 60 dias (par. 2). Dispensa de recolhimento para
+    quem cumpre obrigacoes acessorias ''nos termos de lei complementar'' (par. 4) - mecanica da LC 214 arts. 343-348 NAO lida. Aplicacao ao Simples
+    em 2026: OPEN (scope exclui simples/mei).'
+- key: reforma.ibs.aliquota_teste_estadual
+  value: '0.001'
+  unit: ratio
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+  vigencia_de: 2026-01-01
+  vigencia_ate: 2026-12-31
+  norma: EC 132/2023, ADCT art. 125 caput
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Idem CBS (par. 1-4). Arrecadacao financia o CG-IBS e o fundo de compensacao (par. 3).
+- key: reforma.cbs.cobranca_plena.inicio
+  value: '2027-01-01'
+  unit: date
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: EC 132/2023, ADCT art. 126 I a
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Aliquota de referencia da CBS 2027+ e fixada por resolucao do Senado (LC 214 art. 18, nao lida) - valor OPEN, nao registrado.
+- key: reforma.pis_cofins.extincao
+  value: '2027-01-01'
+  unit: date
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: EC 132/2023, ADCT art. 126 II
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Condicionada a 'desde que instituida' a CBS (instituida pela LC 214/2025). No Simples, Cofins/PIS saem da reparticao e a CBS entra (Res.
+    CGSN 190 Anexos 2027).
+- key: reforma.ibs.aliquota_estadual
+  value: '0.0005'
+  unit: ratio
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: EC 132/2023, ADCT art. 127 caput
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: reforma.ibs.aliquota_municipal
+  value: '0.0005'
+  unit: ratio
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: EC 132/2023, ADCT art. 127 caput
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: reforma.cbs.reducao_aliquota_pp
+  value: '0.001'
+  unit: ratio
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: EC 132/2023, ADCT art. 127, clausula de reducao da CBS
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Reducao de 0,1 ponto percentual sobre a aliquota da CBS (nao e a aliquota). Reflexo no Simples: 6a faixa dos Anexos -0,1 p.p. em 2027-2028.'
+- key: reforma.icms_iss.fracao_aliquota
+  value: '0.9'
+  unit: ratio
+  scope:
+    regime:
+    - '*'
+  vigencia_de: 2029-01-01
+  vigencia_ate: 2029-12-31
+  norma: EC 132/2023, ADCT art. 128
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Fracao das aliquotas fixadas na legislacao vigente (9/10).
+- key: reforma.icms_iss.fracao_aliquota
+  value: '0.8'
+  unit: ratio
+  scope:
+    regime:
+    - '*'
+  vigencia_de: 2030-01-01
+  vigencia_ate: 2030-12-31
+  norma: EC 132/2023, ADCT art. 128
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: reforma.icms_iss.fracao_aliquota
+  value: '0.7'
+  unit: ratio
+  scope:
+    regime:
+    - '*'
+  vigencia_de: 2031-01-01
+  vigencia_ate: 2031-12-31
+  norma: EC 132/2023, ADCT art. 128
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: reforma.icms_iss.fracao_aliquota
+  value: '0.6'
+  unit: ratio
+  scope:
+    regime:
+    - '*'
+  vigencia_de: 2032-01-01
+  vigencia_ate: 2032-12-31
+  norma: EC 132/2023, ADCT art. 128
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: reforma.icms_iss.extincao
+  value: '2033-01-01'
+  unit: date
+  scope:
+    regime:
+    - '*'
+  vigencia_de: 2033-01-01
+  vigencia_ate: null
+  norma: EC 132/2023, ADCT art. 129
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: reforma.lc214.anexos_simples.inicio
+  value: '2027-01-01'
+  unit: date
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: LC 214/2025 art. 544 III (abrange arts. 519 a 534)
+  fonte_url:
+  - https://modeloinicial.com.br/lei/LCP-214-2025/lei-complementar-214/art-544
+  tier: publicacao_tecnica
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: 2026-12-15
+  notas: Art. 519 (Anexos I-V da LC 123 com redacao dos Anexos XVIII-XXII da LC 214) produz efeitos em 2027-01-01. Espelho mostra 2 versoes do
+    inciso III (alteracao posterior acrescentou arts. 168-171, 309-315, 444, 462); 519-534 constam nas duas. Planalto lcp214.htm nao foi lido
+    ate o art. 544 (pagina truncou no art. 233).
+- key: simples.ibs_cbs.regime_regular.janela_semestre_jan
+  value: 09-01..09-30
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 40-D I (incl. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Opcao/renuncia ao IBS/CBS ''por fora'' com efeito em 1/jan do ano seguinte. Para 1o sem. 2027 = 01-30/09/2026: ENCERRADA (P&R 2.27).
+    Opcao sem renuncia se mantem. MEI excluido. Vedado ''por dentro'' a quem recebeu ressarcimento de creditos (art. 40-E).'
+- key: simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan
+  value: 11-30
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 40-D par. 2 I (incl. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'A opcao feita em setembro pode ser cancelada (irretratavelmente) ate 30/11 do mesmo ano. Para 1o sem. 2027: ate 2026-11-30 - AINDA ABERTO
+    em 2026-11-07.'
+- key: simples.ibs_cbs.regime_regular.janela_semestre_jul
+  value: 03-01..03-31
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-03-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 40-D II (incl. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Efeito em 1/jul do mesmo ano. Primeira janela: 2027-03-01..2027-03-31 (efeito 2027-07-01). Cancelamento ate 31/05 (par. 2 II). Inicio
+    de atividade: opcao junto com a do Simples, efeito na inscricao do CNPJ (par. 3-4).'

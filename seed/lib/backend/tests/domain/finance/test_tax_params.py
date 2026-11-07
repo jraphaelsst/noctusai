@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -30,13 +31,57 @@ def mk(tmp_path: Path, rows, fam="simples"):
     return load_registry(tmp_path, today=TODAY)
 
 
-def test_shipped_yaml_loads_and_values():
+def test_whole_shipped_registry_loads_and_counts():
     reg = load_registry(today=TODAY)
-    assert param("simples.fator_r.limiar", on=TODAY, registry=reg).value == "0.28"
-    assert param("obrigacoes.das.dia_vencimento", on=TODAY, scope={"regime": "mei"}, registry=reg).value == 20
-    assert param("obrigacoes.das.dia_vencimento", on=TODAY, scope={"regime": "simples"}, registry=reg).value == 20
-    assert param("nfse.nacional.obrigatoria_me_epp_desde", on=TODAY, registry=reg).unit == "date"
-    assert param("mei.relatorio_mensal.dia_limite", on=TODAY, registry=reg).value == 20
+    assert len(reg.rows) == 297
+
+
+def test_shipped_yaml_values():
+    reg = load_registry(today=TODAY)
+    p = lambda k, on=TODAY, **sc: param(k, on=on, scope=sc or None, registry=reg)  # noqa: E731
+    assert p("simples.fator_r.limiar").value == Decimal("0.28")
+    assert p("simples.anexo_iii.faixa_1.aliquota_nominal", anexo="III").value == Decimal("0.06")
+    assert p("simples.anexo_v.faixa_6.aliquota_nominal", on=date(2027, 6, 1), anexo="V").value == Decimal("0.304")
+    assert p("simples.anexo_v.faixa_6.aliquota_nominal", on=date(2026, 6, 1), anexo="V").value == Decimal("0.305")
+    assert p("obrigacoes.das.vencimento_dia").value == 20
+    assert p("nfse.padrao_nacional.obrigatorio_me_epp_simples.inicio").unit == "date"
+    cbs = p("mei.das.cbs.valor_mensal", on=date(2027, 3, 1))
+    assert cbs.unit == "brl" and cbs.value == Decimal("0.994")
+    assert p("mei.relatorio_mensal_receitas.obrigacao").value == "manter_e_apresentar_quando_solicitado"
+    with pytest.raises(ParamNotDefined):  # unsourced "dia 20" must not exist
+        p("mei.relatorio_mensal.dia_limite")
+    with pytest.raises(ParamNotDefined):  # DAS-MEI due date still open: mei is NOT in the simples row's scope
+        p("obrigacoes.das.vencimento_dia", regime="mei")
+
+
+def test_scope_extensions_and_regime_vocabulary(tmp_path):
+    reg = mk(tmp_path, [row(scope={"regime": ["presumido", "real"], "anexo": ["III", "V"], "porte": ["me"], "cnae": "6201-5/01"})])
+    sc = reg.rows[0].scope
+    assert sc.regime == ["lucro_presumido", "lucro_real"]
+    assert param("x.a", on=TODAY, scope={"regime": "lucro_real", "anexo": "V", "porte": "me"}, registry=reg)
+    with pytest.raises(ParamNotDefined):
+        param("x.a", on=TODAY, scope={"anexo": "I"}, registry=reg)
+    with pytest.raises(ParamRegistryError):
+        mk(tmp_path, [row(scope={"regime": ["bogus"]})])
+    assert mk(tmp_path, [row(scope={})]).rows[0].scope.regime == ["*"]
+
+
+def test_distinct_scope_dims_do_not_overlap_but_same_do(tmp_path):
+    mk(tmp_path, [row(scope={"regime": ["simples"], "anexo": "III"}), row(scope={"regime": ["simples"], "anexo": "V"}, value="0.2")])
+    with pytest.raises(ParamRegistryError, match="overlapping"):
+        mk(tmp_path, [row(scope={"regime": ["simples"], "anexo": ["III", "V"]}), row(scope={"regime": ["simples"], "anexo": "V"})])
+
+
+def test_value_coercion_per_unit(tmp_path):
+    reg = mk(tmp_path, [row(key="k.int", unit="brl_centavos", value="480000000"), row(key="k.dia", unit="dia_do_mes", value="20"),
+                        row(key="k.brl", unit="brl", value="0.994"), row(key="k.pct", unit="pct", value="6.5")])
+    g = lambda k: param(k, on=TODAY, registry=reg).value  # noqa: E731
+    assert g("k.int") == 480000000 and isinstance(g("k.int"), int)
+    assert g("k.dia") == 20 and isinstance(g("k.dia"), int)
+    assert g("k.brl") == Decimal("0.994") and g("k.pct") == Decimal("6.5")
+    for bad in ({"unit": "brl_centavos", "value": "1.5"}, {"unit": "ratio", "value": "abc"}, {"unit": "dia_do_mes", "value": "x"}):
+        with pytest.raises(ParamRegistryError):
+            mk(tmp_path, [row(**bad)])
 
 
 def test_overlap_refused(tmp_path):
@@ -86,7 +131,7 @@ def test_ambiguous_without_scope(tmp_path):
     reg = mk(tmp_path, [row(scope={"regime": ["simples"]}), row(scope={"regime": ["mei"]}, value="0.2")])
     with pytest.raises(ParamAmbiguous):
         param("x.a", on=TODAY, registry=reg)
-    assert param("x.a", on=TODAY, scope={"regime": "mei"}, registry=reg).value == "0.2"
+    assert param("x.a", on=TODAY, scope={"regime": "mei"}, registry=reg).value == Decimal("0.2")
 
 
 def test_stale_verificacao_and_revalidar_override(tmp_path):
