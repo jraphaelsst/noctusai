@@ -21,7 +21,7 @@ drifts_surfaced:
 
 alternatives_considered:
   - "Extending an existing stepper: find_reusable_component returned none."
-  - "framer-motion: not in seed/lib/frontend/package.json, so CSS only."
+  - "Motion is available via the @noctusai/lib/marketing subpath only (landing scope); the authenticated wizard stays CSS-only so the app chunk carries no animation code."
 
 manual_validation_log: []
 integration_test_status: unknown
