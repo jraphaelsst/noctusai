@@ -22,19 +22,14 @@ import {
   useRevokeGrant,
   useRotateGrant,
   type Grant,
-  type GrantStatus,
+  GRANT_STATUS_BADGE,
 } from "@/hooks/useGrants";
 import { ApiError, errorMessage } from "@/lib/errors";
 
 const INPUT_CLASS =
   "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
 
-const STATUS_BADGE: Record<GrantStatus, { label: string; variant: "default" | "destructive" | "muted" }> = {
-  ativo: { label: "Ativo", variant: "default" },
-  pendente: { label: "Pendente", variant: "muted" },
-  revogado: { label: "Revogado", variant: "muted" },
-  falhou: { label: "Falhou", variant: "destructive" },
-};
+const STATUS_BADGE = GRANT_STATUS_BADGE;
 
 const EXPIRACOES: ReadonlyArray<{ valor: string; rotulo: string }> = [
   { valor: "", rotulo: "Sem expiração" },
@@ -55,7 +50,7 @@ function NovaConexaoDialog({ onClose }: { onClose: () => void }) {
   const opcoes = useGrantOpcoes(busca.trim());
   const create = useCreateGrant();
 
-  const produtos = opcoes.data?.produtos ?? [];
+  const produtos = useMemo(() => opcoes.data?.produtos ?? [], [opcoes.data?.produtos]);
   const orgs = opcoes.data?.orgs ?? [];
   const agentes = useMemo(() => [...new Set(produtos.flatMap((p) => p.agent_keys))].sort(), [produtos]);
   const produtosDoAgente = produtos.filter((p) => p.agent_keys.includes(agentKey));
