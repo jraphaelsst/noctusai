@@ -12,6 +12,8 @@ Detectors (each is a function ``(...) -> detalhe | None``; ``None`` = clean):
   regex that is DATA) or a link that no tool returned in this thread;
 * ``termina_sem_pergunta`` -- the reply does not end in a question although the participant stays active
   and nothing handed off / concluded / ended;
+* ``transferencia_sem_handoff`` -- the reply PROMISES a transfer to a person ("vou te transferir", "um especialista vai
+  falar com você") although no ``handoff`` call happened in the turn (blocks by default: one corrective re-run);
 * ``perfil_citado_sem_registro`` -- the lead answered the criterion being asked (matched ONLY through the
   option synonyms the standard's rows list) and no ``registrar_perfil`` for it happened;
 * ``fallback_enviado`` -- the tool loop was exhausted (the reply is the fallback or nothing);
@@ -82,6 +84,7 @@ __all__ = [
     "palavra_de_parar",
     "pii_na_resposta",
     "valor_sem_ferramenta",
+    "transferencia_sem_handoff",
     "sinal_alegacao",
     "casar_padroes",
     "detectar_vazamento",
@@ -614,6 +617,47 @@ def valor_sem_ferramenta(resposta: str, textos_com_valor: Iterable[str]) -> dict
     return {"valores": len(sem)} if sem else None
 
 
+# ── a promised transfer nobody made ─────────────────────────────────────────
+
+#: The people a promise may name (accents folded; matched on the de-obfuscated skeleton).
+_PESSOAS: tuple[str, ...] = (
+    "corretor\\w*", "atendente\\w*", "humano\\w*", "pessoa\\w*", "especialista\\w*", "consultor\\w*", "gerente\\w*",
+    "equipe", "time", "alguem", "colega\\w*", "responsavel", "setor",
+)
+_PESSOA = "(?:" + "|".join(_PESSOAS) + ")"
+#: A COMMITMENT to move the lead to a person (a first-person future / progressive / perfect form). Modal offers ("posso
+#: te transferir", "quer que eu te transfira") carry none of these anchors, so they never match.
+_PROMESSA_TRANSFERENCIA: tuple[re.Pattern[str], ...] = tuple(re.compile(p) for p in (
+    r"\b(?:vou|irei|vamos|iremos)\s+(?:ja\s+)?(?:te\s+|lhe\s+)?(?:transferir|encaminhar)\b",
+    r"\b(?:vou|irei|vamos|iremos)\s+(?:ja\s+)?(?:te\s+|lhe\s+)?(?:passar|direcionar|colocar|conectar|chamar|apresentar|"
+    r"pedir|solicitar|acionar)\b[^.!?\n]{0,60}\b" + _PESSOA + r"\b",
+    r"\b(?:estou|to|estarei|ja\s+estou)\s+(?:te\s+|lhe\s+)?(?:transferindo|encaminhando|passando|direcionando|conectando)\b",
+    r"\b(?:ja\s+|acabei\s+de\s+)?(?:te\s+|lhe\s+)?(?:transferi|encaminhei)\b",
+    r"\b(?:um|uma|o|a|nosso|nossa|algum|alguem\s+d[aeo]\s+\w+)\s+" + _PESSOA + r"\b[^.!?\n]{0,40}\b(?:vai|ira|vao|irao)\s+"
+    r"(?:\w+\s+){0,2}?(?:falar\s+(?:com\s+)?(?:voce|vc|o\s+senhor|a\s+senhora)|te\s+(?:atender|chamar|ligar|responder|procurar)|"
+    r"entrar\s+em\s+contato|assumir|continuar|dar\s+(?:continuidade|sequencia|seguimento)|seguir\s+(?:com|o))",
+))
+#: A sentence that only OFFERS or negates is not a promise ("se quiser, vou te transferir"; "não vou te transferir").
+_NAO_E_PROMESSA = re.compile(
+    r"\b(?:se\s+(?:voce\s+|vc\s+)?(?:quiser|preferir|desejar|precisar|gostar|topar)|caso\s+(?:voce\s+)?(?:queira|prefira|deseje|precise)|"
+    r"nao\s+(?:vou|irei|vamos|posso|consigo|estou)|sem\s+que)\b")
+
+
+def transferencia_sem_handoff(resposta: str, *, transferiu_no_turno: bool) -> dict[str, Any] | None:
+    """The reply promises that a person takes over (a first-person commitment, see :data:`_PROMESSA_TRANSFERENCIA`) while no
+    ``handoff`` call happened in the turn: the promise is false and the lead waits for nobody. Never fires when the turn
+    transferred. An offer ("posso te transferir se quiser?") is no commitment and is left alone. ``detalhe`` is a count."""
+    if transferiu_no_turno or not resposta or not resposta.strip():
+        return None
+    n = 0
+    for frase in re.split(r"(?<=[.!?\n])\s+|\n", esqueleto(resposta)):
+        if _NAO_E_PROMESSA.search(frase):
+            continue
+        if any(rx.search(frase) for rx in _PROMESSA_TRANSFERENCIA):
+            n += 1
+    return {"promessas": n} if n else None
+
+
 # ── deterministic STOP (P1-3) ───────────────────────────────────────────────
 
 
@@ -740,6 +784,8 @@ class EntradaConformidade:
     links_permitidos: Iterable[str] = ()
     participante_segue_ativo: bool = True
     encerrou_ou_transferiu: bool = False
+    #: a ``handoff`` call succeeded in THIS turn (``transferencia_sem_handoff`` never fires then)
+    transferiu_no_turno: bool = False
     criterio_perguntado: Any | None = None
     registrou_perfil: bool = False
     criterios_preenchidos: Mapping[str, str] = field(default_factory=dict)
@@ -820,6 +866,10 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
                 e.resposta, padroes_efetivos("padroes_proibidos", r.parametros))))
         if ativa("valor_sem_ferramenta") is not None:
             achados.append(("valor_sem_ferramenta", valor_sem_ferramenta(e.resposta, e.textos_com_valor)))
+        if ativa("transferencia_sem_handoff") is not None:
+            achados.append((
+                "transferencia_sem_handoff",
+                transferencia_sem_handoff(e.resposta, transferiu_no_turno=e.transferiu_no_turno)))
     return [
         Violacao(nome, e.regras[nome].politica, detalhe)
         for nome, detalhe in achados if detalhe is not None

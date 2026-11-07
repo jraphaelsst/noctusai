@@ -230,6 +230,85 @@ class TestValorSemFerramenta:
         assert body["status"] == "handoff" and not body["reply"]["partes"]
 
 
+# ── a promised transfer nobody made (JL-025) ────────────────────────────────────────────────────────────
+
+class TestTransferenciaSemHandoff:
+    @pytest.mark.parametrize("resposta", [
+        "Entendo sua frustração. Vou te transferir para um corretor agora.",
+        "Vou passar para um corretor da equipe, aguarde um instante.",
+        "Um especialista vai falar com você em breve.",
+        "Já estou te encaminhando para um atendente.",
+        "Vou chamar um corretor pra te atender.",
+        "Já te transferi para o time.",
+        "VOU TE TRANSFERIR PARA UM HUMANO",
+        "Vou te trans\u200bferir para um corretor.",  # zero-width character: the skeleton sees through it
+        "O corretor vai entrar em contato com você ainda hoje.",
+    ])
+    def test_a_promise_without_the_call_is_flagged(self, resposta):
+        assert c.transferencia_sem_handoff(resposta, transferiu_no_turno=False) == {"promessas": 1}
+
+    @pytest.mark.parametrize("resposta", [
+        "Vou te transferir para um corretor agora.",
+        "Um especialista vai falar com você em breve.",
+    ])
+    def test_a_turn_that_called_handoff_never_fires(self, resposta):
+        assert c.transferencia_sem_handoff(resposta, transferiu_no_turno=True) is None
+
+    @pytest.mark.parametrize("resposta", [
+        "Posso te transferir para um corretor se quiser?",
+        "Quer que eu te transfira para um atendente?",
+        "Se você preferir, vou te transferir para um corretor.",
+        "Caso queira, um corretor pode falar com você.",
+        "Não vou te transferir agora, vamos terminar a busca juntos.",
+        "Antes de eu te transferir, qual o bairro?",
+    ])
+    def test_an_offer_or_a_negation_is_no_promise(self, resposta):
+        assert c.transferencia_sem_handoff(resposta, transferiu_no_turno=False) is None
+
+    @pytest.mark.parametrize("resposta", [
+        "", "   ", "Temos 3 opções no centro. Qual te agrada mais?", "O corretor confirma o valor. Quer visitar?",
+        "Posso passar o endereço do imóvel. Quer?", "Vou te passar as opções do bairro Centro.",
+        "A transferência do imóvel é feita no cartório.",
+    ])
+    def test_unrelated_text_is_clean(self, resposta):
+        assert c.transferencia_sem_handoff(resposta, transferiu_no_turno=False) is None
+
+    def test_the_rule_blocks_by_default_and_runs_without_a_stored_row(self):
+        assert POLITICA_PADRAO["transferencia_sem_handoff"] == "bloquear"
+        regras = FakeConformidadeStore().regras(uuid4(), uuid4())
+        assert regras["transferencia_sem_handoff"].ativo
+        e = c.EntradaConformidade(resposta="Vou te transferir para um corretor.", mensagens_lead=[], regras=regras)
+        [v] = [v for v in c.avaliar_resposta(e) if v.regra == "transferencia_sem_handoff"]
+        assert v.politica == "bloquear"
+        assert not [v for v in c.avaliar_resposta(replace(e, transferiu_no_turno=True)) if v.regra == "transferencia_sem_handoff"]
+
+    def test_a_promise_without_the_tool_triggers_the_corrected_rerun(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            say("Vou te transferir para um corretor agora."), say("Me conta o que aconteceu. Qual imóvel você viu?")]))
+        body = chan.turn(turn_body("Quero falar com um humano")).json()
+        assert "transferencia_sem_handoff" in _violacoes(body)
+        assert body["reply"]["partes"] == ["Me conta o que aconteceu. Qual imóvel você viu?"]
+        calls = [x for x in chan.provider.calls if x["method"] == "chat_with_tools"]
+        assert [m.content for m in calls[1]["messages"] if m.role == "system"][-1] == "txt:conformidade.correcao.transferencia_sem_handoff"
+
+    def test_the_same_promise_after_a_handoff_call_passes_without_a_rerun(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("handoff", motivo_codigo="outro", motivo="Cliente pediu um humano")),
+            say("Vou te transferir para um corretor agora.")]))
+        body = chan.turn(turn_body("Quero falar com um humano")).json()
+        assert "transferencia_sem_handoff" not in _violacoes(body)
+        assert len([x for x in chan.provider.calls if x["method"] == "chat_with_tools"]) == 2  # tool step + final, no re-run
+
+    def test_blocked_twice_means_silence_and_a_handoff(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            say("Vou te transferir para um corretor."), say("Um especialista vai falar com você.")]))
+        body = chan.turn(turn_body("Quero falar com um humano")).json()
+        assert body["status"] == "handoff" and not body["reply"]["partes"]
+
+
 # ── P1-3: the deterministic STOP ────────────────────────────────────────────────────────────────────────
 
 class TestStopBackstop:

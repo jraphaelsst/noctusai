@@ -504,6 +504,7 @@ The labels and descriptions for each enum value come from DB rows. The enums the
 
   **Go-live hardening (migration 063; `projects/julia-v2/GUARDRAILS.md` B12).**
   - Pattern rules (`padroes_proibidos`, `alegacao_identidade`) run a code-side floor merged under the stored patterns; a missing row still has it; readiness `regras_seguranca_sem_parametros` blocks publish while an instance has no row.
+  - Blocking detector `transferencia_sem_handoff` (JL-025): a reply that promises a transfer to a person while the turn made no `handoff` call; required text `conformidade.correcao.transferencia_sem_handoff`.
   - New blocking detector `valor_sem_ferramenta` (an R$ / % no tool, lead text or earlier reply backs) and rule `opt_out_palavras` (exact `PARAR|PARE|PARA|PAREM|SAIR|SAI|STOP|CANCELAR|CHEGA|NÃO QUERO MAIS` opts out without the model; text `runtime.confirmacao_opt_out`).
   - Inbound lead text is normalised at the schema boundary (invisible/tag characters stripped); detectors also read a de-obfuscated skeleton; a reply carrying invisible characters is blocked (`formato_suspeito`).
   - Allowlists are built from VALIDATED org specs only (report mode never trusts a failing value); `texto_base` / `atendente_nome` are validated like a spec and dropped when invalid.
