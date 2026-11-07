@@ -1193,3 +1193,44 @@ def guc_carveout_guard_sql(
         f"    BEFORE {' OR '.join(events)} ON {schema}.{table}\n"
         f"    FOR EACH ROW EXECUTE FUNCTION {fn}();"
     )
+
+
+def truncate_guard_sql(
+    *,
+    schema: str,
+    table: str,
+    errcode: str = "P0001",
+    error_message: str | None = None,
+) -> str:
+    """Emit the statement-level ``BEFORE TRUNCATE`` refusal for an append-only table.
+
+    Row triggers -- including every :func:`guc_carveout_guard_sql` guard -- never fire on ``TRUNCATE``
+    (PostgreSQL: ``TRUNCATE`` triggers are statement-level only), so an append-only table guarded by rows
+    alone can still be emptied in one statement. Pair this with the row guard. Emits
+    ``<schema>.<table>_refuse_truncate()`` (SECURITY INVOKER, pinned ``search_path``, EXECUTE revoked) and
+    the ``<table>_no_truncate`` trigger; re-runnable.
+
+    Formalized 2026-11-07 at instance #2 (the transition log's events table, then the event store's
+    ``es_events``). KB § PATTERNS/backend/event-store.md.
+    """
+    schema = _ident(schema, "schema")
+    table = _ident(table, "table")
+    message = error_message or f"{table} is append-only (TRUNCATE refused)"
+    if "'" in message:
+        raise ValueError("error_message must not contain a quote")
+    _ident(errcode.lower(), "errcode")
+    fn = f"{schema}.{table}_refuse_truncate"
+    return (
+        f"CREATE OR REPLACE FUNCTION {fn}() RETURNS trigger\n"
+        "LANGUAGE plpgsql\n"
+        f"SET search_path = pg_catalog, {schema}, pg_temp\n"
+        "AS $fn$\n"
+        "BEGIN\n"
+        f"    RAISE EXCEPTION '{message}' USING ERRCODE = '{errcode}';\n"
+        "END;\n"
+        "$fn$;\n"
+        f"REVOKE ALL ON FUNCTION {fn}() FROM PUBLIC, anon, authenticated;\n"
+        f"DROP TRIGGER IF EXISTS {table}_no_truncate ON {schema}.{table};\n"
+        f"CREATE TRIGGER {table}_no_truncate BEFORE TRUNCATE ON {schema}.{table}\n"
+        f"    FOR EACH STATEMENT EXECUTE FUNCTION {fn}();"
+    )

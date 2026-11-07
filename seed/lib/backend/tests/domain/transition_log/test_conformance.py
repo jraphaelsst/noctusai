@@ -11,15 +11,15 @@ from noctusai_lib.domain.transition_log import (
     transition_log_migration,
 )
 
-from . import pglite_client
+from noctusai_lib.testing.pglite import PgliteClient, pglite_available
 from .conformance import CASES, CONFIGS, SCHEMA, STATE_COLUMNS, STATE_DDL, STATE_DEFAULTS, Harness
 
 
 @pytest.fixture(scope="module")
 def pglite():
-    if not pglite_client.available():
+    if not pglite_available():
         pytest.skip("PGlite unavailable (needs `node` and mcp/noctusai/node/node_modules) -- the Real leg did not run")
-    client = pglite_client.PgliteClient(SCHEMA)
+    client = PgliteClient(SCHEMA)
     client.exec(STATE_DDL)
     for i, cfg in enumerate(CONFIGS.values()):
         client.exec(transition_log_migration(cfg, header=i == 0))
