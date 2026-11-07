@@ -26593,6 +26593,148 @@ def check_mcp_tools_reject_unknown_args(repo_root: Path | None = None) -> list[d
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# `check_local_pipeline_board` — backstop for the canonical funnel organ (2026-11-07).
+#
+# Products copied the board/card layer (stage columns, `mover-etapa`, card
+# grouping) four times (social-wiring, igig, erp-imobiliario, orbity). The CONSTRUCTION
+# leg is the seed funnel organ (`noctusai_lib.domain.pipeline.funnel` + FE
+# `FunnelBoard`); this keeper stops a NEW local copy in an AWAKE product:
+#   - BE: a `mover-etapa` route decorator, or a call to `move_card` /
+#     `group_into_colunas`, in a product's backend (tests excluded);
+#   - FE: a `<PipelineBoard` / `<KanbanBoard` render in a product's frontend/src
+#     (tests and `FunnelBoard.*` itself excluded).
+# A file carrying `NOC-REMEDIATE[pipeline-board-organ]:` in a comment is exempt (a
+# declared, dated deferral). RATCHET: the marker count over EVERY product on disk
+# (asleep ones included — they hold most markers) may only shrink, against
+# `mcp/noctusai/tests/pipeline_board_markers_baseline.json`. Severity `warning`
+# (shadow-first; promote on evidence). KB § PATTERNS/common/remediation-markers.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_LPB_CLASS = "pipeline-board-organ"
+_LPB_MARKER_RE = re.compile(r"^\s*(?:#|//|/\*+|\*)[^\n]*NOC-REMEDIATE\[" + _LPB_CLASS + r"\]:", re.M)
+_LPB_CALLS = frozenset({"move_card", "group_into_colunas"})
+_LPB_JSX_RE = re.compile(r"<(PipelineBoard|KanbanBoard)\b")
+_LPB_BASELINE_REL = ("mcp", "noctusai", "tests", "pipeline_board_markers_baseline.json")
+_LPB_SKIP_PARTS = frozenset({"node_modules", "__pycache__", "tests", "__tests__", "e2e", "migrations", "dist"})
+
+
+def _lpb_files(product_dir: Path) -> Iterator[Path]:
+    for sub, pats in (("backend", ("*.py",)), ("frontend/src", ("*.ts", "*.tsx"))):
+        base = product_dir / sub
+        if not base.is_dir():
+            continue
+        for pat in pats:
+            for f in sorted(base.rglob(pat)):
+                rel_parts = f.relative_to(base).parts
+                if _LPB_SKIP_PARTS & set(rel_parts) or ".test." in f.name or ".spec." in f.name:
+                    continue
+                yield f
+
+
+def _lpb_marker_files(root: Path) -> list[str]:
+    """Repo-relative files carrying the marker, over EVERY product on disk."""
+    out: list[str] = []
+    pd = root / "products"
+    if not pd.is_dir():
+        return out
+    for d in sorted(p for p in pd.iterdir() if p.is_dir() and not p.name.startswith(".")):  # product-scope: n/a (marker ratchet spans asleep products by design)
+        for f in _lpb_files(d):
+            try:
+                if _LPB_MARKER_RE.search(f.read_text(encoding="utf-8")):
+                    out.append(f.relative_to(root).as_posix())
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("check_local_pipeline_board: cannot read %s: %s", f, exc)
+    return out
+
+
+def _lpb_violations(path: Path, text: str) -> list[str]:
+    if path.suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return []
+        hits: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else ""
+                if name in _LPB_CALLS:
+                    hits.append(f"calls `{name}()` (line {node.lineno})")
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for dec in node.decorator_list:
+                    for sub in ast.walk(dec):
+                        if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "mover-etapa" in sub.value:
+                            hits.append(f"declares a `mover-etapa` route (line {node.lineno})")
+        return hits
+    if path.name.startswith("FunnelBoard."):
+        return []
+    return [f"renders `<{m.group(1)}>`" for m in _LPB_JSX_RE.finditer(text)][:1]
+
+
+def _lpb_load_baseline(root: Path) -> int | None:
+    try:
+        return int(json.loads(root.joinpath(*_LPB_BASELINE_REL).read_text(encoding="utf-8"))["count"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def refresh_pipeline_board_markers_baseline(repo_root: Path | None = None) -> int:
+    """Record the marker count. First run records; afterwards it only SHRINKS."""
+    root = repo_root or REPO_ROOT
+    current = len(_lpb_marker_files(root))
+    old = _lpb_load_baseline(root)
+    new = current if old is None else min(current, old)
+    path = root.joinpath(*_LPB_BASELINE_REL)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"count": new}, indent=2) + "\n", encoding="utf-8")
+    return new
+
+
+def check_local_pipeline_board(paths: list[str] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """No NEW product-local pipeline board/card layer in an awake product; the
+    `NOC-REMEDIATE[pipeline-board-organ]` marker count only shrinks. `paths`
+    (pre-commit) narrows REPORTING of violations. Severity ``warning`` (shadow)."""
+    root = repo_root or REPO_ROOT
+    pd = root / "products"
+    scope = {p.replace("\\", "/") for p in paths} if paths else None
+    issues: list[dict] = []
+    for d in _active_product_dirs(pd):
+        for f in _lpb_files(d):
+            rel = f.relative_to(root).as_posix()
+            if scope is not None and rel not in scope:
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("check_local_pipeline_board: cannot read %s: %s", f, exc)
+                continue
+            if _LPB_MARKER_RE.search(text):
+                continue
+            hits = _lpb_violations(f, text)
+            if hits:
+                issues.append({
+                    "product": d.name, "file": rel, "severity": "warning",
+                    "issue": (
+                        f"product-local pipeline board/card layer: {'; '.join(hits)}. Consume the seed funnel organ "
+                        f"(`noctusai_lib.domain.pipeline.funnel` BE / `FunnelBoard` FE) instead; if it genuinely cannot be "
+                        f"migrated yet, declare `NOC-REMEDIATE[{_LPB_CLASS}]: <why> — <date>` in the file "
+                        f"(KB § PATTERNS/common/remediation-markers.md)."
+                    ),
+                })
+    if scope is None:
+        base = _lpb_load_baseline(root)
+        count = len(_lpb_marker_files(root))
+        if base is None:
+            issues.append({"product": "<repo>", "file": "/".join(_LPB_BASELINE_REL), "severity": "warning",
+                           "issue": "marker baseline missing — run `--refresh-pipeline-board-markers-baseline`."})
+        elif count > base:
+            issues.append({"product": "<repo>", "file": "/".join(_LPB_BASELINE_REL), "severity": "warning",
+                           "issue": (f"{count} `NOC-REMEDIATE[{_LPB_CLASS}]` marker file(s) > baseline {base}: the ratchet only "
+                                     f"shrinks — migrate onto the funnel organ instead of marking a new file.")})
+    return issues
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Stranded branches (2026-09-19).
 #
 # Four branches sat unintegrated for 3 days–3 weeks. By the time anyone looked,

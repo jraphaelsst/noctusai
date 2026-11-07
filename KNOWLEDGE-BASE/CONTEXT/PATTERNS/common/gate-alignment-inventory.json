@@ -1355,6 +1355,15 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-local-pipeline-board": {
+   "mechanism": "scaffold: seed funnel organ noctusai_lib.domain.pipeline.funnel + FE FunnelBoard (seed/lib/frontend/src/components/pipeline/funnel/)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: no NEW product-local pipeline board/card layer (mover-etapa route, move_card/group_into_colunas call, PipelineBoard/KanbanBoard render) in an awake product; NOC-REMEDIATE[pipeline-board-organ] exempts a file and its count only shrinks.",
+   "new": true,
+   "declared": "2026-11-07",
+   "source": "KB § PATTERNS/architect/products-consume-canonical-organs.md; KB § PATTERNS/common/remediation-markers.md; Betterer-style ratchet (tooling-craft-canon §4)"
+  },
   "keeper:check-lying-loading-state": {
    "severity": "",
    "kind": "keeper",
@@ -2986,6 +2995,18 @@
    "branch": "feat/gate-alignment",
    "gates": [
     "keeper:check-findings-ledgers"
+   ]
+  },
+  {
+   "id": "D17",
+   "decision": "The pipeline board/card layer (stage columns, mover-etapa, card grouping) is ONE seed funnel organ; products consume it, never re-copy it",
+   "home": "KB § PATTERNS/architect/products-consume-canonical-organs.md",
+   "construction": "scaffold: seed funnel organ noctusai_lib.domain.pipeline.funnel (BE) + FunnelBoard (FE, seed/lib/frontend/src/components/pipeline/funnel/) - built in parallel on the seed branch",
+   "gate": "keeper:check-local-pipeline-board (shadow warning; NOC-REMEDIATE[pipeline-board-organ] exempts, count ratchets down only)",
+   "telemetry": "gate events (cli wrapper, guard-events) + marker count baseline pipeline_board_markers_baseline.json",
+   "branch": "feat/keeper-local-pipeline-board",
+   "gates": [
+    "keeper:check-local-pipeline-board"
    ]
   }
  ]

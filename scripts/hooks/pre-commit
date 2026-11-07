@@ -1215,6 +1215,16 @@ if [[ -n "$STAGED_MNR" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-ter. Local pipeline board/card layer (WARN-first SHADOW) ─
+# Keeper `check_local_pipeline_board`. Products copied the funnel board/card
+# layer 4x; the seed funnel organ (`noctusai_lib.domain.pipeline.funnel` +
+# `FunnelBoard`) is the construction leg, this is the backstop. Warning only
+# until the shadow record supports promotion (gate_alignment walls).
+STAGED_LPB=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/(backend/.*\.py|frontend/src/.*\.tsx?)$' || true)
+if [[ -n "$STAGED_LPB" ]] && have_py; then
+    "$PY" "$CLI" --check-local-pipeline-board --paths "$(echo "$STAGED_LPB" | paste -sd, -)" --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): local-pipeline-board — consume the seed funnel organ or declare NOC-REMEDIATE[pipeline-board-organ]." >&2
+fi
+
 # ─── 6e-sexies. Contract field provenance map gate (blocking, only when the ─
 # F5 generator or its map doc changed) ────────────────────────────────────
 # Keeper `check_contract_field_provenance_map` + `KB § CONTEXT/PRODUCTS/

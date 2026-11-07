@@ -1,3 +1,4 @@
+// NOC-REMEDIATE[pipeline-board-organ]: local FE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 /**
  * `<EsteiraBoard filtros onOpenPost/>` — the Esteira de Reels kanban on the seed
  * `PipelineBoard` (esteira-contract.md §6.1; UX reference: igig's EsteiraBoard).

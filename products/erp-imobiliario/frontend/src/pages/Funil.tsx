@@ -1,3 +1,4 @@
+// NOC-REMEDIATE[pipeline-board-organ]: local FE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 import { useState } from 'react';
 import { PipelineBoard } from '@noctusai/lib/components';
 import { Skeleton } from '@noctusai/seed/components/ui/skeleton';
