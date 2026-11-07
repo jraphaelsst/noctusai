@@ -186,6 +186,10 @@ export type {
   StageUpdateInput,
 } from './pipeline';
 
+// Funnel — ONE board + card for every product, declared per product (`defineFunnel` + `createFunnelHooks`).
+// Composes PipelineBoard + card-hub. KB § PATTERNS/frontend/funnel-organ.md
+export * from './pipeline/funnel';
+
 // Card hub — the entity-agnostic card organ: 3-pane detail dialog with a
 // subpage registry (rail + subpage + activity), board face, kind-registry
 // timeline, Geral subpage with named slots, and `createCardHubHooks` (the

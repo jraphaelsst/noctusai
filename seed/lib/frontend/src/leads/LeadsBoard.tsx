@@ -2,6 +2,7 @@
  * `<LeadsBoard/>` -- the funnel: a kanban column per configured stage, drag a card to move it, click it to open the
  * detail modal. Built on the seed `KanbanBoard` (sensors / a11y / drag overlay) and `useMoveLead` (optimistic move).
  */
+// NOC-REMEDIATE[pipeline-board-organ]: 3rd seed board (KanbanBoard + static stages + own move hook); converge onto FunnelBoard/PipelineBoard once leads stages are served as PipelineStage rows (KB § PATTERNS/frontend/funnel-organ.md §6) — 2026-11-07
 import { Plus } from 'lucide-react';
 import * as React from 'react';
 
