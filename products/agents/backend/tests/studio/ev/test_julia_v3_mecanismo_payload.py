@@ -181,6 +181,7 @@ def test_textos_obrigatorios_do_go_live_estao_no_payload():
         (_ARQ.parent / "julia-v3-textos.json").read_text(encoding="utf-8"))["itens"]}
     assert textos["runtime.confirmacao_opt_out"].strip()
     assert textos["conformidade.correcao.valor_sem_ferramenta"].strip()
+    assert textos["conformidade.correcao.transferencia_sem_handoff"].strip()
 
 
 def test_payload_nao_carrega_valor_de_pii_real():

@@ -749,6 +749,7 @@ async def _executar(
             links_permitidos={*turno.links_vistos, *links_anteriores},
             participante_segue_ativo=not (turno.transferiu or turno.concluiu or turno.encerrou),
             encerrou_ou_transferiu=False,
+            transferiu_no_turno=turno.transferiu,
             criterio_perguntado=padrao.criterio(estado0.proximo_criterio.chave) if estado0.proximo_criterio else None,
             registrou_perfil=bool(estado0.proximo_criterio and estado0.proximo_criterio.chave in turno.registrou_criterios),
             criterios_preenchidos={

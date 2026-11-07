@@ -128,7 +128,7 @@ products/agents/backend/app/
   code-side floor (`stores/conformidade.py`) merged under the stored rows (a missing row still has it; readiness
   `regras_seguranca_sem_parametros` blocks publish); allowlists come from `ValoresOrg.limpos` (validated specs only);
   `studio/normalizador_texto.py` is the one invisible-character / de-obfuscation module (schema boundary + detectors +
-  `spec_formatos`); `valor_sem_ferramenta` blocks an unbacked R$ / %; `opt_out_palavras` opts a lead out on an exact
+  `spec_formatos`); `valor_sem_ferramenta` blocks an unbacked R$ / %; `transferencia_sem_handoff` blocks a reply that promises a transfer to a person ("vou te transferir", "um especialista vai falar com você") when the turn made no `handoff` call (an offer such as "posso te transferir se quiser?" does not fire; blocks by default, one corrective re-run with `conformidade.correcao.transferencia_sem_handoff`); `opt_out_palavras` opts a lead out on an exact
   `PARAR|PARE|PARA|PAREM|SAIR|SAI|STOP|CANCELAR|CHEGA|NÃO QUERO MAIS` with no model call, in EVERY conversation state (paused / handed over / agent off / killed / draining too: the refusal path records it via the same `aplicar_encerramento` and answers `encerrar`+`opt_out`; see julia-v2 CONTRACT §5.2); `contexto.estado.texto_base` / `atendente_nome` are
   validated like a spec; `encaminhada: true` messages are marked for the model and never evidence.
 - Provenance + leak tripwires (migration 046, `channels/proveniencia.py`, `stores/marcadores.py`; GUARDRAILS B2/B7):

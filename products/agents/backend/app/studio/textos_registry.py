@@ -223,7 +223,7 @@ TEXTOS.update({
         "imovel_sem_ferramenta", "termina_sem_pergunta", "perfil_citado_sem_registro", "fallback_enviado",
         "pergunta_repetida", "vazamento_prompt",
         "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito", "padroes_proibidos",
-        "valor_sem_ferramenta",
+        "valor_sem_ferramenta", "transferencia_sem_handoff",
     )},
     # structural guard (a raw placeholder in a reply): optional so an older version without the row still publishes
     "conformidade.correcao.placeholder_cru": _canal("conformidade", obrigatoria=False),
