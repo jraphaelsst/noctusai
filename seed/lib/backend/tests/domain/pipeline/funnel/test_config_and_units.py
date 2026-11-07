@@ -56,6 +56,12 @@ class TestConfigGuards:
             card_hub=_hub(ensure_entity=lambda db, org, eid: {"id": eid}),
         )
 
+    @pytest.mark.parametrize("role", ["ganho", "perdido"])
+    def test_outcomes_are_statuses_so_a_won_or_lost_stage_role_is_refused(self, role):
+        pipe = replace(PIPE, stage_roles=("final", role))
+        with pytest.raises(ValueError, match="outcomes are statuses"):
+            FunnelConfig(pipeline=pipe, tenancy="org")
+
     def test_gate_on_a_role_no_stage_can_carry_is_refused(self):
         with pytest.raises(ValueError, match="stage_roles"):
             FunnelConfig(pipeline=PIPE, tenancy="org", gates={"ganho": FunnelGate("g", lambda *a: [])})
@@ -147,6 +153,11 @@ class TestPipelineMigration:
     def test_history_is_append_only(self):
         assert "BEFORE UPDATE OR DELETE ON crm.pipeline_movimentos" in self.sql
 
+    def test_history_carries_the_event_kind_and_a_nullable_destination(self):
+        assert "kind           TEXT NOT NULL DEFAULT 'mover'" in self.sql
+        assert "ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'mover'" in self.sql
+        assert "para_etapa_id  UUID REFERENCES" in self.sql
+
     def test_position_is_numeric_never_integer(self):
         assert "ADD COLUMN IF NOT EXISTS kanban_pos NUMERIC NOT NULL DEFAULT 0" in self.sql
 
@@ -193,9 +204,9 @@ class TestMovimentosGatherer:
         assert [e["id"] for e in entries] == ["m1", "m2"]
         assert entries[0] == {
             "id": "m1", "kind": "movimento", "ocorrido_em": "2026-03-01T00:00:00+00:00",
-            "ator": {"id": USER, "nome": "Rapha"}, "payload": {"de_etapa": None, "para_etapa": "Renomeada", "motivo": None},
+            "ator": {"id": USER, "nome": "Rapha"}, "payload": {"de_etapa": None, "para_etapa": "Renomeada", "motivo": None, "evento": "mover"},
         }
-        assert entries[1]["payload"] == {"de_etapa": "Renomeada", "para_etapa": "Antiga", "motivo": "x"}
+        assert entries[1]["payload"] == {"de_etapa": "Renomeada", "para_etapa": "Antiga", "motivo": "x", "evento": "mover"}
 
     def test_no_history_no_stage_read(self):
         db = MockSupabaseClient(validate_schema=False, schema="crm")

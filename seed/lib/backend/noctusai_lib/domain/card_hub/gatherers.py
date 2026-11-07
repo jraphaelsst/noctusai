@@ -229,6 +229,9 @@ def movimentos_gatherer(pipeline_cfg: "PipelineConfig") -> Gatherer:
                     "de_etapa": stages.get(str(r["de_etapa_id"])) if r.get("de_etapa_id") else None,
                     "para_etapa": stages.get(str(r.get("para_etapa_id"))),
                     "motivo": r.get("motivo"),
+                    # mover | entrada | perdido | reaberto | arquivado (a table
+                    # predating the funnel organ has no `kind` column: a move).
+                    "evento": r.get("kind") or "mover",
                 },
             }
             for r in rows
