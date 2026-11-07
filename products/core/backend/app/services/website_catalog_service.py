@@ -4,8 +4,8 @@ Fixed projection `slug, nome, descricao, icone, status`, filtered to
 `exibir_no_site = true`. `status` is derived HERE, on the server only:
 
     ativo AND deploy_scope='live'  -> disponivel
-    ativo AND deploy_scope='dev'   -> lista_de_espera
-    NOT ativo                      -> em_breve
+    ativo AND deploy_scope='dev'   -> em_breve
+    NOT ativo                      -> lista_de_espera  (whatever deploy_scope is)
 
 Raw `ativo` / `deploy_scope` / `url_base` / ports never leave this module.
 60s in-process cache (one per worker, same tradeoff as website_settings_service),
@@ -44,8 +44,8 @@ _cache: Optional[dict] = None
 
 def derive_status(ativo: bool, deploy_scope: Optional[str]) -> CatalogStatus:
     if not ativo:
-        return "em_breve"
-    return "disponivel" if deploy_scope == "live" else "lista_de_espera"
+        return "lista_de_espera"
+    return "disponivel" if deploy_scope == "live" else "em_breve"
 
 
 def invalidate_cache() -> None:

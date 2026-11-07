@@ -2,11 +2,11 @@
 --
 -- (098 is claimed by feat/nosnolimiar-rename.)
 --   1. public.products.exibir_no_site boolean NOT NULL DEFAULT true
---      -- the site lists every product in the catalog (inactive ones as "em breve");
+--      -- the site lists every product in the catalog (paused ones as "lista de espera");
 --      this flag is the owner's per-product opt-out. Edited via PATCH /api/products/{id}.
---   2. Platform-internal tools are hidden from the site.
---      OWNER TO CONFIRM: only dev-team and knowledge-extractor are hidden here. Every other
---      product defaults to visible until the owner reviews the list in /admin/products.
+--   2. Internal and single-client builds are hidden from the site; commercial products default
+--      to visible. Owner-approved 2026-11-07: seed, monica (single-client CRM),
+--      academia-de-reciclagem (client), p-studio (client), dev-team, knowledge-extractor.
 --   3. products_scope_sync trigger also fires on exibir_no_site, nome, descricao, icone, and the
 --      dispatch carries the site catalog projection NESTED under the single key `site_catalog`
 --      (GitHub repository_dispatch client_payload allows max 10 top-level keys; we use 5).
@@ -20,7 +20,9 @@ ALTER TABLE public.products
     ADD COLUMN IF NOT EXISTS exibir_no_site boolean NOT NULL DEFAULT true;
 
 UPDATE public.products SET exibir_no_site = false
- WHERE slug IN ('dev-team', 'knowledge-extractor') AND exibir_no_site;
+ WHERE slug IN ('seed', 'monica', 'academia-de-reciclagem', 'p-studio',
+                'dev-team', 'knowledge-extractor')
+   AND exibir_no_site;
 
 CREATE OR REPLACE FUNCTION public.dispatch_product_scope_sync()
 RETURNS trigger
