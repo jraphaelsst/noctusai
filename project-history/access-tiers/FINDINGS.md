@@ -2,7 +2,7 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1013 open / in-progress**, 214 fixed, 1 accepted (1228 total).
+**1010 open / in-progress**, 217 fixed, 1 accepted (1228 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
@@ -17,7 +17,7 @@
 | erp-imobiliario | 187 | 0 | 1 | 186 | 0 | 14 |
 | igig | 58 | 0 | 0 | 58 | 0 | 13 |
 | monica | 9 | 0 | 0 | 9 | 0 | 13 |
-| orbity | 49 | 0 | 0 | 49 | 0 | 13 |
+| orbity | 46 | 0 | 0 | 46 | 0 | 16 |
 | p-studio | 20 | 0 | 0 | 20 | 0 | 0 |
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
@@ -190,7 +190,7 @@
 - igig: 53
 - commerce: 48
 - personal-finance: 40
-- orbity: 39
+- orbity: 36
 - community: 27
 - academia-de-reciclagem: 16
 - adconnect: 16
