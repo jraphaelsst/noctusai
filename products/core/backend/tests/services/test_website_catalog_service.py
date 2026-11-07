@@ -9,13 +9,15 @@ from noctusai_lib.testing.migrations import migration_sql
 
 from app.services import website_catalog_service as svc
 
-KEYS = {"slug", "nome", "descricao", "icone", "destaque_no_site", "status"}
+KEYS = {"slug", "nome", "descricao_publica", "icone", "destaque_no_site", "status"}
 BACKEND = Path(__file__).resolve().parents[2]
 
+# `descricao` is the INTERNAL description: present on the DB rows, must never reach the public payload.
 ROWS = [
-    {"slug": "a", "nome": "A", "descricao": "d", "icone": "i", "ativo": True, "deploy_scope": "live",
+    {"slug": "a", "nome": "A", "descricao": "SEGREDO-INTERNO", "descricao_publica": "pub a", "icone": "i",
+     "ativo": True, "deploy_scope": "live",
      "exibir_no_site": True, "destaque_no_site": 1, "url_base": "https://a", "port": 8001},
-    {"slug": "b", "nome": "B", "descricao": None, "icone": None, "ativo": True, "deploy_scope": "dev",
+    {"slug": "b", "nome": "B", "descricao": "SEGREDO-B", "descricao_publica": None, "icone": None, "ativo": True, "deploy_scope": "dev",
      "exibir_no_site": True, "url_base": "https://b", "port": 8002},
     {"slug": "c", "nome": "C", "descricao": "x", "icone": "y", "ativo": False, "deploy_scope": "dev",
      "exibir_no_site": True, "url_base": "https://c", "port": 8003},
@@ -138,10 +140,11 @@ def test_product_update_accepts_exibir_no_site():
 def test_migration_100_structure():
     sql = migration_sql(BACKEND / "migrations", "products_exibir_no_site")
     assert "exibir_no_site boolean NOT NULL DEFAULT true" in sql
-    for slug in ("seed", "monica", "academia-de-reciclagem", "p-studio", "dev-team", "knowledge-extractor"):
-        assert f"'{slug}'" in sql
+    hidden = sql.split("UPDATE public.products SET exibir_no_site = false", 1)[1].split("AND exibir_no_site;", 1)[0]
+    assert "'seed', 'monica', 'dev-team', 'knowledge-extractor'" in hidden
+    assert "academia-de-reciclagem" not in hidden and "p-studio" not in hidden  # Q20: stay visible
     assert "FROM PUBLIC, anon, authenticated" in sql
-    assert "UPDATE OF ativo, deploy_scope, exibir_no_site, destaque_no_site, nome, descricao, icone" in sql
+    assert "UPDATE OF ativo, deploy_scope, exibir_no_site, destaque_no_site, nome, descricao, descricao_publica, icone" in sql
     # 5 top-level client_payload keys (<= GitHub's 10); the projection is nested.
     for key in ("'active'", "'live'", "'site_catalog'", "'op'", "'at'"):
         assert key in sql
@@ -242,3 +245,73 @@ def test_migration_100_destaque_constraints():
                                 "therapy-platform", "igig"), start=1):
         assert f"('{slug}', {pos})" in sql
     assert "NOT EXISTS (SELECT 1 FROM public.products WHERE destaque_no_site IS NOT NULL)" in sql
+
+
+# --- public description (descricao_publica) ---------------------------------------------------
+
+def test_internal_descricao_never_in_public_payload():
+    out = svc.list_public(client=_Client(ROWS), now=0.0)
+    for p in out:
+        assert "descricao" not in p.model_dump()  # only descricao_publica
+    assert "SEGREDO" not in repr([p.model_dump() for p in out])
+    assert "descricao" not in svc.CatalogProduct.model_fields
+    assert {p.slug: p.descricao_publica for p in out} == {"a": "pub a", "b": None, "c": None}
+
+
+def test_empty_public_description_is_returned_as_null():
+    rows = [{**ROWS[0], "slug": "e", "descricao_publica": ""}]
+    assert svc.list_public(client=_Client(rows), now=0.0)[0].descricao_publica is None
+
+
+def _site_rows(exibir: bool, publica):
+    return [{"slug": "x", "id": "x", "nome": "X", "exibir_no_site": exibir, "descricao_publica": publica}]
+
+
+@pytest.mark.parametrize("publica", [None, "", "   "])
+def test_turning_exibir_on_requires_public_description(publica):
+    with pytest.raises(svc.DestaqueRefused) as exc:
+        svc.check_exibir_write(_Client(_site_rows(False, publica)), "x", {"exibir_no_site": True})
+    assert exc.value.detail == "Escreva a descrição pública antes de mostrar o produto no site."
+
+
+def test_turning_exibir_on_ok_when_described_or_described_in_same_patch():
+    svc.check_exibir_write(_Client(_site_rows(False, "texto")), "x", {"exibir_no_site": True})
+    svc.check_exibir_write(
+        _Client(_site_rows(False, None)), "x", {"exibir_no_site": True, "descricao_publica": "novo"}
+    )
+    with pytest.raises(svc.DestaqueRefused):  # blanking it in the same patch does not slip through
+        svc.check_exibir_write(
+            _Client(_site_rows(False, "texto")), "x", {"exibir_no_site": True, "descricao_publica": " "}
+        )
+
+
+def test_already_visible_rows_with_empty_description_are_not_blocked_retroactively():
+    db = _Client(_site_rows(True, None))
+    svc.check_exibir_write(db, "x", {"exibir_no_site": True})  # not a transition
+    svc.check_exibir_write(db, "x", {"nome": "Y"})
+    svc.check_exibir_write(db, "x", {"exibir_no_site": False})
+
+
+def test_router_runs_exibir_check_and_schema_accepts_descricao_publica():
+    from app.schemas.products import ProductUpdate
+
+    src = (BACKEND / "app" / "routers" / "products.py").read_text()
+    assert "check_exibir_write" in src
+    assert ProductUpdate(descricao_publica="t").model_dump(exclude_none=True) == {"descricao_publica": "t"}
+
+
+def test_migration_100_public_description_seed_and_name_fix():
+    sql = migration_sql(BACKEND / "migrations", "products_exibir_no_site")
+    assert "descricao_publica text" in sql
+    assert "'descricao_publica', descricao_publica" in sql  # site_catalog payload ships the public one
+    assert "'descricao', descricao," not in sql  # ...and never the internal one
+    seeded = {
+        "agents", "social-wiring", "academia-de-reciclagem", "adconnect", "commerce", "community",
+        "daily-life", "erp-imobiliario", "personal-finance", "igig", "p-studio", "pilates",
+        "therapy-platform", "store",
+    }
+    for slug in seeded:
+        assert f"('{slug}', '" in sql
+    assert "('orbity'," not in sql  # honest empty
+    assert "AND p.descricao_publica IS NULL" in sql  # never overwrites the owner's edits on re-run
+    assert "SET nome = 'Finanças Pessoais'" in sql

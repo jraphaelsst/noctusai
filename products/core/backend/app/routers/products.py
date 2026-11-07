@@ -175,6 +175,9 @@ async def atualizar_product(
         await anyio.to_thread.run_sync(
             lambda: website_catalog_service.check_destaque_write(db, product_id, data)
         )
+        await anyio.to_thread.run_sync(
+            lambda: website_catalog_service.check_exibir_write(db, product_id, data)
+        )
     except website_catalog_service.DestaqueRefused as refusal:
         raise HTTPException(status_code=refusal.status_code, detail=refusal.detail)
 

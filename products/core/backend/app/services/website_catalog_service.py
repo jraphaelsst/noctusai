@@ -1,6 +1,7 @@
 """Website catalog — the public showcase mirrors `public.products`.
 
-Fixed projection `slug, nome, descricao, icone, destaque_no_site, status`, filtered to
+Fixed projection `slug, nome, descricao_publica, icone, destaque_no_site, status` (the internal
+`descricao` is NEVER exposed; a null `descricao_publica` is returned as null), filtered to
 `exibir_no_site = true`. `status` is derived HERE, on the server only:
 
     ativo AND deploy_scope='live'  -> disponivel
@@ -33,7 +34,7 @@ class CatalogProduct(StrictHttpModel):
 
     slug: str
     nome: str
-    descricao: Optional[str] = None
+    descricao_publica: Optional[str] = None
     icone: Optional[str] = None
     # Featured position 1..6 on the landing (display order); None = not featured.
     # Public + non-sensitive. The frontend orders and falls back (none featured => first 6).
@@ -69,7 +70,7 @@ def list_public(*, client=None, now: Optional[float] = None) -> list[CatalogProd
     rows = (
         (client or get_admin_client())
         .table("products")
-        .select("slug,nome,descricao,icone,destaque_no_site,ativo,deploy_scope")
+        .select("slug,nome,descricao_publica,icone,destaque_no_site,ativo,deploy_scope")
         .eq("exibir_no_site", True)
         .order("slug")
         .execute()
@@ -80,7 +81,7 @@ def list_public(*, client=None, now: Optional[float] = None) -> list[CatalogProd
         CatalogProduct(
             slug=r["slug"],
             nome=r["nome"],
-            descricao=r.get("descricao"),
+            descricao_publica=(r.get("descricao_publica") or None),
             icone=r.get("icone"),
             destaque_no_site=r.get("destaque_no_site"),
             status=derive_status(bool(r.get("ativo")), r.get("deploy_scope")),
@@ -166,7 +167,29 @@ def check_destaque_write(db, product_id: str, fields: dict) -> None:
         )
 
 
+def check_exibir_write(db, product_id: str, fields: dict) -> None:
+    """Refuse turning `exibir_no_site` ON for a row whose public description is empty.
+
+    Only a false -> true TRANSITION is checked, so rows already visible (the migration's initial
+    state, including ones with a null description) are never blocked retroactively.
+    """
+    if fields.get("exibir_no_site") is not True:
+        return
+    cur = (
+        db.table("products").select("id,exibir_no_site,descricao_publica")
+        .eq("id", product_id).execute().data
+    )
+    if not cur or cur[0].get("exibir_no_site") is True:
+        return  # unknown row -> the write answers 404; already visible -> not a transition
+    texto = fields["descricao_publica"] if "descricao_publica" in fields else cur[0].get("descricao_publica")
+    if not (texto or "").strip():
+        raise DestaqueRefused(
+            "Escreva a descrição pública antes de mostrar o produto no site.", status_code=422
+        )
+
+
 __all__ = [
     "CatalogProduct", "DestaqueRefused", "MAX_DESTAQUES", "check_destaque_write",
+    "check_exibir_write",
     "derive_status", "invalidate_cache", "list_public",
 ]
