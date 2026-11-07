@@ -134,7 +134,9 @@ through a grant. The channel-token AUTH dependency (turns / status / specs) is u
 the whole display. The UI is `/conexoes-plataforma` ("Conexões da plataforma", platform
 admin only, nav item + `status_pagina` row `conexoes-plataforma`, migration 061): pick agente → produto → organização →
 confirmar; the list shows status, the stored credential prefix (`noc_ab12…`), expiry, last delivery and last error; rotate and
-revoke ask for confirmation. The Canais tab of an agent only links there.
+revoke ask for confirmation. The Canais tab of an agent lists that agent's non-revoked connections inline (produto · organização,
+status, credential prefix, last delivery; no agent name — the page is the agent) and links there to manage them; a
+non platform admin (403) sees only the hint. Status badges: `GRANT_STATUS_BADGE` in `hooks/useGrants.ts`, shared by both.
 
 ## Creating a complete agent (Julia as the reference)
 

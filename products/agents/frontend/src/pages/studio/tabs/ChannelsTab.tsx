@@ -16,6 +16,8 @@ import { useChannelConversations, useChannelMessages } from "@/hooks/useChannel"
 import { isProviderKeyConfigured, orgApiKeysHooks } from "@/hooks/useOrgApiKeys";
 import { useAgentVersionRefs } from "@/hooks/studio/useVersions";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { GRANT_STATUS_BADGE, showPrefix, useGrants } from "@/hooks/useGrants";
+import { ApiError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
 function fmt(value: string | null): string {
@@ -51,13 +53,58 @@ function KeyHint({ agentKey }: { agentKey: string }) {
   );
 }
 
-function ConexoesHint() {
+/**
+ * The agent's own connections (product · org), read from the platform grants — each connection is made per agent,
+ * so the agent name is implied by the page. Platform admins only: anyone else (403) gets just the hint.
+ */
+function ConexoesDoAgente({ agentKey }: { agentKey: string }) {
+  const grants = useGrants();
+  const forbidden = grants.isError && grants.error instanceof ApiError && grants.error.status === 403;
+  const itens = (grants.data?.items ?? []).filter((g) => g.agent_key === agentKey && g.status !== "revogado");
+
   return (
-    <div className="rounded-lg border border-border bg-card p-4 text-sm" data-testid="channel-grants-hint">
-      A credencial do canal é gerada e entregue ao produto automaticamente.{" "}
-      <Link to="/conexoes-plataforma" className="text-primary hover:underline">
-        Gerenciar em Conexões da plataforma
-      </Link>
+    <div className="space-y-3 rounded-lg border border-border bg-card p-4 text-sm" data-testid="channel-grants">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-medium">Conexões</span>
+        <Link to="/conexoes-plataforma" className="text-primary hover:underline">
+          Gerenciar em Conexões da plataforma
+        </Link>
+      </div>
+      {forbidden ? (
+        <p className="text-muted-foreground" data-testid="channel-grants-hint">
+          A credencial do canal é gerada e entregue ao produto automaticamente.
+        </p>
+      ) : grants.showSkeleton ? (
+        <StudioLoading rows={1} testId="channel-grants-skeleton" />
+      ) : grants.isError ? (
+        <StudioError error={grants.error} onRetry={() => void grants.refetch()} />
+      ) : itens.length === 0 ? (
+        <p className="text-muted-foreground" data-testid="channel-grants-empty">
+          Nenhuma conexão: este agente ainda não está ligado a nenhum produto.
+        </p>
+      ) : (
+        <ul className="divide-y divide-border" data-testid="channel-grants-list">
+          {itens.map((g) => {
+            const badge = GRANT_STATUS_BADGE[g.status];
+            return (
+              <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 py-2" data-testid="channel-grant-row">
+                <div className="min-w-0">
+                  <div>
+                    <span className="font-medium">{g.product}</span>
+                    <span className="text-muted-foreground"> · {g.org_nome ?? g.org_id}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Credencial {showPrefix(g.token_prefix)} · {g.expires_at ? `expira ${fmt(g.expires_at)}` : "expira nunca"} ·
+                    última entrega {fmt(g.last_delivered_at)}
+                    {g.last_error ? ` · erro: ${g.last_error}` : ""}
+                  </div>
+                </div>
+                <Badge variant={badge.variant}>{badge.label}</Badge>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
@@ -96,7 +143,7 @@ export default function ChannelsTab({ agentKey }: { agentKey: string }) {
   return (
     <div className="space-y-4" data-testid="channels-tab">
       <KeyHint agentKey={agentKey} />
-      <ConexoesHint />
+      <ConexoesDoAgente agentKey={agentKey} />
 
       <section className="space-y-3 rounded-lg border border-border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

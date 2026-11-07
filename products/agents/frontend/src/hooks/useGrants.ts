@@ -65,6 +65,14 @@ export interface GrantCreateInput {
   expira_em_dias?: number;
 }
 
+/** One label + badge variant per grant status — shared by Conexões da plataforma and the agent's Canais tab. */
+export const GRANT_STATUS_BADGE: Record<GrantStatus, { label: string; variant: "default" | "destructive" | "muted" }> = {
+  ativo: { label: "Ativo", variant: "default" },
+  pendente: { label: "Pendente", variant: "muted" },
+  revogado: { label: "Revogado", variant: "muted" },
+  falhou: { label: "Falhou", variant: "destructive" },
+};
+
 const BASE = "/api/studio/plataforma/grants";
 
 export const grantKeys = {

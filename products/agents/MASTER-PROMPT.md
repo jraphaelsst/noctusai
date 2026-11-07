@@ -80,7 +80,7 @@ products/agents/backend/app/
   Nobody pastes a token: `PUT /api/channels/ferramentas-token` is gone. Never log or return a secret. README section
   "Platform grants" has the routes. UI: `/conexoes-plataforma` (`pages/ConexoesPlataforma.tsx`, `hooks/useGrants.ts`), platform
   admin only; the old channel-token paste card AND the human `POST|DELETE /api/agents/{key}/channel-token` routes are deleted; `ChannelsTab`
-  links to the page. Grant responses carry `token_prefix` (stored prefix only), never a secret.
+  lists the agent's own non-revoked grants (produto · org, status, prefix; 403 ⇒ hint only) and links to the page. Grant responses carry `token_prefix` (stored prefix only), never a secret.
 
 ### Julia v2 — the channel runtime (A-RT)
 
