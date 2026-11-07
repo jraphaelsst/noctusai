@@ -1,0 +1,5 @@
+# Family: reforma_tributaria
+# Row contract (see params/__init__.py): key, value, unit, scope{regime,anexo}, vigencia_de, vigencia_ate, norma, fonte_url[>=1],
+# tier, verificado_em, verificado_por, revalidar_em, notas. Money = int centavos; rates = Decimal as STRING (never a YAML float).
+# Rows are added only with a verified source -- never from memory.
+rows: []

@@ -31,6 +31,7 @@ from typing import Any, Optional
 from noctusai_lib.domain._organ_common import csv_safe
 
 from . import _pdf
+from .params import param, staleness_warning
 from ._common import Scope, add_months, iso, month_start
 from .dre import _fetch_by_ids, _inherited, _month_key, make_route
 from .exports import money
@@ -39,7 +40,7 @@ from .types import ActivityKind, SettlementKind, TaxRegime
 
 KB_DOC = "KB § PATTERNS/finance/dre-structure.md §7"
 LEGAL_BASIS = "Res. CGSN 140/2018 art. 106, 108 e 109 (Anexo X)"
-DEADLINE_DAY = 20
+_DEADLINE_KEY = "mei.relatorio_mensal.dia_limite"  # registry row; no in-code default (missing => ParamNotDefined)
 
 #: group -> (label, roman numerals of the three rows). UNVERIFIED against the official Annex X (see the module docstring).
 FIELDS: dict[str, dict[str, str]] = {
@@ -123,7 +124,12 @@ def mei_monthly(s: Scope, month: date, *, regime_prefill: Optional[str] = None) 
     if total < 0:
         warnings.append({"code": "mes_com_estorno_maior", "severity": "warning",
                          "message": "Os estornos do mês superam os recebimentos; confira se foram lançados no mês correto.", "action": "Revise as baixas do mês."})
-    deadline = add_months(start, 1).replace(day=DEADLINE_DAY)
+    deadline_param = param(_DEADLINE_KEY, on=start, scope={"regime": "mei"})
+    deadline_day = int(deadline_param.value)
+    stale = staleness_warning(deadline_param, date.today())
+    if stale:
+        warnings.append(stale)
+    deadline = add_months(start, 1).replace(day=deadline_day)
     return {
         "month": _month_key(start),
         "tax_regime": regime,
@@ -183,7 +189,7 @@ def mei_monthly_pdf(report: dict) -> bytes:
     y, m = report["month"].split("-")
     return _pdf.document(
         "Relatório Mensal de Receitas Brutas",
-        [f"Período de apuração: {m}/{y}", f"Base legal: {report['legal_basis']}", f"Preenchimento até o dia {DEADLINE_DAY} do mês seguinte."],
+        [f"Período de apuração: {m}/{y}", f"Base legal: {report['legal_basis']}", f"Preenchimento até o dia {int(report['deadline'][8:10])} do mês seguinte."],
         body,
         [report["disclaimer"], *report["notes"][1:]],
     )

@@ -1,0 +1,7 @@
+# Staleness policy. max_age_dias per tier is the longest a verification stays fresh (revalidar_em on a row overrides it).
+max_age_dias:
+  norma: 365
+  orgao_oficial: 180
+  publicacao_tecnica: 90
+  especialista: 90
+horizonte_vigencia_dias: 45
