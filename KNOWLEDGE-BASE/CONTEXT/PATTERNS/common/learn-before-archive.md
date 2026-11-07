@@ -12,6 +12,25 @@ preserved elsewhere?"**
 If the answer is "something durable and not already captured" → capture it first,
 THEN delete. If everything is already on dev/KB/memory → delete without ceremony.
 
+## Stopping an agent or session is a teardown too (owner rule, 2026-11-07)
+
+"End idle agents / free some space / stop that session" deletes nothing on disk, but it ENDS a
+working context: its unpushed commits, uncommitted edits, queued test verdicts and — easiest to
+lose — its LEARNINGS (`drift-found:` / `scoped-improvement:` / codification events in its reports,
+often in a hand-back the harness refused as a second report). So a stop runs the same two legs as
+a session end, BEFORE the stop:
+
+1. **Work salvage** — per agent worktree: `git status` (commit WIP on its own branch; never discard),
+   unpushed commits → push + branch pointer + relocate to `.claude/worktrees/<slug>` + score + hand to
+   the steward (or a named deferral). A stopped agent's queued run: read its `~/.noctus/hw-runs/` log
+   or re-run the scoped tests yourself — never enqueue on an unknown verdict without saying so.
+2. **Learning salvage** — collect every `drift-found` / `scoped-improvement` the agent reported (and
+   what its refused hand-back held: check the branch log + run logs) and route each to a durable home
+   (`--codify-log` s1 event, KB, memory, `NOC-REMEDIATE`, or a named owner) — "logged in chat" is lost.
+3. **Then stop** — `TaskStop`, and confirm no orphan process (`ps … | grep <worktree>`).
+
+Peer sessions get the same rule: ask the session to run it before it ends, never just close it.
+
 ## Five categories to preserve
 
 | Category | Destination | Skip condition |
@@ -30,6 +49,7 @@ THEN delete. If everything is already on dev/KB/memory → delete without ceremo
 | 2 | **Tool** — `noctus.dev.salvage_before_delete(target, kind)` — extraction + logging | Shipped (2026-05-30) |
 | 3 | **Keeper** — `check_dangling_remote_branches` flags unique-old remotes | Shipped (2026-05-30) |
 | 4 | **Strict keeper** — flag a delete in recent history with no matching salvage-log entry | Deferred — needs git-log pattern + scope definition |
+| 5 | **Agent-stop gate** — a PreToolUse check on `TaskStop` that refuses while the agent's worktree has uncommitted changes or unpushed commits with no branch pointer | Deferred → tooling-engineer (s1 event `learn-before-archive/agent-stop`, 2026-11-07); discipline + skill trigger until then |
 
 ## Tool: `noctus.dev.salvage_before_delete`
 
