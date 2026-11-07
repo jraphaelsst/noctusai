@@ -42,7 +42,7 @@ export function PricingCard({
     : signupEnabled
       ? t("cta.signup")
       : t("cta.waitlistShort");
-  const ctaHref = plan.is_custom ? "/solucoes" : signupEnabled ? "https://core.noctusai.com/login?mode=signup" : "/lista-de-espera";
+  const ctaHref = plan.is_custom ? "/solucoes" : signupEnabled ? "/login?mode=signup" : "/lista-de-espera";
 
   return (
     <div className={`nx-price-card ${featured ? "nx-price-featured" : ""}`}>
