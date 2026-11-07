@@ -110,6 +110,7 @@ from app.modules.certidoes.registry import (
     e_erro_parametro_obrigatorio,
     e_pendencia,
     emissao_pela_consulta,
+    falha_de_conta_ou_fonte,
     msg_falta_dados,
     parse_resultado,
     pendencia_pre_chamada,
@@ -506,6 +507,16 @@ async def _fetch_certidao(
             # request fails the same way — no retry, no 2ª via (F113: one
             # missing birthdate was billed 3x, nova + 2ª via + retry).
             if api_code == 606:
+                break
+            # Account/vendor-level refusal (sem saldo, API pausada, excesso de
+            # tentativas): a retry or a 2ª via cannot change it. Say why, once.
+            motivo = falha_de_conta_ou_fonte(data)
+            if motivo:
+                logger.warning(
+                    "InfoSimples %s: recusa de conta/fonte (code %s) — sem retry: %s",
+                    config["tipo"], api_code, last_error,
+                )
+                last_error = motivo
                 break
 
             # The initial 2ª via (history said a PCEN is still valid) was

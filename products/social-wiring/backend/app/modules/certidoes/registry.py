@@ -479,6 +479,51 @@ def e_erro_login_govbr(raw_response: Any) -> bool:
     return blob is not None and any(m in blob for m in _PARAMS_LOGIN_GOVBR)
 
 
+#: Vendor/account-level refusals (prod 2026-11: 257 CENPROT calls answered 615 "API
+#: pausada", 19 answered 603 "sem saldo"). The same request fails the same way
+#: seconds later, so retrying only burns ~6s of backoff per call and — for 608 —
+#: makes the source's own rate limit worse. The operator gets a pt-BR reason
+#: instead of the vendor's English-ish `code_message`; the raw response stays
+#: on the row (`api_response`) for support.
+MSG_SEM_SALDO = (
+    "Saldo da conta InfoSimples esgotado — avise o administrador para recarregar. "
+    "Enquanto isso, envie o PDF manualmente"
+)
+MSG_TOKEN_RECUSADO = (
+    "A InfoSimples recusou o token do escritório (inativo ou com limite de uso) — "
+    "revise em Configurações → Chaves de API ou envie o PDF manualmente"
+)
+MSG_API_PAUSADA = (
+    "A InfoSimples pausou temporariamente esta consulta por instabilidade na fonte — "
+    "tente de novo mais tarde ou envie o PDF manualmente"
+)
+MSG_MUITAS_TENTATIVAS = (
+    "A fonte recusou por excesso de tentativas para este CPF/CNPJ — "
+    "aguarde alguns minutos antes de tentar de novo"
+)
+
+
+def falha_de_conta_ou_fonte(raw_response: Any) -> Optional[str]:
+    """The pt-BR operator message when this InfoSimples failure is an
+    account/vendor-level refusal that a retry cannot fix (603 sem saldo /
+    token recusado, 615 "API pausada", 608 excesso de tentativas), else `None`.
+
+    A plain 615 WITHOUT the "pausada" text (the source is momentarily down) is
+    NOT here: that one can clear within the retry window.
+    """
+    blob = _falha_da_origem(raw_response)
+    if blob is None:
+        return None
+    code = raw_response.get("code")
+    if code == 603:
+        return MSG_SEM_SALDO if "saldo" in blob else MSG_TOKEN_RECUSADO
+    if code == 615 and "pausada" in blob:
+        return MSG_API_PAUSADA
+    if code == 608:
+        return MSG_MUITAS_TENTATIVAS
+    return None
+
+
 def e_erro_parametro_obrigatorio(raw_response: Any) -> bool:
     """Is this InfoSimples failure a "required parameter not sent" (606
     "Parâmetros obrigatórios não foram enviados" / "o parâmetro 'x' é

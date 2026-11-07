@@ -51,6 +51,12 @@ Source: `https://api.infosimples.com/consultas/docs/receita-federal/pgfn.md`.
   A 606 is never retried nor 2ª-via'd (the same request fails the same way). Observed: `trf3` once answered
   606 "são necessários os seguintes parâmetros adicionais: nome_mae, birthdate, tipo_documento, documento"
   (1 of 73 calls, 29 successes) — conditional, so not declared pre-call; the guard catches it.
+- **Account/vendor-level refusals are not retried (2026-11-07).** `registry.falha_de_conta_ou_fonte`: 603
+  (sem saldo / token recusado), 615 whose text says "API pausada" and 608 (excesso de tentativas do TRF)
+  end the fetch at once — no backoff retries, no 2ª via — and the row carries a pt-BR reason
+  (`MSG_SEM_SALDO`, `MSG_API_PAUSADA`, …) with the raw answer kept in `api_response`. Prod saw 257 CENPROT
+  calls answered "API pausada" and 19 "sem saldo" (vendor/account side: owner action, not a code fix). A plain
+  615 without "pausada" (source momentarily down) keeps the retry loop.
 
 ## 3 · The learned trigger
 
