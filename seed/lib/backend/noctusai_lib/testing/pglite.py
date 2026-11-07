@@ -21,6 +21,7 @@ modelled; table builders (`.table().select()`) are not.
 
 Needs `node` on PATH and the toolkit's PGlite install (`mcp/noctusai/node/node_modules/@electric-sql`, the
 same pin `noctus.dev.migration_replay` uses). `NOCTUS_PGLITE_NODE_DIR` overrides the node directory.
+`NOC_REQUIRE_REAL_PG=1` (set in CI) turns "harness unavailable" from a skip into a failure.
 """
 from __future__ import annotations
 
@@ -32,7 +33,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional, Sequence
 
-__all__ = ["BRIDGE_JS", "PgliteClient", "PgliteError", "node_dir", "pglite_available", "stubs_path"]
+__all__ = ["BRIDGE_JS", "REQUIRE_REAL_PG_ENV", "PgliteClient", "PgliteError", "RealPgUnavailable", "node_dir",
+           "pglite_available", "real_pg_required", "stubs_path"]
 
 #: seed/lib/backend/noctusai_lib/testing/pglite.py -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -115,8 +117,35 @@ def stubs_path() -> Path:
     return node_dir() / "migration_replay" / "stubs.sql"
 
 
+#: Set to ``1`` where a real-Postgres harness MUST run (CI's seed-backend-tests job). There a missing harness
+#: is a broken setup, not a reason to skip: a skipped proof reads as green in a pytest summary.
+REQUIRE_REAL_PG_ENV = "NOC_REQUIRE_REAL_PG"
+
+
+class RealPgUnavailable(RuntimeError):
+    """A real-Postgres test harness is missing while ``NOC_REQUIRE_REAL_PG=1`` says it must run."""
+
+
+def real_pg_required() -> bool:
+    return os.environ.get(REQUIRE_REAL_PG_ENV, "").strip() == "1"
+
+
 def pglite_available() -> bool:
-    return shutil.which("node") is not None and (node_dir() / "node_modules" / "@electric-sql").exists() and stubs_path().exists()
+    """True when node + the toolkit's PGlite install are present.
+
+    Under ``NOC_REQUIRE_REAL_PG=1`` a missing harness RAISES `RealPgUnavailable` instead of returning False, so
+    every ``if not pglite_available(): pytest.skip(...)`` call site fails loudly in CI rather than skipping.
+    """
+    missing = [what for what, ok in (
+        ("`node` on PATH", shutil.which("node") is not None),
+        (f"{node_dir() / 'node_modules' / '@electric-sql'} (run `npm ci` in {node_dir()})",
+         (node_dir() / "node_modules" / "@electric-sql").exists()),
+        (f"{stubs_path()}", stubs_path().exists()),
+    ) if not ok]
+    if missing and real_pg_required():
+        raise RealPgUnavailable(f"PGlite harness unavailable (missing: {', '.join(missing)}) while "
+                                f"{REQUIRE_REAL_PG_ENV}=1 -- a skipped real-Postgres proof is not a pass")
+    return not missing
 
 
 class PgliteError(RuntimeError):

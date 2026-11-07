@@ -152,4 +152,6 @@ rolled-back transaction, for every product that renders the organ.
   undeletable log.
 - Verified in-tree: the conformance suite (Fake + Real on PGlite), the posture tests and the organ
   guard probes run the rendered SQL on PG16. The two-connection proofs need a real server
-  (`noctusai_lib.testing.pgserver`) — unverified on a machine without one (they skip, visibly).
+  (`noctusai_lib.testing.pgserver`). Locally a missing harness skips, visibly; CI's seed-backend-tests
+  job installs node + PGlite, pins the runner's `initdb`, and sets `NOC_REQUIRE_REAL_PG=1`, under which an
+  unavailable harness FAILS (`RealPgUnavailable`) — a skipped real-Postgres proof never reads as green.
