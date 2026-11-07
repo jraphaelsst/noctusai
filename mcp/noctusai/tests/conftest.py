@@ -70,6 +70,16 @@ if _WORKTREE_SEED_LIB.exists():
     if str(_WORKTREE_SEED_LIB) not in sys.path:
         sys.path.insert(0, str(_WORKTREE_SEED_LIB))
 
+    # Same redirect for the seed FRAMEWORK (noctusai_seed): without it a worktree's
+    # tests read the PRIMARY checkout's organ registry, so an organ registered only in
+    # the worktree raises KeyError in test_organ_guard_probes (2026-11-07, event_store).
+    _WORKTREE_SEED_FW = _WORKTREE_ROOT / "seed" / "framework" / "backend"
+    if _WORKTREE_SEED_FW.exists():
+        for _k in [k for k in sys.modules if k.startswith("noctusai_seed")]:
+            del sys.modules[_k]
+        if str(_WORKTREE_SEED_FW) not in sys.path:
+            sys.path.insert(0, str(_WORKTREE_SEED_FW))
+
     # Legacy per-module redirect kept for extract_mined (the original worktree
     # change) as a belt-and-suspenders check — it's now a no-op since the
     # evict+prepend above handles it, but keep to avoid regressions.
