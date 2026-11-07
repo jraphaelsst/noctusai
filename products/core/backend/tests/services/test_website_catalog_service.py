@@ -71,9 +71,9 @@ def _clean():
     "ativo,scope,expected",
     [
         (True, "live", "disponivel"),
-        (True, "dev", "lista_de_espera"),
-        (False, "dev", "em_breve"),
-        (False, "live", "em_breve"),  # forbidden by the DB CHECK, but never advertised as available
+        (True, "dev", "em_breve"),
+        (False, "dev", "lista_de_espera"),
+        (False, "live", "lista_de_espera"),  # forbidden by the DB CHECK, but never advertised as available
     ],
 )
 def test_derive_status(ativo, scope, expected):
@@ -83,7 +83,7 @@ def test_derive_status(ativo, scope, expected):
 def test_list_public_filters_and_derives():
     out = svc.list_public(client=_Client(ROWS), now=0.0)
     assert [(p.slug, p.status) for p in out] == [
-        ("a", "disponivel"), ("b", "lista_de_espera"), ("c", "em_breve"),
+        ("a", "disponivel"), ("b", "em_breve"), ("c", "lista_de_espera"),
     ]
 
 
@@ -131,7 +131,8 @@ def test_product_update_accepts_exibir_no_site():
 def test_migration_100_structure():
     sql = migration_sql(BACKEND / "migrations", "products_exibir_no_site")
     assert "exibir_no_site boolean NOT NULL DEFAULT true" in sql
-    assert "'dev-team', 'knowledge-extractor'" in sql
+    for slug in ("seed", "monica", "academia-de-reciclagem", "p-studio", "dev-team", "knowledge-extractor"):
+        assert f"'{slug}'" in sql
     assert "FROM PUBLIC, anon, authenticated" in sql
     assert "UPDATE OF ativo, deploy_scope, exibir_no_site, nome, descricao, icone" in sql
     # 5 top-level client_payload keys (<= GitHub's 10); the projection is nested.
