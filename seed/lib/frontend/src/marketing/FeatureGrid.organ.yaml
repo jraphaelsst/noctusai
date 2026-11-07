@@ -1,0 +1,28 @@
+name: FeatureGrid
+kind: component
+path: seed/lib/frontend/src/marketing/FeatureGrid.tsx
+phase: landing-organs
+registered_at: "2026-11-07"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Compact tiles (icon, title, text, optional link) in 3 or 4 columns."
+  - "icons by registered lucide name or a node"
+  - "Exported from @noctusai/lib/marketing only (never the root barrel). Seed tokens only; Reveal for entrance (content is never prerendered hidden; reduced motion = no animation)."
+  - "Consumes seed Button / Badge / Input / Card / Select / Textarea / Skeleton where they exist; link-styled actions use linkButtonClass (anchors cannot be the seed Button)."
+
+errors_encountered: []
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Re-implementing seed Button/Badge/Card: rejected, products consume canonical organs."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []
