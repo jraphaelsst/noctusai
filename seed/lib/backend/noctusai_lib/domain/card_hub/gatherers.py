@@ -29,6 +29,8 @@ from noctusai_lib.integrations.persistence.table_reads import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
+    from noctusai_lib.domain.pipeline.config import PipelineConfig
+
     from .config import CardHubConfig
 
 Gatherer = Callable[["CardHubConfig", Any, Any, Any, dict], list]
@@ -181,6 +183,60 @@ def gather_checklist_events(cfg: "CardHubConfig", db: Any, org_id: Any, entity_i
     ]
 
 
+def movimentos_gatherer(pipeline_cfg: "PipelineConfig") -> Gatherer:
+    """A `"movimento"` gatherer over the pipeline's stage-transition history.
+
+    NOT in `SEED_GATHERERS`: it needs the `PipelineConfig` of the board the
+    card lives on, which the card hub does not know. A product (or the funnel
+    organ's `mount_funnel`) registers it::
+
+        timeline_gatherers={**SEED_GATHERERS, "movimento": movimentos_gatherer(pipeline_cfg)}
+
+    One entry per transition, `ocorrido_em` = the movement's own `created_at`
+    (the row IS the event). Stage names are resolved from the CURRENT stage
+    rows, so a renamed stage reads with its new label on every past entry;
+    stages that were deactivated still resolve (`incluir_inativas`).
+    Org-scoped like every card-hub read: `org_id` is a hard filter, never
+    optional.
+    """
+
+    def gather_movimentos(cfg: "CardHubConfig", db: Any, org_id: Any, entity_id: Any, entity: dict) -> list[dict]:
+        # Local import: `pipeline` must not become a load-time dependency of
+        # the card hub (a product may use the hub with no pipeline at all).
+        from noctusai_lib.domain.pipeline.stages import list_stages
+
+        rows = paged_rows(
+            db,
+            pipeline_cfg.history_table,
+            org_id,
+            eq_filters={"pipeline": pipeline_cfg.pipeline, "entidade_id": str(entity_id)},
+        )
+        if not rows:
+            return []
+        stages = {
+            str(s["id"]): s.get("label")
+            for s in list_stages(db, pipeline_cfg, incluir_inativas=True, org_id=str(org_id))
+        }
+        autor_ids = {r["responsavel_id"] for r in rows if r.get("responsavel_id")}
+        resolved = cfg.actor_resolver(autor_ids)
+        return [
+            {
+                "id": r["id"],
+                "kind": "movimento",
+                "ocorrido_em": r["created_at"],
+                "ator": actor(resolved, r.get("responsavel_id")),
+                "payload": {
+                    "de_etapa": stages.get(str(r["de_etapa_id"])) if r.get("de_etapa_id") else None,
+                    "para_etapa": stages.get(str(r.get("para_etapa_id"))),
+                    "motivo": r.get("motivo"),
+                },
+            }
+            for r in rows
+        ]
+
+    return gather_movimentos
+
+
 #: The kinds the seed owns. Insertion order is the gather order; the served
 #: order is always the sort, so this only matters for readability.
 SEED_GATHERERS: Mapping[str, Gatherer] = {
@@ -197,4 +253,5 @@ __all__ = [
     "gather_checklist_events",
     "gather_documentos",
     "gather_notas",
+    "movimentos_gatherer",
 ]
