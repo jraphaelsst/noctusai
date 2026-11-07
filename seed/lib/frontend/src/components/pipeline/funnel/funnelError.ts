@@ -1,8 +1,9 @@
 /**
- * Parse a funnel API refusal into one shape. The BE contract is `{code, mensagem, detalhe?}` and
- * `409 gate_refused` carries `{gate, pendencias}`; the seed ApiClient exposes the parsed body as
- * `ApiError.body`, and the envelope may be flat, nested under `error`, or under `detail`/`detalhe` —
- * all are read, so a transport re-shape never turns a refusal back into a bare "Erro HTTP 409".
+ * Parse a funnel API refusal into one shape. CANONICAL (projects/noc-funnel/CONTRACT.md): the platform
+ * envelope `{"error":{"code","message","details"}}`; `409 gate_refused` carries
+ * `details.{gate, pendencias:[{codigo, mensagem}]}`. The seed ApiClient exposes the parsed body as
+ * `ApiError.body`. Flat / `detail` / `detalhe` layers are still read so a transport re-shape never turns a
+ * refusal back into a bare "Erro HTTP 409".
  */
 import type { FunnelPendencia, FunnelRefusal } from './types';
 
@@ -22,7 +23,10 @@ export function parseFunnelError(error: unknown): FunnelRefusal {
     push(body.detail);
     push(body.detalhe);
     if (isObj(body.detail)) push(body.detail.detalhe);
-    if (isObj(body.error)) push(body.error.detalhe);
+    if (isObj(body.error)) {
+      push(body.error.details);
+      push(body.error.detalhe);
+    }
   }
   let code: string | null = null;
   let mensagem: string | null = null;
@@ -31,11 +35,12 @@ export function parseFunnelError(error: unknown): FunnelRefusal {
   for (const l of layers) {
     if (code === null && typeof l.code === 'string') code = l.code;
     if (mensagem === null && typeof l.mensagem === 'string') mensagem = l.mensagem;
+    if (mensagem === null && typeof l.message === 'string') mensagem = l.message;
     if (gate === null && typeof l.gate === 'string') gate = l.gate;
     if (pendencias.length === 0 && Array.isArray(l.pendencias)) {
       pendencias = l.pendencias.filter(isObj).map((p) => ({
         codigo: String(p.codigo ?? ''),
-        label: String(p.label ?? p.codigo ?? ''),
+        label: String(p.label ?? p.mensagem ?? p.codigo ?? ''),
       }));
     }
   }
