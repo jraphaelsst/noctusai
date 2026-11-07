@@ -616,7 +616,7 @@ export const MESSAGES = {
   'mei.value': 'Valor',
   'mei.not_applicable': 'Este relatório é só para o MEI. Confirme o regime tributário em Como o DRE é montado.',
   'mei.unassigned': 'Receita sem atividade definida (fora dos totais): {amount}. Defina a atividade na categoria.',
-  'mei.deadline': 'Preencha até {date} (dia 20 do mês seguinte).',
+  'mei.obligation': '{text} ({norma})',
   'mei.basis': 'Base legal: {law}. Confira a estrutura com o modelo oficial (Anexo X) antes de apresentar.',
 
   // ---- Domínio export (E16/E21) ----

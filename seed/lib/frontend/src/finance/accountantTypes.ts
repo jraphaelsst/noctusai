@@ -111,7 +111,8 @@ export interface MeiMonthlyData {
   /** False outside `tax_regime = mei`. */
   applicable: boolean;
   basis: 'cash';
-  deadline: string;
+  /** The MEI keeps the report and presents it only when the Fisco asks (no fill-by date). */
+  obligation: { code: string; text: string; norma: string };
   groups: Record<ActivityKind, MeiGroup>;
   fields: Record<ActivityKind, MeiFieldLabels>;
   grand_total: { label: string; roman: string };

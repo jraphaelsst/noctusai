@@ -2,19 +2,25 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional
+import re
+from typing import Any, Callable, Literal, Optional, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 DATA_DIR = Path(__file__).parent
 FAMILIES = ("simples", "mei", "nfse", "reforma_tributaria", "obrigacoes")
-Unit = Literal["pct", "brl_centavos", "dia_do_mes", "date", "ratio", "text", "meses"]
+Unit = Literal["pct", "brl_centavos", "brl", "dia_do_mes", "date", "ratio", "text", "meses"]
 Tier = Literal["norma", "orgao_oficial", "publicacao_tecnica", "especialista", "pratica"]
 Regime = Literal["simples", "mei", "lucro_presumido", "lucro_real", "*"]
+#: research vocabulary -> canonical regime. Anything else is refused by the ``Regime`` literal.
+REGIME_ALIASES = {"presumido": "lucro_presumido", "real": "lucro_real"}
+#: scope dimensions beyond ``regime``; each is a str or list[str] (None = applies to all).
+SCOPE_DIMS = ("anexo", "porte", "contribuinte", "cnae", "atividade", "caso")
+StrOrList = Union[str, list[str]]
 
 
 class ParamRegistryError(ValueError):
@@ -36,7 +42,27 @@ class ParamAmbiguous(LookupError):
 class Scope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     regime: list[Regime] = Field(default_factory=lambda: ["*"])
-    anexo: Optional[str] = None
+    anexo: Optional[StrOrList] = None
+    porte: Optional[StrOrList] = None
+    contribuinte: Optional[StrOrList] = None
+    cnae: Optional[StrOrList] = None
+    atividade: Optional[StrOrList] = None
+    caso: Optional[StrOrList] = None
+
+    @field_validator("regime", mode="before")
+    @classmethod
+    def _regime(cls, v: Any) -> Any:
+        if v is None or v == []:
+            return ["*"]
+        if isinstance(v, str):
+            v = [v]
+        return [REGIME_ALIASES.get(x, x) for x in v]
+
+    def dim(self, name: str) -> Optional[frozenset]:
+        v = getattr(self, name)
+        if v is None:
+            return None
+        return frozenset([v] if isinstance(v, str) else v)
 
 
 class ParamRow(BaseModel):
@@ -54,6 +80,11 @@ class ParamRow(BaseModel):
     verificado_por: str
     revalidar_em: Optional[date] = None
     notas: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _coerce_value(self) -> "ParamRow":
+        self.value = _coerce(self.value, self.unit, self.key)
+        return self
 
 
 class ParamValue(BaseModel):
@@ -86,6 +117,41 @@ class Policy(BaseModel):
     horizonte_vigencia_dias: int
 
 
+_INT_RE = re.compile(r"^-?\d+$")
+
+
+def _coerce(v: Any, unit: str, key: str) -> Any:
+    """Typed value per unit: ints for centavos/dia/meses, Decimal for ratio/pct/brl, ISO string for date, str for text."""
+    if isinstance(v, bool):
+        raise ValueError(f"{key}: boolean value refused")
+    if unit in ("brl_centavos", "dia_do_mes", "meses"):
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str) and _INT_RE.match(v.strip()):
+            return int(v.strip())
+        raise ValueError(f"{key}: {unit} value {v!r} is not an integer")
+    if unit in ("ratio", "pct", "brl"):
+        if isinstance(v, (int, Decimal)):
+            return Decimal(v)
+        if isinstance(v, str):
+            try:
+                d = Decimal(v.strip())
+            except InvalidOperation as exc:
+                raise ValueError(f"{key}: {unit} value {v!r} is not numeric") from exc
+            if not d.is_finite():
+                raise ValueError(f"{key}: {unit} value {v!r} is not finite")
+            return d
+        raise ValueError(f"{key}: {unit} value {v!r} is not numeric")
+    if unit == "date":
+        if isinstance(v, date):
+            return v.isoformat()
+        try:
+            return date.fromisoformat(str(v)).isoformat()
+        except ValueError as exc:
+            raise ValueError(f"{key}: date value {v!r} is not ISO") from exc
+    return v if isinstance(v, str) else str(v)
+
+
 def _no_floats(v: Any, where: str) -> None:
     if isinstance(v, float):
         raise ParamRegistryError(f"{where}: float value {v!r} refused (money = int centavos, rates = Decimal string)")
@@ -105,6 +171,17 @@ def _regimes_intersect(a: Scope, b: Scope) -> bool:
     return bool(ra & rb) or "*" in ra or "*" in rb
 
 
+def _scopes_intersect(a: Scope, b: Scope) -> bool:
+    """Two scopes can match the same query when the regimes and every other dimension intersect (None = all)."""
+    if not _regimes_intersect(a, b):
+        return False
+    for d in SCOPE_DIMS:
+        da, db = a.dim(d), b.dim(d)
+        if da is not None and db is not None and not (da & db):
+            return False
+    return True
+
+
 class Registry:
     def __init__(self, rows: list[ParamRow], policy: Policy):
         self.rows, self.policy = rows, policy
@@ -120,7 +197,7 @@ class Registry:
                 reg = scope.get("regime")
                 if reg is not None and reg not in r.scope.regime and "*" not in r.scope.regime:
                     continue
-                if "anexo" in scope and r.scope.anexo != scope["anexo"]:
+                if any(d in scope and r.scope.dim(d) is not None and scope[d] not in r.scope.dim(d) for d in SCOPE_DIMS):
                     continue
             out.append(r)
         return out
@@ -151,6 +228,8 @@ def _build(path: Path, today: date) -> Registry:
         if not f.exists():
             continue
         doc = _load_yaml(f) or {}
+        if isinstance(doc, list):
+            doc = {"rows": doc}
         extra = set(doc) - {"rows"}
         if extra:
             raise ParamRegistryError(f"{f.name}: unknown top-level fields {sorted(extra)}")
@@ -168,14 +247,8 @@ def _build(path: Path, today: date) -> Registry:
                 raise ParamRegistryError(f"{f.name}:{key}: tier especialista requires >=2 fonte_url")
             if row.vigencia_ate is not None and row.vigencia_ate < row.vigencia_de:
                 raise ParamRegistryError(f"{f.name}:{key}: vigencia_ate before vigencia_de")
-            if row.unit == "ratio" or row.unit == "pct":
-                try:
-                    Decimal(str(row.value))
-                except Exception as exc:
-                    raise ParamRegistryError(f"{f.name}:{key}: {row.unit} value must be a Decimal string") from exc
             for other in rows:
-                if other.key == row.key and _regimes_intersect(other.scope, row.scope) and other.scope.anexo == row.scope.anexo \
-                        and _overlap(other, row):
+                if other.key == row.key and _scopes_intersect(other.scope, row.scope) and _overlap(other, row):
                     raise ParamRegistryError(f"{f.name}:{key}: overlapping vigencia for the same key+scope")
             rows.append(row)
     return Registry(rows, policy)
@@ -238,7 +311,7 @@ def stale_params(today: date, policy: Optional[Policy] = None, *, registry: Opti
     groups: dict[tuple, list[ParamRow]] = {}
     for r in reg.rows:
         if r.tier != "pratica":
-            groups.setdefault((r.key, tuple(sorted(r.scope.regime)), r.scope.anexo), []).append(r)
+            groups.setdefault((r.key, tuple(sorted(r.scope.regime)), tuple((d, tuple(sorted(r.scope.dim(d) or ()))) for d in SCOPE_DIMS)), []).append(r)
     for rows in groups.values():
         last = max(rows, key=lambda r: r.vigencia_de)
         if last.vigencia_ate is None:

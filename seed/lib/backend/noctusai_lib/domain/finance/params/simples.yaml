@@ -1,17 +1,4445 @@
-# Family: simples (Simples Nacional)
-# Row contract (see params/__init__.py): key, value, unit, scope{regime,anexo}, vigencia_de, vigencia_ate, norma, fonte_url[>=1],
-# tier, verificado_em, verificado_por, revalidar_em, notas. Money = int centavos; rates = Decimal as STRING (never a YAML float).
-# Rows are added only with a verified source -- never from memory.
+# Family: simples -- Simples Nacional: limites, faixas por anexo (aliquota nominal, parcela a deduzir, limites), fator R, regras de apuracao.
+# Source: accountant online research 2026-11-07, converted programmatically (values untouched except: regime vocabulary
+# presumido/real -> lucro_presumido/lucro_real, empty scope -> regime ["*"], MEI CBS/IBS sub-centavo amounts unit text -> brl).
+# Row contract: see params/__init__.py and registry.py. Money = int centavos (brl = decimal reais); rates = Decimal strings.
 rows:
-  - key: simples.fator_r.limiar
-    value: "0.28"
-    unit: ratio
-    scope: {regime: [simples]}
-    vigencia_de: 2018-01-01
-    vigencia_ate: null
-    norma: "LC 123/2006 art. 18 §5-J e §5-M; Res. CGSN 140/2018 art. 25 §1 V"
-    fonte_url: ["https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm"]
-    tier: norma
-    verificado_em: 2026-11-07
-    verificado_por: "accountant (advisory 2026-11-07)"
-    revalidar_em: null
+- key: simples.limite_receita_bruta_anual
+  value: '480000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 art. 3 II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Limite EPP mercado interno; receitas de exportacao tem limite adicional igual (Pergunta 2.1, P&R CGSN atualizado 2026-10-09). Inicio
+    de atividade: proporcional aos meses.'
+- key: simples.limite_receita_bruta_anual_exportacao_adicional
+  value: '480000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 art. 3 par. 14 (red. LC 155/2016)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Lido na Pergunta 2.1 do P&R CGSN; o paragrafo da LC nao foi lido diretamente.
+- key: simples.limite_microempresa
+  value: '36000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 art. 3 I
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ME ate R$ 360 mil; EPP acima ate o limite anual.
+- key: simples.sublimite_icms_iss
+  value: '360000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 art. 13-A e art. 19 par. 4
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'A partir de 2027-01-01 o mesmo sublimite passa a valer tambem para o IBS (Res. CGSN 140 art. 9, red. Res. CGSN 190/2026: ''Sublimite
+    de Receita Bruta para efeito do IBS, do ICMS e do ISS''). Art. 19 caput (opcao estadual de R$ 1,8 mi) nao modelado.'
+- key: simples.fator_r.limiar
+  value: '0.28'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo:
+    - III
+    - V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 art. 18 par. 5-J e 5-M (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: '>= 0,28 => Anexo III; < 0,28 => Anexo V (atividades do par. 5-I). Res. CGSN 190 introduz FS12 junto da RBT12 a partir de 2027; se a
+    janela da folha tambem defasa um mes e OPEN.'
+- key: simples.anexo_iii.faixa_5.iss_teto_percentual_efetivo
+  value: '0.05'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III nota (*) (red. LC 155/2016); Res. CGSN 140 art. 21 III (red. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Gatilho: aliquota efetiva > 14,92537%. A partir de 2027 a diferenca tambem vai ao IBS (Res. 190, art. 21 III).'
+- key: simples.receita.criterio_reconhecimento
+  value: competencia_ou_caixa_por_opcao_anual
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 140/2018 (texto anterior a Res. CGSN 190/2026)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'P&R CGSN Pergunta 5.7: ate 31/12/2026 opcao anual caixa ou competencia. vigencia_de 2018 = inicio do periodo verificado, nao a origem
+    da regra.'
+- key: simples.receita.criterio_reconhecimento
+  value: faturamento_emissao_documento_fiscal
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: 'Res. CGSN 140/2018 art. 2 par. 8, 9 e 9-A; art. 16 par. 1-A (red. Res. CGSN 190/2026, art. 9: efeitos 2027-01-01)'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Receita auferida no momento do faturamento = emissao do documento fiscal (inclusive adiantamentos e venda para entrega futura; nota de
+    debito/complementar conta). Regime de caixa vedado (P&R 5.7).
+- key: simples.rbt12.janela
+  value: 12_meses_anteriores_ao_PA
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 140/2018 art. 21 II a (texto anterior)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: P&R 5.3 contrasta 'regra ate 2026' com 5.3.2 (2027). Texto anterior do art. 21 nao lido diretamente.
+- key: simples.rbt12.janela
+  value: 12_meses_antecedentes_ao_mes_anterior_ao_PA
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 21 II a (red. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Ex. P&R 5.3.2: PA jul/2027 -> RBT12 = jun/2026 a mai/2027 (o P&R escreve ''jun/2025'', erro aparente; ver conflitos).'
+- key: simples.opcao.janela_anual
+  value: 09-01..09-30
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 6 par. 1 (red. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Opcao de 01 a 30/09 com efeito em 1/jan do ano seguinte (antes: janeiro). Para 2027 a janela foi 01-30/09/2026 (P&R 2.7) - ja encerrada.
+    Cancelamento: par. 1-B (prazo nao transcrito). Empresa em inicio de atividade: regra propria (par. 5).'
+- key: simples.ibs_cbs.inclusao_no_das.inicio
+  value: '2027-01-01'
+  unit: date
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 art. 13 (red. LC 214/2025); Res. CGSN 140 art. 4 (red. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'P&R Pergunta 1.6: a partir de 01/01/2027 o Simples inclui IBS e CBS. Padrao = ''por dentro'' do DAS; MEI nao pode optar ''por fora''
+    (P&R 2.27).'
+- key: simples.anexo_i.faixa_1.limite_superior
+  value: '18000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_i.faixa_1.aliquota_nominal
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_i.faixa_1.parcela_a_deduzir
+  value: '0'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: faixa 1 = '-' no texto legal (zero)
+- key: simples.anexo_i.faixa_2.limite_superior
+  value: '36000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_i.faixa_2.aliquota_nominal
+  value: '0.073'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_i.faixa_2.parcela_a_deduzir
+  value: '594000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_i.faixa_3.limite_superior
+  value: '72000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_i.faixa_3.aliquota_nominal
+  value: '0.095'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_i.faixa_3.parcela_a_deduzir
+  value: '1386000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_i.faixa_4.limite_superior
+  value: '180000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_i.faixa_4.aliquota_nominal
+  value: '0.107'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_i.faixa_4.parcela_a_deduzir
+  value: '2250000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_i.faixa_5.limite_superior
+  value: '360000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_i.faixa_5.aliquota_nominal
+  value: '0.143'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_i.faixa_5.parcela_a_deduzir
+  value: '8730000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_i.faixa_6.limite_superior
+  value: '480000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_i.faixa_6.aliquota_nominal
+  value: '0.19'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Res. CGSN 190/2026 Anexo I: 2027-2028 = 18.9%, a partir de 2029 = 18.9% (linhas abaixo)'
+- key: simples.anexo_i.faixa_6.parcela_a_deduzir
+  value: '37800000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo I (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_i.faixa_6.aliquota_nominal
+  value: '0.189'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo I (red. Res. CGSN 190/2026 art. 6) 'Para os anos-calendario 2027 e 2028'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: CBS reduzida 0,1 p.p. em 2027-2028 (ADCT art. 127, clausula de reducao da CBS); LC 214 art. 519 (Anexos XVIII-XXII) nao lido no Planalto
+- key: simples.anexo_i.faixa_6.aliquota_nominal
+  value: '0.189'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: I
+  vigencia_de: 2029-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 Anexo I (red. Res. CGSN 190/2026) 'A partir do ano-calendario 2029'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'ATENCAO: Anexo I 6a faixa 2029+ = 18,90% (nao volta a 19%) - conferir LC 214 Anexo XVIII; ver lista open'
+- key: simples.anexo_ii.faixa_1.limite_superior
+  value: '18000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_ii.faixa_1.aliquota_nominal
+  value: '0.045'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_ii.faixa_1.parcela_a_deduzir
+  value: '0'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: faixa 1 = '-' no texto legal (zero)
+- key: simples.anexo_ii.faixa_2.limite_superior
+  value: '36000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_ii.faixa_2.aliquota_nominal
+  value: '0.078'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_ii.faixa_2.parcela_a_deduzir
+  value: '594000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_ii.faixa_3.limite_superior
+  value: '72000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_ii.faixa_3.aliquota_nominal
+  value: '0.1'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_ii.faixa_3.parcela_a_deduzir
+  value: '1386000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_ii.faixa_4.limite_superior
+  value: '180000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_ii.faixa_4.aliquota_nominal
+  value: '0.112'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_ii.faixa_4.parcela_a_deduzir
+  value: '2250000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_ii.faixa_5.limite_superior
+  value: '360000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_ii.faixa_5.aliquota_nominal
+  value: '0.147'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_ii.faixa_5.parcela_a_deduzir
+  value: '8550000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_ii.faixa_6.limite_superior
+  value: '480000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_ii.faixa_6.aliquota_nominal
+  value: '0.3'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Res. CGSN 190/2026 Anexo II: 2027-2028 = 29.9%, a partir de 2029 = 30.0% (linhas abaixo)'
+- key: simples.anexo_ii.faixa_6.parcela_a_deduzir
+  value: '72000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo II (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_ii.faixa_6.aliquota_nominal
+  value: '0.299'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo II (red. Res. CGSN 190/2026 art. 6) 'Para os anos-calendario 2027 e 2028'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: CBS reduzida 0,1 p.p. em 2027-2028 (ADCT art. 127, clausula de reducao da CBS); LC 214 art. 519 (Anexos XVIII-XXII) nao lido no Planalto
+- key: simples.anexo_ii.faixa_6.aliquota_nominal
+  value: '0.3'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: II
+  vigencia_de: 2029-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 Anexo II (red. Res. CGSN 190/2026) 'A partir do ano-calendario 2029'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.limite_superior
+  value: '18000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iii.faixa_1.aliquota_nominal
+  value: '0.06'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iii.faixa_1.parcela_a_deduzir
+  value: '0'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: faixa 1 = '-' no texto legal (zero)
+- key: simples.anexo_iii.faixa_2.limite_superior
+  value: '36000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iii.faixa_2.aliquota_nominal
+  value: '0.112'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iii.faixa_2.parcela_a_deduzir
+  value: '936000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.limite_superior
+  value: '72000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iii.faixa_3.aliquota_nominal
+  value: '0.135'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iii.faixa_3.parcela_a_deduzir
+  value: '1764000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.limite_superior
+  value: '180000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iii.faixa_4.aliquota_nominal
+  value: '0.16'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iii.faixa_4.parcela_a_deduzir
+  value: '3564000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.limite_superior
+  value: '360000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iii.faixa_5.aliquota_nominal
+  value: '0.21'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iii.faixa_5.parcela_a_deduzir
+  value: '12564000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.limite_superior
+  value: '480000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iii.faixa_6.aliquota_nominal
+  value: '0.33'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Res. CGSN 190/2026 Anexo III: 2027-2028 = 32.9%, a partir de 2029 = 33.0% (linhas abaixo)'
+- key: simples.anexo_iii.faixa_6.parcela_a_deduzir
+  value: '64800000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo III (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.aliquota_nominal
+  value: '0.329'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6) 'Para os anos-calendario 2027 e 2028'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: CBS reduzida 0,1 p.p. em 2027-2028 (ADCT art. 127, clausula de reducao da CBS); LC 214 art. 519 (Anexos XVIII-XXII) nao lido no Planalto
+- key: simples.anexo_iii.faixa_6.aliquota_nominal
+  value: '0.33'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2029-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026) 'A partir do ano-calendario 2029'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iv.faixa_1.limite_superior
+  value: '18000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iv.faixa_1.aliquota_nominal
+  value: '0.045'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iv.faixa_1.parcela_a_deduzir
+  value: '0'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: faixa 1 = '-' no texto legal (zero)
+- key: simples.anexo_iv.faixa_2.limite_superior
+  value: '36000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iv.faixa_2.aliquota_nominal
+  value: '0.09'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iv.faixa_2.parcela_a_deduzir
+  value: '810000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iv.faixa_3.limite_superior
+  value: '72000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iv.faixa_3.aliquota_nominal
+  value: '0.102'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iv.faixa_3.parcela_a_deduzir
+  value: '1242000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iv.faixa_4.limite_superior
+  value: '180000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iv.faixa_4.aliquota_nominal
+  value: '0.14'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iv.faixa_4.parcela_a_deduzir
+  value: '3978000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iv.faixa_5.limite_superior
+  value: '360000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iv.faixa_5.aliquota_nominal
+  value: '0.22'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_iv.faixa_5.parcela_a_deduzir
+  value: '18378000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iv.faixa_6.limite_superior
+  value: '480000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_iv.faixa_6.aliquota_nominal
+  value: '0.33'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Res. CGSN 190/2026 Anexo IV: 2027-2028 = 32.9%, a partir de 2029 = 33.0% (linhas abaixo)'
+- key: simples.anexo_iv.faixa_6.parcela_a_deduzir
+  value: '82800000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo IV (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iv.faixa_6.aliquota_nominal
+  value: '0.329'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo IV (red. Res. CGSN 190/2026 art. 6) 'Para os anos-calendario 2027 e 2028'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: CBS reduzida 0,1 p.p. em 2027-2028 (ADCT art. 127, clausula de reducao da CBS); LC 214 art. 519 (Anexos XVIII-XXII) nao lido no Planalto
+- key: simples.anexo_iv.faixa_6.aliquota_nominal
+  value: '0.33'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: IV
+  vigencia_de: 2029-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 Anexo IV (red. Res. CGSN 190/2026) 'A partir do ano-calendario 2029'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.limite_superior
+  value: '18000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_v.faixa_1.aliquota_nominal
+  value: '0.155'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_v.faixa_1.parcela_a_deduzir
+  value: '0'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: faixa 1 = '-' no texto legal (zero)
+- key: simples.anexo_v.faixa_2.limite_superior
+  value: '36000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_v.faixa_2.aliquota_nominal
+  value: '0.18'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_v.faixa_2.parcela_a_deduzir
+  value: '450000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.limite_superior
+  value: '72000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_v.faixa_3.aliquota_nominal
+  value: '0.195'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_v.faixa_3.parcela_a_deduzir
+  value: '990000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.limite_superior
+  value: '180000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_v.faixa_4.aliquota_nominal
+  value: '0.205'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_v.faixa_4.parcela_a_deduzir
+  value: '1710000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.limite_superior
+  value: '360000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_v.faixa_5.aliquota_nominal
+  value: '0.23'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'faixas 1-5: aliquota/parcela identicas nas tabelas Res. CGSN 190/2026 (2027-2028 e 2029+)'
+- key: simples.anexo_v.faixa_5.parcela_a_deduzir
+  value: '6210000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.limite_superior
+  value: '480000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016, art. 11 III)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: limite_superior inalterado nas tabelas 2027-2028 e 2029+ da Res. CGSN 190/2026
+- key: simples.anexo_v.faixa_6.aliquota_nominal
+  value: '0.305'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Res. CGSN 190/2026 Anexo V: 2027-2028 = 30.4%, a partir de 2029 = 30.5% (linhas abaixo)'
+- key: simples.anexo_v.faixa_6.parcela_a_deduzir
+  value: '54000000'
+  unit: brl_centavos
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 Anexo V (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.aliquota_nominal
+  value: '0.304'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6) 'Para os anos-calendario 2027 e 2028'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: CBS reduzida 0,1 p.p. em 2027-2028 (ADCT art. 127, clausula de reducao da CBS); LC 214 art. 519 (Anexos XVIII-XXII) nao lido no Planalto
+- key: simples.anexo_v.faixa_6.aliquota_nominal
+  value: '0.305'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2029-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026) 'A partir do ano-calendario 2029'
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.cofins
+  value: '0.1282'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.pis
+  value: '0.0278'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.iss
+  value: '0.335'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.cofins
+  value: '0.1405'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.pis
+  value: '0.0305'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.iss
+  value: '0.32'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.cofins
+  value: '0.1364'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.pis
+  value: '0.0296'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.iss
+  value: '0.325'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.cofins
+  value: '0.1364'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.pis
+  value: '0.0296'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.iss
+  value: '0.325'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.cofins
+  value: '0.1282'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.pis
+  value: '0.0278'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.iss
+  value: '0.335'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: (*) percentual efetivo maximo de ISS = 5%; se aliquota efetiva > 14,92537%, excesso redistribuido aos federais (IRPJ 6,02% CSLL 5,26%
+    Cofins 19,28% PIS 4,18% CPP 65,26% de (aliq.efetiva-5%))
+- key: simples.anexo_iii.faixa_6.reparticao.irpj
+  value: '0.35'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.cofins
+  value: '0.1603'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.pis
+  value: '0.0347'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.cpp
+  value: '0.305'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.iss
+  value: '0'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo III, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: sem ISS no DAS na 6a faixa (acima do sublimite, ISS recolhido fora); celula '-' no texto
+- key: simples.anexo_v.faixa_1.reparticao.irpj
+  value: '0.25'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.cofins
+  value: '0.141'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.pis
+  value: '0.0305'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.cpp
+  value: '0.2885'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.iss
+  value: '0.14'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.irpj
+  value: '0.23'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.cofins
+  value: '0.141'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.pis
+  value: '0.0305'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.cpp
+  value: '0.2785'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.iss
+  value: '0.17'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.irpj
+  value: '0.24'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.cofins
+  value: '0.1492'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.pis
+  value: '0.0323'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.cpp
+  value: '0.2385'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.iss
+  value: '0.19'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.irpj
+  value: '0.21'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.cofins
+  value: '0.1574'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.pis
+  value: '0.0341'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.cpp
+  value: '0.2385'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.iss
+  value: '0.21'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.irpj
+  value: '0.23'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.csll
+  value: '0.125'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.cofins
+  value: '0.141'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.pis
+  value: '0.0305'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.cpp
+  value: '0.2385'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.iss
+  value: '0.235'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.irpj
+  value: '0.35'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.csll
+  value: '0.155'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.cofins
+  value: '0.1644'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.pis
+  value: '0.0356'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.cpp
+  value: '0.295'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.iss
+  value: '0'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 Anexo V, Percentual de Reparticao (red. LC 155/2016)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp155.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: sem ISS no DAS na 6a faixa (acima do sublimite, ISS recolhido fora); celula '-' no texto
+- key: simples.anexo_iii.faixa_1.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.cbs
+  value: '0.1543'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.iss
+  value: '0.335'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_1.reparticao.ibs
+  value: '0.0017'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.cbs
+  value: '0.1691'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.iss
+  value: '0.32'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_2.reparticao.ibs
+  value: '0.0019'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.cbs
+  value: '0.1641'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.iss
+  value: '0.325'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_3.reparticao.ibs
+  value: '0.0019'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.cbs
+  value: '0.1641'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.iss
+  value: '0.325'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_4.reparticao.ibs
+  value: '0.0019'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.irpj
+  value: '0.04'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.csll
+  value: '0.035'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.cbs
+  value: '0.1543'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.cpp
+  value: '0.434'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_5.reparticao.iss
+  value: '0.335'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: '(*) teto ISS 5%; aliq.efetiva > 14,92537%: IRPJ 6,02% CSLL 5,26% CBS 23,20% CPP 65,26% IBS 0,26% de (aliq.efetiva-5%)'
+- key: simples.anexo_iii.faixa_5.reparticao.ibs
+  value: '0.0017'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.irpj
+  value: '0.3509'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.csll
+  value: '0.1504'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.cbs
+  value: '0.1929'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.cpp
+  value: '0.3058'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_iii.faixa_6.reparticao.iss
+  value: '0'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: celula '-' na tabela (ISS/IBS fora do DAS acima do sublimite)
+- key: simples.anexo_iii.faixa_6.reparticao.ibs
+  value: '0'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: III
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo III (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: celula '-' na tabela (ISS/IBS fora do DAS acima do sublimite)
+- key: simples.anexo_v.faixa_1.reparticao.irpj
+  value: '0.25'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.cbs
+  value: '0.1696'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.cpp
+  value: '0.2885'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.iss
+  value: '0.14'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_1.reparticao.ibs
+  value: '0.0019'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.irpj
+  value: '0.23'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.cbs
+  value: '0.1696'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.cpp
+  value: '0.2785'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.iss
+  value: '0.17'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_2.reparticao.ibs
+  value: '0.0019'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.irpj
+  value: '0.24'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.cbs
+  value: '0.1795'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.cpp
+  value: '0.2385'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.iss
+  value: '0.19'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_3.reparticao.ibs
+  value: '0.002'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.irpj
+  value: '0.21'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.csll
+  value: '0.15'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.cbs
+  value: '0.1894'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.cpp
+  value: '0.2385'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.iss
+  value: '0.21'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_4.reparticao.ibs
+  value: '0.0021'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.irpj
+  value: '0.23'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.csll
+  value: '0.125'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.cbs
+  value: '0.1696'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.cpp
+  value: '0.2385'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.iss
+  value: '0.235'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_5.reparticao.ibs
+  value: '0.0019'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.irpj
+  value: '0.351'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.csll
+  value: '0.1554'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.cbs
+  value: '0.1978'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.cpp
+  value: '0.2958'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: ''
+- key: simples.anexo_v.faixa_6.reparticao.iss
+  value: '0'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: celula '-' na tabela (ISS/IBS fora do DAS acima do sublimite)
+- key: simples.anexo_v.faixa_6.reparticao.ibs
+  value: '0'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+    anexo: V
+  vigencia_de: 2027-01-01
+  vigencia_ate: 2028-12-31
+  norma: Res. CGSN 140/2018 Anexo V (red. Res. CGSN 190/2026 art. 6), 2027-2028
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: celula '-' na tabela (ISS/IBS fora do DAS acima do sublimite)
