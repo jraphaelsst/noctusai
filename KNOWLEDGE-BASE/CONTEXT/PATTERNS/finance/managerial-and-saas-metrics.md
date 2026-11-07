@@ -86,6 +86,10 @@ a16z: "a common mistake is to use bookings and revenue interchangeably". **Booki
 | MRR / churn (NoctusAI) | `recurrences` approximate contracted recurring receivables | **no subscription ledger** (plan, start/end, MRR events) — metrics are approximations until one exists; proposal for the tech-lead |
 | CAC | marketing categories + customer origin | no attribution of customer → channel in the organ |
 
+**Deferred revenue for annual plans is not modelled yet** (NBC TG 1002: recognise 1/12 per month as the service is delivered; cash arrives up front) — open for the tech-lead; until then annual-plan MRR and the cash bridge are approximations (§0, §1).
+
+**NoctusAI company file** (pre-CNPJ, no revenue, no contador, 2026-11-07): `br-tax-advisor-canon.md` §13; the §9 numbers are illustrative.
+
 ## 9 · Worked example B — NoctusAI's own Fator R + SaaS view
 
 **Question (owner):** "Nossa alíquota do DAS está certa?"
