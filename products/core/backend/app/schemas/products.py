@@ -52,6 +52,9 @@ class ProductUpdate(StrictHttpModel):
     logout_behavior: Optional[str] = None  # 'redirect' or 'signout'
     # Public-site visibility (noctusai.com showcase), independent of ativo/deploy_scope.
     exibir_no_site: Optional[bool] = None
+    # Featured position on the landing (1..6; null = remove from the featured set). The range /
+    # duplicate / hidden rules are enforced in pt-BR by website_catalog_service.check_destaque_write.
+    destaque_no_site: Optional[int] = None
 
     # NOTE: `ativo` and `deploy_scope` are DELIBERATELY absent.
     #

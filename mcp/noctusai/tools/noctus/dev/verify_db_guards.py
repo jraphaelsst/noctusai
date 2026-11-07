@@ -1595,6 +1595,90 @@ END;
 )
 
 
+_DESTAQUE_MIGRATION = "100_products_exibir_no_site.sql"
+
+
+def _destaque_refusal_probe(
+    *, probe_id: str, guard_name: str, rationale: str, update_sql: str, min_rows: int = 1
+) -> GuardProbe:
+    """One `products.destaque_no_site` guard probe: `update_sql` must be refused by `guard_name`.
+
+    UPDATE (not INSERT) on existing catalog rows, like the telefone probe: a refused statement
+    never fires the statement-level scope-sync trigger, and the wrapper rolls everything back.
+    """
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=(_DESTAQUE_MIGRATION,),
+        rationale=rationale,
+        sql=_do_block(f"""
+BEGIN
+  IF (SELECT count(*) FROM public.products WHERE exibir_no_site) < {min_rows} THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs at least {min_rows} visible row(s) in public.products';
+  END IF;
+  BEGIN
+    {update_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: the UPDATE succeeded — {guard_name} did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%"{guard_name}"%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_PRODUCTS_DESTAQUE_PROBES = (
+    _destaque_refusal_probe(
+        probe_id="products.destaque_no_site.range",
+        guard_name="products_destaque_no_site_range",
+        rationale=(
+            "The landing features at most six products; the position IS the display order, so it "
+            "must be 1..6. The admin write path refuses a 7th in pt-BR first; this CHECK is the "
+            "backstop for every other writer. Proven by UPDATE-ing a catalog row to position 7."
+        ),
+        update_sql=(
+            "UPDATE public.products SET destaque_no_site = 7 "
+            "WHERE id = (SELECT id FROM public.products WHERE exibir_no_site LIMIT 1);"
+        ),
+    ),
+    _destaque_refusal_probe(
+        probe_id="products.destaque_no_site.requires_exibir",
+        guard_name="products_destaque_requires_exibir",
+        rationale=(
+            "A product hidden from the site (exibir_no_site=false) must never be featured on it. "
+            "Proven by UPDATE-ing a visible row to hidden AND featured in one statement."
+        ),
+        update_sql=(
+            "UPDATE public.products SET exibir_no_site = false, destaque_no_site = 1 "
+            "WHERE id = (SELECT id FROM public.products WHERE exibir_no_site LIMIT 1);"
+        ),
+    ),
+    _destaque_refusal_probe(
+        probe_id="products.destaque_no_site.unique_position",
+        guard_name="products_destaque_no_site_uniq",
+        rationale=(
+            "Two products can never share a featured position (it is the display order); the "
+            "admin path refuses a duplicate in pt-BR and never swaps silently. Proven by "
+            "UPDATE-ing two visible rows to the same position in ONE statement."
+        ),
+        min_rows=2,
+        update_sql=(
+            "UPDATE public.products SET destaque_no_site = 2 WHERE id IN "
+            "(SELECT id FROM public.products WHERE exibir_no_site ORDER BY id LIMIT 2);"
+        ),
+    ),
+)
+
+
 _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE = GuardProbe(
     id="roteiros.feedback_status.allowed_values",
     product="social-wiring",
@@ -11540,6 +11624,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _JULIA_RELATORIO_CHAVE_UNIQUE_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
     _NOCTUS_USERS_TELEFONE_E164_PROBE,
+    *_PRODUCTS_DESTAQUE_PROBES,
     _JULIA_MENSAGEM_ORIGEM_PROBE,
     _JULIA_CHAT_CATEGORIA_PROBE,
     _JULIA_AGENTE_EXIGE_ATIVADO_EM_PROBE,
