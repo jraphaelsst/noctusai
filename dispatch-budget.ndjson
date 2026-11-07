@@ -63,3 +63,4 @@
 {"ts": "2026-11-07T19:31:58.437554+00:00", "slug": "access-tiers-inherited-default-grants", "agent": "tooling-engineer", "duration_minutes": 60.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-07T19:33:16.142581+00:00", "slug": "core-painel-route", "agent": "frontend-engineer", "duration_minutes": 127.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-07T19:47:31.898441+00:00", "slug": "seed-finance-service-only", "agent": "backend-engineer", "duration_minutes": 110.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
+{"ts": "2026-11-07T20:04:47.234545+00:00", "slug": "core-public-grants-service-only", "agent": "backend-engineer", "duration_minutes": 21.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
