@@ -60,7 +60,8 @@ def _config() -> tuple[str, str] | dict[str, Any]:
         return _error("nao_configurado",
                       "NOCTUS_TRANSCRIPTION_TOKEN ausente (token pk_* com escopo "
                       "transcription:write/read). Defina no .env da raiz.")
-    url = os.environ.get("NOCTUS_TRANSCRIPTION_URL", "").strip() or DEFAULT_URL
+    url = (os.environ.get("NOCTUS_TRANSCRIPTION_URL", "").strip()
+           or os.environ.get("NOCTUS_CORE_APP_URL", "").strip() or DEFAULT_URL)
     return url.rstrip("/"), token
 
 

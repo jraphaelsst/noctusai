@@ -18,7 +18,9 @@ core is the **identity provider + launcher**. Every product:
 
 core is **same-origin** (FE + API on one host — the single-container house model):
 `core.noctusai.com` in prod, `localhost:8000` (the house port) in dev. So there is
-really **one** core URL. The wart that caused the bugs: a separate
+really **one** core URL.
+
+> **Planned (P0-P3, not live):** the owner is retiring `core.noctusai.com`; the apex `noctusai.com` will serve the website (`/`, `/en*`, `/produtos`, ...) AND the core SPA (`/login`, `/painel`, `/admin/*`, ...), with `/api/*`, `/consent/*`, `/invite/*`, `/_*` unchanged. Core and website route sets must stay disjoint (fitness test `mcp/noctusai/tests/test_core_website_route_disjoint.py`). Until P1 every statement below about `core.noctusai.com` is the live truth. Plan: `project-history/roadmaps/core-host-retirement-2026-11.md`. The wart that caused the bugs: a separate
 `VITE_CORE_API_URL` existed but was baked for only `core`/`erp` — every other product
 baked only `VITE_CORE_URL`.
 
@@ -96,7 +98,7 @@ A scaffolded product gets working SSO + nav **by construction**, no per-product 
 2. The **template** (`products/seed/` → auto-synced `templates/product-seed/`) ships
    `Login`/`Landing`/`AcceptInvite` already consuming `env.CORE_URL`.
 3. The product Dockerfile bakes `ARG VITE_CORE_URL`; `build-and-push.yml` sets
-   `VITE_CORE_URL=https://core.noctusai.com` ⇒ prod resolves the real core.
+   `VITE_CORE_URL=https://core.noctusai.com` ⇒ prod resolves the real core (planned P1: the apex value; see the roadmap above).
 4. core CORS allows the new origin in prod via `@registry:all` → `PRODUCT_URL_<SLUG>`;
    in dev via the `.env` `CORS_ORIGINS` house-port band.
 
