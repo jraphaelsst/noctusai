@@ -45,6 +45,7 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
+        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
     container_name: dev-noctus-core
     image: ghcr.io/jraphaelsst/noctus-core:${NOCTUS_IMAGE_TAG:-dev}
     env_file:

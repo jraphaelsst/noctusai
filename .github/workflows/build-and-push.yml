@@ -88,6 +88,8 @@ jobs:
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_CORE_URL: https://core.noctusai.com
       VITE_CORE_API_URL: https://core.noctusai.com
+      # Public Turnstile SITE key (not a secret) — GitHub repo VARIABLE, core website forms.
+      VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
       GHCR_USERNAME: ${{ github.actor }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

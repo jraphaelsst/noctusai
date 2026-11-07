@@ -102,7 +102,11 @@ _C_VITE_SUPABASE = (
 )
 _C_VITE_SEED = _C_VITE_SUPABASE + "        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
 _C_VITE: dict[str, str] = {
-    "core": _C_VITE_SUPABASE + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n",
+    "core": (
+        _C_VITE_SUPABASE
+        + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n"
+        "        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}\n"
+    ),
     "erp-imobiliario": (
         _C_VITE_SUPABASE
         + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n"
@@ -336,8 +340,12 @@ _D_VITE_SEED = (
     _D_VITE_SUPABASE + "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
 )
 _D_VITE: dict[str, str] = {
-    "core": _D_VITE_SUPABASE
-    + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n",
+    "core": (
+        _D_VITE_SUPABASE
+        + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"
+        "ARG VITE_TURNSTILE_SITE_KEY=\n"
+        "ENV VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}\n"
+    ),
     "erp-imobiliario": (
         _D_VITE_SUPABASE
         + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"

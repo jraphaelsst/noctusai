@@ -40,6 +40,8 @@ ARG VITE_SUPABASE_PUBLISHABLE_KEY=
 ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
 ARG VITE_CORE_API_URL=
 ENV VITE_CORE_API_URL=${VITE_CORE_API_URL}
+ARG VITE_TURNSTILE_SITE_KEY=
+ENV VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}
 COPY products/core/frontend/package*.json ./products/core/frontend/
 WORKDIR /app/products/core/frontend
 # NOC-REMEDIATE[vitest-4112-hold]: package.json holds vitest <4.1.12 (4.1.12, published 2026-10-15, is an inconsistent set that crashes npm10 arborist on this lockfile-less install). Drop the hold once a vitest > 4.1.12 resolves cleanly lockfile-less — 2026-10-15
