@@ -293,3 +293,11 @@ def test_config_validation():
         FinanceConfig(schema="ok", org_id_expr="  ")
     with pytest.raises(ValueError):
         finance_migration(CFG, " ")
+
+
+def test_service_only_fix_with_reminders_closes_the_dunning_tables_too():
+    fix = finance_service_only_fix(CFG, "commerce", with_reminders=True)
+    for name in ("reminder_settings", "reminder_rules", "reminder_log"):
+        assert f"REVOKE ALL ON commerce.fin_{name} FROM PUBLIC, anon, authenticated;" in fix
+        assert f"COMMENT ON TABLE commerce.fin_{name} IS 'tier:org';" in fix
+    assert "fin_reminder_log" not in finance_service_only_fix(CFG, "commerce")

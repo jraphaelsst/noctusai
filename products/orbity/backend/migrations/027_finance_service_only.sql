@@ -91,6 +91,27 @@ CREATE POLICY "service_role_bypass" ON orbity.fin_budgets FOR ALL TO service_rol
 REVOKE ALL ON orbity.fin_budgets FROM PUBLIC, anon, authenticated;
 GRANT ALL ON orbity.fin_budgets TO service_role;
 COMMENT ON TABLE orbity.fin_budgets IS 'tier:org';
+ALTER TABLE orbity.fin_reminder_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "fin_reminder_settings_select_own_org" ON orbity.fin_reminder_settings;
+DROP POLICY IF EXISTS "service_role_bypass" ON orbity.fin_reminder_settings;
+CREATE POLICY "service_role_bypass" ON orbity.fin_reminder_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON orbity.fin_reminder_settings FROM PUBLIC, anon, authenticated;
+GRANT ALL ON orbity.fin_reminder_settings TO service_role;
+COMMENT ON TABLE orbity.fin_reminder_settings IS 'tier:org';
+ALTER TABLE orbity.fin_reminder_rules ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "fin_reminder_rules_select_own_org" ON orbity.fin_reminder_rules;
+DROP POLICY IF EXISTS "service_role_bypass" ON orbity.fin_reminder_rules;
+CREATE POLICY "service_role_bypass" ON orbity.fin_reminder_rules FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON orbity.fin_reminder_rules FROM PUBLIC, anon, authenticated;
+GRANT ALL ON orbity.fin_reminder_rules TO service_role;
+COMMENT ON TABLE orbity.fin_reminder_rules IS 'tier:org';
+ALTER TABLE orbity.fin_reminder_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "fin_reminder_log_select_own_org" ON orbity.fin_reminder_log;
+DROP POLICY IF EXISTS "service_role_bypass" ON orbity.fin_reminder_log;
+CREATE POLICY "service_role_bypass" ON orbity.fin_reminder_log FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON orbity.fin_reminder_log FROM PUBLIC, anon, authenticated;
+GRANT ALL ON orbity.fin_reminder_log TO service_role;
+COMMENT ON TABLE orbity.fin_reminder_log IS 'tier:org';
 -- Private finance attachments bucket; SERVICE-ONLY (no authenticated object policy) -- the API signs access.
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('finance-attachments', 'finance-attachments', false)
