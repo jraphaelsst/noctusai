@@ -182,6 +182,7 @@ def test_textos_obrigatorios_do_go_live_estao_no_payload():
     assert textos["runtime.confirmacao_opt_out"].strip()
     assert textos["conformidade.correcao.valor_sem_ferramenta"].strip()
     assert textos["conformidade.correcao.transferencia_sem_handoff"].strip()
+    assert textos["conformidade.correcao.insatisfacao_sem_alerta"].strip()
 
 
 def test_payload_nao_carrega_valor_de_pii_real():

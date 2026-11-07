@@ -66,7 +66,7 @@ class TestPureDetectors:
         assert POLITICA_PADRAO["vazamento_prompt"] == "bloquear"
         assert {r for r, p in POLITICA_PADRAO.items() if p == "bloquear"} == {
             "vazamento_prompt", "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta",
-            "formato_suspeito", "padroes_proibidos", "valor_sem_ferramenta", "transferencia_sem_handoff", "placeholder_cru"}
+            "formato_suspeito", "padroes_proibidos", "valor_sem_ferramenta", "transferencia_sem_handoff", "insatisfacao_sem_alerta", "placeholder_cru"}
 
 
 class TestPromptLeakFingerprint:

@@ -65,6 +65,8 @@ REGRAS = (
     "valor_sem_ferramenta", "opt_out_palavras",
     # a reply that promises a transfer to a person in a turn with no `handoff` call
     "transferencia_sem_handoff",
+    # the lead complains about the service and the turn never called `sinalizar_alerta`
+    "insatisfacao_sem_alerta",
     # a raw ``{{…}}`` / ``[dado: …]`` in a reply (a spec that never resolved): structural, always on
     "placeholder_cru",
 )
@@ -72,7 +74,7 @@ REGRAS = (
 #: identity number, encoded/structured payload or a forbidden pattern never reaches the lead.
 DETECTORES_BLOQUEANTES = (
     "vazamento_prompt", "link_nao_permitido", "contato_nao_permitido", "pii_na_resposta", "formato_suspeito",
-    "padroes_proibidos", "valor_sem_ferramenta", "transferencia_sem_handoff", "placeholder_cru",
+    "padroes_proibidos", "valor_sem_ferramenta", "transferencia_sem_handoff", "insatisfacao_sem_alerta", "placeholder_cru",
 )
 #: SECURITY-class rules: switching one off (or loosening it) opens an attack path, so only a HUMAN platform admin may
 #: change them -- never the ``studio:content-write`` token (the MCP path) that an agent or a leaked secret can hold.

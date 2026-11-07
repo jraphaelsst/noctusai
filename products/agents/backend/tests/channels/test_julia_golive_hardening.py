@@ -309,6 +309,122 @@ class TestTransferenciaSemHandoff:
         assert body["status"] == "handoff" and not body["reply"]["partes"]
 
 
+# ── dissatisfaction with no alert (JL-026) ──────────────────────────────────────────────────────────────
+
+class TestInsatisfacaoSemAlerta:
+    @pytest.mark.parametrize("lead", [
+        "Já te falei que é em Pinheiros, você não presta atenção?",
+        "Já te disse isso duas vezes",
+        "Eu já respondi isso",
+        "Você já me perguntou isso",
+        "você já perguntou isso antes",
+        "Você não está me ouvindo",
+        "voce nao ta me entendendo",
+        "Não foi isso que eu pedi",
+        "Que atendimento péssimo",
+        "o atendimento é horrível",
+        "Você é burra?",
+        "voce e muito inutil",
+        "Você não entende nada",
+        "É a terceira vez que eu falo",
+        "Pela terceira vez: é em Pinheiros",
+        "De novo isso?",
+        "Cansado de repetir a mesma coisa",
+        "JÁ TE FALEI!!!",
+        "Já te f​alei que é casa",  # zero-width character: the skeleton sees through it
+    ])
+    def test_a_service_complaint_without_the_alert_is_flagged(self, lead):
+        assert c.insatisfacao_sem_alerta([lead], alertou_no_turno=False) == {"mensagens": 1}
+
+    def test_the_alert_in_the_turn_never_fires(self):
+        assert c.insatisfacao_sem_alerta(["Já te falei que é em Pinheiros"], alertou_no_turno=True) is None
+
+    def test_a_handoff_turn_never_fires(self):
+        # the transfer is the priority (and its report already tells the staff); a retry after it would be noise
+        assert c.insatisfacao_sem_alerta(
+            ["Já te falei, quero falar com uma pessoa"], alertou_no_turno=False, encerrou_ou_transferiu=True) is None
+
+    @pytest.mark.parametrize("lead", [
+        "Na verdade quero casa", "Mudei de ideia, prefiro apartamento", "Já falei com o corretor ontem",
+        "Quero um apartamento em Pinheiros", "Pode ser a segunda opção?", "Sim, já visitei esse imóvel",
+        "Não entendi o valor do condomínio", "Obrigado, você ajudou muito", "", "   ", "Nunca vi esse bairro",
+    ])
+    def test_a_neutral_message_or_change_of_mind_is_clean(self, lead):
+        assert c.insatisfacao_sem_alerta([lead], alertou_no_turno=False) is None
+
+    @pytest.mark.parametrize("lead", [
+        "Para de me mandar mensagem, já te falei", "Não quero mais receber mensagens, você não presta atenção",
+        "Me tira da lista, que atendimento ruim", "Parar", "chega", "Sair", "Não quero mais",
+        "Pare de me chamar, já disse",
+    ])
+    def test_a_stop_request_never_fires(self, lead):
+        assert c.insatisfacao_sem_alerta([lead], alertou_no_turno=False) is None
+
+    def test_the_stored_patterns_extend_the_floor(self):
+        p = [r"\bque\s+demora\b"]
+        assert c.insatisfacao_sem_alerta(["Que demora"], alertou_no_turno=False) is None
+        assert c.insatisfacao_sem_alerta(["Que demora"], alertou_no_turno=False, padroes=p) == {"mensagens": 1}
+
+    def test_the_rule_blocks_by_default_and_needs_the_tool_to_be_offered(self):
+        assert POLITICA_PADRAO["insatisfacao_sem_alerta"] == "bloquear"
+        regras = FakeConformidadeStore().regras(uuid4(), uuid4())
+        assert regras["insatisfacao_sem_alerta"].ativo
+        e = c.EntradaConformidade(
+            resposta="Qual o bairro?", mensagens_lead=["Já te falei que é em Pinheiros"], regras=regras, alerta_ofertado=True)
+        [v] = [v for v in c.avaliar_resposta(e) if v.regra == "insatisfacao_sem_alerta"]
+        assert v.politica == "bloquear"
+        for ok in (replace(e, alertou_no_turno=True), replace(e, transferiu_no_turno=True),
+                   replace(e, encerrou_no_turno=True), replace(e, alerta_ofertado=False)):
+            assert not [x for x in c.avaliar_resposta(ok) if x.regra == "insatisfacao_sem_alerta"]
+
+    def test_an_empty_reply_is_still_checked(self):
+        regras = FakeConformidadeStore().regras(uuid4(), uuid4())
+        e = c.EntradaConformidade(resposta="", mensagens_lead=["Já te falei!"], regras=regras, alerta_ofertado=True)
+        assert [v for v in c.avaliar_resposta(e) if v.regra == "insatisfacao_sem_alerta"]
+
+    def test_a_complaint_without_the_alert_triggers_the_corrected_rerun(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            say("Qual o bairro que você procura?"),
+            step(call("sinalizar_alerta", tipo="lead_insatisfeito", descricao="Lead repetiu o bairro")),
+            say("Desculpa a falha. Prefere falar com uma pessoa ou seguimos por aqui?")]))
+        body = chan.turn(turn_body("Já te falei que é em Pinheiros, você não presta atenção?")).json()
+        assert "insatisfacao_sem_alerta" in _violacoes(body)
+        assert body["reply"]["partes"] == ["Desculpa a falha. Prefere falar com uma pessoa ou seguimos por aqui?"]
+        calls = [x for x in chan.provider.calls if x["method"] == "chat_with_tools"]
+        assert [m.content for m in calls[1]["messages"] if m.role == "system"][-1] == "txt:conformidade.correcao.insatisfacao_sem_alerta"
+
+    def test_a_turn_with_the_alert_passes_without_a_rerun(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("sinalizar_alerta", tipo="lead_insatisfeito", descricao="Lead repetiu o bairro")),
+            say("Desculpa a falha. Prefere falar com uma pessoa ou seguimos por aqui?")]))
+        body = chan.turn(turn_body("Já te falei que é em Pinheiros, você não presta atenção?")).json()
+        assert "insatisfacao_sem_alerta" not in _violacoes(body)
+        assert len([x for x in chan.provider.calls if x["method"] == "chat_with_tools"]) == 2  # tool step + final, no re-run
+
+    def test_a_neutral_turn_never_reruns(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[say("Qual o bairro que você procura?")]))
+        body = chan.turn(turn_body("Quero um apartamento em Pinheiros")).json()
+        assert "insatisfacao_sem_alerta" not in _violacoes(body)
+
+    def test_a_stop_request_with_encerrar_is_left_alone(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("encerrar", motivo="lead_pediu_parar", motivo_texto="Pediu para parar",
+                      trecho="para de me mandar mensagem")),
+            say("Tudo bem, não envio mais mensagens.")]))
+        body = chan.turn(turn_body("Para de me mandar mensagem, já te falei que não quero")).json()
+        assert "insatisfacao_sem_alerta" not in _violacoes(body)
+
+    def test_blocked_twice_means_silence_and_a_handoff(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[say("Qual o bairro?"), say("E o orçamento?")]))
+        body = chan.turn(turn_body("Já te falei que é em Pinheiros, você não presta atenção?")).json()
+        assert body["status"] == "handoff" and not body["reply"]["partes"]
+
+
 # ── P1-3: the deterministic STOP ────────────────────────────────────────────────────────────────────────
 
 class TestStopBackstop:
