@@ -147,6 +147,22 @@ class TestAccessTierTables:
         sql2 = "REVOKE ALL ON agents.compiled_prompts FROM authenticated;\n"
         assert check_access_tier_tables(_tree(tmp_path, "", {"001.sql": sql1, "002.sql": sql2})) == []
 
+    def test_public_table_with_no_grant_statement_inherits_supabase_default_grants(self, tmp_path):
+        """085_finance shape: CREATE TABLE public.x with no GRANT/REVOKE inherits anon+authenticated ALL."""
+        root = _tree(tmp_path, "", {"001.sql": "CREATE TABLE IF NOT EXISTS public.fin_accounts (id int, org_id uuid);\n"})
+        keys = {f["key"] for f in at.analyze_tables(root)["grant_findings"]}
+        assert {"grant:public.fin_accounts:anon", "grant:public.fin_accounts:authenticated"} <= keys
+
+    def test_later_forward_revoke_closes_inherited_public_grants(self, tmp_path):
+        sql1 = "CREATE TABLE public.fin_accounts (id int);\n"
+        sql2 = "REVOKE ALL ON public.fin_accounts FROM anon, authenticated;\n"
+        root = _tree(tmp_path, "", {"001.sql": sql1, "002.sql": sql2})
+        assert at.analyze_tables(root)["grant_findings"] == []
+
+    def test_explicit_revoke_in_same_migration_is_clean(self, tmp_path):
+        sql = "CREATE TABLE public.fin_x (id int);\nREVOKE ALL ON public.fin_x FROM anon, authenticated;\n"
+        assert at.analyze_tables(_tree(tmp_path, "", {"001.sql": sql}))["grant_findings"] == []
+
     def test_tier_comment_makes_any_table_platform(self, tmp_path):
         sql = ("CREATE TABLE agents.secret_rubrics (id int);\nCOMMENT ON TABLE agents.secret_rubrics IS 'tier:platform';\n"
                "GRANT SELECT ON agents.secret_rubrics TO authenticated;\n")
