@@ -66,3 +66,4 @@
 {"ts": "2026-11-07T20:04:47.234545+00:00", "slug": "core-public-grants-service-only", "agent": "backend-engineer", "duration_minutes": 21.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-07T20:04:59.895141+00:00", "slug": "seed-landing-organs", "agent": "frontend-engineer", "duration_minutes": 12.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-07T20:05:40.245735+00:00", "slug": "seed-polish-contrast-icons", "agent": "frontend-engineer", "duration_minutes": 12.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
+{"ts": "2026-11-07T20:08:14.160313+00:00", "slug": "sw-documentos-service-only", "agent": "backend-engineer", "duration_minutes": 20.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
