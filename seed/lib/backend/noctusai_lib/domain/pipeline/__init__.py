@@ -42,11 +42,13 @@ from .defaults import StageDefault, ensure_default_stages
 from .moves import move_card, resolve_initial_stage
 from .ordering import (
     POSITION_FIELD,
+    position_for_drop,
     position_for_index,
     position_of,
     position_on_top,
 )
 from .router import PipelineContext, pipeline_stages_router
+from .sql import pipeline_migration
 from .stages import (
     STAGE_COLORS,
     STAGE_ROLES,
@@ -80,7 +82,9 @@ __all__ = [
     "list_stages",
     "move_card",
     "orphan_cards",
+    "pipeline_migration",
     "pipeline_stages_router",
+    "position_for_drop",
     "position_for_index",
     "position_of",
     "position_on_top",
