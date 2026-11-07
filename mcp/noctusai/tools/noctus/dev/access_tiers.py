@@ -513,6 +513,10 @@ def classify_routes(root: Path | None = None) -> list[Route]:
 # Tables
 # ---------------------------------------------------------------------------
 _ROLES = ("authenticated", "anon", "public")
+#: Supabase's built-in `ALTER DEFAULT PRIVILEGES ... IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated`
+#: (prod relacl: `anon=arwdDxtm,authenticated=arwdDxtm`). "" = an unqualified name resolved via search_path=public.
+_SUPABASE_DEFAULT_SCHEMAS = ("public", "")
+_SUPABASE_DEFAULT_ROLES = ("anon", "authenticated")
 _Q = r'"?(?:(?P<schema>[\w-]+)"?\."?)?(?P<table>[\w-]+)"?'
 _GRANT_ALL_SCHEMA = re.compile(r"(?:GRANT|REVOKE)\s+[^;]*?ON\s+ALL\s+TABLES\s+IN\s+SCHEMA\s+\"?(?P<s>[\w-]+)\"?", re.I)
 _GRANT_RE = re.compile(r"^\s*(?P<verb>GRANT|REVOKE)\s+(?P<privs>.+?)\s+ON\s+(?:TABLE\s+)?(?P<tables>.+?)\s+(?P<dir>TO|FROM)\s+(?P<roles>.+?)\s*$", re.I | re.S)
@@ -631,7 +635,11 @@ def analyze_tables(root: Path | None = None) -> dict[str, Any]:
             continue
         pschema = prod.replace("-", "_") if prod == "agents" else None
         tables: dict[str, _Tbl] = {}
-        defaults: dict[str, set[str]] = defaultdict(set)   # schema -> roles with default table grants
+        # schema -> roles with default table grants. `public` (and the unqualified search_path form) starts with the
+        # Supabase default privileges (anon + authenticated ALL): a table created with no REVOKE INHERITS them.
+        defaults: dict[str, set[str]] = defaultdict(set)
+        for _s in _SUPABASE_DEFAULT_SCHEMAS:
+            defaults[_s] = set(_SUPABASE_DEFAULT_ROLES)
         for f in files:
             rel = f.relative_to(root).as_posix()
             try:
