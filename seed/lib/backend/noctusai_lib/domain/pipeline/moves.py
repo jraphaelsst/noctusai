@@ -37,6 +37,7 @@ def move_card(
     log_action: Callable[..., Any] | None = None,
     extra_updates: dict[str, Any] | None = None,
     org_id: str | None = None,
+    card_scoped_by_org: bool = True,
 ) -> dict:
     """Move one card to `to_stage_id`, recording the transition.
 
@@ -59,6 +60,10 @@ def move_card(
         org_id: Required by consumers whose client does not enforce tenancy
             (see `list_stages`). Also stamped onto the history row when the
             history table is org-scoped.
+        card_scoped_by_org: ``True`` (default, every existing caller) filters
+            the CARD read by `org_id`. A platform-tier funnel whose card table
+            has no `org_id` column (e.g. `website_leads`) passes ``False`` —
+            `org_id` still scopes the stage lookup and stamps the history row.
 
     Returns:
         The updated card row.
@@ -69,7 +74,7 @@ def move_card(
     if cfg.cliente_field:
         select_cols.append(cfg.cliente_field)
     card_query = db.table(cfg.card_table).select(", ".join(select_cols)).eq("id", card_id)
-    if org_id:
+    if org_id and card_scoped_by_org:
         card_query = card_query.eq("org_id", org_id)
     current_rows = card_query.execute().data or []
     if not current_rows:
