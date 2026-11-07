@@ -4,24 +4,62 @@ stage: building
 last_touched: '2026-10-01'
 last_touched_by: backend-engineer
 known_facts:
-- InfoSimples docs (receita-federal/pgfn) - a holder of a PCEN certidao cannot get a NEW one from the PGFN portal;
-  preferencia_emissao=2via retrieves the still-valid earlier one, with the same practical effect.
-- The docs give NO code or message for the refused nova; the only signal is the 600-798 failure range. The emission
-  watcher (migration 186) records every call to learn the real signature.
-- A 2a via carries the ORIGINAL emission date, so the 30-day rule would reject it; the contract gate judges it by the
-  printed validity and asks the operator to acknowledge it.
-- data[0].tipo is the source's own verdict (Positiva com efeitos de negativa / Negativa); header.price + header.billable
-  give the per-call cost.
-errors_encountered: []
+- InfoSimples docs (receita-federal/pgfn) - a holder of a PCEN certidao cannot get a NEW one from the
+  PGFN portal; preferencia_emissao=2via retrieves the still-valid earlier one, with the same practical
+  effect.
+- The docs give NO code or message for the refused nova; the only signal is the 600-798 failure range.
+  The emission watcher (migration 186) records every call to learn the real signature.
+- A 2a via carries the ORIGINAL emission date, so the 30-day rule would reject it; the contract gate judges
+  it by the printed validity and asks the operator to acknowledge it.
+- data[0].tipo is the source's own verdict (Positiva com efeitos de negativa / Negativa); header.price
+  + header.billable give the per-call cost.
+- '[observado] cenprot: 303 chamadas, 0 com sucesso (0%); 0 retentativas 2ª via (R$ 0).'
+- '[observado] cnd_fazenda_sp: 120 chamadas, 6 com sucesso (5%); 0 retentativas 2ª via (R$ 0).'
+- '[observado] cnd_federal: 146 chamadas, 65 com sucesso (45%); 18 retentativas 2ª via (R$ 2.4000).'
+- '[observado] cnd_trabalhista_tst: 100 chamadas, 82 com sucesso (82%); 0 retentativas 2ª via (R$ 0).'
+- '[observado] trf3: 170 chamadas, 67 com sucesso (39%); 0 retentativas 2ª via (R$ 0).'
+- '[observado] trf3_sp: 164 chamadas, 66 com sucesso (40%); 0 retentativas 2ª via (R$ 0).'
+- '[observado] trt2_digital: 104 chamadas, 81 com sucesso (78%); 0 retentativas 2ª via (R$ 0).'
+- '[observado] trt2_fisico: 99 chamadas, 81 com sucesso (82%); 0 retentativas 2ª via (R$ 0).'
+errors_encountered:
+- when: '2026-10-23'
+  error: '[observado] cnd_federal: assinatura ''603|o token informado nao tem autorizacao de acesso ao
+    servico verifique se ele continua ativo e se ele nao possui algum limite de uso especificado|a conta
+    esta sem saldo adicione saldo para conseguir usar a api'' é transitória (3 casos: a 2ª via também
+    falhou ou a nova voltou a funcionar).'
+  resolution: 'gatilho aprendido: não repete a chamada como 2ª via (economiza a chamada cobrada)'
+  avoidable_by: não tratar essa falha como PCEN
+- when: '2026-10-23'
+  error: '[observado] cnd_federal: assinatura ''611|os dados estao incompletos no site ou aplicativo de
+    origem e nao puderam ser retornados|as informacoes disponiveis na receita federal sobre o contribuinte
+    sao insuficientes para emitir a certidao pela internet'' é transitória (3 casos: a 2ª via também falhou
+    ou a nova voltou a funcionar).'
+  resolution: 'gatilho aprendido: não repete a chamada como 2ª via (economiza a chamada cobrada)'
+  avoidable_by: não tratar essa falha como PCEN
+- when: '2026-10-23'
+  error: '[observado] cnd_federal: assinatura ''618|o site ou aplicativo de origem esta sobrecarregado
+    tente novamente em alguns instantes|'' é transitória (3 casos: a 2ª via também falhou ou a nova voltou
+    a funcionar).'
+  resolution: 'gatilho aprendido: não repete a chamada como 2ª via (economiza a chamada cobrada)'
+  avoidable_by: não tratar essa falha como PCEN
+- when: '2026-11-03'
+  error: '[observado] cnd_federal: assinatura ''620|o site ou aplicativo de origem emitiu um erro que
+    provavelmente nao mudara em breve para esta consulta leia o para saber mais|inscricao no cnpj inapta
+    omissao de declaracoes emissao de certidao nao permitida'' é transitória (3 casos: a 2ª via também
+    falhou ou a nova voltou a funcionar).'
+  resolution: 'gatilho aprendido: não repete a chamada como 2ª via (economiza a chamada cobrada)'
+  avoidable_by: não tratar essa falha como PCEN
 drifts_surfaced: []
 alternatives_considered:
 - alt: always request 2via first (the vendor's suggestion)
-  rejected_because: only a per-documento history of a still-valid PCEN justifies skipping nova; otherwise a negativa
-    holder would get an old certidao instead of a fresh one.
+  rejected_because: only a per-documento history of a still-valid PCEN justifies skipping nova; otherwise
+    a negativa holder would get an old certidao instead of a fresh one.
 - alt: classify the failure by code range only
-  rejected_because: the range is too broad (outages and PCEN share it); signatures + outcome evidence separate them.
+  rejected_because: the range is too broad (outages and PCEN share it); signatures + outcome evidence
+    separate them.
 manual_validation_log: []
 bugs_fixed_during_dev: []
 related:
   kb_patterns:
   - KB § INTEGRATIONS/infosimples-certidoes.md
+aprendizados_ate: '2026-11-03 14:29:16.988529+00'
