@@ -35,7 +35,8 @@ class FinanceConfig:
             `<org_id>/entries/<entry_id>/<attachment_id>.<ext>`.
         signed_url_ttl_seconds: attachment signed-URL lifetime (capped at 10 min).
         org_id_expr: SQL expression the authenticated own-org policies compare
-            `org_id` to. Unset => `public.current_org_id_for('<schema>')` (the
+            `org_id` to (the reminders organ's tables; the core finance tables are
+            service-role only since 2026-11-07 and carry no browser policy). Unset => `public.current_org_id_for('<schema>')` (the
             home org for everyone, the SELECTED org while platform staff act
             through the org picker) -- same default as `CommerceConfig`.
         with_parties: the `parties` organ is mounted in the same schema. Adds the nullable

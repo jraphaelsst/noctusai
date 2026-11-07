@@ -9,6 +9,7 @@ from noctusai_lib.primitives.postgrest_errors import is_foreign_key_violation, i
 
 from ._common import Scope, first, iso, new_id, now_iso, run_parallel, to_date, today
 from .errors import CONTA_COM_MOVIMENTO, CONTA_EM_USO, CONTA_GATEWAY_DUPLICADA, CONTA_INATIVA, conflict, invalid
+from .sql import LEDGER_SUM_RPC, rpc_name
 from .types import AccountKind, LedgerDirection
 
 logger = logging.getLogger(__name__)
@@ -166,24 +167,49 @@ def delete_account(s: Scope, account_id: Any) -> None:
 
 
 def signed_ledger_cents(rows: list[dict]) -> int:
+    """The Python fold of ledger rows (IN +, everything else -). The reads use `ledger_signed_sum` (the same
+    rule in SQL); this stays the reference the parity tests hold the database function to."""
     return sum(
         int(r["amount_cents"]) if r["direction"] == LedgerDirection.IN.value else -int(r["amount_cents"])
         for r in rows
     )
 
 
+def ledger_signed_sum(s: Scope, on: date, *, inclusive: bool, account_id: Optional[Any] = None) -> int:
+    """Signed sum of the org's ledger up to `on` (`<= on` when `inclusive`, else `< on`), for one account or all.
+
+    ONE round trip returning ONE number (`<prefix>ledger_signed_sum`, computed in Postgres) -- never the rows:
+    a balance read must not grow with the ledger's history (event-sourcing-program P0)."""
+    resp = s.db.rpc(
+        rpc_name(s.cfg, LEDGER_SUM_RPC),
+        {
+            "p_org_id": s.org_id,
+            "p_account_id": str(account_id) if account_id else None,
+            "p_on": on.isoformat(),
+            "p_inclusive": inclusive,
+        },
+    ).execute()
+    data = getattr(resp, "data", resp)
+    if isinstance(data, list):  # some clients wrap a scalar result in a one-element list
+        data = data[0] if data else None
+    if data is None:  # SUM is COALESCEd to 0 in SQL; a NULL here means an empty wrapped list
+        return 0
+    if isinstance(data, bool) or not isinstance(data, (int, str)):
+        raise ValueError(f"unexpected {LEDGER_SUM_RPC} payload: {type(data).__name__}")
+    return int(data)
+
+
 def account_balance(s: Scope, account_id: Any, on: Optional[date] = None) -> dict:
     """Balance of the account on day `on` (default today): opening + the ledger up to and including `on`."""
     on = on or today()
     day = on.isoformat()
-    # account lookup (404 guard, listed first) and ledger read are independent: one wall-clock round trip.
-    account, rows = run_parallel(
+    # account lookup (404 guard, listed first) and the ledger sum are independent: one wall-clock round trip.
+    account, movement = run_parallel(
         lambda: get_account(s, account_id),
-        lambda: s.rows(_LEDGER, eq={"account_id": str(account_id)}, refine=lambda q: q.lte("occurred_on", day)),
+        lambda: ledger_signed_sum(s, on, inclusive=True, account_id=account_id),
     )
     opening_date = to_date(account.get("opening_date"))
     opening = int(account.get("opening_balance_cents") or 0) if opening_date is None or opening_date <= on else 0
-    movement = signed_ledger_cents(rows)
     return {
         "account_id": str(account["id"]),
         "on": day,
@@ -199,6 +225,7 @@ __all__ = [
     "delete_account",
     "get_account",
     "get_or_create_gateway_account",
+    "ledger_signed_sum",
     "list_accounts",
     "require_usable_account",
     "signed_ledger_cents",

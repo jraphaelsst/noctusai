@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -67,6 +67,9 @@ class RpcMockClient(MockSupabaseClient):
                 payload = self._reverse(p)
             self.rpc_calls.append((name, p))
             return _Result(payload)
+        if name == f"{fp}ledger_signed_sum":
+            self.rpc_calls.append((name, p))
+            return _Result(self._ledger_signed_sum(p))
         return super().rpc(name, params)
 
     # ── commerce_create_refund ───────────────────────────────────────────
@@ -167,3 +170,20 @@ class RpcMockClient(MockSupabaseClient):
         if opposite:
             self.table(self._fin("ledger")).insert(opposite).execute()
         return {"status": "ok", "settlement": {**st, **patch}}
+
+    def _ledger_signed_sum(self, p: dict) -> int:
+        """Mirror of `<prefix>ledger_signed_sum` (proven against the Python fold on PGlite by
+        `test_settle_rpc_on_real_postgres.py`): org-scoped, optional account, `<=`/`<` on `occurred_on`."""
+        from noctusai_lib.domain.finance.accounts import signed_ledger_cents
+
+        if self._validate_schema:
+            self._check_rpc_signature(f"{self._finance_prefix}ledger_signed_sum", p)
+        on = date.fromisoformat(str(p["p_on"]))
+        acc = p.get("p_account_id")
+        rows = [
+            r for r in self._rows(self._fin("ledger"), org_id=str(p["p_org_id"]))
+            if (acc is None or str(r["account_id"]) == str(acc))
+            and (date.fromisoformat(str(r["occurred_on"])[:10]) <= on if p["p_inclusive"]
+                 else date.fromisoformat(str(r["occurred_on"])[:10]) < on)
+        ]
+        return signed_ledger_cents(rows)

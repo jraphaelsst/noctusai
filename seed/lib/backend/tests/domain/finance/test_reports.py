@@ -1,11 +1,12 @@
 """Cash flow (realized + projected), receivables aging (the DRE: test_dre.py)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
-from noctusai_lib.domain.finance import reports, settlements
+from noctusai_lib.domain.finance import accounts, reports, settlements
+from noctusai_lib.domain.finance._common import to_date, today
 from noctusai_lib.domain.finance.errors import FinanceError
 
 from .conftest import VALID_CNPJ, VALID_CPF, mk_account, mk_entry
@@ -62,6 +63,54 @@ def test_cashflow_range_rules_and_org_scope(s, s_b):
         reports.cashflow(s, date(2026, 1, 1), date(2026, 2, 1), account_id=foreign["id"])
     mk_entry(s_b, due_date="2026-01-10", amount_cents=999)
     assert reports.cashflow(s, date(2026, 1, 1), date(2026, 1, 31))["totals"]["projected_in_cents"] == 0
+
+
+def _old_fold(db, org, account_id, on, *, inclusive):
+    """The read path before event-sourcing-program P0: every ledger row up to `on`, folded in Python."""
+    rows = [
+        r for r in db.table("fin_ledger").select("*").eq("org_id", org).execute().data
+        if (account_id is None or str(r["account_id"]) == str(account_id))
+        and (to_date(r["occurred_on"]) <= on if inclusive else to_date(r["occurred_on"]) < on)
+    ]
+    return accounts.signed_ledger_cents(rows)
+
+
+def test_balance_and_cashflow_opening_match_the_old_python_fold_on_a_mixed_ledger(s, s_b, db):
+    a = mk_account(s, "A", opening_balance_cents=5000, opening_date="2026-01-15")
+    b = mk_account(s, "B")
+    foreign = mk_account(s_b, "Foreign", opening_balance_cents=777)
+    sts = []
+    for i, (direction, amount, day) in enumerate([
+        ("receivable", 1200, "2026-01-10"), ("payable", 300, "2026-01-31"), ("receivable", 4500, "2026-02-01"),
+        ("payable", 2200, "2026-02-14"), ("receivable", 999, "2026-03-01"), ("payable", 50, "2026-03-31"),
+    ]):
+        e = mk_entry(s, direction=direction, due_date=day, amount_cents=amount)
+        sts.append(pay(s, e, a if i % 2 == 0 else b, amount, day, fee_cents=7 if i % 3 == 0 else 0)["settlement"])
+    settlements.create_transfer(s, {"from_account_id": a["id"], "to_account_id": b["id"], "amount_cents": 400, "occurred_on": "2026-02-01"})
+    settlements.reverse_settlement(s, sts[2]["id"], "engano")  # opposite rows (reverses_id) booked today
+    settlements.reverse_settlement(s, sts[3]["id"], "engano")
+    pay(s_b, mk_entry(s_b, due_date="2026-02-01", amount_cents=123456), foreign, 123456, "2026-02-01")  # other org: never counted
+    ledger = db.table("fin_ledger").select("*").execute().data
+    assert any(r.get("reverses_id") for r in ledger) and any(r["origin"] == "transfer" for r in ledger)
+
+    t = today()
+    days = [date(2026, 1, 9), date(2026, 1, 15), date(2026, 2, 1), date(2026, 3, 31), t - timedelta(days=1), t, t + timedelta(days=1)]
+    for on in days:
+        for acc in (a, b):
+            got = accounts.account_balance(s, acc["id"], on)
+            opening_date = to_date(acc.get("opening_date"))
+            opening = int(acc.get("opening_balance_cents") or 0) if opening_date is None or opening_date <= on else 0
+            movement = _old_fold(db, s.org_id, acc["id"], on, inclusive=True)
+            assert got == {"account_id": str(acc["id"]), "on": on.isoformat(), "opening_balance_cents": opening,
+                           "movement_cents": movement, "balance_cents": opening + movement}, (acc["name"], on)
+        for acc_id in (None, a["id"], b["id"]):
+            cf = reports.cashflow(s, on, on + timedelta(days=40), account_id=acc_id)
+            openings = sum(
+                int(x.get("opening_balance_cents") or 0) for x in (a, b)
+                if (acc_id is None or x["id"] == acc_id)
+                and (to_date(x.get("opening_date")) is None or to_date(x.get("opening_date")) < on)
+            )
+            assert cf["opening_balance_cents"] == openings + _old_fold(db, s.org_id, acc_id, on, inclusive=False), (acc_id, on)
 
 
 # ── DRE ── (the structured statement is covered in test_dre.py; only the legacy import path is pinned here)

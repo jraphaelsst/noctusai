@@ -25,6 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_fin_accounts_org ON commerce.fin_accounts (org_id
 -- Accounting code (E21): the contador's reduced account code for this bank/cash/gateway account (free text, optional);
 -- the Domínio export refuses to run while a used account has none.
 ALTER TABLE commerce.fin_accounts ADD COLUMN IF NOT EXISTS accounting_code TEXT;
+COMMENT ON TABLE commerce.fin_accounts IS 'tier:org';
 ALTER TABLE commerce.fin_accounts ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_accounts_select_own_org" ON commerce.fin_accounts;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_accounts;
@@ -60,6 +61,7 @@ ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS is_das BOOLEAN NOT 
 ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS accounting_code TEXT;
 ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS activity_kind TEXT
     CHECK (activity_kind IN ('comercio', 'industria', 'servicos'));
+COMMENT ON TABLE commerce.fin_categories IS 'tier:org';
 ALTER TABLE commerce.fin_categories ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_categories_select_own_org" ON commerce.fin_categories;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_categories;
@@ -78,6 +80,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_cost_centers (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, code)
 );
+COMMENT ON TABLE commerce.fin_cost_centers IS 'tier:org';
 ALTER TABLE commerce.fin_cost_centers ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_cost_centers_select_own_org" ON commerce.fin_cost_centers;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_cost_centers;
@@ -99,6 +102,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_recurrences (
     CHECK (end_date IS NULL OR end_date >= next_date OR active = false)
 );
 CREATE INDEX IF NOT EXISTS idx_fin_recurrences_due ON commerce.fin_recurrences (next_date) WHERE active;
+COMMENT ON TABLE commerce.fin_recurrences IS 'tier:org';
 ALTER TABLE commerce.fin_recurrences ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_recurrences_select_own_org" ON commerce.fin_recurrences;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_recurrences;
@@ -152,6 +156,7 @@ ALTER TABLE commerce.fin_entries ADD COLUMN IF NOT EXISTS has_invoice BOOLEAN;
 -- Entry source vocabulary: re-stated so tables created before a source existed accept it.
 ALTER TABLE commerce.fin_entries DROP CONSTRAINT IF EXISTS fin_entries_source_check;
 ALTER TABLE commerce.fin_entries ADD CONSTRAINT fin_entries_source_check CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'contracts', 'import', 'external', 'purchasing'));
+COMMENT ON TABLE commerce.fin_entries IS 'tier:org';
 ALTER TABLE commerce.fin_entries ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_entries_select_own_org" ON commerce.fin_entries;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_entries;
@@ -174,6 +179,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_statement_imports (
     UNIQUE (account_id, sha256)
 );
 CREATE INDEX IF NOT EXISTS idx_fin_statement_imports_org ON commerce.fin_statement_imports (org_id, at DESC);
+COMMENT ON TABLE commerce.fin_statement_imports IS 'tier:org';
 ALTER TABLE commerce.fin_statement_imports ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_statement_imports_select_own_org" ON commerce.fin_statement_imports;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_statement_imports;
@@ -200,6 +206,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_statement_lines_ledger ON commerce.fin_
     WHERE ledger_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_fin_statement_lines_import ON commerce.fin_statement_lines (import_id);
 CREATE INDEX IF NOT EXISTS idx_fin_statement_lines_org_status ON commerce.fin_statement_lines (org_id, match_status);
+COMMENT ON TABLE commerce.fin_statement_lines IS 'tier:org';
 ALTER TABLE commerce.fin_statement_lines ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_statement_lines_select_own_org" ON commerce.fin_statement_lines;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_statement_lines;
@@ -231,6 +238,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_settlements_external ON commerce.fin_se
     WHERE external_ref IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_fin_settlements_entry ON commerce.fin_settlements (entry_id);
 CREATE INDEX IF NOT EXISTS idx_fin_settlements_org_date ON commerce.fin_settlements (org_id, settled_on);
+COMMENT ON TABLE commerce.fin_settlements IS 'tier:org';
 ALTER TABLE commerce.fin_settlements ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_settlements_select_own_org" ON commerce.fin_settlements;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_settlements;
@@ -274,6 +282,7 @@ BEGIN
     END IF;
 END
 $fin_fk$;
+COMMENT ON TABLE commerce.fin_ledger IS 'tier:org';
 ALTER TABLE commerce.fin_ledger ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_ledger_select_own_org" ON commerce.fin_ledger;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_ledger;
@@ -294,6 +303,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_attachments (
     at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_fin_attachments_entry ON commerce.fin_attachments (entry_id);
+COMMENT ON TABLE commerce.fin_attachments IS 'tier:org';
 ALTER TABLE commerce.fin_attachments ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_attachments_select_own_org" ON commerce.fin_attachments;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_attachments;
@@ -310,6 +320,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_gateway_sync (
     last_error      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_fin_gateway_sync_org ON commerce.fin_gateway_sync (org_id);
+COMMENT ON TABLE commerce.fin_gateway_sync IS 'tier:org';
 ALTER TABLE commerce.fin_gateway_sync ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_gateway_sync_select_own_org" ON commerce.fin_gateway_sync;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_gateway_sync;
@@ -334,6 +345,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_dre_settings (
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+COMMENT ON TABLE commerce.fin_dre_settings IS 'tier:org';
 ALTER TABLE commerce.fin_dre_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_dre_settings_select_own_org" ON commerce.fin_dre_settings;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_dre_settings;
@@ -353,6 +365,7 @@ CREATE TABLE IF NOT EXISTS commerce.fin_budgets (
     UNIQUE (org_id, category_id, month)
 );
 CREATE INDEX IF NOT EXISTS idx_fin_budgets_org_month ON commerce.fin_budgets (org_id, month);
+COMMENT ON TABLE commerce.fin_budgets IS 'tier:org';
 ALTER TABLE commerce.fin_budgets ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_budgets_select_own_org" ON commerce.fin_budgets;
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_budgets;
@@ -450,6 +463,31 @@ END;
 $fn$;
 REVOKE ALL ON FUNCTION commerce.fin_reverse_settlement_locked(UUID, UUID, TEXT, UUID, DATE) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION commerce.fin_reverse_settlement_locked(UUID, UUID, TEXT, UUID, DATE) TO service_role;
+
+-- Signed ledger sum: the balance / opening-balance aggregate computed in the database (one row back, not N).
+CREATE OR REPLACE FUNCTION commerce.fin_ledger_signed_sum(p_org_id UUID, p_account_id UUID, p_on DATE, p_inclusive BOOLEAN) RETURNS BIGINT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, commerce, pg_temp
+AS $fn$
+DECLARE
+    v_sum BIGINT;
+BEGIN
+    IF p_account_id IS NULL THEN
+        SELECT COALESCE(SUM(CASE WHEN direction = 'in' THEN amount_cents ELSE -amount_cents END), 0)::BIGINT INTO v_sum
+            FROM commerce.fin_ledger
+            WHERE org_id = p_org_id AND occurred_on <= p_on AND (p_inclusive OR occurred_on < p_on);
+    ELSE
+        SELECT COALESCE(SUM(CASE WHEN direction = 'in' THEN amount_cents ELSE -amount_cents END), 0)::BIGINT INTO v_sum
+            FROM commerce.fin_ledger
+            WHERE org_id = p_org_id AND account_id = p_account_id AND occurred_on <= p_on AND (p_inclusive OR occurred_on < p_on);
+    END IF;
+    RETURN v_sum;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION commerce.fin_ledger_signed_sum(UUID, UUID, DATE, BOOLEAN) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION commerce.fin_ledger_signed_sum(UUID, UUID, DATE, BOOLEAN) TO service_role;
 
 -- Private finance attachments bucket; SERVICE-ONLY (no authenticated object policy) -- the API signs access.
 INSERT INTO storage.buckets (id, name, public)
