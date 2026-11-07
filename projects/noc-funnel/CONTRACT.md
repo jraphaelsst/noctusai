@@ -76,3 +76,24 @@ Every write is `log_action`-ed; movimentos are append-only; **no write on a 4xx*
 6. `status` default `aberto`; `todos` supported.
 7. Filters (`busca`, `responsavel_id`, `limite_por_etapa`) are server-side.
 8. `meta.lost_reasons` drives the lose dialog; `motivo_obrigatorio`/`motivo_desconhecido` are 422 with `error.code`.
+
+## Read seams (additive; 2026-11-07, for products whose cards need joins -- e.g. social-wiring)
+
+Three declared `FunnelConfig` fields plus a clarified `card_projection`. **Every default reproduces the pre-seam
+behaviour exactly** (`select("*")`, no filter, DTO-derived search); a product that sets none of them is unaffected.
+
+| Field | Type | Default | Applies to |
+|---|---|---|---|
+| `card_select` | `str` (PostgREST select) | `"*"` | every card read: board, `GET /cards/{id}` (and the row read ahead of each write), orphans |
+| `row_filter` | `query -> query` | `None` | the same reads, applied AFTER the tenancy `org_id` filter (can only narrow); includes the drop-index column read, so a hidden row never occupies a position |
+| `search_haystack` | `row -> str` | `None` | board `busca`: when set, the needle is matched against its result (accent-folded + lowercased) INSTEAD of the DTO-derived titulo/subtitulo/campos |
+
+- `card_select` embeds joins (`"*, lead:leads(nome), campanha:campanhas(nome)"`); the embedded keys arrive on the row.
+  Writes (insert/update) still address the bare card table. The drop-index read keeps its own 3-column select.
+- `row_filter` example: `lambda q: q.is_("substituida_por", "null")` (one card per person). A filtered-out card is a 404 on
+  `GET /cards/{id}` and on every write route, exactly like a missing one.
+- `search_haystack` is called with the (joined) ROW, not the DTO, so it can search joined names and phone digits. `None`/empty
+  result never matches.
+- `card_projection(row)` is unchanged in shape but now receives the joined row, so it may read embedded keys
+  (`row["lead"]["nome"]`) for `titulo`/`badges`/`campos`. It must still be pure.
+- Tests: `seed/lib/backend/tests/domain/pipeline/funnel/test_read_seams.py` (one class per seam + a defaults-unchanged class).

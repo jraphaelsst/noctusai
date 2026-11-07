@@ -141,7 +141,9 @@ class FunnelConfig:
             (``titulo``, ``subtitulo``, ``valor``, ``responsavel``, ``badges``,
             ``campos``, ``hub_entity_id``), merged over the defaults the organ
             derives from columns. MUST be pure over the row (no IO): it runs
-            for every card of a board read. Unknown keys raise.
+            for every card of a board read. Unknown keys raise. When `card_select`
+            embeds joins, the row it receives carries the embedded keys
+            (e.g. ``row["lead"]["nome"]``), so the projection can read them.
         editable_fields: ``{campo_key: column}`` — the ONLY extra columns a
             create/PATCH may write via ``campos``. Anything else is 422
             ``campo_nao_editavel``.
@@ -162,6 +164,21 @@ class FunnelConfig:
         prepare_create: ``(db, ctx, row) -> row`` — fills the NOT NULL columns
             a product's card table needs beyond the organ's (e.g.
             `website_leads.source`/`consent`/`dedupe_key`).
+        card_select: PostgREST select string for EVERY card read (board,
+            single card, orphans, search). Default ``"*"``. Embedded joins
+            (``"*, lead:leads(nome), etapa_rel:etapas(*)"``) arrive on the row.
+            Reads only: writes still address the bare card table.
+        row_filter: ``query -> query`` applied to every card read after the
+            organ's own tenancy filter (e.g. ``lambda q: q.is_("substituida_por",
+            "null")``). Hides rows from board, card GET, orphans and the
+            drop-index column read alike. It can only narrow, never widen:
+            it runs AFTER the org filter. Must be pure (no IO besides
+            chaining PostgREST filters).
+        search_haystack: ``row -> str`` searched by the board's `busca`
+            INSTEAD of the DTO-derived text (titulo/subtitulo/campos). Called
+            with the (joined) ROW, not the DTO; the organ accent-folds and
+            lowercases its result and the needle. Default ``None`` keeps the
+            DTO-derived haystack.
     """
 
     pipeline: PipelineConfig
@@ -180,6 +197,9 @@ class FunnelConfig:
     card_hub: CardHubConfig | None = None
     actor_resolver: Callable[[set], dict] | None = None
     prepare_create: Callable[[Any, FunnelContext, dict], dict] | None = None
+    card_select: str = "*"
+    row_filter: Callable[[Any], Any] | None = None
+    search_haystack: Callable[[dict], str] | None = None
 
     def __post_init__(self) -> None:
         if self.tenancy not in ("org", "platform"):
@@ -226,6 +246,8 @@ class FunnelConfig:
                     f"FunnelConfig.editable_fields['{key}'] -> '{column}': a column the organ owns "
                     "(stage/position/status/loss) cannot be edited through campos"
                 )
+        if not isinstance(self.card_select, str) or not self.card_select.strip():
+            raise ValueError("FunnelConfig.card_select must be a non-empty PostgREST select string")
         for canonical in self.status_values:
             if canonical not in CANONICAL_STATUSES:
                 raise ValueError(f"FunnelConfig.status_values: unknown canonical status {canonical!r}")
