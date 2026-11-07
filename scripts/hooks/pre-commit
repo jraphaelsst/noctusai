@@ -1159,6 +1159,20 @@ if [[ -n "$STAGED_SR" ]] && have_py; then
         exit 1
     fi
 fi
+# ─── 6e-quinquies-quater-ter-bis. Motion-import-boundary gate (warn-first shadow) ──────
+# Keeper `check_motion_import_boundary` (2026-11-07): `motion` / `framer-motion` is imported ONLY via
+# `@noctusai/lib/marketing` (MotionProvider hard-codes reduced-motion + LazyMotion strict; keeps motion
+# out of authenticated app chunks). ts-morph AST scan; zero violations at birth, no baseline.
+# Escape per import: `// noc-allow: motion-import — why`.
+STAGED_MOTION=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/frontend/src/.*\.tsx?|seed/lib/frontend/src/.*\.tsx?|templates/product-seed/frontend/src/.*\.tsx?|mcp/noctusai/node/motion_import_scan\.mjs)$' || true)
+if [[ -n "$STAGED_MOTION" ]] && have_py; then
+    echo "[pre-commit] frontend source staged — checking Motion is imported only via @noctusai/lib/marketing..."
+    # WARN-first SHADOW (new gates start at warning; promote to blocking after >=7 shadow days with
+    # effective-FP <=10% via `--gate-alignment declare --placement blocking`, then flip to `exit 1`).
+    if ! "$PY" "$CLI" --check-motion-import-boundary --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow): MOTION-IMPORT-BOUNDARY — import the organ/primitive from @noctusai/lib/marketing instead of motion/framer-motion directly (the provider carries reduced-motion). See KB § PATTERNS/frontend/marketing-organs-and-motion.md." >&2
+    fi
+fi
 # ─── 6e-quinquies-quater-quater. Stale-after-write gate (blocking) ─────────────
 # Keepers `check_mutation_family_write` + `check_job_start_without_handoff` (2026-10-24): a raw
 # setQueryData that never refreshes its key's derived reads (F88), and a job-starting write that never

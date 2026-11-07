@@ -322,6 +322,8 @@ in `logo_light`/`logo_dark` variants (`brand-tokens.ts:26-32`) — show the righ
 ### 5.6 Motion
 Short (≈ 200 ms, the seed collapsible/accordion timings `tailwind.config.base.ts:125-130`), functional
 (show where something went), and removed or reduced under `prefers-reduced-motion` (MDN).
+Landing-page animation (Motion) enters only via `@noctusai/lib/marketing`, whose provider carries
+reduced-motion → `KB § PATTERNS/frontend/marketing-organs-and-motion.md`.
 
 **Checklist.** [ ] roles only, no hex · [ ] ≤ 3 type sizes, `tabular-nums` on numbers · [ ] numbers
 right-aligned · [ ] seed control sizes · [ ] "—"/"não informado" for nulls · [ ] 375 / 768 / 1440.

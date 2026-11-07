@@ -9315,6 +9315,126 @@ def check_silent_refusal(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_motion_import_boundary` — Motion (npm `motion`, ex `framer-motion`)
+# reaches the fleet ONLY through `@noctusai/lib/marketing`.
+#
+# The seam's `MotionProvider` hard-codes `MotionConfig reducedMotion="user"` +
+# `LazyMotion strict`, so a product that never imports motion directly cannot
+# forget reduced-motion nor pull motion into an authenticated app chunk. A direct
+# import in `products/*/frontend/src/**`, `templates/product-seed/frontend/src/**`
+# or `seed/lib/frontend/src/**` (outside `marketing/`) bypasses both.
+#
+# Detection is AST (ts-morph, `mcp/noctusai/node/motion_import_scan.mjs`): import
+# / export-from / dynamic `import()` / `require()` of `motion`, `motion/*`,
+# `framer-motion`, `framer-motion/*`. `@noctusai/lib/marketing` is allowed.
+# Scope: ACTIVE products only (`_active_product_dirs`); no dependency on
+# `seed/lib/frontend/src/marketing/` existing. Escape (reason required, same line
+# or <=3 lines above): `// noc-allow: motion-import — <why>`. A scan that cannot
+# run is ONE explicit finding, never a silent pass. Severity `high`.
+# KB § PATTERNS/frontend/marketing-organs-and-motion.md.
+# ---------------------------------------------------------------------------
+
+_MOTION_SCRIPT_REL = ("mcp", "noctusai", "node", "motion_import_scan.mjs")
+_MOTION_TIMEOUT_SECONDS = 120
+_MOTION_SEED_ROOTS = ("templates/product-seed/frontend/src", "seed/lib/frontend/src")
+_MOTION_ALLOWED_SEGMENT = "marketing"  # seed/lib/frontend/src/marketing/** is THE seam
+_MOTION_SKIP_PARTS = {"node_modules", "dist", "build", ".git", "coverage"}
+
+
+def _motion_import_files(root: Path) -> dict[str, list[Path]]:
+    """Candidate `.ts`/`.tsx` files grouped by owner (product slug / `seed`)."""
+    srcs: list[tuple[str, Path, Path | None]] = []
+    products_dir = root / "products"
+    for child in _active_product_dirs(products_dir):
+        src = child / "frontend" / "src"
+        if src.is_dir():
+            srcs.append((child.name, src, None))
+    for rel in _MOTION_SEED_ROOTS:
+        src = root / rel
+        if src.is_dir():
+            allowed = src / _MOTION_ALLOWED_SEGMENT if rel.startswith("seed/lib") else None
+            srcs.append(("seed", src, allowed))
+    groups: dict[str, list[Path]] = {}
+    for owner, src, allowed in srcs:
+        for f in sorted(src.rglob("*")):
+            if f.suffix not in (".ts", ".tsx") or not f.is_file():
+                continue
+            if set(f.relative_to(src).parts) & _MOTION_SKIP_PARTS:
+                continue
+            if allowed is not None and allowed in f.parents:
+                continue
+            groups.setdefault(owner, []).append(f)
+    return groups
+
+
+def _motion_import_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
+    """ts-morph scan over `files` -> (results, per_file_errors, bootstrap_error)."""
+    if not files:
+        return {}, {}, None
+    script = REPO_ROOT.joinpath(*_MOTION_SCRIPT_REL)
+    if shutil.which("node") is None:
+        return {}, {}, "node_unavailable: `node` not on PATH"
+    if not script.exists():
+        return {}, {}, f"script_missing: {script}"
+    try:
+        proc = subprocess.run(
+            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
+            capture_output=True, text=True, timeout=_MOTION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return {}, {}, f"timeout: exceeded {_MOTION_TIMEOUT_SECONDS}s ({len(files)} files)"
+    except OSError as exc:
+        return {}, {}, f"spawn_failed: {exc}"
+    if proc.returncode != 0:
+        tail = (proc.stderr or "")[-600:]
+        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
+            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
+        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
+    if not parsed.get("ok"):
+        return {}, {}, f"bad_request: {parsed.get('error')}"
+    return parsed.get("results", {}), parsed.get("errors", {}), None
+
+
+def check_motion_import_boundary(repo_root: Path | None = None) -> list[dict]:
+    """No direct `motion` / `framer-motion` import outside `@noctusai/lib/marketing`."""
+    root = repo_root or REPO_ROOT
+    groups = _motion_import_files(root)
+    files = [f for fs in groups.values() for f in fs]
+    owner_of = {str(f): o for o, fs in groups.items() for f in fs}
+    results, errors, bootstrap = _motion_import_scan(files)
+    kb = "KB § PATTERNS/frontend/marketing-organs-and-motion.md"
+    if bootstrap is not None:
+        return [{
+            "product": "*", "file": "mcp/noctusai/node/motion_import_scan.mjs", "severity": "high",
+            "issue": f"motion-import scan could not run — {bootstrap}. {kb}",
+        }]
+    issues: list[dict] = []
+    for path, message in sorted(errors.items()):
+        rel = Path(path).relative_to(root).as_posix() if path.startswith(str(root)) else path
+        issues.append({
+            "product": owner_of.get(path, "*"), "file": rel, "severity": "high",
+            "issue": f"motion-import scan could not read this file ({message[:200]}) — a skipped file is not a clean one.",
+        })
+    for path, found in sorted(results.items()):
+        rel = Path(path).relative_to(root).as_posix() if path.startswith(str(root)) else path
+        for f in found:
+            issues.append({
+                "product": owner_of.get(path, "*"), "file": rel, "line": f.get("line"), "severity": "high",
+                "issue": (
+                    f"line {f.get('line')}: direct {f.get('kind')} of `{f.get('spec')}`. Motion is imported ONLY via "
+                    "`@noctusai/lib/marketing` (its MotionProvider hard-codes reduced-motion + LazyMotion strict, "
+                    "and keeps motion out of authenticated app chunks). Import the organ/primitive from there. "
+                    f"Escape (with a reason): `// noc-allow: motion-import — why`. {kb}"
+                ),
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_mutation_family_write` + `check_job_start_without_handoff` — the
 # screen must not lie after a write or an async job (2026-10-24).
 #
@@ -19007,6 +19127,8 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    # 2026-11-07 — Motion only via @noctusai/lib/marketing (reduced-motion + chunk boundary).
+    all_issues.extend(check_motion_import_boundary())
     # 2026-10-19 — vendor reverse-engineering captures/exports belong in _private-studies, not git.
     all_issues.extend(check_no_vendor_study_in_git())
     # 2026-10-10 — templates/product-seed/ drifting from the seed it is generated
