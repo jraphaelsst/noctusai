@@ -157,3 +157,97 @@ class TestAppPathRedirect:
         mock_sb.set_table_data("website_settings", [])
         resp = unauth_client.get("/produtos/does-not-exist", headers={"Host": WEBSITE_HOST}, follow_redirects=False)
         assert resp.status_code == 404
+
+
+class TestAppOnWebsiteHostFlag:
+    def test_off_unknown_path_still_301s_to_core(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "app_on_website_host", False)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/painel", headers={"Host": WEBSITE_HOST}, follow_redirects=False)
+        assert resp.status_code == 301
+        assert resp.headers["location"] == "https://core.noctusai.com/painel"
+
+    def test_off_landing_not_redirected_to_root(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "app_on_website_host", False)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/landing", headers={"Host": WEBSITE_HOST}, follow_redirects=False)
+        assert resp.status_code == 301
+        assert resp.headers["location"] == "https://core.noctusai.com/landing"
+
+    def test_off_robots_has_no_app_disallow(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "app_on_website_host", False)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/robots.txt", headers={"Host": WEBSITE_HOST})
+        assert "Disallow: /admin" not in resp.text
+        assert "Disallow: /painel" not in resp.text
+
+    def test_on_app_path_passes_through_not_redirected(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "app_on_website_host", True)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/painel", headers={"Host": WEBSITE_HOST}, follow_redirects=False)
+        assert resp.status_code != 301
+        assert "location" not in resp.headers
+
+    def test_on_landing_301s_to_root(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "app_on_website_host", True)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/landing?x=1", headers={"Host": WEBSITE_HOST}, follow_redirects=False)
+        assert resp.status_code == 301
+        assert resp.headers["location"] == "/?x=1"
+
+    def test_on_robots_disallows_admin_and_painel(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "app_on_website_host", True)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/robots.txt", headers={"Host": WEBSITE_HOST})
+        assert "Disallow: /admin\n" in resp.text
+        assert "Disallow: /painel\n" in resp.text
+
+    def test_on_website_routes_still_prerendered(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "app_on_website_host", True)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/", headers={"Host": WEBSITE_HOST})
+        assert resp.status_code == 200
+        assert "<h1>" in resp.text
+
+
+class TestLegacyCoreHostRedirectFlag:
+    def test_off_core_host_untouched(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "legacy_core_host_redirect", False)  # self-patch-ok: config flag seam
+        resp = unauth_client.get("/login", headers={"Host": APP_HOST}, follow_redirects=False)
+        assert resp.status_code != 301
+
+    def test_on_core_host_301s_to_apex_with_query(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "legacy_core_host_redirect", True)  # self-patch-ok: config flag seam
+        resp = unauth_client.get("/login?next=%2Fa", headers={"Host": APP_HOST}, follow_redirects=False)
+        assert resp.status_code == 301
+        assert resp.headers["location"] == "https://noctusai.com/login?next=%2Fa"
+
+    def test_on_counts_hits_per_host(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        from app.routers import website_html
+        monkeypatch.setattr(settings, "legacy_core_host_redirect", True)  # self-patch-ok: config flag seam
+        before = website_html._legacy_host_hits[APP_HOST]
+        unauth_client.get("/x", headers={"Host": APP_HOST}, follow_redirects=False)
+        assert website_html._legacy_host_hits[APP_HOST] == before + 1
+
+    def test_on_ops_probe_exempt(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "legacy_core_host_redirect", True)  # self-patch-ok: config flag seam
+        resp = unauth_client.get("/_health", headers={"Host": APP_HOST}, follow_redirects=False)
+        assert resp.status_code != 301
+
+    def test_on_website_host_not_redirected(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "legacy_core_host_redirect", True)  # self-patch-ok: config flag seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        resp = unauth_client.get("/", headers={"Host": WEBSITE_HOST}, follow_redirects=False)
+        assert resp.status_code == 200

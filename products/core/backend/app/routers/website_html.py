@@ -20,6 +20,8 @@ import json
 import logging
 import re
 import time
+from collections import Counter
+from urllib.parse import urlsplit
 from pathlib import PurePosixPath
 from typing import Optional
 
@@ -66,6 +68,22 @@ _OPS_PASSTHROUGH = ("/docs", "/openapi.json", "/redoc")
 _WEBSITE_PATH_STEMS = (
     "/produtos", "/solucoes", "/precos", "/contato", "/lista-de-espera", "/sobre", "/404", "/en",
 )
+
+
+# Per-host request counter for the legacy-core-host redirect telemetry
+# (hostname retirement: tells devops when core.* traffic has drained).
+_legacy_host_hits: Counter = Counter()
+
+
+def _core_host() -> str:
+    return (urlsplit(settings.core_app_origin).hostname or "").lower()
+
+
+def _apex_host() -> str:
+    for h in settings.website_hosts_list:
+        if not h.startswith("www."):
+            return h
+    return settings.website_hosts_list[0] if settings.website_hosts_list else ""
 
 
 def _site_dir() -> Path:
@@ -191,8 +209,9 @@ def build_sitemap_xml(manifest: dict, public_data: dict, *, base_url: str = "htt
     )
 
 
-def build_robots_txt(*, base_url: str = "https://noctusai.com") -> str:
-    return "User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: " + base_url + "/sitemap.xml\n"
+def build_robots_txt(*, base_url: str = "https://noctusai.com", app_on_host: bool = False) -> str:
+    app_rules = "Disallow: /admin\nDisallow: /painel\n" if app_on_host else ""
+    return "User-agent: *\nAllow: /\nDisallow: /api/\n" + app_rules + "Sitemap: " + base_url + "/sitemap.xml\n"
 
 
 def build_llms_txt(manifest: dict, public_data: dict, *, base_url: str = "https://noctusai.com") -> str:
@@ -214,6 +233,20 @@ def build_llms_txt(manifest: dict, public_data: dict, *, base_url: str = "https:
 async def website_html_middleware(request: Request, call_next):
     host = (request.headers.get("host") or "").split(":")[0].lower()
     is_website_host = host in settings.website_hosts_list
+
+    # Legacy core host -> apex (flagged, default OFF). Ops surfaces (`/_*`:
+    # health/ready probes) are exempt so container healthchecks never 301.
+    if settings.legacy_core_host_redirect and host and host == _core_host() and _apex_host():
+        if not request.url.path.startswith("/_"):
+            _legacy_host_hits[host] += 1
+            logger.info(
+                "website: legacy core host redirect host=%s hits=%d path=%s",
+                host, _legacy_host_hits[host], request.url.path,
+            )
+            q = request.url.query
+            return RedirectResponse(
+                f"https://{_apex_host()}{request.url.path}" + (f"?{q}" if q else ""), status_code=301
+            )
 
     # Dev override — `?__site=1` / `X-NX-Site: 1` — production-gated so it
     # can never be used to spoof host-split behaviour in prod (contract §5).
@@ -243,6 +276,11 @@ async def website_html_middleware(request: Request, call_next):
     if _is_passthrough(path):
         return await call_next(request)
 
+    # `/landing` is the legacy SPA landing; once the app lives on the apex the
+    # website owns `/`.
+    if settings.app_on_website_host and path.rstrip("/") == "/landing":
+        return RedirectResponse("/" + (f"?{query}" if query else ""), status_code=301)
+
     version, current_data = website_settings_service.get_current()
     public_data = website_settings_service.public_subset(current_data)
 
@@ -261,7 +299,7 @@ async def website_html_middleware(request: Request, call_next):
     if path == "/sitemap.xml":
         return Response(content=build_sitemap_xml(manifest, public_data), media_type="application/xml")
     if path == "/robots.txt":
-        return PlainTextResponse(build_robots_txt())
+        return PlainTextResponse(build_robots_txt(app_on_host=settings.app_on_website_host))
     if path == "/llms.txt":
         return PlainTextResponse(build_llms_txt(manifest, public_data), media_type="text/plain")
 
@@ -288,6 +326,9 @@ async def website_html_middleware(request: Request, call_next):
         return _website_404(by_path, public_data, path=normalized)
 
     # 6 · Everything else on a website host is an app path (contract §5.6).
+    # With the app hosted on the apex itself, serve it (SPA mount) in place.
+    if settings.app_on_website_host:
+        return await call_next(request)
     target = f"{settings.core_app_origin}{path}" + (f"?{query}" if query else "")
     return RedirectResponse(target, status_code=301)
 

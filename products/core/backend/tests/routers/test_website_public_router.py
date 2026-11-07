@@ -1,4 +1,6 @@
 """Tests for `app.routers.website_public` — `/api/website/*` (contract §3)."""
+import pytest
+
 from tests.conftest import website_defaults_dict
 
 
@@ -79,6 +81,13 @@ class TestGetPlans:
 
 
 class TestCreateLead:
+    @pytest.fixture(autouse=True)
+    def _non_production_env(self, monkeypatch):
+        # Turnstile with no secret is skipped in non-production only; CI runs
+        # without DEBUG (== production), so pin the env these tests assume.
+        from app.config import settings
+        monkeypatch.setattr(settings, "debug", True)  # self-patch-ok: config seam (env selector)
+
     def test_success_returns_id_and_whatsapp_url(self, unauth_client, website_site):
         mock_sb = unauth_client.mock_supabase
         mock_sb.set_table_data("website_settings", [])
@@ -130,6 +139,41 @@ class TestCreateLead:
             settings.website_turnstile_secret = ""
         assert resp.status_code == 403
         assert resp.json()["detail"] == "turnstile_failed"
+
+
+class TestTurnstileFailClosed:
+    _BODY = {
+        "source": "waitlist", "name": "Ana", "email": "ana@example.com",
+        "locale": "pt-BR", "consent_marketing": True, "consent_text_version": "v1",
+    }
+
+    def test_prod_without_secret_refused_503(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "debug", False)  # self-patch-ok: config seam (env selector)
+        monkeypatch.setattr(settings, "website_turnstile_secret", "")  # self-patch-ok: config seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        _seed_leads_tables(unauth_client.mock_supabase)
+        resp = unauth_client.post("/api/website/leads", json=self._BODY)
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "turnstile_not_configured"
+
+    def test_dev_without_secret_skips(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "debug", True)  # self-patch-ok: config seam (env selector)
+        monkeypatch.setattr(settings, "website_turnstile_secret", "")  # self-patch-ok: config seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        _seed_leads_tables(unauth_client.mock_supabase)
+        resp = unauth_client.post("/api/website/leads", json=self._BODY)
+        assert resp.status_code == 201
+
+    def test_prod_with_secret_still_verifies(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "debug", False)  # self-patch-ok: config seam (env selector)
+        monkeypatch.setattr(settings, "website_turnstile_secret", "a-real-secret")  # self-patch-ok: config seam
+        unauth_client.mock_supabase.set_table_data("website_settings", [])
+        _seed_leads_tables(unauth_client.mock_supabase)
+        resp = unauth_client.post("/api/website/leads", json={**self._BODY, "turnstile_token": ""})
+        assert resp.status_code == 403
 
 
 class TestCreateEvent:

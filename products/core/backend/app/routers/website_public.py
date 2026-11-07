@@ -2,10 +2,8 @@
 
 No auth. Every POST is rate-limited via the core `limiter`; the two
 lead-capture / event endpoints never require Turnstile — it is enforced
-ONLY when `settings.website_turnstile_secret` is configured (the seed
-factory's dev-safe default: `make_turnstile_verifier` returns a Fake that
-still rejects an EMPTY token, so a missing submission still 403s even
-unconfigured).
+when `settings.website_turnstile_secret` is configured; unset is skipped
+in non-production only and refused with 503 in production (fail closed).
 
 NOTE: deliberately NOT `from __future__ import annotations` — combined
 with `@limiter.limit(...)` (slowapi's `functools.wraps`-based decorator),
@@ -30,7 +28,7 @@ from app.rate_limit import limiter
 from app.schemas.website import WebsiteEventCreate, WebsiteLeadCreate
 from app.services import website_catalog_service, website_leads_service, website_settings_service
 from app.services.website_lead_fanout import run_fanout
-from noctusai_lib.integrations.turnstile import make_turnstile_verifier
+from noctusai_lib.integrations.turnstile import resolve_turnstile_verifier
 from noctusai_lib.api.access_tiers import access_tier
 
 logger = logging.getLogger(__name__)
@@ -47,10 +45,18 @@ def _client_ip(request: Request) -> Optional[str]:
 
 
 async def _verify_turnstile(token: Optional[str], request: Request) -> None:
-    secret = settings.website_turnstile_secret
-    if not secret:
-        return  # not configured — the whole gate is opt-in (contract §3)
-    verifier = make_turnstile_verifier(secret=secret)
+    # Seed fake-or-refuse seam: no secret -> None (never a silent Fake).
+    verifier = resolve_turnstile_verifier(secret=settings.website_turnstile_secret)
+    if verifier is None:
+        if settings.is_production:
+            # Public write without abuse protection: fail closed (access-tiers).
+            logger.error("website: WEBSITE_TURNSTILE_SECRET unset in production; refusing public write")
+            raise HTTPException(
+                status_code=503,
+                detail={"detail": "turnstile_not_configured", "code": "turnstile_not_configured"},
+            )
+        logger.warning("website: Turnstile skipped (no secret, non-production)")
+        return
     result = await verifier.verify(token or "", remote_ip=_client_ip(request))
     if not result.success:
         # `{"detail": <code>, "code": <code>}` is the seed's escape hatch

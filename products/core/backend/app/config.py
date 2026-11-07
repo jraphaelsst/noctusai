@@ -94,6 +94,14 @@ class Settings(ProductSettings):
     # because it does not currently diverge between environments.
     core_app_origin: str = "https://core.noctusai.com"
 
+    # Hostname retirement, phase P0 (expand) — both default OFF = no behaviour
+    # change. `app_on_website_host`: the apex also serves the core SPA (step 6
+    # passes through instead of 301-ing to `core_app_origin`; `/landing` ->
+    # `/`; robots disallows /admin + /painel). `legacy_core_host_redirect`:
+    # requests whose Host is the core host get a 301 to the apex.
+    app_on_website_host: bool = False
+    legacy_core_host_redirect: bool = False
+
     # Single-container mode: where the built website's prerendered output
     # lives (`<dir>/_site/manifest.json`, `<dir>/_site/settings.defaults.json`).
     # Mirrors `noctusai_seed.app._mount_spa`'s own `SERVE_SPA_DIR` resolution
