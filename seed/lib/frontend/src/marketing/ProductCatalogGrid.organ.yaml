@@ -1,0 +1,28 @@
+name: ProductCatalogGrid
+kind: component
+path: seed/lib/frontend/src/marketing/ProductCatalogGrid.tsx
+phase: landing-organs
+registered_at: "2026-11-07"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Presentational public product catalog. Featured (destaque_no_site, max 6; fallback first 6 by status then name) with in-place 'Ver todos os produtos (N)' expansion and the status filter only when expanded. Badges disponivel=ok, em_breve=info, lista_de_espera=warn. States: loading, empty, error-with-stale."
+  - "variant 'public' only; the dashboard variant stays in the product (needs has_access/SSO)"
+  - "Exported from @noctusai/lib/marketing only (never the root barrel). Seed tokens only; Reveal for entrance (content is never prerendered hidden; reduced motion = no animation)."
+  - "Consumes seed Button / Badge / Input / Card / Select / Textarea / Skeleton where they exist; link-styled actions use linkButtonClass (anchors cannot be the seed Button)."
+
+errors_encountered: []
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Re-implementing seed Button/Badge/Card: rejected, products consume canonical organs."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []
