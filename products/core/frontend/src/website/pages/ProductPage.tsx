@@ -29,7 +29,7 @@ export default function ProductPage({ slug }: { slug: string }) {
   const wa = whatsappUrl(settings, locale, locale === "en" ? `Hi! I'd like to know more about ${copy.name}.` : `Olá! Quero saber mais sobre o ${copy.name}.`);
   const actions: CtaAction[] = [];
   if (entry.state === "disponivel") {
-    actions.push({ label: t("cta.signup"), href: "https://core.noctusai.com/login?mode=signup", primary: true, eventName: "signup_start" });
+    actions.push({ label: t("cta.signup"), href: "/login?mode=signup", primary: true, eventName: "signup_start" });
     if (wa) actions.push({ label: t("cta.whatsapp"), href: wa, external: true, eventName: "whatsapp_click", eventProps: { product: slug } });
   } else if (entry.state === "lista_de_espera") {
     actions.push({ label: t("cta.waitlistShort"), href: `${pathFor("waitlist", locale)}?produto=${slug}`, primary: true });

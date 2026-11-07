@@ -63,12 +63,13 @@ const App = createProductApp({
   Layout: CoreLayout,
   Login,
   Landing,
-  unauthRedirect: '/',
+  unauthRedirect: '/login',
   publicRoutes: [
     { path: '/invite/:token', component: AcceptInvite },
   ],
   routes: [
     { path: '/', component: Dashboard },
+    { path: '/painel', component: Dashboard },
     { path: '/pricing', component: Pricing },
     { path: '/billing', component: BillingSettings },
     { path: '/checkout/success', component: CheckoutSuccess },

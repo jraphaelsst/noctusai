@@ -31,6 +31,8 @@ export interface ProductEnv {
   BACKEND_API_URL: string;
   /** Core platform frontend URL (for SSO redirect and navigation) */
   CORE_URL: string;
+  /** Core's logged-in app home: `CORE_URL` + `/painel` (derived, not an env var) */
+  CORE_APP_HOME: string;
   /** Core platform backend API URL (for SSO token exchange) */
   CORE_API_URL: string;
   /**
@@ -59,8 +61,11 @@ export interface ProductEnv {
   PRODUCT_SLUG: string;
 }
 
-/** All required VITE_ var names with descriptions and defaults */
-export const ENV_VARS: Record<keyof ProductEnv, { viteKey: string; description: string; required: boolean; defaultDev: string }> = {
+/**
+ * All required VITE_ var names with descriptions and defaults. `CORE_APP_HOME`
+ * is derived from `CORE_URL` (no VITE_ var of its own), so it has no row.
+ */
+export const ENV_VARS: Record<Exclude<keyof ProductEnv, 'CORE_APP_HOME'>, { viteKey: string; description: string; required: boolean; defaultDev: string }> = {
   SUPABASE_URL: {
     viteKey: 'VITE_SUPABASE_URL',
     description: 'Supabase project URL (required by shared createProductSupabase)',
@@ -148,6 +153,8 @@ export const env: ProductEnv = {
   // Literal member read so createViteConfig's `define` inlines it at build time.
   get PRODUCT_SLUG() { return import.meta.env.VITE_PRODUCT_SLUG || ''; },
   get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core named service (house port)
+  /** Core's logged-in app home (dashboard); `CORE_URL` is the public site root. */
+  get CORE_APP_HOME() { return `${env.CORE_URL.replace(/\/+$/, '')}/painel`; },
   get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || getViteVar('VITE_CORE_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core same-origin
   // Read the LITERAL member expression so Vite's build-time inline
   // applies (same reason as BACKEND_API_URL above). String 'true' →

@@ -171,6 +171,24 @@ describe("createProductLayout — supabase mode (backward compat)", () => {
   });
 });
 
+// ── "Voltar ao NoctusAI" target ─────────────────────────────────────────────
+
+describe("createProductLayout — BackToCore", () => {
+  it("links to core's /painel dashboard (not the public site root) for SSO users", () => {
+    const supabase = makeSupabaseClient();
+    const Layout = createProductLayout({
+      ...baseConfig(),
+      useAuthStore: () => ({
+        user: { id: "u1", email: "u1@example.com", user_metadata: { org_role: "admin" } },
+      }),
+      supabase,
+    });
+    renderLayout(Layout);
+    const link = screen.getByRole("link", { name: /Voltar ao NoctusAI/ });
+    expect(link.getAttribute("href")).toMatch(/\/painel$/);
+  });
+});
+
 // ── Session mode (cookie-session sibling — `sessionAuth`) ───────────────────
 
 describe("createProductLayout — session mode (sessionAuth)", () => {

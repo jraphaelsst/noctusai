@@ -35,7 +35,7 @@ export default function Home() {
   if (wa) heroActions.push({ label: t("cta.whatsapp"), href: wa, primary: true, external: true, eventName: "whatsapp_click", eventProps: { section: "hero" } });
   heroActions.push(
     settings.signup_enabled
-      ? { label: t("cta.signup"), href: "https://core.noctusai.com/login?mode=signup", primary: !wa, eventName: "signup_start" }
+      ? { label: t("cta.signup"), href: "/login?mode=signup", primary: !wa, eventName: "signup_start" }
       : { label: t("cta.waitlist"), href: pathFor("waitlist", locale), primary: !wa },
   );
 
@@ -105,7 +105,7 @@ export default function Home() {
                   title={locale === "en" ? "Developers" : "Desenvolvedores"}
                   benefit={locale === "en" ? "APIs and integrations built the seed-first way." : "APIs e integrações construídas seed-first."}
                   ctaLabel={t("cta.signup")}
-                  ctaHref="https://core.noctusai.com/login?mode=signup"
+                  ctaHref="/login?mode=signup"
                 />
                 <AudienceCard
                   title={locale === "en" ? "Freelancers & solo founders" : "Autônomos & solo founders"}
@@ -233,12 +233,12 @@ export default function Home() {
                 ? [
                     { label: t("cta.whatsapp"), href: closingWa, primary: true, external: true, eventName: "whatsapp_click", eventProps: { section: "closing" } },
                     settings.signup_enabled
-                      ? { label: t("cta.signup"), href: "https://core.noctusai.com/login?mode=signup" }
+                      ? { label: t("cta.signup"), href: "/login?mode=signup" }
                       : { label: t("cta.waitlist"), href: pathFor("waitlist", locale) },
                   ]
                 : [
                     settings.signup_enabled
-                      ? { label: t("cta.signup"), href: "https://core.noctusai.com/login?mode=signup", primary: true }
+                      ? { label: t("cta.signup"), href: "/login?mode=signup", primary: true }
                       : { label: t("cta.waitlist"), href: pathFor("waitlist", locale), primary: true },
                   ]
             }

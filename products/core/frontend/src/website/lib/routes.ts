@@ -61,8 +61,8 @@ export function twinPath(path: string): string | null {
 }
 
 export const EXTERNAL = {
-  login: "https://core.noctusai.com/login",
-  signup: "https://core.noctusai.com/login?mode=signup",
+  login: "/login",
+  signup: "/login?mode=signup",
   privacyPolicy: "/consent/privacy-policy",
   termsOfUse: "/consent/terms-of-use",
 };
