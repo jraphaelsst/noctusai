@@ -1,0 +1,36 @@
+name: Breadcrumbs
+kind: component
+path: seed/lib/frontend/src/design-system/components/Breadcrumbs.tsx
+phase: pilot-seed
+registered_at: "2026-11-07"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Route-mapping header ('Administração / Comercial / Produtos') mounted ONCE inside the seed Header, right of the mobile menu button; products get it with zero local code."
+  - "Trail is DERIVED (breadcrumb-trail.ts, pure): nav registry groups -> items (the same status-filtered nav the Sidebar renders, passed to AppShell navGroups/standaloneItems) + router match. Longest-prefix href wins; unknown routes fall back to the nearest known ancestor, else 'Início'."
+  - "Detail routes: crumb from route handle.crumb (data router; string or fn({params,data,pathname})) or AppShell routeCrumbs specs (non-data router). Unresolved crumb renders 'Detalhes', never a raw id."
+  - "Every route crumb is a link; group crumbs (no page) are menu buttons (aria-haspopup, aria-expanded, arrows/Home/End, Esc returns focus) listing the group's pages. Last crumb = aria-current=page. nav aria-label 'Você está em', ol, aria-hidden separators. <640px collapses to '… / Parent / Current'; ellipsis opens the full path."
+  - "Mounted only where an AppShell supplies a nav registry (internal/app pages). Public pages (website, landing, login, legal) do not use AppShell, so they render nothing — no per-page opt-out exists."
+  - "Consumers: seed createProductLayout (all session/supabase products) and core admin Layout (AppShell direct)."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "core NAV_GROUPS label 'Administracao' (missing accent) fixed to 'Administração' since it is now user-visible in the trail."
+
+alternatives_considered:
+  - "Per-product breadcrumb components rejected (replication-to-seed symmetry)."
+  - "Hand-maintained trail lists rejected; derived from the nav registry."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
