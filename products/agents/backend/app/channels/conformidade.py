@@ -152,6 +152,31 @@ def canario(org_id: UUID, version_id: UUID, *, segredo: str = "") -> str:
     return hmac.new(chave, f"{org_id}:{version_id}".encode("utf-8"), hashlib.sha256).hexdigest()[:20]
 
 
+#: Key prefix of the corrective system message (``conformidade.correcao.<regra>``). It is injected ONLY into a corrective
+#: re-run and tells the model what to say, so it is model-facing speech, not prompt a lead could extract: left out of the
+#: fingerprint. (Measured 2026-11-07: it was NOT the cause of the re-run false positives -- see :data:`_FALA_ENTRE_ASPAS` -- but
+#: it was the same latent exposure, so it is closed with the same stroke.)
+PREFIXO_CORRECAO = "conformidade.correcao."
+
+
+def _e_correcao(texto_row: Any) -> bool:
+    return str(getattr(texto_row, "chave", "") or "").startswith(PREFIXO_CORRECAO)
+
+
+#: A quoted span on ONE line ("..." or curly quotes), at most this long. The prompt marks the sentences the agent is MEANT to say
+#: to the lead as quoted examples ('diga, por exemplo: "Quem marca a visita e o corretor: vou passar pra ele..."'). The lead is
+#: the audience of those lines, so repeating one is not a leak -- and it measurably blocked normal replies (visit flow, the
+#: "prefere falar com uma pessoa ou seguir comigo" question, the CPF request), then handed the lead off. The instructions AROUND
+#: the quotes stay fingerprinted, and so does the canary: a reply that dumps a section still matches on the unquoted text.
+_FALA_ENTRE_ASPAS = re.compile(r'"[^"\n]{1,500}"|\u201c[^\u201d\n]{1,500}\u201d')
+
+
+def sem_falas_de_exemplo(texto: str) -> str:
+    """``texto`` without its quoted example speech (see :data:`_FALA_ENTRE_ASPAS`); a space replaces each span so the tokens
+    on its two sides never fuse into one window."""
+    return _FALA_ENTRE_ASPAS.sub(" . ", texto)
+
+
 def texto_fonte_do_prompt(
     compiled: Any, skills: Iterable[str] = (), skill_files: Iterable[str] = (), *, so_skills: bool = False,
 ) -> str:
@@ -163,11 +188,11 @@ def texto_fonte_do_prompt(
     partes = [] if so_skills else [compiled.texto]
     cont = getattr(compiled, "conteudo", None)
     if cont is not None and not so_skills:
-        partes += [t.conteudo for t in cont.textos if t.conteudo]
+        partes += [t.conteudo for t in cont.textos if t.conteudo and not _e_correcao(t)]
         partes += [f.descricao for f in cont.ferramentas if f.ativo and f.descricao]
         partes += [d.regra for d in cont.decisoes if d.regra]
     partes += list(skills) + list(skill_files)
-    return "\n".join(p for p in partes if p)
+    return "\n".join(sem_falas_de_exemplo(p) for p in partes if p)
 
 
 SHINGLE_MIN, SHINGLE_MAX = 4, 64  # the ``conformidade_impressoes.shingle_tokens`` CHECK (037)
@@ -190,12 +215,13 @@ def garantir_impressao(
     store: ConformidadeStore, org_id: UUID, version_id: UUID, compiled: Any, k: int = SHINGLE_TOKENS,
 ) -> Impressao:
     """The stored fingerprint of the version, computing + storing it when publish has not (an older
-    version) or when the stored one was cut at another shingle length than the rule's ``k`` now asks.
-    Publish calls this too, so a turn normally only reads."""
+    version), when the stored one was cut at another shingle length than the rule's ``k`` now asks, or when it no longer
+    equals what the source yields now (the source definition changed after publish). Publish calls this too."""
     atual = store.obter_impressao(org_id, version_id)
-    if atual is not None and atual.shingle_tokens == k:
-        return atual
     nova = impressao_de(version_id, texto_fonte_do_prompt(compiled), k)
+    if atual is not None and atual.shingle_tokens == k and atual.shingles == nova.shingles:
+        return atual
+    # a fingerprint stored before the source changed (the scripted-speech exemption below) is rebuilt, not trusted
     store.salvar_impressao(org_id, nova)
     return nova
 
@@ -632,10 +658,16 @@ _PESSOA = "(?:" + "|".join(_PESSOAS) + ")"
 #: te transferir", "quer que eu te transfira") carry none of these anchors, so they never match.
 _PROMESSA_TRANSFERENCIA: tuple[re.Pattern[str], ...] = tuple(re.compile(p) for p in (
     r"\b(?:vou|irei|vamos|iremos)\s+(?:ja\s+)?(?:te\s+|lhe\s+)?(?:transferir|encaminhar)\b",
-    r"\b(?:vou|irei|vamos|iremos)\s+(?:ja\s+)?(?:te\s+|lhe\s+)?(?:passar|direcionar|colocar|conectar|chamar|apresentar|"
-    r"pedir|solicitar|acionar)\b[^.!?\n]{0,60}\b" + _PESSOA + r"\b",
     r"\b(?:estou|to|estarei|ja\s+estou)\s+(?:te\s+|lhe\s+)?(?:transferindo|encaminhando|passando|direcionando|conectando)\b",
     r"\b(?:ja\s+|acabei\s+de\s+)?(?:te\s+|lhe\s+)?(?:transferi|encaminhei)\b",
+))
+#: A softer promise of CONTACT: "vou passar para o responsavel" / "um corretor vai entrar em contato". It is true (not a lie)
+#: whenever the turn handed the lead over (``handoff`` / ``concluir_qualificacao``) OR registered a visit intention
+#: (``registrar_intencao_visita``: the skill ``intencao-de-visita`` tells the agent to say exactly this). It is a violation only
+#: when nothing in the turn backs it. The explicit transfer verbs above stay handoff-only.
+_PROMESSA_CONTATO: tuple[re.Pattern[str], ...] = tuple(re.compile(p) for p in (
+    r"\b(?:vou|irei|vamos|iremos)\s+(?:ja\s+)?(?:te\s+|lhe\s+)?(?:passar|direcionar|colocar|conectar|chamar|apresentar|"
+    r"pedir|solicitar|acionar)\b[^.!?\n]{0,60}\b" + _PESSOA + r"\b",
     r"\b(?:um|uma|o|a|nosso|nossa|algum|alguem\s+d[aeo]\s+\w+)\s+" + _PESSOA + r"\b[^.!?\n]{0,40}\b(?:vai|ira|vao|irao)\s+"
     r"(?:\w+\s+){0,2}?(?:falar\s+(?:com\s+)?(?:voce|vc|o\s+senhor|a\s+senhora)|te\s+(?:atender|chamar|ligar|responder|procurar)|"
     r"entrar\s+em\s+contato|assumir|continuar|dar\s+(?:continuidade|sequencia|seguimento)|seguir\s+(?:com|o))",
@@ -646,17 +678,22 @@ _NAO_E_PROMESSA = re.compile(
     r"nao\s+(?:vou|irei|vamos|posso|consigo|estou)|sem\s+que)\b")
 
 
-def transferencia_sem_handoff(resposta: str, *, transferiu_no_turno: bool) -> dict[str, Any] | None:
+def transferencia_sem_handoff(
+    resposta: str, *, transferiu_no_turno: bool, contato_garantido_no_turno: bool = False,
+) -> dict[str, Any] | None:
     """The reply promises that a person takes over (a first-person commitment, see :data:`_PROMESSA_TRANSFERENCIA`) while no
     ``handoff`` call happened in the turn: the promise is false and the lead waits for nobody. Never fires when the turn
-    transferred. An offer ("posso te transferir se quiser?") is no commitment and is left alone. ``detalhe`` is a count."""
+    transferred. A promise of CONTACT (:data:`_PROMESSA_CONTATO`) is also backed by ``contato_garantido_no_turno`` (a visit intention
+    was registered, or the qualification was concluded). An offer ("posso te transferir se quiser?") is no commitment and is
+    left alone. ``detalhe`` is a count."""
     if transferiu_no_turno or not resposta or not resposta.strip():
         return None
     n = 0
     for frase in re.split(r"(?<=[.!?\n])\s+|\n", esqueleto(resposta)):
         if _NAO_E_PROMESSA.search(frase):
             continue
-        if any(rx.search(frase) for rx in _PROMESSA_TRANSFERENCIA):
+        regras = _PROMESSA_TRANSFERENCIA if contato_garantido_no_turno else (*_PROMESSA_TRANSFERENCIA, *_PROMESSA_CONTATO)
+        if any(rx.search(frase) for rx in regras):
             n += 1
     return {"promessas": n} if n else None
 
@@ -838,6 +875,8 @@ class EntradaConformidade:
     encerrou_ou_transferiu: bool = False
     #: a ``handoff`` call succeeded in THIS turn (``transferencia_sem_handoff`` never fires then)
     transferiu_no_turno: bool = False
+    #: a visit intention was registered or the qualification concluded in THIS turn: a promise of CONTACT is then true
+    contato_garantido_no_turno: bool = False
     #: ``insatisfacao_sem_alerta`` inputs: a ``sinalizar_alerta`` call succeeded / the turn ended the agent in THIS turn, and
     #: the tool is offered at all (a turn that cannot alert is never blocked for not alerting)
     alertou_no_turno: bool = False
@@ -931,7 +970,9 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
         if ativa("transferencia_sem_handoff") is not None:
             achados.append((
                 "transferencia_sem_handoff",
-                transferencia_sem_handoff(e.resposta, transferiu_no_turno=e.transferiu_no_turno)))
+                transferencia_sem_handoff(
+                    e.resposta, transferiu_no_turno=e.transferiu_no_turno,
+                    contato_garantido_no_turno=e.contato_garantido_no_turno)))
     return [
         Violacao(nome, e.regras[nome].politica, detalhe)
         for nome, detalhe in achados if detalhe is not None

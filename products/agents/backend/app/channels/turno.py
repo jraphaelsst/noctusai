@@ -751,6 +751,7 @@ async def _executar(
             participante_segue_ativo=not (turno.transferiu or turno.concluiu or turno.encerrou),
             encerrou_ou_transferiu=False,
             transferiu_no_turno=turno.transferiu,
+            contato_garantido_no_turno=turno.transferiu or turno.concluiu or turno.visita_registrada,
             alertou_no_turno=bool(turno.alertas_tipos), encerrou_no_turno=turno.encerrou,
             alerta_ofertado=any(
                 f.ferramenta == "sinalizar_alerta" for f in tools_ofertaveis(turno.conteudo, turno.capacidades())),

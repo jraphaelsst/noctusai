@@ -504,7 +504,7 @@ The labels and descriptions for each enum value come from DB rows. The enums the
 
   **Go-live hardening (migration 063; `projects/julia-v2/GUARDRAILS.md` B12).**
   - Pattern rules (`padroes_proibidos`, `alegacao_identidade`) run a code-side floor merged under the stored patterns; a missing row still has it; readiness `regras_seguranca_sem_parametros` blocks publish while an instance has no row.
-  - Blocking detector `transferencia_sem_handoff` (JL-025): a reply that promises a transfer to a person while the turn made no `handoff` call; required text `conformidade.correcao.transferencia_sem_handoff`.
+  - Blocking detector `transferencia_sem_handoff` (JL-025): a reply that promises a transfer to a person while the turn made no `handoff` call (a promise of contact is also backed by a successful `registrar_intencao_visita` / `concluir_qualificacao`, JL-027); required text `conformidade.correcao.transferencia_sem_handoff`.
   - Blocking detector `insatisfacao_sem_alerta` (JL-026): the lead's message complains about the service and the turn made no successful `sinalizar_alerta` call (only when the tool is offered; not on a stop request, `handoff` or `encerrar`); required text `conformidade.correcao.insatisfacao_sem_alerta`.
   - New blocking detector `valor_sem_ferramenta` (an R$ / % no tool, lead text or earlier reply backs) and rule `opt_out_palavras` (exact `PARAR|PARE|PARA|PAREM|SAIR|SAI|STOP|CANCELAR|CHEGA|NÃO QUERO MAIS` opts out without the model; text `runtime.confirmacao_opt_out`).
   - Inbound lead text is normalised at the schema boundary (invisible/tag characters stripped); detectors also read a de-obfuscated skeleton; a reply carrying invisible characters is blocked (`formato_suspeito`).

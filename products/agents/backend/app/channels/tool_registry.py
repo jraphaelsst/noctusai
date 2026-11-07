@@ -507,6 +507,8 @@ class JuliaTurno:
     #: Any identification field (name / e-mail / CPF / RG) was registered this turn: the turn response flag.
     identificacao_registrada: bool = False
     transferiu: bool = False
+    #: a ``registrar_intencao_visita`` call succeeded this turn (also when the intention was already on record)
+    visita_registrada: bool = False
     encerrou: bool = False
     concluiu: bool = False
     resumo_handoff: str | None = None
@@ -851,6 +853,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         r = await _evento(a.codigo, "quer_visitar", origem, pref)
         if not r.ok:
             return _recusa(t, r.codigo or "evento_invalido")
+        t.visita_registrada = True
         if not r.inalterado:
             t.acao(type="intencao_visita", codigo=a.codigo, preferencia_horario=pref)
         return _ok(inalterado=r.inalterado, mensagem=t.texto("ferramenta.resultado.registrado"))
