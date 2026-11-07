@@ -54,7 +54,7 @@
 | social-wiring — leads, clients, deals, contracts, certidões, Julia | leads, buyers, sellers, spouses, witnesses, brokers | the client org (imobiliária; e.g. One Consultoria — `LGPD-WARNINGS.md:63`) | operador | high for CRM data |
 | social-wiring — Biblioteca de virais (third-party Reels) | third-party creators' voices | the org that registers the profile; **NoctusAI if it reuses outputs across orgs** | operador / controlador | open — §15 |
 | agents — Julia and every studio agent on WhatsApp | leads | the client org | operador | high; per-org LLM key ⇒ the LLM vendor is the **org's** operator, not NoctusAI's suboperador (`LGPD-WARNINGS.md:63` mitigation) |
-| monica → nosnolimiar — leads, WhatsApp, patients, clinical tools | prospective and current patients | Mônica / Nós no Limiar (`products/monica/projects/clinical-tools-build/DECISIONS.md:39` "Mônica = controller, NoctusAI = operator") | operador | high |
+| monica → nosnolimiar — leads, WhatsApp, patients, clinical tools | prospective and current patients | Mônica / Nós no Limiar (`products/nosnolimiar/projects/clinical-tools-build/DECISIONS.md:39` "Mônica = controller, NoctusAI = operator") | operador | high |
 | store — kit buyers (nome, e-mail, CPF at checkout) | consumers | the seller of the kit (fornecedor) — **identify the legal entity** (`consumer-ecommerce.md` §2) | operador if the seller is a client; controlador if NoctusAI sells | open |
 | mcp/vista — read tools over a client's Vista CRM | owners, brokers, clients | the client imobiliária | operador | high (`LGPD-WARNINGS.md:18`) |
 | Platform telemetry, cost ledgers, security logs | users | NoctusAI | controlador | high |

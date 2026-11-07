@@ -343,7 +343,7 @@ draft organ; three date-format families exist in the seed (§8.3).
 `"noImplicitAny": false` in all five active products and in the scaffold the next product copies
 (`products/seed/frontend/tsconfig.json:14-15`, `templates/product-seed/frontend/tsconfig.json:14-15`,
 `products/core/frontend/tsconfig.json:18,21`, `products/social-wiring/frontend/tsconfig.json:14-15`,
-`products/agents/frontend/tsconfig.json:14-15`, `products/monica/frontend/tsconfig.json:14-15`). Lint
+`products/agents/frontend/tsconfig.json:14-15`, `products/nosnolimiar/frontend/tsconfig.json:14-15`). Lint
 downgrades `@typescript-eslint/no-explicit-any` to `warn`, citing payload and react-hook-form `as any`
 workarounds (`seed/framework/frontend/eslint.config.js:28-31`); `as any` appears 254× in the active
 product FEs.
