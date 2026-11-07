@@ -463,11 +463,11 @@ class TestAstIdentical:
         assert not SS.ast_identical(None, BIG)
         assert not SS.ast_identical(BIG, BIG + "def (\n")
 
-    def test_ast_too_deep_to_dump_is_not_identical(self):
-        """cli.py's long `elif` dispatch nests past the recursion limit in
-        `ast.dump` (2026-11-07): answer 'not identical', never crash."""
-        deep = "if a == 0:\n    pass\n" + "".join(f"elif a == {i}:\n    pass\n" for i in range(1, 600))
-        assert not SS.ast_identical(deep, deep + "# c\n")
+    def test_a_deeply_nested_module_does_not_blow_the_recursion_limit(self):
+        """cli.py's dispatcher is a >1000-deep `elif` chain; `ast.dump` recursed past the limit (gate_sweep crash)."""
+        deep = "x = 0\nif x == 0:\n    y = 0\n" + "".join(f"elif x == {i}:\n    y = {i}\n" for i in range(1, 2500))
+        assert SS.ast_identical(deep, deep.replace("y = 7\n", "y = 7  # seven\n"))
+        assert not SS.ast_identical(deep, deep.replace("y = 7\n", "y = 8\n"))
 
 
 class TestAstIdenticalEndToEnd(TestGateSweepEndToEnd):
