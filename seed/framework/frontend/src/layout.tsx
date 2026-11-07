@@ -478,6 +478,10 @@ export function createProductLayout(config: ProductLayoutConfig) {
       <>
       <OrgSelectionGate onSignOut={handleLogout} />
       <AppShell
+        // Route-mapping header: the Header's Breadcrumbs derive from the SAME
+        // (status-filtered) nav the Sidebar renders — no second list.
+        navGroups={navGroups}
+        standaloneItems={standaloneItems}
         sidebar={({ closeSidebar }) => (
           <Sidebar
             brandIcon={brandIcon}
