@@ -10,7 +10,7 @@
 **How to use it.** `dre-structure.md` stays the canonical DRE line doc — read it first for any "which line?" question. Use this doc for "which rule, which year, which regime, which document?" and for what the code does. Every answer: state **which year's rules** it holds for (§3), tier every claim, end with what the contador must confirm (§8).
 
 ## Contents
-0. Standard term ↔ house term · 1. Norm hierarchy and source protocol · 2. Regimes · 3. Reforma Tributária 2026–2033 · 4. Fiscal documents · 5. Statutory statements · 6. The finance organ, module by module · 7. Checklists and answer template · 8. When a contador (CRC) is required · 9. Worked examples · 10. Anti-patterns · 11. Sources · 12. Re-verify list
+0. Standard term ↔ house term · 1. Norm hierarchy and source protocol · 2. Regimes · 3. Reforma Tributária 2026–2033 · 4. Fiscal documents · 5. Statutory statements · 6. The finance organ, module by module · 7. Checklists and answer template · 8. When a contador (CRC) is required · 9. Worked examples · 10. Anti-patterns · 11. Sources · 12. Re-verify list · 13. NoctusAI company file · 14. Abertura de CNPJ
 
 ## 0 · Standard term ↔ house term
 
@@ -34,6 +34,11 @@
 - Tax law and accounting standards answer different questions: "is it receita bruta for the Simples base?" (tax: LC/Res. CGSN/SC) vs "which DRE line?" (accounting: Lei 6.404 + NBC TG). Never let one answer the other (dre-structure §4 h is the house example).
 - **A Solução de Consulta binds the consulente who asked;** for anyone else it is a strong signal of how the RFB reads the rule, tier [órgão oficial], not a rule. Quote its number, year and the exact sentence.
 
+**Owner source tiers (2026-11-07).** Every claim carries ONE tag, plus URL and access date:
+`[norma]` > `[órgão oficial]` > `[publicação técnica/científica]` (peer-reviewed or institutional: CFC/CRC, FGV, IBPT papers) > `[opinião de especialista]` (named author with credentials, cross-checked by **≥2 independent sources**) > `[blog/prática]` (a pointer to find the primary, **never the basis**). The norm order above is unchanged; older `[publicação profissional]` tags read as `[publicação técnica/científica]` only when institutional, else `[blog/prática]`.
+- **Conflicts between sources are stated explicitly** ("A diz X, B diz Y; prevalece Z por hierarquia, ou fica aberto") — never resolved silently.
+- All research is online; unreachable primary ⇒ tag the substitute honestly and mark **open**.
+
 **Source protocol.**
 1. Read the primary text: Planalto (CF/EC/LC/Lei), `normasinternet2.receita.fazenda.gov.br` (Res. CGSN, IN, SC), CFC (NBC). A mirror (`normaslegais`, `ibet`, accounting blogs) is at best [publicação profissional] and is replaced when the primary is reachable.
 2. Planalto pages carry several versions of amended articles; quote the text marked in force and note the amending act (e.g. LC 214 as amended by LC 227/2026).
@@ -54,7 +59,9 @@
 - **Effective rate.** The nominal rate of the bracket is set by the receita bruta accumulated in the **12 months before** the apuração period (RBT12; LC 123 art. 18 §1) and converted to an effective rate by the art. 18 §1-A formula: `(RBT12 × Aliq − PD) / RBT12` [norma; formula structure confirmed on Planalto, coefficients per Anexo table — re-verify the table before computing a real DAS].
 - **Anexos I–V.** I commerce · II industry · III/IV/V services. Anexo IV services pay the employer social contribution (CPP) outside the DAS.
 - **Fator R (LC 123 art. 18 §§5-J, 5-K, 5-M)** [norma]: for the services listed in §5-I, the ratio **folha de salários / receita bruta, both over the 12 months before the apuração period** (§5-K), decides the Anexo: **≥ 28% ⇒ Anexo III** (§5-J), **< 28% ⇒ Anexo V** (§5-M). Folha includes salaries, pró-labore and the CPP/FGTS actually paid [publicação profissional; statutory definition in art. 18 — re-verify the paragraph].
-- **Software / SaaS.** The statute lists software development, licensing and website services in art. 18 §5-D (Anexo III), but practice and the CGSN CNAE annex treat several IT CNAEs (e.g. 6201-5/01 custom development) as Fator-R-sensitive (III or V) [publicação profissional, unverified against Res. CGSN 140 Anexo VI — **re-verify per CNAE before answering a real company**]. Which Anexo applies to a given CNAE is the contador's sign-off.
+- **Software / SaaS (verified chain, advisory 2026-11-07).** LC 123 art. 18 §5-D IV/V (software development/licensing services) + §5-M II; Res. CGSN 140 art. 25 §1 V d/e/f/u ⇒ **Anexo III if Fator R ≥ 0,28, else Anexo V** [norma]. The earlier premise "Anexo VI lists the CNAEs" is **wrong**: Anexo VI lists the CNAEs that **bar entry** to the Simples. Which CNAE a company registers is still a decision to take with the §8 list in view.
+- **Fator R — folha rules (LC 123 art. 26 §§3–7)** [norma, verified in the advisory]: what the folha excludes; companies with **less than 13 months** of activity use the 0,28/0,01 rules for the ratio; the **zero-folha** and **zero-revenue** cases have their own treatment. Quote the paragraph from Planalto/Receita before computing a real DAS.
+- **From 2027 the Simples base is "faturamento, entrega ou execução, o que primeiro ocorrer"** (Res. CGSN 140 art. 2 §8 as amended by Res. CGSN 190/2026) and **caixa ends** [órgão oficial].
 - **First-bracket nominal rates** (up to R$ 180 mil RBT12): Anexo III 6%, Anexo V 15,5% [publicação profissional; LC 123 Anexos III/V tables not re-fetched].
 - **DAS repartição.** Each Anexo table splits the DAS into IRPJ/CSLL/Cofins/PIS/CPP/ISS-ICMS percentages; the house DRE uses it only when a store splits the DAS (`dre_help.py`, `INCOME_TAXES` "percentual de repartição do seu anexo"; accountant Q4).
 
@@ -73,6 +80,7 @@ Primary texts: EC 132/2023 (incl. ADCT arts. 125–129) and LC 214/2025 (as amen
 
 **Simples and IBS/CBS.**
 - A Simples optante may opt to apurar and recolher IBS/CBS **by the regular regime** instead of inside the DAS (LC 214 art. 41 §3; exercised under LC 123, §4) [norma]; the CGSN rule lets them be paid outside the DAS (Res. CGSN 190/2026 art. 5 XVI) [órgão oficial]. A Simples optante that received a refund of these taxes in the current or prior year cannot leave the regular regime (art. 41 §5).
+- **Option window:** the IBS/CBS option for **H1-2027 closed Sep/Oct 2026** [órgão oficial, advisory]. Res. CGSN 194/2026 is **unverified — open**. The H2-2027 window is **open** (§12).
 - **Credit consequence for B2B buyers:** if IBS/CBS stay inside the DAS, the optante takes no credits (art. 47 §9 I) and a regular-regime buyer credits only the amount paid through the Simples (art. 47 §9 II) [norma]. That is why B2B service sellers (NoctusAI's own case) may prefer the regular IBS/CBS regime — a contador decision.
 - **DRE consequence:** inside the DAS ⇒ nothing changes in the Deduções line. Outside ⇒ IBS/CBS become their own Deduções rows (accountant Q7 is open on presentation).
 
@@ -86,7 +94,9 @@ Primary texts: EC 132/2023 (incl. ADCT arts. 125–129) and LC 214/2025 (as amen
 ## 4 · Fiscal documents
 
 - **NF-e** (goods, state) and **NFS-e** (services, municipal). From 2027 the Simples base is the invoice moment, so **the invoice issue date becomes a tax input**: today `simples_base.py` approximates it with the receivable's `competence_month` and says so in `BASIS_NOTE` (`simples_base.py:8-9,36-38`).
-- **NFS-e Nacional (Emissor Nacional).** gov.br NFS-e news: on 28/04/2026, ME/EPP Simples optantes were to issue through the Emissor Nacional from 01/09/2026; on 11/08/2026, "Comitê Gestor do Simples Nacional prorroga a obrigatoriedade…" [órgão oficial — new date not shown on the listing]. Professional sources report Res. CGSN 191 (04/08/2026) moving it to **01/11/2026** [publicação profissional — **re-verify against the official text**]. If that holds, it is already in force on this doc's date; some municipalities let optantes adopt early (gov.br, 28/09/2026). LC 214 sanctions municipalities that do not adopt (audit-verified).
+- **NFS-e Nacional (Emissor Nacional).** gov.br NFS-e news: on 28/04/2026, ME/EPP Simples optantes were to issue through the Emissor Nacional from 01/09/2026; on 11/08/2026, "Comitê Gestor do Simples Nacional prorroga a obrigatoriedade…" [órgão oficial — new date not shown on the listing]. **Verified (advisory 2026-11-07): NFS-e Nacional is mandatory for ME/EPP from 01/11/2026 (Res. CGSN 191/2026)** — in force on this doc's date.
+- **API shape:** one **signed DPS per POST**, ICP-Brasil mTLS (manual dos contribuintes v1.2, Oct 2025) [órgão oficial]; **one NFS-e per tomador per charge**.
+- Early adoption: some municipalities let optantes adopt early (gov.br, 28/09/2026). LC 214 sanctions municipalities that do not adopt (audit-verified).
 - **Automation rule.** Any automation touching the Simples base from 2027 must carry the NF-e/NFS-e issue date; until it does, every figure says it is an approximation (the house already does this — keep it).
 
 ## 5 · Statutory statements
@@ -141,6 +151,8 @@ The agent always says so — the list in `dre-structure.md` §7 (bookkeeping res
 - **Split-payment reconciliation** policy once it goes live.
 - **The 2026→2027 transition** (2026 sales received in 2027).
 
+**No-contador mode (owner has none, 2026-11-07).** The agent is the **primary advisor**: it gives a recommended decision with tiered sources, never "ask your contador" as the answer. It keeps a running list **"pendências que exigem CRC por lei"** — ONLY what the law makes a registered contador's act or signature. Which acts need a CRC for an ME/EPP in the Simples vs not is researched and cited per item when it arises; starting points to verify (do not assert without the source): Decreto-Lei 9.295/1946 (privativo do contabilista) [norma — verify]; ECD/ECF signature where the obligation applies (Simples optantes are generally dispensed — verify IN RFB 2.003/2021 and 2.004/2021); DEFIS responsibility — **open**. The agent says plainly when the owner must hire a contador or an online accounting service and **what to look for** (CRC active, scope: abertura/escrituração/folha/fiscal, e-CAC procuração, price transparency, data-export rights, LGPD clause) — **neutral, no vendor names or ads**.
+
 ## 9 · Worked examples
 
 ### A · Installment interest after the reform (a store)
@@ -188,3 +200,22 @@ See `KB § PATTERNS/finance/managerial-and-saas-metrics.md` §9 — Fator R comp
 - Res. CGSN 140 Anexo VI (CNAE → Anexo, Fator R flag) for IT CNAEs; LC 123 Anexos III/V tables; the folha-de-salários definition paragraph in art. 18.
 - NBC TG 1000 / 1001 / 1002 scope boundaries — final CFC texts.
 - Res. CGSN 190/2026 MEI changes from 2027 (accountant Q8).
+- **Open (advisory 2026-11-07):** 2027 wording of the Fator R window; the H2-2027 IBS/CBS option window; Res. CGSN 194/2026 (unverified); SP / Cotia adherence to NFS-e Nacional.
+
+## 13 · NoctusAI company file (as of 2026-11-07)
+
+**State:** pre-CNPJ, **no revenue, no customers, no contador**. Nothing is due today; this list starts the day the CNPJ opens.
+- **NFS-e Nacional** — mandatory for ME/EPP since 01/11/2026 (Res. CGSN 191/2026); Emissor Nacional or API (§4), the API path needs a certificado ICP-Brasil.
+- **Fator R tracking** — monthly folha ÷ receita bruta, trailing 12 months; <13 months of activity use the art. 26 rules (§2); r ≥ 0,28 ⇒ Anexo III, else V. Illustration: `managerial-and-saas-metrics.md` §9.
+- **IBS/CBS semester option** — inside vs outside the DAS; H1-2027 window closed, H2-2027 open (§3, §12); B2B buyers favour the regular regime (art. 47 §9).
+- **Folha / pró-labore plan** — pró-labore is the Fator R lever and a social-security/IR decision; fix amount, start month and INSS at opening.
+- **Pendências que exigem CRC por lei:** kept per §8; empty until a CNPJ exists.
+
+## 14 · Abertura de CNPJ — decision checklist (playbook stub)
+
+> **Deferred by owner — research when asked.** Checklist only; nothing below is researched or sourced yet.
+- [ ] **Natureza jurídica:** SLU vs LTDA vs MEI eligibility for software. MEI does not allow CNAE 6201/6203/6204 (verify at the MEI CNAE annex when asked).
+- [ ] **CNAE choice** (primary + secondary) and its Anexo/Fator R effect (§2).
+- [ ] **Município and address:** Cotia / Carapicuíba / São Paulo; home-office address rules per municipality.
+- [ ] **Simples opting window** (at opening vs January window) and impediments.
+- [ ] **Pró-labore** amount and start (§13).
