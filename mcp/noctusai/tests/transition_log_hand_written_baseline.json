@@ -1,0 +1,20 @@
+{
+  "_doc": "Ratchet baseline for check_transition_log_hand_written: hand-written transition-history shapes that predate the seed primitive noctusai_lib.domain.transition_log (2026-11-07). Entries are <file>::<table>; this list only ever SHRINKS (a pilot adopting the primitive removes its entry). KB § PATTERNS/backend/transition-log.md.",
+  "legacy": [
+    "products/agents/backend/migrations/018_editorial_workflow.sql::editorial_events",
+    "products/agents/backend/migrations/033_julia_v2_threads.sql::thread_handoffs",
+    "products/agents/backend/migrations/033_julia_v2_threads.sql::thread_participante_eventos",
+    "products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql::funil_movimentos",
+    "products/erp-imobiliario/backend/migrations/042_pipeline_stages.sql::pipeline_movimentos",
+    "products/igig/backend/migrations/017_igig_pipeline.sql::pipeline_movimentos",
+    "products/igig/backend/migrations/sqlite/017_pipeline.sql::pipeline_movimentos",
+    "products/social-wiring/backend/migrations/030_meta_ads.sql::ads_activity_events",
+    "products/social-wiring/backend/migrations/034_pipeline_funil_processos.sql::pipeline_movimentos",
+    "products/social-wiring/backend/migrations/123_fotos_core.sql::fotos_eventos",
+    "products/social-wiring/backend/migrations/149_manual_imovel_matricula.sql::imovel_endereco_historico",
+    "products/social-wiring/backend/migrations/262_imovel_preco_historico.sql::imovel_preco_historico",
+    "products/social-wiring/backend/migrations/265_condominios.sql::condominio_eventos",
+    "products/social-wiring/backend/migrations/286_atendimento_blocos_supervisao.sql::atendimento_handoffs",
+    "products/therapy-platform/backend/migrations/001_therapy_platform.sql::platform_settings_history"
+  ]
+}

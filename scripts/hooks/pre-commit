@@ -1421,6 +1421,10 @@ if [[ -n "$STAGED_SECURITY_MIGRATIONS" ]] && have_py; then
         echo "[pre-commit] Render it: noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (or scaffold_migration with_guc_guard). See KB § PATTERNS/backend/database-rls.md § GUC carve-out guard." >&2
         exit 1
     fi
+    # Keeper: transition_log_hand_written -- WARN-first SHADOW (gate-alignment placement=warn); promote to
+    # blocking after the shadow record. KB § PATTERNS/backend/transition-log.md.
+    "$PY" "$CLI" --check-transition-log-hand-written --worktree-path "$REPO_ROOT" \
+        || echo "[pre-commit] WARNING (shadow): hand-written transition history -- render it with noctusai_lib.domain.transition_log.transition_log_migration. See KB § PATTERNS/backend/transition-log.md." >&2
     if ! "$PY" "$CLI" --check-migration-untyped-empty-array --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] MIGRATION-UNTYPED-EMPTY-ARRAY check FAILED. Commit aborted." >&2
         echo "[pre-commit] Cast the literal: ARRAY[]::text[]. See KB § PATTERNS/backend/migration-sql-security-gates.md." >&2

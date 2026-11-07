@@ -11944,9 +11944,118 @@ def derive_organ_probes(*, products_dir: Any = None, registry: Any = None) -> tu
     return tuple(probes)
 
 
+# ---------------------------------------------------------------------------
+# Transition-log-derived probes -- `noctusai_lib.domain.transition_log` renders the events table + guard +
+# erasure function per AGGREGATE (several per product, several per file), so it is found by its config
+# marker (`-- transition-log-config: {...}`), not an organ header. Each marker re-derives the full config
+# and so the guard probes; the erasure path gets an inverse-polarity `write_allowed` probe (the ONE gated
+# delete MUST work: an erasure that silently deletes nothing is an LGPD finding). Fail-closed like the organs.
+# KB § PATTERNS/backend/transition-log.md.
+# ---------------------------------------------------------------------------
+
+_TL_PROBE_PREFIX = "transition_log"
+
+
+def _transition_log_erasure_probe(probe_id: str, product: str, cfg: Any, migrations: tuple[str, ...]) -> GuardProbe:
+    from noctusai_lib.domain.transition_log.guards import erasure_probe_parts
+    from noctusai_lib.domain.transition_log.sql import ERASURES_TABLE
+
+    parts = erasure_probe_parts(cfg)
+    fn = f"{cfg.schema}.{cfg.rpc('erase_subject')}"
+    pending = "\n".join(
+        f"  IF to_regclass('{_sql_lit(cfg.schema)}.{_sql_lit(t)}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:pending: {_sql_lit(cfg.schema)}.{_sql_lit(t)} does not exist (transition log not applied)';\n"
+        "  END IF;"
+        for t in (cfg.events_table, ERASURES_TABLE)
+    )
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  {parts['declare']}
+BEGIN
+{pending}
+  BEGIN
+{parts['setup']}
+{parts['erase']}
+    v_left := {parts['remaining']};
+    IF v_left = 0 AND (v_res->>'deleted')::int = 1 THEN
+      RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(fn)} erased the subject under its flag (1 row, 0 left)';
+    END IF;
+    RAISE EXCEPTION 'NOC_PROBE:blocked: {_sql_lit(fn)} answered % and left % row(s) of the subject', v_res, v_left;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:allowed:%' OR SQLERRM LIKE 'NOC_PROBE:blocked:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{_sql_lit(cfg.events_table)} is append-only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:blocked: the guard refused the gated erasure: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the erasure path under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id, product=product, schema=cfg.schema, guard_name=cfg.rpc("erase_subject"), kind="write_allowed",
+        migrations=migrations, sql=sql,
+        rationale=(f"{fn} is the ONE gated delete of {cfg.events_table} (LGPD erasure, owner decision 2026-11-07): "
+                   "it must actually delete the subject's rows under its transaction-local flag."),
+    )
+
+
+def derive_transition_log_probes(*, products_dir: Any = None) -> tuple[GuardProbe, ...]:
+    """The guard + erasure probes of every transition-log aggregate rendered into any product's migrations."""
+    from settings import PRODUCTS_DIR
+
+    root = products_dir or PRODUCTS_DIR
+    try:
+        from noctusai_lib.domain.transition_log import configs_in_migration, transition_log_guard_probes
+        from noctusai_lib.domain.transition_log.sql import CONFIG_MARKER
+    except ImportError as exc:
+        return (_unverifiable_probe(
+            f"{_TL_PROBE_PREFIX}.unavailable", "<platform>", "public",
+            f"cannot import noctusai_lib.domain.transition_log ({exc}): transition-log probes cannot be derived",
+        ),)
+    latest: dict[tuple[str, str, str], tuple[Any, str]] = {}
+    for sql_file in sorted(root.glob("*/backend/migrations/*.sql")):
+        try:
+            text = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if CONFIG_MARKER not in text:
+            continue
+        product = sql_file.parents[2].name
+        try:
+            cfgs = configs_in_migration(text)
+        except ValueError as exc:
+            latest[(product, sql_file.name, "<unparseable>")] = (exc, sql_file.name)
+            continue
+        for cfg in cfgs:
+            latest[(product, cfg.schema, cfg.aggregate)] = (cfg, sql_file.name)  # sorted walk: the last render wins
+    probes: dict[str, GuardProbe] = {}
+    for (product, schema, aggregate), (cfg, fname) in sorted(latest.items()):
+        if aggregate == "<unparseable>":
+            pid = f"{_TL_PROBE_PREFIX}.{product}.{schema}.marker"
+            probes[pid] = _unverifiable_probe(pid, product, "public", f"{fname}: {cfg}")
+            continue
+        for op in transition_log_guard_probes(cfg):
+            # the shared erasure-log guards repeat per aggregate of a schema: probe them once
+            scope = cfg.schema if op.guard_name.startswith("transition_log_erasures") else cfg.aggregate
+            pid = f"{_TL_PROBE_PREFIX}.{product}.{scope}.{op.probe_key}"
+            probes.setdefault(pid, GuardProbe(
+                id=pid, product=product, schema=cfg.schema, guard_name=op.guard_name, kind="write_refusal",
+                migrations=(fname,), rationale=op.rationale, sql=_organ_probe_sql(cfg.schema, op),
+            ))
+        pid = f"{_TL_PROBE_PREFIX}.{product}.{cfg.aggregate}.erase_subject"
+        probes[pid] = _transition_log_erasure_probe(pid, product, cfg, (fname,))
+    return tuple(probes.values())
+
+
 def full_registry(*, products_dir: Any = None, registry: Any = None) -> tuple[GuardProbe, ...]:
-    """`DEFAULT_REGISTRY` (hand-written, per-product) + the organ-derived probes: what a run actually executes."""
-    return (*DEFAULT_REGISTRY, *derive_organ_probes(products_dir=products_dir, registry=registry))
+    """`DEFAULT_REGISTRY` (hand-written, per-product) + the organ- and transition-log-derived probes: what a run executes."""
+    return (
+        *DEFAULT_REGISTRY,
+        *derive_organ_probes(products_dir=products_dir, registry=registry),
+        *derive_transition_log_probes(products_dir=products_dir),
+    )
 
 
 
@@ -12156,6 +12265,7 @@ __all__ = [
     "DEFAULT_REGISTRY",
     "REGISTERED_GUARD_NAMES",
     "derive_organ_probes",
+    "derive_transition_log_probes",
     "full_registry",
     "wrap_rollback_only",
     "run_probe",
