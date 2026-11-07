@@ -1595,7 +1595,7 @@ END;
 )
 
 
-_DESTAQUE_MIGRATION = "100_products_exibir_no_site.sql"
+_DESTAQUE_MIGRATION = "105_products_exibir_no_site.sql"
 
 
 def _destaque_refusal_probe(

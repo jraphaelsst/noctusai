@@ -184,7 +184,7 @@ async def atualizar_product(
     try:
         result = (await anyio.to_thread.run_sync(db.table("products").update(data).eq("id", product_id).execute))
     except Exception as exc:
-        # Race backstop: the pre-check passed but a concurrent write took the slot (migration 100
+        # Race backstop: the pre-check passed but a concurrent write took the slot (migration 105
         # unique index / CHECKs). Say so in pt-BR instead of an opaque 500.
         if "destaque" in str(exc):
             logger.warning("Featured-product constraint hit on %s: %s", product_id, exc)

@@ -1,4 +1,4 @@
--- 100: products.exibir_no_site — the noctusai.com showcase mirrors the live catalog.
+-- 105: products.exibir_no_site — the noctusai.com showcase mirrors the live catalog.
 --
 -- (098 is claimed by feat/nosnolimiar-rename.)
 --   1. public.products.exibir_no_site boolean NOT NULL DEFAULT true

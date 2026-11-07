@@ -108,7 +108,7 @@ def check_destaque_write(db, product_id: str, fields: dict) -> None:
     """Refuse (never silently swap) a write that would break the featured rules.
 
     `fields` is the patch about to be written; only `destaque_no_site` / `exibir_no_site`
-    matter here. The DB constraints (migration 100) are the race-proof backstop; this gives
+    matter here. The DB constraints (migration 105) are the race-proof backstop; this gives
     the owner a clear reason first.
     """
     touches_destaque = "destaque_no_site" in fields
