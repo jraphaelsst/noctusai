@@ -14,7 +14,7 @@ cannot be edited and cannot drift from the state.
 | Need | Shape |
 |---|---|
 | Current state is what the app reads; history is for audit, timelines, analytics | **transition log** (this doc) |
-| The history IS the truth; state is a projection rebuilt from events (replay, temporal queries, several projections) | the **event store** (later phase of the event-sourcing program — not built yet) |
+| The history IS the truth; state is a projection rebuilt from events (replay, temporal queries, several projections) | the **event store** — `KB § PATTERNS/backend/event-store.md` |
 | A request/action trail across every mutating call | `KB § PATTERNS/backend/audit-trail.md` |
 | An immutable version table (agent versions, prompt versions) | not this — a version is a snapshot, not a transition |
 
@@ -99,7 +99,7 @@ Results: `TransitionOutcome(status, event, code, current_state, detail)` and
 `ErasureOutcome(status, deleted, code)`. One shared conformance suite
 (`seed/lib/backend/tests/domain/transition_log/conformance.py`) runs against the Fake AND the
 Real adapter on real Postgres (PGlite, harness `noctusai_lib.testing.pglite`) — parity is proven, not asserted.
-The TRUNCATE guard is the shared `truncate_guard_sql` (`noctusai_lib.domain.sql_templates`) (one statement trigger per table).
+The TRUNCATE guard is the shared `truncate_guard_sql` (`noctusai_lib.domain.sql_templates`), also used by the event store.
 
 ## 5. Guard probes
 
@@ -138,7 +138,7 @@ pass; legacy copies are baselined; a reasoned non-fit carries
   *CREATE FUNCTION* § Writing SECURITY DEFINER Functions Safely (pinned `search_path`, revoked
   `EXECUTE`). <https://www.postgresql.org/docs/16/>
 - Martin Fowler, *Event Sourcing* (2005) and *Audit Log* — the distinction between a log that
-  explains state (this primitive) and a log that IS the state (the future event store).
+  explains state (this primitive) and a log that IS the state (the event store).
   <https://martinfowler.com/eaaDev/EventSourcing.html>
 - LGPD, Lei 13.709/2018, art. 18 VI (eliminação dos dados) and art. 16 (retention exceptions) —
   why the erasure is a real, logged delete and not crypto-shredding.

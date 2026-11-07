@@ -40,6 +40,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md
   - CONTEXT/PATTERNS/backend/leads-organ.md
   - CONTEXT/PATTERNS/backend/transition-log.md
+  - CONTEXT/PATTERNS/backend/event-store.md
   - CONTEXT/PATTERNS/backend/chatbot-operational-readiness.md
   - CONTEXT/PATTERNS/backend/upload-route-body-override-derivation.md
   - CONTEXT/PATTERNS/common/realtime-sse-bus.md
@@ -113,7 +114,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 ## Owned KB depth (canonical territory)
 **Craft** → `KB § PATTERNS/backend/backend-craft-canon.md` · `KB § PATTERNS/backend/postgres-craft.md`.
 **Backend patterns** → `KB § PATTERNS/backend/backend.md` · `KB § PATTERNS/backend/pydantic-strict-http.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`.
-**Data & migrations** → `KB § PATTERNS/backend/database-rls.md` · `KB § PATTERNS/backend/transition-log.md` (state history: never hand-write it) · `KB § PATTERNS/backend/migrate-product-mcp-tool.md` · `KB § PATTERNS/backend/projection-reconcile.md` · `KB § backend/04-DATABASE.md`.
+**Data & migrations** → `KB § PATTERNS/backend/database-rls.md` · `KB § PATTERNS/backend/transition-log.md` (state history: never hand-write it) · `KB § PATTERNS/backend/event-store.md` (log-is-truth organ) · `KB § PATTERNS/backend/migrate-product-mcp-tool.md` · `KB § PATTERNS/backend/projection-reconcile.md` · `KB § backend/04-DATABASE.md`.
 **Domain (per product; 02/03/06/08 = asleep products)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
 **Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md` · `KB § PATTERNS/backend/audit-trail.md` · `KB § PATTERNS/common/performance-analysis.md`.
 **Photo editing** → `KB § PATTERNS/backend/photo-editing-seed.md`.
