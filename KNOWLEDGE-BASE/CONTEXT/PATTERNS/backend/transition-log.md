@@ -98,7 +98,8 @@ Exactly one path deletes: `<agg>_erase_subject(p_org, p_subject jsonb, p_reason,
 Results: `TransitionOutcome(status, event, code, current_state, detail)` and
 `ErasureOutcome(status, deleted, code)`. One shared conformance suite
 (`seed/lib/backend/tests/domain/transition_log/conformance.py`) runs against the Fake AND the
-Real adapter on real Postgres (PGlite) — parity is proven, not asserted.
+Real adapter on real Postgres (PGlite, harness `noctusai_lib.testing.pglite`) — parity is proven, not asserted.
+The TRUNCATE guard is the shared `truncate_guard_sql` (`noctusai_lib.domain.sql_templates`) (one statement trigger per table).
 
 ## 5. Guard probes
 

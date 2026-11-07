@@ -12,7 +12,7 @@ What one render emits (forward-only, idempotent -- applied twice by the chain re
   index, `seq = 1 <=> creation event` (every log starts at its initial state), and a DEFERRABLE
   NO ACTION foreign key to the state row -- never ON DELETE CASCADE;
 * immutability: `guc_carveout_guard_sql` refuses every UPDATE and every DELETE not made under the
-  aggregate's transaction-local erasure flag, plus a statement trigger refusing TRUNCATE;
+  aggregate's transaction-local erasure flag, plus `truncate_guard_sql` (statement trigger) refusing TRUNCATE;
 * the ONE gated erasure path (owner decision 2026-11-07, LGPD): `<agg>_erase_subject` -- SECURITY
   DEFINER, sets the flag, deletes only the subject's rows, logs the erasure to the schema's
   append-only `transition_log_erasures` (ids + counts + reason; no payload);
@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 
 from noctusai_lib.domain._organ_common import definer_search_path, org_rls
-from noctusai_lib.domain.sql_templates import guc_carveout_guard_sql, set_search_path
+from noctusai_lib.domain.sql_templates import guc_carveout_guard_sql, set_search_path, truncate_guard_sql
 
 from .config import (
     CREATED_EVENT,
@@ -182,18 +182,7 @@ COMMENT ON TABLE {r.qev} IS 'tier:org';
 -- Immutability: UPDATE always refused, DELETE only under {cfg.erase_guc} (set by {cfg.rpc('erase_subject')} alone).
 {guc_carveout_guard_sql(schema=r.s, table=r.ev, guc=cfg.erase_guc, error_message=f"{r.ev} is append-only", errcode=APPEND_ONLY_SQLSTATE, allow_ops=("DELETE",))}
 
-CREATE OR REPLACE FUNCTION {r.s}.{r.ev}_refuse_truncate() RETURNS trigger
-LANGUAGE plpgsql
-{definer_search_path(r.s)}
-AS $fn$
-BEGIN
-    RAISE EXCEPTION '{r.ev} is append-only (TRUNCATE refused)' USING ERRCODE = '{APPEND_ONLY_SQLSTATE}';
-END;
-$fn$;
-REVOKE ALL ON FUNCTION {r.s}.{r.ev}_refuse_truncate() FROM PUBLIC, anon, authenticated;
-DROP TRIGGER IF EXISTS {r.ev}_no_truncate ON {r.qev};
-CREATE TRIGGER {r.ev}_no_truncate BEFORE TRUNCATE ON {r.qev}
-    FOR EACH STATEMENT EXECUTE FUNCTION {r.s}.{r.ev}_refuse_truncate();"""
+{truncate_guard_sql(schema=r.s, table=r.ev, errcode=APPEND_ONLY_SQLSTATE)}"""
 
 
 def _erasures_table(schema: str) -> str:

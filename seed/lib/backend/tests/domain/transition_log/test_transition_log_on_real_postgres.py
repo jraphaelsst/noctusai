@@ -15,7 +15,7 @@ import pytest
 
 from noctusai_lib.domain.transition_log import ERASURES_TABLE, transition_log_migration
 
-from . import pglite_client
+from noctusai_lib.testing.pglite import PgliteClient, PgliteError, pglite_available
 from .conformance import CARD, PARTICIPANT, SCHEMA, STATE_DDL
 
 ORG = str(uuid.UUID(int=0xC3))
@@ -23,9 +23,9 @@ ORG = str(uuid.UUID(int=0xC3))
 
 @pytest.fixture(scope="module")
 def db():
-    if not pglite_client.available():
+    if not pglite_available():
         pytest.skip("PGlite unavailable (needs `node` and mcp/noctusai/node/node_modules)")
-    client = pglite_client.PgliteClient(SCHEMA)
+    client = PgliteClient(SCHEMA)
     client.exec(STATE_DDL)
     sql = transition_log_migration(CARD) + transition_log_migration(PARTICIPANT, header=False)
     client.exec(sql)
@@ -48,7 +48,7 @@ def _card(db) -> str:
 ])
 def test_direct_mutation_of_history_is_refused(db, stmt):
     e = _card(db)
-    with pytest.raises(pglite_client.PgliteError, match="card_events is append-only") as err:
+    with pytest.raises(PgliteError, match="card_events is append-only") as err:
         db.exec(stmt.format(s=SCHEMA, e=e))
     assert err.value.code == "TL001"
     assert db.query(f"SELECT count(*)::int AS n FROM {SCHEMA}.card_events WHERE entity_id = '{e}'")[0]["n"] == 1
@@ -56,7 +56,7 @@ def test_direct_mutation_of_history_is_refused(db, stmt):
 
 def test_a_caller_cannot_borrow_the_erasure_flag_of_another_aggregate(db):
     e = _card(db)
-    with pytest.raises(pglite_client.PgliteError, match="append-only"):
+    with pytest.raises(PgliteError, match="append-only"):
         db.exec(f"BEGIN; SELECT set_config('{PARTICIPANT.erase_guc}', 'on', true); "
                 f"DELETE FROM {SCHEMA}.card_events WHERE entity_id = '{e}'; COMMIT;")
     db.exec("ROLLBACK")
@@ -84,7 +84,7 @@ def test_erasure_deletes_the_subject_under_its_flag_and_logs_it(db):
 
 def test_no_cascade_a_state_row_with_history_cannot_be_deleted(db):
     e = _card(db)
-    with pytest.raises(pglite_client.PgliteError, match="card_events_entity_fk"):
+    with pytest.raises(PgliteError, match="card_events_entity_fk"):
         db.exec(f"DELETE FROM {SCHEMA}.cards WHERE id = '{e}'")
     fk = db.query(f"SELECT confdeltype, condeferrable FROM pg_constraint WHERE conname = 'card_events_entity_fk'")[0]
     assert fk == {"confdeltype": "a", "condeferrable": True}  # NO ACTION, deferrable for the guard probes
@@ -95,7 +95,7 @@ def test_the_erasure_log_is_append_only(db):
             f"VALUES ('{ORG}', 'card', '{{}}'::jsonb, 0, 'probe')")
     for stmt in (f"UPDATE {SCHEMA}.{ERASURES_TABLE} SET reason = 'x'", f"DELETE FROM {SCHEMA}.{ERASURES_TABLE}",
                  f"TRUNCATE {SCHEMA}.{ERASURES_TABLE}"):
-        with pytest.raises(pglite_client.PgliteError, match=f"{ERASURES_TABLE} is append-only"):
+        with pytest.raises(PgliteError, match=f"{ERASURES_TABLE} is append-only"):
             db.exec(stmt)
 
 
@@ -112,7 +112,7 @@ def test_the_checks_backstop_direct_inserts(db):
         "uq_card_events_entity_seq": dict(seq=1, frm="NULL", typ="created", data="'{}'", kind="user"),
     }
     for constraint, values in bad.items():
-        with pytest.raises(pglite_client.PgliteError, match=constraint):
+        with pytest.raises(PgliteError, match=constraint):
             db.exec(ins.format(**values))
 
 
