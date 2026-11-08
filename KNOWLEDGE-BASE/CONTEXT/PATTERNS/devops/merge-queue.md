@@ -89,6 +89,16 @@ Code lives in:
    number ejects the entry; it is never auto-resolved on CI. The owning session
    fixes the branch and enqueues it again. Local renumbering against `dev`
    still happens at enqueue time (`_attempt_migration_renumber`).
+   **One carve-out — registered derived ledgers (2026-11-07).** A conflict that
+   lies wholly inside ONE set in `merge_queue.DERIVED_SETS` (today: the
+   access-tiers `FINDINGS.md` / `findings.ndjson` / `metrics.ndjson`) is not a
+   content conflict — each slice regenerated the same derived artifact. Compose
+   takes the head copy, finishes applying the entry, re-runs the set's regen on
+   the merged tree and commits only that set (`chore(<set>): re-derive conflicted
+   ledger at compose [auto]`, drain log `[mq-derived-regen]`). A mixed conflict
+   still ejects as `conflict`; a failed regen ejects as `derived_regen`. Adding a
+   set is one data row — never hand-resolve a derived file. Born when two slices
+   ejected on these files in one batch (s1 `merge-queue/derived-ledger-coupling`).
 5. **The driver comes from `dev`.** The workflow checks out `dev` and runs
    *that* `merge_queue.py`, never the entry's copy.
 

@@ -2,7 +2,7 @@ import { test, expect } from '../fixtures/auth.fixture';
 import { mockAdminAPIs } from '../fixtures/api-mocks';
 import type { Page } from '@playwright/test';
 
-// The admin sidebar is nested (Administracao › Visão geral | Clientes |
+// The admin sidebar is nested (Administração › Visão geral | Clientes |
 // Comercial | Plataforma) and each level is an accordion: only the group on
 // the current page's path is open. Open a sub-group before reaching a link
 // inside it (owner-approved UX, 2026-10-05, MENUS.md).

@@ -48,7 +48,7 @@ from .config import (
     ResumoExtension,
 )
 from .documentos import register_retention_sweep
-from .gatherers import SEED_GATHERERS, Gatherer
+from .gatherers import SEED_GATHERERS, Gatherer, movimentos_gatherer
 from .router import DocumentoDeleteHook, DocumentoUploadHook, card_hub_routers
 from .services import ensure_entity
 from .sql import card_hub_migration
@@ -78,6 +78,7 @@ __all__ = [
     "ensure_entity",
     "get_card_resumo",
     "get_timeline",
+    "movimentos_gatherer",
     "lembretes",
     "register_retention_sweep",
     "services",

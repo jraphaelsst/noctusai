@@ -722,6 +722,8 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
       · `grep_max:<n>:<term>@<path>`     ≤ n files under <path> contain <term>
       · `superseded_by:<target_substr>`  a LATER entry (ts >) at a terminal status
                                           (s4-keeper|closed) has target ⊇ substr
+      · `finance_param_fresh:<key>`      the tax-parameter registry no longer flags <key> as
+                                          stale today (re-verified, or a successor row exists)
 
     Returns `(satisfied, human_detail)`. Unknown grammar ⇒ `(False, "unknown ...")`
     (loud, never silently True). KB § PATTERNS/common/scoped-auto-improvement.md.
@@ -760,6 +762,17 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
                     and substr in e.get("target", "")):
                 return True, f"superseded by terminal entry target⊇'{substr}'"
         return False, f"no terminal superseding entry for '{substr}'"
+    if pred.startswith("finance_param_fresh:"):
+        key = pred[len("finance_param_fresh:"):].strip()
+        try:
+            from tools.noctus.dev import finance_params_staleness as fps
+            rep = fps.report(root=repo_root)
+        except Exception as exc:  # noqa: BLE001 - loud, never silently True
+            return False, f"finance_param_fresh: registry unreadable ({exc})"
+        if not rep.get("ok"):
+            return False, f"finance_param_fresh: registry unreadable ({rep.get('error')})"
+        stale = any(r["key"] == key for rows in rep["grouped"].values() for r in rows)
+        return (not stale), f"finance param {key} {'still stale' if stale else 'fresh'}"
     if pred.startswith(MANUAL_PREFIX):
         return False, f"manual closure ({pred[len(MANUAL_PREFIX):].strip()}) — closes only by explicit promote/close"
     return False, f"unknown predicate grammar: {pred!r}"
@@ -1072,7 +1085,7 @@ def register(server) -> None:
             "ndjson (atomic) + refresh the cache. Predicate grammar: "
             "`keeper:<name>` · `path_exists:<relpath>` · "
             "`grep_present:<term>@<path>` · `grep_max:<n>:<term>@<path>` · "
-            "`superseded_by:<target_substr>`. Returns reconciled / still_open / "
+            "`superseded_by:<target_substr>` · `finance_param_fresh:<key>`. Returns reconciled / still_open / "
             "unhandled (open entries with NO resolve_when — they cannot self-"
             "close). Run it at every hot-drift surface (the /contextualize "
             "protocol). KB § PATTERNS/common/scoped-auto-improvement.md."

@@ -41,7 +41,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Sequence
 
-__all__ = ["POSITION_FIELD", "position_for_index", "position_of", "position_on_top"]
+__all__ = ["POSITION_FIELD", "position_for_drop", "position_for_index", "position_of", "position_on_top"]
 
 POSITION_FIELD = "kanban_pos"
 
@@ -77,6 +77,38 @@ def position_on_top(cards: Sequence[Any]) -> Decimal:
     if not cards:
         return Decimal(0)
     return min(position_of(c) for c in cards) - _STEP
+
+
+def _id_of(card: Any) -> Any:
+    return card.get("id") if isinstance(card, dict) else getattr(card, "id", None)
+
+
+def _created_at_of(card: Any) -> str:
+    raw = card.get("created_at") if isinstance(card, dict) else getattr(card, "created_at", None)
+    return str(raw) if raw else ""
+
+
+def position_for_drop(cards: Sequence[Any], card_id: Any, index: int | None) -> Decimal | None:
+    """The fractional position that lands `card_id` at `index` of the column
+    `cards`, or `None` when the client sent no index.
+
+    Lifted from igig's `quadro_comum.posicao_para_indice` and social-wiring's
+    `boards._posicao_para_indice` (the same function, forked twice), minus the
+    database read: the caller hands in the destination column's rows (any
+    order, `id` + `kanban_pos` + `created_at` is enough) so the function is
+    pure and testable without a client.
+
+    `None` means "plain move to this stage, no opinion about where" — it must
+    not disturb the stored position. The moved card is EXCLUDED from its own
+    neighbours (a drop at index 3 means three cards above it once it is gone),
+    and the column is sorted the way the board sorts it (`kanban_pos`, then
+    `created_at`), so the index the client saw is the index we use.
+    """
+    if index is None:
+        return None
+    vizinhos = [c for c in cards if str(_id_of(c)) != str(card_id)]
+    vizinhos.sort(key=lambda c: (position_of(c), _created_at_of(c)))
+    return position_for_index(vizinhos, index)
 
 
 def position_for_index(cards: Sequence[Any], index: int) -> Decimal:

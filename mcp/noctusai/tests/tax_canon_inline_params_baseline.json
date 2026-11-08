@@ -1,0 +1,4 @@
+{
+ "_note": "Shrink-only ratchet: pre-existing inline tax literals in br-tax-advisor-canon.md. Fix a line then run --check-tax-canon-no-inline-params --tax-canon-baseline shrink. Never edit by hand.",
+ "signatures": []
+}

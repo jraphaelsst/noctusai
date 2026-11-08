@@ -192,7 +192,7 @@ const FIELDS = {
   servicos: { title: 'Prestação de serviços', without: 'Serviços sem nota', without_roman: 'VII', with: 'Serviços com nota', with_roman: 'VIII', total: 'Total serviços', total_roman: 'IX' },
 };
 const MEI: MeiMonthlyData = {
-  month: '2026-10', tax_regime: 'mei', applicable: true, basis: 'cash', deadline: '2026-11-20',
+  month: '2026-10', tax_regime: 'mei', applicable: true, basis: 'cash', obligation: { code: 'manter_e_apresentar_quando_solicitado', text: 'Guarde este relatório com as notas fiscais anexadas; apresente-o ao Fisco quando solicitado.', norma: 'P&R MEI 3.6' },
   groups: {
     comercio: { without_invoice_cents: 4_000, with_invoice_cents: 10_000, total_cents: 14_000 },
     industria: { without_invoice_cents: 0, with_invoice_cents: 0, total_cents: 0 },
@@ -205,14 +205,14 @@ const MEI: MeiMonthlyData = {
 };
 
 describe('MeiMonthlyReport', () => {
-  it('lays out the model rows I-X, the unassigned money apart, the deadline and the warnings', async () => {
+  it('lays out the model rows I-X, the unassigned money apart, the obligation and the warnings', async () => {
     const api = makeRoutedApi({ 'GET /api/finance/reports/mei-monthly': ok(MEI) });
     render(<MeiMonthlyReport hooks={hooksFor(api)} canExport now={NOW} />, { wrapper: wrapperFor() });
     const total = (await screen.findByText('Total geral das receitas brutas no mês')).closest('tr')!;
     expect(flat(total.textContent)).toContain('R$ 490,00');
     expect(flat(screen.getByText('Revenda com nota').closest('tr')!.textContent)).toContain('R$ 100,00');
     expect(flat(screen.getByText(/fora dos totais/).textContent)).toContain('R$ 25,00');
-    expect(screen.getByText(/20\/11\/2026/)).toBeInTheDocument();
+    expect(screen.getByText(/apresente-o ao Fisco quando solicitado/)).toBeInTheDocument();
     expect(screen.getByText('Receita sem atividade.')).toBeInTheDocument();
     expect(api.get).toHaveBeenCalledWith('/api/finance/reports/mei-monthly', { month: '2026-10-01' });
   });
