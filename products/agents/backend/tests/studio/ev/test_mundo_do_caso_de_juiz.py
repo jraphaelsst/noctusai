@@ -55,3 +55,20 @@ def test_the_repo_mirror_worlds_are_all_valid():
     assert com_mundo
     for d in com_mundo:
         validar_mundo_juiz(d["roteiro"], titulo=d["titulo"], entrada=d["entrada"], contexto=d.get("contexto"))
+
+
+def test_a_judge_case_can_be_created_and_patched_with_a_world_but_not_with_k_or_asserts():
+    from uuid import uuid4
+
+    from app.stores.studio_evals import EvalCaseInput, FakeEvalStore
+
+    store, org, agent = FakeEvalStore(), uuid4(), uuid4()
+    caso = store.create_case(org, agent, EvalCaseInput(
+        slug="j1", titulo="t", entrada="e", criterios={"deve": ["a"], "nao_deve": []}, contexto="c"))
+    assert caso.roteiro is None
+    novo = store.update_case(org, agent, caso.id, roteiro=MUNDO)
+    assert novo.roteiro == MUNDO and novo.suite == "comportamento"
+    with pytest.raises(ValueError):
+        store.update_case(org, agent, caso.id, k=5)
+    with pytest.raises(RoteiroInvalido):
+        store.update_case(org, agent, caso.id, roteiro={**MUNDO, "turnos": [{"lead": "oi"}]})
