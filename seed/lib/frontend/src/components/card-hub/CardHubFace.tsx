@@ -16,6 +16,7 @@
  * Slice C) — a MOVE, not a rewrite: markup, classes and data-testids are SW's,
  * so SW's own suites pass unchanged once it consumes this copy (Slice F).
  */
+import type { ReactNode } from "react";
 import { AlignLeft, CheckSquare, Clock, Paperclip, Thermometer } from "lucide-react";
 
 import { cn } from "../../utils";
@@ -32,6 +33,22 @@ export interface CardHubFaceProps {
   badges?: CardBadges | null;
   onClick?: () => void;
   className?: string;
+  /**
+   * SEAM for derived faces (`FunnelCardFace`) — all optional, all additive: omit them and the
+   * face renders byte-identically to before.
+   *  - `leading`  — rendered left of the title (an avatar).
+   *  - `subtitle` — one muted line under the title.
+   *  - `chips`    — a row between the title block and the badge row.
+   *  - `footer`   — the last row (value · owner · actions).
+   *  - `onOpen`   — makes the TITLE a real `<button>` (keyboard-openable, named by its text).
+   *    Unlike `onClick` it does NOT turn the whole face into `role="button"`, so controls inside
+   *    `chips`/`footer` are never nested inside another interactive role.
+   */
+  leading?: ReactNode;
+  subtitle?: ReactNode;
+  chips?: ReactNode;
+  footer?: ReactNode;
+  onOpen?: () => void;
 }
 
 type DueState = "done" | "overdue" | "soon" | "upcoming";
@@ -76,6 +93,11 @@ export function CardHubFace({
   onClick,
   className,
   testId = "card-hub-face",
+  leading,
+  subtitle,
+  chips,
+  footer,
+  onOpen,
 }: CardHubFaceProps) {
   const dueState =
     datas?.data_entrega != null
@@ -115,7 +137,33 @@ export function CardHubFace({
       )}
 
       <div className="space-y-2 p-3">
-        <p className="line-clamp-2 text-sm font-medium leading-snug">{nome}</p>
+        <div className={leading ? "flex items-start gap-2" : undefined}>
+          {leading}
+          <div className="min-w-0 flex-1">
+            {onOpen ? (
+              <button
+                type="button"
+                onClick={onOpen}
+                // The card wrapper (dnd-kit) owns Enter/Space for keyboard DRAG; the title button
+                // is the keyboard path to OPEN, so its key events must not reach the wrapper.
+                onKeyDown={(e) => e.stopPropagation()}
+                className="line-clamp-2 w-full rounded-sm text-left text-sm font-medium leading-snug hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                data-testid={`${testId}-title`}
+              >
+                {nome}
+              </button>
+            ) : (
+              <p className="line-clamp-2 text-sm font-medium leading-snug">{nome}</p>
+            )}
+            {subtitle && (
+              <p className="truncate text-xs text-muted-foreground" data-testid={`${testId}-subtitle`}>
+                {subtitle}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {chips}
 
         {hasBadgeRow && (
           <div className="flex flex-wrap items-center gap-2 text-xs" data-testid={`${testId}-badges`}>
@@ -171,6 +219,8 @@ export function CardHubFace({
             )}
           </div>
         )}
+
+        {footer}
       </div>
     </div>
   );

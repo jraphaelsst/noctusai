@@ -69,6 +69,32 @@ PUSH_TOKEN_ENV = "MQ_PUSH_TOKEN"  # fine-grained PAT (contents+workflows write);
 WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
 ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
 
+# DERIVED files: committed by every slice after it regenerates them, so two parallel slices
+# always conflict on them although neither edit is "real" (2026-11-07 run 42405063978 ejected
+# seed-finance-service-only + sw-documentos-service-only on access-tiers FINDINGS/findings/metrics).
+# At compose time a conflict whose files are ALL inside one registered set is resolved to the
+# queue head's copy and the set's `regen` re-derives it from the merged tree; any other
+# conflicting file keeps the ejection. ONE place, as data: add a set here, nothing else.
+# KB § PATTERNS/devops/merge-queue.md (derived-ledger coupling).
+DERIVED_SETS: tuple[dict[str, Any], ...] = (
+    {"name": "access-tiers",
+     "paths": ("project-history/access-tiers/FINDINGS.md",
+               "project-history/access-tiers/findings.ndjson",
+               "project-history/access-tiers/metrics.ndjson"),
+     "regen": ("mcp/noctusai/cli.py", "--findings-ledger-reconcile", "access-tier", "--found-by", "merge-queue")},
+)
+REDERIVE_MAX_STOPS = 50  # a linear entry replays commit by commit; each can stop on the derived files
+
+
+def derived_set_for(files: list[str]) -> dict[str, Any] | None:
+    """The registered derived set that owns EVERY conflicted file (None: empty, mixed, or unregistered)."""
+    files = [f.strip() for f in files if f.strip()]
+    for ds in DERIVED_SETS:
+        if files and all(f in ds["paths"] for f in files):
+            return ds
+    return None
+
+
 Runner = Callable[..., "tuple[int, str, str]"]
 
 
@@ -183,9 +209,11 @@ class Queue:
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
                  workdir: str | None = None, log: Callable[[str], None] = print,
                  workflow_token: bool | None = None, push_token: str | None = None,
-                 regen: Callable[[str], tuple[bool, str]] | None = None):
+                 regen: Callable[[str], tuple[bool, str]] | None = None,
+                 derived_regen: Callable[[str, dict[str, Any]], tuple[bool, str]] | None = None):
         self.repo, self.remote, self.dev = repo, remote, dev
         self.regen = regen or self._regen_kb_counts
+        self.derived_regen = derived_regen or self._regen_derived
         self.run, self.run_url, self.run_id = run, run_url, run_id
         self.poll_s, self.timeout_s, self.sleep = poll_s, timeout_s, sleep
         self.workdir = workdir or os.getcwd()
@@ -219,6 +247,71 @@ class Queue:
         cli = os.path.join(wt, "mcp", "noctusai", "cli.py")
         rc, out, err = self.run([sys.executable, cli, "--update-kb-counts", "--worktree-path", wt], cwd=wt)
         return rc == 0, (err or out).strip()[-400:]
+
+    def _regen_derived(self, wt: str, ds: dict[str, Any]) -> tuple[bool, str]:
+        """Re-derive one registered derived set from the composed tree (argv is data in DERIVED_SETS)."""
+        script, *rest = ds["regen"]
+        rc, out, err = self.run([sys.executable, os.path.join(wt, script), *rest], cwd=wt)
+        return rc == 0, (err or out).strip()[-400:]
+
+    def _unmerged(self, wt: str) -> list[str]:
+        return self.git("diff", "--name-only", "--diff-filter=U", cwd=wt, check=False).split()
+
+    def _resolve_to_head(self, wt: str, files: list[str]) -> bool:
+        """Take the queue head's copy of derived conflicted files and stage them."""
+        for args in (["checkout", "--ours", "--", *files], ["add", "--", *files]):
+            if self.run(["git", *args], cwd=wt)[0] != 0:
+                return False
+        return True
+
+    def rederive_conflict(self, e: Entry, wt: str, kind: str) -> tuple[dict[str, Any] | None, list[str]]:
+        """A merge/rebase of `e` just stopped on conflicts. If every conflicted file belongs to ONE
+        registered derived set, resolve it to the head's copy and finish the operation; the set is
+        re-derived by `finish_rederive` once the entry is fully applied. Returns (set, files) or
+        (None, files) when the conflict is real (caller aborts + ejects, exactly as before)."""
+        seen: list[str] = []
+        owner: dict[str, Any] | None = None
+        for _ in range(REDERIVE_MAX_STOPS):
+            files = self._unmerged(wt)
+            if (kind == "rebase" and not files and owner is not None
+                    and self.run(["git", "diff", "--cached", "--quiet"], cwd=wt)[0] == 0):
+                # The commit touched ONLY derived files: resolved to head it is empty, so
+                # `rebase --continue` stopped with nothing to commit. Drop it and keep going.
+                if self.run(["git", "rebase", "--skip"], cwd=wt)[0] == 0:
+                    return owner, seen
+                continue
+            ds = derived_set_for(files)
+            if ds is None or (owner is not None and ds is not owner) or not self._resolve_to_head(wt, files):
+                return None, seen + files
+            owner, seen = ds, seen + files
+            cont = (["git", "commit", "--no-edit"] if kind == "merge"
+                    else ["git", "-c", "core.editor=true", "rebase", "--continue"])
+            if self.run(cont, cwd=wt)[0] == 0:
+                return owner, seen
+            if kind == "merge":
+                return None, seen
+        return None, seen
+
+    def finish_rederive(self, e: Entry, wt: str, ds: dict[str, Any], files: list[str]) -> tuple[bool, str]:
+        ok, why = self.derived_regen(wt, ds)
+        if not ok:
+            return False, f"derived re-derivation of {ds['name']} failed: {why}"
+        rc, porcelain, err = self.run(["git", "status", "--porcelain", "-z", "--untracked-files=all", "--",
+                                       *ds["paths"]], cwd=wt)
+        if rc != 0:
+            return False, f"derived status read failed ({rc}): {err.strip()[:300]}"
+        paths = [x[3:] for x in porcelain.split("\0") if len(x) > 3]
+        if paths:
+            for args in (["add", "--", *paths],
+                         ["commit", "-q", "-m", f"chore({ds['name']}): re-derive conflicted ledger at compose [auto]",
+                          "--", *paths]):
+                rc, _o, err = self.run(["git", *args], cwd=wt)
+                if rc != 0:
+                    return False, self._redact(f"derived commit failed: git {args[0]} ({rc}): {err.strip()[:300]}")
+        # Telemetry: one line per re-derive in the drain's CI log (grep `mq-derived-regen`).
+        self.log(f"[mq-derived-regen] set={ds['name']} slug={e.slug} conflicted={sorted(set(files))} "
+                 f"rederived={len(paths)} run={self.run_id}")
+        return True, ""
 
     def regen_and_commit_counts(self, wt: str) -> tuple[bool, str]:
         """Merge drivers re-derive counts against the PRE-merge working tree
@@ -306,6 +399,7 @@ class Queue:
             merges = self.git("rev-list", "--merges", f"{head}..{e.sha}", cwd=wt)
             rc_anc, _, _ = self.run(["git", "merge-base", "--is-ancestor", head, e.sha], cwd=wt)
             how = ""
+            rederive: tuple[dict[str, Any], list[str]] | None = None
             if rc_anc == 0:
                 self.git("merge", "--ff-only", "--quiet", e.sha, cwd=wt)
                 how = "fast-forward"
@@ -314,10 +408,14 @@ class Queue:
                                          f"mq: merge {e.slug}", e.sha], cwd=wt)
                 how = "merge"
                 if rc != 0:
-                    files = self.git("diff", "--name-only", "--diff-filter=U", cwd=wt, check=False)
-                    self.run(["git", "merge", "--abort"], cwd=wt)
-                    ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
-                    continue
+                    ds, rfiles = self.rederive_conflict(e, wt, "merge")
+                    if ds is not None:
+                        rederive = (ds, rfiles)
+                    else:
+                        files = " ".join(rfiles)
+                        self.run(["git", "merge", "--abort"], cwd=wt)
+                        ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
+                        continue
             else:
                 # Linear entry: replay its own commits (merge-base..tip) onto head.
                 mb = self.git("merge-base", head, e.sha, cwd=wt)
@@ -325,10 +423,21 @@ class Queue:
                 rc, out, err = self.run(["git", "rebase", "--quiet", "--onto", head, mb], cwd=wt)
                 how = "rebase"
                 if rc != 0:
-                    files = self.git("diff", "--name-only", "--diff-filter=U", cwd=wt, check=False)
-                    self.run(["git", "rebase", "--abort"], cwd=wt)
+                    ds, rfiles = self.rederive_conflict(e, wt, "rebase")
+                    if ds is not None:
+                        rederive = (ds, rfiles)
+                    else:
+                        files = " ".join(rfiles)
+                        self.run(["git", "rebase", "--abort"], cwd=wt)
+                        self.git("checkout", "--quiet", "--detach", head, cwd=wt)
+                        ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
+                        continue
+            if rederive is not None:
+                ok, why = self.finish_rederive(e, wt, *rederive)
+                if not ok:
+                    self.run(["git", "reset", "--hard", "--quiet", head], cwd=wt)
                     self.git("checkout", "--quiet", "--detach", head, cwd=wt)
-                    ejected.append(self._eject_info(e, "conflict", f"conflicts with dev+queue ahead of it: {files.split()[:6]}"))
+                    ejected.append(self._eject_info(e, "derived_regen", why))
                     continue
             ok, why = self.regen_and_commit_counts(wt)
             if not ok:

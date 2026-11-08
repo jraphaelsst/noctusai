@@ -921,6 +921,23 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-finance-params-schema": {
+   "mechanism": "write-path: .claude/skills/noc-tax-params/SKILL.md (guided re-verification) + KB § PATTERNS/finance/br-tax-advisor-canon.md",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: the BR tax-parameter registry must load with its real loader (schema, overlap, float, especialista <2 urls, future verificado_em); runs only when finance/params is staged.",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": {
+    "since": "2026-11-07",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "KB § PATTERNS/finance/br-tax-advisor-canon.md §1 (source protocol: tax numbers carry a dated primary source) + Fowler Evolutionary Architecture (fitness function on the diff)",
+   "wired_in": [
+    "pre-commit"
+   ]
+  },
   "keeper:check-findings-ledger-visibility": {
    "severity": "",
    "kind": "keeper",
@@ -1569,6 +1586,23 @@
    },
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-motion-import-boundary": {
+   "mechanism": "KB § PATTERNS/frontend/marketing-organs-and-motion.md (api: @noctusai/lib/marketing MotionProvider)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: Motion (`motion`/`framer-motion`) may be imported ONLY via `@noctusai/lib/marketing` (provider carries reduced-motion; keeps motion out of app chunks).",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": {
+    "since": "2026-11-07",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "motion.dev docs (reduce motion; LazyMotion strict; bundle size) + MDN prefers-reduced-motion + KB § PATTERNS/frontend/marketing-organs-and-motion.md",
+   "wired_in": [
+    "pre-commit"
+   ]
   },
   "keeper:check-mutation-family-write": {
    "severity": "high",
@@ -2654,6 +2688,23 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-tax-canon-no-inline-params": {
+   "mechanism": "write-path: .claude/skills/noc-tax-params/SKILL.md (guided re-verification) + KB § PATTERNS/finance/br-tax-advisor-canon.md",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: br-tax-advisor-canon.md must not retype a registry value; a % or R$ literal equal to a registry value needs its key in backticks on the line (shrink-only baseline).",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": {
+    "since": "2026-11-07",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "KB § PATTERNS/finance/br-tax-advisor-canon.md §1 (source protocol: tax numbers carry a dated primary source) + Fowler Evolutionary Architecture (fitness function on the diff)",
+   "wired_in": [
+    "pre-commit"
+   ]
+  },
   "keeper:check-tunnel-ingress-snapshot-sync": {
    "severity": "",
    "kind": "keeper",
@@ -2999,6 +3050,31 @@
   },
   {
    "id": "D17",
+   "decision": "Motion enters the fleet through ONE subpath: `@noctusai/lib/marketing` (peer dep, landing chunks only); reduced-motion + LazyMotion strict live in its MotionProvider, so products cannot forget them",
+   "home": "KB § PATTERNS/frontend/marketing-organs-and-motion.md",
+   "construction": "api:@noctusai/lib/marketing MotionProvider (MotionConfig reducedMotion=\"user\" + LazyMotion strict) and the marketing organs",
+   "gate": "keeper:check-motion-import-boundary",
+   "telemetry": "gate events (cli wrapper, guard-events) + gate-walls ledger",
+   "branch": "feat/keeper-motion-import-boundary",
+   "gates": [
+    "keeper:check-motion-import-boundary"
+   ]
+  },
+  {
+   "id": "D18",
+   "decision": "Brazilian tax numbers live in ONE effective-dated registry; staleness is calendar-driven (reported daily, never a gate) and re-verification goes through one skill",
+   "home": "KB § PATTERNS/finance/br-tax-advisor-canon.md",
+   "construction": "write-path:.claude/skills/noc-tax-params/SKILL.md (accountant re-verifies online; bump or successor row)",
+   "gate": "keeper:check-finance-params-schema + keeper:check-tax-canon-no-inline-params",
+   "telemetry": "noctus.dev.finance_params_staleness (report + self-closing drift rows) + noc-daily-ops debt line",
+   "branch": "feat/finance-params-staleness",
+   "gates": [
+    "keeper:check-finance-params-schema",
+    "keeper:check-tax-canon-no-inline-params"
+   ]
+  },
+  {
+   "id": "D22",
    "decision": "The pipeline board/card layer (stage columns, mover-etapa, card grouping) is ONE seed funnel organ; products consume it, never re-copy it",
    "home": "KB § PATTERNS/architect/products-consume-canonical-organs.md",
    "construction": "scaffold: seed funnel organ noctusai_lib.domain.pipeline.funnel (BE) + FunnelBoard (FE, seed/lib/frontend/src/components/pipeline/funnel/) - built in parallel on the seed branch",

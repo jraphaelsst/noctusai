@@ -169,6 +169,19 @@ class TestListProductsIncludeInactive:
         assert len(data) == 2
         assert any(p["ativo"] is False for p in data)
 
+    def test_admin_listing_carries_the_public_site_fields(self, admin_client):
+        """The /admin/products controls read exibir_no_site / destaque_no_site /
+        descricao_publica from this list (admin path = select('*'))."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("products", [
+            {"id": "prod-1", "nome": "A", "slug": "a", "ativo": True,
+             "exibir_no_site": True, "destaque_no_site": 2, "descricao_publica": "Texto"},
+        ])
+        row = admin_client.get("/api/products?include_inactive=true").json()["data"][0]
+        assert row["exibir_no_site"] is True
+        assert row["destaque_no_site"] == 2
+        assert row["descricao_publica"] == "Texto"
+
     def test_default_listing_still_works_for_regular_user(self, client):
         """Default (no param) stays the public catalog — any authed user."""
         mock_sb = client.mock_supabase

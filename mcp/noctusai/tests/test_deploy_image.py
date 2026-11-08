@@ -623,6 +623,9 @@ def test_tunnel_restart_failure_surfaces_warning():
     assert "tunnel_warning" in r
 
 
+_EDGE_HOST = "https://edge.example.test"  # fake edge host; value irrelevant to the assertions
+
+
 def test_edge_check_ok_when_hostname_provided_and_reachable():
     """When edge_hostname is provided and the fake http returns ok=True,
     edge_check is present in the result."""
@@ -635,7 +638,7 @@ def test_edge_check_ok_when_hostname_provided_and_reachable():
     r = DI.deploy_image(
         "core", run_remote=f, sleep=lambda s: None, now=_now,
         confirm=True, startup_grace=0, poll_interval=5,
-        edge_hostname="https://core.noctusai.com.br",
+        edge_hostname=_EDGE_HOST,
         http=_fake_http, local_diff=lambda o, n: (True, [], ""),
     )
     assert r["status"] == "deployed"
@@ -654,7 +657,7 @@ def test_edge_check_surfaces_warning_when_unreachable():
     r = DI.deploy_image(
         "core", run_remote=f, sleep=lambda s: None, now=_now,
         confirm=True, startup_grace=0, poll_interval=5,
-        edge_hostname="https://core.noctusai.com.br",
+        edge_hostname=_EDGE_HOST,
         http=_fake_http, local_diff=lambda o, n: (True, [], ""),
     )
     assert r["status"] == "deployed"  # still deployed; warning is advisory

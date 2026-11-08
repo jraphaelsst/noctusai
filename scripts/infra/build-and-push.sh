@@ -170,6 +170,9 @@ GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 : "${VITE_SUPABASE_PUBLISHABLE_KEY:=}"
 : "${VITE_CORE_URL:=}"
 : "${VITE_CORE_API_URL:=}"
+# Turnstile SITE key (public, core website forms only). Empty => the form shows
+# "unavailable" and the backend fails closed (503) — see core-host-retirement runbook.
+: "${VITE_TURNSTILE_SITE_KEY:=}"
 
 if [[ -z "$VITE_SUPABASE_URL" || -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]]; then
   echo "WARNING: VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY are empty." >&2
@@ -246,7 +249,8 @@ boot_smoke() {
 if want core; then
   build_product core \
     "${COMMON_VITE_ARGS[@]}" \
-    --build-arg "VITE_CORE_API_URL=${VITE_CORE_API_URL}"
+    --build-arg "VITE_CORE_API_URL=${VITE_CORE_API_URL}" \
+    --build-arg "VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}"
 fi
 
 if want erp-imobiliario; then

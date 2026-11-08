@@ -29,6 +29,18 @@ from typing import Any, Callable
 
 from settings import REPO_ROOT
 
+DEFAULT_CORE_URL = "https://core.noctusai.com"  # roadmap core-host-retirement-2026-11: P1 flips to apex
+
+
+def resolve_core_url(core_url: str | None = None, host: str | None = None) -> str:
+    """Core app URL: explicit `host` (bare host or URL) > `core_url` > env
+    NOCTUS_CORE_APP_URL > today's default. Lets P1 run the smoke on the apex."""
+    raw = (host or core_url or os.environ.get("NOCTUS_CORE_APP_URL", "") or DEFAULT_CORE_URL).strip()
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    return raw.rstrip("/")
+
+
 # (method, url, json_body, headers) -> (status_code, parsed_json)
 HttpFn = Callable[[str, str, "dict | None", "dict | None"], "tuple[int, dict]"]
 
@@ -102,7 +114,8 @@ def _resolve_creds(env_file: str | None, creds: dict | None) -> dict:
 
 
 def sso_smoke(
-    core_url: str = "https://core.noctusai.com",
+    core_url: str | None = None,
+    host: str | None = None,
     email: str | None = None,
     product: str = "erp-imobiliario",
     env_file: str | None = None,
@@ -122,7 +135,7 @@ def sso_smoke(
     supa = (c.get("supabase_url") or "").rstrip("/")
     service = c.get("service_key") or ""
     anon = c.get("anon_key") or ""
-    core = core_url.rstrip("/")
+    core = resolve_core_url(core_url, host)
 
     if not (supa and service and anon and email):
         missing = [k for k, v in {
@@ -247,7 +260,8 @@ def _default_preflight(url: str, origin: str) -> tuple[int, dict[str, str]]:
 
 
 def sso_cors_smoke(
-    core_url: str = "https://core.noctusai.com",
+    core_url: str | None = None,
+    host: str | None = None,
     products: list[str] | None = None,
     origins: dict[str, str] | None = None,
     preflight: Callable[[str, str], "tuple[int, dict[str, str]]"] | None = None,
@@ -263,7 +277,7 @@ def sso_cors_smoke(
     status: 'pass' | 'fail' (≥1 product blocked) | 'not_configured' (no
     resolvable origins — honest, never a faked pass).
     """
-    core = core_url.rstrip("/")
+    core = resolve_core_url(core_url, host)
     url = f"{core}{_SSO_PREFLIGHT_PATH}"
     probe = preflight or _default_preflight
 
@@ -361,17 +375,18 @@ def register(server) -> None:
             "not_configured, never a faked pass. Reads Supabase creds + "
             "NOCTUS_SSO_SMOKE_EMAIL from env / env_file (repo .env default); "
             "sends a browser UA (core is behind Cloudflare's WAF, err 1010). "
-            "Side effects: a one-time login OTP + a user_metadata re-sync for "
+            "Target: `host` (bare host or URL; e.g. noctusai.com) or `core_url`, else env NOCTUS_CORE_APP_URL, else core.noctusai.com. Side effects: a one-time login OTP + a user_metadata re-sync for "
             "the test user — use a TEST account. See KB § PATTERNS/core-url-routing.md."
         ),
     )
     def _sso_smoke(
-        core_url: str = "https://core.noctusai.com",
+        core_url: str | None = None,
+        host: str | None = None,
         email: str | None = None,
         product: str = "erp-imobiliario",
         env_file: str | None = None,
     ) -> dict:
-        return sso_smoke(core_url=core_url, email=email, product=product, env_file=env_file)
+        return sso_smoke(core_url=core_url, host=host, email=email, product=product, env_file=env_file)
 
     @server.tool(
         name="noctus.dev.sso_cors_smoke",
@@ -389,10 +404,11 @@ def register(server) -> None:
         ),
     )
     def _sso_cors_smoke(
-        core_url: str = "https://core.noctusai.com",
+        core_url: str | None = None,
+        host: str | None = None,
         products: list[str] | None = None,
     ) -> dict:
-        return sso_cors_smoke(core_url=core_url, products=products)
+        return sso_cors_smoke(core_url=core_url, host=host, products=products)
 
 
 __all__ = ["sso_smoke", "sso_cors_smoke", "register", "HttpFn"]

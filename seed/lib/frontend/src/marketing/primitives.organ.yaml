@@ -1,0 +1,33 @@
+name: marketing-motion-primitives
+kind: component
+path: seed/lib/frontend/src/marketing/primitives.tsx
+phase: marketing-motion-plumbing
+registered_at: "2026-11-07"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Covers MotionProvider (LazyMotion strict + MotionConfig reducedMotion=user, optional CSP nonce) and the Reveal / Stagger primitives, all built on m.* only."
+  - "motion@^12 is a peerDependency of @noctusai/lib, exposed ONLY via the ./marketing subpath; the root barrel never exports it, so authenticated app chunks carry no Motion code."
+  - "domAnimation is loaded lazily from features.ts (its own chunk); strict mode makes a stray motion.* component throw."
+  - "SSR rule: content is never prerendered hidden. Primitives render visible with initial={false} and only arm (hide-then-reveal) in a layout effect after mount; hide uses duration 0 so there is no flash."
+  - "Under prefers-reduced-motion (useReducedMotion) the primitives never arm, so nothing moves and nothing is hidden."
+  - "check_framework_deps derives motion as a required dep of every framework product from the organ scan, so each product declares motion@^12 and refreshes its lockfile with a scoped npm install."
+
+errors_encountered: []
+drifts_surfaced:
+  - "JourneyWizard.organ.yaml claimed framer-motion was not in the seed; it is now available via ./marketing (the wizard stays CSS-only on purpose)."
+
+alternatives_considered:
+  - "Root-barrel export of motion: rejected, ships animation code into the authenticated app."
+  - "CSS-only reveal with IntersectionObserver: rejected for stagger/orchestration; Motion m.* with LazyMotion is a small initial cost."
+  - "whileInView with initial opacity 0: rejected, SSR/no-JS would prerender invisible content."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []
