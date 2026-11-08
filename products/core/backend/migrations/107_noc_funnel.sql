@@ -119,6 +119,13 @@ REVOKE ALL ON public.pipeline_stages FROM PUBLIC;
 REVOKE ALL ON public.pipeline_movimentos FROM PUBLIC;
 REVOKE ALL ON public.website_leads FROM PUBLIC, anon, authenticated;
 GRANT ALL ON public.website_leads TO service_role;
+COMMENT ON TABLE public.website_leads IS 'tier:platform';
+
+-- The lead timeline (052) was created with the Supabase default grants; RLS is service-only,
+-- this is defence in depth (AT-deacf3c1).
+REVOKE ALL ON public.website_lead_activities FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.website_lead_activities TO service_role;
+COMMENT ON TABLE public.website_lead_activities IS 'tier:platform';
 
 -- The offer a card carries: one-off + monthly, kept separate (never summed).
 ALTER TABLE public.website_leads

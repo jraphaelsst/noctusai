@@ -122,3 +122,12 @@ class TestFlow:
         assert r.json()["data"]["efeitos"]["ponte_financeira"] == "nao_implementada"
         sb = seeded.mock_supabase
         assert any(p.get("kind") == "ganho" for p in sb.table("pipeline_movimentos").inserted_payloads)
+
+
+class TestCreateWritesExactlyOneEntry:
+    def test_admin_created_card_adds_no_entrada_from_the_organ(self, seeded):
+        """The DB trigger (migration 107) records the single `entrada`; the organ must stay out."""
+        r = seeded.post(f"{PREFIX}/cards", headers=AUTH, json={"titulo": "Novo contato"})
+        assert r.status_code == 201
+        sb = seeded.mock_supabase
+        assert [p for p in sb.table("pipeline_movimentos").inserted_payloads if p.get("kind") == "entrada"] == []

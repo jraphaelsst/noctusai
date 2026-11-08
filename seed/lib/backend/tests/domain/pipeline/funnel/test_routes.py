@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from .conftest import GATED_ROLE, HEADERS, ORG, OTHER_ORG, PLATFORM_ORG, READ_ONLY, USER
+from .conftest import GATED_ROLE, build_funnel, make_cfg, HEADERS, ORG, OTHER_ORG, PLATFORM_ORG, READ_ONLY, USER
 
 CARD = "11111111-1111-4111-8111-111111111111"
 
@@ -140,6 +140,16 @@ class TestCreate:
         assert len(entry) == 1 and entry[0]["de_etapa_id"] is None and entry[0]["para_etapa_id"] == fn.stages["entrada"]
         assert entry[0]["org_id"] == fn.effective_org and entry[0]["responsavel_id"] == USER
         assert fn.audit[-1][1] == "criar" and older  # audit-logged
+
+    def test_record_entry_on_create_false_leaves_the_entry_to_the_product(self, fn):
+        f = build_funnel("platform", cfg=make_cfg("platform", record_entry_on_create=False))
+        f.add_stage("entrada", posicao=0)
+        response = f.client.post(f.url("/cards"), json={"titulo": "Novo"}, headers=HEADERS)
+        assert response.status_code == 201
+        assert f.movimentos(response.json()["data"]["id"]) == []  # the product's trigger owns it
+
+    def test_record_entry_on_create_defaults_to_true(self):
+        assert make_cfg("platform").record_entry_on_create is True
 
     def test_card_row_carries_org_only_for_org_tenancy(self, fn):
         card_id = fn.client.post(fn.url("/cards"), json={"titulo": "x"}, headers=HEADERS).json()["data"]["id"]

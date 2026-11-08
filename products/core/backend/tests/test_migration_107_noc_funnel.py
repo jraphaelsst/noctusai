@@ -42,7 +42,9 @@ def test_platform_tier_and_no_browser_grants():
         assert f"COMMENT ON TABLE public.{table} IS 'tier:platform'" in FLAT
         assert f"REVOKE ALL ON public.{table} FROM anon, authenticated" in FLAT
         assert f"REVOKE ALL ON public.{table} FROM PUBLIC" in FLAT
-    assert "REVOKE ALL ON public.website_leads FROM PUBLIC, anon, authenticated" in FLAT
+    for table in ("website_leads", "website_lead_activities"):
+        assert f"REVOKE ALL ON public.{table} FROM PUBLIC, anon, authenticated" in FLAT
+        assert f"COMMENT ON TABLE public.{table} IS 'tier:platform'" in FLAT
     assert not re.search(r"GRANT [A-Z, ]+ ON [\w.]+ TO (anon|authenticated|PUBLIC)", FLAT)
     assert not re.search(r"CREATE POLICY[^;]+TO (anon|authenticated)", FLAT)
 
@@ -59,3 +61,11 @@ def test_lead_to_card_triggers_and_legacy_stage_kept():
     assert "AFTER INSERT ON public.website_leads" in FLAT
     assert not re.search(r"DROP COLUMN", FLAT), "expand only: the legacy stage column stays (N-1 image)"
     assert "SET lock_timeout" in FLAT
+
+
+def test_entry_history_row_is_written_by_the_trigger_only():
+    """The trigger owns `entrada` (public lead path), so the organ must not write a second one."""
+    from app.noc_funnel import FUNNEL
+
+    assert FUNNEL.record_entry_on_create is False
+    assert "AFTER INSERT ON public.website_leads" in FLAT and "'entrada'" in FLAT

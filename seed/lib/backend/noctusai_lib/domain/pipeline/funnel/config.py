@@ -162,6 +162,11 @@ class FunnelConfig:
         prepare_create: ``(db, ctx, row) -> row`` — fills the NOT NULL columns
             a product's card table needs beyond the organ's (e.g.
             `website_leads.source`/`consent`/`dedupe_key`).
+        record_entry_on_create: ``True`` (default) — `create_card` writes the
+            `entrada` history row. A product whose card table has a DB trigger
+            that already records the entry (so rows born outside the organ,
+            e.g. a public intake form, also get one) sets ``False``: the
+            history is append-only, a second `entrada` is permanent.
     """
 
     pipeline: PipelineConfig
@@ -180,6 +185,7 @@ class FunnelConfig:
     card_hub: CardHubConfig | None = None
     actor_resolver: Callable[[set], dict] | None = None
     prepare_create: Callable[[Any, FunnelContext, dict], dict] | None = None
+    record_entry_on_create: bool = True
 
     def __post_init__(self) -> None:
         if self.tenancy not in ("org", "platform"):

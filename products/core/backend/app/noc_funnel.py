@@ -220,6 +220,9 @@ def build_config() -> FunnelConfig:
         responsavel_field="owner_user_id",
         actor_resolver=actor_resolver(lambda: _db.get_core_client()),
         prepare_create=_prepare_create,
+        # The AFTER INSERT trigger on website_leads (migration 107) owns the `entrada` row, so the
+        # public lead form and an admin-typed card each get exactly one; the history is append-only.
+        record_entry_on_create=False,
     )
 
 
