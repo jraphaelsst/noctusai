@@ -24,6 +24,10 @@ Born 2026-10-12 from the commerce seed run (`project-history/roadmaps/commerce-s
 
 A thing that lands in the wrong layer is a structural fork (`../../03-SEED-ARCHITECTURE.md § Named seams vs structural forks`). Recurrence moves things *up*: the second client wanting a pack feature triggers triage to an L2 setting/seam; the second market wanting an L2 feature triggers triage to L1 (`project-execution.md` DRY rule, N=2 → triage).
 
+### 1a · A market product composes several verticals (owner 2026-11-08)
+
+One market = one product, and that product **mounts several vertical modules** (CRM, ERP, CMS, …) in sidebar groups ordered by `MODULE_GROUP_ORDER` (`@noctusai/lib` `design-system/components/nav-groups.ts`). Canons: social-wiring (real estate), orbity (digital agencies), monica (psychoanalysis clinics), core (SaaS — noc runs its own business on the same modules). A module is a `ModuleSpec` (BE: organs + page keys + permissions) plus `defineModule` (FE: nav group + routes + page keys); a market extends a module with `extendModule`, never with a copy. Market configuration the org can change (funnel stages, origins, lost reasons) is a **preset the market ships and the org edits** — the seed owns the mechanics, never the list. Roadmap: `project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.md`.
+
 ## 2 · Named seams a vertical seed must declare up front
 
 A vertical seed is only reusable if the places where markets differ are **named before the first market is built**. For commerce:
@@ -55,6 +59,38 @@ The ERP vertical declares these before the first market ERP is built. Defaults a
 | quote accept | `QuoteAcceptHandler` (convert-on-accept), signed public link needs a host `get_link_secret` | what an accepted quote becomes (contract, sales order, work order) |
 
 Scaffold a market ERP from this layer with `noctus.dev.scaffold_product(overlay="erp")` (`templates/product-erp/`, registered `deploy_scope='dev'` only): `../../GUIDES/new-product.md § Market products from a vertical seed`.
+
+### CRM seams (2026-11-08)
+
+| Seam | Values / shape | Where a market differs |
+|---|---|---|
+| `pipelines` | board keys per market (`CrmPreset.pipelines`) | RE `funil`+`processos_venda`; SaaS `funil_noc` (platform tenancy); agencies `comercial`; clinics `leads` |
+| `stage_set` | `pipeline_stages` rows (slug immutable, label/cor/posicao editable, `papel`); preset seeded lazily by `ensure_default_stages`; org edits in settings | the default list |
+| `stage_roles` | canonical `entrada`·`qualificado`·`proposta`·`proposta_aceite`·`ganho`·`final` + market roles; code keys on `papel`; a role the org's funnel lacks ⇒ declared no-op | RE `visita`; clinics `sessao_experimental`; agencies `briefing` |
+| `lost_reasons` | `FunnelConfig.lost_reasons`, preset default | the list |
+| `lead_origins` + `lead_source` | origin slugs (data) + `LeadSource` Protocol/Fake/Real (whatsapp, meta lead ads, website form, xlsx import, email) | RE portal webhooks (OLX, Imovelweb) are L2 adapters |
+| `qualification_schema` | JSON schema per market, fed to the agent and shown on the card | fields per market |
+| `agent_hook` | `LeadAgentHook` (on_inbound / on_created / on_stage_entered) → agents product by agent key | RE Julia; clinics `monica-leads`; others Fake |
+| `assignment_strategy` | `round_robin`·`by_team`·`by_source`·`manual` + capacity; custom = named hook | who owns a lead |
+| `activity_types` | preset list | visita only RE |
+| `proposal_accept` / `on_won` | `QuoteAcceptHandler` + funnel action → `papel=proposta_aceite`; `on_stage_entered` | what a won deal becomes (processo de venda, contract, paciente, org) |
+| `consent_channels` | opt-out registry + `OutboundGate` on every sender; the agent decides an opt-out, the seed records and enforces | retention note per market |
+| `nouns` | Lead/Cliente/Paciente, Corretor/Terapeuta/Account | labels |
+
+### CMS seams (2026-11-08)
+
+| Seam | Values / shape | Where a market differs |
+|---|---|---|
+| `block_types` | page = ordered blocks over the landing organs; registry for market blocks | RE listing blocks; agencies cases |
+| `content_types` | `page`·`post`·`listing`·`case` (open) | per market |
+| `editorial_policy` | `domain/editorial` transitions + grants | who approves |
+| `content_board` | `esteira` pipeline preset | stage list |
+| `feed_publisher` | Protocol + Fake + Real (sitemap, RSS, Google Merchant/Meta catalog) | RE ZAP/VivaReal/OLX/Imovelweb adapters (L2) |
+| `portal_audience` | `proprietario`·`paciente`·`membro`·`cliente`; token-scoped | what each audience sees |
+| `domain` | per-org subdomain/custom domain via tunnel + DNS tools | none |
+
+### ERP market specs (real estate, 2026-11-08)
+Locação = `contracts` recurring + readjustment index (L1); vistorias, chaves, seguros = SW L2; manutenção/campo = `activities` types (+ supplier `parties`, finance payable); filiais = `org_unit_id` convention (L2, promote at N=2); comissões = finance split mechanism (L1) + RE policy (L2); DIMOB = SW export of data over contracts+finance, accountant-reviewed; banco/impostos = the finance organ.
 
 ## 3 · Client extension packs — client-specific CODE, contained
 
@@ -111,6 +147,10 @@ app = create_product_app(..., organs=[finance])   # routers + upload-size overri
 - **Applied organ migrations are frozen (security review B2, 2026-10-14).** `migrate_product` tracks files by name and never re-runs one, so re-rendering an applied file silently drifts prod. `migrate_product confirm=True` therefore mirrors every applied file + sha256 into `products/<p>/backend/migrations-applied.json` (`noctusai_lib.testing.migrations_applied`). Organ generators are re-runnable full-state scripts (`IF NOT EXISTS`, restated CHECKs), so when a generator changes: an UNAPPLIED latest file is refreshed in place; an APPLIED one yields a NEW `NNN_<organ>_rev<N>.sql` (`new_revision`) holding the full current output + a trailing `-- organ-revision: N` marker, and the earlier file is never touched. `assert_organ_migration_current` pins only the LATEST file to the generator (>=1 files); every earlier one must be recorded as applied and byte-identical to its recorded sha256. Backfill a product applied before the record existed: read its ledger read-only (`SELECT filename, checksum FROM <schema>.schema_migrations`) and call `record_applied(backend_dir, {...})` -- until then its files count as unapplied (refresh in place), so backfill BEFORE changing a generator.
 - **Guards are declared with the generator.** Every UNIQUE / CHECK / trigger guard an organ's migration emits needs an `OrganGuardProbe` in `noctusai_lib/domain/<organ>/guards.py` (set as `OrganSpec.guard_probes`): the schema-parameterized violating operation, proven to refuse on PGlite. `noctus.dev.verify_db_guards` derives the probes for every product that rendered the organ (a table not applied yet reports `pending`), and `check_migration_guard_has_probe` treats an organ-rendered guard as covered iff the organ declares it -- so rendering an organ into a product never needs a hand-written probe or `_GUARD_PROBE_ALLOWLIST` entry, and a generator cannot add an unprobed guard (`test_organ_guard_probes.py` is the completeness gate). KB § PATTERNS/common/methodology-execution-discipline.md § 8.
 - FE: the seed shell has no manifest-driven route mechanism; the host adds one lazy route (`/financeiro/*`, gated by `status_pagina`) whose page is a one-liner over the `FinanceRoutedPage` organ exported from `@noctusai/lib` (`basePath`, `api` or `hooks`, `isAdmin`, optional `isAccountant`/`title`). The organ owns the URL <-> section sync and the unknown-segment redirect; never hand-roll it per product (`finance-fe-route` closed).
+
+## Mounting a module
+
+`create_product_app(modules=[crm_module(preset, ...), erp_module(...), cms_module(...)])` flattens each module's organs through `mount_organs`; FE `orderNavGroups([...modules.map(m => m.navGroup), ...local])` + spread `routes`. Every module page key needs a `status_pagina` row (keeper `check_module_page_status_rows`); new module pages take the `/crm|/erp|/cms/…` prefix, existing URLs never move. Scaffold a new market with `scaffold_product(overlay=["crm","erp","cms"])` (overlays generated from the module specs).
 
 ## Composes with
 
