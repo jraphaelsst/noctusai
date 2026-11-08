@@ -30,10 +30,12 @@ export interface RevealProps {
   y?: number;
   /** Seconds. */
   duration?: number;
+  /** Initial scale (e.g. 0.96 for a scale-in). Omitted = no scale animation (default). */
+  scale?: number;
 }
 
 /** Fades/slides its children in once, when they scroll into view. */
-export function Reveal({ children, className, delay = 0, y = 16, duration = 0.5 }: RevealProps) {
+export function Reveal({ children, className, delay = 0, y = 16, duration = 0.5, scale }: RevealProps) {
   const ref = useRef<HTMLDivElement>(null);
   const armed = useArmed();
   const inView = useInView(ref, { once: true, margin: "0px 0px -10% 0px" });
@@ -43,7 +45,11 @@ export function Reveal({ children, className, delay = 0, y = 16, duration = 0.5 
       ref={ref}
       className={className}
       initial={false}
-      animate={hidden ? { opacity: 0, y } : { opacity: 1, y: 0 }}
+      animate={
+        hidden
+          ? { opacity: 0, y, ...(scale !== undefined ? { scale } : {}) }
+          : { opacity: 1, y: 0, ...(scale !== undefined ? { scale: 1 } : {}) }
+      }
       transition={hidden ? { duration: 0 } : { duration, delay, ease: "easeOut" }}
     >
       {children}

@@ -3,7 +3,7 @@ kind: component
 path: seed/lib/frontend/src/marketing/LandingFooter.tsx
 phase: landing-organs
 registered_at: "2026-11-07"
-organ_version: "1.0"
+organ_version: "1.1"
 validation_status: emerging
 
 known_facts:
@@ -11,6 +11,7 @@ known_facts:
   - "cookie preferences is a button, not a link"
   - "Exported from @noctusai/lib/marketing only (never the root barrel). Seed tokens only; Reveal for entrance (content is never prerendered hidden; reduced motion = no animation)."
   - "Consumes seed Button / Badge / Input / Card / Select / Textarea / Skeleton where they exist; link-styled actions use linkButtonClass (anchors cannot be the seed Button)."
+  - "v2: tagline accepts a ReactNode (e.g. a link to noctusai.com). Default string unchanged."
 
 errors_encountered: []
 drifts_surfaced: []

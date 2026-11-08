@@ -121,7 +121,7 @@ export const ENV_VARS: Record<Exclude<keyof ProductEnv, 'CORE_APP_HOME'>, { vite
 // ---------------------------------------------------------------------------
 
 function getViteVar(viteKey: string): string | undefined {
-  return (import.meta as any).env?.[viteKey];
+  return (import.meta.env as Record<string, string | undefined> | undefined)?.[viteKey];
 }
 
 /** Typed access to product environment variables with fallbacks */
@@ -166,6 +166,41 @@ export const env: ProductEnv = {
   // standalone (Core-only surfaces no-op).
   get CORE_ATTACHED() { return import.meta.env.VITE_CORE_ATTACHED !== 'false'; },
 };
+
+// ---------------------------------------------------------------------------
+// Cross-product URLs (mirror of backend `noctusai_lib.config.product_urls.resolve_product_url`)
+// ---------------------------------------------------------------------------
+
+/** The canonical PROD host scheme (backend `CANONICAL_PROD_URL_PATTERN`). */
+const CANONICAL_PROD_URL_PATTERN = 'https://{slug}.noctusai.com';
+
+/**
+ * Public URL of ANOTHER product, for cross-product links (e.g. the Agents landing linking to Social Wiring).
+ * Same resolution order as the backend resolver, first non-empty wins:
+ *
+ * 1. `VITE_PRODUCT_URL_<SLUG_UPPER_UNDERSCORED>` (`social-wiring` -> `VITE_PRODUCT_URL_SOCIAL_WIRING`):
+ *    pins one product (use it for the short-host exceptions, e.g. erp / social / core).
+ * 2. `VITE_PRODUCT_URL_PATTERN` with `{slug}` / `{slug_underscored}` placeholders (a fleet-wide scheme).
+ * 3. The canonical prod URL `https://<slug>.noctusai.com` (what `public.products.url_base` holds).
+ *
+ * A trailing `/` is stripped; `path` (e.g. `/entrar`) is appended. Unlike the backend there is no "all sources
+ * absent" error: step 3 always yields the canonical prod URL. Pass `slug` as registered in `public.products.slug`.
+ */
+export function productUrl(slug: string, path = ''): string {
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
+    throw new Error(`productUrl: invalid product slug ${JSON.stringify(slug)}`);
+  }
+  const underscored = slug.replace(/-/g, '_');
+  const pinned = getViteVar(`VITE_PRODUCT_URL_${underscored.toUpperCase()}`);
+  const pattern = getViteVar('VITE_PRODUCT_URL_PATTERN');
+  const base = (
+    pinned
+    || (pattern ? pattern.split('{slug_underscored}').join(underscored).split('{slug}').join(slug) : '')
+    || CANONICAL_PROD_URL_PATTERN.replace('{slug}', slug)
+  ).replace(/\/+$/, '');
+  if (!path) return base;
+  return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+}
 
 // ---------------------------------------------------------------------------
 // Validation

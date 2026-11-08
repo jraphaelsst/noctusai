@@ -1,0 +1,26 @@
+name: LandingTheme
+kind: component
+path: seed/lib/frontend/src/marketing/theme.tsx
+phase: landing-organs
+registered_at: "2026-11-07"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "SSR-safe 3-state (system/light/dark) theme for public pages lifted from core's website: LandingThemeProvider, useLandingTheme, useLandingThemeSwitch, createThemeInlineScript(key) / THEME_INLINE_SCRIPT (no-flash head script). Drives .dark and data-theme on html; default storage key nx.theme (core's, so persisted choices survive)."
+  - "Core's website/lib/theme.tsx + themeScript.ts now re-export these (names unchanged). The seed design-system useTheme is not SSR-safe and has no system state, hence this module."
+
+errors_encountered: []
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Reusing design-system useTheme: rejected (localStorage read in useState crashes SSR; no system state)."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

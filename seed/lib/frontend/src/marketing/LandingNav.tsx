@@ -20,17 +20,24 @@ export interface LandingNavProps {
   brand: { label: string; href: string; ariaLabel?: string; mark?: ReactNode };
   /** Links after the products disclosure (Soluções, Preços, …). */
   links: NavLink[];
-  /** Only the "disponível" products: derived from the catalog, never hand-kept. */
+  /**
+   * Only the "disponível" products: derived from the catalog, never hand-kept. The "Produtos" disclosure
+   * (and the drawer's Produtos link) renders only when this prop is passed; omit it for a single-product site.
+   */
   products?: NavProduct[];
   productsLabel?: string;
   /** Target of the "all products" entry (menu footer and the mobile drawer's Produtos link). */
-  allProductsHref: string;
+  allProductsHref?: string;
   loginAction?: NavLink;
   primaryAction: NavLink;
   /** Language switch link (e.g. EN). Rendered with `lang` so it is pronounced correctly. */
   languageLink?: { label: string; href: string; lang: string; ariaLabel: string };
   /** Theme switch; omitted when the page has none. */
   themeSwitch?: { value: ThemeChoice; onChange: (next: ThemeChoice) => void };
+  /** Show `loginAction` as a ghost button at every width (default: large screens only; the drawer holds it below). */
+  loginAlwaysVisible?: boolean;
+  /** Show `primaryAction` on large screens only (the drawer's links carry the same destination). Default false. */
+  primaryActionDesktopOnly?: boolean;
 }
 
 const THEMES: { value: ThemeChoice; label: string; Icon: typeof Sun }[] = [
@@ -39,7 +46,8 @@ const THEMES: { value: ThemeChoice; label: string; Icon: typeof Sun }[] = [
   { value: "dark", label: "Tema escuro", Icon: Moon },
 ];
 
-function ThemeSwitch({ value, onChange }: NonNullable<LandingNavProps["themeSwitch"]>) {
+/** 3-state theme control (sistema / claro / escuro). A group of toggle buttons with `aria-pressed`. */
+export function ThemeSwitch({ value, onChange }: NonNullable<LandingNavProps["themeSwitch"]>) {
   return (
     <div role="group" aria-label="Tema" className="inline-flex rounded-md border border-input p-0.5">
       {THEMES.map(({ value: v, label, Icon }) => (
@@ -68,9 +76,10 @@ function ThemeSwitch({ value, onChange }: NonNullable<LandingNavProps["themeSwit
  * focus to its button; a click outside closes the disclosure.
  */
 export function LandingNav({
-  brand, links, products = [], productsLabel = "Produtos", allProductsHref,
-  loginAction, primaryAction, languageLink, themeSwitch,
+  brand, links, products, productsLabel = "Produtos", allProductsHref,
+  loginAction, primaryAction, languageLink, themeSwitch, loginAlwaysVisible = false, primaryActionDesktopOnly = false,
 }: LandingNavProps) {
+  const productsHref = products !== undefined ? allProductsHref : undefined;
   const [menuOpen, setMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const menuId = useId();
@@ -115,6 +124,7 @@ export function LandingNav({
         </a>
 
         <nav aria-label="Principal" className="hidden items-center gap-1 lg:flex">
+          {productsHref && products ? (
           <div ref={menuWrap} className="relative">
             <Button
               ref={menuBtn}
@@ -143,12 +153,13 @@ export function LandingNav({
                   </span>
                 </a>
               ))}
-              <a href={allProductsHref} onClick={() => setMenuOpen(false)} className="flex flex-col rounded-md p-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <a href={productsHref} onClick={() => setMenuOpen(false)} className="flex flex-col rounded-md p-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <strong className="text-sm text-foreground">Ver todos os produtos</strong>
                 <small className="text-xs text-muted-foreground">Inclui os que estão em construção ou em pausa</small>
               </a>
             </div>
           </div>
+          ) : null}
           {links.map((l) => (
             <a key={l.href + l.label} href={l.href} className={ghost}>{l.label}</a>
           ))}
@@ -162,9 +173,9 @@ export function LandingNav({
           ) : null}
           {themeSwitch ? <div className="hidden lg:block"><ThemeSwitch {...themeSwitch} /></div> : null}
           {loginAction ? (
-            <a href={loginAction.href} className={cn(ghost, "hidden lg:inline-flex")}>{loginAction.label}</a>
+            <a href={loginAction.href} className={loginAlwaysVisible ? ghost : cn(ghost, "hidden lg:inline-flex")}>{loginAction.label}</a>
           ) : null}
-          <a href={primaryAction.href} className={linkButtonClass("primary", "md")}>{primaryAction.label}</a>
+          <a href={primaryAction.href} className={primaryActionDesktopOnly ? cn(linkButtonClass("primary", "md"), "hidden lg:inline-flex") : linkButtonClass("primary", "md")}>{primaryAction.label}</a>
           <Button
             ref={drawerBtn}
             variant="outline"
@@ -183,7 +194,7 @@ export function LandingNav({
       <div id={drawerId} hidden={!drawerOpen} className={cn("border-t border-border bg-card lg:hidden", HIDDEN_ATTR)}>
         <div className={`${wrapClass} flex flex-col gap-3 py-3`}>
           <nav aria-label="Principal (celular)" className="flex flex-col">
-            {[{ label: productsLabel, href: allProductsHref }, ...links].map((l) => (
+            {[...(productsHref ? [{ label: productsLabel, href: productsHref }] : []), ...links].map((l) => (
               <a key={l.href + l.label} href={l.href} onClick={() => setDrawerOpen(false)} className="rounded-md px-2 py-2.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {l.label}
               </a>
@@ -197,7 +208,7 @@ export function LandingNav({
             ) : null}
             {themeSwitch ? <ThemeSwitch {...themeSwitch} /> : null}
           </div>
-          {loginAction ? (
+          {loginAction && !loginAlwaysVisible ? (
             <a href={loginAction.href} className={linkButtonClass("outline", "lg", "w-full")}>{loginAction.label}</a>
           ) : null}
         </div>
