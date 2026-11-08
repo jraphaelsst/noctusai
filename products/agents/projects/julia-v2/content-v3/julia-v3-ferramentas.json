@@ -4,12 +4,12 @@
    "ferramenta": "sinalizar_alerta",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Avisa a equipe pelo WhatsApp quando o lead demonstra insatisfação ou reclama, xinga, ofende ou assedia, quando você percebe que errou (informação errada, pergunta repetida, entendeu mal o pedido) ou quando a conversa saiu do rumo. Chame no mesmo turno em que perceber, antes de responder, no máximo um alerta por tipo por turno. Depois responda em uma frase (desculpas, ou um limite calmo diante de ofensa ou assédio) e pergunte se o lead prefere falar com uma pessoa da equipe ou seguir vendo imóveis. Não use para uma simples mudança de ideia do lead nem para pedido de parar de receber mensagens.",
+   "descricao": "Avisa a equipe pelo aplicativo e pelo WhatsApp quando o lead demonstra insatisfação ou reclama, xinga, ofende ou assedia, quando você percebe que errou (informação errada, pergunta repetida, entendeu mal o pedido), quando a conversa saiu do rumo, quando o lead pede uma informação que você não tem (dado da imobiliária ou do imóvel que não veio preenchido) ou quando o lead pede para falar com uma pessoa. Chame no mesmo turno em que perceber, antes de responder, no máximo um alerta por tipo por turno, e chame mesmo que o lead depois aceite ou recuse a transferência. Depois, só nos casos de insatisfação, erro ou ofensa, responda em uma frase (desculpas, ou um limite calmo diante de ofensa ou assédio) e pergunte se o lead prefere falar com uma pessoa da equipe ou seguir vendo imóveis. Nos casos de informação que você não tem e de pedido de pessoa, siga \"Informação indisponível\" e \"Transferência para a equipe\". Não use para uma simples mudança de ideia do lead nem para pedido de parar de receber mensagens.",
    "parametros": {
     "tipo": "Natureza do alerta.",
     "trecho": "Palavras do lead que motivaram o alerta. Opcional.",
-    "descricao": "O que aconteceu, objetivo e para a equipe, em até 500 caracteres. Sem dados pessoais.",
-    "tipo.outro": "assédio, conteúdo sexual ou outro motivo para a equipe olhar a conversa",
+    "descricao": "O que aconteceu, objetivo e para a equipe, em até 500 caracteres. Sem dados pessoais. Para informação que falta, diga qual dado o lead pediu; para pedido de pessoa, diga o que ele quer.",
+    "tipo.outro": "assédio, conteúdo sexual, informação que você não tem e o lead pediu, pedido do lead para falar com uma pessoa, ou outro motivo para a equipe olhar a conversa",
     "tipo.desvio": "a conversa saiu do rumo e você não consegue trazer de volta",
     "tipo.erro_agente": "você percebeu que errou",
     "tipo.lead_insatisfeito": "o lead demonstra irritação ou frustração, reclama do atendimento, xinga ou ofende"
@@ -62,7 +62,7 @@
    "ferramenta": "handoff",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Transfere o atendimento para a equipe humana. O sistema monta e envia para a equipe o relatório da conversa (resumo, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos). Você decide a hora: não precisa ter todos os dados. Depois disso você não responde mais nesta conversa: avise o lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, sem perguntas. Antes de escolher `motivo_codigo`, olhe a conversa: se o lead pediu um dado da imobiliária que você respondeu não ter, o motivo é `info_indisponivel` (não `pedido_humano`).",
+   "descricao": "Transfere o atendimento para a equipe humana. O sistema monta e envia para a equipe o relatório da conversa (resumo, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos). Você decide a hora: não precisa ter todos os dados. Quando o motivo for `pedido_humano` ou `info_indisponivel`, chame `sinalizar_alerta` (tipo `outro`) no mesmo turno, antes do `handoff` (se já alertou sobre essa informação em turno anterior, não repita). Depois disso você não responde mais nesta conversa: avise o lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, sem perguntas. Antes de escolher `motivo_codigo`, olhe a conversa: se o lead pediu um dado da imobiliária que você respondeu não ter, o motivo é `info_indisponivel` (não `pedido_humano`).",
    "parametros": {
     "motivo": "Uma frase objetiva para a equipe: o que o lead quer e por que transferir. Sem dados pessoais.",
     "motivo_codigo": "Motivo da transferência.",
@@ -70,7 +70,7 @@
     "motivo_codigo.parceria": "corretor, imobiliária ou empresa propondo parceria",
     "motivo_codigo.seguranca": "insistência em dados internos ou de outras pessoas, ou alguém dizendo ser da equipe ou autoridade",
     "motivo_codigo.reclamacao": "reclamação ou insatisfação, e o lead aceitou falar com uma pessoa",
-    "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor (se antes ele pediu um dado da imobiliária que você não tinha, use info_indisponivel)",
+    "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor: transfira na hora, sem perguntar se ele prefere pessoa ou seguir (se antes ele pediu um dado da imobiliária que você não tinha, use info_indisponivel)",
     "motivo_codigo.fora_do_escopo": "pedido fora do mercado imobiliário em que o lead insiste",
     "motivo_codigo.direito_titular": "pedido do lead sobre os próprios dados (já registrado com registrar_solicitacao_titular)",
     "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada",

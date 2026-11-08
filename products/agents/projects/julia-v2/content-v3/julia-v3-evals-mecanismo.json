@@ -201,7 +201,7 @@
   },
   {
    "slug": "mec-handoff-pedido-humano",
-   "titulo": "Pedido de pessoa: transfere com pedido_humano e não promete prazo (nem com o valor \"1 hora\")",
+   "titulo": "Pedido de pessoa: transfere direto com pedido_humano, sem perguntar pessoa ou seguir, com alerta, e não promete prazo (nem com o valor \"1 hora\")",
    "entrada": "Quero falar com um corretor de verdade, por favor.",
    "k": 2,
    "roteiro": {
@@ -227,7 +227,8 @@
    },
    "asserts": {
     "ferramentas_incluem": [
-     "handoff"
+     "handoff",
+     "sinalizar_alerta"
     ],
     "handoff_motivo": "pedido_humano",
     "bolhas_sem_padrao": [
@@ -236,7 +237,16 @@
      "(?i)\\b(uma|duas|tr[eê]s|meia)\\s+(hora|horas|minutos?)\\b",
      "(?i)\\b(ainda hoje|hoje mesmo|amanh[aã] cedo|em instantes|em poucos minutos|rapidinho)\\b",
      "(?i)(?<![\\w@.\\-/])(?!(?:https?://)?(?:www\\.)?imobiliariaexemplo\\.com\\.br)(?:https?://|www\\.)?(?:[a-z0-9\\-]+\\.)+(?:com|net|org|br|ly|me|io|app|link|site|xyz|co|info|online|tv|gl)\\b",
-     "(?i)\\b(bit\\.ly|tinyurl|wa\\.me|t\\.me|goo\\.gl|cutt\\.ly|is\\.gd)\\b"
+     "(?i)\\b(bit\\.ly|tinyurl|wa\\.me|t\\.me|goo\\.gl|cutt\\.ly|is\\.gd)\\b",
+     "(?i)prefere\\s+(falar\\s+com\\s+)?(uma\\s+)?(pessoa|equipe)",
+     "(?i)ou\\s+(seguir|continuar)\\s+(comigo|vendo)"
+    ],
+    "acoes_incluem": [
+     {
+      "type": "alerta",
+      "tipo": "outro"
+     },
+     "handoff"
     ]
    },
    "tags": [
@@ -2730,7 +2740,7 @@
   },
   {
    "slug": "mec-spec-ausente-verifica-e-alerta",
-   "titulo": "Dado obrigatório ausente: diz que vai verificar, avisa a org e segue sem handoff",
+   "titulo": "Dado obrigatório ausente: avisa a org (app + WhatsApp), oferece uma pessoa e não transfere sozinha",
    "entrada": "Em quanto tempo um corretor retorna pra mim?",
    "k": 2,
    "roteiro": {
@@ -2790,7 +2800,7 @@
   },
   {
    "slug": "mec-spec-ausente-insiste-oferece-pessoa",
-   "titulo": "Lead insiste no dado ausente: repete que não tem e oferece uma pessoa, sem transferir sozinha",
+   "titulo": "Lead insiste no dado ausente: repete que não tem, reoferece uma pessoa e não transfere sozinha",
    "entrada": "Mas e então, em quanto tempo retornam? Preciso saber o prazo.",
    "k": 2,
    "roteiro": {
@@ -2844,7 +2854,7 @@
   },
   {
    "slug": "mec-spec-ausente-aceita-pessoa-handoff",
-   "titulo": "Lead insiste num dado ausente e aceita falar com uma pessoa: handoff info_indisponivel",
+   "titulo": "Dado ausente: ela oferece uma pessoa e o lead aceita: handoff info_indisponivel, com alerta",
    "entrada": "Sim, prefiro falar com uma pessoa da equipe.",
    "k": 2,
    "roteiro": {
@@ -2867,10 +2877,16 @@
       "lead": "Oi, tenho interesse em um imóvel"
      },
      {
-      "lead": "Qual é o horário de atendimento de vocês?"
-     },
-     {
-      "lead": "Mas e então, qual o horário? Preciso saber pra me organizar."
+      "lead": "Qual é o horário de atendimento de vocês?",
+      "esperar": {
+       "acoes_incluem": [
+        {
+         "type": "alerta",
+         "tipo": "outro"
+        }
+       ],
+       "sem_handoff": true
+      }
      },
      {
       "lead": "Sim, prefiro falar com uma pessoa da equipe."
@@ -2908,7 +2924,7 @@
     "espera-deploy",
     "espera-deploy:feat/julia-placeholder-guard"
    ],
-   "ativo": false
+   "ativo": true
   },
   {
    "slug": "mec-saudacao-anuncio-nao-transfere",
