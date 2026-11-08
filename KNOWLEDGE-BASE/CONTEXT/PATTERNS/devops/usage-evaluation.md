@@ -81,6 +81,18 @@ with the numbers next to the decision, in the budget file's `_approved` note or 
 First instance: 2026-11-04 slot trial: window A 03:45Z–05:45Z (`build`, max_heavy 1) against the
 stepped loosening from 05:45Z (max_heavy 2 + min CPU idle 25, the owner's "12→24", then 3 and 4).
 
+## 4b · Delivery ingest (`action=sync_deliveries`)
+
+`noctus.dev.usage_eval action=sync_deliveries since until dry_run` (CLI `--usage-sync-deliveries [--dry]`) ingests
+`slice-scores.ndjson` + `dispatch-budget.ndjson` (origin/ledgers via `read_dual`) into `public.dev_deliveries`
+(core migration 111). Dedup on `line_hash` plus `(slug, agent, ts)`; budget joins score on `(slug, agent)` within
+±15 min (unmatched rows kept, scores null); models canonicalised through the seed registry (unknown ids kept raw,
+counted in `unknown_model`); null tokens stay null and get no cost; cost = seed price at a 90/10 split, always
+`cost_is_estimate`. `ambiente` = `NOC_AMBIENTE` > CI > host in the fleet compose inventory > local. `origem` is
+`desconhecido`: Claude Code transcripts do not record the auth mode (`userType`/`entrypoint`/`service_tier` are
+identical for API key and subscription), so it is never guessed. `dry_run` needs no table; a real run on a missing
+table raises `DeliveriesSchemaError`. `dev_telemetry_claude` rows are stamped `ambiente`/`origem` too.
+
 ## 5 · Composes with
 
 `KB § PATTERNS/devops/hardware-admission-budget.md` (the machine side and its budget) ·
