@@ -27,6 +27,7 @@ import {
   Coins,
   Activity,
   Gauge,
+  Filter,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { CoreHeader } from './CoreHeader';
@@ -66,6 +67,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Comercial',
         icon: Wallet,
         items: [
+          { name: 'Funil', href: '/admin/funil', icon: Filter },
           { name: 'Produtos', href: '/admin/products', icon: Package },
           { name: 'Planos', href: '/admin/plans', icon: ClipboardList },
           { name: 'Assinaturas', href: '/admin/subs', icon: CreditCard },

@@ -6128,6 +6128,93 @@ _CORE_AI_USAGE_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry -- NoctusAI's own funnel (core migration 107): the seed pipeline organ's two guards on
+# `public.pipeline_stages` / `public.pipeline_movimentos`. Self-provisioning: a fresh org id, throwaway rows
+# inside the rollback-only wrapper (no FK on `org_id`, `entidade_id` is deliberately not an FK).
+# ---------------------------------------------------------------------------
+
+_CORE_FUNNEL_MIGRATIONS = ("107_noc_funnel.sql",)
+
+
+def _core_funnel_stage_role_probe() -> GuardProbe:
+    return _fresh_org_write_refusal_probe(
+        product="core", schema="public", exists_table="pipeline_stages", exists_migration="107",
+        declare_vars=(), probe_id="core.pipeline_stages.one_stage_per_role", guard_name="uq_pipeline_stages_papel",
+        setup_sql=(
+            "INSERT INTO public.pipeline_stages (org_id, pipeline, slug, label, papel) "
+            "VALUES (v_org, 'noc_probe', 'noc_a', 'A', 'qualificado');",
+        ),
+        attack_sql=(
+            "INSERT INTO public.pipeline_stages (org_id, pipeline, slug, label, papel) "
+            "VALUES (v_org, 'noc_probe', 'noc_b', 'B', 'qualificado');"
+        ),
+        what="a second stage with the same role on one funnel",
+        rationale=(
+            "Stage gates key on `papel`; two stages with one role make the gate pick one arbitrarily, "
+            "and a rename-proof rule would depend on read order."
+        ),
+        migrations=_CORE_FUNNEL_MIGRATIONS,
+    )
+
+
+def _core_funnel_history_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("pipeline_movimentos is append-only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_id uuid;
+BEGIN
+  IF to_regclass('public.pipeline_movimentos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.pipeline_movimentos does not exist (core migration 107 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO public.pipeline_movimentos (org_id, pipeline, entidade_id)
+    VALUES (gen_random_uuid(), 'noc_probe', gen_random_uuid())
+    RETURNING id INTO v_id;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name="pipeline_movimentos_append_only",
+        kind="write_refusal",
+        migrations=_CORE_FUNNEL_MIGRATIONS,
+        sql=sql,
+        rationale=(
+            "pipeline_movimentos is the funnel's stage history ('how long did it sit in Qualificado?'); "
+            "a row that can be edited or deleted is not a trail."
+        ),
+    )
+
+
+_CORE_FUNNEL_PROBES: tuple[GuardProbe, ...] = (
+    _core_funnel_stage_role_probe(),
+    _core_funnel_history_probe(
+        probe_id="core.pipeline_movimentos.update_refused",
+        op_sql="    UPDATE public.pipeline_movimentos SET motivo = 'tampered' WHERE id = v_id;",
+        what="UPDATE of a funnel history row",
+    ),
+    _core_funnel_history_probe(
+        probe_id="core.pipeline_movimentos.delete_refused",
+        op_sql="    DELETE FROM public.pipeline_movimentos WHERE id = v_id;",
+        what="DELETE of a funnel history row",
+    ),
+)
+
+
 
 # ---------------------------------------------------------------------------
 # Registry -- public.platform_templates (migration 092, admin > Templates).
@@ -11578,6 +11665,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
     *_CORE_AI_USAGE_PROBES,
+    *_CORE_FUNNEL_PROBES,
     *_PLATFORM_TEMPLATES_PROBES,
     *_CORE_CREDIT_PROBES,
     _SSO_PROMOTION_PROBE,

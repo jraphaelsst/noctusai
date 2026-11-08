@@ -40,6 +40,7 @@ from app.routers import billing_admin as billing_admin_router
 from app.routers import website_public as website_public_router
 from app.routers import website_admin as website_admin_router
 from app.routers.website_html import website_html_middleware
+from app.noc_funnel import mount_noc_funnel
 from app.routers import transcriptions as transcriptions_router
 from app.routers import brand as brand_router
 from app.routers import credits as credits_router
@@ -158,6 +159,9 @@ app = create_product_app(
 app.add_middleware(ApiTokenAuditMiddleware, audit_writer=LazyAuditWriter())
 
 app.add_exception_handler(TranscricaoErro, transcricao_erro_handler)
+
+# NoctusAI's own sales funnel: the seed funnel organ on `website_leads` (platform tier, admin only).
+mount_noc_funnel(app)
 
 # Website host-split serving (contract §5) — registered as `http` middleware
 # AFTER `create_product_app` returns, so it becomes the OUTERMOST layer of
