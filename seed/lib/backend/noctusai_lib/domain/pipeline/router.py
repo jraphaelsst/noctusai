@@ -19,6 +19,8 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends
+
+from noctusai_lib.api.access_tiers import make_router
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
@@ -96,6 +98,7 @@ def pipeline_stages_router(
     prefix: str = "",
     tags: list[str] | None = None,
     require_stage_admin: Callable[..., Any] | None = None,
+    tier: str | None = None,
 ) -> APIRouter:
     """Build a stage-CRUD router for one pipeline.
 
@@ -115,8 +118,16 @@ def pipeline_stages_router(
             The dependency raises (e.g. 403) to refuse; its return value is
             ignored. Omitted ⇒ every authenticated caller may edit, which is
             the historical behaviour.
+        tier: Access tier of the mount (``"platform"`` | ``"org"`` | ...). When
+            given, the router is built through ``make_router(tier,
+            guard=auth_dependency)`` -- a platform tier stays out of the public
+            ``/openapi.json``, exactly like the funnel's board router. Omitted
+            (default) keeps the plain ``APIRouter`` of old.
     """
-    router = APIRouter(prefix=prefix, tags=tags or ["pipeline-stages"])
+    if tier is None:
+        router = APIRouter(prefix=prefix, tags=tags or ["pipeline-stages"])
+    else:
+        router = make_router(tier=tier, guard=auth_dependency, prefix=prefix, tags=tags or ["pipeline-stages"])
     write_dependencies = [Depends(require_stage_admin)] if require_stage_admin else []
 
     @router.get("")

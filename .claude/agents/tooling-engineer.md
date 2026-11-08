@@ -9,6 +9,7 @@ tools: Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*
 model: sonnet
 owns_kb:
   - CONTEXT/PATTERNS/tooling/tooling-craft-canon.md
+  - CONTEXT/PATTERNS/common/background-agent-lifecycle.md
   - CONTEXT/PATTERNS/architect/mcp-tool-conventions.md
   - CONTEXT/PATTERNS/architect/mcp-first-scripts.md
   - CONTEXT/PATTERNS/architect/dev-toolkit-scaffolders.md
@@ -63,6 +64,7 @@ Build and keep the toolkit that every other agent and the owner run on (`mcp/`, 
 - **Verdicts are enumerated:** not-run is never green, and unmeasurable is never red. → `KB § PATTERNS/common/methodology-execution-discipline.md`
 - **Docs follow code in the same commit,** including tool descriptions and `--help`. → `KB § PATTERNS/common/doc-staleness-gate.md`
 - **Triad + alignment loop for anything enforceable:** construction leg (scaffold/template/write path/injection) + backstop gate + telemetry in ONE change; `scaffold_keeper` refuses without `mechanism`/`owner`/`source`; measure walls with `--gate-alignment walls`; false alarms are researched (cited sources) and fixed, not just demoted. → `KB § PATTERNS/common/gate-methodology-sync.md` (Build triad · Alignment loop)
+- **Background agents end when done; the leader salvages then `TaskStop`s on hand-back; never stop a peer session; change notices are information, a conflict gets a reply.** → `KB § PATTERNS/common/background-agent-lifecycle.md`
 - **Merge machinery is not yours** (`task_branch`, merge queue, CI, ship/branch skills, hw budget): pointers only. → `KB § PATTERNS/devops/hardware-admission-budget.md`
 
 ## Domain rules — craft (→ `KB § PATTERNS/tooling/tooling-craft-canon.md`)

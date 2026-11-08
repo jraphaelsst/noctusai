@@ -184,12 +184,19 @@ class FunnelConfig:
             that already records the entry (so rows born outside the organ,
             e.g. a public intake form, also get one) sets ``False``: the
             history is append-only, a second `entrada` is permanent.
+        board_fields: LGPD minimisation (Art. 6 III) of the LIST reads. ``None``
+            (default) keeps today's behaviour: every ``campos`` key rides on
+            every card of the board and the orphan list. A tuple limits those
+            two reads to exactly those ``campos`` keys; ``GET /cards/{id}``
+            still carries them all. Search is unaffected (it runs on the full
+            card before the trim).
     """
 
     pipeline: PipelineConfig
     tenancy: Tenancy
     platform_org_id: str | None = None
     card_projection: Callable[[dict], Mapping[str, Any]] | None = None
+    board_fields: tuple[str, ...] | None = None
     editable_fields: Mapping[str, str] = field(default_factory=dict)
     lost_reasons: Sequence[LostReason] = ()
     gates: Mapping[str, FunnelGate] = field(default_factory=dict)
@@ -254,6 +261,10 @@ class FunnelConfig:
                 )
         if not isinstance(self.card_select, str) or not self.card_select.strip():
             raise ValueError("FunnelConfig.card_select must be a non-empty PostgREST select string")
+        if self.board_fields is not None:
+            if isinstance(self.board_fields, str) or not all(isinstance(k, str) for k in self.board_fields):
+                raise ValueError("FunnelConfig.board_fields must be a tuple of campos keys (or None)")
+            object.__setattr__(self, "board_fields", tuple(self.board_fields))
         for canonical in self.status_values:
             if canonical not in CANONICAL_STATUSES:
                 raise ValueError(f"FunnelConfig.status_values: unknown canonical status {canonical!r}")

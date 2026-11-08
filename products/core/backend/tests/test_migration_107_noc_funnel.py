@@ -50,8 +50,10 @@ def test_platform_tier_and_no_browser_grants():
 
 
 def test_every_security_definer_function_is_revoked_from_browser_roles():
+    # The generator's touch function is SECURITY INVOKER with an empty search_path (seed
+    # funnel follow-ups); any DEFINER function that remains must still be revoked.
+    assert re.search(r"FUNCTION public\.\w*updated_at\w*\(\)[^$]*?SECURITY INVOKER SET search_path = ''", SQL)
     fns = re.findall(r"CREATE OR REPLACE FUNCTION (public\.\w+)\(\)[^$]*?SECURITY DEFINER", SQL)
-    assert fns, "the generator's touch function is expected to be SECURITY DEFINER"
     for fn in fns:
         assert f"REVOKE ALL ON FUNCTION {fn}() FROM PUBLIC, anon, authenticated" in FLAT
 

@@ -14,7 +14,7 @@ import {
   Zap, Building2, Wallet, HeartPulse, Share2, CalendarCheck,
   ShieldCheck, Brain, ArrowRight,
 } from "lucide-react";
-import { LandingFooter } from "../components/LandingFooter";
+import { LandingFooter } from "@noctusai/lib/marketing";
 
 const PRODUCTS = [
   {
@@ -147,7 +147,21 @@ export default function Landing() {
         </Button>
       </section>
 
-      <LandingFooter />
+      <LandingFooter
+        id="rodape"
+        brand={<span className="text-lg font-bold">NoctusAI</span>}
+        columns={[
+          {
+            heading: "Legal",
+            links: [
+              { label: "Central de Privacidade", href: "/consent" },
+              { label: "Política de Privacidade", href: "/consent/privacy-policy" },
+              { label: "Termos de Uso", href: "/consent/terms-of-use" },
+            ],
+          },
+        ]}
+        copyright={`© ${new Date().getFullYear()} NoctusAI · Plataforma de Produtos Digitais AI-First`}
+      />
     </div>
   );
 }

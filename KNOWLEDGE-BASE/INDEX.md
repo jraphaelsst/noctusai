@@ -123,6 +123,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── doc-symbology.md
 │   │   │   ├── doc-staleness-gate.md
 │   │   │   ├── doc-to-code-drift.md
+│   │   │   ├── background-agent-lifecycle.md
 │   │   │   ├── dont-block-on-background.md
 │   │   │   ├── drift-fix-on-contact.md
 │   │   │   ├── eight-way-sync.md

@@ -63,6 +63,7 @@ def mount_funnel(
             log_action=log_action,
             prefix=f"{prefix}/etapas",
             require_stage_admin=require_stage_admin,
+            tier=cfg.tenancy,
         )
     )
 

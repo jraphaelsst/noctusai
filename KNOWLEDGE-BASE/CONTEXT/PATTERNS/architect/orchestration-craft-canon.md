@@ -300,12 +300,12 @@ If step 3 returns an overlap with a live session, go to §6.4 before touching an
 | Kind | First line (template) | Body carries | Expected reply |
 |---|---|---|---|
 | CLAIM | `CLAIM: I am taking <paths> on <branch> for <purpose>, ~<duration>.` | why, pointer row, what you will not touch | none, or ASK if it collides |
-| HEADS-UP | `HEADS-UP: <what> landed/changed on <ref> at <sha>; it affects <paths/behaviour>.` | what the peer must do (rebase, renumber, re-run) | none |
+| HEADS-UP | `HEADS-UP: <what> landed/changed on <ref> at <sha>; it affects <paths/behaviour>. Reply if it conflicts with your work.` | what changed and what the peer MAY do (rebase, renumber, re-run, re-read); information, not an order: the receiver decides how to proceed and never waits on the owner because of it (§6.13) | none, unless it conflicts with the receiver's work or breaks something: then a reply is REQUIRED and the two resolve it together |
 | ASK | `ASK: may I change <exact lines> in <path> (your zone) for <reason>?` | the diff or its shape; the alternative if refused | yes / no / later |
 | FREEZE | `FREEZE: please do not enqueue/land/push to <ref or paths> until I send THAW (reason: <reason>, expected <duration>).` | scope precisely; what remains allowed | ACK |
 | THAW | `THAW: <ref or paths> is open again as of <sha>.` | what changed during the freeze, any rebase needed | none |
 | HANDOVER | `HANDOVER: you now own <zone/ship/freeze>; please confirm.` | state, open items, where the notes are | ACK (required) |
-| LANDED | `LANDED: <slug> is on dev as <sha>; <one line of impact>.` | — | none |
+| LANDED | `LANDED: <slug> is on dev as <sha>; <one line of impact>. Reply if it conflicts with your work.` | impact on shared plumbing / methodology, if any | none, unless it conflicts: then a reply is required (§6.13) |
 | CONFLICT | `CONFLICT: our edits to <path> collided twice; I am stopping and parking mine.` | your parked change, its pointer | the peer's plan |
 
 Example of a well-formed FREEZE (generic):
@@ -393,6 +393,19 @@ Silence means one of: busy, holding your message for its user, refusing inbound 
 **Anti-patterns for §6.** Group-chat coordination (every session telling every session everything). Treating a message as a durable record. "Silence means yes". Entering a claimed zone because the change is "tiny". Deleting a quiet peer's worktree. Polling a peer.
 
 ---
+
+### 6.13 Change propagation - methodology and shared-code changes reach every live session
+
+*Owner, 2026-11-07: agents working in parallel must know when the methodology (or code they depend on) changes, so there is no drift and the work stays careful across sessions.* A HEADS-UP (§6.4) is voluntary and a busy, idle or refusing peer may never read it; the first sign was then the merge queue ejecting the branch. Same rule as §6.2: **a message points at state**. The state is `origin/dev`; the pull leg reads it.
+
+- **Methodology surfaces** (a landing here always propagates): `CLAUDE.md`, `CLAUDE/*.md`, `KNOWLEDGE-BASE/CONTEXT/PATTERNS/**`, `.claude/{agents,skills,commands}/`, `scripts/hooks/`, `.claude/settings.json`. They join the shared plumbing of §6.4 (hooks, `compliance.py`, CI, lockfiles, migration numbering).
+- **Pull leg (durable, receiver side) - `scripts/hooks/claude-guard-dev-advance.py`** on SessionStart (baseline), UserPromptSubmit and PostToolUse. It keeps, per session, the `origin/dev` sha last seen (`~/.noctus/dev-advance-seen.json`). When the local ref moved it diffs seen..current and injects `additionalContext` only if the advance touched (a) a methodology surface or (b) a path overlapping this session's `on_going` pointer `paths` (latest row per branch of the local `origin/ledgers` ref; own session or own worktree) or its worktree's diff against dev. The text names each commit and file and says re-read / rebase before enqueue. Otherwise it only moves the baseline, silently.
+- **Local refs only, no fetch.** `origin/dev` is shared by every worktree of the clone and is advanced by the SessionStart sweep, `task_branch`, the merge queue and any peer's fetch (checked 2026-11-07: the sweep runs `ff_primary_to_dev(fetch=True)`). Limit: a landing nobody has fetched yet is invisible until someone does; the pusher's HEADS-UP covers that window.
+- **Push leg (doc + skill text, voluntary).** Whoever lands a methodology or shared-plumbing change sends HEADS-UP to every live peer in `ListAgents`; for the steward it is part of LANDED. A session that changes methodology mid-flight also `SendMessage`s its own dispatched agents (`noc-branch-dispatch`).
+- **A notice is information, never a stop order.** The receiving session or agent knows its own environment and decides how to proceed: adopt now, finish the current step first, rebase, or ignore if unaffected. It never pauses to wait for the owner's reply because of a notice (owner, 2026-11-07). The injected hook text says so ("decide how to proceed; no need to wait for the owner") and never says STOP. Not to be confused with a FREEZE (§6.6), which the zone owner requests explicitly.
+- **Silence is not OK on a conflict or an error.** The receiver either decides how to proceed, or replies to the sender (the pusher, or the steward for a LANDED) via `SendMessage` when it needs to coordinate. When the notice reveals a conflict or error (a collision with its zone or paths, a broken assumption, a failing test it caused or sees) it MUST reply, and the two sessions talk until it is resolved; neither escalates to the owner by default (the owner is asked only if the two cannot agree, per §6.8). Hook text: "if it conflicts with your work or breaks something, reply to the sender/steward and resolve it together - silence is not OK". Telemetry limit: the hook records the injection, not the reply (a SendMessage is not observable from a hook), so the reply is documented discipline; the conflict outcome is carried by the CONFLICT shape and pointer `notes`.
+- **Owner boundary.** Inform only. Never stop, steer or re-scope another session (`background-agent-lifecycle.md` leg 4).
+- **Fail open, <2 s, never blocks; telemetry:** each injection appends a `guard=dev-advance` row to `guard-events.ndjson` (gitignored, under the primary's .claude/cache) (`methodology_files`, `overlap_files`) - the count is how often a session was saved from drift. Tests: `mcp/noctusai/tests/test_background_agent_lifecycle_hooks.py`.
 
 ## 7 · Multi-agent frameworks — what we take and what we leave
 
