@@ -1,0 +1,31 @@
+name: FinanceCompetenceCards
+kind: component
+path: seed/lib/frontend/src/finance/FinanceCompetenceCards.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Opt-in overview cards (competenceCards): revenue by category and the competence-basis result, both derived from one GET /reports/dre answer for the month."
+  - "Never estimates tax: the tax line shows the DRE deductions line only when the regime is informed and money is booked; else 'depende do contador' and result '—'."
+  - "Loading contract: skeleton while pending without data; failure is a visible retryable error (lying-loading-state.md)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by products/commerce and later products."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
