@@ -11,7 +11,7 @@
 **How to use it.** `dre-structure.md` stays the canonical DRE line doc — read it first for any "which line?" question. Use this doc for "which rule, which year, which regime, which document?" and for what the code does. Every answer: state **which year's rules** it holds for (§3), tier every claim, end with what the contador must confirm (§8).
 
 ## Contents
-0. Standard term ↔ house term · 1. Norm hierarchy and source protocol · 2. Regimes · 3. Reforma Tributária 2026–2033 · 4. Fiscal documents · 5. Statutory statements · 6. The finance organ, module by module · 7. Checklists and answer template · 8. When a contador (CRC) is required · 9. Worked examples · 10. Anti-patterns · 11. Sources · 12. Re-verify list · 13. NoctusAI company file · 14. Abertura de CNPJ · 15. Legal posture of a contador product · 16. Template — a contador for another company
+0. Standard term ↔ house term · 1. Norm hierarchy and source protocol · 2. Regimes · 3. Reforma Tributária 2026–2033 · 4. Fiscal documents · 5. Statutory statements · 6. The finance organ, module by module · 7. Checklists and answer template · 8. When a contador (CRC) is required · 9. Worked examples · 10. Anti-patterns · 11. Sources · 12. Re-verify list · 13. NoctusAI company file · 14. Abertura de CNPJ · 15. Legal posture of a contador product · 16. Template — a contador for another company · 17. Ask the contador
 
 ## 0 · Standard term ↔ house term
 
@@ -59,9 +59,9 @@
 **Simples mechanics.**
 - **Effective rate.** The nominal rate of the bracket is set by the receita bruta accumulated in the **12 months before** the apuração period (RBT12; LC 123 art. 18 §1) and converted to an effective rate by the art. 18 §1-A formula: `(RBT12 × Aliq − PD) / RBT12` [norma; formula structure confirmed on Planalto, coefficients per Anexo table — re-verify the table before computing a real DAS].
 - **Anexos I–V.** I commerce · II industry · III/IV/V services. Anexo IV services pay the employer social contribution (CPP) outside the DAS.
-- **Fator R (LC 123 art. 18 §§5-J, 5-K, 5-M)** [norma]: for the services listed in §5-I, the ratio **folha de salários / receita bruta, both over the 12 months before the apuração period** (§5-K), decides the Anexo: **≥ `simples.fator_r.limiar` ⇒ Anexo III** (§5-J), **below it ⇒ Anexo V** (§5-M). Folha includes salaries, pró-labore and the CPP/FGTS actually paid [publicação profissional; statutory definition in art. 18 — re-verify the paragraph]. From 2027 Res. CGSN 190/2026 adds FS12 next to RBT12; whether the folha window also shifts one month is **open** (registry row notes).
+- **Fator R (LC 123 art. 18 §§5-J, 5-K, 5-M)** [norma]: for the services listed in §5-I, the ratio **folha de salários / receita bruta, both over the 12 months before the apuração period** (§5-K), decides the Anexo: **≥ `simples.fator_r.limiar` ⇒ Anexo III** (§5-J), **below it ⇒ Anexo V** (§5-M). The folha definition is LC 123 art. 18 §24 [norma]: salaries, pró-labore and 13th paid plus CPP and FGTS actually paid; rents, profit distribution, interns and payments to MEI are out (`simples.fs12.janela`, notes). From 2027 the folha window shifts one month, in step with the RBT12 window (`simples.fs12.janela`, `simples.rbt12.janela`) [norma, Res. CGSN 190/2026 art. 1]; **legal tension flagged for a CRC:** LC 123 §5-K still says "twelve months before the apuração period", and a resolution may not move a statutory window (§12, §17).
 - **Software / SaaS (verified chain, advisory 2026-11-07).** LC 123 art. 18 §5-D IV/V (software development/licensing services) + §5-M II; Res. CGSN 140 art. 25 §1 V d/e/f/u ⇒ **Anexo III if Fator R ≥ 0,28, else Anexo V** [norma]. The earlier premise "Anexo VI lists the CNAEs" is **wrong**: Anexo VI lists the CNAEs that **bar entry** to the Simples. Which CNAE a company registers is still a decision to take with the §8 list in view.
-- **Fator R — folha rules (LC 123 art. 26 §§3–7)** [norma, verified in the advisory]: what the folha excludes; companies with **less than 13 months** of activity use the 0,28/0,01 rules for the ratio; the **zero-folha** and **zero-revenue** cases have their own treatment. Quote the paragraph from Planalto/Receita before computing a real DAS.
+- **Fator R — folha rules (Res. CGSN 140 art. 26 §§1–7, not LC 123 art. 26, which concerns obrigações acessórias)** [norma, verified in the advisory]: what the folha excludes; companies in their first months use their own rule for the ratio (`simples.fator_r.inicio_atividade_dois_primeiros_meses` from 2027: annualising applies for more than 2 and less than 14 months of activity; until 2026 only the start month had the rule); the **zero-folha** and **zero-revenue** cases have their own treatment. Quote the paragraph from Planalto/Receita before computing a real DAS.
 - **From 2027 the Simples base is "faturamento, entrega ou execução, o que primeiro ocorrer"** (Res. CGSN 140 art. 2 §8 as amended by Res. CGSN 190/2026) and **caixa ends** [órgão oficial].
 - **Anexo tables (all faixas, limits, nominal rates, parcela a deduzir, repartição)** live in the registry, effective-dated: `simples.anexo_<i..v>.faixa_<1..6>.*` (e.g. `simples.anexo_iii.faixa_1.aliquota_nominal`, `simples.anexo_v.faixa_1.aliquota_nominal`) [norma, LC 155/2016 Anexos read 2026-11-07]. Res. CGSN 190/2026 rewrites the tables from 2027 (6th faixa −0,1 p.p. in 2027–2028; CBS/IBS replace PIS/Cofins in the repartição) — always read with `param(key, on=<apuração month>)`, never from this page.
 - **DAS repartição.** Each Anexo table splits the DAS into IRPJ/CSLL/Cofins/PIS/CPP/ISS-ICMS percentages; the house DRE uses it only when a store splits the DAS (`dre_help.py`, `INCOME_TAXES` "percentual de repartição do seu anexo"; accountant Q4).
@@ -72,7 +72,7 @@ Primary texts: EC 132/2023 (incl. ADCT arts. 125–129) and LC 214/2025 (as amen
 
 | Year | What changes | Source | Tier |
 |---|---|---|---|
-| **2026** | Test year: IBS (`reforma.ibs.aliquota_teste_estadual`) and CBS (`reforma.cbs.aliquota_teste`), offsettable against PIS/Cofins; Simples/MEI application **open** | ADCT art. 125 | [norma] |
+| **2026** | Test year: IBS (`reforma.ibs.aliquota_teste_estadual`) and CBS (`reforma.cbs.aliquota_teste`), offsettable against PIS/Cofins; **does not apply to Simples/MEI** (`reforma.teste_2026.aplica_ao_simples`); lucro presumido/real may be dispensed from paying it (`reforma.teste_2026.dispensa_recolhimento`) | ADCT art. 125; LC 214 arts. 343, 346, 348 | [norma] |
 | **2027** | CBS charged; contributions on revenue (CF art. 195 I "b" and IV — the PIS/Cofins base) revoked; IPI zeroed except Zona Franca de Manaus incentives; Imposto Seletivo starts | EC 132 art. 22 I; ADCT art. 126 | [norma] |
 | **2027–2028** | IBS state + municipal (`reforma.ibs.aliquota_estadual`, `reforma.ibs.aliquota_municipal`); CBS reduced (`reforma.cbs.reducao_aliquota_pp`) | ADCT art. 127 | [norma] |
 | **2027** (Simples) | IBS/CBS rules for Simples optantes take effect 2027-01-01; Simples base moves to the invoice moment ("no momento do faturamento", Res. CGSN 190/2026 art. 2 §8; effects art. 9) | Res. CGSN 190/2026 (dre-structure §6); CRC-MS note | [órgão oficial]; [publicação profissional] |
@@ -81,15 +81,15 @@ Primary texts: EC 132/2023 (incl. ADCT arts. 125–129) and LC 214/2025 (as amen
 
 **Simples and IBS/CBS.**
 - A Simples optante may opt to apurar and recolher IBS/CBS **by the regular regime** instead of inside the DAS (LC 214 art. 41 §3; exercised under LC 123, §4) [norma]; the CGSN rule lets them be paid outside the DAS (Res. CGSN 190/2026 art. 5 XVI) [órgão oficial]. A Simples optante that received a refund of these taxes in the current or prior year cannot leave the regular regime (art. 41 §5).
-- **Option windows (Res. CGSN 140 art. 40-D, incl. Res. CGSN 190/2026)** [norma, read 2026-11-07]: the regular-regime option for January is made in September (`simples.ibs_cbs.regime_regular.janela_semestre_jan`) — for H1-2027 it was 01–30/09/2026, **closed**; an option made in September can be cancelled until `simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan` (for H1-2027: 2026-11-30, still open on 2026-11-07); the July option is made in March (`simples.ibs_cbs.regime_regular.janela_semestre_jul`, first window 2027-03). A company opening its CNPJ opts together with the Simples option. MEI cannot opt out of the DAS. Res. CGSN 194/2026 is still **unverified — open**.
+- **Option windows for the calendar year 2027 (Res. CGSN 186/2026 as amended by Res. CGSN 194/2026 — DOU S1 Ed. Extra 183-C of 28/09/2026)** [norma, read 2026-11-07]: the Simples option window is `simples.opcao.janela_anual` (2026 rows: the original one, then the one extended by Res. 194; **closed on 2026-11-07**); cancellation runs in `simples.opcao.cancelamento.janela` (**open**, irretractable); pending issues must be cleared by `simples.opcao.regularizacao_pendencias_ate`. Regular-regime IBS/CBS option: `simples.ibs_cbs.regime_regular.janela_semestre_jan` (2026 rows, original then Res. 194), cancellable until `simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan` (2026 row: the window runs 03/11 to 20/12/2026, not 30/11). A CNPJ registered after the cut-off in Res. 186 art. 3 is outside the windows; SIMEI/MEI are outside (art. 4; MEI cannot opt out of the DAS). **Legal basis:** the resolutions (Res. 186/2026 on LC 123 art. 2 §6 and art. 16, and LC 214 art. 41 §§3–4) — the statutory LC 123 art. 87-B was revoked by LC 227/2026 art. 181 IV a. From 2027 the recurring rule is Res. CGSN 140 art. 40-D (same keys, 2027 rows); the July option is made in March (`simples.ibs_cbs.regime_regular.janela_semestre_jul`, first window 2027-03). Whether art. 144-E (deadline 2026-12-20) is binding is **open** (§12).
 - **Credit consequence for B2B buyers:** if IBS/CBS stay inside the DAS, the optante takes no credits (art. 47 §9 I) and a regular-regime buyer credits only the amount paid through the Simples (art. 47 §9 II) [norma]. That is why B2B service sellers (NoctusAI's own case) may prefer the regular IBS/CBS regime — a contador decision.
 - **DRE consequence:** inside the DAS ⇒ nothing changes in the Deduções line. Outside ⇒ IBS/CBS become their own Deduções rows (accountant Q7 is open on presentation).
 
 **Split payment (LC 214 arts. 31–35)** [norma].
 - Electronic-payment providers and payment-system operators **segregate and remit** IBS/CBS to the Comitê Gestor and RFB **at the financial settlement** of the transaction (art. 31; timing art. 34 I). Installments: remitted proportionally at each installment's settlement (art. 34 II).
 - A **simplified procedure** is optional: a preset percentage of the operation, by sector or taxpayer, unrelated to the actual debits (art. 33 §§1–2); when the buyer is in the regular regime, the simplified remittance generates no credit to the buyer (art. 33 §7 II).
-- Arts. 31–35 carry no Simples-specific rule.
-- **Gateway impact (Asaas, our gateway).** From go-live, part of each settled charge may be withheld before it reaches the store, so: (a) settlement amount ≠ charge amount even without fees; (b) the ledger must book the withheld IBS/CBS as tax, not as a gateway fee; (c) installment charges withhold per installment. Go-live date and Asaas' mechanics: **open — ask Asaas and the contador; re-verify the implementation calendar.**
+- Arts. 31–35 carry no Simples-specific rule; the Simples hook is **LC 123 art. 21 §3-A (LC 214 art. 517)**, which lets the Simples optante's IBS/CBS be collected through the split payment. The go-live date is still open (a joint act of RFB and CGIBS is pending).
+- **Gateway impact (Asaas, our gateway).** From go-live, part of each settled charge may be withheld before it reaches the store, so: (a) settlement amount ≠ charge amount even without fees; (b) the ledger must book the withheld IBS/CBS as tax, not as a gateway fee; (c) installment charges withhold per installment. Go-live date (ato conjunto RFB/CGIBS pending) and Asaas' mechanics: **open — ask Asaas and the contador; re-verify the implementation calendar.**
 - **Code impact (proposal, not done):** `TaxRegime` and `DreLine` will need IBS/CBS deduction rows; `gateway_sync` must distinguish split-payment withholding from MDR.
 
 ## 4 · Fiscal documents
@@ -196,16 +196,16 @@ See `KB § PATTERNS/finance/managerial-and-saas-metrics.md` §9 — Fator R comp
 
 ## 12 · Re-verify list (date-watch)
 
-**Dated values are re-verified mechanically:** `noctus.dev.finance_params_staleness` flags rows by tier age, `revalidar_em` and the `vigencia_ate` horizon; skill `noc-tax-params` re-verifies them online and adds successor rows. This list keeps only what is **not yet a row** (open research, 2026-11-07):
-- **LC 214/2025 beyond art. 233** (arts. 18, 343–348, 519, Anexos XVIII–XXII): Planalto page truncates; the 2027+ CBS reference rate (Senate resolution) and the 2026 "no payment owed" mechanics are not rows.
-- **Simples/MEI under the 2026 test rates** — only secondary sources say they are out; rows are scoped to lucro presumido/real.
-- **Anexo I 6th faixa from 2029** (`simples.anexo_i.faixa_6.aliquota_nominal` on 2029-01-01) in Res. CGSN 190 (every other Anexo returns to its 2018 rate) — possible drafting slip; compare with LC 214 Anexo XVIII before code depends on it.
-- **DAS-MEI due day** — no MEI-specific text read; the DAS row covers the Simples only.
-- **DEFIS for calendar year 2026** — DEFIS by 31/03/2027 or the new PGDAS-D route (art. 38-B); same date, channel open.
-- **Fator R window from 2027** (FS12 next to RBT12 — does the folha also shift one month?).
-- **Res. CGSN 140 consolidated text** (arts. 40, 72, 109, Anexo XI) — normas.receita did not render; values rest on the CGSN P&R (órgão oficial) or an Anexo XI reproduction.
-- **Legal basis for applying the September-2026 Simples option window** before Res. 190's 2027 effect date; same for art. 144-E (2026-12-20).
-- Split-payment implementation calendar and Asaas' mechanics; NBC TG 1000/1001/1002 scope boundaries; SP / Cotia adherence to NFS-e Nacional.
+**Dated values are re-verified mechanically:** `noctus.dev.finance_params_staleness` flags rows by tier age, `revalidar_em` and the `vigencia_ate` horizon; skill `noc-tax-params` re-verifies them online and adds successor rows. This list keeps only what is **not yet a row**. Closed on 2026-11-07 (now rows or canon text): the 2026 test rates in Simples/MEI (`reforma.teste_2026.aplica_ao_simples`), Anexo I 6th faixa from 2029 (a conflict: the LC prevails, `simples.anexo_i.faixa_6.aliquota_nominal` on the 2029 row), DAS-MEI due day (`obrigacoes.das.vencimento_dia`, mei row), the Fator R window (`simples.fs12.janela`), the legal basis of the option windows (Res. 186/2026; the statutory art. 87-B was revoked by LC 227/2026 art. 181 IV a) and Res. 194/2026 (read, rows in §3).
+
+**Still open (2026-11-07):**
+- **Official rendering of Res. CGSN 140** — normas.receita (idAto=92278) is a single-page app; values rest on the CGSN P&R (órgão oficial) or a mirror.
+- **Formal basis of art. 144-E** — Res. 190 art. 9 gives effects from 2027 against a deadline of 20/12/2026.
+- **DEFIS for calendar year 2026** — by 31/03/2027 or via the PGDAS-D (art. 38-B); channel to confirm with a CRC (`obrigacoes.pgdas_d.informacoes_socioeconomicas.janela`, notes).
+- **Split-payment go-live** — an ato conjunto RFB/CGIBS is pending; Asaas' mechanics unknown.
+- **2027 CBS reference rate** — the Senate resolution is pending, and the press deadlines conflict with the text of LC 214 art. 349 §1.
+- **Content of Res. CGSN 193/2026** — not read.
+- NBC TG 1000/1001/1002 scope boundaries; SP / Cotia adherence to NFS-e Nacional.
 
 ## 13 · NoctusAI company file (as of 2026-11-07)
 
@@ -248,3 +248,9 @@ The agent is generic; a company is DATA. To instantiate for a company (next: One
 3. **Numbers** only via the registry; a sector-specific parameter (e.g. ISS item for corretagem) is a new registry row with source, never prose.
 4. **Product exposure** (agents product, skill `noc-new-agent`) only after the §15 items are cleared: name, `validado_por_crc` checkpoint, terms + DPA, agents-security review.
 
+## 17 · Ask the contador (open legal questions, 2026-11-07)
+
+- Which channel files the **DEFIS for calendar year 2026** (DEFIS or PGDAS-D, art. 38-B)?
+- **Anexo I 6th faixa from 2029:** LC 214 Anexo XVIII and Res. CGSN 190/2026 print different rates (`simples.anexo_i.faixa_6.aliquota_nominal`, 2029 row); the registry follows the LC — confirm.
+- Can a **resolution shift the FS12/RBT12 window** (`simples.fs12.janela`, `simples.rbt12.janela`) given LC 123 §5-K?
+- Is **art. 144-E** (deadline 2026-12-20) binding on the Simples optante?

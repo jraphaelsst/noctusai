@@ -88,8 +88,8 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: '>= 0,28 => Anexo III; < 0,28 => Anexo V (atividades do par. 5-I). Res. CGSN 190 introduz FS12 junto da RBT12 a partir de 2027; se a
-    janela da folha tambem defasa um mes e OPEN.'
+  notas: '>= 0,28 => Anexo III; < 0,28 => Anexo V (atividades do par. 5-I). Res. CGSN 190 introduz FS12 junto da RBT12 a partir de 2027;
+    a janela da folha tambem defasa um mes: sim, ver simples.fs12.janela.'
 - key: simples.anexo_iii.faixa_5.iss_teto_percentual_efetivo
   value: '0.05'
   unit: ratio
@@ -182,7 +182,7 @@ rows:
   scope:
     regime:
     - simples
-  vigencia_de: 2026-09-01
+  vigencia_de: 2027-01-01
   vigencia_ate: null
   norma: Res. CGSN 140/2018 art. 6 par. 1 (red. Res. CGSN 190/2026)
   fonte_url:
@@ -192,8 +192,9 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: 'Opcao de 01 a 30/09 com efeito em 1/jan do ano seguinte (antes: janeiro). Para 2027 a janela foi 01-30/09/2026 (P&R 2.7) - ja encerrada.
-    Cancelamento: par. 1-B (prazo nao transcrito). Empresa em inicio de atividade: regra propria (par. 5).'
+  notas: 'Regra recorrente (Res. CGSN 190/2026): opcao de 01 a 30/09 com efeito em 1/jan do ano seguinte. Cancelamento: par. 1-B (prazo
+    nao transcrito). Empresa em inicio de atividade: regra propria (par. 5). Janela de 2026: ver linhas 2026 (Res. 186/2026 red. Res.
+    194/2026).'
 - key: simples.ibs_cbs.inclusao_no_das.inicio
   value: '2027-01-01'
   unit: date
@@ -500,7 +501,8 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: 'Res. CGSN 190/2026 Anexo I: 2027-2028 = 18.9%, a partir de 2029 = 18.9% (linhas abaixo)'
+  notas: 'Res. CGSN 190/2026 Anexo I: 2027-2028 = 18.9% (linha abaixo); a partir de 2029 = 19.0% por LC 214 Anexo XVIII (linha de 2029);
+    ver conflito na linha de 2029.'
 - key: simples.anexo_i.faixa_6.parcela_a_deduzir
   value: '37800000'
   unit: brl_centavos
@@ -535,9 +537,10 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: CBS reduzida 0,1 p.p. em 2027-2028 (ADCT art. 127, clausula de reducao da CBS); LC 214 art. 519 (Anexos XVIII-XXII) nao lido no Planalto
+  notas: CBS reduzida 0,1 p.p. em 2027-2028 (ADCT art. 127, clausula de reducao da CBS); LC 214 art. 519 (Anexos XVIII-XXII) confirma
+    18,9% para 2027-2028.
 - key: simples.anexo_i.faixa_6.aliquota_nominal
-  value: '0.189'
+  value: '0.19'
   unit: ratio
   scope:
     regime:
@@ -545,15 +548,17 @@ rows:
     anexo: I
   vigencia_de: 2029-01-01
   vigencia_ate: null
-  norma: Res. CGSN 140/2018 Anexo I (red. Res. CGSN 190/2026) 'A partir do ano-calendario 2029'
+  norma: LC 123/2006 Anexo I (red. LC 214/2025 art. 519 e Anexo XVIII 'A partir do ano-calendario 2029'; efeitos art. 544 III red. LC
+    227/2026)
   fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm
   - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
-  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
   tier: norma
   verificado_em: 2026-11-07
   verificado_por: accountant
-  revalidar_em: null
-  notas: 'ATENCAO: Anexo I 6a faixa 2029+ = 18,90% (nao volta a 19%) - conferir LC 214 Anexo XVIII; ver lista open'
+  revalidar_em: 2027-06-30
+  notas: 'CONFLITO: Res. CGSN 190/2026 art. 6 imprime 18,90% tambem para 2029+; LC 214 Anexo XVIII da 19,00%; prevalece a LC (hierarquia).
+    Parcela a deduzir 378.000 igual. Revalidar se o CGSN retifica.'
 - key: simples.anexo_ii.faixa_1.limite_superior
   value: '18000000'
   unit: brl_centavos
@@ -4443,3 +4448,124 @@ rows:
   verificado_por: accountant
   revalidar_em: null
   notas: celula '-' na tabela (ISS/IBS fora do DAS acima do sublimite)
+- key: simples.fs12.janela
+  value: 12_meses_anteriores_ao_PA
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 123/2006 art. 18 par. 5-K e par. 24; Res. CGSN 140/2018 art. 26 I e par. 5 IV
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Folha = salarios, pro-labore e 13o pagos + CPP + FGTS efetivamente pagos; exclui alugueis, distribuicao de lucros, estagiarios,
+    pagamentos a MEI (P&R 5.11).
+- key: simples.fs12.janela
+  value: 12_meses_antecedentes_ao_mes_anterior_ao_PA
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 26 I e par. 5 IV (red. Res. CGSN 190/2026 art. 1; efeitos art. 9)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Mesma defasagem de simples.rbt12.janela; ex.: PA jan/2027 => dez/2025 a nov/2026. Tensao legal: LC 123 par. 5-K ainda diz "doze
+    meses anteriores ao PA"; confirmar com CRC.'
+- key: simples.fator_r.inicio_atividade_dois_primeiros_meses
+  value: '0.28'
+  unit: ratio
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 26 par. 6 (red. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Ate 2026 a regra era so o mes de inicio; a anualizacao vale para mais de 2 e menos de 14 meses (novo par. 4).
+- key: simples.opcao.janela_anual
+  value: 09-01..09-30
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-04-17
+  vigencia_ate: 2026-09-27
+  norma: Res. CGSN 186/2026 art. 1 caput (redacao original; opcao para o AC 2027)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  - https://www.normaslegais.com.br/legislacao/resolucao-cgsn-186-2026.htm
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Redacao original, antes da Res. CGSN 194/2026.
+- key: simples.opcao.janela_anual
+  value: 09-01..10-15
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-28
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 186/2026 art. 1 caput (red. Res. CGSN 194/2026 art. 1); base LC 123 art. 2 par. 6 e art. 16 caput
+  fonte_url:
+  - https://www.reformatributaria.com/wp-content/uploads/2026/09/RESOLUCAO-CGSN-No-194-DE-25-DE-SETEMBRO-DE-2026.pdf
+  - https://fenacon.org.br/wp-content/uploads/2026/09/Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-DOU-Imprensa-Naciona.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Encerrada em 2026-11-07. Nao se aplica a CNPJ registrado em 16/10 a 31/12/2026 (art. 3 I), nem ao SIMEI (art. 4). O P&R de 09/10/2026
+    esta desatualizado. Res. 194: DOU S1 Ed. Extra 183-C de 28/09/2026, p. 8.'
+- key: simples.opcao.cancelamento.janela
+  value: 11-03..12-20
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-28
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 186/2026 art. 1 par. 1 I (red. Res. CGSN 194/2026)
+  fonte_url:
+  - https://www.reformatributaria.com/wp-content/uploads/2026/09/RESOLUCAO-CGSN-No-194-DE-25-DE-SETEMBRO-DE-2026.pdf
+  - https://fenacon.org.br/wp-content/uploads/2026/09/Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-DOU-Imprensa-Naciona.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Aberta em 2026-11-07; irretratavel.
+- key: simples.opcao.regularizacao_pendencias_ate
+  value: '2026-10-30'
+  unit: date
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-28
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 186/2026 art. 1 par. 1 II (red. Res. CGSN 194/2026)
+  fonte_url:
+  - https://www.reformatributaria.com/wp-content/uploads/2026/09/RESOLUCAO-CGSN-No-194-DE-25-DE-SETEMBRO-DE-2026.pdf
+  - https://fenacon.org.br/wp-content/uploads/2026/09/Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-DOU-Imprensa-Naciona.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Prazo para regularizar pendencias da opcao.

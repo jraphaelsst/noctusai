@@ -162,3 +162,42 @@ def test_staleness_warning(tmp_path):
     assert w and w["code"] == "parametro_desatualizado" and w["details"]["dias"] == 402
     reg = mk(tmp_path, [row()])
     assert staleness_warning(param("x.a", on=TODAY, registry=reg), TODAY, registry=reg) is None
+
+
+# --- real registry: S12 corrections (2026-11-07) ---------------------------------------------------------------------
+def _real(key, on, scope=None):
+    return param(key, on=on, scope=scope, registry=load_registry())
+
+
+def test_anexo_i_faixa_6_2029_follows_lc214_not_cgsn_print():
+    k = "simples.anexo_i.faixa_6.aliquota_nominal"
+    assert _real(k, date(2028, 6, 1), {"regime": "simples", "anexo": "I"}).value == Decimal("0.189")
+    assert _real(k, date(2029, 6, 1), {"regime": "simples", "anexo": "I"}).value == Decimal("0.19")
+
+
+def test_das_vencimento_mei_row_resolves():
+    assert _real("obrigacoes.das.vencimento_dia", date(2026, 11, 7), {"regime": "mei"}).value == 20
+
+
+@pytest.mark.parametrize("key", [
+    "simples.opcao.janela_anual",
+    "simples.ibs_cbs.regime_regular.janela_semestre_jan",
+    "simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan",
+])
+def test_window_keys_unambiguous_2026_and_2027(key):
+    for on in (date(2026, 10, 1), date(2027, 3, 1)):
+        assert _real(key, on, {"regime": "simples"}).value
+
+
+def test_window_2026_values_follow_res_186_194():
+    sc = {"regime": "simples"}
+    assert _real("simples.opcao.janela_anual", date(2026, 10, 1), sc).value == "09-01..10-15"
+    assert _real("simples.opcao.janela_anual", date(2026, 9, 1), sc).value == "09-01..09-30"
+    assert _real("simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan", date(2026, 10, 1), sc).value == "12-20"
+    assert _real("simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan", date(2027, 3, 1), sc).value == "11-30"
+
+
+def test_fs12_window_shifts_at_2027():
+    sc = {"regime": "simples"}
+    assert _real("simples.fs12.janela", date(2026, 12, 31), sc).value == "12_meses_anteriores_ao_PA"
+    assert _real("simples.fs12.janela", date(2027, 1, 1), sc).value == "12_meses_antecedentes_ao_mes_anterior_ao_PA"

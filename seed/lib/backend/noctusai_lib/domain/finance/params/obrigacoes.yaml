@@ -18,8 +18,8 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: 'Dia 20 do mes seguinte ao PA; sem expediente bancario no dia 20 => prorroga para o 1o dia util seguinte (P&R 6.8). Texto do art. 40
-    nao lido diretamente (normas.receita nao renderiza). Aplicacao ao DAS-MEI: provavel mas OPEN (nao lido em fonte MEI).'
+  notas: 'Dia 20 do mes seguinte ao PA; sem expediente bancario no dia 20 => prorroga para o 1o dia util seguinte (P&R 6.8). Texto do
+    art. 40 nao lido diretamente (normas.receita nao renderiza). DAS-MEI: ver a linha de regime mei desta chave.'
 - key: obrigacoes.pgdas_d.prazo_dia
   value: '20'
   unit: dia_do_mes
@@ -56,8 +56,8 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: 2027-01-31
-  notas: Defis ate 31/03 do ano seguinte (P&R 6.10). Que o art. 72 e o da Defis e inferencia (Res. 183/2025 o reescreveu sobre Defis), nao lido.
-    Inatividade nao dispensa.
+  notas: Defis ate 31/03 do ano seguinte (P&R 6.10). Art. 72 e o da Defis, lido via Res. CGSN 140 art. 72 par. 1 (espelho). Inatividade
+    nao dispensa.
 - key: obrigacoes.pgdas_d.informacoes_socioeconomicas.janela
   value: 01-01..03-31
   unit: text
@@ -74,9 +74,9 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: 2027-01-31
-  notas: 'Substitui a Defis: informacoes socioeconomicas e fiscais do ano anterior prestadas uma unica vez NO PGDAS-D, de janeiro a marco, mesmo
-    sem atividade. Eventos (incorporacao/cisao/extincao/fusao): no PGDAS-D do mes do evento. Se o ano-calendario 2026 ja segue este rito (jan-mar/2027)
-    ou ainda a Defis: OPEN.'
+  notas: 'Substitui a Defis: informacoes socioeconomicas e fiscais do ano anterior prestadas uma unica vez NO PGDAS-D, de janeiro a marco,
+    mesmo sem atividade. Eventos (incorporacao/cisao/extincao/fusao): no PGDAS-D do mes do evento. Ano-calendario 2026: leitura textual:
+    AC 2026 ja segue o art. 38-B (Res. 190 art. 8 XXI revoga art. 72 c/ efeitos 2027); confirmar com CRC.'
 - key: obrigacoes.transicao_2027.receitas_anteriores.prazo_dez25_nov26
   value: '2026-12-20'
   unit: date
@@ -113,3 +113,22 @@ rows:
   verificado_por: accountant
   revalidar_em: null
   notas: Competencia dez/2026.
+- key: obrigacoes.das.vencimento_dia
+  value: '20'
+  unit: dia_do_mes
+  scope:
+    regime:
+    - mei
+  vigencia_de: 2018-08-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 40 caput e par. 3 c/c art. 119 (regulamenta LC 123 art. 21 III)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/simplesnacional/arquivos/manual/manual_pgmei_2018.pdf
+  - https://www.contadores.cnt.br/legislacoes/resolucao-cgsn%20no%20140-%20de%2022-de-maio-de-2018.html
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: 2027-01-31
+  notas: Sem expediente bancario no dia 20 => 1o dia util seguinte. Nao ha artigo especifico do MEI (art. 119 aplica as regras do Simples
+    subsidiariamente); art. 40 lido no espelho pre-2026 e nao alterado pela Res. 190; nao e o DAE do MEI com empregado (Res. 164/2022,
+    174/2023).
