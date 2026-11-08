@@ -2715,6 +2715,17 @@
     "note": "Critical, no allowlist; storage exposure is not covered by route tiers."
    }
   },
+  "keeper:check-storage-service-only-policy": {
+   "mechanism": "seed/lib/backend/noctusai_lib/domain/sql_templates.py",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "standard": "Keeper: a service-only organ bucket (finance-attachments) must end its migration chain with no storage.objects policy TO authenticated/anon/PUBLIC (final-state replay per chain). Leg D of --check-storage-bucket-public; shadow/warn first.",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": null,
+   "source": "KB § PATTERNS/security/access-tiers.md (service-only tier: no browser grant) + Supabase Storage access control (storage.objects RLS policies grant authenticated/anon API access) -- finance-attachments incident 2026-11-07",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson (same --check-storage-bucket-public invocation)"
+  },
   "keeper:check-table-has-rls": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3164,6 +3175,18 @@
    "branch": "feat/keeper-local-pipeline-board",
    "gates": [
     "keeper:check-local-pipeline-board"
+   ]
+  },
+  {
+   "id": "D23",
+   "decision": "A service-only organ's private bucket carries no storage.objects policy for authenticated/anon/PUBLIC; the API signs every access with the service role",
+   "home": "KB § PATTERNS/security/access-tiers.md",
+   "construction": "seed/lib/backend/noctusai_lib/domain/sql_templates.py (private_org_bucket_sql(service_only=True), used by the finance organ _bucket); per-host *_finance_service_only.sql drops the browser policies",
+   "gate": "keeper:check-storage-service-only-policy",
+   "telemetry": "gate events (cli wrapper, guard-events) via --check-storage-bucket-public",
+   "branch": "feat/finance-storage-service-only",
+   "gates": [
+    "keeper:check-storage-service-only-policy"
    ]
   }
  ]
