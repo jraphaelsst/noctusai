@@ -22,6 +22,45 @@ class TestGetSettings:
         assert "hidden-product" not in {p["slug"] for p in body["data"]["products"]}
 
 
+class TestGetCatalog:
+    _ROWS = [
+        {"slug": "crm", "nome": "CRM", "descricao_publica": "Funil de vendas.", "icone": "Users",
+         "destaque_no_site": 1, "ativo": True, "deploy_scope": "live", "exibir_no_site": True,
+         "descricao": "INTERNAL", "url_base": "http://internal:9000", "port": 9000},
+        {"slug": "wip", "nome": "WIP", "descricao_publica": None, "icone": None,
+         "destaque_no_site": None, "ativo": True, "deploy_scope": "dev", "exibir_no_site": True},
+        {"slug": "later", "nome": "Later", "descricao_publica": "Em espera.", "icone": None,
+         "destaque_no_site": None, "ativo": False, "deploy_scope": "live", "exibir_no_site": True},
+    ]
+
+    def _seed(self, unauth_client):
+        from app.services import website_catalog_service
+        website_catalog_service.invalidate_cache()
+        unauth_client.mock_supabase.set_table_data("products", self._ROWS)
+
+    def test_public_without_auth_returns_bare_array_of_catalog_shape(self, unauth_client):
+        self._seed(unauth_client)
+        resp = unauth_client.get("/api/website/catalog")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert isinstance(body, list)
+        by_slug = {p["slug"]: p for p in body}
+        assert by_slug["crm"]["status"] == "disponivel"
+        assert by_slug["wip"]["status"] == "em_breve"
+        assert by_slug["later"]["status"] == "lista_de_espera"
+        assert by_slug["crm"]["destaque_no_site"] == 1
+
+    def test_only_the_public_fields_leave_the_server(self, unauth_client):
+        self._seed(unauth_client)
+        body = unauth_client.get("/api/website/catalog").json()
+        allowed = {"slug", "nome", "descricao_publica", "icone", "destaque_no_site", "status"}
+        assert body
+        for item in body:
+            assert set(item) == allowed
+        raw = unauth_client.get("/api/website/catalog").text
+        assert "INTERNAL" not in raw and "9000" not in raw and "deploy_scope" not in raw
+
+
 class TestGetPlans:
     def test_only_active_plans_ordered_by_price(self, unauth_client):
         mock_sb = unauth_client.mock_supabase

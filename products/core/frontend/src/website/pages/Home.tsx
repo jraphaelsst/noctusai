@@ -1,207 +1,172 @@
+import { useState } from "react";
+import { CtaBand, FeatureGrid, Hero, ProductCatalogGrid, Steps, type LeadInterest } from "@noctusai/lib/marketing";
 import { useL10n, useLocale, useT } from "../lib/i18n";
 import { useWebsiteSettings } from "../lib/settings";
-import { whatsappUrl } from "../lib/whatsapp";
-import { pathFor } from "../lib/routes";
-import { PRODUCTS } from "../content/products";
-import { CtaPair, type CtaAction } from "../components/CtaPair";
-import { AudienceCard } from "../components/AudienceCard";
-import { ProductChapter } from "../components/ProductChapter";
-import { ArchitectureDiagram } from "../components/ArchitectureDiagram";
-import { FaqAccordion } from "../components/FaqAccordion";
+import { useCatalog } from "../lib/catalog";
+import { toHeroChips, toOrganProducts } from "../lib/catalogView";
+import { pathFor, EXTERNAL } from "../lib/routes";
 import { PricingSection } from "../components/PricingSection";
-import { LeadForm } from "../components/LeadForm";
-import { HeroScene, type HeroModule } from "../hero3d/HeroScene";
+import { SiteFaq } from "../components/SiteFaq";
+import { SiteLeadForm } from "../components/SiteLeadForm";
 import { MarkedSection } from "../lib/markers";
+import { customBuildSteps } from "../content/customBuild";
 
-/** Home (07 §Home — 11 switchable sections + hero/header/footer/closing). */
+/** Home (07 §Home). Sections are the seed landing organs; the products section is the live catalog. */
 export default function Home() {
   const t = useT();
   const l10n = useL10n();
   const locale = useLocale();
+  const en = locale === "en";
   const settings = useWebsiteSettings();
+  const { products, isLoading, isRefreshing, isError, refetch } = useCatalog();
+  const [interest, setInterest] = useState<LeadInterest | null>(null);
 
-  const visibleProducts = settings.products
-    .filter((p) => p.visible && PRODUCTS[p.slug])
-    .sort((a, b) => a.order - b.order);
+  const rows = products ?? [];
+  const signup = settings.signup_enabled
+    ? { label: t("cta.signup"), href: EXTERNAL.signup }
+    : { label: t("cta.waitlist"), href: pathFor("waitlist", locale) };
 
-  const heroModules: HeroModule[] = visibleProducts.map((p) => ({
-    slug: p.slug,
-    label: PRODUCTS[p.slug]?.name ?? p.slug,
-    href: pathFor(`product-${p.slug}`, locale),
-  }));
-
-  const wa = whatsappUrl(settings, locale);
-  const heroActions: CtaAction[] = [];
-  if (wa) heroActions.push({ label: t("cta.whatsapp"), href: wa, primary: true, external: true, eventName: "whatsapp_click", eventProps: { section: "hero" } });
-  heroActions.push(
-    settings.signup_enabled
-      ? { label: t("cta.signup"), href: "/login?mode=signup", primary: !wa, eventName: "signup_start" }
-      : { label: t("cta.waitlist"), href: pathFor("waitlist", locale), primary: !wa },
-  );
-
-  const closingWa = wa;
+  const verifiedTrustItems = settings.trust_items.filter((item) => item.verified_at);
 
   return (
     <>
-      <section className="nx-hero nx-band-inverse">
-        <HeroScene modules={heroModules} />
-        <div className="nx-hero-scrim" aria-hidden="true" />
-        <div className="nx-container nx-hero-content">
-          <span className="nx-eyebrow">NOCTUSAI</span>
-          <h1 className="nx-display">
-            {locale === "en" ? (
-              <>
-                AI that works for your <span className="nx-accent-word">business</span> — ready-made or custom-built.
-              </>
-            ) : (
-              <>
-                IA que trabalha pela sua <span className="nx-accent-word">empresa</span> — pronta ou sob medida.
-              </>
-            )}
-          </h1>
-          <p className="nx-subhead">
-            {locale === "en"
-              ? "WhatsApp, email and social channels automated with AI — and your agency's own operating system, ready-made or custom-built."
-              : "WhatsApp, e-mail e redes sociais automatizados com IA — e o sistema operacional da sua agência, pronto ou sob medida."}
-          </p>
-          <CtaPair actions={heroActions} />
-          {heroModules.length > 0 && (
-            <ul className="nx-hero-modules">
-              {heroModules.map((m) => (
-                <li key={m.slug}>
-                  <a href={m.href}>{m.label}</a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        {settings.sections.hero_update_card && (
-          <div className="nx-hero-update-card">
-            {locale === "en" ? "Latest update" : "Última novidade"}
-          </div>
-        )}
-      </section>
+      <Hero
+        eyebrow="NOCTUSAI"
+        title={en ? "AI that works for your business," : "IA que trabalha pela sua empresa,"}
+        titleEmphasis={en ? "ready-made or custom-built." : "pronta ou sob medida."}
+        lede={
+          en
+            ? "Ready-made products that answer WhatsApp leads and organise sales, AI agents you switch on and off, and projects built for your operation."
+            : "Produtos prontos para atender leads no WhatsApp e organizar as vendas, agentes de IA que você liga e desliga quando quiser, e projetos feitos para a sua operação."
+        }
+        actions={[
+          { label: signup.label, href: signup.href, variant: "primary" },
+          { label: en ? "See the products" : "Ver os produtos", href: "#produtos", variant: "outline" },
+        ]}
+        chips={toHeroChips(rows, locale)}
+        chipsLabel={en ? "Available products" : "Produtos disponíveis"}
+      />
 
       {settings.sections.audiences && (
         <MarkedSection sectionKey="audiences">
-          <section className="nx-section" id="audiencias">
-            <div className="nx-container">
-              <span className="nx-eyebrow">{locale === "en" ? "WHO IT'S FOR" : "PARA QUEM É"}</span>
-              <h2>{locale === "en" ? "Is this for you?" : "É para você?"}</h2>
-              <div className="nx-audience-grid">
-                <AudienceCard
-                  title={locale === "en" ? "Small businesses" : "Pequenas empresas"}
-                  benefit={locale === "en" ? "Ready-made AI products for your day to day." : "Produtos prontos com IA para o seu dia a dia."}
-                  ctaLabel={t("cta.seeProduct")}
-                  ctaHref={pathFor("products-index", locale)}
-                />
-                <AudienceCard
-                  title={locale === "en" ? "Enterprises" : "Empresas"}
-                  benefit={locale === "en" ? "A custom AI project, built for your architecture." : "Um projeto de IA sob medida para a sua operação."}
-                  ctaLabel={t("nav.solutions")}
-                  ctaHref={pathFor("solutions", locale)}
-                />
-                <AudienceCard
-                  title={locale === "en" ? "Developers" : "Desenvolvedores"}
-                  benefit={locale === "en" ? "APIs and integrations built the seed-first way." : "APIs e integrações construídas seed-first."}
-                  ctaLabel={t("cta.signup")}
-                  ctaHref="/login?mode=signup"
-                />
-                <AudienceCard
-                  title={locale === "en" ? "Freelancers & solo founders" : "Autônomos & solo founders"}
-                  benefit={locale === "en" ? "Start free, grow when you need to." : "Comece grátis, cresça quando precisar."}
-                  ctaLabel={t("cta.seePricing")}
-                  ctaHref={pathFor("pricing", locale)}
-                />
-              </div>
-            </div>
-          </section>
+          <FeatureGrid
+            id="audiencias"
+            eyebrow={en ? "Who it's for" : "Para quem é"}
+            title={en ? "Choose where to start" : "Escolha por onde começar"}
+            description={
+              en
+                ? "A ready-made product solves the day to day. A custom project solves what is only yours."
+                : "Um produto pronto resolve o dia a dia. Um projeto sob medida resolve o que é só seu."
+            }
+            items={[
+              {
+                title: en ? "Small and mid-size businesses" : "Pequenas e médias empresas",
+                description: en ? "Ready-made AI products to sell and serve better, no IT project." : "Produtos prontos com IA para vender e atender melhor, sem projeto de TI.",
+                icon: "Store",
+                cta: { label: en ? "See the products" : "Ver os produtos", href: "#produtos" },
+              },
+              {
+                title: en ? "Companies with their own process" : "Empresas com processo próprio",
+                description: en ? "An AI project designed for your operation and your data." : "Um projeto de IA desenhado para a sua operação e os seus dados.",
+                icon: "Building2",
+                cta: { label: en ? "See how it works" : "Ver como funciona", href: "#sob-medida" },
+              },
+              {
+                title: en ? "Freelancers" : "Autônomos",
+                description: en ? "Start free and change plan when the business grows." : "Comece grátis e mude de plano quando o negócio crescer.",
+                icon: "User",
+                cta: { label: en ? "See pricing" : "Ver os preços", href: pathFor("pricing", locale) },
+              },
+            ]}
+          />
         </MarkedSection>
       )}
 
-      {settings.sections.products && visibleProducts.length > 0 && (
+      {settings.sections.products && (
         <MarkedSection sectionKey="products">
-          <section className="nx-section" id="produtos">
-            <div className="nx-container">
-              <span className="nx-eyebrow">{locale === "en" ? "PRODUCTS" : "PRODUTOS"}</span>
-              <h2>{locale === "en" ? "Live products, in DOM." : "Produtos ao vivo, em DOM."}</h2>
-              {visibleProducts.map((p) => {
-                const copy = PRODUCTS[p.slug];
-                if (!copy) return null;
-                return (
-                  <ProductChapter
-                    key={p.slug}
-                    copy={copy}
-                    state={p.state}
-                    productHref={pathFor(`product-${p.slug}`, locale)}
-                    whatsappHref={whatsappUrl(settings, locale, locale === "en" ? `Hi! I'd like to know more about ${copy.name}.` : `Olá! Quero saber mais sobre o ${copy.name}.`)}
-                    tagline={p.tagline}
-                  />
-                );
-              })}
-            </div>
-          </section>
+          <ProductCatalogGrid
+            id="produtos"
+            eyebrow={en ? "Products" : "Produtos"}
+            title={en ? "NoctusAI products" : "Produtos NoctusAI"}
+            description={
+              en
+                ? "The available ones you use today with the same account. The others are being built or paused: join the list and we tell you when they open."
+                : "Os disponíveis você usa hoje com a mesma conta. Os outros estão em construção ou em pausa: entre na lista e avisamos quando abrirem."
+            }
+            products={toOrganProducts(rows, locale)}
+            isLoading={isLoading}
+            isError={isError}
+            onRetry={refetch}
+            onWaitlist={(slug) => {
+              const p = rows.find((r) => r.slug === slug);
+              if (p) setInterest({ slug: p.slug, nome: p.nome });
+            }}
+            emptyAction={{ label: en ? "Talk to us" : "Falar com a gente", href: pathFor("contact", locale) }}
+          />
+          {isRefreshing && <p className="sr-only" role="status">{en ? "Updating the product list" : "Atualizando a lista de produtos"}</p>}
         </MarkedSection>
       )}
 
       {settings.sections.custom_builds && (
         <MarkedSection sectionKey="custom_builds">
-          <section className="nx-section nx-band-inverse" id="sob-medida">
+          <Steps
+            id="sob-medida"
+            eyebrow={en ? "Custom AI" : "IA sob medida"}
+            title={en ? "A project built for your business" : "Um projeto construído para o seu negócio"}
+            description={
+              en
+                ? "You see and use a version with your data before we decide what to build."
+                : "Você vê e usa uma versão com os seus dados antes de decidirmos o que construir."
+            }
+            steps={customBuildSteps(en)}
+          />
+        </MarkedSection>
+      )}
+
+      <SiteLeadForm
+        source="brief"
+        id="contato-form"
+        eyebrow={en ? "Talk to us" : "Fale com a gente"}
+        title={en ? "Tell us what you need" : "Conte o que você precisa"}
+        description={
+          en
+            ? "Every message reaches the NoctusAI team, and a person answers on WhatsApp during business hours."
+            : "Cada mensagem chega à equipe da NoctusAI, e uma pessoa responde pelo WhatsApp em horário comercial."
+        }
+        heading={en ? "Tell us about your project" : "Conte sobre o seu projeto"}
+        interest={interest}
+        onInterestClear={() => setInterest(null)}
+      />
+
+      {settings.sections.trust && verifiedTrustItems.length > 0 && (
+        // Empty-state guard: a heading with nothing under it reads as unfinished, so the section
+        // renders only once at least one claim is human-verified (P7: nothing unverified).
+        <MarkedSection sectionKey="trust">
+          <section className="nx-section" id="confianca">
             <div className="nx-container">
-              <span className="nx-eyebrow">{locale === "en" ? "CUSTOM AI" : "IA SOB MEDIDA"}</span>
-              <h2>{locale === "en" ? "A project built for your business." : "Um projeto construído para o seu negócio."}</h2>
-              <ol className="nx-mono">
-                <li>01 {locale === "en" ? "Diagnosis" : "Diagnóstico"}</li>
-                <li>02 {locale === "en" ? "Prototype" : "Protótipo"}</li>
-                <li>03 {locale === "en" ? "Production" : "Produção"}</li>
-                <li>04 {locale === "en" ? "Evolution" : "Evolução"}</li>
-              </ol>
-              <ArchitectureDiagram locale={locale} />
-              <h3 style={{ marginTop: 40 }}>{locale === "en" ? "Tell us about your project" : "Conte sobre o seu projeto"}</h3>
-              <LeadForm variant="brief" />
+              <span className="nx-eyebrow">{en ? "Why NoctusAI" : "Por que a NoctusAI"}</span>
+              <h2>{en ? "What's verifiably true today" : "O que é verdade hoje"}</h2>
+              <div className="nx-trust-grid">
+                {verifiedTrustItems.map((item) => (
+                  <div className="nx-trust-item" key={item.key}>
+                    <span>{l10n(item.text)}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
         </MarkedSection>
       )}
 
-      {(() => {
-        const verifiedTrustItems = settings.trust_items.filter((item) => item.verified_at);
-        // Empty-state guard (2026-09-23 full-page review): a heading with
-        // zero items under it reads as a broken/unfinished section, not an
-        // honest one — the honesty requirement (P7: nothing unverified) is
-        // served just as well by not rendering the section at all until at
-        // least one claim is verified, same pattern as `social_proof`.
-        if (!settings.sections.trust || verifiedTrustItems.length === 0) return null;
-        return (
-          <MarkedSection sectionKey="trust">
-            <section className="nx-section" id="confianca">
-              <div className="nx-container">
-                <span className="nx-eyebrow">{locale === "en" ? "WHY NOCTUSAI" : "POR QUE A NOCTUSAI"}</span>
-                <h2>{locale === "en" ? "What's verifiably true today" : "O que é verdade hoje"}</h2>
-                <div className="nx-trust-grid">
-                  {verifiedTrustItems.map((item) => (
-                    <div className="nx-trust-item" key={item.key}>
-                      <span>{l10n(item.text)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-          </MarkedSection>
-        );
-      })()}
-
       {settings.sections.social_proof && settings.social_proof_items.length > 0 && (
         <MarkedSection sectionKey="social_proof">
           <section className="nx-section" id="prova-social">
             <div className="nx-container">
-              <span className="nx-eyebrow">{locale === "en" ? "TRUSTED BY" : "QUEM CONFIA"}</span>
-              <h2>{locale === "en" ? "Trusted by" : "Quem confia"}</h2>
+              <span className="nx-eyebrow">{en ? "Trusted by" : "Quem confia"}</span>
+              <h2>{en ? "Trusted by" : "Quem confia"}</h2>
               <div className="nx-trust-grid">
                 {settings.social_proof_items.map((item, i) => (
-                  <div key={i}>
-                    {item.text ? l10n(item.text) : item.name}
-                  </div>
+                  <div key={i}>{item.text ? l10n(item.text) : item.name}</div>
                 ))}
               </div>
             </div>
@@ -213,38 +178,19 @@ export default function Home() {
 
       {settings.sections.faq && settings.faq.length > 0 && (
         <MarkedSection sectionKey="faq">
-          <section className="nx-section" id="faq">
-            <div className="nx-container">
-              <h2>{t("faq.title")}</h2>
-              <FaqAccordion items={settings.faq} />
-            </div>
-          </section>
+          <SiteFaq title={t("faq.title")} items={settings.faq} />
         </MarkedSection>
       )}
 
-      <section className="nx-section nx-band-inverse" id="cta-final">
-        <div className="nx-container">
-          <h2 className="nx-display" style={{ fontSize: "clamp(32px, 5vw, 64px)" }}>
-            {locale === "en" ? "Ready to work with AI?" : "Pronto para trabalhar com IA?"}
-          </h2>
-          <CtaPair
-            actions={
-              closingWa
-                ? [
-                    { label: t("cta.whatsapp"), href: closingWa, primary: true, external: true, eventName: "whatsapp_click", eventProps: { section: "closing" } },
-                    settings.signup_enabled
-                      ? { label: t("cta.signup"), href: "/login?mode=signup" }
-                      : { label: t("cta.waitlist"), href: pathFor("waitlist", locale) },
-                  ]
-                : [
-                    settings.signup_enabled
-                      ? { label: t("cta.signup"), href: "/login?mode=signup", primary: true }
-                      : { label: t("cta.waitlist"), href: pathFor("waitlist", locale), primary: true },
-                  ]
-            }
-          />
-        </div>
-      </section>
+      <CtaBand
+        id="cta-final"
+        title={en ? "Start with a ready-made product or tell us your case." : "Comece por um produto pronto ou conte o seu caso."}
+        description={en ? "One account works for every NoctusAI product." : "A conta é a mesma para todos os produtos NoctusAI."}
+        actions={[
+          { label: signup.label, href: signup.href, variant: "primary" },
+          { label: en ? "Tell us my case" : "Contar o meu caso", href: "#contato-form", variant: "outline" },
+        ]}
+      />
     </>
   );
 }

@@ -10,7 +10,7 @@
  * have to either omit `price` (invalid per schema.org) or fabricate one
  * (P7 violation). `NOC-REMEDIATE[content]`: add `Offer` JSON-LD once plans
  * can be resolved at build time (e.g. a build-time snapshot endpoint).
- * `FAQPage` is emitted by `FaqAccordion` itself (inline, in the body — valid
+ * `FAQPage` is emitted by `SiteFaq` itself (inline, in the body — valid
  * per schema.org, doesn't need to live in `<head>`).
  */
 import { PRODUCTS, PRODUCT_ORDER } from "../content/products";

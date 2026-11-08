@@ -28,7 +28,7 @@ from app.config import settings
 from app.database import get_admin_client
 from app.rate_limit import limiter
 from app.schemas.website import WebsiteEventCreate, WebsiteLeadCreate
-from app.services import website_leads_service, website_settings_service
+from app.services import website_catalog_service, website_leads_service, website_settings_service
 from app.services.website_lead_fanout import run_fanout
 from noctusai_lib.integrations.turnstile import make_turnstile_verifier
 from noctusai_lib.api.access_tiers import access_tier
@@ -77,6 +77,14 @@ def _whatsapp_url(public_settings: dict, locale: str) -> Optional[str]:
 def get_public_settings(request: Request):
     version, data = website_settings_service.get_current()
     return {"data": website_settings_service.public_subset(data), "version": version}
+
+
+@router.get("/catalog")
+@access_tier('public', reason='public product catalog', category='landing')
+@limiter.limit("120/minute")
+def get_public_catalog(request: Request):
+    """Bare JSON array of `CatalogProduct` (the service caches 60s; the admin router invalidates)."""
+    return [p.model_dump() for p in website_catalog_service.list_public()]
 
 
 @router.get("/plans")

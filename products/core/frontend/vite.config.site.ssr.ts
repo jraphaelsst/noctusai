@@ -10,8 +10,14 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { fileURLToPath } from "url";
+import { resolveFrameworkDeps } from "../../../seed/framework/frontend/vite.config.factory";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// The site build consumes the seed landing organs (`@noctusai/lib/marketing`) and the seed
+// tokens (`@noctusai/seed/index.css`), so it resolves them exactly like `createViteConfig`
+// does for the app build (same aliases, same framework-dep dedupe => ONE React).
+const seedLib = path.resolve(__dirname, "../../../seed/lib/frontend/src");
+const seedFramework = path.resolve(__dirname, "../../../seed/framework/frontend/src");
 
 export default defineConfig({
   plugins: [react()],
@@ -28,6 +34,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@noctusai/lib": seedLib,
+      "@noctusai/seed": seedFramework,
     },
+    dedupe: resolveFrameworkDeps(seedLib),
   },
 });

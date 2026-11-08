@@ -28,10 +28,14 @@ export interface HeadOptions {
   assetTags: string; // <script>/<link> tags from the Vite manifest
   ogImagePath: string; // e.g. "/_site/og/home-pt.png"
   settingsJson: string; // "__NX_SETTINGS__" placeholder or the real defaults JSON for local previews
+  /** Build-time catalog snapshot rows (what the body was rendered from), or null when the build had none. */
+  catalog?: unknown[] | null;
 }
 
 export function buildHead(opts: HeadOptions): string {
-  const { route, locale, path, meta, assetTags, ogImagePath, settingsJson } = opts;
+  const { route, locale, path, meta, assetTags, ogImagePath, settingsJson, catalog = null } = opts;
+  // `<` escaped like the settings payload: a stored description can never close the <script>.
+  const catalogJson = JSON.stringify(catalog).replace(/</g, "\\u003c");
   const htmlLang = locale === "en" ? "en" : "pt-BR";
   const canonical = `${ORIGIN}${path}`;
   const ogUrl = `${ORIGIN}${ogImagePath}`;
@@ -64,10 +68,9 @@ export function buildHead(opts: HeadOptions): string {
     <meta name="twitter:title" content="${escapeAttr(meta.title)}" />
     <meta name="twitter:description" content="${escapeAttr(meta.description)}" />
     <meta name="twitter:image" content="${ogUrl}" />
-    <link rel="preload" as="font" type="font/woff2" href="/_site/fonts/inter-latin-400.woff2" crossorigin="anonymous" />
-    <link rel="preload" as="font" type="font/woff2" href="/_site/fonts/jetbrains-mono-latin-400.woff2" crossorigin="anonymous" />
     <script>${THEME_INLINE_SCRIPT}</script>
     <script id="nx-settings" type="application/json">${settingsJson}</script>
+    <script id="nx-catalog" type="application/json">${catalogJson}</script>
     ${jsonLdScripts}
     ${assetTags}
   </head>`;

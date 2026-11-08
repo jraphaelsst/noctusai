@@ -3,9 +3,9 @@
  * from `vite.config.ts` (the logged app): different `root` input, different
  * `base` (`/_site/`), different `outDir` (`dist/_site`). Does NOT use
  * `createViteConfig()` — that factory is app-shaped (dev-server port
- * resolution, seed-organ framework-dep dedupe) and the website consumes
- * neither `@noctusai/lib` organs nor `@noctusai/seed` (contract D3: i18n/
- * consent/analytics are website-local).
+ * resolution, schema/slug defines). It DOES consume the `@noctusai/lib/marketing` landing organs and
+ * the seed design tokens (Tailwind via the product's postcss config); i18n/consent/
+ * analytics stay website-local (contract D3).
  *
  * `build.manifest: true` emits `.vite/manifest.json`, which
  * `scripts/prerender-site.mjs` reads to know the real hashed asset URLs for
@@ -18,8 +18,14 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { fileURLToPath } from "url";
+import { resolveFrameworkDeps } from "../../../seed/framework/frontend/vite.config.factory";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// The site build consumes the seed landing organs (`@noctusai/lib/marketing`) and the seed
+// tokens (`@noctusai/seed/index.css`), so it resolves them exactly like `createViteConfig`
+// does for the app build (same aliases, same framework-dep dedupe => ONE React).
+const seedLib = path.resolve(__dirname, "../../../seed/lib/frontend/src");
+const seedFramework = path.resolve(__dirname, "../../../seed/framework/frontend/src");
 
 export default defineConfig({
   base: "/_site/",
@@ -38,6 +44,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@noctusai/lib": seedLib,
+      "@noctusai/seed": seedFramework,
     },
+    dedupe: resolveFrameworkDeps(seedLib),
   },
 });

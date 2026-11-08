@@ -12,185 +12,82 @@
  * juggling a shared Tailwind `content` glob across two different apps.
  */
 
-@font-face {
-  font-family: "NX Sans";
-  src: url("/_site/fonts/inter-latin-400.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "NX Sans";
-  src: url("/_site/fonts/inter-latin-600.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "NX Sans";
-  src: url("/_site/fonts/inter-latin-700.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "NX Mono";
-  src: url("/_site/fonts/jetbrains-mono-latin-400.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
+/*
+ * Token bridge. The seed design tokens (`@noctusai/seed/index.css`: `--background`, `--foreground`,
+ * `--muted-foreground`, `--border`, … in the seed gray palette, `.dark` for dark mode) are the
+ * single source of colour for the whole site: the landing organs read them through Tailwind, and
+ * the legacy `nx-*` rules below read them through the semantic aliases here. No web font — the
+ * app's system stack (D7 "one visual family").
+ *
+ * Contrast fixes approved with the apex mockup (D8) are scoped to the site only:
+ * light `--muted-foreground` 42%, dark `--primary` 46%, light `--destructive` 45%.
+ */
 [data-surface="site"] {
-  /* Primitive — night ramp (0 lightest → 12 darkest) */
-  --nx-night-0: #f7f8fc;
-  --nx-night-1: #eceef6;
-  --nx-night-2: #d7dae8;
-  --nx-night-3: #b6bccf;
-  --nx-night-4: #8b93a8;
-  --nx-night-5: #5c6478;
-  --nx-night-6: #3c4256;
-  --nx-night-7: #262b3c;
-  --nx-night-8: #191d2b;
-  --nx-night-9: #12151f;
-  --nx-night-10: #0c0e16;
-  --nx-night-11: #07080f;
-  --nx-night-12: #05060b;
-  /* Primitive — accent (violet→cyan gradient family) */
-  --nx-accent-3: #c4b5fd;
-  --nx-accent-5: #a78bfa;
-  --nx-accent-7: #8b5cf6;
-  --nx-accent-9: #6d28d9;
-  --nx-cyan-6: #22d3ee;
-  /* Primitive — action (single reserved CTA colour) */
-  --nx-action-6: #22d3ee;
-  --nx-action-7: #06b6d4;
+  --muted-foreground: 0 0% 42%;
+  --destructive: 0 62% 45%;
 
-  /* Semantic — light theme (default until data-theme resolves) */
-  --bg: var(--nx-night-0);
-  --bg-elevated: #ffffff;
-  --bg-inverse: var(--nx-night-11);
-  --fg: var(--nx-night-11);
-  --fg-muted: var(--nx-night-6);
-  --fg-subtle: var(--nx-night-5);
-  --fg-inverse: var(--nx-night-0);
-  --border: var(--nx-night-2);
-  --border-strong: var(--nx-night-4);
-  --hairline: rgba(12, 14, 22, 0.08);
-  --accent: var(--nx-accent-7);
-  --accent-fg: #ffffff;
-  --accent-gradient: linear-gradient(90deg, var(--nx-accent-7), var(--nx-cyan-6));
-  --action: var(--nx-action-7);
-  --action-fg: #04252b;
-  --action-hover: var(--nx-action-6);
-  --focus-ring: var(--nx-action-6);
-  --scene-bg: var(--nx-night-1);
-  --scene-accent: var(--nx-accent-7);
-  --scene-fog: rgba(255, 255, 255, 0.6);
+  --bg: hsl(var(--background));
+  --bg-elevated: hsl(var(--card));
+  --bg-inverse: hsl(var(--foreground));
+  --fg: hsl(var(--foreground));
+  --fg-muted: hsl(var(--muted-foreground));
+  --fg-subtle: hsl(var(--muted-foreground));
+  --fg-inverse: hsl(var(--background));
+  --border: hsl(var(--border));
+  --border-strong: hsl(var(--input));
+  --hairline: hsl(var(--border));
+  --accent: hsl(var(--primary));
+  --accent-fg: hsl(var(--primary-foreground));
+  --action: hsl(var(--primary));
+  --action-fg: hsl(var(--primary-foreground));
+  --action-hover: hsl(var(--primary) / 0.9);
+  --focus-ring: hsl(var(--ring));
 
-  font-family: "NX Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color: var(--fg);
   background: var(--bg);
 }
 
 [data-surface="site"][data-theme="dark"],
 html[data-theme="dark"] [data-surface="site"] {
-  --bg: var(--nx-night-11);
-  --bg-elevated: var(--nx-night-9);
-  --bg-inverse: var(--nx-night-11);
-  --fg: var(--nx-night-0);
-  --fg-muted: var(--nx-night-3);
-  --fg-subtle: var(--nx-night-4);
-  /* Stays LIGHT in both themes: `--fg-inverse` is the text colour for the
-     always-dark band (`--bg-inverse`, also constant across themes), never
-     the ambient dark-theme foreground. Was mistakenly set to night-11
-     (near-black) here, producing 1.09:1 contrast on the band's form
-     fields (Lighthouse color-contrast, 2026-09-23). */
-  --fg-inverse: var(--nx-night-0);
-  --border: var(--nx-night-7);
-  --border-strong: var(--nx-night-5);
-  --hairline: rgba(247, 248, 252, 0.08);
-  --accent: var(--nx-accent-5);
-  --accent-fg: #0b0620;
-  --action: var(--nx-action-6);
-  --action-fg: #04252b;
-  --action-hover: var(--nx-action-7);
-  --scene-bg: var(--nx-night-11);
-  --scene-accent: var(--nx-accent-5);
-  --scene-fog: rgba(5, 6, 11, 0.7);
+  --primary: 220 10% 46%;
 }
 
-/* Always-dark band (06 §Theming): hero + one AI band read bg-inverse in
-   BOTH themes — a deliberate dark panel, not a mistake. */
-[data-surface="site"] .nx-band-inverse {
-  background: var(--bg-inverse);
-  color: var(--fg-inverse);
-  --fg: var(--fg-inverse);
-  --fg-muted: var(--nx-night-3);
-  --border: var(--nx-night-7);
-  --hairline: rgba(247, 248, 252, 0.08);
-  /* Form fields/cards inside the band (`.nx-field input`, `.nx-panel`) read
-     `--bg-elevated`; force it dark here too, else a LIGHT ambient theme
-     leaves them white-on-dark-band with `--fg-inverse` (light) text on top
-     — light-on-light, unreadable. */
-  --bg-elevated: var(--nx-night-9);
-  /* Same bug, second instance (2026-09-23 review): `--scene-*` was left at
-     the AMBIENT theme's value, and in light theme `--scene-bg` is a near-
-     white ramp step — the hero poster/scene rendered as a washed-out light
-     grey gradient behind white H1/subhead text. The hero is an always-dark
-     band in BOTH themes (06 §Theming), so the scene it frames must ALSO
-     stay dark in both. */
-  --scene-bg: var(--nx-night-11);
-  --scene-accent: var(--nx-accent-5);
-  --scene-fog: rgba(5, 6, 11, 0.7);
-}
-
-/* ---------- Base / reset (SSR-safe: nothing here hides content by
-   default — animation is an enhancement layer, see .nx-enhance) ---------- */
-[data-surface="site"] * { box-sizing: border-box; }
-[data-surface="site"] {
+/* ---------- Base / reset ----------
+   Element rules are `:where()`-wrapped (specificity 0) so the Tailwind utilities of the landing
+   organs always win over them; they only style the legacy `nx-*` pages. */
+:where([data-surface="site"]) * { box-sizing: border-box; }
+:where([data-surface="site"]) {
   min-height: 100vh;
   line-height: 1.6;
 }
-[data-surface="site"] h1,
-[data-surface="site"] h2,
-[data-surface="site"] h3 {
+:where([data-surface="site"]) :is(h1, h2, h3) {
   font-weight: 600;
   letter-spacing: -0.02em;
-  line-height: 1.1;
+  line-height: 1.15;
   margin: 0 0 0.5em 0;
 }
-[data-surface="site"] h1 { font-size: clamp(40px, 5vw, 72px); letter-spacing: -0.025em; }
-[data-surface="site"] .nx-display { font-size: clamp(40px, 5.2vw, 84px); line-height: 1.02; font-weight: 500; letter-spacing: -0.03em; }
-[data-surface="site"] h2 { font-size: clamp(32px, 4vw, 48px); }
-[data-surface="site"] h3 { font-size: clamp(22px, 2.5vw, 28px); }
-[data-surface="site"] p { margin: 0 0 1em 0; color: var(--fg-muted); }
-[data-surface="site"] a { color: inherit; text-decoration: none; }
-[data-surface="site"] .nx-accent-word {
-  background: var(--accent-gradient);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-[data-surface="site"] :focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
+:where([data-surface="site"]) h1 { font-size: clamp(32px, 5vw, 52px); }
+:where([data-surface="site"]) h2 { font-size: clamp(24px, 4vw, 36px); }
+:where([data-surface="site"]) h3 { font-size: 16px; }
+:where([data-surface="site"]) p { margin: 0 0 1em 0; color: var(--fg-muted); }
+:where([data-surface="site"]) a { color: inherit; text-decoration: none; }
+[data-surface="site"] .nx-display { font-size: clamp(32px, 5vw, 52px); line-height: 1.1; font-weight: 600; letter-spacing: -0.02em; }
+[data-surface="site"] .nx-accent-word { color: var(--fg-muted); }
 [data-surface="site"] .nx-mono {
-  font-family: "NX Mono", "SFMono-Regular", Menlo, monospace;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 [data-surface="site"] .nx-eyebrow {
-  font-family: "NX Mono", monospace;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--accent);
+  color: var(--fg-muted);
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
-[data-surface="site"] .nx-eyebrow::before { content: "●"; font-size: 8px; }
 
 /* ---------- Layout ---------- */
 [data-surface="site"] .nx-container {
@@ -221,11 +118,12 @@ html[data-theme="dark"] [data-surface="site"] {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 20px;
-  border-radius: 8px;
+  padding: 0 16px;
+  min-height: 32px;
+  border-radius: calc(var(--radius, 0.5rem) - 2px);
   border: 1px solid var(--border);
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   transition: background-color 200ms, border-color 200ms, transform 150ms;
   background: transparent;
@@ -240,248 +138,6 @@ html[data-theme="dark"] [data-surface="site"] {
 [data-surface="site"] .nx-btn-primary:hover { background: var(--action-hover); }
 [data-surface="site"] .nx-btn-ghost { border-color: transparent; }
 [data-surface="site"] .nx-cta-pair { display: flex; flex-wrap: wrap; gap: 12px; }
-
-/* ---------- Header ---------- */
-[data-surface="site"] .nx-header {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  backdrop-filter: blur(12px);
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  border-bottom: 1px solid var(--hairline);
-}
-[data-surface="site"] .nx-header-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 14px 0;
-}
-[data-surface="site"] .nx-logo { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
-[data-surface="site"] .nx-nav { display: none; align-items: center; gap: 24px; font-size: 14px; font-weight: 500; }
-[data-surface="site"] .nx-nav-right { display: flex; align-items: center; gap: 12px; }
-/* Mobile header overflow fix (2026-09-23 review): below 900px (the SAME
-   breakpoint the full nav already collapses at) the locale switch, the
-   3-way theme switch, and "Entrar" move into the drawer instead of
-   crowding the header row — at 390px the old layout clipped mid-label
-   ("Sistema Claro E…") with no room left for the hamburger. Only the
-   primary CTA + the hamburger stay in the header at every width. */
-[data-surface="site"] .nx-nav-right > .nx-locale-switch,
-[data-surface="site"] .nx-nav-right > .nx-theme-switch,
-[data-surface="site"] .nx-nav-right > .nx-btn-ghost {
-  display: none;
-}
-[data-surface="site"] .nx-theme-toggle-mobile {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 40px;
-  min-height: 40px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--fg);
-  font-size: 16px;
-  cursor: pointer;
-}
-@media (min-width: 768px) {
-  [data-surface="site"] .nx-theme-toggle-mobile { display: none; }
-}
-@media (min-width: 900px) {
-  [data-surface="site"] .nx-nav-right > .nx-locale-switch,
-  [data-surface="site"] .nx-nav-right > .nx-theme-switch,
-  [data-surface="site"] .nx-nav-right > .nx-btn-ghost {
-    display: inline-flex;
-  }
-}
-[data-surface="site"] .nx-mobile-drawer .nx-drawer-utilities {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding-top: 8px;
-  border-top: 1px solid var(--hairline);
-  margin-top: 8px;
-}
-@media (min-width: 900px) {
-  [data-surface="site"] .nx-mobile-drawer { display: none; }
-}
-[data-surface="site"] .nx-nav a,
-[data-surface="site"] .nx-nav .nx-nav-link {
-  color: var(--fg);
-  font: inherit;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px 2px;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-}
-@media (min-width: 900px) {
-  [data-surface="site"] .nx-nav { display: flex; }
-  [data-surface="site"] .nx-nav-mobile-toggle { display: none; }
-}
-[data-surface="site"] .nx-nav-mobile-toggle {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fg);
-  padding: 8px 12px;
-  min-width: 40px;
-  min-height: 40px;
-}
-[data-surface="site"] .nx-mobile-drawer {
-  border-top: 1px solid var(--hairline);
-  padding: 16px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-[data-surface="site"] .nx-mega-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  background: var(--bg-elevated);
-  border-bottom: 1px solid var(--hairline);
-  padding: 24px 0;
-}
-[data-surface="site"] .nx-mega-menu-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-}
-[data-surface="site"] .nx-theme-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-[data-surface="site"] .nx-theme-switch button {
-  border: none;
-  background: transparent;
-  color: var(--fg-muted);
-  padding: 8px 12px;
-  min-height: 24px;
-  font-size: 12px;
-  cursor: pointer;
-}
-[data-surface="site"] .nx-theme-switch button[aria-pressed="true"] { background: var(--border); color: var(--fg); }
-[data-surface="site"] .nx-locale-switch {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-  min-height: 24px;
-  min-width: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg);
-  padding: 6px 10px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-/* ---------- Hero ---------- */
-[data-surface="site"] .nx-hero {
-  position: relative;
-  min-height: 88vh;
-  display: flex;
-  align-items: flex-end;
-  overflow: hidden;
-}
-[data-surface="site"] .nx-hero-poster {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-[data-surface="site"] .nx-hero-scene {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-/* Contrast scrim (P1/06 §3D hero "with a contrast scrim"): sits ABOVE the
-   poster/scene, BELOW the text. Guarantees WCAG AA for the H1/subhead over
-   ANY poster colour in ANY theme — the poster/scene tokens alone (fixed
-   below to force dark `--scene-*` values regardless of ambient theme)
-   already fix the light-theme wash-out, but the scrim is the belt-and-
-   braces fix per the tech-lead's review (2026-09-23): it also visually
-   dims whatever part of the 3D scene happens to sit under the text column,
-   independent of the scene's own node-position bias. */
-[data-surface="site"] .nx-hero-scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  background: linear-gradient(
-    to right,
-    rgba(5, 6, 11, 0.72) 0%,
-    rgba(5, 6, 11, 0.5) 45%,
-    rgba(5, 6, 11, 0.12) 72%,
-    rgba(5, 6, 11, 0) 88%
-  );
-}
-[data-surface="site"] .nx-hero-content {
-  position: relative;
-  z-index: 3;
-  padding: 64px 0 72px;
-  max-width: min(1100px, 90vw);
-}
-[data-surface="site"] .nx-hero h1 { color: var(--fg-inverse); }
-[data-surface="site"] .nx-hero p.nx-subhead { color: var(--nx-night-3); font-size: 18px; max-width: min(680px, 85vw); }
-[data-surface="site"] .nx-hero-update-card {
-  position: absolute;
-  right: 24px;
-  bottom: 24px;
-  z-index: 3;
-  background: color-mix(in srgb, var(--nx-night-9) 80%, transparent);
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
-  padding: 12px 16px;
-  max-width: 260px;
-  color: var(--nx-night-0);
-  font-size: 13px;
-  display: none;
-}
-@media (min-width: 900px) {
-  [data-surface="site"] .nx-hero-update-card { display: block; }
-}
-[data-surface="site"] .nx-hero-modules {
-  list-style: none;
-  margin: 24px 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-[data-surface="site"] .nx-hero-modules a {
-  border: 1px solid var(--nx-night-7);
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 13px;
-  color: var(--nx-night-1);
-}
-[data-surface="site"] .nx-explore-3d {
-  position: absolute;
-  z-index: 3;
-  right: 24px;
-  top: 24px;
-  font-size: 13px;
-}
-[data-surface="site"] .nx-hero-hud-label {
-  z-index: 2;
-}
-
-/* ---------- Audience row ---------- */
-[data-surface="site"] .nx-audience-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 1px;
-  background: var(--hairline);
-  border: 1px solid var(--hairline);
-}
-[data-surface="site"] .nx-audience-card {
-  background: var(--bg);
-  padding: 32px 24px;
-}
-[data-surface="site"] .nx-audience-card h3 { font-size: 18px; }
 
 /* ---------- Product chapters ---------- */
 [data-surface="site"] .nx-chapter {
@@ -503,7 +159,7 @@ html[data-theme="dark"] [data-surface="site"] {
 }
 [data-surface="site"] .nx-panel-header {
   padding: 10px 16px;
-  font-family: "NX Mono", monospace;
+  font-family: ui-monospace, monospace;
   font-size: 12px;
   color: var(--fg-muted);
   border-bottom: 1px solid var(--hairline);
@@ -511,7 +167,7 @@ html[data-theme="dark"] [data-surface="site"] {
   align-items: center;
   gap: 8px;
 }
-[data-surface="site"] .nx-panel-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--nx-night-4); }
+[data-surface="site"] .nx-panel-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-subtle); }
 [data-surface="site"] .nx-panel-row {
   padding: 12px 16px;
   border-bottom: 1px solid var(--hairline);
@@ -524,7 +180,7 @@ html[data-theme="dark"] [data-surface="site"] {
 [data-surface="site"] .nx-badge {
   display: inline-block;
   font-size: 11px;
-  font-family: "NX Mono", monospace;
+  font-family: ui-monospace, monospace;
   padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -554,72 +210,15 @@ html[data-theme="dark"] [data-surface="site"] {
   gap: 12px;
 }
 [data-surface="site"] .nx-price-card.nx-price-featured { border-color: var(--accent); position: relative; }
-[data-surface="site"] .nx-price-card .nx-price-amount { font-family: "NX Mono", monospace; font-size: 32px; }
+[data-surface="site"] .nx-price-card .nx-price-amount { font-family: ui-monospace, monospace; font-size: 32px; }
 [data-surface="site"] .nx-price-anchor {
   position: absolute; top: -12px; left: 24px; background: var(--accent); color: var(--accent-fg);
-  font-size: 11px; padding: 2px 10px; border-radius: 999px; font-family: "NX Mono", monospace;
+  font-size: 11px; padding: 2px 10px; border-radius: 999px; font-family: ui-monospace, monospace;
 }
 [data-surface="site"] .nx-skeleton { background: var(--border); border-radius: 6px; display: inline-block; animation: nx-pulse 1.6s ease-in-out infinite; }
 @keyframes nx-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 [data-surface="site"] .nx-comparison-table { width: 100%; border-collapse: collapse; margin-top: 32px; font-size: 14px; }
 [data-surface="site"] .nx-comparison-table th, [data-surface="site"] .nx-comparison-table td { border-bottom: 1px solid var(--hairline); padding: 10px 12px; text-align: left; }
-
-/* ---------- FAQ ---------- */
-[data-surface="site"] .nx-faq-item { border-bottom: 1px solid var(--hairline); }
-[data-surface="site"] .nx-faq-question {
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 20px 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--fg);
-  display: flex;
-  justify-content: space-between;
-  cursor: pointer;
-}
-[data-surface="site"] .nx-faq-answer { padding: 0 0 20px 0; color: var(--fg-muted); }
-
-/* ---------- Forms ---------- */
-[data-surface="site"] .nx-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
-[data-surface="site"] .nx-field label { font-size: 13px; font-weight: 600; }
-[data-surface="site"] .nx-field input,
-[data-surface="site"] .nx-field select,
-[data-surface="site"] .nx-field textarea {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elevated);
-  color: var(--fg);
-  padding: 10px 12px;
-  font-size: 14px;
-  font-family: inherit;
-}
-[data-surface="site"] .nx-form-error { color: #f87171; font-size: 13px; }
-[data-surface="site"] .nx-form-success { color: var(--accent); font-size: 14px; }
-
-/* ---------- Architecture diagram ---------- */
-[data-surface="site"] .nx-arch-diagram { width: 100%; height: auto; }
-[data-surface="site"] .nx-arch-diagram text { fill: var(--fg-muted); font-family: "NX Mono", monospace; font-size: 11px; }
-[data-surface="site"] .nx-arch-diagram rect { fill: var(--bg-elevated); stroke: var(--border); }
-[data-surface="site"] .nx-arch-diagram .nx-arch-accent { stroke: var(--accent); }
-
-/* ---------- Footer ---------- */
-[data-surface="site"] .nx-footer {
-  border-top: 1px solid var(--hairline);
-  padding: 64px 0 32px;
-  background: var(--bg-elevated);
-}
-[data-surface="site"] .nx-footer-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 32px;
-  margin-bottom: 48px;
-}
-[data-surface="site"] .nx-footer-grid h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-subtle); margin-bottom: 12px; font-weight: 600; }
-[data-surface="site"] .nx-footer-grid ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-[data-surface="site"] .nx-footer-grid a { color: var(--fg-muted); font-size: 14px; }
-[data-surface="site"] .nx-footer-legal { border-top: 1px solid var(--hairline); padding-top: 24px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; font-size: 12px; color: var(--fg-subtle); }
 
 /* ---------- Consent banner / locale bar / whatsapp float ---------- */
 [data-surface="site"] .nx-bottom-bar {
