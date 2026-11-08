@@ -60,7 +60,8 @@ def _config() -> tuple[str, str] | dict[str, Any]:
         return _error("nao_configurado",
                       "NOCTUS_TRANSCRIPTION_TOKEN ausente (token pk_* com escopo "
                       "transcription:write/read). Defina no .env da raiz.")
-    url = os.environ.get("NOCTUS_TRANSCRIPTION_URL", "").strip() or DEFAULT_URL
+    url = (os.environ.get("NOCTUS_TRANSCRIPTION_URL", "").strip()
+           or os.environ.get("NOCTUS_CORE_APP_URL", "").strip() or DEFAULT_URL)
     return url.rstrip("/"), token
 
 
@@ -131,17 +132,23 @@ def get(id: str, *, _transport: httpx.BaseTransport | None = None) -> dict:
 
 
 def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
-               timeout_s: float = 3600, *, _transport: httpx.BaseTransport | None = None,
+               timeout_s: float = 3600, segmentos: bool = False, *,
+               _transport: httpx.BaseTransport | None = None,
                _sleep: Callable[[float], None] = time.sleep,
                _clock: Callable[[], float] = time.monotonic) -> dict:
-    """Submit, poll (5 s for the first minute, then 30 s; honours Retry-After)."""
+    """Submit, poll (5 s for the first minute, then 30 s; honours Retry-After).
+
+    ``segmentos=True`` asks the server for timestamped segments and returns them
+    under ``segmentos`` — the reason callers used to fall back to local Whisper.
+    """
     start = _clock()
 
     def remaining() -> float:
         return timeout_s - (_clock() - start)
 
     while True:
-        job = submit(path, idioma=idioma, rotulo=rotulo, _transport=_transport)
+        job = submit(path, idioma=idioma, rotulo=rotulo, segmentos=segmentos,
+                     _transport=_transport)
         ra = job.get("retry_after") if "codigo" in job else None
         if ra is not None and job.get("status_code") in (429, 503) \
                 and ra <= _MAX_SUBMIT_WAIT_S and remaining() > ra:
@@ -165,6 +172,8 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
                    "duracao_s": cur.get("duracao_s"), "rtf": cur.get("rtf"), "id": job_id}
             if cur.get("erro"):
                 out["erro"] = cur["erro"]
+            if segmentos:
+                out["segmentos"] = cur.get("segmentos")
             return out
         if wait is None:
             wait = _FAST_POLL_S if (_clock() - started) < _FAST_WINDOW_S else _SLOW_POLL_S
@@ -270,11 +279,15 @@ def register(server) -> None:
     @server.tool(
         name="noctus.transcription.transcribe",
         description=("Submit a local file and poll until terminal or timeout_s (default 3600). "
-                     "Returns {status, texto, duracao_s, rtf, id}; on timeout {status:'timeout', id} "
-                     "and the job keeps running server-side (use get)."),
+                     "Returns {status, texto, duracao_s, rtf, id}, plus segmentos "
+                     "[{start,end,text}] when segmentos=True; on timeout {status:'timeout', id} "
+                     "and the job keeps running server-side (use get). The DEFAULT path for any "
+                     "transcription — local Whisper is only a fallback when this server fails."),
     )
-    def _transcribe(path: str, idioma: str = "pt", rotulo: str = "", timeout_s: float = 3600) -> dict:
-        return transcribe(path, idioma=idioma, rotulo=rotulo or None, timeout_s=timeout_s)
+    def _transcribe(path: str, idioma: str = "pt", rotulo: str = "", timeout_s: float = 3600,
+                    segmentos: bool = False) -> dict:
+        return transcribe(path, idioma=idioma, rotulo=rotulo or None, timeout_s=timeout_s,
+                          segmentos=segmentos)
 
     @server.tool(
         name="noctus.transcription.batch",

@@ -1,1 +1,15 @@
-{}
+{
+  "npm:motion": {
+    "job": "scroll-in reveal + staggered cascade + reduced-motion handling for marketing/landing organs (@noctusai/lib/marketing)",
+    "in_repo_alternative": "Tailwind transition/animate-in utilities + a hand-rolled IntersectionObserver hook (as in JourneyWizard, CSS-only)",
+    "metrics": {
+      "gzip_bytes_initial_chunk_m_lazymotion_useInView_useReducedMotion": 8001,
+      "gzip_bytes_lazy_domAnimation_features_chunk": 22779,
+      "authenticated_app_entry_chunk_gzip_bytes_added": 0,
+      "orchestration_primitives_covered_of_4_needed_stagger_inview_reduced_motion_csp_nonce": 4,
+      "same_primitives_covered_by_css_only_alternative_of_4": 1
+    },
+    "decision": "adopt",
+    "date": "2026-11-07"
+  }
+}

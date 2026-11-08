@@ -23,7 +23,7 @@ export function ProductChapter({ copy, state, productHref, whatsappHref, tagline
 
   const actions: CtaAction[] = [];
   if (state === "disponivel") {
-    actions.push({ label: t("cta.signup"), href: "https://core.noctusai.com/login?mode=signup", primary: true });
+    actions.push({ label: t("cta.signup"), href: "/login?mode=signup", primary: true });
     if (whatsappHref) actions.push({ label: t("cta.whatsapp"), href: whatsappHref, external: true, eventName: "whatsapp_click", eventProps: { section: "products", product: copy.slug } });
   } else if (state === "lista_de_espera") {
     actions.push({ label: t("cta.waitlistShort"), href: `/lista-de-espera?produto=${copy.slug}`, primary: true });

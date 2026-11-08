@@ -60,6 +60,9 @@ _OPS_PASSTHROUGH = ("/docs", "/openapi.json", "/redoc")
 # React Router route table (mirrors `manifest.json`'s own generation step).
 # Until then this is the documented fallback the contract explicitly
 # sanctions: "If derivation isn't feasible, 301 everything not matched." — 2026-09-23
+# Drift guard until then: mcp/noctusai/tests/test_core_website_route_disjoint.py
+# (AST-derives routes.ts + core main.tsx; fails if this tuple diverges or overlaps).
+# Not derived at runtime: it needs a node build step (not small) -- proposed for P3.
 _WEBSITE_PATH_STEMS = (
     "/produtos", "/solucoes", "/precos", "/contato", "/lista-de-espera", "/sobre", "/404", "/en",
 )

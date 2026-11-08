@@ -32,7 +32,7 @@ from noctusai_lib.config.product_urls import resolve_product_url
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin
-from app.services import audit_service
+from app.services import audit_service, website_catalog_service
 from app.schemas.products import (
     ProductActivation,
     ProductCreate,
@@ -151,6 +151,7 @@ async def criar_product(body: ProductCreate, authorization: Optional[str] = Head
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar produto")
 
+    website_catalog_service.invalidate_cache()
     logger.info(f"Product created: {body.nome}")
     return {"data": result.data[0]}
 
@@ -164,13 +165,38 @@ async def atualizar_product(
     db = get_admin_client()
 
     data = body.model_dump(mode="json", exclude_none=True)
+    if "destaque_no_site" in body.model_fields_set:
+        # An explicit null un-features the product, so it survives exclude_none.
+        data["destaque_no_site"] = body.destaque_no_site
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = (await anyio.to_thread.run_sync(db.table("products").update(data).eq("id", product_id).execute))
+    try:
+        await anyio.to_thread.run_sync(
+            lambda: website_catalog_service.check_destaque_write(db, product_id, data)
+        )
+        await anyio.to_thread.run_sync(
+            lambda: website_catalog_service.check_exibir_write(db, product_id, data)
+        )
+    except website_catalog_service.DestaqueRefused as refusal:
+        raise HTTPException(status_code=refusal.status_code, detail=refusal.detail)
+
+    try:
+        result = (await anyio.to_thread.run_sync(db.table("products").update(data).eq("id", product_id).execute))
+    except Exception as exc:
+        # Race backstop: the pre-check passed but a concurrent write took the slot (migration 105
+        # unique index / CHECKs). Say so in pt-BR instead of an opaque 500.
+        if "destaque" in str(exc):
+            logger.warning("Featured-product constraint hit on %s: %s", product_id, exc)
+            raise HTTPException(
+                status_code=409,
+                detail="Não foi possível salvar o destaque: a posição foi ocupada por outra alteração. Recarregue e tente de novo.",
+            )
+        raise
     if not result.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
+    website_catalog_service.invalidate_cache()
     logger.info(f"Product updated: {product_id}")
     return {"data": result.data[0]}
 
@@ -272,6 +298,7 @@ async def definir_activation(
     before = _guide_state(prior.data[0])
 
     row = (await anyio.to_thread.run_sync(lambda: _apply_activation(db, product_id, body.ativo)))
+    website_catalog_service.invalidate_cache()
     logger.info(
         "Product %s: %s (deploy_scope forced to dev)",
         product_id, "activated" if body.ativo else "deactivated",
@@ -348,6 +375,7 @@ async def definir_deploy_scope(
     if not result.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
+    website_catalog_service.invalidate_cache()
     logger.info("Product %s deploy_scope -> %s", product_id, body.deploy_scope)
     await _audit_guide_change(
         user, request,
@@ -381,6 +409,7 @@ async def desativar_product(
     before = _guide_state(prior.data[0])
 
     row = (await anyio.to_thread.run_sync(lambda: _apply_activation(db, product_id, False)))
+    website_catalog_service.invalidate_cache()
     logger.info(f"Product deactivated: {product_id}")
     await _audit_guide_change(
         user, request,

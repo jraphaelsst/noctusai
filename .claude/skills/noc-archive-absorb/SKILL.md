@@ -1,6 +1,6 @@
 ---
 name: noc-archive-absorb
-description: Use at EVERY teardown / archive / close-out moment — triggers "archive this project", "close out findings.md", "delete the worktree", "we're done with this project", "clean up the project folder", "absorb the findings". The two-leg gate — absorption (learnings → durable homes) + recovery pointer — BEFORE anything is archived or deleted.
+description: Use at EVERY teardown / archive / close-out moment — triggers "archive this project", "close out findings.md", "delete the worktree", "we're done with this project", "clean up the project folder", "absorb the findings", "end idle agents", "stop the background agents", "free some space", "kill that agent", "this session is ending". The two-leg gate — absorption (learnings → durable homes) + recovery pointer — BEFORE anything is archived or deleted.
 version: 1.0.0
 ---
 
@@ -18,6 +18,9 @@ version: 1.0.0
 3. **Record the recovery pointer** — `project-history/worktree-salvage.ndjson` or `ledger.ndjson` row (branch + SHA + one-line what-was-there). For worktrees, `noctus.dev.salvage_before_delete` / `task_branch action=cleanup` carry this leg mechanically.
 4. **Only then archive/delete** — `noctus.dev.archive <slug>` / worktree removal.
 5. **Memory index discipline** — a new memory entry from the absorption is one line appended to the matching `MEMORY-<topic>.md`, **never to `MEMORY.md`**. `MEMORY.md` is a router of TOPICS: it is auto-loaded AND read-capped (~24.4 KB), and past the cap the read returns *nothing*, so a pointer added there can silently cost you the whole index. → `KB § PATTERNS/common/memory-index-topic-split.md`
+
+## Agent / session stop (owner rule, 2026-11-07)
+Stopping an agent or ending a session is a teardown: before `TaskStop`, salvage its WORK (commit WIP, push, branch pointer, relocate, score, hand to the steward or a named deferral; recover a queued test verdict from `~/.noctus/hw-runs/`) AND its LEARNINGS (every `drift-found` / `scoped-improvement` → `--codify-log` / KB / memory / `NOC-REMEDIATE`). Then stop and confirm no orphan process. → `learn-before-archive.md` "Stopping an agent or session is a teardown too".
 
 ## Guardrails
 - ⚠️ "Archive now, absorb later" is the anti-pattern this skill exists for — later never comes; the archive IS the absorb deadline.

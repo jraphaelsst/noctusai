@@ -12,6 +12,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/lying-loading-state.md
   - CONTEXT/PATTERNS/frontend/mutation-cache-writes.md
   - CONTEXT/PATTERNS/frontend/silent-refusal.md
+  - CONTEXT/PATTERNS/frontend/marketing-organs-and-motion.md
   - CONTEXT/PATTERNS/frontend/notification-classes.md
   - CONTEXT/PATTERNS/frontend/mirror-owned-overlay.md
   - CONTEXT/PATTERNS/frontend/status-pagina-dev-visibility.md
@@ -40,6 +41,7 @@ Turn a validated mockup into product UI through the seed factories and canonical
 - **Wired to real data + page-scoped CRUD.** Real endpoint ∧ the page owns its CRUD; all four states; `noctus.dev.scan_wiring` before claiming done. → `KB § PATTERNS/frontend/product-internal-wiring.md`
 - **Loading UI = two signals off `data`.** `showSkeleton = isPending && !data` · `isRefreshing = isFetching && !!data` (indicator, never an early return) · `placeholderData: (prev) => prev` on user-keyed queries; computed in the hook. → `KB § PATTERNS/frontend/lying-loading-state.md`
 - **A mutation writes what it knows into the cache — never invalidate-only.** `useCacheWriteMutation`: optimistic when predictable · commit the server answer · background settle; `check_mutation_invalidate_only` ratchets. → `KB § PATTERNS/frontend/mutation-cache-writes.md`
+- **Motion only via `@noctusai/lib/marketing`.** The provider carries reduced-motion; no direct `motion`/`framer-motion` import; `check_motion_import_boundary` guards. → `KB § PATTERNS/frontend/marketing-organs-and-motion.md`
 - **Mirror + owned overlay.** A UI over external data (Vista) declares each field's source + CRUD verbs; mirror = read-only `SourceBadge`, never a dead edit button; owned = full CRUD via the existing service; sync never overwrites owned; differing values shown both (`MirrorOverrideValue`). → `KB § PATTERNS/frontend/mirror-owned-overlay.md`
 - **A refusal is never silent.** Error branch before empty (`QueryErrorState`); uploads via `useUploadDocumento` + `<UploadErro>`, `onUpload` returns `mutateAsync`; `check_silent_refusal` blocks. → `KB § PATTERNS/frontend/silent-refusal.md`
 - **Forms = react-hook-form + zod mirrored from the contract.** Bound labels, errors inline via `aria-invalid` + `aria-describedby`, pt-BR messages, pending submit, server 422 → `setError` on the field. → `KB § PATTERNS/frontend/frontend-craft-canon.md` §6

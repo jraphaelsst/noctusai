@@ -253,6 +253,8 @@ const DEFAULT_ROLE_LABELS: Record<string, string> = ORG_ROLE_LABELS;
 // landmine: 5173 is the dead pre-house vite port). Non-local deploys set
 // VITE_CORE_URL; the getter encodes the fallback once for every consumer.
 const CORE_URL = env.CORE_URL;
+// "Voltar ao NoctusAI" lands on core's logged-in dashboard, not the public site root.
+const CORE_APP_HOME = env.CORE_APP_HOME;
 /**
  * What the header's sign-out revokes. ONE value feeds both the Supabase
  * `signOut({ scope })` call and the Header (whose label is derived from it),
@@ -264,7 +266,7 @@ const LOGOUT_SCOPE: LogoutScope = "global";
 
 const BackToCore = (
   <a
-    href={CORE_URL}
+    href={CORE_APP_HOME}
     className="flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
   >
     <ChevronLeft className="h-4 w-4 shrink-0" />

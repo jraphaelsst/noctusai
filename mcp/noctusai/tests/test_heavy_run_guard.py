@@ -169,3 +169,44 @@ def test_heredoc_and_newline_still_judged(cmd):
 def test_escape_honoured_even_when_unparseable():
     assert guard.decide(_bash("NOC_HW_UNGATED_OK=harness-trial pytest 'unterminated")) is None
     assert guard.decide(_bash("NOC_HW_UNGATED_OK= pytest 'unterminated"))
+
+
+# ── Local Whisper (owner rule 2026-11-07): server first, local only after a server failure ──
+WHISPER_DENY = [
+    "uv run -q --no-project --with faster-whisper python -I /tmp/s/whisper_one.py a.mp3 o.json",
+    "python whisper_one.py a.mp3 out.json",
+    "nice -n 10 backend/.venv/bin/python -I local_whisper_batch.py mp3 out",
+    "python3 -m faster_whisper a.mp3",
+    "whisper a.mp3 --model turbo",
+    "cd v02 && whisperx a.mp3",
+]
+WHISPER_ALLOW = [
+    'python -c "import faster_whisper"',
+    "grep -rn whisper .",
+    "python script.py whisper.mp3",
+    "uv run python tools/report.py",
+    "python mcp/noctusai/tools/noctus/dev/hw_admission.py run --job whisper:local -- python whisper_one.py a b",
+]
+
+
+@pytest.mark.parametrize("cmd", WHISPER_DENY)
+def test_local_whisper_denied_with_server_first_message(cmd):
+    out = guard.decide(_bash(cmd))
+    assert out and "noctus.transcription.transcribe" in out["reason"]
+    assert "--job whisper:local" in out["reason"]
+
+
+@pytest.mark.parametrize("cmd", WHISPER_ALLOW)
+def test_whisper_lookalikes_allowed(cmd):
+    assert guard.decide(_bash(cmd)) is None
+
+
+def test_whisper_escape_after_server_failure(capsys):
+    assert guard.decide(_bash('NOC_HW_UNGATED_OK="transcriber 503 after retries" python whisper_one.py a b')) is None
+    assert "transcriber 503" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cmd", ["nice -n 10 pytest tests", "nice -10 pytest", "env -i FOO=1 pytest",
+                                 "uv run pytest -q", "uv run --with x pytest"])
+def test_wrapper_and_uv_flags_do_not_hide_a_suite(cmd):
+    assert guard.decide(_bash(cmd))
