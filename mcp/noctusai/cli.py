@@ -571,6 +571,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steward-products", default=None, help="With --release-steward request: comma-separated products touched.")
     parser.add_argument("--steward-migrations", action="store_true", help="With --release-steward request: the delivery carries migrations.")
     parser.add_argument("--steward-notes", default=None, help="With --release-steward request/ack/handoff/release: free-text notes.")
+    parser.add_argument("--steward-inline-reason", default=None, choices=["orchestrator_owned", "single_coherent_voice", "shared_state", "owner_directed"], help="With --release-steward request: why an over-cutoff (>=100 LoC or >=3 files) inline delivery was not dispatched. Needs --steward-inline-note. Shadow period: omitting it is a warning naming the specialists to dispatch. KB § PATTERNS/architect/parallelization-first-orchestration.md (Enforcement).")
+    parser.add_argument("--steward-inline-note", default=None, help="With --steward-inline-reason: >=10 chars saying why.")
+    parser.add_argument("--bp-inline-reason", default=None, choices=["orchestrator_owned", "single_coherent_voice", "shared_state", "owner_directed"], dest="bp_inline_reason", help="With --branch-pointer-update: closed-set reason an over-cutoff inline delivery was not dispatched (needs --bp-inline-note).")
+    parser.add_argument("--bp-inline-note", default=None, dest="bp_inline_note", help="With --bp-inline-reason: >=10 chars saying why.")
+    parser.add_argument("--check-orchestrator-inline-over-cutoff", action="store_true", help="Keeper (WARN-first shadow, never blocks): branch-tree pointers of inline agents (self-branch|tech-lead|orchestrator) landed on/after 2026-11-07 whose delivery is >=100 LoC or >=3 files with no recorded inline_reason. Names the specialists to dispatch. --inline-cutoff-log files one auto-improvement drift row per branch; --inline-cutoff-replay-days N is the false-alarm research mode. KB § PATTERNS/architect/parallelization-first-orchestration.md (Enforcement).")
+    parser.add_argument("--inline-cutoff-log", action="store_true", help="With --check-orchestrator-inline-over-cutoff: file one auto-improvement drift row per finding (target orchestrator_inline_over_cutoff:<branch>).")
+    parser.add_argument("--inline-cutoff-replay-days", type=int, default=None, help="With --check-orchestrator-inline-over-cutoff: research mode, evaluate pointers since N days ago instead of the shadow start date (report only).")
     parser.add_argument("--steward-outcome", default=None, choices=["enqueued", "landed", "ejected", "deployed"], help="With --release-steward ack: the request's new outcome.")
     parser.add_argument("--steward-dev-sha", default=None, help="With --release-steward ack: the dev sha it landed as.")
     parser.add_argument("--steward-to-session-id", default=None, help="With --release-steward handoff: transfer the lane to this session id.")
@@ -2923,6 +2930,21 @@ def main():
             print(f"    [{i['severity']}] {i['issue']}")
         sys.exit(1 if high else 0)
 
+    elif args.check_orchestrator_inline_over_cutoff:
+        from tools.noctus.dev.compliance import check_orchestrator_inline_over_cutoff
+        _since = None
+        if args.inline_cutoff_replay_days is not None:
+            import datetime as _dt
+            _since = (_dt.date.today() - _dt.timedelta(days=args.inline_cutoff_replay_days)).isoformat()
+        issues = check_orchestrator_inline_over_cutoff(since=_since, log=args.inline_cutoff_log)
+        if not issues:
+            print(f"  {GREEN}\u2713 orchestrator-inline-over-cutoff: no unexplained over-cutoff inline delivery.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}\u26a0 {len(issues)} unexplained over-cutoff inline delivery(ies) (shadow, never blocks):{RESET}")
+        for i in issues:
+            print(f"    [{i['severity']}] {i['issue']}")
+        sys.exit(0)
+
     elif args.check_guard_hooks_registered:
         from tools.noctus.dev.compliance import check_guard_hooks_registered
         issues = check_guard_hooks_registered()
@@ -4039,7 +4061,8 @@ def main():
             branch=args.steward_branch, head_sha=args.steward_head_sha,
             products=[x.strip() for x in (args.steward_products or "").split(",") if x.strip()] or None,
             migrations=args.steward_migrations, notes=args.steward_notes, outcome=args.steward_outcome,
-            dev_sha=args.steward_dev_sha, include_done=args.steward_include_done)
+            dev_sha=args.steward_dev_sha, include_done=args.steward_include_done,
+            inline_reason=args.steward_inline_reason, inline_note=args.steward_inline_note)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 
@@ -4476,6 +4499,8 @@ def main():
             paths=getattr(args, "bp_paths", None),
             brief=getattr(args, "bp_brief", None),
             notes=getattr(args, "bp_notes", None),
+            inline_reason=getattr(args, "bp_inline_reason", None),
+            inline_note=getattr(args, "bp_inline_note", None),
             push_dev=not getattr(args, "bp_no_push", False),
             from_dev=not getattr(args, "bp_local", False),
         )

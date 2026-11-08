@@ -366,6 +366,18 @@ for _ll_flag in --check-engineer-slice-scored --check-guard-hooks-registered; do
     fi
 done
 
+# ── orchestrator inline cutoff (WARN-first shadow, D19; never blocks) ──────
+# Inline-agent branches landed on/after 2026-11-07 that are >=100 LoC or >=3 files with no recorded
+# inline_reason. The construction leg is release_steward `request` (inline_reason/inline_note); this is
+# the backstop. Promote to blocking only after >=7 days of measured fix_rate (gate-alignment inventory).
+if [[ -x "$PY_PP" && -f "$CLI_PP" ]]; then
+    _oi_out="$("$PY_PP" "$CLI_PP" --check-orchestrator-inline-over-cutoff 2>&1)" || true
+    echo "[pre-push] $(echo "$_oi_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
+    if [[ "$_oi_out" == *"⚠"* ]]; then
+        echo "[pre-push] WARNING (shadow): ORCHESTRATOR-INLINE-OVER-CUTOFF — dispatch the specialist next time, or record inline_reason (see KB § PATTERNS/architect/parallelization-first-orchestration.md Enforcement)." >&2
+    fi
+fi
+
 # ── ledger-drain keeper ─────────────────────────────────────────────────────
 # Branch-independent (it inspects task_branch.py's own structure, not the ref
 # being pushed), so it runs ONCE outside the per-ref loop rather than per-ref.

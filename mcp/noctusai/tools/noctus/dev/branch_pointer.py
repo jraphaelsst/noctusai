@@ -414,6 +414,8 @@ def update(
     brief: str | None = None,
     notes: str | None = None,
     project: str | None = None,
+    inline_reason: str | None = None,
+    inline_note: str | None = None,
     push_dev: bool = True,
     runner=None,
     dev_branch: str = "dev",
@@ -478,6 +480,17 @@ def update(
     carried_project = project if project is not None else prev.get("project")
     if carried_project and str(carried_project).strip():
         row["project"] = str(carried_project).strip()
+    # Orchestrator inline cutoff (KB § PATTERNS/architect/parallelization-first-orchestration.md
+    # Enforcement): a closed-set reason + note, validated here so no caller can write junk.
+    reason = inline_reason if inline_reason is not None else prev.get("inline_reason")
+    note = inline_note if inline_note is not None else prev.get("inline_note")
+    if inline_reason is not None or inline_note is not None:
+        from tools.noctus.dev.orchestrator_inline_cutoff import validate_reason
+        err = validate_reason(reason, note)
+        if err:
+            return {"ok": False, "error": err}
+    if reason:
+        row["inline_reason"], row["inline_note"] = reason, note
 
     push_result = _write_row(row, publish=push_dev,
                              message=f"branch-pointer {new_status} — {row['agent']} on {branch}")
@@ -566,6 +579,8 @@ def register(server) -> None:  # noqa: ANN001
             "            Required: branch. Optional: status, base, commit, paths, brief, notes,\n"
             "            project, push_dev (default True), from_dev (default True).\n"
             "            `base` corrects a mis-recorded base (the mirror keeper's prescribed fix).\n"
+            "            `inline_reason` (orchestrator_owned|single_coherent_voice|shared_state|owner_directed)\n"
+            "            + `inline_note` (>=10 chars) justify an over-cutoff inline delivery.\n"
             "            role/agent/parent/worktree/session are append-only: REFUSED here.\n"
             "  query   — resolve latest-per-branch from dev's copy.\n"
             "            Optional: status, branch, agent, project, paths_overlap, from_dev (default True).\n"
@@ -600,6 +615,8 @@ def register(server) -> None:  # noqa: ANN001
         include_terminal: bool = False,
         paths_overlap: list[str] | None = None,
         project: str | None = None,
+        inline_reason: str | None = None,
+        inline_note: str | None = None,
     ) -> dict | list:
         if action == "append":
             missing = [f for f, v in [
@@ -628,7 +645,7 @@ def register(server) -> None:  # noqa: ANN001
             return update(
                 branch=branch, status=status, base=base, commit=commit, paths=paths,
                 brief=brief, notes=notes, project=project, push_dev=push_dev,
-                from_dev=from_dev,
+                from_dev=from_dev, inline_reason=inline_reason, inline_note=inline_note,
             )
         elif action == "query":
             return query(
