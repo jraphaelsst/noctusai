@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS {s}.{settings} (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-{org_rls(s, settings, o)}""",
+{org_rls(s, settings, o, grants=True, authenticated_select=False)}""",
         f"""-- Rules: one per (org, channel, offset). offset_days is relative to the due date (-3 = three days before).
 CREATE TABLE IF NOT EXISTS {s}.{rules} (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS {s}.{rules} (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_{rules}_offset ON {s}.{rules} (org_id, channel, offset_days);
 CREATE INDEX IF NOT EXISTS idx_{rules}_org ON {s}.{rules} (org_id) WHERE enabled;
-{org_rls(s, rules, o)}""",
+{org_rls(s, rules, o, grants=True, authenticated_select=False)}""",
         f"""-- The dedup ledger + send log. One row per (receivable, rule, cycle date); written BEFORE the send.
 CREATE TABLE IF NOT EXISTS {s}.{log} (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS {s}.{log} (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_{log}_dedup ON {s}.{log} (org_id, entry_id, rule_id, cycle_date);
 CREATE INDEX IF NOT EXISTS idx_{log}_org_created ON {s}.{log} (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_{log}_retry ON {s}.{log} (org_id, cycle_date) WHERE status = 'failed';
-{org_rls(s, log, o)}""",
+{org_rls(s, log, o, grants=True, authenticated_select=False)}""",
     ]
     return "\n\n".join(parts) + "\n"
 

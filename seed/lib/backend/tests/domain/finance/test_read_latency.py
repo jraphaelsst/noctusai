@@ -21,20 +21,31 @@ DELAY = 0.15
 
 
 class DelayDb:
-    """Counts `.table()` round trips and makes each one cost DELAY seconds (a network hop)."""
+    """Counts `.table()` / `.rpc()` round trips and makes each one cost DELAY seconds (a network hop)."""
 
     def __init__(self, inner):
         self._inner = inner
         self.calls = 0
+        self.tables: list[str] = []
+        self.rpcs: list[str] = []
         self.threads: set[int] = set()
         self._lock = threading.Lock()
 
-    def table(self, name):
+    def _hop(self) -> None:
         with self._lock:
             self.calls += 1
             self.threads.add(threading.get_ident())
         time.sleep(DELAY)
+
+    def table(self, name):
+        self._hop()
+        self.tables.append(name)
         return self._inner.table(name)
+
+    def rpc(self, name, params=None):
+        self._hop()
+        self.rpcs.append(name)
+        return self._inner.rpc(name, params)
 
     def __getattr__(self, item):
         return getattr(self._inner, item)
@@ -63,7 +74,8 @@ def test_cashflow_totals_are_pinned_and_reads_overlap(s, db):
     got = reports.cashflow(ss, date(2026, 2, 1), date(2026, 3, 31))
     wall = time.perf_counter() - t0
     assert got == baseline  # identical numbers
-    assert slow.calls == 4  # accounts + ledger<from + ledger in range + open entries
+    assert slow.calls == 4  # accounts + ledger SUM before `from` (rpc) + ledger in range + open entries
+    assert slow.rpcs == ["fin_ledger_signed_sum"] and slow.tables.count("fin_ledger") == 1  # history is never read as rows
     assert wall < DELAY * 2.5  # sequential would be >= 4 * DELAY
     assert len(slow.threads) > 1
 
@@ -80,7 +92,8 @@ def test_account_balance_overlaps_lookup_and_ledger(s, db):
     t0 = time.perf_counter()
     got = accounts.account_balance(Scope(slow, CFG, ORG_A), acc["id"], date(2026, 12, 31))
     assert time.perf_counter() - t0 < DELAY * 1.8
-    assert got == want and slow.calls == 2
+    assert got == want and slow.calls == 2  # account lookup + the ledger SUM
+    assert slow.rpcs == ["fin_ledger_signed_sum"] and "fin_ledger" not in slow.tables  # one number, never the rows
 
 
 def test_run_parallel_orders_results_and_raises_first_failure():

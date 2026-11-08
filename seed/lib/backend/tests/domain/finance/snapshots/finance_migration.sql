@@ -25,12 +25,13 @@ CREATE INDEX IF NOT EXISTS idx_fin_accounts_org ON commerce.fin_accounts (org_id
 -- Accounting code (E21): the contador's reduced account code for this bank/cash/gateway account (free text, optional);
 -- the Domínio export refuses to run while a used account has none.
 ALTER TABLE commerce.fin_accounts ADD COLUMN IF NOT EXISTS accounting_code TEXT;
+COMMENT ON TABLE commerce.fin_accounts IS 'tier:org';
 ALTER TABLE commerce.fin_accounts ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_accounts_select_own_org" ON commerce.fin_accounts;
-CREATE POLICY "fin_accounts_select_own_org" ON commerce.fin_accounts FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_accounts;
 CREATE POLICY "service_role_bypass" ON commerce.fin_accounts FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_accounts FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_accounts TO service_role;
 
 -- Categories (tree). Unique (org, parent, lower(name)); defaults are seeded per org on first use.
 CREATE TABLE IF NOT EXISTS commerce.fin_categories (
@@ -60,12 +61,13 @@ ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS is_das BOOLEAN NOT 
 ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS accounting_code TEXT;
 ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS activity_kind TEXT
     CHECK (activity_kind IN ('comercio', 'industria', 'servicos'));
+COMMENT ON TABLE commerce.fin_categories IS 'tier:org';
 ALTER TABLE commerce.fin_categories ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_categories_select_own_org" ON commerce.fin_categories;
-CREATE POLICY "fin_categories_select_own_org" ON commerce.fin_categories FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_categories;
 CREATE POLICY "service_role_bypass" ON commerce.fin_categories FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_categories FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_categories TO service_role;
 
 -- Cost centers (code unique per org).
 CREATE TABLE IF NOT EXISTS commerce.fin_cost_centers (
@@ -78,12 +80,13 @@ CREATE TABLE IF NOT EXISTS commerce.fin_cost_centers (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, code)
 );
+COMMENT ON TABLE commerce.fin_cost_centers IS 'tier:org';
 ALTER TABLE commerce.fin_cost_centers ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_cost_centers_select_own_org" ON commerce.fin_cost_centers;
-CREATE POLICY "fin_cost_centers_select_own_org" ON commerce.fin_cost_centers FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_cost_centers;
 CREATE POLICY "service_role_bypass" ON commerce.fin_cost_centers FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_cost_centers FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_cost_centers TO service_role;
 
 -- Recurrences: `template` is the entry shape; generation is idempotent on (recurrence_id, due_date).
 CREATE TABLE IF NOT EXISTS commerce.fin_recurrences (
@@ -99,12 +102,13 @@ CREATE TABLE IF NOT EXISTS commerce.fin_recurrences (
     CHECK (end_date IS NULL OR end_date >= next_date OR active = false)
 );
 CREATE INDEX IF NOT EXISTS idx_fin_recurrences_due ON commerce.fin_recurrences (next_date) WHERE active;
+COMMENT ON TABLE commerce.fin_recurrences IS 'tier:org';
 ALTER TABLE commerce.fin_recurrences ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_recurrences_select_own_org" ON commerce.fin_recurrences;
-CREATE POLICY "fin_recurrences_select_own_org" ON commerce.fin_recurrences FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_recurrences;
 CREATE POLICY "service_role_bypass" ON commerce.fin_recurrences FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_recurrences FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_recurrences TO service_role;
 
 -- Entries: payables / receivables. `overdue` is NEVER stored (computed on read). `settled_cents` is derived from unreversed settlements.
 CREATE TABLE IF NOT EXISTS commerce.fin_entries (
@@ -152,12 +156,13 @@ ALTER TABLE commerce.fin_entries ADD COLUMN IF NOT EXISTS has_invoice BOOLEAN;
 -- Entry source vocabulary: re-stated so tables created before a source existed accept it.
 ALTER TABLE commerce.fin_entries DROP CONSTRAINT IF EXISTS fin_entries_source_check;
 ALTER TABLE commerce.fin_entries ADD CONSTRAINT fin_entries_source_check CHECK (source IN ('manual', 'recurrence', 'installment', 'commerce_order', 'contracts', 'import', 'external', 'purchasing'));
+COMMENT ON TABLE commerce.fin_entries IS 'tier:org';
 ALTER TABLE commerce.fin_entries ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_entries_select_own_org" ON commerce.fin_entries;
-CREATE POLICY "fin_entries_select_own_org" ON commerce.fin_entries FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_entries;
 CREATE POLICY "service_role_bypass" ON commerce.fin_entries FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_entries FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_entries TO service_role;
 
 -- Statement imports (slice D service). sha256 unique per account: re-importing a file is a 409.
 CREATE TABLE IF NOT EXISTS commerce.fin_statement_imports (
@@ -174,12 +179,13 @@ CREATE TABLE IF NOT EXISTS commerce.fin_statement_imports (
     UNIQUE (account_id, sha256)
 );
 CREATE INDEX IF NOT EXISTS idx_fin_statement_imports_org ON commerce.fin_statement_imports (org_id, at DESC);
+COMMENT ON TABLE commerce.fin_statement_imports IS 'tier:org';
 ALTER TABLE commerce.fin_statement_imports ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_statement_imports_select_own_org" ON commerce.fin_statement_imports;
-CREATE POLICY "fin_statement_imports_select_own_org" ON commerce.fin_statement_imports FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_statement_imports;
 CREATE POLICY "service_role_bypass" ON commerce.fin_statement_imports FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_statement_imports FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_statement_imports TO service_role;
 
 -- Statement lines (slice D service). `ledger_id` FK is added after the ledger exists (cycle).
 CREATE TABLE IF NOT EXISTS commerce.fin_statement_lines (
@@ -200,12 +206,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_statement_lines_ledger ON commerce.fin_
     WHERE ledger_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_fin_statement_lines_import ON commerce.fin_statement_lines (import_id);
 CREATE INDEX IF NOT EXISTS idx_fin_statement_lines_org_status ON commerce.fin_statement_lines (org_id, match_status);
+COMMENT ON TABLE commerce.fin_statement_lines IS 'tier:org';
 ALTER TABLE commerce.fin_statement_lines ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_statement_lines_select_own_org" ON commerce.fin_statement_lines;
-CREATE POLICY "fin_statement_lines_select_own_org" ON commerce.fin_statement_lines FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_statement_lines;
 CREATE POLICY "service_role_bypass" ON commerce.fin_statement_lines FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_statement_lines FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_statement_lines TO service_role;
 
 -- Settlements: payments / refunds against an entry. NEVER deleted -- a reversal sets reversed_* and books opposite ledger rows.
 CREATE TABLE IF NOT EXISTS commerce.fin_settlements (
@@ -231,12 +238,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_settlements_external ON commerce.fin_se
     WHERE external_ref IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_fin_settlements_entry ON commerce.fin_settlements (entry_id);
 CREATE INDEX IF NOT EXISTS idx_fin_settlements_org_date ON commerce.fin_settlements (org_id, settled_on);
+COMMENT ON TABLE commerce.fin_settlements IS 'tier:org';
 ALTER TABLE commerce.fin_settlements ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_settlements_select_own_org" ON commerce.fin_settlements;
-CREATE POLICY "fin_settlements_select_own_org" ON commerce.fin_settlements FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_settlements;
 CREATE POLICY "service_role_bypass" ON commerce.fin_settlements FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_settlements FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_settlements TO service_role;
 
 -- Ledger (append-only): the money that actually moved on an account. Transfers = two rows sharing transfer_group. A reversal row points at the row it reverses.
 CREATE TABLE IF NOT EXISTS commerce.fin_ledger (
@@ -274,12 +282,13 @@ BEGIN
     END IF;
 END
 $fin_fk$;
+COMMENT ON TABLE commerce.fin_ledger IS 'tier:org';
 ALTER TABLE commerce.fin_ledger ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_ledger_select_own_org" ON commerce.fin_ledger;
-CREATE POLICY "fin_ledger_select_own_org" ON commerce.fin_ledger FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_ledger;
 CREATE POLICY "service_role_bypass" ON commerce.fin_ledger FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_ledger FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_ledger TO service_role;
 
 -- Attachments: private bucket objects, keys `<org_id>/entries/<entry_id>/<id>.<ext>` (server-generated).
 CREATE TABLE IF NOT EXISTS commerce.fin_attachments (
@@ -294,12 +303,13 @@ CREATE TABLE IF NOT EXISTS commerce.fin_attachments (
     at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_fin_attachments_entry ON commerce.fin_attachments (entry_id);
+COMMENT ON TABLE commerce.fin_attachments IS 'tier:org';
 ALTER TABLE commerce.fin_attachments ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_attachments_select_own_org" ON commerce.fin_attachments;
-CREATE POLICY "fin_attachments_select_own_org" ON commerce.fin_attachments FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_attachments;
 CREATE POLICY "service_role_bypass" ON commerce.fin_attachments FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_attachments FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_attachments TO service_role;
 
 -- Gateway sync cursor (slice D service): one row per gateway account.
 CREATE TABLE IF NOT EXISTS commerce.fin_gateway_sync (
@@ -310,12 +320,13 @@ CREATE TABLE IF NOT EXISTS commerce.fin_gateway_sync (
     last_error      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_fin_gateway_sync_org ON commerce.fin_gateway_sync (org_id);
+COMMENT ON TABLE commerce.fin_gateway_sync IS 'tier:org';
 ALTER TABLE commerce.fin_gateway_sync ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_gateway_sync_select_own_org" ON commerce.fin_gateway_sync;
-CREATE POLICY "fin_gateway_sync_select_own_org" ON commerce.fin_gateway_sync FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_gateway_sync;
 CREATE POLICY "service_role_bypass" ON commerce.fin_gateway_sync FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_gateway_sync FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_gateway_sync TO service_role;
 
 -- DRE settings (CONTRACT §10.5): ONE row per org. The per-store mapping of every provisional accounting choice is DATA so an accountant changes it without touching money records. `choice_meta` is `{<choice>: {provisional, confirmed_by, confirmed_at, note}}` -- absent = provisional (the default).
 CREATE TABLE IF NOT EXISTS commerce.fin_dre_settings (
@@ -334,12 +345,13 @@ CREATE TABLE IF NOT EXISTS commerce.fin_dre_settings (
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+COMMENT ON TABLE commerce.fin_dre_settings IS 'tier:org';
 ALTER TABLE commerce.fin_dre_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_dre_settings_select_own_org" ON commerce.fin_dre_settings;
-CREATE POLICY "fin_dre_settings_select_own_org" ON commerce.fin_dre_settings FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_dre_settings;
 CREATE POLICY "service_role_bypass" ON commerce.fin_dre_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_dre_settings FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_dre_settings TO service_role;
 
 -- Budgets (E21): the planned amount per (category, month); the report compares it with the DRE-basis actual. One row per (org, category, month).
 CREATE TABLE IF NOT EXISTS commerce.fin_budgets (
@@ -353,12 +365,13 @@ CREATE TABLE IF NOT EXISTS commerce.fin_budgets (
     UNIQUE (org_id, category_id, month)
 );
 CREATE INDEX IF NOT EXISTS idx_fin_budgets_org_month ON commerce.fin_budgets (org_id, month);
+COMMENT ON TABLE commerce.fin_budgets IS 'tier:org';
 ALTER TABLE commerce.fin_budgets ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_budgets_select_own_org" ON commerce.fin_budgets;
-CREATE POLICY "fin_budgets_select_own_org" ON commerce.fin_budgets FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_budgets;
 CREATE POLICY "service_role_bypass" ON commerce.fin_budgets FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON commerce.fin_budgets FROM PUBLIC, anon, authenticated;
+GRANT ALL ON commerce.fin_budgets TO service_role;
 
 -- Settle under a row lock: the balance is checked and the settlement inserted in ONE transaction.
 CREATE OR REPLACE FUNCTION commerce.fin_settle_entry_locked(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB
@@ -451,22 +464,40 @@ $fn$;
 REVOKE ALL ON FUNCTION commerce.fin_reverse_settlement_locked(UUID, UUID, TEXT, UUID, DATE) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION commerce.fin_reverse_settlement_locked(UUID, UUID, TEXT, UUID, DATE) TO service_role;
 
--- Private finance attachments bucket; object RLS keys on the org_id first path segment.
+-- Signed ledger sum: the balance / opening-balance aggregate computed in the database (one row back, not N).
+CREATE OR REPLACE FUNCTION commerce.fin_ledger_signed_sum(p_org_id UUID, p_account_id UUID, p_on DATE, p_inclusive BOOLEAN) RETURNS BIGINT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, commerce, pg_temp
+AS $fn$
+DECLARE
+    v_sum BIGINT;
+BEGIN
+    IF p_account_id IS NULL THEN
+        SELECT COALESCE(SUM(CASE WHEN direction = 'in' THEN amount_cents ELSE -amount_cents END), 0)::BIGINT INTO v_sum
+            FROM commerce.fin_ledger
+            WHERE org_id = p_org_id AND occurred_on <= p_on AND (p_inclusive OR occurred_on < p_on);
+    ELSE
+        SELECT COALESCE(SUM(CASE WHEN direction = 'in' THEN amount_cents ELSE -amount_cents END), 0)::BIGINT INTO v_sum
+            FROM commerce.fin_ledger
+            WHERE org_id = p_org_id AND account_id = p_account_id AND occurred_on <= p_on AND (p_inclusive OR occurred_on < p_on);
+    END IF;
+    RETURN v_sum;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION commerce.fin_ledger_signed_sum(UUID, UUID, DATE, BOOLEAN) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION commerce.fin_ledger_signed_sum(UUID, UUID, DATE, BOOLEAN) TO service_role;
+
+-- Private finance attachments bucket; SERVICE-ONLY (no authenticated object policy) -- the API signs access.
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('finance-attachments', 'finance-attachments', false)
 ON CONFLICT (id) DO NOTHING;
+UPDATE storage.buckets SET file_size_limit = 10485760, allowed_mime_types = ARRAY['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'application/xml', 'text/xml']::text[] WHERE id = 'finance-attachments';
 DROP POLICY IF EXISTS "finance-attachments_storage_select" ON storage.objects;
-CREATE POLICY "finance-attachments_storage_select" ON storage.objects FOR SELECT TO authenticated
-  USING (bucket_id = 'finance-attachments' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
 DROP POLICY IF EXISTS "finance-attachments_storage_insert" ON storage.objects;
-CREATE POLICY "finance-attachments_storage_insert" ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'finance-attachments' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
 DROP POLICY IF EXISTS "finance-attachments_storage_update" ON storage.objects;
-CREATE POLICY "finance-attachments_storage_update" ON storage.objects FOR UPDATE TO authenticated
-  USING (bucket_id = 'finance-attachments' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
 DROP POLICY IF EXISTS "finance-attachments_storage_delete" ON storage.objects;
-CREATE POLICY "finance-attachments_storage_delete" ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'finance-attachments' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
 DROP POLICY IF EXISTS "finance-attachments_storage_service" ON storage.objects;
 CREATE POLICY "finance-attachments_storage_service" ON storage.objects FOR ALL TO service_role
   USING (bucket_id = 'finance-attachments')
