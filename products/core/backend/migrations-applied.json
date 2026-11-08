@@ -25,6 +25,7 @@
     "106_finance_rev2.sql": "4e684b417918c6af7225418793114bdb9b6ed3bcba0dd27dd6a6b648edeea433",
     "107_noc_funnel.sql": "00df9b13414f933a916c031ad523ec219f87b56630dd0d8e905e1e36f325f6bd",
     "108_brand_platform_tokens_contrast.sql": "d8d6f86927113241e55d32475a264d8227347957e97cdb3787ea668aecb96751",
-    "109_drop_products_logout_behavior.sql": "ebaecc78a31c1d136f98876bfd1171df6aaf470c655a0f467deac16bc6e08432"
+    "109_drop_products_logout_behavior.sql": "ebaecc78a31c1d136f98876bfd1171df6aaf470c655a0f467deac16bc6e08432",
+    "110_decouple_erp_public_fns.sql": "f26be640291f04ac6a9b05cef2b02632f2c7229243e68618db66b237db28f7e6"
   }
 }
