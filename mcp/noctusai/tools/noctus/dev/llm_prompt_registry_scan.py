@@ -42,7 +42,6 @@ _PROMPT_CONST_RE = re.compile(r"(?:^|_)(?:[A-Z0-9]*SYSTEM[A-Z0-9_]*|[A-Z0-9_]*PR
 #: Path fragments (repo-relative, posix) that are exempt, each with the reason.
 EXEMPT_PREFIXES: dict[str, str] = {
     "seed/lib/backend/noctusai_lib/integrations/llm/": "the seam's own provider modules",
-    "seed/lib/backend/noctusai_lib/integrations/image_edit/": "vendor image-edit adapter (the seam itself)",
     "seed/lib/backend/noctusai_lib/integrations/prompt_registry/": "the sanctioned path itself",
     "mcp/openai_mcp/tools/": "pass-through tools: the prompt is the caller's input",
     "mcp/noctusai/tools/llm/": "pass-through tools: the prompt is the caller's input",
