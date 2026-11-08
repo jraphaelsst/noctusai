@@ -148,9 +148,29 @@ app = create_product_app(..., organs=[finance])   # routers + upload-size overri
 - **Guards are declared with the generator.** Every UNIQUE / CHECK / trigger guard an organ's migration emits needs an `OrganGuardProbe` in `noctusai_lib/domain/<organ>/guards.py` (set as `OrganSpec.guard_probes`): the schema-parameterized violating operation, proven to refuse on PGlite. `noctus.dev.verify_db_guards` derives the probes for every product that rendered the organ (a table not applied yet reports `pending`), and `check_migration_guard_has_probe` treats an organ-rendered guard as covered iff the organ declares it -- so rendering an organ into a product never needs a hand-written probe or `_GUARD_PROBE_ALLOWLIST` entry, and a generator cannot add an unprobed guard (`test_organ_guard_probes.py` is the completeness gate). KB § PATTERNS/common/methodology-execution-discipline.md § 8.
 - FE: the seed shell has no manifest-driven route mechanism; the host adds one lazy route (`/financeiro/*`, gated by `status_pagina`) whose page is a one-liner over the `FinanceRoutedPage` organ exported from `@noctusai/lib` (`basePath`, `api` or `hooks`, `isAdmin`, optional `isAccountant`/`title`). The organ owns the URL <-> section sync and the unknown-segment redirect; never hand-roll it per product (`finance-fe-route` closed).
 
-## Mounting a module
+## Mounting a module (CRM / ERP / CMS inside ONE market product)
 
-`create_product_app(modules=[crm_module(preset, ...), erp_module(...), cms_module(...)])` flattens each module's organs through `mount_organs`; FE `orderNavGroups([...modules.map(m => m.navGroup), ...local])` + spread `routes`. Every module page key needs a `status_pagina` row (keeper `check_module_page_status_rows`); new module pages take the `/crm|/erp|/cms/…` prefix, existing URLs never move. Scaffold a new market with `scaffold_product(overlay=["crm","erp","cms"])` (overlays generated from the module specs).
+Owner 2026-11-08: each market is ONE product that mounts modules as sidebar groups in `MODULE_GROUP_ORDER`; modules are switched **per org, ALL ON by default**, managed by NoctusAI admins. (ADR-1 of `project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.plan.md`, which lives on the plan branch until it lands; its "per product for now" licensing is superseded: `license_key` is live.)
+
+**BE** `noctusai_seed.modules`:
+
+```python
+crm = ModuleSpec(key="crm", organs=[leads, funnel],                       # MountedOrgans, flattened by mount_organs
+                 pages=[PageSpec("crm/leads", "/crm/leads", "Leads")],     # PageSpec(key, path, label, status="producao")
+                 permissions={"crm.write": "admin"}, license_key=None)    # enablement key defaults to `key`
+app = create_product_app(..., modules=[crm], module_auth_dependency=get_current_user_org)
+```
+
+- `key` is a canonical module-group key (`noctusai_lib.domain.module_enablement.MODULE_GROUP_KEYS`, a BE test parses the FE `MODULE_GROUP_ORDER` and fails on divergence). A page lives in exactly one module; `module_manifest(specs)` is the page-key contract.
+- Module routers sit behind a guard that depends on the host auth dependency: no auth => strict 401; org without the module => **403 `{"code": "module_disabled"}`**; enablement lookup outage => 503 (never "all on"). `public_routers` (signed links) are mounted unguarded and declare their own tier. `GET /api/modules` (tier org) tells the FE which of the product's modules the caller's org has.
+- Storage: `public.org_modules(org_id, module_key, enabled, updated_by, updated_at)`, ONE platform table, service-only (`tier:platform`, no browser grant), absent row = ENABLED. Organ `module_enablement` (`noctus.dev.render_organ_migration product=core organ=module_enablement`); resolver `ModuleEnablement.enabled_modules(org_id)`. It keeps current state only; a change history, if wanted, uses the transition-log primitive, never a hand-written table.
+- Write API for the core admin dashboard: `create_org_modules_admin_router(...)` (`GET/PUT /api/platform/org-modules/{org_id}[/{module_key}]`, `require_platform_admin`: 401 / 403 `platform_admin_required`). The core admin PAGE is a follow-up.
+
+**FE** `@noctusai/lib` (`modules/`): `defineModule({ key, items: [{ label, path, pageKey, element, roles?, status?, children? }] })` -> `{ navGroup, routes, pageKeys }`; `extendModule(base, { items, insertAfter, override, remove })` is the only way a market adjusts a seed module; `composeModules({ modules, localGroups, enabledKeys, orgRole })` merges through `orderNavGroups` and **does not render** a module the org lacks (no nav group, no routes; while `useEnabledModules` is unanswered nothing renders and `pending` is true). `pageKey` = `status_pagina.nome_pagina`; `filterNavByPageStatus` still gates the result.
+
+**Contract check.** BE `module_manifest(specs)` and FE `moduleManifest(modules)` emit the same JSON; a host commits it and asserts both sides (`assertManifestMatches` FE; BE compares `module_manifest(specs)` to the file). The seed pins the cross-language parity with `seed/lib/backend/tests/fixtures/module_manifest.json`.
+
+**Planned (not built yet).** Every module page key needs a `status_pagina` row (keeper `check_module_page_status_rows`, follow-up). New module pages take the `/crm|/erp|/cms/…` prefix, and existing URLs never move. A new market is scaffolded with `scaffold_product(overlay=["crm","erp","cms"])`, with overlays generated from the module specs.
 
 ## Composes with
 

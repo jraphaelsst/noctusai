@@ -91,6 +91,9 @@ def create_product_app(
     license_checker: Optional[LicenseChecker] = None,
     org_selection_store: Optional[OrgSelectionStore] = None,
     organs: Sequence[Any] = (),
+    modules: Sequence[Any] = (),
+    module_auth_dependency: Optional[Callable[..., Any]] = None,
+    module_enablement: Optional[Any] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -213,6 +216,13 @@ def create_product_app(
             Their routers are mounted after ``routers`` and their upload-size overrides
             are merged into ``max_body_path_overrides`` (the product's own entries win).
             Default ``()`` — unchanged behaviour. See ``noctusai_seed/organs.py``.
+        modules: ``noctusai_seed.modules.ModuleSpec`` instances. Their organs flatten through
+            ``mount_organs``; their routers sit behind the per-org enablement guard (403
+            ``module_disabled``) and ``GET /api/modules`` is mounted. Needs ``module_auth_dependency``
+            (the host's ``get_current_user_org``, yielding ``(user, token, org_id)``) -- omitting it
+            with modules is a boot error. ``module_enablement`` overrides the resolver (default: Real over
+            ``public.org_modules``, all-ON Fake under pytest). Default ``()`` — unchanged behaviour.
+            See ``noctusai_seed/modules``.
         max_body_path_overrides: Per-route request-body-size cap, layered on
             top of the app-wide ``settings.max_body_bytes`` (default 1 MB —
             right for webhooks, wrong for uploads). ``{"<path-prefix-or-*-pattern>":
@@ -546,10 +556,24 @@ def create_product_app(
 
     # 7a. Organs seam: merge each mounted organ's upload-size overrides under the product's own.
     _organ_routers: list = []
-    if organs:
+    _module_mount = None
+    if modules:
+        if module_auth_dependency is None:
+            raise ValueError("create_product_app(modules=...) needs module_auth_dependency (the host's get_current_user_org)")
+        from noctusai_lib.domain.module_enablement import make_module_enablement
+        from noctusai_seed.modules import mount_modules
+
+        _enablement = module_enablement or make_module_enablement(
+            [m.enablement_key for m in modules], lambda: db.get_core_client()
+        )
+        _module_mount = mount_modules(modules, enablement=_enablement, auth_dependency=module_auth_dependency)
+        app.state.module_enablement = _enablement
+    if organs or _module_mount:
         from noctusai_seed.organs import mount_organs
 
-        _organ_routers, _organ_overrides = mount_organs(organs)
+        _organ_routers, _organ_overrides = mount_organs([*organs, *(_module_mount.organs if _module_mount else ())])
+        if _module_mount:
+            _organ_routers = list(mount_organs(organs)[0])
         if _organ_overrides:
             _base = (
                 max_body_path_overrides
@@ -609,6 +633,11 @@ def create_product_app(
 
     for router in _organ_routers:
         app.include_router(router)
+    if _module_mount:
+        for router, deps in _module_mount.guarded:
+            app.include_router(router, dependencies=list(deps))
+        for router in _module_mount.open_routers:
+            app.include_router(router)
 
     # 10a. Boot-time refusal: every route mounted above (9 + 10) whose
     #      endpoint declares an UploadFile parameter MUST have a matching

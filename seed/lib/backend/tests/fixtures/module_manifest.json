@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "key": "crm",
+      "enablement_key": "crm",
+      "pages": [
+        {"key": "crm/funil", "path": "/crm/funil", "label": "Funil", "status": "producao"},
+        {"key": "crm/leads", "path": "/crm/leads", "label": "Leads", "status": "producao"},
+        {"key": "crm/relatorios", "path": "/crm/relatorios", "label": "Relatórios", "status": "desenvolvimento"}
+      ]
+    },
+    {
+      "key": "erp",
+      "enablement_key": "erp-financeiro",
+      "pages": [
+        {"key": "erp/financeiro", "path": "/erp/financeiro", "label": "Financeiro", "status": "producao"}
+      ]
+    }
+  ]
+}
