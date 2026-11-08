@@ -179,6 +179,11 @@ class FunnelConfig:
             with the (joined) ROW, not the DTO; the organ accent-folds and
             lowercases its result and the needle. Default ``None`` keeps the
             DTO-derived haystack.
+        record_entry_on_create: ``True`` (default) — `create_card` writes the
+            `entrada` history row. A product whose card table has a DB trigger
+            that already records the entry (so rows born outside the organ,
+            e.g. a public intake form, also get one) sets ``False``: the
+            history is append-only, a second `entrada` is permanent.
         board_fields: LGPD minimisation (Art. 6 III) of the LIST reads. ``None``
             (default) keeps today's behaviour: every ``campos`` key rides on
             every card of the board and the orphan list. A tuple limits those
@@ -207,6 +212,7 @@ class FunnelConfig:
     card_select: str = "*"
     row_filter: Callable[[Any], Any] | None = None
     search_haystack: Callable[[dict], str] | None = None
+    record_entry_on_create: bool = True
 
     def __post_init__(self) -> None:
         if self.tenancy not in ("org", "platform"):

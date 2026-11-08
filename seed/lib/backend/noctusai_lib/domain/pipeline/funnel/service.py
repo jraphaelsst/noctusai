@@ -352,7 +352,8 @@ def create_card(db: Any, cfg: FunnelConfig, ctx: PipelineContext, body: Mapping[
     created = db.table(cfg.pipeline.card_table).insert(row).execute().data or []
     if not created:
         raise InternalError("O card não foi criado.")
-    _record_entry(db, cfg, org_id, created[0], stage["id"], ctx.user_id)
+    if cfg.record_entry_on_create:
+        _record_entry(db, cfg, org_id, created[0], stage["id"], ctx.user_id)
     return created[0]
 
 

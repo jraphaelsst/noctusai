@@ -41,6 +41,8 @@ export interface FunnelDescriptor {
   prefix: string;
   /** Noun for toasts: "negócio". */
   entityLabel: string;
+  /** The stage-editor API (the seed `pipeline_stages_router`, usually `${prefix}/etapas`). Omit = columns are fixed. */
+  stagesEndpoint?: string;
   /** Link the card-hub (timeline / notas / lembretes …). Omit for a funnel with no hub. */
   hub?: { descriptor: CardHubDescriptor; api: CardHubApi };
 }
@@ -125,6 +127,7 @@ export function createFunnelHooks<TCard extends FunnelCard = FunnelCard>(
       getCardId: idOf,
       getCardValue: (c) => c.valor,
       entityLabel,
+      stagesEndpoint: descriptor.stagesEndpoint,
     },
     api,
   );
