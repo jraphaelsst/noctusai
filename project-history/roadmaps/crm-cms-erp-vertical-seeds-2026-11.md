@@ -68,3 +68,11 @@ _(empty)_
 
 ## File trail
 _(filled as slices land)_
+
+## Owner answers to the plan's questions (2026-11-08)
+
+- **Q1, public surfaces:** "follow the same pattern as sw and that should be canonical, even to noc ... sw should be way safer. let's use it as reference to seed security also and we can project to other products then". SW's hardened public/portal security model (2026-11-05/06 refinement) becomes the SEED canon. CMS sites and portals adopt it, and core and the other canons project from it. The W5-2 portal organ lifts SW's pattern rather than designing a new one.
+- **Q2, therapy-platform data:** "Erase it all". No migration of its data; W8-M erases code and data after A0 measurement. The owner was told that CFP/LGPD clinical-record retention may apply and chose erasure.
+- **Q3, module switches:** per COMPANY (org), **all modules on by default**, manageable from the admin dashboard. This supersedes ADR-1's "per product for now": `ModuleSpec.license_key` is live from W1-1. There is an org-level module enablement record, which noc admins toggle in core admin and which the FE nav and BE routes both honour.
+- **Q4, Mônica slug:** finish the `nosnolimiar` rename BEFORE any Mônica absorption slice. It is still gated by the standing rule that the rename runs only after "Julia prod-verified".
+- **UX fix (seed Sidebar):** in the collapsed icon rail, item badges (DEV, Em breve) must not push the icon sideways. Hide the badge when collapsed and show it when expanded, or use a better non-shifting indicator.
