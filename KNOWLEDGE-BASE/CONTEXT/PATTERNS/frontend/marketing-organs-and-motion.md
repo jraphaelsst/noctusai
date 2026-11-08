@@ -18,6 +18,14 @@
 
 LandingNav · Hero (with a media slot) · FeatureGrid · Steps · CtaBand · LandingFooter. Piloted on `core`, `social-wiring` and `agents` before fan-out (pilot-products-first); products consume the organs and compose copy and media through slots, never fork them (`KB § PATTERNS/architect/products-consume-canonical-organs.md`).
 
+## Landing organs v2: opt-in props, product brand, cross-product URLs
+
+Product landings match their approved mockup through **opt-in props on the same organs** (a default render is unchanged, so core is untouched): Hero `variant="inverse"` / `bareMedia` / `accentEmphasis` / `stats` / `entrance="staggered"`; FeatureGrid `columns={2}` / `cardVariant="large"` / `accent` / `revealItems` and per-item `tag` / `bullets` / `link`; LandingNav omits the Produtos disclosure unless `products` is passed (`loginAlwaysVisible`, `primaryActionDesktopOnly`); LeadCaptureForm `variant="product"` + `productInterest` + copy overrides; CtaBand `variant="inverse"`; LandingFooter `tagline` as a node. The 3-state theme (`LandingThemeProvider`, `ThemeSwitch`) and the non-core lead wire (`createCoreLeadSubmit`, to `env.CORE_API_URL`) live in the seed, not in products.
+
+**Product brand precedence** (highest first): element override (`link.brand`) > `<ProductBrandScope brand>` (static per-product accent, CSS variables on a scoped `display: contents` element, never `:root`) > org `BrandProvider` (runtime `/api/brand/current`) > NOC tokens. The accent text uses `primary` on light and `primary-light` on dark; a declared accent must reach AA for white-on-primary, accent text on the light/dark/inverse surfaces and the dark focus ring. Landings use the system font (no heading font in the contract).
+
+**Another product's public URL** in the FE is `productUrl(slug, path?)` from `@noctusai/lib`, the mirror of the backend `resolve_product_url`: `VITE_PRODUCT_URL_<SLUG>` > `VITE_PRODUCT_URL_PATTERN` > `https://<slug>.noctusai.com`. Short-host products (erp, social, core) pin it with the per-product variable; do not read `VITE_<PRODUCT>_URL` ad hoc.
+
 ## What the keeper checks
 
 - **Fails** on any import, `export … from`, dynamic `import()` or `require()` of `motion`, `motion/*`, `framer-motion` or `framer-motion/*` in `products/*/frontend/src/**` (active products only, `deploy/fleet/active-scope.txt`), `templates/product-seed/frontend/src/**`, and `seed/lib/frontend/src/**` outside `marketing/`.

@@ -12,7 +12,8 @@ export interface FooterColumn { heading: string; links: FooterLink[] }
 
 export interface LandingFooterProps {
   brand: ReactNode;
-  tagline?: string;
+  /** A string, or a node when part of it must link (e.g. "Um produto <a>NoctusAI</a>"). */
+  tagline?: ReactNode;
   columns: FooterColumn[];
   copyright: string;
   id?: string;
