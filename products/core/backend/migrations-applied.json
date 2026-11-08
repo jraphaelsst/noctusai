@@ -21,6 +21,7 @@
     "102_billing_reads_platform_staff.sql": "e78738f439d399f5fde2cb5c76de0e4b6391118066273674e77b76fb25287458",
     "103_finance_service_only.sql": "8cc9e2daab270db70a8d581ac785cc353adec96b89a33d020a7f571248d459e7",
     "104_public_browser_grants_service_only.sql": "791fee34715231c85c51b66d075d83826ff7e1e57bb182c9ee87d628401eab96",
-    "105_products_exibir_no_site.sql": "ac45b54b3b9031fec271724d7cdcd259b5203aa8ea5a20fe60da8179d1b6d10d"
+    "105_products_exibir_no_site.sql": "ac45b54b3b9031fec271724d7cdcd259b5203aa8ea5a20fe60da8179d1b6d10d",
+    "106_finance_rev2.sql": "4e684b417918c6af7225418793114bdb9b6ed3bcba0dd27dd6a6b648edeea433"
   }
 }
