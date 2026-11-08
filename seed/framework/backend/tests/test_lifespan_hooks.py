@@ -192,3 +192,21 @@ def test_raising_shutdown_hook_still_runs_framework_cleanup(minimal_settings, mo
         pass
 
     assert closed == ["llm"], "framework cleanup must run even when the product hook raises"
+
+
+def test_create_product_app_configures_the_real_prompt_registry(fake_settings):
+    """Startup wiring by construction: a product built by the factory resolves the registry to the Real adapter,
+    over its own core client (late-bound), with nothing per product."""
+    from noctusai_lib.integrations.prompt_registry import (
+        SupabasePromptRegistry,
+        configure_prompt_registry,
+        get_prompt_registry,
+    )
+    from noctusai_seed import create_product_app
+
+    configure_prompt_registry(None)
+    try:
+        create_product_app(name="Test", schema="test", settings=fake_settings, standard_routers=["health"])
+        assert isinstance(get_prompt_registry(), SupabasePromptRegistry)
+    finally:
+        configure_prompt_registry(None)
