@@ -388,6 +388,9 @@ SCOPE_STUDIO_CONTENT_WRITE = "studio:content-write"
 #: The extra scope that lets the SAME platform-issued token DELETE an agent (``DELETE /api/studio/agents/{key}``).
 #: Opt-in at mint time (``permitir_exclusao``): a content token never carries it by default.
 SCOPE_STUDIO_AGENT_DELETE = "studio:agent-delete"
+#: The eval-loop scope (2026-11-08): start / list / read / cancel an eval run (both suites) and NOTHING else --
+#: no publish, no definition write, no org data. Same issuer rule as the content token.
+SCOPE_STUDIO_EVALS_RUN = "studio:evals-run"
 CONTENT_TOKEN_ISSUER = "noctus-platform"
 
 
@@ -416,6 +419,34 @@ async def require_platform_content_admin(
     if ctx.caller_kind == "product":
         return _content_token_gate(ctx)
     return await require_platform_admin(ctx=ctx, request=request, response=response)
+
+
+async def _evals_gate(ctx: AuthContext, request: Request, response: Response, legacy_publish: bool) -> AuthContext:
+    if ctx.caller_kind == "product":
+        if SCOPE_STUDIO_EVALS_RUN in ctx.scopes:
+            return _content_token_gate(ctx, SCOPE_STUDIO_EVALS_RUN)
+        if legacy_publish and SCOPE_STUDIO_PUBLISH in ctx.scopes:
+            return ctx  # the dev-advisor publish token (the route enforces the agent kind)
+        needed = f"{SCOPE_STUDIO_EVALS_RUN}" + (f" or {SCOPE_STUDIO_PUBLISH}" if legacy_publish else "")
+        raise HTTPException(
+            status_code=403, detail={"detail": f"Missing scope(s): {needed}", "code": "scope_missing"},
+        )
+    return await require_platform_admin(ctx=ctx, request=request, response=response)
+
+
+async def require_evals_run_access(
+    ctx: AuthContext = Depends(get_auth_context), request: Request = None, response: Response = None,
+) -> AuthContext:
+    """Start / list / read an eval run (either suite): a platform admin, a ``studio:publish`` token (dev-advisor
+    agents, enforced by the route) OR the platform-issued ``studio:evals-run`` token. Nothing else reaches it."""
+    return await _evals_gate(ctx, request, response, legacy_publish=True)
+
+
+async def require_evals_run_cancel(
+    ctx: AuthContext = Depends(get_auth_context), request: Request = None, response: Response = None,
+) -> AuthContext:
+    """Cancel an eval run: a platform admin OR the platform-issued ``studio:evals-run`` token (never ``studio:publish``)."""
+    return await _evals_gate(ctx, request, response, legacy_publish=False)
 
 
 async def require_agent_delete(
@@ -817,6 +848,9 @@ __all__ = [
     "require_platform_content_admin",
     "require_admin_or_content_token",
     "SCOPE_STUDIO_CONTENT_WRITE",
+    "SCOPE_STUDIO_EVALS_RUN",
+    "require_evals_run_access",
+    "require_evals_run_cancel",
     "SCOPE_STUDIO_AGENT_DELETE",
     "require_agent_delete",
     "CONTENT_TOKEN_ISSUER",

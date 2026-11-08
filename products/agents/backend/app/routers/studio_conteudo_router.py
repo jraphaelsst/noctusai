@@ -33,6 +33,7 @@ from app.dependencies import (
     CONTENT_TOKEN_ISSUER,
     SCOPE_STUDIO_AGENT_DELETE,
     SCOPE_STUDIO_CONTENT_WRITE,
+    SCOPE_STUDIO_EVALS_RUN,
     get_auth_context,
     get_core_client,
     get_product_token_admin_dep,
@@ -543,7 +544,12 @@ def mint_content_token(
     """Mint the ``noctus.agents.content`` MCP token: scope ``studio:content-write`` only, issuer
     ``noctus-platform`` (server-side), ``expira_em_dias`` days (default 30, 1..30; never ``null``), org-bound to the platform org the admin acts in. PLATFORM ADMIN
     only; the raw secret is returned once. Audited like the channel token."""
-    scopes = [SCOPE_STUDIO_CONTENT_WRITE] + ([SCOPE_STUDIO_AGENT_DELETE] if payload.permitir_exclusao else [])
+    if payload.tipo == "avaliacoes":
+        if payload.permitir_exclusao:
+            raise http_error(422, "exclusao_nao_aplicavel", "Um token de avaliações não pode excluir agentes.")
+        scopes = [SCOPE_STUDIO_EVALS_RUN]
+    else:
+        scopes = [SCOPE_STUDIO_CONTENT_WRITE] + ([SCOPE_STUDIO_AGENT_DELETE] if payload.permitir_exclusao else [])
     expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expira_em_dias)
     try:
         minted = token_admin.mint(
@@ -584,9 +590,10 @@ def _content_token_status(info) -> str:
 
 
 def _content_tokens(token_admin: ProductTokenAdmin, org_id: UUID):
-    return token_admin.list_tokens(
-        "agents", org_id=org_id, scope=SCOPE_STUDIO_CONTENT_WRITE, issuer=CONTENT_TOKEN_ISSUER,
-    )
+    return [
+        i for scope in (SCOPE_STUDIO_CONTENT_WRITE, SCOPE_STUDIO_EVALS_RUN)
+        for i in token_admin.list_tokens("agents", org_id=org_id, scope=scope, issuer=CONTENT_TOKEN_ISSUER)
+    ]
 
 
 @router.get("/plataforma/content-tokens", response_model=ContentTokensOut, include_in_schema=False)

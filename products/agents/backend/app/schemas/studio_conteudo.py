@@ -285,6 +285,9 @@ class ContentTokenCreateRequest(StrictHttpModel):
     expira_em_dias: int = Field(30, ge=1, le=30)
     #: Also grant ``studio:agent-delete`` (the token may then DELETE agents). Default off.
     permitir_exclusao: bool = False
+    #: ``conteudo`` (default) = ``studio:content-write``; ``avaliacoes`` = ONLY ``studio:evals-run`` (start / list / read /
+    #: cancel eval runs, both suites). ``permitir_exclusao`` is refused (422) for ``avaliacoes``.
+    tipo: Literal["conteudo", "avaliacoes"] = "conteudo"
 
 
 class ContentTokenOut(BaseModel):

@@ -888,3 +888,113 @@ class TestContentTokenUi:
         admin.mint("agents", org_id=DEFAULT_ORG_ID, label="old", scopes=["studio:content-write"],
                    expires_at=datetime.now(timezone.utc) - timedelta(days=1), issuer="noctus-platform")
         assert plat.get(f"{PLAT}/content-tokens").json()["itens"][0]["status"] == "expirado"
+
+
+class TestEvalsRunToken:
+    """``studio:evals-run`` (2026-11-08): start / list / read / cancel an eval run (both suites) and nothing else."""
+
+    RUNS = f"{BASE}/julia/evals/runs"
+
+    @staticmethod
+    def _as(plat, scopes, issuer="noctus-platform"):
+        plat.raw.app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+            org_id=DEFAULT_ORG_ID, caller_kind="product", user_id=None, scopes=scopes,
+            raw_token="tok", api_token_id=UUID(int=11), issuer=issuer,
+        )
+
+    @pytest.fixture
+    def evals(self, plat):
+        from app.routers.studio_agents_router import get_eval_store_dep
+        from app.routers.studio_evals_router import get_current_hash_dep, get_eval_scheduler_dep
+        from app.stores.studio_evals import FakeEvalStore
+
+        store = FakeEvalStore()
+        scheduled: list = []
+        ov = plat.raw.app.dependency_overrides
+        ov[get_eval_store_dep] = lambda: store
+        ov[get_eval_scheduler_dep] = lambda: scheduled.append
+        ov[get_current_hash_dep] = lambda: (lambda org, agent, version: "h" * 64)
+        return plat, store, scheduled
+
+    def test_unauthenticated_is_strict_401(self, plat):
+        assert plat.raw.get(self.RUNS).status_code == 401
+        assert plat.raw.post(self.RUNS, json={}).status_code == 401
+
+    def test_a_content_only_token_is_403_on_every_run_route(self, plat):
+        self._as(plat, ["studio:content-write"])
+        rid = UUID(int=1)
+        for resp in (
+            plat.raw.get(self.RUNS), plat.raw.post(self.RUNS, json={}), plat.raw.get(f"{self.RUNS}/{rid}"),
+            plat.raw.post(f"{self.RUNS}/{rid}/cancel"),
+            plat.raw.post(f"{BASE}/julia/draft/mecanismo-runs"), plat.raw.get(f"{BASE}/julia/mecanismo-runs/{rid}"),
+        ):
+            assert resp.status_code == 403 and resp.json()["code"] == "scope_missing"
+
+    def test_the_scope_without_the_platform_issuer_is_403(self, plat):
+        self._as(plat, ["studio:evals-run"], issuer=None)
+        resp = plat.raw.get(self.RUNS)
+        assert resp.status_code == 403 and resp.json()["code"] == "issuer_not_allowed"
+
+    def test_the_scope_lists_and_reads_runs(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:evals-run"])
+        resp = plat.raw.get(self.RUNS)
+        assert resp.status_code == 200, resp.text
+        assert plat.raw.get(f"{self.RUNS}/{UUID(int=1)}").status_code == 404  # reached the handler: run unknown
+
+    def test_the_scope_cancels_through_the_handler(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:evals-run"])
+        assert plat.raw.post(f"{self.RUNS}/{UUID(int=1)}/cancel").status_code == 404  # past the gate, run unknown
+
+    def test_the_scope_reaches_the_mecanismo_read(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:evals-run"])
+        resp = plat.raw.get(f"{BASE}/julia/mecanismo-runs/{UUID(int=1)}")
+        assert resp.status_code == 404 and resp.json()["code"] == "run_not_found"
+
+    def test_the_scope_cannot_publish_or_write_definitions(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:evals-run"])
+        for resp in (
+            plat.raw.put(f"{BASE}/julia/draft/textos", json={"itens": []}),
+            plat.raw.put(f"{BASE}/julia/draft/sections", json=SECOES),
+            plat.raw.post(f"{BASE}/julia/draft/publish", json={}),
+            plat.raw.post(f"{BASE}/julia/evals/cases", json={}),
+            plat.raw.delete(f"{BASE}/julia"),
+        ):
+            assert resp.status_code == 403, resp.request.url
+            assert resp.json()["code"] in {"scope_missing", "user_required"}
+
+    def test_a_tenant_org_admin_is_still_403_on_runs(self, plat):
+        plat.mock_supabase.set_table_data(
+            "noctus_users", [{"id": str(DEFAULT_USER_ID), "org_id": str(DEFAULT_ORG_ID), "role": "user", "org_role": "owner"}])
+        resp = plat.get(self.RUNS)
+        assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
+
+
+class TestEvalsTokenMint:
+    def test_avaliacoes_mints_only_the_evals_run_scope(self, plat):
+        from app.dependencies import get_product_token_admin_dep, get_token_audit_dep
+
+        class _Admin:
+            def mint(self, product, **kw):
+                self.kw = kw
+                from types import SimpleNamespace as N
+                return N(secret="noc_x", info=N(id=UUID(int=3), prefix="noc_x"))
+
+        class _Audit:
+            def record(self, **kw):
+                pass
+
+        admin = _Admin()
+        plat.raw.app.dependency_overrides[get_product_token_admin_dep] = lambda: admin
+        plat.raw.app.dependency_overrides[get_token_audit_dep] = lambda: _Audit()
+        plat.as_role("admin")
+        _platform_admin(plat)
+        resp = plat.post(f"{PLAT}/content-token", json={"label": "loop", "tipo": "avaliacoes"})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["scopes"] == ["studio:evals-run"]
+        assert admin.kw["issuer"] == "noctus-platform"
+        bad = plat.post(f"{PLAT}/content-token", json={"label": "x", "tipo": "avaliacoes", "permitir_exclusao": True})
+        assert bad.status_code == 422
