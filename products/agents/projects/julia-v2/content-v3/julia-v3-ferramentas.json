@@ -19,7 +19,7 @@
    "ferramenta": "registrar_documento",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Registra a foto ou o arquivo de um documento de identificação do próprio lead (RG, CPF, CNH ou CIN) que ele enviou nesta conversa, para a visita. O sistema lê o documento e preenche os dados sozinho; o CPF fica pendente até a leitura. Só use depois da intenção de visita. Nunca leia, repita nem confirme números do documento na conversa. Imagem escura, cortada ou ilegível: peça outra com boa luz ou o número digitado.",
+   "descricao": "Registra a foto ou o arquivo de um documento de identificação do próprio lead (RG, CPF, CNH ou CIN) que ele enviou nesta conversa, para a visita. O sistema lê o documento e preenche os dados sozinho; o CPF fica pendente até a leitura. Só use depois da intenção de visita e depois que a foto ou o arquivo já chegou: se o lead só perguntou se pode mandar, ainda não chame; aceite (\"Pode mandar, sim\") e peça dados visíveis e boa iluminação, ou o número digitado. Nunca leia, repita nem confirme números do documento na conversa. Imagem escura, cortada ou ilegível: peça outra com boa luz ou o número digitado.",
    "parametros": {
     "provider_message_id": "Identificador da mensagem do lead que trouxe a imagem ou o arquivo, como aparece no histórico.",
     "tipo_provavel": "Tipo provável do documento.",

@@ -1,0 +1,36 @@
+{
+ "itens": [
+  {
+   "chave": "cpf",
+   "rotulo": "CPF",
+   "descricao_modelo": "CPF (11 dígitos), para o corretor preparar o cadastro da visita que ele vai combinar com o lead. Nunca diga que é para liberar a entrada nem para confirmar a visita.",
+   "ordem": 320,
+   "grupo": "contato",
+   "tipo": "identificacao",
+   "opcoes": [],
+   "pontuacao": {},
+   "ativo": true,
+   "eixo": null,
+   "escopo": "sdr",
+   "unidade": null,
+   "sensivel": null,
+   "validade_dias": null
+  },
+  {
+   "chave": "rg",
+   "rotulo": "RG",
+   "descricao_modelo": "RG (com a UF, se o lead informar), desejável, para o corretor preparar o cadastro da visita. Peça uma vez, sem insistir; nunca diga que é para liberar a entrada.",
+   "ordem": 330,
+   "grupo": "contato",
+   "tipo": "identificacao",
+   "opcoes": [],
+   "pontuacao": {},
+   "ativo": true,
+   "eixo": null,
+   "escopo": "sdr",
+   "unidade": null,
+   "sensivel": null,
+   "validade_dias": null
+  }
+ ]
+}
