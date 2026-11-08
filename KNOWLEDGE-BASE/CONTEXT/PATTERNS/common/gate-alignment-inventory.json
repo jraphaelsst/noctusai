@@ -108,6 +108,24 @@
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
    "note": "landed by feat/access-tiers-gate; no firing history yet"
   },
+  "guard:background-agent-idle": {
+   "mechanism": "KB § PATTERNS/common/background-agent-lifecycle.md (engineer-seed hand-back clause + noc-branch-dispatch step 5b); advisory backstop, never blocks",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-07",
+   "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
+  },
+  "guard:dev-advance": {
+   "mechanism": "KB § PATTERNS/architect/orchestration-craft-canon.md §6.13 (push leg + noc-branch-dispatch guardrail); advisory pull backstop, never blocks",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-07",
+   "source": "Claude Code hooks reference (SessionStart/UserPromptSubmit additionalContext); orchestration-craft-canon.md §6.2 'a message points at state'; Google SRE incident handover (explicit, acknowledged state); owner rule 2026-11-07"
+  },
   "guard:executor-dispatch": {
    "severity": "",
    "kind": "guard",
@@ -3083,6 +3101,19 @@
    "branch": "feat/keeper-local-pipeline-board",
    "gates": [
     "keeper:check-local-pipeline-board"
+   ]
+  },
+  {
+   "id": "D20",
+   "decision": "Background agents end when done (hand-back is the last act), the dispatcher salvages then TaskStops on every hand-back, peer sessions are never stopped; methodology/code changes reach live sessions as information (pull hook + HEADS-UP), each decides how to proceed",
+   "home": "KB § PATTERNS/common/background-agent-lifecycle.md + KB § PATTERNS/architect/orchestration-craft-canon.md §6.13",
+   "construction": "injection:.claude/agents/engineer-seed.md §4 hand-back clause; .claude/skills/noc-branch-dispatch/SKILL.md step 5b + change-propagation guardrail",
+   "gate": "guard:background-agent-idle + guard:dev-advance (advisory, fail-open)",
+   "telemetry": "guard-events.ndjson rows (guard=background-agent-idle|dev-advance)",
+   "branch": "feat/background-agent-lifecycle",
+   "gates": [
+    "guard:background-agent-idle",
+    "guard:dev-advance"
    ]
   }
  ]
