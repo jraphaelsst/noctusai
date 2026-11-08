@@ -138,6 +138,8 @@ revoke ask for confirmation. The Canais tab of an agent lists that agent's non-r
 status, credential prefix, last delivery; no agent name — the page is the agent) and links there to manage them; a
 non platform admin (403) sees only the hint. Status badges: `GRANT_STATUS_BADGE` in `hooks/useGrants.ts`, shared by both.
 
+Platform AI calls UI: `/agentes-plataforma` ("Agentes da plataforma", group Plataforma, platform admin only, `status_pagina` row `agentes-plataforma`, migration 069; `pages/AgentesPlataforma.tsx`, `hooks/usePlataformaAgentes.ts`): pick a call, choose Fornecedor + Modelo (filtered by vendor/capacidade) and edit ONE whole-prompt field; unsaved-draft guard, Descartar alterações, 422 `modelo_invalido` inline.
+
 ## Creating a complete agent (Julia as the reference)
 
 `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md` (skill `noc-new-agent`) is the recipe: the artifacts a production agent has and
