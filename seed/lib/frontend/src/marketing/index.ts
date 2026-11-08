@@ -23,6 +23,7 @@ export { Steps } from "./Steps";
 export type { StepsProps, StepItem } from "./Steps";
 export { LeadCaptureForm, LEAD_MESSAGES } from "./LeadCaptureForm";
 export type { LeadCaptureFormProps, LeadFormValues, LeadInterest } from "./LeadCaptureForm";
+export type { TurnstileApi } from "./TurnstileSlot";
 export { CtaBand } from "./CtaBand";
 export type { CtaBandProps } from "./CtaBand";
 export { Faq } from "./Faq";

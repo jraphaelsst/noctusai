@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
-interface TurnstileApi {
+/** The single `window.turnstile` declaration for the fleet; products consume it, never re-declare. */
+export interface TurnstileApi {
   render(el: HTMLElement, opts: Record<string, unknown>): string;
   remove(widgetId: string): void;
 }
