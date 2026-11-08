@@ -584,11 +584,12 @@ script element; the safe form replaces `<` with `<` (HTML — restrictions for c
 elements). Core's server does exactly this when injecting website settings
 (`products/core/backend/app/routers/website_html.py:132-138`). But the client then **parses** those
 settings (`products/core/frontend/src/website/lib/settings.tsx:32`, decoding `<` back to `<`) and
-`FaqAccordion` re-serialises admin-editable FAQ items with plain `JSON.stringify` into
-`dangerouslySetInnerHTML` (`products/core/frontend/src/website/components/FaqAccordion.tsx:15-43`) — the
+the (since-deleted) core `FaqAccordion` re-serialised admin-editable FAQ items with plain `JSON.stringify` into
+`dangerouslySetInnerHTML` — the
 server's escaping is undone on the client. ✅ Fixed 2026-11-05: every JSON-LD site serialises through the
 seed `safeJsonLd` (`@noctusai/lib/json-ld`, `seed/lib/frontend/src/json-ld.ts`; escapes `<` `>` `&` U+2028/9) —
-`FaqAccordion.tsx:44`, `headHtml.ts` prerender; test `website/__tests__/faqJsonLd.test.tsx`.
+today `products/core/frontend/src/website/components/SiteFaq.tsx:26` (core wraps the seed `Faq` organ
+and emits the `FAQPage` JSON-LD), `headHtml.ts` prerender; test `website/__tests__/faqJsonLd.test.tsx`.
 
 **CSP.** The seed sets `Content-Security-Policy-Report-Only` on HTML responses
 (`seed/lib/backend/noctusai_lib/api/security_headers.py:24-33,63-64`) with `script-src 'self'
@@ -664,7 +665,7 @@ are readable by any XSS — one more reason the exits above stay closed.
 | Draft seeded by an effect | `products/core/frontend/src/pages/AccountSettings.tsx:15-21` | §1.3 · §6 |
 | State reset by effects instead of `key` | `products/agents/frontend/src/pages/studio/tabs/SkillsTab.tsx:95-110` | §1.3 |
 | Label not bound, error not described | `products/social-wiring/frontend/src/pages/Certidoes.tsx:775-780` | §6 |
-| ~~JSON-LD re-serialised unescaped~~ fixed 2026-11-05 (`safeJsonLd`) | `products/core/frontend/src/website/components/FaqAccordion.tsx:44` | §11 |
+| ~~JSON-LD re-serialised unescaped~~ fixed 2026-11-05 (`safeJsonLd`) | `products/core/frontend/src/website/components/SiteFaq.tsx:26` | §11 |
 | Plain `lazy` on 38 routes | `products/core/frontend/src/main.tsx:19-56` | §9 |
 | Generic error copy at the boundary | `seed/lib/frontend/src/components/ErrorBoundary.tsx:86-91` | §12 |
 | Product tsconfig not strict (scaffold) | `products/seed/frontend/tsconfig.json:14-15` | §5 |
