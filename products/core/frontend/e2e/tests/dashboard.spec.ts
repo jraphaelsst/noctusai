@@ -91,20 +91,20 @@ test.describe('Dashboard', () => {
     await expect(page.getByText('Ver planos')).toBeVisible();
   });
 
-  test('admin user sees Admin Panel button', async ({ adminPage: page }) => {
+  test('admin user sees Painel admin button', async ({ adminPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    await expect(page.getByRole('button', { name: 'Admin Panel' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Painel admin' })).toBeVisible();
   });
 
-  test('non-admin user does not see Admin Panel button', async ({ authenticatedPage: page }) => {
+  test('non-admin user does not see Painel admin button', async ({ authenticatedPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
     // Wait for the dashboard to render before asserting absence.
     await expect(page.getByRole('heading', { name: 'Bem-vindo, Rafael!' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Admin Panel' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Painel admin' })).toHaveCount(0);
   });
 
   test('shows trial countdown when on trial', async ({ authenticatedPage: page }) => {

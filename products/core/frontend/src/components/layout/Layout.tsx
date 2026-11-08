@@ -1,150 +1,32 @@
-import {
-  LayoutDashboard,
-  Building2,
-  CreditCard,
-  KeyRound,
-  ClipboardList,
-  Package,
-  Wallet,
-  Webhook,
-  BarChart3,
-  Settings,
-  Zap,
-  Users,
-  PackageOpen,
-  Brain,
-  FileText,
-  Globe,
-  BookOpen,
-  UserPlus,
-  ShieldCheck,
-  Landmark,
-  Palette,
-  MessageSquare,
-  GitBranch,
-  Search,
-  Coins,
-  Activity,
-  Gauge,
-  Filter,
-} from 'lucide-react';
-import { useAuth } from '../../lib/auth-context';
+import { useMemo } from 'react';
+import { Zap } from 'lucide-react';
 import { CoreHeader } from './CoreHeader';
 import { AppShell, Sidebar } from '@noctusai/lib/design-system';
-import type { NavGroup } from '@noctusai/lib/design-system';
-
-export const NAV_GROUPS: NavGroup[] = [
-  {
-    key: 'admin',
-    label: 'Administração',
-    icon: Settings,
-    items: [],
-    groups: [
-      {
-        key: 'visao-geral',
-        label: 'Visão geral',
-        icon: LayoutDashboard,
-        items: [
-          { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
-          { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
-          { name: 'Digest de auditoria', href: '/admin/audit-digest', icon: FileText },
-          { name: 'Operação', href: '/admin/operacao', icon: Activity },
-          { name: 'Fleet Control', href: '/admin/fleet', icon: Zap },
-        ],
-      },
-      {
-        key: 'clientes',
-        label: 'Clientes',
-        icon: Users,
-        items: [
-          { name: 'Usuarios', href: '/admin/users', icon: Users },
-          { name: 'Organizacoes', href: '/admin/orgs', icon: Building2 },
-        ],
-      },
-      {
-        key: 'comercial',
-        label: 'Comercial',
-        icon: Wallet,
-        items: [
-          { name: 'Funil', href: '/admin/funil', icon: Filter },
-          { name: 'Produtos', href: '/admin/products', icon: Package },
-          { name: 'Planos', href: '/admin/plans', icon: ClipboardList },
-          { name: 'Assinaturas', href: '/admin/subs', icon: CreditCard },
-          { name: 'Faturamento', href: '/admin/billing', icon: Wallet },
-          { name: 'Financeiro', href: '/admin/financeiro', icon: Landmark },
-          { name: 'Créditos de IA', href: '/admin/creditos', icon: Coins },
-          { name: 'Uso & Custos', href: '/admin/uso', icon: Gauge },
-        ],
-      },
-      {
-        key: 'plataforma',
-        label: 'Plataforma',
-        icon: Settings,
-        items: [
-          { name: 'Chaves API', href: '/admin/api-keys', icon: KeyRound },
-          { name: 'Tokens de API', href: '/admin/tokens', icon: KeyRound },
-          { name: 'Chaves LLM', href: '/api-keys', icon: Brain },
-          { name: 'Webhooks', href: '/admin/webhooks', icon: Webhook },
-          { name: 'Configuracoes', href: '/admin/settings', icon: Settings },
-          { name: 'Segurança', href: '/security', icon: ShieldCheck },
-        ],
-      },
-      {
-        key: 'templates',
-        label: 'Templates',
-        icon: PackageOpen,
-        items: [
-          { name: 'Design system', href: '/admin/templates/design_system', icon: Palette },
-          { name: 'Agentes e prompts', href: '/admin/templates/agent', icon: Brain },
-          { name: 'Mensagens', href: '/admin/templates/message', icon: MessageSquare },
-          { name: 'Documentos', href: '/admin/templates/document', icon: FileText },
-          { name: 'Repositório e workflow', href: '/admin/templates/repo_workflow', icon: GitBranch },
-          { name: 'Fontes', href: '/admin/templates/fontes', icon: Search },
-          { name: 'Scaffolds de projeto', href: '/admin/templates/scaffolds', icon: Package },
-        ],
-      },
-    ],
-  },
-  {
-    key: 'website',
-    label: 'Website',
-    icon: Globe,
-    items: [
-      { name: 'Documentação', href: '/admin/website/docs', icon: BookOpen },
-      { name: 'Configurações', href: '/admin/website/settings', icon: Settings },
-      { name: 'Leads', href: '/admin/website/leads', icon: UserPlus },
-    ],
-  },
-];
+import { ADMIN_NAV_GROUPS, ADMIN_STANDALONE_ITEMS } from '../../admin/navConfig';
+import { pruneNavGroups, pruneNavItems, type AdminRole } from '../../admin/access';
 
 /**
- * A `marketing` user reaches only `/admin/website/*` (`CoreLayout`'s gate),
- * so the sidebar must show only the `website` group — derived from the SAME
- * `NAV_GROUPS` array (never a second hand-maintained list, contract §6 /
- * `docs/11 §Sidebar`). Any other role sees the full set (today: `admin`,
- * the only role `CoreLayout` otherwise lets through).
+ * Admin shell (sidebar + header). Renders the seed `Sidebar` organ with core's module-group config,
+ * pruned by `canReach(role, href)` -- the SAME predicate that registers the routes. Only ever
+ * imported from the code-split admin chunk.
  */
-export function visibleNavGroups(role: string | undefined): NavGroup[] {
-  if (role === 'marketing') return NAV_GROUPS.filter((group) => group.key === 'website');
-  return NAV_GROUPS;
-}
-
-export function Layout({ children }: { children?: React.ReactNode }) {
-  const { user } = useAuth();
-
-  const navGroups = visibleNavGroups(user?.role);
+export function Layout({ children, role }: { children?: React.ReactNode; role: AdminRole }) {
+  const navGroups = useMemo(() => pruneNavGroups(ADMIN_NAV_GROUPS, role), [role]);
+  const standaloneItems = useMemo(() => pruneNavItems(ADMIN_STANDALONE_ITEMS, role), [role]);
 
   return (
     <AppShell
       navGroups={navGroups}
+      standaloneItems={standaloneItems}
       sidebar={
         <Sidebar
           brandIcon={Zap}
           brandTitle="NoctusAI"
-          brandSubtitle="Admin"
+          brandSubtitle={role === 'admin' ? 'Admin' : 'Marketing'}
           brandHref="/"
           storageKey="core"
           navGroups={navGroups}
+          standaloneItems={standaloneItems}
         />
       }
       header={({ onMenuToggle }) => (

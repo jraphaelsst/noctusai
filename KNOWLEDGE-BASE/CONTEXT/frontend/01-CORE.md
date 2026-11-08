@@ -31,7 +31,7 @@ TanStack Query via entity hooks (`src/hooks/`: `useTeam` → `teamKeys` `:96`, `
 
 ## Route gating
 
-No `ProtectedRoute`/`AdminRoute` components: the seed shell gates authentication, and `CoreLayout` gates `/admin/*` — `isAdmin`, or `isMarketing` on `/admin/website/*` only, else `<Navigate to="/" />` (`src/components/layout/CoreLayout.tsx:22,35-38`). UX only; the backend enforces.
+No `ProtectedRoute`/`AdminRoute` components and no admin gate in `CoreLayout`: **admin is not rendered, not hidden.** `createProductApp({ NotFound: CatchAll })` — `pages/CatchAll` lazy-loads the code-split `src/admin/AdminApp` only for a server-confirmed role from `/api/auth/me` (`user.role === 'admin'` = the platform role the backend `platform_admin_required` reads, never an org/product admin; `marketing` = website only); anyone else gets the plain `pages/NotFound`, byte-identical to an unknown path (no redirect, no "forbidden"). Admin routes (`admin/routes.ts`), nav (`admin/navConfig.ts`: module groups CRM, ERP, CMS, Integrações, Configurações, Operação, Modelos da plataforma + standalone Painel, rendered by the seed `Sidebar` organ) and the shell (`components/layout/Layout.tsx`) live only in that chunk; `src/build-output.test.ts` builds and asserts the main entry carries no admin path/label. ONE predicate, `admin/access.ts` `canReach(role, href)`, registers the routes AND prunes the nav (`pruneNavGroups`). Backend still enforces (`get_current_admin` / `require_platform_admin_dep`, 403 for non-admins). Pending modules (Redes Sociais, CoreStudio, Banib, Emissões) wait on the seed Sidebar `disabled`/"Em breve" state (`PENDING_MODULE_GROUPS`).
 
 ## Website
 

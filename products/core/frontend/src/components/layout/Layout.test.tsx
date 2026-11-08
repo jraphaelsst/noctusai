@@ -1,31 +1,47 @@
 /**
- * `visibleNavGroups` — sidebar derivation for the marketing role carve-out
- * (contract §6: "the sidebar shows only the Website group ... derive it
- * from the same NAV_GROUPS, not a second list"). A pure-function test:
- * verifies the DERIVATION without rendering the full `AppShell`/`Sidebar`/
- * `Header` tree (covered indirectly by `CoreLayout.test.tsx`'s gate tests).
+ * The admin shell renders the seed Sidebar with core's module groups, pruned per role.
  */
-import { describe, expect, it } from 'vitest';
-import { NAV_GROUPS, visibleNavGroups } from './Layout';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { Layout } from './Layout';
 
-describe('visibleNavGroups', () => {
-  it('returns every group for admin (and any non-marketing role)', () => {
-    expect(visibleNavGroups('admin')).toBe(NAV_GROUPS);
-    expect(visibleNavGroups(undefined)).toBe(NAV_GROUPS);
+afterEach(() => { cleanup(); window.localStorage.clear(); });
+
+vi.mock('./CoreHeader', () => ({ CoreHeader: () => <div data-testid="hdr" /> }));
+
+function renderShell(role: 'admin' | 'marketing', path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Layout role={role}><div>BODY</div></Layout>
+    </MemoryRouter>,
+  );
+}
+
+const groupLabels = () =>
+  screen.getAllByRole('button').map((b) => b.textContent?.trim() ?? '').filter(Boolean);
+
+describe('admin shell navigation', () => {
+  it('lists the module groups in order for a platform admin, with Painel as a standalone item', () => {
+    renderShell('admin', '/admin');
+    const labels = groupLabels();
+    const order = ['CRM', 'ERP', 'CMS', 'Integrações', 'Configurações', 'Operação', 'Modelos da plataforma'];
+    const idx = order.map((l) => labels.findIndex((x) => x.includes(l)));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+    expect(screen.getByRole('link', { name: /Painel/ })).toBeTruthy();
   });
 
-  it('returns ONLY the website group for marketing, derived from NAV_GROUPS', () => {
-    const groups = visibleNavGroups('marketing');
-    expect(groups.map((g) => g.key)).toEqual(['website']);
-    // Same object identity as the source items — a derivation, not a copy.
-    expect(groups[0]).toBe(NAV_GROUPS.find((g) => g.key === 'website'));
-  });
-
-  it('the website group carries Documentação, Configurações and Leads', () => {
-    const [website] = visibleNavGroups('marketing');
-    const names = website.items.map((i) => i.name);
-    expect(names).toContain('Documentação');
-    expect(names).toContain('Configurações');
-    expect(names).toContain('Leads');
+  it('shows a marketing user only the website entries (CRM > Leads do site, CMS)', () => {
+    renderShell('marketing', '/admin/website/leads');
+    const labels = groupLabels();
+    expect(labels.some((l) => l.includes('CRM'))).toBe(true);
+    expect(labels.some((l) => l.includes('CMS'))).toBe(true);
+    for (const l of ['ERP', 'Integrações', 'Configurações', 'Operação', 'Modelos']) {
+      expect(labels.some((x) => x.includes(l))).toBe(false);
+    }
+    expect(screen.getByRole('link', { name: /Leads do site/ })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Painel/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Funil/ })).toBeNull();
   });
 });

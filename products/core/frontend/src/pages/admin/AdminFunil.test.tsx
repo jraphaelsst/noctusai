@@ -24,7 +24,7 @@ vi.mock('../../lib/api', () => ({ api }));
 vi.mock('../../lib/auth-context', () => ({ useAuth: () => ({ isAdmin: true }) }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
-import { NAV_GROUPS } from '../../components/layout/Layout';
+import { ADMIN_NAV_GROUPS } from '../../admin/navConfig';
 import { AdminFunil } from './AdminFunil';
 import { OfertaSection, parseMoney } from './funil/OfertaSection';
 import type { NocCard } from './funil/hooks';
@@ -80,10 +80,9 @@ afterEach(() => {
 });
 
 describe('nav', () => {
-  it('lists Funil first under Administração > Comercial', () => {
-    const admin = NAV_GROUPS.find((g) => g.key === 'admin')!;
-    const comercial = admin.groups!.find((g) => g.key === 'comercial')!;
-    expect(comercial.items[0]).toMatchObject({ name: 'Funil', href: '/admin/funil' });
+  it('lists Funil first under CRM', () => {
+    const crm = ADMIN_NAV_GROUPS.find((g) => g.key === 'crm')!;
+    expect(crm.items[0]).toMatchObject({ name: 'Funil', href: '/admin/funil' });
   });
 });
 
