@@ -8,7 +8,6 @@ import re
 from pathlib import Path
 
 import pytest
-from noctusai_lib.testing.migrations import migration_sql
 
 from app.services.brand import tokens as T
 
@@ -43,9 +42,11 @@ class TestKeyDerivation:
             T.parse_tokens_css(css)
 
     def test_migration_platform_row_equals_the_artifact(self):
-        sql = migration_sql(BACKEND / "migrations", "org_brand_identities")
-        literal = re.search(r"'(\{\"schema\": \"noctus\.brand-tokens/v1\".*?\})'::jsonb", sql, re.S).group(1)
-        assert json.loads(literal) == T.platform_tokens()
+        # The newest migration carrying the platform literal wins (089 seeds v1; later ones follow tokens.css).
+        pattern = re.compile(r"'(\{\"schema\": \"noctus\.brand-tokens/v1\".*?\})'::jsonb", re.S)
+        carriers = [p for p in sorted((BACKEND / "migrations").glob("*.sql")) if pattern.search(p.read_text(encoding="utf-8"))]
+        literal = pattern.search(carriers[-1].read_text(encoding="utf-8")).group(1)
+        assert json.loads(literal) == T.platform_tokens(), carriers[-1].name
 
 
 class TestValidation:
