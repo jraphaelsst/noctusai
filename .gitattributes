@@ -30,3 +30,10 @@ KNOWLEDGE-BASE/AGENT-CONTEXT.md          merge=kb-counts
 # registered by scripts/hooks/install-hooks.sh. Deletes are governed by keeper
 # check_lgpd_entry_removal. KB § PATTERNS/common/lgpd-entry-keeper.md
 LGPD-WARNINGS.md                         merge=lgpd-warnings
+
+# gate-alignment-inventory.json: `decisions[]` ids are hand-assigned (next D<n>) at
+# the list tail and `gates` gains a row per gate, so parallel branches conflict and
+# can mint duplicate ids (s1 gate-inventory/decision-id-collision). The
+# `gate-inventory` driver unions gates and renumbers colliding decisions.
+# Driver = scripts/hooks/merge-gate-inventory.sh. KB § PATTERNS/common/auto-generated-merge-drivers.md
+KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-alignment-inventory.json   merge=gate-inventory
