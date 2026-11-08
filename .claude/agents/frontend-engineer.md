@@ -19,6 +19,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/org-admin-ux-gate.md
   - CONTEXT/PATTERNS/frontend/spa-cache-and-service-worker.md
   - CONTEXT/PATTERNS/frontend/inbox-chat-surface.md
+  - CONTEXT/PATTERNS/frontend/funnel-organ.md
   - CONTEXT/frontend/01-CORE.md
   - CONTEXT/frontend/02-ERP.md
   - CONTEXT/frontend/03-PF.md
@@ -52,6 +53,7 @@ Turn a validated mockup into product UI through the seed factories and canonical
 - **Nav entries need a `status_pagina` row, and `desenvolvimento` needs its RLS policy with roles matching `DEV_ROLES`** — else hidden, or the dev branch is dead code (`check_status_pagina_role_parity`). → `KB § PATTERNS/frontend/status-pagina-dev-visibility.md`
 - **Org-admin UX gate = `useIsOrgAdmin()` / `isOrgAdmin(ctx)`, never the inline copy** — UX only, the server enforces (`check_hand_copied_org_admin`). → `KB § PATTERNS/frontend/org-admin-ux-gate.md`
 - **Chat/inbox = `ChatWindow` organ + adapter + DB-first reads + ONE realtime stream;** register every organ's `.organ.yaml` (a missing one manufactures forks). → `KB § PATTERNS/frontend/inbox-chat-surface.md`
+- **Funnel/CRM board+card = the `FunnelBoard`/`FunnelCardDialog` organ + a `defineFunnel` schema** — face slots, tabs, actions per product; never a 4th board or a per-product card face; PipelineBoard is the one board. → `KB § PATTERNS/frontend/funnel-organ.md`
 - **Product icon must render** — `icone` registered as a real icon (`check_product_icon_registered`). → `KB § PATTERNS/frontend/product-icon-registry.md`
 - **Consent routes are seed-mounted** — never declare `ConsentHubPage`/`PrivacyPolicyPage`/`TermsOfUsePage` locally (`check_consent_routes_mounted`). → `KB § PATTERNS/frontend/consent-routes-mandate.md`
 - **No precaching service worker** — retire with `selfDestroying: true` or declare `// noc-allow: service-worker` (`check_product_service_worker`). → `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`

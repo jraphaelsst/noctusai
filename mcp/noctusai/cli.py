@@ -374,6 +374,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange / --check-lgpd-entry-removal: path of the commit message file (so the Guide-Unaffected / LGPD-Entry-Removed trailer escape hatch can be read).")
     parser.add_argument("--check-lgpd-entry-removal", action="store_true", help="Keeper (commit-msg stage, over the STAGED LGPD-WARNINGS.md vs HEAD; merge-aware): a commit must not REMOVE an unresolved `- [ ]` entry (identity = the concern+path pair; ticking `- [x]`, in-place edits and additions are fine; changing the concern/path text reads as remove+add). Override: a `LGPD-Entry-Removed: <concern or path prefix> \u2014 <reason>` trailer (read from --commit-msg-file; reason mandatory). With --lgpd-range BASE..TIP it runs the CI leg instead: every commit of the range vs its parent with its OWN message. Severity high. Born from the 2026-10-10 loss of an unresolved entry in a conflict resolution. KB § PATTERNS/common/lgpd-entry-keeper.md.")
     parser.add_argument("--lgpd-range", metavar="BASE..TIP", default=None, help="With --check-lgpd-entry-removal: check each commit of this range against its parent (CI leg).")
+    parser.add_argument("--merge-gate-inventory", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="3-way merge of gate-alignment-inventory.json (pure: reads the three files, writes ONLY --out). gates = union (a key changed differently on both sides conflicts), decisions = ours + theirs' new entries (renumbered past max on id collision, duplicates dropped), output sorted + byte-stable. Exit 0 clean, 10 conflicted (ours kept in --out), 2 usage/IO error. Shell half: scripts/hooks/merge-gate-inventory.sh (merge driver `gate-inventory`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--merge-lgpd-warnings", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="Entry-aware 3-way merge of LGPD-WARNINGS.md (pure: reads the three files, writes ONLY --out). Exit 0 clean, 10 conflicted (markers around just the conflicting block in --out), 2 usage/IO error. The shell half is scripts/hooks/merge-lgpd-warnings.sh (git merge driver `lgpd-warnings`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--check-migration-number-refs-in-tests", action="store_true", help="Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER (\"217_x.sql\", migrations/217_) — task_branch integrate renumbers colliding migrations, breaking the test. Use noctusai_lib.testing.migrations.migration_path(root, name_suffix). Pre-existing offenders are baselined in mcp/noctusai/tests/migration_number_refs_baseline.json; only a new file or grown count blocks. `--paths` narrows reporting (pre-commit). Severity high. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--refresh-migration-number-refs-baseline", action="store_true", help="Shrink-only refresh of the --check-migration-number-refs-in-tests baseline (first run records current offenders; later runs only lower counts / drop fixed files, never add).")
@@ -2685,6 +2686,23 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} \u2014 {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
         sys.exit(1 if blocking else 0)
+
+    elif args.merge_gate_inventory:
+        from tools.noctus.dev.gate_alignment import merge_inventory
+        if not args.out:
+            print("--merge-gate-inventory requires --out FILE", file=sys.stderr)
+            sys.exit(2)
+        try:
+            _texts = [Path(f).expanduser().read_text(encoding="utf-8") if Path(f).expanduser().exists() else ""
+                      for f in args.merge_gate_inventory]
+            _merged, _conflicted, _notes = merge_inventory(*_texts)
+        except (OSError, ValueError) as exc:  # UnicodeDecodeError / JSONDecodeError are ValueErrors
+            print(f"--merge-gate-inventory: cannot merge: {exc}", file=sys.stderr)
+            sys.exit(2)
+        for _n in _notes:
+            print(_n, file=sys.stderr)
+        Path(args.out).expanduser().write_text(_merged, encoding="utf-8")
+        sys.exit(10 if _conflicted else 0)
 
     elif args.merge_lgpd_warnings:
         from tools.noctus.dev.lgpd import merge_warnings

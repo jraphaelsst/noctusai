@@ -1,0 +1,35 @@
+name: FunnelCardDialog
+kind: component
+path: seed/lib/frontend/src/components/pipeline/funnel/FunnelCardDialog.tsx
+phase: pilot-seed
+registered_at: '2026-11-07'
+organ_version: '1.0'
+validation_status: emerging
+
+known_facts:
+- 'Built ON CardHubDialog (rail + subpage registry + activity pane). The tabs are not written here: they
+  come from the funnel schema (`tabsFor(card)`: order, `when`, section kind). Section kinds rendered by the
+  organ: fields, form (PATCH, only meta.campos_editaveis), list, linked, timeline, custom; geral/schedule/
+  reminders/conversation need product services and are injected through `renderers` (a missing renderer says
+  so on screen).'
+- 'Activity pane = the card-hub timeline + composer when the card links a hub (`hubEntityId`), else the
+  stage-move history (`GET P/cards/{id}/movimentos`) with no composer (CardHubDialog `activity.composer` is
+  optional since this organ).'
+- 'Header: "Etapa" select (move without drag), schema header actions (confirm/inputs via
+  useFunnelActionFlow), Perder (coded reason; "Outro" requires text), Reabrir, Arquivar. A refused move shows
+  the server message + pendencias in place and the select snaps back.'
+- 'Fields: a missing value renders "—", never 0.'
+
+errors_encountered: []
+drifts_surfaced: []
+
+alternatives_considered:
+- 'Hard-coding SW/IgIg/NoctusAI tabs in the organ: rejected — the vocabulary stays in each product schema.'
+
+manual_validation_log: []
+integration_test_status: unit-only
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false

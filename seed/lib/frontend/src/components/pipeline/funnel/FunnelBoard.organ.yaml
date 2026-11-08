@@ -1,0 +1,41 @@
+name: FunnelBoard
+kind: component
+path: seed/lib/frontend/src/components/pipeline/funnel/FunnelBoard.tsx
+phase: pilot-seed
+registered_at: '2026-11-07'
+organ_version: '1.0'
+validation_status: emerging
+
+known_facts:
+- 'ONE funnel board for every product (owner 2026-11-07: "same component in different contexts"). It
+  COMPOSES PipelineBoard (the one seed board) + FunnelCardFace + FunnelCardDialog + LostReasonDialog;
+  what differs per product is a `defineFunnel` schema (face slots, tabs by section kind, actions, hub
+  link) + `createFunnelHooks` descriptor. KB § PATTERNS/frontend/funnel-organ.md.'
+- 'Lost/descartado/arquivado/ganho are STATUSES, not columns: the board has an Abertos and a Perdidos view
+  (`status` filter owned by the view); a lost card offers Reabrir.'
+- 'Moving never needs a drag (WCAG 2.5.7): a "Mover para…" menu on each open card and an "Etapa" select
+  in the dialog header, all through the ONE move mutation (`createFunnelHooks().pipeline.useMoveCard`
+  replaces the base pipeline move, so drag/menu/select share one cache contract).'
+- 'A refused move (409 gate_refused) is rolled back by the mutation and surfaced with the server message and
+  the missing `pendencias`; never a bare toast, never silent.'
+- 'Cache contract: every card mutation commits the SERVER card into every board entry and the detail entry;
+  status changes are applied per board view (`showsStatus`).'
+
+errors_encountered: []
+
+drifts_surfaced:
+- 'KanbanCard cannot take a key handler (dnd-kit KeyboardSensor owns Enter/Space on the wrapper), so the
+  card title is a real button inside the face — fixed in the organ (CardHubFace `onOpen` seam).'
+
+alternatives_considered:
+- 'A fourth board component: rejected (DRY, N=4 forbidden). PipelineBoard is the convergence target;
+  leads/LeadsBoard carries NOC-REMEDIATE[pipeline-board-organ].'
+- 'Forking CardHubFace for the funnel face: rejected; extended through additive seam props instead.'
+
+manual_validation_log: []
+integration_test_status: unit-only
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
