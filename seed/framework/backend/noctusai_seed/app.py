@@ -41,6 +41,7 @@ from noctusai_lib.config.deploy_config import (
     baseline_required_prod_env,
     require_prod_config,
 )
+from noctusai_lib.api.auth.session_audience import configure_session_audience
 from noctusai_lib.api.auth.token_cache import configure_token_cache
 from noctusai_lib.api.auth.org_selection import OrgSelectionStore, make_org_selection_store
 from noctusai_lib.domain.licensing import (
@@ -302,6 +303,10 @@ def create_product_app(
         lambda: db.get_core_client()
     )
     configure_token_cache(getattr(settings, "auth_token_cache_ttl_seconds", None))
+    configure_session_audience(
+        mode=getattr(settings, "sso_product_session_mode", "observe"),
+        is_core=(schema == "public" or _product_slug == CORE_SLUG),
+    )
     configure_license_gate(
         _product_slug,
         _license_checker,

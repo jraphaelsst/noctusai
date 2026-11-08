@@ -111,6 +111,9 @@ class TokenCache:
         self._ttl_override = ttl_s  # None => follow the process setting
         self._lock = threading.Lock()
         self._store: "OrderedDict[str, tuple[Any, float]]" = OrderedDict()
+        # Registry answer (session_product; None = "not a product session") riding the same
+        # token, TTL and exp cap. See ``session_audience``.
+        self._product: "OrderedDict[str, tuple[Optional[str], float]]" = OrderedDict()
         _instances.add(self)
 
     @property
@@ -159,14 +162,49 @@ class TokenCache:
                 self._store.popitem(last=False)
         return True
 
+    def get_session_product(self, token: str) -> "tuple[bool, Optional[str]]":
+        """``(hit, product_slug)`` for the cached registry answer; ``(False, None)`` on a miss."""
+        if self.ttl_s <= 0:
+            return False, None
+        key = token_digest(token)
+        now = time.monotonic()
+        with self._lock:
+            entry = self._product.get(key)
+            if entry is None:
+                return False, None
+            slug, expires_at = entry
+            if now >= expires_at:
+                del self._product[key]
+                return False, None
+            self._product.move_to_end(key)
+        return True, slug
+
+    def put_session_product(self, token: str, slug: Optional[str]) -> bool:
+        """Cache the registry answer for ``min(ttl, token exp)`` (same rule as :meth:`put`)."""
+        ttl = self.ttl_s
+        exp = _token_exp(token)
+        if ttl <= 0 or exp is None or exp - time.time() <= 0:
+            return False
+        entry = (slug, time.monotonic() + min(ttl, exp - time.time()))
+        key = token_digest(token)
+        with self._lock:
+            self._product[key] = entry
+            self._product.move_to_end(key)
+            while len(self._product) > self._max:
+                self._product.popitem(last=False)
+        return True
+
     def discard(self, token: str) -> bool:
         """Evict one token (the logout path). True iff it was cached."""
+        key = token_digest(token)
         with self._lock:
-            return self._store.pop(token_digest(token), None) is not None
+            self._product.pop(key, None)
+            return self._store.pop(key, None) is not None
 
     def clear(self) -> None:
         with self._lock:
             self._store.clear()
+            self._product.clear()
 
     def __len__(self) -> int:
         with self._lock:

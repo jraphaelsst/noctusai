@@ -139,6 +139,7 @@ def make_trusted_legacy_jwt_resolver(
             raw_token=token,  # JWT — preserves the bearer for legacy callers
             api_token_id=None,
             aal=read_aal(token, validated_user=user),
+            session_product=getattr(getattr(request, "state", None), "session_product", None),
         )
 
     # make_get_auth_context hands the request to resolvers that declare they take it

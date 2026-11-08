@@ -44,6 +44,7 @@ from noctusai_lib.api.auth import (
     validate_bearer_token_via,
 )
 from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
+from noctusai_lib.api.auth.session_audience import observe_core_route, resolve_session_product
 from noctusai_lib.api.auth.token_cache import TokenCache
 from noctusai_lib.api.auth._reasons import log_auth_401
 from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
@@ -208,6 +209,14 @@ class ProductDependencies:
         # stash onto in that shape, and nothing reads it there either.
         if request is not None:
             request.state.audit_actor = AuditActor(user_id=getattr(user, "id", None))
+        # SSO lifecycle S2 (observe): which product this session was minted for. Additive -- it
+        # never changes the return, never raises, never blocks (see session_audience).
+        session_product = await resolve_session_product(
+            token, cache=self._token_cache, get_core_client_fn=lambda: self._db.get_core_client(),
+        )
+        if request is not None:
+            request.state.session_product = session_product
+            observe_core_route(request, session_product, getattr(user, "id", None))
         return user, token
 
     async def get_current_user(

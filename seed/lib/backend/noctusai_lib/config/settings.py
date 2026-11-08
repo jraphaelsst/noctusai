@@ -57,6 +57,10 @@ class BaseAppSettings(BaseSettings):
     # keep working up to this long on a process that already cached it — the
     # owner-accepted trade-off (2026-10-21). KB § PATTERNS/backend/request-path-latency.md
     auth_token_cache_ttl_seconds: int = 30
+    # SSO lifecycle S2: product-session registry mode, off|observe|enforce (env
+    # SSO_PRODUCT_SESSION_MODE). `enforce` is refused at startup until slice S8.
+    # See noctusai_lib.api.auth.session_audience.
+    sso_product_session_mode: str = "observe"
 
     # JWT / SSO
     jwt_secret: str = ""
