@@ -795,6 +795,14 @@ state change, not a removal.
 - **Revisit trigger:** the VPS gains a toolkit runtime the probe may depend on even when the fleet is degraded (it should not), or the installer grows real decision logic.
 - **Recorded by:** prod-watchdog slice (2026-10-11), after the VPS freeze.
 
+### 9i Background-agent idle + dev-advance hooks retain shell (`[carve:hook]`, 2026-11-07)
+
+- **Subject:** `scripts/hooks/claude-guard-background-agent-idle.py` and `scripts/hooks/claude-guard-dev-advance.py`, both harness-UX notices (never gates).
+- **Decision `[A]`:** both stay scripts, the same `[carve:hook]` bucket and structural reason as 9a–9h. They run on the per-tool-call and prompt path, where the MCP server is not reachable, and they fit a 1.5 s fail-open budget. Both are stdlib-only. Their detection logic is currently in-script. If another caller ever needs it, extract it into `tools/noctus/dev/` and keep the adapters thin.
+- **Why:** the owner rule of 2026-11-07 says background agents end when their purpose is done, the dispatcher stops them on hand-back, and sessions learn of methodology changes on `dev`. → `KB § PATTERNS/common/background-agent-lifecycle.md`
+- **Scope:** the two files, each carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a), or a second caller for either detection.
+
 ### 9e Agent-package push hooks retain shell (`[carve:hook]`, 2026-10-03)
 
 - **Subject:** `scripts/agent-hooks/{noc-pre-push-publish.sh, consumer-pre-push.sh, agent_sync_runner.py}` — the push-time legs of the Agent Packages contract (`products/agents/projects/agent-packages/CONTRACT.md` §A5, §F, §G, §H).
