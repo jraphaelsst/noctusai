@@ -229,6 +229,29 @@ describe("AppShell hover rail", () => {
 });
 
 describe("Sidebar collapsed rendering", () => {
+  it("renders no badge in the collapsed rail (icon stays centred, info kept in the name), and shows it on expand", () => {
+    const { aside } = renderShell();
+
+    // "Equipe" carries badge 3. Collapsed: no badge text, same row/icon classes as a badge-less item.
+    expect(screen.queryByText("3")).toBeNull();
+    const plain = screen.getByRole("link", { name: "Dashboard" });
+    const badged = screen.getByRole("link", { name: "Equipe (3)" });
+    expect(badged).toHaveAttribute("title", "Equipe (3)");
+    for (const cls of ["md:justify-center", "md:gap-0", "md:px-0"]) {
+      expect(plain.className).toContain(cls);
+      expect(badged.className).toContain(cls);
+    }
+    for (const cls of ["h-4", "w-4", "shrink-0"]) {
+      expect(badged.querySelector("svg")?.classList.contains(cls)).toBe(true);
+      expect(plain.querySelector("svg")?.classList.contains(cls)).toBe(true);
+    }
+    expect(badged.querySelector(".ml-auto")).toBeNull();
+
+    hover(aside);
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Equipe" })).not.toHaveAttribute("title");
+  });
+
   it("preserves accessible names and adds a title tooltip while collapsed", () => {
     const { aside } = renderShell();
 
@@ -262,7 +285,7 @@ describe("Sidebar collapsed rendering", () => {
     // NOT why it's open — see the "collapsed-by-construction" describe block
     // below, which pins a `defaultOpen: true` group closed when inactive.)
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Equipe" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Equipe (3)" })).toBeInTheDocument();
   });
 
   it("renders unchanged outside an AppShell (context default is not-a-rail)", () => {

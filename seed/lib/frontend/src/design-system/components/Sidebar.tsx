@@ -319,23 +319,31 @@ export function Sidebar({
     setOpenState((prev) => ({ ...prev, [parentKey]: prev[parentKey] === key ? null : key }));
   };
 
-  const renderBadge = (badge: string | number) => (
-    <span
-      className={cn(
-        "ml-auto text-xs bg-primary/20 text-primary-foreground px-1.5 py-0.5 rounded-full",
-        COLLAPSIBLE_TEXT,
-        collapsed && "md:max-w-0 md:px-0 md:opacity-0 md:overflow-hidden"
-      )}
-    >
-      {badge}
-    </span>
-  );
+  // While the rail is collapsed the badge is NOT rendered: its `ml-auto` swallowed the row's free space and
+  // pushed the icon out of the centred column (owner bug 2026-11-08, CoreStudio > Biblioteca "DEV"). The
+  // information is kept in the row's tooltip + accessible name instead (see `withBadge`), and the chip
+  // returns on hover/focus expand, when `collapsed` flips to false.
+  const renderBadge = (badge: string | number) =>
+    collapsed ? null : (
+      <span
+        className={cn(
+          "ml-auto text-xs bg-primary/20 text-primary-foreground px-1.5 py-0.5 rounded-full",
+          COLLAPSIBLE_TEXT
+        )}
+      >
+        {badge}
+      </span>
+    );
+
+  /** Collapsed rail: fold the badge into the tooltip / accessible name so it isn't lost. */
+  const withBadge = (item: NavItem) =>
+    collapsed && item.badge != null ? `${item.name} (${item.badge})` : item.name;
 
   const renderDisabledItem = (item: NavItem) => (
     <div
       key={`${item.href}:${item.name}`}
       aria-disabled="true"
-      title={collapsed ? item.name : undefined}
+      title={collapsed ? withBadge(item) : undefined}
       className={cn(
         "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium cursor-not-allowed text-sidebar-foreground/40",
         collapsed && "md:justify-center md:gap-0 md:px-0"
@@ -355,9 +363,9 @@ export function Sidebar({
       key={`${item.href}:${item.name}`}
       to={item.href}
       onClick={onNavigate}
-      aria-label={item.name}
+      aria-label={withBadge(item)}
       aria-current={current.item === item ? "page" : undefined}
-      title={collapsed ? item.name : undefined}
+      title={collapsed ? withBadge(item) : undefined}
       className={cn(
         "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         collapsed && "md:justify-center md:gap-0 md:px-0",

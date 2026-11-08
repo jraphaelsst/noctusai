@@ -21,6 +21,8 @@ known_facts:
 
   - "2026-11-08 DISABLED STATE + MODULE ORDER (opt-in, defaults unchanged): NavItem gained `disabled?: boolean` (badge already existed as string|number); NavGroup gained `disabled?: boolean` + `badge?: string`. A disabled item (or any item under a disabled group, recursively) renders visible to everyone as a non-interactive <div aria-disabled='true'> — not a Link, no navigation, text-sidebar-foreground/40 — and is skipped by findCurrentPage (never aria-current, never auto-opens its group). The badge renders as the same small chip as the existing item badge (shared renderBadge, collapses with the rail); a group badge shows on the group header and the group still expands. Canonical module order lives in the sibling nav-groups.ts: MODULE_GROUP_ORDER (crm, redes-sociais, erp, cms, corestudio, banib, emissoes, integracoes, configuracoes), MODULE_GROUP_LABELS (pt-BR) and pure orderNavGroups(groups, order?) — known keys first in canonical order, unknown keys after in original order, nothing dropped. All exported from design-system/index.ts. Tests: Sidebar.disabled.test.tsx."
 
+  - "2026-11-08 COLLAPSED-RAIL BADGE FIX: a badge chip (`ml-auto`) pushed its row's icon out of the centred 64px column (owner bug: CoreStudio > Biblioteca 'DEV'). While `collapsed` the badge is no longer rendered; the info moves into the row's `title` + `aria-label` as '<name> (<badge>)'. On hover/focus expand `collapsed` is false and the chip returns. No new props. Test: AppShell.test.tsx 'renders no badge in the collapsed rail'."
+
 errors_encountered: []
 
 drifts_surfaced:
