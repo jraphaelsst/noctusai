@@ -34,7 +34,11 @@ from app.schemas.admin_llm_spend import BudgetUpdate
 from app.services.trusted_auth import get_trusted_auth, get_trusted_db
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/llm-spend", tags=["Admin · LLM Spend"])
+# Platform tier (`/api/admin/*` is platform-admin ONLY): the budget write. Not in the OpenAPI schema.
+router = APIRouter(prefix="/api/admin/llm-spend", tags=["Admin · LLM Spend"], include_in_schema=False)
+# Org tier: an org owner/admin reads THEIR OWN org spend. Lives outside `/api/admin/` so the admin prefix
+# stays platform-only and an org admin's call never lands in a platform namespace.
+org_router = APIRouter(prefix="/api/orgs", tags=["Org · LLM Spend"])
 
 _ACESSO_NEGADO = {
     "detail": "Restrito aos administradores desta organização",
@@ -99,6 +103,8 @@ def get_spend_calculator() -> Callable[[str], Awaitable[dict]]:
     return compute_status
 
 
+@org_router.get("/{org_id}/llm-spend")
+# NOC-REMEDIATE[llm-spend-legacy-admin-path]: drop this alias once every product's frontend has redeployed on the seed hook that calls /api/orgs/{id}/llm-spend — 2026-11-22
 @router.get("/{org_id}")
 @access_tier("org", reason="an org owner/admin reads THEIR OWN org spend (require_spend_reader); not Platform IP")
 async def get_spend_status(

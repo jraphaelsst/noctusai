@@ -193,7 +193,7 @@ export type {
 } from "./ai";
 
 // LLM spend badge — Wave 5 (X4 / cost guardrails). Backed by
-// `GET /api/admin/llm-spend/{org_id}` (Core, admin-only). Composed with
+// `GET /api/orgs/{org_id}/llm-spend` (Core, org owner/admin). Composed with
 // `<PendingConsentBadge/>` via `<AIBadgeStack/>` as the seed framework's
 // default `aiBadge` fill. Admin-only render; non-admins see nothing.
 export {

@@ -135,6 +135,7 @@ app = create_product_app(
         admin_llm_usage_router.router,
         admin_usage_router.router,
         admin_llm_spend_router.router,
+        admin_llm_spend_router.org_router,
         usage.router,
         users.router,
         templates.router,
