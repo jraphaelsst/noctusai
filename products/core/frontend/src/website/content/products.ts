@@ -1,28 +1,16 @@
 /**
- * Marketing copy for the curated products shown on the public website.
+ * Marketing copy for the product CHAPTER PAGES (`/produtos/<slug>`) — nothing else.
  *
- * Source of truth for WHICH products exist and their catalog slug/state is
- * `public.products` (core DB) — see `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`
- * and `deploy/fleet/build-scope.txt`. This file adds pt-BR/EN marketing
- * copy on top; it never invents a product that isn't real.
+ * Which products the site lists, their names, icons, public descriptions and status
+ * (Disponível / Em breve / Lista de espera) are NOT here: they come from the dynamic catalog
+ * (`GET /api/website/catalog`, core `website_catalog_service`, fed by `public.products`) —
+ * see `lib/catalog.tsx`. This file only adds pt-BR/EN long-form copy for the few slugs that
+ * have a dedicated page; a catalog product without an entry here simply has no chapter page
+ * (its card shows no "Conhecer", and a waitlist product still offers "Avise-me").
  *
- * Curation decision (2026-09-23, frontend-engineer slice `website-site`):
- * of the active catalog (`academia-de-reciclagem`, `agents`, `community`,
- * `core`, `igig`, `orbity`, `p-studio`, `social-wiring`), only THREE are
- * general-purpose, multi-tenant offers a visitor could plausibly sign up
- * for. The rest are single-client builds (academia-de-reciclagem, agents,
- * p-studio) or too early to market (community — "domain modules planned,
- * not built" per 02-LANDSCAPE.md) and are deliberately left OUT of the
- * public site rather than misrepresented as products anyone can buy:
- *
- *   - `social-wiring` — LIVE in prod (`deploy_scope='live'`) → `disponivel`
- *   - `orbity`        — built, `deploy_scope='dev'` (not yet promoted) → `lista_de_espera`
- *   - `igig`          — built, `deploy_scope='dev'` (not yet promoted) → `lista_de_espera`
- *
- * `content/defaults.ts` mirrors these states in `WebsiteSettings.products[]`.
- * The admin can change order/visibility/state later without a code change;
- * changing WHICH slugs exist requires shipping new copy here (D3/D4-style
- * seam — copy is content, not runtime-editable prose, for v1).
+ * Adding a page for another product = a new entry here + its slug in `PRODUCT_ORDER`.
+ * `content/defaults.ts` lists the same slugs as the chapter pages' visibility switches
+ * (`WebsiteSettings.products[]`, edited in the admin).
  */
 import type { L10n } from "./types";
 

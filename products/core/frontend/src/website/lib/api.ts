@@ -118,3 +118,42 @@ export async function fetchPlans(): Promise<PlanRow[]> {
   const body = await res.json();
   return (body.data ?? []) as PlanRow[];
 }
+
+/** One row of `GET /api/website/catalog` — the ONLY shape the public site sees (BE `CatalogProduct`). */
+export interface CatalogRow {
+  slug: string;
+  nome: string;
+  descricao_publica: string | null;
+  icone: string | null;
+  destaque_no_site: number | null;
+  status: "disponivel" | "em_breve" | "lista_de_espera";
+}
+
+/** Narrow an untrusted JSON value to `CatalogRow[]` (drops malformed rows, never throws). */
+export function parseCatalog(value: unknown): CatalogRow[] | null {
+  if (!Array.isArray(value)) return null;
+  const rows: CatalogRow[] = [];
+  for (const r of value) {
+    if (!r || typeof r !== "object") continue;
+    const o = r as Record<string, unknown>;
+    if (typeof o.slug !== "string" || typeof o.nome !== "string") continue;
+    if (o.status !== "disponivel" && o.status !== "em_breve" && o.status !== "lista_de_espera") continue;
+    rows.push({
+      slug: o.slug,
+      nome: o.nome,
+      descricao_publica: typeof o.descricao_publica === "string" && o.descricao_publica.trim() ? o.descricao_publica : null,
+      icone: typeof o.icone === "string" ? o.icone : null,
+      destaque_no_site: typeof o.destaque_no_site === "number" ? o.destaque_no_site : null,
+      status: o.status,
+    });
+  }
+  return rows;
+}
+
+export async function fetchCatalog(): Promise<CatalogRow[]> {
+  const res = await fetch(`${baseUrl()}/api/website/catalog`);
+  if (!res.ok) throw new Error(await parseError(res));
+  const rows = parseCatalog(await res.json());
+  if (!rows) throw new Error("catalog_malformed");
+  return rows;
+}

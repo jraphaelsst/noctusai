@@ -9,6 +9,8 @@ import { StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { AppRoutes } from "./routes";
+import { readInlineCatalog } from "./lib/catalog";
+import "@noctusai/seed/index.css";
 import "./styles/site.css";
 
 const container = document.getElementById("root");
@@ -18,7 +20,7 @@ if (container) {
     container,
     <StrictMode>
       <BrowserRouter>
-        <AppRoutes />
+        <AppRoutes catalog={readInlineCatalog()} />
       </BrowserRouter>
     </StrictMode>,
   );
