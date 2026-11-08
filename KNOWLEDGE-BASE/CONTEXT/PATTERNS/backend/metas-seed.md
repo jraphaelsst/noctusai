@@ -218,7 +218,7 @@ should fire on:
 - **Frontend (TS) seed** — `useMetas` / `useGoals` hook pattern lift is a separate cycle (different layer, different recurrence trigger).
 - **Period parent-child cascade** — ERP's quinzenal → mensal → trimestral auto-generation stays in ERP at N=1. Reopen when N=2.
 - **Product wiring** — three follow-up cycles (`pf-metas-seed-wiring`, `erp-metas-seed-wiring`, `daily-life-goals-seed-wiring`) refactor each product's service file to call the seed.
-- **Migrations** — no schema changes; products keep their tables verbatim. The seed maps to/from existing schema at the service boundary.
+- **Migrations** — the PURE primitives (§§ 1-7) ship no schema; products that keep their own tables map at the service boundary. Products that want the ready-made schema mount the organ (§ 10).
 
 ---
 
@@ -231,3 +231,52 @@ should fire on:
 - `KB § PATTERNS/backend/scheduling-seed.md` — canonical reference shape this mirrors.
 - `KB § PATTERNS/architect/project-execution.md § 2.7` — recurrence rule that triggered the lift.
 - `projects/metas-domain-seed-absorption/PROJECT.md` — design + audit trail.
+
+---
+
+## 10. The mountable organs: `metas` + `engagement` (2026-11)
+
+Born from social-wiring's ERP › Metas e Desempenho, where `noc-verify-seed` blocked the mount: the seed shipped only the
+pure domain (a `GoalRepository` Protocol + an in-memory Fake) and a shape-only points ledger -- no Real repository, no DDL,
+no router. Both are now **organs** (router + rendered migration + Fake/Real + `mount_*`), the same shape as leads / finance.
+
+**metas** (`noctusai_lib.domain.metas`, `mount_metas`) -- periods (parent -> child, `open -> review -> closed`), teams with a
+leader and membership history (`left_at`), goals at three levels in ONE table (`scope` individual | team | company), goal
+contributions, per-org scoring settings (value -> points, weights, default ranking metric), owner-tunable point rules (org-wide
+or one-period override), scoring events (idempotent on `dedupe_key`, `team_id` = snapshot at event time), rankings and
+**immutable closings** (trigger refuses UPDATE / DELETE / TRUNCATE). `MetasConfig` carries the product DATA: event types,
+modalities, goal categories (`source`: `value` | `points` | `count:<event>` | `manual`), default rules. `SupabaseGoalRepository` /
+`make_goal_repository` is the Real `GoalRepository`.
+
+**engagement** (`noctusai_lib.domain.engagement`, `mount_engagement`) -- the points ledger (`eng_points`: **append-only**, the
+only DELETE path is the SECURITY DEFINER LGPD erase-by-subject that raises a transaction-local GUC), owner-tunable `PointRule`
+/ `BadgeRule` rows, leaderboard, member card. `OrgPointsLedger` is the org-scoped Real ledger; the older `RealSupabasePointsLedger`
+(product-owned table, no org column) stays for community.
+
+Rules of the road (all pinned by tests): service-only tables (`tier:org`, no `authenticated` / `anon` grant -- the API applies the
+visibility: member = own events, leader = their team's, admin = all); totals are a **SQL SUM** (`<prefix>event_totals`,
+`eng_points_totals`), never a Python loop; a closing is one atomic bulk insert THEN the period flips (a retry finishes a crash in
+between); goal status is recomputed from progress, never trusted from a client.
+
+### Mounting (a product, never the seed)
+
+```python
+from noctusai_lib.domain.metas import EventType, GoalCategory, MetasConfig, Modality, RuleSeed
+from noctusai_seed.organs import mount_engagement, mount_metas
+
+cfg = MetasConfig(schema="monica",
+    event_types=(EventType("venda", "Venda"), EventType("captacao", "Captação")),
+    modalities=(Modality("padrao", "Padrão"), Modality("compartilhada", "Compartilhada")),
+    categories=(GoalCategory("vgv", "VGV", "value"), GoalCategory("vendas", "Vendas", "count:venda")),
+    default_rules=(RuleSeed("venda", "padrao", 50.0), RuleSeed("captacao", "padrao", 1.0)))
+kw = dict(schema="monica", auth_dependency=get_current_user_org, get_admin_client=get_admin_client, get_core_client=get_core_client)
+app = create_product_app(..., organs=[mount_metas(cfg=cfg, **kw), mount_engagement(**kw)])
+```
+
+Then `noctus.dev.render_organ_migration product=<p> organ=metas` (and `engagement`), pin each with `assert_organ_migration_current`
+in a product test, `POST /api/metas/rules/defaults` once per org. Routes: `/api/metas/*` and `/api/engagement/*`.
+
+**Follow-ups (named, not done):** (1) FE organ pages in `@noctusai/lib` (periods, teams, goals cascade, ranking, closings, rules,
+member card) -- the host owns its screens until then; (2) goal / closing status HISTORY rides the seed transition-log primitive
+(`PATTERNS/backend/transition-log.md`) when it lands -- no hand-written history table here; (3) a stored totals projection only
+if SQL SUM is MEASURED slow; (4) re-point erp-imobiliario / social-wiring onto the organs (`project-history/roadmaps/erp-gamificacao-seed-lift-2026-09.md`).

@@ -26,6 +26,9 @@ Functions (pure):
     `evaluate_badges(totals, rules) -> list[str]`
     `leaderboard(totals, period) -> LeaderboardResult`
 
+Mountable organ (`mount_engagement` in `noctusai_seed.organs`): `engagement_migration`, `create_engagement_router`,
+`OrgPointsLedger` (org-scoped Real, SQL-SUM totals, append-only + LGPD erase), `EngagementService`.
+
 Ledger seam:
     `PointsLedger` (Protocol), `InMemoryPointsLedger`,
     `RealSupabasePointsLedger`, `make_points_ledger`
@@ -36,7 +39,16 @@ idempotent-on-insert via a unique-constraint no-op instead of a raise.
 `leaderboard` reuses `noctusai_lib.domain.metas.Period` rather than
 inventing a second period vocabulary.
 """
+from noctusai_lib.domain.engagement.config import EngagementConfig
 from noctusai_lib.domain.engagement.errors import EngagementRuleError
+from noctusai_lib.domain.engagement.guards import engagement_guard_probes
+from noctusai_lib.domain.engagement.organ_errors import EngagementError
+from noctusai_lib.domain.engagement.organ_ledger import FakeOrgPointsLedger, OrgPointsLedger, make_org_points_ledger
+from noctusai_lib.domain.engagement.router import create_engagement_router
+from noctusai_lib.domain.engagement.service import Actor as EngagementActor
+from noctusai_lib.domain.engagement.service import EngagementService
+from noctusai_lib.domain.engagement.sql import ENGAGEMENT_MIGRATION_HEADER, engagement_migration
+from noctusai_lib.domain.engagement.store import build_engagement_store, engagement_table_specs
 from noctusai_lib.domain.engagement.ledger import (
     InMemoryPointsLedger,
     PointsLedger,
@@ -58,6 +70,20 @@ from noctusai_lib.domain.engagement.value_objects import (
 )
 
 __all__ = [
+    # mountable organ (router + migration + org-scoped ledger)
+    "ENGAGEMENT_MIGRATION_HEADER",
+    "EngagementActor",
+    "EngagementConfig",
+    "EngagementError",
+    "EngagementService",
+    "FakeOrgPointsLedger",
+    "OrgPointsLedger",
+    "build_engagement_store",
+    "create_engagement_router",
+    "engagement_guard_probes",
+    "engagement_migration",
+    "engagement_table_specs",
+    "make_org_points_ledger",
     # value objects + errors
     "BadgeRule",
     "DuplicateEvent",
