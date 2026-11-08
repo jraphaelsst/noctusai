@@ -39,10 +39,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.config import settings
 from app.dependencies import (
+    require_evals_run_access,
+    require_evals_run_cancel,
     require_platform_admin,
     require_platform_content_admin,
-    require_publish_read,
-    require_publish_write,
 )
 from app.routers.studio_agents_router import (
     actor_id,
@@ -233,7 +233,7 @@ def delete_case(
 async def create_run(
     key: str,
     payload: EvalRunCreateRequest,
-    ctx: AuthContext = Depends(require_publish_write),
+    ctx: AuthContext = Depends(require_evals_run_access),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
     scheduler=Depends(get_eval_scheduler_dep),
@@ -299,7 +299,7 @@ async def create_run(
 def list_runs(
     key: str,
     version_id: UUID | None = Query(None),
-    ctx: AuthContext = Depends(require_publish_read),
+    ctx: AuthContext = Depends(require_evals_run_access),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunListOut:
@@ -313,7 +313,7 @@ def list_runs(
 def get_run(
     key: str,
     run_id: UUID,
-    ctx: AuthContext = Depends(require_publish_read),
+    ctx: AuthContext = Depends(require_evals_run_access),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunDetailOut:
@@ -344,7 +344,7 @@ def get_run(
 def cancel_run(
     key: str,
     run_id: UUID,
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_evals_run_cancel),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunOut:

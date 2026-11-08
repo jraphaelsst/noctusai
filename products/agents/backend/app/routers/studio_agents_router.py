@@ -44,6 +44,8 @@ from app.config import settings
 from app.channels.conformidade import garantir_impressao
 from app.routers.qualificacao_router import get_padrao_store_dep
 from app.dependencies import (
+    SCOPE_STUDIO_EVALS_RUN,
+    require_evals_run_access,
     get_conformidade_store_dep,
     get_geracao_store_dep,
     get_skills_store_dep,
@@ -233,6 +235,8 @@ def require_user_or_dev_advisor(ctx: AuthContext, agent: Any) -> None:
     """A ``studio:publish`` token acts ONLY on a dev-advisor agent; a runtime
     agent (Bia, IsaIA) stays human-only → 403 ``user_required``, exactly
     as before the scope existed."""
+    if ctx.caller_kind == "product" and SCOPE_STUDIO_EVALS_RUN in ctx.scopes:
+        return  # the platform-issued eval-loop token acts on any agent's eval runs
     if ctx.caller_kind == "product" and getattr(agent, "kind", "runtime") != "dev-advisor":
         raise http_error(403, "user_required", "Restricted to human users")
 
@@ -1165,7 +1169,7 @@ include_in_schema=False)
 async def run_mecanismo_suite(
     key: str,
     request: Request,
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_evals_run_access),
     store=Depends(get_studio_definition_store_dep),
     mecanismo=Depends(get_mecanismo_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
@@ -1213,7 +1217,7 @@ async def run_mecanismo_suite(
 def get_mecanismo_run(
     key: str,
     run_id: UUID,
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_evals_run_access),
     store=Depends(get_studio_definition_store_dep),
     mecanismo=Depends(get_mecanismo_store_dep),
 ) -> MecanismoRunOut:

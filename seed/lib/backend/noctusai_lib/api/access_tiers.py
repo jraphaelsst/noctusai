@@ -117,6 +117,8 @@ DEP_TIERS: dict[str, str] = {
     "require_content_write": "platform",
     "require_agent_delete": "platform",
     "require_publish_write": "platform",
+    "require_evals_run_access": "platform",  # platform admin OR the platform-issued studio:evals-run token
+    "require_evals_run_cancel": "platform",
     "get_current_admin": "platform",
     "get_website_editor": "platform",  # noctus_users.role in (admin, marketing): NoctusAI staff, global
     "resolve_platform_admin_role": "platform",

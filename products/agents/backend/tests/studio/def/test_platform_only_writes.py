@@ -102,6 +102,7 @@ def test_no_eval_route_is_gated_by_the_member_floor_alone():
     permitidos = {
         deps.require_publish_read, deps.require_publish_write, deps.require_platform_admin,
         deps.require_platform_content_admin,
+        deps.require_evals_run_access, deps.require_evals_run_cancel,
     }
     for r in app.routes:
         if not getattr(r, "dependant", None) or "/evals" not in r.path or not r.path.startswith("/api/studio"):
