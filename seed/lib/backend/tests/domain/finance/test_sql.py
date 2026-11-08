@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from noctusai_lib.domain.finance import APPEND_ONLY_TABLES, FINANCE_TABLES, FinanceConfig, finance_migration
+from noctusai_lib.domain.finance.sql import finance_service_only_fix
 from noctusai_lib.domain.finance.types import (
     AccountKind,
     ActivityKind,
@@ -123,16 +124,22 @@ def test_every_table_is_org_scoped_with_rls(table):
     name = f"fin_{table}"
     assert re.search(r"\borg_id\s+UUID", _block(name)), f"{name} has no org_id"
     assert f"ALTER TABLE commerce.{name} ENABLE ROW LEVEL SECURITY" in SQL
-    assert f'"{name}_select_own_org"' in SQL
+    # Service-only: the select policy is DROPPED (never re-created) and the browser roles hold no privileges.
+    assert f'DROP POLICY IF EXISTS "{name}_select_own_org" ON commerce.{name};' in SQL
+    assert f'CREATE POLICY "{name}_select_own_org"' not in SQL
+    assert f"REVOKE ALL ON commerce.{name} FROM PUBLIC, anon, authenticated;" in SQL
+    assert f"GRANT ALL ON commerce.{name} TO service_role;" in SQL
+    assert f"GRANT SELECT ON commerce.{name} TO authenticated;" not in SQL
     assert re.search(rf'CREATE POLICY "service_role_bypass"\s+ON commerce\.{name}\b', SQL)
     # No authenticated WRITE policy anywhere: the backend writes through the service role.
     assert not re.search(rf"ON commerce\.{name}\s+FOR (INSERT|UPDATE|DELETE)", SQL)
 
 
-def test_org_id_expr_defaults_to_org_picker_aware_function_and_is_overridable():
-    assert "org_id = (SELECT public.current_org_id_for('commerce'))" in SQL
+def test_org_id_expr_is_not_used_by_any_browser_policy():
+    # Service-only: the only consumer of `org_id_expr` was the `authenticated` SELECT policy, now gone.
+    assert "current_org_id_for('commerce')" not in SQL
     custom = finance_migration(FinanceConfig(schema="commerce", org_id_expr="public.current_org_id()"), "commerce")
-    assert "org_id = (SELECT public.current_org_id())" in custom
+    assert custom == SQL
 
 
 def test_enum_checks_match_the_python_enums():
@@ -251,6 +258,30 @@ def test_attachments_bucket_is_private():
     assert "VALUES ('finance-attachments', 'finance-attachments', false)" in SQL
 
 
+def test_no_authenticated_policy_anywhere():
+    assert not re.search(r"TO authenticated", SQL)
+
+
+def test_attachments_bucket_is_service_only_with_limits():
+    for cmd in ("select", "insert", "update", "delete"):
+        assert f'DROP POLICY IF EXISTS "finance-attachments_storage_{cmd}" ON storage.objects;' in SQL
+        assert f'CREATE POLICY "finance-attachments_storage_{cmd}"' not in SQL
+    assert 'CREATE POLICY "finance-attachments_storage_service" ON storage.objects FOR ALL TO service_role' in SQL
+    assert "file_size_limit = 10485760" in SQL
+    assert "allowed_mime_types = ARRAY['application/pdf'" in SQL
+
+
+def test_service_only_fix_body_closes_every_table_and_declares_tier():
+    for tier in ("org", "platform"):
+        fix = finance_service_only_fix(CFG, "commerce", tier=tier)
+        assert "TO authenticated" not in fix
+        for table in FINANCE_TABLES:
+            assert f"REVOKE ALL ON commerce.fin_{table} FROM PUBLIC, anon, authenticated;" in fix
+            assert f"COMMENT ON TABLE commerce.fin_{table} IS 'tier:{tier}';" in fix
+    with pytest.raises(ValueError):
+        finance_service_only_fix(CFG, "commerce", tier="public")
+
+
 def test_config_validation():
     with pytest.raises(ValueError):
         FinanceConfig(schema="Bad-Schema")
@@ -262,3 +293,11 @@ def test_config_validation():
         FinanceConfig(schema="ok", org_id_expr="  ")
     with pytest.raises(ValueError):
         finance_migration(CFG, " ")
+
+
+def test_service_only_fix_with_reminders_closes_the_dunning_tables_too():
+    fix = finance_service_only_fix(CFG, "commerce", with_reminders=True)
+    for name in ("reminder_settings", "reminder_rules", "reminder_log"):
+        assert f"REVOKE ALL ON commerce.fin_{name} FROM PUBLIC, anon, authenticated;" in fix
+        assert f"COMMENT ON TABLE commerce.fin_{name} IS 'tier:org';" in fix
+    assert "fin_reminder_log" not in finance_service_only_fix(CFG, "commerce")

@@ -23,7 +23,8 @@ def test_every_table_has_org_id_and_rls(table):
     block = re.search(rf"CREATE TABLE IF NOT EXISTS finx\.{name} \((.*?)\n\);", SQL, re.S)
     assert block and re.search(r"\borg_id\s+UUID\b", block.group(1))
     assert f"ALTER TABLE finx.{name} ENABLE ROW LEVEL SECURITY;" in SQL
-    assert f'"{name}_select_own_org"' in SQL and "service_role_bypass" in SQL
+    assert f'CREATE POLICY "{name}_select_own_org"' not in SQL and "service_role_bypass" in SQL
+    assert f"REVOKE ALL ON finx.{name} FROM PUBLIC, anon, authenticated;" in SQL
 
 
 def test_dedup_unique_covers_org_entry_rule_cycle():

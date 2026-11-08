@@ -210,6 +210,9 @@ def private_org_bucket_sql(
     bucket: str,
     *,
     comment: str = "Private bucket; object RLS keys on the org_id first path segment.",
+    service_only: bool = False,
+    file_size_limit: int | None = None,
+    allowed_mime_types: tuple[str, ...] | None = None,
 ) -> str:
     """Emit a PRIVATE storage bucket + per-org object RLS (first key segment = ``org_id``).
 
@@ -218,6 +221,11 @@ def private_org_bucket_sql(
     policies. Re-runnable (``ON CONFLICT DO NOTHING``, ``DROP POLICY IF
     EXISTS``). Used by ``card_hub`` and ``commerce``; byte-pinned by the
     card-hub SQL tests.
+
+    ``service_only=True`` is for buckets only the backend (service-role client) touches: NO ``authenticated`` object
+    policy is created, any previously-generated one is dropped (re-runnable closure), and ``file_size_limit`` /
+    ``allowed_mime_types`` are enforced on the bucket row (UPDATE, so an already-created bucket is tightened too).
+    The default mode is byte-identical to the historical output.
     """
     predicate = (
         f"bucket_id = '{bucket}' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text"
@@ -225,6 +233,14 @@ def private_org_bucket_sql(
     parts = [
         f"INSERT INTO storage.buckets (id, name, public)\nVALUES ('{bucket}', '{bucket}', false)\nON CONFLICT (id) DO NOTHING;"
     ]
+    if service_only and (file_size_limit is not None or allowed_mime_types is not None):
+        sets = []
+        if file_size_limit is not None:
+            sets.append(f"file_size_limit = {int(file_size_limit)}")
+        if allowed_mime_types is not None:
+            mimes = ", ".join(f"'{m}'" for m in allowed_mime_types)
+            sets.append(f"allowed_mime_types = ARRAY[{mimes}]::text[]")
+        parts.append(f"UPDATE storage.buckets SET {', '.join(sets)} WHERE id = '{bucket}';")
     for cmd, using, with_check in (
         ("SELECT", predicate, None),
         ("INSERT", None, predicate),
@@ -233,6 +249,8 @@ def private_org_bucket_sql(
     ):
         name = f"{bucket}_storage_{cmd.lower()}"
         parts.append(f'DROP POLICY IF EXISTS "{name}" ON storage.objects;')
+        if service_only:
+            continue
         parts.append(rls_subquery_policy("storage", "objects", name, cmd, using=using, with_check=with_check))
     service_name = f"{bucket}_storage_service"
     parts.append(f'DROP POLICY IF EXISTS "{service_name}" ON storage.objects;')
