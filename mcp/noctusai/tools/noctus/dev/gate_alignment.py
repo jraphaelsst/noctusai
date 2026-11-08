@@ -316,6 +316,89 @@ def _write_inventory(root: Path, inv: dict) -> None:
 _LEGS = ("home", "construction", "gate", "telemetry", "branch")
 
 
+# ── git merge driver logic (pure) ─────────────────────────────────────────
+def _decision_num(d: dict) -> int:
+    m = re.fullmatch(r"D(\d+)", str(d.get("id", "")))
+    return int(m.group(1)) if m else 0
+
+
+def _same_decision(a: dict, b: dict) -> bool:
+    """Same decision added twice: identical content (ids aside) or same gate + decision text."""
+    strip = lambda d: {k: v for k, v in d.items() if k != "id"}  # noqa: E731
+    return strip(a) == strip(b) or (
+        bool(a.get("gate")) and a.get("gate") == b.get("gate") and a.get("decision") == b.get("decision"))
+
+
+def merge_inventory(base: str, ours: str, theirs: str) -> tuple[str, bool, list[str]]:
+    """3-way merge of `gate-alignment-inventory.json`. Returns (text, conflicted, notes).
+
+    * `gates`: union; a key changed differently on both sides is a conflict
+      (ours kept in the output, `conflicted=True`). Output sorted.
+    * `decisions`: ours + theirs' entries whose id is not in base. A theirs entry
+      that duplicates one already present (identical content, or same gate +
+      decision text) is dropped; one whose id collides with a different decision
+      is renumbered past the current max. Base entries changed on one side only
+      take that side (deleted on one side + unchanged on the other: deleted).
+    * other top-level keys: ordinary 3-way (both sides differ => conflict, ours kept).
+    * Output format = `_write_inventory` (indent=1, ensure_ascii=False, trailing newline).
+    """
+    def load(t: str) -> dict:
+        return json.loads(t) if t.strip() else {}
+    b, o, t = load(base), load(ours), load(theirs)
+    conflicted, notes = False, []
+
+    def three(bv: Any, ov: Any, tv: Any, what: str) -> Any:
+        nonlocal conflicted
+        if ov == tv or tv == bv:
+            return ov
+        if ov == bv:
+            return tv
+        conflicted = True
+        notes.append(f"conflict: {what} changed differently on both sides")
+        return ov
+
+    out: dict[str, Any] = {}
+    for k in [*o, *[k for k in t if k not in o]]:
+        if k in ("gates", "decisions"):
+            continue
+        v = three(b.get(k), o.get(k), t.get(k), f"top-level key {k!r}")
+        if v is not None:
+            out[k] = v
+
+    bg, og, tg = b.get("gates", {}), o.get("gates", {}), t.get("gates", {})
+    gates: dict[str, Any] = {}
+    for g in sorted({*bg, *og, *tg}):
+        v = three(bg.get(g), og.get(g), tg.get(g), f"gate {g!r}")
+        if v is not None:
+            gates[g] = v
+    out["gates"] = gates
+
+    bd = {d.get("id"): d for d in b.get("decisions", [])}
+    td = {d.get("id"): d for d in t.get("decisions", [])}
+    decisions: list[dict] = []
+    for d in o.get("decisions", []):
+        i = d.get("id")
+        if i in bd and i not in td:  # theirs deleted it
+            if d == bd[i]:
+                continue
+        elif i in bd:
+            d = three(bd[i], d, td[i], f"decision {i}")
+        decisions.append(d)
+    for d in t.get("decisions", []):
+        if d.get("id") in bd:
+            continue
+        if any(_same_decision(d, x) for x in decisions):
+            notes.append(f"dedup: {d.get('id')} already present on the other side")
+            continue
+        if any(x.get("id") == d.get("id") for x in decisions):
+            new = f"D{max(_decision_num(x) for x in decisions) + 1}"
+            notes.append(f"renumber: incoming {d.get('id')} -> {new}")
+            d = {**d, "id": new}
+        decisions.append(d)
+    out["decisions"] = decisions
+    return json.dumps(out, indent=1, ensure_ascii=False) + "\n", conflicted, notes
+
+
 def matrix_issues(root: Path | None = None) -> tuple[list[dict], list[dict]]:
     """(failures, findings) for the decision coverage matrix (inventory `decisions`).
 

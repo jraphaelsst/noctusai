@@ -97,7 +97,7 @@ def repo(tmp_path):
     root = tmp_path / "r"
     (root / "scripts/hooks").mkdir(parents=True)
     (root / "mcp/noctusai").mkdir(parents=True)
-    for f in ("merge-kb-counts.sh", "merge-lgpd-warnings.sh", "register-merge-drivers.sh"):
+    for f in ("merge-kb-counts.sh", "merge-lgpd-warnings.sh", "merge-gate-inventory.sh", "register-merge-drivers.sh"):
         shutil.copy(HOOKS / f, root / "scripts/hooks" / f)
     (root / "mcp/noctusai/cli.py").write_text(STUB_CLI)
     (root / ".gitattributes").write_text("DOC.md merge=kb-counts\n")

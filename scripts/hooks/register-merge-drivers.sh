@@ -27,3 +27,4 @@ reg() { # name, description, script
 
 reg kb-counts "regenerate auto-derived kb-counts blocks; surface real prose conflicts" merge-kb-counts.sh
 reg lgpd-warnings "entry-aware merge of LGPD-WARNINGS.md (keeps both sides' entries)" merge-lgpd-warnings.sh
+reg gate-inventory "3-way merge of gate-alignment-inventory.json (gates union, decision ids renumbered on collision)" merge-gate-inventory.sh
