@@ -144,6 +144,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (!accessToken) return;
 
+    // A password-RECOVERY link also lands with `#access_token=`; that token is for /redefinir-senha
+    // to change the password with -- it must not become a core session here (it would skip MFA).
+    if (params.get('type') === 'recovery') return;
+
     // Clean up the URL hash
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
 

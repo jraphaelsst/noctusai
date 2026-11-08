@@ -33,6 +33,8 @@ const AdminCreditos = lazy(() => import('./pages/admin/AdminCreditos').then(m =>
 const OrgSettings = lazy(() => import('./pages/OrgSettings').then(m => ({ default: m.OrgSettings })));
 const APIKeys = lazy(() => import('./pages/APIKeys').then(m => ({ default: m.APIKeys })));
 const Onboarding = lazy(() => import('./pages/Onboarding').then(m => ({ default: m.Onboarding })));
+const EsqueciSenha = lazy(() => import('./pages/EsqueciSenha').then(m => ({ default: m.EsqueciSenha })));
+const RedefinirSenha = lazy(() => import('./pages/RedefinirSenha').then(m => ({ default: m.RedefinirSenha })));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite').then(m => ({ default: m.AcceptInvite })));
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const AdminOrganizations = lazy(() => import('./pages/admin/AdminOrganizations').then(m => ({ default: m.AdminOrganizations })));
@@ -66,6 +68,9 @@ const App = createProductApp({
   unauthRedirect: '/login',
   publicRoutes: [
     { path: '/invite/:token', component: AcceptInvite },
+    // Central-login recovery (sso-entry contract). PUBLIC on purpose; keep above any catch-all.
+    { path: '/esqueci-senha', component: EsqueciSenha },
+    { path: '/redefinir-senha', component: RedefinirSenha },
   ],
   routes: [
     { path: '/', component: Dashboard },
