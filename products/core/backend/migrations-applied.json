@@ -17,6 +17,7 @@
     "096_noctus_users_telefone.sql": "5553a82eb2aab2d2568c90c7dc3b0036b4ce9dab8e4c93d7d43ec89eca1ea98d",
     "097_dev_telemetry.sql": "43d61cc676b5e354820cfef99b487b0cc022e8e99d752358e4f213d3e2aa9848",
     "099_service_accounts_m2m_tokens.sql": "b613f524e136f30752f2c5f8a106749e79af43a3601c261ce76474148310a5dd",
-    "101_plans_subscriptions_writes_service_only.sql": "952d4bd70dba5e126a1f9fc3a5b63fd05512ff3ac86351298f720f0eeaa58913"
+    "101_plans_subscriptions_writes_service_only.sql": "952d4bd70dba5e126a1f9fc3a5b63fd05512ff3ac86351298f720f0eeaa58913",
+    "102_billing_reads_platform_staff.sql": "e78738f439d399f5fde2cb5c76de0e4b6391118066273674e77b76fb25287458"
   }
 }
