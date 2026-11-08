@@ -1,0 +1,20 @@
+name: defineModule
+kind: module
+path: seed/lib/frontend/src/modules/define.ts
+phase: pilot-seed
+registered_at: "2026-11-08"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "defineModule/extendModule/composeModules/useEnabledModules: the FE half of BE noctusai_seed.modules.ModuleSpec. A module yields {navGroup, routes, pageKeys}; the host merges modules + local groups through composeModules (orderNavGroups) and spreads routes."
+  - "Per-org enablement (owner 2026-11-08): all modules ON by default; NoctusAI admins toggle per org (BE public.org_modules). A disabled module is NOT RENDERED (no nav group, no routes); while GET /api/modules is unanswered nothing renders and `pending` is true."
+  - "pageKey is the status_pagina.nome_pagina row and the BE PageSpec.key; moduleManifest() emits the shared page-key contract (same shape as BE module_manifest); a cross-language fixture test pins parity."
+
+errors_encountered: []
+drifts_surfaced:
+  - "MODULE_GROUP_KEYS exists on both sides (BE keys.py, FE nav-groups.ts); a BE test parses the TS file and fails on divergence."
+alternatives_considered:
+  - "A single generated TS file from the BE: rejected for this slice (no codegen step in products' Docker builds); a checked manifest compared on both sides gives the same guarantee without one."
+manual_validation_log: []
+integration_test_status: unknown
