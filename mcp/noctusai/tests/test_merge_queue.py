@@ -661,3 +661,18 @@ def test_derived_regen_failure_ejects_with_its_own_kind(world):
 def test_derived_set_registry_is_data_and_matches_only_whole_sets():
     assert mq.derived_set_for([DERIVED, "project-history/access-tiers/FINDINGS.md"])["name"] == "access-tiers"
     assert mq.derived_set_for([DERIVED, "README"]) is None and mq.derived_set_for([]) is None
+
+
+def test_derived_only_commit_empties_after_resolve_is_skipped_not_ejected(world):
+    calls, logs = [], []
+
+    def regen(wt, ds):
+        calls.append(ds["name"])
+        (Path(wt) / DERIVED).write_text("derived-from-merged-tree\n")
+        return True, ""
+    q, wt, head, applied, ejected = _compose_pair(
+        world, [(DERIVED, "one\n"), ("a.txt", "a\n")], [("b.txt", "b\n"), (DERIVED, "two\n")], regen, logs)
+    assert [e.slug for e in applied] == ["first", "second"] and not ejected
+    assert calls == ["access-tiers"]
+    assert sh(wt, "git", "show", f"{head}:b.txt") == "b"
+    assert sh(wt, "git", "show", f"{head}:{DERIVED}") == "derived-from-merged-tree"

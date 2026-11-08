@@ -273,6 +273,13 @@ class Queue:
         owner: dict[str, Any] | None = None
         for _ in range(REDERIVE_MAX_STOPS):
             files = self._unmerged(wt)
+            if (kind == "rebase" and not files and owner is not None
+                    and self.run(["git", "diff", "--cached", "--quiet"], cwd=wt)[0] == 0):
+                # The commit touched ONLY derived files: resolved to head it is empty, so
+                # `rebase --continue` stopped with nothing to commit. Drop it and keep going.
+                if self.run(["git", "rebase", "--skip"], cwd=wt)[0] == 0:
+                    return owner, seen
+                continue
             ds = derived_set_for(files)
             if ds is None or (owner is not None and ds is not owner) or not self._resolve_to_head(wt, files):
                 return None, seen + files
