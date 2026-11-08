@@ -724,6 +724,8 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
                                           (s4-keeper|closed) has target ⊇ substr
       · `finance_param_fresh:<key>`      the tax-parameter registry no longer flags <key> as
                                           stale today (re-verified, or a successor row exists)
+      · `inline_reason_recorded:<branch>` that branch's latest pointer carries a valid
+                                          inline_reason + inline_note (orchestrator inline cutoff)
 
     Returns `(satisfied, human_detail)`. Unknown grammar ⇒ `(False, "unknown ...")`
     (loud, never silently True). KB § PATTERNS/common/scoped-auto-improvement.md.
@@ -773,6 +775,16 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
             return False, f"finance_param_fresh: registry unreadable ({rep.get('error')})"
         stale = any(r["key"] == key for rows in rep["grouped"].values() for r in rows)
         return (not stale), f"finance param {key} {'still stale' if stale else 'fresh'}"
+    if pred.startswith("inline_reason_recorded:"):
+        branch = pred[len("inline_reason_recorded:"):].strip()
+        try:
+            from tools.noctus.dev import branch_pointer as bp
+            from tools.noctus.dev import orchestrator_inline_cutoff as oic
+            row = bp._latest_per_branch(bp._read_local_ledger()).get(branch) or {}
+        except Exception as exc:  # noqa: BLE001 - loud, never silently True
+            return False, f"inline_reason_recorded: pointer ledger unreadable ({exc})"
+        ok = bool(row) and oic.validate_reason(row.get("inline_reason"), row.get("inline_note")) is None
+        return ok, f"inline_reason {'recorded' if ok else 'still missing'} on {branch}"
     if pred.startswith(MANUAL_PREFIX):
         return False, f"manual closure ({pred[len(MANUAL_PREFIX):].strip()}) — closes only by explicit promote/close"
     return False, f"unknown predicate grammar: {pred!r}"

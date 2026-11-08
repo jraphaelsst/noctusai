@@ -174,14 +174,19 @@ class StewardStore:
 
     Mutations take an exclusive flock on a sibling `.lock` file and replace
     atomically (lease) or append (ndjson), so concurrent sessions never read a
-    torn write. Seams: `clock`, `pid_alive`, `resolve_head`.
+    torn write. Seams: `clock`, `pid_alive`, `resolve_head`, `inline_gate`.
     """
 
     def __init__(self, root: Path | None = None, *, clock: Callable[[], float] = time.time,
                  pid_alive: Callable[[int | None], bool] = _pid_alive,
                  resolve_head: Callable[[str], str | None] | None = None,
-                 default_ttl_s: int | None = None) -> None:
+                 default_ttl_s: int | None = None,
+                 inline_gate: Callable[[str, str | None, str | None], dict[str, Any]] | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
+        # Production (root=None -> ~/.noctus) runs the real gate; a store built on an explicit root
+        # (tests, tooling) opts out unless it injects one - the gate reads the shared pointer ledger.
+        self._inline_gate = inline_gate if inline_gate is not None else (
+            None if root is None else (lambda _b, _r, _n: {"applicable": False}))
         self.clock = clock
         self.pid_alive = pid_alive
         self.resolve_head = resolve_head if resolve_head is not None else _git_resolve_head
@@ -428,8 +433,12 @@ class StewardStore:
     def request(self, session_id: str | None, slug: str, *, name: str | None = None,
                 branch: str | None = None, head_sha: str | None = None,
                 products: list[str] | None = None, migrations: bool = False,
-                notes: str | None = None) -> dict[str, Any]:
-        """NON-BLOCKING: file a delivery for the steward and return at once."""
+                notes: str | None = None, inline_reason: str | None = None,
+                inline_note: str | None = None) -> dict[str, Any]:
+        """NON-BLOCKING: file a delivery for the steward and return at once.
+
+        Inline-cutoff gate (shadow): an over-cutoff delivery by an inline agent wants an
+        ``inline_reason``; its absence is a WARNING naming who to dispatch, never a refusal."""
         slug = (slug or "").strip()
         if not slug or not re.fullmatch(r"[A-Za-z0-9._/-]+", slug):
             return _err("request needs slug=<slug> (the feat/<slug> name; letters, digits, . _ / -)")
@@ -461,9 +470,27 @@ class StewardStore:
             out["hint"] = ("no live steward yet - your request is safely in the outbox. If you are a LEADER "
                            "session with shipping work, run ListAgents then release_steward action=claim and "
                            "announce it; otherwise carry on, the next steward drains the outbox.")
+        gate = self.inline_gate(branch, inline_reason, inline_note)
+        if gate.get("applicable"):
+            out["inline_cutoff"] = {k: v for k, v in gate.items() if k != "warnings"}
+            warnings.extend(gate.get("warnings") or [])
         if warnings:
             out["warnings"] = warnings
         return out
+
+    def inline_gate(self, branch: str, inline_reason: str | None, inline_note: str | None) -> dict[str, Any]:
+        """Injectable seam (tests assign ``store.inline_gate``): the real gate looks up the branch's
+        pointer and measures its delivery. Never raises - a failure is a warning."""
+        if self._inline_gate is not None:
+            return self._inline_gate(branch, inline_reason, inline_note)
+        try:
+            from tools.noctus.dev import branch_pointer as bp
+            from tools.noctus.dev import orchestrator_inline_cutoff as oic
+            pointer = bp._latest_per_branch(bp._read_dev_ledger()).get(branch)
+            return oic.gate_delivery(branch, pointer=pointer, inline_reason=inline_reason,
+                                     inline_note=inline_note, root=Path(__file__).resolve().parents[5])
+        except Exception as exc:  # noqa: BLE001 - shadow gate: loud, never a refusal
+            return {"applicable": True, "warnings": [f"inline cutoff unmeasured: {exc}"]}
 
     def mine(self, session_id: str | None, include_done: bool = False) -> dict[str, Any]:
         rows = [r for r in self.requests().values() if r["requester"].get("session_id") == session_id]
@@ -801,7 +828,8 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
     if action == "request":
         return store.request(session_id, kw.get("slug") or "", name=kw.get("name"), branch=kw.get("branch"),
                              head_sha=kw.get("head_sha"), products=kw.get("products"),
-                             migrations=bool(kw.get("migrations")), notes=kw.get("notes"))
+                             migrations=bool(kw.get("migrations")), notes=kw.get("notes"),
+                             inline_reason=kw.get("inline_reason"), inline_note=kw.get("inline_note"))
     if action == "inbox":
         return store.inbox(include_done=bool(kw.get("include_done")))
     if action == "ack":
@@ -818,8 +846,10 @@ def register(server) -> None:
             "action=status (who is steward, am I, my requests) | claim name= reason= [ttl_s=] (refused while a live "
             "other holder exists; stale after ttl or dead process; then ANNOUNCE via ListAgents+SendMessage) | "
             "heartbeat | handoff to_session_id=|to_name= | release | request slug= [branch= head_sha= products=[] "
-            "migrations= notes=] (OPEN to every session, NON-BLOCKING, returns at once; re-requesting a slug keeps "
-            "the latest head_sha) | mine (my requests' outcomes) | inbox [include_done] (pending, grouped by "
+            "migrations= notes= inline_reason= inline_note=] (OPEN to every session, NON-BLOCKING, returns at once; "
+            "re-requesting a slug keeps the latest head_sha; an inline-agent delivery >=100 LoC or >=3 files wants "
+            "inline_reason=orchestrator_owned|single_coherent_voice|shared_state|owner_directed + inline_note, else a "
+            "warning names the specialists to dispatch) | mine (my requests' outcomes) | inbox [include_done] (pending, grouped by "
             "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed [dev_sha= "
             "notes=] (steward). Identity = the server's CLAUDE_CODE_SESSION_ID (one MCP server per session). "
             "Files: ~/.noctus/release-steward.json|.ndjson, ship-requests.ndjson. The PreToolUse hook "
@@ -833,13 +863,15 @@ def register(server) -> None:
                          to_name: str | None = None, slug: str | None = None, branch: str | None = None,
                          head_sha: str | None = None, products: list[str] | None = None,
                          migrations: bool = False, notes: str | None = None, outcome: str | None = None,
-                         dev_sha: str | None = None, include_done: bool = False) -> dict:
+                         dev_sha: str | None = None, include_done: bool = False,
+                         inline_reason: str | None = None, inline_note: str | None = None) -> dict:
         return run_action(
             action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
             child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
             name=name, reason=reason, ttl_s=ttl_s, to_session_id=to_session_id, to_name=to_name, slug=slug,
             branch=branch, head_sha=head_sha, products=products, migrations=migrations, notes=notes,
-            outcome=outcome, dev_sha=dev_sha, include_done=include_done)
+            outcome=outcome, dev_sha=dev_sha, include_done=include_done,
+            inline_reason=inline_reason, inline_note=inline_note)
 
 
 __all__ = ["StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",

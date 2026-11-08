@@ -85,6 +85,8 @@ origin/dev
 
 ## Inline-deving — empersonate the specialist (codified 2026-05-26)
 
+> **Gated since 2026-11-07:** an over-cutoff inline delivery must state a closed-set `inline_reason`, else it is warned and counted. See § Enforcement at the end of this doc.
+
 When the work is **below the inline cutoff** OR the architect chooses inline for a specific reason (e.g., methodology work that needs a single coherent voice across sub-domains), the architect MUST still ROUTE BY DOMAIN. Inline ≠ "use generic architect mode for everything."
 
 **The rule:** at each task boundary during inline work, ask the same question as at dispatch — "which specialist would I dispatch for this?" — and EMPERSONATE that specialist until the task's commit. Then switch lens for the next task. Apply each specialist's discipline + owns_kb + behavioral specifics from their `.claude/agents/<name>.md` body.
@@ -123,3 +125,27 @@ The failure mode this whole pattern exists to prevent: the tech-lead dispatches 
 **Keep a fleet running:** when a wave lands, the next wave's engineers should already be dispatched. Idle orchestrator time = under-utilization. Pair builders with auditors (wiring-audit / compliance) so built ≠ wired is caught (`KB § PATTERNS/common/...` dispatch-review-wiring-audit).
 
 Under-parallelizing is a *form of under-building* — you shipped less because you didn't fan out — so this composes with the realism rule (build maximally; realism governs the claim, not the ambition).
+
+---
+
+## Enforcement — the inline cutoff is a gate now (2026-11-07)
+
+**Recurrence.** The owner, 2026-11-07, verbatim: *"vc deveria estar usando os agentes desse harness em .claude/agents lol, vc é o maestro e usa esses arquivos pra atuar e dispatch. make this happen, doc and alert other agents."* The rule above had been discipline-only since 2026-06-03 and recurred: the tech-lead built two of four accountant slices inline (`feat/finance-params-staleness` ~25 tests across ≥10 files, `feat/accountant-canon-registry`) and did the tax research inline instead of dispatching `accountant`. A discipline-only rule that recurs gets the build triad (`KB § PATTERNS/common/gate-methodology-sync.md`).
+
+**Advisor work is dispatched too.** Research, legal or tax questions, design review and security review go to `accountant`, `legal-advisor`, `architect`, `security`, `product-designer`, `compliance-reviewer` as read-only `Agent` calls. They need no worktree and no branch, so there is no setup cost to hide behind. The orchestrator does not do that research inline and then write it up; it asks the advisor and integrates the answer. (Empersonation, above, is for work genuinely below the cutoff.)
+
+**The cutoff.** Inline is allowed for `<100 LoC` ∧ `<3 files` ∧ single-phase. Size is measured against the branch's fork base (`git diff --numstat <base> <commit>`), over authored paths only: lockfiles, `project-history/`, `templates/product-seed/`, snapshots, `dist/`, `migrations-applied.json`, regenerated per-product compose/Dockerfile, `deploy/fleet/*.txt`, `_version_static.py` and `*baseline*.json` do not count. A `role=engineer` pointer (a dispatched worker), merge trains (`train-*`) and `applied-record*` branches are not orchestrator inlining and are out of scope.
+
+**The triad.**
+
+| Leg | Mechanism |
+|---|---|
+| Construction | `noctus.dev.release_steward action=request` measures the delivery of an inline-agent branch (`self-branch`, `tech-lead`, `tech-lead-inline`, `orchestrator`, `orchestrator-operator`). Over the cutoff it wants `inline_reason` + `inline_note` (>=10 chars) and records them on the branch-tree pointer (`branch_pointer action=update inline_reason= inline_note=`, validated there). Without them the result carries a **warning** naming the specialists from `.claude/agents/` to dispatch and this section. Shadow period: never a refusal. |
+| Backstop | keeper `check_orchestrator_inline_over_cutoff` (`--check-orchestrator-inline-over-cutoff`, pre-push, severity warning): inline pointers landed on/after 2026-11-07, over the cutoff, no valid recorded reason. |
+| Telemetry | an auto-improvement drift row `orchestrator_inline_over_cutoff:<branch>` per unexplained delivery, self-closing on `inline_reason_recorded:<branch>`. |
+
+**Reasons (closed set).** `orchestrator_owned` (git, merge, deploy, live DB/DNS mutation, cross-engineer conflict resolution) · `single_coherent_voice` (methodology/doc work that needs one voice) · `shared_state` (cannot be split without sharing mutable state) · `owner_directed` (the owner asked for it inline). Anything else is a dispatch.
+
+**Decision row.** `D19` in `gate-alignment-inventory.json`, shadow since 2026-11-07. It is promoted only on measured evidence (`--gate-alignment walls`), never on a hunch.
+
+**Measured base rate (replay of the pointer ledger, 2026-10-08..2026-11-07).** 917 pointers landed; 494 were in scope (inline agent, not `role=engineer`, not a train or applied-record); 356 of those (72%) were over the cutoff: 190 at >=1000 LoC, 57 at 300-999, 66 at 100-299, and 43 under 100 LoC but touching >=3 files. Nearly every owner-facing session is an "orchestrator" that builds for itself, so this is the real extent of inlining, not detector noise. Because the signal is that wide, telemetry rows are filed only at delivery time (`release_steward request`) or on an explicit `--inline-cutoff-log`, never on every push, and the gate stays warn-only until reasons are in use. The pointer ledger had no landed inline pointer on/after 2026-11-07 at replay time, so the live shadow window starts empty.

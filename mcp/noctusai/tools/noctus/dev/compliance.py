@@ -24227,7 +24227,7 @@ def check_stale_branch_pointers(
 # ---------------------------------------------------------------------------
 
 _SLICE_SCORED_SINCE = "2026-11-04"
-_SLICE_INLINE_AGENTS = frozenset({"self-branch", "tech-lead", "orchestrator", "orchestrator-operator"})
+from tools.noctus.dev.orchestrator_inline_cutoff import INLINE_AGENTS as _SLICE_INLINE_AGENTS  # one source (inline cutoff gate)
 _SLICE_LANDED_STATUSES = frozenset({"integrated-worktree-live", "shipped"})
 
 
@@ -24302,6 +24302,45 @@ def check_engineer_slice_scored(
             "severity": "high" if own else "warning",
         })
     return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_orchestrator_inline_over_cutoff` - backstop for the release_steward
+# `request` inline-cutoff gate: the orchestrator conducts, specialists play.
+# WARN-first shadow (D19); never blocks. KB § CONTEXT/PATTERNS/architect/
+# parallelization-first-orchestration.md (Enforcement).
+# ---------------------------------------------------------------------------
+
+def check_orchestrator_inline_over_cutoff(
+    repo_root: Path | None = None,
+    rows: list[dict] | None = None,
+    since: str | None = None,
+    log: bool = False,
+    runner=None,
+    size_fn=None,
+) -> list[dict]:
+    """Inline-agent pointers landed on/after the shadow start (``since``) whose delivery is
+    >=100 LoC or >=3 files with no valid recorded ``inline_reason``. Always severity warning.
+    ``rows`` / ``runner`` / ``size_fn`` are injection seams; ``log=True`` files one
+    auto-improvement drift row per finding."""
+    import json
+
+    from tools.noctus.dev import orchestrator_inline_cutoff as oic
+
+    root = repo_root or REPO_ROOT
+    if rows is None:
+        rows = []
+        for ln in _branch_tree_text(root).splitlines():
+            ln = ln.strip()
+            if ln:
+                try:
+                    rows.append(json.loads(ln))
+                except json.JSONDecodeError:
+                    continue
+    findings = oic.scan(rows, root=root, since=since or oic.SHADOW_SINCE, runner=runner, size_fn=size_fn)
+    if log and findings:
+        oic.log_telemetry(findings)
+    return [oic.issue_for(f) for f in findings]
 
 
 # ---------------------------------------------------------------------------
