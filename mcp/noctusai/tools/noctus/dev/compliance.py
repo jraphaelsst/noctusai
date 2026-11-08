@@ -16093,6 +16093,14 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # erp 050: plain UNIQUE index on the SHA-256 of a 384-bit random token (lookup key, not a business invariant).
+    # erp.portal_tokens has 0 rows in prod (verified 2026-11-08) so a probe has no fixture row, and the product is asleep.
+    (
+        "products/erp-imobiliario/backend/migrations/050_portal_tokens_hash_service_only.sql",
+        "uq_portal_tokens_token_hash",
+        "Lookup-key uniqueness on a hash of a high-entropy token; empty table in prod (no fixture row) and erp-imobiliario "
+        "is asleep, so a rollback-only probe cannot be seeded.",
+    ),
     # Biblioteca/Apify 320 is NOT APPLIED (file-only until the tech-lead runs migrate_product): it re-creates the
     # existing status vocabulary CHECK with two more values. A pure vocabulary list (no cross-column logic), written
     # only by our own ingestion handler through fixed literals; the widened constraint does not exist in prod to probe yet.

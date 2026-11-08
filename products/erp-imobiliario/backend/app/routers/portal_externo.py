@@ -9,7 +9,7 @@ Agents generate portal links; owners/tenants access data without full auth.
 --   org_id uuid NOT NULL,
 --   tipo text NOT NULL CHECK (tipo IN ('proprietario', 'locatario')),
 --   pessoa_id uuid NOT NULL,
---   token text UNIQUE NOT NULL,
+--   token_hash text UNIQUE NOT NULL,  -- sha256 hex; the raw token is never stored (migration 050)
 --   nome text NOT NULL,
 --   email text,
 --   expires_at timestamptz NOT NULL DEFAULT (now() + interval '90 days'),
@@ -17,6 +17,7 @@ Agents generate portal links; owners/tenants access data without full auth.
 --   created_at timestamptz NOT NULL DEFAULT now()
 -- );
 """
+import hmac
 import logging
 import secrets
 from typing import Any, Dict, List, Optional, Literal
@@ -25,12 +26,13 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import Field
 
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
+from app.dependencies import get_current_user, get_admin_client, get_org_id, log_action, first_or_none
 from app.responses import success_response, paginated_response, ok_response, calculate_pagination
 from app.services.portal_documentos_query import fetch_shared_documentos
 from app.config import settings
 from app.rate_limit import limiter
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth.session.api_tokens import hash_token
 from noctusai_lib.api.rate_limit_policies import DEFAULT_PORTAL_RL
 
 logger = logging.getLogger(__name__)
@@ -110,16 +112,26 @@ def _get_admin():
 
 
 def _validate_token(token: str) -> dict:
-    """Validate a portal token. Returns token row or raises 401/404."""
+    """Validate a presented portal token by its SHA-256 hash. Returns the row or raises 401/404.
+
+    Only the hash is stored (``token_hash``); the presented token is hashed with
+    the seed's ``hash_token`` and looked up by equality on the unique index, then
+    re-compared in constant time. ``is_active`` and ``expires_at`` are honoured.
+    """
+    presented_hash = hash_token(token)
     admin = _get_admin()
     result = admin.table("portal_tokens").select("*").eq(
-        "token", token
-    ).eq("is_active", True).single().execute()
+        "token_hash", presented_hash
+    ).limit(1).execute()
+    rows = result.data or []
+    token_data = rows[0] if isinstance(rows, list) and rows else (rows if isinstance(rows, dict) else None)
 
-    if not result.data:
+    if (
+        not token_data
+        or not hmac.compare_digest(str(token_data.get("token_hash") or ""), presented_hash)
+        or not token_data.get("is_active")
+    ):
         raise HTTPException(status_code=404, detail="Link de acesso inválido ou expirado")
-
-    token_data = result.data
 
     # Check expiration
     expires_at = datetime.fromisoformat(token_data["expires_at"].replace("Z", "+00:00"))
@@ -136,19 +148,21 @@ def _validate_token(token: str) -> dict:
 @router.post("/gerar-link")
 async def gerar_link(body: GerarLinkBody, auth = Depends(get_current_user)):
     """Gera um link de acesso ao portal para proprietário ou locatário. Requer autenticação."""
-    user, token = auth
-    db = get_user_client(token)
+    user, _jwt = auth
+    db = _get_admin()  # portal_tokens is service-only (migration 050)
+    org_id = get_org_id(user, required=True)
 
-    # Generate secure token
+    # Generate secure token (returned ONCE; only its hash is persisted)
     portal_token = secrets.token_urlsafe(48)
     expires_at = (datetime.now(timezone.utc) + timedelta(days=body.dias_validade)).isoformat()
 
     data = {
+        "org_id": org_id,
         "tipo": body.tipo,
         "pessoa_id": body.pessoa_id,
         "nome": body.nome,
         "email": body.email,
-        "token": portal_token,
+        "token_hash": hash_token(portal_token),
         "expires_at": expires_at,
         "is_active": True,
     }
@@ -162,6 +176,7 @@ async def gerar_link(body: GerarLinkBody, auth = Depends(get_current_user)):
                f"Gerou link de portal ({body.tipo}) para {body.nome}")
 
     issued = portal_token_issued_to_dto(row) or {}
+    issued["token"] = portal_token  # the one and only time the raw token exists server-side
     return success_response({
         **issued,
         "link": f"/portal/{portal_token}",
@@ -174,17 +189,18 @@ async def listar_tokens(
     page_size: int = Query(50, ge=1, le=200),
     auth = Depends(get_current_user)):
     """Lista todos os tokens de portal gerados (requer autenticação)."""
-    user, token = auth
-    db = get_user_client(token)
+    user, _jwt = auth
+    db = _get_admin()  # portal_tokens is service-only (migration 050)
+    org_id = get_org_id(user, required=True)
 
     validated_page, validated_page_size, offset = calculate_pagination(
         page, page_size, settings.max_page_size
     )
 
-    count_result = db.table("portal_tokens").select("id", count="exact").execute()
+    count_result = db.table("portal_tokens").select("id", count="exact").eq("org_id", org_id).execute()
     total = count_result.count if count_result.count is not None else 0
 
-    result = db.table("portal_tokens").select("*").order(
+    result = db.table("portal_tokens").select("*").eq("org_id", org_id).order(
         "created_at", desc=True
     ).range(offset, offset + validated_page_size - 1).execute()
 
@@ -200,12 +216,13 @@ async def listar_tokens(
 @router.delete("/tokens/{token_id}")
 async def revogar_token(token_id: str, auth = Depends(get_current_user)):
     """Revoga (desativa) um token de portal."""
-    user, token = auth
-    db = get_user_client(token)
+    user, _jwt = auth
+    db = _get_admin()  # portal_tokens is service-only (migration 050)
+    org_id = get_org_id(user, required=True)
 
     result = db.table("portal_tokens").update(
         {"is_active": False}
-    ).eq("id", token_id).execute()
+    ).eq("id", token_id).eq("org_id", org_id).execute()
     row = first_or_none(result)
 
     if not row:

@@ -5,6 +5,8 @@ Covers link generation, token listing, token revocation, and public portal endpo
 import pytest
 from datetime import datetime, timezone, timedelta
 
+from noctusai_lib.api.auth.session.api_tokens import hash_token
+
 
 class TestGerarLink:
     def test_gerar_link_proprietario(self, client):
@@ -14,7 +16,7 @@ class TestGerarLink:
             "pessoa_id": "p1",
             "nome": "Carlos Silva",
             "email": "carlos@test.com",
-            "token": "abc123",
+            "token_hash": hash_token("abc123"),
             "is_active": True,
         })
         resp = client.post("/api/portal/gerar-link", json={
@@ -33,7 +35,7 @@ class TestGerarLink:
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana Costa",
-            "token": "def456",
+            "token_hash": hash_token("def456"),
             "is_active": True,
         })
         resp = client.post("/api/portal/gerar-link", json={
@@ -49,7 +51,7 @@ class TestGerarLink:
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "João",
-            "token": "ghi789",
+            "token_hash": hash_token("ghi789"),
             "is_active": True,
         })
         resp = client.post("/api/portal/gerar-link", json={
@@ -135,11 +137,12 @@ class TestListarTokens:
         client._mock_supabase.set_table_data("portal_tokens", [
             {
                 "id": "pt1",
+                "org_id": "test-org-123",
                 "tipo": "proprietario",
                 "pessoa_id": "p1",
                 "nome": "Carlos",
                 "email": "carlos@test.com",
-                "token": "MUST-NEVER-APPEAR-IN-LIST",
+                "token_hash": hash_token("MUST-NEVER-APPEAR-IN-LIST"),
                 "is_active": True,
                 "expires_at": "2026-08-11T00:00:00Z",
                 "created_at": "2026-05-11",
@@ -151,7 +154,7 @@ class TestListarTokens:
         rows = body.get("data") or []
         assert rows, "expected at least one token in the listing"
         for row in rows:
-            assert "token" not in row, (
+            assert "token_hash" not in row and "token" not in row, (
                 "PORTAL TOKEN LEAK at router boundary — admin listing "
                 "/api/portal/tokens must hide raw bearer tokens."
             )
@@ -166,7 +169,7 @@ class TestListarTokens:
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "Carlos",
-            "token": "ISSUED-AT-ONE-SHOT",
+            "token_hash": hash_token("ISSUED-AT-ONE-SHOT"),
             "is_active": True,
         })
         resp = client.post("/api/portal/gerar-link", json={
@@ -183,7 +186,7 @@ class TestListarTokens:
 class TestRevogarToken:
     def test_revoke_success(self, client):
         client._mock_supabase.set_table_data("portal_tokens", {
-            "id": "pt1", "is_active": False,
+            "id": "pt1", "org_id": "test-org-123", "is_active": False,
         })
         resp = client.delete("/api/portal/tokens/pt1")
         assert resp.status_code == 200
@@ -203,7 +206,7 @@ class TestValidarPortal:
             "tipo": "proprietario",
             "nome": "Carlos",
             "pessoa_id": "p1",
-            "token": "valid-token",
+            "token_hash": hash_token("valid-token"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -228,7 +231,7 @@ class TestPortalImoveis:
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "Carlos",
-            "token": "tok-prop",
+            "token_hash": hash_token("tok-prop"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -247,7 +250,7 @@ class TestPortalImoveis:
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana",
-            "token": "tok-loc",
+            "token_hash": hash_token("tok-loc"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -264,7 +267,7 @@ class TestPortalFinanceiro:
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "Carlos",
-            "token": "tok-fin",
+            "token_hash": hash_token("tok-fin"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -282,7 +285,7 @@ class TestPortalFinanceiro:
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana",
-            "token": "tok-fin2",
+            "token_hash": hash_token("tok-fin2"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -299,7 +302,7 @@ class TestPortalContratos:
             "tipo": "locatario",
             "pessoa_id": "p1",
             "nome": "Ana",
-            "token": "tok-ctr",
+            "token_hash": hash_token("tok-ctr"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -332,7 +335,7 @@ class TestPortalDocumentos:
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "Carlos",
-            "token": "tok-doc",
+            "token_hash": hash_token("tok-doc"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -361,7 +364,7 @@ class TestPortalDocumentos:
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana",
-            "token": "tok-doc2",
+            "token_hash": hash_token("tok-doc2"),
             "is_active": True,
             "expires_at": expires,
         })
@@ -384,10 +387,68 @@ class TestPortalDocumentos:
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana",
-            "token": "tok-doc3",
+            "token_hash": hash_token("tok-doc3"),
             "is_active": True,
             "expires_at": expires,
         })
         client._mock_supabase.set_table_data("documentos", [])
         resp = client._tc.get("/api/portal/tok-doc3/documentos")
         assert resp.status_code == 200
+
+
+def _row(raw, *, active=True, days=30):
+    return {
+        "id": "pt1", "org_id": "org-1", "tipo": "proprietario", "pessoa_id": "p1",
+        "nome": "Carlos", "token_hash": hash_token(raw), "is_active": active,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(),
+    }
+
+
+class TestTokenHashedAtRest:
+    def test_issue_persists_only_hash_and_returns_raw_once(self, client):
+        client._mock_supabase.set_table_data("portal_tokens", [])
+        resp = client.post("/api/portal/gerar-link", json={
+            "tipo": "proprietario", "pessoa_id": "p1", "nome": "Carlos",
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        raw = data["token"]
+        assert data["link"] == f"/portal/{raw}"
+        payloads = client._mock_supabase.table("portal_tokens").inserted_payloads
+        assert len(payloads) == 1
+        assert "token" not in payloads[0]
+        assert payloads[0]["token_hash"] == hash_token(raw)
+        assert raw not in repr(payloads[0])
+
+    def test_issue_then_validate_ok(self, client):
+        client._mock_supabase.set_table_data("portal_tokens", [])
+        raw = client.post("/api/portal/gerar-link", json={
+            "tipo": "proprietario", "pessoa_id": "p1", "nome": "Carlos",
+        }).json()["data"]["token"]
+        stored = client._mock_supabase.table("portal_tokens").inserted_payloads[0]
+        client._mock_supabase.set_table_data("portal_tokens", [{**stored, "id": "pt1"}])
+        assert client._tc.get(f"/api/portal/{raw}").status_code == 200
+
+    def test_wrong_token_refused(self, client):
+        client._mock_supabase.set_table_data("portal_tokens", [_row("right")])
+        assert client._tc.get("/api/portal/wrong").status_code == 404
+
+    def test_plaintext_hash_is_not_a_credential(self, client):
+        client._mock_supabase.set_table_data("portal_tokens", [_row("right")])
+        assert client._tc.get(f"/api/portal/{hash_token('right')}").status_code == 404
+
+    def test_inactive_token_refused(self, client):
+        client._mock_supabase.set_table_data("portal_tokens", [_row("tok", active=False)])
+        assert client._tc.get("/api/portal/tok").status_code == 404
+
+    def test_expired_token_refused_401(self, client):
+        client._mock_supabase.set_table_data("portal_tokens", [_row("tok", days=-1)])
+        assert client._tc.get("/api/portal/tok").status_code == 401
+
+    def test_gerar_link_requires_auth_401(self, client):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        resp = TestClient(app).post("/api/portal/gerar-link", json={
+            "tipo": "proprietario", "pessoa_id": "p1", "nome": "Carlos",
+        })
+        assert resp.status_code == 401
