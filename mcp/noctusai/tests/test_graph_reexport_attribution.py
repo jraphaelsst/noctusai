@@ -13,7 +13,8 @@ TS extractor emits a ``consumes_component`` edge for each named barrel import.
 Test categories:
   1. Real-graph counts  — LoginForm ≥9, ResourceManager ≥3 consumers.
   2. Zero-consumer shelfware  — PageSkeleton, LLMSpendBadge, FakeModeBadge,
-     ErrorBoundary emit zero ``consumes_component`` edges FROM product files.
+     emit zero ``consumes_component`` edges FROM product files (ErrorBoundary left the
+     shelf 2026-11-08: core's admin surface consumes it).
   3. Synthetic barrel traversal  — deterministic unit test with synthetic
      barrel + component files.
   4. No circular attribution  — no edge FROM a barrel index.ts file itself.
@@ -150,11 +151,12 @@ class TestRealGraphConsumerCounts:
 class TestShelfwareHasZeroConsumers:
     """Shelfware components must have zero consumes_component edges FROM product files.
 
-    ``LLMSpendBadge``, ``FakeModeBadge``, ``ErrorBoundary`` are declared in the
+    ``LLMSpendBadge`` and ``FakeModeBadge`` are declared in the
     design-system barrel but not consumed directly by products (they're used
     internally by the seed framework shell or not yet used at all).
     ``PageSkeleton`` was in this set until academia-de-reciclagem adopted it —
     see ``TestRealGraphConsumerCounts.test_page_skeleton_attributes_to_academia_pages``.
+    ``ErrorBoundary`` left on 2026-11-08 when core's admin surface adopted it (pinned below).
 
     Checking "zero PRODUCT consumers" (source contains a product path), not
     zero edges total — seed-internal references between barrel siblings are
@@ -184,10 +186,14 @@ class TestShelfwareHasZeroConsumers:
             f"FakeModeBadge has unexpected direct product consumers: {consumers}"
         )
 
-    def test_error_boundary_zero_product_consumers(self, cc_by_target):
+    def test_error_boundary_attributes_to_core_admin_surface(self, cc_by_target):
+        """ErrorBoundary left the shelf on 2026-11-08: core's lazily-loaded admin
+        surface (``admin/AdminSurface.tsx``) wraps the privileged bundles in the
+        seed organ, which is the canonical-organ consumption the rule asks for.
+        Pin that consumer, so the attribution stays real and a re-fork shows up."""
         consumers = self._product_consumers(cc_by_target, "ErrorBoundary")
-        assert consumers == [], (
-            f"ErrorBoundary has unexpected direct product consumers: {consumers}"
+        assert "code:products/core/frontend/src/admin/AdminSurface.tsx" in consumers, (
+            f"ErrorBoundary should be consumed by core's admin surface; got {consumers}"
         )
 
 
