@@ -2,7 +2,7 @@
 
 ## Sidebar
 
-- A new group **Website** appears in the core sidebar.
+- The website entries live in the module groups **CMS** (Site, Documentação) and **CRM** (Leads do site) of the core sidebar.
 - **All sidebar groups start collapsed.** The seed `Sidebar` collapses every group by construction (commit `e3ebde374`, `seed/lib/frontend/src/design-system/components/Sidebar.tsx`); `NavGroup.defaultOpen` is ignored. The group containing the current page opens automatically so users see where they are. Manual open/close choices persist per browser.
 - **Items, added slice by slice.** A nav item appears only when its page is real (no placeholder items):
 
@@ -25,7 +25,7 @@
 **Implementation:**
 - `noctus_users.role` gains `marketing`.
 - A SQL helper `is_website_editor()` backs the RLS policies, with a matching backend dependency.
-- A **role-aware shell** lets a marketing user reach the Website group. Today the admin shell gates `/admin/*` on `isAdmin` only (`CoreLayout.tsx:32-33`), so this is a real change, not a menu tweak.
+- A **role-aware shell** lets a marketing user reach the Website group. Implemented by `src/admin/access.ts` (`canReach`), which both registers the admin routes and prunes the nav for the role.
 
 ## Documentação
 

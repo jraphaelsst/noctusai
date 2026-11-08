@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
@@ -12,6 +12,9 @@ import {
 } from '../components/ProductStateControls';
 import { useProductStateActions } from '../hooks/useProductStateActions';
 import { ServiceUnavailable } from '../components/ServiceUnavailable';
+
+// Code-split: the admin entry (and its path) is fetched only when the server said this user is a platform admin.
+const AdminEntryButton = lazy(() => import('../admin/AdminEntryButton'));
 
 interface Product {
   id: string;
@@ -162,12 +165,9 @@ export function Dashboard() {
         profileEditable
         actions={
           isAdmin ? (
-              <button
-                className="h-9 rounded-md bg-primary text-primary-foreground px-4 text-sm font-medium hover:bg-primary/90 transition-colors"
-                onClick={() => navigate('/admin')}
-              >
-                Admin Panel
-              </button>
+              <Suspense fallback={null}>
+                <AdminEntryButton />
+              </Suspense>
           ) : null
         }
       />

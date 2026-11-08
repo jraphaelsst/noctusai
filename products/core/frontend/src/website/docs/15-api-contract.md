@@ -176,8 +176,8 @@ dist/_site/
 
 ## 6 · Admin UI (admin slice)
 
-- Sidebar group **Website** (key `website`): Documentação (exists), **Configurações** `/admin/website/settings`, **Leads** `/admin/website/leads`.
-- **Marketing users** see **only** the Website group. `CoreLayout` lets `role === 'marketing'` reach `/admin/website/*` and nothing else under `/admin`.
+- Sidebar (module groups, 2026-11-08): **CMS** › Site `/admin/website/settings`, Documentação `/admin/website/docs`; **CRM** › Leads do site `/admin/website/leads`.
+- **Marketing users** see **only** those entries. `admin/access.ts` `canReach` registers just the `/admin/website/*` routes for `role === 'marketing'` and prunes the nav with the same predicate; every other `/admin/*` path renders the plain NotFound.
 - **Configurações** tabs:
   - **Geral:** `site_enabled`, `signup_enabled` (disabled for marketing), WhatsApp number + default message pt/EN + float toggle.
   - **Seções:** a switch per key; `social_proof` is disabled with a hint while there are 0 items.

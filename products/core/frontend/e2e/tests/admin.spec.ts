@@ -2,8 +2,8 @@ import { test, expect } from '../fixtures/auth.fixture';
 import { mockAdminAPIs } from '../fixtures/api-mocks';
 import type { Page } from '@playwright/test';
 
-// The admin sidebar is nested (Administração › Visão geral | Clientes |
-// Comercial | Plataforma) and each level is an accordion: only the group on
+// The admin sidebar is module-grouped (CRM, ERP › Vendas, CMS, Integrações,
+// Configurações, Operação, ...) and each level is an accordion: only the group on
 // the current page's path is open. Open a sub-group before reaching a link
 // inside it (owner-approved UX, 2026-10-05, MENUS.md).
 async function openNavGroup(page: Page, label: string) {
@@ -21,12 +21,13 @@ test.describe('Admin Panel', () => {
     );
     await page.goto('/admin');
 
-    // SECURITY INTENT: CoreLayout's admin guard (`if (!isAdmin) <Navigate
-    // to="/" replace>`) sends a member off /admin to the dashboard. Assert
-    // both the redirect AND that no admin-only content rendered.
-    await expect(page).toHaveURL('/');
-    await expect(page.getByRole('heading', { name: 'Bem-vindo, Rafael!' })).toBeVisible();
+    // SECURITY INTENT: admin routes are not registered for a non-admin, so
+    // /admin is just an unknown path: same NotFound page, URL unchanged (no
+    // redirect, no "forbidden"), and no admin content or navigation rendered.
+    await expect(page).toHaveURL('/admin');
+    await expect(page.getByRole('heading', { name: 'Página não encontrada' })).toBeVisible();
     await expect(page.getByText('Visao geral da plataforma NoctusAI')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Painel' })).toHaveCount(0);
   });
 
   test('admin can access /admin and sees sidebar', async ({ adminPage: page }) => {
@@ -34,21 +35,23 @@ test.describe('Admin Panel', () => {
     await page.goto('/admin');
 
     // Sidebar navigation items, group by group (accordion: one open at a time)
-    await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Analytics' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Painel' })).toBeVisible();
 
-    await openNavGroup(page, 'Clientes');
+    await openNavGroup(page, 'CRM');
     await expect(page.getByRole('link', { name: /Organiza/ })).toBeVisible();
 
-    await openNavGroup(page, 'Comercial');
+    await openNavGroup(page, 'ERP');
+    await openNavGroup(page, 'Vendas');
     await expect(page.getByRole('link', { name: 'Assinaturas' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Planos' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Faturamento' })).toBeVisible();
 
-    await openNavGroup(page, 'Plataforma');
-    await expect(page.getByRole('link', { name: 'Chaves API' })).toBeVisible();
+    await openNavGroup(page, 'Integrações');
+    await expect(page.getByRole('link', { name: /Chaves de API/ })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Webhooks' })).toBeVisible();
-    await expect(page.getByRole('link', { name: /Configura/ })).toBeVisible();
+
+    await openNavGroup(page, 'Operação');
+    await expect(page.getByRole('link', { name: 'Analytics' })).toBeVisible();
   });
 
   test('admin dashboard shows stats', async ({ adminPage: page }) => {
@@ -65,7 +68,7 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
-    await openNavGroup(page, 'Clientes');
+    await openNavGroup(page, 'CRM');
     await page.getByRole('link', { name: /Organiza/ }).click();
     await expect(page).toHaveURL('/admin/orgs');
   });
@@ -74,7 +77,8 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
-    await openNavGroup(page, 'Comercial');
+    await openNavGroup(page, 'ERP');
+    await openNavGroup(page, 'Vendas');
     await page.getByRole('link', { name: 'Assinaturas' }).click();
     await expect(page).toHaveURL('/admin/subs');
   });
@@ -83,8 +87,8 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
-    await openNavGroup(page, 'Plataforma');
-    await page.getByRole('link', { name: 'Chaves API' }).click();
+    await openNavGroup(page, 'Integrações');
+    await page.getByRole('link', { name: /Chaves de API/ }).click();
     await expect(page).toHaveURL('/admin/api-keys');
   });
 
@@ -92,7 +96,8 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
-    await openNavGroup(page, 'Comercial');
+    await openNavGroup(page, 'ERP');
+    await openNavGroup(page, 'Vendas');
     await page.getByRole('link', { name: 'Planos' }).click();
     await expect(page).toHaveURL('/admin/plans');
   });
