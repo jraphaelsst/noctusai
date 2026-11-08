@@ -1,0 +1,26 @@
+name: CoreLeadAdapter
+kind: component
+path: seed/lib/frontend/src/marketing/coreLead.ts
+phase: landing-organs
+registered_at: "2026-11-07"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Lead wire for landings on a NON-core origin: LeadCaptureForm values -> core's public POST {env.CORE_API_URL}/api/website/leads (never window.location.origin). submitCoreLead / createCoreLeadSubmit({productInterest, source, locale, consentTextVersion}) / toCoreLeadPayload; rejects on non-2xx so the organ keeps typed values."
+  - "Absorbed from agents' landingLead.ts (feat/agents-landing-v2). Core's own same-origin wire stays in products/core."
+
+errors_encountered: []
+drifts_surfaced: []
+
+alternatives_considered:
+  - "A per-product landingLead.ts copy: rejected (recurrence rule, N>=2)."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

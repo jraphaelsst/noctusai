@@ -3,7 +3,7 @@ kind: component
 path: seed/lib/frontend/src/marketing/Hero.tsx
 phase: landing-organs
 registered_at: "2026-11-07"
-organ_version: "1.0"
+organ_version: "1.1"
 validation_status: emerging
 
 known_facts:
@@ -11,6 +11,7 @@ known_facts:
   - "media is a slot; the 3D canvas is the consumer's"
   - "Exported from @noctusai/lib/marketing only (never the root barrel). Seed tokens only; Reveal for entrance (content is never prerendered hidden; reduced motion = no animation)."
   - "Consumes seed Button / Badge / Input / Card / Select / Textarea / Skeleton where they exist; link-styled actions use linkButtonClass (anchors cannot be the seed Button)."
+  - "v2 (opt-in, defaults unchanged): variant=\"inverse\" (dark sidebar-token band + soft primary glow, outline CTA re-toned), bareMedia (media without the Card), accentEmphasis (titleEmphasis + eyebrow in primary / primary-light on dark, instead of muted), stats (dl of value+label), entrance=\"staggered\" (parts cascade, media scales in; Stagger/Reveal only, never prerendered hidden, reduced motion = none)."
 
 errors_encountered: []
 drifts_surfaced: []

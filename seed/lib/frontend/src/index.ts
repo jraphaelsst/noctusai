@@ -138,7 +138,7 @@ export type {
 } from './use-retryable-action';
 
 // Environment
-export { env, validateEnv, generateEnvExample, ENV_VARS } from './env';
+export { env, productUrl, validateEnv, generateEnvExample, ENV_VARS } from './env';
 export type { ProductEnv } from './env';
 
 // Supabase

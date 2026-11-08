@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { toast } from "sonner";
 import { Bell } from "lucide-react";
 import { Button } from "../design-system/ui/Button";
@@ -30,7 +30,11 @@ export interface LeadFormValues {
 }
 
 export interface LeadCaptureFormProps {
-  variant: "brief" | "waitlist";
+  /**
+   * "brief" (contact: phase select + company), "waitlist" (from a catalog card) or "product" (a single-product
+   * landing: no phase select, no company field).
+   */
+  variant: "brief" | "waitlist" | "product";
   /** Waitlist variant: the product being waited for. Setting it prefills (focus + undo toast). */
   interest?: LeadInterest | null;
   /** "Remover" / "Desfazer": clear the interest (the parent switches back to the brief variant). */
@@ -47,6 +51,27 @@ export interface LeadCaptureFormProps {
   privacyHref?: string;
   /** Overrides `import.meta.env.VITE_TURNSTILE_SITE_KEY` (tests / explicit wiring). Empty = no widget. */
   turnstileSiteKey?: string;
+  /** Product variant: slug sent as `product_interest: [slug]` (e.g. "agents"). */
+  productInterest?: string;
+  /** Submit button label. Defaults: "Enviar mensagem" (brief/product) / "Entrar na lista" (waitlist). */
+  submitLabel?: string;
+  /** Label of the free-text field. Default "O que você precisa?". */
+  messageLabel?: string;
+  /** Hint under the free-text field. Default "Uma ou duas frases bastam.". */
+  messageHint?: string;
+  /** Placeholder of the free-text field. Default none. */
+  messagePlaceholder?: string;
+  /**
+   * What the contact consent is about, completing "Concordo em ser contatado pela NoctusAI sobre {subject}, conforme a
+   * Política de Privacidade." Default "este assunto". Example: "os Agentes", "o Social Wiring".
+   */
+  consentSubject?: string;
+  /** Sent-state heading (not used by the waitlist). Default "Recebemos a sua mensagem.". */
+  successTitle?: string;
+  /** Sent-state body (not used by the waitlist). Default "Uma pessoa da NoctusAI vai responder pelo WhatsApp que você informou.". */
+  successBody?: ReactNode;
+  /** Sent-state button that resets the form. Default "Enviar outra mensagem". */
+  againLabel?: string;
   /** Optional follow-up shown after a brief is sent (e.g. "Continuar no WhatsApp"). */
   successAction?: { label: string; href: string };
 }
@@ -78,7 +103,10 @@ const inputLg = "h-10 text-base";
 export function LeadCaptureForm({
   variant, interest = null, onInterestClear, onSubmit,
   id = "contato-form", eyebrow, title, heading, description, privacyHref = "/consent/privacy-policy",
-  turnstileSiteKey, successAction,
+  turnstileSiteKey, successAction, productInterest, submitLabel: submitLabelProp, messageLabel = "O que você precisa?",
+  messageHint = "Uma ou duas frases bastam.", messagePlaceholder, consentSubject = "este assunto",
+  successTitle = "Recebemos a sua mensagem.", successBody = "Uma pessoa da NoctusAI vai responder pelo WhatsApp que você informou.",
+  againLabel = "Enviar outra mensagem",
 }: LeadCaptureFormProps) {
   const uid = useId();
   const f = (n: string) => `${uid}-${n}`;
@@ -109,7 +137,8 @@ export function LeadCaptureForm({
     prevSlug.current = slug;
   }, [interest, onInterestClear]);
 
-  const submitLabel = waitlist ? "Entrar na lista" : "Enviar mensagem";
+  const productVariant = variant === "product";
+  const submitLabel = submitLabelProp ?? (waitlist ? "Entrar na lista" : "Enviar mensagem");
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -137,10 +166,12 @@ export function LeadCaptureForm({
       whatsapp: digits,
       consentimento: true,
       ...(val("email") ? { email: val("email") } : {}),
-      ...(val("empresa") ? { empresa: val("empresa") } : {}),
-      ...(!waitlist && val("tipo") ? { tipo: val("tipo") } : {}),
+      ...(!productVariant && val("empresa") ? { empresa: val("empresa") } : {}),
+      ...(!waitlist && !productVariant && val("tipo") ? { tipo: val("tipo") } : {}),
       ...(val("mensagem") ? { mensagem: val("mensagem") } : {}),
-      ...(waitlist && interest ? { product_interest: [interest.slug] } : {}),
+      ...(waitlist && interest
+        ? { product_interest: [interest.slug] }
+        : productInterest ? { product_interest: [productInterest] } : {}),
       ...(siteKey && token ? { turnstileToken: token } : {}),
     };
     setStatus("sending");
@@ -184,16 +215,16 @@ export function LeadCaptureForm({
                   <strong className="block">
                     {sentInterest.current
                       ? `Pronto, você está na lista de espera do ${sentInterest.current.nome}.`
-                      : "Recebemos a sua mensagem."}
+                      : successTitle}
                   </strong>
                   {sentInterest.current
                     ? "Avisamos pelo WhatsApp informado quando ele abrir."
-                    : "Uma pessoa da NoctusAI vai responder pelo WhatsApp que você informou."}
+                    : successBody}
                 </div>
                 {successAction && !sentInterest.current ? (
                   <p className="mt-3"><a className="text-sm font-medium underline" href={successAction.href}>{successAction.label}</a></p>
                 ) : null}
-                <Button variant="ghost" className="mt-3" onClick={again}>Enviar outra mensagem</Button>
+                <Button variant="ghost" className="mt-3" onClick={again}>{againLabel}</Button>
               </div>
             ) : (
               <form key={formKey} ref={formRef} noValidate onSubmit={handleSubmit} aria-busy={sending} className="flex flex-col gap-4">
@@ -231,20 +262,22 @@ export function LeadCaptureForm({
                   </div>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className={cn("grid gap-4", !productVariant && "sm:grid-cols-2")}>
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor={f("email")} className={labelClass}>E-mail (opcional)</label>
                     <Input id={f("email")} name="email" data-field="email" type="email" autoComplete="email" readOnly={sending}
                       className={inputLg} aria-invalid={errors.email ? true : undefined} aria-describedby={describedBy("email")} />
                     {errors.email ? <span id={f("email-err")} className={errClass}>{errors.email}</span> : null}
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor={f("empresa")} className={labelClass}>Empresa (opcional)</label>
-                    <Input id={f("empresa")} name="empresa" autoComplete="organization" readOnly={sending} className={inputLg} />
-                  </div>
+                  {!productVariant ? (
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor={f("empresa")} className={labelClass}>Empresa (opcional)</label>
+                      <Input id={f("empresa")} name="empresa" autoComplete="organization" readOnly={sending} className={inputLg} />
+                    </div>
+                  ) : null}
                 </div>
 
-                {!waitlist ? (
+                {!waitlist && !productVariant ? (
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor={f("tipo")} className={labelClass}>Em que fase está o projeto?</label>
                     <Select id={f("tipo")} name="tipo" className={inputLg} disabled={sending}>
@@ -258,9 +291,9 @@ export function LeadCaptureForm({
                 ) : null}
 
                 <div className="flex flex-col gap-1.5">
-                  <label htmlFor={f("mensagem")} className={labelClass}>O que você precisa?</label>
-                  <Textarea id={f("mensagem")} name="mensagem" maxLength={600} readOnly={sending} aria-describedby={f("mensagem-hint")} />
-                  <span id={f("mensagem-hint")} className={hintClass}>Uma ou duas frases bastam.</span>
+                  <label htmlFor={f("mensagem")} className={labelClass}>{messageLabel}</label>
+                  <Textarea id={f("mensagem")} name="mensagem" maxLength={600} readOnly={sending} placeholder={messagePlaceholder} aria-describedby={f("mensagem-hint")} />
+                  <span id={f("mensagem-hint")} className={hintClass}>{messageHint}</span>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
@@ -269,7 +302,7 @@ export function LeadCaptureForm({
                       className="mt-1 h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       aria-invalid={errors.consent ? true : undefined} aria-describedby={describedBy("consent")} />
                     <span>
-                      Concordo em ser contatado pela NoctusAI sobre este assunto, conforme a{" "}
+                      {`Concordo em ser contatado pela NoctusAI sobre ${consentSubject}, conforme a`}{" "}
                       <a href={privacyHref} className="underline">Política de Privacidade</a>. *
                     </span>
                   </label>
