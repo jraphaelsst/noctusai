@@ -53,6 +53,7 @@ from noctusai_lib.integrations.llm import LLMConfig
 from noctusai_lib.integrations.llm.attribution import set_default_product as set_llm_default_product
 from noctusai_lib.integrations.llm.budget import configure_budget_module
 from noctusai_lib.integrations.llm.ledger import make_central_usage_sink
+from noctusai_lib.integrations.prompt_registry import configure_prompt_registry, make_prompt_registry
 from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
 
 from noctusai_seed.database import create_database_module
@@ -373,6 +374,10 @@ def create_product_app(
     #    Late-binding lambda for the same reason the audit sink uses one (see 3a).
     set_llm_default_product(CORE_SLUG if schema == "public" else _product_slug)
     central_usage_sink = make_central_usage_sink(lambda: db.get_core_client())
+    # 4a. The platform prompt registry (`public.plataforma_agentes`): EVERY product reads its AI prompts/models from the
+    #     database through the service-role core client, configured by construction (late-binding lambda, see 3a).
+    #     Tests inject a Fake with `configure_prompt_registry(...)` or pass `registry=`.
+    configure_prompt_registry(make_prompt_registry(lambda: db.get_core_client()))
     usage_db = None
     if getattr(settings, "llm_usage_tracking", False):
         try:

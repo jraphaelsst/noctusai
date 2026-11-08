@@ -75,7 +75,7 @@ VALUES (
     'Avaliador e corretor de agentes',
     'Le as falhas de uma rodada de evals de um agente e decide as correcoes.',
     'anthropic',
-    'claude-opus-5-5',
+    'claude-fable-5-1',
     $prompt$[PRIMEIRO RASCUNHO - SUBSTITUA ESTE TEXTO]
 
 Voce avalia a rodada de evals de um agente e propoe as correcoes.
