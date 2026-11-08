@@ -110,6 +110,12 @@ export interface NavItem {
   href: string;
   icon: React.ElementType;
   badge?: string | number;
+  /**
+   * Opt-in (2026-11-08): render visible-to-all but NON-interactive — no link,
+   * `aria-disabled="true"`, muted tokens, never the current page. Pair with
+   * `badge` (e.g. "Em breve"). Default (omitted) = unchanged behaviour.
+   */
+  disabled?: boolean;
 }
 
 export interface NavGroup {
@@ -131,6 +137,14 @@ export interface NavGroup {
    * sub-groups passes `items: []`.
    */
   groups?: NavGroup[];
+  /**
+   * Opt-in (2026-11-08): every item beneath this group renders disabled
+   * (non-interactive). The group still expands so the disabled children stay
+   * discoverable. Pair with `badge`.
+   */
+  disabled?: boolean;
+  /** Chip shown on the group header (e.g. "Em breve"). */
+  badge?: string;
 }
 
 /** Max number of GROUP levels (the 4th level is the leaf item). */
@@ -199,15 +213,17 @@ function findCurrentPage(
 ): CurrentPage {
   let best: CurrentPage = { item: null, path: [] };
   const consider = (item: NavItem, path: string[]) => {
+    if (item.disabled) return; // a disabled item is never the current page
     if (!hrefMatches(item.href, pathname)) return;
     if (!best.item || item.href.length > best.item.href.length) best = { item, path };
   };
-  const walk = (groups: NavGroup[], path: string[]) => {
+  const walk = (groups: NavGroup[], path: string[], parentDisabled = false) => {
     for (const g of groups) {
       if (!groupHasContent(g)) continue;
       const here = [...path, g.key];
-      g.items.forEach((item) => consider(item, here));
-      walk(g.groups ?? [], here);
+      const off = parentDisabled || !!g.disabled;
+      if (!off) g.items.forEach((item) => consider(item, here));
+      walk(g.groups ?? [], here, off);
     }
   };
   walk(navGroups, []);
@@ -303,7 +319,38 @@ export function Sidebar({
     setOpenState((prev) => ({ ...prev, [parentKey]: prev[parentKey] === key ? null : key }));
   };
 
-  const renderNavLink = (item: NavItem) => (
+  const renderBadge = (badge: string | number) => (
+    <span
+      className={cn(
+        "ml-auto text-xs bg-primary/20 text-primary-foreground px-1.5 py-0.5 rounded-full",
+        COLLAPSIBLE_TEXT,
+        collapsed && "md:max-w-0 md:px-0 md:opacity-0 md:overflow-hidden"
+      )}
+    >
+      {badge}
+    </span>
+  );
+
+  const renderDisabledItem = (item: NavItem) => (
+    <div
+      key={`${item.href}:${item.name}`}
+      aria-disabled="true"
+      title={collapsed ? item.name : undefined}
+      className={cn(
+        "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium cursor-not-allowed text-sidebar-foreground/40",
+        collapsed && "md:justify-center md:gap-0 md:px-0"
+      )}
+    >
+      <item.icon className="h-4 w-4 shrink-0" />
+      <span className={cn("flex-1 truncate", COLLAPSIBLE_TEXT, collapsed && COLLAPSED_TEXT)}>
+        {item.name}
+      </span>
+      {item.badge != null && renderBadge(item.badge)}
+    </div>
+  );
+
+  const renderNavLink = (item: NavItem, inheritedDisabled = false) =>
+    item.disabled || inheritedDisabled ? renderDisabledItem(item) : (
     <Link
       key={`${item.href}:${item.name}`}
       to={item.href}
@@ -323,24 +370,20 @@ export function Sidebar({
       <span className={cn("flex-1 truncate", COLLAPSIBLE_TEXT, collapsed && COLLAPSED_TEXT)}>
         {item.name}
       </span>
-      {item.badge != null && (
-        <span
-          className={cn(
-            "ml-auto text-xs bg-primary/20 text-primary-foreground px-1.5 py-0.5 rounded-full",
-            COLLAPSIBLE_TEXT,
-            collapsed && "md:max-w-0 md:px-0 md:opacity-0 md:overflow-hidden"
-          )}
-        >
-          {item.badge}
-        </span>
-      )}
+      {item.badge != null && renderBadge(item.badge)}
     </Link>
   );
 
   // Recursive group renderer. `depth` 0 = L1. Radix Collapsible keeps the
   // header a <button> with aria-expanded.
-  const renderGroup = (group: NavGroup, depth: number, parentKey: string): React.ReactNode => {
+  const renderGroup = (
+    group: NavGroup,
+    depth: number,
+    parentKey: string,
+    inheritedDisabled = false,
+  ): React.ReactNode => {
     if (!groupHasContent(group)) return null;
+    const groupDisabled = inheritedDisabled || !!group.disabled;
     if (depth > SIDEBAR_MAX_GROUP_DEPTH - 1) {
       console.error(
         `Sidebar: group "${group.key}" is nested deeper than ${SIDEBAR_MAX_GROUP_DEPTH} group levels (max 4 levels incl. the leaf).`,
@@ -375,6 +418,7 @@ export function Sidebar({
               {group.label}
             </span>
           </div>
+          {group.badge != null && renderBadge(group.badge)}
           <ChevronRight
             className={cn(
               "h-3.5 w-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
@@ -395,8 +439,10 @@ export function Sidebar({
             collapsed && "md:ml-0 md:border-l-0 md:pl-0"
           )}
         >
-          {group.items.map(renderNavLink)}
-          {(group.groups ?? []).map((sub) => renderGroup(sub, depth + 1, group.key))}
+          {group.items.map((it) => renderNavLink(it, groupDisabled))}
+          {(group.groups ?? []).map((sub) =>
+            renderGroup(sub, depth + 1, group.key, groupDisabled),
+          )}
         </CollapsiblePrimitive.Content>
       </CollapsiblePrimitive.Root>
     );
@@ -454,7 +500,7 @@ export function Sidebar({
           {/* Standalone items */}
           {standaloneItems.length > 0 && (
             <div className="pt-2 border-t border-sidebar-border space-y-0.5">
-              {standaloneItems.map(renderNavLink)}
+              {standaloneItems.map((it) => renderNavLink(it))}
             </div>
           )}
         </nav>

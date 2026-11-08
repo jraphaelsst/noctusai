@@ -18,6 +18,8 @@ export type { Crumb, CrumbContext, CrumbResolver, RouteCrumbSpec } from "./compo
 
 export { Sidebar } from "./components/Sidebar";
 export type { SidebarProps, NavGroup, NavItem } from "./components/Sidebar";
+export { MODULE_GROUP_ORDER, MODULE_GROUP_LABELS, orderNavGroups } from "./components/nav-groups";
+export type { ModuleGroupKey } from "./components/nav-groups";
 
 export { Header, LOGOUT_LABELS } from "./components/Header";
 export type { HeaderProps, HeaderUser, LogoutScope } from "./components/Header";
