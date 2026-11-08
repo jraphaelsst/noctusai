@@ -99,7 +99,7 @@ describe('DreReport', () => {
     expect(within(sell).getByRole('note')).toHaveTextContent('Fonte do servidor');
     const gross = screen.getByText('Receita bruta').closest('tr')!;
     await user.click(within(gross).getByRole('button', { name: /O que é/ }));
-    expect(within(gross).getByRole('note')).toHaveTextContent(/Tudo o que a loja vendeu/);
+    expect(within(gross).getByRole('note')).toHaveTextContent(/Tudo o que a empresa vendeu/);
   });
 
   it('expands category detail rows under a line', async () => {
@@ -301,7 +301,7 @@ describe('DreSettingsForm', () => {
   it('shows a stored split share as a percentage, and a regime pre-filled from the store profile', async () => {
     mountSettings({ das_split_irpj_csll: true, das_irpj_csll_share_bps: 2740, tax_regime_prefilled: true });
     expect(await screen.findByLabelText(/Parte de IRPJ \+ CSLL/)).toHaveValue(27.4);
-    expect(screen.getByText(/Preenchido pelo cadastro da loja/)).toBeInTheDocument();
+    expect(screen.getByText(/Preenchido pelo cadastro da empresa/)).toBeInTheDocument();
   });
 
   it('staff: read-only (controls disabled), no confirm/save buttons', async () => {

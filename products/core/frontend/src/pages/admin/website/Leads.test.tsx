@@ -63,6 +63,18 @@ describe('Leads — list', () => {
     expect((await screen.findByText(/Não foi possível carregar os leads/))).toBeTruthy();
   });
 
+  it('opens the lead from the keyboard-reachable name link', async () => {
+    const http = fakeHttp({
+      'GET /api/admin/website/stats': () => ({ data: STATS }),
+      'GET /api/admin/website/leads': () => ({ data: [lead()], total: 1 }),
+    });
+    render(renderWithWebsite(http, <Leads />));
+    const link = await screen.findByRole('link', { name: 'Ana Souza' });
+    expect(link.getAttribute('href')).toBe('/admin/website/leads/lead-1');
+    link.focus();
+    expect(document.activeElement).toBe(link);
+  });
+
   it('hides the CSV export button for non-admins', async () => {
     mockAuth = { isAdmin: false };
     const http = fakeHttp({
