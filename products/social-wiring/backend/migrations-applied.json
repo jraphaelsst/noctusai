@@ -68,6 +68,7 @@
     "320_biblioteca_apify.sql": "d035c93a8ea51f283fe4dee76143bf2c1874fbe63f875cc376ffd6222462b7e8",
     "321_whatsapp_connections_session_unique_hide_secrets.sql": "7e15c60cf9f496aee33cabcf6f38b4cb3d1aca8df60387c88f1e9c6c8e4527da",
     "323_julia_permitidos.sql": "292bc3dd3525e2a0d6a49e8aff1ea479724ec5e4e7309ed0d91bac266967a794",
-    "325_org_id_default_acting_aware.sql": "0087805a3a9264f896d8304de1078be63e8e1aa15ade3ecfe69a1d724e615c1f"
+    "325_org_id_default_acting_aware.sql": "0087805a3a9264f896d8304de1078be63e8e1aa15ade3ecfe69a1d724e615c1f",
+    "326_finance_rev2.sql": "14e3a87ed6acf03216189d9a777f044b46626b6e746c224a0e8d168e1f7a81bd"
   }
 }
