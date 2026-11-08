@@ -90,6 +90,8 @@ jobs:
       VITE_CORE_API_URL: https://core.noctusai.com
       # Public Turnstile SITE key (not a secret) — GitHub repo VARIABLE, core website forms.
       VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+      # Real Social Wiring host (productUrl('social-wiring') canonical would be social-wiring.noctusai.com).
+      VITE_PRODUCT_URL_SOCIAL_WIRING: https://social.noctusai.com
       GHCR_USERNAME: ${{ github.actor }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

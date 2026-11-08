@@ -5,7 +5,6 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Landing from "../Landing";
-import { toAgentsLeadPayload } from "@/lib/landingLead";
 
 function renderLanding() {
   return render(
@@ -61,16 +60,18 @@ describe("Agents Landing", () => {
     fireEvent.change(screen.getByLabelText("Nome *"), { target: { value: "Ana" } });
     fireEvent.change(screen.getByLabelText("WhatsApp *"), { target: { value: "11 91234-5678" } });
     fireEvent.click(screen.getByRole("checkbox"));
-    fireEvent.click(screen.getByRole("button", { name: "Enviar mensagem" }));
-    expect(await screen.findByText("Recebemos a sua mensagem.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pedir contato" }));
+    expect(await screen.findByText("Pedido recebido.")).toBeTruthy();
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toMatch(/\/api\/website\/leads$/);
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body).toMatchObject({ source: "contact", name: "Ana", phone: "11912345678", product_interest: ["agents"], consent_marketing: true });
   });
 
-  it("maps the project phase into the message", () => {
-    const p = toAgentsLeadPayload({ nome: "A", whatsapp: "11912345678", consentimento: true, tipo: "diagnostico", mensagem: "oi" });
-    expect(p.message).toBe("Fase do projeto: Quero um diagnóstico\n\noi");
+  it("links Julia to Social Wiring through productUrl and the footer to core", () => {
+    renderLanding();
+    const sw = screen.getByRole("link", { name: /A Julia atende pelo Social Wiring/ });
+    expect(sw.getAttribute("href")).toMatch(/^https?:\/\/[^/]+/);
+    expect(screen.getByText("Pedir contato", { selector: "button" })).toBeTruthy();
   });
 });

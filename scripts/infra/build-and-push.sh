@@ -173,6 +173,10 @@ GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 # Turnstile SITE key (public, core website forms only). Empty => the form shows
 # "unavailable" and the backend fails closed (503) — see core-host-retirement runbook.
 : "${VITE_TURNSTILE_SITE_KEY:=}"
+# Cross-product link target (public URL, not a secret): the agents landing links to Social Wiring,
+# whose real host is social.noctusai.com, not the productUrl() canonical pattern. Only products whose
+# Dockerfile declares the ARG bake it.
+: "${VITE_PRODUCT_URL_SOCIAL_WIRING:=}"
 
 if [[ -z "$VITE_SUPABASE_URL" || -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]]; then
   echo "WARNING: VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY are empty." >&2
@@ -273,7 +277,9 @@ for slug in "${ALL_SLUGS[@]}"; do
   want "$slug" || continue
   build_product "$slug" \
     "${COMMON_VITE_ARGS[@]}" \
-    --build-arg "VITE_CORE_URL=${VITE_CORE_URL}"
+    --build-arg "VITE_CORE_URL=${VITE_CORE_URL}" \
+    --build-arg "VITE_PRODUCT_URL_SOCIAL_WIRING=${VITE_PRODUCT_URL_SOCIAL_WIRING}" \
+    --build-arg "VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}"
 done
 
 # ── 3. login + push ───────────────────────────────────────────────────
