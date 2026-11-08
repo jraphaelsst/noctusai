@@ -1,5 +1,5 @@
 -- ============================================================================
--- 111: public.plataforma_agentes -- the registry of the AI calls the PLATFORM itself makes to a vendor.
+-- 113: public.plataforma_agentes -- the registry of the AI calls the PLATFORM itself makes to a vendor.
 --
 -- One row per call (chave): the whole prompt + the model, edited by a platform admin through
 -- /api/studio/plataforma/agentes and read by code through noctusai_lib.integrations.prompt_registry (prompt_e_modelo / chamar_ia). A row exists only
