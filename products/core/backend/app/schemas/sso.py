@@ -38,3 +38,14 @@ class SSOSessionResponse(StrictHttpModel):
     refresh_token: str
     user_id: str
     email: str
+
+
+class SSOProdutoPublic(StrictHttpModel):
+    """`GET /api/sso/produto/{slug}` -- public identity of an ACTIVE catalog product
+    (contract: products/core/CONTRACTS/sso-entry.md). Four fields, nothing else leaves."""
+    slug: str
+    nome: str
+    icone: str | None = None
+    # Product base URL, resolved server-side + same-site checked; the prompt=none
+    # bounce target (`landing_url + "#sso=login_required"`).
+    landing_url: str

@@ -18,7 +18,7 @@ from app.rate_limit import limiter
 from app.database import _db, get_admin_client
 from app.dependencies import get_platform_finance_auth
 from app.scheduler import configure as configure_scheduler, start_scheduler, stop_scheduler
-from app.routers import auth, organizations, products, licenses, sso
+from app.routers import auth, organizations, products, licenses, sso, sso_public
 from app.routers import plans, subscriptions, api_keys, test_accounts, billing
 from app.routers import team, roles
 from app.routers import onboarding, analytics, oauth
@@ -116,6 +116,7 @@ app = create_product_app(
         products.router,
         licenses.router,
         sso.router,
+        sso_public.router,
         plans.router,
         subscriptions.router,
         api_keys.router,

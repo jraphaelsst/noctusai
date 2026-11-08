@@ -45,4 +45,11 @@ describe("core routes", () => {
   it("keeps Landing wired until P3", () => {
     expect(captured.config.Landing).toBeDefined();
   });
+
+  it("mounts the central-login recovery pages as PUBLIC routes (reachable signed out)", () => {
+    const pub = (p: string) => captured.config.publicRoutes.find((r: { path: string }) => r.path === p);
+    expect(pub("/esqueci-senha")).toBeDefined();
+    expect(pub("/redefinir-senha")).toBeDefined();
+    expect(route("/esqueci-senha")).toBeUndefined();
+  });
 });

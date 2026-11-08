@@ -31,6 +31,8 @@ const CreditosUso = lazy(() => import('./pages/credits/CreditosUso').then(m => (
 const OrgSettings = lazy(() => import('./pages/OrgSettings').then(m => ({ default: m.OrgSettings })));
 const APIKeys = lazy(() => import('./pages/APIKeys').then(m => ({ default: m.APIKeys })));
 const Onboarding = lazy(() => import('./pages/Onboarding').then(m => ({ default: m.Onboarding })));
+const EsqueciSenha = lazy(() => import('./pages/EsqueciSenha').then(m => ({ default: m.EsqueciSenha })));
+const RedefinirSenha = lazy(() => import('./pages/RedefinirSenha').then(m => ({ default: m.RedefinirSenha })));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite').then(m => ({ default: m.AcceptInvite })));
 
 // Unknown-path fallback. For a platform admin / marketing user it loads the code-split admin
@@ -48,6 +50,9 @@ const App = createProductApp({
   unauthRedirect: '/login',
   publicRoutes: [
     { path: '/invite/:token', component: AcceptInvite },
+    // Central-login recovery (sso-entry contract). PUBLIC on purpose; keep above any catch-all.
+    { path: '/esqueci-senha', component: EsqueciSenha },
+    { path: '/redefinir-senha', component: RedefinirSenha },
   ],
   routes: [
     { path: '/', component: Dashboard },
