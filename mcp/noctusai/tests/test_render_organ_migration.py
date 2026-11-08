@@ -192,3 +192,88 @@ def test_applied_record_roundtrip_and_malformed(tmp_path):
     (b / "migrations-applied.json").write_text(json.dumps({"applied": []}))
     with pytest.raises(ValueError):
         load_applied(b)
+
+
+# ── cross-tree generator: the tree the caller names is the tree that is measured ──────────────
+
+import os  # noqa: E402
+
+from tools.noctus.dev.render_organ_migration import _generator_from_tree  # noqa: E402
+from workspace import MARKER_FILENAME  # noqa: E402
+
+
+def _tree_with_generator(tmp_path, marker_text):
+    """A minimal worktree whose `noctusai_lib`/`noctusai_seed` differ from the primary's."""
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / ".git").write_text("gitdir: x\n")
+    (root / MARKER_FILENAME).write_text("")
+    lib = root / "seed" / "lib" / "backend" / "noctusai_lib" / "testing"
+    fw = root / "seed" / "framework" / "backend" / "noctusai_seed"
+    lib.mkdir(parents=True)
+    fw.mkdir(parents=True)
+    (lib.parent / "__init__.py").write_text("")
+    (lib / "__init__.py").write_text("")
+    (lib / "organs.py").write_text(
+        "def expected_organ_migration(organ, schema, revision):\n"
+        f"    return '-- {marker_text} ' + organ + ' ' + schema + ' ' + str(revision) + '\\n'\n"
+    )
+    (fw / "__init__.py").write_text("")
+    (fw / "organs.py").write_text(
+        "class _S:\n    migration_header = '-- " + marker_text + "'\n"
+        "ORGAN_REGISTRY = {'finance': _S()}\n"
+    )
+    return root
+
+
+def test_generator_runs_from_the_named_tree_not_the_server_import_path(tmp_path):
+    root = _tree_with_generator(tmp_path, "UNMERGED-GENERATOR")
+    out = _generator_from_tree(root, "finance", "erp", [1])
+    assert out["header"] == "-- UNMERGED-GENERATOR"
+    assert out["sql"]["1"].startswith("-- UNMERGED-GENERATOR finance erp 1")
+    assert str(root) in out["source"]
+    # RED before the fix: the in-process path (what the tool used) serves the primary's generator.
+    from tools.noctus.dev.render_organ_migration import _generator_in_process
+    primary = _generator_in_process("finance", "erp", [1])
+    assert "UNMERGED-GENERATOR" not in primary["sql"]["1"]
+
+
+def test_unmerged_generator_change_is_not_reported_up_to_date(tmp_path):
+    root = _tree_with_generator(tmp_path, "UNMERGED-GENERATOR")
+    products = root / "products"
+    mig = products / "demo" / "backend" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "001_seed.sql").write_text("-- seed\n")
+    # the product already carries the PRIMARY generator's output ...
+    (mig / "002_finance.sql").write_text(organ_migration_sql("finance", "erp"))
+    # ... which, against the named tree's generator, is not even recognisable: a new file, not 'up_to_date'
+    r = render("demo", "finance", worktree_path=str(root), schema="erp", skip_fetch=True,
+               live_products_fn=_live("demo"))
+    assert r["status"] == "planned", r
+    assert "UNMERGED-GENERATOR" in r["generator_source"] or str(root) in r["generator_source"]
+    assert r["resolved_root"] == str(root)
+
+
+def test_no_worktree_path_warns_that_the_server_tree_was_used(tmp_path):
+    products, _ = _product(tmp_path)
+    r = _call(products)
+    assert any("no worktree_path" in w for w in r["warnings"]), r
+    assert r["generator_source"]
+
+
+def test_confirm_write_lands_inside_the_named_tree(tmp_path):
+    root = _tree_with_generator(tmp_path, "UNMERGED-GENERATOR")
+    mig = root / "products" / "demo" / "backend" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "001_seed.sql").write_text("-- seed\n")
+    r = render("demo", "finance", worktree_path=str(root), schema="erp", skip_fetch=True,
+               confirm=True, live_products_fn=_live("demo"))
+    assert r["status"] == "created", r
+    assert Path(r["path"]).resolve().is_relative_to(root.resolve())
+    assert Path(r["path"]).read_text().startswith("-- UNMERGED-GENERATOR finance erp")
+
+
+def test_bad_worktree_path_is_a_loud_error(tmp_path):
+    r = render("demo", "finance", worktree_path=str(tmp_path / "nope"), schema="erp", skip_fetch=True,
+               live_products_fn=_live("demo"))
+    assert r["status"] == "error"

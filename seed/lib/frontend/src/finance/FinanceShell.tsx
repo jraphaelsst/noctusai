@@ -25,7 +25,7 @@ import { DominioExport } from './DominioExport';
 import { DreSettingsForm } from './DreSettingsForm';
 import { EntriesTable } from './EntriesTable';
 import { ExportsPanel } from './ExportsPanel';
-import { FinanceOverview } from './FinanceOverview';
+import { FinanceOverview, type FinanceOverviewEmptyState } from './FinanceOverview';
 import { LivroCaixaReport } from './LivroCaixaReport';
 import { MeiMonthlyReport } from './MeiMonthlyReport';
 import { ReconciliationPage } from './ReconciliationPage';
@@ -70,6 +70,15 @@ export interface FinanceShellProps {
   section?: FinanceSectionKey;
   onSectionChange?: (key: FinanceSectionKey) => void;
   now?: Date;
+  /** Opt-in named seams (all default to the organ's original behaviour). */
+  /** Overview: "De onde veio a receita do mês" + "Resultado do mês (competência)" (derived from the DRE; tax is never estimated). */
+  competenceCards?: boolean;
+  /** Overview: first-use state shown instead of the numbers while there is no account and no movement. */
+  overviewEmptyState?: FinanceOverviewEmptyState;
+  /** Overview: product-specific content below the cards (e.g. how the books are fed). */
+  overviewFooter?: React.ReactNode;
+  /** Receivable/payable tables: add the "Origem" column. */
+  showEntryOrigin?: boolean;
 }
 
 function SubTabs<T extends string>({ tabs, active, onChange, labelPrefix, label }: { tabs: readonly T[]; active: T; onChange: (t: T) => void; labelPrefix: string; label: string }) {
@@ -113,7 +122,7 @@ function AccountantSection({
   );
 }
 
-export function FinanceShell({ hooks, isAdmin = false, isAccountant = false, section: controlled, onSectionChange, now }: FinanceShellProps) {
+export function FinanceShell({ hooks, isAdmin = false, isAccountant = false, section: controlled, onSectionChange, now, competenceCards, overviewEmptyState, overviewFooter, showEntryOrigin }: FinanceShellProps) {
   const canRead = isAdmin || isAccountant;
   const [inner, setInner] = React.useState<FinanceSectionKey>('overview');
   const section = controlled ?? inner;
@@ -134,6 +143,9 @@ export function FinanceShell({ hooks, isAdmin = false, isAccountant = false, sec
         <FinanceOverview
           hooks={hooks}
           now={now}
+          competenceCards={competenceCards}
+          emptyState={overviewEmptyState}
+          footer={overviewFooter}
           onNavigate={(to) => {
             if (to === 'accounts') {
               setRegisterTab('accounts');
@@ -144,10 +156,10 @@ export function FinanceShell({ hooks, isAdmin = false, isAccountant = false, sec
       );
       break;
     case 'receivable':
-      page = <EntriesTable hooks={hooks} direction="receivable" isAdmin={isAdmin} />;
+      page = <EntriesTable hooks={hooks} direction="receivable" isAdmin={isAdmin} showOrigin={showEntryOrigin} />;
       break;
     case 'payable':
-      page = <EntriesTable hooks={hooks} direction="payable" isAdmin={isAdmin} />;
+      page = <EntriesTable hooks={hooks} direction="payable" isAdmin={isAdmin} showOrigin={showEntryOrigin} />;
       break;
     case 'cashflow':
       page = (

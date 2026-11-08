@@ -11,7 +11,7 @@
 import * as React from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { FinanceShell, financeSectionFromPath, financeSectionPath } from './FinanceShell';
-import type { FinanceSectionKey } from './FinanceShell';
+import type { FinanceSectionKey, FinanceShellProps } from './FinanceShell';
 import { createFinanceHooks } from './hooks';
 import type { FinanceApi, FinanceHooks } from './hooks';
 
@@ -25,11 +25,16 @@ export type FinanceRoutedPageProps = {
   /** Optional wrapper class (e.g. `space-y-4 p-4`); when neither `title` nor `className` is set there is no wrapper. */
   className?: string;
   now?: Date;
+  /** Opt-in named seams, forwarded to `<FinanceShell/>` (see there). */
+  competenceCards?: boolean;
+  overviewEmptyState?: FinanceShellProps['overviewEmptyState'];
+  overviewFooter?: React.ReactNode;
+  showEntryOrigin?: boolean;
 } & ({ hooks: FinanceHooks; api?: never } | { api: FinanceApi; hooks?: never });
 
 const trimBase = (basePath: string) => basePath.replace(/\/+$/, '');
 
-export function FinanceRoutedPage({ basePath, isAdmin = false, isAccountant = false, title, className, now, hooks, api }: FinanceRoutedPageProps) {
+export function FinanceRoutedPage({ basePath, isAdmin = false, isAccountant = false, title, className, now, hooks, api, competenceCards, overviewEmptyState, overviewFooter, showEntryOrigin }: FinanceRoutedPageProps) {
   const base = trimBase(basePath);
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -48,7 +53,8 @@ export function FinanceRoutedPage({ basePath, isAdmin = false, isAccountant = fa
   if (segment !== financeSectionPath(section)) return <Navigate to={pathFor(section)} replace />;
 
   const shell = (
-    <FinanceShell hooks={built} isAdmin={isAdmin} isAccountant={isAccountant} section={section} onSectionChange={(key) => navigate(pathFor(key))} now={now} />
+    <FinanceShell hooks={built} isAdmin={isAdmin} isAccountant={isAccountant} section={section} onSectionChange={(key) => navigate(pathFor(key))} now={now}
+      competenceCards={competenceCards} overviewEmptyState={overviewEmptyState} overviewFooter={overviewFooter} showEntryOrigin={showEntryOrigin} />
   );
   if (!title && !className) return shell;
   return (

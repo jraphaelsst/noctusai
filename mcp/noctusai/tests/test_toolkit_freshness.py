@@ -409,19 +409,14 @@ class _FakeMcpServer:
 
 
 def _register_all_gated_tools() -> dict[str, Callable]:
-    from tools.noctus.dev import deploy_image as _di_mod
-    from tools.noctus.dev import migrate_product as _mp_mod
-    from tools.noctus.dev import release as _rel_mod
-    from tools.noctus.dev import task_branch as _tb_mod
+    """Register the module behind EVERY `_MAPPED_PARAMS` key (derived, not
+    hand-listed: a writer scaffolded by `scaffold_mcp_tool target='noctus.dev'`
+    is covered the moment it is mapped). Key == module name by convention."""
+    import importlib
 
     srv = _FakeMcpServer()
-    _rel_mod.register(srv)
-    _mp_mod.register(srv)
-    _di_mod.register(srv)
-    _tb_mod.register(srv)
-    from tools.noctus.dev import verify_db_guards as _vdg_mod
-
-    _vdg_mod.register(srv)
+    for key in TF._MAPPED_PARAMS:
+        importlib.import_module(f"tools.noctus.dev.{key}").register(srv)
     return srv.captured
 
 
@@ -435,13 +430,12 @@ def test_every_register_wrapper_param_is_in_mapped_params():
     import inspect as _inspect
 
     captured = _register_all_gated_tools()
-    checks = {
-        "release": captured["noctus.dev.release"],
-        "migrate_product": captured["noctus.dev.migrate_product"],
-        "deploy_image": captured["noctus.dev.deploy_image"],
-        "task_branch": captured["noctus.dev.task_branch"],
-        "verify_db_guards": captured["noctus.dev.verify_db_guards"],
-    }
+    checks = {}
+    for tool_name in TF._MAPPED_PARAMS:
+        assert f"noctus.dev.{tool_name}" in captured, (
+            f"{tool_name} is in _MAPPED_PARAMS but its module registered no "
+            f"noctus.dev.{tool_name} tool (key must equal the module name)")
+        checks[tool_name] = captured[f"noctus.dev.{tool_name}"]
     for tool_name, wrapper_fn in checks.items():
         wrapper_params = set(_inspect.signature(wrapper_fn).parameters) - {"allow_stale_toolkit"}
         mapped = TF._MAPPED_PARAMS[tool_name]
