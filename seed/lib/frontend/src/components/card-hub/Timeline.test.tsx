@@ -139,10 +139,13 @@ describe("Timeline — kind-renderer registry", () => {
 
   it("the seed default registry covers every kind the seed's own data produces", () => {
     expect(Object.keys(DEFAULT_TIMELINE_RENDERERS).sort()).toEqual([
+      "arquivado",
       "checklist",
       "documento",
       "movimento",
       "nota",
+      "perdido",
+      "reaberto",
       "sistema",
     ]);
   });

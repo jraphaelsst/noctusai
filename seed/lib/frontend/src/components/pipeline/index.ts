@@ -58,3 +58,5 @@ export type {
   MoveDecision,
   MoveIntentContext,
 } from './types';
+
+export * from "./funnel";

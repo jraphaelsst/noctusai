@@ -34,7 +34,7 @@
  * Presentational only: props in, callbacks out.
  */
 import type { LucideIcon } from "lucide-react";
-import { FileText, MessageSquare, MoveRight, Paperclip, SquareCheck } from "lucide-react";
+import { Archive, FileText, MessageSquare, MoveRight, Paperclip, RotateCcw, SquareCheck, XCircle } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "../../design-system/ui/avatar";
 import { CardHubButton as Button } from "../../design-system/ui/card-hub-button";
@@ -97,6 +97,14 @@ export const GENERIC_TIMELINE_RENDERERS: TimelineRenderers = {
     summary: (entry: TimelineSistemaEntry) =>
       entry.detalhe ? `${entry.evento} — ${entry.detalhe}` : entry.evento,
   },
+  // Outcome events the seed funnel writes (outcomes are statuses, not columns).
+  perdido: {
+    icon: XCircle,
+    summary: (entry: { motivo?: string | null }) =>
+      entry.motivo ? `Marcado como perdido: ${entry.motivo}` : "Marcado como perdido",
+  },
+  reaberto: { icon: RotateCcw, summary: () => "Reaberto" },
+  arquivado: { icon: Archive, summary: () => "Arquivado" },
 };
 
 /** The seed's canonical registry: every kind the seed's own data produces. */
