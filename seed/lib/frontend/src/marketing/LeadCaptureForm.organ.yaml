@@ -3,7 +3,7 @@ kind: component
 path: seed/lib/frontend/src/marketing/LeadCaptureForm.tsx
 phase: landing-organs
 registered_at: "2026-11-07"
-organ_version: "1.0"
+organ_version: "1.1"
 validation_status: emerging
 
 known_facts:
@@ -11,6 +11,7 @@ known_facts:
   - "toast comes from sonner; the consumer mounts a Toaster"
   - "Exported from @noctusai/lib/marketing only (never the root barrel). Seed tokens only; Reveal for entrance (content is never prerendered hidden; reduced motion = no animation)."
   - "Consumes seed Button / Badge / Input / Card / Select / Textarea / Skeleton where they exist; link-styled actions use linkButtonClass (anchors cannot be the seed Button)."
+  - "v2 (opt-in, defaults unchanged): variant=\"product\" (no phase select, no Empresa), productInterest, submitLabel, messageLabel/messageHint/messagePlaceholder, consentSubject (\"os Agentes\" gives the product consent sentence), successTitle/successBody/againLabel. Non-core origins post through coreLead.ts (createCoreLeadSubmit)."
 
 errors_encountered: []
 drifts_surfaced: []

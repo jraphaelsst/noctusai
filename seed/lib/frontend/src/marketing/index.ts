@@ -11,10 +11,10 @@ export { Reveal, Stagger } from "./primitives";
 export type { RevealProps, StaggerProps } from "./primitives";
 
 // ── Landing organs (public website sections) ─────────────────────────────────
-export { LandingNav } from "./LandingNav";
+export { LandingNav, ThemeSwitch } from "./LandingNav";
 export type { LandingNavProps, NavLink, NavProduct, ThemeChoice } from "./LandingNav";
 export { Hero } from "./Hero";
-export type { HeroProps, HeroChip } from "./Hero";
+export type { HeroProps, HeroChip, HeroStat } from "./Hero";
 export { FeatureGrid } from "./FeatureGrid";
 export type { FeatureGridProps, FeatureItem } from "./FeatureGrid";
 export { ProductCatalogGrid, selectFeaturedProducts, sortCatalog } from "./ProductCatalogGrid";
@@ -32,3 +32,11 @@ export { LandingFooter } from "./LandingFooter";
 export type { LandingFooterProps, FooterColumn, FooterLink } from "./LandingFooter";
 export type { LandingAction } from "./shared";
 export { LandingIcon } from "./shared";
+
+// ── Landing v2 additions ─────────────────────────────────────────────────────
+export { ProductBrandScope, productBrandCss, productBrandVars } from "./productBrand";
+export type { ProductBrand, ProductBrandScopeProps } from "./productBrand";
+export { LandingThemeProvider, useLandingTheme, useLandingThemeSwitch, createThemeInlineScript, THEME_INLINE_SCRIPT, THEME_STORAGE_KEY } from "./theme";
+export type { LandingThemeValue, LandingThemeProviderProps, ResolvedTheme } from "./theme";
+export { submitCoreLead, createCoreLeadSubmit, toCoreLeadPayload, LANDING_CONSENT_TEXT_VERSION } from "./coreLead";
+export type { CoreLeadOptions, CoreLeadPayload } from "./coreLead";

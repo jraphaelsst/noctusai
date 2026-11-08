@@ -1,0 +1,28 @@
+name: ProductBrand
+kind: component
+path: seed/lib/frontend/src/marketing/productBrand.tsx
+phase: landing-organs
+registered_at: "2026-11-07"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Per-product STATIC brand accent for public pages: ProductBrand {primary, primaryLight, primaryDark, ring?} as HSL triplets, applied by <ProductBrandScope> as CSS variables on a display:contents scope element (never :root), plus the dark-theme ring = primary-light."
+  - "Precedence: element-level brand override (FeatureGrid link.brand) > ProductBrandScope > org BrandProvider (runtime /api/brand/current, :root/.dark) > NOC tokens. The scope sets variables on a descendant so it beats the :root org stylesheet regardless of order; authenticated screens (no scope) keep the org brand."
+  - "Triplets are validated with BrandProvider's HSL_TRIPLET contract; invalid brands are dropped, never injected. No web font: landings use the system font (owner decision Q10); heading font is intentionally not in the contract."
+  - "Declared accents verified AA in tests: Agents indigo 232 45% 42% / 230 80% 78% / 232 50% 28%; Social Wiring teal 174 70% 26% / 170 55% 62% / 174 70% 18%."
+
+errors_encountered: []
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Writing :root variables from createProductApp: rejected, it would leak the landing accent into the authenticated app and fight the org BrandProvider."
+
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

@@ -3,7 +3,7 @@ kind: component
 path: seed/lib/frontend/src/marketing/FeatureGrid.tsx
 phase: landing-organs
 registered_at: "2026-11-07"
-organ_version: "1.0"
+organ_version: "1.1"
 validation_status: emerging
 
 known_facts:
@@ -11,6 +11,8 @@ known_facts:
   - "icons by registered lucide name or a node"
   - "Exported from @noctusai/lib/marketing only (never the root barrel). Seed tokens only; Reveal for entrance (content is never prerendered hidden; reduced motion = no animation)."
   - "Consumes seed Button / Badge / Input / Card / Select / Textarea / Skeleton where they exist; link-styled actions use linkButtonClass (anchors cannot be the seed Button)."
+  - "v2 (opt-in, defaults unchanged): columns 2|3|4, cardVariant=\"large\", accent (eyebrow/icon chip/check tint), revealItems (per-card reveal staggered by column), per-item tag chip, bullets (check list) and link (inline accent anchor stretched over the card; link.brand re-colours it with another product's ProductBrand). cta (outline button) wins over link."
+  - "LandingIcon registry gained Power, FlaskConical, GitMerge, Target, Lock, MessageCircle, Kanban, Building, FileText, Megaphone, Wand, Users, Calendar (Share2, Bot already existed)."
 
 errors_encountered: []
 drifts_surfaced: []
