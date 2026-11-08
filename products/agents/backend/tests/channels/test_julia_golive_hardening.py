@@ -7,7 +7,7 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from noctusai_lib.integrations.llm import FakeProvider
@@ -24,6 +24,7 @@ from app.studio.especificacoes_service import preparar
 from app.studio.models import ConfigValidacao, SpecDefData
 from app.studio.normalizador_texto import esqueleto, limpar, tem_caractere_oculto
 from app.studio.spec_formatos import SpecInvalida, validar_texto_externo
+from app.stores.studio_definitions_conteudo import TextoInput
 from tests.channels.conftest import contexto_body, turn_body
 from tests.channels.test_julia_v2_controles_limites import model_calls
 from tests.channels.test_julia_v2_e2e import call, say, step
@@ -600,3 +601,44 @@ class TestOptOutIsReportedToSW:
                                                        *[say(f"R{i}?") for i in range(4)]]))
         [acao] = chan.turn(turn_body("sem interesse", ids=["a"])).json()["actions"]  # no opt_out action either
         assert acao["lead_opt_out"] is False and acao.get("opt_out_origem") is None and acao.get("trecho") is None
+
+
+# ── a turn that ends on tool calls with no message (behaviour suite "silencio") ─────────────────────────────
+
+class TestRespostaVazia:
+    def test_an_empty_final_message_after_tool_calls_gets_one_corrective_rerun(self, chan):
+        chan.seed_agent(textos_extra=[TextoInput("conformidade.correcao.resposta_vazia", "txt:conformidade.correcao.resposta_vazia")])
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("sinalizar_alerta", tipo="lead_insatisfeito", descricao="Lead repetiu o bairro")),
+            say(""),  # the model stops after the tool: nothing for the lead
+            say("Desculpa a falha. Prefere falar com uma pessoa ou seguimos por aqui?")]))
+        body = chan.turn(turn_body("Já te falei que é em Pinheiros, você não presta atenção?")).json()
+        assert body["status"] == "respondido"
+        assert body["reply"]["partes"] == ["Desculpa a falha. Prefere falar com uma pessoa ou seguimos por aqui?"]
+        calls = [x for x in chan.provider.calls if x["method"] == "chat_with_tools"]
+        assert [m.content for m in calls[-1]["messages"] if m.role == "system"][-1] == "txt:conformidade.correcao.resposta_vazia"
+        rows = chan.rt.stores.messages.list(chan.org_id, UUID(body["thread_id"]), limite=50)
+        assert [m.texto for m in rows if m.role == "evento"] == ["conformidade:resposta_vazia"]  # the code, never the wording
+
+    def test_a_second_empty_message_stays_silent_it_is_not_looped(self, chan):
+        chan.seed_agent(textos_extra=[TextoInput("conformidade.correcao.resposta_vazia", "txt:conformidade.correcao.resposta_vazia")])
+        chan.use_provider(FakeProvider(tool_responses=[say(""), say("")]))
+        body = chan.turn(turn_body("Quero um apartamento em Pinheiros")).json()
+        assert body["status"] == "silencio"
+        assert len([x for x in chan.provider.calls if x["method"] == "chat_with_tools"]) == 2  # one re-run, no more
+
+    def test_without_the_optional_text_the_turn_stays_silent_as_before(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[say("")]))
+        body = chan.turn(turn_body("Quero um apartamento em Pinheiros")).json()
+        assert body["status"] == "silencio"
+        assert len([x for x in chan.provider.calls if x["method"] == "chat_with_tools"]) == 1
+
+    def test_an_opt_out_ended_by_the_model_with_no_message_still_gets_the_standard_confirmation(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("encerrar", motivo="lead_pediu_parar", motivo_texto="Pediu para parar", trecho="para de me mandar mensagem")),
+            say("")]))
+        body = chan.turn(turn_body("Para de me mandar mensagem, por favor")).json()
+        assert body["status"] == "encerrado"
+        assert body["reply"]["partes"] == ["txt:runtime.confirmacao_opt_out"]

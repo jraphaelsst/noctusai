@@ -2908,7 +2908,7 @@
     "espera-deploy",
     "espera-deploy:feat/julia-placeholder-guard"
    ],
-   "ativo": true
+   "ativo": false
   },
   {
    "slug": "mec-saudacao-anuncio-nao-transfere",

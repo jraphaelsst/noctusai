@@ -227,6 +227,8 @@ TEXTOS.update({
     )},
     # structural guard (a raw placeholder in a reply): optional so an older version without the row still publishes
     "conformidade.correcao.placeholder_cru": _canal("conformidade", obrigatoria=False),
+    # a turn that ended on tool calls with no message: ONE corrective re-run asks for the message (optional: without the row the turn stays silent)
+    "conformidade.correcao.resposta_vazia": _canal("conformidade", obrigatoria=False),
     # alerts to the org when a REQUIRED org spec is missing (optional rows: an older version alerts with the bare code)
     "ferramenta.alerta.info_indisponivel.aviso": _canal("ferramenta", "chaves", obrigatoria=False),
     "ferramenta.alerta.info_indisponivel.redirecionado": _canal("ferramenta", "chaves", obrigatoria=False),

@@ -1,0 +1,8 @@
+{
+ "itens": [
+  {
+   "chave": "conformidade.correcao.resposta_vazia",
+   "conteudo": "Você executou as ferramentas, mas terminou sem escrever nada ao lead. Escreva agora a mensagem ao lead, curta e cordial, no passo em que a conversa está: responda ao que ele pediu e termine com a pergunta ou o próximo passo previsto nas suas regras. Não repita ferramentas que já executou."
+  }
+ ]
+}

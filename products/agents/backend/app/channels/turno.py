@@ -805,6 +805,27 @@ async def _executar(
                     bloqueios = bl2
                 else:
                     texto_final = "\n\n".join(x for x in t2.textos if x and x.strip())
+            if (not texto_final.strip() and not bloqueios and parada is None
+                    and not (turno.parar or turno.transferiu or turno.concluiu or turno.encerrou)):
+                # A turn that ends on tool calls with NO message leaves the lead with nothing (the measured "silencio" of
+                # the behaviour suite after sinalizar_alerta / registrar_intencao_visita). The model's slip is never the
+                # lead's problem: ONE corrective re-run asks for the message. The wording is prompt text (an optional row,
+                # ``conformidade.correcao.resposta_vazia``): without it the outcome stays silence, as before.
+                correcao_vazia = _texto_opcional(conteudo, "conformidade.correcao.resposta_vazia")
+                if correcao_vazia:
+                    svc.messages.add(
+                        org_id, thread.id, "evento", f"{_PREFIXO_EVENTO_CORRECAO}:resposta_vazia", agent_id=agent.id,
+                        lead_ref_id=lead_ref_id)
+                    turno.reiniciar_tentativa()
+                    t3 = await _rodar(runtime, prep.spec, replace(ctx, mensagem_correcao=correcao_vazia), slot, None)
+                    tentativas.append(t3)
+                    achados3 = [] if turno.parar else _avaliar(t3)
+                    bl3 = conf.violacoes_bloqueantes(achados3)
+                    violacoes += [replace(v, bloqueada=v in bl3) for v in achados3]
+                    if bl3:
+                        bloqueios = bl3
+                    else:
+                        texto_final = "\n\n".join(x for x in t3.textos if x and x.strip())
     except BaseException:  # an aborted turn (deadline, provider refusal) may already hold a registered CPF / RG
         await _redigir_identificacao(svc, turno, org_id, thread.id, agent.id, lead_ref_id, bus)
         raise
@@ -825,6 +846,10 @@ async def _executar(
             await executar_handoff(
                 turno, turno.parar, conteudo.texto("escalonamento.resumo").replace("{motivo_codigo}", turno.parar))
             texto_final = _texto_opcional(conteudo, "runtime.parada_segura")
+    if not texto_final.strip() and turno.encerrou and any(a.get("lead_opt_out") for a in turno.actions):
+        # the model ended the lead's opt-out with ``encerrar`` and wrote nothing: the lead still gets the standard
+        # confirmation (the same DB text the deterministic STOP backstop sends), never silence after a stop request
+        texto_final = _texto_opcional(conteudo, "runtime.confirmacao_opt_out")
     if turno.campos_substituidos:  # B3.6: a lead-influenced tool argument reproduced the prompt (codes only)
         violacoes.append(Violacao(
             "vazamento_prompt", conf.politica_efetiva(regras, "vazamento_prompt"),
