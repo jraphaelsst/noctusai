@@ -3074,7 +3074,7 @@
    ]
   },
   {
-   "id": "D19",
+   "id": "D21",
    "decision": "The seed card_hub organ is service-only: no browser role holds a privilege or policy on a card-hub table (the backend scopes by org_id through the service-role client)",
    "home": "KB § PATTERNS/backend/database-rls.md (Seed card_hub organ is service-only by construction)",
    "construction": "api:noctusai_lib.domain.card_hub.card_hub_migration (emits REVOKE + service_role_bypass + tier comment; pinned by TestServiceOnlyByConstruction)",
