@@ -110,9 +110,9 @@ describe.skipIf(!BUILT)("build output — dist/_site (contract §4)", () => {
     }
   });
 
-  it("home wraps every curated product chapter in nx:product comment markers", () => {
-    const html = fs.readFileSync(routeFile("/"), "utf-8");
+  it("every product chapter page is wrapped in nx:product comment markers (the BE strips hidden ones)", () => {
     for (const slug of ["social-wiring", "orbity", "igig"]) {
+      const html = fs.readFileSync(routeFile(`/produtos/${slug}`), "utf-8");
       expect(html, `missing start marker for ${slug}`).toContain(`<!--nx:product:${slug}-->`);
       expect(html, `missing end marker for ${slug}`).toContain(`<!--/nx:product:${slug}-->`);
     }
@@ -145,8 +145,14 @@ describe.skipIf(!BUILT)("build output — dist/_site (contract §4)", () => {
     expect(Array.isArray(settings.faq)).toBe(true);
   });
 
-  it("fonts and OG images are present under dist/_site (self-hosted, per-language OG)", () => {
-    expect(fs.existsSync(path.join(SITE_DIR, "fonts/inter-latin-400.woff2"))).toBe(true);
+  it("every page carries the catalog snapshot slot and no web font (system stack)", () => {
+    const html = fs.readFileSync(routeFile("/"), "utf-8");
+    expect(html).toMatch(/<script id="nx-catalog" type="application\/json">/);
+    expect(html).not.toContain("/fonts/inter");
+    expect(fs.existsSync(path.join(SITE_DIR, "fonts"))).toBe(false);
+  });
+
+  it("OG images are present under dist/_site (per-language OG)", () => {
     expect(fs.existsSync(path.join(SITE_DIR, "og/home-pt.png"))).toBe(true);
     expect(fs.existsSync(path.join(SITE_DIR, "og/home-en.png"))).toBe(true);
   });

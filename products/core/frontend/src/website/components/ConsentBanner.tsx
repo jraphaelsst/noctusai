@@ -3,10 +3,17 @@ import { useConsent } from "../lib/consent";
 import { useT } from "../lib/i18n";
 import { postEvent } from "../lib/api";
 
+const OPEN_PREFERENCES_EVENT = "nx:open-consent-preferences";
+
+/** Footer "Preferências de cookies" -> reopen the bar (works after a decision was made). */
+export function openConsentPreferences(): void {
+  if (typeof document !== "undefined") document.dispatchEvent(new CustomEvent(OPEN_PREFERENCES_EVENT));
+}
+
 /**
  * Bottom-bar cookie consent (P12: a bar, never a modal). Equal-weight
  * Rejeitar/Aceitar plus Personalizar (per-category). Also opens when the
- * footer's "Preferências de cookies" link is clicked, even after an initial
+ * footer's "Preferências de cookies" button is pressed, even after an initial
  * decision was made.
  */
 export function ConsentBanner() {
@@ -18,16 +25,12 @@ export function ConsentBanner() {
   const [forceOpen, setForceOpen] = useState(false);
 
   useEffect(() => {
-    function onOpenPreferences(e: Event) {
-      const target = e.target as HTMLElement;
-      if (target.closest("[data-nx-open-consent-preferences]")) {
-        e.preventDefault();
-        setForceOpen(true);
-        setCustomizing(true);
-      }
+    function onOpenPreferences() {
+      setForceOpen(true);
+      setCustomizing(true);
     }
-    document.addEventListener("click", onOpenPreferences);
-    return () => document.removeEventListener("click", onOpenPreferences);
+    document.addEventListener(OPEN_PREFERENCES_EVENT, onOpenPreferences);
+    return () => document.removeEventListener(OPEN_PREFERENCES_EVENT, onOpenPreferences);
   }, []);
 
   const open = bannerOpen || forceOpen;

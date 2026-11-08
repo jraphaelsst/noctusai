@@ -1,6 +1,6 @@
 import { useLocale, useT } from "../lib/i18n";
 import { PricingSection } from "../components/PricingSection";
-import { FaqAccordion } from "../components/FaqAccordion";
+import { SiteFaq } from "../components/SiteFaq";
 import { useWebsiteSettings } from "../lib/settings";
 
 /** `/precos` (07 §Subpage templates). */
@@ -18,14 +18,7 @@ export default function Pricing() {
         </div>
       </section>
       <PricingSection full />
-      {settings.sections.faq && settings.faq.length > 0 && (
-        <section className="nx-section">
-          <div className="nx-container">
-            <h2>{t("faq.title")}</h2>
-            <FaqAccordion items={settings.faq} sectionId="pricing-faq" />
-          </div>
-        </section>
-      )}
+      {settings.sections.faq && settings.faq.length > 0 && <SiteFaq id="pricing-faq" title={t("faq.title")} items={settings.faq} />}
     </div>
   );
 }

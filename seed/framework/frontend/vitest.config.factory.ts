@@ -189,6 +189,13 @@ export function createProductVitestConfig(
       // keys into `import.meta.env`, so setting them before the config is
       // returned is what actually reaches the seed.
       env: { ...TEST_VITE_ENV },
+      // `motion` (the `@noctusai/lib/marketing` organs' animation runtime) is a node_modules
+      // package vitest would EXTERNALIZE: Node then loads it with its own `react`, resolved from
+      // the seed lib's tree, while the organs run on the product's React => two Reacts and
+      // "Cannot read properties of null (reading 'useState')" on the first `Reveal`.
+      // Inlining routes it through Vite, where the `resolve.dedupe` below collapses `react`
+      // onto the product's copy (same reason the BUILD dedupes the framework deps).
+      server: { deps: { inline: ["motion", "framer-motion", "motion-dom", "motion-utils"] } },
       // Seed setup provisions localStorage/sessionStorage that vitest's jsdom
       // env omits — runs before any test module imports (so module-scope
       // persist stores are constructed against real storage).

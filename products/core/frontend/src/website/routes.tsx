@@ -4,6 +4,8 @@ import { SiteLayout } from "./components/SiteLayout";
 import { ConsentProvider } from "./lib/consent";
 import { SettingsProvider } from "./lib/settings";
 import { ThemeProvider } from "./lib/theme";
+import { CatalogProvider } from "./lib/catalog";
+import type { CatalogRow } from "./lib/api";
 import Home from "./pages/Home";
 import ProductsIndex from "./pages/ProductsIndex";
 import ProductPage from "./pages/ProductPage";
@@ -36,11 +38,13 @@ function RouteEntry({ id, product }: { id: string; product?: string }) {
  * and `entry-server.tsx` (StaticRouter). Every `RouteDef` contributes TWO
  * `<Route>`s (pt + en), both rendering the same page component; the page
  * itself reads locale off the URL via `SiteLayout`/`LocaleProvider`, never
- * off two different component trees.
+ * off two different component trees. `catalog` is the build-time snapshot of
+ * `GET /api/website/catalog` (null when the build had none); the client refreshes it.
  */
-export function AppRoutes() {
+export function AppRoutes({ catalog = null }: { catalog?: CatalogRow[] | null }) {
   return (
     <SettingsProvider>
+      <CatalogProvider initial={catalog}>
       <ThemeProvider>
         <ConsentProvider>
           <Routes>
@@ -52,6 +56,7 @@ export function AppRoutes() {
           </Routes>
         </ConsentProvider>
       </ThemeProvider>
+      </CatalogProvider>
     </SettingsProvider>
   );
 }

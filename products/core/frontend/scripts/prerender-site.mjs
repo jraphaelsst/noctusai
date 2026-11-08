@@ -27,6 +27,40 @@ const FE_ROOT = path.resolve(__dirname, "..");
 const CLIENT_OUT = path.join(FE_ROOT, "dist/_site");
 const SSR_OUT = path.join(FE_ROOT, "dist/_site-ssr");
 
+/**
+ * Build-time catalog snapshot (`GET /api/website/catalog`). Best effort by design: a build with
+ * no network (CI, offline) must still succeed, and then every page is prerendered in the
+ * LOADING state and the browser fetches the rows — never an invented list, never an empty grid.
+ *
+ *   NOC_CATALOG_SNAPSHOT_FILE  read the rows from a JSON file instead (tests / air-gapped builds)
+ *   NOC_CATALOG_SNAPSHOT_URL   endpoint to fetch (default: the production site)
+ *   NOC_CATALOG_SNAPSHOT=off   skip the snapshot on purpose
+ */
+async function loadCatalogSnapshot(parseCatalog) {
+  if (process.env.NOC_CATALOG_SNAPSHOT === "off") {
+    console.log("prerender-site: catalog snapshot disabled (NOC_CATALOG_SNAPSHOT=off); pages prerender the loading state.");
+    return null;
+  }
+  const file = process.env.NOC_CATALOG_SNAPSHOT_FILE;
+  const url = process.env.NOC_CATALOG_SNAPSHOT_URL || "https://noctusai.com/api/website/catalog";
+  try {
+    const raw = file
+      ? JSON.parse(fs.readFileSync(file, "utf-8"))
+      : await (async () => {
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })();
+    const rows = parseCatalog(raw);
+    if (!rows || rows.length === 0) throw new Error("no valid catalog rows");
+    console.log(`prerender-site: catalog snapshot = ${rows.length} products (${file ?? url}).`);
+    return rows;
+  } catch (err) {
+    console.warn(`prerender-site: WARNING catalog snapshot unavailable (${err.message}); pages prerender the loading state and the browser fetches the catalog.`);
+    return null;
+  }
+}
+
 async function main() {
   const ssrEntryPath = path.join(SSR_OUT, "entry-server.mjs");
   if (!fs.existsSync(ssrEntryPath)) {
@@ -45,7 +79,10 @@ async function main() {
     resolveMarkersToComments,
     defaultSettings,
     PRODUCT_ORDER,
+    parseCatalog,
   } = await import(ssrEntryPath);
+
+  const catalog = await loadCatalogSnapshot(parseCatalog);
 
   const viteManifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
   const entry = viteManifest["src/website/index-site.html"];
@@ -69,11 +106,11 @@ async function main() {
       ["pt-BR", route.pt],
       ["en", route.en],
     ]) {
-      const bodyHtmlRaw = render(routePath);
+      const bodyHtmlRaw = render(routePath, catalog);
       const bodyHtml = resolveMarkersToComments(bodyHtmlRaw, sectionKeys, PRODUCT_ORDER);
       const meta = getPageMeta(route.id, locale, route.product);
       const ogImagePath = locale === "en" ? "/_site/og/home-en.png" : "/_site/og/home-pt.png";
-      const head = buildHead({ route, locale, path: routePath, meta, assetTags, ogImagePath, settingsJson });
+      const head = buildHead({ route, locale, path: routePath, meta, assetTags, ogImagePath, settingsJson, catalog });
       const htmlLang = locale === "en" ? "en" : "pt-BR";
 
       const doc = `<!DOCTYPE html>
@@ -109,6 +146,9 @@ ${head}
     JSON.stringify({ routes: manifestRoutes, product_routes: productRoutes, built_at: builtAt }, null, 2),
     "utf-8",
   );
+  if (catalog) {
+    fs.writeFileSync(path.join(CLIENT_OUT, "catalog.snapshot.json"), JSON.stringify(catalog, null, 2), "utf-8");
+  }
   fs.writeFileSync(
     path.join(CLIENT_OUT, "settings.defaults.json"),
     JSON.stringify(defaultSettings, null, 2),

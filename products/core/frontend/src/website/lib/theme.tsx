@@ -29,6 +29,8 @@ function resolveTheme(choice: ThemeChoice): ResolvedTheme {
 function applyTheme(resolved: ResolvedTheme): void {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute("data-theme", resolved);
+  // The seed tokens (Tailwind `darkMode: "class"`) key off `.dark`; the legacy site rules off `data-theme`.
+  document.documentElement.classList.toggle("dark", resolved === "dark");
 }
 
 interface ThemeContextValue {

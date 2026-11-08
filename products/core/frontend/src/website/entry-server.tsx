@@ -11,13 +11,14 @@ import { renderToString } from "react-dom/server";
 import { StaticRouter } from "react-router";
 import { AppRoutes } from "./routes";
 import { PrerenderModeContext } from "./lib/markers";
+import { parseCatalog, type CatalogRow } from "./lib/api";
 
-export function render(path: string): string {
+export function render(path: string, catalog: CatalogRow[] | null = null): string {
   return renderToString(
     <StrictMode>
       <PrerenderModeContext.Provider value={true}>
         <StaticRouter location={path}>
-          <AppRoutes />
+          <AppRoutes catalog={catalog} />
         </StaticRouter>
       </PrerenderModeContext.Provider>
     </StrictMode>,
@@ -33,4 +34,5 @@ export { buildHead } from "./lib/headHtml";
 export { resolveMarkersToComments } from "./lib/markers";
 export { defaultSettings } from "./content/defaults";
 export { PRODUCT_ORDER } from "./content/products";
+export { parseCatalog };
 

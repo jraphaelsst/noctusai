@@ -18,11 +18,12 @@
 import { PRODUCT_ORDER } from "./products";
 import type { WebsiteSettings, WebsiteSettingsProduct } from "./types";
 
+/** Chapter-page switches only (visible / tagline override). The product LIST on the site is the live catalog. */
 const DEFAULT_PRODUCTS: WebsiteSettingsProduct[] = PRODUCT_ORDER.map((slug, i) => ({
   slug,
   visible: true,
   order: i,
-  state: slug === "social-wiring" ? "disponivel" : "lista_de_espera",
+  state: slug === "social-wiring" ? "disponivel" : "lista_de_espera", // fallback until the catalog loads
 }));
 
 export const defaultSettings: WebsiteSettings = {
