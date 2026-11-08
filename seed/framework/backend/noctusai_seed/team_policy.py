@@ -22,9 +22,14 @@ A product declares its policy once, in `app/main.py`::
         ),
     )
 
-No policy (the default) keeps the pre-seam behaviour exactly: the list shows
-every non-customer member of the org and an invite may grant any `ORG_ROLES`
-value. End customers (`CUSTOMER_ORG_ROLES`) are excluded from the list ALWAYS,
+A product of a MARKET with its own business roles (real estate's `corretor`)
+declares it with `TeamPolicy.for_market("real_estate")`. Roles are per market, the
+same as funnel stages (owner decision 2026-11-08): the BASE roles are offered
+everywhere, a market role only by products of that market.
+
+No policy (the default): the list shows every non-customer member of the org
+(a stored `corretor` row still lists) and an invite may grant any
+`BASE_ORG_ROLES` value except owner -- no market role. End customers (`CUSTOMER_ORG_ROLES`) are excluded from the list ALWAYS,
 policy or not, and can never be declared staff or invitable.
 
 The policy is validated at construction — an incoherent policy raises
@@ -36,9 +41,11 @@ from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
 from noctusai_lib.primitives.roles import (
+    BASE_ORG_ROLES,
     CUSTOMER_ORG_ROLES,
     ORG_ROLE_LABELS,
     ORG_ROLES,
+    market_org_roles,
 )
 
 #: An invitation never grants it (owner decision 2026-10-14) -- ownership is granted after the
@@ -60,10 +67,10 @@ class TeamPolicy:
 
     Attributes:
         staff_roles: The `noctus_users.org_role` values `GET /api/team` lists.
-            `None` ⇒ every non-customer member of the org (the pre-seam
-            behaviour; reported by `/api/team/policy` as `ORG_ROLES`).
+            `None` ⇒ every non-customer member of the org (reported by
+            `/api/team/policy` as `ORG_ROLES`, so stored market-role rows list).
         invitable_roles: The roles `POST /api/team/invite` may grant. `None` ⇒
-            `ORG_ROLES` (narrowed to `staff_roles` when that is declared).
+            `BASE_ORG_ROLES` (narrowed to `staff_roles` when that is declared).
             When declared it MUST be a subset of `staff_roles` (if that is
             declared too) — inviting someone the product then hides from its
             own roster is the incoherence this seam exists to remove.
@@ -134,6 +141,30 @@ class TeamPolicy:
                 "platform labels live in noctusai_lib.primitives.roles.ORG_ROLE_LABELS"
             )
 
+    @classmethod
+    def for_market(
+        cls,
+        market: str,
+        *,
+        staff_roles: Optional[frozenset[str]] = None,
+        extra_role_labels: Optional[Mapping[str, str]] = None,
+    ) -> "TeamPolicy":
+        """Policy for a product of ``market``: the base roles plus that market's roles.
+
+        ``MARKET_ORG_ROLES`` (``noctusai_lib.primitives.roles``) is the source; an
+        unknown market raises ``KeyError`` (never silently "no extras"). The market
+        roles are platform roles, so they carry labels already. Composes with the
+        market presets later: a preset names its market, the policy follows.
+        """
+        invitable = frozenset(
+            r for r in (*BASE_ORG_ROLES, *market_org_roles(market)) if r != NEVER_INVITABLE_ROLE
+        )
+        return cls(
+            staff_roles=staff_roles,
+            invitable_roles=invitable,
+            extra_role_labels=extra_role_labels or {},
+        )
+
     # ── Resolved views (what the router enforces) ──────────────────────────
 
     def effective_staff_roles(self) -> list[str]:
@@ -149,7 +180,7 @@ class TeamPolicy:
             return _ordered(self.invitable_roles)
         if self.staff_roles is not None:
             return [r for r in ORG_ROLES if r in self.staff_roles and r != NEVER_INVITABLE_ROLE]
-        return [r for r in ORG_ROLES if r != NEVER_INVITABLE_ROLE]
+        return [r for r in BASE_ORG_ROLES if r != NEVER_INVITABLE_ROLE]
 
     def labels(self) -> dict[str, str]:
         """pt-BR label for every role this policy can surface (platform + extras)."""

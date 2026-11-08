@@ -10,14 +10,31 @@
  * API rejects. Change both, same commit.
  */
 
-// `corretor` is a real business role, not a permission tier: it carries
-// EXACTLY member-level rights (it appears in none of the grant arrays below)
-// and exists so an agency's brokers are identifiable as brokers on the team
-// page and attachable to their listings. `juridico` is the same shape for an
-// org's legal staff, plus approving a contract's legal review (LEGAL_REVIEW_ROLES).
-export const ORG_ROLES = [
-  'owner', 'admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor', 'juridico',
+// BASE roles are offered by EVERY product; MARKET roles only by products of that
+// market (owner decision 2026-11-08: roles are per market, like funnel stages).
+// 🔴 NEVER add a market role to BASE_ORG_ROLES -- declare it in MARKET_ORG_ROLES.
+// Mirrors `BASE_ORG_ROLES` / `MARKET_ORG_ROLES` in `noctusai_lib/primitives/roles.py`.
+// `corretor` carries EXACTLY member-level rights (it appears in none of the grant
+// arrays below); `juridico` is base and adds approving a contract's legal review
+// (LEGAL_REVIEW_ROLES).
+export const BASE_ORG_ROLES = [
+  'owner', 'admin', 'manager', 'member', 'viewer', 'dev', 'test', 'juridico',
 ] as const;
+
+export const MARKET_ORG_ROLES = {
+  real_estate: ['corretor'],
+} as const;
+
+/**
+ * Every VALID stored org_role (BASE + all market roles). What a product OFFERS comes
+ * from `GET /api/team/policy` (see the TeamPage organ), never from this list.
+ */
+export const ORG_ROLES = [
+  ...BASE_ORG_ROLES, ...Object.values(MARKET_ORG_ROLES).flat(),
+] as readonly (
+  | (typeof BASE_ORG_ROLES)[number]
+  | (typeof MARKET_ORG_ROLES)[keyof typeof MARKET_ORG_ROLES][number]
+)[];
 
 export type OrgRole = (typeof ORG_ROLES)[number];
 
@@ -69,7 +86,12 @@ export function isCustomerRole(orgRole: string | null | undefined): boolean {
   return !!orgRole && CUSTOMER_ORG_ROLES.includes(orgRole);
 }
 
-/** Assignable roles (cannot assign "owner" — that's the org creator only) */
+/**
+ * Roles a NoctusAI Core platform admin may assign across ALL products (cannot assign
+ * "owner" -- that's the org creator only). Core spans every market, so it is the one
+ * consumer that legitimately lists market roles too. A product's own Equipe page
+ * must NOT use this: it renders `GET /api/team/policy`.
+ */
 export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor', 'juridico'];
 
 /**

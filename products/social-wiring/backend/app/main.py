@@ -48,7 +48,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from noctusai_lib.config.credentials import register_credential_override
-from noctusai_seed import create_product_app
+from noctusai_seed import TeamPolicy, create_product_app
 from noctusai_lib.api.auth.session import ApiTokenAuditMiddleware
 
 from app.dependencies import LazyApiTokenAuditWriter, get_admin_client, get_core_client, get_current_user_org
@@ -775,6 +775,9 @@ app = create_product_app(
     limiter=limiter,
     # Module-contributed base (_STANDARD_ROUTERS) + product-global "status_paginas".
     standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback", "status_paginas"],
+    # Roles are per MARKET (2026-11-08): social-wiring is the real-estate product, so
+    # its Equipe offers the base roles + `corretor`. → KB § 03-SEED-ARCHITECTURE.md (team).
+    team=TeamPolicy.for_market("real_estate"),
     routers=_routers,
     organs=[finance_organ],
     # Conversation buffer + worker — boots the seed-backed
