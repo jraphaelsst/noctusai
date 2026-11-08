@@ -228,8 +228,9 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: 2027-01-31
-  notas: 'P&R MEI 3.6 (atualizado 2025-04-29): o MEI MANTEM o relatorio, sem prazo de entrega. Nenhuma fonte lida fixa ''dia 20'' - prazo de preenchimento
-    fica OPEN. Res. CGSN 190 revoga incisos I e II do art. 106 caput a partir de 2027 (conteudo nao lido) - revalidar.'
+  notas: 'P&R MEI 3.6 (atualizado 2025-04-29): o MEI MANTEM o relatorio, sem prazo de entrega. Res. 140 art. 106 I (espelho pre-2026)
+    previa preenchimento ate o dia 20; Res. 190 art. 8 XXIX revoga art. 106 I-II a partir de 2027-01-01 - [pratica] ate o texto oficial
+    renderizar.'
 - key: mei.dasn_simei.prazo
   value: 05-31
   unit: text

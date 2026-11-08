@@ -12,16 +12,16 @@ rows:
     - lucro_real
   vigencia_de: 2026-01-01
   vigencia_ate: 2026-12-31
-  norma: EC 132/2023, ADCT art. 125 caput
+  norma: LC 214/2025 art. 346
   fonte_url:
   - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
   tier: norma
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: 'Compensavel com PIS/Cofins (par. 1), senao outro tributo federal ou ressarcimento em 60 dias (par. 2). Dispensa de recolhimento para
-    quem cumpre obrigacoes acessorias ''nos termos de lei complementar'' (par. 4) - mecanica da LC 214 arts. 343-348 NAO lida. Aplicacao ao Simples
-    em 2026: OPEN (scope exclui simples/mei).'
+  notas: 'Compensavel com PIS/Cofins (par. 1), senao outro tributo federal ou ressarcimento em 60 dias (par. 2). Dispensa de recolhimento
+    para quem cumpre obrigacoes acessorias (par. 4 ADCT; mecanica na LC 214 art. 348, ver reforma.teste_2026.dispensa_recolhimento). Nao
+    se aplica ao Simples/MEI: ver reforma.teste_2026.aplica_ao_simples.'
 - key: reforma.ibs.aliquota_teste_estadual
   value: '0.001'
   unit: ratio
@@ -31,14 +31,14 @@ rows:
     - lucro_real
   vigencia_de: 2026-01-01
   vigencia_ate: 2026-12-31
-  norma: EC 132/2023, ADCT art. 125 caput
+  norma: LC 214/2025 art. 343 e art. 348
   fonte_url:
   - https://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/emc132.htm
   tier: norma
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: Idem CBS (par. 1-4). Arrecadacao financia o CG-IBS e o fundo de compensacao (par. 3).
+  notas: 'Idem CBS (par. 1-4). Arrecadacao financia o CG-IBS e o fundo de compensacao (par. 3). Nao se aplica ao Simples/MEI: ver reforma.teste_2026.aplica_ao_simples.'
 - key: reforma.cbs.cobranca_plena.inicio
   value: '2027-01-01'
   unit: date
@@ -216,21 +216,20 @@ rows:
   vigencia_ate: null
   norma: LC 214/2025 art. 544 III (abrange arts. 519 a 534)
   fonte_url:
-  - https://modeloinicial.com.br/lei/LCP-214-2025/lei-complementar-214/art-544
-  tier: publicacao_tecnica
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm
+  tier: norma
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: 2026-12-15
-  notas: Art. 519 (Anexos I-V da LC 123 com redacao dos Anexos XVIII-XXII da LC 214) produz efeitos em 2027-01-01. Espelho mostra 2 versoes do
-    inciso III (alteracao posterior acrescentou arts. 168-171, 309-315, 444, 462); 519-534 constam nas duas. Planalto lcp214.htm nao foi lido
-    ate o art. 544 (pagina truncou no art. 233).
+  notas: Art. 519 (Anexos I-V da LC 123 com redacao dos Anexos XVIII-XXII da LC 214) produz efeitos em 2027-01-01 (art. 544 III). Espelho
+    mostrou 2 versoes do inciso III (alteracao posterior acrescentou arts. 168-171, 309-315, 444, 462); 519-534 constam nas duas.
 - key: simples.ibs_cbs.regime_regular.janela_semestre_jan
   value: 09-01..09-30
   unit: text
   scope:
     regime:
     - simples
-  vigencia_de: 2026-09-01
+  vigencia_de: 2027-01-01
   vigencia_ate: null
   norma: Res. CGSN 140/2018 art. 40-D I (incl. Res. CGSN 190/2026)
   fonte_url:
@@ -240,15 +239,16 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: 'Opcao/renuncia ao IBS/CBS ''por fora'' com efeito em 1/jan do ano seguinte. Para 1o sem. 2027 = 01-30/09/2026: ENCERRADA (P&R 2.27).
-    Opcao sem renuncia se mantem. MEI excluido. Vedado ''por dentro'' a quem recebeu ressarcimento de creditos (art. 40-E).'
+  notas: 'Regra recorrente (Res. CGSN 140/2018 art. 40-D I, Res. 190): opcao/renuncia ao IBS/CBS ''por fora'' com efeito em 1/jan do ano
+    seguinte. Opcao sem renuncia se mantem. MEI excluido. Vedado ''por dentro'' a quem recebeu ressarcimento de creditos (art. 40-E).
+    Janela de 2026: ver linhas 2026.'
 - key: simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan
   value: 11-30
   unit: text
   scope:
     regime:
     - simples
-  vigencia_de: 2026-09-01
+  vigencia_de: 2027-01-01
   vigencia_ate: null
   norma: Res. CGSN 140/2018 art. 40-D par. 2 I (incl. Res. CGSN 190/2026)
   fonte_url:
@@ -257,8 +257,8 @@ rows:
   verificado_em: 2026-11-07
   verificado_por: accountant
   revalidar_em: null
-  notas: 'A opcao feita em setembro pode ser cancelada (irretratavelmente) ate 30/11 do mesmo ano. Para 1o sem. 2027: ate 2026-11-30 - AINDA ABERTO
-    em 2026-11-07.'
+  notas: 'Regra recorrente: a opcao feita em setembro pode ser cancelada (irretratavelmente) ate 30/11 do mesmo ano. Cancelamento de 2026:
+    ver linha 2026.'
 - key: simples.ibs_cbs.regime_regular.janela_semestre_jul
   value: 03-01..03-31
   unit: text
@@ -277,3 +277,90 @@ rows:
   revalidar_em: null
   notas: 'Efeito em 1/jul do mesmo ano. Primeira janela: 2027-03-01..2027-03-31 (efeito 2027-07-01). Cancelamento ate 31/05 (par. 2 II). Inicio
     de atividade: opcao junto com a do Simples, efeito na inscricao do CNPJ (par. 3-4).'
+- key: reforma.teste_2026.aplica_ao_simples
+  value: nao
+  unit: text
+  scope:
+    regime:
+    - simples
+    - mei
+  vigencia_de: 2026-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 214/2025 art. 348 III c
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: As aliquotas-teste CBS (art. 346) e IBS (art. 343) nao se aplicam aos optantes do Simples, MEI incluido (Res. CGSN 140 art. 100);
+    IBS/CBS entram no DAS so a partir de 2027-01-01.
+- key: reforma.teste_2026.dispensa_recolhimento
+  value: dispensado_se_cumpridas_obrigacoes_acessorias
+  unit: text
+  scope:
+    regime:
+    - lucro_presumido
+    - lucro_real
+  vigencia_de: 2026-01-01
+  vigencia_ate: 2026-12-31
+  norma: LC 214/2025 art. 348 par. 1 a 4 (pars. 3-4 incl. LC 227/2026)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Par. 2: PIS/Cofins continuam devidos integralmente. Pars. 3-4: prazo de 60 dias para sanar apos auto de infracao por obrigacao
+    acessoria; se arrecadado, compensa-se com PIS/Cofins (I), senao outro tributo federal ou ressarcimento em 60 dias (II).'
+- key: simples.ibs_cbs.regime_regular.janela_semestre_jan
+  value: 09-01..09-30
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-04-17
+  vigencia_ate: 2026-09-27
+  norma: Res. CGSN 186/2026 art. 2 caput (redacao original)
+  fonte_url:
+  - https://www.reformatributaria.com/wp-content/uploads/2026/09/RESOLUCAO-CGSN-No-194-DE-25-DE-SETEMBRO-DE-2026.pdf
+  - https://fenacon.org.br/wp-content/uploads/2026/09/Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-DOU-Imprensa-Naciona.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Redacao original, antes da Res. CGSN 194/2026.
+- key: simples.ibs_cbs.regime_regular.janela_semestre_jan
+  value: 09-01..10-30
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-28
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 186/2026 art. 2 caput (red. Res. CGSN 194/2026); base LC 214 art. 41 pars. 3 e 4
+  fonte_url:
+  - https://www.reformatributaria.com/wp-content/uploads/2026/09/RESOLUCAO-CGSN-No-194-DE-25-DE-SETEMBRO-DE-2026.pdf
+  - https://fenacon.org.br/wp-content/uploads/2026/09/Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-DOU-Imprensa-Naciona.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Nao se aplica a CNPJ registrado em 31/10 a 31/12/2026 (art. 3 II); MEI excluido.
+- key: simples.ibs_cbs.regime_regular.cancelamento_ate_semestre_jan
+  value: 12-20
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2026-09-28
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 186/2026 art. 2 par. unico (red. Res. CGSN 194/2026)
+  fonte_url:
+  - https://www.reformatributaria.com/wp-content/uploads/2026/09/RESOLUCAO-CGSN-No-194-DE-25-DE-SETEMBRO-DE-2026.pdf
+  - https://fenacon.org.br/wp-content/uploads/2026/09/Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-Resolucao-CGSN-no-194-DE-25-DE-setembro-DE-2026-DOU-Imprensa-Naciona.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: A janela de cancelamento corre de 03/11 a 20/12/2026; a redacao original dizia ate 30/11.
