@@ -33,7 +33,7 @@ def mk(tmp_path: Path, rows, fam="simples"):
 
 def test_whole_shipped_registry_loads_and_counts():
     reg = load_registry(today=TODAY)
-    assert len(reg.rows) == 297
+    assert len(reg.rows) == 310
 
 
 def test_shipped_yaml_values():
@@ -43,15 +43,15 @@ def test_shipped_yaml_values():
     assert p("simples.anexo_iii.faixa_1.aliquota_nominal", anexo="III").value == Decimal("0.06")
     assert p("simples.anexo_v.faixa_6.aliquota_nominal", on=date(2027, 6, 1), anexo="V").value == Decimal("0.304")
     assert p("simples.anexo_v.faixa_6.aliquota_nominal", on=date(2026, 6, 1), anexo="V").value == Decimal("0.305")
-    assert p("obrigacoes.das.vencimento_dia").value == 20
+    assert p("obrigacoes.das.vencimento_dia", regime="simples").value == 20
     assert p("nfse.padrao_nacional.obrigatorio_me_epp_simples.inicio").unit == "date"
     cbs = p("mei.das.cbs.valor_mensal", on=date(2027, 3, 1))
     assert cbs.unit == "brl" and cbs.value == Decimal("0.994")
     assert p("mei.relatorio_mensal_receitas.obrigacao").value == "manter_e_apresentar_quando_solicitado"
     with pytest.raises(ParamNotDefined):  # unsourced "dia 20" must not exist
         p("mei.relatorio_mensal.dia_limite")
-    with pytest.raises(ParamNotDefined):  # DAS-MEI due date still open: mei is NOT in the simples row's scope
-        p("obrigacoes.das.vencimento_dia", regime="mei")
+    with pytest.raises(ParamAmbiguous):  # simples + mei rows both active: an unscoped read must refuse, never pick one
+        p("obrigacoes.das.vencimento_dia")
 
 
 def test_scope_extensions_and_regime_vocabulary(tmp_path):
