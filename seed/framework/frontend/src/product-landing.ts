@@ -1,3 +1,5 @@
+import { writeEntryMarker } from "@noctusai/lib";
+
 /**
  * Where a sign-out lands: THIS product's own public landing (owner decision
  * 2026-11-08; before that, SSO products sent the user to core's landing).
@@ -12,11 +14,17 @@
  */
 export const PRODUCT_LANDING_PATH = "/";
 
-/** Hard-navigate to the product landing (full reload drops in-memory state). */
+/**
+ * Hard-navigate to the product landing (full reload drops in-memory state).
+ *
+ * Reached after Sair, so it also stamps the entry marker `signed-out`: the next visit to "/" shows
+ * the Landing (no silent re-entry through core), and sibling tabs that lose the session land on "/".
+ */
 export function goToProductLanding(
   navigate: (url: string) => void = (url) => {
     window.location.href = url;
   },
 ): void {
+  writeEntryMarker("signed-out");
   navigate(PRODUCT_LANDING_PATH);
 }

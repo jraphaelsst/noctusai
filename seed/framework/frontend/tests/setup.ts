@@ -4,6 +4,8 @@
  * tests can use them idiomatically.
  */
 import "@testing-library/jest-dom/vitest";
+// jsdom under this Node ships no working localStorage; the shared seed setup provisions it (idempotent).
+import "../vitest.setup";
 import { afterEach } from "vitest";
 
 // jsdom's `window` (and therefore `sessionStorage`) persists across every
@@ -14,4 +16,5 @@ import { afterEach } from "vitest";
 // tab never carries a prior test's storage) with zero risk to product code.
 afterEach(() => {
   window.sessionStorage.clear();
+  localStorage.clear();
 });

@@ -193,6 +193,17 @@ describe('SSOCallback cross-product deep link (#next=)', () => {
     expect(window.location.hash).not.toContain('next');
   });
 
+  it('a successful redeem stamps the re-entry marker `active` and closes the core round-trip loop window', async () => {
+    window.localStorage.setItem('noctus:entry', 'left');
+    window.localStorage.setItem('noctus:reentry-inflight', String(Date.now()));
+    window.sessionStorage.setItem('noctus:reentry-trips', JSON.stringify([Date.now(), Date.now()]));
+    const { findByText } = run('#token=abc.def.ghi&next=%2Fjulia%2Fopt-outs');
+    expect(await findByText('opt-outs')).toBeTruthy();
+    expect(window.localStorage.getItem('noctus:entry')).toBe('active');
+    expect(window.localStorage.getItem('noctus:reentry-inflight')).toBeNull();
+    expect(window.sessionStorage.getItem('noctus:reentry-trips')).toBeNull();
+  });
+
   it.each(['https%3A%2F%2Fevil.example', '%2F%2Fevil.example'])('ignores a non-path next (%s)', async (bad) => {
     const { findByText } = run(`#token=abc.def.ghi&next=${bad}`);
     expect(await findByText('home')).toBeTruthy();

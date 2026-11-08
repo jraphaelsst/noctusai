@@ -11,6 +11,12 @@ describe("goToProductLanding", () => {
     expect(PRODUCT_LANDING_PATH).toBe("/");
   });
 
+  it("stamps the entry marker `signed-out` (Sair: no silent re-entry, sibling tabs land on /)", () => {
+    localStorage.setItem("noctus:entry", "active");
+    goToProductLanding(vi.fn());
+    expect(localStorage.getItem("noctus:entry")).toBe("signed-out");
+  });
+
   it.each(["https://agents.noctusai.com", "https://noctusai.com", "https://erp.noctusai.com"])(
     "resolves against %s, never against core",
     (origin) => {

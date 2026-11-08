@@ -22,6 +22,7 @@ import { checkProductAccess, SEM_ACESSO_PATH } from '../access';
 import { env } from '../env';
 import { clearLocalIdentity, dropProductCookieSession, goTrueSessionId } from '../identity';
 import { beginOrgVisitEntry } from '../org-visit';
+import { recordSuccessfulRedeem } from '../reentry';
 // Use a loose type so products with custom schema generics can pass their client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -234,6 +235,9 @@ export function SSOCallback({
       ? await checkProductAccess({ baseUrl: apiUrl ?? env.BACKEND_API_URL, token })
       : true;
     if (cancelledRef.current) return;
+    // The redeem produced a session: this browser is "inside" the product (re-entry marker) and the
+    // core round-trip loop guard resets.
+    recordSuccessfulRedeem();
     navigate(ok ? (nextPathRef.current ?? redirectPath) : SEM_ACESSO_PATH, { replace: true });
   }, [supabase, apiUrl, navigate, redirectPath]);
 
