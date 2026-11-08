@@ -678,6 +678,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--surface-rationale", metavar="MD", help="With --respond-and-resume: tech-lead rationale (required, durable knowledge).")
     parser.add_argument("--surface-updated-brief", metavar="MD", help="With --respond-and-resume --surface-decision=adapt: the revised brief text.")
     parser.add_argument("--dispatch-resume-brief", metavar="SURFACE_ID", dest="dispatch_resume_brief_id", help="Compose the full dispatch-ready brief for a responded surface. Pass verbatim to Agent() brief. MCP: noctus.dev.dispatch_resume_brief. KB § PATTERNS/common/surface-and-resume-tooling.md.")
+    parser.add_argument("--usage-sync-deliveries", action="store_true", help="Ingest slice-scores + dispatch-budget (origin/ledgers) into public.dev_deliveries. Use --since/--usage-until (ISO) and --dry to preview (no DB needed). MCP: noctus.dev.usage_eval action=sync_deliveries.")
+    parser.add_argument("--usage-until", metavar="ISO", dest="usage_until", help="With --usage-sync-deliveries: exclusive upper bound (ISO timestamp).")
     parser.add_argument("--budget-slug", metavar="SLUG", dest="budget_slug", help="With --dispatch-budget-log: branch/task slug (e.g. 'feat/r1-f11').")
     parser.add_argument("--input-tokens", metavar="N", type=int, dest="input_tokens", help="With --dispatch-budget-log: input token count.")
     parser.add_argument("--output-tokens", metavar="N", type=int, dest="output_tokens", help="With --dispatch-budget-log: output token count.")
@@ -4329,6 +4331,16 @@ def main():
         )
         print(f"  {GREEN}✓ Vector cost total:{RESET}")
         print(json.dumps(result, indent=2, default=str))
+        sys.exit(0)
+
+    elif args.usage_sync_deliveries:
+        from tools.noctus.dev.usage_eval import DeliveriesSchemaError, parse_ts as _pts, sync_deliveries as _sd
+        try:
+            res = _sd(_pts(args.since), _pts(args.usage_until), dry_run=bool(args.dry))
+        except DeliveriesSchemaError as exc:
+            print(f"  {RED}✗ {exc}{RESET}")
+            sys.exit(1)
+        print(json.dumps(res, indent=2, default=str))
         sys.exit(0)
 
     elif args.dispatch_budget_log:

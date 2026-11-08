@@ -24,6 +24,10 @@ SINK: Supabase ``public.dev_telemetry_{claude,os,jobs,marks}`` (core migration 0
 read directly by the usage dashboard. Never ``public.ai_usage`` (product ledger, credit-charged).
 No prompt/response text leaves the machine — counts only.
 
+DELIVERIES (``action=sync_deliveries``, project ai-usage-dashboard contract §4): slice-scores + dispatch-budget
+(origin/ledgers via ``read_dual``) → ``public.dev_deliveries``; ``dry_run`` works without the table, a real run on a
+missing table raises ``DeliveriesSchemaError``. ``dev_telemetry_claude`` rows are stamped ``ambiente``/``origem``.
+
 KB § PATTERNS/devops/usage-evaluation.md
 """
 from __future__ import annotations
@@ -404,10 +408,12 @@ def sync(since: datetime, until: datetime, *, client=None, claude_root: Path = _
     so a bucket that was still filling at the last sync is completed by the next one."""
     client = client or _client()
     h = host()
+    amb = ambiente()
     claude = [{
         "host": h, "bucket": r.bucket.isoformat(), "session_id": r.session_id, "agent_id": r.agent_id,
         "project": r.project, "model": r.model, **r.counts, "cost_usd": round(r.cost_usd, 6),
         "price_version": r.price_version, "synced_at": datetime.now(timezone.utc).isoformat(),
+        "ambiente": amb, "origem": origem_of(),
     } for r in scan_claude(since, until, claude_root)]
     samples, jobs = scan_hw(since, until, hw_log)
     written = {}
@@ -417,7 +423,14 @@ def sync(since: datetime, until: datetime, *, client=None, claude_root: Path = _
         ("dev_telemetry_jobs", jobs, "host,ts,job,event"),
     ):
         for chunk in _chunks(rows):
-            client.table(table).upsert(chunk, on_conflict=conflict).execute()
+            try:
+                client.table(table).upsert(chunk, on_conflict=conflict).execute()
+            except Exception as exc:
+                if table == "dev_telemetry_claude" and _is_missing_column(exc):
+                    raise DeliveriesSchemaError(
+                        "dev_telemetry_claude has no ambiente/origem columns yet — apply core migration 111 "
+                        "(ai-usage-dashboard §2 expand) before syncing") from exc
+                raise
         written[table] = len(rows)
     return {"host": h, "since": since.isoformat(), "until": until.isoformat(), "written": written}
 
@@ -428,6 +441,263 @@ def mark(kind: str, label: str, ts: datetime | None = None, payload: dict | None
            "label": label, "payload": payload or {}}
     client.table("dev_telemetry_marks").upsert(row, on_conflict="host,ts,kind,label").execute()
     return row
+
+
+# ── ledger → dev_deliveries (ai-usage-dashboard contract §4) ──────────────
+
+DELIVERIES_TABLE = "dev_deliveries"
+JOIN_WINDOW = timedelta(minutes=15)
+IN_SHARE = 0.9  # the ledger stores one `tokens` total — the seed estimate is priced on a 90/10 in/out split
+ORIGEM_VALUES = ("api_key", "assinatura", "desconhecido")
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+_FLEET_COMPOSE = _REPO_ROOT / "deploy" / "fleet" / "docker-compose.prod.yml"
+
+
+class DeliveriesSchemaError(RuntimeError):
+    """The Supabase schema lacks what the ingest writes (migration 111 not applied). Typed, never skipped."""
+
+
+def _is_missing_column(exc: BaseException) -> bool:
+    code = str(getattr(exc, "code", "") or "")
+    msg = str(exc)
+    return code in {"PGRST204", "42703"} or "column" in msg and ("does not exist" in msg or "Could not find" in msg)
+
+
+def _is_missing_table(exc: BaseException) -> bool:
+    code = str(getattr(exc, "code", "") or "")
+    msg = str(exc)
+    return code in {"PGRST205", "42P01"} or ("Could not find the table" in msg) or ("relation" in msg and "does not exist" in msg)
+
+
+def fleet_hosts(compose: Path = _FLEET_COMPOSE, env: dict[str, str] | None = None) -> set[str]:
+    """Hostnames of the prod fleet, DERIVED from the compose file (``container_name`` / ``hostname`` of every
+    service) plus ``NOCTUS_VPS_HOST`` (short name). Never a hand-kept list; a missing file yields the empty set."""
+    env = os.environ if env is None else env
+    names: set[str] = set()
+    try:
+        import yaml
+        doc = yaml.safe_load(compose.read_text(encoding="utf-8")) or {}
+        for svc in (doc.get("services") or {}).values():
+            if isinstance(svc, dict):
+                for k in ("container_name", "hostname"):
+                    if svc.get(k):
+                        names.add(str(svc[k]).split(".")[0].lower())
+    except (OSError, ImportError, ValueError):
+        pass
+    vps = (env.get("NOCTUS_VPS_HOST") or "").strip()
+    if vps:
+        names.add(vps.split(".")[0].lower())
+    return names
+
+
+def ambiente(env: dict[str, str] | None = None, hostname: str | None = None,
+             fleet: set[str] | None = None) -> str:
+    """Order (contract §4): NOC_AMBIENTE > CI/GITHUB_ACTIONS=true > host in the fleet inventory > local."""
+    env = os.environ if env is None else env
+    explicit = (env.get("NOC_AMBIENTE") or "").strip().lower()
+    if explicit:
+        if explicit not in ("prod", "local", "ci"):
+            raise ValueError(f"NOC_AMBIENTE must be prod|local|ci; got {explicit!r}")
+        return explicit
+    if (env.get("CI") or "").strip().lower() in ("1", "true") or (env.get("GITHUB_ACTIONS") or "").strip().lower() == "true":
+        return "ci"
+    fleet = fleet_hosts(env=env) if fleet is None else fleet
+    return "prod" if (hostname or host()) in fleet else "local"
+
+
+def origem_of(session: dict | None = None) -> str:
+    """``api_key`` | ``assinatura`` only when the session's auth mode is READABLE; else ``desconhecido``.
+
+    FINDING (2026-11-08, ~/.claude/projects transcripts + telemetry + settings): Claude Code transcripts do NOT record
+    the auth mode — ``userType`` is always ``external``, ``entrypoint`` ``cli`` and ``usage.service_tier`` ``standard``
+    for both API-key and subscription sessions; they carry only account/org uuids. So nothing is readable ⇒ always
+    ``desconhecido`` (never guessed). ``session`` is the seam for a future readable signal (``auth_mode``)."""
+    mode = (session or {}).get("auth_mode")
+    return mode if mode in ("api_key", "assinatura") else "desconhecido"
+
+
+def canonical_model(model_id: str | None) -> tuple[str | None, bool]:
+    """``(canonical_id, known)`` via the seed model registry. A pinned snapshot (``<id>-2026-09-08`` or the
+    registry's ``snapshot`` suffix) maps to its catalog id. Unknown ids come back RAW with ``known=False``."""
+    if not model_id:
+        return None, True  # absent is not unknown
+    raw = str(model_id).strip()
+    try:
+        from noctusai_lib.integrations.llm.models import models_for
+        entries = [m for m in models_for("anthropic")]
+    except ImportError:
+        return raw, False
+    ids = {m.id for m in entries}
+    if raw in ids:
+        return raw, True
+    for m in sorted(entries, key=lambda e: -len(e.id)):
+        if raw.startswith(m.id + "-") and raw[len(m.id) + 1:len(m.id) + 5].isdigit():
+            return m.id, True
+        if m.snapshot and raw == m.id + m.snapshot:
+            return m.id, True
+    return raw, False
+
+
+def estimate_delivery_cost(model: str | None, tokens: int | None) -> tuple[float | None, str | None]:
+    """``(cost_usd, price_version)``; None/None unless tokens exist AND the model is priced. 90/10 split."""
+    if not tokens or not model:
+        return None, None
+    try:
+        from noctusai_lib.integrations.llm.usage import price_usage
+    except ImportError:
+        return None, "unpriced:no-seed-lib"
+    cost, version = price_usage(provider="anthropic", model=model, prompt_tokens=round(tokens * IN_SHARE),
+                                completion_tokens=tokens - round(tokens * IN_SHARE))
+    return (None, version) if version.startswith("unpriced") else (round(cost, 6), version)
+
+
+def line_hash(row: dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+
+
+def _parse_lines(text: str) -> list[dict]:
+    out = []
+    for ln in text.splitlines():
+        if ln.strip():
+            try:
+                d = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(d, dict):
+                out.append(d)
+    return out
+
+
+def _tok(v: Any) -> int | None:
+    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def build_deliveries(score_text: str, budget_text: str, *, amb: str, origem: str = "desconhecido",
+                     since: datetime | None = None, until: datetime | None = None,
+                     now: datetime | None = None) -> tuple[list[dict], dict[str, int]]:
+    """Merge the two ledgers into ``dev_deliveries`` rows. Pure: no IO, no clock beyond ``now``."""
+    ingested_at = (now or datetime.now(timezone.utc)).isoformat()
+    stats = {"scores": 0, "budgets": 0, "matched": 0, "unmatched_budget": 0, "unmatched_score": 0,
+             "duplicates": 0, "unknown_model": 0, "out_of_window": 0, "no_key": 0}
+    seen_hash: set[str] = set()
+    seen_key: set[tuple] = set()
+
+    def fresh(line: dict, kind: str) -> bool:
+        h = line_hash(line)
+        key = (line.get("slug"), line.get("agent"), line.get("ts"))
+        if not all(key) or parse_ts(line.get("ts")) is None:
+            stats["no_key"] += 1
+            return False
+        if h in seen_hash or key in seen_key:
+            stats["duplicates"] += 1
+            return False
+        seen_hash.add(h)
+        seen_key.add(key)
+        stats[kind] += 1
+        return True
+
+    scores = [d for d in _parse_lines(score_text) if fresh(d, "scores")]
+    budgets = [d for d in _parse_lines(budget_text) if fresh(d, "budgets")]
+
+    by_pair: dict[tuple, list[int]] = defaultdict(list)
+    for i, b in enumerate(budgets):
+        by_pair[(b["slug"], b["agent"])].append(i)
+    used: set[int] = set()
+    pairs: list[tuple[dict | None, dict | None]] = []
+    for sc in sorted(scores, key=lambda d: d["ts"]):
+        sts = parse_ts(sc["ts"])
+        cands = [(abs(parse_ts(budgets[i]["ts"]) - sts), i) for i in by_pair.get((sc["slug"], sc["agent"]), [])
+                 if i not in used and abs(parse_ts(budgets[i]["ts"]) - sts) <= JOIN_WINDOW]
+        if cands:
+            i = min(cands)[1]
+            used.add(i)
+            stats["matched"] += 1
+            pairs.append((sc, budgets[i]))
+        else:
+            stats["unmatched_score"] += 1
+            pairs.append((sc, None))
+    for i, b in enumerate(budgets):
+        if i not in used:
+            stats["unmatched_budget"] += 1
+            pairs.append((None, b))
+
+    rows = []
+    for sc, bd in pairs:
+        primary = sc or bd
+        ts = parse_ts(primary["ts"])
+        if (since and ts < since) or (until and ts >= until):
+            stats["out_of_window"] += 1
+            continue
+        sc, bd = sc or {}, bd or {}
+        model, known = canonical_model(sc.get("model") or bd.get("model"))
+        if not known:
+            stats["unknown_model"] += 1
+        planner, _ = canonical_model(sc.get("planner_model"))
+        tokens = _tok(sc.get("tokens"))
+        if tokens is None:
+            tokens = _tok(bd.get("total_tokens"))
+        if tokens is None:
+            tokens = _tok(bd.get("estimated_tokens"))
+        cost, version = estimate_delivery_cost(model, tokens)
+        rows.append({
+            "line_hash": line_hash(primary), "slug": primary["slug"], "agent": primary["agent"], "ts": ts.isoformat(),
+            "branch": sc.get("branch"), "sha": sc.get("sha"), "model": model, "planner_model": planner,
+            "q": sc.get("q"), "q_weighted": sc.get("q_weighted"), "first_pass": sc.get("first_pass"),
+            "rework_commits": sc.get("rework_commits"), "tokens": tokens, "tool_uses": sc.get("tool_uses"),
+            "wall_s_measured": sc.get("wall_s_measured"), "wall_s_self_reported": sc.get("wall_s_self_reported"),
+            "duration_minutes": bd.get("duration_minutes"), "outcome": bd.get("outcome"),
+            "cost_usd": cost, "cost_is_estimate": True if cost is not None else None, "price_version": version,
+            "ambiente": amb, "origem": origem, "ingested_at": ingested_at,
+        })
+    rows.sort(key=lambda r: (r["ts"], r["slug"], r["agent"]))
+    return rows, stats
+
+
+def _read_ledgers() -> tuple[str, str, list[str]]:
+    """``(scores, budgets, store_errors)`` — origin/ledgers ∪ the legacy dev copy (``read_dual``)."""
+    from settings import LEDGER_ROOT
+    from tools.noctus.dev._ledger_store import read_ledger_text
+    errors = []
+    texts = []
+    for name in ("slice-scores.ndjson", "dispatch-budget.ndjson"):
+        text, err = read_ledger_text(name, LEDGER_ROOT / "project-history" / name, fetch=True)
+        texts.append(text)
+        if err:
+            errors.append(f"{name}: {err}")
+    return texts[0], texts[1], errors
+
+
+def sync_deliveries(since: datetime | None = None, until: datetime | None = None, *, dry_run: bool = False,
+                    client=None, ledgers: tuple[str, str, list[str]] | None = None,
+                    env: dict[str, str] | None = None, hostname: str | None = None,
+                    fleet: set[str] | None = None) -> dict[str, Any]:
+    """Idempotent ledger → ``public.dev_deliveries`` upsert. ``dry_run`` needs neither the table nor credentials.
+    A real run on a missing table raises :class:`DeliveriesSchemaError` (never a silent skip)."""
+    score_text, budget_text, store_errors = ledgers if ledgers is not None else _read_ledgers()
+    amb = ambiente(env, hostname, fleet)
+    rows, stats = build_deliveries(score_text, budget_text, amb=amb, origem=origem_of(), since=since, until=until)
+    result: dict[str, Any] = {"dry_run": dry_run, "ambiente": amb, "origem": origem_of(), "stats": stats,
+                              "rows": len(rows), "unknown_model": stats["unknown_model"],
+                              "ledger_errors": store_errors,
+                              "since": since.isoformat() if since else None, "until": until.isoformat() if until else None}
+    if dry_run:
+        result["sample"] = rows[:3]
+        result["written"] = 0
+        return result
+    client = client or _client()
+    try:
+        client.table(DELIVERIES_TABLE).select("line_hash").limit(1).execute()
+    except Exception as exc:
+        if _is_missing_table(exc):
+            raise DeliveriesSchemaError(
+                f"public.{DELIVERIES_TABLE} does not exist — apply core migration 111 (feat/ai-usage-be) first; "
+                "nothing was written. Use dry_run=true to preview.") from exc
+        raise
+    for chunk in _chunks(rows):
+        client.table(DELIVERIES_TABLE).upsert(chunk, on_conflict="slug,agent,ts").execute()
+    result["written"] = len(rows)
+    return result
 
 
 # ── entry points ──────────────────────────────────────────────────────────
@@ -442,7 +712,9 @@ def _window(since: str | None, until: str | None, default_hours: float = 2.0) ->
 
 def usage_eval(action: str = "report", since: str | None = None, until: str | None = None,
                b_since: str | None = None, b_until: str | None = None, kind: str | None = None,
-               label: str | None = None, payload: dict | None = None) -> dict[str, Any]:
+               label: str | None = None, payload: dict | None = None, dry_run: bool = False) -> dict[str, Any]:
+    if action == "sync_deliveries":
+        return sync_deliveries(parse_ts(since), parse_ts(until), dry_run=dry_run)
     if action == "report":
         return window_report(*_window(since, until))
     if action == "compare":
@@ -455,7 +727,7 @@ def usage_eval(action: str = "report", since: str | None = None, until: str | No
         if not (kind and label):
             raise ValueError("mark needs kind and label")
         return mark(kind, label, parse_ts(since), payload)
-    raise ValueError(f"unknown action {action!r}: report | compare | sync | mark")
+    raise ValueError(f"unknown action {action!r}: report | compare | sync | sync_deliveries | mark")
 
 
 def register(server) -> None:
@@ -467,13 +739,15 @@ def register(server) -> None:
             "heavy jobs (ran/wait/peak RSS/not-admitted) + OS samples (CPU idle, reclaimable MB, swap-out, load, "
             "overloaded %). action=compare since/until + b_since/b_until -> A vs B deltas. action=sync -> upsert "
             "the window into Supabase public.dev_telemetry_* (the dashboard's data). action=mark kind/label -> "
-            "record a phase change / experiment window. Counts only, never text. KB § PATTERNS/devops/usage-evaluation.md"
+            "record a phase change / experiment window. action=sync_deliveries since/until/dry_run -> ingest "
+            "slice-scores + dispatch-budget (origin/ledgers) into public.dev_deliveries (dry_run previews; a missing "
+            "table fails loudly). Counts only, never text. KB § PATTERNS/devops/usage-evaluation.md"
         ),
     )
     def _usage_eval(action: str = "report", since: str | None = None, until: str | None = None,
                     b_since: str | None = None, b_until: str | None = None, kind: str | None = None,
-                    label: str | None = None, payload: dict | None = None) -> dict:
-        return usage_eval(action, since, until, b_since, b_until, kind, label, payload)
+                    label: str | None = None, payload: dict | None = None, dry_run: bool = False) -> dict:
+        return usage_eval(action, since, until, b_since, b_until, kind, label, payload, dry_run)
 
 
 if __name__ == "__main__":  # `python usage_eval.py sync [since] [until]` — the scheduled syncer's entry
