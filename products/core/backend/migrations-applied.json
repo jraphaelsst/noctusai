@@ -23,6 +23,7 @@
     "104_public_browser_grants_service_only.sql": "791fee34715231c85c51b66d075d83826ff7e1e57bb182c9ee87d628401eab96",
     "105_products_exibir_no_site.sql": "ac45b54b3b9031fec271724d7cdcd259b5203aa8ea5a20fe60da8179d1b6d10d",
     "106_finance_rev2.sql": "4e684b417918c6af7225418793114bdb9b6ed3bcba0dd27dd6a6b648edeea433",
-    "107_noc_funnel.sql": "00df9b13414f933a916c031ad523ec219f87b56630dd0d8e905e1e36f325f6bd"
+    "107_noc_funnel.sql": "00df9b13414f933a916c031ad523ec219f87b56630dd0d8e905e1e36f325f6bd",
+    "108_brand_platform_tokens_contrast.sql": "d8d6f86927113241e55d32475a264d8227347957e97cdb3787ea668aecb96751"
   }
 }
