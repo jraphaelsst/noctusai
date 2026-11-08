@@ -11,6 +11,7 @@ Token transport / redemption strictness is MIXED and catalog-derived: see
 slug optional, only for active dev-scope products on the old callback).
 """
 import anyio
+import hashlib
 import logging
 import threading
 import time
@@ -24,6 +25,7 @@ from noctusai_lib.api.auth.session.types import AuthContext
 from app.services.trusted_auth import require_platform_admin_dep
 from fastapi.responses import JSONResponse, RedirectResponse
 from supabase import create_client
+from supabase.lib.client_options import ClientOptions
 
 from app.config import settings
 from app.database import get_admin_client, supabase_admin
@@ -37,25 +39,19 @@ from app.sso_regime import (
 from app.services import product_admission, team_memberships
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
+SB_FORWARDED_FOR = "Sb-Forwarded-For"
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sso", tags=["SSO"])
 
 # ---------------------------------------------------------------------------
-# SSO session cache (shared across all products)
+# Per-email mint lock map
 #
-# compliance-audit-reconciliation Phase 6 (finding 9, 2026-04-22):
-# previous TTL was 3500s (~58min). That preserved stale role / license /
-# org-reassignment state for up to an hour after change. Reduced to 300s
-# — above the Supabase 60s rate-limit between magic-link generations but
-# tight enough that role revocations take effect quickly. Role/license
-# change points also call `invalidate_sso_cache_for_user(email)` to
-# flush on demand.
+# `SSOSessionCache` (promoted to `noctusai_lib.auth` in `core-seed-wiring-v2`
+# Phase 4) is used ONLY as a lock map here: no session is ever cached or
+# re-issued (2026-10-22 -- see `_generate_session`). `invalidate_sso_cache_for_user`
+# stays a public helper for the role/license change points.
 # ---------------------------------------------------------------------------
-#
-# Cache class promoted to `noctusai_lib.auth.SSOSessionCache` in
-# `core-seed-wiring-v2` Phase 4 (2026-04-23). Core now composes the lib
-# class rather than maintaining a local one — any future identity-source
-# product gets the same cache with the same concurrency semantics.
 
 from noctusai_lib.api.auth import SSOSessionCache
 from noctusai_lib.config.product_urls import resolve_product_url
@@ -109,7 +105,7 @@ _CROSS_SITE_DETAIL = (
     "contate o suporte NoctusAI"
 )
 
-_CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
+_CACHE_TTL = 300  # only bounds the (unused) store; sessions are never cached
 
 _NO_PRODUCT_SCOPE = "_no-product"
 _session_cache = SSOSessionCache(ttl_seconds=_CACHE_TTL)
@@ -125,7 +121,7 @@ def invalidate_sso_cache_for_user(email: str) -> bool:
         return False
     removed = _session_cache.invalidate(email)
     if removed:
-        logger.info("SSO cache invalidated for email=%s", email)
+        logger.info("SSO cache invalidated for email_ref=%s", _email_ref(email))
     return removed
 
 
@@ -399,68 +395,123 @@ def _enrich_sso_metadata(db, metadata: dict, org_id: str | None, product_slug: s
             logger.debug("SSO enrich: license query failed: %s", exc)
 
 
-def _is_rate_limit_error(exc: Exception) -> bool:
-    """Check if an exception is a Supabase rate limit error.
+# GoTrue error codes (supabase/auth `internal/api/errors`), read from
+# `AuthApiError.code` -- never from the message text.
+_GOTRUE_RATE_LIMIT = "over_request_rate_limit"
+_GOTRUE_NOT_ADMIN = "not_admin"
+_GOTRUE_OTP_EXPIRED = "otp_expired"
+# /verify refills ~1 token per 10 s (30 per 5 min, IP-keyed).
+_RATE_LIMIT_RETRY_AFTER_S = 10
+_NOT_ADMIN_DETAIL = (
+    "Configuração do servidor inválida: o cliente admin do Supabase não é service_role"
+)
 
-    Supabase GoTrue returns different error messages depending on the context:
-    - "rate limit" / "429" / "60 seconds" for explicit rate limit responses
-    - "User not allowed" when a magiclink/OTP is generated too quickly for the
-      same email (undocumented ~60s cooldown per email)
-    """
-    msg = str(exc).lower()
-    return (
-        ("rate" in msg and "limit" in msg)
-        or "429" in msg
-        or "60 seconds" in msg
-        or "user not allowed" in msg
+
+def _gotrue_code(exc: BaseException) -> str | None:
+    """The GoTrue error ``code`` carried by supabase-py's ``AuthApiError`` (None for anything else)."""
+    code = getattr(exc, "code", None)
+    return code if isinstance(code, str) else None
+
+
+def _email_ref(email: str) -> str:
+    """Stable short reference for log lines -- the address itself never reaches a log."""
+    return hashlib.sha256(email.strip().lower().encode()).hexdigest()[:12]
+
+
+def _log_mint(outcome: str, email: str, code: str | None, product_slug: str | None, attempts: int) -> None:
+    """One ``sso_mint`` line per mint (alert on any ``over_request_rate_limit``). No tokens, no address."""
+    logger.info(
+        "sso_mint outcome=%s gotrue_code=%s email_ref=%s product=%s attempts=%d",
+        outcome, code or "-", _email_ref(email), product_slug or _NO_PRODUCT_SCOPE, attempts,
     )
 
 
-def _generate_session(email: str, org_id: str | None = None, product_slug: str | None = None) -> dict:
+def _mint_lock(email: str) -> threading.Lock:
+    """ONE lock per EMAIL: GoTrue keeps a single recovery-token slot per user, so two concurrent
+    generate_link calls for one user (whatever the product/org) overwrite each other's OTP.
+
+    IN-PROCESS only. Core runs a single uvicorn worker (``products/core/backend/Dockerfile`` CMD is
+    plain ``uvicorn app.main:app`` with no ``--workers`` / ``WEB_CONCURRENCY``; the prod compose
+    adds neither), so this suffices today. With >1 worker/replica the ``otp_expired`` retry in
+    ``_generate_session`` is the only remaining protection -- a distributed lock would be needed.
+    """
+    return _session_cache.get_lock(email.strip().lower(), org_id=None, product_slug="_mint")
+
+
+def _otp_client(client_ip: str | None):
+    """Throwaway anon client for ``verify_otp``.
+
+    HOOK POINT for ``Sb-Forwarded-For``: with ``settings.supabase_forward_client_ip`` ON and a visitor IP,
+    the header rides this client's auth requests so GoTrue's IP-keyed /verify bucket is per end-user.
+    OFF (default) = the plain two-argument ``create_client`` call, unchanged.
+    """
+    if settings.supabase_forward_client_ip and client_ip:
+        return create_client(
+            settings.supabase_url, settings.supabase_anon_key,
+            options=ClientOptions(headers={SB_FORWARDED_FOR: client_ip}),
+        )
+    return create_client(settings.supabase_url, settings.supabase_anon_key)
+
+
+def _mint_once(email: str, client_ip: str | None):
+    """One generate_link -> verify_otp pair; returns the verify response."""
+    link_response = supabase_admin.auth.admin.generate_link({
+        "type": "magiclink",
+        "email": email,
+    })
+
+    email_otp = link_response.properties.email_otp
+    if not email_otp:
+        raise Exception("generate_link não retornou email_otp")
+
+    # verify_otp ESTABLISHES a session, so supabase-py propagates the
+    # new user token onto the calling client's PostgREST layer. Running
+    # it on the shared service-role singleton (`supabase_admin`) would
+    # downgrade every later get_admin_client() call from service_role
+    # to authenticated — process-wide until restart — tripping RLS on
+    # unrelated requests (42P17 recursion on noctus_users, broke
+    # GET /api/auth/me 2026-05-23). Use a throwaway anon client, like
+    # login/refresh/logout already do. generate_link above stays on the
+    # admin singleton (admin API; it does not set a session).
+    return _otp_client(client_ip).auth.verify_otp({
+        "email": email,
+        "token": email_otp,
+        "type": "magiclink",
+    })
+
+
+def _generate_session(
+    email: str, org_id: str | None = None, product_slug: str | None = None, client_ip: str | None = None,
+) -> dict:
     """Generate a FRESH Supabase session for the given user — every call.
 
     Never re-issues a pair it already handed out (2026-10-22): GoTrue rotates
     refresh tokens, so two redemptions of one cached pair (two launches into
     the same product, or a second browser) present a spent refresh token and
     GoTrue revokes the whole session — every tab of the product drops to
-    Landing, and re-entry from core kept failing for the cache's 5 minutes.
-    A per-(email, org, product) lock still serializes concurrent redemptions;
-    a GoTrue rate limit is a typed 429 that `SSOCallback` counts down and retries.
+    Landing. A per-EMAIL lock serializes concurrent mints (one recovery-token
+    slot per GoTrue user) and the pair is retried once on ``otp_expired``.
+    ``over_request_rate_limit`` is a typed 429 that `SSOCallback` counts down
+    and retries; ``not_admin`` is a loud 500 (misconfigured admin client).
+    ``org_id`` is accepted for call-site parity; the lock no longer keys on it.
     """
-    # Legacy tokens (old callback) carry no product; they get their own scope.
-    scope = {"org_id": org_id, "product_slug": product_slug or _NO_PRODUCT_SCOPE}
     if not supabase_admin:
         logger.error("supabase_admin não inicializado — verifique SUPABASE_SERVICE_ROLE_KEY")
         raise HTTPException(status_code=500, detail="Configuração do servidor incompleta")
 
-    lock = _session_cache.get_lock(email, **scope)
-    with lock:
+    attempts = 0
+    with _mint_lock(email):
         try:
-            logger.debug("Gerando link para email=%s", email)
-            link_response = supabase_admin.auth.admin.generate_link({
-                "type": "magiclink",
-                "email": email,
-            })
-
-            email_otp = link_response.properties.email_otp
-            if not email_otp:
-                raise Exception("generate_link não retornou email_otp")
-
-            # verify_otp ESTABLISHES a session, so supabase-py propagates the
-            # new user token onto the calling client's PostgREST layer. Running
-            # it on the shared service-role singleton (`supabase_admin`) would
-            # downgrade every later get_admin_client() call from service_role
-            # to authenticated — process-wide until restart — tripping RLS on
-            # unrelated requests (42P17 recursion on noctus_users, broke
-            # GET /api/auth/me 2026-05-23). Use a throwaway anon client, like
-            # login/refresh/logout already do. generate_link above stays on the
-            # admin singleton (admin API; it does not set a session).
-            otp_client = create_client(settings.supabase_url, settings.supabase_anon_key)
-            session_response = otp_client.auth.verify_otp({
-                "email": email,
-                "token": email_otp,
-                "type": "magiclink",
-            })
+            while True:
+                attempts += 1
+                try:
+                    session_response = _mint_once(email, client_ip)
+                    break
+                except Exception as exc:
+                    if _gotrue_code(exc) == _GOTRUE_OTP_EXPIRED and attempts < 2:
+                        logger.warning("sso: otp_expired minting for email_ref=%s; retrying the pair once", _email_ref(email))
+                        continue
+                    raise
 
             session = session_response.session
             if not session:
@@ -473,17 +524,26 @@ def _generate_session(email: str, org_id: str | None = None, product_slug: str |
                 "email": email,
             }
 
-            logger.info("SSO sessão gerada para email=%s", email)
+            _log_mint("ok", email, None, product_slug, attempts)
             return result
 
         except HTTPException:
             raise
         except Exception as exc:
-            if _is_rate_limit_error(exc):
-                logger.warning("Rate limit do Supabase para email=%s: %s", email, exc)
+            code = _gotrue_code(exc)
+            if code == _GOTRUE_RATE_LIMIT:
+                _log_mint("rate_limited", email, code, product_slug, attempts)
                 raise _RateLimitError()
+            if code == _GOTRUE_NOT_ADMIN:
+                _log_mint("not_admin", email, code, product_slug, attempts)
+                logger.critical(
+                    "sso: GoTrue answered not_admin -- the admin client is NOT service_role "
+                    "(poisoned singleton or wrong SUPABASE_SERVICE_ROLE_KEY)"
+                )
+                raise HTTPException(status_code=500, detail=_NOT_ADMIN_DETAIL)
 
-            logger.error("Erro ao gerar sessão Supabase para %s: %s: %s", email, type(exc).__name__, exc)
+            _log_mint("error", email, code, product_slug, attempts)
+            logger.error("Erro ao gerar sessão Supabase (email_ref=%s): %s", _email_ref(email), type(exc).__name__)
             raise HTTPException(
                 status_code=500,
                 detail=f"Erro ao gerar sessão: {type(exc).__name__}",
@@ -530,7 +590,7 @@ def sso_session(request: Request, response: Response, body: SSOSessionRequest):
     1. Decode JWT using shared jwt_secret (via verify_sso_token)
     2. Extract email from payload (user already exists — same Supabase project)
     3. Sync NoctusAI role + org_id into user_metadata (so products know the role)
-    4. Generate a Supabase session (access_token + refresh_token), with caching
+    4. Generate a FRESH Supabase session (access_token + refresh_token)
     5. Return tokens to the frontend
     """
     payload = verify_sso_token(body.token)
@@ -614,15 +674,15 @@ def sso_session(request: Request, response: Response, body: SSOSessionRequest):
         )
 
     logger.info(
-        "SSO session para email=%s, org=%s, role=%s, org_role=%s",
-        email, org_id, noctus_role, org_role,
+        "SSO session para email_ref=%s, org=%s, role=%s, org_role=%s",
+        _email_ref(email), org_id, noctus_role, org_role,
     )
 
     # Sync full SSO context into user_metadata so products are "aware"
     # of the user's role, org, subscription plan, and license status.
     # Supabase merges user_metadata (shallow), so existing fields are preserved.
     # This runs before _generate_session, so newly-created sessions include
-    # the updated metadata.  Cached sessions (≤55s) have prior update's data.
+    # the updated metadata. 
     if supabase_admin and user_id:
         try:
             metadata_update: dict = {
@@ -643,7 +703,10 @@ def sso_session(request: Request, response: Response, body: SSOSessionRequest):
             logger.warning("Failed to sync metadata to user_metadata: %s", exc)
 
     try:
-        session = _generate_session(email, org_id, payload.get("product"))
+        session = _generate_session(
+            email, org_id, payload.get("product"),
+            client_ip=request.headers.get("CF-Connecting-IP", "").strip() or None,
+        )
     except HTTPException:
         _release_sso_jti(db, jti)
         raise
@@ -651,11 +714,11 @@ def sso_session(request: Request, response: Response, body: SSOSessionRequest):
         # Nothing was issued — release the claim so the client's Retry-After
         # retry (same token) is not burned.
         _release_sso_jti(db, jti)
-        logger.warning("sso: rate-limit hit for email=%s during session generation; returning 429", email)
+        logger.warning("sso: rate-limit hit for email_ref=%s during session generation; returning 429", _email_ref(email))
         return JSONResponse(
             status_code=429,
-            content={"detail": "Rate limit — tente novamente em 60 segundos"},
-            headers={"Retry-After": "60"},
+            content={"detail": f"Rate limit — tente novamente em {_RATE_LIMIT_RETRY_AFTER_S} segundos"},
+            headers={"Retry-After": str(_RATE_LIMIT_RETRY_AFTER_S)},
         )
 
     return SSOSessionResponse(
