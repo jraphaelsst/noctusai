@@ -42,6 +42,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 import { cn } from "../../utils";
+import { BreadcrumbRegistryContext, type BreadcrumbRegistry } from "./Breadcrumbs";
 
 /**
  * How the shell renders the desktop sidebar.
@@ -120,9 +121,30 @@ export interface AppShellProps {
    * icon rail; pass `"expanded"` for the pre-rail static sidebar.
    */
   railMode?: SidebarRailMode;
+  /**
+   * The nav registry that drives the sidebar. When given, the header's
+   * `Breadcrumbs` derive the route trail from it (groups -> items -> current
+   * route). Pass the SAME (status-filtered) groups the `Sidebar` renders.
+   */
+  navGroups?: BreadcrumbRegistry["navGroups"];
+  standaloneItems?: BreadcrumbRegistry["standaloneItems"];
+  /** Detail-route crumbs for non-data routers (data routers: `handle.crumb`). */
+  routeCrumbs?: BreadcrumbRegistry["routeCrumbs"];
 }
 
-export function AppShell({ sidebar, header, children, railMode = "hover-expand" }: AppShellProps) {
+export function AppShell({
+  sidebar,
+  header,
+  children,
+  railMode = "hover-expand",
+  navGroups,
+  standaloneItems,
+  routeCrumbs,
+}: AppShellProps) {
+  const breadcrumbRegistry = useMemo<BreadcrumbRegistry | null>(
+    () => (navGroups ? { navGroups, standaloneItems, routeCrumbs } : null),
+    [navGroups, standaloneItems, routeCrumbs],
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const toggleSidebar = useCallback(() => setSidebarOpen((o) => !o), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
@@ -211,7 +233,9 @@ export function AppShell({ sidebar, header, children, railMode = "hover-expand" 
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {header({ onMenuToggle: toggleSidebar })}
+        <BreadcrumbRegistryContext.Provider value={breadcrumbRegistry}>
+          {header({ onMenuToggle: toggleSidebar })}
+        </BreadcrumbRegistryContext.Provider>
         <main className="flex-1 overflow-auto">
           {children}
         </main>

@@ -1,7 +1,9 @@
 """MEI Relatório Mensal de Receitas Brutas (E21) -- the monthly revenue book of the Microempreendedor Individual.
 
 Legal anchor: Res. CGSN 140/2018 art. 106 (+ arts. 108, 109), Annex X; the MEI must KEEP it (for the Fisco, on request), with the
-sale invoices attached, filled by the 20th of the following month [P&R-MEI 3.6]. The software prepares the figures; it files nothing.
+sale invoices attached, to PRESENT only when the Fisco asks [P&R-MEI 3.6 nota 2] -- there is NO fill-by date (a "dia 20" was
+once shown here, unsourced; the report now carries the registry obligation row `mei.relatorio_mensal_receitas.obrigacao` as `obligation`).
+The software prepares the figures; it files nothing.
 
 **Model fields -- UNVERIFIED.** The brief cites the report and its legal anchor but not its field list, and the official Annex X text
 could not be fetched when this was written (gov.br serves the form as a download, the Receita P&R-MEI PDF only cites it). The
@@ -31,6 +33,7 @@ from typing import Any, Optional
 from noctusai_lib.domain._organ_common import csv_safe
 
 from . import _pdf
+from .params import param, staleness_warning
 from ._common import Scope, add_months, iso, month_start
 from .dre import _fetch_by_ids, _inherited, _month_key, make_route
 from .exports import money
@@ -39,7 +42,9 @@ from .types import ActivityKind, SettlementKind, TaxRegime
 
 KB_DOC = "KB § PATTERNS/finance/dre-structure.md §7"
 LEGAL_BASIS = "Res. CGSN 140/2018 art. 106, 108 e 109 (Anexo X)"
-DEADLINE_DAY = 20
+_OBLIGATION_KEY = "mei.relatorio_mensal_receitas.obrigacao"  # registry row; no in-code default (missing => ParamNotDefined)
+_OBLIGATION_KEEP_AND_PRESENT = "manter_e_apresentar_quando_solicitado"
+OBLIGATION_TEXT = "Guarde este relatório com as notas fiscais anexadas; apresente-o ao Fisco quando solicitado."
 
 #: group -> (label, roman numerals of the three rows). UNVERIFIED against the official Annex X (see the module docstring).
 FIELDS: dict[str, dict[str, str]] = {
@@ -123,13 +128,18 @@ def mei_monthly(s: Scope, month: date, *, regime_prefill: Optional[str] = None) 
     if total < 0:
         warnings.append({"code": "mes_com_estorno_maior", "severity": "warning",
                          "message": "Os estornos do mês superam os recebimentos; confira se foram lançados no mês correto.", "action": "Revise as baixas do mês."})
-    deadline = add_months(start, 1).replace(day=DEADLINE_DAY)
+    obligation_param = param(_OBLIGATION_KEY, on=start, scope={"regime": "mei"})
+    if obligation_param.value != _OBLIGATION_KEEP_AND_PRESENT:
+        raise ValueError(f"{_OBLIGATION_KEY}: unexpected value {obligation_param.value!r}; the report text must be revisited")
+    stale = staleness_warning(obligation_param, date.today())
+    if stale:
+        warnings.append(stale)
     return {
         "month": _month_key(start),
         "tax_regime": regime,
         "applicable": regime == TaxRegime.MEI.value,
         "basis": "cash",
-        "deadline": iso(deadline),
+        "obligation": {"code": obligation_param.value, "text": OBLIGATION_TEXT, "norma": obligation_param.norma},
         "groups": groups,
         "fields": FIELDS,
         "grand_total": GRAND_TOTAL,
@@ -183,7 +193,7 @@ def mei_monthly_pdf(report: dict) -> bytes:
     y, m = report["month"].split("-")
     return _pdf.document(
         "Relatório Mensal de Receitas Brutas",
-        [f"Período de apuração: {m}/{y}", f"Base legal: {report['legal_basis']}", f"Preenchimento até o dia {DEADLINE_DAY} do mês seguinte."],
+        [f"Período de apuração: {m}/{y}", f"Base legal: {report['legal_basis']}", report["obligation"]["text"]],
         body,
         [report["disclaimer"], *report["notes"][1:]],
     )
