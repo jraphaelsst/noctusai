@@ -1769,6 +1769,23 @@
    "telemetry": "cli exit wrapper -> guard-events.ndjson",
    "remediation": "NOC-REMEDIATE[gate-wall]: construction leg missing; owner to ship (see pattern wall table)"
   },
+  "keeper:check-orchestrator-inline-over-cutoff": {
+   "mechanism": "tool:noctus.dev.release_steward action=request (inline_reason/inline_note, measured at delivery) + branch_pointer update",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: inline-agent branches (self-branch|tech-lead|orchestrator) delivered on/after 2026-11-07 that change >=100 LoC or >=3 files must carry a closed-set inline_reason + note on the branch-tree pointer; otherwise warn naming the specialists to dispatch. Never blocks (shadow).",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": {
+    "since": "2026-11-07",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "Owner restatement 2026-11-07 (maestro dispatches via .claude/agents); KB § PATTERNS/architect/parallelization-first-orchestration.md (Enforcement) + Team Topologies (orchestrator as enabling team, not a stream-aligned builder)",
+   "wired_in": [
+    "pre-push"
+   ]
+  },
   "keeper:check-org-identity-function-parity": {
    "severity": "",
    "kind": "keeper",
@@ -3015,6 +3032,18 @@
    "branch": "feat/keeper-motion-import-boundary",
    "gates": [
     "keeper:check-motion-import-boundary"
+   ]
+  },
+  {
+   "id": "D19",
+   "decision": "The orchestrator conducts, specialists build: an inline-agent delivery over the cutoff (>=100 LoC or >=3 files) must state a closed-set inline_reason, else it is warned and counted; advisor work (research, legal/tax, design, security) is dispatched as read-only Agent calls",
+   "home": "KB § PATTERNS/architect/parallelization-first-orchestration.md (Enforcement)",
+   "construction": "tool:noctus.dev.release_steward action=request (measures the delivery; inline_reason + inline_note recorded on the branch-tree pointer via branch_pointer update)",
+   "gate": "keeper:check-orchestrator-inline-over-cutoff",
+   "telemetry": "auto-improvement drift rows orchestrator_inline_over_cutoff:<branch> (self-closing on inline_reason_recorded) + gate_alignment walls",
+   "branch": "feat/orchestrator-inline-cutoff-gate",
+   "gates": [
+    "keeper:check-orchestrator-inline-over-cutoff"
    ]
   }
  ]
