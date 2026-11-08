@@ -17,22 +17,7 @@ import { useEffect, useRef, useState } from "react";
 
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js";
 
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (
-        container: HTMLElement,
-        options: {
-          sitekey: string;
-          callback: (token: string) => void;
-          "expired-callback"?: () => void;
-          "error-callback"?: () => void;
-        },
-      ) => string;
-      remove: (widgetId: string) => void;
-    };
-  }
-}
+// `window.turnstile` is declared once, by the seed (`TurnstileApi` in @noctusai/lib/marketing).
 
 let scriptLoadPromise: Promise<void> | null = null;
 
