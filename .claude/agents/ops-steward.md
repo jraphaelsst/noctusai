@@ -48,4 +48,4 @@ ITIL-lite practice map (event → incident → problem → change) §1 · SLO he
 `KB § PATTERNS/devops/owner-operations.md` (operating model, autonomy levels, ledger) · `KB § PATTERNS/devops/ops-craft-canon.md` (ops craft canon) · `KB § PATTERNS/common/owner-questionnaire.md` (owner-ask taxonomy).
 
 ## Composes-with
-skill `noc-daily-ops` · skill `noc-hygiene` · skill `noc-container-debug` · agent `devops-engineer` (L2 fixes) · `noctus.dev.harness_status` · core admin Operação page.
+skill `noc-daily-ops` (incl. the fiscal-parameters step → skill `noc-tax-params`) · skill `noc-hygiene` · skill `noc-container-debug` · agent `devops-engineer` (L2 fixes) · `noctus.dev.harness_status` · core admin Operação page.

@@ -1173,6 +1173,24 @@ if [[ -n "$STAGED_MOTION" ]] && have_py; then
         echo "[pre-commit] WARNING (shadow): MOTION-IMPORT-BOUNDARY — import the organ/primitive from @noctusai/lib/marketing instead of motion/framer-motion directly (the provider carries reduced-motion). See KB § PATTERNS/frontend/marketing-organs-and-motion.md." >&2
     fi
 fi
+# ─── 6e-quinquies-quater-ter-ter. Tax-parameter registry gates (warn-first shadow, diff-scoped; promote to blocking after >=7 days) ──────────────
+# Keepers `check_finance_params_schema` + `check_tax_canon_no_inline_params` (2026-11-07). Both judge the DIFF only
+# (staleness by the calendar is NEVER a gate: it is the report tool `finance_params_staleness`, rolled into
+# noc-daily-ops). Construction leg: skill `noc-tax-params`. KB § PATTERNS/finance/br-tax-advisor-canon.md.
+STAGED_FPARAMS=$(git diff --cached --name-only 2>/dev/null | grep -E '^seed/lib/backend/noctusai_lib/domain/finance/params/[^/]+\.(yaml|py)$' || true)
+if [[ -n "$STAGED_FPARAMS" ]] && have_py; then
+    echo "[pre-commit] tax-parameter registry staged — loading it with the real loader..."
+    if ! "$PY" "$CLI" --check-finance-params-schema --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow): FINANCE-PARAMS-SCHEMA — the registry does not load; fix the row it names (skill noc-tax-params)." >&2
+    fi
+fi
+STAGED_TAXCANON=$(git diff --cached --name-only 2>/dev/null | grep -E '^(KNOWLEDGE-BASE/CONTEXT/PATTERNS/finance/br-tax-advisor-canon\.md|seed/lib/backend/noctusai_lib/domain/finance/params/[^/]+\.yaml)$' || true)
+if [[ -n "$STAGED_TAXCANON" ]] && have_py; then
+    echo "[pre-commit] tax canon / registry staged — checking the canon does not retype registry values..."
+    if ! "$PY" "$CLI" --check-tax-canon-no-inline-params --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow): TAX-CANON-INLINE-PARAMS — cite the registry key in backticks next to the value (or read it from the registry); never retype it." >&2
+    fi
+fi
 # ─── 6e-quinquies-quater-quater. Stale-after-write gate (blocking) ─────────────
 # Keepers `check_mutation_family_write` + `check_job_start_without_handoff` (2026-10-24): a raw
 # setQueryData that never refreshes its key's derived reads (F88), and a job-starting write that never

@@ -25960,6 +25960,171 @@ def check_findings_ledger_visibility(repo_root: Path | None = None) -> list[dict
     return out
 
 
+# ---------------------------------------------------------------------------
+# Tax-parameter registry keepers (2026-11-07) -- the backstop leg of the build triad whose
+# construction leg is skill `noc-tax-params` and whose telemetry is `noctus.dev.finance_params_staleness`.
+#
+#   check_finance_params_schema        loads the registry with its REAL loader (no re-implemented schema) and
+#                                       reports any load error; also refuses a stray *.yaml the loader would
+#                                       silently ignore. Judges the DIFF, so blocking is fair.
+#   check_tax_canon_no_inline_params   the tax canon doc must not retype a registry value: a percentage or BRL
+#                                       literal equal to a registry value must sit on a line that names its
+#                                       registry key in backticks. Shrink-only ratchet baseline.
+#
+# Calendar staleness is NEVER a keeper (it must not block unrelated work): that is the report tool's job.
+# ---------------------------------------------------------------------------
+
+_FIN_PARAMS_REL = "seed/lib/backend/noctusai_lib/domain/finance/params"
+_TAX_CANON_REL = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/finance/br-tax-advisor-canon.md"
+_TAX_CANON_BASELINE_REL = "mcp/noctusai/tests/tax_canon_inline_params_baseline.json"
+_TAX_CANON_ALLOW_RE = re.compile(r"<!--\s*noc-allow:\s*tax-literal\s*[—-]\s*\S.*?-->")
+_TAX_PCT_RE = re.compile(r"(?<![\w.,])(\d{1,3}(?:[.,]\d+)?)\s?%")
+_TAX_BRL_RE = re.compile(r"R\$\s?(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d+)?)(\s+(?:mil|milh[õo]es|milh[ãa]o))?", re.I)
+_TAX_KEY_RE = re.compile(r"`([a-z_]+(?:\.[a-z0-9_]+)+)`")
+
+
+def check_finance_params_schema(repo_root: Path | None = None) -> list[dict]:
+    """Keeper: the tax-parameter registry must load with its real loader (schema, overlapping vigencia,
+    float value, especialista <2 fonte_url, future verificado_em). Return shape:
+    [{"file", "issue", "severity"}]. Not-staged gating lives in pre-commit; a tree with no registry => []."""
+    from datetime import date as _date
+    from tools.noctus.dev.finance_params_staleness import load_registry_module, PARAMS_REL
+
+    root = repo_root or REPO_ROOT
+    pdir = root / PARAMS_REL
+    if not (pdir / "registry.py").is_file():
+        return []
+    issues: list[dict] = []
+    try:
+        mod = load_registry_module(root)
+        known = set(mod.FAMILIES) | {"_policy"}
+        for f in sorted(pdir.glob("*.yaml")):
+            if f.stem not in known:
+                issues.append({"file": f"{PARAMS_REL}/{f.name}", "severity": "high",
+                               "issue": f"{f.name} is not a known family ({sorted(mod.FAMILIES)}) so the loader would "
+                                        "silently ignore it; add it to FAMILIES in registry.py or fix the name"})
+        mod.load_registry(pdir, today=_date.today())
+    except Exception as exc:  # the loader's own message names file + key
+        issues.append({"file": PARAMS_REL, "severity": "high", "issue": f"registry does not load: {exc}"})
+    return issues
+
+
+def _tax_registry_literals(root: Path) -> dict[str, set[str]]:
+    """{canonical literal -> {registry keys}} for pct/ratio/brl_centavos rows ('pct:28', 'brl:36000000')."""
+    from decimal import Decimal, InvalidOperation
+    from datetime import date as _date
+    from tools.noctus.dev.finance_params_staleness import load_registry_module, PARAMS_REL
+
+    mod = load_registry_module(root)
+    reg = mod.load_registry(root / PARAMS_REL, today=_date.today())
+    out: dict[str, set[str]] = {}
+    for r in reg.rows:
+        try:
+            if r.unit == "pct":
+                lit = f"pct:{Decimal(str(r.value)).normalize():f}"
+            elif r.unit == "ratio":
+                lit = f"pct:{(Decimal(str(r.value)) * 100).normalize():f}"
+            elif r.unit == "brl_centavos":
+                lit = f"brl:{int(r.value)}"
+            elif r.unit == "brl":  # reais as a Decimal string (unit added after slice A)
+                lit = f"brl:{int(Decimal(str(r.value)) * 100)}"
+            else:
+                continue
+        except (InvalidOperation, ValueError, TypeError):
+            continue
+        out.setdefault(lit, set()).add(r.key)
+    return out
+
+
+def _tax_line_literals(line: str) -> list[tuple[str, str]]:
+    """[(canonical literal, as-written)] for every percentage / BRL amount on a canon line."""
+    from decimal import Decimal, InvalidOperation
+
+    found: list[tuple[str, str]] = []
+    for m in _TAX_PCT_RE.finditer(line):
+        raw = m.group(1)
+        try:
+            d = Decimal(raw.replace(".", "").replace(",", ".")) if "," in raw else Decimal(raw)
+        except InvalidOperation:
+            continue
+        found.append((f"pct:{d.normalize():f}", m.group(0)))
+    for m in _TAX_BRL_RE.finditer(line):
+        raw, mult = m.group(1), (m.group(2) or "").strip().lower()
+        try:
+            d = Decimal(raw.replace(".", "").replace(",", ".")) if ("," in raw or "." in raw) else Decimal(raw)
+        except InvalidOperation:
+            continue
+        if mult == "mil":
+            d *= 1000
+        elif mult.startswith("milh"):
+            d *= 1_000_000
+        found.append((f"brl:{int(d * 100)}", m.group(0).strip()))
+    return found
+
+
+def _tax_canon_findings(root: Path) -> list[dict]:
+    path = root / _TAX_CANON_REL
+    if not path.is_file():
+        return []
+    registry = _tax_registry_literals(root)
+    findings: list[dict] = []
+    in_fence = False
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or _TAX_CANON_ALLOW_RE.search(line):
+            continue
+        keys_on_line = set(_TAX_KEY_RE.findall(line))
+        for canon, shown in _tax_line_literals(line):
+            owners = registry.get(canon)
+            if not owners or (owners & keys_on_line):
+                continue
+            sig = hashlib.sha256(f"{canon}|{' '.join(line.split())}".encode()).hexdigest()[:12]
+            if any(f["sig"] == sig for f in findings):
+                continue  # the same literal twice on one line is one finding
+            findings.append({"file": f"{_TAX_CANON_REL}:{n}", "severity": "high", "sig": sig,
+                             "issue": f"'{shown}' equals the registry value of {sorted(owners)}: cite the key in backticks "
+                                      f"(e.g. `{sorted(owners)[0]}`) on this line, or read the value from the registry"})
+    return findings
+
+
+def write_tax_canon_baseline(mode: str, root: Path | None = None) -> dict:
+    """Ratchet: ``init`` snapshots current findings (only if no baseline); ``shrink`` drops fixed entries. Never grows."""
+    root = root or REPO_ROOT
+    p = root / _TAX_CANON_BASELINE_REL
+    cur = {f["sig"] for f in _tax_canon_findings(root)}
+    old = set(json.loads(p.read_text())["signatures"]) if p.exists() else None
+    if mode == "init":
+        if old is not None:
+            return {"ok": False, "error": "baseline exists; use shrink (the ratchet never grows)"}
+        new = cur
+    elif mode == "shrink":
+        if old is None:
+            return {"ok": False, "error": "no baseline; use init"}
+        new = old & cur
+    else:
+        return {"ok": False, "error": f"mode must be init|shrink; got {mode!r}"}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"_note": "Shrink-only ratchet: pre-existing inline tax literals in br-tax-advisor-canon.md. "
+                             "Fix a line then run --check-tax-canon-no-inline-params --tax-canon-baseline shrink. Never edit by hand.",
+                             "signatures": sorted(new)}, indent=1) + "\n")
+    return {"ok": True, "mode": mode, "entries": len(new)}
+
+
+def check_tax_canon_no_inline_params(repo_root: Path | None = None) -> list[dict]:
+    """Keeper: the tax canon must not retype a registry value (a % or R$ literal equal to a registry value needs
+    its registry key in backticks on the same line). Findings already in the shrink-only baseline are tolerated."""
+    root = repo_root or REPO_ROOT
+    try:
+        findings = _tax_canon_findings(root)
+    except Exception as exc:  # unmeasurable is explicit, never a silent pass
+        return [{"file": _TAX_CANON_REL, "severity": "high", "issue": f"cannot compare canon to registry: {exc}"}]
+    bp = root / _TAX_CANON_BASELINE_REL
+    base = set(json.loads(bp.read_text())["signatures"]) if bp.exists() else set()
+    return [{k: v for k, v in f.items() if k != "sig"} for f in findings if f["sig"] not in base]
+
+
 def register(server) -> None:
     desc_validate = "Check seed compliance for all products. Returns score 0-100."
 
