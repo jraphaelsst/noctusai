@@ -4,6 +4,7 @@
     "012_finance.sql": "bc57e6e8ce00df4cdb9acc449a24c5a98bb6bb91b2499a7a96cb084d2e046f2b",
     "013_status_pagina_financeiro.sql": "1b76cfb14284e59829cd47047d046ba60f7e8ef11e106c46e182604f23613b40",
     "014_status_pagina_configuracoes.sql": "ee4f6cd6839e2c8ee40c83a5fa1a3f0c1a92a427750db1ebef60bc41f6a7d956",
-    "015_finance_rev2.sql": "8683e6380c0f36d25ff36fd95b93a0f69710d32538fa96e6c23fc2af2cec098f"
+    "015_finance_rev2.sql": "8683e6380c0f36d25ff36fd95b93a0f69710d32538fa96e6c23fc2af2cec098f",
+    "016_finance_service_only.sql": "760934f2e2497cd53961a40d0430af7ac5908d28a00a1048edb308fe43563029"
   }
 }
