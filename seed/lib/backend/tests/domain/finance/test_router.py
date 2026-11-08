@@ -138,6 +138,38 @@ def test_entries_filters_via_query_string(h):
     assert call(h, "GET", f"{P}/entries?overdue=true", h.staff()).status_code == 200
 
 
+def test_entries_source_filter_in_the_query_so_pagination_and_totals_hold(h):
+    mk_entry(h, description="Manual 1")
+    mk_entry(h, description="Manual 2")
+    mk_entry(h, description="Integrada", source="external", source_ref="ext-1")
+    mk_entry(h, description="Parcelada", installments=2, amount_cents=1000)
+
+    def listing(qs):
+        r = call(h, "GET", f"{P}/entries{qs}", h.staff())
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    only = listing("?source=external")
+    assert [e["description"] for e in only["data"]] == ["Integrada"] and only["pagination"]["total"] == 1
+    many = listing("?source=external&source=installment")  # repeated param = any of
+    assert many["pagination"]["total"] == 3 and {e["source"] for e in many["data"]} == {"external", "installment"}
+    paged = listing("?source=manual&page_size=1&page=2")  # total counts the filtered set, not the page
+    assert paged["pagination"]["total"] == 2 and len(paged["data"]) == 1
+
+
+def test_entries_unknown_source_is_a_typed_422_never_ignored(h):
+    mk_entry(h, description="Venda")
+    r = call(h, "GET", f"{P}/entries?source=manual&source=nope", h.staff())
+    assert r.status_code == 422
+    assert "Origem inválida" in r.text and "origem_invalida" in r.text
+
+
+def test_entries_without_source_is_todays_behaviour(h):
+    mk_entry(h, description="A")
+    mk_entry(h, description="B", source="external", source_ref="ext-9")
+    assert call(h, "GET", f"{P}/entries", h.staff()).json()["pagination"]["total"] == 2
+
+
 # ── LGPD masking ──
 
 
