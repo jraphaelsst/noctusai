@@ -8,7 +8,7 @@
  */
 import {
   Activity, BarChart3, Brain, Building2, Coins, CreditCard, FileText, Filter, Gauge, Globe,
-  KeyRound, Landmark, LayoutDashboard, LogOut, MessageSquare, Package, PackageOpen, Palette, Plug,
+  KeyRound, Landmark, LayoutDashboard, MessageSquare, Package, PackageOpen, Palette, Plug,
   Search, Settings, ShieldCheck, Users, Wallet, Webhook, ClipboardList, Zap, GitBranch,
   Share2, Briefcase, Sparkles, FileCheck,
 } from 'lucide-react';
@@ -83,7 +83,6 @@ const PLATFORM_GROUPS: NavGroup[] = [
     icon: Settings,
     items: [
       { name: 'Gerais', href: '/admin/settings', icon: Settings },
-      { name: 'Saída da sessão', href: '/admin/logout-behavior', icon: LogOut },
       { name: 'Segurança', href: '/security', icon: ShieldCheck, badge: '↗' },
     ],
   },
