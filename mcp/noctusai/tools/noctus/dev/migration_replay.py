@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from settings import REPO_ROOT  # noqa: E402  (path constants)
+from workspace import resolve_caller_root  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +311,45 @@ def format_report(r: dict) -> str:
     return "\n".join(lines)
 
 
+def replay_for_caller(
+    products: list[str] | None = None,
+    paths: list[str] | None = None,
+    *,
+    source: str = "worktree",
+    base: str | None = None,
+    worktree_path: str | None = None,
+    toolkit_root: Path | str | None = None,
+    resolve_root: Any = resolve_caller_root,
+    node_bin: str | None = None,
+) -> dict[str, Any]:
+    """The MCP entry: replay the CALLER's tree, never silently the server's.
+
+    The MCP server boots with one fixed cwd (the primary checkout) and is never
+    told the caller's, so a worktree's new migration files are invisible unless
+    ``worktree_path`` pins the tree (``workspace.resolve_caller_root`` contract,
+    the same one ``migrate_product`` / ``gate_sweep`` use). Without it the tree
+    is the server's own; the result then says so (``resolved_root`` +
+    ``warnings``) because a green about the wrong tree reads as a green about
+    yours. ``resolve_root`` / ``toolkit_root`` / ``node_bin`` are test seams.
+    """
+    default_root = Path(toolkit_root) if toolkit_root else Path(REPO_ROOT)
+    warnings: list[str] = []
+    try:
+        root = Path(resolve_root(worktree_path)) if worktree_path else default_root
+    except ValueError as exc:
+        return {"status": "inconclusive", "products": [], "error": str(exc),
+                "resolved_root": None, "warnings": warnings}
+    if not worktree_path:
+        warnings.append(
+            f"no worktree_path: replayed the SERVER's tree ({root}). Migration files that exist only "
+            "in your worktree were NOT measured -- pass worktree_path=<your worktree root>."
+        )
+    if base:
+        paths = (paths or []) + changed_migration_paths(root, base)
+    result = migration_replay(products, paths, source=source, root=root, node_bin=node_bin)
+    return {**result, "resolved_root": str(root), "warnings": warnings}
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.migration_replay",
@@ -322,7 +362,7 @@ def register(server) -> None:
             "file like migrate_product does, then a SECOND time (idempotency). "
             "Per-product fixtures insert prod-shaped rows before a named file. "
             "status: green | red | inconclusive (harness could not measure — never green). "
-            "`source`: worktree | index | <sha>. KB § PATTERNS/backend/migration-chain-replay.md."
+            "`source`: worktree | index | <sha>. `worktree_path`: replay THAT tree (the caller's worktree); omitted => the server's own tree, flagged in `warnings`/`resolved_root`. KB § PATTERNS/backend/migration-chain-replay.md."
         ),
     )
     def _migration_replay(
@@ -330,11 +370,11 @@ def register(server) -> None:
         paths: list[str] | None = None,
         source: str = "worktree",
         base: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
-        root = _root(None)
-        if base:
-            paths = (paths or []) + changed_migration_paths(root, base)
-        return migration_replay(products, paths, source=source, root=root)
+        return replay_for_caller(
+            products, paths, source=source, base=base, worktree_path=worktree_path,
+        )
 
 
 __all__ = [
@@ -346,4 +386,5 @@ __all__ = [
     "migration_replay",
     "products_for_paths",
     "register",
+    "replay_for_caller",
 ]

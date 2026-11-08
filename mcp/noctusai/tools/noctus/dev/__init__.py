@@ -91,6 +91,7 @@ def register_all(server) -> None:
     from . import ensure_product_url_roster
     from . import ensure_schema_exposure
     from . import check_storage_no_public_buckets
+    from . import projection_reconcile
     from . import lgpd
     from . import master_prompts
     from . import merge_debt
@@ -258,6 +259,7 @@ def register_all(server) -> None:
     ensure_product_url_roster.register(server)
     ensure_schema_exposure.register(server)
     check_storage_no_public_buckets.register(server)
+    projection_reconcile.register(server)
     lgpd.register(server)
     master_prompts.register(server)
     merge_debt.register(server)

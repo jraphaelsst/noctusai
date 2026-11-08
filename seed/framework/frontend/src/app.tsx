@@ -14,6 +14,7 @@ import { OrgScopeBoundary, OrgScopedQueryClientProvider, getOrgScopedQueryClient
 import { PageSkeleton, BrandProvider, NotificationBell, useNotificationBellMounted, useOrgEntryPending } from "@noctusai/lib/design-system";
 import type { NotificationHooks } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
+import { goToProductLanding } from "./product-landing";
 import { SemAcessoPage } from "./pages/SemAcessoPage";
 import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
 import { PrivacyPolicyPage } from "./pages/consent/PrivacyPolicyPage";
@@ -458,7 +459,7 @@ export function createProductApp(config: ProductAppConfig) {
                   try {
                     await supabase?.auth.signOut();
                   } finally {
-                    window.location.assign("/login");
+                    goToProductLanding();
                   }
                 }}
               />

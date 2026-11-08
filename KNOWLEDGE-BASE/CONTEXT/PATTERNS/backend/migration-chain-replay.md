@@ -52,6 +52,13 @@ regression `test_comment_before_begin_is_still_transaction_control` +
 - **CI** (`commit-range-keepers` job): the same check over the push/PR range
   (`--migration-replay-base`), after `npm ci` of the pinned PGlite. Here
   inconclusive FAILS: CI is where the measurement is guaranteed.
+- **MCP (`noctus.dev.migration_replay`) measures the tree you name.** The server's cwd is fixed
+  (the primary checkout) and the caller's is never transmitted, so a worktree's new migration
+  files are invisible unless `worktree_path=<worktree root>` is passed (`replay_for_caller`,
+  `workspace.resolve_caller_root`). Omitted => the server's tree is replayed AND the result says
+  so (`resolved_root` + a `warnings` entry): a green about the wrong tree reads as a green about
+  yours. An invalid `worktree_path` is `inconclusive`, never green. The CLI run from inside the
+  worktree always measures that worktree. Tests: `test_replay_for_caller_*`.
 - **`gate_sweep`** maps every migration/config path to a `migration_replay` gate.
   `migration_replay: INCONCLUSIVE` is a registered harness signature.
 

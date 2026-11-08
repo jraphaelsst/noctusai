@@ -475,7 +475,11 @@ def ast_identical(old_source: str | None, new_source: str) -> bool:
         return False
     try:
         return ast.dump(ast.parse(old_source)) == ast.dump(ast.parse(new_source))
-    except SyntaxError:
+    except (SyntaxError, RecursionError):
+        # RecursionError: `cli.py`'s ~500-branch `elif` dispatch nests If nodes
+        # past the recursion limit inside `ast.dump` (2026-11-07, every cli.py
+        # change crashed gate_sweep). "Not identical" is the conservative
+        # answer: no narrowing, every importing test runs.
         return False
 
 

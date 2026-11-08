@@ -21,9 +21,11 @@ export interface EntriesTableProps {
   direction?: EntryDirection;
   isAdmin?: boolean;
   pageSize?: number;
+  /** Opt-in (default off = today's table): an "Origem" column showing how each entry got into the books. */
+  showOrigin?: boolean;
 }
 
-export function EntriesTable({ hooks, direction, isAdmin = false, pageSize = 20 }: EntriesTableProps) {
+export function EntriesTable({ hooks, direction, isAdmin = false, pageSize = 20, showOrigin = false }: EntriesTableProps) {
   const [dirFilter, setDirFilter] = React.useState<EntryDirection | ''>('');
   const [status, setStatus] = React.useState<EntryStatus | ''>('');
   const [overdue, setOverdue] = React.useState(false);
@@ -74,6 +76,7 @@ export function EntriesTable({ hooks, direction, isAdmin = false, pageSize = 20 
             <th className="p-2">{t('entry.due_date')}</th>
             <th className="p-2">{t('entry.description')}</th>
             <th className="p-2">{t('entry.category')}</th>
+            {showOrigin ? <th className="p-2">{t('entry.origin')}</th> : null}
             <th className="p-2 text-right">{t('entry.amount')}</th>
             <th className="p-2 text-right">{t('entry.remaining')}</th>
             <th className="p-2">{t('entry.status')}</th>
@@ -94,6 +97,7 @@ export function EntriesTable({ hooks, direction, isAdmin = false, pageSize = 20 
                   {e.installment_n && e.installment_total ? <div className="text-xs text-muted-foreground">{t('entry.installment')} {e.installment_n}/{e.installment_total}</div> : null}
                 </td>
                 <td className="p-2">{catName(e.category_id)}</td>
+                {showOrigin ? <td className="p-2 whitespace-nowrap">{t(`entry_source.${e.source}`)}</td> : null}
                 <td className="p-2 text-right whitespace-nowrap">{formatCents(e.amount_cents)}</td>
                 <td className="p-2 text-right whitespace-nowrap">{formatCents(remainingCents(e))}</td>
                 <td className="p-2"><EntryStatusChip status={e.status} overdue={e.overdue} /></td>

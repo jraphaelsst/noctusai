@@ -506,6 +506,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deploy-image-skip-compose-drift-check", action="store_true", help="With --deploy-image: bypass the VPS compose-drift precheck (VPS checkout behind the image's deploy/fleet/) — run noctus.dev.deploy_pull instead; recorded in the result.")
     parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; this mirrors the MCP tool's own allow_stale_toolkit escape hatch for a human invoking the CLI directly against a long-lived local checkout). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
+    parser.add_argument("--projection-reconcile", action="store_true", help="READ-ONLY: fold each registered append-only log and diff it against its stored state row (projection check). consistent|drift|inconclusive|skipped per pair; exit 0 only when every measured pair is consistent. MCP: noctus.dev.projection_reconcile.")
+    parser.add_argument("--projection-reconcile-pairs", default=None, help="With --projection-reconcile: comma-separated pair ids (default: all registered).")
+    parser.add_argument("--projection-reconcile-product", default=None, help="With --projection-reconcile: only pairs of this product slug.")
+    parser.add_argument("--projection-reconcile-sample", type=int, default=5, help="With --projection-reconcile: mismatches sampled per pair (max 50).")
     parser.add_argument("--verify-db-guards", action="store_true", help="Run the behaviour probes proving each declared DB guard refuses what it claims (rollback-only, against prod). Transport failures are retried automatically; any that still fail come back status='unverified_transient' with retry_probe_ids. MCP: noctus.dev.verify_db_guards.")
     parser.add_argument("--verify-db-guards-probe-ids", default=None, help="With --verify-db-guards: comma-separated probe ids to run ONLY (the retry button for retry_probe_ids).")
     parser.add_argument("--verify-db-guards-project-ref", default=None, help="With --verify-db-guards: Supabase project ref (default: the platform project).")
@@ -3938,6 +3942,17 @@ def main():
         )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.projection_reconcile:
+        from tools.noctus.dev.projection_reconcile import projection_reconcile
+        raw = getattr(args, "projection_reconcile_pairs", None)
+        r = projection_reconcile(
+            pairs=[p.strip() for p in raw.split(",") if p.strip()] if raw else None,
+            product=args.projection_reconcile_product,
+            sample=args.projection_reconcile_sample,
+        )
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 1)))
 
     elif args.verify_db_guards:
         from tools.noctus.dev.verify_db_guards import verify_db_guards

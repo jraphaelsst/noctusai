@@ -22,7 +22,7 @@ A script outside these three → MCP tool. A carve-out claim without a manifest 
 
 ## 2. Operational shape
 
-1. Default: `noctus.dev.<action>` MCP tool + `cli.py --<flag>` + colocated `Test<CamelCase>` (`feedback_regression_test_the_detector`). Use `scaffold_mcp_tool`.
+1. Default: `noctus.dev.<action>` MCP tool + `cli.py --<flag>` + colocated `Test<CamelCase>` (`feedback_regression_test_the_detector`). Use `scaffold_mcp_tool(target="noctus.dev", name=…, kind=read|write, confirm=True)` — it writes the module + `dev/__init__.py` register line + `cli.py` flag/dispatch + seam test (+ `toolkit_freshness` mapping for a writer) via libcst and refuses an existing name; never hand-copy a sibling tool.
 2. Namespace: extend the existing `noctus.dev.*` (user decision 2026-05-18 — no separate `noctus.ops.*`).
 3. Pre-commit-invoked logic absorbed into MCP, the script kept as a thin `cli.py` shim (so the hook keeps a stable shell entry while the logic is single-sourced + tested).
 4. Already-shell capability with a *plausible* second consumer = bystander MCP-first opportunity → apply-now or defer-with-destination (`KB § 01-PHILOSOPHY.md § Flag MCP-first / AST-first opportunities proactively`).
