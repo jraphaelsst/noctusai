@@ -2,7 +2,7 @@
  * Tests for `<LLMSpendBadge/>` + `useLLMSpend`'s envelope handling.
  *
  * THE BUG THESE PIN (live on social.noctusai.com, 2026-09-01):
- * core answers `GET /api/admin/llm-spend/{org}` with the seed envelope
+ * core answers `GET /api/orgs/{org}/llm-spend` with the seed envelope
  * `{"data": {...}}`, but the hook read the TOP level. Every field came back
  * `undefined` — including `status`, so the badge's `status === 'ok' | 'unset'`
  * early-return never fired. Result: a permanent, content-free warning chip

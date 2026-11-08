@@ -1,6 +1,6 @@
 /**
  * `useLLMSpend` — TanStack query for an org's month-to-date LLM spend
- * status. Backed by `GET /api/admin/llm-spend/{org_id}` (Core endpoint).
+ * status. Backed by `GET /api/orgs/{org_id}/llm-spend` (Core endpoint).
  *
  * **Admin-gated.** The hook only fetches when `isAdmin === true` AND a
  * non-empty `orgId` is present. Non-admins get `data === undefined` and
@@ -40,7 +40,7 @@ export interface LLMSpendResponse {
 export const LLM_SPEND_REFETCH_INTERVAL_MS = 5 * 60_000;
 
 /**
- * `/api/admin/llm-spend/{org_id}` is a **Core-platform** endpoint. On a
+ * `/api/orgs/{org_id}/llm-spend` is a **Core-platform** endpoint. On a
  * standalone (no-Core) deploy or any product that doesn't mount the
  * admin spend router, the endpoint returns a real 404. Swallow it
  * (resolves to `null` → `<LLMSpendBadge/>` null-renders) instead of
@@ -66,7 +66,7 @@ export function useLLMSpend(orgId: string | null | undefined, isAdmin: boolean) 
         // a real `hard_stop` could never render as one. Observed live on
         // social.noctusai.com, 2026-09-01.
         const res = await coreApi.get<LLMSpendResponse | { data: LLMSpendResponse }>(
-          `/api/admin/llm-spend/${encodeURIComponent(orgId!)}`,
+          `/api/orgs/${encodeURIComponent(orgId!)}/llm-spend`,
         );
         const body =
           res && typeof res === 'object' && 'data' in res

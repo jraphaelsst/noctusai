@@ -105,7 +105,7 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
   /**
    * A client pointed at CORE, for the handful of surfaces Core owns.
    *
-   * 🔴 WHY THIS EXISTS. `/api/me/consents` and `/api/admin/llm-spend/{org}`
+   * 🔴 WHY THIS EXISTS. `/api/me/consents` and `/api/orgs/{org}/llm-spend`
    * live on Core, but the seed hooks called them through `api` — which points
    * at the PRODUCT. Both returned 404 on every page load of every product,
    * and the hooks' own 404-swallow (written for standalone deploys where the

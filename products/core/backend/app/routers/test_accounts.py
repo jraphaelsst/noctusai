@@ -29,7 +29,7 @@ from app.rate_limit import limiter
 from app.schemas.test_accounts import TestAccountCreate
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/admin/test-accounts", tags=["Test Accounts"])
+router = APIRouter(prefix="/api/admin/test-accounts", tags=["Test Accounts"], include_in_schema=False)
 
 
 @router.post("")
