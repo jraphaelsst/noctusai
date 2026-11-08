@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agentes</title>
     <meta name="description" content="A minimal NoctusAI product — proves the entire shared stack works" />
+    <!-- No-flash theme for the public landing: verbatim seed THEME_INLINE_SCRIPT (key "nx.theme", the
+         LandingThemeProvider default). Keep in sync with seed/lib/frontend/src/marketing/theme.tsx. -->
+    <script>(function(){try{var k="nx.theme";var s=localStorage.getItem(k);var t=s;if(!t||t==="system"){t=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";}document.documentElement.setAttribute("data-theme",t);document.documentElement.classList.toggle("dark",t==="dark");}catch(e){}})();</script>
   </head>
   <body>
     <div id="root"></div>
