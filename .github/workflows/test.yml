@@ -1445,10 +1445,35 @@ jobs:
           python mcp/noctusai/cli.py --check-workflow-cli-flags-exist
           python mcp/noctusai/cli.py --check-workflow-mcp-requirements-path
 
+      - name: Cache actionlint (keyed by the pinned sha256)
+        id: actionlint-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/actionlint
+          key: actionlint-1.7.12-8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+
       - name: Install actionlint (pinned) and run it with shellcheck
+        # Release tarball + pinned sha256 + retries, never `curl | bash`: one GitHub
+        # blip (a 92-byte body -> "not in gzip format") turned a green candidate red
+        # and cost a bisect leg (s1 ci/actionlint-download-flake, 2026-11-08).
+        # Bump = change the version AND sha256 here and in the cache key above, from the
+        # release's actionlint_<v>_checksums.txt (linux_amd64 row).
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
         run: |
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
-          PATH="$PWD:$PATH" python mcp/noctusai/cli.py --check-workflow-actionlint --actionlint-require
+          dir="$RUNNER_TEMP/actionlint"
+          mkdir -p "$dir"
+          tgz="$dir/actionlint.tar.gz"
+          # A cache hit restores the VERIFIED tarball: no network at all. The checksum
+          # is re-checked either way, so a poisoned cache entry still fails closed.
+          if [ ! -f "$tgz" ]; then
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tgz" \
+              "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          fi
+          echo "${ACTIONLINT_SHA256}  $tgz" | sha256sum -c -
+          tar -xzf "$tgz" -C "$dir" actionlint
+          PATH="$dir:$PATH" python mcp/noctusai/cli.py --check-workflow-actionlint --actionlint-require
 
       - name: Keeper check_lgpd_entry_removal (range)
         run: python mcp/noctusai/cli.py --check-lgpd-entry-removal --lgpd-range "${{ steps.range.outputs.range }}"
