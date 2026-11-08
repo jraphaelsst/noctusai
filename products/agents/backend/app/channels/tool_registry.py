@@ -1313,7 +1313,7 @@ async def registrar_opt_out_do_lead(t: JuliaTurno, motivo_texto: str) -> None:
 
 
 #: Why an opt-out happened, as the turn response reports it to SW (``encerrar`` action, ``opt_out_origem``).
-OPT_OUT_PALAVRA_CHAVE = "palavra_chave"  # the deterministic STOP backstop (an exact PARAR / SAIR / ...)
+OPT_OUT_PALAVRA_CHAVE = "palavra_chave"  # legacy origin value (the deterministic backstop was removed 2026-11-08); kept for old events
 OPT_OUT_PEDIDO_DO_LEAD = "pedido_do_lead"  # the model's ``encerrar(lead_pediu_parar)`` on the lead's words
 TRECHO_OPT_OUT_MAX = 200
 

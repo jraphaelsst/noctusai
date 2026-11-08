@@ -126,7 +126,7 @@ PISO_DE_PADROES: dict[str, tuple[str, ...]] = {
     "padroes_proibidos": PADROES_PROIBIDOS_PISO,
     "alegacao_identidade": PADROES_ALEGACAO_PISO,
 }
-#: Exact (normalised) messages that opt the lead out WITHOUT the model (P1-3); ``opt_out_palavras.parametros.palavras``
+#: Exact (normalised) messages that are a SIGNAL of an opt-out request (a hint to Julia, who decides; owner 2026-11-08); ``opt_out_palavras.parametros.palavras``
 #: extends it.
 PALAVRAS_PARAR_PISO: tuple[str, ...] = (
     "parar", "sair", "stop", "cancelar", "nao quero mais", "pare", "para", "parem", "sai", "chega",

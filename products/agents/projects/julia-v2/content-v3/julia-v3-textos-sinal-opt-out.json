@@ -1,0 +1,8 @@
+{
+ "itens": [
+  {
+   "chave": "contexto.sinal_opt_out",
+   "conteudo": "Sinal do sistema: a mensagem do lead é uma das palavras de pedido para parar. Se ele está pedindo para parar de receber mensagens (regra 10 de \"Obrigações\"), chame `encerrar` com `motivo` `lead_pediu_parar` agora, antes de escrever qualquer texto. Se for outra coisa (por exemplo, um ajuste da busca), siga normalmente."
+  }
+ ]
+}

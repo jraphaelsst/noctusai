@@ -41,10 +41,14 @@ def test_caso_valido(caso):
         k=caso["k"], roteiro=caso["roteiro"], asserts=caso["asserts"], titulo=caso["titulo"], entrada=caso["entrada"])
 
 
+_DESATIVADOS_EM_PROD = frozenset({"mec-spec-ausente-aceita-pessoa-handoff"})
+
+
 @pytest.mark.parametrize("caso", _CASOS, ids=[c["slug"] for c in _CASOS])
 def test_cada_caso_e_deterministico_k2_e_ativo(caso):
     assert caso["k"] == 2
-    assert caso["ativo"] is True
+    # prod keeps this one switched off since 2026-11-06 (a deliberate, owner-visible state); every other case is active
+    assert caso["ativo"] is (caso["slug"] not in _DESATIVADOS_EM_PROD)
     assert caso["asserts"], "a mechanism case is graded only by deterministic asserts"
     assert caso["entrada"] == caso["roteiro"]["turnos"][-1]["lead"]
 

@@ -747,7 +747,7 @@ def insatisfacao_sem_alerta(
     return {"mensagens": n} if n else None
 
 
-# ── deterministic STOP (P1-3) ───────────────────────────────────────────────
+# ── stop words: a SIGNAL for Julia, never an override (owner decision 2026-11-08) ───────────────────────────────────────────────
 
 
 def _forma_exata(texto: str) -> str:

@@ -144,7 +144,7 @@ transcript. Door closed by `_kit.redact` (all connectors); key rotation pending 
 - [ ] One normalizer at intake (Cf/tag/bidi strip, confusables, spaced digits) and the same on output.
 - [ ] Tenant specs typed and validated in `block` mode; allowlists built from validated values; tenant text fenced.
 - [ ] Guard rules floor present in CODE for every instance (forbidden claims, identity claims, price-without-tool, links/contacts), plus a blocking readiness item if absent.
-- [ ] Deterministic STOP backstop; owner notified in-app + WhatsApp with the reason.
+- [ ] Opt-out: the model decides (owner decision 2026-11-08, no deterministic stop-word override); once she calls `encerrar` the stop is immediate and the owner is notified in-app + WhatsApp with the reason. Trade-off: a missed tool call keeps the messages coming, mitigated by opt-out evals at pass^k + the `parada_segura` path (`products/agents/projects/julia-v2/GUARDRAILS.md` P1-3).
 - [ ] One outbound chokepoint with an off switch re-read from the DB at send time; platform-level kill switch.
 - [ ] Tools: least privilege, strict args, org from token, evidence fields; no autonomous browsing in channel mode.
 - [ ] Denial-of-wallet: input caps, per-chat/per-connection limits, admission control, budget reservation, loop breaker.
