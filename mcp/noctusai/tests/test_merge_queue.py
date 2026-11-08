@@ -601,3 +601,63 @@ def test_compose_ejects_with_reason_when_regeneration_fails(world):
     assert applied == [] and head == base
     assert ejected[0]["kind"] == "kb_counts_regen"
     assert "noctusai_lib" in ejected[0]["why"]
+
+
+# ── derived-ledger conflicts re-derived at compose (not ejected) ─────────────
+
+DERIVED = "project-history/access-tiers/findings.ndjson"
+
+
+def _compose_pair(w, first_files, second_files, derived_regen, logs):
+    enqueue(w, "first", first_files, 6000)
+    enqueue(w, "second", second_files, 6100)
+    q = mq.Queue("o/r", run=FakeCI(w["origin"]), run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=w["runner"], log=logs.append, regen=_NOREGEN, derived_regen=derived_regen)
+    q.fetch()
+    wt = str(Path(w["runner"]).parent / "wt")
+    return q, wt, *q.compose(q.entries(), q.dev_sha(), wt)
+
+
+def test_derived_only_conflict_is_rederived_not_ejected(world):
+    calls, logs = [], []
+
+    def regen(wt, ds):
+        calls.append(ds["name"])
+        (Path(wt) / DERIVED).write_text("derived-from-merged-tree\n")
+        return True, ""
+    q, wt, head, applied, ejected = _compose_pair(
+        world, [(DERIVED, "one\n"), ("a.txt", "a\n")], [(DERIVED, "two\n"), ("b.txt", "b\n")], regen, logs)
+    assert [e.slug for e in applied] == ["first", "second"] and not ejected
+    assert calls == ["access-tiers"]
+    assert sh(wt, "git", "show", f"{head}:{DERIVED}") == "derived-from-merged-tree"
+    assert sh(wt, "git", "show", f"{head}:a.txt") == "a" and sh(wt, "git", "show", f"{head}:b.txt") == "b"
+    assert len([m for m in logs if m.startswith("[mq-derived-regen] set=access-tiers slug=second")]) == 1
+
+
+def test_mixed_derived_and_real_conflict_is_still_ejected(world):
+    calls, logs = [], []
+    q, wt, head, applied, ejected = _compose_pair(
+        world, [(DERIVED, "one\n"), ("shared.txt", "one\n")], [(DERIVED, "two\n"), ("shared.txt", "two\n")],
+        lambda wt, ds: (calls.append(1), (True, ""))[1], logs)
+    assert [e.slug for e in applied] == ["first"]
+    assert ejected[0]["slug"] == "second" and ejected[0]["kind"] == "conflict" and "shared.txt" in ejected[0]["why"]
+    assert not calls and not [m for m in logs if "mq-derived-regen" in m]
+
+
+def test_no_conflict_never_invokes_the_derived_regen(world):
+    calls, logs = [], []
+    q, wt, head, applied, ejected = _compose_pair(
+        world, [("a.txt", "a\n")], [("b.txt", "b\n")], lambda wt, ds: (calls.append(1), (True, ""))[1], logs)
+    assert [e.slug for e in applied] == ["first", "second"] and not ejected and not calls
+
+
+def test_derived_regen_failure_ejects_with_its_own_kind(world):
+    q, wt, head, applied, ejected = _compose_pair(
+        world, [(DERIVED, "one\n")], [(DERIVED, "two\n")], lambda wt, ds: (False, "scanner boom"), [])
+    assert [e.slug for e in applied] == ["first"]
+    assert ejected[0]["kind"] == "derived_regen" and "scanner boom" in ejected[0]["why"]
+
+
+def test_derived_set_registry_is_data_and_matches_only_whole_sets():
+    assert mq.derived_set_for([DERIVED, "project-history/access-tiers/FINDINGS.md"])["name"] == "access-tiers"
+    assert mq.derived_set_for([DERIVED, "README"]) is None and mq.derived_set_for([]) is None
