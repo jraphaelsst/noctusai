@@ -428,7 +428,7 @@ class TestInsatisfacaoSemAlerta:
 
 # ── P1-3: the deterministic STOP ────────────────────────────────────────────────────────────────────────
 
-class TestStopBackstop:
+class TestStopSinal:
     @pytest.mark.parametrize("texto", ["PARAR", " parar! ", "Stop", "SAIR.", "cancelar", "NÃO QUERO MAIS", "nao quero mais", "P A R A R",
                                        "pare", "Para", "PAREM!", "Sai.", "chega!", "Chega!!", " sai! "])
     def test_exact_matches(self, texto):
@@ -444,18 +444,46 @@ class TestStopBackstop:
         assert c.palavra_de_parar(["Basta!"], extra) == "basta" and c.palavra_de_parar(["basta"], None) is None
         assert c.palavra_de_parar(["parar"], RegraConfig("opt_out_palavras", ativo=False)) is None
 
-    def test_a_one_word_stop_opts_out_without_the_model(self, chan):
+    def test_a_one_word_stop_no_longer_opts_out_by_itself_julia_decides(self, chan):
+        # owner decision 2026-11-08 ("it shouldn't be deterministic, Julia judges"): the word list is a SIGNAL, never an override
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[say("Posso te ajudar com mais alguma coisa?")]))
+        body = chan.turn(turn_body("PARAR", ids=["a"])).json()
+        assert model_calls(chan) == 1
+        assert body["status"] == "respondido" and chan.lead_ref().opt_out_ativo is False and chan.threads._opt_out_eventos == []
+        assert "opt_out_palavras" not in _violacoes(body)
+
+    def test_julias_encerrar_call_is_the_opt_out_and_everything_after_it_still_happens(self, chan):
+        chan.seed_agent()
+        chan.use_provider(FakeProvider(tool_responses=[
+            step(call("encerrar", motivo="lead_pediu_parar", trecho="PARAR", motivo_texto="Pediu para parar")),
+            say("Tudo bem, não envio mais mensagens.")]))
+        body = chan.turn(turn_body("PARAR", ids=["a"])).json()
+        assert body["status"] == "encerrado" and chan.lead_ref().opt_out_ativo is True
+        acao = body["actions"][0]
+        assert acao["type"] == "encerrar" and acao["motivo"] == "lead_pediu_parar" and acao["lead_opt_out"] is True
+        [ev] = chan.threads._opt_out_eventos
+        assert ev.mensagem_lead == "PARAR" and len(chan.notificacoes.sent) == 1
+        assert any(a["type"] == "opt_out" for a in body["actions"])
+
+    def test_the_stop_word_is_handed_to_julia_as_a_hint_in_the_state_block(self, chan):
+        chan.seed_agent(textos_extra=[TextoInput("contexto.sinal_opt_out", "txt:contexto.sinal_opt_out")])
+        chan.use_provider(FakeProvider(tool_responses=[say("Tudo bem.")]))
+        chan.turn(turn_body("PARAR", ids=["a"]))
+        sistema = " ".join(m.content for x in chan.provider.calls if x["method"] == "chat_with_tools" for m in x["messages"] if m.role == "system")
+        assert "txt:contexto.sinal_opt_out" in sistema
+        chan.provider.calls.clear()
+        chan.use_provider(FakeProvider(tool_responses=[say("Qual o bairro?")]))
+        chan.turn(turn_body("Quero um apartamento", ids=["b"]))
+        sistema = " ".join(m.content for x in chan.provider.calls if x["method"] == "chat_with_tools" for m in x["messages"] if m.role == "system")
+        assert "txt:contexto.sinal_opt_out" not in sistema
+
+    def test_a_stop_word_in_a_conversation_the_controls_refuse_is_no_longer_answered_without_the_model(self, chan):
         chan.seed_agent()
         chan.use_provider(FakeProvider(tool_responses=[]))
         body = chan.turn(turn_body("PARAR", ids=["a"])).json()
-        assert model_calls(chan) == 0
-        assert body["status"] == "encerrado" and body["reply"]["partes"] == ["txt:runtime.confirmacao_opt_out"]
-        acao = body["actions"][0]
-        assert acao["type"] == "encerrar" and acao["motivo"] == "lead_pediu_parar" and acao["lead_opt_out"] is True
-        assert chan.lead_ref().opt_out_ativo is True
-        [ev] = chan.threads._opt_out_eventos
-        assert ev.origem == "agente" and ev.mensagem_lead == "PARAR" and len(chan.notificacoes.sent) == 1
-        assert "opt_out_palavras" in _violacoes(body)
+        assert model_calls(chan) in (0, 1)  # refusal paths decide as before; none of them records an opt-out on its own
+        assert chan.lead_ref().opt_out_ativo is False
 
     def test_a_forwarded_stop_does_not_opt_out(self, chan):
         chan.seed_agent()
@@ -573,16 +601,6 @@ class TestChannelSpecsWriteClosed:
 
 
 class TestOptOutIsReportedToSW:
-    def test_the_stop_backstop_reports_palavra_chave_with_the_leads_word(self, chan):
-        chan.seed_agent()
-        chan.use_provider(FakeProvider(tool_responses=[]))
-        acoes = chan.turn(turn_body("PARAR", ids=["a"])).json()["actions"]
-        assert [a["type"] for a in acoes] == ["encerrar", "opt_out"]
-        assert {k: v for k, v in acoes[1].items() if k != "seq"} == {"type": "opt_out", "motivo": "palavra_chave", "trecho": "parar"}
-        acao = acoes[0]
-        assert acao["type"] == "encerrar" and acao["lead_opt_out"] is True
-        assert acao["opt_out_origem"] == "palavra_chave" and acao["trecho"] == "parar"
-
     def test_the_model_encerrar_reports_pedido_do_lead_with_the_trecho(self, chan):
         chan.seed_agent()
         chan.use_provider(FakeProvider(tool_responses=[

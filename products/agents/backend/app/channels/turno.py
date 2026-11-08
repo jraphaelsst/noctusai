@@ -33,15 +33,12 @@ from app.channels.contexto import Dossie, render_contexto_system
 from app.channels import proveniencia as prov
 from app.channels.opt_out import OptOutService
 from app.channels.tool_registry import (
-    MOTIVO_LEAD_PEDIU_PARAR,
     alertar_info_indisponivel,
-    OPT_OUT_PALAVRA_CHAVE,
     JuliaTurno,
     SkillFonte,
     SkillsComSpecs,
     SkillsDaVersao,
     alertar_operacao,
-    aplicar_encerramento,
     executar_handoff,
     finalizar_conclusao,
     tools_ofertaveis,
@@ -401,72 +398,6 @@ def status_do_limite(limite: str) -> str:
 # ── execution ───────────────────────────────────────────────────────────────
 
 
-async def _parar_pelo_lead(turno: JuliaTurno, palavra: str) -> _Tentativa:
-    """The STOP backstop (P1-3): end the participant and record the lead-wide opt-out EXACTLY as the ``encerrar`` tool
-    does (one implementation), and answer with the standard confirmation (a DB text). No model call."""
-    await aplicar_encerramento(
-        turno, MOTIVO_LEAD_PEDIU_PARAR, opt_out=True, motivo_texto=f'"{palavra}"', origem_opt_out=OPT_OUT_PALAVRA_CHAVE,
-        trecho=palavra)
-    confirmacao = turno.conteudo.texto("runtime.confirmacao_opt_out").strip()
-    if not confirmacao:  # the opt-out stands; a missing confirmation is seen, never invented in code
-        logger.error("agents.channel.opt_out.confirmacao_ausente thread_id=%s", turno.thread_id)
-    return _Tentativa(textos=[confirmacao] if confirmacao else [])
-
-
-#: Statuses of a REFUSED turn on which a lead's stop word is still honoured (the opt-out is consent withdrawal, valid in
-#: every conversation state): ``lead_opt_out`` already is one, ``reengajamento_ignorado`` has no lead words, and
-#: ``controle_indisponivel`` never reaches here (503).
-STATUS_RECUSA_SEM_OPT_OUT = frozenset({"lead_opt_out", "reengajamento_ignorado", "controle_indisponivel"})
-
-
-async def opt_out_em_conversa_recusada(
-    *, svc: ServicosCanal, prep: Preparado | None, agent: Any, org_id: UUID, thread: Any, lote_lead: list[str],
-    participante: Any,
-) -> ResultadoTurno | None:
-    """The STOP word in a conversation the controls REFUSED (paused / handed to a broker / another agent's / agent
-    off / platform kill / draining). The lead's opt-out is honoured in EVERY state, so it runs BEFORE the refusal is
-    answered: the SAME recording as the in-turn backstop (:func:`aplicar_encerramento` -> ``OptOutService``: lead-wide
-    opt-out, every participation ended, the owner's in-app notice) and the SAME ``encerrar`` (``lead_opt_out`` +
-    reason) + ``opt_out`` action shape SW consumes (it alerts the responsible in-app and by WhatsApp with the reason).
-
-    ``None`` = nothing to do (not a stop word / no thread / the rule is off) and the refusal stands exactly as before.
-    The confirmation text is sent when the agent is live (``prep`` present): the lead gets one acknowledgement even
-    though a human owns the chat; with the agent off (``prep`` is ``None``: no compiled content) nothing is sent, the
-    opt-out and the alert still happen. No model call."""
-    if thread is None or thread.lead_ref_id is None:
-        return None
-    try:
-        regra = svc.conformidade.regras(org_id, agent.id).get("opt_out_palavras")
-    except Exception:  # noqa: BLE001 -- an unreadable rule must not hide the code-side floor (PARAR / SAIR / ...)
-        logger.exception("agents.channel.opt_out.regra_ilegivel org_id=%s thread_id=%s", org_id, thread.id)
-        regra = None
-    palavra = conf.palavra_de_parar(lote_lead, regra)
-    if palavra is None:
-        return None
-    conteudo = prep.compiled.conteudo if prep is not None else None
-    turno = JuliaTurno(
-        org_id=org_id, agent_id=agent.id, agent_key=agent.key, thread_id=thread.id, lead_ref_id=thread.lead_ref_id,
-        conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash if prep is not None else "",
-        padrao=None, qual=None, threads=svc.threads, skills=None, sw=None, ident=None, handoff_destino=None,
-        limites=None, mensagens_lead=[], sinais=None, lote_lead=list(lote_lead),
-        opt_out=OptOutService(svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),
-    )
-    await aplicar_encerramento(
-        turno, MOTIVO_LEAD_PEDIU_PARAR, opt_out=True, motivo_texto=f'"{palavra}"', origem_opt_out=OPT_OUT_PALAVRA_CHAVE,
-        trecho=palavra)
-    confirmacao = ""
-    if conteudo is not None:
-        confirmacao = conteudo.texto("runtime.confirmacao_opt_out").strip()
-        if not confirmacao:
-            logger.error("agents.channel.opt_out.confirmacao_ausente thread_id=%s", thread.id)
-    atual = await asyncio.to_thread(svc.threads.get_participante, org_id, thread.id, agent.id)
-    return ResultadoTurno(
-        partes_texto=confirmacao, actions=_numerar(turno.actions), status="encerrado",
-        participante_estado=atual.estado if atual is not None else (participante.estado if participante else None),
-        violacoes=[Violacao("opt_out_palavras", "registrar", {"palavra": palavra})],
-    )
-
-
 def _textos_com_valor(turno: JuliaTurno, ct: Any, estado: Any, lote_lead: list[str], mensagens_lead: list[str]) -> list[str]:
     """Where a figure of a reply may come from (``valor_sem_ferramenta``): this turn's tool results, the lead's own
     words (never a forwarded message or media text), the agent's earlier replies in this thread, the dossier."""
@@ -689,13 +620,13 @@ async def _executar(
             _vazou_texto
             if leak is not None and leak.ativo else None),
     )
-    # deterministic STOP backstop (P1-3): a message that IS exactly "PARAR" / "SAIR" / ... opts the lead out WITHOUT the
-    # model -- it must not depend on the model calling ``encerrar`` (nor be swallowed by the flood breaker below)
-    parada = (
-        conf.palavra_de_parar(lote_lead, regras.get("opt_out_palavras"))
-        if gatilho == "mensagem" and turno.opt_out is not None else None)
+    # Opt-out is JULIA's decision (owner, 2026-11-08: "it shouldn't be deterministic, Julia judges"): she calls ``encerrar``
+    # (lead_pediu_parar) and the system does the rest. The stop-word list is only a SIGNAL: when a message of the batch IS one
+    # of the words, the state block says so (optional text ``contexto.sinal_opt_out``) -- it never ends anything by itself.
+    sinal_parar = (
+        conf.palavra_de_parar(lote_lead, regras.get("opt_out_palavras")) if gatilho == "mensagem" else None)
     # loop / flood / echo breaker (guardrails B5): no model call -- the participant is paused, a person is told
-    if gatilho == "mensagem" and parada is None:
+    if gatilho == "mensagem":
         sinal_loop = await asyncio.to_thread(_loop_detectado, svc, org_id, thread.id, lote_lead, limites)
         if sinal_loop is not None:
             return await _parar_por_loop(svc, turno, prep, agent, org_id, thread, lead_ref_id, sinal_loop)
@@ -720,6 +651,10 @@ async def _executar(
         fuso=(contexto.fuso if contexto is not None else "America/Sao_Paulo"), estado=estado_sw, dossie=dossie,
         tag=tag, fase_testes=fase_testes,
     )
+    if sinal_parar:  # the lead's message looks like an opt-out request: a hint to JULIA, who decides (see above)
+        dica = _texto_opcional(conteudo, "contexto.sinal_opt_out")
+        if dica:
+            contexto_system = f"{contexto_system}\n\n{dica}"
     if nota_caso:  # an eval case's situation lives in the state block, exactly where a real turn's facts live
         contexto_system = f"{contexto_system}\n\n{nota_caso.strip()}"
     ctx = TurnContext(
@@ -738,7 +673,7 @@ async def _executar(
     codigos_da_thread = {e.codigo_imovel.casefold() for e in eventos} | ({campanha.casefold()} if campanha else set())
     tentativas: list[_Tentativa] = []
     bloqueios: list[Violacao] = []
-    if parada is None and turno.specs_faltando:  # the org learns the agent is answering without a required spec
+    if turno.specs_faltando:  # the org learns the agent is answering without a required spec
         await alertar_info_indisponivel(turno, "aviso")
 
     def _avaliar(t: _Tentativa) -> list[Violacao]:
@@ -771,21 +706,17 @@ async def _executar(
     try:
         async with asyncio.timeout(settings.channel_turn_timeout_seconds):
             await publish_event(thread.id, "session.status", {"status": "pensando"}, bus=bus)
-            if parada is not None:
-                t1 = await _parar_pelo_lead(turno, parada)
-                violacoes.append(Violacao("opt_out_palavras", "registrar", {"palavra": parada}))
-            else:
+            t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
+            if turno.parar in PARADAS_PROCEDURAIS:
+                # a procedural / tool slip of the model is never the lead's problem: ONE silent re-run on fresh budgets
+                # (the compliance re-run's twin); only a second slip reaches the settle block below
+                violacoes.append(Violacao("parada_segura", "registrar", {"motivo": turno.parar, "tentativa": 1}))
+                tentativas.append(t1)
+                turno.reiniciar_tentativa()
                 t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
-                if turno.parar in PARADAS_PROCEDURAIS:
-                    # a procedural / tool slip of the model is never the lead's problem: ONE silent re-run on fresh budgets
-                    # (the compliance re-run's twin); only a second slip reaches the settle block below
-                    violacoes.append(Violacao("parada_segura", "registrar", {"motivo": turno.parar, "tentativa": 1}))
-                    tentativas.append(t1)
-                    turno.reiniciar_tentativa()
-                    t1 = await _rodar(runtime, prep.spec, ctx, slot, None)
             tentativas.append(t1)
             violacoes += [Violacao(r, "sinal", d) for r, d in turno.sinais_ferramenta]
-            achados = [] if (turno.parar or parada is not None) else _avaliar(t1)
+            achados = [] if turno.parar else _avaliar(t1)
             bl = conf.violacoes_bloqueantes(achados)
             violacoes += [replace(v, bloqueada=v in bl) for v in achados]
             texto_final = "\n\n".join(x for x in t1.textos if x and x.strip())
@@ -805,7 +736,7 @@ async def _executar(
                     bloqueios = bl2
                 else:
                     texto_final = "\n\n".join(x for x in t2.textos if x and x.strip())
-            if (not texto_final.strip() and not bloqueios and parada is None
+            if (not texto_final.strip() and not bloqueios
                     and not (turno.parar or turno.transferiu or turno.concluiu or turno.encerrou)):
                 # A turn that ends on tool calls with NO message leaves the lead with nothing (the measured "silencio" of
                 # the behaviour suite after sinalizar_alerta / registrar_intencao_visita). The model's slip is never the
@@ -848,7 +779,7 @@ async def _executar(
             texto_final = _texto_opcional(conteudo, "runtime.parada_segura")
     if not texto_final.strip() and turno.encerrou and any(a.get("lead_opt_out") for a in turno.actions):
         # the model ended the lead's opt-out with ``encerrar`` and wrote nothing: the lead still gets the standard
-        # confirmation (the same DB text the deterministic STOP backstop sends), never silence after a stop request
+        # confirmation (the standard DB confirmation of an opt-out), never silence after a stop request
         texto_final = _texto_opcional(conteudo, "runtime.confirmacao_opt_out")
     if turno.campos_substituidos:  # B3.6: a lead-influenced tool argument reproduced the prompt (codes only)
         violacoes.append(Violacao(

@@ -163,6 +163,8 @@ TEXTOS.update({
     )},
     # Julia v3 §12.2: optional label of the "testing phase" state line (no line is rendered while it is blank)
     "contexto.rotulo_fase_testes": _canal("contexto", obrigatoria=False),
+    # a SIGNAL to the model when the lead's message is one of the stop words: Julia decides the opt-out (owner, 2026-11-08)
+    "contexto.sinal_opt_out": _canal("contexto", obrigatoria=False),
     **{f"credito.{k}": _canal("credito") for k in ("pedir", "consentiu", "recusou")},
     "reengajamento.minutos": _canal("reengajamento"),
     "reengajamento.horas": _canal("reengajamento"),

@@ -103,7 +103,7 @@
    "ferramenta": "encerrar",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Encerra o atendimento nesta conversa. Pedido para parar de receber mensagens (\"pare\", \"para\", \"sai\", \"chega\", \"STOP\", \"não me manda mais nada\", em qualquer idioma ou no meio de outra frase): sempre `motivo` `lead_pediu_parar`, com `trecho` e `motivo_texto`. Use também em caso de engano ou spam, e quando ofensa ou assédio continua depois do limite (`invalido`). Antes, uma frase curta de despedida; para um pedido de parar, confirme que não vai mais enviar mensagens. Nunca encerre por pergunta fora do escopo (saúde, emergência, tarefas, outros assuntos): recuse com educação e mantenha a conversa aberta.",
+   "descricao": "Encerra o atendimento nesta conversa. Pedido para parar de receber mensagens (\"pare\", \"para\", \"sai\", \"chega\", \"STOP\", \"não me manda mais nada\", em qualquer idioma ou no meio de outra frase): sempre `motivo` `lead_pediu_parar`, com `trecho` e `motivo_texto`. Use também em caso de engano ou spam, e quando ofensa ou assédio continua depois do limite (`invalido`). Para um pedido de parar, chame esta ferramenta PRIMEIRO, antes de escrever qualquer texto; só depois do resultado, confirme em uma frase que não vai mais enviar mensagens. Nos outros casos, antes, uma frase curta de despedida. Nunca encerre por pergunta fora do escopo (saúde, emergência, tarefas, outros assuntos): recuse com educação e mantenha a conversa aberta.",
    "parametros": {
     "motivo": "Por que encerrar.",
     "trecho": "Obrigatório com lead_pediu_parar: as palavras exatas do lead nesta mensagem pedindo para parar.",
