@@ -115,6 +115,10 @@ class AuthContext(NamedTuple):
             has not filled it). Read via ``noctusai_lib.api.auth.mfa``
             (never decoded ad hoc). Informational until the M2 gate
             consumes it. Appended at the END like ``issuer``.
+        session_product: SSO lifecycle S2. The product slug the Supabase session was MINTED for
+            (registry ``public.sso_product_sessions``); ``None`` for a core-born / unregistered
+            session, a ``pk_*`` token, or mode ``off``. Informational in observe mode; see
+            ``noctusai_lib.api.auth.session_audience``. Appended at the END like ``aal``.
     """
 
     org_id: UUID
@@ -129,6 +133,7 @@ class AuthContext(NamedTuple):
     minted_by: UUID | None = None
     issuer: str | None = None
     aal: str | None = None
+    session_product: str | None = None
 
 
 class SessionTokens(NamedTuple):

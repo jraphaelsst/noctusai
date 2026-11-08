@@ -36,7 +36,7 @@ from app.sso_regime import (
     build_sso_launch_url, new_bind_nonce, origin_same_site, resolve_launch_base, site_of,
     sso_bind_cookie_name, sso_regime, unbound_redeem_allowed,
 )
-from app.services import product_admission, team_memberships
+from app.services import product_admission, product_sessions, team_memberships
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
 SB_FORWARDED_FOR = "Sb-Forwarded-For"
@@ -482,6 +482,7 @@ def _mint_once(email: str, client_ip: str | None):
 
 def _generate_session(
     email: str, org_id: str | None = None, product_slug: str | None = None, client_ip: str | None = None,
+    jti: str | None = None,
 ) -> dict:
     """Generate a FRESH Supabase session for the given user — every call.
 
@@ -524,6 +525,8 @@ def _generate_session(
                 "email": email,
             }
 
+            # S2 registry (observe): never fails the mint -- logs `sso_registry_write_failed`.
+            product_sessions.register_product_session(get_admin_client(), access_token=result["access_token"], user_id=result["user_id"], product_slug=product_slug, jti=jti)
             _log_mint("ok", email, None, product_slug, attempts)
             return result
 
@@ -705,7 +708,7 @@ def sso_session(request: Request, response: Response, body: SSOSessionRequest):
     try:
         session = _generate_session(
             email, org_id, payload.get("product"),
-            client_ip=request.headers.get("CF-Connecting-IP", "").strip() or None,
+            client_ip=request.headers.get("CF-Connecting-IP", "").strip() or None, jti=jti,
         )
     except HTTPException:
         _release_sso_jti(db, jti)
