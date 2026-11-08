@@ -18,6 +18,7 @@ async def main() -> None:
     ap.add_argument("--k", type=int, default=1)
     ap.add_argument("--modelo")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--sem-mundos", action="store_true", help="ignore the repo's per-case `roteiro` (world) overlay")
     a = ap.parse_args()
 
     import app.main  # noqa: F401 -- configures the LLM layer and the stores, as in production
@@ -35,6 +36,16 @@ async def main() -> None:
     casos = [c for c in store.list_cases(definicao.org_id, definicao.id) if c.ativo and c.suite == "comportamento"]
     if a.casos:
         casos = [c for c in casos if c.slug in a.casos.split(",")]
+    if not a.sem_mundos:  # the repo mirror's WORLD (roteiro) wins over the draft store's, so a case can be tried before it is written
+        from dataclasses import replace
+        from pathlib import Path
+
+        mundos = {}
+        for f in (Path(__file__).resolve().parent.parent / "content-v3" / "evals").glob("*.json"):
+            d = json.loads(f.read_text())
+            if isinstance(d, dict) and d.get("slug") and d.get("roteiro"):
+                mundos[d["slug"]] = d["roteiro"]
+        casos = [replace(c, roteiro=mundos[c.slug]) if c.slug in mundos else c for c in casos]
     runner = EvalRunner(
         evals=store, runs=None, definitions=defs, catalog=None, runtime=None, broker=None, judge=LlmJudge(),
         instance_id="local", turn_driver_factory=make_live_eval_driver_factory(), turn_timeout_seconds=300.0)

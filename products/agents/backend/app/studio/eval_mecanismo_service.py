@@ -84,6 +84,11 @@ async def concluir_suite_mecanismo(
         logger.exception("agents.eval.mecanismo_run_crashed org_id=%s run_id=%s", org_id, run_id)
         store.fail_run(org_id, run_id, erro="Falha interna do executor da suíte de mecanismo.")
         raise
+    harness = resultado.erro_de_harness
+    if harness is not None:  # nothing was judged: the run FAILED (a harness error), it is not a 0/N score for the agent
+        logger.error("agents.eval.mecanismo_harness_error org_id=%s run_id=%s %s", org_id, run_id, harness)
+        store.fail_run(org_id, run_id, erro=harness[:300])
+        return resultado
     store.finish_run(org_id, run_id, resultado, driver=driver.tipo)
     return resultado
 
