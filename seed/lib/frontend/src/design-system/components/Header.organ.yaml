@@ -7,7 +7,7 @@ validation_status: emerging
 
 known_facts:
   - "Full-featured header: hamburger toggle (mobile), user HoverCard (avatar/name/role/edit profile/change password), dark/light theme toggle, logout. Products pass user data and callbacks — zero product-specific imports in this component."
-  - "logoutBehavior prop distinguishes 'signout' (actually signs out) vs 'redirect' (navigates to platformUrl without signing out). Since 2026-07-07 the framework product layout uses 'signout' too; 'Voltar ao NoctusAI' is a separate Sidebar control."
+  - "logoutBehavior prop distinguishes 'signout' (actually signs out) vs 'redirect' (navigates to platformUrl without signing out). Since 2026-07-07 the framework product layout uses 'signout' too; 'Voltar ao NoctusAI' is a separate, icon-only Sidebar-footer control (aria-label + title; seed BackToCore, 2026-11-08). A product sign-out lands on the product's OWN landing ('/', seed product-landing.ts), not core's."
   - "logoutScope ('global' default | 'local') declares what onLogout revokes; the sign-out label is DERIVED from it via LOGOUT_LABELS (global → 'Sair de todos os dispositivos'). Callers pass the SAME value their onLogout uses (framework layout: one LOGOUT_SCOPE constant for both signOut({scope}) and the Header). Replaced the free-text logoutLabel prop on 2026-10-09."
   - "actions slot enables product-specific content (e.g. NotificationBell) without forking the component. variant prop ('default' | 'dark') controls the header bar color for products with dark sidebar that extends to the header."
   - "5 import sites from @noctusai/lib/design-system in products (core Layout.tsx + 4 more) plus indirect consumption via createProductLayout — highest explicit import count of the shell trio."

@@ -56,7 +56,8 @@ import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusa
 import { HelpChatBubble } from "@noctusai/lib/components";
 import type { HelpChatBubbleProps } from "@noctusai/lib/components";
 import { toast } from "sonner";
-import { ChevronLeft } from "lucide-react";
+import { BackToCore } from "./components/BackToCore";
+import { goToProductLanding } from "./product-landing";
 import type { LucideIcon } from "lucide-react";
 // Structural (duck-typed) supabase shape — see the note in app.tsx. The layout
 // only touches `.auth` (refresh/signOut/updateUser) and `.from` (usePageStatus),
@@ -264,16 +265,6 @@ const CORE_APP_HOME = env.CORE_APP_HOME;
  */
 const LOGOUT_SCOPE: LogoutScope = "global";
 
-const BackToCore = (
-  <a
-    href={CORE_APP_HOME}
-    className="flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-  >
-    <ChevronLeft className="h-4 w-4 shrink-0" />
-    Voltar ao NoctusAI
-  </a>
-);
-
 // Sentinel passed to `usePageStatus` when there's no real Supabase client
 // (session-auth mode). The query's `enabled` flag is `false` in that case,
 // so TanStack Query never invokes `queryFn` — this object only exists so
@@ -439,7 +430,8 @@ export function createProductLayout(config: ProductLayoutConfig) {
       } else {
         await supabase!.auth.signOut({ scope: LOGOUT_SCOPE });
       }
-      window.location.href = ssoCtx.isSSO ? CORE_URL : "/login";
+      // Own landing, not core's (and not /login): see product-landing.ts.
+      goToProductLanding();
     };
 
     // Profile update — enrichment override wins; otherwise the per-mode
@@ -492,7 +484,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
             navGroups={navGroups}
             storageKey={sidebarStorageSlug(brandTitle)}
             standaloneItems={standaloneItems.length > 0 ? standaloneItems : undefined}
-            footerContent={ssoCtx.isSSO ? BackToCore : undefined}
+            footerContent={ssoCtx.isSSO ? <BackToCore href={CORE_APP_HOME} /> : undefined}
             // 🔴 Fixed 2026-09-28: `onNavigate` was never wired, so picking a
             // nav item on MOBILE left the off-canvas drawer open over the
             // page it had just navigated to (desktop is unaffected — no
