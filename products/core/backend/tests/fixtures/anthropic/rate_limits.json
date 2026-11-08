@@ -1,0 +1,3 @@
+{"data":[{"id":"rl_synthetic","group":{"type":"model_group","id":"rlg_synthetic","display_name":"Claude Test 1.x"},
+ "models":["claude-test-model"],"limits":[{"type":"requests_per_minute","value":1000},{"type":"output_tokens_per_minute","value":80000}]}],
+ "has_more":false,"next_page":null}

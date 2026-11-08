@@ -26,6 +26,9 @@ Jobs (platform clock — `NOCTUS_TIMEZONE`, default America/Sao_Paulo):
 * `core_owner_daily_brief`        — 07:00 daily. Code-only owner brief (no
   LLM): failed/missing routines, LLM spend, cost ledger, fleet, deploy.
   Its own run in `public.scheduler_runs` is the Operação dead-man.
+* `anthropic_usage_snapshot`      — every 6h at :20. Replace-window sync of the Anthropic Admin usage/cost
+  analytics into `ai_anthropic_*` (migration 112). A failure RAISES (run ledger = `error` + admin alert);
+  no key / Individual Org is recorded as `unavailable`, not an error.
 * `core_scheduler_runs_retention` — 04:15 daily. Trims the run ledger
   (ok/skipped after 14 days, error after 90).
 
@@ -46,6 +49,9 @@ from app.database import get_admin_client
 from app.services import billing_automations, fx_service, storage_cost_service
 from app.services.owner_brief_service import run_owner_brief
 from noctusai_lib.domain.scheduler_runs import RUNS_TABLE
+from noctusai_lib.domain.scheduler_runs.ledger import notify_platform_admins
+from app.services.ai_usage.anthropic_client import make_anthropic_client
+from app.services.ai_usage.snapshot import SupabaseSyncStore, run_snapshot
 from noctusai_lib.primitives.timeutil import now_utc
 from app.services.billing_context import BillingContext, build_billing_context
 from app.services.credits.debit import run_debit
@@ -64,6 +70,7 @@ STORAGE_SNAPSHOT_JOB = "core_storage_cost_snapshot"
 CREDITS_DEBIT_JOB = "core_credits_debit"
 OWNER_BRIEF_JOB = "core_owner_daily_brief"
 RUNS_RETENTION_JOB = "core_scheduler_runs_retention"
+ANTHROPIC_USAGE_JOB = "anthropic_usage_snapshot"
 RUNS_RETENTION_OK_DAYS = 14
 RUNS_RETENTION_ERROR_DAYS = 90
 
@@ -166,6 +173,22 @@ async def scheduler_runs_retention_job(db: Optional[Any] = None) -> dict:
     return result
 
 
+def _notify_admins(title: str, message: str, metadata: dict) -> None:
+    notify_platform_admins(get_admin_client(), kind="ai_usage_source_unavailable", title=title, message=message,
+                           metadata=metadata)
+
+
+async def anthropic_usage_snapshot_job(client: Optional[Any] = None, store: Optional[Any] = None) -> dict:
+    """Not wrapped in a catch-all: a failure must reach the run ledger (`error`) and the admin alert."""
+    api = client if client is not None else make_anthropic_client()
+    sync_store = store if store is not None else SupabaseSyncStore(get_admin_client())
+    result = await asyncio.to_thread(
+        lambda: run_snapshot(api, sync_store, today=now_utc().date(), clock=now_utc, notify=_notify_admins)
+    )
+    logger.info("Anthropic usage snapshot: %s", result)
+    return result
+
+
 def configure() -> None:
     """Register every Core job (idempotent — re-registering replaces)."""
     register(
@@ -185,10 +208,13 @@ def configure() -> None:
     register(STORAGE_SNAPSHOT_JOB, storage_cost_snapshot_job, cron="30 2 * * *", misfire_grace_time=3600)
     register(CREDITS_DEBIT_JOB, credits_debit_job, minutes=1, misfire_grace_time=30)
     register(OWNER_BRIEF_JOB, owner_brief_job, cron="0 7 * * *", misfire_grace_time=3 * 3600)
+    register(ANTHROPIC_USAGE_JOB, anthropic_usage_snapshot_job, cron="20 */6 * * *", misfire_grace_time=3 * 3600)
     register(RUNS_RETENTION_JOB, scheduler_runs_retention_job, cron="15 4 * * *", misfire_grace_time=3600)
 
 
 __all__ = [
+    "ANTHROPIC_USAGE_JOB",
+    "anthropic_usage_snapshot_job",
     "AUDIT_LOG_RETENTION_JOB",
     "BILLING_AUTOMATIONS_JOB",
     "CREDITS_DEBIT_JOB",

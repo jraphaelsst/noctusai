@@ -65,6 +65,10 @@ class Settings(ProductSettings):
     # Email (optional — Resend)
     resend_api_key: Optional[str] = None
 
+    # Anthropic Admin API key for the AI-usage snapshot job (env ANTHROPIC_ADMIN_API_KEY). Empty -> the source
+    # reads as unavailable(no_admin_key). Never logged, returned or sent to the FE.
+    anthropic_admin_api_key: str = ""
+
     # Optional Postgres URL for SQLAlchemy-bound flows (audit-hook write side
     # effects for `public.tool_call_audits`). Empty → audit-hook lazy session
     # factory returns None and the audit writer skips with a debug log.

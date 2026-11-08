@@ -1,0 +1,5 @@
+{"data":[{"starting_at":"2026-11-02T00:00:00Z","ending_at":"2026-11-03T00:00:00Z",
+ "group":{"model":"claude-test-model","workspace_id":"wrkspc_synthetic","api_key_id":null,"service_tier":"standard","context_window":null},
+ "usage":{"uncached_input_tokens":1000,"cache_creation":{"ephemeral_1h_input_tokens":10,"ephemeral_5m_input_tokens":200},
+ "cache_read_input_tokens":3000,"output_tokens":500,"total_tokens":4710,"server_tool_use":{"web_search_requests":2},"requests":7}}],
+ "has_more":true,"next_page":"page_synthetic_2","data_refreshed_at":"2026-11-08T10:00:00Z"}

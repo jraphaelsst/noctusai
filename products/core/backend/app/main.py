@@ -28,6 +28,7 @@ from app.routers import credentials as credentials_router
 from app.routers import admin_cache as admin_cache_router
 from app.routers import admin_llm_usage as admin_llm_usage_router
 from app.routers import admin_usage as admin_usage_router
+from app.routers import admin_ai_usage as admin_ai_usage_router
 from app.routers import admin_llm_spend as admin_llm_spend_router
 from app.routers import usage
 from app.routers import users
@@ -134,6 +135,7 @@ app = create_product_app(
         admin_cache_router.router,
         admin_llm_usage_router.router,
         admin_usage_router.router,
+        admin_ai_usage_router.router,
         admin_llm_spend_router.router,
         admin_llm_spend_router.org_router,
         usage.router,
