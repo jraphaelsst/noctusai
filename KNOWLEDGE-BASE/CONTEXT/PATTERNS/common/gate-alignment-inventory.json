@@ -1382,6 +1382,21 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-llm-prompt-from-registry": {
+   "mechanism": "seed/lib/backend/noctusai_lib/integrations/prompt_registry (chamar_ia / chamar_ia_visao / transcrever_ia / prompt_e_modelo; branch feat/agents-plataforma-ia-registro)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: every call through the seed LLM seam (chat_completion*, chat_with_tools, run_tool_loop*, analyze_image*, digest.narrative, create_help_chat_router) or a vendor SDK (messages.create, chat.completions.create, responses.create, images.edit, ClaudeSDKClient) must be fed by noctusai_lib.integrations.prompt_registry; prompt-shaped constants and repo .md system prompts are flagged too. AST-based, shrink-only ratchet baseline (mcp/noctusai/tests/llm_prompt_from_registry_baseline.json); WARN-first shadow for 7 days, pre-push.",
+   "new": true,
+   "declared": "2026-11-08",
+   "shadow": {
+    "since": "2026-11-08",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "Owner rule 2026-11-08: agent prompts are consumed 100% from the database, never from code, to protect them from malicious users; UI maintenance is far easier than code maintenance. KB § PATTERNS/ai/prompts-from-registry.md",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson; --llm-prompt-log files auto-improvement drift rows llm_prompt_not_from_registry:<file> (self-closing via llm_prompt_registry_clean:<file>)"
+  },
   "keeper:check-llm-usage-context-entry": {
    "severity": "",
    "kind": "keeper",
@@ -3187,6 +3202,18 @@
    "branch": "feat/finance-storage-service-only",
    "gates": [
     "keeper:check-storage-service-only-policy"
+   ]
+  },
+  {
+   "id": "D24",
+   "decision": "An agent's prompt is read from the database through the prompt registry, never from code or a repo file; a call to the LLM seam or a vendor SDK that is not fed by the registry is flagged",
+   "home": "KB § PATTERNS/ai/prompts-from-registry.md",
+   "construction": "seed/lib/backend/noctusai_lib/integrations/prompt_registry (chamar_ia / chamar_ia_visao / transcrever_ia / prompt_e_modelo), branch feat/agents-plataforma-ia-registro",
+   "gate": "keeper:check-llm-prompt-from-registry",
+   "telemetry": "gate events (cli wrapper, guard-events) + auto-improvement drift rows llm_prompt_not_from_registry:<file>",
+   "branch": "feat/keeper-llm-prompt-from-registry",
+   "gates": [
+    "keeper:check-llm-prompt-from-registry"
    ]
   }
  ]

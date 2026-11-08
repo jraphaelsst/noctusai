@@ -378,6 +378,19 @@ if [[ -x "$PY_PP" && -f "$CLI_PP" ]]; then
     fi
 fi
 
+# ── llm prompt from registry (WARN-first shadow since 2026-11-08, D24; never blocks) ──────────
+# Owner rule: agent prompts come 100% from the database via noctusai_lib.integrations.prompt_registry, never
+# from code. Flags a NEW LLM call site outside the registry (shrink-only ratchet baseline). --llm-prompt-log
+# files an auto-improvement drift row per flagged file. Promote to blocking only after >=7 days of measured fix_rate.
+if [[ -x "$PY_PP" && -f "$CLI_PP" ]]; then
+    _lp_out="$("$PY_PP" "$CLI_PP" --check-llm-prompt-from-registry --llm-prompt-log 2>&1)" || true
+    echo "[pre-push] $(echo "$_lp_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
+    if [[ "$_lp_out" == *"⚠"* ]]; then
+        echo "[pre-push] WARNING (shadow): LLM-PROMPT-NOT-FROM-REGISTRY — use noctusai_lib.integrations.prompt_registry (chamar_ia / prompt_e_modelo); see KB § PATTERNS/ai/prompts-from-registry.md." >&2
+        echo "$_lp_out" | grep -E '\[warning\]' | head -5 >&2
+    fi
+fi
+
 # ── ledger-drain keeper ─────────────────────────────────────────────────────
 # Branch-independent (it inspects task_branch.py's own structure, not the ref
 # being pushed), so it runs ONCE outside the per-ref loop rather than per-ref.
