@@ -18491,6 +18491,7 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_storage_service_only_policy": "tests/test_storage_service_only_policy_keeper.py",
     "check_redis_client_via_seam": "tests/test_check_redis_client_via_seam.py",
     "check_migration_number_refs_in_tests": "tests/test_check_migration_number_refs_in_tests.py",
+    "check_llm_prompt_from_registry": "tests/test_llm_prompt_from_registry.py",
 }
 
 
@@ -24499,6 +24500,56 @@ def check_orchestrator_inline_over_cutoff(
     if log and findings:
         oic.log_telemetry(findings)
     return [oic.issue_for(f) for f in findings]
+
+
+# ---------------------------------------------------------------------------
+# `check_llm_prompt_from_registry` - owner rule 2026-11-08: agents consume 100% of their prompt from the
+# database (never from code) so malicious users cannot read it, and UI maintenance beats code maintenance.
+# Sanctioned path: noctusai_lib.integrations.prompt_registry. WARN-first shadow (never blocks) with a
+# shrink-only ratchet baseline derived by `--refresh-llm-prompt-from-registry-baseline`.
+# KB § PATTERNS/ai/prompts-from-registry.md.
+# ---------------------------------------------------------------------------
+
+def check_llm_prompt_from_registry(
+    paths: list[str] | None = None, repo_root: Path | None = None, log: bool = False,
+) -> list[dict]:
+    """Every LLM-seam / vendor-SDK call site not fed by the prompt registry, beyond the ratchet baseline
+    (``mcp/noctusai/tests/llm_prompt_from_registry_baseline.json``). A baselined file only fails when its
+    site count GROWS; a new file fails at once. ``paths`` narrows REPORTING (pre-commit/pre-push delta).
+    Severity ``warning`` (shadow). ``log=True`` files one auto-improvement drift row per file."""
+    from tools.noctus.dev import llm_prompt_registry_scan as lps
+
+    root = repo_root or REPO_ROOT
+    baseline = lps.load_baseline(root.joinpath(*lps.BASELINE_REL))
+    only = {p.replace("\\", "/") for p in paths} if paths else None
+    over = lps.over_baseline(root, baseline, only=only)
+    if log and over:
+        lps.log_telemetry(over)
+    issues: list[dict] = []
+    for r in over:
+        rel = r["file"]
+        sites = ", ".join(f"{f['symbol']}@{f['line']}" for f in r["findings"][:4])
+        issues.append({
+            "severity": "warning",
+            "product": rel.split("/")[1] if rel.startswith("products/") else rel.split("/")[0],
+            "file": rel,
+            "issue": (
+                f"{r['count']} LLM prompt site(s) not fed by the registry (baseline {r['allowed']}): {sites}. "
+                "Agent prompts live in the database, never in code: call "
+                "noctusai_lib.integrations.prompt_registry.chamar_ia(chave, messages, ...) "
+                "(chamar_ia_visao / transcrever_ia; prompt_e_modelo(chave) when you need the text, e.g. a seam "
+                f"with tools). {lps.PATTERN_DOC}."
+            ),
+        })
+    return issues
+
+
+def refresh_llm_prompt_from_registry_baseline(repo_root: Path | None = None) -> dict[str, int]:
+    """Write/shrink the ratchet baseline (first run records; afterwards it only SHRINKS)."""
+    from tools.noctus.dev import llm_prompt_registry_scan as lps
+
+    root = repo_root or REPO_ROOT
+    return lps.shrink_baseline(root, root.joinpath(*lps.BASELINE_REL))
 
 
 # ---------------------------------------------------------------------------

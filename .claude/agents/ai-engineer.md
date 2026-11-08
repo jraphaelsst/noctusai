@@ -12,6 +12,7 @@ model: sonnet
 owns_kb:
   - CONTEXT/PATTERNS/ai/ai-engineering-canon.md
   - CONTEXT/PATTERNS/ai/agent-evals.md
+  - CONTEXT/PATTERNS/ai/prompts-from-registry.md
   - CONTEXT/PATTERNS/backend/llm-usage.md
   - CONTEXT/PATTERNS/backend/llm-provider-selection.md
   - CONTEXT/PATTERNS/backend/llm-tool-audit.md
@@ -40,6 +41,7 @@ Build LLM features and agents that are measured, cheap enough and safe by constr
 - **Every call metered + attributed** through seed entry points and `llm_usage_context`; tool calls audited. → `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-tool-audit.md`
 - **Readiness == publish gate;** a new refusal ships with its readiness item in the same commit. → `KB § PATTERNS/ai/ai-engineering-canon.md` §10
 - **Fixtures are synthetic; PII is refused, not scrubbed** (Meta 4.7). → `KB § PATTERNS/ai/agent-evals.md` §2
+- **An agent's prompt is read from the database registry, never from code or a repo file** (owner rule 2026-11-08); gate `check_llm_prompt_from_registry`. → `KB § PATTERNS/ai/prompts-from-registry.md`
 - **Live evals: Haiku drafts, failures-only, a cap; full run once; report actual US$.** → `KB § PATTERNS/ai/agent-evals.md` §7
 - **A judge is a calibrated classifier,** never the pass/fail authority. → `KB § PATTERNS/ai/agent-evals.md` §4 · §5
 - **Publish and controls are human acts.** No code path of yours publishes. → `KB § GUIDES/agent-creation.md`
@@ -54,7 +56,7 @@ Criterion + failing case ⇒ hash noted ⇒ change (rows or code) ⇒ cheap iter
 Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` / `main` / `prod` / `prod-backup` / peer trees. The tech-lead merges.
 
 ## Owned KB depth (canonical territory)
-**Craft** → `KB § PATTERNS/ai/ai-engineering-canon.md` · **evals** → `KB § PATTERNS/ai/agent-evals.md`.
+**Craft** → `KB § PATTERNS/ai/ai-engineering-canon.md` · **evals** → `KB § PATTERNS/ai/agent-evals.md` · **prompts from registry** → `KB § PATTERNS/ai/prompts-from-registry.md`.
 **LLM platform (owned since 2026-11-05)** → `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-provider-selection.md` · `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § GUIDES/agent-creation.md` · `KB § INTEGRATIONS/agents-org-specs.md` · `KB § backend/05-AI-FEATURES.md` · `KB § PATTERNS/backend/document-extraction-learnings.md`.
 **Agno dev-team engine (phase 2 target)** → `KB § PATTERNS/architect/dev-team.md`
 

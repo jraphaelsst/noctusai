@@ -724,6 +724,8 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
                                           (s4-keeper|closed) has target ⊇ substr
       · `finance_param_fresh:<key>`      the tax-parameter registry no longer flags <key> as
                                           stale today (re-verified, or a successor row exists)
+      · `llm_prompt_registry_clean:<relpath>` the file no longer exists or has no LLM call site outside
+                                          the prompt registry (check_llm_prompt_from_registry)
       · `inline_reason_recorded:<branch>` that branch's latest pointer carries a valid
                                           inline_reason + inline_note (orchestrator inline cutoff)
 
@@ -785,6 +787,14 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
             return False, f"inline_reason_recorded: pointer ledger unreadable ({exc})"
         ok = bool(row) and oic.validate_reason(row.get("inline_reason"), row.get("inline_note")) is None
         return ok, f"inline_reason {'recorded' if ok else 'still missing'} on {branch}"
+    if pred.startswith("llm_prompt_registry_clean:"):
+        rel = pred[len("llm_prompt_registry_clean:"):].strip()
+        try:
+            from tools.noctus.dev import llm_prompt_registry_scan as lps
+            ok = lps.file_clean(repo_root, rel)
+        except Exception as exc:  # noqa: BLE001 - loud, never silently True
+            return False, f"llm_prompt_registry_clean: scan failed ({exc})"
+        return ok, f"{rel} {'has no LLM site outside the registry' if ok else 'still has LLM sites not fed by the registry'}"
     if pred.startswith(MANUAL_PREFIX):
         return False, f"manual closure ({pred[len(MANUAL_PREFIX):].strip()}) — closes only by explicit promote/close"
     return False, f"unknown predicate grammar: {pred!r}"
