@@ -191,6 +191,7 @@ class FunnelConfig:
     tenancy: Tenancy
     platform_org_id: str | None = None
     card_projection: Callable[[dict], Mapping[str, Any]] | None = None
+    board_fields: tuple[str, ...] | None = None
     editable_fields: Mapping[str, str] = field(default_factory=dict)
     lost_reasons: Sequence[LostReason] = ()
     gates: Mapping[str, FunnelGate] = field(default_factory=dict)
@@ -206,7 +207,6 @@ class FunnelConfig:
     card_select: str = "*"
     row_filter: Callable[[Any], Any] | None = None
     search_haystack: Callable[[dict], str] | None = None
-    board_fields: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.tenancy not in ("org", "platform"):
