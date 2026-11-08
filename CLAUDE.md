@@ -16,11 +16,8 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 ## 1 · Universal rules (rule + one-clause why; depth at the pointer)
 
 - **Vocabulary — methodology, not doctrine.** Hierarchical framing runs counter to how this team works. → `KB § 01-PHILOSOPHY.md`
-- **Seed first. Always.** The seed IS the approach; a customization not through a named seam is a structural fork. → `KB § 03-SEED-ARCHITECTURE.md` · skill `noc-new-product`
-- **Verify the seed ships it.** A planned "consume" silently becomes a "seed-build" if only the Protocol/Fake ships. → `KB § 03-SEED-ARCHITECTURE.md`
-- **Seed IO modules ship Fake+Real+factory.** Half-shipped seed IO generates consumer-side forks. → `KB § PATTERNS/backend/seed-fake-real-adapter.md`
-- **Seed defaults = canonical answer, not consumer-#1 coincidence.** A coincidence default silently misroutes consumers #2..N. → `KB § PATTERNS/architect/seed-canonical-defaults.md`
-- **No incomplete commits.** One real side + one placeholder side lies about maturity; "scaffolded" ≠ "complete." → `KB § 03-SEED-ARCHITECTURE.md`
+- **Seed architecture — one approach, five rules.** Seed first through a named seam; verify the seed ships it; seed IO ships Fake+Real+factory; seed defaults are the canonical answer; no incomplete commits. → `KB § PATTERNS/common/seed-family-index.md` · skill `noc-verify-seed`
+- **Event-Oriented Architecture (EOA) is noc's official architecture.** Every state change records an immutable intent-named event in the same transaction (seed transition log by default; event-sourced only where money/past-state/contention pays; projections rebuildable) — never a hand-written history table. → `KB § PATTERNS/architect/event-oriented-architecture.md`
 - **Product-internal-wiring.** route-exists ≠ wired; a page must show real data ∧ own its CRUD. → `KB § PATTERNS/frontend/product-internal-wiring.md` · skill `noc-wiring-audit`
 - **No quick fixes.** A fix touching N products for one reason is at the wrong level — go to the root. → `KB § 01-PHILOSOPHY.md`
 - **No workarounds / no monkey-patching (incl. tests).** Patching our own guard means the test no longer exercises it. Gated at BOTH ends: WRITE by `test_seam_guard`, COMMIT by `check_no_self_monkeypatch`. → `KB § PATTERNS/compliance/testing.md`
@@ -83,9 +80,9 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 
 **Slash commands** (`.claude/commands/`, user-invoked via `/<name>`): `/contextualize` (fresh-agent graph-shaped orientation) · `/codify` (drain codification pipeline) · `/gc` (methodology garbage-collection — the codify exhaust) · `/vector-status` (cache health) · `/baselines` (kb + code ratification status) · `/codification-radar` (s1/s2 → s3 promotion candidates) · `/cost-report` (vector costs) · `/verify-pass` (verify-pending pass scaffolding) · `/refresh-caches` (all-cache refresh).
 
-**§1 family indexes** (`KB § PATTERNS/common/*-family-index.md`): a §1 family line is a router hop — the member rules live at the pointer **verbatim**. `cache` · `orchestration` · `knowledge-lifecycle` · `doc-discipline` · `learning-posture` · `server-state`. → `KB § PATTERNS/common/methodology-gc.md`
+**§1 family indexes** (`KB § PATTERNS/common/*-family-index.md`): a §1 family line is a router hop — the member rules live at the pointer **verbatim**. `seed` · `cache` · `orchestration` · `knowledge-lifecycle` · `doc-discipline` · `learning-posture` · `server-state`. → `KB § PATTERNS/common/methodology-gc.md`
 
-**Architecture & depth** (KB): philosophy → `01-PHILOSOPHY.md` · landscape → `02-LANDSCAPE.md` · seed → `03-SEED-ARCHITECTURE.md` · shared-lib → `04-SHARED-LIBRARY.md` · infra → `05-INFRASTRUCTURE.md` · MCP toolkit/agents → `06-AGENTS.md` · gamification → `07-GAMIFICATION.md`.
+**Architecture & depth** (KB): philosophy → `01-PHILOSOPHY.md` · landscape → `02-LANDSCAPE.md` · seed → `03-SEED-ARCHITECTURE.md` · event-oriented → `PATTERNS/architect/event-oriented-architecture.md` · shared-lib → `04-SHARED-LIBRARY.md` · infra → `05-INFRASTRUCTURE.md` · MCP toolkit/agents → `06-AGENTS.md` · gamification → `07-GAMIFICATION.md`.
 
 **Full pattern + integration + guide + per-product catalog → `KB § INDEX.md`** (the canonical map; not duplicated here). High-traffic patterns: backend · frontend · testing · database-rls · core-url-routing · dev-prod-parity · branching · containerization · product-internal-wiring · accept-with-rationale.
 
