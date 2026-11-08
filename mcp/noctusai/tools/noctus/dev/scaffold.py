@@ -601,6 +601,40 @@ def _canonicalize_seed_migration(target: Path, slug: str, schema: str) -> dict:
     }
 
 
+def _start_migration_chain_unapplied(target: Path) -> dict:
+    """A new product has applied NOTHING: empty the copied ``migrations-applied.json`` (it is the seed's ledger)
+    and collapse each organ's stacked revisions to the latest (as revision 1, in the first one's slot), which is the only file a fresh chain needs
+    (a revision is a full-state script; the earlier ones exist for chains that applied them). Without this the
+    organ pin (``assert_organ_migration_current``) freezes a superseded file by a hash recorded for the seed's bytes."""
+    import json
+
+    from noctusai_lib.testing.organs import find_organ_migration
+    from noctusai_seed.organs import ORGAN_REGISTRY
+
+    backend = target / "backend"
+    collapsed: list[str] = []
+    for spec in ORGAN_REGISTRY.values():
+        found = find_organ_migration(backend, spec.migration_header)
+        if len(found) < 2:
+            continue
+        # The latest revision is a full-state script; it takes the FIRST revision's number (so everything that
+        # depends on the organ's tables still sorts after it) and becomes revision 1 (no `-- organ-revision:` marker).
+        latest = found[-1]
+        body = re.sub(r"\n-- organ-revision: \d+\n?\Z", "\n", latest.read_text(encoding="utf-8"))
+        for old in found:
+            old.unlink()
+            collapsed.append(old.name)
+        found[0].write_text(body, encoding="utf-8")
+    ledger = backend / "migrations-applied.json"
+    reset = False
+    if ledger.is_file():
+        data = json.loads(ledger.read_text(encoding="utf-8"))
+        data["applied"] = {}
+        ledger.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        reset = True
+    return {"ledger_reset": reset, "collapsed_revisions": collapsed}
+
+
 def _emit_frontend_lockfile(target: Path, seed_lockfile: Path) -> dict:
     """Give the new product's frontend a ``package-lock.json`` (by construction).
 
@@ -738,6 +772,7 @@ def scaffold_product(
     # header is replaced with the canonical `prelude(schema)` output
     # so every new product starts from a single source of truth.
     canonical_migration = _canonicalize_seed_migration(target, slug, schema)
+    chain_start = _start_migration_chain_unapplied(target)
 
     # ─── 1.c Vertical-seed overlay (organ bindings), BEFORE substitution ─
     overlay_result: dict | None = None
@@ -1024,6 +1059,7 @@ def scaffold_product(
         "llm_rewrite": llm_rewrite,
         "seed_row_migration": seed_row_migration,
         "canonical_migration": canonical_migration,
+        "migration_chain_start": chain_start,
         "overlay": overlay_result,
         "start_sh_registration": start_sh_registration,
         "docker_patch": docker_patch,
