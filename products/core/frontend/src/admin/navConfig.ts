@@ -7,21 +7,23 @@
  * Code-split with the admin chunk: never import this from the main bundle.
  */
 import {
-  Activity, BarChart3, BookOpen, Brain, Building2, Coins, CreditCard, FileText, Filter, Gauge, Globe,
+  Activity, BarChart3, Brain, Building2, Coins, CreditCard, FileText, Filter, Gauge, Globe,
   KeyRound, Landmark, LayoutDashboard, LogOut, MessageSquare, Package, PackageOpen, Palette, Plug,
-  Search, Settings, ShieldCheck, Users, UserPlus, Wallet, Webhook, ClipboardList, Zap, GitBranch,
+  Search, Settings, ShieldCheck, Users, Wallet, Webhook, ClipboardList, Zap, GitBranch,
   Share2, Briefcase, Sparkles, FileCheck,
 } from 'lucide-react';
+import { orderNavGroups } from '@noctusai/lib/design-system';
 import type { NavGroup, NavItem } from '@noctusai/lib/design-system';
+import { NAV_DOCS, NAV_LEADS, NAV_SITE } from './websiteConfig';
 
-export const ADMIN_NAV_GROUPS: NavGroup[] = [
+const PLATFORM_GROUPS: NavGroup[] = [
   {
     key: 'crm',
     label: 'CRM',
     icon: Users,
     items: [
       { name: 'Funil', href: '/admin/funil', icon: Filter },
-      { name: 'Leads do site', href: '/admin/website/leads', icon: UserPlus },
+      NAV_LEADS,
       { name: 'Organizações', href: '/admin/orgs', icon: Building2 },
       { name: 'Usuários', href: '/admin/users', icon: Users },
     ],
@@ -59,8 +61,8 @@ export const ADMIN_NAV_GROUPS: NavGroup[] = [
     label: 'CMS',
     icon: Globe,
     items: [
-      { name: 'Site', href: '/admin/website/settings', icon: Settings },
-      { name: 'Documentação', href: '/admin/website/docs', icon: BookOpen },
+      NAV_SITE,
+      NAV_DOCS,
     ],
   },
   {
@@ -118,16 +120,25 @@ export const ADMIN_STANDALONE_ITEMS: NavItem[] = [
 ];
 
 /**
- * Canonical modules core does not have yet. NOT rendered: the seed Sidebar drops
- * empty groups and has no disabled / "Em breve" state yet.
- * TODO(feat/seed-sidebar-module-groups): when that branch lands (NavItem `disabled`
- * + `badge: 'Em breve'` + the exported canonical module-group order), render these
- * as disabled stubs for noc-admins only and sort ADMIN_NAV_GROUPS by the canonical
- * order instead of the hand-written order above.
+ * Canonical modules core does not have yet: disabled "Em breve" stubs, visible to noc-admins only
+ * (they sit in the platform bundle; `href: '#'` is unreachable for any other role, so `pruneNavGroups`
+ * drops them for marketing).
  */
-export const PENDING_MODULE_GROUPS: Array<Pick<NavGroup, 'key' | 'label' | 'icon'> & { after: string }> = [
-  { key: 'redes-sociais', label: 'Redes Sociais', icon: Share2, after: 'crm' },
-  { key: 'corestudio', label: 'CoreStudio', icon: Sparkles, after: 'cms' },
-  { key: 'banib', label: 'Banib', icon: Landmark, after: 'corestudio' },
-  { key: 'emissoes', label: 'Emissões', icon: FileCheck, after: 'banib' },
+const stub = (key: string, label: string, icon: NavGroup['icon']): NavGroup => ({
+  key,
+  label,
+  icon,
+  disabled: true,
+  badge: 'Em breve',
+  items: [{ name: label, href: '#', icon, disabled: true }],
+});
+
+const STUB_GROUPS: NavGroup[] = [
+  stub('redes-sociais', 'Redes Sociais', Share2),
+  stub('corestudio', 'CoreStudio', Sparkles),
+  stub('banib', 'Banib', Landmark),
+  stub('emissoes', 'Emissões', FileCheck),
 ];
+
+/** Canonical module order (seed `MODULE_GROUP_ORDER`) first; core's own groups (`operacao`, `modelos`) after. */
+export const ADMIN_NAV_GROUPS: NavGroup[] = orderNavGroups([...PLATFORM_GROUPS, ...STUB_GROUPS]);

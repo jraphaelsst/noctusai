@@ -14,6 +14,7 @@ import { useCacheWriteMutation } from '@noctusai/lib/cache-writes';
 import { useEffectiveSSOContext } from '@noctusai/lib/design-system';
 import { api } from './api';
 import type { HttpClient } from './billing';
+import type { CreditsAdminApi } from './credits.admin';
 
 export type WalletMode = 'prepaid' | 'postpaid_trusted' | 'byok';
 
@@ -147,26 +148,14 @@ export function createCreditsApi(http: HttpClient) {
     usage: (from?: string, to?: string) => unwrap<UsageReport>(http.get(`/api/credits/usage${qs({ from, to })}`)),
     purchase: (body: { amount_brl: string; gateway: 'asaas' | 'stripe'; billing_method: string; tax_id?: string }) =>
       unwrap<PurchaseResult>(http.post('/api/credits/purchase', body)),
-    adminWallets: () => unwrap<AdminWalletRow[]>(http.get('/api/admin/credits/wallets')),
-    grant: ({ orgId, ...body }: GrantInput) =>
-      unwrap<{ status: string; credits: number; balance_credits: number | null }>(
-        http.post(`/api/admin/credits/${orgId}/grant`, {
-          reason: body.reason, ...(body.usd ? { usd: body.usd } : { credits: body.credits }),
-        })),
-    adjust: (orgId: string, credits: string, reason: string) =>
-      unwrap<{ status: string; balance_credits: number | null }>(
-        http.post(`/api/admin/credits/${orgId}/adjustments`, { credits, reason })),
-    setWallet: (orgId: string, body: { mode?: WalletMode; overdraft_limit_credits?: string }) =>
-      unwrap<WalletView>(http.put(`/api/admin/credits/${orgId}/wallet`, body)),
-    pricing: () => unwrap<PricingVersion[]>(http.get('/api/admin/credits/pricing')),
-    createPricing: (body: PricingInput) => unwrap<PricingVersion[]>(http.post('/api/admin/credits/pricing', body)),
-    margin: (from?: string, to?: string) => unwrap<MarginReport>(http.get(`/api/admin/credits/margin${qs({ from, to })}`)),
   };
 }
 
-export type CreditsApi = ReturnType<typeof createCreditsApi>;
+/** The admin half lives in `credits.admin.ts` (code-split with the admin bundle); the context carries both. */
+export type CreditsApi = ReturnType<typeof createCreditsApi> & CreditsAdminApi;
 
-const CreditsApiContext = createContext<CreditsApi>(createCreditsApi(api));
+// Default value is the PUBLIC half only; the admin surface provides the full one (`admin/AdminApis`).
+const CreditsApiContext = createContext<CreditsApi>(createCreditsApi(api) as CreditsApi);
 
 export function CreditsApiProvider({ value, children }: { value: CreditsApi; children: ReactNode }) {
   return createElement(CreditsApiContext.Provider, { value }, children);

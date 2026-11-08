@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { matchPath } from 'react-router-dom';
 import { canReach, pruneNavGroups } from './access';
 import { ADMIN_NAV_GROUPS, ADMIN_STANDALONE_ITEMS } from './navConfig';
+import { WEBSITE_NAV_GROUPS } from './websiteConfig';
 import { ADMIN_ROUTES } from './routes';
 
 const names = (groups: ReturnType<typeof pruneNavGroups>): string[] =>
@@ -44,6 +45,15 @@ describe('pruneNavGroups (same predicate as the route gate)', () => {
     expect(names(pruned)).toEqual(['Leads do site', 'Site', 'Documentação']);
   });
 
+  it('drops the Em breve stubs for marketing (their href is unreachable)', () => {
+    const keys = pruneNavGroups(ADMIN_NAV_GROUPS, 'marketing').map((g) => g.key);
+    for (const k of ['redes-sociais', 'corestudio', 'banib', 'emissoes']) expect(keys).not.toContain(k);
+  });
+
+  it('the website bundle nav equals what marketing sees from the full tree', () => {
+    expect(names(pruneNavGroups(WEBSITE_NAV_GROUPS, 'marketing'))).toEqual(names(pruneNavGroups(ADMIN_NAV_GROUPS, 'marketing')));
+  });
+
   it('shows nobody else anything', () => {
     expect(pruneNavGroups(ADMIN_NAV_GROUPS, undefined)).toEqual([]);
   });
@@ -52,7 +62,7 @@ describe('pruneNavGroups (same predicate as the route gate)', () => {
 describe('nav config', () => {
   it('lists the module groups in the canonical order, then core groups', () => {
     expect(ADMIN_NAV_GROUPS.map((g) => g.key)).toEqual([
-      'crm', 'erp', 'cms', 'integracoes', 'configuracoes', 'operacao', 'modelos',
+      'crm', 'redes-sociais', 'erp', 'cms', 'corestudio', 'banib', 'emissoes', 'integracoes', 'configuracoes', 'operacao', 'modelos',
     ]);
     expect(ADMIN_STANDALONE_ITEMS.map((i) => i.name)).toEqual(['Painel']);
   });
@@ -62,7 +72,7 @@ describe('nav config', () => {
     const walk = (gs: typeof ADMIN_NAV_GROUPS) => gs.forEach((g) => { g.items.forEach((i) => hrefs.push(i.href)); walk(g.groups ?? []); });
     walk(ADMIN_NAV_GROUPS);
     ADMIN_STANDALONE_ITEMS.forEach((i) => hrefs.push(i.href));
-    for (const href of hrefs.filter((h) => h.startsWith('/admin'))) {
+    for (const href of hrefs.filter((h) => h.startsWith('/admin'))) {  // '#' stubs are not links
       expect(ADMIN_ROUTES.some((r) => matchPath({ path: r.path, end: true }, href)), href).toBe(true);
     }
   });
