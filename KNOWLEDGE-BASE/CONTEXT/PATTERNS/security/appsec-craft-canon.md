@@ -436,7 +436,7 @@ role.
   magic bytes, not the header; storage key generated server-side; never public.
 - **XSS (React):** JSX escapes by default; the sinks are `dangerouslySetInnerHTML`, `href`/`src` with
   `javascript:` URLs, and markdown renderers. On `origin/dev` the only `dangerouslySetInnerHTML` sites
-  are a JSON-LD `<script>` with `JSON.stringify` (`products/core/frontend/src/website/components/FaqAccordion.tsx:43`)
+  are a JSON-LD `<script>` serialised through the seed `safeJsonLd` (`products/core/frontend/src/website/components/SiteFaq.tsx:26`)
   and the shadcn chart style block (`products/erp-imobiliario/frontend/src/components/ui/chart.tsx:70`) —
   both non-user content. Any new site needs DOMPurify or a reasoned exemption. CSP is report-only today
   (`seed/lib/backend/noctusai_lib/api/security_headers.py:7,64`) — moving it to enforcing is the

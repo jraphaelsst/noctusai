@@ -40,5 +40,5 @@ No `ProtectedRoute`/`AdminRoute` components: the seed shell gates authentication
 ## Known follow-ups (2026-11-05)
 
 - Route components use plain `React.lazy` (`src/main.tsx:19-56`), not `lazyWithReload` — a mid-session deploy breaks unloaded routes (`frontend-craft-canon.md` §9).
-- `FaqAccordion` re-serialises admin-editable FAQ JSON-LD without escaping `<` (`src/website/components/FaqAccordion.tsx:43`; `frontend-craft-canon.md` §11).
+- ~~`FaqAccordion` re-serialises admin-editable FAQ JSON-LD without escaping `<`~~ fixed 2026-11-05 (`safeJsonLd`); the JSON-LD now lives in `src/website/components/SiteFaq.tsx:26` over the seed `Faq` organ (`frontend-craft-canon.md` §11).
 - Hand-rolled modal in `src/pages/admin/AdminPlans.tsx:176` (`frontend-craft-canon.md` WE1).
