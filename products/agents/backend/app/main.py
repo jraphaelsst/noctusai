@@ -69,6 +69,7 @@ from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.editorial_router import router as editorial_router
 from app.routers.persona_router import router as persona_router
+from app.routers.plataforma_agentes_router import router as plataforma_agentes_router
 from app.routers.plataforma_controle_router import router as plataforma_controle_router
 from app.routers.plataforma_grants_router import router as plataforma_grants_router
 from app.routers.plataforma_org_specs_router import router as plataforma_org_specs_router
@@ -254,6 +255,7 @@ app = create_product_app(
         channel_tools_token_router,
         approvals_router,
         qualificacao_router,  # Julia v2 A-QUAL: the platform qualification standard + lead state
+        plataforma_agentes_router,  # platform AI-call registry (prompt + model per call)
         plataforma_controle_router,  # Julia v3 §12.1: the platform kill switch
         plataforma_org_specs_router,  # staff-only org specs for any company (platform admin, audited)
         plataforma_grants_router,  # Julia-line D: platform grants (mint + deliver an agent->product credential)
