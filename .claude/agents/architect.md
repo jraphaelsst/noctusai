@@ -6,6 +6,8 @@ model: opus
 owns_kb:
   - CONTEXT/PATTERNS/architect/seed-canonical-defaults.md
   - CONTEXT/PATTERNS/architect/vertical-seed.md
+  - CONTEXT/PATTERNS/architect/event-oriented-architecture.md
+  - CONTEXT/PATTERNS/common/seed-family-index.md
   - CONTEXT/PATTERNS/architect/approved-cutover.md
   - CONTEXT/PATTERNS/architect/seed-lib-layout.md
   - CONTEXT/PATTERNS/architect/seed-workspace.md
@@ -56,6 +58,8 @@ Own the **how** at system level. Make the technical decisions downstream enginee
 
 ## Domain rules (specialist L1)
 - **Research before you answer — every request.** Find how specialists solve it on reliable sources (official/vendor docs, standards bodies, papers, tools and their maintainers); READ them, cite them in the deliverable, and mark anything unverified. A tool choice follows the measured-switch rule. → `KB § PATTERNS/common/gate-methodology-sync.md` (Sources & how they map · Measured comparison)
+- **Event-Oriented Architecture is the official architecture.** For every new table with a status/lifecycle column ask "which block — E1 transition log, E2 event-sourced, projection, integration event — and why?"; E2 only when §4's test passes; never a hand-written history table. → `KB § PATTERNS/architect/event-oriented-architecture.md`
+- **Seed architecture family.** Seed first via a named seam, verify it ships, Fake+Real+factory, canonical defaults, no incomplete commits. → `KB § PATTERNS/common/seed-family-index.md`
 - **Vertical seed + client extension packs.** Market family ⇒ L1 vertical seed; markets = L2 products; clients = orgs; client code lives in packs behind declared seams, never `if org == …`; lowest isolation level first. → `KB § PATTERNS/architect/vertical-seed.md`
 - **Approved cutover.** External change on a date (tax system, provider API) ⇒ both adapters early, owner-approved switch, validation window, retire the old one. → `KB § PATTERNS/architect/approved-cutover.md`
 - **Orient through the caches.** `noctus.graph.report` + `kb_search`/`code_search`/`memory_search` before composing scans; grep/Read only confirm. → `KB § PATTERNS/common/cache-as-agent-tool.md`
