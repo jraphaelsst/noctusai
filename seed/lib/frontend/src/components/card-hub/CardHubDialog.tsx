@@ -79,7 +79,8 @@ export interface CardSubpage<K extends string = string> {
 
 export interface CardHubActivityProps {
   timeline: TimelineProps;
-  composer: ComentarioComposerProps;
+  /** Omit when the surface has no comment thread (the pane then shows the timeline only). */
+  composer?: ComentarioComposerProps;
   /** The pane's heading. */
   title?: string;
 }
@@ -216,9 +217,9 @@ export function CardHubDialog<K extends string>({
                 {activity.title ?? "Comentários e atividade"}
               </h3>
 
-              <ComentarioComposer {...activity.composer} />
+              {activity.composer && <ComentarioComposer {...activity.composer} />}
 
-              <ScrollArea className="mt-4 flex-1">
+              <ScrollArea className={cn("flex-1", activity.composer && "mt-4")}>
                 <Timeline {...activity.timeline} />
               </ScrollArea>
             </div>

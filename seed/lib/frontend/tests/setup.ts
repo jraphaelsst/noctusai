@@ -42,6 +42,20 @@ if (!Element.prototype.scrollIntoView) {
 }
 
 /**
+ * ResizeObserver — jsdom has none; Radix ScrollArea (inside CardHubDialog) and
+ * Select observe size on mount and throw `ReferenceError` without it. A no-op
+ * stub, same jsdom-gap class as the pointer-capture polyfills above. Installed
+ * only when absent, so a test that stubs its own (recharts utils) still wins.
+ */
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
+/**
  * Web Storage — Node >= 25 ships its own global `localStorage`/`sessionStorage`
  * that, without `--localstorage-file`, is a bare object with no Storage methods
  * and SHADOWS jsdom's (`localStorage.clear is not a function`). Install a
