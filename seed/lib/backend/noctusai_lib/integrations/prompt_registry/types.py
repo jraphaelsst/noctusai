@@ -1,4 +1,4 @@
-"""Value types + errors of the platform prompt registry (``public.plataforma_agentes``, core migration 111)."""
+"""Value types + errors of the platform prompt registry (``public.plataforma_agentes``, core migration 113)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
