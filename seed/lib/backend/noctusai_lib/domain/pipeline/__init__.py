@@ -47,6 +47,16 @@ from .ordering import (
     position_of,
     position_on_top,
 )
+from .market_presets import MARKET_PRESETS
+from .presets import (
+    CANONICAL_CRM_ROLES,
+    KNOWN_CRM_ROLES,
+    CrmPreset,
+    LostReasonDefault,
+    OriginDefault,
+    ensure_preset_stages,
+    stage_for_role,
+)
 from .router import PipelineContext, pipeline_stages_router
 from .sql import pipeline_migration
 from .stages import (
@@ -64,6 +74,14 @@ from .stages import (
 )
 
 __all__ = [
+    "CANONICAL_CRM_ROLES",
+    "KNOWN_CRM_ROLES",
+    "MARKET_PRESETS",
+    "CrmPreset",
+    "LostReasonDefault",
+    "OriginDefault",
+    "ensure_preset_stages",
+    "stage_for_role",
     "DEFAULT_STAGE_ROLES",
     "POSITION_FIELD",
     "PipelineConfig",
