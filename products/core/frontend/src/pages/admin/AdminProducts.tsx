@@ -13,6 +13,7 @@ import {
   type DeployScope,
 } from '../../components/ProductStateControls';
 import { useProductStateActions } from '../../hooks/useProductStateActions';
+import { featuredOf, MAX_DESTAQUES, useProductSite } from '../../hooks/useProductSite';
 
 interface Product {
   id: string;
@@ -26,6 +27,10 @@ interface Product {
   // Working scope — stored INTENT ("where do we work this product?"), distinct
   // from `/api/products/deployment-status`, which reports runtime reachability.
   deploy_scope: DeployScope;
+  // Public-site controls (noctusai.com showcase), independent of ativo/deploy_scope.
+  exibir_no_site?: boolean | null;
+  destaque_no_site?: number | null;
+  descricao_publica?: string | null;
   created_at: string;
 }
 
@@ -50,6 +55,7 @@ const EMPTY_PRODUCT_FORM = {
   nome: '',
   slug: '',
   descricao: '',
+  descricao_publica: '',
   // A product must ship a real icon (icone is required + non-empty server-side).
   // Default to the scaffolder default "Box"; pick any registered ProductIcon
   // name (see lib/product-icon.tsx ICONS) or an emoji.
@@ -66,14 +72,16 @@ const EMPTY_PRODUCT_FORM = {
 function ProductCols() {
   return (
     <colgroup>
-      <col className="w-[22%]" />
-      <col className="w-[15%]" />
-      <col className="w-[22%]" />
-      <col className="w-[6%]" />
-      <col className="w-[9%]" />
-      <col className="w-[9%]" />
-      <col className="w-[9%]" />
+      <col className="w-[16%]" />
+      <col className="w-[10%]" />
+      <col className="w-[14%]" />
+      <col className="w-[5%]" />
       <col className="w-[8%]" />
+      <col className="w-[8%]" />
+      <col className="w-[9%]" />
+      <col className="w-[13%]" />
+      <col className="w-[7%]" />
+      <col className="w-[10%]" />
     </colgroup>
   );
 }
@@ -121,6 +129,7 @@ export function AdminProducts() {
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [productForm, setProductForm] = useState(EMPTY_PRODUCT_FORM);
+  const [modalError, setModalError] = useState<string | null>(null);
   // Per-row in-flight guard for the colour picker (a PATCH, a different
   // concern from the activation/deploy-scope toggles below — see
   // `handleSetColor`, left as its own mutation rather than folded into the
@@ -134,6 +143,8 @@ export function AdminProducts() {
   const [showLicenseModal, setShowLicenseModal] = useState(false);
   const [licenseForm, setLicenseForm] = useState({ org_id: '', fim: '' });
   const [licenseFilter, setLicenseFilter] = useState<'all' | 'active' | 'revoked'>('all');
+
+  const confirm = useConfirm();
 
   async function fetchProducts() {
     try {
@@ -198,16 +209,19 @@ export function AdminProducts() {
 
   function openCreateProduct() {
     setEditingProductId(null);
+    setModalError(null);
     setProductForm(EMPTY_PRODUCT_FORM);
     setShowProductModal(true);
   }
 
   function openEditProduct(product: Product) {
     setEditingProductId(product.id);
+    setModalError(null);
     setProductForm({
       nome: product.nome,
       slug: product.slug,
       descricao: product.descricao || '',
+      descricao_publica: product.descricao_publica || '',
       icone: product.icone || '',
       url_base: product.url_base,
       cor: product.cor || '#6366f1',
@@ -217,6 +231,7 @@ export function AdminProducts() {
 
   async function handleProductSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setModalError(null);
     try {
       if (editingProductId) {
         // Send ONLY the three human-owned presentation fields. Previously the
@@ -226,10 +241,12 @@ export function AdminProducts() {
         await api.patch(`/api/products/${editingProductId}`, {
           nome: productForm.nome,
           descricao: productForm.descricao,
+          descricao_publica: productForm.descricao_publica,
           cor: productForm.cor,
         });
       } else {
-        await api.post('/api/products', productForm);
+        const { descricao_publica: _omit, ...createBody } = productForm;
+        await api.post('/api/products', createBody);
       }
       setShowProductModal(false);
       await Promise.all([fetchProducts(), fetchAllLicenses()]);
@@ -238,7 +255,8 @@ export function AdminProducts() {
         setSelectedProduct(res.data);
       }
     } catch (err: any) {
-      alert(err.message);
+      // A refusal is never silent: the server's pt-BR reason stays in the form.
+      setModalError(err?.message || 'Não foi possível salvar o produto. Tente de novo.');
     }
   }
 
@@ -256,6 +274,23 @@ export function AdminProducts() {
 
   const { busyId, setActivation: handleSetActivation, setDeployScope: handleSetDeployScope } =
     useProductStateActions(refreshAfterMutation);
+
+  const site = useProductSite<Product>(products, up => setProducts(up), fetchProducts);
+
+  async function handleToggleSite(product: Product) {
+    const turningOff = !!product.exibir_no_site;
+    if (turningOff && product.destaque_no_site != null) {
+      const ok = await confirm({
+        title: `Esconder ${product.nome} do site?`,
+        description: `${product.nome} é o destaque nº ${product.destaque_no_site}. Esconder do site também o tira dos destaques; os que estão abaixo sobem uma posição.`,
+        confirmLabel: 'Esconder e tirar dos destaques',
+        cancelLabel: 'Manter no site',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
+    await site.setExibir(product, !turningOff);
+  }
 
   async function handleSetColor(id: string, cor: string) {
     setColorBusyId(id);
@@ -302,7 +337,6 @@ export function AdminProducts() {
     }
   }
 
-  const confirm = useConfirm();
   async function handleRevokeLicense(licenseId: string) {
     if (!(await confirm({ title: 'Revogar acesso desta organização?', confirmLabel: 'Revogar', tone: 'danger' }))) return;
     try {
@@ -388,8 +422,9 @@ export function AdminProducts() {
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Descricao</label>
+              <label htmlFor="prod-descricao" className="block text-sm font-medium text-foreground mb-1">Descricao</label>
               <input
+                id="prod-descricao"
                 type="text"
                 value={productForm.descricao}
                 onChange={e => setProductForm({ ...productForm, descricao: e.target.value })}
@@ -397,6 +432,25 @@ export function AdminProducts() {
                 className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
+            {editingProductId && (
+              <div>
+                <label htmlFor="prod-descricao-publica" className="block text-sm font-medium text-foreground mb-1">
+                  Descrição pública (aparece no site)
+                </label>
+                <textarea
+                  id="prod-descricao-publica"
+                  rows={3}
+                  value={productForm.descricao_publica}
+                  onChange={e => setProductForm({ ...productForm, descricao_publica: e.target.value })}
+                  aria-describedby="prod-descricao-publica-hint"
+                  placeholder="Uma ou duas frases para quem visita noctusai.com"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <p id="prod-descricao-publica-hint" className="text-xs text-muted-foreground mt-1">
+                  Obrigatória para ligar “No site”. A descrição interna acima nunca vai para o site.
+                </p>
+              </div>
+            )}
             {/* Icone / URL Base / Slug are SYSTEM-managed — the scaffolder and
                 the url-roster tooling own them, and hand-editing them here is
                 how the catalog drifts away from the fleet it describes. They
@@ -444,6 +498,9 @@ export function AdminProducts() {
                 />
               </div>
             </div>
+            {modalError && (
+              <p role="alert" className="text-sm text-danger">{modalError}</p>
+            )}
             <div className="flex justify-end gap-3 pt-2">
               <button
                 type="button"
@@ -757,6 +814,7 @@ export function AdminProducts() {
   }
 
   // --- List View ---
+  const featured = featuredOf([...products]);
   const bucketCounts = {
     prod: products.filter(p => bucketOf(p) === 'prod').length,
     dev: products.filter(p => bucketOf(p) === 'dev').length,
@@ -792,6 +850,63 @@ export function AdminProducts() {
           `table-fixed` + a shared <ProductCols/> means every section resolves
           identical column widths — separate tables would otherwise size their
           columns independently and the sections would visibly misalign. */}
+      <section className="bg-card rounded-lg border border-border shadow-sm p-4 mb-6" aria-labelledby="destaques-h">
+        <h2 id="destaques-h" className="text-base font-semibold text-foreground">
+          Destaques no site ({featured.length}/{MAX_DESTAQUES})
+        </h2>
+        <p className="text-xs text-muted-foreground mt-1">
+          A seção de produtos de noctusai.com mostra estes, nesta ordem, e depois “Ver todos os produtos”. Escolha na coluna “Destaque no site”.
+        </p>
+        {featured.length === 0 ? (
+          <p className="mt-3 text-sm text-foreground">
+            Nenhum destaque escolhido.{' '}
+            <span className="text-muted-foreground">
+              Enquanto isso, o site mostra os 6 primeiros produtos visíveis: os disponíveis antes, depois em ordem alfabética.
+            </span>
+          </p>
+        ) : (
+          <ol className="mt-3 space-y-2">
+            {featured.map((p, i) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2">
+                <span className="text-xs font-semibold text-muted-foreground w-6">{i + 1}.</span>
+                <span className="text-sm font-medium text-foreground flex-1 min-w-[8rem]">{p.nome}</span>
+                <button
+                  type="button"
+                  className="border border-border rounded-md px-2 py-1 text-xs hover:bg-accent disabled:opacity-40"
+                  aria-label={`Mover ${p.nome} para cima`}
+                  disabled={i === 0 || site.busyId !== null}
+                  onClick={() => site.move(p, -1)}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="border border-border rounded-md px-2 py-1 text-xs hover:bg-accent disabled:opacity-40"
+                  aria-label={`Mover ${p.nome} para baixo`}
+                  disabled={i === featured.length - 1 || site.busyId !== null}
+                  onClick={() => site.move(p, 1)}
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  className="text-xs underline text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  aria-label={`Remover ${p.nome} dos destaques`}
+                  disabled={site.busyId !== null}
+                  onClick={() => site.unfeature(p)}
+                >
+                  Remover
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
+        {site.error && site.error.id === null && (
+          <p role="alert" className="mt-2 text-sm text-danger">{site.error.message}</p>
+        )}
+        <p role="status" className="sr-only">{site.status}</p>
+      </section>
+
       <div className="space-y-6">
         {BUCKETS.map(bucket => {
           const rows = products
@@ -814,7 +929,8 @@ export function AdminProducts() {
                   <span className="text-xs text-muted-foreground">· {bucket.rule}</span>
                 </div>
               </header>
-              <table className="w-full text-sm table-fixed">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[1100px] text-sm table-fixed">
                 <ProductCols />
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
@@ -824,6 +940,8 @@ export function AdminProducts() {
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Cor</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Deploy</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">No site</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">Destaque no site</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Licencas</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
                   </tr>
@@ -890,6 +1008,65 @@ export function AdminProducts() {
                             onToggle={next => handleSetDeployScope(product, next)}
                           />
                         </td>
+                        <td className="px-4 py-3">
+                          <div onClick={e => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={!!product.exibir_no_site}
+                              aria-label={`${product.nome} no site`}
+                              disabled={site.busyId === product.id}
+                              onClick={() => handleToggleSite(product)}
+                              className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                                product.exibir_no_site
+                                  ? 'bg-success/10 text-success hover:bg-success/20'
+                                  : 'bg-muted text-muted-foreground hover:bg-accent'
+                              }`}
+                            >
+                              {product.exibir_no_site ? 'Ligado' : 'Desligado'}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div onClick={e => e.stopPropagation()} className="space-y-1">
+                            {product.destaque_no_site != null ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-foreground">Nº {product.destaque_no_site}</span>
+                                <button
+                                  type="button"
+                                  className="text-xs underline text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                  aria-label={`Tirar ${product.nome} dos destaques`}
+                                  disabled={site.busyId === product.id}
+                                  onClick={() => site.unfeature(product)}
+                                >
+                                  Tirar
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="text-muted-foreground" aria-label="sem destaque">—</span>
+                                <button
+                                  type="button"
+                                  className="text-xs border border-border bg-card rounded-md px-2 py-1 hover:bg-accent disabled:opacity-50"
+                                  aria-label={`Destacar ${product.nome} no site`}
+                                  aria-describedby={product.exibir_no_site ? undefined : `hint-destaque-${product.id}`}
+                                  disabled={!product.exibir_no_site || site.busyId === product.id}
+                                  onClick={() => site.feature(product)}
+                                >
+                                  Destacar
+                                </button>
+                              </div>
+                            )}
+                            {!product.exibir_no_site && product.destaque_no_site == null && (
+                              <p id={`hint-destaque-${product.id}`} className="text-[11px] text-muted-foreground">
+                                Ligue “No site” para poder destacar.
+                              </p>
+                            )}
+                            {site.error?.id === product.id && (
+                              <p role="alert" className="text-xs text-danger">{site.error.message}</p>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-foreground">{licenseCount(product.id)}</td>
                         <td className="px-4 py-3">
                           <div onClick={e => e.stopPropagation()}>
@@ -901,6 +1078,7 @@ export function AdminProducts() {
                   })}
                 </tbody>
               </table>
+              </div>
             </section>
           );
         })}
