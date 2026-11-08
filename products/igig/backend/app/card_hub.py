@@ -138,13 +138,16 @@ _CABECALHO_019 = """\
 
 
 def gerar_migration_card_hub() -> str:
-    """The exact body of `migrations/019_card_hub.sql`."""
+    """The exact body of `migrations/019_card_hub.sql`.
+
+    `legacy_browser_read=True`: 019 is an applied, frozen replay log in the pre-lockdown shape
+    (its authenticated policies were dropped by 044). The seed now emits service-only."""
     from noctusai_lib.domain.card_hub import card_hub_migration
 
     return "\n".join(
         [
             _CABECALHO_019,
-            card_hub_migration(CARD_HUB_CLIENTE, "igig"),
-            card_hub_migration(CARD_HUB_NEGOCIO, "igig"),
+            card_hub_migration(CARD_HUB_CLIENTE, "igig", legacy_browser_read=True),
+            card_hub_migration(CARD_HUB_NEGOCIO, "igig", legacy_browser_read=True),
         ]
     )

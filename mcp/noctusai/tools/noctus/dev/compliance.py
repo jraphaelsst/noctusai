@@ -13829,6 +13829,16 @@ def check_no_authenticated_grant_on_content_tables(
     return issues
 
 
+def check_card_hub_service_only(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
+    """A seed ``card_hub`` table (notes/tags/members/reminders/checklists/documents/access log) holds no
+    ``authenticated``/``anon`` privilege at the end of its product's migration chain -- the card hub is reached only
+    through the backend's service-role client. ``paths`` (staged migrations) limits the report to the tables they
+    touch. Severity critical. ``KB § PATTERNS/security/access-tiers.md`` (security triage 2026-11-07)."""
+    from tools.noctus.dev import card_hub_service_only
+
+    return card_hub_service_only.check_card_hub_service_only(repo_root or REPO_ROOT, paths)
+
+
 # ---------------------------------------------------------------------------
 # `check_postgrest_unbounded_query` — PostgREST silently caps ANY select at
 # `db-max-rows` (Supabase default 1 000) — no error, no warning,
