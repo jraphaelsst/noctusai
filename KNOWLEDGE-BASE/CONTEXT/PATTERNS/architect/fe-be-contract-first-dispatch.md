@@ -10,6 +10,14 @@ Born 2026-06-01, social-wiring multi-account integrations. The multi-account fra
 
 Mocked-hook FE tests and shape-agnostic BE tests each passed against their own (drifted) assumption. There was no shared skeleton — so nothing forced the two sides to agree. → see [[framework-consume-wire-and-apply-gap]] (the runtime symptom: route/CRUD-exists ≠ wired).
 
+## Where the contract file lives
+
+When the contract is a file, put it at `products/<slug>/docs/<feature>-contract.md`. Never use `products/<slug>/CONTRACTS/` or `contracts/`.
+- **Why:** `.gitignore` has a PII rule, `products/*/contracts/`, that keeps signed purchase-and-sale contracts (CPF, bank data) out of git. On macOS the filesystem ignores case (`core.ignorecase=true`), so `CONTRACTS/` is the same physical directory as `contracts/`. A contract written there is silently ignored and never reaches the branch. It happened to the SSO entry contract on 2026-11-08: the commit message named the file, and the tree never had it.
+- **Don't fix it with a negation rule** (`!products/*/CONTRACTS/`). It would re-include the PII directory itself.
+- **What catches a slip today:** the doc-staleness `missing_path` check, when a tracked doc cites the ignored path.
+- **Example:** the SSO entry contract, which moved into core's docs folder for this reason.
+
 ## The contract skeleton (what to pin, ONCE)
 Per endpoint, authored as the single source of truth both engineers reference:
 - **path + method** (e.g. `GET /api/integrations/accounts?provider=<id>`)
