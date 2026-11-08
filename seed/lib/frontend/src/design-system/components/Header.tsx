@@ -36,16 +36,7 @@ export const LOGOUT_LABELS: Record<LogoutScope, string> = {
 export interface HeaderProps {
   user: HeaderUser;
   onMenuToggle?: () => void;
-  /**
-   * Logout behavior:
-   * - "signout": Actually signs out the user (Core platform only)
-   * - "redirect": Redirects to platformUrl without signing out (products — SSO stays active)
-   * Defaults to "signout".
-   */
-  logoutBehavior?: "signout" | "redirect";
-  /** URL to redirect to when logoutBehavior is "redirect" (e.g., Core dashboard URL) */
-  platformUrl?: string;
-  /** Called when logoutBehavior is "signout". Performs the actual sign-out. */
+  /** Performs the actual sign-out (the header control always signs out). */
   onLogout: () => void;
   /**
    * What `onLogout` revokes — the sign-out control's label FOLLOWS it, so a
@@ -76,8 +67,6 @@ export interface HeaderProps {
 export function Header({
   user,
   onMenuToggle,
-  logoutBehavior = "signout",
-  platformUrl,
   onLogout,
   logoutScope = "global",
   theme,
@@ -205,15 +194,9 @@ export function Header({
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
-                    onClick={() => {
-                      if (logoutBehavior === "redirect" && platformUrl) {
-                        window.location.href = platformUrl;
-                      } else {
-                        onLogout();
-                      }
-                    }}
-                    title={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : LOGOUT_LABELS[logoutScope]}
-                    aria-label={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : LOGOUT_LABELS[logoutScope]}
+                    onClick={onLogout}
+                    title={LOGOUT_LABELS[logoutScope]}
+                    aria-label={LOGOUT_LABELS[logoutScope]}
                     className="h-8 w-8 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                   >
                     <LogOut className="h-4 w-4" />

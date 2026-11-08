@@ -27,7 +27,7 @@ TanStack Query via entity hooks (`src/hooks/`: `useTeam` → `teamKeys` `:96`, `
 
 **Public**: `/invite/:token` (AcceptInvite) + seed-provided Login / Landing / consent routes.
 **User**: Dashboard `/`, Pricing, Billing, Checkout success/cancel, Team, Account settings, Security, Org settings (+ `/identidade`, `/creditos`), API keys, Onboarding.
-**Admin** (`/admin/*`): dashboard, users, orgs, subs, api-keys, plans, products, billing, webhooks, analytics, settings, logout-behavior, templates, audit-digest, website docs/settings/leads, fleet, operação, financeiro, créditos.
+**Admin** (`/admin/*`): dashboard, users, orgs, subs, api-keys, plans, products, billing, webhooks, analytics, settings, templates, audit-digest, website docs/settings/leads, fleet, operação, financeiro, créditos.
 
 ## Route gating
 

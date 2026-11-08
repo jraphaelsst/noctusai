@@ -13,12 +13,12 @@ from noctusai_lib.api import StrictHttpModel
 #: columns (`house_port`, `sso_callback_verified_at`, `db_schema`, ...) are
 #: admin-only. Derived from the real consumers: core FE Dashboard / Onboarding
 #: (id nome slug descricao icone url_base cor ativo deploy_scope), AdminDashboard
-#: and AdminLogoutBehavior (+ logout_behavior; both call the non-admin list
-#: path), AdminProducts (+ created_at; its list uses the admin path).
+#: (it calls the non-admin list path), AdminProducts (+ created_at; its list
+#: uses the admin path).
 #: A new field a consumer reads MUST be added here.
 PRODUCT_PUBLIC_COLUMNS = (
     "id, nome, slug, descricao, icone, url_base, cor, ativo, deploy_scope, "
-    "logout_behavior, created_at"
+    "created_at"
 )
 
 #: Same allowlist as a key tuple (for shaping rows already read wide).
@@ -36,7 +36,6 @@ class ProductCreate(StrictHttpModel):
     icone: str = Field(min_length=1)
     url_base: str  # e.g. http://localhost:8080 or https://erp.noctus.ai
     cor: Optional[str] = "#6366f1"  # brand color
-    logout_behavior: Optional[str] = "redirect"  # 'redirect' or 'signout'
 
 
 class ProductUpdate(StrictHttpModel):
@@ -49,7 +48,6 @@ class ProductUpdate(StrictHttpModel):
     icone: Optional[str] = Field(default=None, min_length=1)
     url_base: Optional[str] = None
     cor: Optional[str] = None
-    logout_behavior: Optional[str] = None  # 'redirect' or 'signout'
     # Public-site visibility (noctusai.com showcase), independent of ativo/deploy_scope.
     exibir_no_site: Optional[bool] = None
     # Site-facing description (the internal `descricao` is never public). Required non-empty

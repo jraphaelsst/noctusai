@@ -39,11 +39,6 @@ describe("Header sign-out label follows logoutScope", () => {
     expect(await screen.findByLabelText("Sair")).toBeTruthy();
   });
 
-  it("redirect behaviour is labelled as navigation, not sign-out", async () => {
-    renderHeader({ logoutBehavior: "redirect", platformUrl: "https://core.example" });
-    expect(await screen.findByLabelText("Voltar ao NoctusAI")).toBeTruthy();
-  });
-
   it("clicking the global control calls onLogout", async () => {
     const onLogout = vi.fn();
     renderHeader({ onLogout });

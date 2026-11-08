@@ -510,9 +510,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
             // `BackToCore` above — so the two coexist with distinct behaviour.
             // Was "redirect", which made this button silently skip signOut and
             // leave the session live (fixed 2026-07-07).
-            logoutBehavior="signout"
             logoutScope={LOGOUT_SCOPE}
-            platformUrl={CORE_URL}
             onLogout={handleLogout}
             theme={theme}
             onThemeToggle={toggleTheme}
