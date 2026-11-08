@@ -46,6 +46,7 @@ def register_all(server) -> None:
     from . import doc_staleness
     from . import doc_to_code_drift
     from . import engineer_output_linter
+    from . import finance_params_staleness
     from . import context
     from . import cost_evaluation
     from . import diff
@@ -226,6 +227,7 @@ def register_all(server) -> None:
     doc_to_code_drift.register(server)
     engineer_brief_compose.register(server)
     engineer_output_linter.register(server)
+    finance_params_staleness.register(server)
     find_reusable_component.register(server)
     findings.register(server)
     gate_sweep.register(server)

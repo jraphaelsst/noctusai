@@ -506,6 +506,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verify-db-guards", action="store_true", help="Run the behaviour probes proving each declared DB guard refuses what it claims (rollback-only, against prod). Transport failures are retried automatically; any that still fail come back status='unverified_transient' with retry_probe_ids. MCP: noctus.dev.verify_db_guards.")
     parser.add_argument("--verify-db-guards-probe-ids", default=None, help="With --verify-db-guards: comma-separated probe ids to run ONLY (the retry button for retry_probe_ids).")
     parser.add_argument("--verify-db-guards-project-ref", default=None, help="With --verify-db-guards: Supabase project ref (default: the platform project).")
+    parser.add_argument("--finance-params-staleness", action="store_true", help="Calendar-driven staleness report of the BR tax-parameter registry (seed finance/params): rows grouped verificacao_vencida / vigencia_terminando / vigencia_encerrada_sem_sucessor + `escalate` (no successor and vigencia ends in <=15 days or already ended). Never blocks; exit 0 unless the registry is unreadable (inconclusive, exit 1). MCP: noctus.dev.finance_params_staleness. Fix via skill noc-tax-params.")
+    parser.add_argument("--finance-params-log", action="store_true", help="With --finance-params-staleness: append one auto-improvement drift row per stale key (resolve_when finance_param_fresh:<key>) + a run summary.")
+    parser.add_argument("--finance-params-today", default=None, metavar="YYYY-MM-DD", help="With --finance-params-staleness: override today (test clock).")
+    parser.add_argument("--check-finance-params-schema", action="store_true", help="Keeper (blocking, pre-commit, only when finance/params/*.yaml is staged): load the tax-parameter registry with its REAL loader and report any load error (schema, overlapping vigencia, float value, especialista <2 fonte_url, future verificado_em). Severity high. KB § PATTERNS/finance/br-tax-advisor-canon.md; skill noc-tax-params.")
+    parser.add_argument("--tax-canon-baseline", choices=["init", "shrink"], default=None, help="With --check-tax-canon-no-inline-params: write the shrink-only ratchet (init = first snapshot; shrink = drop fixed entries; never grows).")
+    parser.add_argument("--check-tax-canon-no-inline-params", action="store_true", help="Keeper (blocking, pre-commit, only when br-tax-advisor-canon.md is staged): a percentage or BRL literal in the tax canon that equals a registry value must sit next to its registry key in backticks (e.g. `simples.fator_r.limiar`); canon values are read from the registry, never retyped. Shrink-only ratchet baseline for pre-existing literals. Severity high. skill noc-tax-params.")
     parser.add_argument("--deploy-verify", action="store_true", help="The INDEPENDENT prod revision-drift witness — read-only, ZERO dependency on --deploy-image having run. Roster is CATALOG-DRIVEN (ativo=true AND deploy_scope='live' + core, not the compose file) — or --deploy-verify-products to check named slugs (incl. inactive ones) deliberately. Per actionable product: running container revision vs the freshly-resolved prod branch tip, fed through the build-scope diff predicate (a stale-but-untouched revision is expected; only a diff touching the product's own build inputs is drift) + health + startup_hook_error. A catalog-live product with no running container is its own 'missing' finding; non-actionable products are reported (never dropped) in skipped_inactive. Exit 0 only when status='verified'. MCP: noctus.dev.deploy_verify.")
     parser.add_argument("--cloudflare-dns", default=None, metavar="ACTION", help="DNS for the cloudflared tunnel hostnames: check (default, read-only DoH diff vs deploy/tunnel/ingress.yml) | route (DRY-RUN unless --cloudflare-dns-confirm; creates CNAMEs via cloudflared-in-docker on the VPS) | list (zone records; needs cloudflare_api_token). MCP: noctus.dev.cloudflare_dns.")
     parser.add_argument("--cloudflare-dns-hosts", default=None, help="With --cloudflare-dns: comma-separated hostnames (route targets / extra check hosts).")
@@ -3875,6 +3881,35 @@ def main():
         r = verify_db_guards(**kw)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
+
+    elif args.finance_params_staleness:
+        from tools.noctus.dev.finance_params_staleness import finance_params_staleness
+        r = finance_params_staleness(log=bool(args.finance_params_log), today=args.finance_params_today)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.check_finance_params_schema:
+        from tools.noctus.dev.compliance import check_finance_params_schema
+        issues = check_finance_params_schema()
+        if not issues:
+            print(f"  {GREEN}\u2713 finance-params-schema: clean.{RESET}"); sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} finance-params-schema issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_tax_canon_no_inline_params:
+        from tools.noctus.dev.compliance import check_tax_canon_no_inline_params, write_tax_canon_baseline
+        if args.tax_canon_baseline:
+            _r = write_tax_canon_baseline(args.tax_canon_baseline)
+            print(f"  tax-canon baseline {args.tax_canon_baseline}: {_r}"); sys.exit(0 if _r.get("ok") else 1)
+        issues = check_tax_canon_no_inline_params()
+        if not issues:
+            print(f"  {GREEN}\u2713 tax-canon-no-inline-params: clean.{RESET}"); sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} tax-canon-no-inline-params issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
+        sys.exit(1)
 
     elif args.deploy_verify:
         from tools.noctus.dev.deploy_verify import deploy_verify

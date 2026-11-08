@@ -36,7 +36,7 @@ import type { NavGroup } from '@noctusai/lib/design-system';
 export const NAV_GROUPS: NavGroup[] = [
   {
     key: 'admin',
-    label: 'Administracao',
+    label: 'Administração',
     icon: Settings,
     items: [],
     groups: [
@@ -136,6 +136,7 @@ export function Layout({ children }: { children?: React.ReactNode }) {
 
   return (
     <AppShell
+      navGroups={navGroups}
       sidebar={
         <Sidebar
           brandIcon={Zap}

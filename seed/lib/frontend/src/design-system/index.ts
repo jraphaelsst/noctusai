@@ -11,6 +11,11 @@
 export { AppShell, useSidebarRail } from "./components/AppShell";
 export type { AppShellProps, SidebarRailMode, SidebarRailState } from "./components/AppShell";
 
+export { Breadcrumbs, BreadcrumbRegistryContext } from "./components/Breadcrumbs";
+export type { BreadcrumbRegistry } from "./components/Breadcrumbs";
+export { buildBreadcrumbTrail } from "./components/breadcrumb-trail";
+export type { Crumb, CrumbContext, CrumbResolver, RouteCrumbSpec } from "./components/breadcrumb-trail";
+
 export { Sidebar } from "./components/Sidebar";
 export type { SidebarProps, NavGroup, NavItem } from "./components/Sidebar";
 

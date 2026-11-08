@@ -930,6 +930,23 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-finance-params-schema": {
+   "mechanism": "write-path: .claude/skills/noc-tax-params/SKILL.md (guided re-verification) + KB § PATTERNS/finance/br-tax-advisor-canon.md",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: the BR tax-parameter registry must load with its real loader (schema, overlap, float, especialista <2 urls, future verificado_em); runs only when finance/params is staged.",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": {
+    "since": "2026-11-07",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "KB § PATTERNS/finance/br-tax-advisor-canon.md §1 (source protocol: tax numbers carry a dated primary source) + Fowler Evolutionary Architecture (fitness function on the diff)",
+   "wired_in": [
+    "pre-commit"
+   ]
+  },
   "keeper:check-findings-ledger-visibility": {
    "severity": "",
    "kind": "keeper",
@@ -2671,6 +2688,23 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-tax-canon-no-inline-params": {
+   "mechanism": "write-path: .claude/skills/noc-tax-params/SKILL.md (guided re-verification) + KB § PATTERNS/finance/br-tax-advisor-canon.md",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper: br-tax-advisor-canon.md must not retype a registry value; a % or R$ literal equal to a registry value needs its key in backticks on the line (shrink-only baseline).",
+   "new": true,
+   "declared": "2026-11-07",
+   "shadow": {
+    "since": "2026-11-07",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "KB § PATTERNS/finance/br-tax-advisor-canon.md §1 (source protocol: tax numbers carry a dated primary source) + Fowler Evolutionary Architecture (fitness function on the diff)",
+   "wired_in": [
+    "pre-commit"
+   ]
+  },
   "keeper:check-tunnel-ingress-snapshot-sync": {
    "severity": "",
    "kind": "keeper",
@@ -3028,6 +3062,19 @@
   },
   {
    "id": "D18",
+   "decision": "Brazilian tax numbers live in ONE effective-dated registry; staleness is calendar-driven (reported daily, never a gate) and re-verification goes through one skill",
+   "home": "KB § PATTERNS/finance/br-tax-advisor-canon.md",
+   "construction": "write-path:.claude/skills/noc-tax-params/SKILL.md (accountant re-verifies online; bump or successor row)",
+   "gate": "keeper:check-finance-params-schema + keeper:check-tax-canon-no-inline-params",
+   "telemetry": "noctus.dev.finance_params_staleness (report + self-closing drift rows) + noc-daily-ops debt line",
+   "branch": "feat/finance-params-staleness",
+   "gates": [
+    "keeper:check-finance-params-schema",
+    "keeper:check-tax-canon-no-inline-params"
+   ]
+  },
+  {
+   "id": "D19",
    "decision": "The seed card_hub organ is service-only: no browser role holds a privilege or policy on a card-hub table (the backend scopes by org_id through the service-role client)",
    "home": "KB § PATTERNS/backend/database-rls.md (Seed card_hub organ is service-only by construction)",
    "construction": "api:noctusai_lib.domain.card_hub.card_hub_migration (emits REVOKE + service_role_bypass + tier comment; pinned by TestServiceOnlyByConstruction)",

@@ -10,6 +10,7 @@
  *
  * Products pass user data and callbacks via props — no product-specific imports.
  */
+import { Breadcrumbs } from "./Breadcrumbs";
 import { useState } from "react";
 import { Menu, LogOut, Moon, Sun, Edit2, Lock } from "lucide-react";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../ui/hover-card";
@@ -147,7 +148,7 @@ export function Header({
         ? "bg-sidebar border-sidebar-border"
         : "bg-card border-border"
     }`}>
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2">
         {onMenuToggle && (
           <button
             type="button"
@@ -161,6 +162,8 @@ export function Header({
             <Menu className="h-5 w-5" />
           </button>
         )}
+        {/* Route-mapping header: renders nothing outside an AppShell nav registry. */}
+        <Breadcrumbs />
       </div>
 
       <div className="flex items-center gap-2 sm:gap-4">
