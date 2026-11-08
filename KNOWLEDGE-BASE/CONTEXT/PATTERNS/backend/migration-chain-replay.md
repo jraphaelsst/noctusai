@@ -121,6 +121,17 @@ purpose. The divergence is a **named seam at the sync point**, not an `if`:
 A change to the seed's 001/003 now reaches new products only through the template.
 Edit `templates/product-seed/backend/migrations/` by hand, and keep it idempotent.
 
+**The template is a chain START, not an applied product (2026-11-08).** The sync and the
+keeper's render both end with the scaffold's own transform
+(`scaffold._start_migration_chain_unapplied`): the copied `migrations-applied.json` is
+emptied (it is the seed's prod ledger and records the seed's bytes, which a
+`{{SCHEMA_NAME}}` render never matches), and each organ's stacked revisions collapse
+into ONE full-state file in the first revision's slot. Without it, the seed's second
+finance revision (`015_finance_rev2`) made the template's organ pin freeze `012` by a
+hash it could never match. The scaffold step stays, and is idempotent on an
+already-started template. Regression:
+`mcp/noctusai/tests/test_sync_seed_template.py::test_real_template_is_a_chain_start`.
+
 ## Composed with
 
 `KB § PATTERNS/backend/migrate-product-mcp-tool.md` (the prod apply this mirrors) ·

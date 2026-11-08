@@ -113,7 +113,14 @@ class TestErpOverlay:
         assert result["migration_chain_start"]["ledger_reset"] is True
         # the seed ships finance as 012 + a later full-state revision; a fresh chain keeps one file, in 012's slot
         assert not list((backend / "migrations").glob("*_finance_rev*.sql"))
-        assert "015_finance_rev2.sql" in result["migration_chain_start"]["collapsed_revisions"]
+        # (the template is already a chain start -- sync_seed_template collapses it -- so the scaffold's own
+        # collapse is idempotent here; the invariant is ONE finance organ file, whichever step produced it)
+        from noctusai_lib.testing.organs import find_organ_migration
+        from noctusai_seed.organs import ORGAN_REGISTRY
+
+        assert [p.name for p in find_organ_migration(backend, ORGAN_REGISTRY["finance"].migration_header)] == [
+            "012_finance.sql"
+        ]
         assert "organ-revision" not in (backend / "migrations" / "012_finance.sql").read_text(encoding="utf-8")
 
     def test_scaffolded_backend_imports_and_its_wiring_tests_pass(self, scaffolded):

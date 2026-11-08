@@ -254,6 +254,17 @@ def _apply_placeholders(text: str, filename: str, is_compose: bool, is_dockerfil
     return text
 
 
+def _start_template_chain(tree: Path) -> dict:
+    """The template is a CHAIN START, never an applied product: reuse the scaffold's transform (empty the
+    copied ``migrations-applied.json`` -- it is the seed's prod ledger, recording the seed's bytes, not the
+    placeholderized ones -- and collapse each organ's stacked revisions into one full-state file). Without it a
+    second organ revision in the seed makes the template's organ pin freeze ``012`` by a hash it can never match
+    (``{{SCHEMA_NAME}}`` != ``seed``). One transform for sync, drift keeper and scaffold (idempotent there)."""
+    from .scaffold import _start_migration_chain_unapplied
+
+    return _start_migration_chain_unapplied(tree)
+
+
 def _is_text_file(p: Path) -> bool:
     if p.suffix in _TEXT_SUFFIXES:
         return True
@@ -347,6 +358,7 @@ def check_seed_template_sync(repo_root: Path | None = None) -> list[dict]:
         rendered = Path(tmp) / "product-seed"
         _copy_tree(seed, rendered, _TEMPLATE_EXTRA_EXCLUDES)
         _placeholderize_tree(rendered)
+        _start_template_chain(rendered)
         git_root = root if (root / ".git").exists() else None
         seed_files = _tree_files(seed, _TEMPLATE_EXTRA_EXCLUDES, git_root=git_root)
         want = {r for r in _tree_files(rendered, _TEMPLATE_EXTRA_EXCLUDES) if r in seed_files}
@@ -472,6 +484,11 @@ def sync_seed_template(
     # ─── Step 3: placeholderize ──────────────────────────────────────
     _placeholderize_tree(template)
     steps.append("Replaced product values with placeholders")
+    chain = _start_template_chain(template)
+    steps.append(
+        "Template migration chain starts unapplied (ledger reset; collapsed: "
+        f"{', '.join(chain['collapsed_revisions']) or 'none'})"
+    )
 
     # ─── Step 3b: restore the declared divergences ───────────────────
     # The seed's rendering of a divergent path is discarded and the

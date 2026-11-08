@@ -297,3 +297,21 @@ def test_real_template_matches_seed_plus_declared_divergences():
         "backend/migrations/005_status_pagina_dev_visibility.sql",
         "backend/migrations/006_customer_role_isolation.sql",
     }
+
+
+def test_real_template_is_a_chain_start():
+    """The template is never applied anywhere: its ledger is empty and each organ ships ONE full-state file.
+
+    Born 2026-11-08: the seed gained finance rev2 (015) on top of 012 and the template inherited the seed's
+    prod ledger verbatim, so the template's organ pin froze 012 by the seed's sha -- which a
+    ``{{SCHEMA_NAME}}`` render can never match (merge-queue candidate 42459900456-1)."""
+    from noctusai_lib.testing.organs import find_organ_migration
+    from noctusai_seed.organs import ORGAN_REGISTRY
+
+    backend = Path(sst.REPO_ROOT) / "templates" / "product-seed" / "backend"
+    if not backend.is_dir():
+        pytest.skip("no templates/product-seed in this tree")
+    assert json.loads((backend / "migrations-applied.json").read_text(encoding="utf-8"))["applied"] == {}
+    for spec in ORGAN_REGISTRY.values():
+        found = find_organ_migration(backend, spec.migration_header)
+        assert len(found) <= 1, f"organ {spec.name} is stacked in the template: {[p.name for p in found]}"
