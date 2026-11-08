@@ -81,6 +81,7 @@ products/agents/backend/app/
   "Platform grants" has the routes. UI: `/conexoes-plataforma` (`pages/ConexoesPlataforma.tsx`, `hooks/useGrants.ts`), platform
   admin only; the old channel-token paste card AND the human `POST|DELETE /api/agents/{key}/channel-token` routes are deleted; `ChannelsTab`
   lists the agent's own non-revoked grants (produto · org, status, prefix; 403 ⇒ hint only) and links to the page. Grant responses carry `token_prefix` (stored prefix only), never a secret.
+  Platform AI calls UI: `/agentes-plataforma` ("Agentes da plataforma", group Plataforma, platform admin only, `status_pagina` row `agentes-plataforma`, migration 069; `pages/AgentesPlataforma.tsx`, `hooks/usePlataformaAgentes.ts`): pick a call, choose Fornecedor + Modelo (filtered by vendor/capacidade) and edit ONE whole-prompt field; unsaved-draft guard, Descartar alterações, 422 `modelo_invalido` inline.
 
 ### Julia v2 — the channel runtime (A-RT)
 

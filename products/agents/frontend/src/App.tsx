@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, CheckCircle2, KeyRound, SlidersHorizontal, Sparkles, Wallet, Link2 } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, CheckCircle2, KeyRound, SlidersHorizontal, Sparkles, Wallet, Link2, Layers } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -41,6 +41,7 @@ const RedirectAcademiaPersona = redirect("RedirectAcademiaPersona");
 const RedirectLeadImobStudioToJulia = redirect("RedirectLeadImobStudioToJulia");
 // Platform-admin pages (server-enforced by `require_platform_admin`).
 const Credenciais = lazy(() => import("@/pages/Credenciais"));
+const AgentesPlataforma = lazy(() => import("@/pages/AgentesPlataforma"));
 const ChavesIA = lazy(() => import("@/pages/ChavesIA"));
 const ConexoesPlataforma = lazy(() => import("@/pages/ConexoesPlataforma"));
 const ConfiguracoesAgente = lazy(() => import("@/pages/ConfiguracoesAgente"));
@@ -75,6 +76,14 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Conexões da plataforma", href: "/conexoes-plataforma", icon: Link2, route: "conexoes-plataforma" },
     ],
   },
+  {
+    key: "plataforma",
+    label: "Plataforma",
+    icon: Layers,
+    items: [
+      { name: "Agentes da plataforma", href: "/agentes-plataforma", icon: Bot, route: "agentes-plataforma" },
+    ],
+  },
 ];
 
 const NAV_FALLBACK: NavGroup[] = [
@@ -99,6 +108,14 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Credenciais", href: "/credenciais", icon: KeyRound },
       { name: "Chaves de IA", href: "/chaves-ia", icon: Sparkles },
       { name: "Conexões da plataforma", href: "/conexoes-plataforma", icon: Link2 },
+    ],
+  },
+  {
+    key: "plataforma",
+    label: "Plataforma",
+    icon: Layers,
+    items: [
+      { name: "Agentes da plataforma", href: "/agentes-plataforma", icon: Bot },
     ],
   },
 ];
@@ -132,6 +149,7 @@ export default createProductApp({
     { path: "/credenciais", component: Credenciais },
     { path: "/chaves-ia", component: ChavesIA },
     { path: "/conexoes-plataforma", component: ConexoesPlataforma },
+    { path: "/agentes-plataforma", component: AgentesPlataforma },
     { path: "/configuracoes-agente", component: ConfiguracoesAgente },
     { path: "/studio", component: RedirectStudio },
     // Declared before `/studio/:key` for readability; react-router ranks the
