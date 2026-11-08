@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { BillingApiProvider, createBillingApi, type HttpClient } from '../lib/billing';
+import { createBillingAdminApi } from '../lib/billing.admin';
 
 export type Route = (body?: unknown) => unknown | Promise<unknown>;
 
@@ -38,7 +39,7 @@ export function renderWithBilling(http: FakeHttp, ui: ReactNode, initialEntries:
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return (
     <QueryClientProvider client={client}>
-      <BillingApiProvider value={createBillingApi(http)}>
+      <BillingApiProvider value={{ ...createBillingApi(http), ...createBillingAdminApi(http) }}>
         <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
       </BillingApiProvider>
     </QueryClientProvider>

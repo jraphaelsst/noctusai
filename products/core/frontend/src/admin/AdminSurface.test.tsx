@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import AdminApp from './AdminApp';
+import { AdminSurface } from './AdminSurface';
+import { ADMIN_ROUTES } from './routes';
+import { WEBSITE_ROUTES } from './websiteConfig';
 
 afterEach(() => cleanup());
 
@@ -15,7 +17,7 @@ function html(path: string, role: 'admin' | 'marketing') {
   const r = render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="*" element={<AdminApp role={role} />} />
+        <Route path="*" element={<AdminSurface role={role} routes={role === 'admin' ? ADMIN_ROUTES : WEBSITE_ROUTES} navGroups={[]} />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -24,7 +26,7 @@ function html(path: string, role: 'admin' | 'marketing') {
   return out;
 }
 
-describe('AdminApp route registration', () => {
+describe('AdminSurface route registration', () => {
   it('marketing on a non-website admin path gets the plain unknown-path NotFound, no shell', () => {
     const unknown = html('/nope', 'marketing');
     expect(html('/admin/users', 'marketing')).toBe(unknown);

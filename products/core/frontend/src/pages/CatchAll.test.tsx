@@ -7,13 +7,19 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import CatchAll from './CatchAll';
 
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); loaded.platform.mockClear(); loaded.website.mockClear(); });
 
 let mockAuth: Record<string, unknown>;
 vi.mock('../lib/auth-context', () => ({ useAuth: () => mockAuth }));
-vi.mock('../admin/AdminApp', () => ({
-  default: ({ role }: { role: string }) => <div data-testid="admin-app">{role}</div>,
-}));
+const loaded = { platform: vi.fn(), website: vi.fn() };
+vi.mock('../admin/PlatformAdminApp', () => {
+  loaded.platform();
+  return { default: () => <div data-testid="admin-app">admin</div> };
+});
+vi.mock('../admin/WebsiteAdminApp', () => {
+  loaded.website();
+  return { default: () => <div data-testid="admin-app">marketing</div> };
+});
 
 const base = { loading: false, unavailable: false, refresh: vi.fn() };
 
@@ -42,6 +48,9 @@ describe('CatchAll', () => {
     const { container } = renderAt('/admin/users', { isAdmin: false, isMarketing: false });
     expect(container.querySelectorAll('a[href^="/admin"]')).toHaveLength(0);
     expect(screen.queryByTestId('admin-app')).toBeNull();
+    // the loader was never called: no admin bundle is even requested for a non-admin
+    expect(loaded.platform).not.toHaveBeenCalled();
+    expect(loaded.website).not.toHaveBeenCalled();
     for (const label of ['Painel', 'CRM', 'ERP', 'Integrações', 'Configurações', 'Fleet Control']) {
       expect(container.textContent).not.toContain(label);
     }
@@ -50,11 +59,14 @@ describe('CatchAll', () => {
   it('hands a platform admin to the admin surface', async () => {
     renderAt('/admin', { isAdmin: true, isMarketing: false });
     expect((await screen.findByTestId('admin-app')).textContent).toBe('admin');
+    expect(loaded.website).not.toHaveBeenCalled();
   });
 
   it('hands a marketing user to the admin surface as marketing', async () => {
     renderAt('/admin/website/leads', { isAdmin: false, isMarketing: true });
     expect((await screen.findByTestId('admin-app')).textContent).toBe('marketing');
+    // marketing is never delivered the platform-admin bundle
+    expect(loaded.platform).not.toHaveBeenCalled();
   });
 
   it('never decides before the profile resolves (no NotFound flash for an admin)', () => {
