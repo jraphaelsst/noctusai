@@ -289,6 +289,34 @@ def _branch_for_path(porcelain: str, wt_path: str) -> str | None:
     return None
 
 
+def _resolve_worktree_for_branch(
+    porcelain: str, branch: str, canonical_rel: str,
+) -> tuple[str, str, str | None]:
+    """THE single worktree-path resolver for a slug's branch (root-cause fix for
+    the 2026-11-07 N=3 ENOENT: an engineer worked in an Agent-tool isolation
+    worktree `.claude/worktrees/agent-<id>` holding `feat/<slug>`, but every
+    action assumed `.claude/worktrees/<slug>`).
+
+    Returns `(path, resolved_from, found_elsewhere)`:
+      * branch checked out at the canonical path -> canonical (relative) path,
+        `'canonical'`.
+      * checked out at some other path -> that ABSOLUTE path,
+        `'git_worktree_list'`.
+      * checked out nowhere -> the canonical path unchanged, `'canonical'`
+        (callers keep their existing error/creation behaviour).
+    Matching is by `branch refs/heads/<branch>` from `git worktree list
+    --porcelain`, never by directory name."""
+    want = f"refs/heads/{branch}"
+    hits = [wt.get("path", "") for wt in _parse_worktrees(porcelain)
+            if wt.get("branch") == want and wt.get("path")]
+    if not hits:
+        return canonical_rel, "canonical", None
+    for h in hits:
+        if h == canonical_rel or h.rstrip("/").endswith("/" + canonical_rel.strip("/")):
+            return canonical_rel, "canonical", None
+    return hits[0], "git_worktree_list", hits[0]
+
+
 def _is_dirty_excluding_gitignored(runner, wt_path: str) -> bool:
     """True iff the worktree has uncommitted changes that are NOT gitignored.
 
@@ -2627,8 +2655,25 @@ def task_branch(
 
     wt_path = f"{worktrees_dir}/{slug}" if slug else None
     branch = f"{branch_prefix}{slug}" if slug else None
+    wt_resolved_from = "canonical"
+    if slug and action in {"integrate", "landed", "cleanup"}:
+        # integrate covers enqueue (queue_mode rewrote the action above).
+        _rc_wl0, _wl0, _e0 = git("worktree", "list", "--porcelain")
+        wt_path, wt_resolved_from, _elsewhere = _resolve_worktree_for_branch(
+            _wl0 if _rc_wl0 == 0 else "", branch, wt_path)
     base: dict[str, Any] = {"ok": True, "action": action, "remote": remote,
-                            "slug": slug, "branch": branch, "worktree": wt_path}
+                            "slug": slug, "branch": branch, "worktree": wt_path,
+                            "worktree_resolved_from": wt_resolved_from}
+    if slug and action == "integrate" and wt_resolved_from == "canonical":
+        _listed = [w.get("path", "") for w in _parse_worktrees(_wl0 if _rc_wl0 == 0 else "")]
+        if _listed and not any(q == wt_path or q.rstrip("/").endswith("/" + wt_path.strip("/"))
+                               for q in _listed):
+            return {**base, "status": "error", "exit_code": 1,
+                    "error": (f"no worktree has {branch} checked out, and the canonical path "
+                              f"{wt_path} is not a registered worktree. Expected {branch} at "
+                              f"{wt_path} (or any worktree holding it, e.g. an agent-<id> "
+                              f"isolation dir) - run action='start' slug='{slug}' or "
+                              f"`git worktree add {wt_path} {branch}`.")}
 
     # ── STATUS ── read-only: list active self-branch worktrees + ahead/behind
     if action == "status":
@@ -2691,7 +2736,7 @@ def task_branch(
                 # See workspace.get_ledger_root() docstring.
                 from settings import LEDGER_ROOT  # lazy: avoids import cost otherwise
                 root = str(LEDGER_ROOT)
-            return root, os.path.join(root, worktrees_dir, slug)
+            return root, _absolute_wt_path(wt_path, root)
 
         if not confirm:
             plan_extra: dict[str, Any] = {}
@@ -2728,8 +2773,16 @@ def task_branch(
             # git error) still surfaces as an error, unchanged.
             _rc_list, list_out, _e = git("worktree", "list", "--porcelain")
             existing_branch = _branch_for_path(list_out if _rc_list == 0 else "", wt_path)
+            _adopt, _adopt_from, _elsewhere = _resolve_worktree_for_branch(
+                list_out if _rc_list == 0 else "", branch, wt_path)
             if existing_branch == branch:
                 already_existed = True
+            elif _elsewhere:
+                # The branch is already checked out in another worktree (e.g. an
+                # Agent-tool isolation dir): adopt it instead of failing.
+                already_existed = True
+                wt_path = _adopt
+                plan = {**plan, "worktree": wt_path, "worktree_resolved_from": _adopt_from}
             else:
                 return {**plan, "status": "error", "exit_code": 1,
                         "error": f"worktree add failed: {err.strip() or out.strip()}"}

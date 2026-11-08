@@ -9,7 +9,7 @@ import * as React from 'react';
 import { Button } from '../design-system/ui/Button';
 import { ACTIVITY_KINDS } from './types';
 import { EmptyState, Field, FormError, HelpTip, Input, ListSkeleton, Notice, PageHeader, RefreshingBar, RetryError } from './controls';
-import { formatCents, formatDate, monthStartIso } from './format';
+import { formatCents, monthStartIso } from './format';
 import { FINANCE_EXPORT_PATHS, errorMessage, type FinanceHooks } from './hooks';
 import { t } from './i18n';
 
@@ -68,7 +68,7 @@ export function MeiMonthlyReport({ hooks, canExport = false, now }: MeiMonthlyRe
               </tbody>
             </table>
             {d.unassigned_cents ? <p className="text-sm text-destructive">{t('mei.unassigned', { amount: formatCents(d.unassigned_cents) })}</p> : null}
-            <p className="text-xs text-muted-foreground">{t('mei.deadline', { date: formatDate(d.deadline) })}</p>
+            <p className="text-xs text-muted-foreground">{t('mei.obligation', { text: d.obligation.text, norma: d.obligation.norma })}</p>
             <p className="text-xs text-muted-foreground">{t('mei.basis', { law: d.legal_basis })}</p>
             <ul className="list-disc pl-5 text-xs text-muted-foreground">{d.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
             <Notice>{d.disclaimer}</Notice>

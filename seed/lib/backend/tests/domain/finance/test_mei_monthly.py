@@ -37,7 +37,9 @@ def test_groups_split_by_activity_and_invoice(ah):
     received(s, acc, category=cat(s, "Serviços"), amount=300_00, has_invoice=True)
     received(s, acc, category=cat(s, "Serviços"), amount=50_00, has_invoice=False)
     d = ah.get(f"/reports/mei-monthly?{M}").json()["data"]
-    assert d["applicable"] and d["tax_regime"] == "mei" and d["basis"] == "cash" and d["deadline"] == "2026-11-20"
+    assert d["applicable"] and d["tax_regime"] == "mei" and d["basis"] == "cash" and "deadline" not in d
+    assert d["obligation"]["code"] == "manter_e_apresentar_quando_solicitado" and d["obligation"]["norma"]
+    assert "Fisco" in d["obligation"]["text"]
     assert d["groups"]["comercio"] == {"without_invoice_cents": 40_00, "with_invoice_cents": 100_00, "total_cents": 140_00}
     assert d["groups"]["servicos"] == {"without_invoice_cents": 50_00, "with_invoice_cents": 300_00, "total_cents": 350_00}
     assert d["groups"]["industria"]["total_cents"] == 0

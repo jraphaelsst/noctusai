@@ -93,6 +93,12 @@ def test_every_probe_is_clean_with_the_migration(pglite, product):
 @pytest.mark.parametrize("product", sorted(_CASES))
 def test_without_the_migration_the_probes_report_violation(pglite, product):
     mig, probes, _d, _a = _CASES[product]
-    out, other = _run(product, {mig: "SELECT 1;\n"})
+    # core 104 (revoke every browser grant on `public`) ALSO clears the grants 086 clears, so withholding 086 alone
+    # leaves the privileges probe clean (086 is then redundant for privileges; it still owns the POLICIES). To keep
+    # the privileges probe non-vacuous, withhold every migration that revokes: 086 and 104.
+    withheld = {mig: "SELECT 1;\n"}
+    if product == "core":
+        withheld["products/core/backend/migrations/104_public_browser_grants_service_only.sql"] = "SELECT 1;\n"
+    out, other = _run(product, withheld)
     assert other == [], other
     assert out == {p.id: "violation" for p in probes}, out

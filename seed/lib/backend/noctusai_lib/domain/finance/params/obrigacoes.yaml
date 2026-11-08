@@ -1,0 +1,115 @@
+# Family: obrigacoes -- Obrigacoes acessorias e prazos (DAS, PGDAS-D, DEFIS, transicao 2027).
+# Source: accountant online research 2026-11-07, converted programmatically (values untouched except: regime vocabulary
+# presumido/real -> lucro_presumido/lucro_real, empty scope -> regime ["*"], MEI CBS/IBS sub-centavo amounts unit text -> brl).
+# Row contract: see params/__init__.py and registry.py. Money = int centavos (brl = decimal reais); rates = Decimal strings.
+rows:
+- key: obrigacoes.das.vencimento_dia
+  value: '20'
+  unit: dia_do_mes
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-08-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 40 (regulamenta LC 123 art. 21 III)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: 'Dia 20 do mes seguinte ao PA; sem expediente bancario no dia 20 => prorroga para o 1o dia util seguinte (P&R 6.8). Texto do art. 40
+    nao lido diretamente (normas.receita nao renderiza). Aplicacao ao DAS-MEI: provavel mas OPEN (nao lido em fonte MEI).'
+- key: obrigacoes.pgdas_d.prazo_dia
+  value: '20'
+  unit: dia_do_mes
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2012-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 38 par. 2 II (red. Res. CGSN 190/2026, efeitos 2027) - 'ate o vencimento do prazo para pagamento ... previsto
+    no art. 40'
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Mesmo prazo do DAS, mensal, ainda que sem receita. Multa 2% a.m. sobre tributos, max 20%, minimo R$ 50 por mes (LC 123 art. 38-A; P&R
+    6.5). A partir de 2027 a RFB pode oferecer declaracao assistida pre-preenchida ate o dia 10 (art. 38-A Res. 140 novo); dados de CBS/IBS pre-preenchidos
+    so se alteram corrigindo o documento fiscal.
+- key: obrigacoes.defis.prazo
+  value: 03-31
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2012-01-01
+  vigencia_ate: 2026-12-31
+  norma: Res. CGSN 140/2018 art. 72 (revogado pela Res. CGSN 190/2026 art. 8 XXI, efeitos 2027-01-01)
+  fonte_url:
+  - https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoSN.pdf
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  tier: orgao_oficial
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: 2027-01-31
+  notas: Defis ate 31/03 do ano seguinte (P&R 6.10). Que o art. 72 e o da Defis e inferencia (Res. 183/2025 o reescreveu sobre Defis), nao lido.
+    Inatividade nao dispensa.
+- key: obrigacoes.pgdas_d.informacoes_socioeconomicas.janela
+  value: 01-01..03-31
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2027-01-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 38-B par. 1 (incl. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  - https://rotadajurisprudencia.com.br/wp-content/uploads/2026/08/Resolucao-CGSN-no-190-2026.pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: 2027-01-31
+  notas: 'Substitui a Defis: informacoes socioeconomicas e fiscais do ano anterior prestadas uma unica vez NO PGDAS-D, de janeiro a marco, mesmo
+    sem atividade. Eventos (incorporacao/cisao/extincao/fusao): no PGDAS-D do mes do evento. Se o ano-calendario 2026 ja segue este rito (jan-mar/2027)
+    ou ainda a Defis: OPEN.'
+- key: obrigacoes.transicao_2027.receitas_anteriores.prazo_dez25_nov26
+  value: '2026-12-20'
+  unit: date
+  scope:
+    regime:
+    - simples
+    caso: ingresso_2027_sem_simples_integral_em_2026_ou_desenquadrado_simei_2026
+  vigencia_de: 2026-08-10
+  vigencia_ate: 2026-12-20
+  norma: Res. CGSN 140/2018 art. 144-D e 144-E I (incl. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Confirmar/alterar receita bruta e folha (RBT12/FS12) das competencias dez/2025-nov/2026 no modulo 'Receitas Anteriores a Opcao' do PGDAS-D.
+    Silencio = vale o pre-preenchido da administracao, inclusive para a aliquota efetiva informada aos emissores de documento fiscal. Nao se aplica
+    a quem ficou no Simples desde a inscricao do CNPJ ate 31/12/2026. vigencia_de = publicacao (efeitos formais da Res. 190 em 2027 - ver conflitos).
+- key: obrigacoes.transicao_2027.receitas_anteriores.prazo_dez26
+  value: '2027-01-20'
+  unit: date
+  scope:
+    regime:
+    - simples
+    caso: ingresso_2027_sem_simples_integral_em_2026_ou_desenquadrado_simei_2026
+  vigencia_de: 2026-08-10
+  vigencia_ate: 2027-01-20
+  norma: Res. CGSN 140/2018 art. 144-E II (incl. Res. CGSN 190/2026)
+  fonte_url:
+  - https://www.in.gov.br/web/dou/-/resolucao-cgsn-n-190-de-4-de-agosto-de-2026-724454118
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Competencia dez/2026.

@@ -1,0 +1,46 @@
+# Family: nfse -- NFS-e padrao nacional.
+# Source: accountant online research 2026-11-07, converted programmatically (values untouched except: regime vocabulary
+# presumido/real -> lucro_presumido/lucro_real, empty scope -> regime ["*"], MEI CBS/IBS sub-centavo amounts unit text -> brl).
+# Row contract: see params/__init__.py and registry.py. Money = int centavos (brl = decimal reais); rates = Decimal strings.
+rows:
+- key: nfse.padrao_nacional.obrigatorio_me_epp_simples.inicio
+  value: '2026-11-01'
+  unit: date
+  scope:
+    regime:
+    - simples
+    porte:
+    - me
+    - epp
+  vigencia_de: 2026-11-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 59 par. 1 (red. Res. CGSN 191/2026 art. 1); Res. CGSN 191/2026 art. 3 I
+  fonte_url:
+  - https://economia.df.gov.br/documents/d/seec/resol-cgsn-n-191-2026-pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Texto integral lido (copia 'Visao Multivigente' de normas.receita hospedada pela SEEC-DF; DOU 10/08/2026 secao 1-E p. 8). ME/EPP do Simples
+    emite NFS-e de padrao nacional pelo Emissor Nacional (web ou API) para servicos sujeitos a Nota Fiscal de Servicos. Revogou a Res. CGSN 189/2026
+    (que fixava 2026-09-01).
+- key: nfse.padrao_nacional.canais_emissao
+  value: emissor_web|api
+  unit: text
+  scope:
+    regime:
+    - simples
+    porte:
+    - me
+    - epp
+  vigencia_de: 2026-11-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 art. 59 par. 1 I-II (red. Res. CGSN 191/2026)
+  fonte_url:
+  - https://economia.df.gov.br/documents/d/seec/resol-cgsn-n-191-2026-pdf
+  tier: norma
+  verificado_em: 2026-11-07
+  verificado_por: accountant
+  revalidar_em: null
+  notas: Tambem obrigatorio para opcao pendente/em discussao (como 'optante pendente') e sob impedimento do art. 12 (par. 1-A). Vedada NFS-e em
+    operacao sujeita so ao ICMS (par. 1-B). Validade nacional (par. 1-C).
