@@ -198,7 +198,7 @@ class TestGetMe:
         mock_sb.set_table_data("products", [{
             "id": "prod-1", "nome": "ERP", "slug": "erp", "descricao": "d", "icone": "Building2",
             "url_base": "https://erp.noctusai.com", "cor": "#111", "ativo": True,
-            "deploy_scope": "live", "logout_behavior": "redirect", "created_at": "2026-01-01",
+            "deploy_scope": "live", "created_at": "2026-01-01",
             "house_port": 8001, "sso_callback_verified_at": "2026-10-01T00:00:00Z",
             "db_schema": "erp", "aceita_clientes": False,
         }])

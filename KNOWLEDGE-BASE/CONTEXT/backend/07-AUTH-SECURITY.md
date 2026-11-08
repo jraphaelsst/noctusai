@@ -33,9 +33,7 @@ If proactive refresh fails: API call returns 401 → `createApiClient`'s `onToke
 
 ## Logout Behavior
 
-Configurable per product via `products.logout_behavior` column:
-- ERP/PF: `redirect` (back to Core dashboard, SSO stays active)
-- Therapy/Core: `signout` (full sign out)
+Not configurable: the seed Header control always signs out (the `products.logout_behavior` column and its core admin page were removed; migration 109). "Voltar ao NoctusAI" is a separate icon-only Sidebar-footer control.
 
 ## Security Policies
 
