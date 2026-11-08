@@ -176,6 +176,15 @@ def card_dto(cfg: FunnelConfig, row: dict) -> CardDTO:
     return dto  # type: ignore[return-value]
 
 
+def board_dto(cfg: FunnelConfig, dto: CardDTO) -> CardDTO:
+    """The card as the LIST reads (board, orphans) ship it: `campos` cut to
+    `cfg.board_fields` when set; untouched (same object) when `None`."""
+    if cfg.board_fields is None:
+        return dto
+    keep = set(cfg.board_fields)
+    return {**dto, "campos": {k: v for k, v in (dto.get("campos") or {}).items() if k in keep}}  # type: ignore[return-value]
+
+
 def attach_owner_names(cfg: FunnelConfig, dtos: list[dict]) -> None:
     """Fill `responsavel.nome` for every DTO in ONE resolver call."""
     resolver = cfg.actor_resolver or (cfg.card_hub.actor_resolver if cfg.card_hub else None)
@@ -226,7 +235,7 @@ def board(
         cfg.pipeline,
         stages,
         rows,
-        row_to_dto=lambda r: dtos[str(r["id"])],
+        row_to_dto=lambda r: board_dto(cfg, dtos[str(r["id"])]),
         value_of=lambda r: dtos[str(r["id"])]["valor"],
         limite_cards=limite_por_etapa,
     )
@@ -239,7 +248,7 @@ def orphans(db: Any, cfg: FunnelConfig, org_id: str) -> list[dict]:
     org_id = _require_org(org_id)
     stages = list_stages(db, cfg.pipeline, org_id=org_id)
     rows = orphan_cards(stages, list_open_cards(db, cfg, org_id))
-    dtos = [card_dto(cfg, r) for r in rows]
+    dtos = [board_dto(cfg, card_dto(cfg, r)) for r in rows]
     attach_owner_names(cfg, dtos)
     return dtos
 
@@ -597,6 +606,7 @@ __all__ = [
     "attach_owner_names",
     "board",
     "card_dto",
+    "board_dto",
     "column_cards",
     "create_card",
     "get_card_row",
