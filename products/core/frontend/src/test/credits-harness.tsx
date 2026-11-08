@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { CreditsApiProvider, createCreditsApi } from '../lib/credits';
+import { createCreditsAdminApi } from '../lib/credits.admin';
 import { fakeHttp, type FakeHttp, type Route } from './billing-harness';
 
 export { fakeHttp, type FakeHttp, type Route };
@@ -14,7 +15,7 @@ export function renderWithCredits(http: FakeHttp, ui: ReactNode, client?: QueryC
   const qc = client ?? new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return (
     <QueryClientProvider client={qc}>
-      <CreditsApiProvider value={createCreditsApi(http)}>
+      <CreditsApiProvider value={{ ...createCreditsApi(http), ...createCreditsAdminApi(http) }}>
         <MemoryRouter>{ui}</MemoryRouter>
       </CreditsApiProvider>
     </QueryClientProvider>

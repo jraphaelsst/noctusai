@@ -3,7 +3,9 @@
  * loaded lazily, only after the server confirmed a platform admin / marketing role — so no admin
  * path, label or page component ships in the main bundle of any other user.
  */
-import { lazy, type LazyExoticComponent } from 'react';
+import { lazy } from 'react';
+import type { AdminRoute } from './types';
+import { WEBSITE_ROUTES } from './websiteConfig';
 
 const AdminTokens = lazy(() => import('../pages/admin/AdminTokens').then(m => ({ default: m.AdminTokens })));
 const AdminCreditos = lazy(() => import('../pages/admin/AdminCreditos').then(m => ({ default: m.AdminCreditos })));
@@ -21,22 +23,14 @@ const AdminUsers = lazy(() => import('../pages/admin/AdminUsers').then(m => ({ d
 const AdminLogoutBehavior = lazy(() => import('../pages/admin/AdminLogoutBehavior').then(m => ({ default: m.AdminLogoutBehavior })));
 const TemplatesAdmin = lazy(() => import('../pages/admin/TemplatesAdmin').then(m => ({ default: m.TemplatesAdmin })));
 const AdminAuditDigest = lazy(() => import('../pages/admin/AdminAuditDigest').then(m => ({ default: m.AdminAuditDigest })));
-const Docs = lazy(() => import('../pages/admin/website/Docs').then(m => ({ default: m.Docs })));
-const WebsiteSettings = lazy(() => import('../pages/admin/website/Settings').then(m => ({ default: m.Settings })));
-const WebsiteLeads = lazy(() => import('../pages/admin/website/Leads').then(m => ({ default: m.Leads })));
-const WebsiteLeadDetail = lazy(() => import('../pages/admin/website/LeadDetail').then(m => ({ default: m.LeadDetail })));
 const AdminFinanceiro = lazy(() => import('../pages/admin/AdminFinanceiro').then(m => ({ default: m.AdminFinanceiro })));
 const AdminUsoCustos = lazy(() => import('../pages/admin/AdminUsoCustos').then(m => ({ default: m.AdminUsoCustos })));
 const AdminOperacao = lazy(() => import('../pages/admin/AdminOperacao').then(m => ({ default: m.AdminOperacao })));
 const AdminFunil = lazy(() => import('../pages/admin/AdminFunil').then(m => ({ default: m.AdminFunil })));
 const FleetControl = lazy(() => import('../pages/FleetControl').then(m => ({ default: m.FleetControl })));
 
-export interface AdminRoute {
-  path: string;
-  component: LazyExoticComponent<any>;
-}
-
 export const ADMIN_ROUTES: AdminRoute[] = [
+    ...WEBSITE_ROUTES,
     { path: '/admin', component: AdminDashboard },
     { path: '/admin/users', component: AdminUsers },
     { path: '/admin/orgs', component: AdminOrganizations },
@@ -52,10 +46,6 @@ export const ADMIN_ROUTES: AdminRoute[] = [
     { path: '/admin/logout-behavior', component: AdminLogoutBehavior },
     { path: '/admin/templates/*', component: TemplatesAdmin },
     { path: '/admin/audit-digest', component: AdminAuditDigest },
-    { path: '/admin/website/docs/*', component: Docs },
-    { path: '/admin/website/settings/*', component: WebsiteSettings },
-    { path: '/admin/website/leads', component: WebsiteLeads },
-    { path: '/admin/website/leads/:id', component: WebsiteLeadDetail },
     { path: '/admin/fleet', component: FleetControl },
     { path: '/admin/operacao/*', component: AdminOperacao },
     { path: '/admin/financeiro/*', component: AdminFinanceiro },
