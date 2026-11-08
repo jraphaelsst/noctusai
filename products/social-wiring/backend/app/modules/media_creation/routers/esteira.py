@@ -1,3 +1,4 @@
+# NOC-REMEDIATE[pipeline-board-organ]: local BE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 """Esteira de reels endpoints (esteira-contract.md 5.1): ``/api/media-creation/esteira``.
 
 Four routers, mounted in this order (``ROUTERS``):

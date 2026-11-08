@@ -1,3 +1,4 @@
+# NOC-REMEDIATE[pipeline-board-organ]: local BE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 """
 Processos de Venda Router — the post-proposal execution board.
 

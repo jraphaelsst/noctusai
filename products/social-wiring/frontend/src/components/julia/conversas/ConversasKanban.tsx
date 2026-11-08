@@ -1,3 +1,4 @@
+// NOC-REMEDIATE[pipeline-board-organ]: local FE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 /**
  * Kanban view of Conversas (`?view=kanban`) over the seed `KanbanBoard` organ:
  * fixed "Todas (n)" column with an eye toggle, one column per etiqueta,

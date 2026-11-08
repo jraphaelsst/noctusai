@@ -1,3 +1,4 @@
+# NOC-REMEDIATE[pipeline-board-organ]: local BE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 """Esteira de reels — board, posts, stage moves, headline/roteiro binding (esteira-contract.md 3-5).
 
 Org/user scoped: a foreign id is a 404 (never 403). Coded refusals carry the FastAPI-style detail

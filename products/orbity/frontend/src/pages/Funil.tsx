@@ -1,3 +1,4 @@
+// NOC-REMEDIATE[pipeline-board-organ]: local FE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 // @consumes-organ LeadCard@1.0 +seam=pre-existing-product-fork
 // @consumes-organ LeadFormDialog@1.0 +seam=pre-existing-product-fork
 // NOC-REMEDIATE[orbity-consume-seed-leads]: this file predates the seed leads organ (2026-10-26) and keeps its own LeadCard/LeadFormDialog; the product's shape (not the organ's) is why it has not converged yet. Converge onto @noctusai/lib leads when the product adopts the organ (KB PATTERNS/backend/leads-organ.md) — 2026-10-26

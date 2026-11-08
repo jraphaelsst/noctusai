@@ -1,3 +1,4 @@
+# NOC-REMEDIATE[pipeline-board-organ]: local BE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 """Comercial funnel board — roadmap R2/R3/R4.
 
   GET/POST/PATCH/DELETE /api/comercial/pipeline/stages …  stage editor (seed

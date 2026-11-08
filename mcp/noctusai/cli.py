@@ -377,6 +377,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--merge-gate-inventory", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="3-way merge of gate-alignment-inventory.json (pure: reads the three files, writes ONLY --out). gates = union (a key changed differently on both sides conflicts), decisions = ours + theirs' new entries (renumbered past max on id collision, duplicates dropped), output sorted + byte-stable. Exit 0 clean, 10 conflicted (ours kept in --out), 2 usage/IO error. Shell half: scripts/hooks/merge-gate-inventory.sh (merge driver `gate-inventory`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--merge-lgpd-warnings", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="Entry-aware 3-way merge of LGPD-WARNINGS.md (pure: reads the three files, writes ONLY --out). Exit 0 clean, 10 conflicted (markers around just the conflicting block in --out), 2 usage/IO error. The shell half is scripts/hooks/merge-lgpd-warnings.sh (git merge driver `lgpd-warnings`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--check-migration-number-refs-in-tests", action="store_true", help="Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER (\"217_x.sql\", migrations/217_) — task_branch integrate renumbers colliding migrations, breaking the test. Use noctusai_lib.testing.migrations.migration_path(root, name_suffix). Pre-existing offenders are baselined in mcp/noctusai/tests/migration_number_refs_baseline.json; only a new file or grown count blocks. `--paths` narrows reporting (pre-commit). Severity high. KB § PATTERNS/compliance/testing.md.")
+    parser.add_argument("--check-local-pipeline-board", action="store_true", help="Keeper (severity warning, shadow-first): no NEW product-local pipeline board/card layer in an AWAKE product (`mover-etapa` route, `move_card`/`group_into_colunas` call, `<PipelineBoard>`/`<KanbanBoard>` render) — consume the seed funnel organ (`noctusai_lib.domain.pipeline.funnel` + `FunnelBoard`). A file with `NOC-REMEDIATE[pipeline-board-organ]` is exempt; the marker count only shrinks. KB § PATTERNS/common/remediation-markers.md.")
+    parser.add_argument("--refresh-pipeline-board-markers-baseline", action="store_true", help="Shrink-only refresh of the --check-local-pipeline-board marker-count baseline (first run records; later runs only lower it).")
     parser.add_argument("--refresh-migration-number-refs-baseline", action="store_true", help="Shrink-only refresh of the --check-migration-number-refs-in-tests baseline (first run records current offenders; later runs only lower counts / drop fixed files, never add).")
     parser.add_argument("--lower-mutation-invalidate-only-baseline", action="store_true", help="Re-derive mcp/noctusai/tests/mutation_invalidate_only_baseline.json DOWNWARD from the tree (min(baseline, current) per file; never raises). Run after migrating mutations to useCacheWriteMutation, and to resolve a baseline merge conflict between parallel slices. KB § PATTERNS/frontend/mutation-cache-writes.md.")
     parser.add_argument("--async-handlers-to-def", metavar="PRODUCT", help="libcst codemod: convert PRODUCT's awaitless `async def` route handlers to plain `def` (threadpooled, no event-loop blocking). DRY-RUN unless --apply. MCP: noctus.dev.async_handlers_to_def. KB § PATTERNS/backend/request-path-latency.md.")
@@ -2759,6 +2761,23 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} \u2014 {i['issue']}")
         sys.exit(1)
+
+    elif args.check_local_pipeline_board:
+        from tools.noctus.dev.compliance import check_local_pipeline_board
+        _lpb_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_local_pipeline_board(paths=_lpb_paths)
+        if not issues:
+            print(f"  {GREEN}\u2713 local-pipeline-board: no new product-local board/card layer; marker ratchet holds.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}\u26a0 {len(issues)} local-pipeline-board issue(s):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} \u2014 {i['issue']}")
+        sys.exit(1 if any(i.get("severity") in ("high", "critical", "error") for i in issues) else 0)
+
+    elif args.refresh_pipeline_board_markers_baseline:
+        from tools.noctus.dev.compliance import refresh_pipeline_board_markers_baseline
+        print(f"  baseline refreshed: {refresh_pipeline_board_markers_baseline()} marker file(s).")
+        sys.exit(0)
 
     elif args.refresh_migration_number_refs_baseline:
         from tools.noctus.dev.compliance import refresh_migration_number_refs_baseline

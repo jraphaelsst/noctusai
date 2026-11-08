@@ -1,3 +1,4 @@
+# NOC-REMEDIATE[pipeline-board-organ]: local BE copy of the pipeline board/card layer; retire onto the seed funnel organ (noctusai_lib.domain.pipeline.funnel + FunnelBoard) when it lands — 2026-11-07
 """Comercial funnel — the negócio card's lifecycle (roadmap R2/R4).
 
     open   `abrir_negocio`  a lead enters the funnel at the entry stage
