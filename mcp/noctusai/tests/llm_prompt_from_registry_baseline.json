@@ -49,6 +49,7 @@
     "seed/lib/backend/noctusai_lib/domain/help_chat/router.py": 1,
     "seed/lib/backend/noctusai_lib/domain/photo_editing/ports.py": 1,
     "seed/lib/backend/noctusai_lib/integrations/documents/transcription.py": 1,
+    "seed/lib/backend/noctusai_lib/integrations/image_edit/openai_adapter.py": 1,
     "seed/lib/backend/noctusai_lib/integrations/media/real_adapter.py": 3,
     "seed/lib/backend/noctusai_lib/integrations/risk_classifier/real.py": 2
   }

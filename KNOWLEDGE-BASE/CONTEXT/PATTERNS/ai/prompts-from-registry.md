@@ -44,7 +44,7 @@ A site inside a function that calls `prompt_e_modelo` / `chamar_ia*` is registry
 
 | Path | Reason |
 |---|---|
-| the `noctusai_lib.integrations.llm` and `.image_edit` packages | the seam's own provider modules |
+| the `noctusai_lib.integrations.llm` package (pure provider modules only; the `image_edit` adapter renders its own `EDIT_PROMPT` in code and is flagged) | the seam's own provider modules |
 | the `noctusai_lib.integrations.prompt_registry` package | the sanctioned path itself |
 | `mcp/openai_mcp/tools/`, `mcp/noctusai/tools/llm/` | pass-through tools: the prompt is the caller's input |
 | `products/agents/backend/app/runtime/llm_runtime.py`, `runtime/eval_driver_live.py`, `studio/geracao.py` | the runtime that runs Julia's DB-compiled spec |
