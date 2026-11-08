@@ -6,6 +6,7 @@ POST  /api/sso/validate        — Validate SSO token
 GET   /api/sso/launch/{slug}   — Redirect to product with SSO token
 POST  /api/sso/session         — Exchange SSO token for Supabase session
 """
+import logging
 import time
 import uuid
 
@@ -423,19 +424,25 @@ class TestSSOSessionTokenValidation:
         assert resp.status_code == 422
 
 
+def _gotrue_error(message: str, status: int, code: str):
+    """The REAL supabase-py error shape: ``AuthApiError(message, status, code)`` with ``.code``."""
+    from gotrue.errors import AuthApiError
+    return AuthApiError(message, status, code)
+
+
 class TestSSORateLimitDetection:
-    def test_rate_limit_returns_429_with_retry_after(self, sso_session_client):
-        """When Supabase rate limits, return 429 with Retry-After header."""
+    """Classification is by GoTrue ``AuthApiError.code`` -- never by message substring."""
+
+    def test_over_request_rate_limit_is_429_retry_after_10(self, sso_session_client):
         client, mock_admin = sso_session_client
-        mock_admin.auth.admin.generate_link.side_effect = Exception(
-            "For security purposes, you can only request this once every 60 seconds"
+        mock_admin.auth.verify_otp.side_effect = _gotrue_error(
+            "Request rate limit reached", 429, "over_request_rate_limit"
         )
 
-        token = _make_sso_token()
-        resp = client.post("/api/sso/session", json={"token": token})
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
 
         assert resp.status_code == 429
-        assert resp.headers.get("retry-after") == "60"
+        assert resp.headers.get("retry-after") == "10"
         assert "rate limit" in resp.json()["detail"].lower()
 
     def test_rate_limit_after_a_success_is_429_never_the_spent_pair(self, sso_session_client):
@@ -444,35 +451,165 @@ class TestSSORateLimitDetection:
         client, mock_admin = sso_session_client
         token = _make_sso_token()
 
-        resp1 = client.post("/api/sso/session", json={"token": token})
-        assert resp1.status_code == 200
+        assert client.post("/api/sso/session", json={"token": token}).status_code == 200
 
-        mock_admin.auth.admin.generate_link.side_effect = Exception(
-            "For security purposes, you can only request this once every 60 seconds"
-        )
+        mock_admin.auth.verify_otp.side_effect = _gotrue_error("rl", 429, "over_request_rate_limit")
         resp2 = client.post("/api/sso/session", json={"token": token})
         assert resp2.status_code == 429
-        assert resp2.headers.get("retry-after") == "60"
+        assert resp2.headers.get("retry-after") == "10"
 
-    def test_rate_limit_429_in_error_message(self, sso_session_client):
-        """Error messages containing '429' should trigger rate limit handling."""
+    def test_not_admin_is_a_loud_500_never_429(self, sso_session_client):
+        """'User not allowed' (code not_admin) = the admin client is not service_role."""
         client, mock_admin = sso_session_client
-        mock_admin.auth.admin.generate_link.side_effect = Exception("AuthApiError: 429 Too Many Requests")
+        mock_admin.auth.admin.generate_link.side_effect = _gotrue_error("User not allowed", 403, "not_admin")
 
-        token = _make_sso_token()
-        resp = client.post("/api/sso/session", json={"token": token})
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
 
-        assert resp.status_code == 429
+        assert resp.status_code == 500
+        assert "service_role" in _get_error_message(resp)
+        assert resp.headers.get("retry-after") is None
 
-    def test_user_not_allowed_treated_as_rate_limit(self, sso_session_client):
-        """Supabase returns 'User not allowed' on rapid magiclink calls for same email."""
+    @pytest.mark.parametrize("message", [
+        "For security purposes, you can only request this once every 60 seconds",
+        "AuthApiError: 429 Too Many Requests",
+        "AuthApiError: User not allowed",
+        "rate limit exceeded",
+    ])
+    def test_message_text_alone_is_never_a_rate_limit(self, sso_session_client, message):
+        """The old substring matches ('60 seconds', '429', 'user not allowed', rate+limit) are gone."""
         client, mock_admin = sso_session_client
-        mock_admin.auth.admin.generate_link.side_effect = Exception("AuthApiError: User not allowed")
+        mock_admin.auth.admin.generate_link.side_effect = Exception(message)
 
-        token = _make_sso_token()
-        resp = client.post("/api/sso/session", json={"token": token})
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
 
-        assert resp.status_code == 429
+        assert resp.status_code == 500
+        assert resp.headers.get("retry-after") is None
+
+
+class TestSSOMintSerializationAndRetry:
+    def test_otp_expired_retries_the_pair_once(self, sso_session_client):
+        client, mock_admin = sso_session_client
+        mock_admin.auth.verify_otp.side_effect = [
+            _gotrue_error("Email link is invalid or has expired", 403, "otp_expired"),
+            _mock_verify_otp(),
+        ]
+
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
+
+        assert resp.status_code == 200
+        assert mock_admin.auth.admin.generate_link.call_count == 2  # a fresh OTP for the retry
+
+    def test_otp_expired_twice_is_a_500_not_a_loop(self, sso_session_client):
+        client, mock_admin = sso_session_client
+        mock_admin.auth.verify_otp.side_effect = _gotrue_error("expired", 403, "otp_expired")
+
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
+
+        assert resp.status_code == 500
+        assert mock_admin.auth.admin.generate_link.call_count == 2
+
+    def test_lock_key_is_per_email_not_per_org_or_product(self):
+        from app.routers.sso import _mint_lock
+        assert _mint_lock("A@Test.com") is _mint_lock("a@test.com ")
+        assert _mint_lock("a@test.com") is not _mint_lock("b@test.com")
+
+    def test_concurrent_mints_for_one_email_into_two_products_both_succeed(self, sso_session_client):
+        """GoTrue has ONE recovery-token slot per user: model it. Without per-email
+        serialization the second generate_link overwrites the first OTP and the
+        first verify_otp fails otp_expired; with it (and the retry) both succeed."""
+        import threading
+        import time as _time
+        from app.routers import sso as sso_mod
+
+        _, mock_admin = sso_session_client
+        slot = {"otp": None}
+        counter = iter(range(1, 100))
+
+        def generate_link(_params):
+            slot["otp"] = f"otp-{next(counter)}"
+            _time.sleep(0.05)  # widen the generate->verify window
+            resp = MagicMock()
+            resp.properties.email_otp = slot["otp"]
+            return resp
+
+        def verify_otp(params):
+            if params["token"] != slot["otp"]:
+                raise _gotrue_error("expired", 403, "otp_expired")
+            slot["otp"] = None
+            return _mock_verify_otp()
+
+        mock_admin.auth.admin.generate_link.side_effect = generate_link
+        mock_admin.auth.verify_otp.side_effect = verify_otp
+
+        results, errors = [], []
+
+        def mint(product):
+            try:
+                results.append(sso_mod._generate_session("same@test.com", "org-123", product))
+            except Exception as exc:  # pragma: no cover - failure path asserted below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=mint, args=(p,)) for p in ("agents", "monica")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert errors == []
+        assert len(results) == 2
+
+
+class TestSSOMintTelemetry:
+    def test_one_sso_mint_line_per_mint_without_tokens_or_email(self, sso_session_client, caplog):
+        client, mock_admin = sso_session_client
+        mock_admin.auth.verify_otp.side_effect = _gotrue_error("rl", 429, "over_request_rate_limit")
+
+        with caplog.at_level(logging.INFO, logger="app.routers.sso"):
+            client.post("/api/sso/session", json={"token": _make_sso_token(email="secret.person@test.com")})
+
+        mint_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("sso_mint")]
+        assert len(mint_lines) == 1
+        assert "outcome=rate_limited" in mint_lines[0]
+        assert "gotrue_code=over_request_rate_limit" in mint_lines[0]
+        assert "secret.person@test.com" not in caplog.text
+        assert "sb-access-token" not in caplog.text
+
+    def test_success_outcome_logged(self, sso_session_client, caplog):
+        client, _ = sso_session_client
+        with caplog.at_level(logging.INFO, logger="app.routers.sso"):
+            client.post("/api/sso/session", json={"token": _make_sso_token()})
+        assert any(r.getMessage().startswith("sso_mint outcome=ok") for r in caplog.records)
+
+
+class TestSbForwardedForSetting:
+    def test_off_by_default_sends_no_header(self, sso_session_client):
+        client, mock_admin = sso_session_client
+        assert settings.supabase_forward_client_ip is False
+
+        with patch("app.routers.sso.create_client") as create:
+            create.return_value = mock_admin
+            client.post(
+                "/api/sso/session", json={"token": _make_sso_token()},
+                headers={"CF-Connecting-IP": "203.0.113.9"},
+            )
+
+        assert create.call_count == 1
+        assert create.call_args.kwargs == {}  # no ClientOptions, hence no Sb-Forwarded-For
+        assert len(create.call_args.args) == 2
+
+    def test_on_sends_visitor_ip(self, sso_session_client):
+        client, mock_admin = sso_session_client
+
+        with patch.object(settings, "supabase_forward_client_ip", True), \
+                patch("app.routers.sso.create_client") as create:
+            create.return_value = mock_admin
+            client.post(
+                "/api/sso/session", json={"token": _make_sso_token()},
+                headers={"CF-Connecting-IP": "203.0.113.9"},
+            )
+
+        headers = create.call_args.kwargs["options"].headers
+        assert headers["Sb-Forwarded-For"] == "203.0.113.9"
 
 
 class TestSSOSessionSupabaseAdminNull:

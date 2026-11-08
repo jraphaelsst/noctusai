@@ -20,6 +20,18 @@ class Settings(ProductSettings):
     # (sibling field, dropped here) had no such consumer.
     sso_token_expiration_minutes: int = 5  # short-lived
 
+    # DORMANT (default OFF) -- `Sb-Forwarded-For` on the SSO mint's `verify_otp`.
+    # GoTrue's /verify limit (30 per 5 min) is keyed by IP, and every mint comes from
+    # core's ONE server IP, so the whole fleet shares one bucket. With this ON, core
+    # sends `Sb-Forwarded-For: <CF-Connecting-IP>` so the bucket becomes per end-user.
+    # DO NOT ENABLE without an OWNER DECISION (provider config, T3): GoTrue honours the
+    # header only when IP forwarding is enabled on the Supabase project AND the request
+    # uses a SECRET key (`sb_secret_...`); the legacy anon/service_role keys are ignored.
+    # `_otp_client` builds its client on `supabase_anon_key`, so enabling also needs the
+    # key swap there. Env: SUPABASE_FORWARD_CLIENT_IP=true. Not wired into
+    # routers/auth.py's proxied /token login/refresh (that file is outside slice S1).
+    supabase_forward_client_ip: bool = False
+
     # CORS — registry-driven union of every product frontend (core hosts the SSO bridge).
     # `@registry:all` resolves at property-read time via
     # `noctusai_lib.config.cors_registry.derive_cors_origins(include_all_frontends=True)`,
