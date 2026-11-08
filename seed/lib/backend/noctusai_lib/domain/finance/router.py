@@ -29,7 +29,7 @@ product's schema-scoped client (re-deriving poisons the shared admin client).
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
@@ -202,13 +202,14 @@ def make_finance_router(
         category_id: Optional[UUID] = Query(None),
         cost_center_id: Optional[UUID] = Query(None),
         q: Optional[str] = Query(None, max_length=100),
+        source: Optional[List[str]] = Query(None),
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> dict:
         rows, total, page, size = entries_svc.list_entries(
             scope(ctx), direction=direction, status=status, overdue=overdue, date_from=date_from, date_to=date_to,
-            category_id=category_id, cost_center_id=cost_center_id, q=q, page=page, page_size=page_size,
+            category_id=category_id, cost_center_id=cost_center_id, q=q, source=source, page=page, page_size=page_size,
         )
         on = today()
         return paginated_response(

@@ -40,6 +40,7 @@ import type {
   EntryDirection,
   EntryInput,
   EntryPatch,
+  EntrySource,
   EntryStatus,
   FinanceAccount,
   FinanceAttachment,
@@ -94,6 +95,8 @@ export interface EntryListParams {
   category_id?: string;
   cost_center_id?: string;
   q?: string;
+  /** Origem (how the entry got into the books); one value, part of the query key. */
+  source?: EntrySource | '';
   page?: number;
   page_size?: number;
 }

@@ -90,6 +90,8 @@ export const MESSAGES = {
   'entries.all_directions': 'A receber e a pagar',
   'entries.filter_status': 'Filtrar por situação',
   'entries.filter_category': 'Filtrar por categoria',
+  'entries.filter_origin': 'Filtrar por origem',
+  'entries.all_origins': 'Todas as origens',
   'entries.all_categories': 'Todas as categorias',
   'entries.from': 'Vencimento a partir de',
   'entries.to': 'Vencimento até',

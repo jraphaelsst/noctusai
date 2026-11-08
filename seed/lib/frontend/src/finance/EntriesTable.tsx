@@ -13,7 +13,7 @@ import { SettleDialog } from './SettleDialog';
 import { formatCents, formatDate, remainingCents } from './format';
 import { errorMessage, type FinanceHooks } from './hooks';
 import { t } from './i18n';
-import { ENTRY_STATUSES, type EntryDirection, type EntryStatus, type FinanceEntry } from './types';
+import { ENTRY_SOURCES, ENTRY_STATUSES, type EntrySource, type EntryDirection, type EntryStatus, type FinanceEntry } from './types';
 
 export interface EntriesTableProps {
   hooks: FinanceHooks;
@@ -33,6 +33,7 @@ export function EntriesTable({ hooks, direction, isAdmin = false, pageSize = 20,
   const [to, setTo] = React.useState('');
   const [categoryId, setCategoryId] = React.useState('');
   const [q, setQ] = React.useState('');
+  const [source, setSource] = React.useState<EntrySource | ''>('');
   const [page, setPage] = React.useState(1);
 
   const [detailId, setDetailId] = React.useState<string | null>(null);
@@ -48,6 +49,7 @@ export function EntriesTable({ hooks, direction, isAdmin = false, pageSize = 20,
     to,
     category_id: categoryId,
     q,
+    source: showOrigin ? source : '',
     page,
     page_size: pageSize,
   });
@@ -142,6 +144,14 @@ export function EntriesTable({ hooks, direction, isAdmin = false, pageSize = 20,
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </Select>
+        {showOrigin ? (
+          <Select aria-label={t('entries.filter_origin')} value={source} onChange={(e) => resetPage(setSource)(e.target.value as EntrySource | '')}>
+            <option value="">{t('entries.all_origins')}</option>
+            {ENTRY_SOURCES.map((s) => (
+              <option key={s} value={s}>{t(`entry_source.${s}`)}</option>
+            ))}
+          </Select>
+        ) : null}
         <Input type="date" aria-label={t('entries.from')} value={from} onChange={(e) => resetPage(setFrom)(e.target.value)} />
         <Input type="date" aria-label={t('entries.to')} value={to} onChange={(e) => resetPage(setTo)(e.target.value)} />
         <Input type="search" aria-label={t('entries.search')} placeholder={t('entries.search')} value={q} onChange={(e) => resetPage(setQ)(e.target.value)} />

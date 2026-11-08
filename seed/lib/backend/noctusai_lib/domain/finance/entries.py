@@ -240,6 +240,7 @@ def list_entries(
     category_id: Optional[Any] = None,
     cost_center_id: Optional[Any] = None,
     q: Optional[str] = None,
+    source: Optional[Any] = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int, int, int]:
@@ -247,6 +248,10 @@ def list_entries(
         raise invalid("direction", "Direção inválida.")
     if status is not None and status not in values(EntryStatus):
         raise invalid("status", "Status inválido.")
+    sources = [source] if isinstance(source, str) else list(source or [])
+    unknown = [x for x in sources if x not in values(EntrySource)]
+    if unknown:
+        raise invalid("source", f"Origem inválida: {', '.join(map(str, unknown))}.", code="origem_invalida")
     category_ids = descendant_ids(s, category_id) if category_id else None
     if category_ids and len(category_ids) > IN_FILTER_BATCH:
         raise invalid("category_id", "A categoria tem subcategorias demais para filtrar de uma vez.", code="categoria_ampla_demais")
@@ -267,6 +272,9 @@ def list_entries(
             query = query.in_("category_id", category_ids)
         if cost_center_id:
             query = query.eq("cost_center_id", str(cost_center_id))
+        if sources:
+            # postgrest-unbounded-ok: validated against the closed EntrySource vocabulary above
+            query = query.in_("source", sources)
         if overdue is True:
             # postgrest-unbounded-ok: two literal enum values
             query = query.in_("status", list(_OPEN_STATUSES)).lt("due_date", on)

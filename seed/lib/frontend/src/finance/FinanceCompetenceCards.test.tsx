@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FinanceShell } from './FinanceShell';
 import { mockRechartsLayout } from '../design-system/charts/_recharts-test-utils';
@@ -115,7 +115,7 @@ describe('Origem column (opt-in)', () => {
     expect(screen.queryByRole('columnheader', { name: 'Origem' })).not.toBeInTheDocument();
     rerender(<FinanceShell hooks={hooksFor(routes())} isAdmin section="receivable" now={NOW} showEntryOrigin />);
     expect(await screen.findByRole('columnheader', { name: 'Origem' })).toBeInTheDocument();
-    expect(await screen.findByText('Recorrência')).toBeInTheDocument();
+    expect(await within(screen.getByRole('table')).findByText('Recorrência')).toBeInTheDocument();
     void user;
   });
 });

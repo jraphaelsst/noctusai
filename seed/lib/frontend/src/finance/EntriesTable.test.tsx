@@ -266,3 +266,20 @@ describe('create / edit entry', () => {
     expect(opts).toEqual(['Ainda não sei', ACC_BANK.name, ACC_GW.name]);
   });
 });
+
+describe('Origem filter (opt-in, server-side)', () => {
+  const entriesCalls = (api: ReturnType<typeof makeRoutedApi>) => api.get.mock.calls.filter((c: any[]) => c[0] === '/api/finance/entries');
+
+  it('is absent unless showOrigin is on', () => {
+    mount();
+    expect(screen.queryByRole('combobox', { name: 'Filtrar por origem' })).not.toBeInTheDocument();
+  });
+
+  it('sends source to the server (part of the query key) and resets to page 1', async () => {
+    const api = makeRoutedApi({ ...baseRoutes(), 'GET /api/finance/entries': page([entry()]) });
+    render(<EntriesTable hooks={hooksFor(api)} direction="payable" showOrigin />, { wrapper: wrapperFor() });
+    await screen.findByText('Pedido #100');
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Filtrar por origem' }), 'contracts');
+    await waitFor(() => expect(entriesCalls(api).some((c: any[]) => c[1]?.source === 'contracts' && c[1]?.page === 1)).toBe(true));
+  });
+});

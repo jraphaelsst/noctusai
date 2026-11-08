@@ -247,3 +247,15 @@ def test_add_months_keeps_the_anchor():
     assert add_months(date(2026, 1, 31), 2) == date(2026, 3, 31)
     assert add_months(date(2026, 2, 28), 1, anchor_day=31) == date(2026, 3, 31)
     assert add_months(date(2026, 11, 30), 3) == date(2027, 2, 28)
+
+
+def test_list_entries_source_filter(s):
+    a = mk_entry(s, description="M")
+    b = mk_entry(s, description="X", source="external", source_ref="r1")
+    def ids(**kw):
+        return {r["id"] for r in entries.list_entries(s, **kw)[0]}
+    assert ids(source="external") == {b["id"]}
+    assert ids(source=["manual", "external"]) == {a["id"], b["id"]}
+    assert ids() == {a["id"], b["id"]}
+    with pytest.raises(FinanceError):
+        entries.list_entries(s, source="nope")
