@@ -10,6 +10,7 @@ import { StatTileRow } from '../design-system/charts/StatTileRow';
 import { Button } from '../design-system/ui/Button';
 import { Notice, PageHeader, RefreshingBar } from './controls';
 import { formatCents, monthEndIso, monthStartIso, remainingCents } from './format';
+import { CompetenceResultCard, RevenueByCategoryCard } from './FinanceCompetenceCards';
 import { errorMessage, type FinanceHooks } from './hooks';
 import { t } from './i18n';
 
@@ -17,10 +18,25 @@ export interface FinanceOverviewProps {
   hooks: FinanceHooks;
   now?: Date;
   /** Optional deep links (the host routes). */
-  onNavigate?: (section: 'receivable' | 'payable' | 'cashflow' | 'accounts') => void;
+  onNavigate?: (section: 'receivable' | 'payable' | 'cashflow' | 'accounts' | 'reconciliation' | 'dre') => void;
+  /** Opt-in (default off = today's page): "De onde veio a receita do mês" + "Resultado do mês (competência)". */
+  competenceCards?: boolean;
+  /** Named seam: replaces the numbers with a first-use state when the books have no account and no movement yet. */
+  emptyState?: FinanceOverviewEmptyState;
+  /** Named seam: product-specific content rendered at the bottom of the overview (e.g. how the books are fed). */
+  footer?: React.ReactNode;
 }
 
-export function FinanceOverview({ hooks, now, onNavigate }: FinanceOverviewProps) {
+export interface FinanceOverviewEmptyState {
+  title: string;
+  description: string;
+  /** Plain-language note under the actions. */
+  hint?: string;
+  /** Show the "Cadastrar a primeira conta" / "Importar um extrato" actions (needs `onNavigate`). Default true. */
+  actions?: boolean;
+}
+
+export function FinanceOverview({ hooks, now, onNavigate, competenceCards = false, emptyState, footer }: FinanceOverviewProps) {
   const base = React.useMemo(() => now ?? new Date(), [now]);
   const accounts = hooks.useAccounts({ active: true });
   const ids = React.useMemo(() => (accounts.data ?? []).map((a) => a.id), [accounts.data]);
@@ -28,6 +44,8 @@ export function FinanceOverview({ hooks, now, onNavigate }: FinanceOverviewProps
   const cash = hooks.useCashflow({ from: monthStartIso(base), to: monthEndIso(base, 5) });
   const aging = hooks.useAging();
   const overduePayable = hooks.useEntries({ direction: 'payable', overdue: true, page: 1, page_size: 100 });
+  // Same month as the cash card; the request only goes out when the competence cards are on.
+  const dre = hooks.useDre({ from: monthStartIso(base), to: monthEndIso(base), view: 'statement' }, { enabled: competenceCards });
 
   const accountRows = (accounts.data ?? []).map((a) => ({ id: a.id, name: a.name, balance: balances.byId[a.id]?.balance_cents }));
   const totalBalance = accountRows.reduce((sum, r) => sum + (r.balance ?? 0), 0);
@@ -47,7 +65,32 @@ export function FinanceOverview({ hooks, now, onNavigate }: FinanceOverviewProps
   if (aging.isError && !aging.data) failures.push({ key: 'aging', message: t('overview.err_aging'), retry: () => void aging.refetch() });
   if (overduePayable.isError && !overduePayable.data) failures.push({ key: 'payable', message: t('overview.err_payable'), retry: () => void overduePayable.refetch() });
 
-  const refreshing = accounts.isRefreshing || balances.isRefreshing || cash.isRefreshing || aging.isRefreshing || overduePayable.isRefreshing;
+  const dreError = competenceCards && dre.isError && !dre.data ? t('overview.err_dre') : null;
+  const refreshing = (competenceCards && dre.isRefreshing) || accounts.isRefreshing || balances.isRefreshing || cash.isRefreshing || aging.isRefreshing || overduePayable.isRefreshing;
+
+  // First use: loaded (never while pending), no failure, no account and no movement.
+  const firstUse =
+    !!emptyState && !!accounts.data && accounts.data.length === 0 && !!cash.data && cash.data.buckets.length === 0 && failures.length === 0;
+
+  if (firstUse && emptyState) {
+    return (
+      <section className="space-y-4">
+        <PageHeader title={t('overview.title')} subtitle={t('overview.subtitle')} />
+        <div className="grid justify-items-center gap-2 rounded-lg border p-10 text-center">
+          <h3 className="text-base font-semibold">{emptyState.title}</h3>
+          <p className="max-w-[60ch] text-sm text-muted-foreground">{emptyState.description}</p>
+          {onNavigate && emptyState.actions !== false ? (
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button onClick={() => onNavigate('accounts')}>{t('overview.empty_add_account')}</Button>
+              <Button variant="outline" onClick={() => onNavigate('reconciliation')}>{t('overview.empty_import')}</Button>
+            </div>
+          ) : null}
+          {emptyState.hint ? <p className="text-xs text-muted-foreground">{emptyState.hint}</p> : null}
+        </div>
+        {footer}
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-4" aria-busy={refreshing}>
@@ -133,6 +176,19 @@ export function FinanceOverview({ hooks, now, onNavigate }: FinanceOverviewProps
           </dl>
         </ChartCard>
       </div>
+      {competenceCards ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <RevenueByCategoryCard report={dre.data} loading={dre.showSkeleton} error={dreError} onRetry={() => void dre.refetch()} />
+          <CompetenceResultCard
+            report={dre.data}
+            loading={dre.showSkeleton}
+            error={dreError}
+            onRetry={() => void dre.refetch()}
+            onSeeDre={onNavigate ? () => onNavigate('dre') : undefined}
+          />
+        </div>
+      ) : null}
+      {footer}
     </section>
   );
 }

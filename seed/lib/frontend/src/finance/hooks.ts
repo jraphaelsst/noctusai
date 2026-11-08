@@ -472,10 +472,11 @@ export function createFinanceHooks(apiOrBase: string | FinanceApi) {
   }
 
   // ---- DRE (CONTRACT §10 / §10.5 / §11) ---------------------------------------------------
-  function useDre(params: PeriodParams & { view?: DreView } = {}) {
+  function useDre(params: PeriodParams & { view?: DreView } = {}, options: { enabled?: boolean } = {}) {
     const q = useQuery<DreReportData>({
       queryKey: [...financeKeys.reports, 'dre', params],
       queryFn: () => data(api.get(p('/reports/dre'), params)),
+      enabled: options.enabled ?? true,
       placeholderData: keep,
     });
     return signals(q);

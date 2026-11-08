@@ -21,7 +21,8 @@ export type { FinanceShellProps, FinanceSectionKey, RegisterTab, AccountantTab }
 export { FinanceRoutedPage } from './FinanceRoutedPage';
 export type { FinanceRoutedPageProps } from './FinanceRoutedPage';
 export { FinanceOverview } from './FinanceOverview';
-export type { FinanceOverviewProps } from './FinanceOverview';
+export type { FinanceOverviewProps, FinanceOverviewEmptyState } from './FinanceOverview';
+export { RevenueByCategoryCard, CompetenceResultCard, revenueSlices } from './FinanceCompetenceCards';
 export { EntriesTable } from './EntriesTable';
 export type { EntriesTableProps } from './EntriesTable';
 export { EntryDialog } from './EntryDialog';
