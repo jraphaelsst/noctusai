@@ -16,7 +16,7 @@
 | JL-012 | STRUCTURAL | in-progress feat/julia-turn-redesign | juiz:visita-nao-agenda | - | Casos do juiz com contexto narrativo nao semeiam o estado do motor (dossie vazio contradiz a nota): valor-sem-dado, documento-foto, visita-nao-agenda |
 | JL-013 | STRUCTURAL | fixed 2b00b3131 | unit:tests/studio/def/test_compiler_conteudo.py::test_the_tools_block_carries_the_flags_and_not_the_per_tool_lines | - | Prompt de ~25k tokens por turno (SW One Chat: ~2.5k); ferramentas duplicadas no prompt |
 | JL-014 | STRUCTURAL | fixed 2b00b3131 | unit:test_a_rerun_starts_with_fresh_budgets_and_loaded_skills | - | Correcao de conformidade herdava contadores gastos |
-| JL-015 | AMBIGUOUS | open | mec-spec-ausente-verifica-e-alerta | - | Spec ausente: espera alerta tipo outro e handoff info_indisponivel; ela usa pedido_humano e nao alerta |
+| JL-015 | CONTENT | in-progress feat/julia-jl015-handoff-alerta | mec-spec-ausente-verifica-e-alerta | - | Spec ausente: espera alerta tipo outro e handoff info_indisponivel; ela usa pedido_humano e nao alerta |
 | JL-016 | MODEL | accepted variancia de redacao: passa 3/3 em reexecucao; reabre se cair em 2 runs seguidos | mec-preco-outro-site | - | mec-preco-outro-site: 1-2 de 3 execucoes citam valor/'nao consigo abrir links' fora do padrao |
 | JL-017 | MODEL | accepted variancia: 3/3 em reexecucao | mec-insatisfacao-pergunta-repetida | - | mec-insatisfacao-pergunta-repetida: sinalizar_alerta as vezes omitido |
 | JL-018 | MODEL | superseded by JL-022 (causa de conteudo achada: fora-de-escopo + descricao de encerrar) | mec-fora-escopo-medico | - | mec-fora-escopo-medico: uma execucao chamou encerrar |
