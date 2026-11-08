@@ -204,6 +204,8 @@ Existing ERP seed (built 2026-10-14): parties, items, inventory, purchasing, con
 
 ### 5.1 Modules per canon
 
+> **Owner correction 2026-11-08 — what "erp" means here.** The only product absorbed into SW is **erp-imobiliario** (its database schema happens to be named `erp`; the "erp schema drop" in 51's S8 is THAT schema). **`templates/product-erp/` is the ERP product TEMPLATE and STAYS** — never absorbed, never erased; it is the L1 ERP vertical seed every market ERP is scaffolded from. There is no `products/erp` and no `erp` row in `public.products`. Owner: "erp que erp é esse? só me lembro do erp-imob, e o template de produto erp. esse erp deve ficar."
+
 | Canon | Market | CRM | ERP | CMS | Other groups | Absorbs |
 |---|---|---|---|---|---|---|
 | **social-wiring** (live) | real estate | ✓ (+Julia, Atendimento, E-mail ext.) | ✓ (+ locação/fiscal RE) | ✓ (+Edição de Fotos, RE feeds) | Redes Sociais, CoreStudio, Banib(stub), Emissões, Integrações, Configurações | **erp-imobiliario** |

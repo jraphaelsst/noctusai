@@ -43,6 +43,9 @@ E1 locação on `contracts` recurring + readjustment index; E2 commissions split
 ## Phase 5 — Absorptions (W6–W8) (DEFERRED — per product, owner-gated steps)
 erp-imobiliario → SW (A5 decouple public fns before A7); wake orbity (owner go) → igig → orbity; therapy-platform + community + nos-no-limiar content → monica (legal review first, owner Q2). Phase 6 = contract (W9): drop leads-lite literal path, SW SQL stage fn, orbity `lead_stages`; keepers flip to blocking.
 
+> **Owner correction 2026-11-08 — what "erp" means here.** The only product absorbed into SW is **erp-imobiliario** (its database schema happens to be named `erp`; the "erp schema drop" in 51's S8 is THAT schema). **`templates/product-erp/` is the ERP product TEMPLATE and STAYS** — never absorbed, never erased; it is the L1 ERP vertical seed every market ERP is scaffolded from. There is no `products/erp` and no `erp` row in `public.products`. Owner: "erp que erp é esse? só me lembro do erp-imob, e o template de produto erp. esse erp deve ficar."
+
+
 ## Anti-goals (explicit non-goals)
 - No separate CRM/ERP/CMS products or containers — modules mount into the market product.
 - No market stage list, origin list or noun inside `seed/` (the seed ships one generic preset only).
