@@ -108,6 +108,12 @@ def _validate_caso(
         raise ValueError(f"suite must be one of {SUITES}; got {suite!r}")
     if suite == "comportamento":
         _validate_criterios(criterios)
+        if asserts is not None:
+            raise ValueError("asserts only exist on a mecanismo case")
+        if roteiro is not None:
+            from app.studio.eval_mecanismo import validar_mundo_juiz
+
+            validar_mundo_juiz(roteiro, **conteudo)
         return
     validar_caso_mecanismo(k=k, roteiro=roteiro, asserts=asserts, criterios=criterios, **conteudo)
 
@@ -115,8 +121,13 @@ def _validate_caso(
 def _validate_update_mecanismo(current: "EvalCaseRecord", **changes: Any) -> None:
     """An update that touches a ``mecanismo`` case re-validates the MERGED case (same rules as create)."""
     if current.suite != "mecanismo":
-        if any(changes.get(n) is not _UNSET for n in ("k", "roteiro", "asserts")):
-            raise ValueError("k / roteiro / asserts only exist on a mecanismo case")
+        if any(changes.get(n) is not _UNSET for n in ("k", "asserts")):
+            raise ValueError("k / asserts only exist on a mecanismo case")
+        novo = changes.get("roteiro", _UNSET)
+        if novo is not _UNSET and novo is not None:  # the judge case's WORLD (no turnos): see validar_mundo_juiz
+            from app.studio.eval_mecanismo import validar_mundo_juiz
+
+            validar_mundo_juiz(novo, titulo=current.titulo, entrada=current.entrada, contexto=current.contexto)
         return
     merged = {
         "titulo": current.titulo, "entrada": current.entrada, "contexto": current.contexto,

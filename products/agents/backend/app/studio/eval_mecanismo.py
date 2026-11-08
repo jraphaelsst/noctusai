@@ -245,6 +245,26 @@ def validar_roteiro(roteiro: Any) -> None:
         raise RoteiroInvalido(f"roteiro.estado_inicial: campos desconhecidos {sorted(extra)}")
 
 
+_CHAVES_MUNDO_JUIZ = frozenset({"estado_inicial", "catalogo", "fixture"})
+
+
+def validar_mundo_juiz(roteiro: Any, **conteudo_sintetico: Any) -> None:
+    """A ``comportamento`` (judge) case may carry the WORLD its free-text ``contexto`` narrates -- ``estado_inicial``
+    (criteria / offer batches already recorded), ``catalogo`` and ``fixture`` (specs, ``fase_testes``) -- and nothing
+    else: no ``turnos`` (the judge case is ONE turn) and no ``canarios``. Without it the engine state block says the
+    lead is brand new while the contexto says an imóvel was already shown, and the case grades the contradiction
+    instead of the agent. Same synthetic-data rule as a mecanismo case (Meta 4.7)."""
+    from app.studio.eval_pii import recusar_pii
+
+    if not isinstance(roteiro, dict):
+        raise RoteiroInvalido("roteiro: objeto")
+    extra = set(roteiro) - _CHAVES_MUNDO_JUIZ
+    if extra:
+        raise RoteiroInvalido(f"roteiro de um caso de comportamento so aceita {sorted(_CHAVES_MUNDO_JUIZ)}; recebeu {sorted(extra)}")
+    validar_roteiro({**roteiro, "turnos": [{"lead": "x"}]})
+    recusar_pii(roteiro=roteiro, **conteudo_sintetico)
+
+
 def validar_caso_mecanismo(*, k: int, roteiro: Any, asserts: Any, **conteudo_sintetico: Any) -> None:
     """The one validator every store calls before writing a ``mecanismo`` case. Also refuses personal data
     (Meta 4.7: fixtures are synthetic)."""
@@ -564,6 +584,17 @@ class SuiteResultado:
     @property
     def casos_aprovados(self) -> int:
         return sum(1 for c in self.casos if c.passou)
+
+    @property
+    def erro_de_harness(self) -> str | None:
+        """The run measured NOTHING about the agent: every execution that ran ended in ``erro`` (the driver crashed before
+        a reply), none was judged. That is a harness failure, never "Julia failed 61 cases" (2026-11-06 run 8f5eb895:
+        61/61 ``erro_turno1:TypeError`` was stored as a finished run at 0/61). Returns the distinct driver codes."""
+        execucoes = [e for c in self.casos for e in c.execucoes if e.status != "pulado"]
+        if not execucoes or any(e.status in ("aprovado", "reprovado") for e in execucoes):
+            return None
+        codigos = sorted({f.codigo for e in execucoes for f in e.falhas if f.assert_nome == "driver"})
+        return "erro_de_harness: " + (", ".join(codigos) if codigos else "o driver falhou antes de qualquer resposta")
 
 
 class _Orcamento:

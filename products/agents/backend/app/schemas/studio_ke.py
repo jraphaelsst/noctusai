@@ -266,8 +266,10 @@ class EvalCaseCreateRequest(StrictHttpModel):
     def _criterios_do_juiz(self) -> "EvalCaseCreateRequest":
         if self.suite == "comportamento" and self.criterios is None:
             raise ValueError("criterios is required for a comportamento case")
-        if self.suite != "mecanismo" and (self.roteiro is not None or self.asserts is not None):
-            raise ValueError("roteiro / asserts only exist on a mecanismo case")
+        if self.suite != "mecanismo" and self.asserts is not None:
+            raise ValueError("asserts only exist on a mecanismo case")
+        if self.suite not in ("mecanismo", "comportamento") and self.roteiro is not None:
+            raise ValueError("roteiro only exists on a mecanismo or comportamento case")
         return self
 
 
@@ -279,7 +281,8 @@ class EvalCaseUpdateRequest(StrictHttpModel):
     rubrica: str | None = None
     tags: list[str] | None = None
     ativo: bool | None = None
-    #: ``mecanismo`` cases only (the store refuses them on a ``comportamento`` case).
+    #: ``k`` / ``asserts``: ``mecanismo`` cases only. ``roteiro`` on a ``comportamento`` case is the WORLD only
+    #: (``estado_inicial`` / ``catalogo`` / ``fixture``; no ``turnos``) -- see ``eval_mecanismo.validar_mundo_juiz``.
     k: int | None = None
     roteiro: dict[str, Any] | None = None
     asserts: dict[str, Any] | None = None

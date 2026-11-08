@@ -156,6 +156,26 @@ async def test_a_fake_driver_run_is_recorded_but_never_opens_the_gate():
     assert decidir_portao(store.requisito(ORG, AGENT, VERSION), "h1").codigo == "sem_execucao"
 
 
+class _Quebrado(FakeEvalTurnDriver):
+    tipo = "live"
+
+    async def executar_turno(self, thread, mensagem_lead):
+        raise TypeError("driver quebrado")
+
+
+@pytest.mark.asyncio
+async def test_a_driver_that_crashes_on_every_case_fails_the_run_as_a_harness_error_not_as_a_score():
+    store = _store_with_case()
+    run_id, res = await rodar_suite_mecanismo(
+        store, _Quebrado([]), org_id=ORG, agent_id=AGENT, version_id=VERSION, compiled_hash="h1",
+        started_by=uuid4(), limite_usd=None,
+    )
+    row = store.runs[run_id]
+    assert row["status"] == "falhou" and row["erro"] == "erro_de_harness: erro_turno1:TypeError"
+    assert res.erro_de_harness and not decidir_portao(store.requisito(ORG, AGENT, VERSION), "h1").liberado
+    assert store.latest_live_run(ORG, VERSION) is None  # a harness error never counts as a finished live run
+
+
 @pytest.mark.asyncio
 async def test_failed_failures_are_stored_as_codes_only():
     store = _store_with_case()
