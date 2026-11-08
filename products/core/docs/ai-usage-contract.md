@@ -136,3 +136,11 @@ Extend the existing writer with `noctus.dev.usage_eval action=sync_deliveries` (
 - null-not-zero for unrecorded fields.
 - `check_access_tier_routes/tables` green.
 - One E2E shape check against the live route.
+
+## 7. As built (feat/ai-usage-be, 2026-11-08) — these override §1–§2 where they differ
+1. **403 body is flat.** The seed handler flattens `require_platform_admin_dep`, so the body is `{"detail": "<message>", "code": "platform_admin_required"}`. Consumers read the top-level `code` on 403. The 422 and 500 bodies stay `{detail:{code,message}}`.
+2. **`/cost` group_by** (anthropic) = `model|token_type|workspace|api_key|cost_type`. The cost table has no `service_tier`/`context_window`, so those return 422 `group_by_not_supported_by_source` on `/cost`. They remain valid on `/usage`.
+3. **422 validation order:** `range_invalid` → `range_before_coverage` → `range_too_long`.
+4. **Replace-window** is executed by three SECURITY INVOKER RPCs, `ai_replace_anthropic_{usage_window,cost_window,rate_limits}` (EXECUTE granted to service_role only). PostgREST cannot delete+insert in one transaction.
+5. **Scheduler job id** `anthropic_usage_snapshot`, cron `20 */6 * * *`. Startup catch-up is not wired; each 6-hourly run fills gaps (misfire grace 3h).
+6. **Rate limits:** org scope only for now; no workspace rows.
