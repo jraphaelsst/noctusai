@@ -78,7 +78,12 @@ async def get_current_admin(
         db.table("noctus_users").select("role").eq("id", user.id).single().execute
     )
     if not profile.data or profile.data.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
+        # Canonical platform-tier refusal (same body as `require_platform_admin_dep`): an org/product
+        # admin lands here too, never past it.
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "Restrito a administradores da plataforma NoctusAI", "code": "platform_admin_required"},
+        )
     # Assurance gate (platform-admin-mfa M5): policy `off` = no-op; warn/enforce
     # read the aal of the token `get_current_user` just validated.
     await require_admin_assurance(
