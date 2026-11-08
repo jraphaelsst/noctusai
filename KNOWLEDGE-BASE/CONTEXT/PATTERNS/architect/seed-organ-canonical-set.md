@@ -91,7 +91,7 @@ Architect scout surfaced 15 organs already canonical in practice. All ship `orga
 |---|---|---|---|---|
 | AppShell | `seed/lib/frontend/src/design-system/components/AppShell.tsx` | 5+ (1 direct + N via createProductLayout) | emerging | Layout wrapper; responsive sidebar; shell trio entry point |
 | Sidebar | `seed/lib/frontend/src/design-system/components/Sidebar.tsx` | 5+ (1 direct + N via createProductLayout) | emerging | Prop-driven collapsible nav; brandHref SSO seam |
-| Header | `seed/lib/frontend/src/design-system/components/Header.tsx` | 5 direct + N via createProductLayout | emerging | logoutBehavior seam; actions slot; variant prop |
+| Header | `seed/lib/frontend/src/design-system/components/Header.tsx` | 5 direct + N via createProductLayout | emerging | actions slot; variant prop |
 | ScorePill | `seed/lib/frontend/src/design-system/gamification/ScorePill.tsx` | 3 | emerging | Threshold-based color pill; null-safe; sibling to ProgressRing |
 | RankBadge | `seed/lib/frontend/src/design-system/gamification/RankBadge.tsx` | 2 | emerging | Gold/silver/bronze/neutral tier badge; gamification convention |
 | NotificationBell | `seed/lib/frontend/src/design-system/components/NotificationBell.tsx` | 3 | emerging | Hook-injection pattern; no shadcn dep; standardized Notificacao type |

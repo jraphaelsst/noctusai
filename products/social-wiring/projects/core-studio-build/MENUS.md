@@ -32,7 +32,7 @@ Labels below are verbatim from each product's `NAV_GROUPS`; `›` marks nesting.
   - **Visão geral**: Dashboard · Analytics · Digest de auditoria · Fleet Control
   - **Clientes**: Usuarios · Organizacoes
   - **Comercial**: Produtos · Planos · Assinaturas · Faturamento
-  - **Plataforma**: Chaves API · Chaves LLM · Webhooks · Templates · Logout Behavior · Configuracoes · Segurança
+  - **Plataforma**: Chaves API · Chaves LLM · Webhooks · Templates · Configuracoes · Segurança
 - **Website**: Documentação · Configurações · Leads
 
 The `marketing` role still sees only Website.
