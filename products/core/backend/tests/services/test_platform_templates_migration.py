@@ -14,9 +14,16 @@ FLAT = " ".join(SQL.split())
 
 
 def test_seeded_design_system_equals_platform_tokens():
-    m = re.search(r"'design_system', 'org-design-system',.*?'json',\s*'(\{.*?\})',\s*1, 'active'", SQL, re.S)
-    assert m, "seed row not found"
-    seeded = json.loads(m.group(1).replace("''", "'"))
+    # The template is append-only: 092 seeds v1, later migrations append + activate a new
+    # version when tokens.css moves. The NEWEST carrier must equal the artifact.
+    carriers = [
+        p for p in sorted((BACKEND / "migrations").glob("*.sql"))
+        if "'org-design-system'" in (txt := p.read_text(encoding="utf-8")) and "noctus.brand-tokens/v1" in txt
+    ]
+    assert carriers, "seed row not found"
+    m = re.findall(r"'(\{\"schema\": \"noctus\.brand-tokens/v1\".*?\})'", carriers[-1].read_text(encoding="utf-8"), re.S)
+    assert m, f"no design-system literal in {carriers[-1].name}"
+    seeded = json.loads(m[-1].replace("''", "'"))
     tok = json.loads((BACKEND / "app/services/brand/platform_tokens.json").read_text(encoding="utf-8"))
     assert seeded["schema"] == "noctus.brand-tokens/v1"
     assert seeded["light"] == tok["light"] and seeded["dark"] == tok["dark"] and seeded["radius"] == tok["radius"]
