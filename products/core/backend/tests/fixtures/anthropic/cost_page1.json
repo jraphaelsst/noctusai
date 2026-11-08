@@ -1,0 +1,4 @@
+{"data":[{"starting_at":"2026-11-02T00:00:00Z","ending_at":"2026-11-03T00:00:00Z",
+ "group":{"model":"claude-test-model","workspace_id":null,"api_key_id":null,"cost_type":"tokens","token_type":"output_tokens"},
+ "cost":{"currency":"USD","amount":"1250.500000","list_amount":"1500.000000","requests":null}}],
+ "has_more":false,"next_page":null,"data_refreshed_at":"2026-11-08T10:00:00Z"}

@@ -1,0 +1,5 @@
+{"data":[{"starting_at":"2026-11-03T00:00:00Z","ending_at":"2026-11-04T00:00:00Z",
+ "group":{"model":"claude-test-model","workspace_id":null,"api_key_id":"apikey_synthetic","service_tier":null,"context_window":null},
+ "usage":{"uncached_input_tokens":50,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},
+ "cache_read_input_tokens":0,"output_tokens":5,"total_tokens":55,"server_tool_use":{"web_search_requests":0},"requests":1}}],
+ "has_more":false,"next_page":null,"data_refreshed_at":"2026-11-08T10:05:00Z"}

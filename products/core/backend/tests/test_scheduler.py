@@ -24,6 +24,7 @@ JOB_IDS = {
     core_scheduler.PTAX_JOB,
     core_scheduler.STORAGE_SNAPSHOT_JOB,
     core_scheduler.CREDITS_DEBIT_JOB,
+    core_scheduler.ANTHROPIC_USAGE_JOB,
 }
 
 
