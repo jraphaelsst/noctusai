@@ -75,7 +75,8 @@ describe("buildBreadcrumbTrail", () => {
   });
 
   it("falls back to the nearest known ancestor, then to Início", () => {
-    expect(buildBreadcrumbTrail({ navGroups: NAV, pathname: "/admin/products/9f3/whatever" }).at(-1)?.label).toBe("Produtos");
+    const trail = buildBreadcrumbTrail({ navGroups: NAV, pathname: "/admin/products/9f3/whatever" });
+    expect(trail[trail.length - 1]?.label).toBe("Produtos");
     const none = buildBreadcrumbTrail({ navGroups: NAV, pathname: "/nada/aqui" });
     expect(none).toEqual([{ key: "root", label: "Início", current: true }]);
   });

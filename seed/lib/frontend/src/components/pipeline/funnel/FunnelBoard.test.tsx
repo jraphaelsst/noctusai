@@ -97,7 +97,8 @@ function makeFake(initial: FunnelCard[]): Fake {
       const m = path.match(/\/cards\/([^/]+)\/(.+)$/)!;
       const target = fake.cards.find((c) => c.id === m[1])!;
       if (m[2] === 'mover-etapa') {
-        if (fake.failMoveTo?.etapa === body.para_etapa_id) throw fake.failMoveTo.error;
+        const fail = fake.failMoveTo;
+        if (fail && fail.etapa === body.para_etapa_id) throw fail.error;
         Object.assign(target, { etapa_id: body.para_etapa_id });
         return target;
       }
