@@ -90,7 +90,7 @@ export function showsStatus(queryKey: QueryKey | undefined, status: FunnelStatus
 
 /** Merge an edit into a card: DTO keys stay top-level, anything else is a `campos` key. */
 export function mergeChanges<TCard extends FunnelCard>(card: TCard, changes: Record<string, unknown>): TCard {
-  const next: Record<string, unknown> = { ...card };
+  const next: Record<string, unknown> = Object.fromEntries(Object.entries(card));
   const campos: Record<string, unknown> = { ...card.campos };
   for (const [key, value] of Object.entries(changes)) {
     if (key !== 'campos' && key in card) next[key] = value;
