@@ -12,7 +12,8 @@ KB § PATTERNS/common/background-agent-lifecycle.md.
 `~/.claude/projects/<project>/<session-id>/subagents/agent-<agentId>.jsonl`; beside it
 sits `agent-<agentId>.meta.json` whose `finished: true` is written when the agent's run
 ended (a running agent has no such key). An agent is REPORTED when finished, quiet for
->= GRACE_S, and the leader transcript holds no `TaskStop` for its id. Scope is the
+>= GRACE_S, and the leader transcript holds no `TaskStop` and no `[Subagent hand-back]` (from=<id>) for its id
+(a delivered hand-back = released by the harness). Scope is the
 payload's own `session_id`, so a peer session's agents are never seen (owner rule: never
 stop another session). Hooks that fire INSIDE a subagent (payload has `agent_id`) skip.
 
@@ -52,7 +53,15 @@ def tasks_dirs(session_id: str) -> list[Path]:
         return [Path(override)]
     uid = os.getuid()
     pats = [f"/private/tmp/claude-{uid}/*/{session_id}/tasks", f"/tmp/claude-{uid}/*/{session_id}/tasks"]
-    return [Path(p) for pat in pats for p in glob.glob(pat)]
+    seen: set[str] = set()
+    out: list[Path] = []
+    for pat in pats:  # /tmp and /private/tmp are one directory (macOS symlink): dedupe by realpath
+        for p in sorted(glob.glob(pat)):
+            rp = os.path.realpath(p)
+            if rp not in seen:
+                seen.add(rp)
+                out.append(Path(p))
+    return out
 
 
 def stopped_ids(transcript_path: str | None, ids: list[str]) -> set[str]:
@@ -67,6 +76,29 @@ def stopped_ids(transcript_path: str | None, ids: list[str]) -> set[str]:
                     continue
                 for i in ids:
                     if i.encode() in line:
+                        found.add(i)
+    except OSError:
+        return set()
+    return found
+
+
+HANDBACK_MARK = b"[Subagent hand-back]"
+
+
+def handed_back_ids(transcript_path: str | None, ids: list[str]) -> set[str]:
+    """Ids whose `[Subagent hand-back]` the leader already received (`from=\\"<id>\\"` /
+    `"from":"<id>"` on a marked line): the harness released those agents - not held, not idle."""
+    if not transcript_path or not ids:
+        return set()
+    found: set[str] = set()
+    try:
+        with open(transcript_path, "rb") as fh:
+            for line in fh:
+                if HANDBACK_MARK not in line:
+                    continue
+                for i in ids:
+                    b = i.encode()
+                    if b'from=\\"' + b + b'\\"' in line or b'"from":"' + b + b'"' in line:
                         found.add(i)
     except OSError:
         return set()
@@ -93,7 +125,8 @@ def find_idle(session_id: str, transcript_path: str | None, now: float | None = 
                               "description": md.get("description"), "idle_s": int(idle_s)})
             except (OSError, ValueError):
                 continue
-    done = stopped_ids(transcript_path, [c["agent_id"] for c in cands])
+    ids = [c["agent_id"] for c in cands]
+    done = stopped_ids(transcript_path, ids) | handed_back_ids(transcript_path, ids)
     return [c for c in cands if c["agent_id"] not in done]
 
 
