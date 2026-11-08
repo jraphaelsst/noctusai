@@ -43,6 +43,10 @@ describe("Landing", () => {
     for (const a of screen.getAllByRole("link", { name: "Política de Privacidade" })) expect(a).toHaveAttribute("href", "/consent/privacy-policy");
     expect(screen.getByRole("link", { name: "Termos de Uso" })).toHaveAttribute("href", "/consent/terms-of-use");
     expect(screen.getByRole("link", { name: "Central de Privacidade" })).toHaveAttribute("href", "/consent");
+    // cross-product links come from productUrl("agents"), never a literal in the page
+    const agentes = screen.getAllByRole("link", { name: /Agentes/ });
+    expect(agentes.length).toBeGreaterThanOrEqual(2);
+    expect(agentes.every((a) => /^https?:\/\/.+/.test(a.getAttribute("href") ?? ""))).toBe(true);
   });
 
   it("sends the lead to core with product_interest social-wiring", async () => {
@@ -53,7 +57,7 @@ describe("Landing", () => {
     await user.type(screen.getByLabelText(/^Nome/), "Ana");
     await user.type(screen.getByLabelText(/^WhatsApp/), "11912345678");
     await user.click(screen.getByRole("checkbox"));
-    await user.click(screen.getByRole("button", { name: /Enviar mensagem/ }));
+    await user.click(screen.getByRole("button", { name: "Pedir contato" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toMatch(/\/api\/website\/leads$/);
