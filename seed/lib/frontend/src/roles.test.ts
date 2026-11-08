@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ASSIGNABLE_ROLES, DEV_ROLES, grantableRoles, isDevOrOwner } from './roles';
+import { ASSIGNABLE_ROLES, BASE_ORG_ROLES, DEV_ROLES, MARKET_ORG_ROLES, ORG_ROLES, grantableRoles, isDevOrOwner } from './roles';
 
 describe('DEV_ROLES', () => {
   it('is the single source of truth for dev-page visibility', () => {
@@ -61,5 +61,17 @@ describe('grantableRoles', () => {
 
   it('a product admin (org owner/admin, or a NoctusAI platform operator) sees every assignable role', () => {
     expect(grantableRoles(true)).toEqual(ASSIGNABLE_ROLES);
+  });
+});
+
+describe('base vs market roles (per-market split, 2026-11-08)', () => {
+  it('juridico is base; corretor is a real_estate market role, not base', () => {
+    expect(BASE_ORG_ROLES).toContain('juridico');
+    expect(BASE_ORG_ROLES).not.toContain('corretor');
+    expect(MARKET_ORG_ROLES.real_estate).toEqual(['corretor']);
+  });
+
+  it('ORG_ROLES (valid stored values) is base + every market role', () => {
+    expect([...ORG_ROLES]).toEqual([...BASE_ORG_ROLES, 'corretor']);
   });
 });

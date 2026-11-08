@@ -61,7 +61,7 @@ export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining,
 export type { SSORoleInfo, SSOContext, SSOPlanInfo, SSOSubscriptionInfo, SSOLicenseInfo, SSOOrgInfo, EffectiveSSOContext, EffectiveOrgSource } from './sso';
 
 // Roles
-export { ORG_ROLES, ADMIN_ROLES, MANAGE_TEAM_ROLES, DEV_ROLES, PRODUCT_ADMIN_ROLES, LEGAL_REVIEW_ROLES, ASSIGNABLE_ROLES, ELEVATED_GRANT_ROLES, grantableRoles, ORG_ROLE_LABELS, isDevOrOwner, canManageTeam, canManageBilling, canReviewLegal, CUSTOMER_ORG_ROLES, isCustomerRole } from './roles';
+export { BASE_ORG_ROLES, MARKET_ORG_ROLES, ORG_ROLES, ADMIN_ROLES, MANAGE_TEAM_ROLES, DEV_ROLES, PRODUCT_ADMIN_ROLES, LEGAL_REVIEW_ROLES, ASSIGNABLE_ROLES, ELEVATED_GRANT_ROLES, grantableRoles, ORG_ROLE_LABELS, isDevOrOwner, canManageTeam, canManageBilling, canReviewLegal, CUSTOMER_ORG_ROLES, isCustomerRole } from './roles';
 export type { OrgRole } from './roles';
 
 // Page Status

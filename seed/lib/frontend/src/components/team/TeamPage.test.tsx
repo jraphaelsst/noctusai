@@ -142,6 +142,28 @@ describe('TeamPage: invite', () => {
     ]);
   });
 
+  it('offers no market role when the policy is base-only, and a real_estate policy offers corretor', async () => {
+    const base: TeamPolicyContract = {
+      staff_roles: ['owner', 'admin', 'corretor'],
+      invitable_roles: ['admin', 'member', 'juridico'],
+      labels: { admin: 'Administrador', member: 'Membro', juridico: 'Jurídico', corretor: 'Corretor' },
+    };
+    const first = renderPage({ api: makeApi({ policy: base }) });
+    await screen.findByText('Ana Admin');
+    fireEvent.click(screen.getByRole('button', { name: /Convidar/ }));
+    const baseSelect = (await screen.findByLabelText('Papel')) as HTMLSelectElement;
+    expect(Array.from(baseSelect.options).map((o) => o.value)).toEqual(['admin', 'member', 'juridico']);
+    first.unmount();
+
+    renderPage({
+      api: makeApi({ policy: { ...base, invitable_roles: [...base.invitable_roles, 'corretor'] } }),
+    });
+    await screen.findByText('Ana Admin');
+    fireEvent.click(screen.getByRole('button', { name: /Convidar/ }));
+    const reSelect = (await screen.findByLabelText('Papel')) as HTMLSelectElement;
+    expect(Array.from(reSelect.options).map((o) => o.value)).toContain('corretor');
+  });
+
   it('warns with email_motivo when the e-mail was not sent', async () => {
     const post = vi.fn(async () => ({
       data: { id: 'i2' },

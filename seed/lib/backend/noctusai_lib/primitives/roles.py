@@ -11,16 +11,43 @@ rejects. Change both, same commit.
 """
 from __future__ import annotations
 
-# All valid org_role values (noctus_users.org_role)
-# `corretor` is a real business role, not a permission tier: it carries
-# EXACTLY member-level rights (it appears in none of the grant tuples below)
-# and exists so an agency's brokers are identifiable as brokers on the team
-# page and attachable to their listings. The alternative was a product-local
-# role set in social-wiring, which is the fork this constant exists to prevent.
-# `juridico` (2026-10-07) is the same shape for an org's legal staff: member-level
-# rights plus ONE elevation, approving a contract's legal review
-# (LEGAL_REVIEW_ROLES below). Never a team/billing/dev grant.
-ORG_ROLES = ("owner", "admin", "manager", "member", "viewer", "dev", "test", "corretor", "juridico")
+# BASE roles: offered by EVERY product, whatever its market.
+# `juridico` (2026-10-07) is the org's legal staff, base because every market signs
+# contracts: member-level rights plus ONE elevation, approving a contract's legal
+# review (LEGAL_REVIEW_ROLES below). Never a team/billing/dev grant.
+BASE_ORG_ROLES = ("owner", "admin", "manager", "member", "viewer", "dev", "test", "juridico")
+
+# MARKET roles (owner decision 2026-11-08: in-app roles are per MARKET, the same as
+# funnel stages): a business role that only makes sense in one market is offered only
+# by products of that market. `corretor` is a real business role, not a permission
+# tier: EXACTLY member-level rights (it appears in none of the grant tuples below),
+# so an agency's brokers are identifiable on the team page and attachable to listings.
+#
+# 🔴 NEVER add a market role to BASE_ORG_ROLES. Declare it here, under its market.
+# This map is the single source: `ORG_ROLES` is derived from it, and
+# `noctusai_seed.TeamPolicy.for_market(market)` is what a product uses to OFFER it.
+MARKET_ORG_ROLES: dict[str, tuple[str, ...]] = {
+    "real_estate": ("corretor",),
+}
+
+# Every VALID stored org_role value (noctus_users.org_role, CHECK constraints, API
+# validators): BASE + all market roles. This is what is ACCEPTED/STORED, not what a
+# product OFFERS: the default `TeamPolicy` offers `BASE_ORG_ROLES` only, so a
+# `corretor` row keeps working everywhere while orbity/noc* never offer it.
+ORG_ROLES = BASE_ORG_ROLES + tuple(r for roles in MARKET_ORG_ROLES.values() for r in roles)
+
+
+def market_org_roles(market: str) -> tuple[str, ...]:
+    """The roles a ``market`` adds on top of ``BASE_ORG_ROLES`` (``()`` if it declares none).
+
+    Raises ``KeyError`` for a market name nobody declared -- a typo must not silently
+    mean "no extra roles".
+    """
+    if market not in MARKET_ORG_ROLES:
+        raise KeyError(
+            f"unknown market {market!r}; declared in MARKET_ORG_ROLES: {sorted(MARKET_ORG_ROLES)}"
+        )
+    return MARKET_ORG_ROLES[market]
 
 # Roles that grant team/billing management (can invite, remove, change roles)
 ADMIN_ROLES = ("owner", "admin")

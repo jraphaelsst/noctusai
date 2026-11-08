@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from noctusai_lib.primitives.exceptions import http_exception_handler
-from noctusai_lib.primitives.roles import ORG_ROLE_LABELS, ORG_ROLES
+from noctusai_lib.primitives.roles import BASE_ORG_ROLES, MARKET_ORG_ROLES, ORG_ROLE_LABELS, ORG_ROLES
 from noctusai_lib.testing.mocks import MockSupabaseClient
 from noctusai_lib.testing.memberships import seed_profiles
 from noctusai_seed import TeamPolicy
@@ -123,8 +123,29 @@ class TestTeamPolicyValidation:
         contract = TeamPolicy().as_contract()
         assert contract["staff_roles"] == list(ORG_ROLES)
         # `owner` is never invitable (owner decision 2026-10-14: granted after joining).
-        assert contract["invitable_roles"] == [r for r in ORG_ROLES if r != "owner"]
+        # Base only: no market role is offered by default (roles are per market).
+        assert contract["invitable_roles"] == [r for r in BASE_ORG_ROLES if r != "owner"]
+        assert "corretor" not in contract["invitable_roles"]
         assert contract["labels"] == {r: ORG_ROLE_LABELS[r] for r in ORG_ROLES}
+
+    def test_juridico_is_base_and_corretor_is_not(self):
+        assert "juridico" in BASE_ORG_ROLES
+        assert "corretor" not in BASE_ORG_ROLES
+        assert MARKET_ORG_ROLES["real_estate"] == ("corretor",)
+        assert set(ORG_ROLES) == set(BASE_ORG_ROLES) | {"corretor"}
+        assert "juridico" in TeamPolicy().effective_invitable_roles()
+
+    def test_for_market_real_estate_offers_base_plus_corretor(self):
+        policy = TeamPolicy.for_market("real_estate")
+        assert policy.effective_invitable_roles() == [
+            r for r in ORG_ROLES if r != "owner"
+        ]
+        assert "corretor" in policy.effective_invitable_roles()
+        assert "owner" not in policy.effective_invitable_roles()
+
+    def test_for_market_unknown_market_raises(self):
+        with pytest.raises(KeyError, match="unknown market"):
+            TeamPolicy.for_market("real_state")
 
     def test_declared_policy_contract_shape(self):
         assert COMMUNITY.as_contract() == {
@@ -200,6 +221,35 @@ class TestPolicyEndpoint:
         resp = world.as_user("corretor-1").get("/api/team/policy", headers=AUTH)
         assert resp.status_code == 200, resp.text
         assert resp.json() == TeamPolicy().as_contract()
+
+
+class TestInviteOffered:
+    def test_default_policy_refuses_corretor_invite_400(self, make_world):
+        world = make_world(None)
+        resp = world.as_user("admin-1").post(
+            "/api/team/invite", json={"email": "c@x.com", "role": "corretor"}, headers=AUTH,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "corretor" in resp.json()["detail"]
+
+    def test_default_policy_accepts_juridico_invite(self, make_world):
+        world = make_world(None)
+        resp = world.as_user("admin-1").post(
+            "/api/team/invite", json={"email": "j@x.com", "role": "juridico"}, headers=AUTH,
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_real_estate_policy_accepts_corretor_invite(self, make_world):
+        world = make_world(TeamPolicy.for_market("real_estate"))
+        resp = world.as_user("admin-1").post(
+            "/api/team/invite", json={"email": "c@x.com", "role": "corretor"}, headers=AUTH,
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_default_policy_still_lists_stored_corretor_rows(self, make_world):
+        world = make_world(None)
+        resp = world.as_user("admin-1").get("/api/team", headers=AUTH)
+        assert "corretor-1" in _listed(resp)
 
 
 # ── GET /api/team ──────────────────────────────────────────────────────────
@@ -301,10 +351,10 @@ class TestInviteRoles:
         )
         assert resp.status_code == 400, resp.text
 
-    def test_default_policy_still_invites_any_org_role(self, make_world):
+    def test_default_policy_invites_base_roles(self, make_world):
         world = make_world(None)
         resp = world.as_user("owner-1").post(
-            "/api/team/invite", json={"email": "c@test.com", "role": "corretor"}, headers=AUTH,
+            "/api/team/invite", json={"email": "c@test.com", "role": "viewer"}, headers=AUTH,
         )
         assert resp.status_code == 200, resp.text
 
