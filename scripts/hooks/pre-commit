@@ -479,7 +479,9 @@ fi
 # a public bucket is never the correct answer on this platform. The keeper's
 # own message names the sanctioned alternative (short-TTL signed URL minted
 # at read time) so refusing never dead-ends into `--no-verify`.
-STAGED_STORAGE_SURFACE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/migrations/.*\.sql|products/.*\.(py|ts|tsx)|noctusai_lib/.*\.py|mcp/.*\.py|templates/.*\.(py|ts|tsx))$' || true)
+# Leg D (same wall): `check_storage_service_only_policy` — a service-only organ bucket (finance-attachments)
+# whose migration chain still ends with a storage.objects policy TO authenticated/anon/PUBLIC.
+STAGED_STORAGE_SURFACE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/migrations/.*\.sql|templates/[^/]+/backend/migrations/.*\.sql|products/.*\.(py|ts|tsx)|noctusai_lib/.*\.py|mcp/.*\.py|templates/.*\.(py|ts|tsx))$' || true)
 if [[ -n "$STAGED_STORAGE_SURFACE" ]] && have_py; then
     echo "[pre-commit] Checking for a public storage bucket surface..."
     STAGED_STORAGE_SURFACE_CSV=$(echo "$STAGED_STORAGE_SURFACE" | paste -sd, -)

@@ -13738,7 +13738,9 @@ _GRANT_TABLE_RE = re.compile(
     r"\bGRANT\s+(?P<privs>.+?)\s+ON\s+(?P<target>.+?)\s+TO\s+(?P<roles>[^;]+)",
     re.IGNORECASE | re.DOTALL,
 )
-_POLICY_RE = re.compile(
+#: `_AGENTS_` prefix is load-bearing: a bare `_POLICY_RE` is redefined further down this module (the storage-bucket
+#: keeper), and module globals resolve at CALL time -- this keeper silently ran the other regex until 2026-11-07.
+_AGENTS_POLICY_RE = re.compile(
     r"\bCREATE\s+POLICY\s+(?:\"[^\"]+\"|\w+)\s+ON\s+(?P<table>[\w\".]+)(?P<rest>.*)",
     re.IGNORECASE | re.DOTALL,
 )
@@ -13752,6 +13754,14 @@ def _agents_role_set(raw: str) -> set[str]:
 
 def _agents_bare_table(raw: str) -> str:
     return raw.strip().strip(";").split(".")[-1].strip('"').lower()
+
+
+def _agents_other_schema(raw: str) -> bool:
+    """True when the target is qualified with a schema OTHER than `agents` (e.g. `storage.objects`, whose bucket
+    policies are path-scoped object RLS behind the Storage API, not a table the agents PostgREST schema serves).
+    Unqualified names resolve through the migration's `SET search_path = agents, ...`, so they still count."""
+    parts = [s.strip().strip('"').lower() for s in raw.strip().strip(";").split(".")]
+    return len(parts) > 1 and parts[-2] != "agents"
 
 
 def _agents_browser_grant_findings(statement: str) -> list[tuple[str, str]]:
@@ -13771,9 +13781,12 @@ def _agents_browser_grant_findings(statement: str) -> list[tuple[str, str]]:
             if re.match(r"ALL\s+TABLES\b", target, re.IGNORECASE):
                 out.append(("*", "GRANT ... ON ALL TABLES IN SCHEMA to a browser role"))
             else:
-                out.extend((_agents_bare_table(t), "GRANT SELECT/ALL to a browser role") for t in target.split(","))
-    p = _POLICY_RE.match(st)
-    if p:
+                out.extend(
+                    (_agents_bare_table(t), "GRANT SELECT/ALL to a browser role")
+                    for t in target.split(",") if not _agents_other_schema(t)
+                )
+    p = _AGENTS_POLICY_RE.match(st)
+    if p and not _agents_other_schema(p.group("table")):
         t = _POLICY_TO_RE.search(p.group("rest"))
         if t and _agents_role_set(t.group("roles")) & _BROWSER_ROLES:
             out.append((_agents_bare_table(p.group("table")), "CREATE POLICY ... TO a browser role"))
@@ -15884,6 +15897,132 @@ def check_storage_bucket_public(
                     "runtime.",
                 ))
 
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# `check_storage_service_only_policy` — a SERVICE-ONLY organ's private bucket
+# must carry no `storage.objects` policy for `authenticated` / `anon` / PUBLIC.
+# THE INCIDENT (2026-11-07): the finance organ rendered four
+# `finance-attachments_storage_{select,insert,update,delete}` policies
+# `TO authenticated` (org-folder scoped) into ~10 hosts. Any org member could
+# read, overwrite or delete the org's invoices/receipts straight through the
+# Supabase storage API, bypassing the backend role checks and the audit trail
+# — the backend already serves every attachment as a service-role signed URL, so
+# the browser grants were unused attack surface. Same class as SW documentos
+# (migration 328). The sibling table gate (`check_access_tier_tables`) cannot see
+# this: `storage.objects` is not a product table.
+#
+# FINAL-STATE REPLAY, not a grep: migrations are immutable history (the
+# `..._storage_select TO authenticated` lines in `012_finance.sql` stay on disk
+# forever), so per product the chain is replayed in numeric order and only the
+# policies still ALIVE at the end are judged -- `CREATE POLICY ... ON
+# storage.objects` adds, `DROP POLICY [IF EXISTS] ... ON storage.objects` removes.
+# A bucket is identified by the `bucket_id = '<name>'` literal in the policy.
+# Registry: `SERVICE_ONLY_BUCKETS` below; add a bucket the moment its organ goes
+# service-only. No allowlist, no suppression marker (same posture as
+# `check_storage_bucket_public`).
+# ---------------------------------------------------------------------------
+
+#: Buckets whose organ serves objects through the service-role client alone.
+SERVICE_ONLY_BUCKETS: tuple[str, ...] = ("finance-attachments",)
+
+_STORAGE_POLICY_CREATE_RE = re.compile(
+    r"^\s*CREATE\s+POLICY\s+(?P<name>\"[^\"]+\"|[A-Za-z_][A-Za-z_0-9]*)\s+ON\s+storage\.objects\b(?P<rest>.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_STORAGE_POLICY_DROP_RE = re.compile(
+    r"^\s*DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?(?P<name>\"[^\"]+\"|[A-Za-z_][A-Za-z_0-9]*)\s+ON\s+storage\.objects\b",
+    re.IGNORECASE,
+)
+_STORAGE_POLICY_TO_RE = re.compile(r"\bTO\s+(?P<roles>[A-Za-z_][A-Za-z_0-9,\s]*?)(?=\s+(?:USING|WITH)\b|$)", re.IGNORECASE)
+_STORAGE_BROWSER_ROLES = frozenset({"authenticated", "anon", "public"})
+_STORAGE_SERVICE_ONLY_ALTERNATIVE = (
+    "Service-only buckets are read/written by the backend through the service-role "
+    "client (signed URLs minted after the org/role check). Drop the policy "
+    "(`DROP POLICY IF EXISTS \"<name>\" ON storage.objects;`) in a new forward migration; "
+    "keep only the `TO service_role` policy. KB § PATTERNS/security/access-tiers.md."
+)
+
+
+def _storage_chain_order(path: Path) -> tuple[int, str]:
+    m = re.match(r"(\d+)", path.name)
+    return (int(m.group(1)) if m else -1, path.name)
+
+
+def check_storage_service_only_policy(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag a `storage.objects` policy open to `authenticated`/`anon`/PUBLIC on a service-only bucket.
+
+    Replays each product's migration chain (plus the `templates/product-seed` copy) in numeric order and
+    reports the policies still alive at the end of the chain. `paths` (pre-commit) only selects WHICH
+    products' chains get judged -- a staged migration/template file triggers its whole chain, because the
+    final state is a property of the chain, never of one file.
+    """
+    from noctusai_lib.testing.migration_parser import (
+        _strip_block_comments,
+        _strip_line_comments,
+        _walk_statements,
+    )
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+    chains: dict[Path, list[Path]] = {}
+    for d in sorted((root / "products").glob("*/backend/migrations")):  # product-scope: all — applied migration SQL describes the LIVE shared DB regardless of ativo (security)
+        chains[d] = sorted(d.glob("*.sql"), key=_storage_chain_order)
+    tmpl = root / "templates" / "product-seed" / "backend" / "migrations"
+    if tmpl.is_dir():
+        chains[tmpl] = sorted(tmpl.glob("*.sql"), key=_storage_chain_order)
+    if paths is not None:
+        touched = {(root / p).parent for p in paths if p.endswith(".sql")}
+        chains = {d: files for d, files in chains.items() if d in touched}
+
+    for _d, files in chains.items():
+        alive: dict[tuple[str, str], tuple[Path, int]] = {}
+        for sql_file in files:
+            try:
+                text = sql_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+                continue
+            clean = _strip_block_comments(_strip_line_comments(text))
+            for stmt in _walk_statements(clean):
+                drop = _STORAGE_POLICY_DROP_RE.match(stmt)
+                if drop:
+                    name = drop.group("name").strip('"')
+                    for key in [k for k in alive if k[1] == name]:
+                        del alive[key]
+                    continue
+                create = _STORAGE_POLICY_CREATE_RE.match(stmt)
+                if not create:
+                    continue
+                rest = create.group("rest")
+                bucket = next((b for b in SERVICE_ONLY_BUCKETS if re.search(rf"bucket_id\s*=\s*'{re.escape(b)}'", rest)), None)
+                if bucket is None:
+                    continue
+                to = _STORAGE_POLICY_TO_RE.search(rest)
+                roles = {r.strip().lower() for r in to.group("roles").split(",")} if to else {"public"}
+                name = create.group("name").strip('"')
+                if roles & _STORAGE_BROWSER_ROLES:
+                    alive[(bucket, name)] = (sql_file, clean[: clean.find(stmt)].count("\n") + 1 if stmt in clean else 1)
+                else:
+                    for key in [k for k in alive if k[1] == name]:
+                        del alive[key]
+        for (bucket, name), (sql_file, line) in sorted(alive.items(), key=lambda kv: kv[0]):
+            rel = str(sql_file.relative_to(root))
+            findings.append({
+                "file": rel,
+                "line": line,
+                "issue": (
+                    f"{rel}:{line} policy \"{name}\" on storage.objects is still live at the end of the chain "
+                    f"for the service-only bucket '{bucket}' and is open to authenticated/anon/PUBLIC. "
+                    f"{_STORAGE_SERVICE_ONLY_ALTERNATIVE}"
+                ),
+                "severity": "critical",
+            })
     return findings
 
 
@@ -18331,6 +18470,7 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     # class. KB § PATTERNS/backend/database-rls.md § Storage buckets —
     # never public.
     "check_storage_bucket_public": "tests/test_storage_bucket_public_keeper.py",
+    "check_storage_service_only_policy": "tests/test_storage_service_only_policy_keeper.py",
     "check_redis_client_via_seam": "tests/test_check_redis_client_via_seam.py",
     "check_migration_number_refs_in_tests": "tests/test_check_migration_number_refs_in_tests.py",
 }
