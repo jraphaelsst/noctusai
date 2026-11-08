@@ -26,13 +26,26 @@ Functions:
     `next_status`, `can_transition`, `from_pt_string`, `to_pt_string`
 
 Repository seam:
-    `GoalRepository` (Protocol), `InMemoryGoalRepository` (default)
+    `GoalRepository` (Protocol), `InMemoryGoalRepository` (tests), `SupabaseGoalRepository` + `make_goal_repository` (Real)
+
+Mountable organ (`mount_metas` in `noctusai_seed.organs`): `metas_migration`, `create_metas_router`, `MetasService`,
+`MetasStore` (Fake + Supabase), `MetasConfig`. Periods, teams, goals at three levels (individual / team / company),
+point rules, scoring events, rankings and immutable period closings.
 
 See `KB § PATTERNS/metas-seed.md` for the wiring recipe + status mapping
 table. The shape mirrors `noctusai_lib.domain.scheduling`: value objects
 + Protocols + defaults + pure-function helpers, no IO.
 """
 
+from noctusai_lib.domain.metas.config import EventType, GoalCategory, MetasConfig, Modality, RuleSeed
+from noctusai_lib.domain.metas.errors import MetasError
+from noctusai_lib.domain.metas.goal_repository import SupabaseGoalRepository, make_goal_repository
+from noctusai_lib.domain.metas.guards import metas_guard_probes
+from noctusai_lib.domain.metas.router import create_metas_router
+from noctusai_lib.domain.metas.service import Actor as MetasActor
+from noctusai_lib.domain.metas.service import MetasService
+from noctusai_lib.domain.metas.sql import METAS_MIGRATION_HEADER, metas_migration
+from noctusai_lib.domain.metas.store import FakeMetasStore, MetasStore, SupabaseMetasStore, build_metas_store, metas_table_specs
 from noctusai_lib.domain.metas.periods import (
     count_business_days,
     period_bounds,
@@ -70,6 +83,26 @@ from noctusai_lib.domain.metas.value_objects import (
 )
 
 __all__ = [
+    # mountable organ (router + migration + Real repositories)
+    "EventType",
+    "FakeMetasStore",
+    "GoalCategory",
+    "METAS_MIGRATION_HEADER",
+    "MetasActor",
+    "MetasConfig",
+    "MetasError",
+    "MetasService",
+    "MetasStore",
+    "Modality",
+    "RuleSeed",
+    "SupabaseGoalRepository",
+    "SupabaseMetasStore",
+    "build_metas_store",
+    "create_metas_router",
+    "make_goal_repository",
+    "metas_guard_probes",
+    "metas_migration",
+    "metas_table_specs",
     # value objects + enums
     "Contribution",
     "Goal",
