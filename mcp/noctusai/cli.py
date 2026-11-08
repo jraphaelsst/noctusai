@@ -330,6 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-private-accent-fold", action="store_true", help="Keeper: no private unicodedata NFKD/NFD accent fold outside noctusai_lib.primitives.accents. Severity high; blocking.")
     parser.add_argument("--check-org-role-without-org-id", action="store_true", help="Keeper (B3): resolve_org_role/is_org_admin/require_org_admin_role called without org_id= decide admin in the HOME org, not the request's selected org. Severity high; blocking.")
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
+    parser.add_argument("--check-card-hub-service-only", action="store_true", help="Keeper: a seed card_hub table holds no authenticated/anon privilege at the end of its product's migration chain (service-only by construction; security triage 2026-11-07). Severity critical; blocking. --paths limits it to the tables the staged migrations touch.")
     parser.add_argument("--check-no-authenticated-grant-on-content-tables", action="store_true", help="Keeper: an agents migration (>= 036) must not GRANT SELECT or CREATE POLICY TO authenticated/anon on a table outside the browser-readable allowlist (the agents schema is PostgREST-exposed; security finding C2). Severity critical; blocking.")
     parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
     parser.add_argument("--check-guc-carveout-guard-hand-written", action="store_true", help="Keeper: a NEW migration may not hand-write a trigger function that gates a table mutation on a transaction-local flag (current_setting('<ns>.<flag>', true) = 'on'); render it with noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (marker comment accepted). Six legacy copies baselined (guc_carveout_guard_baseline.json). Severity high; blocking. KB § PATTERNS/backend/database-rls.md.")
@@ -2210,6 +2211,17 @@ def main():
             print(f"  {GREEN}✓ no-metadata-authz: clean (no backend authorization reads user_metadata org/role).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} user_metadata org/role read(s) in backend authz/scoping paths — each is a cross-tenant hole:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_card_hub_service_only:
+        from tools.noctus.dev.compliance import check_card_hub_service_only
+        issues = check_card_hub_service_only(paths=[p for p in (args.paths or "").split(",") if p] or None)
+        if not issues:
+            print(f"  {GREEN}✓ card-hub-service-only: clean (no card-hub table is reachable by anon/authenticated).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} card-hub table(s) reachable from the browser:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)

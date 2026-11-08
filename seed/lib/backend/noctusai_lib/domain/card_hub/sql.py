@@ -15,12 +15,12 @@ code was written against.
 
 Conventions every table follows:
 
-- `org_id UUID NOT NULL`; RLS enabled; an `authenticated` SELECT policy on
-  `org_id = (SELECT public.current_org_id())` (the planner-once subquery
-  shape) + the literal-named `service_role_bypass` policy — the backend writes
-  through the service-role client, so the authenticated policy is defence in
-  depth, and no authenticated write policy exists (the access log is
-  append-only for everyone but `service_role` BY CONSTRUCTION).
+- `org_id UUID NOT NULL`; RLS enabled; SERVICE-ONLY (the igig 044 shape): the
+  literal-named `service_role_bypass` policy, `REVOKE ALL ... FROM PUBLIC, anon,
+  authenticated`, `GRANT ALL ... TO service_role`, `COMMENT ... 'tier:org'`. The
+  backend reaches the card hub through the service-role client, scoping every
+  query by `org_id`; no browser role holds a policy or a privilege (the access
+  log is append-only for everyone but `service_role` BY CONSTRUCTION).
 - Soft-delete columns where the lifted code soft-deletes.
 - Forward-only and idempotent (`IF NOT EXISTS`, `DROP POLICY IF EXISTS`
   before `CREATE POLICY`, `ON CONFLICT DO NOTHING` catalogue seed).
@@ -71,25 +71,48 @@ def _sql_literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _org_rls(schema: str, table: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
-    """RLS on + own-org SELECT for `authenticated` + `service_role_bypass`."""
-    select_name = f"{table}_select_own_org"
-    return "\n".join(
-        [
-            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
+def _org_rls(schema: str, table: str, org_id_expr: Optional[str] = None) -> str:
+    """The table's access shape.
+
+    `org_id_expr=None` (the default, and what `card_hub_migration` emits): SERVICE-ONLY, the
+    igig 044 shape -- RLS on, `service_role_bypass`, `REVOKE ALL ... FROM PUBLIC, anon,
+    authenticated`, `GRANT ALL ... TO service_role`, `COMMENT ... 'tier:org'`. The card hub is
+    reached only through the backend's service-role client, which scopes every query by
+    `org_id`; no browser role holds a privilege or a policy on it.
+
+    `org_id_expr="..."` (only via `card_hub_migration(legacy_browser_read=True)`): the old
+    own-org SELECT policy for `authenticated`, kept solely to reproduce already-applied
+    replay logs byte-for-byte.
+    """
+    lines = [f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;"]
+    if org_id_expr is not None:
+        select_name = f"{table}_select_own_org"
+        lines += [
             f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
             rls_subquery_policy(schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"),
-            f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
-            service_role_bypass(table, schema=schema),
         ]
-    )
+    lines += [
+        f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
+        service_role_bypass(table, schema=schema),
+    ]
+    if org_id_expr is None:
+        lines += _service_only_lines(schema, table)
+    return "\n".join(lines)
+
+
+def _service_only_lines(schema: str, table: str) -> list[str]:
+    return [
+        f"REVOKE ALL ON TABLE {schema}.{table} FROM PUBLIC, anon, authenticated;",
+        f"GRANT ALL ON TABLE {schema}.{table} TO service_role;",
+        f"COMMENT ON TABLE {schema}.{table} IS 'tier:org';",
+    ]
 
 
 def _entity_fk(cfg: CardHubConfig, schema: str) -> str:
     return f"{cfg.entity_fk} UUID NOT NULL REFERENCES {schema}.{cfg.entity_table}(id) ON DELETE CASCADE"
 
 
-def _notas(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
+def _notas(cfg: CardHubConfig, schema: str, org_id_expr: Optional[str] = None) -> str:
     t = cfg.tables.notas
     return f"""-- Notes: one `descricao` per card (partial unique index) + many `comentario`.
 -- Soft-delete only: a deleted note leaves a tombstone.
@@ -112,7 +135,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_{t}_one_descricao
 {_org_rls(schema, t, org_id_expr)}"""
 
 
-def _tags(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
+def _tags(cfg: CardHubConfig, schema: str, org_id_expr: Optional[str] = None) -> str:
     t, links = cfg.tables.tags, cfg.tables.tag_links
     return f"""-- ONE org tag catalogue (case-insensitive unique name) + per-card links.
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
@@ -138,7 +161,7 @@ CREATE INDEX IF NOT EXISTS idx_{links}_org ON {schema}.{links} (org_id);
 {_org_rls(schema, links, org_id_expr)}"""
 
 
-def _membros(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
+def _membros(cfg: CardHubConfig, schema: str, org_id_expr: Optional[str] = None) -> str:
     t, src = cfg.tables.membros, cfg.member_source
     return f"""-- Assignment: points at the member source's id, NEVER at a name.
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
@@ -173,7 +196,7 @@ BEGIN
 END $$;"""
 
 
-def _lembretes(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
+def _lembretes(cfg: CardHubConfig, schema: str, org_id_expr: Optional[str] = None) -> str:
     t = cfg.tables.lembretes
     # `lembretes_crud` opt-in (default False — social-wiring's real 056 table
     # has neither column; `test_template_columns_equal_sw_056_057_083` pins
@@ -200,7 +223,7 @@ CREATE INDEX IF NOT EXISTS idx_{t}_entity ON {schema}.{t} ({cfg.entity_fk}, crea
 {_org_rls(schema, t, org_id_expr)}"""
 
 
-def _checklists(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
+def _checklists(cfg: CardHubConfig, schema: str, org_id_expr: Optional[str] = None) -> str:
     t, itens = cfg.tables.checklists, cfg.tables.checklist_itens
     etapa_ref = (
         f" REFERENCES {schema}.{cfg.stage_table}(id) ON DELETE SET NULL" if cfg.stage_table else ""
@@ -234,7 +257,9 @@ CREATE INDEX IF NOT EXISTS idx_{itens}_checklist ON {schema}.{itens} (checklist_
 {_org_rls(schema, itens, org_id_expr)}"""
 
 
-def _documento_tipos(cfg: CardHubConfig, schema: str, tipos: Sequence[tuple]) -> str:
+def _documento_tipos(
+    cfg: CardHubConfig, schema: str, tipos: Sequence[tuple], *, legacy_browser_read: bool = False
+) -> str:
     t = cfg.tables.documento_tipos
     select_name = f"{t}_select_authenticated"
     values = ",\n    ".join(
@@ -250,6 +275,14 @@ ON CONFLICT (tipo_documento) DO NOTHING;"""
         if tipos
         else ""
     )
+    if legacy_browser_read:
+        access = f"""ALTER TABLE {schema}.{t} ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "{select_name}" ON {schema}.{t};
+{rls_subquery_policy(schema, t, select_name, "SELECT", using="true")}
+DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{t};
+{service_role_bypass(t, schema=schema)}"""
+    else:
+        access = _org_rls(schema, t)
     return f"""-- The table-driven retention + upload allow-list (platform-wide, no org_id).
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
     tipo_documento  TEXT PRIMARY KEY,
@@ -260,14 +293,10 @@ CREATE TABLE IF NOT EXISTS {schema}.{t} (
     descricao       TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE {schema}.{t} ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "{select_name}" ON {schema}.{t};
-{rls_subquery_policy(schema, t, select_name, "SELECT", using="true")}
-DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{t};
-{service_role_bypass(t, schema=schema)}{seed}"""
+{access}{seed}"""
 
 
-def _documentos(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
+def _documentos(cfg: CardHubConfig, schema: str, org_id_expr: Optional[str] = None) -> str:
     t, tipos, acessos = cfg.tables.documentos, cfg.tables.documento_tipos, cfg.tables.documento_acessos
     return f"""-- Documents (soft delete with reason) + the append-only access log.
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
@@ -306,7 +335,7 @@ CREATE INDEX IF NOT EXISTS idx_{acessos}_org ON {schema}.{acessos} (org_id);
 {_org_rls(schema, acessos, org_id_expr)}"""
 
 
-def _bucket(cfg: CardHubConfig) -> str:
+def _bucket(cfg: CardHubConfig, *, legacy_browser_read: bool = False) -> str:
     """Private bucket + object RLS on the FIRST key segment (`org_id`).
 
     Policy names on `storage.objects` are global to that table, so each is
@@ -319,12 +348,13 @@ def _bucket(cfg: CardHubConfig) -> str:
     parts = [
         f"INSERT INTO storage.buckets (id, name, public)\nVALUES ('{b}', '{b}', false)\nON CONFLICT (id) DO NOTHING;"
     ]
-    for cmd, using, with_check in (
+    browser_cmds = (
         ("SELECT", predicate, None),
         ("INSERT", None, predicate),
         ("UPDATE", predicate, None),
         ("DELETE", predicate, None),
-    ):
+    )
+    for cmd, using, with_check in browser_cmds if legacy_browser_read else ():
         name = f"{b}_storage_{cmd.lower()}"
         parts.append(f'DROP POLICY IF EXISTS "{name}" ON storage.objects;')
         parts.append(rls_subquery_policy("storage", "objects", name, cmd, using=using, with_check=with_check))
@@ -341,10 +371,15 @@ def _bucket(cfg: CardHubConfig) -> str:
             to_role="service_role",
         )
     )
-    return "-- Private document bucket; object RLS keys on the org_id first path segment.\n" + "\n".join(parts)
+    head = (
+        "-- Private document bucket; object RLS keys on the org_id first path segment."
+        if legacy_browser_read
+        else "-- Private document bucket; service-role only (every file op goes through the backend)."
+    )
+    return head + "\n" + "\n".join(parts)
 
 
-def _checklist_extras(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
+def _checklist_extras(cfg: CardHubConfig, schema: str, org_id_expr: Optional[str] = None) -> str:
     t, docs = cfg.tables.checklist_extras, cfg.tables.documentos
     return f"""-- Operator-authored checklist lines. NO `concluido` column: completion is
 -- DERIVED (valor_texto / a live documento_id). Deleting the file keeps the line.
@@ -375,6 +410,7 @@ def card_hub_migration(
     *,
     documento_tipos: Optional[Sequence[tuple]] = None,
     org_id_expr: str = DEFAULT_ORG_ID_EXPR,
+    legacy_browser_read: bool = False,
 ) -> str:
     """The whole card-hub DDL for `schema`, as one migration body.
 
@@ -385,29 +421,39 @@ def card_hub_migration(
     `documento_tipos` overrides the seeded catalogue rows
     (`DEFAULT_DOCUMENTO_TIPOS`); pass `()` to seed none.
 
-    `org_id_expr` is the SQL expression the table-level own-org SELECT policies compare
-    `org_id` against (default `public.current_org_id()`, unchanged for every existing
-    consumer). The `storage.objects` folder policies are not parameterised.
+    SERVICE-ONLY BY CONSTRUCTION (the igig 044 shape): every table gets RLS + the literal
+    `service_role_bypass` policy, `REVOKE ALL ... FROM PUBLIC, anon, authenticated`,
+    `GRANT ALL ... TO service_role` and `COMMENT ... 'tier:org'`; the bucket keeps only its
+    service-role policy. No browser role can read or write the card hub (security triage
+    2026-11-07; `KB § PATTERNS/security/access-tiers.md`).
+
+    `legacy_browser_read=True` reproduces the pre-2026-11-07 shape (own-org SELECT policies for
+    `authenticated` + the org-folder bucket policies) and exists ONLY so already-applied,
+    frozen replay logs (igig 019, social-wiring 241) stay byte-pinned to their generator;
+    `check_card_hub_service_only` fails any NEW migration that carries it. In that mode
+    `org_id_expr` is the expression the own-org SELECT policies compare `org_id` against;
+    in the default mode it is unused.
     """
     if not schema or not schema.strip():
         raise ValueError("card_hub_migration requires a non-empty schema")
     tipos = DEFAULT_DOCUMENTO_TIPOS if documento_tipos is None else tuple(documento_tipos)
+    rls_expr = org_id_expr if legacy_browser_read else None
     sections = [
         f"-- Card hub ({cfg.entity_kind}) -- generated by noctusai_lib.domain.card_hub.sql",
         f"{set_search_path(schema)};",
-        _notas(cfg, schema, org_id_expr),
-        _tags(cfg, schema, org_id_expr),
-        _membros(cfg, schema, org_id_expr),
+        _notas(cfg, schema, rls_expr),
+        _tags(cfg, schema, rls_expr),
+        _membros(cfg, schema, rls_expr),
     ]
     if cfg.entity_datas:
         sections.append(_datas(cfg, schema))
     sections += [
-        _lembretes(cfg, schema, org_id_expr),
-        _checklists(cfg, schema, org_id_expr),
-        _documento_tipos(cfg, schema, tipos),
-        _documentos(cfg, schema, org_id_expr),
-        _bucket(cfg),
-        _checklist_extras(cfg, schema, org_id_expr),
+        _lembretes(cfg, schema, rls_expr),
+        _checklists(cfg, schema, rls_expr),
+        _documento_tipos(cfg, schema, tipos, legacy_browser_read=legacy_browser_read),
+        _documentos(cfg, schema, rls_expr),
+        _bucket(cfg, legacy_browser_read=legacy_browser_read),
+        _checklist_extras(cfg, schema, rls_expr),
     ]
     return "\n\n".join(sections) + "\n"
 

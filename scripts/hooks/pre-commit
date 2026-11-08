@@ -1430,6 +1430,19 @@ if [[ -n "$STAGED_AGENTS_MIGRATIONS" ]] && have_py; then
     fi
 fi
 
+# ─── 6g3c. Card-hub service-only (WARN shadow, only when a product migration is ─
+# staged) ─ keeper `check_card_hub_service_only` (security triage 2026-11-07). The seed
+# card_hub organ is reached only through the backend's service-role client; a card-hub
+# table the staged migrations touch must not stay reachable by authenticated/anon.
+STAGED_HUB_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/migrations/.*\.sql$' | paste -sd, - || true)
+if [[ -n "$STAGED_HUB_MIGRATIONS" ]] && have_py; then
+    echo "[pre-commit] product migration staged — checking card-hub tables are service-only..."
+    # WARN-first shadow (gate admission, KB § PATTERNS/common/gate-methodology-sync.md D11): promote to blocking on measured precision.
+    if ! "$PY" "$CLI" --check-card-hub-service-only --paths "$STAGED_HUB_MIGRATIONS" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARN: CARD-HUB-SERVICE-ONLY (shadow, not blocking). REVOKE ALL ON TABLE <t> FROM PUBLIC, anon, authenticated (generate with card_hub_migration). See KB § PATTERNS/security/access-tiers.md." >&2
+    fi
+fi
+
 # ─── 6h. PostgREST unbounded-query gate (advisory, only when backend Python ──
 # changed) ──────────────────────────────────────────────────────────────
 # Keeper `check_postgrest_unbounded_query` + `KB § PATTERNS/backend/

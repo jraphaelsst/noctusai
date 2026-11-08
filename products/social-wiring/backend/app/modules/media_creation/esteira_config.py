@@ -101,4 +101,5 @@ def gerar_migration_card_hub() -> str:
         "social_wiring",
         documento_tipos=ESTEIRA_DOC_TIPOS,
         org_id_expr="public.current_org_id_for('social_wiring')",
+        legacy_browser_read=True,  # 241 is an applied replay log; 330 locks the tables down
     )

@@ -77,23 +77,29 @@ class TestConventions:
             assert f"ALTER TABLE crm.{t} ENABLE ROW LEVEL SECURITY;" in ddl, t
             assert f'CREATE POLICY "service_role_bypass" ON crm.{t} FOR ALL TO service_role' in ddl, t
 
-    def test_org_tables_use_the_subquery_org_predicate(self, ddl):
-        assert 'CREATE POLICY "lead_notas_select_own_org" ON crm.lead_notas FOR SELECT TO authenticated\n  USING (org_id = (SELECT public.current_org_id()));' in ddl
+    def test_org_tables_use_the_subquery_org_predicate_in_legacy_mode(self):
+        legacy = card_hub_migration(lead_config(_noop), "crm", legacy_browser_read=True)
+        assert 'CREATE POLICY "lead_notas_select_own_org" ON crm.lead_notas FOR SELECT TO authenticated\n  USING (org_id = (SELECT public.current_org_id()));' in legacy
 
     def test_one_descricao_per_card_is_a_db_constraint(self, ddl):
         assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_lead_notas_one_descricao" in ddl
         assert "WHERE tipo = 'descricao' AND deleted_at IS NULL;" in ddl
 
-    def test_bucket_is_private_and_object_rls_keys_on_org_first_segment(self, ddl):
+    def test_bucket_is_private_and_service_only(self, ddl):
         assert "VALUES ('crm-documentos', 'crm-documentos', false)" in ddl
-        assert "(storage.foldername(name))[1] = (SELECT public.current_org_id())::text" in ddl
         # Bucket-qualified names: two products' hubs must not replace each other's policies.
-        assert 'CREATE POLICY "crm-documentos_storage_select" ON storage.objects' in ddl
+        assert 'CREATE POLICY "crm-documentos_storage_service" ON storage.objects' in ddl
+        assert "crm-documentos_storage_select" not in ddl
         assert '"service_role_bypass" ON storage.objects' not in ddl
 
-    def test_access_log_has_no_authenticated_write_policy(self, ddl):
+    def test_legacy_bucket_object_rls_keys_on_org_first_segment(self):
+        legacy = card_hub_migration(lead_config(_noop), "crm", legacy_browser_read=True)
+        assert "(storage.foldername(name))[1] = (SELECT public.current_org_id())::text" in legacy
+        assert 'CREATE POLICY "crm-documentos_storage_select" ON storage.objects' in legacy
+
+    def test_access_log_is_append_only_for_everyone_but_service_role(self, ddl):
         policies = re.findall(r'CREATE POLICY "[^"]+" ON crm\.lead_documento_acessos FOR (\w+) TO (\w+)', ddl)
-        assert sorted(policies) == [("ALL", "service_role"), ("SELECT", "authenticated")]
+        assert policies == [("ALL", "service_role")]
 
     def test_no_stage_fk_without_a_stage_table(self, ddl):
         assert "pipeline_stages" not in ddl
@@ -123,18 +129,51 @@ class TestConventions:
 
 
 class TestOrgIdExpr:
-    """`org_id_expr` swaps the table-level own-org resolver; default is unchanged."""
+    """`org_id_expr` swaps the table-level own-org resolver of the LEGACY browser-read shape (the default is service-only)."""
 
     def test_default_is_the_home_only_helper(self):
-        sql = card_hub_migration(lead_config(_noop), "crm")
+        sql = card_hub_migration(lead_config(_noop), "crm", legacy_browser_read=True)
         assert "org_id = (SELECT public.current_org_id())" in sql
         assert "current_org_id_for" not in sql
 
     def test_custom_expr_replaces_every_table_policy_and_leaves_storage_alone(self):
         expr = "public.current_org_id_for('crm')"
-        sql = card_hub_migration(lead_config(_noop), "crm", org_id_expr=expr)
+        sql = card_hub_migration(lead_config(_noop), "crm", org_id_expr=expr, legacy_browser_read=True)
         assert "org_id = (SELECT public.current_org_id())" not in sql
         selects = re.findall(r'CREATE POLICY "\w+_select_own_org"', sql)
         assert selects and sql.count(f"org_id = (SELECT {expr})") == len(selects)
         # storage.objects folder policies compare a path segment, not org_id: untouched
         assert "(storage.foldername(name))[1] = (SELECT public.current_org_id())::text" in sql
+
+
+class TestServiceOnlyByConstruction:
+    """Security triage 2026-11-07: the card hub is reached only through the backend's service-role client, so the
+    emitted DDL gives no browser role a policy or a privilege (igig 044 is the model shape)."""
+
+    @pytest.fixture(scope="class")
+    def ddl(self):
+        return card_hub_migration(lead_config(_noop), "crm")
+
+    def test_no_policy_or_grant_names_a_browser_role(self, ddl):
+        assert not re.search(r"\bTO\s+(authenticated|anon|public)\b", ddl, re.I)
+        assert not re.search(r"\bGRANT\b[^;]*\b(authenticated|anon)\b", ddl, re.I)
+
+    def test_every_table_is_locked_down_and_tiered(self, ddl):
+        tables = re.findall(r"CREATE TABLE IF NOT EXISTS (crm\.\w+)", ddl)
+        assert len(tables) == 11
+        for t in tables:
+            assert f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;" in ddl
+            assert f'CREATE POLICY "service_role_bypass" ON {t} FOR ALL TO service_role' in ddl
+            assert f"REVOKE ALL ON TABLE {t} FROM PUBLIC, anon, authenticated;" in ddl
+            assert f"GRANT ALL ON TABLE {t} TO service_role;" in ddl
+            assert f"COMMENT ON TABLE {t} IS 'tier:org';" in ddl
+
+    def test_bucket_keeps_only_the_service_policy(self, ddl):
+        bucket = [l for l in ddl.splitlines() if "ON storage.objects" in l and "CREATE POLICY" in l]
+        assert len(bucket) == 1 and "TO service_role" in bucket[0]
+
+    def test_legacy_flag_reproduces_the_browser_read_shape_and_only_it(self):
+        legacy = card_hub_migration(lead_config(_noop), "crm", legacy_browser_read=True)
+        assert "FOR SELECT TO authenticated" in legacy
+        assert "REVOKE" not in legacy
+        assert "lead_notas_select_own_org" in legacy
