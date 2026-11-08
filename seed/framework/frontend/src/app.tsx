@@ -9,12 +9,13 @@ import { Suspense, useEffect, useState, type LazyExoticComponent } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { ErrorBoundary, ConfirmProvider, createAuthProvider, useAuthReconnecting, SSOCallback, env, markAuthReady, useLiveNotifications } from "@noctusai/lib";
+import { ErrorBoundary, ConfirmProvider, writeEntryMarker, createAuthProvider, useAuthReconnecting, SSOCallback, env, markAuthReady, useLiveNotifications } from "@noctusai/lib";
 import { OrgScopeBoundary, OrgScopedQueryClientProvider, getOrgScopedQueryClient, initOrgScopedQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton, BrandProvider, NotificationBell, useNotificationBellMounted, useOrgEntryPending } from "@noctusai/lib/design-system";
 import type { NotificationHooks } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
 import { goToProductLanding } from "./product-landing";
+import { ReentryGate, CoreRouteRedirect, defaultCoreNavigate, type CoreNavigate } from "./components/ReentryGate";
 import { SemAcessoPage } from "./pages/SemAcessoPage";
 import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
 import { PrivacyPolicyPage } from "./pages/consent/PrivacyPolicyPage";
@@ -96,8 +97,10 @@ export interface ProductAppConfig {
   authProvider?: CustomAuthProvider;
   /** Standard public pages */
   Landing?: LazyExoticComponent<any>;
+  /** @deprecated SSO products collect credentials at core only: `/login` is a seed redirect (S6 removes this prop). */
   Login?: LazyExoticComponent<any>;
   AcceptInvite?: LazyExoticComponent<any>;
+  /** @deprecated `/forgot-password` is a seed redirect to core's `/esqueci-senha` (S6 removes this prop). */
   ForgotPassword?: LazyExoticComponent<any>;
   NotFound?: LazyExoticComponent<any>;
   /** Additional public routes (no auth) */
@@ -127,6 +130,11 @@ export interface ProductAppConfig {
    * redirect loop (no Landing → root falls through to this redirect → loop).
    */
   unauthRedirect?: string;
+  /**
+   * How the SPA leaves for core's central login (default `window.location.replace`). A seam for tests and
+   * embedders; products have no reason to set it.
+   */
+  coreNavigate?: CoreNavigate;
   /**
    * Routes that should render WITHOUT the Layout wrapper.
    * Useful for full-screen pages like video sessions.
@@ -165,11 +173,11 @@ function _rememberIntendedPath(pathname: string, search: string): void {
   }
 }
 
-function _consumeIntendedPath(): string | null {
+function _consumeIntendedPath(consume = true): string | null {
   let stored: string | null = null;
   try {
     stored = window.sessionStorage.getItem(_INTENDED_PATH_KEY);
-    if (stored) window.sessionStorage.removeItem(_INTENDED_PATH_KEY);
+    if (stored && consume) window.sessionStorage.removeItem(_INTENDED_PATH_KEY);
   } catch {
     return null;
   }
@@ -201,6 +209,7 @@ export function createProductApp(config: ProductAppConfig) {
     unauthRedirect = "/",
     unwrappedRoutes = [],
     notifications,
+    coreNavigate = defaultCoreNavigate,
   } = config;
 
   if (!authProvider && (!supabase || !useAuthStore)) {
@@ -222,6 +231,21 @@ export function createProductApp(config: ProductAppConfig) {
       "createProductApp: VITE_PRODUCT_SLUG is empty — SSO redemption would omit " +
         "product_slug. Build with createViteConfig (derives it from start.sh / " +
         "products/<slug>/frontend).",
+    );
+  }
+  // Supabase-auth products (every product but core, the identity provider) enter THROUGH core: no local
+  // login form, the unauthenticated branch is a `ReentryGate`, `/login` and `/forgot-password` redirect to core.
+  const ssoEntry = !authProvider && !!env.PRODUCT_SLUG;
+  if (ssoEntry && Login) {
+    console.warn(
+      "createProductApp: the `Login` prop is deprecated — /login now redirects to core's central login " +
+        "(SSO session lifecycle S4); the product login form is removed in S6.",
+    );
+  }
+  if (ssoEntry && ForgotPassword) {
+    console.warn(
+      "createProductApp: the `ForgotPassword` prop is deprecated — /forgot-password now redirects to core's " +
+        "/esqueci-senha (SSO session lifecycle S4); the product form is removed in S6.",
     );
   }
   const AuthProvider = authProvider
@@ -346,6 +370,11 @@ export function createProductApp(config: ProductAppConfig) {
       // them to Landing/login — otherwise a deep link (bookmark, shared URL)
       // is silently discarded and they always land on "/" post-login.
       _rememberIntendedPath(location.pathname, location.search);
+      // SSO products: ReentryGate decides Landing vs. core (settled auth bootstrap only, so it never
+      // runs before `/api/auth/me` resolves, and the authenticated tree below stays assembled right here).
+      if (ssoEntry) {
+        return <ReentryGate slug={env.PRODUCT_SLUG} coreUrl={env.CORE_URL} Landing={Landing} navigate={coreNavigate} />;
+      }
       // When a Landing page is provided, serve it at "/" for unauthenticated
       // users and redirect any other protected path to "/" so the visitor
       // always lands on the public marketing page.
@@ -425,7 +454,22 @@ export function createProductApp(config: ProductAppConfig) {
           {/* Back-compat: bookmarks / old SPA-shell redirects pointing to
               /landing are silently upgraded to "/" (the new canonical root). */}
           <Route path="/landing" element={<Navigate to="/" replace />} />
-          {Login && <Route path="/login" element={<Login />} />}
+          {ssoEntry ? (
+            <Route
+              path="/login"
+              element={
+                <CoreRouteRedirect
+                  slug={env.PRODUCT_SLUG}
+                  coreUrl={env.CORE_URL}
+                  route="/login"
+                  fallbackNext={() => _consumeIntendedPath(false)}
+                  navigate={coreNavigate}
+                />
+              }
+            />
+          ) : (
+            Login && <Route path="/login" element={<Login />} />
+          )}
           {supabase && (
             <Route
               path="/sso"
@@ -456,6 +500,8 @@ export function createProductApp(config: ProductAppConfig) {
               <SemAcessoPage
                 coreUrl={env.CORE_URL}
                 onSignOut={async () => {
+                  // Stamp BEFORE the sign-out broadcast so sibling tabs read `signed-out` and land on "/".
+                  writeEntryMarker("signed-out");
                   try {
                     await supabase?.auth.signOut();
                   } finally {
@@ -466,7 +512,22 @@ export function createProductApp(config: ProductAppConfig) {
             }
           />
           {AcceptInvite && <Route path="/accept-invite/:token" element={<AcceptInvite />} />}
-          {ForgotPassword && <Route path="/forgot-password" element={<ForgotPassword />} />}
+          {ssoEntry ? (
+            <Route
+              path="/forgot-password"
+              element={
+                <CoreRouteRedirect
+                  slug={env.PRODUCT_SLUG}
+                  coreUrl={env.CORE_URL}
+                  route="/esqueci-senha"
+                  fallbackNext={() => _consumeIntendedPath(false)}
+                  navigate={coreNavigate}
+                />
+              }
+            />
+          ) : (
+            ForgotPassword && <Route path="/forgot-password" element={<ForgotPassword />} />
+          )}
           {publicRoutes.map(({ path, component: Component }) => (
             <Route key={path} path={path} element={<Component />} />
           ))}

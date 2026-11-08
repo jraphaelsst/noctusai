@@ -30,6 +30,7 @@ import { dropProductCookieSession, goTrueSessionId, verifySessionWithServer } fr
 import { isTransientHttpStatus, refreshWithBackoff, type RefreshAttempt, type RefreshWithBackoffOptions } from './api';
 import { autoRetryDelayMs } from './retry';
 import { adoptRotatedPair } from './session-ending';
+import { markSessionLost } from './reentry';
 
 // How a session ends (expiry = local only; explicit Sair = the only server revoke).
 export {
@@ -425,7 +426,10 @@ export function useSupabaseAuthInit(
       // Dead: supabase-js already purged the slot locally — never signOut here
       // (a GoTrue /logout on a verdict, prod 2026-10-23).
       await dropProductCookieSession(keepId);
-      if (!disposed) setUser(null);
+      if (!disposed) {
+        markSessionLost();
+        setUser(null);
+      }
     };
 
     void resolveBootVerdict<User>(
@@ -462,6 +466,9 @@ export function useSupabaseAuthInit(
           } else {
             // eslint-disable-next-line no-console
             console.warn('[auth] SIGNED_OUT confirmed: no stored session — returning to Landing');
+            // Tell the entry gate this tab LOST a session (vs. a fresh visit): it re-enters through core
+            // (or lands on `/` after a Sair) instead of treating it as a stranger.
+            markSessionLost();
             setUser(null);
           }
         })();
