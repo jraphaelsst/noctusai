@@ -1,4 +1,4 @@
-# Agent Packages — CONTRACT (v1, 2026-10-03)
+# Agent Packages — CONTRACT (v1, 2026-10-03 · amended 2026-11-08: A11–A12, §M)
 
 > The single shape every slice builds to. Builds ON Agent Studio (`../agent-studio-isaia/CONTRACT.md`,
 > referenced as **Studio §X**) and changes nothing about Bia (the academia agent, named Julia until 2026-10-19), the SDR Julia, or IsaIA. A slice that needs to deviate
@@ -33,6 +33,8 @@ for the Nós no Limiar app). First consumer: `jraphaelsst/limiar-app`.
 | A8 | **Machine auth = scoped project token** (`pk_…`, Studio's existing `agents.api_tokens`), kept in the developer's local env, never committed. Scopes (§I) grant only package read, project-knowledge write and learnings write (plus `studio:publish`, see §I — the noc pre-push publish leg only). | A git hook can't do SSO; today every route refuses non-user callers (403 `user_required`). |
 | A9 | `agents.kind ∈ {runtime, dev-advisor}`; one registry, same versions/sections/skills/knowledge/evals/audit. Tabs that don't apply to dev-advisors (Clientes) hide. | Owner: "build them alike IsaIA". |
 | A10 | Dev-advisors are **read-only**: Claude Code wrapper `tools: Read, Grep, Glob`; Studio toolset = Studio §E3 read-only tools. No write tools on either surface. | Owner: advisors, never editors. |
+| A11 | **DB-source agents (amends A1, owner decision 2026-11-08).** An agent may instead be authored in Agents Studio, where the **DB is the source of truth**; git holds only a GENERATED mirror (`.claude/agents/<key>.md` + `agents/<key>/`), exported from the agent's **published** version. First: `media-analyst`. Rules in §M. Git-source packages (A1) are unchanged. | Owner: "o agente do banco é a fonte da verdade"; the Studio is where agents are built and refined. |
+| A12 | **`kind = dev-executor`** (owner decision B, 2026-11-08): a dev agent that MAY carry write tools on the Claude Code surface (Bash, Edit, Write, MCP). A10 stays for `dev-advisor`. Same token rules as dev-advisor (§I). | A media analyst downloads, transcribes and writes reports; an advisor cannot. |
 
 ---
 
@@ -206,6 +208,42 @@ routes whose scope it holds (all other routes keep 403 `user_required`). Token l
 | **FE-STUDIO** (engineer) | `products/agents/frontend/src/pages/studio/**` kind badge, Aprendizados tab, project collections |
 | **HOOKS** (engineer) | `scripts/hooks/` noc pre-push §F + consumer hook template |
 | **CONTENT** (orchestrator) | `products/agents/packages/{mobile-dev,nos-no-limiar}/` |
+
+## §M · DB-source agents (A11) — the mirror contract
+
+M1. **Where authoring happens.** Sections, skills, knowledge and evals are DB rows, edited in the Studio or via
+`noctus.agents.content` (dry-run → confirm, drafts only). Publishing stays a human act behind the eval gate (D4).
+The Claude Code surface settings live on the version as `agent_versions.superficie_claude jsonb`
+`{tools: [...], model, owns_kb: [...]}` (validated: `dev-advisor` ⇒ A10 tools only; `dev-executor` ⇒ any).
+M2. **Export (DB → git).** `GET /api/agent-packages/{key}/{versao}` (scope `packages:read`) serves, for a DB-source
+agent, a tree RENDERED server-side from the published version: `compile_prompt` (A3) + the §C2 adapter, frontmatter
+from `superficie_claude`, plus `agents/<key>/{PACKAGE.json, skills/, knowledge/}`. `noctus.dev.agent_export key=`
+writes it and then refreshes the agent-context cache in the same call (eager leg). It never writes a draft.
+M3. **What the mirror records.** The `.md` frontmatter carries `studio: {key, versao, version_id, compiled_hash}`
+and the body opens with `<!-- GENERATED from Agents Studio (the DB is the source) — edit in the Studio, publish,
+then noctus.dev.agent_export key=<key>; never by hand -->`. `compiled_hash` = sha256 of the body below the header.
+M4. **Offline keeper `check_db_agent_mirror_integrity`** (pre-commit, no network): every `.claude/agents/*.md`
+carrying a `studio:` block must hash to its recorded `compiled_hash` (a hand edit ⇒ high, names the file). The
+existing `check_agent_context_cache_freshness` then holds cache == `.md`. Together: cache == `.md` == last export.
+M5. **Online check (pre-push, A5 rules).** For each `studio:` mirror, `GET /api/agent-packages/{key}/versions`; if
+the newest published `version_id` ≠ the recorded one, print a loud stale line and write `.agents-sync-pending`
+(never blocks the push, never silent; cleared by the next successful export). No token / offline ⇒ the marker
+says "unverified", never "ok".
+M6. **Never the other way.** No tool writes from the mirror into the DB. A change made in the `.md` is a defect
+(M4), not an input.
+M7. **What the tree holds (v1).** `.claude/agents/<key>.md`, `agents/<key>/PACKAGE.json` (+ `fonte: "db"`,
+`version_id`), every ACTIVE skill of the version and every PINNED library skill at its pinned version as
+`agents/<key>/skills/<nome>/SKILL.md` + `references/`. Knowledge collections are NOT mirrored in v1: the render
+lists them in `PACKAGE.json.nao_espelhado` and the adapter tells the Claude Code reader to use the KB in `owns_kb`
+instead (never a silent gap). `versao_semver` of a DB-source publish = `<versao>.0.0` (each publish is a major).
+M8. **Schema.** Migration: `agents.fonte text not null default 'git' check (fonte in ('git','db'))`; `agents.kind`
+check adds `'dev-executor'`; `agent_versions.superficie_claude jsonb null`. Render at publish: after the gate
+passes and BEFORE the flip (the 017 tree guard only lets a draft's tree be written), in the same request; a
+render failure refuses the publish (409 `espelho_falhou`), never publishes an agent without its mirror.
+M9. **Slices (inline, one branch each).** (1) BE: migration + `app/studio/claude_surface.py` (the renderer moved
+from `agent_package_build.py`, which then imports it: ONE renderer) + render-at-publish + `resolve_dev_advisor`
+accepts `dev-executor` + `fonte=db` · (2) tool `noctus.dev.agent_export` (+ cache refresh) · (3) keeper
+`check_db_agent_mirror_integrity` · (4) pre-push online leg (M5) · (5) content: `media-analyst` in the Studio.
 
 ## §L · Deliberately later
 Embedding search (Studio §K) · auto-promotion of learnings · write tools for advisors · Bia/Julia/IsaIA as packages.
