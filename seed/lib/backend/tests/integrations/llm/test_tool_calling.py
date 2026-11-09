@@ -406,3 +406,73 @@ async def test_run_tool_loop_over_fake(fake_registered):
     out = await run_tool_loop([ChatMessage.user("go")], [LOOKUP], handler, chat=chat)
     assert out.text == "all done" and out.iterations == 2 and not out.exhausted
     assert [m.role for m in out.messages] == ["user", "assistant", "tool"]
+
+
+# ── run_tool_loop keeps the text a model sends alongside a tool call ────────
+
+from noctusai_lib.integrations.llm.tool_calling import ChatToolsResponse  # noqa: E402
+
+
+def _scripted_chat(responses):
+    queue = list(responses)
+
+    async def chat(msgs, specs):
+        return queue.pop(0)
+
+    return chat
+
+
+async def _ok_handler(call):
+    return ToolResult(call.call_id, '{"ok": true}')
+
+
+def _tool_turn(text, call_id="c1"):
+    return ChatToolsResponse(
+        text=text, tool_calls=(ToolCall(call_id, "lookup_property", {"code": "X"}),), finish_reason="tool_calls"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_turn_text_returned_when_final_is_empty():
+    chat = _scripted_chat([_tool_turn("Visita registrada!"), ChatToolsResponse(text="")])
+    out = await run_tool_loop([ChatMessage.user("go")], [LOOKUP], _ok_handler, chat=chat)
+    assert out.text == "Visita registrada!" and not out.exhausted
+
+
+@pytest.mark.asyncio
+async def test_tool_turn_text_joined_across_turns_and_whitespace_final():
+    chat = _scripted_chat([_tool_turn("one", "c1"), _tool_turn("two", "c2"), ChatToolsResponse(text="  \n")])
+    out = await run_tool_loop([ChatMessage.user("go")], [LOOKUP], _ok_handler, chat=chat)
+    assert out.text == "one\n\ntwo"
+
+
+@pytest.mark.asyncio
+async def test_final_text_wins_without_concatenation():
+    chat = _scripted_chat([_tool_turn("Visita registrada!"), ChatToolsResponse(text="Visita registrada! Algo mais?")])
+    out = await run_tool_loop([ChatMessage.user("go")], [LOOKUP], _ok_handler, chat=chat)
+    assert out.text == "Visita registrada! Algo mais?"
+
+
+@pytest.mark.asyncio
+async def test_no_text_anywhere_stays_empty():
+    chat = _scripted_chat([_tool_turn(""), ChatToolsResponse(text="")])
+    out = await run_tool_loop([ChatMessage.user("go")], [LOOKUP], _ok_handler, chat=chat)
+    assert out.text == "" and not out.exhausted
+
+
+@pytest.mark.asyncio
+async def test_exhausted_prefers_intermediate_text_over_fallback():
+    chat = _scripted_chat([_tool_turn("partial", "c1"), _tool_turn("", "c2")])
+    out = await run_tool_loop(
+        [ChatMessage.user("go")], [LOOKUP], _ok_handler, chat=chat, max_iterations=2, fallback_reply="FB"
+    )
+    assert out.exhausted and out.text == "partial"
+
+
+@pytest.mark.asyncio
+async def test_exhausted_without_text_uses_fallback():
+    chat = _scripted_chat([_tool_turn(""), _tool_turn("", "c2")])
+    out = await run_tool_loop(
+        [ChatMessage.user("go")], [LOOKUP], _ok_handler, chat=chat, max_iterations=2, fallback_reply="FB"
+    )
+    assert out.exhausted and out.text == "FB"

@@ -51,7 +51,7 @@ class ToolLoopResult:
     text: str
     messages: list[ChatMessage]
     iterations: int
-    #: True when the cap was hit without a final text reply (`text` is then the fallback).
+    #: True when the cap was hit without a final text reply (`text` is then the text sent alongside tool calls, else the fallback).
     exhausted: bool = False
     usage: LLMUsage = field(default_factory=LLMUsage)
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -77,12 +77,20 @@ async def run_tool_loop(
         return ToolLoopResult(response.text, history, 1, usage=response.usage)
 
     executed: list[ToolCall] = []
+    # Reply text a model writes in the SAME response as a tool call. If its
+    # next response is empty (it already said its piece), this is the reply.
+    side_texts: list[str] = []
     for iteration in range(1, max_iterations + 1):
         response = await chat(history, specs)
         usage = usage + response.usage
         if not response.tool_calls:
-            return ToolLoopResult(response.text, history, iteration, usage=usage, tool_calls=executed)
+            text = response.text
+            if not (text and text.strip()) and side_texts:
+                text = "\n\n".join(side_texts)
+            return ToolLoopResult(text, history, iteration, usage=usage, tool_calls=executed)
 
+        if response.text and response.text.strip():
+            side_texts.append(response.text.strip())
         history.append(response.message)
         for call in response.tool_calls:
             executed.append(call)
@@ -98,7 +106,7 @@ async def run_tool_loop(
 
     logger.warning("tool loop hit max iterations (%d) without a final reply", max_iterations)
     return ToolLoopResult(
-        fallback_reply, history, max_iterations, exhausted=True, usage=usage, tool_calls=executed
+        "\n\n".join(side_texts) if side_texts else fallback_reply, history, max_iterations, exhausted=True, usage=usage, tool_calls=executed
     )
 
 
