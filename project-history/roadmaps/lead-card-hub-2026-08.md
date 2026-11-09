@@ -491,6 +491,7 @@ right person is asked.
 | **T3b** | Phase 2 shipped; runs independently of Phase 3 | Phase 2b |
 | **T4** | Phase 3 checkpoint accepted **and** the LGPD data-category intake is filed | Phase 4 |
 | **T5** | Any phase ≥ 2 shipped (the component has a card to live on) | Phase 5 |
+| **T6** | Migration 338 (roteiro lifecycle + `roteiro_eventos` ledger) applied in prod **and** `imovel_corretores` (SW 331, ad-lead intake) live | **Roteiro eventos timeline + performance** (deferred 2026-11-09 by `feat/sw-roteiro-ciclo-be`): a timeline endpoint reading `roteiro_eventos`, and per-lead / per-imóvel / per-corretor visit counts and outcome rates derived ONCE from the ledger (measurement-by-design) |
 
 ---
 
