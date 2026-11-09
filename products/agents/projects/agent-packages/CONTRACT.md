@@ -213,8 +213,9 @@ routes whose scope it holds (all other routes keep 403 `user_required`). Token l
 
 M1. **Where authoring happens.** Sections, skills, knowledge and evals are DB rows, edited in the Studio or via
 `noctus.agents.content` (dry-run → confirm, drafts only). Publishing stays a human act behind the eval gate (D4).
-The Claude Code surface settings live on the version as `agent_versions.superficie_claude jsonb`
-`{tools: [...], model, owns_kb: [...]}` (validated: `dev-advisor` ⇒ A10 tools only; `dev-executor` ⇒ any).
+The Claude Code surface settings live on the DEFINITION as `agents.superficie_claude jsonb`
+`{tools: [...], model, owns_kb: [...]}` (validated: `dev-advisor` ⇒ A10 tools only; `dev-executor` ⇒ any), set at
+`criar_agente` or later through `configurar_agente`; the tree snapshot taken at publish freezes it per version.
 M2. **Export (DB → git).** `GET /api/agent-packages/{key}/{versao}` (scope `packages:read`) serves, for a DB-source
 agent, a tree RENDERED server-side from the published version: `compile_prompt` (A3) + the §C2 adapter, frontmatter
 from `superficie_claude`, plus `agents/<key>/{PACKAGE.json, skills/, knowledge/}`. `noctus.dev.agent_export key=`
@@ -237,7 +238,9 @@ M7. **What the tree holds (v1).** `.claude/agents/<key>.md`, `agents/<key>/PACKA
 lists them in `PACKAGE.json.nao_espelhado` and the adapter tells the Claude Code reader to use the KB in `owns_kb`
 instead (never a silent gap). `versao_semver` of a DB-source publish = `<versao>.0.0` (each publish is a major).
 M8. **Schema.** Migration: `agents.fonte text not null default 'git' check (fonte in ('git','db'))`; `agents.kind`
-check adds `'dev-executor'`; `agent_versions.superficie_claude jsonb null`. Render at publish: after the gate
+check adds `'dev-executor'`; `agents.superficie_claude jsonb null` (migration 070). `kind`/`fonte` are creatable
+through `POST /plataforma/agents` + MCP `criar_agente`; every creation surface is held by the structure ↔ constructor
+parity gate (`app/stores/structure_parity.py`, `KB § PATTERNS/backend/structure-constructor-parity.md`). Render at publish: after the gate
 passes and BEFORE the flip (the 017 tree guard only lets a draft's tree be written), in the same request; a
 render failure refuses the publish (409 `espelho_falhou`), never publishes an agent without its mirror.
 M9. **Slices (inline, one branch each).** (1) BE: migration + `app/studio/claude_surface.py` (the renderer moved

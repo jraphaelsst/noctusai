@@ -1297,6 +1297,22 @@ if [[ -n "$STAGED_CONTRACT_GERADOR" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-septies. Structure ↔ constructor parity gate (WARN-first SHADOW since ─
+# 2026-11-08, any staged .py; promote to blocking after >=7 shadow days with
+# effective-FP <=10%, per KB § PATTERNS/common/gate-methodology-sync.md) ────
+# Keeper `check_structure_constructor_parity` + `KB § PATTERNS/backend/
+# structure-constructor-parity.md` (owner 2026-11-08: "whenever we change the
+# agent structure, we must update the function to match it. tests will probably
+# pass, but it will break"). Every field of an entity's record must reach every
+# constructor surface its `structure_parity.py` manifest names, or be exempted
+# there WITH a reason. AST-only, ~0.3 s, so it runs on any staged Python file.
+STAGED_PY_PARITY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '\.py$' || true)
+if [[ -n "$STAGED_PY_PARITY" ]] && have_py; then
+    if ! "$PY" "$CLI" --check-structure-constructor-parity --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow): STRUCTURE-CONSTRUCTOR-PARITY — carry the new field on the named constructor surface, or exempt it WITH a reason in the entity's structure_parity.py." >&2
+    fi
+fi
+
 # ─── 6f. Lying-loading-state gate (advisory, only when a product frontend ──
 # .tsx changed) ──────────────────────────────────────────────────────────
 # Keeper `check_lying_loading_state` + `KB § PATTERNS/frontend/lying-

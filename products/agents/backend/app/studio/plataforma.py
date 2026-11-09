@@ -51,7 +51,7 @@ def ensure_definicao(
     descricao: str | None = None, runtime: str = "llm", owner_product: str | None = None,
     escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
     rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
-    exemplar: bool = False,
+    exemplar: bool = False, kind: str = "runtime", fonte: str = "git", superficie_claude: dict[str, Any] | None = None,
 ) -> StudioAgentRecord:
     """Idempotently create the platform DEFINITION of ``key`` in ``org_id`` (which must be the platform org -- the
     DB trigger / the Fake refuse anywhere else: ``definition_not_platform``) with an empty draft carrying only the
@@ -68,14 +68,17 @@ def ensure_definicao(
         org_id, key, nome, descricao, runtime=runtime, owner_product=owner_product,
         definition_scope="plataforma", escopo_qualificacao=escopo_qualificacao,
         padrao_qualificacao=padrao_qualificacao, rascunho_padrao=rascunho_padrao, instanciavel=instanciavel, papel=papel,
-        exemplar=exemplar,
+        exemplar=exemplar, kind=kind, fonte=fonte,
     )
+    if superficie_claude is not None:
+        # The surface is validated against the agent's kind (A10), which exists only once the row does.
+        agent = studio_store.update_definicao(org_id, key, {"superficie_claude": dict(superficie_claude)})
     draft = studio_store.create_draft(org_id, agent.id, None, created_by or agent.id)
     if rascunho_padrao:
         studio_store.update_draft(org_id, draft.id, dict(rascunho_padrao))
     studio_store.append_audit(
         org_id, agent.id, created_by, "agente_criado", None,
-        {"key": key, "nome": agent.nome, "definition_scope": "plataforma"},
+        {"key": key, "nome": agent.nome, "definition_scope": "plataforma", "kind": agent.kind, "fonte": agent.fonte},
     )
     logger.info("agents.plataforma.definition_created key=%s org_id=%s agent_id=%s", key, org_id, agent.id)
     return agent

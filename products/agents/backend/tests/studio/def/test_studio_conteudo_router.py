@@ -114,6 +114,30 @@ class TestPlatformDefinition:
         draft = studio.store.get_draft(DEFAULT_ORG_ID, UUID(first.json()["id"]))
         assert draft.versao == 1 and studio.store.list_sections(DEFAULT_ORG_ID, draft.id) == []
 
+    def test_a_db_source_dev_executor_is_created_with_its_claude_surface(self, studio):
+        """070 (Agent Packages A11/A12): kind + fonte + superficie_claude travel the whole creation chain."""
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        sup = {"tools": ["Bash", "Read", "Write"], "model": "opus", "owns_kb": ["CONTEXT/PATTERNS/x.md"]}
+        resp = studio.post(f"{PLAT}/agents", json={"key": "media-analyst", "nome": "Media analyst",
+                                                   "kind": "dev-executor", "fonte": "db", "superficie_claude": sup})
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert (body["kind"], body["fonte"], body["superficie_claude"]) == ("dev-executor", "db", sup)
+        agent = studio.store.get_platform_definition("media-analyst")
+        assert agent.espelhado and agent.superficie_claude == sup
+
+    def test_the_mirror_rules_are_refused_at_creation(self, studio):
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        runtime_db = studio.post(f"{PLAT}/agents", json={"key": "a1", "nome": "A", "fonte": "db"})
+        assert runtime_db.status_code == 422 and runtime_db.json()["code"] == "invalid_field"
+        advisor_bash = studio.post(f"{PLAT}/agents", json={
+            "key": "a2", "nome": "A", "kind": "dev-advisor", "fonte": "db", "superficie_claude": {"tools": ["Bash"]}})
+        assert advisor_bash.status_code == 422 and "A10" in advisor_bash.json()["detail"]
+        runtime_sup = studio.post(f"{PLAT}/agents", json={"key": "a3", "nome": "A", "superficie_claude": {"tools": ["Read"]}})
+        assert runtime_sup.status_code == 422
+
     def test_an_org_owner_is_not_a_platform_admin(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         studio.as_org_admin_only()
