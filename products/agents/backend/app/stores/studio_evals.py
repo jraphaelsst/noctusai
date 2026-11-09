@@ -313,11 +313,6 @@ class EvalStore(Protocol):
 
     def list_runs(self, org_id: UUID, agent_id: UUID, version_id: UUID | None = None) -> list[EvalRunRecord]: ...
 
-    def org_spend_since(self, org_id: UUID, since: datetime) -> float:
-        """USD committed by the org's runs created at/after ``since`` (any agent): each run's ``custo_usd``, or its
-        reserved ``limite_usd`` while it has no cost yet. Drives the token-run daily ceiling (fail-closed: raises)."""
-        ...
-
     def get_run(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> EvalRunRecord:
         """Raises :class:`NotFound` for an unknown/foreign run id."""
         ...
@@ -337,16 +332,6 @@ class EvalStore(Protocol):
         """Raises ``StudioConflict('run_not_cancellable')`` if the run isn't
         currently pendente/executando."""
         ...
-
-
-def _sum_spend(rows) -> float:
-    """Committed USD of run rows: the measured ``custo_usd``, else the reserved ``limite_usd``, else 0."""
-    total = 0.0
-    for r in rows:
-        cost = r.get("custo_usd")
-        cap = r.get("limite_usd")
-        total += float(cost if cost is not None else (cap if cap is not None else 0))
-    return total
 
 
 class FakeEvalStore:
@@ -494,9 +479,6 @@ class FakeEvalStore:
             for cid in resolved
         ]
         return self._run_record(row)
-
-    def org_spend_since(self, org_id: UUID, since: datetime) -> float:
-        return _sum_spend(r for r in self._runs.values() if r["org_id"] == org_id and r["created_at"] >= since)
 
     def list_runs(self, org_id: UUID, agent_id: UUID, version_id: UUID | None = None) -> list[EvalRunRecord]:
         rows = self._own_runs(org_id, agent_id)
@@ -698,14 +680,6 @@ class SupabaseEvalStore:
         if not run_id:
             raise RuntimeError(f"create_eval_run returned no run id: {resp.data!r}")
         return self.get_run(org_id, agent_id, UUID(str(run_id)))
-
-    def org_spend_since(self, org_id: UUID, since: datetime) -> float:
-        rows = self._paged(
-            lambda: self._t(_RUNS_TABLE).select("id,custo_usd,limite_usd,created_at")
-            .eq("org_id", str(org_id)).gte("created_at", since.isoformat()),
-            label=f"eval_runs spend org_id={org_id}", order=(("created_at", True),),
-        )
-        return _sum_spend(rows)
 
     def list_runs(self, org_id: UUID, agent_id: UUID, version_id: UUID | None = None) -> list[EvalRunRecord]:
         def build():

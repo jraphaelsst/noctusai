@@ -907,10 +907,14 @@ class TestEvalsRunToken:
         from app.routers.studio_agents_router import get_eval_store_dep
         from app.routers.studio_evals_router import get_current_hash_dep, get_eval_scheduler_dep
         from app.stores.studio_evals import FakeEvalStore
+        from app.studio.spend import get_spend_ceiling_dep
+        from noctusai_lib.integrations.llm import InMemorySpendCeiling
 
         store = FakeEvalStore()
         scheduled: list = []
+        plat.ceiling = InMemorySpendCeiling()  # ONE shared Fake: the seed ceiling every token run reserves under
         ov = plat.raw.app.dependency_overrides
+        ov[get_spend_ceiling_dep] = lambda: plat.ceiling
         ov[get_eval_store_dep] = lambda: store
         ov[get_eval_scheduler_dep] = lambda: scheduled.append
         ov[get_current_hash_dep] = lambda: (lambda org, agent, version: "h" * 64)
@@ -1057,31 +1061,35 @@ class TestEvalsRunToken:
         assert resp.status_code == 422 and resp.json()["code"] == "version_not_draft"
         assert scheduled == []
 
+    def test_the_shared_daily_ceiling_defaults_to_10_usd(self):
+        from app.config import settings
+
+        assert settings.daily_spend_ceiling_usd == 10.0
+
     def test_the_org_daily_ceiling_is_fail_closed(self, evals, monkeypatch):
         from app.config import settings
 
         plat, store, scheduled = evals
         _, draft_id = self._seed_case(plat, store)
-        monkeypatch.setattr(settings, "studio_eval_token_daily_budget_usd", 3.0)
+        monkeypatch.setattr(settings, "daily_spend_ceiling_usd", 3.0)
         self._as(plat, ["studio:evals-run"])
         first = plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
         assert first.status_code == 202, first.text
+        # a booked run still counts at its reserved cap: free the version slot, the NEXT start crosses 3.0
+        store.mark_run_failed(DEFAULT_ORG_ID, UUID(first.json()["id"]), erro="x")
         second = plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
-        assert second.status_code == 429 and second.json()["code"] == "eval_daily_budget_exceeded"
+        assert second.status_code == 429 and second.json()["code"] == "daily_spend_ceiling_exceeded"
         assert len(scheduled) == 1
 
-    def test_a_store_failure_computing_the_ceiling_does_not_start_a_run(self, evals, monkeypatch):
+    def test_a_lookup_failure_computing_the_ceiling_does_not_start_a_run(self, evals):
         plat, store, scheduled = evals
-        _, draft_id = self._seed_case(plat, store)
-
-        def boom(*a, **k):
-            raise RuntimeError("store down")
-
-        monkeypatch.setattr(store, "org_spend_since", boom)
+        agent, draft_id = self._seed_case(plat, store)
+        plat.ceiling.fail_with = RuntimeError("store down")
         self._as(plat, ["studio:evals-run"])
-        with pytest.raises(RuntimeError, match="store down"):
-            plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
+        resp = plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
+        assert resp.status_code == 503 and resp.json()["code"] == "daily_spend_ceiling_unverifiable"
         assert scheduled == []
+        assert [r.status for r in store.list_runs(DEFAULT_ORG_ID, agent.id)] == ["falhou"]
 
     def test_the_platform_admin_ui_keeps_its_latitude(self, evals):
         plat, store, scheduled = evals

@@ -122,6 +122,11 @@ class BaseAppSettings(BaseSettings):
     # supports_image_columns` docstring for the narrow-vs-wide history.
     llm_usage_wide_columns: bool = False
 
+    # ONE rolling-24h spend ceiling (USD, per org) shared by every mechanism that spends on an org's behalf
+    # (eval runs, mecanismo runs, the improver loop...) -- `integrations/llm/spend_ceiling.py`. Owner 2026-11-09: $10.
+    # `DAILY_SPEND_CEILING_USD` env override.
+    daily_spend_ceiling_usd: float = 10.0
+
     # Pagination defaults
     default_page_size: int = 50
     max_page_size: int = 200
