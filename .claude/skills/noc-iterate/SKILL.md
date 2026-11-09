@@ -15,12 +15,14 @@ The outer loop for making a thing good on evidence: an agent, a skill, an agent 
    - **sequence**: a method is applied to N items, ONE per round, and each item refines the method (skill-scout vetting one skill at a time).
 
    Write the **evaluation set** before building: cases, criteria, or the items list. Open TWO trials: `method_trial action=open slug=<target-slug>` (hypothesis + 2–4 observable metrics) and `slug=noc-iterate-<target-slug>` on this skill. Read past verdicts first (`method_trial action=status open_only=false` + `auto_improvement_query target=<target>`).
-1. **Build or redo v_n.** Round 1 builds from the best existing source (codebase first, then the reference exemplar, e.g. Julia for agents). Later rounds change ONLY what the last diagnosis named. Record the version identity: a content hash, a commit or a DB version id.
-2. **Evaluate in a batch, on v_n.** Run the WHOLE evaluation set against v_n, and wait for EVERY result before you read any of them. Partial reads bias the diagnosis. Sequence shape: process the round's ONE item fully with the current method.
+1. **Build or redo v_n.** Round 1 builds from the best existing source (codebase first, then the reference exemplar, e.g. Julia for agents). Later rounds change ONLY what the last diagnosis named. Record the version identity: a content hash, a commit or a DB version id. Sequence shape: also pin the round's ITEM (an upstream commit SHA, a run id) so the verdict can be re-checked later.
+2. **Evaluate on v_n.**
+   - Repeat shape: run the WHOLE evaluation set against v_n, and wait for EVERY result before you read any of them. Partial reads bias the diagnosis.
+   - Sequence shape: run the current method on the round's ONE item end to end, then score the method on that item.
 3. **Diagnose: split the defect.** Classify each failure before touching anything:
    - **harness or world defect**: the eval, fixture, simulated data, tool or environment is wrong. Fix it there, never in the target.
    - **target defect**: the target behaved wrong. That one feeds the refine step.
-   - **method defect** (sequence shape): the procedure missed, slowed or misled. That one refines the method file.
+   - **method defect** (sequence shape): the procedure missed, slowed or misled. Count every step you had to INVENT because the method file didn't say it; that count is the loop's main signal and should fall round over round. Each one refines the method file.
    Log each finding with `method_trial action=observe` and its evidence.
 4. **Council before you refine.** For any non-trivial change, run five lenses on the proposed fix: contrarian (what breaks), first principles (is the premise right), expansionist (what bigger win is missed), outsider (would a newcomer understand it), executor (what exactly changes now). Then one chairman line: decision, biggest risk, first step. In one session this is the single-chat version; the lenses share one model and one context, so say so when you report it.
 5. **Refine: the smallest change that fixes the diagnosed defect.** Edit the target (and in sequence shape, the method file). Never lower the bar or delete a failing case to get green. A case is "stable" only per (case, content hash): any content change resets stability. A stable case is SAMPLED less, never retired.

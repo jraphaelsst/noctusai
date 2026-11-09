@@ -37,7 +37,7 @@ Record per round what the evaluation costs: model calls and US$ (eval runs), wal
 
 | Date | Target | Shape | Rounds | Verdict | Notes |
 |---|---|---|---|---|---|
-| 2026-11-08 | `skill-scout` (vetting UI UX Pro Max, then marketing skills) | sequence | in progress | — | first run; also refines this loop |
+| 2026-11-08 | `skill-scout` (vetting UI UX Pro Max, then marketing skills) | sequence | in progress | — | first run; also refines this loop. Round 1 (UI UX Pro Max → `ui-ux-rules`, VENDOR-PARTIAL): 8 invented steps written back into the protocol; the council turned "vendor both references" into "vendor one file". Loop fixes: pin the round's item; count invented steps as the main signal |
 
 ## Composes with
 
