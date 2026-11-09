@@ -107,6 +107,7 @@ from app.studio.eval_mecanismo_service import (
     DriverSemTipo,
     SuiteVazia,
     concluir_suite_mecanismo,
+    TodosConsolidados,
     iniciar_suite_mecanismo,
 )
 from app.studio.plataforma import ensure_instancias
@@ -216,6 +217,31 @@ def get_compiled_hash_provider(
         return compile_version(store, catalog, org_id, agent, version).hash
 
     return _hash
+
+
+def get_compiled_partes_provider(
+    store=Depends(get_studio_definition_store_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
+):
+    """``(org_id, agent, version) -> per-part hashes`` of the version compiled NOW (eval consolidation: WHAT changed).
+    ``None`` when the compile is unavailable -- the caller then treats every case as affected (fail-safe: runs all)."""
+
+    def _partes(org_id: UUID, agent: StudioAgentRecord, version: VersionRecord) -> dict[str, str] | None:
+        try:
+            return dict(compile_version(store, catalog, org_id, agent, version).partes)
+        except Exception:  # noqa: BLE001 -- named fail-safe: no per-part hashes => consolidation cannot skip anything
+            logger.warning("studio: per-part hashes unavailable for version %s (consolidation off for this run)",
+                           version.id, exc_info=True)
+            return None
+
+    return _partes
+
+
+def get_consolidacao_store_dep(evals=Depends(get_eval_store_dep)):
+    """Seam over the eval-consolidation store (state, transitions, skipped ledger). Tests override it."""
+    from app.stores.studio_eval_consolidacao import get_consolidacao_store
+
+    return get_consolidacao_store(settings, evals)
 
 
 # ── error helpers ───────────────────────────────────────────────────────────
@@ -1204,6 +1230,8 @@ async def run_mecanismo_suite(
     catalog=Depends(get_knowledge_catalog_dep),
     driver=Depends(get_eval_turn_driver),
     ceiling=Depends(get_spend_ceiling_dep),
+    consolidacao=Depends(get_consolidacao_store_dep),
+    rodar_tudo: bool = Query(False),
 ) -> MecanismoRunIniciadaOut:
     """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
     minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
@@ -1223,9 +1251,16 @@ async def run_mecanismo_suite(
     limite = settings.studio_mecanismo_run_budget_usd
     try:
         with store_errors():
+            total_ativos = len(mecanismo.list_active_cases(ctx.org_id, agent.id))
             run_id, casos = iniciar_suite_mecanismo(
                 mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
-                compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite)
+                compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite,
+                consolidacao=consolidacao, partes=dict(compiled.partes) or None, rodar_tudo=rodar_tudo)
+    except TodosConsolidados as exc:
+        raise http_error(
+            409, "todos_consolidados",
+            "Todos os casos de mecanismo estão consolidados e não foram afetados por mudanças. Use rodar_tudo para rodar mesmo assim.",
+        ) from exc
     except SuiteVazia as exc:
         raise http_error(409, "sem_casos_mecanismo", "O agente não tem casos de mecanismo ativos.") from exc
     except DriverSemTipo as exc:
@@ -1243,7 +1278,8 @@ async def run_mecanismo_suite(
     async def _executar() -> None:
         try:
             resultado = await concluir_suite_mecanismo(
-                mecanismo, driver, casos, org_id=ctx.org_id, run_id=run_id, limite_usd=limite)
+                mecanismo, driver, casos, org_id=ctx.org_id, run_id=run_id, limite_usd=limite, consolidacao=consolidacao,
+                agent_id=agent.id, compiled_hash=compiled.hash, parcial=len(casos) < total_ativos)
             if resultado.erro_de_harness is None:  # a crashed/harness-failed run keeps its cap counting
                 settle_run(ceiling, kind=KIND_MECANISMO_RUN, run_id=run_id, actual_usd=float(resultado.custo_usd or 0.0))
         except Exception:  # noqa: BLE001 -- the run is already marked `falhou` (fixed text); nothing else to do

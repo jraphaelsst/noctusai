@@ -411,7 +411,11 @@ class EvalRunner:
         llm_runtime: Any = None,
         guardar_vazamento: bool = False,
         turn_driver_factory: Callable[[], Any] | None = None,
+        consolidacao: Any = None,
     ) -> None:
+        #: Eval consolidation store (``app.stores.studio_eval_consolidacao``): after a run its per-case results move the case
+        #: states. ``None`` = off (tests / a deploy without the migration).
+        self._consolidacao = consolidacao
         #: The prompt-leak detector on every output (Julia v2 IP protection): ON for a run started by a caller
         #: who is not a platform admin -- they can read the results, never the prompt.
         self._guardar_vazamento = guardar_vazamento
@@ -528,10 +532,32 @@ class EvalRunner:
                 org_id, run.id, status="falhou", aprovados=aprovados, score=score,
                 erro=BUDGET_EXCEEDED_NOTA, custo_usd=custo_usd, completa=False,
             )
+            self._registrar_consolidacao(org_id, run)
             return
         self._runs.finish_run(
             org_id, run.id, status="concluida", aprovados=aprovados, score=score, custo_usd=custo_usd,
         )
+        self._registrar_consolidacao(org_id, run)
+
+    def _registrar_consolidacao(self, org_id: UUID, run: Any) -> None:
+        """Fold the run's per-case statuses into the consolidation states. Best-effort by design: the run's verdict is already
+        stored, so a failure here is logged with the exception and the states are rebuilt by the backfill. A
+        cheaper-iteration run (another model answered) is not evidence about the version's model and is never counted."""
+        if self._consolidacao is None or run.modelo_geracao:
+            return
+        try:
+            from app.studio.consolidacao_service import registrar_resultados
+
+            resultados = [
+                (r.result.case_id, [r.result.status])
+                for r in self._evals.list_results_with_cases(org_id, run.agent_id, run.id)
+            ]
+            registrar_resultados(
+                self._consolidacao, org_id=org_id, agent_id=run.agent_id, suite="comportamento", run_id=run.id,
+                run_tipo="comportamento", hash_atual=run.compiled_hash,
+                partes=self._consolidacao.get_run_partes(org_id, run.id, "comportamento"), resultados=resultados)
+        except Exception:
+            logger.exception("agents.eval.consolidacao_falhou org_id=%s run_id=%s", org_id, run.id)
 
     def _agent_by_id(self, org_id: UUID, agent_id: UUID) -> Any:
         for agent in self._definitions.list_agents(org_id):

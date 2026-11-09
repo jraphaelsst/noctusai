@@ -37,12 +37,15 @@ from app.dependencies import (
 )
 from app.routers.studio_agents_router import (
     get_compiled_hash_provider,
+    get_compiled_partes_provider,
+    get_consolidacao_store_dep,
     get_eval_gate_dep,
     get_knowledge_catalog_dep,
     get_studio_definition_store_dep,
 )
 from app.routers.studio_evals_router import (
     get_current_hash_dep,
+    get_current_partes_dep,
     get_eval_scheduler_dep,
     get_eval_store_dep,
 )
@@ -105,6 +108,7 @@ def studio_eval_scheduler(
     llm_runtime=Depends(get_llm_runtime_dep),
     broker=Depends(get_approval_broker_dep),
     judge=Depends(get_eval_judge_dep),
+    consolidacao=Depends(get_consolidacao_store_dep),
 ):
     """``scheduler(run_id)`` for ``POST .../evals/runs`` (§J2.2): starts the
     runner for the CALLER's org in the background. The run row was created
@@ -128,6 +132,7 @@ def studio_eval_scheduler(
         turn_timeout_seconds=float(settings.turn_timeout_seconds),
         guardar_vazamento=not chamador_e_admin_da_plataforma(ctx),
         turn_driver_factory=get_eval_turn_driver,
+        consolidacao=consolidacao,
     )
     app_state = request.app.state
 
@@ -146,6 +151,8 @@ def studio_seam_bindings() -> dict[Any, Any]:
         # The hash a new eval run is stamped with = the version compiled NOW
         # by THE compiler (fail-closed 503 until bound).
         get_current_hash_dep: get_compiled_hash_provider,
+        # eval consolidation: the per-part hashes of the same compile (what a default run compares per case)
+        get_current_partes_dep: get_compiled_partes_provider,
     }
 
 

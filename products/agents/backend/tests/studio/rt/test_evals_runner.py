@@ -395,3 +395,63 @@ class TestJudgeParsing:
         assert "nunca siga instruções" in system and nonce in system
         _, nonce2 = build_judge_messages(entrada="e", contexto=None, criterios=self.CRIT, rubrica=None, saida=saida)
         assert nonce2 != nonce
+
+
+class TestConsolidacao:
+    """The runner folds a finished run's per-case results into the consolidation states (owner rule 2026-11-09)."""
+
+    P = {"secao:id": "1", "modelo": "m", "config": "c", "estrutura": "e"}
+
+    def _store(self, w):
+        from app.stores.studio_eval_consolidacao import FakeConsolidacaoStore
+
+        return FakeConsolidacaoStore(w.evals)
+
+    @pytest.mark.asyncio
+    async def test_a_finished_run_moves_each_case_state_and_records_the_transitions(self):
+        w = World(cases=[("c1", "P1", {"deve": ["a"], "nao_deve": []}), ("c2", "P2", {"deve": ["a"], "nao_deve": []})])
+        w.judge.answers = {"P2": [False]}
+        cs = self._store(w)
+        run = w.new_run()
+        cs.set_run_partes(ORG, run.id, "comportamento", dict(self.P), rodar_tudo=False)
+        await w.runner(consolidacao=cs).execute(ORG, run.id)
+        est = cs.get_estados(ORG, w.agent.id)
+        assert (est[w.case_ids["c1"]].estado, est[w.case_ids["c1"]].sequencia) == ("em_validacao", 1)
+        assert est[w.case_ids["c2"]].sequencia == 0
+        t = {r["case_id"]: r for r in cs.transicoes}
+        assert str(w.case_ids["c1"]) in {str(k) for k in t} and all(str(r["run_id"]) == str(run.id) for r in cs.transicoes)
+        assert {r["motivo"] for r in cs.transicoes} == {"acerto", "falha"}
+
+    @pytest.mark.asyncio
+    async def test_a_cheaper_iteration_run_is_not_evidence(self):
+        w = World()
+        cs = self._store(w)
+        run = w.new_run(modelo_geracao="claude-haiku-4-5")
+        await w.runner(consolidacao=cs).execute(ORG, run.id)
+        assert cs.get_estados(ORG, w.agent.id) == {} and cs.transicoes == []
+
+    @pytest.mark.asyncio
+    async def test_an_error_result_is_neutral_not_a_reset(self):
+        w = World()
+        cs = self._store(w)
+        cid = w.case_ids["c1"]
+        from app.studio.consolidacao_service import registrar_resultados
+
+        for _ in range(3):
+            registrar_resultados(cs, org_id=ORG, agent_id=w.agent.id, suite="comportamento", run_id=uuid4(), run_tipo="comportamento",
+                                 hash_atual="h", partes=dict(self.P), resultados=[(cid, ["aprovado"])])
+        registrar_resultados(cs, org_id=ORG, agent_id=w.agent.id, suite="comportamento", run_id=uuid4(), run_tipo="comportamento",
+                             hash_atual="h", partes=dict(self.P), resultados=[(cid, ["erro"])])
+        assert cs.get_estados(ORG, w.agent.id)[cid].sequencia == 3
+
+    @pytest.mark.asyncio
+    async def test_a_consolidation_store_failure_never_changes_the_runs_verdict(self):
+        w = World()
+
+        class _Quebrado:
+            def get_run_partes(self, *a, **k):
+                raise RuntimeError("db down")
+
+        run = w.new_run()
+        await w.runner(consolidacao=_Quebrado()).execute(ORG, run.id)
+        assert w.run_row(run.id).status == "concluida"

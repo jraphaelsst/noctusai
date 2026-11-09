@@ -4755,6 +4755,7 @@ def _m(nn: str) -> str:
         "039": "039_julia_v2_skills_compartilhadas.sql", "040": "040_julia_v2_pin_catalogo.sql",
         "042": "042_julia_v2_lead_opt_out_eventos.sql", "043": "043_julia_v2_lead_reativacao.sql",
         "046": "046_julia_v2_proveniencia_canario.sql", "053": "053_renata_cutover.sql",
+        "072": "072_eval_consolidacao.sql",
     }[nn]
 
 
@@ -5292,6 +5293,39 @@ _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
                 "VALUES (v_org, v_agent, 'noc-probe', 't', 'e', '{}'::jsonb, 'mecanismo');"),
         fragments=("eval_cases_mecanismo_conteudo",), what="a mecanismo case with no roteiro/asserts",
         rationale="A mechanism case IS its script + deterministic asserts; without them it would pass every run.",
+    ),
+    *(
+        _julia_v2_probe(
+            probe_id=f"eval_cases.consolidacao_{probe}", guard_name=guard,
+            migrations=(_m("072"),), setup=_JV2_AGENT,
+            attack=(f"INSERT INTO {_JV2}.eval_cases (org_id, agent_id, slug, titulo, entrada, criterios, {col}) "
+                    f"VALUES (v_org, v_agent, 'noc-probe', 't', 'e', '{{\"deve\": [\"x\"]}}'::jsonb, {val});"),
+            fragments=(guard,), what=what, rationale=why,
+        )
+        for probe, guard, col, val, what, why in (
+            ("criticidade", "eval_cases_criticidade_check", "criticidade", "'urgente'",
+             "an eval case with an unknown criticality",
+             "The consolidation thresholds are keyed by criticality; an unknown value would have no threshold and be skipped."),
+            ("criticidade_origem", "eval_cases_criticidade_origem_check", "criticidade_origem", "'palpite'",
+             "an eval case with an unknown criticality origin",
+             "The origin says whether a human decided the criticality; an invented origin would pass as reviewed."),
+            ("depende_de_array", "eval_cases_depende_de_check", "depende_de", "'{\"a\": 1}'::jsonb",
+             "a case dependency declaration that is not a JSON array",
+             "A non-array depende_de cannot be matched against part hashes: the case would never be seen as affected."),
+            ("depende_de_origem", "eval_cases_depende_de_origem_check", "depende_de_origem", "'adivinhada'",
+             "an eval case with an unknown dependency origin",
+             "Dependencies drive which cases are NOT re-run; the origin keeps inferred ones reviewable."),
+        )
+    ),
+    _julia_v2_probe(
+        probe_id="eval_case_transicoes.append_only", guard_name="eval_case_transicoes_sem_update",
+        migrations=(_m("072"),),
+        setup=(f"INSERT INTO {_JV2}.eval_case_transicoes (org_id, agent_id, case_id, suite, de_estado, para_estado, motivo, "
+               "criticidade, sequencia_antes, sequencia_depois, limite) VALUES (v_org, gen_random_uuid(), gen_random_uuid(), "
+               "'comportamento', 'em_validacao', 'em_validacao', 'acerto', 'normal', 0, 1, 5);"),
+        attack=f"UPDATE {_JV2}.eval_case_transicoes SET motivo = 'falha' WHERE org_id = v_org;",
+        fragments=("eval_case_transicoes is append-only",), what="an UPDATE of a consolidation transition",
+        rationale="The history is what the owner queries to refine the rule; an edited row would rewrite why a case was skipped.",
     ),
     _julia_v2_probe(
         probe_id="eval_mecanismo_runs.approved_only_when_all_green", guard_name="eval_mecanismo_runs_aprovado_consistente",

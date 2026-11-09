@@ -43,6 +43,7 @@ from typing import Any
 
 from app.studio.especificacoes import completar_indisponiveis, placeholders_org, resolver_texto
 from app.studio.especificacoes_service import preparar as preparar_valores
+from app.studio.partes import partes_da_compilacao
 from app.studio.spec_formatos import dividir_itens
 from app.studio.ferramentas_registry import ferramenta_conhecida, nome_no_modelo  # noqa: F401 -- nome_no_modelo is re-exported
 from app.studio.models import (
@@ -787,9 +788,14 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt:
         prompt_hash(texto) if cont is None
         else _hash_of(hash_payload(texto, cont, inp.version, inp.extras, inp.qualificacao))
     )
+    partes = partes_da_compilacao(
+        texto=texto, version=version, secoes_ativas=secoes, skills_ativas=skills, conteudo=cont,
+        extras=inp.extras, qualificacao=inp.qualificacao, knowledge=inp.knowledge,
+    )
     return CompiledPrompt(
         texto=texto,
         hash=hash_,
+        partes=partes,
         manifest=manifest,
         tokens_estimados=tokens,
         sob_demanda=sob_demanda,

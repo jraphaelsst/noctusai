@@ -19,6 +19,7 @@ const mockUseDeleteEvalCase = vi.fn();
 const mockUseCancelEvalRun = vi.fn();
 const mockUseIsAdmin = vi.fn();
 const mockUseStudioAgent = vi.fn();
+const mockUseConsolidacao = vi.fn();
 
 vi.mock("@/hooks/studio/useEvals", () => ({
   useEvalCases: () => mockUseEvalCases(),
@@ -29,6 +30,7 @@ vi.mock("@/hooks/studio/useEvals", () => ({
   useUpdateEvalCase: () => mockUseUpdateEvalCase(),
   useDeleteEvalCase: () => mockUseDeleteEvalCase(),
   useCancelEvalRun: () => mockUseCancelEvalRun(),
+  useConsolidacao: () => mockUseConsolidacao(),
 }));
 vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => mockUseIsAdmin() }));
 vi.mock("@/hooks/studio/useStudioAgents", () => ({ useStudioAgent: () => mockUseStudioAgent() }));
@@ -55,6 +57,7 @@ beforeEach(() => {
   mockUseDeleteEvalCase.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseCancelEvalRun.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseStudioAgent.mockReturnValue({ data: { versoes: [{ id: "v1", versao: 2, status: "rascunho" }] } });
+  mockUseConsolidacao.mockReturnValue({ data: undefined, showSkeleton: false, isError: false });
 });
 
 afterEach(() => cleanup());
@@ -466,5 +469,53 @@ describe("EvalsTab — Controle de custo (contract §L)", () => {
       await renderTab();
       expect(screen.queryByTestId("evals-run-repeat-r1")).toBeNull();
     });
+  });
+});
+
+
+describe("EvalsTab — consolidation (owner rule 2026-11-09)", () => {
+  const ITEM = {
+    case_id: "e1", slug: "pergunta-reels", titulo: "Pergunta sobre reels", suite: "comportamento", ativo: true,
+    criticidade: "critico", criticidade_origem: "sugerida", depende_de: null, depende_de_origem: null,
+    estado: "em_validacao", sequencia: 4, limite: 10,
+  };
+
+  it("admin: each case shows its state, the N/limite streak, criticality and the fail-safe 'sem dependências'", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    mockUseConsolidacao.mockReturnValue({ data: { config: {}, contagem: {}, items: [ITEM] }, showSkeleton: false, isError: false });
+    await renderTab();
+    const badge = await screen.findByTestId("evals-consolidacao-pergunta-reels");
+    expect(badge.textContent).toContain("em validação 4/10");
+    expect(badge.textContent).toContain("crítico");
+    expect(badge.textContent).toContain("sem dependências");
+  });
+
+  it("admin: 'Rodar tudo' is an explicit opt-in sent as rodar_tudo", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    const mutateAsync = vi.fn().mockResolvedValue({ id: "r9" });
+    mockUseCreateEvalRun.mockReturnValue({ mutateAsync, isPending: false });
+    await renderTab();
+    fireEvent.click(screen.getByTestId("evals-run-button"));
+    const form = await screen.findByTestId("evals-new-run-form");
+    fireEvent.click(screen.getByTestId("evals-run-rodar-tudo"));
+    fireEvent.submit(form);
+    await waitFor(() => expect(mutateAsync.mock.calls[0][0]).toMatchObject({ version_id: "v1", rodar_tudo: true }));
+  });
+
+  it("a run says which cases it skipped and why", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    mockUseEvalRuns.mockReturnValue({ data: [{ id: "r1", version_id: "v1", status: "concluida", total: 1, aprovados: 1, score: 1, limiar: 0.8, started_at: null, finished_at: null, custo_usd: null }] });
+    mockUseEvalRun.mockReturnValue({
+      data: {
+        id: "r1", version_id: "v1", status: "concluida", total: 1, aprovados: 1, score: 1, limiar: 0.8, started_at: null,
+        finished_at: null, custo_usd: null, resultados: [],
+        casos_pulados: [{ case_id: "e2", case_slug: "ja-provado", estado: "consolidado", motivo: "consolidado_nao_afetado", sequencia: 5, limite: 5 }],
+      },
+      showSkeleton: false, isError: false,
+    });
+    await renderTab();
+    fireEvent.click(screen.getByTestId("evals-run-row-r1"));
+    const pulados = await screen.findByTestId("evals-run-pulados");
+    expect(pulados.textContent).toContain("ja-provado (5/5)");
   });
 });

@@ -43,6 +43,7 @@ from tests.routers.conftest import (  # noqa: F401
 )
 
 from app.stores.studio_definitions import FakeStudioDefinitionStore
+from app.stores.studio_eval_consolidacao import FakeConsolidacaoStore
 from app.stores.studio_evals import FakeEvalStore
 from app.stores.studio_knowledge import FakeStudioKnowledgeStore
 from noctusai_lib.domain.editorial import FakeEditorialStore
@@ -83,8 +84,15 @@ class _Stores:
         self.knowledge = FakeStudioKnowledgeStore(self.editorial)
         self.evals = FakeEvalStore()
         self.defs = FakeStudioDefinitionStore()
+        #: eval consolidation (state / transitions / skipped ledger) shared across a test's requests
+        self.consol = FakeConsolidacaoStore(self.evals)
+        #: version_id -> the per-part hashes the Fake compiler returns "now" (absent => None => nothing can be skipped)
+        self.partes: dict[UUID, dict[str, str]] = {}
         #: version_id -> the hash the Fake compiler returns for it "now".
         self.hashes: dict[UUID, str] = {}
+
+    def current_partes(self, org_id: UUID, agent, version):
+        return self.partes.get(version.id)
 
     def current_hash(self, org_id: UUID, agent, version) -> str:
         return self.hashes.get(version.id, f"sha256:{'0' * 56}{str(version.id)[:8]}")
@@ -100,8 +108,8 @@ def ke_client():
     with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
-        from app.routers.studio_agents_router import get_studio_definition_store_dep
-        from app.routers.studio_evals_router import get_current_hash_dep, get_eval_store_dep
+        from app.routers.studio_agents_router import get_consolidacao_store_dep, get_studio_definition_store_dep
+        from app.routers.studio_evals_router import get_current_hash_dep, get_current_partes_dep, get_eval_store_dep
         from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
 
         app = _build_local_app()
@@ -110,6 +118,8 @@ def ke_client():
         app.dependency_overrides[get_studio_definition_store_dep] = lambda: stores.defs
         app.dependency_overrides[get_eval_store_dep] = lambda: stores.evals
         app.dependency_overrides[get_current_hash_dep] = lambda: stores.current_hash
+        app.dependency_overrides[get_current_partes_dep] = lambda: stores.current_partes
+        app.dependency_overrides[get_consolidacao_store_dep] = lambda: stores.consol
 
         from app.routers.editorial_router import editorial_deps
 

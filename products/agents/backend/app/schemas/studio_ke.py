@@ -239,6 +239,12 @@ class EvalCaseOut(BaseModel):
     k: int = 3
     roteiro: dict[str, Any] | None = None
     asserts: dict[str, Any] | None = None
+    #: Consolidation: ``normal`` (5 / 3) | ``critico`` (10 / 6) consecutive passes; where it came from; the declared
+    #: dependencies (``None`` = fail-safe, affected by any change).
+    criticidade: str = "normal"
+    criticidade_origem: str = "padrao"
+    depende_de: list[str] | None = None
+    depende_de_origem: str | None = None
 
 
 class EvalCaseListOut(BaseModel):
@@ -343,6 +349,10 @@ class EvalRunCreateRequest(StrictHttpModel):
     #: resolved server-side into ``case_ids`` (404 if the run doesn't
     #: belong to this org/agent). Mutually exclusive with ``case_ids``.
     repetir_falhas_de: UUID | None = None
+    #: Consolidation (owner rule 2026-11-09): omitted/``False`` ⇒ a default run executes only the cases that are NOT
+    #: ``consolidado``-and-unaffected (the skipped ones + why are stored with the run). ``True`` ⇒ run every active case.
+    #: An explicit ``case_ids`` / ``repetir_falhas_de`` is never filtered.
+    rodar_tudo: bool = False
 
     @field_validator("modelo_geracao")
     @classmethod
@@ -375,8 +385,60 @@ class EvalResultOut(BaseModel):
     tokens_cache_leitura: int | None = None
 
 
+class CasoPuladoOut(BaseModel):
+    """A case a default run did NOT execute because it was consolidated and unaffected (queryable, per run)."""
+
+    case_id: UUID
+    case_slug: str | None = None
+    estado: str
+    motivo: str
+    sequencia: int = 0
+    limite: int = 1
+
+
 class EvalRunDetailOut(EvalRunOut):
     resultados: list[EvalResultOut]
+    casos_pulados: list[CasoPuladoOut] = Field(default_factory=list)
+
+
+class ConsolidacaoCasoOut(BaseModel):
+    case_id: UUID
+    slug: str
+    titulo: str | None = None
+    suite: str
+    ativo: bool
+    criticidade: str
+    criticidade_origem: str
+    depende_de: list[str] | None = None
+    depende_de_origem: str | None = None
+    estado: str
+    sequencia: int
+    limite: int
+
+
+class ConsolidacaoOut(BaseModel):
+    config: dict[str, int]
+    contagem: dict[str, int]
+    items: list[ConsolidacaoCasoOut]
+
+
+class ConsolidacaoCasoUpdateRequest(StrictHttpModel):
+    #: ``normal`` | ``critico`` -- stamps ``criticidade_origem='definida'``.
+    criticidade: str | None = Field(default=None, pattern="^(normal|critico)$")
+    #: A JSON array of part refs (``secao:<chave>``, ``ferramenta:<nome>``, ``skill:<nome>``, trailing ``*`` wildcard) or
+    #: ``null`` to clear (back to fail-safe: affected by any change). Omit to leave unchanged.
+    depende_de: list[str] | None = None
+
+
+class BackfillConsolidacaoRequest(StrictHttpModel):
+    #: ``False`` (default) = DRY-RUN: nothing is written, the report says what would be.
+    confirmar: bool = False
+    #: Historical runs without recoverable per-part hashes: ``dono`` = a bare hash change affects only a case with no
+    #: declared dependencies; ``conservadora`` = it affects every case.
+    politica_sem_partes: str = Field(default="dono", pattern="^(dono|conservadora)$")
+    #: Replay and (on confirm) persist the heuristically inferred ``depende_de`` for cases that declare none.
+    usar_deps_propostas: bool = False
+    propor_criticidade: bool = True
 
 
 __all__ = [
@@ -409,4 +471,9 @@ __all__ = [
     "EvalRunCreateRequest",
     "EvalResultOut",
     "EvalRunDetailOut",
+    "CasoPuladoOut",
+    "ConsolidacaoCasoOut",
+    "ConsolidacaoOut",
+    "ConsolidacaoCasoUpdateRequest",
+    "BackfillConsolidacaoRequest",
 ]

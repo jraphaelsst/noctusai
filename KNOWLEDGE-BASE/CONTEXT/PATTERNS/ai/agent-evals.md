@@ -412,6 +412,18 @@ spend, and compare against `mec-injecao-*`, `mec-skill-dump-*` and the leak rule
 
 A narrative `contexto` is only a note appended to the state block; the engine's own state (dossier, offered imoveis, controls such as `fase_testes`) is what the model trusts. A judge case that presumes state ("the imovel was already shown", "Fase de testes: nao") must carry it as `roteiro` (`estado_inicial` / `catalogo` / `fixture`, no `turnos`; validated by `validar_mundo_juiz`, synthetic data only). Without it the case grades the contradiction, not the agent: Julia's behaviour suite fell 0.979 -> 0.778 with no content regression. A run whose every execution crashed in the driver is a harness error (`falhou`, `erro_de_harness`), never a 0/N score.
 
+## 14 · Case consolidation: do not re-run what is proven and untouched (2026-11-09)
+
+Owner rule: a case that passed N CONSECUTIVE times is `consolidado` and is not re-run until a change AFFECTS it. Both suites share one machine (`app/studio/consolidacao.py`, pure; orchestration in `consolidacao_service.py`; tables in migration 072, all `agents.eval_*`, service role only).
+
+- **States per (case, agent):** `em_validacao` -> `consolidado` after 5 (normal) / 10 (`critico`) consecutive passes, a failure resets; an affected case is `revalidar` and returns to `consolidado` after 3 / 6; a failure while revalidating (or a regression of a consolidated case run anyway) drops to `em_validacao` with the FULL threshold. The four thresholds are ROWS (`eval_consolidacao_config`), never constants. An `erro` / `pulado` result is neutral (nothing was measured about the agent); a mechanism execution counts as one pass each (k per run).
+- **Affected = a part the case depends on changed.** `compiled_hash` is too coarse, so the compiler also emits per-part hashes (`app/studio/partes.py`: `secao:`, `texto:`, `ferramenta:`, `decisao:`, `spec:`, `skill:`, `skill_ref:`, `qualificacao`, `conhecimento`, `extras` + the GLOBAL parts `modelo`, `config`, `estrutura`, `texto_legado` that affect every case). A test proves any change that moves the hash moves at least one part. A case declares `depende_de` (part refs, `*` suffix = prefix wildcard); NULL = not declared = affected by ANY change (fail-safe), and so is a run with no per-part hashes.
+- **What a default run does:** executes only cases that are not consolidated-and-unaffected and stores the skipped ones + why (`eval_casos_pulados`); `rodar_tudo` runs everything. A filtered run is never `completa` (judge) / `aprovado` (mechanism), so it never opens the publish gate; only a `rodar_tudo` run does.
+- **Not evidence:** a cheaper-iteration judge run (another model answered) and a `fake`-driver mechanism run.
+- **History is queryable:** every move is an append-only row in `eval_case_transicoes` (run id, part hashes, reason, affected parts). `GET .../evals/consolidacao` (+ `/transicoes`), `PUT .../evals/cases/{id}/consolidacao`, `POST .../evals/consolidacao/backfill` (dry-run unless `confirmar`).
+- **Criticality and dependencies are proposals until a human sets them** (`criticidade_origem` padrao/sugerida/definida; `depende_de_origem` declarada/inferida). The heuristic only reads POSITIVE signals (a required tool, a required skill, typed tags, a quoted part key): which sections drive a behaviour cannot be read off a case, so an inferred list is a lower bound the owner reviews.
+- **Not tracked:** a code change (tool behaviour, guards, firewall) does not move any prompt part; a case whose behaviour is code-driven must be revalidated with `rodar_tudo` after such a change.
+
 ## Composes-with
 
 `KB § PATTERNS/ai/ai-engineering-canon.md` · `KB § PATTERNS/security/ai-agent-security-canon.md` §9 ·

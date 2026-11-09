@@ -253,8 +253,44 @@ export interface EvalResult {
   tokens_cache_leitura: number | null;
 }
 
+/** A case a default run did NOT execute: consolidated and unaffected by the change (queryable per run). */
+export interface EvalCasoPulado {
+  case_id: string;
+  case_slug: string | null;
+  estado: ConsolidacaoEstado;
+  motivo: "consolidado_nao_afetado";
+  sequencia: number;
+  limite: number;
+}
+
 export interface EvalRunDetail extends EvalRun {
   resultados: EvalResult[];
+  casos_pulados?: EvalCasoPulado[];
+}
+
+/** Eval consolidation (owner rule 2026-11-09): N consecutive passes (5 normal / 10 critico) consolidate a case;
+ * an affected case is `revalidar` and needs 3 / 6. */
+export type ConsolidacaoEstado = "em_validacao" | "consolidado" | "revalidar";
+
+export interface ConsolidacaoCaso {
+  case_id: string;
+  slug: string;
+  titulo: string | null;
+  suite: "comportamento" | "mecanismo";
+  ativo: boolean;
+  criticidade: "normal" | "critico";
+  criticidade_origem: "padrao" | "sugerida" | "definida";
+  depende_de: string[] | null;
+  depende_de_origem: "declarada" | "inferida" | null;
+  estado: ConsolidacaoEstado;
+  sequencia: number;
+  limite: number;
+}
+
+export interface Consolidacao {
+  config: Record<string, number>;
+  contagem: Record<string, number>;
+  items: ConsolidacaoCaso[];
 }
 
 export interface EvalRunCreate {
@@ -269,6 +305,9 @@ export interface EvalRunCreate {
   /** Contract §L: rerun only the failures of a prior run of this agent.
    * Mutually exclusive with `case_ids` (422). */
   repetir_falhas_de?: string;
+  /** Omitted/false: only cases that are NOT consolidated-and-unaffected run (the skipped ones are stored with the run).
+   * True: run every active case (and the only way to get a publish-gate-eligible complete run). */
+  rodar_tudo?: boolean;
 }
 
 // §D2 Clients: collapsed into FE-DEF's `../types.ts` (`Client`,

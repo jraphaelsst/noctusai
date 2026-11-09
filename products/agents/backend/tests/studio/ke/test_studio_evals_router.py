@@ -345,3 +345,133 @@ class TestCostControl:
         # A rerun over a SUBSET is never `completa` (H1) regardless of it
         # having been derived from a full prior run.
         assert rerun.json()["completa"] is False
+
+
+class TestConsolidacaoRuns:
+    """Owner rule 2026-11-09: a default run executes only cases that are not consolidated-and-unaffected."""
+
+    P0 = {"secao:a": "1", "secao:b": "1", "modelo": "m", "config": "c", "estrutura": "e"}
+
+    def _seed(self, ke_client, n=3):
+        agent = seed_studio_agent(ke_client)
+        version_id = seed_draft(ke_client, agent).id
+        ids = []
+        for i in range(n):
+            c = ke_client.stores.evals.create_case(
+                DEFAULT_ORG_ID, agent.id,
+                EvalCaseInput(slug=f"c{i}", titulo=f"Caso {i}", entrada="e", criterios={"deve": ["x"], "nao_deve": []}))
+            ke_client.stores.consol.set_caso(DEFAULT_ORG_ID, agent.id, c.id, depende_de=["secao:a"], depende_de_origem="declarada")
+            ids.append(c.id)
+        ke_client.stores.partes[version_id] = dict(self.P0)
+        return agent, version_id, ids
+
+    def _consolidar(self, ke_client, agent, ids, h="sha256:" + "0" * 56 + "0"):
+        from app.studio.consolidacao_service import registrar_resultados
+
+        for _ in range(5):
+            registrar_resultados(ke_client.stores.consol, org_id=DEFAULT_ORG_ID, agent_id=agent.id, suite="comportamento", run_id=uuid4(),
+                                 run_tipo="comportamento", hash_atual=h, partes=dict(self.P0), resultados=[(i, ["aprovado"]) for i in ids])
+
+    def _post_run(self, ke_client, version_id, **extra):
+        app = ke_client.raw().app
+        app.dependency_overrides[get_eval_scheduler_dep] = lambda: (lambda run_id: None)
+        try:
+            return ke_client.post("/api/studio/agents/isaia/evals/runs", json={"version_id": str(version_id), **extra})
+        finally:
+            app.dependency_overrides.pop(get_eval_scheduler_dep, None)
+
+    def test_default_run_skips_consolidated_cases_and_the_run_says_why(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent, version_id, ids = self._seed(ke_client)
+        self._consolidar(ke_client, agent, ids[:2])
+        resp = self._post_run(ke_client, version_id)
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["total"] == 1 and resp.json()["completa"] is False  # subset: never the publish gate's complete run
+        detail = ke_client.get(f"/api/studio/agents/isaia/evals/runs/{resp.json()['id']}").json()
+        assert [r["case_slug"] for r in detail["resultados"]] == ["c2"]
+        assert {p["case_slug"] for p in detail["casos_pulados"]} == {"c0", "c1"}
+        assert all(p["motivo"] == "consolidado_nao_afetado" and p["estado"] == "consolidado" for p in detail["casos_pulados"])
+
+    def test_rodar_tudo_runs_every_case_and_stays_complete(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent, version_id, ids = self._seed(ke_client)
+        self._consolidar(ke_client, agent, ids[:2])
+        resp = self._post_run(ke_client, version_id, rodar_tudo=True)
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["total"] == 3 and resp.json()["completa"] is True
+        assert ke_client.get(f"/api/studio/agents/isaia/evals/runs/{resp.json()['id']}").json()["casos_pulados"] == []
+
+    def test_a_change_to_a_dependency_brings_the_case_back_as_revalidar(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent, version_id, ids = self._seed(ke_client)
+        self._consolidar(ke_client, agent, ids)
+        ke_client.stores.partes[version_id] = {**self.P0, "secao:a": "2"}
+        resp = self._post_run(ke_client, version_id)
+        assert resp.status_code == 202 and resp.json()["total"] == 3
+        assert {e.estado for e in ke_client.stores.consol.get_estados(DEFAULT_ORG_ID, agent.id).values()} == {"revalidar"}
+
+    def test_everything_consolidated_and_unaffected_is_a_409_not_an_empty_run(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent, version_id, ids = self._seed(ke_client)
+        self._consolidar(ke_client, agent, ids)
+        resp = self._post_run(ke_client, version_id)
+        assert resp.status_code == 409 and resp.json()["code"] == "todos_consolidados"
+        assert ke_client.get("/api/studio/agents/isaia/evals/runs").json()["items"] == []
+
+    def test_without_part_hashes_nothing_is_skipped(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent, version_id, ids = self._seed(ke_client)
+        self._consolidar(ke_client, agent, ids)
+        ke_client.stores.partes.clear()  # compile of parts unavailable -> fail-safe
+        resp = self._post_run(ke_client, version_id)
+        assert resp.status_code == 202 and resp.json()["total"] == 3
+
+    def test_explicit_case_ids_are_never_filtered(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent, version_id, ids = self._seed(ke_client)
+        self._consolidar(ke_client, agent, ids)
+        resp = self._post_run(ke_client, version_id, case_ids=[str(ids[0])])
+        assert resp.status_code == 202 and resp.json()["total"] == 1
+
+
+class TestConsolidacaoApi:
+    def test_state_listing_set_criticality_deps_transitions_and_backfill_dry_run(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent = seed_studio_agent(ke_client)
+        seed_draft(ke_client, agent)
+        c = ke_client.stores.evals.create_case(
+            DEFAULT_ORG_ID, agent.id,
+            EvalCaseInput(slug="adv", titulo="Adv", entrada="e", criterios={"deve": ["x"], "nao_deve": []}, tags=("adversarial",)))
+        listed = ke_client.get("/api/studio/agents/isaia/evals/consolidacao").json()
+        assert listed["config"]["consolidar_critico"] == 10 and listed["contagem"]["em_validacao"] == 1
+        assert listed["items"][0]["estado"] == "em_validacao" and listed["items"][0]["limite"] == 5
+
+        put = ke_client.put(f"/api/studio/agents/isaia/evals/cases/{c.id}/consolidacao",
+                            json={"criticidade": "critico", "depende_de": ["secao:a", "skill:*"]})
+        assert put.status_code == 200, put.text
+        body = put.json()
+        assert (body["criticidade"], body["criticidade_origem"], body["depende_de"], body["depende_de_origem"], body["limite"]) == (
+            "critico", "definida", ["secao:a", "skill:*"], "declarada", 10)
+        case_out = ke_client.get("/api/studio/agents/isaia/evals/cases").json()["items"][0]
+        assert case_out["criticidade"] == "critico" and case_out["depende_de"] == ["secao:a", "skill:*"]
+
+        assert ke_client.get("/api/studio/agents/isaia/evals/consolidacao/transicoes").json() == {"items": []}
+        dry = ke_client.post("/api/studio/agents/isaia/evals/consolidacao/backfill", json={})
+        assert dry.status_code == 200, dry.text
+        assert dry.json()["aplicado"] is False and dry.json()["politica_sem_partes"] == "dono"
+
+    def test_put_rejects_an_invalid_criticality_and_unknown_case(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent = seed_studio_agent(ke_client)
+        assert ke_client.put(f"/api/studio/agents/isaia/evals/cases/{uuid4()}/consolidacao", json={"criticidade": "x"}).status_code == 422
+        r = ke_client.put(f"/api/studio/agents/isaia/evals/cases/{uuid4()}/consolidacao", json={"criticidade": "normal"})
+        assert r.status_code == 404 and r.json()["code"] == "eval_case_not_found"
+
+    def test_member_cannot_read_or_write_consolidation(self, ke_client):
+        seed_org_role(ke_client, role="member")
+        seed_studio_agent(ke_client)
+        assert ke_client.get("/api/studio/agents/isaia/evals/consolidacao").status_code == 403
+        assert ke_client.post("/api/studio/agents/isaia/evals/consolidacao/backfill", json={}).status_code == 403
+
+    def test_consolidation_requires_auth(self, ke_client):
+        assert ke_client.raw().get("/api/studio/agents/isaia/evals/consolidacao").status_code == 401

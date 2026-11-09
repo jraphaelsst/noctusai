@@ -67,6 +67,7 @@ import { useStudioAgent } from "@/hooks/studio/useStudioAgents";
 import {
   useCancelEvalRun,
   useCreateEvalCase,
+  useConsolidacao,
   useCreateEvalRun,
   useDeleteEvalCase,
   useEvalCases,
@@ -75,6 +76,7 @@ import {
   useUpdateEvalCase,
 } from "@/hooks/studio/useEvals";
 import type {
+  ConsolidacaoCaso,
   EvalCase,
   EvalCaseCreate,
   EvalRun,
@@ -395,6 +397,29 @@ function parseLimiteUsd(raw: string): { value: number | undefined; error: string
   return { value: n, error: null };
 }
 
+const CONSOLIDACAO_ROTULO: Record<string, string> = {
+  em_validacao: "em validação",
+  consolidado: "consolidado",
+  revalidar: "revalidar",
+};
+
+/** State of a case under the consolidation rule: `estado`, the streak `N/limite`, and whether it is critical. */
+function ConsolidacaoBadge({ item }: { item: ConsolidacaoCaso }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1" data-testid={`evals-consolidacao-${item.slug}`}>
+      <Badge variant={item.estado === "consolidado" ? "default" : "outline"}>
+        {CONSOLIDACAO_ROTULO[item.estado] ?? item.estado} {item.sequencia}/{item.limite}
+      </Badge>
+      {item.criticidade === "critico" && <Badge variant="outline">crítico</Badge>}
+      {item.depende_de === null && (
+        <span className="text-[10px] text-muted-foreground" title="Sem dependências declaradas: qualquer mudança a afeta.">
+          sem dependências
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** "Nova execução" form (contract §L3/§L5) — toggled by "Rodar avaliação",
  * mirrors the "Novo caso" toggle immediately below it in the tree. */
 function NewRunForm({
@@ -408,6 +433,7 @@ function NewRunForm({
 }) {
   const [modelo, setModelo] = useState<"" | EvalRunModel>("");
   const [limite, setLimite] = useState("");
+  const [rodarTudo, setRodarTudo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const createRun = useCreateEvalRun(agentKey);
 
@@ -423,6 +449,7 @@ function NewRunForm({
       version_id: versionId,
       modelo_geracao: modelo || undefined,
       limite_usd: limiteUsd,
+      rodar_tudo: rodarTudo || undefined,
     };
     try {
       const run = await createRun.mutateAsync(payload);
@@ -461,6 +488,18 @@ function NewRunForm({
           />
         </Field>
       </div>
+      <label className="flex items-start gap-2 text-xs text-foreground">
+        <input
+          type="checkbox"
+          checked={rodarTudo}
+          onChange={(e) => setRodarTudo(e.target.checked)}
+          data-testid="evals-run-rodar-tudo"
+        />
+        <span>
+          Rodar tudo (inclui casos consolidados). Por padrão a execução pula os casos já consolidados e não afetados pelas
+          mudanças — e uma execução assim nunca é a "completa" que libera a publicação.
+        </span>
+      </label>
       <p className="text-xs text-muted-foreground" data-testid="evals-run-draft-hint">
         Execuções com modelo de rascunho (Sonnet 5/Haiku 4.5 acima) nunca liberam a publicação — só uma
         execução com "Modelo do agente" satisfaz o portão de avaliação.
@@ -576,6 +615,12 @@ function RunDetailPanel({
       ) : (
         run.erro && <FormError message={run.erro} />
       )}
+      {run.casos_pulados && run.casos_pulados.length > 0 && (
+        <div className="rounded-md border border-border p-2 text-xs text-muted-foreground" data-testid="evals-run-pulados">
+          {run.casos_pulados.length} caso(s) pulado(s): consolidados e não afetados pelas mudanças —{" "}
+          {run.casos_pulados.map((p) => `${p.case_slug ?? p.case_id.slice(0, 8)} (${p.sequencia}/${p.limite})`).join(", ")}.
+        </div>
+      )}
       <div className="space-y-2">
         {run.resultados.map((r) => (
           <div key={r.case_id} className="rounded-md border border-border p-2 text-xs" data-testid={`evals-result-${r.case_id}`}>
@@ -628,6 +673,8 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
   const { data: cases, showSkeleton, isError, error } = useEvalCases(agentKey);
   const { data: runs } = useEvalRuns(agentKey);
   const draft = useDraftVersion(agentKey);
+  const consolidacao = useConsolidacao(agentKey, isAdmin);
+  const estadoPorCaso = new Map((consolidacao.data?.items ?? []).map((i) => [i.case_id, i]));
   const repeatRun = useCreateEvalRun(agentKey);
   const deleteCase = useDeleteEvalCase(agentKey);
   const updateCase = useUpdateEvalCase(agentKey);
@@ -750,6 +797,7 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
                     </div>
                   )}
                 </div>
+                {estadoPorCaso.get(c.id) && <ConsolidacaoBadge item={estadoPorCaso.get(c.id)!} />}
                 <p className="line-clamp-2 text-xs text-muted-foreground">{c.entrada}</p>
                 <div className="flex flex-wrap gap-1 text-[10px] text-muted-foreground">
                   {c.criterios.deve.length > 0 && <span>{c.criterios.deve.length} deve</span>}

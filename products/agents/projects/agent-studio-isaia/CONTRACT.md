@@ -696,3 +696,18 @@ size caps, `caminho` pattern + `..`-exclusion — via the SAME Pydantic field co
 (`DocumentBatchItemIn`/`SkillFileBatchItemIn` mirror the single-item request schemas field-for-field)
 and the SAME store-layer validation (`_validate_slug`/`_validate_tipo`/`_check_cap` — no batch-only
 code path bypasses them). No weaker path into `knowledge_documents` or `agent_skill_files`.
+
+## §N · Consolidação de casos de avaliação (2026-11-09)
+
+A case that passed N CONSECUTIVE times is `consolidado` and a default run does not re-run it until a change AFFECTS a part it depends on
+(KB `PATTERNS/ai/agent-evals.md` §14; migration 072). Platform admin only, Platform IP (`agents.eval_*`).
+
+- `POST .../evals/runs` (and `POST .../draft/mecanismo-runs?rodar_tudo=`) take `rodar_tudo` (default `false`): a default run executes only the
+  cases that are not consolidated-and-unaffected and stores the skipped ones (`eval_casos_pulados`, returned as `casos_pulados` on the run
+  detail). Everything consolidated and unaffected is 409 `todos_consolidados`. A filtered run is never `completa` / `aprovado`: only a
+  `rodar_tudo` run opens the publish gate. Explicit `case_ids` / `repetir_falhas_de` are never filtered.
+- `GET .../evals/consolidacao[?suite=]` -> `{config, contagem, items[{case_id, slug, suite, criticidade(+_origem), depende_de(+_origem), estado, sequencia, limite}]}`;
+  `GET .../evals/consolidacao/transicoes[?case_id=&limit=]` (append-only history); `PUT .../evals/cases/{id}/consolidacao {criticidade?, depende_de?}`;
+  `POST .../evals/consolidacao/backfill {confirmar=false, politica_sem_partes=dono|conservadora, usar_deps_propostas=false, propor_criticidade=true}` (dry-run unless `confirmar`).
+- Case reads (`GET .../evals/cases`) carry `criticidade`, `criticidade_origem`, `depende_de`, `depende_de_origem`.
+- Typed FE contract: `Consolidacao`, `ConsolidacaoCaso`, `EvalCasoPulado`, `EvalRunCreate.rodar_tudo` in `frontend/src/api/studio/types-ke.ts`.

@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
 import type {
+  Consolidacao,
   EvalCase,
   EvalCaseCreate,
   EvalCaseListResponse,
@@ -35,6 +36,8 @@ import { studioKeys } from "./keys";
 const casesKey = (agentKey: string) => ["studio", agentKey, "evals", "cases"] as const;
 const runsKey = (agentKey: string, versionId?: string) => ["studio", agentKey, "evals", "runs", versionId ?? null] as const;
 const runKey = (agentKey: string, runId: string) => ["studio", agentKey, "evals", "runs", "detail", runId] as const;
+
+const consolidacaoKey = (agentKey: string) => ["studio", agentKey, "evals", "consolidacao"] as const;
 
 const IN_FLIGHT = new Set(["pendente", "executando"]);
 
@@ -99,6 +102,21 @@ export function useDeleteEvalCase(agentKey: string) {
   });
 }
 
+/** Per-case consolidation state (platform admin only: pass `enabled=false` for anyone else). Moves whenever a run
+ * is created or reaches a terminal status, so both invalidate it. */
+export function useConsolidacao(agentKey: string, enabled = true) {
+  const query = useQuery<Consolidacao>({
+    queryKey: consolidacaoKey(agentKey),
+    queryFn: () => api.get<Consolidacao>(`/api/studio/agents/${agentKey}/evals/consolidacao`),
+    enabled: !!agentKey && enabled,
+  });
+  return {
+    data: query.data,
+    showSkeleton: query.isPending && !query.data,
+    isError: query.isError,
+  };
+}
+
 // ─── Runs ───────────────────────────────────────────────────────────────────
 
 export function useEvalRuns(agentKey: string, versionId?: string) {
@@ -142,6 +160,7 @@ export function useEvalRun(agentKey: string, runId: string | null) {
     if (notifiedFor.current === runId) return;
     notifiedFor.current = runId;
     qc.invalidateQueries({ queryKey: studioKeys.detail(agentKey) });
+    qc.invalidateQueries({ queryKey: consolidacaoKey(agentKey) });
     // The readiness checklist's judge item (`eval_juiz_*`) is derived from this run.
     qc.invalidateQueries({ queryKey: studioKeys.prontidao(agentKey) });
   }, [agentKey, qc, runId, status]);
@@ -161,6 +180,7 @@ export function useCreateEvalRun(agentKey: string) {
     mutationFn: (payload: EvalRunCreate) => api.post<EvalRun>(`/api/studio/agents/${agentKey}/evals/runs`, payload),
     onSuccess: (run) => {
       qc.invalidateQueries({ queryKey: ["studio", agentKey, "evals", "runs"] });
+      qc.invalidateQueries({ queryKey: consolidacaoKey(agentKey) });
       qc.invalidateQueries({ queryKey: studioKeys.detail(agentKey) });
       qc.setQueryData(runKey(agentKey, run.id), { ...run, resultados: [] });
     },

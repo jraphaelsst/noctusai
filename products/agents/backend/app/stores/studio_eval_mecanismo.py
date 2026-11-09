@@ -41,7 +41,7 @@ class MecanismoStore(Protocol):
         limite_usd: float | None, started_by: UUID, total_casos: int,
     ) -> UUID: ...
 
-    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None: ...
+    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str, parcial: bool = False) -> None: ...
 
     def fail_run(self, org_id: UUID, run_id: UUID, *, erro: str) -> None: ...
 
@@ -116,7 +116,7 @@ class FakeMecanismoStore:
         self.execucoes[rid] = []
         return rid
 
-    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None:
+    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str, parcial: bool = False) -> None:
         row = self.runs.get(run_id)
         if row is None or row["org_id"] != org_id:
             raise NotFound(f"mechanism run {run_id} not found")
@@ -129,7 +129,7 @@ class FakeMecanismoStore:
                 })
         row.update(
             status="concluida", total_casos=len(resultado.casos), casos_aprovados=resultado.casos_aprovados,
-            completa=resultado.completo, aprovado=resultado.aprovado,
+            completa=resultado.completo and not parcial, aprovado=resultado.aprovado and not parcial,
             orcamento_excedido=resultado.orcamento_excedido, custo_usd=resultado.custo_usd,
             finished_at=utcnow(),
         )
@@ -233,7 +233,7 @@ class SupabaseMecanismoStore:
             raise RuntimeError("insert of mechanism run returned no row")
         return UUID(str(rows[0]["id"]))
 
-    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None:
+    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str, parcial: bool = False) -> None:
         execs = [
             {
                 "org_id": str(org_id), "run_id": str(run_id), "case_id": str(cr.caso.id), "indice": e.indice,
@@ -248,8 +248,8 @@ class SupabaseMecanismoStore:
         exec_query(
             self._t("eval_mecanismo_runs").update({
                 "status": "concluida", "total_casos": len(resultado.casos),
-                "casos_aprovados": resultado.casos_aprovados, "completa": resultado.completo,
-                "aprovado": resultado.aprovado, "orcamento_excedido": resultado.orcamento_excedido,
+                "casos_aprovados": resultado.casos_aprovados, "completa": resultado.completo and not parcial,
+                "aprovado": resultado.aprovado and not parcial, "orcamento_excedido": resultado.orcamento_excedido,
                 "custo_usd": resultado.custo_usd, "finished_at": utcnow_iso(),
             }).eq("org_id", str(org_id)).eq("id", str(run_id)).eq("status", "executando")
         )

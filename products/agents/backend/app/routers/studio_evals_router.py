@@ -45,6 +45,7 @@ from app.dependencies import (
     require_platform_content_admin,
 )
 from app.routers.studio_agents_router import (
+    get_consolidacao_store_dep,
     audit_definition_read,
     actor_id,
     get_eval_store_dep,  # defined in studio_agents_router (publish/readiness read the cases too); re-exported here
@@ -56,6 +57,11 @@ from app.routers.studio_agents_router import (
 )
 from app.routers.studio_knowledge_router import not_found_error, resolve_studio_agent
 from app.schemas.studio_ke import (
+    BackfillConsolidacaoRequest,
+    CasoPuladoOut,
+    ConsolidacaoCasoOut,
+    ConsolidacaoCasoUpdateRequest,
+    ConsolidacaoOut,
     CriteriosOut,
     EvalCaseCreateRequest,
     EvalCaseListOut,
@@ -68,6 +74,8 @@ from app.schemas.studio_ke import (
     EvalRunOut,
 )
 from app.stores._db_errors import StudioConflict
+from app.studio.consolidacao import resumir_estados
+from app.studio.consolidacao_service import Selecao, confirmar_selecao, reconstruir, selecionar
 from app.studio.spend import KIND_EVAL_RUN, get_spend_ceiling_dep, reserve_run
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
@@ -96,6 +104,16 @@ def get_eval_scheduler_dep():
     return _unavailable
 
 
+#: ``(org_id, agent, version) -> per-part hashes | None`` -- what a default run compares per case (consolidation).
+CurrentPartes = Callable[[UUID, StudioAgentRecord, VersionRecord], "dict[str, str] | None"]
+
+
+def get_current_partes_dep() -> CurrentPartes:
+    """Fail-safe default: no per-part hashes => every case counts as affected (a default run runs everything).
+    ``app.studio.wiring`` binds the production compile."""
+    return lambda org_id, agent, version: None
+
+
 def get_current_hash_dep() -> CurrentHash:
     """Fail-closed default (503 ``compile_unavailable``): stamping a run
     with a hash nobody computed would let the gate judge the wrong text.
@@ -106,8 +124,12 @@ def get_current_hash_dep() -> CurrentHash:
     )
 
 
-def _case_out(record) -> EvalCaseOut:
+def _case_out(record, meta=None) -> EvalCaseOut:
     return EvalCaseOut(
+        **({} if meta is None else {
+            "criticidade": meta.criticidade, "criticidade_origem": meta.criticidade_origem,
+            "depende_de": None if meta.depende_de is None else list(meta.depende_de),
+            "depende_de_origem": meta.depende_de_origem}),
         id=record.id, slug=record.slug, titulo=record.titulo, entrada=record.entrada,
         contexto=record.contexto,
         criterios=CriteriosOut(
@@ -150,10 +172,12 @@ def list_cases(
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
+    consol=Depends(get_consolidacao_store_dep),
 ) -> EvalCaseListOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
     records = store.list_cases(ctx.org_id, agent.id)
-    return EvalCaseListOut(items=[_case_out(r) for r in records])
+    meta = consol.list_meta(ctx.org_id, agent.id)
+    return EvalCaseListOut(items=[_case_out(r, meta.get(r.id)) for r in records])
 
 
 @router.post("/{key}/evals/cases", response_model=EvalCaseOut, status_code=status.HTTP_201_CREATED)
@@ -254,6 +278,8 @@ async def create_run(
     defs=Depends(get_studio_definition_store_dep),
     scheduler=Depends(get_eval_scheduler_dep),
     current_hash: CurrentHash = Depends(get_current_hash_dep),
+    current_partes: CurrentPartes = Depends(get_current_partes_dep),
+    consol=Depends(get_consolidacao_store_dep),
     ceiling=Depends(get_spend_ceiling_dep),
 ) -> EvalRunOut:
     # The store/definition calls are sync PostgREST: run them in a worker thread so the loop keeps
@@ -281,6 +307,24 @@ async def create_run(
                 if r.result.status != "aprovado"
             ]
 
+        # Consolidation: a DEFAULT run (no explicit ids, no repeat-failures, no rodar_tudo) executes only the cases that are
+        # not consolidated-and-unaffected. Explicit selections are never filtered.
+        partes = current_partes(ctx.org_id, agent, version)
+        filtrada = case_ids is None and not payload.rodar_tudo
+        if filtrada:
+            ativos = [c.id for c in store.list_cases(ctx.org_id, agent.id) if c.ativo and c.suite == "comportamento"]
+            selecao = selecionar(
+                consol, org_id=ctx.org_id, agent_id=agent.id, suite="comportamento", ativos=ativos, partes=partes,
+                hash_atual=compiled_hash, rodar_tudo=False)
+            if ativos and not selecao.rodar:
+                raise http_error(
+                    409, "todos_consolidados",
+                    "Todos os casos estão consolidados e não foram afetados por mudanças. Use rodar_tudo para rodar mesmo assim.")
+            if selecao.pulados:
+                case_ids = list(selecao.rodar)  # a subset run: never `completa` (the publish gate still needs rodar_tudo)
+        else:
+            selecao = Selecao(rodar=list(case_ids or []), rodar_tudo=True)
+
         limite_usd = payload.limite_usd if payload.limite_usd is not None else settings.studio_eval_run_budget_usd
         try:
             run = store.create_run(
@@ -295,6 +339,14 @@ async def create_run(
             raise http_error(409, exc.code, str(exc)) from exc
         except ValueError as exc:
             raise http_error(422, "no_eval_cases", str(exc)) from exc
+
+        try:
+            confirmar_selecao(
+                consol, selecao, org_id=ctx.org_id, agent_id=agent.id, suite="comportamento", run_id=run.id,
+                run_tipo="comportamento", partes=partes, hash_atual=compiled_hash)
+        except Exception:
+            store.mark_run_failed(ctx.org_id, run.id, erro="consolidacao_indisponivel")
+            raise
 
         if ctx.caller_kind == "product":
             # The shared daily ceiling (seed): over it / unverifiable -> the booked run is failed, never scheduled.
@@ -343,6 +395,7 @@ def get_run(
     ctx: AuthContext = Depends(require_evals_run_access),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
+    consol=Depends(get_consolidacao_store_dep),
 ) -> EvalRunDetailOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
@@ -353,7 +406,14 @@ def get_run(
     if ctx.caller_kind == "product":
         audit_definition_read(defs, ctx, agent, "eval_run", run.version_id)  # a failed audit write fails the read
     results = store.list_results_with_cases(ctx.org_id, agent.id, run_id)
+    slugs = {str(c.id): c.slug for c in store.list_cases(ctx.org_id, agent.id)}
+    pulados = [
+        CasoPuladoOut(case_id=UUID(str(p["case_id"])), case_slug=slugs.get(str(p["case_id"])), estado=p["estado"],
+                      motivo=p["motivo"], sequencia=int(p.get("sequencia") or 0), limite=int(p.get("limite") or 1))
+        for p in consol.list_pulados(ctx.org_id, run_id, "comportamento")
+    ]
     return EvalRunDetailOut(
+        casos_pulados=pulados,
         **_run_out(run).model_dump(),
         resultados=[
             EvalResultOut(
@@ -386,8 +446,125 @@ def cancel_run(
     return _run_out(run)
 
 
+# ── Consolidation (owner rule 2026-11-09) ───────────────────────────────
+
+
+@router.get("/{key}/evals/consolidacao", response_model=ConsolidacaoOut)
+def get_consolidacao(
+    key: str,
+    suite: str | None = Query(None, pattern="^(mecanismo|comportamento)$"),
+    ctx: AuthContext = Depends(require_platform_admin),
+    store=Depends(get_eval_store_dep),
+    defs=Depends(get_studio_definition_store_dep),
+    consol=Depends(get_consolidacao_store_dep),
+) -> ConsolidacaoOut:
+    """The state of every case of the agent: ``em_validacao`` | ``consolidado`` | ``revalidar``, the streak ``sequencia``/``limite``,
+    criticality and declared dependencies. Platform admin only (Platform IP)."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    cfg = consol.config()
+    meta = consol.list_meta(ctx.org_id, agent.id, suite)
+    estados = consol.get_estados(ctx.org_id, agent.id)
+    titulos = {c.id: c.titulo for c in store.list_cases(ctx.org_id, agent.id)}
+    from app.studio.consolidacao import estado_inicial
+
+    items = []
+    for cid, m in meta.items():
+        e = estados.get(cid) or estado_inicial(cid, m.criticidade, cfg)
+        items.append(ConsolidacaoCasoOut(
+            case_id=cid, slug=m.slug, titulo=titulos.get(cid), suite=m.suite, ativo=m.ativo, criticidade=m.criticidade,
+            criticidade_origem=m.criticidade_origem, depende_de=None if m.depende_de is None else list(m.depende_de),
+            depende_de_origem=m.depende_de_origem, estado=e.estado, sequencia=e.sequencia,
+            limite=cfg.limite(e.estado, m.criticidade)))
+    items.sort(key=lambda i: (i.suite, i.slug))
+    return ConsolidacaoOut(
+        config=dict(cfg.valores), contagem=resumir_estados(i.estado for i in items if i.ativo), items=items)
+
+
+@router.get("/{key}/evals/consolidacao/transicoes")
+def list_transicoes(
+    key: str,
+    case_id: UUID | None = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    ctx: AuthContext = Depends(require_platform_admin),
+    defs=Depends(get_studio_definition_store_dep),
+    consol=Depends(get_consolidacao_store_dep),
+) -> dict:
+    """The append-only transition history (newest first): run id, part hashes, reason -- what the owner queries to refine the rule."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    rows = consol.list_transicoes(ctx.org_id, agent.id, case_id, limit)
+    return {"items": [{k: (str(v) if isinstance(v, UUID) else v) for k, v in r.items() if k != "org_id"} for r in rows]}
+
+
+@router.put("/{key}/evals/cases/{case_id}/consolidacao", response_model=ConsolidacaoCasoOut)
+def put_caso_consolidacao(
+    key: str,
+    case_id: UUID,
+    payload: ConsolidacaoCasoUpdateRequest,
+    ctx: AuthContext = Depends(require_platform_admin),
+    store=Depends(get_eval_store_dep),
+    defs=Depends(get_studio_definition_store_dep),
+    consol=Depends(get_consolidacao_store_dep),
+) -> ConsolidacaoCasoOut:
+    """Set a case's criticality and/or declared dependencies (a human decision: origins become ``definida`` / ``declarada``)."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    fields = payload.model_fields_set
+    try:
+        store.get_case(ctx.org_id, agent.id, case_id)
+        consol.set_caso(
+            ctx.org_id, agent.id, case_id,
+            criticidade=payload.criticidade if "criticidade" in fields else None,
+            depende_de=payload.depende_de if "depende_de" in fields else _UNSET,
+            depende_de_origem="declarada" if payload.depende_de is not None else None)
+    except NotFound as exc:
+        raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
+    cfg = consol.config()
+    m = consol.list_meta(ctx.org_id, agent.id)[case_id]
+    from app.studio.consolidacao import estado_inicial
+
+    e = consol.get_estados(ctx.org_id, agent.id).get(case_id) or estado_inicial(case_id, m.criticidade, cfg)
+    return ConsolidacaoCasoOut(
+        case_id=case_id, slug=m.slug, suite=m.suite, ativo=m.ativo, criticidade=m.criticidade,
+        criticidade_origem=m.criticidade_origem, depende_de=None if m.depende_de is None else list(m.depende_de),
+        depende_de_origem=m.depende_de_origem, estado=e.estado, sequencia=e.sequencia,
+        limite=cfg.limite(e.estado, m.criticidade))
+
+
+@router.post("/{key}/evals/consolidacao/backfill")
+def backfill_consolidacao(
+    key: str,
+    payload: BackfillConsolidacaoRequest,
+    ctx: AuthContext = Depends(require_platform_admin),
+    defs=Depends(get_studio_definition_store_dep),
+    consol=Depends(get_consolidacao_store_dep),
+    current_hash: CurrentHash = Depends(get_current_hash_dep),
+    current_partes: CurrentPartes = Depends(get_current_partes_dep),
+) -> dict:
+    """Replay the finished runs of BOTH suites oldest-first per case into current states. DRY-RUN unless ``confirmar``.
+    Old runs have no per-part hashes: each version is recompiled and accepted only when its hash equals the run's stamped one."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+
+    def _recomputar(version_id: UUID, compiled_hash: str):
+        try:
+            v = defs.get_version(ctx.org_id, version_id)
+        except NotFound:
+            return None
+        partes = current_partes(ctx.org_id, agent, v)
+        return partes if partes is not None and current_hash(ctx.org_id, agent, v) == compiled_hash else None
+
+    ref = defs.get_draft(ctx.org_id, agent.id)
+    conhecidas = (current_partes(ctx.org_id, agent, ref) or {}).keys() if ref is not None else ()
+    with store_errors():
+        rel = reconstruir(
+            consol, org_id=ctx.org_id, agent_id=agent.id, partes_conhecidas=list(conhecidas), recomputar_partes=_recomputar,
+            politica_sem_partes=payload.politica_sem_partes, usar_deps_propostas=payload.usar_deps_propostas,
+            aplicar=payload.confirmar, propor_criticidade=payload.propor_criticidade)
+    return rel.to_dict()
+
+
 __all__ = [
     "router",
+    "CurrentPartes",
+    "get_current_partes_dep",
     "CurrentHash",
     "EvalSchedulerUnavailable",
     "get_current_hash_dep",

@@ -481,6 +481,9 @@ class CompiledPrompt:
     #: this org's specs resolved, skills, knowledge index, tools) ends and the dynamic layer (the
     #: client in focus) begins. Everything before it is byte-stable across an org's turns.
     ponto_cache: int = 0
+    #: Per-PART hashes (``app.studio.partes``): WHAT of the spec changed between two compiles; eval consolidation
+    #: compares them per case. Empty only for a hand-built ``CompiledPrompt`` (tests).
+    partes: dict[str, str] = field(default_factory=dict)
 
     @property
     def bloqueado(self) -> bool:
