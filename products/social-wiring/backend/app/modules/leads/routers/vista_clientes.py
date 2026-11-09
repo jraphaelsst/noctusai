@@ -10,7 +10,7 @@ Mounted under `/api/leads` BEFORE `leads.router`'s catch-all `/{lead_id}` (see `
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -42,6 +42,13 @@ def get_vista_clientes_core() -> Any:
     return get_core_client()
 
 
+def get_vista_adapter_factory() -> Callable[..., Any]:
+    """DI seam: builds the org's paced Vista adapter (503 when the org has no credentials). Tests override this network edge."""
+    from app.services import vista_credenciais
+
+    return vista_credenciais.adapter_ou_503
+
+
 def _admin(core: Any, auth: tuple, request: Request, contexto: str) -> None:
     require_org_admin_for(core, auth, request, contexto)
 
@@ -57,14 +64,13 @@ def sincronizar(
     auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
     core: Any = Depends(get_vista_clientes_core),
+    fabrica_vista: Callable[..., Any] = Depends(get_vista_adapter_factory),
 ) -> dict:
     """Runs now, one batch (plain `def`: threadpool). Calls Vista, paced by the org's budget. A full pass is the CALLER looping on `proximo_cursor`."""
-    from app.services import vista_credenciais
-
     _admin(core, auth, request, "A sincronização dos clientes do Vista")
     org_id = coerce_org_uuid(auth[2])
     estado = svc.estado_da_org(client, org_id)
-    adapter = vista_credenciais.adapter_ou_503(org_id, rate_per_sec=estado["vista_rps"])
+    adapter = fabrica_vista(org_id, rate_per_sec=estado["vista_rps"])
     return success_response(svc.sincronizar_sync(client, adapter, org_id, dry_run=dry_run, limite=limite, cursor=cursor, modo=modo, pausa_s=pausa_s))
 
 
