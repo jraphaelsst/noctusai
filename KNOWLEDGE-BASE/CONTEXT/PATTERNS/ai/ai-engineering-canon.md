@@ -162,6 +162,17 @@ summaries.
   messages + the new prompt (`A:runtime/llm_runtime.py:18-22`). Durable facts about the lead live as
   structured records on the shared lead (qualification criteria), so later blocks never re-ask
   (memory `project_maya_julia_agent_architecture`). That is structured note-taking in the canon's sense.
+- **The server owns the context window.** A history over the token budget is fitted server-side, never
+  bounced to the client as a 422: `LLM:context_window.py` `fit_history` drops the oldest
+  turns (latest unit always kept, leading system pinned, an assistant tool-call and its tool results are one
+  atomic unit, trims to a low-water mark so the window moves in steps and stays cache-friendly). A history
+  that fits is returned untouched, so a short conversation's prompt is byte-identical. Pure trimming is the
+  default; an optional `summarizer` runs only past a threshold, is memoised per conversation
+  (`SummaryCache`) and degrades loudly to trimming. Consumers: help-chat (`max_history_tokens`) and Julia's
+  thread history (`A:channels/turno.py` `ajustar_janela_historico`, `llm_history_max_tokens`).
+- **A tool call executes once per id.** `run_tool_loop` records the result per `tool_call_id`; a repeated id
+  in the same loop replays the recorded result and runs neither handler nor audit again (a side-effecting
+  tool must not fire twice). Request-level idempotency (agents' per-turn key) is a separate, outer layer.
 - **Tenant data enters as data.** Org specs are substituted into placeholders at compile time for that
   org; a lead's words never become a system rule (`KB § GUIDES/agent-creation.md` §6). Tenant-spec
   injection is a security finding class (`KB § PATTERNS/security/ai-agent-security-canon.md` §15 WE-2).

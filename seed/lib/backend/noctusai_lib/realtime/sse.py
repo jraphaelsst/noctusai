@@ -56,6 +56,14 @@ _DEFAULT_DISCONNECT_POLL_SECONDS = 1.0
 # type, so it never collides with `message.new` / `chat.upsert` / etc.
 _HEARTBEAT_FRAME = ": heartbeat\n\n"
 
+def sse_event(payload: dict[str, Any]) -> str:
+    """Format one Server-Sent Event data frame: a single `data:` line carrying
+    a JSON payload, no custom `event:` types, so a plain `EventSource` /
+    `fetch`+`ReadableStream` reader only ever parses one shape. Shared by the
+    help-chat organ and any product streaming chat replies."""
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 ScopeResolver = Callable[[Request, Any], "str | Awaitable[str]"]
 AuthDependency = Callable[..., Any]
 

@@ -164,7 +164,8 @@ All keyword-only on `create_help_chat_router(...)`:
 | `user_id_from_auth` | `org_id_from_auth` | `(auth_value) -> user_id`, keys the rate limit. Omit for per-org limiting. |
 | `model` | `"claude-haiku-4-5"` | Cheap/fast, conversation-optimized. Override for a more demanding assistant. |
 | `provider` | `"anthropic"` | Passed straight to the seed LLM stack. |
-| `max_turns` | `20` | Max messages accepted per request (422 above). |
+| `max_turns` | `200` | Abuse bound on messages per request (422 `limite_de_turnos` above). NOT the window: the server fits a longer history itself. |
+| `max_history_tokens` | `24000` | Estimated-token budget for prior turns; older turns are dropped server-side (`context_window.fit_history`), never a 422. |
 | `max_chars_per_message` | `4000` | Per-message length cap (422 above). |
 | `rate_limit` | `20` | Requests/minute per user (429 above, `limite_de_mensagens`). |
 | `prefix` | `"/api/ajuda"` | Router prefix. |

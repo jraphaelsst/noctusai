@@ -14,6 +14,11 @@ nothing about vendors, keys, budget or usage (those live in
 
 Handlers may be sync or async and return a `ToolResult`. `audit_writer` is
 best-effort: an exception is logged and the loop continues.
+
+Idempotency: a tool call is executed AT MOST ONCE per `call_id` within a loop.
+If the model (or a retried/replayed response) repeats an id, the recorded
+`ToolResult` is fed back and the handler and audit writer are NOT run again -
+a side-effecting tool (send a message, book a visit) must not fire twice.
 """
 from __future__ import annotations
 
@@ -77,6 +82,7 @@ async def run_tool_loop(
         return ToolLoopResult(response.text, history, 1, usage=response.usage)
 
     executed: list[ToolCall] = []
+    recorded: dict[str, ToolResult] = {}  # call_id -> the result of its one execution
     # Reply text a model writes in the SAME response as a tool call. If its
     # next response is empty (it already said its piece), this is the reply.
     side_texts: list[str] = []
@@ -93,10 +99,16 @@ async def run_tool_loop(
             side_texts.append(response.text.strip())
         history.append(response.message)
         for call in response.tool_calls:
+            if call.call_id and call.call_id in recorded:
+                logger.warning("tool loop: repeated tool_call_id %s (%s); replaying the recorded result", call.call_id, call.name)
+                history.append(ChatMessage.tool(recorded[call.call_id]))
+                continue
             executed.append(call)
             result = tool_handler(call)
             if inspect.isawaitable(result):
                 result = await result
+            if call.call_id:
+                recorded[call.call_id] = result
             if audit_writer is not None:
                 try:
                     audit_writer(call, result)
