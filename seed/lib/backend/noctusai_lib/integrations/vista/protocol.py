@@ -23,7 +23,7 @@ calibration, MCP server).
 
 from __future__ import annotations
 
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from noctusai_lib.domain.real_estate import Imovel, ImovelFoto, ImovelPage, PropertyData
 
@@ -79,6 +79,14 @@ class VistaCRMAdapter(Protocol):
         has. Raises `VistaNotFound` when the code does not exist and `VistaRecordUnpublished` when it exists but is
         not visible to this key (ExibirNoSite=Nao); any other `VistaError` is a transport / auth failure.
         """
+        ...
+
+    async def list_corretores(
+        self, *, page: int = 1, page_size: int = 50, fields: Optional[list[str]] = None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """One page of the broker roster (`/corretores/listar`): `(raw items, pagination)`, `pagination` carrying
+        `total` / `paginas` / `pagina` / `quantidade` when Vista sent them. Items are Vista's own dicts (`Codigo`, `Nome`, and whatever
+        `fields` the key honours) -- the roster has no canonical model yet. A transport / auth / field failure raises."""
         ...
 
     async def list_destaques(self) -> list[str]:

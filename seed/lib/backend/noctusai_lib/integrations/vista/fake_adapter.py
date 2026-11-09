@@ -95,6 +95,7 @@ class FakeVistaAdapter:
         data: dict[str, PropertyData] | None = None,
         imoveis: dict[str, Imovel] | None = None,
         fotos: dict[str, dict[str, Any]] | None = None,
+        corretores: list[dict[str, Any]] | None = None,
     ) -> None:
         self._data: dict[str, PropertyData] = dict(data or {})
         self._imoveis: dict[str, Imovel] = dict(imoveis or {})
@@ -102,6 +103,8 @@ class FakeVistaAdapter:
         # NOT pre-parsed `ImovelFoto`s — so `list_imovel_fotos` exercises
         # `parse_imovel_fotos`'s dict-keyed normalization on the Fake too.
         self._fotos: dict[str, dict[str, Any]] = dict(fotos or {})
+        # The broker roster, Vista's own dict shape (`Codigo`, `Nome`, ...), served page by page like `/corretores/listar`.
+        self._corretores: list[dict[str, Any]] = [dict(c) for c in (corretores or [])]
 
     # ── PropertyData surface ──
 
@@ -123,6 +126,24 @@ class FakeVistaAdapter:
 
     async def get_imovel(self, code: str) -> Optional[Imovel]:
         return self._imoveis.get(code)
+
+    # ── Corretor roster surface ──
+
+    def add_corretor(self, corretor: dict[str, Any]) -> None:
+        """Register one roster row in Vista's own shape (`{"Codigo": "16", "Nome": "...", "Email": ...}`)."""
+        self._corretores.append(dict(corretor))
+
+    def clear_corretores(self) -> None:
+        self._corretores.clear()
+
+    async def list_corretores(
+        self, *, page: int = 1, page_size: int = 50, fields: Optional[list[str]] = None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Paginate the seeded roster. `fields` is honoured by projecting the row (a key that ignores it answers every seeded key)."""
+        total = len(self._corretores)
+        inicio = max(0, (page - 1) * page_size)
+        itens = [dict(c) for c in self._corretores[inicio : inicio + page_size]]
+        return itens, {"total": total, "paginas": max(1, (total + page_size - 1) // page_size), "pagina": page, "quantidade": page_size}
 
     # ── Foto surface ──
 
@@ -147,7 +168,9 @@ class FakeVistaAdapter:
         if imovel is None:
             raise VistaNotFound(404, f"imovel {code!r} does not exist", "/imoveis/detalhes")
         if imovel.exibir_no_site is False:
-            raise VistaRecordUnpublished(code, "/imoveis/detalhes", ["Corretor"])
+            # The stub body keeps the persistent `Corretor` relation (dict keyed by broker code), like the Real.
+            relacao = {str(c.codigo or n): {"Codigo": c.codigo, "Nome": c.nome, "Email": c.email, "Fone": c.fone} for n, c in enumerate(imovel.corretores)}
+            raise VistaRecordUnpublished(code, "/imoveis/detalhes", ["Corretor"], {"Corretor": relacao})
         return imovel.model_copy(update={"foto_destaque": None, "banheiro_social": None, "codigo_imobiliaria": None})
 
     async def list_destaques(self) -> list[str]:

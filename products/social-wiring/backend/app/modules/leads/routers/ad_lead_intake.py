@@ -7,6 +7,10 @@
   GET  /imovel/{codigo}/leads          org member · "Leads interessados": leads linked to the property
   GET  /corretor-divergencias          org member · lead corretor x property corretor warnings (?status=pendente&tipo=…)
   POST /corretor-divergencias/{id}/resolver   org admin · a human checked it: resolvida | ignorada
+  POST /corretores/sync                org admin  · refine the in-house brokers from Vista's roster now (dry_run=true by default)
+  GET  /corretor-avisos                org member · brokers missing / Inativo in Vista (corretor_sumiu_no_vista)
+  POST /corretor-avisos/{id}/resolver  org admin  · {acao: resolvida | ignorada}
+  GET  /config  ·  PUT /config         member / org admin · the intake settings (the fallback MAIN broker's Vista Codigo)
   GET  /ref-avisos                     org member · ref-divergence notices (?tipo=ref_sumiu_no_vista|ref_nova_no_vista&status=)
   POST /ref-avisos/{id}/restaurar      org admin  · a ref that vanished from Vista: unpause + clear (one click)
   POST /ref-avisos/{id}/resolver       org admin  · {acao: confirmar_sumiu (stays paused) | ciente (a new ref)}
@@ -28,7 +32,7 @@ from noctusai_lib.primitives.responses import success_response
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org_unified
 from app.modules.imovel_hub import busca_service
 from app.modules.leads.deps import get_leads_client
-from app.modules.leads.services import ad_lead_intake_backfill, ad_lead_intake_service as intake
+from app.modules.leads.services import ad_lead_intake_backfill, ad_lead_intake_service as intake, corretores_vista_sync
 from app.services import imovel_ref_avisos, table_reads
 
 router = APIRouter(prefix="/api/leads/ad-intake", tags=["leads-ad-intake"])
@@ -212,6 +216,70 @@ def resolver_ref_aviso(
 ) -> dict:
     _admin(auth, request, "A divergência de ref com o Vista")
     return _resolver_aviso(aviso_id, body.acao, body.nota, auth, client)
+
+
+class ConfigIn(StrictHttpModel):
+    corretor_principal_fallback_vista_codigo: Optional[str] = None
+
+
+class ResolverCorretorAvisoIn(StrictHttpModel):
+    acao: Literal["resolvida", "ignorada"]
+    nota: Optional[str] = None
+
+
+@router.post("/corretores/sync")
+def sincronizar_corretores(
+    request: Request, dry_run: bool = Query(default=True),
+    auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
+) -> dict:
+    """Runs now (not queued): one roster read is a handful of calls. DRY-RUN by default: classifies, writes nothing."""
+    from app.services import vista_credenciais
+
+    _admin(auth, request, "A sincronização dos corretores com o Vista")
+    org_id = coerce_org_uuid(auth[2])
+    adapter = vista_credenciais.adapter_ou_503(org_id)
+    return success_response(corretores_vista_sync.sincronizar_sync(client, adapter, org_id, dry_run=dry_run))
+
+
+@router.get("/corretor-avisos")
+def listar_corretor_avisos(
+    status: Optional[Literal["pendente", "resolvida", "ignorada"]] = Query(default="pendente"),
+    auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
+) -> dict:
+    rows = corretores_vista_sync.listar_avisos(client, coerce_org_uuid(auth[2]), status)
+    return success_response({"items": rows, "total": len(rows)})
+
+
+@router.post("/corretor-avisos/{aviso_id}/resolver")
+def resolver_corretor_aviso(
+    aviso_id: UUID, body: ResolverCorretorAvisoIn, request: Request,
+    auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
+) -> dict:
+    _admin(auth, request, "O aviso de corretor do Vista")
+    try:
+        return success_response(corretores_vista_sync.resolver_aviso(client, coerce_org_uuid(auth[2]), aviso_id, body.acao, getattr(auth[0], "id", None), body.nota))
+    except LookupError as exc:
+        raise NotFoundError("corretor_aviso", str(aviso_id)) from exc
+
+
+@router.get("/config")
+def get_config(auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client)) -> dict:
+    return success_response(intake.config_do_org(client, coerce_org_uuid(auth[2])))
+
+
+@router.put("/config")
+def put_config(
+    body: ConfigIn, request: Request, auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
+) -> dict:
+    _admin(auth, request, "A configuração do intake de leads de anúncio")
+    org_id = coerce_org_uuid(auth[2])
+    codigo = (body.corretor_principal_fallback_vista_codigo or "").strip() or None
+    patch = {"corretor_principal_fallback_vista_codigo": codigo, "updated_at": intake._agora(), "updated_by": str(getattr(auth[0], "id", "") or "") or None}
+    if intake._um(client, intake.T_CONFIG, org_id, "org_id", org_id):
+        client.table(intake.T_CONFIG).update(patch).eq("org_id", str(org_id)).execute()
+    else:
+        client.table(intake.T_CONFIG).insert({"org_id": str(org_id), **patch}).execute()
+    return success_response(intake.config_do_org(client, org_id))
 
 
 __all__ = ["router"]

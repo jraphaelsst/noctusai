@@ -565,6 +565,11 @@ class Imovel(BaseModel):
 
     # Atribuição
     corretores: list[Corretor] = Field(default_factory=list)
+    #: The MAIN broker (Vista `CodigoCorretor`; `CorretorNome` is "<cod>:<nome>"; `Agenciador` the same person on the samples). Every
+    #: other entry of `corretores` is a partner. None when the record did not carry it (e.g. the unpublished-record stub).
+    codigo_corretor: Optional[str] = None
+    corretor_nome: Optional[str] = None
+    agenciador: Optional[str] = None
     construtora: Optional[str] = Field(None, description="Populated on only ~9% — too sparse to feature.")
 
     # Datas

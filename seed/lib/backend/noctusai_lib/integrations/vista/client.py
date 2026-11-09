@@ -217,7 +217,7 @@ class VistaRecordUnpublished(VistaUpstreamError):
     property data. See `KB § INTEGRATIONS/vista.md § 4.1`.
     """
 
-    def __init__(self, codigo: str, endpoint: str, payload_keys: list[str]):
+    def __init__(self, codigo: str, endpoint: str, payload_keys: list[str], payload: Optional[dict] = None):
         keys_desc = ", ".join(payload_keys) if payload_keys else "none"
         body = (
             f"no `Codigo` in body for imovel={codigo!r} (keys present: {keys_desc}) "
@@ -229,6 +229,9 @@ class VistaRecordUnpublished(VistaUpstreamError):
         #: Keys the 200 body carried. EMPTY = a code that does not exist (`[]`); non-empty (e.g. `Corretor`) = a record
         #: that exists but is unpublished -- the discriminator `refresh_imovel` uses.
         self.payload_keys = list(payload_keys)
+        #: The stub body itself (usually just the persistent `Corretor` relation): lets a caller still read the corretores of an
+        #: unpublished record without pretending the property was visible.
+        self.payload: dict = dict(payload or {})
 
 
 class VistaTimeout(VistaError):
@@ -528,8 +531,14 @@ class VistaClient:
         *,
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
+        fields: Optional[list[str]] = None,
     ) -> VistaCallResult:
         """Broker roster — `GET /corretores/listar?page=&limit=`.
+
+        `fields` (optional, added 2026-11-09): when given, sent as `pesquisa={"fields": [...]}` so a tenant whose key now honours it
+        returns the richer record (Nomecompleto, Email, Celular, CRECI, Equipe, ...). The 2026-10-26 finding was that `pesquisa`
+        was IGNORED and items carried only `Codigo` + `Nome`; a key/tenant that still ignores it simply answers those two. There is
+        NO `/corretores/listarcampos` route on `oneconsu-rest` (404), so an unknown field is learned from Vista's 400, not a catalog.
 
         ✅ GRANTED on `oneconsu-rest` 2026-10-26 (24 brokers). The route
         answers a DIFFERENT envelope from every other family::
@@ -548,6 +557,7 @@ class VistaClient:
         """
         return await self._request(
             "/corretores/listar",
+            **({"pesquisa": {"fields": fields}} if fields else {}),
             extra_params={"page": page, "limit": min(page_size, DEFAULT_PAGE_SIZE)},
         )
 
@@ -1158,7 +1168,7 @@ def _assert_detalhes_describes_record(result: VistaCallResult, codigo: str) -> N
     if isinstance(data, dict) and data.get("Codigo"):
         return
     keys = list(data.keys()) if isinstance(data, dict) else []
-    raise VistaRecordUnpublished(codigo, result.endpoint, keys)
+    raise VistaRecordUnpublished(codigo, result.endpoint, keys, data if isinstance(data, dict) else None)
 
 
 __all__ = [

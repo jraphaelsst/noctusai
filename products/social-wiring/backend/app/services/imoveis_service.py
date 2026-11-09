@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
-from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_property_data
+from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_property_data, parse_corretores
 from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
 
@@ -221,6 +221,8 @@ class RefreshCodigo:
     report: "SyncReport"
     imovel: Optional[Imovel] = None
     existia: bool = False
+    #: brokers of an unpublished record (`DETALHE_OCULTO`): the stub body keeps the `Corretor` relation.
+    corretores_oculto: list = field(default_factory=list)
     #: mirror columns Vista changed vs what we had: `{campo: {antes, depois}}` (empty for a new row).
     mudancas: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -674,7 +676,9 @@ class ImovelSyncService:
         self._div: Optional[vista_divergencias.Execucao] = None
         # Ref-divergence notices (migration 333): codes Vista has and we did not, collected over a run, flushed once at its end.
         self._novas_run: list[str] = []
-        self._tinha_espelho = False
+        self._tinha_espelho: Optional[bool] = False
+        #: code -> the `Corretor` relation of an UNPUBLISHED record's stub body (read by `refresh_codigo`)
+        self.corretores_ocultos: dict[str, list] = {}
 
     def _table(self):
         return self._client.schema(_SCHEMA).table(_TABLE)
@@ -971,7 +975,9 @@ class ImovelSyncService:
             return await self._adapter.refresh_imovel(codigo), DETALHE_OK
         except VistaNotFound:
             return None, DETALHE_SUMIU
-        except VistaRecordUnpublished:
+        except VistaRecordUnpublished as exc:
+            # The stub body keeps the persistent `Corretor` relation: remember it (the ad-lead intake still records the brokers).
+            self.corretores_ocultos[codigo] = parse_corretores((getattr(exc, "payload", None) or {}).get("Corretor"))
             return None, DETALHE_OCULTO
         except Exception as exc:
             if report is not None:
@@ -1019,7 +1025,7 @@ class ImovelSyncService:
         report.started_at = synced_at = agora.isoformat()
         self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
         imovel, desfecho = await self.buscar_detalhe(codigo, report)
-        saida = RefreshCodigo(codigo=codigo, desfecho=desfecho, report=report)
+        saida = RefreshCodigo(codigo=codigo, desfecho=desfecho, report=report, corretores_oculto=self.corretores_ocultos.pop(codigo, []))
         self._novas_run, self._tinha_espelho = [], self._mirror_tem_linhas(org_id)
         if imovel is None:
             if desfecho == DETALHE_SUMIU:

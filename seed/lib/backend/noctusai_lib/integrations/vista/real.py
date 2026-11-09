@@ -48,6 +48,7 @@ from noctusai_lib.integrations.vista.client import (
     PAGINATION_KEYS,
     VistaNotFound,
     VistaRecordUnpublished,
+    extract_corretores_items,
     extract_items,
     redact_api_key,
 )
@@ -361,6 +362,13 @@ class VistaRESTAdapter:
                 raise VistaNotFound(404, f"imovel {code!r} does not exist", "/imoveis/detalhes") from exc
             raise
         return vista_to_imovel(listing=None, detalhes=result.data if isinstance(result.data, dict) else None)
+
+    async def list_corretores(
+        self, *, page: int = 1, page_size: int = 50, fields: list[str] | None = None
+    ) -> tuple[list[dict], dict]:
+        client = self._client()
+        result = await client.listar_corretores(page=page, page_size=page_size, fields=fields)
+        return extract_corretores_items(result.data)
 
     async def list_destaques(self) -> list[str]:
         client = self._client()

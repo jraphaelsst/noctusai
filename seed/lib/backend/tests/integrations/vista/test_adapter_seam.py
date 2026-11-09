@@ -42,6 +42,7 @@ def test_protocol_declares_the_expected_surface():
         "search_imoveis",
         "refresh_imovel",
         "list_destaques",
+        "list_corretores",
         "list_imovel_fotos",
     }
 
