@@ -146,6 +146,46 @@ async def _digest_de_divergencias(client: Any, core: Any, org: UUID, execucao_id
         logger.error("imoveis refresh: the divergence digest failed org=%s (%s)", org, type(exc).__name__)
 
 
+#: Run statuses that are NOT a failure the owner must hear about (`listar_vazio` has its own daily notice).
+_STATUS_SEM_AVISO = ("ok", "listar_vazio")
+
+
+def _status_anterior(client: Any, org: UUID) -> Optional[str]:
+    """The previous finished run's status (the current one is already closed, so it is row 0) — the failure warning
+    fires on the TRANSITION into a bad status, not on every 2-hourly repeat of it."""
+    rows = (
+        _tabela(client).select("status").eq("org_id", str(org)).neq("status", "em_andamento")
+        .order("iniciado_em", desc=True).limit(2).execute().data or []
+    )
+    return rows[1].get("status") if len(rows) > 1 else None
+
+
+async def _avisar_dono(
+    client: Any, org: UUID, status: str, report: Any, relatorio: dict, notificador: Any, *, aviso_listar_vazio: bool = False,
+) -> None:
+    """WhatsApp the owner what this run did that he asked to hear about (owner, 2026-11-09): properties that left Vista,
+    and a run that did not end ok. Through the scripted notification system (`NotificationService`, catalog-gated, so
+    each switch lives on core's Notificações page). Never raises: the run is already persisted."""
+    try:
+        if notificador is None:
+            from app.services.notification_service import build_notification_service
+
+            notificador = build_notification_service(client)
+        if aviso_listar_vazio:
+            await notificador.notify_imoveis_listar_vazio(org_id=org, texto=AVISO_MENSAGEM)
+        codigos = list(getattr(report, "removidos_codigos", None) or [])
+        if codigos:
+            await notificador.notify_imoveis_delistados(
+                org_id=org, codigos=codigos, exclusivos=list(getattr(report, "removidos_exclusivos", None) or []),
+            )
+        if status not in _STATUS_SEM_AVISO and _status_anterior(client, org) != status:
+            motivo = relatorio.get("erro") or relatorio.get("motivo")
+            await notificador.notify_imoveis_sync_falhou(org_id=org, status=status, motivo=motivo)
+    except Exception as exc:  # noqa: BLE001 — loud, never breaks the run
+        logger.error("imoveis refresh: the owner WhatsApp warning failed org=%s (%s)", org, type(exc).__name__,
+                     exc_info=True)
+
+
 async def executar(
     client: Any,
     adapter: Any,
@@ -161,6 +201,7 @@ async def executar(
     sonda_max_falhas: int = 40,
     lease_fn: Any = None,
     enviar_divergencia: Any = None,
+    notificador: Any = None,
 ) -> dict:
     """Run one refresh and return the persisted report row (`status`, `caminho`, `relatorio`)."""
     if modo not in MODOS or escopo not in ESCOPOS:
@@ -200,6 +241,7 @@ async def executar(
             status = "falhou"
         _fechar(client, execucao_id, status=status, caminho=caminho, relatorio=relatorio, aviso=aviso)
     await _digest_de_divergencias(client, core, org, execucao_id, report, relatorio, enviar_divergencia)
+    await _avisar_dono(client, org, status, report, relatorio, notificador, aviso_listar_vazio=aviso)
     return {"id": str(execucao_id), "status": status, "caminho": caminho, "relatorio": relatorio}
 
 

@@ -25,6 +25,7 @@ const AdminAuditDigest = lazy(() => import('../pages/admin/AdminAuditDigest').th
 const AdminFinanceiro = lazy(() => import('../pages/admin/AdminFinanceiro').then(m => ({ default: m.AdminFinanceiro })));
 const AdminUsoCustos = lazy(() => import('../pages/admin/AdminUsoCustos').then(m => ({ default: m.AdminUsoCustos })));
 const AdminOperacao = lazy(() => import('../pages/admin/AdminOperacao').then(m => ({ default: m.AdminOperacao })));
+const AdminNotificacoes = lazy(() => import('../pages/admin/AdminNotificacoes').then(m => ({ default: m.AdminNotificacoes })));
 const AdminFunil = lazy(() => import('../pages/admin/AdminFunil').then(m => ({ default: m.AdminFunil })));
 const FleetControl = lazy(() => import('../pages/FleetControl').then(m => ({ default: m.FleetControl })));
 
@@ -46,6 +47,7 @@ export const ADMIN_ROUTES: AdminRoute[] = [
     { path: '/admin/audit-digest', component: AdminAuditDigest },
     { path: '/admin/fleet', component: FleetControl },
     { path: '/admin/operacao/*', component: AdminOperacao },
+    { path: '/admin/notificacoes', component: AdminNotificacoes },
     { path: '/admin/financeiro/*', component: AdminFinanceiro },
     { path: '/admin/creditos', component: AdminCreditos },
     { path: '/admin/uso', component: AdminUsoCustos },

@@ -56,6 +56,8 @@ T_MENSAGENS = "conversation_messages"
 LIMITE_LINHAS_DIGEST = 15
 DIGESTS_POR_HORA = 4
 KIND_AVISO = "imoveis_vista_divergencia"
+#: Catalog kind of the WhatsApp digest (core Notificações page switch).
+KIND_DIGEST = "vista_divergencias"
 
 # Origin labels of OUR value (what the review screen shows).
 O_CAPTACAO = "captacao_manual"
@@ -498,6 +500,14 @@ async def enviar_digest(
     """ONE digest for the run. Returns how it went: `whatsapp` | `in_app:<motivo>` | `nada`. Never raises, never silent."""
     if not novas:
         return "nada"
+    from noctusai_lib.domain.notification_catalog import get_notification_gate
+
+    from app.services.notification_kinds import PRODUCT as _PRODUCT
+
+    gate = get_notification_gate(_PRODUCT)
+    if not gate.allowed(KIND_DIGEST):
+        gate.record(KIND_DIGEST, org_id=org_id, status="suppressed", recipients=1, reason="desligada em Notificações")
+        return "desligada"
     texto = texto_digest(novas, base_url)
     cfg = config(db, org_id)
     telefone = telefone_do_usuario(core, org_id, cfg["destino_user_id"])
@@ -516,6 +526,11 @@ async def enviar_digest(
         if erro:
             motivo = f"falha_envio:{erro}"
     via = "whatsapp"
+    gate.record(
+        KIND_DIGEST, org_id=org_id,
+        status=("no_recipient" if motivo == "sem_telefone_do_destino" else "failed") if motivo else "sent",
+        recipients=0 if motivo == "sem_telefone_do_destino" else 1, delivered=0 if motivo else 1, reason=motivo,
+    )
     if motivo is not None:
         via = f"in_app:{motivo}"
         _aviso_in_app(core, org_id, novas, texto)
