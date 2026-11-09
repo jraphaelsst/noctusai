@@ -161,6 +161,7 @@ def register_all(server) -> None:
     from . import dispatch_resume
     from . import agent_package_build
     from . import agent_pull
+    from . import agent_export
     from . import agent_package_publish
     from . import agent_context_sync
     from . import agent_learnings_push
@@ -330,6 +331,7 @@ def register_all(server) -> None:
     dispatch_resume.register(server)
     agent_package_build.register(server)
     agent_pull.register(server)
+    agent_export.register(server)
     agent_package_publish.register(server)
     agent_context_sync.register(server)
     agent_learnings_push.register(server)
