@@ -38,6 +38,7 @@ from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_evals_router import router as studio_evals_router
 from app.routers.studio_geracoes_router import router as studio_geracoes_router
 from app.routers.studio_knowledge_router import router as studio_knowledge_router
+from app.routers.agent_packages_router import router as agent_packages_router
 from app.routers.studio_package_sync_router import router as studio_package_sync_router
 from app.routers.studio_padrao_router import router as studio_padrao_router
 from app.routers.studio_prontidao_router import router as studio_prontidao_router
@@ -136,6 +137,8 @@ def _build_app() -> FastAPI:
     app.include_router(studio_ui_router)
     # mounted for the visibility-tier matrix only (their seams stay unbound: auth answers first)
     app.include_router(studio_knowledge_router)
+    # Agent Packages §M2: a DB-source agent's mirror is read back through the package route.
+    app.include_router(agent_packages_router)
     app.include_router(studio_evals_router)
     app.include_router(studio_package_sync_router)
     return app
