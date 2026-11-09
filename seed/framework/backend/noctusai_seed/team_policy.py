@@ -38,7 +38,7 @@ The policy is validated at construction — an incoherent policy raises
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Optional
+from typing import TYPE_CHECKING, Mapping, Optional
 
 from noctusai_lib.primitives.roles import (
     BASE_ORG_ROLES,
@@ -47,6 +47,9 @@ from noctusai_lib.primitives.roles import (
     ORG_ROLES,
     market_org_roles,
 )
+
+if TYPE_CHECKING:  # annotation only: the policy reads `preset.market`, nothing else
+    from noctusai_lib.domain.pipeline import CrmPreset
 
 #: An invitation never grants it (owner decision 2026-10-14) -- ownership is granted after the
 #: person joined, by NoctusAI owner/admins only (core's role change, `owner_grant_forbidden`).
@@ -153,8 +156,8 @@ class TeamPolicy:
 
         ``MARKET_ORG_ROLES`` (``noctusai_lib.primitives.roles``) is the source; an
         unknown market raises ``KeyError`` (never silently "no extras"). The market
-        roles are platform roles, so they carry labels already. Composes with the
-        market presets later: a preset names its market, the policy follows.
+        roles are platform roles, so they carry labels already. A product that
+        declares a CRM preset uses `for_preset` instead, so the two cannot disagree.
         """
         invitable = frozenset(
             r for r in (*BASE_ORG_ROLES, *market_org_roles(market)) if r != NEVER_INVITABLE_ROLE
@@ -163,6 +166,24 @@ class TeamPolicy:
             staff_roles=staff_roles,
             invitable_roles=invitable,
             extra_role_labels=extra_role_labels or {},
+        )
+
+    @classmethod
+    def for_preset(
+        cls,
+        preset: "CrmPreset",
+        *,
+        staff_roles: Optional[frozenset[str]] = None,
+        extra_role_labels: Optional[Mapping[str, str]] = None,
+    ) -> "TeamPolicy":
+        """Policy that follows a CRM preset's market (roles per market, like stages).
+
+        A product declaring ``preset`` for its funnel gets the team roles of that
+        same market, so the funnel and the Equipe page can never name different
+        markets. Same ``KeyError`` as ``for_market`` for a market with no roles row.
+        """
+        return cls.for_market(
+            preset.market, staff_roles=staff_roles, extra_role_labels=extra_role_labels
         )
 
     # ── Resolved views (what the router enforces) ──────────────────────────

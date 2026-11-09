@@ -26,8 +26,18 @@ BASE_ORG_ROLES = ("owner", "admin", "manager", "member", "viewer", "dev", "test"
 # 🔴 NEVER add a market role to BASE_ORG_ROLES. Declare it here, under its market.
 # This map is the single source: `ORG_ROLES` is derived from it, and
 # `noctusai_seed.TeamPolicy.for_market(market)` is what a product uses to OFFER it.
+#
+# ONE market vocabulary: every market that has a CRM preset
+# (`noctusai_lib.domain.pipeline.market_presets.MARKET_PRESETS`) is declared here,
+# with `()` when it adds no role, so `TeamPolicy.for_preset(preset)` never meets an
+# unknown market. A market with no row stays a `KeyError` (a typo is never "no extras").
+# Parity is pinned by seed/framework/backend/tests/routers/test_team_policy.py.
 MARKET_ORG_ROLES: dict[str, tuple[str, ...]] = {
+    "generic": (),
     "real_estate": ("corretor",),
+    "saas": (),
+    "agency": (),
+    "clinic": (),
 }
 
 # Every VALID stored org_role value (noctus_users.org_role, CHECK constraints, API

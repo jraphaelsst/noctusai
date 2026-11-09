@@ -21,8 +21,13 @@ export const BASE_ORG_ROLES = [
   'owner', 'admin', 'manager', 'member', 'viewer', 'dev', 'test', 'juridico',
 ] as const;
 
+// Same market keys as the Python map (every CRM preset market; `[]` = no extra role).
 export const MARKET_ORG_ROLES = {
+  generic: [],
   real_estate: ['corretor'],
+  saas: [],
+  agency: [],
+  clinic: [],
 } as const;
 
 /**

@@ -147,6 +147,49 @@ class TestTeamPolicyValidation:
         with pytest.raises(KeyError, match="unknown market"):
             TeamPolicy.for_market("real_state")
 
+    # ── one market vocabulary: CRM presets ↔ market roles (py) ↔ roles.ts ──
+
+    def test_every_crm_preset_market_has_a_roles_row(self):
+        from noctusai_lib.domain.pipeline import MARKET_PRESETS
+
+        assert set(MARKET_PRESETS) == set(MARKET_ORG_ROLES)
+
+    def test_roles_ts_declares_the_same_market_keys(self):
+        import re
+        from pathlib import Path
+
+        roles_ts = next(
+            p / "seed" / "lib" / "frontend" / "src" / "roles.ts"
+            for p in Path(__file__).resolve().parents
+            if (p / "seed" / "lib" / "frontend" / "src" / "roles.ts").is_file()
+        )
+        block = re.search(
+            r"export const MARKET_ORG_ROLES = \{(.*?)\} as const;",
+            roles_ts.read_text(encoding="utf-8"),
+            re.S,
+        )
+        assert block, "MARKET_ORG_ROLES block not found in roles.ts"
+        ts_keys = set(re.findall(r"^\s*([a-z_]+):", block.group(1), re.M))
+        assert ts_keys == set(MARKET_ORG_ROLES)
+
+    @pytest.mark.parametrize("market", ["generic", "real_estate", "saas", "agency", "clinic"])
+    def test_for_preset_follows_the_preset_market(self, market):
+        from noctusai_lib.domain.pipeline import MARKET_PRESETS
+
+        preset = MARKET_PRESETS[market]
+        assert (
+            TeamPolicy.for_preset(preset).effective_invitable_roles()
+            == TeamPolicy.for_market(market).effective_invitable_roles()
+        )
+
+    def test_for_preset_real_estate_offers_corretor_and_saas_does_not(self):
+        from noctusai_lib.domain.pipeline import MARKET_PRESETS
+
+        assert "corretor" in TeamPolicy.for_preset(MARKET_PRESETS["real_estate"]).effective_invitable_roles()
+        saas = TeamPolicy.for_preset(MARKET_PRESETS["saas"]).effective_invitable_roles()
+        assert "corretor" not in saas
+        assert saas == [r for r in BASE_ORG_ROLES if r != "owner"]
+
     def test_declared_policy_contract_shape(self):
         assert COMMUNITY.as_contract() == {
             "staff_roles": ["owner", "admin", "dev", "moderador"],
