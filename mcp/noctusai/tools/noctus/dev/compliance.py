@@ -16111,6 +16111,104 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Vocabulary-only CHECK re-created with 'sem_credencial'/'sem_orcamento'; migration unapplied (file-only), "
         "so there is no live constraint to probe; values are written from fixed literals in biblioteca_ingestao.py.",
     ),
+    # SW 331 (ad-lead intake) is NOT APPLIED (file-only until the tech-lead runs migrate_product): the partial unique index
+    # keeps one SW corretor per Vista corretor Codigo. It is written only by `ad_lead_intake_service` (read-then-write, NULL-only
+    # stamp) on a nullable column; the index does not exist in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/331_ad_lead_intake.sql",
+        "uq_sw_lead_corretores_vista_codigo",
+        "Partial UNIQUE on lead_corretores(org_id, vista_codigo) WHERE vista_codigo IS NOT NULL; migration unapplied (file-only) so "
+        "there is no live index to probe; the only writer stamps it NULL-only after checking no other corretor claims the Codigo. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    # SW 332 (ad-lead intake, corretor divergence tipos) is NOT APPLIED (file-only until the tech-lead runs migrate_product): a
+    # vocabulary CHECK on `tipo` (three values, written only from the TIPO_* literals of ad_lead_intake_service) and the widened
+    # UNIQUE (org, lead, código, tipo) that keeps one open warning per tipo. Neither exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/332_ad_lead_intake_divergencia_tipos.sql",
+        "lead_corretor_divergencias_tipo_check",
+        "Vocabulary-only CHECK on a new column, written from fixed literals; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/332_ad_lead_intake_divergencia_tipos.sql",
+        "uq_sw_lead_corretor_divergencias_tipo",
+        "UNIQUE (org_id, lead_id, codigo_canonical, tipo); migration unapplied (file-only), so no live constraint to probe. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    # SW 333 (ref-divergence notices) is NOT APPLIED (file-only until the tech-lead runs migrate_product): the partial UNIQUE keeps one
+    # OPEN notice per (imóvel, tipo); the tipo/status vocabulary CHECKs are inline column checks. Nothing exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/333_imovel_ref_avisos.sql",
+        "uq_sw_imovel_ref_avisos_aberto",
+        "Partial UNIQUE (org_id, codigo_canonical, tipo) WHERE status='pendente'; migration unapplied (file-only), no live index to probe. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/333_imovel_ref_avisos.sql",
+        "imovel_ref_avisos_tipo_check",
+        "Vocabulary-only inline CHECK written from fixed literals in imovel_ref_avisos.py; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/333_imovel_ref_avisos.sql",
+        "imovel_ref_avisos_status_check",
+        "Vocabulary-only inline CHECK written from fixed literals in imovel_ref_avisos.py; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    # SW 334 (main broker / in-house brokers from Vista) is NOT APPLIED (file-only until the tech-lead runs migrate_product): vocabulary CHECKs
+    # written from fixed literals and the partial UNIQUE (one open notice per corretor). Nothing exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "imovel_corretores_papel_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "imovel_corretores_principal_origem_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "lead_corretores_vista_status_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "corretor_avisos_tipo_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "corretor_avisos_status_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "uq_sw_corretor_avisos_aberto",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    # SW 337 (Vista clientes -> lead people, fill-empty-only) is NOT APPLIED (file-only until the tech-lead runs migrate_product): the UNIQUE
+    # (org, Vista cliente Codigo) link and the partial UNIQUE keeping one OPEN notice per (tipo, Codigo, campo, pessoa). Written only by
+    # `vista_clientes_sync` (read-then-write); neither index exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/337_vista_clientes_sync.sql",
+        "uq_sw_vista_cliente_links_codigo",
+        "UNIQUE (org_id, vista_codigo); migration unapplied (file-only), so no live index to probe; the only writer reads the link first. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/337_vista_clientes_sync.sql",
+        "uq_sw_vista_cliente_avisos_aberto",
+        "Partial UNIQUE over the open notice key WHERE status='pendente'; migration unapplied (file-only), no live index to probe; the only "
+        "writer reads the open keys first. Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
     # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
     # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
     (
@@ -16946,6 +17044,42 @@ def check_new_org_table_rls(repo_root: Path | None = None, paths: list[str] | No
                         "KB § PATTERNS/compliance/org-config-isolation.md."
                     ),
                 })
+    return findings
+
+
+def check_measurable_by_design(
+    repo_root: Path | None = None, paths: list[str] | None = None, *, escapes_out: list[dict] | None = None
+) -> list[dict]:
+    """BLOCKING DELTA gate (owner rule 2026-11-09, "everything inside our products must be measured"): a NEW
+    migration's domain table must be measurable by design -- (a) a creation timestamp, (b) a lifecycle/status column
+    needs an append-only transition capture (``*_eventos`` table / audit trigger / transition-log organ) in the
+    product's migrations. Advisory (severity ``warning``): free-text outcomes, no ``updated_at`` on a lifecycle table,
+    an event table with no actor. Pure join/lookup/cache/config/run/metric tables, seed-baseline (001) and
+    organ-generated migrations are exempt. DELTA, not retroactive: ``paths`` (the staged ADDED migrations) scopes the
+    scan; ``None`` = migrations this branch added vs ``origin/dev``. Escape (recorded, returned in ``escapes_out``):
+    ``-- measurable: <reason>=10 chars>`` or ``-- measurable[<table>]: <reason>``.
+    KB § PATTERNS/architect/measurement-by-design.md."""
+    from .measurable_by_design import product_corpus, scan_sql, seed_owned_tables
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+    seed_tables = seed_owned_tables(root)
+    rels = list(paths) if paths is not None else _added_migration_files(root)
+    for rel in rels:
+        f = root / rel
+        if f.suffix != ".sql" or "backend/migrations" not in f.as_posix() or not f.exists():
+            continue
+        try:
+            raw = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", f, exc)
+            continue
+        got, esc = scan_sql(raw, rel, product_corpus(root, rel), seed_tables)
+        findings.extend(got)
+        if escapes_out is not None:
+            escapes_out.extend(esc)
     return findings
 
 

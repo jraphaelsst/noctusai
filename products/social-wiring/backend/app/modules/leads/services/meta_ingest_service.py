@@ -67,7 +67,7 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from app.modules.imovel_hub import atendimento_imoveis_service, busca_service, interesses_service
 from app.modules.leads.importer.resolvers import resolve_corretor
 from app.modules.meta_ads.services.campanha_resolucao import resolver_campanha
-from app.modules.leads.services import dimensions_service, leads_service
+from app.modules.leads.services import ad_lead_intake_service, dimensions_service, leads_service, meta_form_aliases
 from app.modules.leads.services.query import backfill_generated_columns
 from app.services import clientes_service
 
@@ -235,6 +235,8 @@ def map_meta_lead_to_lead_payload(
 
     answers = meta_lead.get("answers") or {}
     corretor_id, corretor_raw = _resolve_corretor_from_answers(answers, corretor_map or {})
+    # Form drift: a field named `phone_number` / "Nome completo" the typed promotion missed still sits in `answers`.
+    alias = meta_form_aliases.contato_das_respostas(answers)
 
     return {
         "meta_lead_id": meta_lead_id,
@@ -255,13 +257,13 @@ def map_meta_lead_to_lead_payload(
         # detect, so this is an explicit `novo`, not the default
         # `desconhecido` `create_lead` would otherwise stamp.
         "tipo_lead": "novo",
-        "cliente_nome": meta_lead.get("full_name"),
+        "cliente_nome": meta_lead.get("full_name") or alias["full_name"],
         # Phone first; an email-only lead (Meta forms may ask only EMAIL) lands
         # its email as `contato` so `leads_service._derive_contato_fields`
         # types it `email` and the cliente is keyed on it — NULL here left
         # such a lead `desconhecido` and the cliente without any contact
         # (deal 876).
-        "contato": meta_lead.get("phone") or meta_lead.get("email"),
+        "contato": meta_lead.get("phone") or alias["phone"] or meta_lead.get("email") or alias["email"],
         "observacoes": render_answers_pt_br(
             answers, question_types=question_types, question_labels=question_labels
         ),
@@ -393,6 +395,9 @@ def ingest_meta_lead(
             if codigo and (ligado or {}).get("atendimentos")
             else []
         )
+    # Ad-lead intake (CONTRACT ad-lead-intake): refresh the property from Vista, link lead <-> property both ways, record
+    # the corretor + the qualification. Never raises (the lead is committed); a failure is a retryable row, not a skip.
+    intake = ad_lead_intake_service.tentar_intake(client, org_id, lead["id"])
     return {
         "lead": lead,
         "created": True,
@@ -400,6 +405,7 @@ def ingest_meta_lead(
         "atendimento_id": _atendimento_do_lead(client, org_id, lead, meta_lead),
         "campanha": campanha,
         "imoveis": imoveis,
+        "intake": intake,
     }
 
 

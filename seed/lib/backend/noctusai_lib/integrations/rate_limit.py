@@ -108,12 +108,39 @@ _DEFAULTS: dict[str, BucketConfig] = {
 }
 
 
+# Runtime per-bucket overrides (``configure_bucket``) — the seam a multi-tenant
+# product uses to give ONE org its own budget (bucket ``"vista:<org_id>"``)
+# without touching the process environment. Wins over env + built-ins.
+_overrides: dict[str, BucketConfig] = {}
+
+
+def configure_bucket(
+    bucket: str, *, rate_per_sec: float, burst: float | None = None, like: str | None = None
+) -> bool:
+    """Pin ``bucket``'s pacing at runtime. Retry/backoff knobs are inherited from ``like``
+    (default: the bucket's own built-in). Returns True when the effective config CHANGED (the cached
+    token buckets are then dropped so the new rate applies at once); a repeat call is a no-op, so
+    a per-request adapter can call it every time without resetting a half-spent bucket."""
+    if not (rate_per_sec > 0):
+        raise ValueError(f"rate_per_sec must be > 0, got {rate_per_sec!r}")
+    base = _DEFAULTS.get(like or bucket, _DEFAULT)
+    cfg = dataclasses.replace(base, rate_per_sec=float(rate_per_sec), burst=float(burst) if burst else max(1.0, float(rate_per_sec) * 2))
+    if _overrides.get(bucket) == cfg:
+        return False
+    _overrides[bucket] = cfg
+    limiter._buckets.pop(bucket, None)
+    _async_registry._buckets.pop(bucket, None)
+    return True
+
+
 def _config_for(bucket: str) -> BucketConfig:
-    """Resolve a bucket's config: env override → built-in default →
+    """Resolve a bucket's config: runtime override → env override → built-in default →
     global default. Env vars: ``NOC_RL_<BUCKET>_RPS`` (float) and
     ``NOC_RL_<BUCKET>_BURST`` (float)."""
-    base = _DEFAULTS.get(bucket, _DEFAULT)
-    key = bucket.upper()
+    if bucket in _overrides:
+        return _overrides[bucket]
+    base = _DEFAULTS.get(bucket.split(":", 1)[0] if ":" in bucket else bucket, _DEFAULTS.get(bucket, _DEFAULT))
+    key = bucket.split(":", 1)[0].upper()  # "vista:<org>" reads the NOC_RL_VISTA_* env of its family
     mra = os.getenv(f"NOC_RL_{key}_MAX_RETRY_AFTER")
     if mra:
         try:
@@ -589,6 +616,7 @@ def _reset_all_buckets() -> None:
     rebuild on a freshly-set default clock."""
     limiter._reset()
     _async_registry._reset()
+    _overrides.clear()
 
 
 __all__ = [
@@ -600,6 +628,7 @@ __all__ = [
     "VirtualClock",
     "acquire",
     "acquire_async",
+    "configure_bucket",
     "limiter",
     "paced_call",
     "parse_retry_after",

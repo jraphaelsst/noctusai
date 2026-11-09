@@ -610,6 +610,7 @@ def vincular_lead(
     *,
     lead_id: Optional[Any] = None,
     meta_ads_lead_id: Optional[str] = None,
+    codigo: Optional[str] = None,
 ) -> dict:
     """§3.5 — link a lead's imóvel to its atendimento(s) AND its cliente.
 
@@ -619,6 +620,10 @@ def vincular_lead(
     cliente interesse when a cliente is already attached. A missing cliente is
     NOT a failure: `reconcile` (the clientes sweep) completes the interesse once
     the cliente exists.
+
+    `codigo` overrides the código read from the lead (the ad-lead intake passes the canonical one it just refreshed).
+    The interesse carries BOTH `lead_id` (when the mapped `leads` row exists) and `meta_ads_lead_id` (when there is a Meta
+    twin) -- "leads interested in this imóvel" needs the first, the Meta ledger the second.
 
     Returns `{"codigo", "atendimentos": [ids], "interesse": bool|None}` —
     `codigo=None` when the lead carries none (accepted → `imovel_pendente`,
@@ -650,7 +655,8 @@ def vincular_lead(
         lead_row = rows[0] if rows else None
 
     codigo = (
-        (_codigo_da_linha(lead_row) if lead_row else None)
+        (busca_service.canonical(codigo) if codigo and codigo.strip() else None)
+        or (_codigo_da_linha(lead_row) if lead_row else None)
         or (_codigo_meta(meta_row) if meta_row else None)
     )
     saida: dict = {"codigo": codigo, "atendimentos": [], "interesse": None}
@@ -668,12 +674,14 @@ def vincular_lead(
     if cliente_id:
         # The Meta row, when there is one, is the TRUE submission (its
         # `created_time`); the mapped `leads` row is a derived copy.
+        origem_lead: dict = {}
         if meta_row is not None:
-            origem_lead = {"meta_ads_lead_id": str(meta_row["id"])}
+            origem_lead["meta_ads_lead_id"] = str(meta_row["id"])
             criado = meta_row.get("created_time") or meta_row.get("created_at")
         else:
-            origem_lead = {"lead_id": str(lead_row["id"])}
-            criado = lead_row.get("created_at")
+            criado = lead_row.get("created_at") if lead_row else None
+        if lead_row is not None:
+            origem_lead["lead_id"] = str(lead_row["id"])
         saida["interesse"] = interesses_service.registrar_de_lead(
             client,
             org_id,
@@ -681,6 +689,11 @@ def vincular_lead(
             codigo,
             criado_em=criado,
             **origem_lead,
+        )
+        # An interesse written before the lead link existed (or by an earlier ingest that carried only the Meta id) is
+        # completed here -- NULL columns only.
+        interesses_service.preencher_ids_do_lead(
+            client, org_id, UUID(str(cliente_id)), codigo, **origem_lead
         )
     return saida
 

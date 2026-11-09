@@ -19,6 +19,7 @@ version: 1.0.0
 6. **Close with ONE E2E-shape check** — a real-endpoint curl or contract test hitting the live route asserting the FE-consumed shape. Mocked-hook tests never catch BE↔FE drift.
 
 ## Guardrails
+- **The contract has a "Records / Metrics" leg:** what does this feature RECORD (tables as first-class dated rows, the append-only event per lifecycle change, outcome enums) and WHICH METRICS does that enable (each derived in one place)? No metric named ⇒ ask "how will we know it works?" before building. Backstop: keeper `check_measurable_by_design`. → `KB § PATTERNS/architect/measurement-by-design.md`
 - ⚠️ Skipping step 1 and "aligning at integration" IS the anti-pattern — integration is where the drift is most expensive.
 - Carve-out (justify + log): a trivial single-side change that does not alter the contract (pure BE refactor behind a stable shape; pure CSS/copy tweak).
 - Full-stack features extend the same discipline to DB/RLS + persisted client state → `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md § Composes with`.

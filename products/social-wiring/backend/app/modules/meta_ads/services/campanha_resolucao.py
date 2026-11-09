@@ -17,6 +17,8 @@ Reads only. ``client`` is the ``social_wiring``-scoped client (the one
 """
 from __future__ import annotations
 
+import logging
+
 from typing import Any, Optional
 from uuid import UUID
 
@@ -33,6 +35,9 @@ CANAL = "meta_ads"
 
 def _t(client: Any, name: str):
     return client.table(name)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _campanha_viva(client: Any, org_id: UUID, campanha_id: str) -> Optional[dict]:
@@ -67,7 +72,15 @@ def _codigos_da_campanha(client: Any, org_id: UUID, campanha_id: str) -> list[st
         .in_("id", ref_ids)
         .execute()
     ).data or []
-    return sorted({str(r["codigo_canonical"]) for r in registro if r.get("codigo_canonical")})
+    codigos = {str(r["codigo_canonical"]) for r in registro if r.get("codigo_canonical")}
+    # A PAUSED imóvel (it vanished from Vista; `imovel_ref_avisos`) is never sent on a campanha card: the owner decides first.
+    try:
+        from app.services import imovel_ref_avisos
+
+        codigos -= imovel_ref_avisos.codigos_pausados(client, org_id)
+    except Exception:
+        logger.error("campanha_resolucao: could not read the paused imóveis for org=%s -- sending the campanha's imóveis unfiltered", org_id, exc_info=True)
+    return sorted(codigos)
 
 
 def resolver_campanha(

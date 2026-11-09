@@ -167,6 +167,7 @@ class FakeVistaClient:
         *,
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
+        fields: Optional[list[str]] = None,
     ) -> VistaCallResult:
         # Top-level `page` + `limit`, no `pesquisa` — the Real's wire shape
         # since the 2026-10-26 `{items, meta}` envelope. Seed the response

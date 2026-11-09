@@ -1471,6 +1471,16 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-measurable-by-design": {
+   "mechanism": "tool: noctus.dev.scaffold_migration with_table/with_eventos (dated entity + append-only <t>_eventos) + noc-contract-first Records/Metrics leg; KB § PATTERNS/architect/measurement-by-design.md",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "shadow": null,
+   "source": "Owner rule 2026-11-09 (every product feature measured; data-driven orgs); Kimball DW Toolkit (facts are dated rows); Fowler Audit Log; EOA §5 (KB § PATTERNS/architect/event-oriented-architecture.md); Sadowski et al. CACM 2018 (FP budget)"
+  },
   "keeper:check-memory-md-index": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3292,6 +3302,18 @@
    "branch": "feat/agent-db-source",
    "gates": [
     "keeper:check-db-agent-mirror-integrity"
+   ]
+  },
+  {
+   "id": "D28",
+   "decision": "Every product feature is measurable by design: business things are dated first-class rows, every lifecycle change appends an event (who/when/from/to, same transaction), outcomes are CHECK-enums, one derivation per metric; the contract names what it records + which metrics it enables. Gate is delta-only over NEW migrations; warn-first shadow, then blocking",
+   "home": "KB § PATTERNS/architect/measurement-by-design.md",
+   "construction": "noctus.dev.scaffold_migration with_table/with_eventos + noc-contract-first Records/Metrics leg",
+   "gate": "keeper:check-measurable-by-design",
+   "telemetry": "gate events (cli wrapper) via --check-measurable-by-design; escapes logged as allow events",
+   "branch": "feat/measurement-mindset-rule-gate",
+   "gates": [
+    "keeper:check-measurable-by-design"
    ]
   }
  ]
