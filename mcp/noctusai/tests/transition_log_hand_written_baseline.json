@@ -4,6 +4,7 @@
     "products/agents/backend/migrations/018_editorial_workflow.sql::editorial_events",
     "products/agents/backend/migrations/033_julia_v2_threads.sql::thread_handoffs",
     "products/agents/backend/migrations/033_julia_v2_threads.sql::thread_participante_eventos",
+    "products/core/backend/migrations/107_noc_funnel.sql::pipeline_movimentos",
     "products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql::funil_movimentos",
     "products/erp-imobiliario/backend/migrations/042_pipeline_stages.sql::pipeline_movimentos",
     "products/igig/backend/migrations/017_igig_pipeline.sql::pipeline_movimentos",
