@@ -8,10 +8,7 @@ bubbles still matches). Pure.
 """
 from __future__ import annotations
 
-import re
 from typing import Sequence
-
-from noctusai_lib.primitives.accents import fold_accents
 
 #: Longest quote a record stores (matches the column CHECK).
 MAX_TRECHO = 160
@@ -20,11 +17,7 @@ MIN_TRECHO = 2
 #: Default window of lead messages searched.
 ULTIMAS = 8
 
-_NAO_ALFANUM = re.compile(r"[^0-9a-z]+")
-
-
-def normalizar(texto: str) -> str:
-    return _NAO_ALFANUM.sub(" ", fold_accents(texto).casefold()).strip()
+from noctusai_lib.integrations.llm.guardrails.text import normalizar  # noqa: F401  (one definition, shared by the guardrails)
 
 
 def conferir_trecho(

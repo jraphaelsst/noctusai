@@ -35,97 +35,25 @@ plus `wrap_handler(handler) -> handler` that composes onto the
 `app/services/conversation.py::_build_processor` swaps the unwrapped
 handler for the wrapped one. No call-site change at any tool impl.
 
-**Seed lift destination**: pure-logic shaping (no IO). Exemption test
-per `KB § PATTERNS/seed-fake-real-adapter.md` § Exemption fires —
-"would a Fake exercise different code than the Real?" No. So no
-Fake/Real split. **N=2 destination**: `noctusai_lib.primitives.pii`
-(stateless redactors → primitives layer per `KB § PATTERNS/seed-lib-layout.md`).
-N=1 today; surface candidate logged in Improvements when a second
-product needs PII redaction.
+**Seed lift (done)**: the patterns and the redaction live in the seed organ
+`noctusai_lib.integrations.llm.guardrails.redaction` (`redact_pii`,
+`redact_payload`, `count_redactions`); this module keeps only the product seam
+(`wrap_handler` over the `ToolCall`/`ToolResult` shape) and the historical names.
 """
 from __future__ import annotations
 
 import logging
-import re
 from typing import Callable
 
 from noctusai_lib.domain.chatbot import ToolCall, ToolResult
+from noctusai_lib.integrations.llm.guardrails import count_redactions, redact_payload, redact_pii
 
 logger = logging.getLogger(__name__)
 
 
-# Email — RFC-shape sufficient for redaction (we don't need to validate).
-_EMAIL_RE = re.compile(
-    r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
-)
-
-# CNPJ — formatted (12.345.678/0001-90) OR digit-stream (14 digits).
-_CNPJ_FORMATTED_RE = re.compile(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b")
-_CNPJ_DIGITS_RE = re.compile(r"\b\d{14}\b")
-
-# CPF — formatted (123.456.789-00) OR digit-stream (11 digits).
-_CPF_FORMATTED_RE = re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b")
-_CPF_DIGITS_RE = re.compile(r"\b\d{11}\b")
-
-# Brazilian phone numbers. Covers:
-#   +5511999999999
-#   +55 11 99999-9999
-#   (11) 99999-9999
-#   11 99999-9999
-#   11999999999  (10-11 digits)
-_PHONE_RE = re.compile(
-    r"""
-    (?:
-      (?:\+?55[\s\-]?)?    # optional country code
-      \(?\d{2}\)?[\s\-]?   # area code
-      \d{4,5}[\s\-]?\d{4}  # subscriber
-    )
-    """,
-    re.VERBOSE,
-)
-
-# URLs with embedded credentials — https://user:pw@host
-_URL_CRED_RE = re.compile(
-    r"https?://[^/\s:@]+:[^/\s@]+@[^\s]+"
-)
-
-
-# Order matters — apply longest/most specific first so digit-stream
-# patterns don't eat formatted ones.
-_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (_URL_CRED_RE, "[REDACTED_URL_WITH_CREDS]"),
-    (_EMAIL_RE, "[REDACTED_EMAIL]"),
-    (_CNPJ_FORMATTED_RE, "[REDACTED_CNPJ]"),
-    (_CPF_FORMATTED_RE, "[REDACTED_CPF]"),
-    (_PHONE_RE, "[REDACTED_PHONE]"),
-    # Digit-stream fallbacks AFTER formatted variants + phone.
-    (_CNPJ_DIGITS_RE, "[REDACTED_CNPJ]"),
-    (_CPF_DIGITS_RE, "[REDACTED_CPF]"),
-]
-
-
 def sanitize_tool_result(content: str) -> str:
-    """Redact PII patterns from a tool-result `content` string.
-
-    Idempotent — running twice on the same string yields the same
-    output. The redaction tags themselves contain no PII patterns, so
-    a re-sanitization pass is a no-op.
-
-    Args:
-        content: The raw tool-handler output (typically JSON-encoded).
-            May be empty / non-PII — passed through unchanged.
-
-    Returns:
-        Sanitized string. Same shape as input (still parseable as
-        JSON if input was JSON — the redaction tokens are quoted
-        substrings when they appear inside JSON string values).
-    """
-    if not content:
-        return content
-    out = content
-    for pattern, replacement in _PATTERNS:
-        out = pattern.sub(replacement, out)
-    return out
+    """Redact PII patterns from a tool-result `content` string (idempotent; empty input passes through)."""
+    return redact_pii(content)
 
 
 def wrap_handler(
@@ -155,10 +83,7 @@ def wrap_handler(
                 "Tool result sanitized: tool=%s call_id=%s redactions_applied=%d",
                 call.name,
                 call.call_id,
-                sum(
-                    sanitized_content.count(tag)
-                    for _pat, tag in _PATTERNS
-                ),
+                count_redactions(sanitized_content),
             )
         return ToolResult(call_id=raw.call_id, content=sanitized_content)
 
@@ -166,32 +91,8 @@ def wrap_handler(
 
 
 def sanitize_json_payload(payload: dict) -> dict:
-    """Deep-walk a dict + sanitize string values.
-
-    Convenience for tests / callers that have the dict pre-JSON-dump.
-    The runtime path uses `sanitize_tool_result` on the JSON string
-    directly.
-
-    Args:
-        payload: Arbitrary dict (typically tool-handler output before
-            it's JSON-encoded).
-
-    Returns:
-        New dict with PII redacted in string values. Lists + nested
-        dicts are walked recursively. Non-string scalars (int, bool,
-        None) pass through unchanged.
-    """
-    return _walk(payload)
-
-
-def _walk(value):
-    if isinstance(value, str):
-        return sanitize_tool_result(value)
-    if isinstance(value, dict):
-        return {k: _walk(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_walk(v) for v in value]
-    return value
+    """Deep-walk a dict + sanitize string values (lists/dicts walked, non-string scalars unchanged)."""
+    return redact_payload(payload)
 
 
 __all__ = [

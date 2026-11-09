@@ -38,7 +38,6 @@ The deterministic escalations (``escala_*``) live here too: their match patterns
 from __future__ import annotations
 
 import hashlib
-import hmac
 import logging
 import re
 import unicodedata
@@ -48,10 +47,35 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from noctusai_lib.primitives.identificador import cnpj_dv_valido, cpf_dv_valido
+from noctusai_lib.integrations.llm.guardrails import (
+    SHINGLE_TOKENS,
+    SHINGLE_TOKENS_DERIVADO,
+    GuardContext,
+    RealOutputGuard,
+    canario,
+    contar_padroes,
+    contato_nao_permitido,
+    detectar_vazamento,
+    esqueleto,
+    formato_suspeito,
+    link_nao_permitido,
+    lista_de_spec,
+    mascarar_dados_da_org,
+    padroes_proibidos,
+    pii_na_resposta,
+    sem_falas_de_exemplo,
+    shingles_de,
+    tem_caractere_oculto,
+    worst_of,
+)
+from noctusai_lib.integrations.llm.guardrails.fingerprint import tokens_of as _tokens
+from noctusai_lib.integrations.llm.guardrails.text import (
+    skeleton_targets as _alvos,
+    strip_trailing_decoration as _fim_sem_enfeite,
+    termina_com_pergunta,
+)
 
 from app.qualificacao.matcher import normalizar
-from app.studio.normalizador_texto import esqueleto, tem_caractere_oculto
 from app.stores.conformidade import (
     PALAVRAS_PARAR_PISO,
     PISO_DE_PADROES,
@@ -115,41 +139,13 @@ CAMPOS_PROTEGIDOS: dict[str, tuple[str, ...]] = {
     "sinalizar_alerta": ("descricao", "trecho"),
 }
 
-#: Consecutive normalised tokens that make a reply "the prompt".
-SHINGLE_TOKENS = 12
-_URL = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
-_TRAILING_URL = ".,;:!?)]}\"'"
 
-# ── fingerprint ─────────────────────────────────────────────────────────────
-
-
-def _tokens(texto: str) -> list[str]:
-    return normalizar(texto).split()
-
-
-def _h(window: Sequence[str]) -> int:
-    digest = hashlib.sha256(" ".join(window).encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big", signed=True)
-
-
-def shingles_de(texto: str, k: int = SHINGLE_TOKENS) -> frozenset[int]:
-    toks = _tokens(texto)
-    if len(toks) < k:
-        return frozenset()
-    return frozenset(_h(toks[i:i + k]) for i in range(len(toks) - k + 1))
 
 
 def impressao_de(version_id: UUID, texto: str, k: int = SHINGLE_TOKENS) -> Impressao:
     """The fingerprint of ``texto`` (hashes only: it detects a leak, it cannot rebuild the prompt)."""
     return Impressao(version_id, k, shingles_de(texto, k))
 
-
-def canario(org_id: UUID, version_id: UUID, *, segredo: str = "") -> str:
-    """The per-org / per-version canary appended to the system prompt. Deterministic (HMAC over the two
-    ids with the platform secret), so nothing is stored; it appears in a reply only if the prompt was
-    reproduced. 20 hex chars: not a word, never produced by chance."""
-    chave = (segredo or "noctus-canary").encode("utf-8")
-    return hmac.new(chave, f"{org_id}:{version_id}".encode("utf-8"), hashlib.sha256).hexdigest()[:20]
 
 
 #: Key prefix of the corrective system message (``conformidade.correcao.<regra>``). It is injected ONLY into a corrective
@@ -163,18 +159,6 @@ def _e_correcao(texto_row: Any) -> bool:
     return str(getattr(texto_row, "chave", "") or "").startswith(PREFIXO_CORRECAO)
 
 
-#: A quoted span on ONE line ("..." or curly quotes), at most this long. The prompt marks the sentences the agent is MEANT to say
-#: to the lead as quoted examples ('diga, por exemplo: "Quem marca a visita e o corretor: vou passar pra ele..."'). The lead is
-#: the audience of those lines, so repeating one is not a leak -- and it measurably blocked normal replies (visit flow, the
-#: "prefere falar com uma pessoa ou seguir comigo" question, the CPF request), then handed the lead off. The instructions AROUND
-#: the quotes stay fingerprinted, and so does the canary: a reply that dumps a section still matches on the unquoted text.
-_FALA_ENTRE_ASPAS = re.compile(r'"[^"\n]{1,500}"|\u201c[^\u201d\n]{1,500}\u201d')
-
-
-def sem_falas_de_exemplo(texto: str) -> str:
-    """``texto`` without its quoted example speech (see :data:`_FALA_ENTRE_ASPAS`); a space replaces each span so the tokens
-    on its two sides never fuse into one window."""
-    return _FALA_ENTRE_ASPAS.sub(" . ", texto)
 
 
 def texto_fonte_do_prompt(
@@ -226,35 +210,6 @@ def garantir_impressao(
     return nova
 
 
-#: Window of the fingerprint of SKILL text handed to the model in a turn. Longer than the prompt's: a skill teaches example
-#: sentences the agent legitimately says ("Pronto, registrei sua preferencia..."), and a 12-token window blocked those replies
-#: (measured: ``mec-visita-nao-agenda``). A dump of the procedure still reproduces runs far longer than 24 tokens.
-SHINGLE_TOKENS_DERIVADO = 24
-
-
-_DADO_DA_ORG = "dadodaorg"  # a token that is in no prompt
-
-
-def mascarar_dados_da_org(resposta: str, valores: Iterable[str]) -> str:
-    """``resposta`` (normalised) with every occurrence of an org spec value (opening hours, agency name, regions...) replaced by one
-    neutral token. The prompt carries those values as data precisely so the agent can tell the lead: quoting the org's own hours
-    is not a prompt leak (measured: it blocked a legitimate 'when do they call back' answer twice and handed the lead off). Done
-    on the REPLY, because the fingerprint windows that straddle the data (key name + value) cannot be subtracted afterwards."""
-    toks = _tokens(resposta)
-    for v in sorted((x for x in valores if isinstance(x, str)), key=len, reverse=True):
-        vt = _tokens(v)
-        if len(vt) < 2:
-            continue
-        i, out = 0, []
-        while i < len(toks):
-            if toks[i:i + len(vt)] == vt:
-                out.append(_DADO_DA_ORG)
-                i += len(vt)
-            else:
-                out.append(toks[i])
-                i += 1
-        toks = out
-    return " ".join(toks)
 
 
 def impressao_derivada(textos: Iterable[str], k: int = SHINGLE_TOKENS_DERIVADO) -> Impressao | None:
@@ -267,41 +222,9 @@ def impressao_derivada(textos: Iterable[str], k: int = SHINGLE_TOKENS_DERIVADO) 
     return Impressao(UUID(int=0), k, frozenset(todos)) if todos else None
 
 
-def detectar_vazamento(
-    resposta: str, *, canario_do_prompt: str | None, impressao: Impressao | None,
-) -> dict[str, Any] | None:
-    """The reply reproduces the prompt: the canary appears, or >= ``impressao.shingle_tokens`` consecutive
-    tokens match the fingerprint. ``detalhe`` carries the matched-window count only."""
-    if not resposta or not resposta.strip():
-        return None
-    achado: dict[str, Any] = {}
-    if canario_do_prompt and canario_do_prompt in resposta:
-        achado["canario"] = True
-    if impressao is not None and impressao.shingles:
-        casados = shingles_de(resposta, impressao.shingle_tokens) & impressao.shingles
-        if casados:
-            achado["janelas"] = len(casados)
-    return achado or None
-
 
 # ── the detectors ───────────────────────────────────────────────────────────
 
-
-def _fim_sem_enfeite(texto: str) -> str:
-    """The text without trailing whitespace, emoji, symbols and closing quotes/brackets."""
-    t = texto.rstrip()
-    while t:
-        c = t[-1]
-        cat = unicodedata.category(c)
-        if c.isspace() or cat.startswith(("S", "M", "C")) or c in "\"')]}»”’*_~":
-            t = t[:-1]
-            continue
-        break
-    return t
-
-
-def termina_com_pergunta(texto: str) -> bool:
-    return _fim_sem_enfeite(texto).endswith("?")
 
 
 def imovel_sem_ferramenta(
@@ -372,176 +295,10 @@ def pergunta_repetida(
 
 # ── public-line output filters (spec B3) ───────────────────────────────────
 
-_TLDS = "|".join(("com", "br", "net", "org", "io", "me", "ly", "app", "site", "info", "xyz", "link", "online",
-                      "co", "gov", "edu", "dev", "store", "shop", "top", "click", "cc", "tv"))
-#: A URL, a ``www.`` host, a shortener / messenger host, or a bare domain on a common TLD. A bare domain glued to
-#: an ``@`` is an e-mail address (``contato_nao_permitido``'s), not a link.
-_LINK = re.compile(
-    r"(?<![@\w.-])(?:https?://[^\s<>\"')\]]+|(?:www\.)[^\s<>\"')\]]+|(?:wa\.me|t\.me|bit\.ly|tinyurl\.com)/?[^\s<>\"')\]]*"
-    r"|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:" + _TLDS + r")(?![a-z0-9-])(?:/[^\s<>\"')\]]*)?)",
-    re.IGNORECASE,
-)
-_PREFIXO_URL = re.compile(r"^(?:https?://)?(?:www\.)?", re.IGNORECASE)
 
-
-def _host(url: str) -> str:
-    sem = _PREFIXO_URL.sub("", url.strip().rstrip(_TRAILING_URL))
-    return re.split(r"[/?#:]", sem, maxsplit=1)[0].casefold()
-
-
-def lista_de_spec(valor: str | None) -> list[str]:
-    """An org-spec value holding a list (one item per line, ``,`` or ``;``) as clean items."""
-    return [p.strip() for p in re.split(r"[\n,;]+", valor or "") if p.strip()]
-
-
-def link_nao_permitido(
-    resposta: str, links_permitidos: Iterable[str], dominios_permitidos: Iterable[str],
-) -> dict[str, Any] | None:
-    """Every URL **or bare domain** of the reply whose host is neither the host of a link a tool returned /
-    Julia already sent, nor the agency's own domain (``dominios_permitidos``, an org spec; a subdomain of an
-    own domain is own). ``detalhe`` holds the count of foreign hosts."""
-    ok_hosts = {_host(l) for l in links_permitidos} | {_host(d) for d in dominios_permitidos}
-    ok_hosts.discard("")
-    fora: set[str] = set()
-    for m in _LINK.finditer(unicodedata.normalize("NFKC", resposta)):
-        h = _host(m.group(0))
-        if not h or "." not in h:
-            continue
-        if any(h == ok or h.endswith("." + ok) for ok in ok_hosts):
-            continue
-        fora.add(h)
-    return {"links": len(fora)} if fora else None
-
-
-_EMAIL = re.compile(r"[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+", re.IGNORECASE)
-# Word-bounded on both sides: a digit run INSIDE an alphanumeric token (a hex canary, a hash, a listing code
-# like ONE12345678901) is not a phone number.
-_TELEFONE = re.compile(r"(?<![\w.])(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?9?\d{4}[\s.-]?\d{4}(?!\w|[.,]\d)")
-_PIX = re.compile(
-    r"\bchave\s+pix\b|\bpix\s*(?:copia\s+e\s+cola|:)|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
-    re.IGNORECASE,
-)
-_CONTA = re.compile(
-    r"\b(?:ag[eê]ncia|ag\.|c/c|conta\s+corrente|conta\s+poupan[cç]a|conta)\s*(?:n[ºo°.]\s*)?:?\s*\d[\d.\-]{2,}",
-    re.IGNORECASE,
-)
-_BOLETO = re.compile(r"(?<!\d)(?:\d[\s.\-]?){46,47}\d(?!\d)")
-
-
-def _digitos(texto: str) -> str:
-    return "".join(c for c in texto if c.isdigit())
-
-
-def _mesmo_telefone(a: str, b: str) -> bool:
-    """Two phone numbers are the same when one's digits are the other's suffix (+55 / DDD optional), >= 8 digits."""
-    da, db = _digitos(a), _digitos(b)
-    return len(da) >= 8 and len(db) >= 8 and (da.endswith(db) or db.endswith(da))
-
-
-def contato_nao_permitido(
-    resposta: str, contatos_permitidos: Iterable[str], mensagens_lead: Iterable[str] = (),
-) -> dict[str, Any] | None:
-    """Phones, e-mails, PIX keys, bank account/agency and boleto lines in the reply. Allowed only when equal to an
-    org-official contact (``contatos_oficiais`` spec) or a value the LEAD typed itself in this thread."""
-    oficiais = [c for c in contatos_permitidos if c and c.strip()]
-    do_lead = " \n ".join(mensagens_lead)
-    emails_ok = {e.casefold() for c in oficiais for e in _EMAIL.findall(c)} | {e.casefold() for e in _EMAIL.findall(do_lead)}
-    fones_ok = [m.group(0) for c in oficiais for m in _TELEFONE.finditer(c)] + [m.group(0) for m in _TELEFONE.finditer(do_lead)]
-    texto = unicodedata.normalize("NFKC", resposta)
-    achado: dict[str, int] = {}
-    emails = {e.casefold() for e in _EMAIL.findall(texto)} - emails_ok
-    if emails:
-        achado["emails"] = len(emails)
-    fones = {m.group(0) for m in _TELEFONE.finditer(texto) if not _BOLETO.fullmatch(m.group(0))}
-    fones = {f for f in fones if not any(_mesmo_telefone(f, ok) for ok in fones_ok)}
-    if fones:
-        achado["telefones"] = len(fones)
-    if _PIX.search(texto):
-        achado["pix"] = len(_PIX.findall(texto))
-    if _CONTA.search(texto):
-        achado["conta"] = len(_CONTA.findall(texto))
-    if _BOLETO.search(texto):
-        achado["boleto"] = len(_BOLETO.findall(texto))
-    return achado or None
-
-
-_CPF = re.compile(r"(?<![\d.])\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2}(?![\d])")
-_CNPJ = re.compile(r"(?<![\d.])\d{2}[.\s]?\d{3}[.\s]?\d{3}[/\s]?\d{4}[-\s]?\d{2}(?![\d])")
-_RG = re.compile(r"\brg\b\s*(?:n[ºo°.]\s*)?:?\s*\d[\d.\-xX]{5,}|(?<![\d.])\d{1,2}\.\d{3}\.\d{3}-[\dxX](?![\d])", re.IGNORECASE)
-
-
-def pii_na_resposta(resposta: str, cnpjs_proprios: Iterable[str] = ()) -> dict[str, Any] | None:
-    """A CPF with valid check digits (never echoed, not even the lead's own), an RG-shaped value, or a CNPJ that
-    is not the agency's own."""
-    texto = unicodedata.normalize("NFKC", resposta)
-    proprios = {_digitos(c) for c in cnpjs_proprios if c}
-    achado: dict[str, int] = {}
-    cpfs = [m for m in _CPF.finditer(texto) if cpf_dv_valido(_digitos(m.group(0)))]
-    if cpfs:
-        achado["cpf"] = len(cpfs)
-    cnpjs = [m for m in _CNPJ.finditer(texto)
-             if cnpj_dv_valido(_digitos(m.group(0))) and _digitos(m.group(0)) not in proprios]
-    if cnpjs:
-        achado["cnpj"] = len(cnpjs)
-    rgs = _RG.findall(texto)
-    if rgs:
-        achado["rg"] = len(rgs)
-    return achado or None
 
 
 _B64 = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{40,}={0,2}(?![A-Za-z0-9+/=])")
-_HEX = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{40,}(?![0-9A-Fa-f])")
-_TITULO_MD = re.compile(r"^\s{0,3}#{1,6}\s+\S", re.MULTILINE)
-_JSON = re.compile(r"[{\[]\s*\"[^\"\n]{1,60}\"\s*:|^\s*\[\s*[{\[\"]", re.MULTILINE)
-_BULLET = re.compile(r"^\s*(?:[-*•]|\d{1,2}[.)])\s+\S", re.MULTILINE)
-#: Function words that tell the languages apart (a heuristic floor, not content): words shared with Portuguese
-#: are left out of the foreign sets.
-_STOP_PT = frozenset("de da do das dos em no na nos nas um uma uns para por com que não nao se os as o a e é ou mais mas como você voce está esta já ja também tambem muito quando onde ele ela eu meu minha seu sua nós".split())
-_STOP_EN = frozenset("the and is are you your of to in that this it for with on as be at have not or but what was were will would can could which their there from by about".split())
-_STOP_ES = frozenset("el los las y es son usted tu tus del al lo con una unos para por pero qué como está están tiene tienen muy también cuando donde yo mi sus nosotros hay".split())
-
-
-def formato_suspeito(resposta: str, max_chars: int = 1200, max_bullets: int = 6) -> dict[str, Any] | None:
-    """Encoded or structured output that carries data out past the shingle check: base64 / hex runs of 40+,
-    code fences, markdown headings, JSON, more than ``max_bullets`` bullet lines, a reply over ``max_chars``
-    or one mostly in another language. ``detalhe`` holds the shape codes, never a fragment."""
-    if not resposta or not resposta.strip():
-        return None
-    achado: dict[str, Any] = {}
-    if tem_caractere_oculto(resposta):  # zero-width / bidi / tag characters: nothing a person reads, a channel for data
-        achado["caractere_oculto"] = True
-    if _B64.search(resposta) or _HEX.search(resposta):
-        achado["codificado"] = True
-    if "```" in resposta or "~~~" in resposta:
-        achado["bloco_codigo"] = True
-    if _TITULO_MD.search(resposta):
-        achado["titulo"] = True
-    if _JSON.search(resposta):
-        achado["json"] = True
-    if len(_BULLET.findall(resposta)) > max_bullets:
-        achado["lista_longa"] = True
-    if len(resposta) > max_chars:
-        achado["longo"] = True
-    palavras = re.findall(r"[a-zà-ú']+", resposta.casefold())
-    if len(palavras) >= 12:
-        pt = sum(1 for w in palavras if w in _STOP_PT)
-        fora = max(sum(1 for w in palavras if w in _STOP_EN), sum(1 for w in palavras if w in _STOP_ES))
-        if fora >= 4 and fora > pt:
-            achado["outro_idioma"] = True
-    return achado or None
-
-
-def _alvos(textos: Iterable[str]) -> list[str]:
-    """Each text as written (NFKC) AND its de-obfuscated skeleton (zero-width, confusables, spaced letters, accents):
-    a pattern meets both, so an obfuscated phrasing is no way around it."""
-    out: list[str] = []
-    for t in textos:
-        plano = unicodedata.normalize("NFKC", t)
-        out.append(plano)
-        sk = esqueleto(t)
-        if sk != plano.casefold():
-            out.append(sk)
-    return out
 
 
 def padroes_efetivos(regra: str, parametros: Mapping[str, Any] | None) -> list[str]:
@@ -550,27 +307,6 @@ def padroes_efetivos(regra: str, parametros: Mapping[str, Any] | None) -> list[s
     guardados = [p for p in ((parametros or {}).get("padroes") or []) if isinstance(p, str) and p not in piso]
     return [*piso, *guardados]
 
-
-def contar_padroes(textos: Iterable[str], padroes: Iterable[str]) -> int:
-    """How many DISTINCT regexes of ``padroes`` match any of ``textos`` (broken patterns logged + skipped)."""
-    alvos = _alvos(textos)
-    n = 0
-    for p in padroes:
-        try:
-            rx = re.compile(p, re.IGNORECASE)
-        except re.error:
-            logger.error("agents.conformidade.padrao_invalido")
-            continue
-        if any(rx.search(a) for a in alvos):
-            n += 1
-    return n
-
-
-def padroes_proibidos(resposta: str, padroes: Iterable[str]) -> dict[str, Any] | None:
-    """The generic matcher: the rule's ``parametros.padroes`` (DATA -- financing promises, guarantees,
-    verification codes, payment requests, protected traits) found in the reply. Counts only."""
-    n = contar_padroes([resposta], padroes)
-    return {"padroes": n} if n else None
 
 
 # ── an amount the tools never returned (P1-2) ──────────────────────────────
@@ -900,33 +636,25 @@ class EntradaConformidade:
     dados_da_org: Iterable[str] = ()
 
 
-def _pior(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The union of two detector findings (the as-written reply and its de-obfuscated copy): per key, the larger count."""
-    if not a or not b:
-        return a or b
-    return {k: max(a.get(k, 0), b.get(k, 0)) for k in {*a, *b}}
-
-
-def _vazou(resposta: str, canario_: str | None, impressao: Impressao | None, derivada: Impressao | None) -> dict[str, Any] | None:
-    return _pior(
-        detectar_vazamento(resposta, canario_do_prompt=canario_, impressao=impressao),
-        detectar_vazamento(resposta, canario_do_prompt=None, impressao=derivada))
+_GUARD = RealOutputGuard()  # stateless; the generic output rules live in the seed organ (guardrails)
+_pior = worst_of
 
 
 def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
     """Run every active reply detector; the policy of each hit is its rule's. The caller decides what
     ``bloquear`` means (suppress + one corrective re-run, then silence + hand-off)."""
     achados: list[tuple[str, dict[str, Any] | None]] = []
+    ctx = GuardContext(
+        lead_messages=e.mensagens_lead, allowed_links=e.links_permitidos, allowed_domains=e.dominios_permitidos,
+        allowed_contacts=e.contatos_permitidos, own_company_ids=e.cnpjs_proprios, canary=e.canario,
+        fingerprint=e.impressao, derived_fingerprint=e.impressao_derivada, org_data=e.dados_da_org)
 
     def ativa(nome: str) -> RegraConfig | None:
         r = e.regras.get(nome)
         return r if r is not None and r.ativo else None
 
     if (r := ativa("vazamento_prompt")) is not None:
-        # the as-written reply AND its de-obfuscated copy (spaced / dotted / homoglyph spellings), like the link and contact checks
-        achados.append(("vazamento_prompt", _pior(
-            _vazou(mascarar_dados_da_org(e.resposta, e.dados_da_org), e.canario, e.impressao, e.impressao_derivada),
-            _vazou(mascarar_dados_da_org(esqueleto(e.resposta), e.dados_da_org), e.canario, e.impressao, e.impressao_derivada))))
+        achados.append(("vazamento_prompt", _GUARD.evaluate("vazamento_prompt", e.resposta, ctx)))
     if (r := ativa("imovel_sem_ferramenta")) is not None and e.resposta.strip():
         achados.append(("imovel_sem_ferramenta", imovel_sem_ferramenta(
             e.resposta, e.codigos_permitidos, (r.parametros or {}).get("padrao_codigo"))))
@@ -949,22 +677,18 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
             padroes=padroes_efetivos("insatisfacao_sem_alerta", r.parametros), palavras_parar=e.regras.get("opt_out_palavras"))))
     if e.resposta.strip():
         if ativa("link_nao_permitido") is not None:
-            achados.append(("link_nao_permitido", _pior(
-                link_nao_permitido(e.resposta, e.links_permitidos, e.dominios_permitidos),
-                link_nao_permitido(esqueleto(e.resposta), e.links_permitidos, e.dominios_permitidos))))
+            achados.append(("link_nao_permitido", _GUARD.evaluate("link_nao_permitido", e.resposta, ctx)))
         if ativa("contato_nao_permitido") is not None:
-            achados.append(("contato_nao_permitido", _pior(
-                contato_nao_permitido(e.resposta, e.contatos_permitidos, e.mensagens_lead),
-                contato_nao_permitido(esqueleto(e.resposta), e.contatos_permitidos, e.mensagens_lead))))
+            achados.append(("contato_nao_permitido", _GUARD.evaluate("contato_nao_permitido", e.resposta, ctx)))
         if ativa("pii_na_resposta") is not None:
-            achados.append(("pii_na_resposta", pii_na_resposta(e.resposta, e.cnpjs_proprios)))
+            achados.append(("pii_na_resposta", _GUARD.evaluate("pii_na_resposta", e.resposta, ctx)))
         if (r := ativa("formato_suspeito")) is not None:
             p = r.parametros or {}
-            achados.append(("formato_suspeito", formato_suspeito(
-                e.resposta, _inteiro(p.get("max_chars"), 1200), _inteiro(p.get("max_bullets"), 6))))
+            achados.append(("formato_suspeito", _GUARD.evaluate("formato_suspeito", e.resposta, ctx, {
+                "max_chars": _inteiro(p.get("max_chars"), 1200), "max_bullets": _inteiro(p.get("max_bullets"), 6)})))
         if (r := ativa("padroes_proibidos")) is not None:
-            achados.append(("padroes_proibidos", padroes_proibidos(
-                e.resposta, padroes_efetivos("padroes_proibidos", r.parametros))))
+            achados.append(("padroes_proibidos", _GUARD.evaluate(
+                "padroes_proibidos", e.resposta, ctx, {"padroes": padroes_efetivos("padroes_proibidos", r.parametros)})))
         if ativa("valor_sem_ferramenta") is not None:
             achados.append(("valor_sem_ferramenta", valor_sem_ferramenta(e.resposta, e.textos_com_valor)))
         if ativa("transferencia_sem_handoff") is not None:

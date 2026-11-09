@@ -475,6 +475,7 @@ The seed is the structural skeleton. Every item below is authored once in `seed/
 - Notification mappers (`map_notification_to_pt`).
 - Design-system components (`AppShell`, `Sidebar`, `Header`, `NotificationBell`, `LoginForm`, `PageSkeleton`, `InactivityWarning`).
 - LLM access surface (`noctusai_lib.llm`: catalog, client, cache, usage).
+- LLM output guardrails (`noctusai_lib.integrations.llm.guardrails`: `OutputGuard` Fake+Real+factory, prompt-leak fingerprint, link/contact/PII/format/pattern detectors, `redact_pii`, answer bounds; policy as data — `KB § PATTERNS/security/llm-bot-security.md`).
 - Testing helpers (`MockSupabaseClient`, `MockUser`, `AuthClient`, `MockSupabaseResponse`).
 
 **Configuration factories:**

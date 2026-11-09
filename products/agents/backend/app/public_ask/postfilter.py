@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from noctusai_lib.integrations.llm.guardrails import count_words, outside_enum, outside_word_band, unretrieved_sources
+
 from .safety_pack.engine import (
     PACK_DIR,
     LOCK_PATH,
@@ -39,9 +41,6 @@ MOTIVO_CAMINHOS_EXCESSO = "caminhos_excedem_limite"
 MOTIVO_CAMINHO_INVALIDO = "caminho_fora_do_enum"
 MOTIVO_FONTE = "fonte_nao_recuperada"
 MOTIVO_TRIAGEM = "triagem_saida_acima_de_verde"
-
-_WORD = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
-
 
 @dataclass(frozen=True)
 class ResultadoPosfiltro:
@@ -142,15 +141,13 @@ def aplicar_posfiltro(
     for vid, rx in pacote.verificacoes:
         if rx.search(norm):
             motivos.append(vid)
-    n = len(_WORD.findall(resposta))
-    if not pacote.palavras_min <= n <= pacote.palavras_max:
+    if outside_word_band(resposta, pacote.palavras_min, pacote.palavras_max):
         motivos.append(MOTIVO_PALAVRAS)
     if len(caminhos) > pacote.max_caminhos:
         motivos.append(MOTIVO_CAMINHOS_EXCESSO)
-    if any(c not in pacote.caminhos_permitidos for c in caminhos):
+    if outside_enum(caminhos, pacote.caminhos_permitidos):
         motivos.append(MOTIVO_CAMINHO_INVALIDO)
-    recuperadas = set(fonte_ids_recuperadas)
-    if any(f not in recuperadas for f in fonte_ids):
+    if unretrieved_sources(fonte_ids, fonte_ids_recuperadas):
         motivos.append(MOTIVO_FONTE)
     if pacote.engine.triage(resposta).nivel != "verde":
         motivos.append(MOTIVO_TRIAGEM)
