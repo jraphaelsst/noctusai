@@ -285,6 +285,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-council-ledger-schema", action="store_true", help="Offline pre-commit gate: every project-history/council/**/*.ndjson row validates against the council-ledger contract and a staged diff only appends at EOF (append-only). --paths scopes to staged files; --staged enforces append-only against the index. KB-free contract: project-history/assistant-chatbot/contracts/council-ledger.md.")
     parser.add_argument("--staged", action="store_true", help="With --check-council-ledger-schema: also enforce append-only against the git index.")
     parser.add_argument("--council-ledger", dest="council_ledger", metavar="ACTION", help="Council ledger (open_session|record_objection|record_verdict|record_event|blind_view|full_view|report|status); args as JSON via --cl-args. MCP: noctus.dev.council_ledger.")
+    parser.add_argument("--check-decision-log-schema", action="store_true", help="Offline pre-commit gate: every project-history/decisions/**/*.ndjson row validates against the decision-log contract (tier >= its criteria floor, sequential ids) and a staged diff only appends at EOF. --paths scopes to staged files; --staged enforces append-only against the index. Contract: project-history/assistant-chatbot/contracts/decision-log.md.")
+    parser.add_argument("--decision-log", dest="decision_log", metavar="ACTION", help="Decision log (record|review|list|audit|report); args as JSON via --dl-args. MCP: noctus.dev.decision_log.")
+    parser.add_argument("--dl-args", dest="dl_args", metavar="JSON", default=None, help="With --decision-log: JSON object of the action's arguments.")
     parser.add_argument("--cl-args", dest="cl_args", metavar="JSON", default=None, help="With --council-ledger: JSON object of the action's arguments.")
     parser.add_argument("--check-measurable-by-design", action="store_true", help="BLOCKING DELTA gate (owner rule 2026-11-09, measurement-by-design): a NEW migration's domain table needs a creation timestamp, and a lifecycle/status column needs an append-only transition capture (*_eventos table / audit trigger / transition-log organ). Warns on free-text outcomes, missing updated_at, event tables with no actor. Escape: `-- measurable: <reason>` (recorded to gate telemetry). --paths scopes to staged ADDED migrations; omitted = migrations added vs origin/dev. KB § PATTERNS/architect/measurement-by-design.md.")
     parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
@@ -1233,6 +1236,18 @@ def main():
             print(f"  {GREEN}✓ council-ledger-schema: every ledger row validates and the ledger is append-only.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} council-ledger-schema finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_decision_log_schema:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_decision_log_schema
+        _dl_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_decision_log_schema(repo_root=REPO_ROOT, paths=_dl_paths, staged=bool(getattr(args, "staged", False)))
+        if not issues:
+            print(f"  {GREEN}✓ decision-log-schema: every decision row validates and the log is append-only.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} decision-log-schema finding(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
@@ -4721,6 +4736,20 @@ def main():
             sys.exit(2)
         _cl_kw.setdefault("worktree_path", getattr(args, "worktree_path", None))
         result = _cl_run(args.council_ledger, **_cl_kw)
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        sys.exit(0 if result.get("ok") else 1)
+
+    elif getattr(args, "decision_log", None):
+        from tools.noctus.dev.decision_log import run as _dl_run
+        try:
+            _dl_kw = json.loads(args.dl_args) if args.dl_args else {}
+            if not isinstance(_dl_kw, dict):
+                raise ValueError("--dl-args must be a JSON object")
+        except ValueError as e:
+            print(f"  {RED}Error:{RESET} bad --dl-args: {e}")
+            sys.exit(2)
+        _dl_kw.setdefault("worktree_path", getattr(args, "worktree_path", None))
+        result = _dl_run(args.decision_log, **_dl_kw)
         print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
         sys.exit(0 if result.get("ok") else 1)
 

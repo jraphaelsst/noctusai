@@ -17079,6 +17079,17 @@ def check_council_ledger_schema(repo_root: Path | None = None, paths: list[str] 
     return check_schema(repo_root or REPO_ROOT, paths, staged=staged)
 
 
+def check_decision_log_schema(repo_root: Path | None = None, paths: list[str] | None = None, *, staged: bool = False) -> list[dict]:
+    """Offline pre-commit gate for the product-engineer decision log (contract: project-history/assistant-chatbot/
+    contracts/decision-log.md): every ``project-history/decisions/<YYYY-MM>/<slice_id>.ndjson`` row validates (enums,
+    tier >= the floor its own criteria imply, sequential ``D-<slice>-<NNN>`` ids, references) and, when ``staged``,
+    the staged diff only APPENDS lines at EOF. ``paths`` scopes to staged files; ``None`` = every file.
+    Logic lives in ``decision_log``."""
+    from .decision_log import check_schema
+
+    return check_schema(repo_root or REPO_ROOT, paths, staged=staged)
+
+
 def _definition_files(root: Path) -> list[Path]:
     files: list[Path] = []
     for base in sorted((root / "products").glob("*/ops/agents")):  # product-scope: all — declared agent definitions are config regardless of ativo
