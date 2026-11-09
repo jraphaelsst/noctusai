@@ -99,7 +99,8 @@ import type {
   SugestoesExtras,
   Membro,
   Roteiro,
-  StatusVisita,
+  RoteiroPatchBody,
+  VisitaPatchBody,
   Tag,
   TimelineEntry,
   TipoDocumento,
@@ -427,15 +428,17 @@ export interface ClienteCardDialogProps {
   roteirosRefreshing?: boolean;
   roteirosError?: string | null;
   onCriarRoteiro: () => void;
+  /** "Continuar editando" on a draft. */
+  onEditarRascunhoRoteiro: (roteiroId: string) => void;
   onRemoverRoteiro: (roteiroId: string) => void;
-  onGerarRoteiroPdf: (roteiroId: string) => void;
-  onPatchVisita: (
-    roteiroId: string,
-    visitaId: string,
-    body: { status?: StatusVisita; observacao?: string | null },
-  ) => void;
-  onAddVisita: (roteiroId: string, codigo: string) => void;
-  onRemoveVisita: (roteiroId: string, visitaId: string) => void;
+  /** "Baixar PDF" — only a gerado roteiro offers it (`permissoes.baixar_pdf`). */
+  onBaixarRoteiroPdf: (roteiroId: string) => void;
+  onReabrirRoteiro: (roteiroId: string) => void;
+  roteiroReabrindoId?: string | null;
+  onPatchRoteiro: (roteiroId: string, body: RoteiroPatchBody) => void;
+  onPatchVisita: (roteiroId: string, visitaId: string, body: VisitaPatchBody) => void;
+  onReagendarVisita: (roteiroId: string, visitaId: string) => void;
+  roteiroReagendandoId?: string | null;
   /** Answer "a visita aconteceu?" (CONTRACT sw-lead-to-contract §3.3). */
   onResponderFeedbackRoteiro?: (roteiroId: string, body: RoteiroFeedbackBody) => void;
   roteiroFeedbackPendingId?: string | null;
@@ -1119,11 +1122,15 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         refreshing={props.roteirosRefreshing}
         error={props.roteirosError}
         onCriar={props.onCriarRoteiro}
+        onEditarRascunho={props.onEditarRascunhoRoteiro}
         onRemover={props.onRemoverRoteiro}
-        onGerarPdf={props.onGerarRoteiroPdf}
+        onBaixarPdf={props.onBaixarRoteiroPdf}
+        onReabrir={props.onReabrirRoteiro}
+        reabrindoId={props.roteiroReabrindoId}
+        onPatchRoteiro={props.onPatchRoteiro}
         onPatchVisita={props.onPatchVisita}
-        onAddVisita={props.onAddVisita}
-        onRemoveVisita={props.onRemoveVisita}
+        onReagendar={props.onReagendarVisita}
+        reagendandoId={props.roteiroReagendandoId}
         onResponderFeedback={props.onResponderFeedbackRoteiro}
         feedbackPendingId={props.roteiroFeedbackPendingId}
         renderVisitadas={props.renderVisitadas}

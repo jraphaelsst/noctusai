@@ -31,6 +31,7 @@ import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import type { CardHubApi } from "@noctusai/lib/components";
 
 import { apiUrl } from "@/lib/apiBase";
+import { pessoaKey } from "@/hooks/usePessoa";
 import type {
   Agendamento,
   AgendamentoCreateBody,
@@ -46,6 +47,8 @@ import type {
   LadoParte,
   ImovelBusca,
   Roteiro,
+  ReagendarBody,
+  ReagendarResultado,
   RoteiroCreateBody,
   RoteiroPatchBody,
   Visita,
@@ -318,6 +321,9 @@ export function useAgendamentoMutations(clienteId: string) {
 
 // ─── Roteiros e visitas (migration 082) ─────────────────────────────────────
 
+/** `GET /api/roteiros/pendentes-feedback` — only GERADO roteiros enter it, so gerar/reabrir move it. */
+const ROTEIROS_PENDENTES_ROOT = ["sw", "roteiros", "pendentes-feedback"] as const;
+
 /** The roteiros cache family — exported so `useRoteirosFeedback` invalidates
  *  the SAME entries instead of re-deriving the key shape. */
 export const roteirosKeys = { list: ROTEIROS_KEY, family: FAMILY_KEY };
@@ -391,86 +397,93 @@ export function useImoveisBusca(termo: string) {
 // "imoveisBusca"]` prefix by its literal value.
 
 /**
- * Create / rename / delete a roteiro, reorder it, and record each visita's
- * outcome.
+ * The roteiro lifecycle writes (roteiro-ciclo CONTRACT §3–§5).
  *
- * Every one invalidates the roteiros list AND the timeline: a visita outcome
- * IS a timeline entry (derived from `feedback_em`), so leaving the timeline
- * stale would show the card contradicting itself in two panes.
+ * 🔴 EVERY WRITE PUTS WHAT THE SERVER ANSWERED INTO `roteirosKeys.list`, never
+ * invalidate-only: R2/R3/R5/R8/R9/R14 answer the full `Roteiro` (visitas,
+ * `contagem`, `permissoes`) and replace the cached row as-is; R12 writes BOTH
+ * roteiros (the old one gets its visita back as `reagendada`, the new draft is
+ * inserted). R6/R7/R11/R13 answer a `Visita` only, so the visita is written and
+ * the roteiro's server-derived parts (`contagem`, `permissoes`) are refreshed
+ * in the background on settle.
+ *
+ * The timeline is invalidated on settle: a visita outcome IS a timeline entry.
  */
 export function useRoteiroMutations(clienteId: string) {
   const qc = useQueryClient();
   const base = clienteBase(clienteId);
+  const rota = (id: string) => `${base}/roteiros/${encodeURIComponent(id)}`;
+  const timeline = [...FAMILY_KEY(clienteId), "timeline"] as const;
+  const lista = ROTEIROS_KEY(clienteId);
   const invalidate = () =>
     Promise.all([
-      qc.invalidateQueries({ queryKey: ROTEIROS_KEY(clienteId) }),
-      qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
+      qc.invalidateQueries({ queryKey: lista }),
+      qc.invalidateQueries({ queryKey: timeline }),
     ]);
 
-  // A roteiro answer carries its visitas + contagem, so it replaces the cached row as-is. The timeline
-  // (a visita outcome IS a timeline entry) refetches on settle.
-  const timeline = [...FAMILY_KEY(clienteId), "timeline"] as const;
+  /** A roteiro answer carries its visitas + contagem + permissoes: it replaces the cached row. */
+  const gravaRoteiro = (id: string) => ({
+    queryKey: lista,
+    commit: (old: Roteiro[] | undefined, saved: Roteiro) =>
+      // `replace` (not `patch`): a roteiro created moments ago may not be cached yet.
+      listOps.replace(old, id, saved, "prepend"),
+  });
 
+  /** R2 — creates a DRAFT (no funnel move). */
   const create = useCacheWriteMutation<Roteiro, RoteiroCreateBody>({
     mutationFn: (body) => api.post<Roteiro>(`${base}/roteiros`, body),
     targets: [
       {
-        queryKey: ROTEIROS_KEY(clienteId),
-        commit: (old, saved) => listOps.replace(old, saved.id, saved),
+        queryKey: lista,
+        commit: (old, saved) => listOps.replace(old, saved.id, saved, "prepend"),
       },
     ],
     invalidate: [timeline],
   });
 
+  /** R3 — title / date / time, in BOTH statuses. */
   const update = useCacheWriteMutation<Roteiro, { id: string; body: RoteiroPatchBody }>({
-    mutationFn: ({ id, body }) =>
-      api.patch<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}`, body),
-    targets: ({ id }) => [
-      {
-        queryKey: ROTEIROS_KEY(clienteId),
-        commit: (old, saved) => listOps.patch(old, id, saved),
-      },
-    ],
+    mutationFn: ({ id, body }) => api.patch<Roteiro>(rota(id), body),
+    targets: ({ id }) => [gravaRoteiro(id)],
     invalidate: [timeline],
   });
 
+  /** R4 — optimistic: a removed roteiro lingering through the round trip reads as a failed delete. */
   const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`${base}/roteiros/${encodeURIComponent(id)}`),
-    // Optimistic, same reasoning as the agendamento delete: a removed route
-    // lingering through the round trip reads as a failed delete and invites a
-    // second click.
+    mutationFn: (id: string) => api.delete(rota(id)),
     onMutate: async (id: string) => {
-      await qc.cancelQueries({ queryKey: ROTEIROS_KEY(clienteId) });
-      const previous = qc.getQueryData<Roteiro[]>(ROTEIROS_KEY(clienteId));
-      if (previous) {
-        qc.setQueryData<Roteiro[]>(
-          ROTEIROS_KEY(clienteId),
-          previous.filter((r) => r.id !== id),
-        );
-      }
+      await qc.cancelQueries({ queryKey: lista });
+      const previous = qc.getQueryData<Roteiro[]>(lista);
+      if (previous) qc.setQueryData<Roteiro[]>(lista, previous.filter((r) => r.id !== id));
       return { previous };
     },
     onError: (_err, _id, context) => {
-      if (context?.previous) qc.setQueryData(ROTEIROS_KEY(clienteId), context.previous);
+      if (context?.previous) qc.setQueryData(lista, context.previous);
     },
     onSettled: invalidate,
   });
 
+  /** R5 — optimistic order, then the server's roteiro (409 `roteiro_gerado` rolls it back). */
   const reorder = useCacheWriteMutation<Roteiro, { id: string; visitaIds: string[] }>({
     mutationFn: ({ id, visitaIds }) =>
-      api.put<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}/ordem`, {
-        visita_ids: visitaIds,
-      }),
-    targets: ({ id }) => [
+      api.put<Roteiro>(`${rota(id)}/ordem`, { visita_ids: visitaIds }),
+    targets: ({ id, visitaIds }) => [
       {
-        queryKey: ROTEIROS_KEY(clienteId),
-        commit: (old, saved) => listOps.patch(old, id, saved),
+        queryKey: lista,
+        optimistic: (old: Roteiro[] | undefined) =>
+          listOps.update(old, id, (r) => ({
+            ...r,
+            visitas: [...r.visitas].sort(
+              (a, b) => visitaIds.indexOf(a.id) - visitaIds.indexOf(b.id),
+            ),
+          })),
+        commit: gravaRoteiro(id).commit,
       },
     ],
     invalidate: [timeline],
   });
 
-  /** Edit the visitas of ONE roteiro inside the cached roteiros list (`contagem` is the server's: settle refetches). */
+  /** Edit the visitas of ONE roteiro inside the cached list. */
   const nasVisitas = (
     old: Roteiro[] | undefined,
     roteiroId: string,
@@ -478,76 +491,105 @@ export function useRoteiroMutations(clienteId: string) {
   ) =>
     listOps.update(old, roteiroId, (r) => ({ ...r, visitas: edit(r.visitas) ?? r.visitas }));
 
+  /** R11 — an outcome (cancelada needs `cancelada_por` + `cancelada_motivo`) or an observação. */
   const patchVisita = useCacheWriteMutation<
     Visita,
     { roteiroId: string; visitaId: string; body: VisitaPatchBody }
   >({
     mutationFn: ({ roteiroId, visitaId, body }) =>
-      api.patch<Visita>(
-        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`,
-        body,
-      ),
+      api.patch<Visita>(`${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`, body),
     targets: ({ roteiroId, visitaId }) => [
       {
-        queryKey: ROTEIROS_KEY(clienteId),
+        queryKey: lista,
         commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.patch(v, visitaId, saved)),
       },
     ],
-    invalidate: [timeline],
+    // `contagem` and `permissoes.reabrir` move with an outcome: the server's, refreshed.
+    invalidate: [lista, timeline],
   });
 
-  // A roteiro's property list was fixed at creation: `POST /roteiros` seeds the
-  // visitas from `imoveis[]` and nothing could add or drop one afterwards,
-  // even though both routes have always existed.
+  /** R6 — only while the roteiro is a draft (409 `roteiro_gerado`). */
   const addVisita = useCacheWriteMutation<Visita, { roteiroId: string; codigo: string }>({
     mutationFn: ({ roteiroId, codigo }) =>
-      api.post<Visita>(
-        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas`,
-        { codigo },
-      ),
+      api.post<Visita>(`${rota(roteiroId)}/visitas`, { codigo }),
     targets: ({ roteiroId }) => [
       {
-        queryKey: ROTEIROS_KEY(clienteId),
+        queryKey: lista,
         commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.replace(v, saved.id, saved)),
       },
     ],
-    invalidate: [timeline],
+    // `permissoes.gerar` / `motivo_gerar` ("Adicione ao menos um imóvel.") change with the list.
+    invalidate: [lista, timeline],
   });
 
+  /** R7 — only while the roteiro is a draft (409 `roteiro_gerado`). */
   const removeVisita = useCacheWriteMutation<unknown, { roteiroId: string; visitaId: string }>({
     mutationFn: ({ roteiroId, visitaId }) =>
-      api.delete(
-        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`,
-      ),
+      api.delete(`${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`),
     targets: ({ roteiroId, visitaId }) => [
       {
-        queryKey: ROTEIROS_KEY(clienteId),
+        queryKey: lista,
         optimistic: (old) => nasVisitas(old, roteiroId, (v) => listOps.remove(v, visitaId)),
       },
     ],
-    invalidate: [timeline],
+    invalidate: [lista, timeline],
+  });
+
+  /**
+   * R8 — consolidate. The roteiro leaves `rascunho` (the server moves the funnel and
+   * links the lead's interesses in ONE transaction), so those derived views are refreshed.
+   */
+  const gerar = useCacheWriteMutation<Roteiro, { id: string }>({
+    mutationFn: ({ id }) => api.post<Roteiro>(`${rota(id)}/gerar`),
+    targets: ({ id }) => [gravaRoteiro(id)],
+    invalidate: [timeline, pessoaKey(clienteId), ["sw-funil"], ROTEIROS_PENDENTES_ROOT],
+  });
+
+  /** R9 — back to `rascunho` (supervisor/admin/owner, no outcomes yet). */
+  const reabrir = useCacheWriteMutation<Roteiro, { id: string }>({
+    mutationFn: ({ id }) => api.post<Roteiro>(`${rota(id)}/reabrir`),
+    targets: ({ id }) => [gravaRoteiro(id)],
+    invalidate: [timeline, ROTEIROS_PENDENTES_ROOT],
+  });
+
+  /** R12 — closes the visita as `reagendada` (neutral) and opens a NEW draft; BOTH roteiros are written. */
+  const reagendar = useCacheWriteMutation<
+    ReagendarResultado,
+    { roteiroId: string; visitaId: string; body?: ReagendarBody }
+  >({
+    mutationFn: ({ roteiroId, visitaId, body }) =>
+      api.post<ReagendarResultado>(
+        `${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}/reagendar`,
+        body ?? {},
+      ),
+    targets: ({ roteiroId, visitaId }) => [
+      {
+        queryKey: lista,
+        commit: (old: Roteiro[] | undefined, saved: ReagendarResultado) => {
+          const comAntiga = nasVisitas(old, roteiroId, (v) =>
+            listOps.patch(v, visitaId, saved.visita),
+          );
+          return listOps.replace(comAntiga, saved.novo_roteiro.id, saved.novo_roteiro, "prepend");
+        },
+      },
+    ],
+    // The old roteiro's `contagem`/`permissoes` moved with the outcome.
+    invalidate: [lista, timeline],
   });
 
   // 🔴 ITS OWN ROUTE, not a field on `patchVisita` — migration 104 keeps
   // "did the visit happen" and "did it produce an accepted offer" as separate
-  // axes, and one body carrying both invites a client that cannot say which
-  // of the two it meant to change.
-  //
-  // Invalidates the NEGOCIAÇÃO too: accepting writes
-  // `atendimento_negociacao.imovel_codigo`, so leaving that query stale would
-  // show the Negociação panel contradicting the roteiro in the next tab.
+  // axes. Invalidates the NEGOCIAÇÃO too: accepting writes
+  // `atendimento_negociacao.imovel_codigo`.
   const patchProposta = useCacheWriteMutation<
     Visita,
     { roteiroId: string; visitaId: string; body: VisitaPropostaBody }
   >({
     mutationFn: ({ roteiroId, visitaId, body }) =>
-      api.patch<Visita>(
-        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}/proposta`,
-        body,
-      ),
+      api.patch<Visita>(`${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}/proposta`, body),
     targets: ({ roteiroId, visitaId }) => [
       {
-        queryKey: ROTEIROS_KEY(clienteId),
+        queryKey: lista,
         commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.patch(v, visitaId, saved)),
       },
     ],
@@ -563,6 +605,9 @@ export function useRoteiroMutations(clienteId: string) {
     patchProposta,
     addVisita,
     removeVisita,
+    gerar,
+    reabrir,
+    reagendar,
   };
 }
 
@@ -581,8 +626,25 @@ export function nomeDoArquivo(contentDisposition: string | null): string | null 
   return simples ? simples[1].trim() : null;
 }
 
+/** The server's `message` out of a failed response (`{detail:{message}}` or `{error:{message}}`), else `fallback`. */
+async function mensagemDaResposta(resp: Response, fallback: string): Promise<string> {
+  try {
+    const corpo = (await resp.json()) as {
+      detail?: { message?: unknown } | unknown;
+      error?: { message?: unknown };
+    };
+    const detalhe = corpo?.detail;
+    const doDetalhe =
+      detalhe && typeof detalhe === "object" ? (detalhe as { message?: unknown }).message : undefined;
+    const msg = doDetalhe ?? corpo?.error?.message;
+    return typeof msg === "string" && msg ? msg : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /**
- * The "Gerar Roteiro" download.
+ * The "Baixar PDF" download — a GERADO roteiro only (R10 refuses a draft).
  *
  * NOT `api.get` — the seed client parses JSON, and this endpoint answers with
  * `application/pdf`. Fetched with the session token and handed to the browser
@@ -597,7 +659,9 @@ export async function baixarRoteiroPdf(clienteId: string, roteiroId: string): Pr
     { headers: token ? { Authorization: `Bearer ${token}` } : {} },
   );
   if (!resp.ok) {
-    throw new Error(`Falha ao gerar o roteiro (HTTP ${resp.status})`);
+    // R10 answers 409 `roteiro_rascunho` with a ready-to-show pt-BR `message`
+    // (`{detail: {code, message}}`); show it, never a bare status.
+    throw new Error(await mensagemDaResposta(resp, `Falha ao baixar o PDF (HTTP ${resp.status})`));
   }
 
   const blob = await resp.blob();

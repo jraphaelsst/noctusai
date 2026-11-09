@@ -203,9 +203,14 @@ vi.mock("@/hooks/useCardHub", () => ({
     remove: { mutate: vi.fn(), isPending: false },
     reorder: { mutate: vi.fn(), isPending: false },
     patchVisita: { mutate: vi.fn(), isPending: false },
+    addVisita: { mutate: vi.fn(), isPending: false },
+    removeVisita: { mutate: vi.fn(), isPending: false },
+    gerar: { mutate: vi.fn(), isPending: false },
+    reabrir: { mutate: vi.fn(), isPending: false, variables: undefined },
+    reagendar: { mutate: vi.fn(), isPending: false, variables: undefined },
   }),
   baixarRoteiroPdf: vi.fn(),
-  // Consumed by `CriarRoteiroDialog`, which this container renders as a
+  // Consumed by `RoteiroEditorDialog`, which this container renders as a
   // sibling of the card — so it is reached even though the card itself is
   // stubbed below.
   useImoveisBusca: () => ({
@@ -231,7 +236,7 @@ vi.mock("@/hooks/useCardHub", () => ({
 
 // `useContratoMutations` — only `create` is read here (`NovoContratoDialog`
 // is a sibling reached even though the card itself is stubbed, same as
-// `CriarRoteiroDialog`/`useImoveisBusca` above). `importActual` keeps every
+// `RoteiroEditorDialog`/`useImoveisBusca` above). `importActual` keeps every
 // constant/label/validator `NovoContratoDialog` also imports from this
 // module real, so only the hook itself is faked.
 vi.mock("@/hooks/useContratos", async () => {
