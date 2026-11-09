@@ -457,6 +457,11 @@ Corretor          object   nested dict keyed-by-corretor-id: {"103": {"Codigo": 
 - `CodigoImobiliaria`: returned as `null` on `oneconsu-rest`, even though
   requesting it explicitly returns 400. Don't filter, don't try to
   request — just accept it in the response payload.
+- **MAIN broker vs partners (2026-11-09, live read-only):** `CodigoCorretor` (with `CorretorNome` = `"<cod>:<nome>"`) and `Agenciador` are equal on every sample — that code is the MAIN
+  broker; every other entry of the `Corretor` relation is a PARTNER. Requested via `CANDIDATE_IMOVEL_DETAIL_FIELDS`, parsed onto `Imovel.codigo_corretor` / `corretor_nome` / `agenciador`.
+  An unpublished record's stub (`VistaRecordUnpublished`) keeps the `Corretor` relation on `.payload` (no `CodigoCorretor` there). `listar_corretores(fields=...)` sends
+  `pesquisa.fields`; the 2026-10-26 finding (only `Codigo`+`Nome`, `fields` ignored) is UNVERIFIED for the re-granted key; no `/corretores/listarcampos` on `oneconsu-rest`.
+  SW usage: `products/social-wiring/projects/ad-lead-intake-CONTRACT.md` § 2.3b / § 6b.
 - `Corretor_Codigo`: a flat string copy of the first corretor's id,
   returned alongside the nested `Corretor` dict. Useful as a faster
   ID-only check than walking the nested dict; the `_first_corretor_nome`
@@ -2209,3 +2214,7 @@ technical detail.
   before the intake, rather than requiring the intake to answer it.
   Bulk ingestion stays blocked on the data-category intake
   (`KB § PATTERNS/security/lgpd.md`) and the user's go-ahead.
+
+## Pacing + clientes read seam (2026-11-09)
+
+`VistaClient._request` is paced and bounded: a token from the org's bucket (`vista:<org_id>`, default 5 rps / burst 10, per-org override through `get_vista_adapter_for_org(rate_per_sec=)`) before every attempt; HTTP 429 (and 5xx on READS only) is retried with jittered backoff honouring `Retry-After` (`VistaRateLimited`; > 300 s raises `RetryLater`); bodies stay redacted. The Protocol gained `list_clientes` (Fake + Real, read-only, same shape as `list_corretores`; the Real drops a field the key rejects and re-asks). SW consumes it in `vista_clientes_sync` (fill-empty-only, `products/social-wiring/projects/ad-lead-intake-CONTRACT.md` § 8).

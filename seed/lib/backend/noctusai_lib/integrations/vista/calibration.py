@@ -93,7 +93,12 @@ CANDIDATE_IMOVEL_DETAIL_FIELDS: list[Any] = [
     "DataCadastro", "DataAtualizacao",
     "Caracteristicas",
     "Empreendimento", "Construtora",
-    {"Corretor": ["Nome", "Email", "Fone"]},
+    # The relation's sub-fields Equipe/Gerente/Agenciador/Corretor/Codigo are the only broker detail Vista gives on this tenant
+    # (live 2026-11-09; `/corretores/listar` returns just Codigo+Nome): they enrich SW's `lead_corretores`.
+    {"Corretor": ["Nome", "Email", "Fone", "Codigo", "Agenciador", "Gerente", "Corretor", "Equipe"]},
+    # MAIN broker of the imóvel (owner/Vista 2026-11-09, equal on every sample): `CodigoCorretor` + `CorretorNome` ("<cod>:<nome>") +
+    # `Agenciador`. Every other entry of the `Corretor` relation is a PARTNER. Additive: the calibrator drops what a tenant rejects.
+    "CodigoCorretor", "CorretorNome", "Agenciador",
     # ── the 32-field expansion (CONTRACT `imoveis-vista-field-surface`,
     # `KB § INTEGRATIONS/vista.md`) ───────────────────────────────────────
     # Measured live 2026-09-04 against tenant `oneconsu-rest`: 107

@@ -45,9 +45,11 @@ from noctusai_lib.integrations.vista.client import (
     VistaClient,
     VistaConfigError,
     VistaError,
+    VistaFieldNotAvailable,
     PAGINATION_KEYS,
     VistaNotFound,
     VistaRecordUnpublished,
+    extract_corretores_items,
     extract_items,
     redact_api_key,
 )
@@ -75,7 +77,10 @@ class VistaRESTAdapter:
     product code.
     """
 
-    def __init__(self, *, base_url: str, api_key: str):
+    def __init__(
+        self, *, base_url: str, api_key: str,
+        rate_bucket: str = "vista", rate_per_sec: float | None = None, rate_burst: float | None = None,
+    ):
         if not base_url:
             raise VistaNotConfigured(
                 "VISTA_BASE_URL is empty — Vista integration disabled."
@@ -86,6 +91,8 @@ class VistaRESTAdapter:
             )
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        # Pacing (see `VistaClient`): the bucket is per ADAPTER, so a per-org adapter paces itself apart from the rest.
+        self._rate = {"rate_bucket": rate_bucket, "rate_per_sec": rate_per_sec, "rate_burst": rate_burst}
 
     async def get_property(self, code: str) -> PropertyData | None:
         """Fetch property data by code.
@@ -200,7 +207,7 @@ class VistaRESTAdapter:
     # `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up. — 2026-08-03
 
     def _client(self) -> VistaClient:
-        return VistaClient(self._base_url, self._api_key)
+        return VistaClient(self._base_url, self._api_key, **self._rate)
 
     async def get_imovel(self, code: str) -> Imovel | None:
         """Full canonical listing for one code.
@@ -361,6 +368,31 @@ class VistaRESTAdapter:
                 raise VistaNotFound(404, f"imovel {code!r} does not exist", "/imoveis/detalhes") from exc
             raise
         return vista_to_imovel(listing=None, detalhes=result.data if isinstance(result.data, dict) else None)
+
+    async def list_corretores(
+        self, *, page: int = 1, page_size: int = 50, fields: list[str] | None = None
+    ) -> tuple[list[dict], dict]:
+        client = self._client()
+        result = await client.listar_corretores(page=page, page_size=page_size, fields=fields)
+        return extract_corretores_items(result.data)
+
+    async def list_clientes(
+        self, *, page: int = 1, page_size: int = 50, fields: list[str] | None = None
+    ) -> tuple[list[dict], dict]:
+        client = self._client()
+        campos = list(fields or ["Codigo", "Nome"])
+        for _ in range(4):  # a field this key rejects is dropped and the page re-asked (Codigo never dropped)
+            try:
+                result = await client.listar_clientes(fields=campos, page=page, page_size=page_size)
+                break
+            except VistaFieldNotAvailable as exc:
+                restantes = [c for c in campos if c not in set(exc.fields) or c == "Codigo"]
+                if restantes == campos:
+                    raise
+                campos = restantes
+        else:  # pragma: no cover - 4 consecutive rejections
+            raise VistaError("Vista /clientes/listar kept rejecting fields")
+        return extract_corretores_items(result.data)  # the `{items, meta}` envelope, else the dict-keyed one
 
     async def list_destaques(self) -> list[str]:
         client = self._client()

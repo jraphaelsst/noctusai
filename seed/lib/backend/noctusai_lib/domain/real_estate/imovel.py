@@ -361,6 +361,23 @@ class Corretor(BaseModel):
     nome: Optional[str] = None
     email: Optional[str] = None
     fone: Optional[str] = None
+    #: Sub-fields of the property's `Corretor` relation (live 2026-11-09): the only place Vista gives the broker's team/roles on this tenant
+    #: (`/corretores/listar` returns just Codigo+Nome). `Sim`/`Nao` flags parsed to bool, None = not sent.
+    equipe: Optional[str] = None
+    gerente: Optional[bool] = None
+    agenciador: Optional[bool] = None
+    eh_corretor: Optional[bool] = None
+
+
+def _sim_nao_ou_none(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    texto = str(value).strip().lower() if value is not None else ""
+    if texto in ("sim", "s", "true", "1"):
+        return True
+    if texto in ("nao", "não", "n", "false", "0"):
+        return False
+    return None
 
 
 def parse_corretores(raw: Any) -> list[Corretor]:
@@ -391,6 +408,10 @@ def parse_corretores(raw: Any) -> list[Corretor]:
             nome=_clean(entry.get("Nome")),
             email=_clean(entry.get("Email")),
             fone=_clean(entry.get("Fone")),
+            equipe=_clean(entry.get("Equipe")),
+            gerente=_sim_nao_ou_none(entry.get("Gerente")),
+            agenciador=_sim_nao_ou_none(entry.get("Agenciador")),
+            eh_corretor=_sim_nao_ou_none(entry.get("Corretor")),
         )
         if any((corretor.codigo, corretor.nome, corretor.email)):
             out.append(corretor)
@@ -565,6 +586,11 @@ class Imovel(BaseModel):
 
     # Atribuição
     corretores: list[Corretor] = Field(default_factory=list)
+    #: The MAIN broker (Vista `CodigoCorretor`; `CorretorNome` is "<cod>:<nome>"; `Agenciador` the same person on the samples). Every
+    #: other entry of `corretores` is a partner. None when the record did not carry it (e.g. the unpublished-record stub).
+    codigo_corretor: Optional[str] = None
+    corretor_nome: Optional[str] = None
+    agenciador: Optional[str] = None
     construtora: Optional[str] = Field(None, description="Populated on only ~9% — too sparse to feature.")
 
     # Datas

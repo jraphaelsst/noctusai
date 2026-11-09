@@ -373,7 +373,7 @@ class TestVincularLead:
         assert len(interesses) == 1
         assert interesses[0]["cliente_id"] == cliente["id"]
         assert interesses[0]["origem"] == "lead"
-        assert interesses[0]["meta_ads_lead_id"] == meta["id"] and interesses[0]["lead_id"] is None
+        assert interesses[0]["meta_ads_lead_id"] == meta["id"] and interesses[0]["lead_id"] == lead["id"]
 
     def test_is_idempotent(self, client, cenario):
         scoped = cenario["scoped"]

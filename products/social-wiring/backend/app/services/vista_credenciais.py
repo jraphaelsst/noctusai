@@ -50,18 +50,21 @@ def build_store() -> CredentialStore:
     return build_credential_store(get_admin_client())
 
 
-def adapter_da_org(org_id: Any, store: Optional[CredentialStore] = None) -> VistaRESTAdapter:
-    """The Real Vista adapter for this org. Raises `VistaConfigError` when the org has no usable record."""
+def adapter_da_org(org_id: Any, store: Optional[CredentialStore] = None, *, rate_per_sec: Optional[float] = None) -> VistaRESTAdapter:
+    """The Real Vista adapter for this org. Raises `VistaConfigError` when the org has no usable record.
+
+    PACING: the adapter paces every call through the org's own rate-limit bucket (`vista:<org_id>`; default 5 requests/s, burst 10, the
+    platform `vista` bucket). `rate_per_sec` sets THIS org's budget (the clientes sync passes `vista_clientes_sync_estado.vista_rps`)."""
     try:
-        return get_vista_adapter_for_org(VistaCredentialResolver(store or build_store()), str(org_id))  # type: ignore[return-value]
+        return get_vista_adapter_for_org(VistaCredentialResolver(store or build_store()), str(org_id), rate_per_sec=rate_per_sec)  # type: ignore[return-value]
     except EncryptionNotConfigured as exc:
         raise VistaConfigError(str(exc)) from exc
 
 
-def adapter_ou_503(org_id: Any) -> VistaRESTAdapter:
+def adapter_ou_503(org_id: Any, *, rate_per_sec: Optional[float] = None) -> VistaRESTAdapter:
     """Request path: the adapter or a 503 (`Vista não configurada para esta empresa`)."""
     try:
-        return adapter_da_org(org_id)
+        return adapter_da_org(org_id, rate_per_sec=rate_per_sec)
     except VistaConfigError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 

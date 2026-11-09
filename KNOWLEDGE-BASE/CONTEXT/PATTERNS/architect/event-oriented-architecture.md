@@ -10,6 +10,8 @@
 - They never diff rows, and they never rebuild the past from today's rows.
 - The seed and every product follow this through the seed primitives, never by hand.
 
+**Companion rule (2026-11-09): measurement by design.** EOA says how a change is recorded; `KB § PATTERNS/architect/measurement-by-design.md` says what every feature must record so it can be measured (entities as dated rows, outcome enums, one metric derivation) and gates it (`check_measurable_by_design`). Its interim `scaffold_migration with_eventos` table is the hand-written shape §5.1 forbids ONLY until the E1 primitive is on `dev`; the scaffold then switches to the primitive.
+
 ## 2. Why "event-oriented" and not "event-driven" or "event sourcing"
 
 "Event-oriented architecture" is **our name, not an industry standard term**. A search on 2026-11-08 found no reliable source defining it. That is why we chose it: the two standard names each say something we do not mean.

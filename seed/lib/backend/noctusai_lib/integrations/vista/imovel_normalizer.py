@@ -127,6 +127,9 @@ def vista_to_imovel(
         foto_destaque=clean_text(payload.get("FotoDestaque") or payload.get("Foto")),
         fotos=_photo_list(payload.get("Fotos")),
         corretores=parse_corretores(payload.get("Corretor")),
+        codigo_corretor=clean_text(payload.get("CodigoCorretor")),
+        corretor_nome=_nome_do_corretor(payload.get("CorretorNome")),
+        agenciador=clean_text(payload.get("Agenciador")),
         construtora=clean_text(payload.get("Construtora")),
         data_cadastro=parse_date(payload.get("DataCadastro")),
         data_atualizacao=parse_date(payload.get("DataAtualizacao")),
@@ -194,6 +197,15 @@ def _coord(value: Any) -> Optional[float]:
         return float(text)
     except ValueError:
         return None
+
+
+def _nome_do_corretor(raw: Any) -> Optional[str]:
+    """`CorretorNome` arrives as "<cod>:<nome>" (e.g. "112:Diego Gomes"): keep the NAME part."""
+    texto = clean_text(raw)
+    if not texto:
+        return None
+    _, sep, nome = texto.partition(":")
+    return (nome if sep else texto).strip() or None
 
 
 def _photo_list(value: Any) -> list[str]:

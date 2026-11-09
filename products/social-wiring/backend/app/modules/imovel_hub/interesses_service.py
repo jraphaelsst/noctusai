@@ -202,6 +202,39 @@ def registrar_de_lead(
     return True
 
 
+def preencher_ids_do_lead(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    codigo: str,
+    *,
+    lead_id: Optional[str] = None,
+    meta_ads_lead_id: Optional[str] = None,
+) -> bool:
+    """Fill the lead link of an EXISTING interesse that lacks it (`lead_id` and/or `meta_ads_lead_id` still NULL).
+
+    The ad-lead intake needs `lead_id` on the interesse ("leads interested in this imóvel"); rows written by the earlier
+    Meta ingest carry only `meta_ads_lead_id`. NULL columns only -- an interesse already tied to a lead keeps it (one row
+    per (cliente, código), the first lead wins), and a soft-deleted row is filled too (it stays removed). Returns whether a
+    row changed."""
+    canonico = busca_service.canonical(codigo or "")
+    if not canonico or not (lead_id or meta_ads_lead_id):
+        return False
+    linhas = _linhas_do_par(client, org_id, cliente_id, canonico)
+    if not linhas:
+        return False
+    alvo = max(linhas, key=lambda r: (r.get("deleted_at") is None, str(r.get("created_at") or "")))
+    patch: dict[str, Any] = {}
+    if lead_id and not alvo.get("lead_id"):
+        patch["lead_id"] = str(lead_id)
+    if meta_ads_lead_id and not alvo.get("meta_ads_lead_id"):
+        patch["meta_ads_lead_id"] = str(meta_ads_lead_id)
+    if not patch:
+        return False
+    _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq("id", str(alvo["id"])).execute()
+    return True
+
+
 # ── imóvel side: "Interessados" (§4.3) ─────────────────────────────────
 
 
@@ -359,6 +392,7 @@ __all__ = [
     "TABLE",
     "adicionar",
     "listar",
+    "preencher_ids_do_lead",
     "registrar_de_lead",
     "remover",
 ]

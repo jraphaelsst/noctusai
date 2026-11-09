@@ -51,6 +51,17 @@ class _FakeTable:
             self._store[k] = row
         return self
 
+    # The sync also READS (the ref-divergence notices, the mirror) -- an empty table: nothing paused, nothing noticed.
+    data: list = []
+
+    def select(self, *_a, **_k):
+        return self
+
+    def __getattr__(self, name):
+        if name in {"eq", "in_", "is_", "order", "limit", "range", "not_", "gt", "neq"}:
+            return lambda *a, **k: self
+        raise AttributeError(name)
+
     def execute(self):
         return self
 

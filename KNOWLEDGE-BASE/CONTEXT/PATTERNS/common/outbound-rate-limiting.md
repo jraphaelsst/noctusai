@@ -67,7 +67,10 @@ wall-clock-waits — without it the real-adapter Graph tests take ~50s instead o
 
 - ✅ **Meta** (sync) — fully wired + tested.
 - ✅ **Mailchimp** (async) — wired (`acquire_async` at `_request`).
-- ⏳ **Vista / WAHA / YouTube / Google** — `NOC-REMEDIATE[rate-limit]` markers at
+- ✅ **Vista** (async, 2026-11-09) — wired at `VistaClient._request` (`acquire_async` before every attempt + `retry_with_backoff_async` on 429, and
+  on 5xx for READS only; `Retry-After` honoured). Each org gets its own bucket `vista:<org_id>` via `rate_limit.configure_bucket` (the runtime per-bucket
+  override a multi-tenant product uses for a per-org budget; env `NOC_RL_VISTA_*` still sets the family default).
+- ⏳ **WAHA / YouTube / Google** — `NOC-REMEDIATE[rate-limit]` markers at
   their chokepoints (sweep: `grep -rn "NOC-REMEDIATE\[rate-limit\]"`). Deferred
   because their call volume is low today; adopt before any of them grows a sync
   loop. Named destination, not a silent skip.
