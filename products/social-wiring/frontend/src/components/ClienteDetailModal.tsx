@@ -1155,6 +1155,7 @@ export function ClienteDetailModal({
     {/* "Reabrir como rascunho" — the confirmation warns that a downloaded PDF goes stale. */}
     <ReabrirRoteiroDialog
       open={reabrirAlvoId !== null}
+      geradoPorNome={roteiros.data?.find((r) => r.id === reabrirAlvoId)?.gerado_por_nome}
       onCancel={() => setReabrirAlvoId(null)}
       onConfirm={() => {
         const alvo = reabrirAlvoId;

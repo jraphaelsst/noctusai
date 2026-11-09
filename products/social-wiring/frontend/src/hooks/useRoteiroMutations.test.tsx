@@ -141,25 +141,36 @@ describe("useRoteiroMutations — R5 ordem / R6 / R7", () => {
     expect(lista()[0].visitas.map((v) => v.id)).toEqual(["v1", "v2", "v3"]);
   });
 
-  it("R6 POSTs {codigo} and writes the Visita into the roteiro; the roteiro's server-derived parts are refreshed", async () => {
-    const { result, lista, qc } = mount([roteiroFx({ visitas: [visitaFx("v1", "A1")] })]);
-    api.post.mockResolvedValueOnce(visitaFx("v9", "A9", { ordem: 1 }));
+  it("R6 POSTs {codigo} and writes the FULL Roteiro it answered (contract v1.1)", async () => {
+    const { result, lista } = mount([roteiroFx({ visitas: [visitaFx("v1", "A1")] })]);
+    api.post.mockResolvedValueOnce(
+      roteiroFx({
+        visitas: [visitaFx("v1", "A1"), visitaFx("v9", "A9", { ordem: 1 })],
+        permissoes: permissoesRascunho({ gerar: true }),
+      }),
+    );
 
     await act(() => result.current.addVisita.mutateAsync({ roteiroId: "r1", codigo: "A9" }));
 
     expect(api.post).toHaveBeenCalledWith(`${BASE}/r1/visitas`, { codigo: "A9" });
     expect(lista()[0].visitas.map((v) => v.codigo)).toEqual(["A1", "A9"]);
-    // R6 answers a Visita only: `permissoes.gerar` comes from a background refetch of the list
-    const chaves = vi.mocked(qc.invalidateQueries).mock.calls.map(([a]) => JSON.stringify(a?.queryKey));
-    expect(chaves).toContain(JSON.stringify(roteirosKeys.list(C)));
+    expect(lista()[0].contagem.total).toBe(2);
+    // the cache already holds the server's answer the instant it lands (no waiting on a refetch)
+    expect(lista()[0].permissoes.gerar).toBe(true);
   });
 
-  it("R7 removes the visita optimistically (DELETE …/visitas/{vid})", async () => {
+  it("R7 removes the visita optimistically, then commits the Roteiro the server answered (200)", async () => {
     const { result, lista } = mount([roteiroFx({ visitas: tres() })]);
-    api.delete.mockResolvedValueOnce(undefined);
+    const resposta = roteiroFx({
+      visitas: [tres()[0], tres()[2]],
+      permissoes: permissoesRascunho({ gerar: true }),
+      updated_at: "2026-11-09T15:00:00+00:00",
+    });
+    api.delete.mockResolvedValueOnce(resposta);
     await act(() => result.current.removeVisita.mutateAsync({ roteiroId: "r1", visitaId: "v2" }));
     expect(api.delete).toHaveBeenCalledWith(`${BASE}/r1/visitas/v2`);
     expect(lista()[0].visitas.map((v) => v.id)).toEqual(["v1", "v3"]);
+    expect(lista()[0].updated_at).toBe("2026-11-09T15:00:00+00:00");
   });
 });
 
@@ -215,17 +226,25 @@ describe("useRoteiroMutations — R8 gerar / R9 reabrir", () => {
 });
 
 describe("useRoteiroMutations — R11 outcome / R13 proposta / R12 reagendar", () => {
-  it("R11 PATCHes status + cancelada_por + cancelada_motivo (+ observacao) and merges the Visita the server answered", async () => {
-    const { result, lista } = mount([
-      roteiroFx({ status: "gerado", visitas: [visitaFx("v1", "A1"), visitaFx("v2", "A2")] }),
-    ]);
-    api.patch.mockResolvedValueOnce(
+  it("R11 PATCHes status + cancelada_por + cancelada_motivo and writes the FULL Roteiro (counts included)", async () => {
+    const visitas = [
       visitaFx("v1", "A1", {
         status: "cancelada",
         cancelada_por: "proprietario",
         cancelada_motivo: "imovel_indisponivel",
         resultado_em: "2026-11-14T10:00:00+00:00",
         resultado_por: "u1",
+      }),
+      visitaFx("v2", "A2"),
+    ];
+    const { result, lista } = mount([
+      roteiroFx({ status: "gerado", visitas: [visitaFx("v1", "A1"), visitaFx("v2", "A2")] }),
+    ]);
+    api.patch.mockResolvedValueOnce(
+      roteiroFx({
+        status: "gerado",
+        visitas,
+        permissoes: permissoesGerado({ reabrir: false, motivo_reabrir: "Já tem 1 resultado registrado." }),
       }),
     );
 
@@ -246,14 +265,21 @@ describe("useRoteiroMutations — R11 outcome / R13 proposta / R12 reagendar", (
       cancelada_por: "proprietario",
       cancelada_motivo: "imovel_indisponivel",
     });
-    const v1 = lista()[0].visitas[0];
-    expect([v1.status, v1.cancelada_por, v1.cancelada_motivo, v1.resultado_em]).toEqual([
-      "cancelada",
-      "proprietario",
-      "imovel_indisponivel",
-      "2026-11-14T10:00:00+00:00",
-    ]);
-    expect(lista()[0].visitas[1].status).toBe("pendente"); // the sibling is untouched
+    const r = lista()[0];
+    expect(r.visitas[0].status).toBe("cancelada");
+    expect(r.contagem.perdidas).toBe(1);
+    expect(r.permissoes.reabrir).toBe(false);
+    expect(r.visitas[1].status).toBe("pendente");
+  });
+
+  it("R11 sends `horario` ('HH:MM' or null) on its own", async () => {
+    const { result, lista } = mount([roteiroFx({ visitas: [visitaFx("v1", "A1")] })]);
+    api.patch.mockResolvedValueOnce(roteiroFx({ visitas: [visitaFx("v1", "A1", { horario: "10:30" })] }));
+    await act(() =>
+      result.current.patchVisita.mutateAsync({ roteiroId: "r1", visitaId: "v1", body: { horario: "10:30" } }),
+    );
+    expect(api.patch).toHaveBeenCalledWith(`${BASE}/r1/visitas/v1`, { horario: "10:30" });
+    expect(lista()[0].visitas[0].horario).toBe("10:30");
   });
 
   it("R13 keeps its own route (…/proposta) with {proposta, aceita}", async () => {

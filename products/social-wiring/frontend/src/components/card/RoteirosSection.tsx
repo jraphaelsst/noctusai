@@ -56,6 +56,7 @@ import {
   type VisitaPatchBody,
 } from "@/types/cardHub";
 
+import { HorarioVisita } from "./HorarioVisita";
 import { ImovelVisitaCard } from "./ImovelVisitaCard";
 import { VisitaFeedbackPrompt, roteiroVencido } from "./VisitaFeedbackPrompt";
 
@@ -281,6 +282,7 @@ function RoteiroCard({
             {gerado && roteiro.gerado_em && (
               <span className="text-xs text-muted-foreground">
                 em {formatDate(roteiro.gerado_em, true)}
+                {roteiro.gerado_por_nome ? ` por ${roteiro.gerado_por_nome}` : ""}
               </span>
             )}
             {gerado && (
@@ -571,6 +573,13 @@ function VisitaRow({
       )}
 
       <div className="pl-1">
+        <div className="mb-2">
+          <HorarioVisita
+            codigo={visita.codigo}
+            horario={visita.horario}
+            onSalvar={(valor) => onPatch({ horario: valor })}
+          />
+        </div>
         <div
           className="flex flex-wrap items-center gap-1.5"
           role="group"

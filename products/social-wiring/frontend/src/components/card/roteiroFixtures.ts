@@ -54,6 +54,7 @@ export function visitaFx(id: string, codigo: string, over: Partial<Visita> = {})
     reagendada_para_visita_id: null,
     resultado_em: null,
     resultado_por: null,
+    horario: null,
     ...over,
   };
 }
@@ -113,8 +114,10 @@ export function roteiroFx(over: Partial<Roteiro> = {}): Roteiro {
     status: "rascunho",
     gerado_em: gerado ? "2026-11-12T15:42:00+00:00" : null,
     gerado_por: gerado ? "u-cindy" : null,
+    gerado_por_nome: gerado ? "Cindy Kumagai" : null,
     reaberto_em: null,
     reaberto_por: null,
+    reaberto_por_nome: null,
     criado_por: "u1",
     feedback_status: "pendente",
     feedback_em: null,

@@ -437,6 +437,28 @@ describe("RoteirosSection — date and time stay editable on a gerado roteiro", 
   });
 });
 
+describe("RoteirosSection — per-visita Horário and who generated it", () => {
+  it("edits the visita's own time via R11 `horario` on blur (gerado too)", async () => {
+    const onPatchVisita = vi.fn();
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({
+        roteiros: [roteiro({ visitas: [visita("v1", "ONE9001", { horario: "10:00" })] })],
+        onPatchVisita,
+      }),
+    );
+    const h = getByTestId("visita-horario-ONE9001") as HTMLInputElement;
+    expect(h.value).toBe("10:00");
+    fireEvent.change(h, { target: { value: "14:00" } });
+    fireEvent.blur(h);
+    expect(onPatchVisita).toHaveBeenCalledWith("r1", "v1", { horario: "14:00" });
+  });
+
+  it("names who generated the roteiro", async () => {
+    const { getByTestId } = await render(baseProps({ roteiros: [roteiro()] }));
+    expect(getByTestId("roteiro-contagem").textContent).toContain("por Cindy Kumagai");
+  });
+});
+
 describe("RoteirosSection — a delisted imóvel", () => {
   it("says so, and still renders what the registry snapshot holds", async () => {
     // `imovel` is never null (the FK guarantees a registry row), but a sold

@@ -49,7 +49,12 @@ describe("FunilAtendimentoCard", () => {
     metricas.mockReturnValue({
       data: {
         leads: 10, com_roteiro: 4, visitas_agendadas: 6, visitas_realizadas: 3,
-        visitas_nao_realizadas: { reagendada: 2 },
+        visitas_consolidadas: 5,
+        visitas_perdidas: 3,
+        visitas_neutras: 4,
+        visitas_canceladas: 2,
+        visitas_nao_compareceu: 1,
+        visitas_reagendadas: 2,
         propostas_criadas: 2, propostas_aceitas: 1, propostas_recusadas: 1,
         tempo_medio_dias: { lead_a_roteiro: 2.5, roteiro_a_visita: null, visita_a_proposta: 1, proposta_a_aceite: null },
       },
@@ -58,7 +63,9 @@ describe("FunilAtendimentoCard", () => {
     const { getByTestId } = render(<FunilAtendimentoCard />);
     const card = getByTestId("painel-funil-atendimento");
     expect(card.textContent).toContain("Leads");
-    expect(getByTestId("painel-funil-nao-realizadas").textContent).toContain("Reagendada: 2");
+    expect(getByTestId("painel-funil-resultados").textContent).toContain("Consolidadas: 5");
+    expect(getByTestId("painel-funil-resultados").textContent).toContain("Perdidas: 3");
+    expect(getByTestId("painel-funil-perdidas-detalhe").textContent).toContain("2 reagendadas não contam");
     expect(card.textContent).toContain("Lead → roteiro: 2,5 d");
     expect(card.textContent).toContain("Roteiro → visita: —");
   });
