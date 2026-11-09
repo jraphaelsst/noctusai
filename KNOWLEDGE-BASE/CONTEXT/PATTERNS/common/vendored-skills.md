@@ -28,6 +28,7 @@
 - **No `/plugin install`, no marketplace wiring, no runtime dependency** on an external skill or package. A capability we want lives in our tree, under our review, versioned with our code.
 - **Check "already available" first.** The harness already ships some skills at runtime (§6b). A runtime-provided skill is used as-is and never vendored: copying it adds drift and, for source-available ones, a license problem.
 - **Check "already in-home" second.** `noctus.dev.corpus_search` / `ls .claude/skills/` for an overlapping `noc-*` skill. Overlap with a house skill (especially branching, shipping, git) is a reason to SKIP, not to merge.
+- **Measure overlap with the owning agent's KB canon third.** Find the agent whose `owns_kb` covers the domain (design → `product-designer`), grep its canon for the candidate's rules, and vendor only the **delta**. (Round 1, 2026-11-08: our design canon already covered most of UI UX Pro Max's accessibility rules; the delta was interaction, forms and navigation.)
 
 ## 2 · Source tiers and pinning
 
@@ -42,6 +43,8 @@
 
 ## 3 · Content vetting checklist
 
+**First resolve the candidate.** A popular repo often holds several skills, a CLI, a mirror under `src/` and marketing copy; count the real skill directories and pick the one you are vetting (UI UX Pro Max: 7 skill dirs, 711 files, 30 MB; the candidate was one 75-file dir). Star counts and "N skills" in posts are claims; check them in the repo.
+
 Read **every** file in the skill directory (SKILL.md, `scripts/`, `references/`, `assets/`). Scripts are read statically, never executed during vetting; if you must analyse one with code, use `python3 -I` from a directory outside the download, and treat the download as untrusted data.
 
 | # | Check | Reject (SKIP) when |
@@ -54,9 +57,11 @@ Read **every** file in the skill directory (SKILL.md, `scripts/`, `references/`,
 | 6 | **Payloads in assets** | images/PDFs with embedded instructions; files whose type ≠ extension |
 | 7 | **Tool permissions** | `allowed-tools` pre-approves broad tools (`Bash` unscoped, write tools) beyond the stated job |
 | 8 | **Excessive agency** (LLM06) | instructs autonomous destructive actions (delete, push, deploy) without a human gate |
-| 9 | **Collision with house law** | contradicts CLAUDE.md §1 (e.g. `--no-verify`, working on `dev`, installing deps) |
+| 9 | **Collision with house law** | contradicts CLAUDE.md §1 (e.g. `--no-verify`, working on `dev`, installing deps), or writes a parallel source of truth that forks a canonical one (e.g. a generated `design-system/MASTER.md` beside the seed tokens) |
+| 10 | **Footprint and churn** | bundled data or code is large (MB, hundreds of files) or upstream commits daily, so a copy goes stale at once ⇒ vendor only the stable text, or reference it |
+| 11 | **Who runs it** | the consuming agent lacks the tools the skill needs (a script needs `Bash`; `product-designer` has none) ⇒ the mechanism is unusable as is |
 
-Any 1–6 or 9 ⇒ SKIP with a register row (`rejected: <reason>`). Item 7–8 ⇒ ADAPT (narrow it) or SKIP. Unsure ⇒ route the read to agent `agents-security` before deciding.
+Any 1–6 or 9 ⇒ SKIP with a register row (`rejected: <reason>`). Item 7–8 ⇒ ADAPT (narrow it) or SKIP. Item 10–11 ⇒ VENDOR-PARTIAL (only the files that pass) or SKIP. Unsure ⇒ route the read to agent `agents-security` before deciding.
 
 ## 4 · License decision table
 
@@ -86,7 +91,7 @@ From the Agent Skills specification and Anthropic's authoring best practices, pl
 | Body | < 500 lines (instructions < ~5000 tokens recommended); longer → split into referenced files | spec; best practices |
 | References | **one level deep** from SKILL.md; files over 100 lines get a table of contents | best practices |
 | MCP tool names | fully qualified `Server:tool` | best practices |
-| Evaluations | **≥ 3 evaluation scenarios** before adoption; tested on every model it will run on (Haiku / Sonnet / Opus) | best practices |
+| Evaluations | **≥ 3 evaluation scenarios** before adoption; tested on every model it will run on (Haiku / Sonnet / Opus). A reference-only skill (no scripts, read by a person or agent) may be **desk-checked**: each scenario mapped to the rule that answers it, labelled "desk-checked, not model-run" in `evals.md` | best practices; house (2026-11-08) |
 | House: name | `noc-<verb-noun>` when it encodes a platform workflow; generic skills keep a plain name | `skill-creator` |
 | House: depth | `## Depth` → `KB § …`; never restate KB in the skill (DRY on creation) | `skill-creator` |
 | House: keeper | `check_skill_format` (`mcp/noctusai/tools/noctus/dev/compliance.py:19427`): frontmatter present, `name:` + `description:`, `name` = dir | keeper |
@@ -101,9 +106,10 @@ From the Agent Skills specification and Anthropic's authoring best practices, pl
 
 | Skill (our name) | Origin @ SHA | SPDX (at skill path) | NOTICE carried | Verdict | Vetted by · date | Re-check trigger |
 |---|---|---|---|---|---|---|
-| *(none yet — 2026-11-05 inventory: 0 of the 29 skills under `.claude/skills/` are vendored; all are authored in-home, the oldest batch `290515e66` 2026-05-25)* | — | — | — | — | skill-scout · 2026-11-05 | — |
+| *(2026-11-05 inventory: 0 of the 29 skills under `.claude/skills/` were vendored; all authored in-home, the oldest batch `290515e66` 2026-05-25)* | — | — | — | — | skill-scout · 2026-11-05 | — |
+| `ui-ux-rules` | github.com/nextlevelbuilder/ui-ux-pro-max-skill/tree/4f2dbb67e64969a9a30ab00742f2d55d66ddec2b/.claude/skills/ui-ux-pro-max (`references/quick-reference.md` only) | MIT (repo root; no LICENSE at the skill path) | n/a | VENDOR-PARTIAL — rejected parts: `scripts/` + `data/` (§3 items 10–11: 3.5 MB, daily upstream commits, needs Bash the designer lacks), `--persist` (item 9: forks the seed tokens), `references/pro-rules.md` (native-mobile scope) | skill-scout (noc-1, noc-iterate round 1) · 2026-11-08 | upstream SHA moved and `quick-reference.md` changed ∨ license changed ∨ 12 months |
 
-Row format for new entries: `noc-x | github.com/org/repo/tree/<sha>/skills/x | MIT | n/a | VENDOR | skill-scout · YYYY-MM-DD | upstream SHA moved ∨ license changed ∨ 12 months`.
+Row format for new entries: `noc-x | github.com/org/repo/tree/<sha>/skills/x | MIT | n/a | VENDOR | skill-scout · YYYY-MM-DD | upstream SHA moved ∨ license changed ∨ 12 months`. Verdicts: VENDOR · VENDOR-PARTIAL (name the files kept and why the rest was rejected) · AUTHOR-IN-HOME · INSTALL-NEEDS-CONSENT · SKIP.
 
 ### 6b · Runtime-provided — use, never vendor
 

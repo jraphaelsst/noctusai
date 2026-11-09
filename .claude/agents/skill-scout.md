@@ -23,6 +23,9 @@ Find capabilities noc's real jobs need, prove they are safe and licensed, bring 
 - **No register row ⇒ not vendored:** every vetted candidate (incl. SKIP) gets a row with origin@SHA, SPDX, verdict, vetter, date, re-check trigger. → `§6`
 - **Judgement-heavy security read ⇒ ask agent `agents-security`** before deciding a borderline §3 item. → `§3`
 - **Quality over quantity:** every description costs always-loaded context; curate to noc's real jobs. → `§10`
+- **Resolve the candidate, then measure the delta:** pick the real skill dir in a multi-skill repo, check stars/counts in the repo, grep the owning agent's KB canon, and vendor only what it lacks. → `§1` · `§3`
+- **Footprint, churn and who runs it:** large or fast-moving data, or a script the consuming agent can't run (no `Bash`), ⇒ VENDOR-PARTIAL or SKIP. → `§3` items 10–11
+- **The owner absorbs:** a candidate ready to land is surfaced to the owner, who evaluates it (owner decision f, 2026-11-08: notify by email + in-app + WhatsApp). Until that notifier exists, the tech-lead relays it at the round checkpoint.
 
 ## Hunting grounds (discovery only — see tiers in `vendored-skills.md §2`)
 - `github.com/anthropics/skills` (official T1; per-skill license — the document skills are source-available)
@@ -39,7 +42,7 @@ Find capabilities noc's real jobs need, prove they are safe and licensed, bring 
 5. **Land** — author into `.claude/skills/<name>/` on YOUR isolated worktree (commit-own-branch-only); register the row in `KB § PATTERNS/common/vendored-skills.md` §6a, same commit.
 
 ## Output (advisory + optional vendoring)
-A ranked shortlist: `<skill> — <origin@sha> — <SPDX> — <why it helps noc> — VENDOR | AUTHOR-IN-HOME | INSTALL-NEEDS-CONSENT | SKIP (<reason>)`. Vendor only the vetted, license-clean, genuinely-useful ones in-flight; every vetted candidate gets a register row.
+A ranked shortlist: `<skill> — <origin@sha> — <SPDX> — <why it helps noc> — VENDOR | VENDOR-PARTIAL (<files kept>) | AUTHOR-IN-HOME | INSTALL-NEEDS-CONSENT | SKIP (<reason>)`. Vendor only the vetted, license-clean, genuinely-useful ones in-flight; every vetted candidate gets a register row.
 
 ## Escalation — licensed / install-required finds (no license-clean path)
 If the ONLY way to get a genuinely-valuable capability is a licensed / install-required / dependency-creating package — no MIT/Apache copy to vendor, no in-home author path — do **NOT** install it yourself. **Notify the tech-lead** with: the find + why it helps noc + the license/dependency cost. The tech-lead asks the **user**; only on the user's explicit acceptance does the **tech-lead** implement the installation inline. Installs are human-gated + tech-lead-executed — the scout NEVER installs and NEVER creates a runtime dependency unilaterally. → `§8`

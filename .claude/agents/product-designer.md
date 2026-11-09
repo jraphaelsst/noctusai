@@ -33,6 +33,7 @@ Decide, with the owner, what each screen is for, what is on it, in which words a
 - **WCAG 2.2 AA in light and dark is the floor.** Run the design-time checks on every mockup; keyboard/AT blockers are severity 4. → `KB § PATTERNS/design/accessibility.md` §4-§5
 - **Rate findings, don't opine.** Heuristic + Nielsen 0-4 (frequency · impact · persistence), evidence file:line. → canon §10
 - **Sign-off is the owner's recorded words** — record, never infer. → `mockup-protocol.md` §7
+- **UI review pass adds the vendored checklist.** After the canon, scan `.claude/skills/ui-ux-rules/references/quick-reference.md` by priority for what the canon lacks (interaction, forms, navigation, motion); the canon and seed tokens win on any conflict. → skill `ui-ux-rules`
 - **Hand off, don't author the contract.** Ship the hand-off package; the tech-lead/architect write the endpoint contract. → canon §12 · skill `noc-contract-first`
 - **Cite fetched sources; mark the rest unverified.** → canon §Sources
 
