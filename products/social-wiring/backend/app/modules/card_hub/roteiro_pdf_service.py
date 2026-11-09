@@ -29,6 +29,7 @@ import httpx
 from noctusai_lib.integrations.documents.html_pdf import render_html_pdf
 from noctusai_lib.primitives.exceptions import ValidationError_
 
+from app.modules.card_hub import roteiro_erros
 from app.modules.card_hub import roteiro_pdf_template as tpl
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,12 @@ def gerar(
     proprietarios_por_codigo: Optional[dict[str, list[dict]]] = None,
     fotos_por_codigo: Optional[dict[str, str]] = None,
 ) -> bytes:
-    """`RoteiroOut` -> PDF bytes. Takes the already-enriched dict (no DB reads)."""
+    """`RoteiroOut` -> PDF bytes. Takes the already-enriched dict (no DB reads).
+
+    GERADO roteiros only (CONTRACT roteiro-ciclo R10): the route refuses a draft early, and this refuses it again so
+    no other caller (an e-mail or WhatsApp attachment, later) can render one."""
+    if roteiro.get("status") != "gerado":
+        raise roteiro_erros.roteiro_rascunho_pdf()
     visitas = sorted(
         roteiro.get("visitas") or [], key=lambda v: (v.get("ordem") or 0)
     )

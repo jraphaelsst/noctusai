@@ -10,9 +10,10 @@ WRITE RULES
   `uq_sw_cliente_imovel_interesses_vivo` is the backstop, this module is the
   message. A soft-deleted (cliente, código) is REVIVED by a manual add instead
   of inserting a second row.
-* `origem` is a closed vocabulary. `lead` and `roteiro` are SYSTEM values: the
+* `origem` is a closed vocabulary. `lead`, `roteiro` and `julia` are SYSTEM values: the
   HTTP surface refuses them (`ORIGENS_USUARIO`), `registrar_de_lead` is the one
-  writer of `lead`, and `roteiro` is reserved (no writer in v1).
+  writer of `lead`, `roteiro` is written by `roteiro_gerar` (migration 338: generating a
+  roteiro links the lead), and `julia` is reserved for the agent (F4)
 * Removing an interesse is a soft delete and never touches the lead rows or
   `atendimento_imoveis` (§4.1).
 
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 TABLE = "cliente_imovel_interesses"
 
-ORIGENS = ("lead", "manual", "campanha", "roteiro", "permuta")
+ORIGENS = ("lead", "manual", "campanha", "roteiro", "permuta", "julia")
 #: What a person may type through the API (§4.1) — `lead`/`roteiro` are system-only.
 ORIGENS_USUARIO = ("manual", "campanha", "permuta")
 

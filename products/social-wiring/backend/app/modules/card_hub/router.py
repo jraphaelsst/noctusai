@@ -42,6 +42,7 @@ from fastapi import (
 
 from starlette.concurrency import run_in_threadpool
 
+from noctusai_lib.api.access_tiers import access_tier
 from noctusai_lib.api.auth.session import is_org_admin_for, require_org_admin_for
 from noctusai_lib.domain.card_hub import CardHubContext, card_hub_routers
 
@@ -88,10 +89,13 @@ from app.modules.card_hub.negociacao_estruturada_router import (
     router as negociacao_estruturada_router,
 )
 from app.modules.card_hub.partes_schemas import ConjugeDaCertidaoBody, ParteCreateBody
+from app.modules.card_hub import roteiro_erros
 from app.modules.card_hub.roteiro_schemas import (
     RoteiroCreateBodyV2,
     RoteiroPatchBodyV2,
+    VisitaReagendarBody,
 )
+from app.modules.card_hub.roteiros_papeis import Ator, ator_da_requisicao
 from app.modules.card_hub.proveniencia.router import router as proveniencia_router
 from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
 from app.modules.imovel_hub import campos_extraidos_service as campos_extraidos_svc
@@ -453,23 +457,38 @@ def delete_agendamento_route(
 # the roteiro itself would.
 
 
+_ORG_TIER_ROTEIROS = "org-scoped via get_current_user_org; cliente ownership proven in the service"
+
+
+def _ator_roteiros(client: Any, auth: tuple, org_id: UUID, request: Request) -> Ator:
+    """The caller as the roteiro rules see it (CONTRACT roteiro-ciclo §2: `permissoes` is computed by the SERVER)."""
+    return ator_da_requisicao(client, get_core_client(), auth, org_id, request)
+
+
 @router.get("/{cliente_id}/roteiros")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def list_roteiros_route(
     cliente_id: UUID,
+    request: Request,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
-    return roteiros_svc.listar(client, org_id, cliente_id)
+    return roteiros_svc.listar(
+        client, org_id, cliente_id, ator=_ator_roteiros(client, auth, org_id, request)
+    )
 
 
 @router.post("/{cliente_id}/roteiros", status_code=201)
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def create_roteiro_route(
     cliente_id: UUID,
     body: RoteiroCreateBodyV2,
+    request: Request,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
+    """R2 — a DRAFT. No funil move (it moves on `.../gerar`)."""
     _user, org_id = _auth_parts(auth)
     # `AmbiguousAtendimento` is an AppException carrying its own 409, and an
     # unknown código raises `NotFoundError` from `ensure_imovel` — both already
@@ -484,14 +503,17 @@ def create_roteiro_route(
         data_visita=body.data_visita,
         usuario_id=getattr(_user, "id", None),
         hora_visita=body.hora_visita,
+        ator=_ator_roteiros(client, auth, org_id, request),
     )
 
 
 @router.patch("/{cliente_id}/roteiros/{roteiro_id}")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def patch_roteiro_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     body: RoteiroPatchBodyV2,
+    request: Request,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
@@ -505,10 +527,12 @@ def patch_roteiro_route(
         titulo=updates.get("titulo", ...),
         data_visita=updates.get("data_visita", ...),
         hora_visita=updates.get("hora_visita", ...),
+        ator=_ator_roteiros(client, auth, org_id, request),
     )
 
 
 @router.delete("/{cliente_id}/roteiros/{roteiro_id}", status_code=204)
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def delete_roteiro_route(
     cliente_id: UUID,
     roteiro_id: UUID,
@@ -525,18 +549,59 @@ def delete_roteiro_route(
 
 
 @router.put("/{cliente_id}/roteiros/{roteiro_id}/ordem")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def reorder_roteiro_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     body: RoteiroOrdemBody,
+    request: Request,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
-    return roteiros_svc.reordenar(client, org_id, cliente_id, roteiro_id, body.visita_ids)
+    return roteiros_svc.reordenar(
+        client, org_id, cliente_id, roteiro_id, body.visita_ids,
+        ator=_ator_roteiros(client, auth, org_id, request),
+    )
+
+
+@router.post("/{cliente_id}/roteiros/{roteiro_id}/gerar")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
+def gerar_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    request: Request,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """R8 — draft -> gerado, atomically (status + lead link); the funil move rides along under `funil`."""
+    user, org_id = _auth_parts(auth)
+    return roteiros_svc.gerar(
+        client, org_id, cliente_id, roteiro_id,
+        usuario_id=getattr(user, "id", None),
+        ator=_ator_roteiros(client, auth, org_id, request),
+    )
+
+
+@router.post("/{cliente_id}/roteiros/{roteiro_id}/reabrir")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS + "; reopen needs owner/admin/supervisor (403 sem_permissao_reabrir)")
+def reabrir_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    request: Request,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """R9 — gerado -> rascunho; supervisors, owners and admins, only while no visita has an outcome."""
+    _user, org_id = _auth_parts(auth)
+    return roteiros_svc.reabrir(
+        client, get_core_client(), org_id, cliente_id, roteiro_id,
+        ator=_ator_roteiros(client, auth, org_id, request),
+    )
 
 
 @router.get("/{cliente_id}/roteiros/{roteiro_id}/pdf")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 async def roteiro_pdf_route(
     cliente_id: UUID,
     roteiro_id: UUID,
@@ -545,13 +610,16 @@ async def roteiro_pdf_route(
 ) -> Response:
     """The cronograma, one imóvel per page, in visiting order.
 
-    `Response` with explicit bytes rather than `StreamingResponse`: the whole
+    GERADO roteiros only (R10): a draft is 409 `roteiro_rascunho` — the FE never offers the button, the server
+    refuses too. `Response` with explicit bytes rather than `StreamingResponse`: the whole
     document is built in memory anyway (it is a handful of text pages), so
     streaming would add a generator and remove the Content-Length.
     """
     _user, org_id = _auth_parts(auth)
     cliente = svc.ensure_cliente(client, org_id, cliente_id)
     roteiro = (await anyio.to_thread.run_sync(lambda: roteiros_svc.obter(client, org_id, cliente_id, roteiro_id)))
+    if roteiro.get("status") != roteiros_svc.STATUS_GERADO:
+        raise roteiro_erros.roteiro_rascunho_pdf()
     visitas = roteiro.get("visitas") or []
     # Photo download is blocking httpx I/O — off the event loop.
     fotos_por_codigo = await run_in_threadpool(
@@ -579,29 +647,35 @@ async def roteiro_pdf_route(
 
 
 @router.post("/{cliente_id}/roteiros/{roteiro_id}/visitas", status_code=201)
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def create_visita_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     body: VisitaCreateBody,
+    request: Request,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
     return roteiros_svc.adicionar_visita(
-        client, org_id, cliente_id, roteiro_id, body.codigo
+        client, org_id, cliente_id, roteiro_id, body.codigo,
+        ator=_ator_roteiros(client, auth, org_id, request),
     )
 
 
 @router.patch("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def patch_visita_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     visita_id: UUID,
     body: VisitaPatchBody,
+    request: Request,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
-    _user, org_id = _auth_parts(auth)
+    """R11 — returns the full Roteiro."""
+    user, org_id = _auth_parts(auth)
     updates = body.model_dump(mode="json", exclude_unset=True)
     return roteiros_svc.atualizar_visita(
         client,
@@ -611,10 +685,38 @@ def patch_visita_route(
         visita_id,
         status=updates.get("status", ...),
         observacao=updates.get("observacao", ...),
+        cancelada_por=updates.get("cancelada_por", ...),
+        cancelada_motivo=updates.get("cancelada_motivo", ...),
+        horario=updates.get("horario", ...),
+        usuario_id=getattr(user, "id", None),
+        ator=_ator_roteiros(client, auth, org_id, request),
+    )
+
+
+@router.post("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}/reagendar", status_code=201)
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
+def reagendar_visita_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    visita_id: UUID,
+    body: VisitaReagendarBody,
+    request: Request,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """R12 — the visita becomes `reagendada` (neutral) and a NEW rascunho roteiro carries its imóvel."""
+    user, org_id = _auth_parts(auth)
+    return roteiros_svc.reagendar(
+        client, org_id, cliente_id, roteiro_id, visita_id,
+        data_visita=body.data_visita,
+        hora_visita=body.hora_visita,
+        usuario_id=getattr(user, "id", None),
+        ator=_ator_roteiros(client, auth, org_id, request),
     )
 
 
 @router.patch("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}/proposta")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def patch_visita_proposta_route(
     cliente_id: UUID,
     roteiro_id: UUID,
@@ -630,7 +732,8 @@ def patch_visita_proposta_route(
     `atendimento_negociacao.imovel_codigo` — the property the contract
     automation is about — so it refuses rather than guesses when the deal
     already names a different imóvel, and unwinds the deal when an acceptance
-    is undone. `roteiros_service.registrar_proposta` carries the rules.
+    is undone. `roteiros_service.registrar_proposta` carries the rules (and R13:
+    409 `roteiro_rascunho` on a draft).
 
     `model_dump(exclude_unset=True)` and the `...` sentinel: `false` is a real
     value (undo), so ABSENCE is the only thing that can mean "leave alone".
@@ -649,24 +752,26 @@ def patch_visita_proposta_route(
     )
 
 
-@router.delete(
-    "/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}", status_code=204
-)
+@router.delete("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}")
+@access_tier("org", reason=_ORG_TIER_ROTEIROS)
 def delete_visita_route(
     cliente_id: UUID,
     roteiro_id: UUID,
     visita_id: UUID,
+    request: Request,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
-):
+) -> dict:
+    """R7 — 200 with the full Roteiro (every autosave answers with it)."""
     user, org_id = _auth_parts(auth)
-    roteiros_svc.remover_visita(
+    return roteiros_svc.remover_visita(
         client,
         org_id,
         cliente_id,
         roteiro_id,
         visita_id,
         usuario_id=getattr(user, "id", None),
+        ator=_ator_roteiros(client, auth, org_id, request),
     )
 
 

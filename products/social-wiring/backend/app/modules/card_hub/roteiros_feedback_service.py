@@ -1,8 +1,11 @@
 """Roteiro feedback — "a visita aconteceu?" (CONTRACT sw-lead-to-contract §3.2–3.4).
 
 The roteiro is DUE once `data_visita` (plus `hora_visita` when set) has passed
-and nobody answered. Answering fills the per-visita outcome and the structured
-`nao_realizada_motivo` the funnel metric groups by (`metricas_service`).
+and nobody answered — and ONLY a GERADO roteiro is ever due (a rascunho is not in
+the feedback flow). Answering fills the per-visita outcome
+(`realizada | cancelada | nao_compareceu | reagendada`, migration 338) the funnel
+metric groups by (`metricas_service`). The legacy `realizada: bool` + `motivo`
+body is still accepted and mapped exactly as the migration's backfill maps it.
 
 Kept apart from `roteiros_service` (which owns create/patch/proposta toggles) so
 the prompt, its answer and its scheduler read as one unit.
@@ -21,7 +24,9 @@ from noctusai_lib.primitives.exceptions import (
     ValidationError_,
 )
 
+from app.modules.card_hub import roteiro_erros as erros
 from app.modules.card_hub import roteiros_service as roteiros_svc
+from app.modules.card_hub.roteiros_papeis import Ator
 from app.modules.card_hub.services import _t
 from app.modules.imovel_hub.busca_service import enriquecer
 from app.services import table_reads
@@ -31,7 +36,8 @@ logger = logging.getLogger(__name__)
 TZ = ZoneInfo("America/Sao_Paulo")
 PROPOSTAS_TABLE = "atendimento_propostas"
 
-#: Mirrors the DB CHECK in migration 219.
+#: The LEGACY motivo vocabulary (migration 219) the old body still sends. Mapped, never stored (the column is
+#: vestigial since 338): cliente_nao_compareceu -> nao_compareceu, reagendada -> reagendada, the rest -> cancelada.
 MOTIVOS = (
     "cliente_desistiu",
     "cliente_nao_compareceu",
@@ -40,6 +46,8 @@ MOTIVOS = (
     "outro",
 )
 MOTIVO_PADRAO = "outro"
+#: The outcomes a feedback entry may name directly.
+RESULTADOS = ("realizada", "cancelada", "nao_compareceu", "reagendada")
 
 
 def agora_local() -> datetime:
@@ -120,7 +128,7 @@ def pendentes(
         client,
         roteiros_svc.TABLE,
         org_id,
-        eq_filters={"feedback_status": "pendente"},
+        eq_filters={"feedback_status": "pendente", "status": roteiros_svc.STATUS_GERADO},
         refine=lambda q: q.is_("deleted_at", "null").lte("data_visita", agora.date().isoformat()),
     )
     roteiros = [r for r in roteiros if vencido(r, agora)]
@@ -187,6 +195,74 @@ def _motivo_valido(motivo: Optional[str]) -> Optional[str]:
     return motivo
 
 
+def _enum_valido(valor: Optional[str], validos: tuple[str, ...], campo: str) -> Optional[str]:
+    if valor is not None and valor not in validos:
+        raise ValidationError_(
+            f"{campo} deve ser um de {list(validos)}, recebido {valor!r}", field=campo
+        )
+    return valor
+
+
+def _resolver(entrada: Optional[dict], *, aconteceu: bool, vid: str) -> dict:
+    """ONE entry of the feedback -> `{status, cancelada_por, cancelada_motivo, observacao}`, or the typed refusal.
+
+    `resultado` (new) wins; otherwise the legacy `realizada` + `motivo` is mapped as the migration's backfill maps it.
+    A `cancelada` — however it was reached — needs `cancelada_por` and `cancelada_motivo` (422
+    `cancelada_incompleta`): the legacy default `outro` is a MOTIVO, it never invents WHO cancelled.
+    """
+    entrada = entrada or {}
+    observacao = (entrada.get("observacao") or "").strip() or None
+    resultado = _enum_valido(entrada.get("resultado"), RESULTADOS, "resultado")
+    por = _enum_valido(entrada.get("cancelada_por"), roteiros_svc.CANCELADA_POR, "cancelada_por")
+    motivo_cancelamento = _enum_valido(
+        entrada.get("cancelada_motivo"), roteiros_svc.CANCELADA_MOTIVOS, "cancelada_motivo"
+    )
+
+    if resultado is None:
+        if aconteceu:
+            if entrada.get("realizada") is None:
+                raise ValidationError_(
+                    f"Informe o resultado da visita {vid}.", field="resultado"
+                )
+            realizada = bool(entrada["realizada"])
+        else:
+            if entrada.get("realizada"):
+                raise ValidationError_(
+                    "aconteceu=false não admite visita realizada.", field="visitas"
+                )
+            realizada = False
+        if realizada:
+            resultado = "realizada"
+        else:
+            motivo = _motivo_valido(entrada.get("motivo"))
+            if aconteceu and motivo is None:
+                raise ValidationError_(
+                    f"Informe o motivo da visita {vid} não realizada.", field="motivo"
+                )
+            motivo = motivo or MOTIVO_PADRAO
+            if motivo == "cliente_nao_compareceu":
+                resultado = "nao_compareceu"
+            elif motivo == "reagendada":
+                resultado = "reagendada"
+            else:
+                resultado = "cancelada"
+                motivo_cancelamento = motivo_cancelamento or motivo
+    elif not aconteceu and resultado == "realizada":
+        raise ValidationError_("aconteceu=false não admite visita realizada.", field="visitas")
+
+    if resultado == "cancelada":
+        if por is None or motivo_cancelamento is None:
+            raise erros.cancelada_incompleta()
+    else:
+        por = motivo_cancelamento = None
+    return {
+        "status": resultado,
+        "cancelada_por": por,
+        "cancelada_motivo": motivo_cancelamento,
+        "observacao": observacao,
+    }
+
+
 def responder(
     client: Any,
     org_id: UUID,
@@ -195,13 +271,17 @@ def responder(
     *,
     aconteceu: bool,
     visitas: list[dict],
+    usuario_id: Optional[Any] = None,
+    ator: Optional[Ator] = None,
 ) -> dict:
-    """Record "a visita aconteceu?" for a roteiro and return the updated Roteiro.
+    """R14 — record "a visita aconteceu?" for a GERADO roteiro and return the updated Roteiro (409 `roteiro_rascunho`
+    on a draft).
 
     ALL validation happens before the first write (card_hub has no
-    transactions): a 400 never leaves a half-answered roteiro.
+    transactions): a 400/422 never leaves a half-answered roteiro.
     """
     roteiro = roteiros_svc._obter(client, org_id, cliente_id, roteiro_id)
+    roteiros_svc._exigir_gerado(roteiro)
     if roteiro.get("feedback_status") == "respondido":
         raise RoteiroJaRespondido()
     existentes = {
@@ -225,41 +305,29 @@ def responder(
                 + ", ".join(faltando),
                 field="visitas",
             )
-    plano: dict[str, dict] = {}
-    for vid in existentes:
-        entrada = dadas.get(vid)
-        if aconteceu:
-            realizada = bool(entrada["realizada"])
-        else:
-            if entrada is not None and entrada.get("realizada"):
-                raise ValidationError_(
-                    "aconteceu=false não admite visita realizada.", field="visitas"
-                )
-            realizada = False
-        motivo = _motivo_valido((entrada or {}).get("motivo"))
-        if not realizada:
-            if aconteceu and motivo is None:
-                raise ValidationError_(
-                    f"Informe o motivo da visita {vid} não realizada.", field="motivo"
-                )
-            motivo = motivo or MOTIVO_PADRAO
-        else:
-            motivo = None
-        plano[vid] = {
-            "realizada": realizada,
-            "motivo": motivo,
-            "observacao": ((entrada or {}).get("observacao") or "").strip() or None,
-        }
+    # The ANSWERED visitas are judged first, so a wrong answer is reported as itself and not as the (consequent) gap
+    # in a visita nobody answered.
+    ordem = [*dadas, *(vid for vid in existentes if vid not in dadas)]
+    plano = {vid: _resolver(dadas.get(vid), aconteceu=aconteceu, vid=vid) for vid in ordem}
 
     agora = _now()
+    por_usuario = str(usuario_id) if usuario_id else None
     for vid, p in plano.items():
         atual = existentes[vid]
+        mudou = atual.get("status") != p["status"]
         updates: dict = {
-            "status": "realizada" if p["realizada"] else "nao_realizada",
-            "nao_realizada_motivo": p["motivo"],
-            "realizada_em": (atual.get("realizada_em") or agora) if p["realizada"] else None,
+            "status": p["status"],
+            "cancelada_por": p["cancelada_por"],
+            "cancelada_motivo": p["cancelada_motivo"],
+            "realizada_em": (atual.get("realizada_em") or agora) if p["status"] == "realizada" else None,
             "feedback_em": atual.get("feedback_em") or agora,
+            "atualizado_por": por_usuario,
         }
+        if mudou or not atual.get("resultado_em"):
+            updates["resultado_em"] = agora
+            updates["resultado_por"] = por_usuario
+        if p["status"] != "reagendada" and atual.get("reagendada_para_visita_id"):
+            updates["reagendada_para_visita_id"] = None
         if p["observacao"] is not None:
             updates["observacao"] = p["observacao"]
         _t(client, roteiros_svc.VISITAS_TABLE).update(updates).eq("id", vid).eq(
@@ -267,9 +335,9 @@ def responder(
         ).execute()
 
     _t(client, roteiros_svc.TABLE).update(
-        {"feedback_status": "respondido", "feedback_em": agora}
+        {"feedback_status": "respondido", "feedback_em": agora, "updated_at": agora, "atualizado_por": por_usuario}
     ).eq("id", str(roteiro_id)).eq("org_id", str(org_id)).execute()
-    return roteiros_svc.obter(client, org_id, cliente_id, roteiro_id)
+    return roteiros_svc.obter(client, org_id, cliente_id, roteiro_id, ator=ator)
 
 
 # ── 3.4 — the visited list ──────────────────────────────────────────────────

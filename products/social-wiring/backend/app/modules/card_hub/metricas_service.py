@@ -11,7 +11,8 @@ from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from app.modules.card_hub.roteiros_feedback_service import MOTIVO_PADRAO, membros_do_cliente
+from app.modules.card_hub.roteiros_feedback_service import membros_do_cliente
+from app.modules.card_hub.roteiros_service import STATUS_GERADO, _contagem
 from app.services import table_reads
 
 PROPOSTAS_TABLE = "atendimento_propostas"
@@ -85,10 +86,11 @@ def funil(
     ids = [str(a["id"]) for a in atendimentos]
     criado_em = {str(a["id"]): _ts(a.get("created_at")) for a in atendimentos}
 
+    # Drafts are in NO count: only a GERADO roteiro is a commitment to visit (CONTRACT roteiro-ciclo §4).
     roteiros = [
         r
         for r in table_reads.in_batched_rows(client, "roteiros", org_id, "atendimento_id", ids)
-        if r.get("deleted_at") is None
+        if r.get("deleted_at") is None and r.get("status") == STATUS_GERADO
     ]
     visitas = [
         v
@@ -99,17 +101,17 @@ def funil(
     ]
     propostas = table_reads.in_batched_rows(client, PROPOSTAS_TABLE, org_id, "atendimento_id", ids)
 
-    nao_realizadas: dict[str, int] = {}
-    for v in visitas:
-        if v.get("status") == "nao_realizada":
-            motivo = v.get("nao_realizada_motivo") or MOTIVO_PADRAO
-            nao_realizadas[motivo] = nao_realizadas.get(motivo, 0) + 1
+    # The ONE derivation (`roteiros_service._contagem`): consolidadas = realizada, perdidas = cancelada +
+    # nao_compareceu, neutras = reagendada + pendente. The legacy `visitas_nao_realizadas` (a motivo -> n dict) is
+    # GONE (amendment v1.1 §5): the six keys below replace it.
+    contagem = _contagem(visitas)
 
     # lead -> first roteiro
     primeiro_roteiro: dict[str, datetime] = {}
     roteiro_criado: dict[str, Optional[datetime]] = {}
     for r in roteiros:
-        t = _ts(r.get("created_at"))
+        # The roteiro COUNTS from the moment it was generated (a draft is in no count).
+        t = _ts(r.get("gerado_em") or r.get("created_at"))
         roteiro_criado[str(r["id"])] = t
         aid = str(r["atendimento_id"])
         if t is not None and (aid not in primeiro_roteiro or t < primeiro_roteiro[aid]):
@@ -119,9 +121,14 @@ def funil(
     return {
         "leads": len(atendimentos),
         "com_roteiro": len({str(r["atendimento_id"]) for r in roteiros}),
-        "visitas_agendadas": len(visitas),
-        "visitas_realizadas": sum(1 for v in visitas if v.get("status") == "realizada"),
-        "visitas_nao_realizadas": nao_realizadas,
+        "visitas_agendadas": contagem["total"],
+        "visitas_realizadas": contagem["consolidadas"],
+        "visitas_consolidadas": contagem["consolidadas"],
+        "visitas_perdidas": contagem["perdidas"],
+        "visitas_neutras": contagem["neutras"],
+        "visitas_canceladas": contagem["canceladas"],
+        "visitas_nao_compareceu": contagem["nao_compareceu"],
+        "visitas_reagendadas": contagem["reagendadas"],
         "propostas_criadas": len(propostas),
         "propostas_aceitas": sum(1 for p in propostas if p.get("status") == "aceita"),
         "propostas_recusadas": sum(1 for p in propostas if p.get("status") == "recusada"),

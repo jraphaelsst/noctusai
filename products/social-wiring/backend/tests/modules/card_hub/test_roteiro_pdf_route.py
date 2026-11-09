@@ -15,7 +15,7 @@ import pytest
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 from tests.modules.card_hub.test_roteiros import (
     _auth,
-    _criar,
+    _criar_gerado as _criar,
     _seed,
     imovel_row,
 )

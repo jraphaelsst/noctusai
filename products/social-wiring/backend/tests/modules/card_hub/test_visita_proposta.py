@@ -48,17 +48,27 @@ def _seed(scoped, *, codigos=("ONE9001", "ONE9002"), negociacoes=None):
     scoped.set_table_data("negociacao_defaults", [])
     scoped.set_table_data("cliente_membros", [])
     scoped.set_table_data("lead_corretores", [])
+    scoped.set_table_data("cliente_imovel_interesses", [])
+    scoped.set_table_data("pipeline_stages", [])
     return cid, aid
 
 
 def _criar_roteiro(client, cid, codigos) -> dict:
+    """A GERADO roteiro: a proposta needs a visited, generated roteiro (R13)."""
     resp = client.post(
         f"/api/clientes/{cid}/roteiros",
         json={"imoveis": list(codigos), "data_visita": "2026-10-10"},
         headers=_auth(),
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()
+    gerado = client.post(f"/api/clientes/{cid}/roteiros/{resp.json()['id']}/gerar", headers=_auth())
+    assert gerado.status_code == 200, gerado.text
+    return gerado.json()
+
+
+def _reabrir(scoped, rid) -> None:
+    """Put a roteiro back in `rascunho` the way `POST .../reabrir` leaves it, to reach the imóvel-editing routes."""
+    scoped.table("roteiros").update({"status": "rascunho"}).eq("id", rid).execute()
 
 
 def _proposta(client, cid, rid, vid, **body):
@@ -96,10 +106,13 @@ def _deal(scoped, aid) -> object:
 class TestTheAxisIsOrthogonalToStatus:
     """🔴 Migration 104's central decision — see the module docstring."""
 
-    def test_status_stays_at_its_three_values(self):
+    def test_status_stays_at_its_five_outcome_values_with_no_proposta_in_them(self):
         from app.modules.card_hub.roteiros_service import STATUS_VALIDOS
 
-        assert STATUS_VALIDOS == ("pendente", "realizada", "nao_realizada")
+        assert STATUS_VALIDOS == (
+            "pendente", "realizada", "cancelada", "nao_compareceu", "reagendada",
+        )
+        assert not any("proposta" in v or "aceit" in v for v in STATUS_VALIDOS)
 
     def test_recording_a_proposta_does_not_touch_status(self, client, scoped):
         cid, _aid = _seed(scoped)
@@ -420,10 +433,13 @@ class TestUmDeleteNaoDeixaOAceiteParaTras:
                          proposta=True, aceita=True).status_code == 200
         assert _deal(scoped, aid) == "ONE9001"
 
+        # A gerado roteiro keeps its imóveis fixed (R7), so the roteiro is reopened first: an accepted proposta is not
+        # an outcome, which is why a reopen is allowed.
+        _reabrir(scoped, roteiro["id"])
         assert client.delete(
             f"/api/clientes/{cid}/roteiros/{roteiro['id']}/visitas/{vid}",
             headers=_auth(),
-        ).status_code == 204
+        ).status_code == 200  # R7 answers with the full Roteiro
         # The explicit un-accept path already did this; delete used to be the
         # silent half that disagreed with it.
         assert _deal(scoped, aid) is None
