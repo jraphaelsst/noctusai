@@ -17095,6 +17095,17 @@ def check_council_ledger_schema(repo_root: Path | None = None, paths: list[str] 
     return check_schema(repo_root or REPO_ROOT, paths, staged=staged)
 
 
+def check_decision_log_schema(repo_root: Path | None = None, paths: list[str] | None = None, *, staged: bool = False) -> list[dict]:
+    """Offline pre-commit gate for the product-engineer decision log (contract: project-history/assistant-chatbot/
+    contracts/decision-log.md): every ``project-history/decisions/<YYYY-MM>/<slice_id>.ndjson`` row validates (enums,
+    tier >= the floor its own criteria imply, sequential ``D-<slice>-<NNN>`` ids, references) and, when ``staged``,
+    the staged diff only APPENDS lines at EOF. ``paths`` scopes to staged files; ``None`` = every file.
+    Logic lives in ``decision_log``."""
+    from .decision_log import check_schema
+
+    return check_schema(repo_root or REPO_ROOT, paths, staged=staged)
+
+
 def check_council_ledger_sync(repo_root: Path | None = None, *, client=None, verdict_out: dict | None = None) -> list[dict]:
     """Online pre-push check: every ndjson id of the council ledger must exist in the agents-product DB. A table that
     is not applied yet / no credentials / DB unreachable is ``inconclusive`` (returned in ``verdict_out``, no issue:

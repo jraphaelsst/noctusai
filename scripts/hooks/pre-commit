@@ -767,6 +767,17 @@ if [[ -n "$STAGED_COUNCIL_LEDGER" ]] && have_py; then
         echo "[pre-commit] COUNCIL-LEDGER-SCHEMA (warn-only, shadow): rows are written with noctus.dev.council_ledger (never by hand); a correction is a new event row, not an edit. Contract: project-history/assistant-chatbot/contracts/council-ledger.md." >&2
     fi
 fi
+# ── decision log (contract: project-history/assistant-chatbot/contracts/decision-log.md): every staged decision row
+# validates (tier >= its criteria floor, sequential ids) and the log is append-only. Offline.
+# WARN-FIRST SHADOW (gate-methodology-sync): warn-only >=7 days, then promote with a {since,fires,fix_rate} record.
+STAGED_DECISION_LOG=$(git diff --cached --name-only 2>/dev/null | grep -E '^project-history/decisions/[^/]+/[^/]+\.ndjson$' || true)
+if [[ -n "$STAGED_DECISION_LOG" ]] && have_py; then
+    echo "[pre-commit] decision log staged — validating rows + append-only..."
+    STAGED_DECISION_CSV=$(echo "$STAGED_DECISION_LOG" | paste -sd, -)
+    if ! "$PY" "$CLI" --check-decision-log-schema --staged --paths "$STAGED_DECISION_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] DECISION-LOG-SCHEMA (warn-only, shadow): rows are written with noctus.dev.decision_log (never by hand); a correction is a new review row, not an edit. Contract: project-history/assistant-chatbot/contracts/decision-log.md." >&2
+    fi
+fi
 STAGED_AGENT_DEFS=$(git diff --cached --name-only 2>/dev/null | grep -E '^products/[^/]+/(ops/agents/.*\.(json|ya?ml)|packages/[^/]+/package\.yaml)$' || true)
 if [[ -n "$STAGED_AGENT_DEFS" ]] && have_py; then
     echo "[pre-commit] agent definition staged — checking no owned agent is opened to every org..."

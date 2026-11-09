@@ -826,6 +826,15 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-decision-log-schema": {
+   "mechanism": "tool: noctus.dev.decision_log (the only write path; refuses a tier below the floor its criteria imply, enforces caps and 3-in-a-row before append)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "source": "Decision-log contract v1 sections 2-6 (project-history/assistant-chatbot/contracts/decision-log.md); decision-rights research (project-history/assistant-chatbot/research/decision-rights-research.md); append-only ledger rule (EOA / KB § PATTERNS/architect/event-oriented-architecture.md)"
+  },
   "keeper:check-dependabot-product-coverage": {
    "severity": "",
    "kind": "keeper",
@@ -3346,6 +3355,18 @@
    "gates": [
     "keeper:check-council-ledger-schema",
     "keeper:check-council-ledger-sync"
+   ]
+  },
+  {
+   "id": "D30",
+   "decision": "Product-engineer decisions are measurable and bounded: every in-scope decision is a validated, append-only ledger row (one file per slice); a row below the tier floor its own criteria imply is refused at write, caps (5 autonomous / 3 notify) and 3-in-a-row are enforced at record, and audit judges the whole slice diff pre-merge. Schema gate is warn-first shadow then blocking",
+   "home": "project-history/assistant-chatbot/contracts/decision-log.md",
+   "construction": "noctus.dev.decision_log (the only write path; refuses below-floor tiers, enforces caps)",
+   "gate": "keeper:check-decision-log-schema",
+   "telemetry": "gate events (cli wrapper) via --check-decision-log-schema; per-class use/veto/reclassify + promotion proposals via decision_log action=report; pre-merge findings via action=audit",
+   "branch": "feat/assistant-decision-log",
+   "gates": [
+    "keeper:check-decision-log-schema"
    ]
   }
  ]

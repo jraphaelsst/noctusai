@@ -284,6 +284,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-council-ledger-schema", action="store_true", help="Offline pre-commit gate: every project-history/council/**/*.ndjson row validates against the council-ledger contract and a staged diff only appends at EOF (append-only). --paths scopes to staged files; --staged enforces append-only against the index. KB-free contract: project-history/assistant-chatbot/contracts/council-ledger.md.")
     parser.add_argument("--staged", action="store_true", help="With --check-council-ledger-schema: also enforce append-only against the git index.")
+    parser.add_argument("--check-decision-log-schema", action="store_true", help="Offline pre-commit gate: every project-history/decisions/**/*.ndjson row validates against the decision-log contract (tier >= its criteria floor, sequential ids) and a staged diff only appends at EOF. --paths scopes to staged files; --staged enforces append-only against the index. Contract: project-history/assistant-chatbot/contracts/decision-log.md.")
+    parser.add_argument("--decision-log", dest="decision_log", metavar="ACTION", help="Decision log (record|review|list|audit|report); args as JSON via --dl-args. MCP: noctus.dev.decision_log.")
+    parser.add_argument("--dl-args", dest="dl_args", metavar="JSON", default=None, help="With --decision-log: JSON object of the action's arguments.")
     parser.add_argument("--check-council-ledger-sync", action="store_true", help="Online pre-push check: council ledger ndjson ids vs the DB ids. A missing table / no credentials is inconclusive (exit 0, printed loudly), never red.")
     parser.add_argument("--council-ledger", dest="council_ledger", metavar="ACTION", help="Council ledger (open_session|record_objection|record_verdict|record_event|report|sync|status); args as JSON via --cl-args. MCP: noctus.dev.council_ledger.")
     parser.add_argument("--cl-args", dest="cl_args", metavar="JSON", default=None, help="With --council-ledger: JSON object of the action's arguments.")
@@ -1234,6 +1237,18 @@ def main():
             print(f"  {GREEN}✓ council-ledger-schema: every ledger row validates and the ledger is append-only.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} council-ledger-schema finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_decision_log_schema:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_decision_log_schema
+        _dl_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_decision_log_schema(repo_root=REPO_ROOT, paths=_dl_paths, staged=bool(getattr(args, "staged", False)))
+        if not issues:
+            print(f"  {GREEN}✓ decision-log-schema: every decision row validates and the log is append-only.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} decision-log-schema finding(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
@@ -4737,6 +4752,20 @@ def main():
             sys.exit(2)
         _cl_kw.setdefault("worktree_path", getattr(args, "worktree_path", None))
         result = _cl_run(args.council_ledger, **_cl_kw)
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        sys.exit(0 if result.get("ok") else 1)
+
+    elif getattr(args, "decision_log", None):
+        from tools.noctus.dev.decision_log import run as _dl_run
+        try:
+            _dl_kw = json.loads(args.dl_args) if args.dl_args else {}
+            if not isinstance(_dl_kw, dict):
+                raise ValueError("--dl-args must be a JSON object")
+        except ValueError as e:
+            print(f"  {RED}Error:{RESET} bad --dl-args: {e}")
+            sys.exit(2)
+        _dl_kw.setdefault("worktree_path", getattr(args, "worktree_path", None))
+        result = _dl_run(args.decision_log, **_dl_kw)
         print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
         sys.exit(0 if result.get("ok") else 1)
 
