@@ -7,6 +7,7 @@ convention — the router is wiring, this is the logic).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Union
 
 from noctusai_lib.integrations.llm import build_cached_messages
+from noctusai_lib.integrations.retrieval import Retriever
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,109 @@ def load_knowledge(knowledge_path: KnowledgePath) -> str:
             "chat with no knowledge would confidently invent answers."
         )
     return text
+
+
+# ─── Retrieval: send the relevant chunks, not the whole file ──────────────
+#
+# `load_knowledge` above stays the mount-time check and the full text is the
+# FALLBACK; `HelpChatKnowledgeSelector` is what a request uses to put only the
+# relevant chunks in the prompt (retrieval organ,
+# `KB § PATTERNS/backend/retrieval-organ.md`).
+
+#: Why a request got the whole knowledge file instead of retrieved chunks.
+FALLBACK_INDEX_FAILED = "index_failed"
+FALLBACK_RETRIEVAL_ERROR = "retrieval_error"
+FALLBACK_NO_RELEVANT_CHUNKS = "no_relevant_chunks"
+
+_CHUNK_SEPARATOR = "\n\n---\n\n"
+_QUERY_USER_TURNS = 3
+
+
+@dataclass(frozen=True)
+class KnowledgeSelection:
+    """`source` is "retrieval" (text = the joined chunks) or "full_file"
+    (text = the whole knowledge; `fallback_reason` says why, and the selector
+    already logged it)."""
+
+    text: str
+    source: str
+    fallback_reason: str | None = None
+    chunk_count: int = 0
+
+
+def retrieval_query_from_history(history: list[dict], *, user_turns: int = _QUERY_USER_TURNS) -> str:
+    """The retrieval query: the last few USER turns. A bare follow-up ("sim",
+    "1", "e o prazo?") embeds to nothing on its own; the turns before it carry
+    the topic."""
+    users = [m["content"] for m in history if m.get("role") == "user" and (m.get("content") or "").strip()]
+    return "\n".join(users[-user_turns:])
+
+
+class HelpChatKnowledgeSelector:
+    """Per-request knowledge for the help chat. Indexes the product knowledge
+    lazily (first request; a no-op when the stored corpus already matches the
+    text, so a restart spends no embedding), then returns the top-k chunks.
+
+    NEVER silent: whenever it falls back to the whole file it logs the reason
+    (WARNING for a failure, INFO for "nothing relevant"). The fallback is
+    always correct, only costlier."""
+
+    def __init__(
+        self,
+        *,
+        retriever: Retriever,
+        namespace: str,
+        knowledge: str,
+        k: int = 4,
+        min_score: float = 0.3,
+    ) -> None:
+        self._retriever = retriever
+        self._namespace = namespace
+        self._knowledge = knowledge
+        self._k = k
+        self._min_score = min_score
+        self._indexed = False
+        self._lock = asyncio.Lock()
+
+    def _fallback(self, reason: str, *, level: int) -> KnowledgeSelection:
+        logger.log(
+            level,
+            "help_chat: retrieval fallback to the whole knowledge file namespace=%s reason=%s",
+            self._namespace, reason,
+        )
+        return KnowledgeSelection(self._knowledge, "full_file", reason)
+
+    async def _ensure_indexed(self) -> None:
+        if self._indexed:
+            return
+        async with self._lock:
+            if self._indexed:
+                return
+            await self._retriever.index_text(self._namespace, self._knowledge)
+            self._indexed = True
+
+    async def select(self, history: list[dict], *, org_id: str | None = None) -> KnowledgeSelection:
+        try:
+            await self._ensure_indexed()
+        except Exception as exc:  # noqa: BLE001 - logged fallback, the answer must not break
+            return self._fallback(f"{FALLBACK_INDEX_FAILED}:{type(exc).__name__}", level=logging.WARNING)
+        query = retrieval_query_from_history(history)
+        try:
+            # The help knowledge is a PLATFORM-scope corpus (org_id=None): it is
+            # the product's own docs, identical for every org. `org_id` is only
+            # for metering the embedding call.
+            hits = await self._retriever.search(
+                self._namespace, query, k=self._k, min_score=self._min_score,
+                meter_org_id=org_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return self._fallback(f"{FALLBACK_RETRIEVAL_ERROR}:{type(exc).__name__}", level=logging.WARNING)
+        if not hits:
+            return self._fallback(FALLBACK_NO_RELEVANT_CHUNKS, level=logging.INFO)
+        text = _CHUNK_SEPARATOR.join(
+            f"{h.heading}\n{h.content}" if h.heading else h.content for h in hits
+        )
+        return KnowledgeSelection(text, "retrieval", None, len(hits))
 
 
 #: End-of-attendance marker. The preamble tells the model to end its reply
@@ -285,7 +390,12 @@ def rate_limit_error_body(mensagem: str | None = None) -> dict[str, str]:
 __all__ = [
     "MARCADOR_CONCLUSAO",
     "MarcadorFilter",
+    "FALLBACK_INDEX_FAILED",
+    "FALLBACK_NO_RELEVANT_CHUNKS",
+    "FALLBACK_RETRIEVAL_ERROR",
     "HelpChatKnowledgeMissing",
+    "HelpChatKnowledgeSelector",
+    "KnowledgeSelection",
     "HelpChatRateLimiter",
     "KnowledgePath",
     "build_conversation_messages",
@@ -296,5 +406,6 @@ __all__ = [
     "ERROR_ORCAMENTO_IA_EXCEDIDO",
     "load_knowledge",
     "rate_limit_error_body",
+    "retrieval_query_from_history",
     "sse_event",
 ]

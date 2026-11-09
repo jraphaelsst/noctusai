@@ -345,6 +345,7 @@ document is a retrieval bug.
   model gets.
 - **Citations.** The knowledge intro tells the model to cite the collection tag (`[AU]`) when it uses a
   document (`A:studio/compiler.py:113-116`); an eval criterion can check it.
+- **Vector retrieval is ONE seed organ** (`noctusai_lib.integrations.retrieval`: chunking, per-(namespace, org) pgvector store, top-k + score threshold, LGPD-aware semantic cache) — never a per-product copy; first consumer help-chat (`KB § PATTERNS/backend/retrieval-organ.md`).
 - **Embeddings exist elsewhere** (`generate_embeddings_batch`; pgvector `vector(1536)` consumers), but
   Anthropic has no embeddings endpoint: never offer `"anthropic"` for capability `embedding`
   (`KB § PATTERNS/backend/llm-provider-selection.md` § Anti-patterns). A dead embedding provider must
@@ -588,4 +589,4 @@ control instead of consulting `agents-security`.
 `KB § PATTERNS/ai/agent-evals.md` (eval discipline) · `KB § PATTERNS/security/ai-agent-security-canon.md`
 (agents-security) · `KB § GUIDES/agent-creation.md` + skill `noc-new-agent` · `KB § PATTERNS/backend/llm-usage.md` ·
 `KB § PATTERNS/backend/llm-provider-selection.md` · `KB § PATTERNS/backend/llm-tool-audit.md` ·
-`KB § PATTERNS/backend/document-extraction-learnings.md` · `KB § PATTERNS/backend/backend-craft-canon.md` §9.
+`KB § PATTERNS/backend/document-extraction-learnings.md` · `KB § PATTERNS/backend/backend-craft-canon.md` §9 · `KB § PATTERNS/backend/retrieval-organ.md`.
