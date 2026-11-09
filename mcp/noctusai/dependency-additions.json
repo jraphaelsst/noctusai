@@ -11,5 +11,23 @@
     },
     "decision": "adopt",
     "date": "2026-11-07"
+  },
+  "npm:@tailwindcss/postcss": {
+    "job": "Tailwind CSS v4 PostCSS integration for the seed entry stylesheet (replaces the v3 `tailwindcss` PostCSS plugin + autoprefixer)",
+    "in_repo_alternative": "none",
+    "reason": "Tailwind v4 moved its PostCSS plugin into this package; it is the upstream replacement, not a new capability. The alternative @tailwindcss/vite would change the shared vite factory as well; PostCSS keeps the existing seed postcss.config re-export shape untouched.",
+    "metrics": {
+      "lockfile_packages_products_seed_v3": 643,
+      "lockfile_packages_products_seed_v4": 612,
+      "lockfile_packages_social_wiring_v3": 634,
+      "lockfile_packages_social_wiring_v4": 603,
+      "css_gzip_bytes_products_seed_v3": 12709,
+      "css_gzip_bytes_products_seed_v4": 15612,
+      "css_gzip_bytes_social_wiring_v3": 14960,
+      "css_gzip_bytes_social_wiring_v4": 18100,
+      "classes_with_visual_diff_after_pinning_of_1248_social_wiring": 0
+    },
+    "decision": "adopt",
+    "date": "2026-11-09"
   }
 }
