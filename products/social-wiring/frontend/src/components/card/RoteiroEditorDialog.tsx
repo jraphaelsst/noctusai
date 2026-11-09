@@ -54,6 +54,7 @@ import { avisarFunilRecusado } from "@/lib/funilAviso";
 import { dataVisitaBR, salvoHa } from "@/lib/roteiroLabels";
 import type { ImovelVisita, Roteiro } from "@/types/cardHub";
 
+import { HorarioVisita } from "./HorarioVisita";
 import { enderecoDoImovel } from "./ImovelVisitaCard";
 
 export interface RoteiroEditorDialogProps {
@@ -339,6 +340,8 @@ function Editor({
                         posicao={i + 1}
                         total={visitas.length}
                         editavel={editaImoveis}
+                        horario={v.horario}
+                        onHorario={(valor) => r.horario(v.id, v.codigo, valor)}
                         onMover={(delta) => r.mover(v.id, delta)}
                         onRemover={() => r.remover(v.id, v.codigo)}
                         id={v.id}
@@ -546,6 +549,8 @@ function LinhaImovel({
   posicao,
   total,
   editavel,
+  horario,
+  onHorario,
   onMover,
   onRemover,
 }: {
@@ -555,6 +560,8 @@ function LinhaImovel({
   posicao: number;
   total: number;
   editavel: boolean;
+  horario: string | null;
+  onHorario: (valor: string | null) => void;
   onMover: (delta: -1 | 1) => void;
   onRemover: () => void;
 }) {
@@ -610,6 +617,7 @@ function LinhaImovel({
           {[endereco ?? imovel?.empreendimento].filter(Boolean).join(" ") || "—"}
         </p>
       </div>
+      <HorarioVisita codigo={codigo} horario={horario} onSalvar={onHorario} />
       {editavel && (
         <Button
           type="button"

@@ -22,17 +22,21 @@ export interface ReabrirRoteiroDialogProps {
   open: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  /** `Roteiro.gerado_por_nome` — named in the warning; null ⇒ the generic sentence. */
+  geradoPorNome?: string | null;
 }
 
-export function ReabrirRoteiroDialog({ open, onCancel, onConfirm }: ReabrirRoteiroDialogProps) {
+export function ReabrirRoteiroDialog({ open, onCancel, onConfirm, geradoPorNome }: ReabrirRoteiroDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={(aberto) => !aberto && onCancel()}>
       <AlertDialogContent data-testid="roteiro-confirmar-reabrir">
         <AlertDialogHeader>
           <AlertDialogTitle>Reabrir este roteiro como rascunho?</AlertDialogTitle>
           <AlertDialogDescription>
-            A lista volta a aceitar imóveis novos e remoções. Quem gerou o roteiro será avisado. O
-            PDF já baixado fica desatualizado.
+            A lista volta a aceitar imóveis novos e remoções. {geradoPorNome
+              ? `${geradoPorNome}, que gerou o roteiro, será avisado(a).`
+              : "Quem gerou o roteiro será avisado."}{" "}
+            O PDF já baixado fica desatualizado.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -400,12 +400,10 @@ export function useImoveisBusca(termo: string) {
  * The roteiro lifecycle writes (roteiro-ciclo CONTRACT §3–§5).
  *
  * 🔴 EVERY WRITE PUTS WHAT THE SERVER ANSWERED INTO `roteirosKeys.list`, never
- * invalidate-only: R2/R3/R5/R8/R9/R14 answer the full `Roteiro` (visitas,
- * `contagem`, `permissoes`) and replace the cached row as-is; R12 writes BOTH
+ * invalidate-only: R2/R3/R5/R6/R7/R8/R9/R11/R14 answer the full `Roteiro` (visitas,
+ * `contagem`, `permissoes`) and replace the cached row as-is — including R6/R7/R11 (contract v1.1); R12 writes BOTH
  * roteiros (the old one gets its visita back as `reagendada`, the new draft is
- * inserted). R6/R7/R11/R13 answer a `Visita` only, so the visita is written and
- * the roteiro's server-derived parts (`contagem`, `permissoes`) are refreshed
- * in the background on settle.
+ * inserted). Only R13 (proposta) answers a bare `Visita`, which is merged into its roteiro.
  *
  * The timeline is invalidated on settle: a visita outcome IS a timeline entry.
  */
@@ -491,48 +489,37 @@ export function useRoteiroMutations(clienteId: string) {
   ) =>
     listOps.update(old, roteiroId, (r) => ({ ...r, visitas: edit(r.visitas) ?? r.visitas }));
 
-  /** R11 — an outcome (cancelada needs `cancelada_por` + `cancelada_motivo`) or an observação. */
+  /** R11 — an outcome (cancelada needs `cancelada_por` + `cancelada_motivo`), `horario` or an observação. Answers the full Roteiro. */
   const patchVisita = useCacheWriteMutation<
-    Visita,
+    Roteiro,
     { roteiroId: string; visitaId: string; body: VisitaPatchBody }
   >({
     mutationFn: ({ roteiroId, visitaId, body }) =>
-      api.patch<Visita>(`${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`, body),
-    targets: ({ roteiroId, visitaId }) => [
-      {
-        queryKey: lista,
-        commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.patch(v, visitaId, saved)),
-      },
-    ],
-    // `contagem` and `permissoes.reabrir` move with an outcome: the server's, refreshed.
-    invalidate: [lista, timeline],
+      api.patch<Roteiro>(`${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`, body),
+    targets: ({ roteiroId }) => [gravaRoteiro(roteiroId)],
+    invalidate: [timeline],
   });
 
-  /** R6 — only while the roteiro is a draft (409 `roteiro_gerado`). */
-  const addVisita = useCacheWriteMutation<Visita, { roteiroId: string; codigo: string }>({
+  /** R6 — only while the roteiro is a draft (409 `roteiro_gerado`). Answers 201 with the full Roteiro. */
+  const addVisita = useCacheWriteMutation<Roteiro, { roteiroId: string; codigo: string }>({
     mutationFn: ({ roteiroId, codigo }) =>
-      api.post<Visita>(`${rota(roteiroId)}/visitas`, { codigo }),
-    targets: ({ roteiroId }) => [
-      {
-        queryKey: lista,
-        commit: (old, saved) => nasVisitas(old, roteiroId, (v) => listOps.replace(v, saved.id, saved)),
-      },
-    ],
-    // `permissoes.gerar` / `motivo_gerar` ("Adicione ao menos um imóvel.") change with the list.
-    invalidate: [lista, timeline],
+      api.post<Roteiro>(`${rota(roteiroId)}/visitas`, { codigo }),
+    targets: ({ roteiroId }) => [gravaRoteiro(roteiroId)],
+    invalidate: [timeline],
   });
 
-  /** R7 — only while the roteiro is a draft (409 `roteiro_gerado`). */
-  const removeVisita = useCacheWriteMutation<unknown, { roteiroId: string; visitaId: string }>({
+  /** R7 — only while the roteiro is a draft (409 `roteiro_gerado`). Answers 200 with the full Roteiro. */
+  const removeVisita = useCacheWriteMutation<Roteiro, { roteiroId: string; visitaId: string }>({
     mutationFn: ({ roteiroId, visitaId }) =>
-      api.delete(`${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`),
+      api.delete<Roteiro>(`${rota(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`),
     targets: ({ roteiroId, visitaId }) => [
       {
         queryKey: lista,
         optimistic: (old) => nasVisitas(old, roteiroId, (v) => listOps.remove(v, visitaId)),
+        commit: gravaRoteiro(roteiroId).commit,
       },
     ],
-    invalidate: [lista, timeline],
+    invalidate: [timeline],
   });
 
   /**

@@ -16,6 +16,14 @@ describe("ReabrirRoteiroDialog", () => {
     expect(d.textContent).toContain("O PDF já baixado fica desatualizado.");
   });
 
+  it("names who generated it, falling back to the generic text when the name is null", () => {
+    const a = render(<ReabrirRoteiroDialog open geradoPorNome="Cindy Kumagai" onCancel={vi.fn()} onConfirm={vi.fn()} />);
+    expect(screen.getByRole("alertdialog").textContent).toContain("Cindy Kumagai, que gerou o roteiro, será avisado(a).");
+    a.unmount();
+    render(<ReabrirRoteiroDialog open geradoPorNome={null} onCancel={vi.fn()} onConfirm={vi.fn()} />);
+    expect(screen.getByRole("alertdialog").textContent).toContain("Quem gerou o roteiro será avisado.");
+  });
+
   it("'Manter gerado' cancels, the primary action confirms", () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();

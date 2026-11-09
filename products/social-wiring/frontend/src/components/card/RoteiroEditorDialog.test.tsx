@@ -169,7 +169,10 @@ describe("RoteiroEditorDialog — Rascunho · salvo", () => {
 
   it("removing an imóvel sends R7 with the visita id", async () => {
     db = [comPermissoes(roteiroFx({ visitas: tres() }))];
-    api.delete.mockResolvedValue(undefined);
+    api.delete.mockImplementation(async () => {
+      db = [comPermissoes({ ...db[0], visitas: db[0].visitas.filter((v) => v.id !== "v2") })];
+      return db[0];
+    });
     montar({ roteiroId: "r1" });
     await screen.findByTestId("roteiro-lista");
 
@@ -224,6 +227,32 @@ describe("RoteiroEditorDialog — reopening a draft (Continuar editando)", () =>
     const msg = await screen.findByTestId("roteiro-editor-indisponivel");
     expect(msg.textContent).toContain("Este rascunho não existe mais");
     expect(screen.queryByTestId("roteiro-data-visita")).toBeNull();
+  });
+});
+
+describe("RoteiroEditorDialog — horário por visita", () => {
+  it("each imóvel has its own Horário; leaving the field sends R11 {horario} and writes the answer", async () => {
+    db = [comPermissoes(roteiroFx({ visitas: tres() }))];
+    api.patch.mockImplementation(async (_u: string, body: { horario: string | null }) => {
+      db = [comPermissoes({ ...db[0], visitas: db[0].visitas.map((v) => (v.id === "v2" ? { ...v, horario: body.horario } : v)) })];
+      return db[0];
+    });
+    montar({ roteiroId: "r1" });
+    await screen.findByTestId("roteiro-lista");
+
+    const campo = screen.getByTestId("visita-horario-ONE9002") as HTMLInputElement;
+    fireEvent.change(campo, { target: { value: "11:15" } });
+    expect(api.patch).not.toHaveBeenCalled();
+    fireEvent.blur(campo);
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledWith(`${BASE}/roteiros/r1/visitas/v2`, { horario: "11:15" }),
+    );
+    // cleared ⇒ null
+    fireEvent.change(campo, { target: { value: "" } });
+    fireEvent.blur(campo);
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenLastCalledWith(`${BASE}/roteiros/r1/visitas/v2`, { horario: null }),
+    );
   });
 });
 
@@ -445,7 +474,9 @@ describe("RoteiroEditorDialog — autosave: the draft is created on the first me
         db = [criado(body)];
         return db[0];
       }
-      return visitaFx("nv9", (body as { codigo: string }).codigo, { roteiro_id: "novo", ordem: 1 });
+      const r = db[0];
+      db = [comPermissoes({ ...r, visitas: [...r.visitas, visitaFx("nv9", (body as { codigo: string }).codigo, { roteiro_id: "novo", ordem: 1 })] })];
+      return db[0];
     });
     montar();
     await waitFor(() => expect(api.get).toHaveBeenCalled());
@@ -480,9 +511,9 @@ describe("RoteiroEditorDialog — autosave: the draft is created on the first me
           };
         });
       }
-      return Promise.resolve(
-        visitaFx("nv2", (body as { codigo: string }).codigo, { roteiro_id: "novo", ordem: 1 }),
-      );
+      const r = db[0];
+      db = [comPermissoes({ ...r, visitas: [...r.visitas, visitaFx("nv2", (body as { codigo: string }).codigo, { roteiro_id: "novo", ordem: 1 })] })];
+      return Promise.resolve(db[0]);
     });
     montar();
     await waitFor(() => expect(api.get).toHaveBeenCalled());

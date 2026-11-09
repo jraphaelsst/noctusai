@@ -250,6 +250,22 @@ export function useRoteiroRascunho({
     [executar, mut.reorder, roteiro],
   );
 
+  /** This visita's own time (R11 `horario`), sent when the field loses focus. */
+  const horario = useCallback(
+    (visitaId: string, codigo: string, valor: string | null) => {
+      void executar(`o horário de ${codigo}`, async () => {
+        const id = idRef.current;
+        if (!id) return;
+        await mut.patchVisita.mutateAsync({
+          roteiroId: id,
+          visitaId,
+          body: { horario: valor },
+        });
+      });
+    },
+    [executar, mut.patchVisita],
+  );
+
   /** Replay every failed write, in order. The input was never discarded. */
   const tentarDeNovo = useCallback(() => {
     const anteriores = falhas.current;
@@ -308,6 +324,7 @@ export function useRoteiroRascunho({
     adicionar,
     remover,
     mover,
+    horario,
     tentarDeNovo,
     aguardar,
     /** After `aguardar()`: did any write fail (and is it still unsaved)? */

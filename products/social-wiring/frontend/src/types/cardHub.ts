@@ -423,6 +423,8 @@ export interface Visita {
   /** When the outcome was recorded, and by whom. */
   resultado_em: string | null;
   resultado_por: string | null;
+  /** This visita's own time, `HH:MM` (CONTRACT v1.1); editable via R11 in both statuses. */
+  horario: string | null;
 
   /* ── The proposta axis (migration 104) ───────────────────────────────
    * 🔴 ORTHOGONAL to `status`, never a fourth value of it. A visita that
@@ -486,8 +488,10 @@ export interface Roteiro {
   status: StatusRoteiro;
   gerado_em: string | null;
   gerado_por: string | null;
+  gerado_por_nome: string | null;
   reaberto_em: string | null;
   reaberto_por: string | null;
+  reaberto_por_nome: string | null;
   criado_por: string | null;
   /** "visita aconteceu?" — `pendente` until the corretor answers (migration 219). */
   feedback_status?: "pendente" | "respondido";
@@ -498,24 +502,6 @@ export interface Roteiro {
   /** Only on the GERAR response: what the funnel did with `roteiro_criado`. */
   funil?: { moveu: boolean; de: string | null; para: string | null; motivo: string | null };
 }
-
-/**
- * LEGACY vocabulary of the vestigial `visitas.nao_realizada_motivo` (read-only,
- * nothing writes it any more). Kept ONLY to label the metrics card's
- * `visitas_nao_realizadas` breakdown until `/api/metricas/atendimentos` moves
- * to the new keys (NOC-REMEDIATE[roteiro-ciclo-metricas]: the contract names
- * `metricas_service` moving but not the response shape — 2026-11-09).
- */
-export const MOTIVOS_NAO_REALIZADA = [
-  { value: "cliente_desistiu", label: "Cliente desistiu" },
-  { value: "cliente_nao_compareceu", label: "Cliente não compareceu" },
-  { value: "imovel_indisponivel", label: "Imóvel indisponível" },
-  { value: "reagendada", label: "Reagendada" },
-  { value: "outro", label: "Outro" },
-  // The new outcome keys, so a metrics breakdown keyed by them is labelled too.
-  { value: "cancelada", label: "Cancelada" },
-  { value: "nao_compareceu", label: "Não compareceu" },
-] as const;
 
 /** What the "visita aconteceu?" answer can record for one visita (CONTRACT R14). */
 export type ResultadoVisita = "realizada" | "cancelada" | "nao_compareceu" | "reagendada";
@@ -560,7 +546,13 @@ export interface MetricasFunil {
   com_roteiro: number;
   visitas_agendadas: number;
   visitas_realizadas: number;
-  visitas_nao_realizadas: Record<string, number>;
+  /** One derivation for lead / imóvel / corretor (CONTRACT §4). `reagendadas` is NEUTRAL. */
+  visitas_consolidadas: number;
+  visitas_perdidas: number;
+  visitas_neutras: number;
+  visitas_canceladas: number;
+  visitas_nao_compareceu: number;
+  visitas_reagendadas: number;
   propostas_criadas: number;
   propostas_aceitas: number;
   propostas_recusadas: number;
@@ -596,6 +588,8 @@ export interface VisitaPatchBody {
   observacao?: string | null;
   cancelada_por?: CanceladaPor | null;
   cancelada_motivo?: CanceladaMotivo | null;
+  /** `HH:MM` or null to clear. */
+  horario?: string | null;
 }
 
 /** `POST …/visitas/{vid}/reagendar` (R12) — the date/time of the NEW roteiro. */
