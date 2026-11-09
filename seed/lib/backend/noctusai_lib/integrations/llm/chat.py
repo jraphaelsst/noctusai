@@ -15,9 +15,12 @@ import copy
 import logging
 from typing import Any, AsyncIterator, Optional
 
+from .attribution import llm_usage_context
 from .budget import enforce_budget
 from .cache import build_cache_key, try_get, try_set
 from .client import get_llm_config, get_provider, resolve_api_key
+from .model_policy import resolve_model
+from .spend_guard import enforce_spend_guard
 from .stream_types import StreamOutcome
 from .usage import metered_call, metered_stream, prompt_chars_of
 
@@ -40,6 +43,7 @@ async def chat_completion(
     max_tokens: Optional[int] = None,
     response_format: Optional[dict] = None,
     cache: bool = True,
+    purpose: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
     """Route a chat completion through the configured provider.
@@ -54,6 +58,9 @@ async def chat_completion(
         org_id: Scope the key resolution to a specific org (Tier 1 lookup).
         temperature, max_tokens, response_format: Standard OpenAI-shaped
             inference knobs. Gemini / Anthropic providers translate as needed.
+        purpose: ``"classify" | "extract" | "summarize" | "reason" | "chat"`` — what the call is for. When ``model``
+            is not pinned, the seed policy (`model_policy`) picks the tier's model of the SAME provider; omitted (or
+            ``"chat"``) = today's default. Always recorded on the usage row. No provider failover, ever.
         cache: Whether this call is eligible for Phase 8 response caching.
             Set to `False` for non-deterministic prompts or LGPD-protected
             patient data (Therapy clinical flows MUST pass False).
@@ -69,13 +76,14 @@ async def chat_completion(
     """
     config = get_llm_config()
     effective_provider = provider or config.default_provider
-    effective_model = model or config.default_chat_model
+    effective_model = model or resolve_model(effective_provider, purpose) or config.default_chat_model
     api_key = resolve_api_key(effective_provider, org_id)
 
     # Phase 18 budget guardrails — raises LLMBudgetExceeded at the org's
     # hard threshold before we hit the provider. Soft-warn just logs.
     # No-op when the budget module isn't configured (tests, dev runs).
     await enforce_budget(org_id)
+    await enforce_spend_guard(org_id)
 
     # Response-cache consult (Phase 8). Gated by:
     #  - cache=True at the call site (services with patient data pass False).
@@ -105,19 +113,20 @@ async def chat_completion(
             return value
 
     prov = get_provider(effective_provider)
-    result = await metered_call(
-        lambda: prov.chat_completion(
-            messages,
-            model=effective_model,
-            api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format=response_format,
-            org_id=org_id,
-            **kwargs,
-        ),
-        provider=effective_provider, model=effective_model, operation="chat", org_id=org_id,
-    )
+    with llm_usage_context(purpose=purpose):
+        result = await metered_call(
+            lambda: prov.chat_completion(
+                messages,
+                model=effective_model,
+                api_key=api_key,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=response_format,
+                org_id=org_id,
+                **kwargs,
+            ),
+            provider=effective_provider, model=effective_model, operation="chat", org_id=org_id,
+        )
 
     if cache_live and cache_key is not None:
         await try_set(config.cache_backend, cache_key, result, cache_ttl)
@@ -135,6 +144,7 @@ async def chat_completion_stream(
     max_tokens: Optional[int] = None,
     response_format: Optional[dict] = None,
     outcome: Optional[StreamOutcome] = None,
+    purpose: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncIterator[str]:
     """Stream a chat completion as an async iterator of text deltas.
@@ -159,7 +169,7 @@ async def chat_completion_stream(
     """
     config = get_llm_config()
     effective_provider = provider or config.default_provider
-    effective_model = model or config.default_chat_model
+    effective_model = model or resolve_model(effective_provider, purpose) or config.default_chat_model
     api_key = resolve_api_key(effective_provider, org_id)
     # Drop cache-only kwargs some callers pass — they're inert here.
     kwargs.pop("cache", None)
@@ -168,6 +178,7 @@ async def chat_completion_stream(
 
     # Phase 18 budget guardrails — same posture as the non-streaming entry.
     await enforce_budget(org_id)
+    await enforce_spend_guard(org_id)
 
     prov = get_provider(effective_provider)
     stream_fn = getattr(prov, "chat_completion_stream", None)

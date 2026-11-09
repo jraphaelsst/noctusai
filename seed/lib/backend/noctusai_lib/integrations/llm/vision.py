@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence, Union
 
 from .client import get_llm_config, get_provider, resolve_api_key
+from .spend_guard import enforce_spend_guard
 from .usage import metered_call
 from .vision_types import VisionResult
 
@@ -52,6 +53,7 @@ async def analyze_image(
     effective_provider = provider or config.default_provider
     effective_model = model or config.default_vision_model
     api_key = resolve_api_key(effective_provider, org_id)
+    await enforce_spend_guard(org_id)
 
     prov = get_provider(effective_provider)
     return await metered_call(
@@ -118,6 +120,7 @@ async def analyze_images(
     effective_provider = provider or config.default_provider
     effective_model = model or config.default_vision_model
     api_key = resolve_api_key(effective_provider, org_id)
+    await enforce_spend_guard(org_id)
 
     prov = get_provider(effective_provider)
     fn = getattr(prov, "analyze_images", None)

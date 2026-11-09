@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .client import get_llm_config, get_provider, resolve_api_key
+from .spend_guard import enforce_spend_guard
 from .usage import metered_call
 
 
@@ -45,6 +46,7 @@ async def generate_embedding(
     effective_provider = provider or config.default_provider
     effective_model = model or config.default_embedding_model
     api_key = resolve_api_key(effective_provider, org_id)
+    await enforce_spend_guard(org_id)
 
     prov = get_provider(effective_provider)
     return await metered_call(
@@ -93,6 +95,7 @@ async def generate_embeddings_batch(
     effective_provider = provider or config.default_provider
     effective_model = model or config.default_embedding_model
     api_key = resolve_api_key(effective_provider, org_id)
+    await enforce_spend_guard(org_id)
 
     prov = get_provider(effective_provider)
     batch_fn = getattr(prov, "generate_embeddings_batch", None)
