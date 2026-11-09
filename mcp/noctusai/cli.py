@@ -282,6 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--access-tier-reconcile", action="store_true", help="Scanners write the findings ledger: add new findings, close fixed ones, reopen regressions (never hand-edit the ledger). With --access-tier-exposure FILE it reconciles the EFFECTIVE prod findings instead.")
     parser.add_argument("--found-by", default="keeper", help="With --access-tier-reconcile: who found it (keeper | audit | exposure-tool | <agent>).")
     parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
+    parser.add_argument("--check-measurable-by-design", action="store_true", help="BLOCKING DELTA gate (owner rule 2026-11-09, measurement-by-design): a NEW migration's domain table needs a creation timestamp, and a lifecycle/status column needs an append-only transition capture (*_eventos table / audit trigger / transition-log organ). Warns on free-text outcomes, missing updated_at, event tables with no actor. Escape: `-- measurable: <reason>` (recorded to gate telemetry). --paths scopes to staged ADDED migrations; omitted = migrations added vs origin/dev. KB § PATTERNS/architect/measurement-by-design.md.")
     parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
     parser.add_argument("--check-prod-exposure-consent", action="store_true", help="Prod-promotion consent gate: a product's FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the production-promotion decision (:latest ships it with no later gate) — requires a user-authored deploy/consent/<slug>.prod.yml in an isolated prior commit. Severity high. KB § PATTERNS/devops/prod-exposure-consent.md.")
@@ -1218,6 +1219,28 @@ def main():
         print(f"  {RED}✗ {len(issues)} waha-instances drift issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_measurable_by_design:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_measurable_by_design
+        from tools.noctus.dev.gate_alignment import record_event
+        _mb_paths = [p for p in (args.paths or "").split(",") if p] or None
+        _mb_escapes: list = []
+        issues = check_measurable_by_design(repo_root=REPO_ROOT, paths=_mb_paths, escapes_out=_mb_escapes)
+        for e in _mb_escapes:  # telemetry leg: every recorded exception is an `allow` event on the gate
+            record_event("keeper:check-measurable-by-design", "allow", kind="keeper", target=f"{e['file']}:{e['table']}",
+                         reason=e["reason"][:200], source="escape")
+            print(f"    {YELLOW}[escape]{RESET} {e['file']} {e['table']} — measurable: {e['reason']}")
+        blocking = [i for i in issues if i["severity"] != "warning"]
+        for i in issues:
+            if i["severity"] == "warning":
+                print(f"    {YELLOW}[warning]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
+        if not blocking:
+            print(f"  {GREEN}✓ measurable-by-design: every new domain table is dated and every lifecycle has an event capture.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(blocking)} measurable-by-design finding(s):{RESET}")
+        for i in blocking:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
         sys.exit(1)
     elif args.check_new_org_table_rls:
         from settings import REPO_ROOT

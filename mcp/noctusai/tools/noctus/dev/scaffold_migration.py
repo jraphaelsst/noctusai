@@ -393,6 +393,40 @@ def _build_with_table_block(schema: str, table: str) -> str:
     )
 
 
+def _build_eventos_block(schema: str, table: str) -> str:
+    """Companion append-only events table for ``table`` (KB § PATTERNS/architect/measurement-by-design.md).
+
+    Construction leg of ``check_measurable_by_design``: the lifecycle change is captured WHO/WHEN/FROM/TO in the same
+    transaction as the change (the service inserts the event row beside the state UPDATE). Interim shape until the
+    E1 ``transition_log_migration`` primitive lands on dev -- then replace this block with the primitive (EOA rule 5.1).
+    """
+    ev = f"{table}_eventos"
+    return "\n\n".join([
+        f"-- ----- Events (append-only): {schema}.{ev} -- who / when / from -> to, same transaction as the change -----",
+        (f"CREATE TABLE IF NOT EXISTS {schema}.{ev} (\n"
+         f"    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n"
+         f"    entidade_id uuid NOT NULL REFERENCES {schema}.{table}(id) ON DELETE RESTRICT,\n"
+         f"    event_type  text NOT NULL,  -- business intent, past tense: etapa_alterada, visita_realizada ...\n"
+         f"    de          text,           -- previous value (enum text); NULL on creation\n"
+         f"    para        text,           -- new value; outcomes are CHECK-enums on the entity, never free text\n"
+         f"    dados       jsonb NOT NULL DEFAULT '{{}}'::jsonb,  -- extra facts; reference people by id (LGPD)\n"
+         f"    actor_id    uuid,\n"
+         f"    actor_kind  text NOT NULL DEFAULT 'user' CHECK (actor_kind IN ('user', 'agent', 'system', 'integration')),\n"
+         f"    occurred_at timestamptz NOT NULL DEFAULT now(),\n"
+         f"    created_at  timestamptz NOT NULL DEFAULT now()\n"
+         f");"),
+        f"CREATE INDEX IF NOT EXISTS idx_{ev}_entidade ON {schema}.{ev} (entidade_id, occurred_at DESC);",
+        (f"CREATE OR REPLACE FUNCTION {schema}.{ev}_append_only() RETURNS trigger LANGUAGE plpgsql\n"
+         f"SET search_path = {schema}, public AS $$ BEGIN RAISE EXCEPTION '{ev} is append-only'; END; $$;"),
+        (f"DROP TRIGGER IF EXISTS {ev}_no_update_delete ON {schema}.{ev};\n"
+         f"CREATE TRIGGER {ev}_no_update_delete BEFORE UPDATE OR DELETE ON {schema}.{ev}\n"
+         f"    FOR EACH ROW EXECUTE FUNCTION {schema}.{ev}_append_only();"),
+        (f"ALTER TABLE {schema}.{ev} ENABLE ROW LEVEL SECURITY;\n"
+         f"COMMENT ON TABLE {schema}.{ev} IS 'tier:org';  -- TODO: same tier as {table}\n"
+         f"REVOKE ALL ON {schema}.{ev} FROM anon, authenticated;"),
+    ])
+
+
 def _build_updated_at_block(schema: str, tables: list[str]) -> str:
     """Emit one function declaration + N trigger blocks for ``tables``.
 
@@ -444,6 +478,7 @@ def _build_sql(
     with_updated_at: list[str] | None,
     today_str: str,
     with_guc_guard: list[dict] | None = None,
+    with_eventos: bool = False,
 ) -> str:
     """Build the full SQL body for the new migration file."""
     header = (
@@ -473,6 +508,8 @@ def _build_sql(
     parts = [header, prelude, helpers_comment]
     if with_table:
         parts.append(_build_with_table_block(schema, with_table))
+        if with_eventos:
+            parts.append(_build_eventos_block(schema, with_table))
     if with_updated_at:
         parts.append(_build_updated_at_block(schema, with_updated_at))
     if with_guc_guard:
@@ -521,6 +558,7 @@ def scaffold_migration(
     with_table: str | None = None,
     with_updated_at: list[str] | None = None,
     with_guc_guard: list[dict] | None = None,
+    with_eventos: bool = False,
     worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
     skip_fetch: bool = False,
@@ -551,6 +589,10 @@ def scaffold_migration(
             kwarg). Emits the append-only / immutable-table guard with ONE
             GUC-gated carve-out instead of hand-writing it (6 hand-written
             copies by 2026-10-21 — KB § PATTERNS/backend/database-rls.md).
+        with_eventos: With ``with_table``, also emit the companion append-only
+            ``<table>_eventos`` table (who/when/from->to, actor, append-only trigger)
+            -- the construction leg of ``check_measurable_by_design`` (every
+            lifecycle change is captured; KB § PATTERNS/architect/measurement-by-design.md).
         worktree_path: **Caller-aware path resolution.** When set, the
             migration is emitted under the given worktree's
             ``products/<slug>/backend/migrations/`` instead of the MCP
@@ -579,6 +621,8 @@ def scaffold_migration(
         return {"error": "product_slug must be a non-empty string"}
     if not migration_name:
         return {"error": "migration_name must be a non-empty string"}
+    if with_eventos and not with_table:
+        return {"error": "with_eventos requires with_table (the entity whose lifecycle the events capture)"}
     if with_guc_guard is not None:
         if not isinstance(with_guc_guard, list) or any(
             not isinstance(g, dict) or not g.get("table") or not g.get("guc")
@@ -651,6 +695,7 @@ def scaffold_migration(
             with_updated_at=with_updated_at,
             today_str=date.today().isoformat(),
             with_guc_guard=with_guc_guard,
+            with_eventos=with_eventos,
         )
     except ValueError as exc:
         return {"error": f"with_guc_guard invalid: {exc}"}
@@ -700,7 +745,10 @@ def register(server) -> None:
             "offline-safe scaffold (skips the origin/dev fetch). "
             "`with_guc_guard=[{table, guc, ...}]` emits the append-only table "
             "guard with one GUC-gated carve-out (guc_carveout_guard_sql) — "
-            "never hand-write that shape."
+            "never hand-write that shape. `with_eventos=True` (with with_table) "
+            "also emits the companion append-only `<table>_eventos` table "
+            "(who/when/from->to + actor) so the lifecycle is measurable "
+            "(check_measurable_by_design; KB § PATTERNS/architect/measurement-by-design.md)."
         ),
     )
     def _scaffold_migration(
@@ -710,6 +758,7 @@ def register(server) -> None:
         with_table: str | None = None,
         with_updated_at: list[str] | None = None,
         with_guc_guard: list[dict] | None = None,
+        with_eventos: bool = False,
         worktree_path: str | None = None,
         skip_fetch: bool = False,
     ) -> dict:
@@ -720,6 +769,7 @@ def register(server) -> None:
             with_table=with_table,
             with_updated_at=with_updated_at,
             with_guc_guard=with_guc_guard,
+            with_eventos=with_eventos,
             worktree_path=worktree_path,
             skip_fetch=skip_fetch,
         )

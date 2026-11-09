@@ -745,6 +745,16 @@ if [[ -n "$STAGED_NEW_MIGRATIONS" ]] && have_py; then
         exit 1
     fi
 fi
+# ── measurement-by-design (owner rule 2026-11-09): every product feature GENERATES data -- a NEW migration's domain table
+# is dated and every lifecycle column has an append-only transition capture. DELTA gate (never the historical tree).
+# WARN-FIRST SHADOW (gate-methodology-sync: a new blocking gate runs warn-only >=7 days, then is promoted with a
+# {since,fires,fix_rate} record in the gate inventory). Promote = make the failure branch `exit 1`.
+if [[ -n "$STAGED_NEW_MIGRATIONS" ]] && have_py; then
+    echo "[pre-commit] new migration staged — checking measurable-by-design (created_at + lifecycle event capture; WARN-first shadow)..."
+    if ! "$PY" "$CLI" --check-measurable-by-design --paths "$STAGED_NEW_MIGRATIONS_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] MEASURABLE-BY-DESIGN (warn-only, shadow): date every table (created_at) and give each status/etapa column a companion append-only *_eventos table (noctus.dev.scaffold_migration with_eventos); genuine exception: '-- measurable: <reason>'. See KB § PATTERNS/architect/measurement-by-design.md." >&2
+    fi
+fi
 STAGED_AGENT_DEFS=$(git diff --cached --name-only 2>/dev/null | grep -E '^products/[^/]+/(ops/agents/.*\.(json|ya?ml)|packages/[^/]+/package\.yaml)$' || true)
 if [[ -n "$STAGED_AGENT_DEFS" ]] && have_py; then
     echo "[pre-commit] agent definition staged — checking no owned agent is opened to every org..."

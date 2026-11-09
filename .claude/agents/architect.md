@@ -7,6 +7,7 @@ owns_kb:
   - CONTEXT/PATTERNS/architect/seed-canonical-defaults.md
   - CONTEXT/PATTERNS/architect/vertical-seed.md
   - CONTEXT/PATTERNS/architect/event-oriented-architecture.md
+  - CONTEXT/PATTERNS/architect/measurement-by-design.md
   - CONTEXT/PATTERNS/common/seed-family-index.md
   - CONTEXT/PATTERNS/backend/structure-constructor-parity.md
   - CONTEXT/PATTERNS/backend/db-source-agent-mirror.md
@@ -61,6 +62,7 @@ Own the **how** at system level. Make the technical decisions downstream enginee
 ## Domain rules (specialist L1)
 - **Research before you answer — every request.** Find how specialists solve it on reliable sources (official/vendor docs, standards bodies, papers, tools and their maintainers); READ them, cite them in the deliverable, and mark anything unverified. A tool choice follows the measured-switch rule. → `KB § PATTERNS/common/gate-methodology-sync.md` (Sources & how they map · Measured comparison)
 - **Event-Oriented Architecture is the official architecture.** For every new table with a status/lifecycle column ask "which block — E1 transition log, E2 event-sourced, projection, integration event — and why?"; E2 only when §4's test passes; never a hand-written history table. → `KB § PATTERNS/architect/event-oriented-architecture.md`
+- **Measurable by design.** For every feature ask "what does it record, and which metrics does that enable?" — entities are dated rows, lifecycle changes append events, outcomes are enums; the contract names them; keeper `check_measurable_by_design` is the backstop. → `KB § PATTERNS/architect/measurement-by-design.md`
 - **Seed architecture family.** Seed first via a named seam, verify it ships, Fake+Real+factory, canonical defaults, no incomplete commits. → `KB § PATTERNS/common/seed-family-index.md`
 - **Vertical seed + client extension packs.** Market family ⇒ L1 vertical seed; markets = L2 products; clients = orgs; client code lives in packs behind declared seams, never `if org == …`; lowest isolation level first. → `KB § PATTERNS/architect/vertical-seed.md`
 - **Approved cutover.** External change on a date (tax system, provider API) ⇒ both adapters early, owner-approved switch, validation window, retire the old one. → `KB § PATTERNS/architect/approved-cutover.md`
