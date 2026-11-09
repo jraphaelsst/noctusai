@@ -59,7 +59,9 @@ __all__ = [
     "RECUSAS_PUBLICACAO",
     "TAG_BAJULACAO",
     "coletar",
+    "canonico_exigido",
     "compor",
+    "falta_numero_fallback",
     "ferramentas_esperadas",
     "juiz_aprovado",
     "juiz_motivo",
@@ -72,6 +74,7 @@ Severidade = Literal["bloqueante", "aviso", "ok"]
 #: The publish refusals (409 ``code``) a BLOCKING readiness item may stand for. Closed: ``compor`` raises on any other.
 RECUSAS_PUBLICACAO = frozenset({
     "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
+    "numero_fallback_ausente",
 })
 
 
@@ -185,6 +188,9 @@ class Entrada:
     #: Keys of the draft's ACTIVE sections, and the tags of the agent's ACTIVE behaviour cases.
     secoes_ativas: tuple[str, ...] = ()
     tags_comportamento: tuple[str, ...] = ()
+    #: 074: the hand-off fallback number is set (one for every org for now). ``True`` for snapshots built by older
+    #: callers; :func:`coletar` always reads it.
+    numero_fallback_definido: bool = True
 
 
 @dataclass(frozen=True)
@@ -508,6 +514,20 @@ def _periferia(e: Entrada) -> list[Item]:
     return itens
 
 
+def _atendimento(e: Entrada) -> list[Item]:
+    """Every conversational agent can hand off to a human, so the team must be reachable: no fallback number, no publish."""
+    if not e.canonico_exigido:
+        return []
+    if not e.numero_fallback_definido:
+        return [Item(
+            "numero_fallback_ausente", "operacao", "bloqueante",
+            "Não há número de atendimento para avisar a equipe quando o agente passa a conversa para uma pessoa.",
+            "Um administrador da plataforma informa o número em Configurações do agente.",
+            "numero_fallback_ausente",
+        )]
+    return [Item("numero_fallback_definido", "operacao", "ok", "O número de atendimento para passagem a uma pessoa está definido.")]
+
+
 def _canonico(e: Entrada) -> list[Item]:
     """The canonical template's must-haves. ADVISORY first (shadow, like every new gate): promoted to blocking once the
     fleet's published agents carry them (destination: ``KB § PATTERNS/backend/canonical-agent-template.md`` §4)."""
@@ -533,7 +553,7 @@ def _canonico(e: Entrada) -> list[Item]:
 
 def compor(e: Entrada) -> Prontidao:
     """The readiness items of the snapshot (blocking first, then advisory, then ok; stable within a severity)."""
-    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_skills(e), *_ferramentas(e), *_periferia(e), *_canonico(e)]
+    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_skills(e), *_ferramentas(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
     for i in itens:
         if i.grupo not in GRUPOS:
             raise ValueError(f"item {i.codigo!r} has group {i.grupo!r}, outside GRUPOS (the panel cannot label it)")
@@ -632,10 +652,29 @@ def coletar(
         geracao_status=ultima.status if ultima is not None else None,
         geracao_areas=areas,
         controle_modo=modo,
-        canonico_exigido=getattr(agent, "papel", None) != "gerador",
+        canonico_exigido=canonico_exigido(agent),
         secoes_ativas=tuple(sorted({s.chave for s in ef.list_sections(org_id, draft.id) if s.ativo})),
         tags_comportamento=tuple(sorted({t for c in ativos if c.suite == "comportamento" for t in c.tags})),
+        numero_fallback_definido=_numero_fallback() is not None,
     )
+
+
+def canonico_exigido(agent: Any) -> bool:
+    """Every conversational agent (all but the internal generator, which only emits JSON)."""
+    return getattr(agent, "papel", None) != "gerador"
+
+
+def falta_numero_fallback(agent: Any) -> bool:
+    """The publish refusal ``numero_fallback_ausente`` -- the same predicate the readiness item uses."""
+    return canonico_exigido(agent) and _numero_fallback() is None
+
+
+def _numero_fallback() -> str | None:
+    """The platform runtime setting (074), read through the process singleton every consumer shares."""
+    from app.config import settings
+    from app.services.runtime_settings import get_runtime_settings_service
+
+    return get_runtime_settings_service(settings).numero_fallback_atendimento()
 
 
 def avaliar(**kw: Any) -> Prontidao:

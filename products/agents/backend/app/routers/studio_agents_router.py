@@ -101,7 +101,7 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
-from app.studio.prontidao import avaliar as avaliar_prontidao, juiz_aprovado, recusa_de_compilacao
+from app.studio.prontidao import avaliar as avaliar_prontidao, falta_numero_fallback, juiz_aprovado, recusa_de_compilacao
 from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
 from app.studio.eval_mecanismo_service import (
@@ -1098,6 +1098,12 @@ def publish_draft(
     ):
         raise http_error(
             409, "compile_blocked", "Há especificações da organização inválidas (SPEC_VALIDATION_MODE=block).",
+            prontidao=itens_prontidao,
+        )
+    if falta_numero_fallback(agent):  # direct, not via the items: a failed readiness read must not let it through
+        raise http_error(
+            409, "numero_fallback_ausente",
+            "Não há número de atendimento para a passagem a uma pessoa (Configurações do agente).",
             prontidao=itens_prontidao,
         )
     if itens_prontidao and any(i["codigo"] == "regras_seguranca_sem_parametros" for i in itens_prontidao):

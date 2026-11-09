@@ -5056,6 +5056,30 @@ _AGENTS_CAMADAS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# 074: the hand-off fallback number (one platform runtime setting for every org, for now).
+_FALLBACK_MIGS = ("010_credentials_and_runtime_settings.sql", "074_numero_fallback_atendimento.sql")
+_UPSERT_AJUSTE = (f"INSERT INTO {_JV2}.runtime_settings (key, value) VALUES ({{k}}, {{v}}) "
+                  "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;")
+_AGENTS_FALLBACK_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="runtime_settings.key_is_a_closed_set", guard_name="runtime_settings_key_check",
+        migrations=_FALLBACK_MIGS, setup="",
+        attack=_UPSERT_AJUSTE.format(k="'chave_inventada_' || v_sufixo", v="'1'::jsonb"),
+        fragments=("runtime_settings_key_check",), what="a runtime setting under a key the app does not know",
+        rationale="Every runtime setting is read by a typed accessor that validates it; an unknown key is a value "
+                  "nothing validates and nobody can see on the admin page.",
+    ),
+    _julia_v2_probe(
+        probe_id="runtime_settings.fallback_number_is_e164", guard_name="runtime_settings_numero_fallback_e164",
+        migrations=_FALLBACK_MIGS, setup="",
+        attack=_UPSERT_AJUSTE.format(k="'numero_fallback_atendimento'", v="'\"11 9999\"'::jsonb"),
+        fragments=("runtime_settings_numero_fallback_e164",), what="a hand-off fallback number that is not E.164",
+        rationale="Hand-off notices go to this number for every org: a malformed value would silently notify "
+                  "nobody when an agent passes a customer to a person.",
+    ),
+)
+
+
 _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
     # ── 031 · platform definition / instance / content mode ──
     _julia_v2_probe(
@@ -11816,6 +11840,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_DB_SOURCE_PROBES,
     *_AGENTS_ISOLATION_PROBES,
     *_AGENTS_CAMADAS_PROBES,
+    *_AGENTS_FALLBACK_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,
