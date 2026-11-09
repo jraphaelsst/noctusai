@@ -606,6 +606,11 @@ class TestAgentsStudioProbes:
         "agent_audit_log_identifica_agente",
         # Julia-line E1 (migration 059): an org spec's tipo must be a typed format.
         "agent_version_specs_tipo_check",
+        # Agent Packages A11/A12 (migration 070): DB-source dev agents.
+        "agents_fonte_check",
+        "guard_agent_fonte_immutable",
+        "agents_superficie_claude_check",
+        "agents_kind_check",
     }
     _MIGRATIONS = {
         ("012_agent_studio_definitions.sql",),
@@ -617,6 +622,7 @@ class TestAgentsStudioProbes:
         ("012_agent_studio_definitions.sql", "025_channel_conversations.sql"),
         ("012_agent_studio_definitions.sql", "048_agent_lifecycle_delete.sql"),
         ("012_agent_studio_definitions.sql", "031_julia_v2_conteudo.sql", "059_spec_tipos_tipados.sql"),
+        ("070_agent_db_source.sql",),
     }
 
     @staticmethod
