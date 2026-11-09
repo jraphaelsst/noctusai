@@ -425,7 +425,7 @@ The platform-level data model is itself a bridge: **schema per product** (19 sch
 | Team type | Agents | Interaction mode with stream-aligned work |
 |---|---|---|
 | stream-aligned | `backend-engineer`, `frontend-engineer` (per product slice) | — |
-| platform | the seed itself + `engineer-seed` (standing protocol), `devops-engineer` | X-as-a-service (seed exports, `deploy_image`) |
+| platform | the seed itself + `product-engineer` (standing protocol), `devops-engineer` | X-as-a-service (seed exports, `deploy_image`) |
 | enabling | `architect`, `compliance-reviewer` | facilitating (advise, review; never write the code) |
 | complicated-subsystem | `security`, `agents-security`, `accountant` | X-as-a-service (threat models, tax answers) |
 

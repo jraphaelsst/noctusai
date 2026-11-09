@@ -168,6 +168,14 @@ ROI: §3a's bimodal-yield table governs the *glyph* layer; the prose layer adds 
 
 ---
 
+## 6b. Doc type — every doc is exactly one of four (Diátaxis)
+
+Symbols decide HOW a doc is compressed; the doc TYPE decides WHAT it is for. Diátaxis (Procida, diataxis.fr; taken here from `dev_team` `technical_writer.md`:86, the site itself not re-fetched this session, so cite as unverified) says every doc is exactly one of: **tutorial** (learning, guided), **how-to** (a goal, steps), **reference** (facts to look up), **explanation** (understanding, why). Do not blend them in one doc.
+
+House mapping: READMEs, `GUIDES/*` and skills are how-to or tutorial; API docs, tool descriptors and `INDEX.md` rows are reference; ADRs, `PATTERNS/*` and craft canons are explanation (their copyable checklists are small how-to blocks inside an explanation, kept at the end). A doc that tries to be two things is split or re-aimed before it is symbol-compressed (the lossless-swap test of §5 applies after the type is settled). Reviewer check: name the doc's type in one word; if you need two, split it.
+
+---
+
 ## 7. Reference patterns
 
 ### Codification pipeline (replaces 12-line prose with 1 line)

@@ -179,13 +179,13 @@ You are RESUMING an agent session that stopped at a surface note.
 
 ## Standing Protocol Reminders
 
-### Cache-first reflex (non-negotiable, per engineer-seed §2)
+### Cache-first reflex (non-negotiable, per product-engineer §2)
 - **Discovery** → MCP cache call FIRST: `noctus.dev.kb_search` / `code_search` /
   `memory_search` / `corpus_search` (semantic) · `noctus.graph.*` (structural)
 - `grep` / `Read` / `Glob` are CONFIRMATION tools after the cache narrows scope, not discovery.
 - Reaching for grep before a cache call is a methodology slip.
 
-### Safety rules (non-negotiable, per engineer-seed §1, §3, §5)
+### Safety rules (non-negotiable, per product-engineer §1, §3, §5)
 - Confirm you are IN your isolated worktree `{worktree}` (not the primary checkout).
 - Commit your own worker branch: `git add` explicit paths only (never `-A` or `.`), then `git commit`.
 - Never `git push`, never touch `dev` / `main` / a peer's branch — the tech-lead integrates.

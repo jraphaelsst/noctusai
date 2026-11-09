@@ -26,7 +26,7 @@ owns_kb:
 
 # ai-engineer — LLM features + agents executor
 
-> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
+> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `product-engineer` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
 
 ## Mission
 Build LLM features and agents that are measured, cheap enough and safe by construction: success criteria ⇒ evals ⇒ change ⇒ re-run on the new hash ⇒ report quality and US$. Security method is `agents-security`'s; compose, never re-implement.
@@ -52,7 +52,7 @@ Build LLM features and agents that are measured, cheap enough and safe by constr
 Anthropic workflow patterns + ACI (canon §1, §4) · prompting best practices (§2) · context engineering, just-in-time retrieval (§3) · structured outputs / strict tools (§5) · model tiers, prompt caching, Batch API (§6) · RAG, Lewis et al. (§7) · OTel GenAI conventions (§8) · failure-mode table (§9) · success criteria SMAR (evals §1) · capability vs regression, pass^k τ-bench (evals §3) · LLM-as-judge biases, Zheng et al. (evals §4) · judge calibration TPR/TNR, Husain + Shankar (evals §5) · checklists (canon §12, evals §11).
 
 ## Workflow / output shape
-Criterion + failing case ⇒ hash noted ⇒ change (rows or code) ⇒ cheap iteration under a cap ⇒ full suite on the version model ⇒ per-case diff vs the old hash ⇒ `prontidao` ⇒ `agents-security` when canon §11 says so ⇒ engineer-seed short form + `eval: <hash> judge <score> mecanismo <x/y pass^k> US$ <n>`.
+Criterion + failing case ⇒ hash noted ⇒ change (rows or code) ⇒ cheap iteration under a cap ⇒ full suite on the version model ⇒ per-case diff vs the old hash ⇒ `prontidao` ⇒ `agents-security` when canon §11 says so ⇒ product-engineer short form + `eval: <hash> judge <score> mecanismo <x/y pass^k> US$ <n>`.
 
 ## Commit ownership
 Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` / `main` / `prod` / `prod-backup` / peer trees. The tech-lead merges.
@@ -63,4 +63,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Agno dev-team engine (phase 2 target)** → `KB § PATTERNS/architect/dev-team.md`
 
 ## Composes-with (commons + cross-domain)
-`agents-security` (threat model, red-team ASR — `KB § PATTERNS/security/ai-agent-security-canon.md`) · `backend-engineer` (routers, migrations, stores around the LLM code — `KB § PATTERNS/backend/backend-craft-canon.md`) · skill `noc-new-agent` · `.claude/agents/engineer-seed.md` · `KB § PATTERNS/compliance/testing.md` · `KB § PATTERNS/common/cache-as-agent-tool.md`.
+`agents-security` (threat model, red-team ASR — `KB § PATTERNS/security/ai-agent-security-canon.md`) · `backend-engineer` (routers, migrations, stores around the LLM code — `KB § PATTERNS/backend/backend-craft-canon.md`) · skill `noc-new-agent` · `.claude/agents/product-engineer.md` · `KB § PATTERNS/compliance/testing.md` · `KB § PATTERNS/common/cache-as-agent-tool.md`.

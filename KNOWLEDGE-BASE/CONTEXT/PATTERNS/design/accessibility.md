@@ -277,7 +277,7 @@ user is 4 (catastrophe)** regardless of frequency — the user cannot work aroun
 |---|---|---|
 | Criteria, design-time checks, audits, legal frame, token proposals | product-designer | this doc |
 | Semantic HTML, Radix primitives, ARIA wiring, form error wiring, test queries by role | frontend-engineer | `KB § PATTERNS/frontend/frontend-craft-canon.md` §6 · §7 · §10 |
-| Seed fixes (focus reset, `Button` ring, bare `Dialog` focus, token values) | frontend-engineer / engineer-seed slice, pilots first | canon §4.2 · WE1 |
+| Seed fixes (focus reset, `Button` ring, bare `Dialog` focus, token values) | frontend-engineer / product-engineer slice, pilots first | canon §4.2 · WE1 |
 | Automated a11y gates in CI / test harness | test-engineer (W2-S5) with frontend | §7 |
 | Legal exposure (LBI art. 63, consumer complaints) | legal-advisor (W2-S3) | — |
 

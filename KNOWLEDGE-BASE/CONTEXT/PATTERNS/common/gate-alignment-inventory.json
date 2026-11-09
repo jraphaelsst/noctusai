@@ -109,7 +109,7 @@
    "note": "landed by feat/access-tiers-gate; no firing history yet"
   },
   "guard:background-agent-idle": {
-   "mechanism": "KB § PATTERNS/common/background-agent-lifecycle.md (engineer-seed hand-back clause + noc-branch-dispatch step 5b); advisory backstop, never blocks",
+   "mechanism": "KB § PATTERNS/common/background-agent-lifecycle.md (product-engineer hand-back clause + noc-branch-dispatch step 5b); advisory backstop, never blocks",
    "owner": "tooling-engineer",
    "placement": "warn",
    "standard": "",
@@ -3138,8 +3138,8 @@
   {
    "id": "D13",
    "decision": "Research-first is the default for EVERY request: specialists' reliable sources are read (not link-checked), cited in the deliverable, unverified items marked; tool choice follows the measured-switch rule",
-   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Sources & how they map; How to apply step 0) · engineer-seed.md + advisor agents L1 line",
-   "construction": "standing line in .claude/agents/engineer-seed.md and the 7 advisor agents; pattern-authoring checklist step 0; scaffold_keeper requires `source`",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Sources & how they map; How to apply step 0) · product-engineer.md + advisor agents L1 line",
+   "construction": "standing line in .claude/agents/product-engineer.md and the 7 advisor agents; pattern-authoring checklist step 0; scaffold_keeper requires `source`",
    "gate": "keeper:check-gate-triad (new gates carry `source`) + report-only `--gate-alignment sources` (KB deliverables without a sources section; never blocks code commits)",
    "telemetry": "sources report output; gate-triad events",
    "branch": "feat/gate-alignment",
@@ -3230,7 +3230,7 @@
    "id": "D20",
    "decision": "Background agents end when done (hand-back is the last act), the dispatcher salvages then TaskStops on every hand-back, peer sessions are never stopped; methodology/code changes reach live sessions as information (pull hook + HEADS-UP), each decides how to proceed",
    "home": "KB § PATTERNS/common/background-agent-lifecycle.md + KB § PATTERNS/architect/orchestration-craft-canon.md §6.13",
-   "construction": "injection:.claude/agents/engineer-seed.md §4 hand-back clause; .claude/skills/noc-branch-dispatch/SKILL.md step 5b + change-propagation guardrail",
+   "construction": "injection:.claude/agents/product-engineer.md §4 hand-back clause; .claude/skills/noc-branch-dispatch/SKILL.md step 5b + change-propagation guardrail",
    "gate": "guard:background-agent-idle + guard:dev-advance (advisory, fail-open)",
    "telemetry": "guard-events.ndjson rows (guard=background-agent-idle|dev-advance)",
    "branch": "feat/background-agent-lifecycle",

@@ -6,7 +6,7 @@
 
 ## The four legs
 
-1. **Agent side - the hand-back is the LAST act.** No polling, sleep loop, `until grep` wait or run-log wait after it (and none instead of it). Waiting on something you cannot finish (a hw-admission slot, a CI run, a peer)? Name that leftover in the hand-back and end. Standing text: `.claude/agents/engineer-seed.md` §4.
+1. **Agent side - the hand-back is the LAST act.** No polling, sleep loop, `until grep` wait or run-log wait after it (and none instead of it). Waiting on something you cannot finish (a hw-admission slot, a CI run, a peer)? Name that leftover in the hand-back and end. Standing text: `.claude/agents/product-engineer.md` §4.
 2. **Dispatcher side - on every hand-back: salvage, then `TaskStop` that agent immediately**, not at session end. Salvage = work (commits/branch/pointer) + learnings, the legs in `learn-before-archive.md` "Stopping an agent or session is a teardown too" (landing via `feat/methodology-agent-stop-salvage`; link, do not copy). Procedure: `.claude/skills/noc-branch-dispatch/SKILL.md` step 5b.
 3. **The leader takes over leftovers** (an unfinished verdict, a pending push, a queued run): it runs, files or tracks them itself (`release_steward action=request`, a pointer note, a reminder). Leftovers are never parked in an idle agent.
 4. **Never stop another SESSION.** Peer sessions run in the owner's environment. "End idle agents" means YOUR OWN dispatched agents and shells only; stopping, steering or re-scoping a peer needs the owner's say-so. Informing a peer is allowed and encouraged (`orchestration-craft-canon.md` §6.13), and a notice is information, not a stop order: each session/agent decides how to proceed in its own environment and does not pause for the owner because of it. If the notice reveals a conflict or error, silence is not OK: reply to the sender/steward and resolve it together (`orchestration-craft-canon.md` §6.13).
@@ -24,7 +24,7 @@
 
 | Leg | Where |
 |---|---|
-| Agent text | `.claude/agents/engineer-seed.md` §4 (all executors inherit it) |
+| Agent text | `.claude/agents/product-engineer.md` §4 (all executors inherit it) |
 | Dispatcher text | `.claude/skills/noc-branch-dispatch/SKILL.md` step 5b |
 | Backstop + telemetry | `scripts/hooks/claude-guard-background-agent-idle.py` -> `guard-events.ndjson` |
 | Tests | `mcp/noctusai/tests/test_background_agent_lifecycle_hooks.py` (fixture tasks dirs + transcripts) |
