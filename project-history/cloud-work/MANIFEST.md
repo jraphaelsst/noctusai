@@ -134,3 +134,33 @@ comentário do pyproject proíbe. Destino: um upgrade deliberado de fastapi+star
 `vitest: ">=4.1.11 <4.1.12"` em seed/lib e seed/framework parece pin exato, mas é hold
 deliberado com marcador `NOC-REMEDIATE[vitest-4112-hold]` (fbabda687): 4.1.12 é publish
 quebrado e ainda é a última 4.1.x (2026-11-09). Fica até sair 4.1.13.
+
+---
+
+## 4 · Leva 2 — `cloud-work-2` (empilhada em `cloud-work`; entrega única)
+
+Pedido do owner (2026-11-09): terminar tudo antes de entregar. Base: `origin/cloud-work`
+(os lockfiles da leva 1 são a base dos bumps daqui). Quando `cloud-work` landar, rebase em
+`origin/dev` descarta os 4 commits dela (patch-idênticos) e sobra só esta leva.
+
+| Commit (assunto) | O quê | Verificação |
+|---|---|---|
+| feat(academia): drop the public "Entrar" link | owner 2026-11-09 (redo da metade FE de `claude/nifty-dijkstra-vgi6p6`); academia dorme | vitest 24, tsc, build |
+| ci(deps): actions/cache … v6.1.0 (all 7 uses) | substitui #413/#412; inclui `cache/save` e o composite que o dependabot esqueceu | SHA = tag upstream; YAML ok; actionlint fica com o CI |
+| chore(deps): @hookform/resolvers 5.9 -> 7.0 | parte major de #405/#407; só `zodResolver` é usado | SW tsc + vitest 1212 |
+| chore(deps): google-genai cap <2.25 -> <2.34 | substitui #388; re-teste pedido pelo pyproject | venv limpo 34s → 2.33.0, `pip check` ok, 286 testes |
+| feat(seed-lib)!: lucide-react 0.462 -> 1.70 | substitui #311; 236 nomes medidos, só Facebook/Instagram/Youtube sumiram → `@noctusai/lib/brand-icons` | frota inteira: ci/check/tsc/build/vitest |
+| feat(seed-framework)!: Tailwind 3.4 -> 4.3 | substitui #335; migração no seed (entrada CSS única), visual pinado na v3 | diff de computed-style por classe (0 diferenças visuais), e2e core 46 + pixel diff, frota inteira verde |
+| docs(deps): record @tailwindcss/postcss | Gate 0 (`dependency-additions.json`) | keeper warn-first resolvido |
+
+### Para o owner / noc-0 saberem
+
+- **Navegadores:** o Tailwind 4 exige Safari 16.4+, Chrome 111+, Firefox 128+. Abaixo disso o
+  CSS degrada (cores/`@property`). Para o público atual (Brasil, mobile) é o ponto a pesar.
+- **Paleta v3 pinada:** `seed/framework/frontend/src/tailwind-v3-palette.css`. Apagar o arquivo
+  adota a paleta nova da v4 (mais saturada) — decisão visual, não técnica.
+- **Produtos dormindo** (p-studio, dev-team, academia, …) ficam no setup v3/lucide 0.462 próprio.
+  Ao acordar: `@config` no `src/index.css`, deps v4, codemod de classes (o script do
+  commit Tailwind) e `brand-icons` se usarem ícones de marca. p-studio usa o seam `ownTheme`
+  (OKLCH) — validar o seam com v4 antes de acordar.
+- **CSS ~3 KB gzip maior** por produto (camada `@property`/theme da v4 + paleta pinada).
