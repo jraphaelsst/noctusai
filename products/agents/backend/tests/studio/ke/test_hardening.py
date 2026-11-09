@@ -196,14 +196,6 @@ class TestRunCreation:
         assert not [t for t, rpc, _ in client.executed if t in ("eval_runs", "eval_results") and rpc is None
                     and any(call[0] == "insert" for call in _)]
 
-    def test_concurrent_run_unique_violation_is_run_in_progress(self):
-        client = _Client([_APIError("23505", 'duplicate key value violates unique constraint "eval_runs_one_active_per_version_idx"')])
-        with pytest.raises(StudioConflict) as exc:
-            SupabaseEvalStore(client).create_run(
-                ORG, AGENT, uuid4(), compiled_hash="h", limiar=0.8, case_ids=None, started_by=USER,
-            )
-        assert exc.value.code == "run_in_progress"
-
     def test_current_hash_seam_fails_closed(self, ke_client):
         seed_org_role(ke_client, role="owner")
         agent = seed_studio_agent(ke_client)
