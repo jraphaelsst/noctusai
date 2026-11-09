@@ -86,6 +86,8 @@ class FakeGit:
         if sub == "merge-tree":  # trial merge differs from dev's tree
             return (1, "", "")
         if sub == "merge-base":  # merge-base --is-ancestor a b
+            if "--is-ancestor" not in cmd:  # plain `merge-base a b`: no base ⇒ proof 3 refuses
+                return (1, "", "")
             return (0 if self.anc(cmd[3], cmd[4]) else 1, "", "")
         if sub == "log":         # log --oneline a..b
             return (0, self.logs.get(cmd[3], ""), "")

@@ -235,6 +235,14 @@ def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
     Proof 1: `git cherry` — every branch commit's patch-id is on dev (no `+`).
     Proof 2: a trial merge of the branch into dev yields dev's own tree (the
     branch adds nothing; covers conflict-resolved / squashed replays).
+    Proof 3: a trial merge changes nothing on dev except the derived KB-count
+    docs (`_post_images_on_dev`). Covers the two shapes proofs 1–2 miss
+    (2026-11-09, five false refusals in one drain): the queue's kb-counts merge
+    driver re-renders the entry's `chore(kb-counts) … [auto]` commit, so that
+    patch never matches and the derived docs conflict in a trial merge; and a
+    batch-mate that edits nearby lines shifts the patch-id CONTEXT of a
+    byte-identical change. Any non-derived line the merge would add still
+    refuses.
     Returns (equivalent, commits_missing_from_dev)."""
     rc, out, _e = git("cherry", dev_ref, branch)
     missing = [ln[2:].strip() for ln in out.splitlines() if ln.startswith("+")] if rc == 0 else []
@@ -244,7 +252,24 @@ def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
     rc2, devtree, _e2 = git("rev-parse", f"{dev_ref}^{{tree}}")
     if rc1 == 0 and rc2 == 0 and tree.strip().splitlines()[:1] == [devtree.strip()]:
         return True, []
+    if _post_images_on_dev(git, branch, dev_ref):
+        return True, []
     return False, missing
+
+
+def _post_images_on_dev(git, branch: str, dev_ref: str) -> bool:
+    """Proof 3 of `_content_on_dev`: a trial merge of the branch into dev
+    changes NOTHING but the derived KB-count docs. Unlike proof 2 it tolerates
+    a conflict confined to those docs (merge-tree still writes the tree, rc 1),
+    and unlike a byte-compare it tolerates hot files later peers edited."""
+    rc, out, _e = git("merge-tree", "--write-tree", "--no-messages", dev_ref, branch)
+    lines = out.strip().splitlines()
+    if rc not in (0, 1) or not lines:
+        return False
+    rc, names, _e = git("diff", "--name-only", "--no-renames", dev_ref, lines[0].strip())
+    if rc != 0:
+        return False
+    return all(p.strip() in _KB_COUNTS_DERIVED for p in names.splitlines() if p.strip())
 
 
 def _commits(git, a: str, b: str, cwd: str | None = None) -> list[str]:

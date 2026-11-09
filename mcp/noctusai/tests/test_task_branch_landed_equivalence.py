@@ -88,6 +88,47 @@ def test_genuinely_diverged_branch_is_refused_and_untouched(tmp_path):
     assert _sh(primary, "branch", "--list", "feat/x") != ""
 
 
+def _land_with_drift(primary, wt, *, same_content: bool):
+    """The 2026-11-09 shapes: the entry carries a kb-counts [auto] commit the
+    queue re-renders differently, and a batch-mate edits the line right next
+    to the entry's change, so neither cherry nor a trial merge matches."""
+    derived = sorted(T._KB_COUNTS_DERIVED)[0]
+    (wt / "shared.txt").write_text("top\nmid\nbottom\n")
+    os.makedirs((wt / derived).parent, exist_ok=True)
+    (wt / derived).write_text("count: 1\n")
+    _sh(wt, "add", "."); _sh(wt, "commit", "--amend", "-qm", "add a + shared")
+    (wt / derived).write_text("count: 2\n")
+    _sh(wt, "add", "."); _sh(wt, "commit", "-qm", "chore(kb-counts): regenerate derived counts at integrate [auto]")
+    other = primary.parent / "other"
+    subprocess.run(["git", "clone", "-q", str(primary.parent / "remote.git"), str(other)],
+                   check=True, capture_output=True)
+    _sh(other, "checkout", "-q", "dev")
+    (other / "shared.txt").write_text("top\n")
+    _sh(other, "add", "."); _sh(other, "commit", "-qm", "peer touches shared")
+    (other / "a.txt").write_text("a\n" if same_content else "a-but-different\n")
+    (other / "shared.txt").write_text("top\nmid\nbottom\n")
+    os.makedirs((other / derived).parent, exist_ok=True)
+    (other / derived).write_text("count: 7\n")
+    _sh(other, "add", "."); _sh(other, "commit", "-qm", "entry as landed by the queue")
+    _sh(other, "push", "-q", "origin", "dev")
+
+
+def test_kb_counts_rerendered_and_context_shift_is_equivalent(tmp_path):
+    primary, wt = _setup(tmp_path)
+    _land_with_drift(primary, wt, same_content=True)
+    res = _call(primary)
+    assert res["status"] == "integrated", res
+    assert res["content_equivalent"] is True
+
+
+def test_post_image_mismatch_outside_derived_docs_is_still_refused(tmp_path):
+    primary, wt = _setup(tmp_path)
+    _land_with_drift(primary, wt, same_content=False)
+    res = _call(primary)
+    assert res["status"] == "error" and res["missing_commits"], res
+    assert wt.exists()
+
+
 def test_cleanup_still_refuses_unmerged_branch(tmp_path):
     primary, wt = _setup(tmp_path)
     res = T.task_branch(action="cleanup", slug="x", confirm=True, primary_root=str(primary),
