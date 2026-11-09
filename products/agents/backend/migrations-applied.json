@@ -46,6 +46,8 @@
     "066_turn_metrics.sql": "1d2a4da2794af07b2edd6a55e706e92b16b715a0edb837759cac9cd1228488d2",
     "067_finance_rev2.sql": "8a908378cdcfa91c6be1828a494fa282fdbf2f16180851e21630216af5d1fa2d",
     "068_finance_service_only.sql": "5afa7deab845622ad9d61d8f220ef1eeb2e5ff9491ecf2b102d93e0b1dab2925",
-    "069_status_pagina_agentes_plataforma.sql": "0ccf4ab25f6b471027fdfd98d640e68a7e2e21df4ca353db14f6f3df6b7736e0"
+    "069_status_pagina_agentes_plataforma.sql": "0ccf4ab25f6b471027fdfd98d640e68a7e2e21df4ca353db14f6f3df6b7736e0",
+    "070_agent_db_source.sql": "49d977d5a408fd2fc11e8888dfba3ac8dcdf5989241c2a991deb8ec71f144aaf",
+    "071_eval_runs_paralelos.sql": "a119a27f7680c6ae4b067b7dccb4ad0e614f4d44b27ced6dadfb558a48c10916"
   }
 }
