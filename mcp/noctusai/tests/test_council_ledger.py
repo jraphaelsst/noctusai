@@ -1,0 +1,443 @@
+"""``noctus.dev.council_ledger`` + the two keepers ``check_council_ledger_schema`` / ``check_council_ledger_sync``.
+
+Contract: project-history/assistant-chatbot/contracts/council-ledger.md. Hermetic: ``tmp_path`` trees, a fake DB client
+through the ``client=`` seam (no network, no patching of our own guards), real ``git`` in a tmp repo for append-only.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"))
+
+from tools.noctus.dev import council_ledger as cl  # noqa: E402
+from tools.noctus.dev.compliance import check_council_ledger_schema, check_council_ledger_sync  # noqa: E402
+
+SHA = "a" * 64
+T0 = "2026-11-09T10:00:00Z"
+
+
+def u() -> str:
+    return str(uuid.uuid4())
+
+
+class FakeDb:
+    """Records upserts; ``fail`` makes every call raise (missing table / unreachable)."""
+
+    def __init__(self, fail: Exception | None = None, existing: dict[str, list[str]] | None = None):
+        self.fail, self.calls, self.existing = fail, [], existing or {}
+        self._schema = self._table = None
+
+    def schema(self, name):
+        self._schema = name
+        return self
+
+    def table(self, name):
+        self._table = name
+        return self
+
+    def upsert(self, rows, on_conflict=None):
+        if self.fail:
+            raise self.fail
+        self.calls.append((self._schema, self._table, list(rows), on_conflict))
+        return self
+
+    def select(self, col):
+        if self.fail:
+            raise self.fail
+        self._col = col
+        return self
+
+    def execute(self):
+        class R:
+            pass
+        r = R()
+        kind = next(k for k, t in cl.DB_TABLES.items() if t == self._table)
+        r.data = [{self._col: i} for i in self.existing.get(kind, [])]
+        return r
+
+
+def open_s(root, *, stage="build", project="p1", seats=("lens:a", "lens:b"), at=T0, **kw):
+    out = cl.open_session(root, stage=stage, subject_kind="plan", subject_ref="ref", trigger="stage_map", mode="subagents",
+                          seats=list(seats), brief_sha256=SHA, project=project, recorded_by="t", recorded_at=at,
+                          auto_sync=False, **kw)
+    assert out["ok"], out
+    return out["session_id"]
+
+
+def obj(root, sid, seat, label, tokens=None, claim="It breaks.", severity="major", at=T0):
+    out = cl.record_objection(root, session_id=sid, seat=seat, anon_label=label, severity=severity, claim=claim,
+                              model="sonnet", tokens=tokens, recorded_by="t", recorded_at=at, auto_sync=False)
+    assert out["ok"], out
+    return out["objection_id"]
+
+
+def outcome(root, sid, oid, o, at=T0):
+    out = cl.record_event(root, session_id=sid, event_kind="outcome", objection_id=oid, outcome=o,
+                          evidence_kind="test", recorded_by="t", recorded_at=at, auto_sync=False)
+    assert out["ok"], out
+
+
+def verdict(root, sid, disp, at=T0):
+    out = cl.record_verdict(root, session_id=sid, chair_kind="chair_agent", decision="d", biggest_risk="r",
+                            first_step="f", dispositions=[{"objection_id": o, "disposition": d, "reason": why}
+                                                          for o, d, why in disp],
+                            recorded_by="t", recorded_at=at, auto_sync=False)
+    assert out["ok"], out
+
+
+class TestValidation:
+    def test_every_enum_is_enforced_with_a_precise_message(self, tmp_path):
+        out = cl.open_session(tmp_path, stage="nope", subject_kind="plan", subject_ref="r", trigger="stage_map",
+                              mode="subagents", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", auto_sync=False)
+        assert not out["ok"] and out["refused"] and "session.stage must be one of" in out["error"]
+        assert not list((tmp_path / "project-history").rglob("*.ndjson")) if (tmp_path / "project-history").exists() else True
+
+    def test_unknown_field_is_refused_not_dropped(self):
+        row = {"record": "session", "recorded_by": "t", "recorded_at": T0, "session_id": u(), "stage": "build",
+               "subject_kind": "plan", "subject_ref": "r", "trigger": "stage_map", "mode": "api", "seats": ["lens:a"],
+               "brief_sha256": SHA, "project": None, "extra": 1}
+        assert any("unknown field 'extra'" in e for e in cl.validate_row(row))
+
+    def test_bad_seat_label_uuid_sha_tokens_and_timestamp(self, tmp_path):
+        sid = open_s(tmp_path)
+        for kw, frag in (({"seat": "alice"}, "objection.seat"), ({"anon_label": "a1"}, "anon_label"),
+                         ({"tokens": -1}, "tokens"), ({"claim": "One. Two. Three. Four."}, "at most 3 sentences"),
+                         ({"severity": "huge"}, "severity")):
+            args = {"session_id": sid, "seat": "lens:a", "anon_label": "A", "severity": "major", "claim": "x",
+                    "model": "m", **kw}
+            out = cl.record_objection(tmp_path, recorded_by="t", auto_sync=False, **args)
+            assert not out["ok"] and frag in out["error"], (kw, out)
+        out = cl.record_objection(tmp_path, session_id="not-a-uuid", seat="lens:a", anon_label="A", severity="major",
+                                  claim="x", model="m", recorded_by="t", auto_sync=False)
+        assert "UUIDv4" in out["error"]
+        assert any("recorded_at" in e for e in cl.validate_row(
+            {"record": "event", "recorded_by": "t", "recorded_at": "yesterday", "event_id": u(), "session_id": u(),
+             "event_kind": "ratified"}))
+
+    def test_outcome_event_requires_its_fields_and_others_forbid_them(self, tmp_path):
+        sid = open_s(tmp_path)
+        out = cl.record_event(tmp_path, session_id=sid, event_kind="outcome", recorded_by="t", auto_sync=False)
+        assert "required when event_kind=outcome" in out["error"]
+        out = cl.record_event(tmp_path, session_id=sid, event_kind="ratified", outcome="vindicated", recorded_by="t",
+                              auto_sync=False)
+        assert "only allowed when event_kind=outcome" in out["error"]
+
+    def test_references_must_resolve(self, tmp_path):
+        sid = open_s(tmp_path)
+        assert "unknown session" in cl.record_objection(
+            tmp_path, session_id=u(), seat="lens:a", anon_label="A", severity="note", claim="x", model="m",
+            recorded_by="t", auto_sync=False)["error"]
+        assert "not one of the session's seats" in cl.record_objection(
+            tmp_path, session_id=sid, seat="lens:zzz", anon_label="A", severity="note", claim="x", model="m",
+            recorded_by="t", auto_sync=False)["error"]
+        obj(tmp_path, sid, "lens:a", "A")
+        assert "used twice" in cl.record_objection(
+            tmp_path, session_id=sid, seat="lens:b", anon_label="A", severity="note", claim="x", model="m",
+            recorded_by="t", auto_sync=False)["error"]
+        assert "unknown objection" in cl.record_event(
+            tmp_path, session_id=sid, event_kind="outcome", objection_id=u(), outcome="refuted", evidence_kind="test",
+            recorded_by="t", auto_sync=False)["error"]
+        assert "needs a verdict first" in cl.record_event(
+            tmp_path, session_id=sid, event_kind="ratified", recorded_by="t", auto_sync=False)["error"]
+
+    def test_verdict_needs_every_objection_disposed_and_only_one_verdict(self, tmp_path):
+        sid = open_s(tmp_path)
+        o1, o2 = obj(tmp_path, sid, "lens:a", "A"), obj(tmp_path, sid, "lens:b", "B")
+        bad = cl.record_verdict(tmp_path, session_id=sid, chair_kind="tech_lead", decision="d", biggest_risk="r",
+                                first_step="f", dispositions=[{"objection_id": o1, "disposition": "accepted", "reason": "x"}],
+                                recorded_by="t", auto_sync=False)
+        assert f"no disposition to objection {o2}" in bad["error"]
+        verdict(tmp_path, sid, [(o1, "accepted", "x"), (o2, "rejected", "y")])
+        again = cl.record_verdict(tmp_path, session_id=sid, chair_kind="tech_lead", decision="d", biggest_risk="r",
+                                  first_step="f", dispositions=[{"objection_id": o1, "disposition": "accepted", "reason": "x"},
+                                                                {"objection_id": o2, "disposition": "accepted", "reason": "x"}],
+                                  recorded_by="t", auto_sync=False)
+        assert "one verdict" in again["error"]
+        late = cl.record_objection(tmp_path, session_id=sid, seat="lens:a", anon_label="C", severity="note", claim="x",
+                                   model="m", recorded_by="t", auto_sync=False)
+        assert "after the verdict" in late["error"]
+
+    def test_recorded_by_falls_back_to_env_or_is_required(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
+                              mode="api", seats=["lens:a"], brief_sha256=SHA, auto_sync=False)
+        assert not out["ok"] and "recorded_by is required" in out["error"]
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
+                              mode="api", seats=["lens:a"], brief_sha256=SHA, auto_sync=False)
+        assert out["ok"]
+
+
+class TestStorage:
+    def test_one_file_per_session_under_the_month_directory_append_only(self, tmp_path):
+        s1, s2 = open_s(tmp_path), open_s(tmp_path, at="2026-12-01T00:00:00Z")
+        obj(tmp_path, s1, "lens:a", "A")
+        f1 = cl.session_file(tmp_path, s1)
+        assert f1 == tmp_path / "project-history/council/2026-11" / f"{s1}.ndjson"
+        assert cl.session_file(tmp_path, s2) == tmp_path / "project-history/council/2026-12" / f"{s2}.ndjson"
+        assert [r["record"] for r in cl.read_rows(f1)] == ["session", "objection"]
+        assert cl.open_session(tmp_path, session_id=s1, stage="build", subject_kind="plan", subject_ref="r",
+                               trigger="stage_map", mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t",
+                               auto_sync=False)["error"].startswith(f"session {s1} already exists")
+
+
+class TestMetrics:
+    """Hand-computed expected values (contract §3). One session, two seats, a re-resolved outcome."""
+
+    def fixture(self, tmp_path):
+        sid = open_s(tmp_path)
+        o1 = obj(tmp_path, sid, "lens:a", "A", tokens=100)
+        o2 = obj(tmp_path, sid, "lens:a", "B", tokens=50)
+        o3 = obj(tmp_path, sid, "lens:a", "C", tokens=50)
+        o4 = obj(tmp_path, sid, "lens:b", "D", tokens=None)
+        o5 = obj(tmp_path, sid, "lens:b", "E", tokens=200)
+        verdict(tmp_path, sid, [(o1, "accepted", "unique"), (o2, "rejected", "wrong"), (o3, "deferred", "later"),
+                                (o4, "accepted", "shared with A"), (o5, "rejected", "n/a")])
+        outcome(tmp_path, sid, o1, "refuted", at="2026-11-10T00:00:00Z")
+        outcome(tmp_path, sid, o1, "vindicated", at="2026-11-11T00:00:00Z")  # latest wins -> vindicated
+        outcome(tmp_path, sid, o2, "refuted", at="2026-11-10T00:00:00Z")
+        outcome(tmp_path, sid, o3, "untested", at="2026-11-10T00:00:00Z")
+        outcome(tmp_path, sid, o4, "vindicated", at="2026-11-10T00:00:00Z")
+        return sid
+
+    def test_per_seat_rates(self, tmp_path):
+        self.fixture(tmp_path)
+        seats = cl.report(tmp_path)["seats"]
+        a, b = seats["lens:a"], seats["lens:b"]
+        # a: 3 objections; latest outcomes vindicated(o1) refuted(o2) untested(o3)
+        assert (a["objections"], a["vindicated"], a["refuted"], a["with_outcome"]) == (3, 1, 1, 3)
+        assert a["hit_rate"] == 0.5                  # 1 / (1+1)
+        assert a["unique_hit_rate"] == 1.0           # o1 vindicated + marked unique / 1 vindicated
+        assert a["false_alarm_rate"] == 0.3333       # 1 refuted / 3 with an outcome (untested counts as an outcome)
+        assert a["acceptance_rate"] == 0.3333        # 1 accepted / 3 dispositions
+        assert a["cost_per_hit"] == 200.0            # (100+50+50) / 1 vindicated
+        # b: o4 vindicated (tokens null = 0), o5 no outcome
+        assert b["hit_rate"] == 1.0
+        assert b["unique_hit_rate"] == 0.0           # 'shared with A' is not 'unique'
+        assert b["false_alarm_rate"] == 0.0          # 0 / 1
+        assert b["acceptance_rate"] == 0.5           # 1 / 2
+        assert b["cost_per_hit"] == 200.0            # (0+200) / 1
+
+    def test_rates_are_none_when_the_denominator_is_zero(self, tmp_path):
+        sid = open_s(tmp_path)
+        obj(tmp_path, sid, "lens:a", "A", tokens=5)
+        a = cl.report(tmp_path)["seats"]["lens:a"]
+        assert (a["hit_rate"], a["unique_hit_rate"], a["false_alarm_rate"], a["acceptance_rate"], a["cost_per_hit"]) == (None,) * 5
+
+    def test_filters_stage_project_since(self, tmp_path):
+        self.fixture(tmp_path)  # build / p1 / 2026-11-09
+        s2 = open_s(tmp_path, stage="ship", project="p2", seats=("lens:a",), at="2026-11-20T00:00:00Z")
+        o = obj(tmp_path, s2, "lens:a", "A", tokens=10, at="2026-11-20T00:00:00Z")
+        verdict(tmp_path, s2, [(o, "accepted", "unique")], at="2026-11-20T00:00:00Z")
+        outcome(tmp_path, s2, o, "vindicated", at="2026-11-21T00:00:00Z")
+        assert cl.report(tmp_path, stage="ship")["seats"]["lens:a"]["objections"] == 1
+        assert cl.report(tmp_path, stage="ship")["seats"]["lens:a"]["hit_rate"] == 1.0
+        assert cl.report(tmp_path, project="p1")["sessions"] == 1
+        assert cl.report(tmp_path, since="2026-11-15")["sessions"] == 1
+        assert cl.report(tmp_path, since="2026-11-15")["filters"]["since"] == "2026-11-15"
+        assert cl.report(tmp_path, stage="idealize")["seats"] == {}
+
+    def bulk(self, tmp_path, seat, stage, vind, ref):
+        sid = open_s(tmp_path, stage=stage, seats=(seat,))
+        for n in range(vind + ref):
+            o = obj(tmp_path, sid, seat, chr(65 + n % 26) + (chr(65 + n // 26) if n >= 26 else ""))
+            outcome(tmp_path, sid, o, "vindicated" if n < vind else "refuted")
+
+    def test_retune_signals(self, tmp_path):
+        self.bulk(tmp_path, "lens:low", "build", 1, 9)       # 10 resolved, hit 0.1  -> demote
+        self.bulk(tmp_path, "lens:high", "ship", 7, 3)       # 10 resolved, hit 0.7  -> promote
+        self.bulk(tmp_path, "lens:mid", "build", 5, 5)       # 0.5 -> nothing
+        self.bulk(tmp_path, "lens:few", "wire", 0, 9)        # 9 resolved -> below the floor
+        props = {(p["seat"], p["stage"]): p for p in cl.report(tmp_path)["retune_proposals"]}
+        assert set(props) == {("lens:low", "build"), ("lens:high", "ship")}
+        assert props[("lens:low", "build")]["proposal"] == "demote M->O" and props[("lens:low", "build")]["hit_rate"] == 0.1
+        assert props[("lens:high", "ship")]["proposal"] == "promote O->M"
+        assert all(p["auto_apply"] is False and p["applies_if"] for p in props.values())
+        # with the stage map the contract condition is exact: low is already O -> no demote; high is already M -> no promote
+        rep = cl.report(tmp_path, stage_map={"build": {"lens:low": "O"}, "ship": {"lens:high": "M"}})
+        assert rep["retune_proposals"] == []
+        rep = cl.report(tmp_path, stage_map={"build": {"lens:low": "M"}, "ship": {"lens:high": "O"}})
+        assert {p["proposal"] for p in rep["retune_proposals"]} == {"demote M->O", "promote O->M"}
+        assert all(p["applies_if"] is None for p in rep["retune_proposals"])
+
+
+class TestSyncAndPending:
+    def test_missing_table_is_inconclusive_with_a_pending_marker_never_red(self, tmp_path):
+        db = FakeDb(fail=Exception("Could not find the table 'agents.council_sessions' in the schema cache"))
+        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
+                              mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
+        assert out["ok"] and out["sync"]["status"] == "inconclusive" and out["sync"]["reason"] == "table not applied"
+        assert (tmp_path / cl.PENDING_REL).read_text().startswith(out["session_id"])
+        assert cl.status(tmp_path)["pending_sync"] == 1
+
+    def test_unreachable_db_is_inconclusive_too(self, tmp_path):
+        db = FakeDb(fail=ConnectionError("boom"))
+        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
+                              mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
+        assert out["sync"]["status"] == "inconclusive" and out["sync"]["reason"] == "db unreachable: ConnectionError"
+
+    def test_successful_write_upserts_by_id_without_the_record_key(self, tmp_path):
+        db = FakeDb()
+        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
+                              mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
+        assert out["sync"] == {"status": "synced"} and not (tmp_path / cl.PENDING_REL).exists()
+        schema, table, rows, conflict = db.calls[0]
+        assert (schema, table, conflict) == ("agents", "council_sessions", "session_id")
+        assert "record" not in rows[0] and rows[0]["seats"] == ["lens:a"]
+
+    def test_sync_is_dry_run_by_default_then_pushes_all_and_clears_the_marker(self, tmp_path):
+        s = open_s(tmp_path)
+        o = obj(tmp_path, s, "lens:a", "A")
+        verdict(tmp_path, s, [(o, "accepted", "x")])
+        assert (tmp_path / cl.PENDING_REL).exists()  # auto_sync off leaves a marker
+        dry = cl.sync(tmp_path)
+        assert dry["status"] == "dry_run" and dry["would_upsert"] == {"session": 1, "objection": 1, "verdict": 1, "event": 0}
+        db = FakeDb()
+        done = cl.sync(tmp_path, confirm=True, client=db)
+        assert done["status"] == "synced" and [c[1] for c in db.calls] == [
+            "council_sessions", "council_objections", "council_verdicts"]
+        assert not (tmp_path / cl.PENDING_REL).exists()
+
+    def test_sync_with_missing_table_is_inconclusive(self, tmp_path):
+        open_s(tmp_path)
+        out = cl.sync(tmp_path, confirm=True, client=FakeDb(fail=Exception("relation does not exist")))
+        assert out["status"] == "inconclusive" and out["reason"] == "table not applied"
+
+    def test_status_reports_sessions_without_verdict_and_stale_objections(self, tmp_path):
+        s = open_s(tmp_path)
+        old = obj(tmp_path, s, "lens:a", "A", at="2026-10-01T00:00:00Z")
+        fresh = obj(tmp_path, s, "lens:b", "B", at="2026-11-08T00:00:00Z")
+        decided = obj(tmp_path, s, "lens:a", "C", at="2026-10-01T00:00:00Z")
+        outcome(tmp_path, s, decided, "vindicated")
+        st = cl.status(tmp_path, now=datetime(2026, 11, 9, tzinfo=timezone.utc))
+        assert st["sessions_without_verdict"] == [s]
+        assert [x["objection_id"] for x in st["objections_without_outcome"]] == [old]
+        assert fresh not in [x["objection_id"] for x in st["objections_without_outcome"]]
+
+    def test_run_dispatch_validates_arguments_and_action(self, tmp_path):
+        assert "missing required" in cl.run("open_session", root=tmp_path, stage="build")["error"]
+        assert "action must be one of" in cl.run("nope", root=tmp_path)["error"]
+        out = cl.run("open_session", root=tmp_path, stage="build", subject_kind="plan", subject_ref="r",
+                     trigger="stage_map", mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", auto_sync=False)
+        assert out["ok"] and cl.run("status", root=tmp_path)["sessions"] == 1
+
+
+class TestCouncilLedgerSchema:
+    """Keeper ``check_council_ledger_schema``: red + green fixtures, then append-only on a real git index."""
+
+    def test_green_ledger_is_clean(self, tmp_path):
+        s = open_s(tmp_path)
+        o = obj(tmp_path, s, "lens:a", "A")
+        verdict(tmp_path, s, [(o, "accepted", "x")])
+        assert check_council_ledger_schema(tmp_path) == []
+
+    def test_red_bad_enum_hand_edited_row(self, tmp_path):
+        s = open_s(tmp_path)
+        f = cl.session_file(tmp_path, s)
+        row = json.loads(f.read_text().splitlines()[0])
+        row["stage"] = "whenever"
+        f.write_text(json.dumps(row) + "\n")
+        issues = check_council_ledger_schema(tmp_path)
+        assert issues and "session.stage must be one of" in issues[0]["issue"]
+
+    def test_red_file_name_and_month_must_match_the_session(self, tmp_path):
+        s = open_s(tmp_path)
+        f = cl.session_file(tmp_path, s)
+        moved = tmp_path / "project-history/council/2025-01" / f.name
+        moved.parent.mkdir(parents=True)
+        f.rename(moved)
+        assert any("lives in 2025-01/" in i["issue"] for i in check_council_ledger_schema(tmp_path))
+        other = moved.with_name(f"{u()}.ndjson")
+        moved.rename(other)
+        assert any("does not match its session_id" in i["issue"] for i in check_council_ledger_schema(tmp_path))
+
+    def test_paths_scopes_and_ignores_non_ledger_files(self, tmp_path):
+        s = open_s(tmp_path)
+        f = cl.session_file(tmp_path, s)
+        f.write_text("not json\n")
+        assert check_council_ledger_schema(tmp_path, ["README.md"]) == []
+        assert check_council_ledger_schema(tmp_path, [str(f.relative_to(tmp_path))])
+
+    def test_append_only_pure_rules(self):
+        rel = "project-history/council/2026-11/x.ndjson"
+        assert cl.append_only_violations(rel, "A", "", 0) == []
+        assert cl.append_only_violations(rel, "D", "", 3)
+        assert cl.append_only_violations(rel, "M", "@@ -3,0 +4,1 @@\n+row\n", 3) == []
+        assert cl.append_only_violations(rel, "M", "@@ -1,0 +2,1 @@\n+row\n", 3)  # inserted mid-file
+        assert cl.append_only_violations(rel, "M", "@@ -2 +2 @@\n-old\n+new\n", 3)  # edited line
+
+    def _git(self, root, *a):
+        subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", *a], check=True,
+                       capture_output=True)
+
+    def test_append_only_on_a_real_index(self, tmp_path):
+        self._git(tmp_path, "init", "-q")
+        s = open_s(tmp_path)
+        f = cl.session_file(tmp_path, s)
+        rel = str(f.relative_to(tmp_path))
+        self._git(tmp_path, "add", "-A")
+        assert check_council_ledger_schema(tmp_path, [rel], staged=True) == []  # new file
+        self._git(tmp_path, "commit", "-qm", "ledger")
+        obj(tmp_path, s, "lens:a", "A")  # pure append
+        self._git(tmp_path, "add", "-A")
+        assert check_council_ledger_schema(tmp_path, [rel], staged=True) == []
+        self._git(tmp_path, "commit", "-qm", "append")
+        rows = f.read_text().splitlines()
+        rows[0] = rows[0].replace('"project": "p1"', '"project": "p9"')  # rewrite a committed line (still valid JSON)
+        f.write_text("\n".join(rows) + "\n")
+        self._git(tmp_path, "add", "-A")
+        assert any("append-only" in i["issue"] or "modified or deleted" in i["issue"]
+                   for i in check_council_ledger_schema(tmp_path, [rel], staged=True))
+        self._git(tmp_path, "reset", "-q", "--hard")
+        f.unlink()
+        self._git(tmp_path, "add", "-A")
+        assert any("staged status D" in i["issue"] for i in check_council_ledger_schema(tmp_path, [rel], staged=True))
+
+
+class TestCouncilLedgerSync:
+    """Keeper ``check_council_ledger_sync``: ids in ndjson but not in the DB fail; unmeasurable is inconclusive."""
+
+    def test_in_sync_and_db_only_ids_do_not_fail(self, tmp_path):
+        s = open_s(tmp_path)
+        db = FakeDb(existing={"session": [s, u()]})  # an extra DB id = a parallel branch's session
+        v: dict = {}
+        assert check_council_ledger_sync(tmp_path, client=db, verdict_out=v) == []
+        assert v["status"] == "in_sync" and v["db_only"] == {"session": 1}
+
+    def test_missing_ids_fail_with_the_list(self, tmp_path):
+        s = open_s(tmp_path)
+        o = obj(tmp_path, s, "lens:a", "A")
+        issues = check_council_ledger_sync(tmp_path, client=FakeDb(existing={"session": [s]}))
+        assert len(issues) == 1 and o in issues[0]["issue"] and "objection id(s)" in issues[0]["issue"]
+
+    def test_table_not_applied_is_inconclusive_never_red(self, tmp_path):
+        open_s(tmp_path)
+        v: dict = {}
+        issues = check_council_ledger_sync(tmp_path, client=FakeDb(fail=Exception("PGRST205 no table")), verdict_out=v)
+        assert issues == [] and v["status"] == "inconclusive" and v["reason"] == "table not applied"
+
+    def test_no_credentials_is_inconclusive(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        open_s(tmp_path)
+        v: dict = {}
+        assert check_council_ledger_sync(tmp_path, verdict_out=v) == [] and v["status"] == "inconclusive"
+
+    def test_empty_ledger_is_trivially_in_sync(self, tmp_path):
+        v: dict = {}
+        assert check_council_ledger_sync(tmp_path, client=FakeDb(), verdict_out=v) == [] and v["status"] == "in_sync"
+
+
+@pytest.mark.parametrize("name,expect", [("stage", 14), ("subject_kind", 9), ("trigger", 9), ("mode", 3), ("severity", 4),
+                                         ("chair_kind", 3), ("disposition", 3), ("event_kind", 3), ("outcome", 3),
+                                         ("evidence_kind", 7)])
+def test_enums_match_contract_section_2(name, expect):
+    assert len(cl.ENUMS[name]) == expect
