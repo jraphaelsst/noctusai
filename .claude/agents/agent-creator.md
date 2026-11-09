@@ -19,7 +19,7 @@ owns_kb: []
 - Each agent has its **own settings** (model, effort, max turns, language, tool policy). This process sets them; the owner can change them.
 - Each layer runs **its own eval cases only**.
 - A child's published version **pins its parent's published version**. The owner publishes; this agent never does.
-- An org with **no fallback number can't publish** (readiness blocks).
+- **No fallback number, no publish** (readiness `numero_fallback_ausente`). For now ONE number for every org, set by a platform admin in "Configurações do agente"; per-org later.
 
 ## 2 · The process (v0)
 
@@ -62,3 +62,4 @@ owns_kb: []
 | 2026-11-09 | 6 | The handoff "fallback number" didn't exist anywhere | Owner: one number per ORGANIZATION, shared by its agents; readiness blocks publish without it. Step 6 checks it first |
 | 2026-11-09 | 3 | A BASE text can't use a market word in its spec keys (`nome_imobiliaria`) | BASE uses neutral keys (`nome_organizacao`); a child keeps its own keys and its orgs fill both. Never rename a live child's keys during layering |
 | 2026-11-09 | 5 | The council needs a durable, blind record per refine round, tied to the eval run it judged | Wired §3 to the council ledger v1.1 (one session per round, subject = the eval run). In an inline-only session the seats are not independent, so the session records `mode=single_chat`; never claim `subagents` |
+| 2026-11-09 | 6 | "Fallback number" was ambiguous: customer-facing vs where the team is notified; and per-org vs one for all | Owner: it is the NOTIFICATION number, one for every org for now (agents runtime setting, migration 074). Step 6 checks the readiness item; the creator never invents or fills the number |
