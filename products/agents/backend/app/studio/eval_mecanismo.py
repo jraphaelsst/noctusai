@@ -747,6 +747,8 @@ class MecanismoGateRun:
     orcamento_excedido: bool
     total_casos: int
     casos_aprovados: int
+    #: every active mecanismo case is executed in this run or validly CONSOLIDATED (skipped by it; state re-read now)
+    cobertura_completa: bool = False
 
 
 @dataclass(frozen=True)
@@ -788,6 +790,6 @@ def decidir_portao(req: MecanismoRequisito, compiled_hash: str) -> PortaoMecanis
         return PortaoMecanismo(False, "orcamento_excedido", r.id)
     if not r.completa:
         return PortaoMecanismo(False, "incompleta", r.id)
-    if not r.aprovado or r.casos_aprovados != r.total_casos or r.total_casos < req.casos_ativos:
+    if not r.aprovado or r.casos_aprovados != r.total_casos or (r.total_casos < req.casos_ativos and not r.cobertura_completa):
         return PortaoMecanismo(False, "reprovada", r.id)
     return PortaoMecanismo(True, "ok", r.id)

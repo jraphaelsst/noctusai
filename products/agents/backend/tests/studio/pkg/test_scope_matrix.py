@@ -76,6 +76,9 @@ CONTENT_WRITE_ROUTES = {
     ("GET", "/api/studio/agents/{key}/evals/cases"),
     ("POST", "/api/studio/agents/{key}/evals/cases"),
     ("PATCH", "/api/studio/agents/{key}/evals/cases/{case_id}"),
+    # kind evals_consolidacao (case criticidade + depende_de): same platform issuer, audited
+    ("GET", "/api/studio/agents/{key}/evals/consolidacao"),
+    ("PUT", "/api/studio/agents/{key}/evals/cases/{case_id}/consolidacao"),
     ("GET", "/api/studio/agents/{key}/conformidade/regras"),
     ("GET", "/api/studio/agents/{key}/conformidade/regras/{regra}"),
     ("PUT", "/api/studio/agents/{key}/conformidade/regras/{regra}"),

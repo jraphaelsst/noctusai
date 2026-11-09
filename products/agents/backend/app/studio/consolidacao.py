@@ -74,6 +74,8 @@ class EstadoCaso:
     partes_referencia: Mapping[str, str] | None = None
     hash_referencia: str | None = None
     ultimo_run_id: UUID | None = None
+    #: optimistic-concurrency token of the stored row (0 = not stored yet); set by the store, ignored by the machine
+    versao: int = 0
 
 
 @dataclass(frozen=True)

@@ -186,6 +186,16 @@ def _handler(state: FakeAgents):
                 caso = next(c for c in state.casos if c["id"] == mo.group(1))
                 caso.update(b)
                 return self._send(200, caso)
+            # eval consolidation (criticality + declared dependencies, both suites)
+            if m == "GET" and path == f"{A}/evals/consolidacao":
+                return self._send(200, {"items": [
+                    {"case_id": c["id"], "slug": c["slug"], "criticidade": c.get("criticidade", "normal"),
+                     "depende_de": c.get("depende_de")} for c in state.casos]})
+            mo = re.fullmatch(rf"{A}/evals/cases/([0-9a-f-]+)/consolidacao", path)
+            if mo and m == "PUT":
+                caso = next(c for c in state.casos if c["id"] == mo.group(1))
+                caso.update(b)
+                return self._send(200, caso)
             # conformance rules
             if m == "GET" and path == f"{A}/conformidade/regras":
                 return self._send(200, {"items": list(state.regras.values())})
@@ -445,6 +455,26 @@ class TestEvalAndConformanceKinds:
         out = run(srv, private, payload, action="set", kind="conformidade_regras", agent="julia", confirm=confirm)
         assert out["status"] == "error" and out["codigo"] == "regra_seguranca_exige_humano"
         assert "Studio" in out["mensagem"] and srv.writes() == [] and srv.log == []  # no request at all
+
+    def test_consolidation_criticality_and_deps_are_planned_then_written_per_slug(self, srv, private):
+        run(srv, private, {"itens": [self.CASO]}, action="set", kind="evals_mecanismo", agent="julia", confirm=True)
+        slug = self.CASO["slug"]
+        payload = {"itens": [{"slug": slug, "criticidade": "critico", "depende_de": ["secao:persona", "skill:*"]}]}
+        plan = run(srv, private, payload, action="set", kind="evals_consolidacao", agent="julia")
+        assert plan["status"] == "planned" and plan["mudancas"][0]["chave"] == slug and srv.writes()[-1][0] == "POST"
+        out = run(srv, private, payload, action="set", kind="evals_consolidacao", agent="julia", confirm=True)
+        assert out["status"] == "written" and srv.writes()[-1][0] == "PUT" and srv.writes()[-1][1].endswith("/consolidacao")
+        got = run(srv, private, action="get", kind="evals_consolidacao", agent="julia", chave=slug)
+        assert got["itens"] == {slug: {"criticidade": "critico", "depende_de": ["secao:persona", "skill:*"]}}
+        assert run(srv, private, payload, action="set", kind="evals_consolidacao", agent="julia")["status"] == "no_change"
+
+    def test_consolidation_refuses_unknown_cases_fields_and_replace_mode(self, srv, private):
+        for body, merge, codigo in (
+            ({"itens": [{"slug": "nao-existe", "criticidade": "critico"}]}, True, "caso_desconhecido"),
+            ({"itens": [{"slug": "x", "ativo": False}]}, False, "merge_invalido"),
+        ):
+            out = run(srv, private, body, action="set", kind="evals_consolidacao", agent="julia", merge=merge)
+            assert out["status"] == "error" and out["codigo"] == codigo
 
     def test_conformance_rules_can_still_be_read(self, srv, private):
         got = run(srv, private, action="get", kind="conformidade_regras", agent="julia", chave="termina_sem_pergunta")

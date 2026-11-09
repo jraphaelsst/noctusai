@@ -67,7 +67,7 @@ def iniciar_suite_mecanismo(
     execution to :func:`concluir_suite_mecanismo` in the background.
 
     ``consolidacao`` (eval consolidation store): a default run (not ``rodar_tudo``) drops the cases that are consolidated and
-    unaffected and records them as skipped against the run; the run is then PARTIAL (it never satisfies the publish gate)."""
+    unaffected and records them as skipped against the run; the publish gate then counts those still-consolidated cases as covered."""
     tipo = getattr(driver, "tipo", None)
     if tipo not in _TIPOS:
         raise DriverSemTipo("driver.tipo must be 'live' or 'fake'")
@@ -106,7 +106,7 @@ def iniciar_suite_mecanismo(
 async def concluir_suite_mecanismo(
     store: Any, driver: EvalTurnDriver, casos: Sequence, *, org_id: UUID, run_id: UUID,
     limite_usd: float | None, parar_no_primeiro_erro: bool = True, consolidacao: Any = None,
-    agent_id: UUID | None = None, compiled_hash: str | None = None, parcial: bool = False,
+    agent_id: UUID | None = None, compiled_hash: str | None = None,
 ) -> SuiteResultado:
     """Execute the booked run and stamp it (``concluida``); a crash marks it ``falhou`` (fixed text) and re-raises."""
     try:
@@ -122,10 +122,7 @@ async def concluir_suite_mecanismo(
         logger.error("agents.eval.mecanismo_harness_error org_id=%s run_id=%s %s", org_id, run_id, harness)
         store.fail_run(org_id, run_id, erro=harness[:300])
         return resultado
-    if parcial:
-        store.finish_run(org_id, run_id, resultado, driver=driver.tipo, parcial=True)
-    else:
-        store.finish_run(org_id, run_id, resultado, driver=driver.tipo)
+    store.finish_run(org_id, run_id, resultado, driver=driver.tipo)
     _registrar_consolidacao(consolidacao, resultado, org_id=org_id, agent_id=agent_id, run_id=run_id,
                             compiled_hash=compiled_hash, driver=driver.tipo)
     return resultado

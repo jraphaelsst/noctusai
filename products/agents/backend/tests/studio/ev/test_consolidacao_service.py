@@ -122,9 +122,8 @@ def _run_mec(ms, cs, partes, rodar_tudo=False):
     drv = _Driver()
     run_id, casos = iniciar_suite_mecanismo(ms, drv, org_id=ORG, agent_id=AGENT, version_id=VERSION, compiled_hash="h0",
                                             started_by=uuid4(), limite_usd=None, consolidacao=cs, partes=partes, rodar_tudo=rodar_tudo)
-    total = len(ms.list_active_cases(ORG, AGENT))
     asyncio.run(concluir_suite_mecanismo(ms, drv, casos, org_id=ORG, run_id=run_id, limite_usd=None, consolidacao=cs,
-                                         agent_id=AGENT, compiled_hash="h0", parcial=len(casos) < total))
+                                         agent_id=AGENT, compiled_hash="h0"))
     return run_id, casos
 
 
@@ -137,19 +136,28 @@ def test_mechanism_each_passing_execution_counts_as_one_pass_and_k3_run_adds_thr
     assert all(e.estado == "consolidado" for e in cs.get_estados(ORG, AGENT).values())
 
 
-def test_mechanism_default_run_skips_consolidated_and_a_partial_run_never_opens_the_gate():
+def test_mechanism_default_run_skips_consolidated_and_the_gate_counts_them_as_covered_only_with_coverage():
+    from app.studio.eval_mecanismo import MecanismoRequisito, decidir_portao
+
     ms, cs = _mec_store()
     _run_mec(ms, cs, dict(P0)); _run_mec(ms, cs, dict(P0))
     ids = [c.id for c in ms.list_active_cases(ORG, AGENT)]
     with pytest.raises(TodosConsolidados):
         _run_mec(ms, cs, dict(P0))
-    # one case is affected -> only it runs; the run is PARTIAL (completa/aprovado False) so the publish gate is untouched
+    # one case is affected -> only it runs; the skipped one is recorded against the run
     cs.set_caso(ORG, AGENT, ids[1], depende_de=["secao:b"], depende_de_origem="declarada")
     run_id, casos = _run_mec(ms, cs, {**P0, "secao:a": "2"})
     assert [c.id for c in casos] == [ids[0]]
     row = ms.runs[run_id]
-    assert row["completa"] is False and row["aprovado"] is False
+    assert (row["total_casos"], row["aprovado"]) == (1, True)  # honest: this run executed and passed 1 case
     assert {p["case_id"] for p in cs.list_pulados(ORG, run_id, "mecanismo")} == {ids[1]}
+    run = ms.latest_live_run(ORG, VERSION)
+    req = MecanismoRequisito(exigido=True, casos_ativos=2, run=run)
+    assert decidir_portao(req, "h0").codigo == "reprovada"  # 1 of 2 and the DB function has not vouched for the rest
+    from dataclasses import replace
+
+    covered = MecanismoRequisito(exigido=True, casos_ativos=2, run=replace(run, cobertura_completa=True))
+    assert decidir_portao(covered, "h0").liberado is True
 
 
 def test_mechanism_rodar_tudo_runs_everything_and_can_be_complete():
@@ -231,3 +239,80 @@ def test_backfill_proposes_criticality_and_dependency_gaps():
     assert rel.deps_sem_inferencia == ["comportamento:tom"]
     m = st.list_meta(ORG, AGENT)[a.id]
     assert (m.criticidade, m.criticidade_origem, m.depende_de, m.depende_de_origem) == ("critico", "sugerida", ("skill:qualificar",), "inferida")
+
+
+# ── coverage rules (owner decision 2026-11-09) ─────────────────────────────────────────────────────────
+
+
+def test_a_critical_case_is_covered_only_after_ten_and_revalidar_or_em_validacao_never():
+    st, ids = _store(n=3, crit={0: "critico", 1: "critico", 2: "normal"}, deps={0: ["secao:a"], 1: ["secao:a"], 2: ["secao:a"]})
+    _passar(st, ids[:2], 9)  # critical x2 at 9/10
+    _passar(st, [ids[2]], 4)  # normal at 4/5
+    sel = selecionar(st, org_id=ORG, agent_id=AGENT, suite="comportamento", ativos=ids, partes=dict(P0), hash_atual="h0", rodar_tudo=False)
+    assert sel.rodar == ids and not sel.pulados  # nobody is consolidated yet: nothing covered
+    _passar(st, ids[:1], 1)  # first critical reaches 10
+    sel = selecionar(st, org_id=ORG, agent_id=AGENT, suite="comportamento", ativos=ids, partes=dict(P0), hash_atual="h0", rodar_tudo=False)
+    assert [p["case_id"] for p in sel.pulados] == [ids[0]] and sel.pulados[0]["limite"] == 10
+    # a change that affects it: revalidar is never skipped again until it re-earns 6
+    sel = selecionar(st, org_id=ORG, agent_id=AGENT, suite="comportamento", ativos=ids, partes={**P0, "secao:a": "2"}, hash_atual="h1", rodar_tudo=False)
+    assert ids[0] in sel.rodar and not sel.pulados
+    confirmar_selecao(st, sel, org_id=ORG, agent_id=AGENT, suite="comportamento", run_id=uuid4(), run_tipo="comportamento", partes={**P0, "secao:a": "2"}, hash_atual="h1")
+    assert st.get_estados(ORG, AGENT)[ids[0]].estado == "revalidar"
+    sel = selecionar(st, org_id=ORG, agent_id=AGENT, suite="comportamento", ativos=ids, partes={**P0, "secao:a": "2"}, hash_atual="h1", rodar_tudo=False)
+    assert ids[0] in sel.rodar
+
+
+def test_a_case_with_no_declared_deps_is_never_covered_across_a_change():
+    st, ids = _store(n=1)  # no depende_de
+    _passar(st, ids, 5)
+    sel = selecionar(st, org_id=ORG, agent_id=AGENT, suite="comportamento", ativos=ids, partes={**P0, "estrutura": "e2"}, hash_atual="h1", rodar_tudo=False)
+    assert sel.rodar == ids and not sel.pulados
+
+
+def test_a_covered_filtered_judge_run_is_stamped_completa_by_the_selection():
+    st, ids = _store(n=2, deps={0: ["secao:a"], 1: ["secao:a"]})
+    _passar(st, ids[:1], 5)
+    sel = selecionar(st, org_id=ORG, agent_id=AGENT, suite="comportamento", ativos=ids, partes=dict(P0), hash_atual="h0", rodar_tudo=False)
+    run = uuid4()
+    confirmar_selecao(st, sel, org_id=ORG, agent_id=AGENT, suite="comportamento", run_id=run, run_tipo="comportamento", partes=dict(P0), hash_atual="h0")
+    assert ("comportamento", run) in st.completas
+    sel_all = selecionar(st, org_id=ORG, agent_id=AGENT, suite="comportamento", ativos=ids, partes=dict(P0), hash_atual="h0", rodar_tudo=True)
+    run2 = uuid4()
+    confirmar_selecao(st, sel_all, org_id=ORG, agent_id=AGENT, suite="comportamento", run_id=run2, run_tipo="comportamento", partes=dict(P0), hash_atual="h0")
+    assert ("comportamento", run2) not in st.completas  # nothing skipped: the DB's own `completa` stands
+
+
+# ── atomic state under parallel runs ───────────────────────────────────────────────────────────────────
+
+
+def test_a_lost_compare_and_swap_is_retried_not_overwritten():
+    st, ids = _store(n=1)
+    _passar(st, ids, 2)
+    real = st.save_estado
+    calls = {"n": 0}
+
+    def racing(org_id, agent_id, suite, est, *, run_tipo, esperado_versao):
+        calls["n"] += 1
+        if calls["n"] == 1:  # a parallel run lands its pass between our read and our write
+            real(org_id, agent_id, suite, replace_seq(st.estados[ids[0]], 3), run_tipo=run_tipo, esperado_versao=esperado_versao)
+        return real(org_id, agent_id, suite, est, run_tipo=run_tipo, esperado_versao=esperado_versao)
+
+    def replace_seq(e, n):
+        from dataclasses import replace
+
+        return replace(e, sequencia=n)
+
+    st.save_estado = racing
+    registrar_resultados(st, org_id=ORG, agent_id=AGENT, suite="comportamento", run_id=uuid4(), run_tipo="comportamento",
+                         hash_atual="h0", partes=P0, resultados=[(ids[0], ["aprovado"])])
+    assert calls["n"] == 2 and st.estados[ids[0]].sequencia == 4  # 2 + the racing run's pass + ours: no lost update
+
+
+def test_a_state_that_keeps_moving_fails_loudly():
+    from app.studio.consolidacao_service import ConcorrenciaEstado
+
+    st, ids = _store(n=1)
+    st.save_estado = lambda *a, **k: False
+    with pytest.raises(ConcorrenciaEstado):
+        registrar_resultados(st, org_id=ORG, agent_id=AGENT, suite="comportamento", run_id=uuid4(), run_tipo="comportamento",
+                             hash_atual="h0", partes=P0, resultados=[(ids[0], ["aprovado"])])

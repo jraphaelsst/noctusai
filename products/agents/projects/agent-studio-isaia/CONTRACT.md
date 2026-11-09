@@ -704,10 +704,16 @@ A case that passed N CONSECUTIVE times is `consolidado` and a default run does n
 
 - `POST .../evals/runs` (and `POST .../draft/mecanismo-runs?rodar_tudo=`) take `rodar_tudo` (default `false`): a default run executes only the
   cases that are not consolidated-and-unaffected and stores the skipped ones (`eval_casos_pulados`, returned as `casos_pulados` on the run
-  detail). Everything consolidated and unaffected is 409 `todos_consolidados`. A filtered run is never `completa` / `aprovado`: only a
-  `rodar_tudo` run opens the publish gate. Explicit `case_ids` / `repetir_falhas_de` are never filtered.
+  detail). Everything consolidated and unaffected is 409 `todos_consolidados`. **Consolidated coverage (owner decision 2026-11-09):** a
+  version is publishable when every active case is executed and passed in the run, or `consolidado` and skipped by that run as unaffected.
+  A filtered judge run whose skips cover the rest is stamped `completa`; the DB publish function (`agents.publish_agent_version`) and
+  `agents.eval_run_cobre_casos` re-verify at publish that each skipped case is STILL `consolidado` with its streak at the threshold (a critical
+  case below 10, a `revalidar` / `em_validacao` case, or a case added after the run is never covered). Explicit `case_ids` /
+  `repetir_falhas_de` are never filtered; `rodar_tudo` behaves as before.
 - `GET .../evals/consolidacao[?suite=]` -> `{config, contagem, items[{case_id, slug, suite, criticidade(+_origem), depende_de(+_origem), estado, sequencia, limite}]}`;
   `GET .../evals/consolidacao/transicoes[?case_id=&limit=]` (append-only history); `PUT .../evals/cases/{id}/consolidacao {criticidade?, depende_de?}`;
   `POST .../evals/consolidacao/backfill {confirmar=false, politica_sem_partes=dono|conservadora, usar_deps_propostas=false, propor_criticidade=true}` (dry-run unless `confirmar`).
+- State writes are compare-and-swap (`eval_case_estado.versao`): parallel runs of one version re-read and re-apply, never overwrite.
+- `noctus.agents.content` kind `evals_consolidacao` (`{itens:[{slug, criticidade?, depende_de?}]}`, both suites) calls the PUT with the platform `studio:content-write` token (audited).
 - Case reads (`GET .../evals/cases`) carry `criticidade`, `criticidade_origem`, `depende_de`, `depende_de_origem`.
 - Typed FE contract: `Consolidacao`, `ConsolidacaoCaso`, `EvalCasoPulado`, `EvalRunCreate.rodar_tudo` in `frontend/src/api/studio/types-ke.ts`.

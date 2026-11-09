@@ -347,6 +347,8 @@ async def create_run(
         except Exception:
             store.mark_run_failed(ctx.org_id, run.id, erro="consolidacao_indisponivel")
             raise
+        if selecao.pulados:
+            run = store.get_run(ctx.org_id, agent.id, run.id)  # `completa` was stamped by the covered selection
 
         if ctx.caller_kind == "product":
             # The shared daily ceiling (seed): over it / unverifiable -> the booked run is failed, never scheduled.
@@ -453,7 +455,7 @@ def cancel_run(
 def get_consolidacao(
     key: str,
     suite: str | None = Query(None, pattern="^(mecanismo|comportamento)$"),
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
     consol=Depends(get_consolidacao_store_dep),
@@ -500,12 +502,13 @@ def put_caso_consolidacao(
     key: str,
     case_id: UUID,
     payload: ConsolidacaoCasoUpdateRequest,
-    ctx: AuthContext = Depends(require_platform_admin),
+    ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
     consol=Depends(get_consolidacao_store_dep),
 ) -> ConsolidacaoCasoOut:
-    """Set a case's criticality and/or declared dependencies (a human decision: origins become ``definida`` / ``declarada``)."""
+    """Set a case's criticality and/or declared dependencies (a human decision: origins become ``definida`` / ``declarada``).
+    Also the ``noctus.agents.content`` kind ``evals_consolidacao`` (platform ``studio:content-write`` token, audited)."""
     agent = resolve_studio_agent(defs, ctx.org_id, key)
     fields = payload.model_fields_set
     try:
@@ -519,6 +522,9 @@ def put_caso_consolidacao(
         raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
     cfg = consol.config()
     m = consol.list_meta(ctx.org_id, agent.id)[case_id]
+    from types import SimpleNamespace
+
+    _audit_case_mcp(defs, ctx, agent, case_id, SimpleNamespace(id=case_id, slug=m.slug, suite=m.suite))  # token writes are audited
     from app.studio.consolidacao import estado_inicial
 
     e = consol.get_estados(ctx.org_id, agent.id).get(case_id) or estado_inicial(case_id, m.criticidade, cfg)

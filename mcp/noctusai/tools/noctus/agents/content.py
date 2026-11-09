@@ -48,6 +48,9 @@ kind                  payload                                                   
                       max_turns?, idioma?, tool_policy?: {web_search,
                       knowledge}, notas?}}`` (the DRAFT's settings; only the
                       fields sent change)
+``evals_consolidacao`` ``{"itens": [{slug, criticidade?: normal|critico,            PUT .../evals/cases/{id}/
+                      depende_de?: [parte]|null}]}`` (BOTH suites, keyed by          consolidacao
+                      case slug; ``null`` clears the deps = affected by any change)
 ``conformidade_regras`` (READ-ONLY: list/get; set is refused) ``{"itens": [...]}``     .../conformidade/regras/{regra}
 ====================  ==========================================================  =============================
 
@@ -647,6 +650,53 @@ class _EvalCases:
         return sorted(self._rows(api, agent))
 
 
+# ── eval consolidation: criticality + declared dependencies of the cases (both suites) ─────────────
+
+_CONSOLIDACAO_CAMPOS = ("criticidade", "depende_de")
+
+
+class _Consolidacao:
+    """Per-case ``criticidade`` (normal|critico) and ``depende_de`` (part refs the case depends on; ``null`` = not declared =
+    affected by ANY change), keyed by case slug across both suites. A confirmed write stamps the origins ``definida`` /
+    ``declarada`` (a human decision). The cases themselves are not touched; the state machine reads these on the next run."""
+
+    def _rows(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
+        got = api.call("GET", f"/api/studio/agents/{_q(agent)}/evals/consolidacao")["items"]
+        return {r["slug"]: r for r in got}
+
+    def plan(self, api: _Api, agent: str, payload: Any, merge: bool):
+        if not merge:
+            raise ContentError("merge_invalido", "A consolidação só altera casos existentes: use merge=True.")
+        rows = self._rows(api, agent)
+        changes, steps = [], []
+        for it in _items(payload):
+            slug = it.get("slug")
+            if not isinstance(slug, str) or slug not in rows:
+                raise ContentError("caso_desconhecido", f"Caso desconhecido: {slug!r}.")
+            unknown = set(it) - set(_CONSOLIDACAO_CAMPOS) - {"slug"}
+            if unknown:
+                raise ContentError("payload_invalido", f"Campos desconhecidos: {', '.join(sorted(unknown))}.")
+            touched = {k: v for k, v in it.items() if k != "slug"}
+            ch = _change(slug, {k: rows[slug].get(k) for k in touched}, touched)
+            changes.append(ch)
+            if ch["op"] != "unchanged":
+                steps.append((f"/api/studio/agents/{_q(agent)}/evals/cases/{_q(rows[slug]['case_id'])}/consolidacao", touched))
+        if not steps:
+            return changes, None
+
+        def apply() -> None:
+            for path, body in steps:
+                api.call("PUT", path, body)
+
+        return changes, apply
+
+    def current(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
+        return {slug: {f: r.get(f) for f in _CONSOLIDACAO_CAMPOS} for slug, r in self._rows(api, agent).items()}
+
+    def listing(self, api: _Api, agent: str) -> list[str]:
+        return sorted(self._rows(api, agent))
+
+
 # ── conformance rules (switches of the deterministic output checks) ─────────
 
 _REGRA_FIELDS = ("ativo", "politica", "parametros")
@@ -741,12 +791,14 @@ _AGENTE = {
         "comportamento", ("titulo", "entrada", "contexto", "criterios", "rubrica", "roteiro", "tags", "ativo"),
         ("titulo", "entrada", "criterios"),
     ),
+    "evals_consolidacao": _Consolidacao(),
     "conformidade_regras": _ConformidadeRegras(),
     "rascunho": _Rascunho(),
 }
 _EFEITO = {
     "evals_mecanismo": "Casos gravados: valem na PRÓXIMA execução da suíte mecanismo. Nada foi executado nem publicado.",
     "evals_comportamento": "Casos gravados: valem na PRÓXIMA execução da suíte comportamento (juiz LLM). Nada foi executado nem publicado.",
+    "evals_consolidacao": "Criticidade/dependências gravadas: valem a partir do próximo registro de resultados e da próxima seleção de uma execução. Nada foi executado nem publicado.",
     "conformidade_regras": "Regras não são versionadas: valem a partir do próximo turno. Nada foi publicado.",
 }
 KINDS = (*_REPLACE_SETS, "skill", "skill_ref", *_PADRAO, *_AGENTE)
@@ -942,7 +994,7 @@ def register(server) -> None:
             "Write an agent's CONTENT rows (the 'Claude, change Julia's X' path) into a target environment through the "
             "agents Studio API, DRAFTS ONLY (never publishes). action=list|get|set; kind=secao|texto|ferramenta|decisao|"
             "spec (need agent=<key>), skill|skill_ref (library skills / pins on the agent draft), padrao_criterio|"
-            "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo|evals_comportamento (mechanism / LLM-judged behaviour eval cases) | "
+            "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo|evals_comportamento (mechanism / LLM-judged behaviour eval cases) | evals_consolidacao (per-case criticidade + depende_de, both suites; payload {itens: [{slug, criticidade?, depende_de?}]}) | "
             "conformidade_regras (rule switches; NOT versioned - live from the next turn) | rascunho (the DRAFT settings: payload {configuracoes: {provider, model, effort, max_turns, idioma, tool_policy: {web_search, knowledge}, notas}}, only the fields sent change) (need agent=<key>). Lifecycle: "
             "action=criar_agente (agent=<any valid key>: creates the EMPTY platform definition; optional payload_path with nome, "
             "runtime, owner_product, escopo/padrao_qualificacao, rascunho_padrao, instanciavel, papel and a briefing that "

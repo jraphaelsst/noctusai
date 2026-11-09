@@ -41,7 +41,7 @@ class MecanismoStore(Protocol):
         limite_usd: float | None, started_by: UUID, total_casos: int,
     ) -> UUID: ...
 
-    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str, parcial: bool = False) -> None: ...
+    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None: ...
 
     def fail_run(self, org_id: UUID, run_id: UUID, *, erro: str) -> None: ...
 
@@ -116,7 +116,7 @@ class FakeMecanismoStore:
         self.execucoes[rid] = []
         return rid
 
-    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str, parcial: bool = False) -> None:
+    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None:
         row = self.runs.get(run_id)
         if row is None or row["org_id"] != org_id:
             raise NotFound(f"mechanism run {run_id} not found")
@@ -129,7 +129,7 @@ class FakeMecanismoStore:
                 })
         row.update(
             status="concluida", total_casos=len(resultado.casos), casos_aprovados=resultado.casos_aprovados,
-            completa=resultado.completo and not parcial, aprovado=resultado.aprovado and not parcial,
+            completa=resultado.completo, aprovado=resultado.aprovado,
             orcamento_excedido=resultado.orcamento_excedido, custo_usd=resultado.custo_usd,
             finished_at=utcnow(),
         )
@@ -181,7 +181,7 @@ def _gate_run(r: dict[str, Any]) -> MecanismoGateRun:
         id=UUID(str(r["id"])), compiled_hash=r["compiled_hash"], status=r["status"], driver=r["driver"],
         completa=bool(r["completa"]), aprovado=bool(r["aprovado"]),
         orcamento_excedido=bool(r["orcamento_excedido"]), total_casos=int(r["total_casos"] or 0),
-        casos_aprovados=int(r["casos_aprovados"] or 0),
+        casos_aprovados=int(r["casos_aprovados"] or 0), cobertura_completa=bool(r.get("cobertura_completa", False)),
     )
 
 
@@ -233,7 +233,7 @@ class SupabaseMecanismoStore:
             raise RuntimeError("insert of mechanism run returned no row")
         return UUID(str(rows[0]["id"]))
 
-    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str, parcial: bool = False) -> None:
+    def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None:
         execs = [
             {
                 "org_id": str(org_id), "run_id": str(run_id), "case_id": str(cr.caso.id), "indice": e.indice,
@@ -248,8 +248,8 @@ class SupabaseMecanismoStore:
         exec_query(
             self._t("eval_mecanismo_runs").update({
                 "status": "concluida", "total_casos": len(resultado.casos),
-                "casos_aprovados": resultado.casos_aprovados, "completa": resultado.completo and not parcial,
-                "aprovado": resultado.aprovado and not parcial, "orcamento_excedido": resultado.orcamento_excedido,
+                "casos_aprovados": resultado.casos_aprovados, "completa": resultado.completo,
+                "aprovado": resultado.aprovado, "orcamento_excedido": resultado.orcamento_excedido,
                 "custo_usd": resultado.custo_usd, "finished_at": utcnow_iso(),
             }).eq("org_id", str(org_id)).eq("id", str(run_id)).eq("status", "executando")
         )
@@ -263,13 +263,20 @@ class SupabaseMecanismoStore:
     def latest_live_run(self, org_id: UUID, version_id: UUID) -> MecanismoGateRun | None:
         resp = (
             self._t("eval_mecanismo_runs")
-            .select("id, compiled_hash, status, driver, completa, aprovado, orcamento_excedido, total_casos, casos_aprovados")
+            .select("id, agent_id, compiled_hash, status, driver, completa, aprovado, orcamento_excedido, total_casos, casos_aprovados")
             .eq("org_id", str(org_id)).eq("version_id", str(version_id))
             .eq("driver", "live").eq("status", "concluida")
             .order("finished_at", desc=True).limit(1).execute()
         )
         rows = resp.data or []
-        return _gate_run(rows[0]) if rows else None
+        if not rows:
+            return None
+        row = rows[0]
+        # consolidated coverage: asked of the DB function the publish gate itself uses (state re-read now)
+        cobre = exec_rpc(self._client, _SCHEMA, "eval_run_cobre_casos", {
+            "p_org_id": str(org_id), "p_agent_id": row["agent_id"], "p_run_id": row["id"],
+            "p_run_tipo": "mecanismo", "p_suite": "mecanismo"}).data
+        return _gate_run({**row, "cobertura_completa": bool(cobre)})
 
     def requisito(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> MecanismoRequisito:
         return _compose(self, org_id, agent_id, version_id)

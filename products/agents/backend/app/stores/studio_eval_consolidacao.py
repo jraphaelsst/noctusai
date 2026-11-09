@@ -6,11 +6,11 @@ platform-admin only. Every query is org-scoped.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from app.stores._db_errors import exec_query
+from app.stores._db_errors import StudioConflict, exec_query
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
 from app.studio.consolidacao import DEFAULT_CONFIG, ConfigConsolidacao, EstadoCaso, Transicao
@@ -45,7 +45,14 @@ class ConsolidacaoStore(Protocol):
     def config(self) -> ConfigConsolidacao: ...
     def list_meta(self, org_id: UUID, agent_id: UUID, suite: str | None = None) -> dict[UUID, CasoMeta]: ...
     def get_estados(self, org_id: UUID, agent_id: UUID) -> dict[UUID, EstadoCaso]: ...
-    def save_estado(self, org_id: UUID, agent_id: UUID, suite: str, est: EstadoCaso, *, run_tipo: str | None) -> None: ...
+    def get_estado(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> EstadoCaso | None: ...
+    def save_estado(
+        self, org_id: UUID, agent_id: UUID, suite: str, est: EstadoCaso, *, run_tipo: str | None, esperado_versao: int,
+    ) -> bool:
+        """Compare-and-swap: write ``est`` only if the stored row is still at ``esperado_versao`` (0 = no row yet). ``False`` =
+        a parallel run moved it first; the caller re-reads and re-applies. Never a blind overwrite."""
+        ...
+    def marcar_run_completa(self, org_id: UUID, run_id: UUID, run_tipo: str) -> None: ...
     def append_transicoes(
         self, org_id: UUID, agent_id: UUID, *, case_id: UUID, suite: str, criticidade: str, run_id: UUID | None,
         run_tipo: str | None, partes: dict[str, str] | None, compiled_hash: str | None, transicoes: list[Transicao],
@@ -75,6 +82,7 @@ def _estado_de(row: dict[str, Any]) -> EstadoCaso:
         case_id=UUID(str(row["case_id"])), estado=row["estado"], sequencia=int(row["sequencia"]), limite=int(row["limite"]),
         partes_referencia=row.get("partes_referencia"), hash_referencia=row.get("hash_referencia"),
         ultimo_run_id=UUID(str(row["ultimo_run_id"])) if row.get("ultimo_run_id") else None,
+        versao=int(row.get("versao") or 1),
     )
 
 
@@ -101,6 +109,7 @@ class FakeConsolidacaoStore:
         self.estado_suite: dict[UUID, str] = {}
         self.transicoes: list[dict[str, Any]] = []
         self.pulados: list[dict[str, Any]] = []
+        self.completas: list[tuple[str, UUID]] = []
         self.run_partes: dict[tuple[str, UUID], tuple[dict[str, str] | None, bool]] = {}
         self.hist_comportamento: list[dict[str, Any]] = []
         self.hist_mecanismo: list[dict[str, Any]] = []
@@ -127,9 +136,23 @@ class FakeConsolidacaoStore:
     def get_estados(self, org_id: UUID, agent_id: UUID) -> dict[UUID, EstadoCaso]:
         return dict(self.estados)
 
-    def save_estado(self, org_id: UUID, agent_id: UUID, suite: str, est: EstadoCaso, *, run_tipo: str | None) -> None:
-        self.estados[est.case_id] = est
+    def get_estado(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> EstadoCaso | None:
+        return self.estados.get(case_id)
+
+    def save_estado(
+        self, org_id: UUID, agent_id: UUID, suite: str, est: EstadoCaso, *, run_tipo: str | None, esperado_versao: int,
+    ) -> bool:
+        atual = self.estados.get(est.case_id)
+        if (atual.versao if atual else 0) != esperado_versao:
+            return False
+        self.estados[est.case_id] = replace(est, versao=esperado_versao + 1)
         self.estado_suite[est.case_id] = suite
+        return True
+
+    def marcar_run_completa(self, org_id: UUID, run_id: UUID, run_tipo: str) -> None:
+        if self._evals is not None and run_tipo == "comportamento" and run_id in self._evals._runs:
+            self._evals._runs[run_id]["completa"] = True
+        self.completas.append((run_tipo, run_id))
 
     def append_transicoes(
         self, org_id: UUID, agent_id: UUID, *, case_id: UUID, suite: str, criticidade: str, run_id: UUID | None,
@@ -166,7 +189,6 @@ class FakeConsolidacaoStore:
             kw.update(criticidade=criticidade, criticidade_origem=criticidade_origem or "definida")
         if depende_de is not _UNSET:
             kw.update(depende_de=None if depende_de is None else tuple(depende_de), depende_de_origem=depende_de_origem)
-        from dataclasses import replace
         self.meta[case_id] = replace(atual, **kw)
 
     def historico_comportamento(self, org_id: UUID, agent_id: UUID) -> list[dict[str, Any]]:
@@ -220,14 +242,33 @@ class SupabaseConsolidacaoStore:
             label="eval_case_estado", order=(("case_id", False),), id_key="case_id")
         return {UUID(str(r["case_id"])): _estado_de(r) for r in rows}
 
-    def save_estado(self, org_id: UUID, agent_id: UUID, suite: str, est: EstadoCaso, *, run_tipo: str | None) -> None:
-        exec_query(self._t("eval_case_estado").upsert({
-            "case_id": str(est.case_id), "org_id": str(org_id), "agent_id": str(agent_id), "suite": suite,
+    def get_estado(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> EstadoCaso | None:
+        rows = exec_query(self._t("eval_case_estado").select("*").eq("org_id", str(org_id)).eq("case_id", str(case_id)).limit(1)).data or []
+        return _estado_de(rows[0]) if rows else None
+
+    def save_estado(
+        self, org_id: UUID, agent_id: UUID, suite: str, est: EstadoCaso, *, run_tipo: str | None, esperado_versao: int,
+    ) -> bool:
+        row = {
+            "org_id": str(org_id), "agent_id": str(agent_id), "suite": suite,
             "estado": est.estado, "sequencia": est.sequencia, "limite": est.limite,
             "partes_referencia": dict(est.partes_referencia) if est.partes_referencia is not None else None,
             "hash_referencia": est.hash_referencia, "ultimo_run_id": str(est.ultimo_run_id) if est.ultimo_run_id else None,
-            "ultimo_run_tipo": run_tipo,
-        }, on_conflict="case_id"))
+            "ultimo_run_tipo": run_tipo, "versao": esperado_versao + 1,
+        }
+        if esperado_versao == 0:
+            try:  # PK(case_id): a parallel run inserted first -> unique violation -> not saved
+                exec_query(self._t("eval_case_estado").insert({**row, "case_id": str(est.case_id)}), unique_code="estado_concorrente")
+            except StudioConflict:
+                return False
+            return True
+        done = exec_query(
+            self._t("eval_case_estado").update(row).eq("case_id", str(est.case_id)).eq("versao", esperado_versao)
+        ).data or []
+        return bool(done)
+
+    def marcar_run_completa(self, org_id: UUID, run_id: UUID, run_tipo: str) -> None:
+        exec_query(self._t(self._run_table(run_tipo)).update({"completa": True}).eq("org_id", str(org_id)).eq("id", str(run_id)))
 
     def append_transicoes(
         self, org_id: UUID, agent_id: UUID, *, case_id: UUID, suite: str, criticidade: str, run_id: UUID | None,

@@ -1251,7 +1251,6 @@ async def run_mecanismo_suite(
     limite = settings.studio_mecanismo_run_budget_usd
     try:
         with store_errors():
-            total_ativos = len(mecanismo.list_active_cases(ctx.org_id, agent.id))
             run_id, casos = iniciar_suite_mecanismo(
                 mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
                 compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite,
@@ -1279,7 +1278,7 @@ async def run_mecanismo_suite(
         try:
             resultado = await concluir_suite_mecanismo(
                 mecanismo, driver, casos, org_id=ctx.org_id, run_id=run_id, limite_usd=limite, consolidacao=consolidacao,
-                agent_id=agent.id, compiled_hash=compiled.hash, parcial=len(casos) < total_ativos)
+                agent_id=agent.id, compiled_hash=compiled.hash)
             if resultado.erro_de_harness is None:  # a crashed/harness-failed run keeps its cap counting
                 settle_run(ceiling, kind=KIND_MECANISMO_RUN, run_id=run_id, actual_usd=float(resultado.custo_usd or 0.0))
         except Exception:  # noqa: BLE001 -- the run is already marked `falhou` (fixed text); nothing else to do

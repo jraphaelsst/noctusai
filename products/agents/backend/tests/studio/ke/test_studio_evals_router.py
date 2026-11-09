@@ -386,7 +386,7 @@ class TestConsolidacaoRuns:
         self._consolidar(ke_client, agent, ids[:2])
         resp = self._post_run(ke_client, version_id)
         assert resp.status_code == 202, resp.text
-        assert resp.json()["total"] == 1 and resp.json()["completa"] is False  # subset: never the publish gate's complete run
+        assert resp.json()["total"] == 1 and resp.json()["completa"] is True  # covered: executed + consolidated-unaffected = every active case
         detail = ke_client.get(f"/api/studio/agents/isaia/evals/runs/{resp.json()['id']}").json()
         assert [r["case_slug"] for r in detail["resultados"]] == ["c2"]
         assert {p["case_slug"] for p in detail["casos_pulados"]} == {"c0", "c1"}

@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS agents.eval_case_estado (
     estado TEXT NOT NULL DEFAULT 'em_validacao' CHECK (estado IN ('em_validacao', 'consolidado', 'revalidar')),
     sequencia INT NOT NULL DEFAULT 0 CHECK (sequencia >= 0),
     limite INT NOT NULL CHECK (limite >= 1),
+    -- optimistic-concurrency token: parallel runs of one version finish together; a state write is compare-and-swap on it
+    versao INT NOT NULL DEFAULT 1 CHECK (versao >= 1),
     -- the per-part hashes of the last run that counted for this case (what "unchanged" is compared against)
     partes_referencia JSONB NULL,
     hash_referencia TEXT NULL,
@@ -174,3 +176,176 @@ DROP TRIGGER IF EXISTS set_updated_at_eval_consolidacao_config ON agents.eval_co
 CREATE TRIGGER set_updated_at_eval_consolidacao_config
     BEFORE UPDATE ON agents.eval_consolidacao_config
     FOR EACH ROW EXECUTE FUNCTION agents.set_updated_at();
+
+-- 8 · consolidated coverage in the DB publish gate ----------------------------------------------------------------
+-- A skipped case is COVERED only while it is `consolidado` with its streak at the threshold, BOTH as recorded when the run
+-- skipped it and NOW. `revalidar` / `em_validacao` / a critical case below its 10 are never covered; the state is re-read at
+-- publish so a regression after the run revokes the coverage.
+CREATE OR REPLACE FUNCTION agents.eval_run_cobre_casos(
+    p_org_id UUID, p_agent_id UUID, p_run_id UUID, p_run_tipo TEXT, p_suite TEXT
+) RETURNS BOOLEAN
+LANGUAGE sql STABLE
+SET search_path = agents, public
+AS $$
+    SELECT NOT EXISTS (
+        SELECT 1 FROM agents.eval_cases c
+        WHERE c.org_id = p_org_id AND c.agent_id = p_agent_id AND c.ativo AND c.suite = p_suite
+          AND NOT (
+              (p_run_tipo = 'comportamento'
+               AND EXISTS (SELECT 1 FROM agents.eval_results r WHERE r.run_id = p_run_id AND r.case_id = c.id))
+              OR (p_run_tipo = 'mecanismo'
+                  AND EXISTS (SELECT 1 FROM agents.eval_mecanismo_execucoes x WHERE x.run_id = p_run_id AND x.case_id = c.id))
+              OR EXISTS (
+                  SELECT 1 FROM agents.eval_casos_pulados p
+                  JOIN agents.eval_case_estado s ON s.case_id = p.case_id
+                  WHERE p.run_id = p_run_id AND p.run_tipo = p_run_tipo AND p.case_id = c.id
+                    AND p.estado = 'consolidado' AND p.sequencia >= p.limite
+                    AND s.estado = 'consolidado' AND s.sequencia >= s.limite
+              )
+          )
+    );
+$$;
+REVOKE ALL ON FUNCTION agents.eval_run_cobre_casos(UUID, UUID, UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION agents.eval_run_cobre_casos(UUID, UUID, UUID, TEXT, TEXT) TO service_role;
+
+-- publish_agent_version = 038's body + consolidated coverage (judge run and mechanism run).
+CREATE OR REPLACE FUNCTION agents.publish_agent_version(
+    p_org_id UUID,
+    p_version_id UUID,
+    p_published_by UUID,
+    p_eval_run_id UUID,
+    p_override_reason TEXT,
+    p_expected_hash TEXT,
+    p_texto TEXT,
+    p_manifest JSONB
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = agents, public
+AS $$
+DECLARE
+    v_row agents.agent_versions;
+    v_prev agents.agent_versions;
+    v_limiar NUMERIC(4,3);
+    v_score NUMERIC(4,3);
+    v_reason TEXT := NULLIF(btrim(p_override_reason, E' \t\r\n'), '');
+    v_mec agents.eval_mecanismo_runs;
+    v_mec_cases INT;
+    v_mec_exige BOOLEAN;
+BEGIN
+    SELECT * INTO v_row FROM agents.agent_versions
+    WHERE id = p_version_id AND org_id = p_org_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'version_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_row.status <> 'rascunho' THEN
+        RAISE EXCEPTION 'version_immutable' USING ERRCODE = 'P0001';
+    END IF;
+    IF p_expected_hash IS NULL OR v_row.compiled_hash IS DISTINCT FROM p_expected_hash THEN
+        RAISE EXCEPTION 'draft_changed' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Julia v2 A-EVAL: the mechanism suite is a hard gate with no override, enforced here so a direct
+    -- DB publish cannot bypass the router. Required when the agent says so or has an active mecanismo
+    -- case; satisfied only by the newest LIVE-driver run of THIS version for THIS hash that finished,
+    -- was complete, stayed under budget and passed every case (an empty required suite is never green).
+    SELECT a.exige_mecanismo INTO v_mec_exige FROM agents.agents a
+    WHERE a.id = v_row.agent_id AND a.org_id = p_org_id;
+    SELECT count(*) INTO v_mec_cases FROM agents.eval_cases c
+    WHERE c.org_id = p_org_id AND c.agent_id = v_row.agent_id AND c.ativo AND c.suite = 'mecanismo';
+    IF COALESCE(v_mec_exige, false) OR v_mec_cases > 0 THEN
+        SELECT * INTO v_mec FROM agents.eval_mecanismo_runs r
+        WHERE r.org_id = p_org_id AND r.version_id = p_version_id AND r.driver = 'live' AND r.status = 'concluida'
+        ORDER BY r.finished_at DESC NULLS LAST, r.created_at DESC
+        LIMIT 1;
+        IF NOT FOUND
+           OR v_mec.compiled_hash IS DISTINCT FROM p_expected_hash
+           OR NOT v_mec.aprovado OR NOT v_mec.completa OR v_mec.orcamento_excedido
+           OR (v_mec.total_casos < v_mec_cases
+               AND NOT agents.eval_run_cobre_casos(p_org_id, v_row.agent_id, v_mec.id, 'mecanismo', 'mecanismo'))
+           OR (EXISTS (SELECT 1 FROM agents.eval_casos_pulados p WHERE p.run_id = v_mec.id AND p.run_tipo = 'mecanismo')
+               AND NOT agents.eval_run_cobre_casos(p_org_id, v_row.agent_id, v_mec.id, 'mecanismo', 'mecanismo'))
+           OR v_mec.casos_aprovados <> v_mec.total_casos THEN
+            RAISE EXCEPTION 'mecanismo_required' USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- FOR SHARE: a concurrent threshold change waits for this publish, so
+    -- the snapshot is the threshold the gate was actually held to.
+    SELECT publicacao_limiar INTO v_limiar FROM agents.agents
+    WHERE id = v_row.agent_id AND org_id = p_org_id
+    FOR SHARE;
+
+    IF p_eval_run_id IS NOT NULL THEN
+        SELECT r.score INTO v_score FROM agents.eval_runs r
+        WHERE r.id = p_eval_run_id
+          AND r.org_id = p_org_id
+          AND r.version_id = p_version_id
+          AND r.status = 'concluida'
+          AND r.completa
+          AND r.total >= 1
+          AND r.compiled_hash = p_expected_hash
+          AND r.score IS NOT NULL
+          AND r.score >= v_limiar;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'eval_required' USING ERRCODE = 'P0001';
+        END IF;
+        -- Consolidated coverage (owner decision 2026-11-09): a run that skipped consolidated cases only counts when EVERY
+        -- active case is executed in it or still validly consolidated (state re-read NOW, threshold met).
+        IF EXISTS (SELECT 1 FROM agents.eval_casos_pulados p WHERE p.run_id = p_eval_run_id AND p.run_tipo = 'comportamento')
+           AND NOT agents.eval_run_cobre_casos(p_org_id, v_row.agent_id, p_eval_run_id, 'comportamento', 'comportamento') THEN
+            RAISE EXCEPTION 'eval_required' USING ERRCODE = 'P0001';
+        END IF;
+        PERFORM 1 FROM agents.eval_cases c
+        WHERE c.org_id = p_org_id AND c.agent_id = v_row.agent_id AND c.ativo;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'eval_required' USING ERRCODE = 'P0001';
+        END IF;
+        v_reason := NULL;
+    ELSIF v_reason IS NULL OR length(regexp_replace(v_reason, '\s', '', 'g')) < 20 THEN
+        RAISE EXCEPTION 'eval_required' USING ERRCODE = 'P0001';
+    END IF;
+
+    IF p_texto IS NULL OR p_manifest IS NULL THEN
+        RAISE EXCEPTION 'invalid_payload' USING ERRCODE = 'P0001';
+    END IF;
+    INSERT INTO agents.compiled_prompts (org_id, hash, version_id, client_id, texto, manifest)
+    VALUES (p_org_id, p_expected_hash, p_version_id, NULL, p_texto, p_manifest)
+    ON CONFLICT (org_id, hash) DO NOTHING;
+
+    SELECT * INTO v_prev FROM agents.agent_versions
+    WHERE org_id = p_org_id AND agent_id = v_row.agent_id AND status = 'ativa'
+    FOR UPDATE;
+
+    UPDATE agents.agent_versions
+    SET status = 'substituida'
+    WHERE org_id = p_org_id AND agent_id = v_row.agent_id AND status = 'ativa';
+
+    UPDATE agents.agent_versions
+    SET status = 'ativa',
+        published_by = p_published_by,
+        published_at = now(),
+        eval_run_id = p_eval_run_id,
+        publish_override_reason = v_reason,
+        limiar_aplicado = v_limiar,
+        eval_score = v_score
+    WHERE id = p_version_id AND org_id = p_org_id;
+
+    INSERT INTO agents.agent_audit_log (org_id, agent_id, actor, acao, antes, depois)
+    VALUES (
+        p_org_id, v_row.agent_id, p_published_by,
+        CASE WHEN p_eval_run_id IS NULL THEN 'publicado_override' ELSE 'publicado' END,
+        CASE WHEN v_prev.id IS NULL THEN NULL
+             ELSE jsonb_build_object('version_id', v_prev.id, 'versao', v_prev.versao) END,
+        jsonb_build_object(
+            'version_id', v_row.id, 'versao', v_row.versao, 'compiled_hash', v_row.compiled_hash,
+            'eval_run_id', p_eval_run_id, 'eval_score', v_score, 'limiar_aplicado', v_limiar,
+            'override_reason', v_reason
+        )
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION agents.publish_agent_version(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION agents.publish_agent_version(UUID, UUID, UUID, UUID, TEXT, TEXT, TEXT, JSONB) TO service_role;

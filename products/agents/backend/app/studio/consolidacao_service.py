@@ -28,7 +28,13 @@ from app.studio.consolidacao import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["Selecao", "selecionar", "confirmar_selecao", "registrar_resultados", "reconstruir", "RelatorioBackfill"]
+_CAS_TENTATIVAS = 8
+
+
+class ConcorrenciaEstado(RuntimeError):
+    """A case state kept moving under parallel runs for more attempts than the bound (loud, never a silent overwrite)."""
+
+__all__ = ["ConcorrenciaEstado", "Selecao", "selecionar", "confirmar_selecao", "registrar_resultados", "reconstruir", "RelatorioBackfill"]
 
 
 @dataclass
@@ -77,13 +83,27 @@ def confirmar_selecao(
     ``consolidado -> revalidar`` moves of the cases a change affected."""
     store.set_run_partes(org_id, run_id, run_tipo, dict(partes) if partes is not None else None, rodar_tudo=sel.rodar_tudo)
     for m, ap in sel.a_persistir:
-        store.save_estado(org_id, agent_id, suite, _com_run(ap.estado, run_id), run_tipo=run_tipo)
+        # compare-and-swap on the state the selection READ; a parallel run that moved it first is not overwritten (the result
+        # registration reconciles the same affecting change itself)
+        if not store.save_estado(org_id, agent_id, suite, _com_run(ap.estado, run_id), run_tipo=run_tipo,
+                                 esperado_versao=_versao_lida(store, org_id, agent_id, m.id)):
+            logger.warning("agents.eval.consolidacao_cas_perdido case=%s run=%s", m.id, run_id)
+            continue
         store.append_transicoes(
             org_id, agent_id, case_id=m.id, suite=suite, criticidade=m.criticidade, run_id=run_id, run_tipo=run_tipo,
             partes=dict(partes) if partes is not None else None, compiled_hash=hash_atual,
             transicoes=list(ap.transicoes), origem="selecao")
     if sel.pulados:
         store.registrar_pulados(org_id, agent_id, run_id, run_tipo, sel.pulados)
+        # every active case is executed in this run or validly skipped as consolidated+unaffected, so it COVERS the suite
+        # (owner decision 2026-11-09); the DB publish gate re-verifies the coverage against the live state.
+        if run_tipo == "comportamento":  # a mechanism run's `completa` is stamped when it finishes (budget cuts clear it)
+            store.marcar_run_completa(org_id, run_id, run_tipo)
+
+
+def _versao_lida(store: ConsolidacaoStore, org_id: UUID, agent_id: UUID, case_id: UUID) -> int:
+    e = store.get_estado(org_id, agent_id, case_id)
+    return e.versao if e is not None else 0
 
 
 def _com_run(est: EstadoCaso, run_id: UUID) -> EstadoCaso:
@@ -98,19 +118,25 @@ def registrar_resultados(
     execution order) into the case states. Returns ``{case_id_count, transicoes}`` for logging."""
     cfg = store.config()
     meta = store.list_meta(org_id, agent_id, suite)
-    estados = store.get_estados(org_id, agent_id)
     n_casos = n_trans = 0
     for cid, statuses in resultados:
         m = meta.get(cid) or CasoMeta(id=cid, suite=suite)
-        est = estados.get(cid) or estado_inicial(cid, m.criticidade, cfg)
-        trans: list[Transicao] = []
-        for status in statuses:
-            ap = aplicar_resultado(
-                est, resultado_de_status(status), criticidade=m.criticidade, cfg=cfg, atuais=partes, hash_atual=hash_atual,
-                run_id=run_id, depende_de=m.depende_de, sem_partes="conservadora")
-            est = ap.estado
-            trans.extend(ap.transicoes)
-        store.save_estado(org_id, agent_id, suite, est, run_tipo=run_tipo)
+        for _ in range(_CAS_TENTATIVAS):
+            # parallel runs of one version finish together: re-read the state FRESH, apply, compare-and-swap; on a lost
+            # race re-read and re-apply (the other run's result is then part of the streak), never overwrite blindly
+            lido = store.get_estado(org_id, agent_id, cid)
+            est = lido or estado_inicial(cid, m.criticidade, cfg)
+            trans: list[Transicao] = []
+            for status in statuses:
+                ap = aplicar_resultado(
+                    est, resultado_de_status(status), criticidade=m.criticidade, cfg=cfg, atuais=partes, hash_atual=hash_atual,
+                    run_id=run_id, depende_de=m.depende_de, sem_partes="conservadora")
+                est = ap.estado
+                trans.extend(ap.transicoes)
+            if store.save_estado(org_id, agent_id, suite, est, run_tipo=run_tipo, esperado_versao=lido.versao if lido else 0):
+                break
+        else:
+            raise ConcorrenciaEstado(f"estado do caso {cid} mudou {_CAS_TENTATIVAS}x durante o registro")
         if trans:
             store.append_transicoes(
                 org_id, agent_id, case_id=cid, suite=suite, criticidade=m.criticidade, run_id=run_id, run_tipo=run_tipo,
@@ -252,7 +278,8 @@ def reconstruir(
     if aplicar:
         for cid, est in estados.items():
             m = meta[cid]
-            store.save_estado(org_id, agent_id, m.suite, est, run_tipo=None)
+            if not store.save_estado(org_id, agent_id, m.suite, est, run_tipo=None, esperado_versao=0):
+                continue  # a live run created the state meanwhile: the live state wins over the replay
             for run_id, tipo, partes, h, trans in trans_por_caso.get(cid, []):
                 store.append_transicoes(
                     org_id, agent_id, case_id=cid, suite=m.suite, criticidade=crit.get(cid, m.criticidade), run_id=run_id,
