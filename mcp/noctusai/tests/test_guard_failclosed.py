@@ -180,8 +180,8 @@ class TestExecutorDispatch:
         r = _reason(out)
         assert r.startswith("[noc-guard:executor-dispatch] ") and "task_branch action=start" in r
 
-    def test_engineer_seed_is_derived_as_executor(self):
-        code, out = _run(EXEC, self._agent("engineer-seed"))
+    def test_product_engineer_is_derived_as_executor(self):
+        code, out = _run(EXEC, self._agent("product-engineer"))
         assert "executor-dispatch" in _reason(out)
 
     def test_nonexistent_worktree_reference_denied(self):

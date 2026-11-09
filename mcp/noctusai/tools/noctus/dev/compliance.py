@@ -17745,7 +17745,7 @@ def check_git_hooks_bypass(
     this corpus that is not one of the shapes above is a `.md` doc
     explaining or forbidding the very thing this keeper detects (CLAUDE.md
     §4, `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`,
-    `.claude/agents/engineer-seed.md` §5, `.claude/skills/noc-dep-update/
+    `.claude/agents/product-engineer.md` §5, `.claude/skills/noc-dep-update/
     SKILL.md`, `.claude/commands/gc.md`, archived `PROJECT.md`/`findings.md`
     history) — scanning them would flag the very documents that teach the
     rule this keeper enforces. `archive/**` and `project-history/*.ndjson`
@@ -20178,17 +20178,18 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
 # ── Harness-layer format keepers (Stage-4 2026-05-25, harness-agents-skills) ──
 # .claude/skills + .claude/agents are always-on surfaces; these keepers gate
 # authoring discipline so new skills/agents conform by construction.
-_HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer", "agents-security", "accountant", "legal-advisor"})
-_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-seed", "integrations-engineer", "ai-engineer", "test-engineer", "tooling-engineer"})
-# Other agents (skill-scout, ops-steward, reverse-engineer, product-designer) have specialized contracts and
-# are skipped by check_agent_archetype_contract.
+_HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer", "agents-security", "accountant", "legal-advisor", "product-analyst"})
+_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "product-engineer", "integrations-engineer", "ai-engineer", "test-engineer", "tooling-engineer"})
+# Other agents (skill-scout, ops-steward, reverse-engineer, product-designer, product-architect, product-manager)
+# have specialized contracts and are skipped by check_agent_archetype_contract: the product-* spec authors
+# may `Write` spec/notes files only (same house format as product-designer's mockup notes).
 
 # ── Agent-context architecture (Stage-4 2026-05-26, agent-context-architecture) ──
 # KB § PATTERNS/common/agent-context-architecture.md — agent files declare full-domain
 # `owns_kb:` in frontmatter; the keeper enforces existence + body-pointer mirror +
 # exclusive ownership. The unowned-allowlist below names KB paths that are
 # universal commons (no single owner) — every agent inherits via CLAUDE.md §1.
-# Procedure-doc carve-out: engineer-seed owns no KB
+# Procedure-doc carve-out: product-engineer owns no KB
 # (they ARE protocols); skill-scout is a meta-scout (owns no KB).
 _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     # §1 family indexes + the GC pattern (2026-08-03 harness-audit re-author).
@@ -20246,13 +20247,14 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/product-centroid-drift.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
     "CONTEXT/PATTERNS/common/methodology-execution-discipline.md",  # universal commons — close-the-loop/work-within-the-grain/gate-as-learning is an operating contract for EVERY lens; no single-agent ownership
-    "CONTEXT/PATTERNS/common/engineer-operating-discipline.md",  # universal commons — senior-engineer craft (restate the ask, red-first, self-review, commit craft, DoD) shared by EVERY executor lens (engineer-seed/backend/frontend/devops); engineer-seed keeps owns_kb: []
+    "CONTEXT/PATTERNS/common/engineer-operating-discipline.md",  # universal commons — senior-engineer craft (restate the ask, red-first, self-review, commit craft, DoD) shared by EVERY executor lens (product-engineer/backend/frontend/devops); product-engineer keeps owns_kb: []
+    "CONTEXT/PATTERNS/common/engineer-decision-rights.md",  # universal commons — decision rights (tiers, criteria, caps, audit) of the product-engineer standing protocol, which every executor lens applies; product-engineer keeps owns_kb: []
     "CONTEXT/PATTERNS/common/product-dev-learning-ground.md",  # universal commons — learn-development-craft applies to every lens that builds products (backend/frontend/seed); no single-agent ownership
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
 # Their frontmatter MUST declare `owns_kb: []` explicitly (no ambiguity).
-_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed"})
+_AGENT_KB_OWNS_NOTHING = frozenset({"product-engineer"})
 
 # Repo-root-relative untracked allowlist for check_git_leftovers — files that
 # may legitimately appear at depth 1 untracked. Anything else trips the keeper.
@@ -20389,14 +20391,14 @@ def check_agent_format(repo_root: Path | None = None) -> list[dict]:
 
 
 def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
-    """Advisors declare no Edit/Write; executors reference engineer-seed.
+    """Advisors declare no Edit/Write; executors reference product-engineer.
 
     Two archetypes per the harness-agents-skills model:
       - ADVISORS (architect, security, compliance-reviewer) — read-only; their
         `tools:` MUST NOT include `Edit` or `Write` (contract enforced at the
         tool layer, not just discipline).
-      - EXECUTORS (backend-engineer, frontend-engineer, engineer-seed) —
-        body should reference the `engineer-seed` protocol.
+      - EXECUTORS (backend-engineer, frontend-engineer, product-engineer) —
+        body should reference the `product-engineer` protocol.
     Other agents (skill-scout, ops-steward, reverse-engineer, product-designer) have specialized
     contracts and are skipped. Update the archetype sets when new agents land.
     """
@@ -20431,13 +20433,13 @@ def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
                         "severity": "high",
                     })
         elif stem in _HARNESS_EXECUTOR_AGENTS:
-            if "engineer-seed" not in text:
+            if "product-engineer" not in text:
                 issues.append({
                     "product": "<harness>", "file": rel,
                     "issue": (
-                        f"Executor agent `{stem}` body does not reference `engineer-seed` — "
-                        f"executors apply the standing engineer-seed protocol; the body should "
-                        f"say so (e.g. \"Apply the engineer-seed protocol\")."
+                        f"Executor agent `{stem}` body does not reference `product-engineer` — "
+                        f"executors apply the standing product-engineer protocol; the body should "
+                        f"say so (e.g. \"Apply the product-engineer protocol\")."
                     ),
                     "severity": "warning",
                 })
@@ -20565,7 +20567,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": rel,
                 "issue": (
                     f"Meta-agent `{stem}` declares non-empty `owns_kb:` — "
-                    f"meta-agents (engineer-seed) "
+                    f"meta-agents (product-engineer) "
                     f"own no KB territory. Declare `owns_kb: []`."
                 ),
                 "severity": "high",
