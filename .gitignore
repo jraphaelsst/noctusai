@@ -196,6 +196,8 @@ products/agents/projects/IsaIA/
 
 # agent-packages A5 retry marker (written by the sync hooks)
 .agents-sync-pending
+# agent-packages §M5 stale-mirror marker (written by the pre-push mirror check)
+.agents-mirror-pending
 
 # Telegram connector: a Telethon session file IS a full account login; exports hold chat contents.
 mcp/telegram/.session/

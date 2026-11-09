@@ -566,4 +566,11 @@ fi
 if [[ -f "$REPO_ROOT_PP/scripts/agent-hooks/noc-pre-push-publish.sh" ]]; then
     bash "$REPO_ROOT_PP/scripts/agent-hooks/noc-pre-push-publish.sh" "$_ld_py" "$REPO_ROOT_PP" <<< "$PUSH_LINES" || true
 fi
+# ─── DB-source agent mirrors (agent-packages CONTRACT §M5, online leg) ───────
+# For each committed `.claude/agents/<key>.md` mirror of a DB-source agent, compare its recorded version with
+# the newest Studio publish. Stale / unverified -> loud stderr + `.agents-mirror-pending`. NEVER blocks.
+# Instant no-op when no mirror carries the generated marker.
+if grep -lq "GENERATED from Agents Studio" "$REPO_ROOT_PP"/.claude/agents/*.md 2>/dev/null; then
+    "$_ld_py" "$REPO_ROOT_PP/mcp/noctusai/cli.py" --agent-mirror-check --worktree-path "$REPO_ROOT_PP" || true
+fi
 exit 0
