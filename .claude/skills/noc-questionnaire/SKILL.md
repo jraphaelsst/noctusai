@@ -1,7 +1,7 @@
 ---
 name: noc-questionnaire
 description: Use BEFORE asking the owner anything — triggers "question me", "ask me along the way", "questionnaire", "clarify with me", "confirm with me", "confirm via WhatsApp", "pergunte-me", "me pergunte", "check with the owner", or any moment you are blocked on a decision that is the owner's to make. Reduces every ask to the simplest human decision, batches it, sends it on the right channel (local chat or WhatsApp), and records the answer durably.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-questionnaire — every owner ask is the simplest human decision
@@ -24,6 +24,14 @@ charge them; this skill makes each one cheap to answer and impossible to lose.
    - **Self-contained**: name the thing being decided inside the question (the owner may
      see only the dialog / the WhatsApp message).
    - **Default-on-silence** stated: "if no answer, I'll do X" — so silence never blocks.
+   - **Council before you recommend** (any pick-one with a `(Recommended)` option). The agent
+     tends to agree with the owner and with its own first idea, so run five lenses on EACH
+     option first: contrarian (what breaks), first principles (is the premise right),
+     expansionist (what bigger win is missed), outsider (would a newcomer get it), executor
+     (what exactly changes now). Each option's description then carries its **strongest
+     argument against** in one clause, the recommended one included. In one session this is
+     the single-chat version (one model, one context); say so once, never hide the limit.
+     The same council runs in `noc-iterate` step 4 before a refine.
 3. **Batch** — ≤ 4 questions per round, highest-leverage first. Keep working on everything
    that does not depend on the answer (never idle on a question).
 4. **Channel**

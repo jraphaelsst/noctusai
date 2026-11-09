@@ -8,7 +8,6 @@ convention — the router is wiring, this is the logic).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
 import time
@@ -358,17 +357,6 @@ class HelpChatRateLimiter:
             return True
 
 
-# ─── SSE framing ─────────────────────────────────────────────────────────
-
-
-def sse_event(payload: dict[str, Any]) -> str:
-    """Format one Server-Sent Event data frame. Every event this router
-    emits is a single `data:` line carrying a JSON payload — no custom
-    `event:` types, so a plain `EventSource`/`fetch`+`ReadableStream`
-    reader only ever needs to parse one shape."""
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-
 # ─── Error → (status, code, message) mapping ────────────────────────────
 #
 # Mirrors `products/igig/backend/app/routers/assistente_router.py`'s
@@ -407,5 +395,4 @@ __all__ = [
     "load_knowledge",
     "rate_limit_error_body",
     "retrieval_query_from_history",
-    "sse_event",
 ]

@@ -32,7 +32,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from noctusai_lib.realtime import RealtimeEvent, create_sse_router
-from noctusai_lib.realtime.sse import sse_event_stream
+from noctusai_lib.realtime.sse import sse_event, sse_event_stream
 
 
 class _SpyBus:
@@ -286,3 +286,7 @@ def test_router_scope_resolver_receives_resolved_auth_dependency() -> None:
 
     assert seen["auth_ctx"] == {"org_id": "org-42"}
     assert "hi" in response.text
+
+
+def test_sse_event_is_one_data_frame_with_utf8_json() -> None:
+    assert sse_event({"delta": "olá"}) == 'data: {"delta": "olá"}\n\n'

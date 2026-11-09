@@ -79,6 +79,28 @@ class TestValidation:
         assert resp.status_code == 422
         assert resp.json()["code"] == "limite_de_turnos"
 
+    def test_long_history_is_fitted_by_the_server_not_422(self, tmp_path):
+        harness = build_harness(tmp_path, max_turns=200, max_history_tokens=300)
+        msgs = []
+        for i in range(30):  # 60 messages: the old window (20) would have 422'd
+            msgs.append({"role": "user", "content": f"pergunta {i} " + "x" * 60})
+            msgs.append({"role": "assistant", "content": f"resposta {i} " + "y" * 60})
+        msgs.append({"role": "user", "content": "ultima pergunta"})
+        resp = harness.client.post("/api/ajuda/chat", json={"messages": msgs}, headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        [call] = harness.stream.calls
+        sent = call["messages"]
+        assert sent[0]["role"] == "system"
+        assert len(sent) < len(msgs) + 1, "older turns were dropped"
+
+    def test_short_history_is_sent_unchanged(self, tmp_path):
+        harness = build_harness(tmp_path)
+        msgs = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}, {"role": "user", "content": "c"}]
+        resp = harness.client.post("/api/ajuda/chat", json={"messages": msgs}, headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        [call] = harness.stream.calls
+        assert len(call["messages"]) == 4  # cached system + the 3 turns, nothing dropped
+
     def test_message_too_long_is_422(self, tmp_path):
         harness = build_harness(tmp_path, max_chars_per_message=10)
         resp = harness.client.post(

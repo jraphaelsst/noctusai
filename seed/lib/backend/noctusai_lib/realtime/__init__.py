@@ -28,6 +28,7 @@ from noctusai_lib.realtime.sse import (
     AuthDependency,
     ScopeResolver,
     create_sse_router,
+    sse_event,
     sse_event_stream,
 )
 
@@ -42,5 +43,6 @@ __all__ = [
     "redact_values",
     "create_sse_router",
     "get_realtime_bus",
+    "sse_event",
     "sse_event_stream",
 ]

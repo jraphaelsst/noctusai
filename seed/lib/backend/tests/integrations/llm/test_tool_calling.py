@@ -476,3 +476,28 @@ async def test_exhausted_without_text_uses_fallback():
         [ChatMessage.user("go")], [LOOKUP], _ok_handler, chat=chat, max_iterations=2, fallback_reply="FB"
     )
     assert out.exhausted and out.text == "FB"
+
+
+# ── run_tool_loop: a tool_call_id executes at most once per loop ────────────
+
+
+@pytest.mark.asyncio
+async def test_run_tool_loop_repeated_call_id_runs_the_tool_once():
+    executed, audited = [], []
+    chat = _scripted_chat([
+        _tool_turn("", "dup"),
+        _tool_turn("", "dup"),  # the model (or a replay) repeats the same id
+        ChatToolsResponse(text="done", tool_calls=(), finish_reason="stop"),
+    ])
+
+    async def handler(call):
+        executed.append(call.call_id)
+        return ToolResult(call.call_id, '{"n": %d}' % len(executed))
+
+    out = await run_tool_loop(
+        [ChatMessage.user("go")], [LOOKUP], handler, chat=chat, audit_writer=lambda c, r: audited.append(c.call_id)
+    )
+    assert out.text == "done"
+    assert executed == ["dup"] and audited == ["dup"], "handler and audit ran once"
+    tool_msgs = [m for m in out.messages if m.role == "tool"]
+    assert len(tool_msgs) == 2 and tool_msgs[0].content == tool_msgs[1].content == '{"n": 1}'

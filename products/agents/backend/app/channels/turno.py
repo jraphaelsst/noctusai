@@ -47,6 +47,7 @@ from app.config import settings
 from app.qualificacao.models import LeadSinais, VersaoPadrao
 from app.qualificacao.prompt import qualificacao_data
 from app.realtime import conversation_scope, get_bus, publish_event
+from noctusai_lib.integrations.llm.context_window import fit_history
 from noctusai_lib.integrations.llm.usage import coletar_uso
 from noctusai_lib.realtime import redact_values
 from app.runtime.llm_runtime import service_principal_id
@@ -355,6 +356,14 @@ def _midia_da_mensagem(messages: Any, org_id: UUID, thread_id: UUID, provider_me
     return None
 
 
+def ajustar_janela_historico(linhas: list[tuple[str, str]], max_tokens: int | None = None) -> tuple[tuple[str, str], ...]:
+    """The labelled history within the model's token budget. A history that fits comes back UNCHANGED (the same
+    lines, the same bytes: today's prompt); over budget the server drops the oldest turns (pure trimming, no model
+    call, so no per-turn cost or latency)."""
+    limite = max_tokens or int(getattr(settings, "llm_history_max_tokens", 40_000) or 40_000)
+    return tuple(fit_history(linhas, max_tokens=limite).messages)
+
+
 def _mensagens_do_lead(messages: Any, org_id: UUID, thread_id: UUID) -> tuple[list[str], int, list[str]]:
     """``(the lead's recent words, how many lead messages, the provenance tags of this thread's earlier turns)``."""
     rows = messages.list(org_id, thread_id, limite=500)
@@ -635,7 +644,7 @@ async def _executar(
     # the thread context of THIS agent: dossier + last N labelled turns + the newest hand-off note
     n = runtime.history_messages
     ct = contexto_thread(svc.messages, svc.threads, mapa_agentes(svc.studio_store, org_id), org_id, thread.id, agent.id, n=n)
-    historico = tuple(rotular_historico(
+    historico = ajustar_janela_historico(rotular_historico(
         ct.mensagens, tag=tag, rotulo_midia=conteudo.texto("historico.rotulo_midia"),
         rotulo_truncado=conteudo.texto("historico.rotulo_truncado"),
         rotulo_encaminhada=conteudo.texto("historico.rotulo_encaminhada")))

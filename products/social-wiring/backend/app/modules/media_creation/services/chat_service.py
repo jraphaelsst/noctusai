@@ -28,7 +28,8 @@ from typing import Any, AsyncIterator, Callable, Optional
 from fastapi.concurrency import run_in_threadpool
 
 from noctusai_lib.domain.help_chat.router import PEDIDO_CONTINUACAO
-from noctusai_lib.domain.help_chat.service import build_conversation_messages, sse_event
+from noctusai_lib.domain.help_chat.service import build_conversation_messages
+from noctusai_lib.realtime.sse import sse_event
 from noctusai_lib.integrations.llm import (
     LLMAPIError,
     LLMBudgetExceeded,
