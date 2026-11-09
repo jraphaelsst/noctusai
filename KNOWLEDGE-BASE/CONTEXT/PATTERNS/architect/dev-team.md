@@ -112,9 +112,11 @@ envelope = run_team(task="…", dry_run=True)  # MCP-shaped envelope (the canoni
 All except `agent_metrics` wrap `dev_team.mcp_facade` via lazy imports inside the
 FastMCP handler (cold-start stays light; agno only loads when invoked).
 `agent_metrics` reads the slice-scores ledger (`tools/noctus/team/agent_metrics.py`,
-KB § PATTERNS/common/dispatch-token-log.md) — it is the ONE source for both the
-`agents` and `slice_scores` slices of `noctus.team.dashboard`, so they cannot disagree.
-The agno events rollup is `get_agent_metrics` below (telemetry, not the dashboard).
+KB § PATTERNS/common/dispatch-token-log.md): Claude-specialist slice QUALITY, the
+`slice_scores` slice of `noctus.team.dashboard`. The dashboard's `agents` slice is a
+different domain on purpose — agno per-role TELEMETRY (`dev_team.mcp_facade.agent_metrics`,
+same source as its `metrics` slice; rollup `get_agent_metrics` below). Unifying the two
+was tried and reverted 2026-11-09: agno role names return nothing from slice-scores.
 
 ### Product backend (FastAPI)
 

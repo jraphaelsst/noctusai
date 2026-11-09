@@ -57,9 +57,12 @@ class DashboardOutput(BaseModel):
     )
     agents: dict[str, dict[str, Any]] = Field(
         description=(
-            "Per-agent metrics keyed by role name. Empty dict when the "
-            "caller didn't pass `agents`. Each value is the same shape "
-            "as `noctus.team.agent_metrics` returns."
+            "Per-role dev-team TELEMETRY keyed by agno role name (leader, "
+            "backend_engineer, ...): `dev_team.mcp_facade.agent_metrics`, the "
+            "same source as `metrics` ({agent, events, total_cost_usd, ...}). "
+            "Empty dict when the caller didn't pass `agents`. NOT the "
+            "slice-score quality rollup -- that is `slice_scores` (Claude "
+            "specialists, `noctus.team.agent_metrics`); different domains."
         ),
     )
     slice_scores: dict[str, Any] = Field(
@@ -89,10 +92,6 @@ def dashboard(
 ) -> dict[str, Any]:
     """Compose status + metrics + per-agent metrics into one envelope.
 
-    `agents[role]` and `slice_scores` both derive from `slice_scores_fn`
-    (default `tools.noctus.team.agent_metrics.agent_metrics`), so they cannot
-    disagree.
-
     Returns:
         ``{
           "snapshot": {...},   # team_status passthrough
@@ -119,18 +118,11 @@ def dashboard(
     except Exception as exc:  # noqa: BLE001
         errors.append(f"metrics_snapshot: {type(exc).__name__}: {exc}")
 
-    # ONE canonical source for both slices: the slice-scores rollup behind
-    # `noctus.team.agent_metrics` (KB § PATTERNS/common/dispatch-token-log.md).
-    # `agents` used to read dev_team.mcp_facade.agent_metrics (agno events), so
-    # the two slices could disagree for the same agent.
-    source_fn = slice_scores_fn
-    if source_fn is None:
-        from tools.noctus.team.agent_metrics import agent_metrics as source_fn
-
     if agents:
         for role in agents:
             try:
-                per_agent[role] = source_fn(role, effective_scope, False)
+                from dev_team.mcp_facade import agent_metrics
+                per_agent[role] = agent_metrics(name=role, scope=effective_scope)
             except Exception as exc:  # noqa: BLE001
                 errors.append(
                     f"agent_metrics[{role}]: {type(exc).__name__}: {exc}"
@@ -138,7 +130,8 @@ def dashboard(
 
     slice_scores: dict[str, Any] = {}
     try:
-        slice_scores_fn = source_fn
+        if slice_scores_fn is None:
+            from tools.noctus.team.agent_metrics import agent_metrics as slice_scores_fn
         name = "*"
         slice_scores = slice_scores_fn(name, effective_scope, False)
         slice_scores["by_week"] = slice_scores_fn(name, effective_scope, True)["groups"]
