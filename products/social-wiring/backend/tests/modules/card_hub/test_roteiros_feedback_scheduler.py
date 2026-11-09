@@ -23,12 +23,22 @@ class _Notifier:
 @pytest.mark.asyncio
 async def test_one_digest_per_org_with_due_roteiros(db):  # noqa: F811
     mock, cid, _ = db
-    svc.criar(mock, ORG, cid, imoveis=["ONE9001"], data_visita=date(2020, 1, 1))
+    r = svc.criar(mock, ORG, cid, imoveis=["ONE9001"], data_visita=date(2020, 1, 1))
+    svc.gerar(mock, ORG, cid, UUID(r["id"]))
     notifier = _Notifier()
     resumo = await sched.avisar_todas_orgs(mock, notifier)
     assert resumo == {"orgs": 1, "roteiros": 1, "falhas": 0}
     assert notifier.calls[0][0] == ORG
     assert notifier.calls[0][1][0]["cliente_nome"] == "Ana"
+
+
+@pytest.mark.asyncio
+async def test_a_past_dated_draft_is_never_nagged_about(db):  # noqa: F811
+    mock, cid, _ = db
+    svc.criar(mock, ORG, cid, imoveis=["ONE9001"], data_visita=date(2020, 1, 1))
+    notifier = _Notifier()
+    assert (await sched.avisar_todas_orgs(mock, notifier))["orgs"] == 0
+    assert notifier.calls == []
 
 
 @pytest.mark.asyncio

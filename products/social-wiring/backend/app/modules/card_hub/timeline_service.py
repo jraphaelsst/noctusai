@@ -290,13 +290,16 @@ def _gather_visitas(
         por_roteiro[str(v["roteiro_id"])] = por_roteiro.get(str(v["roteiro_id"]), 0) + 1
 
     for r in roteiros:
-        if not r.get("created_at"):
+        # A DRAFT is no event yet: the roteiro "happens" on the card when it is GERADO (backfilled rows: gerado_em =
+        # created_at, so history reads as before).
+        ocorreu = r.get("gerado_em") or r.get("created_at")
+        if r.get("status") != "gerado" or not ocorreu:
             continue
         events.append(
             {
                 "id": f"roteiro-{r['id']}",
                 "kind": "visita",
-                "ocorrido_em": r["created_at"],
+                "ocorrido_em": ocorreu,
                 "ator": None,
                 "payload": {
                     "evento": "roteiro_criado",
@@ -324,6 +327,7 @@ def _gather_visitas(
                     ),
                     "roteiro_id": v["roteiro_id"],
                     "codigo": v.get("codigo"),
+                    "status": v["status"],
                     "observacao": v.get("observacao"),
                 },
             }

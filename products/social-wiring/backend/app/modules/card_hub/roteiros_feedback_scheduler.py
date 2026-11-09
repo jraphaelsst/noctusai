@@ -30,6 +30,7 @@ def _orgs_com_roteiros(client: Any) -> list[UUID]:
             table_reads.table(client, "roteiros")
             .select("id, org_id")
             .eq("feedback_status", "pendente")
+            .eq("status", "gerado")
             .is_("deleted_at", "null")
             .order("id")
             .range(start, end)

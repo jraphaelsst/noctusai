@@ -65,8 +65,12 @@ def anon_client():
 def scoped(client):
     """The `social_wiring`-scoped mock `card_hub`'s own DI seam resolves
     and caches — seeding through THIS instance is what makes rows
-    visible to a subsequent request in the same test."""
-    return get_card_hub_client()
+    visible to a subsequent request in the same test.
+
+    `roteiro_gerar` (migration 338) is mirrored in Python — see `roteiro_rpc`."""
+    from tests.modules.card_hub import roteiro_rpc
+
+    return roteiro_rpc.instalar(get_card_hub_client())
 
 
 @pytest.fixture
