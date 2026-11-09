@@ -243,6 +243,26 @@ def validar_roteiro(roteiro: Any) -> None:
     extra = set(roteiro.get("estado_inicial") or {}) - {f.name for f in dataclasses.fields(Estado)}
     if extra:
         raise RoteiroInvalido(f"roteiro.estado_inicial: campos desconhecidos {sorted(extra)}")
+    _validar_origem_da_fixture((roteiro.get("fixture") or {}).get("origem"))
+
+
+def _validar_origem_da_fixture(origem: Any) -> None:
+    """``fixture.origem``: where the lead came from (an ad lead). The SAME closed model the channel contract uses
+    (``ContextoOrigem``: ``codigo_imovel_campanha`` / ``canal_origem``, an unknown key is refused), so the eval world
+    can never express an origin production would reject."""
+    if origem is None:
+        return
+    from pydantic import ValidationError
+
+    from app.schemas.channels import ContextoOrigem
+
+    if not isinstance(origem, dict):
+        raise RoteiroInvalido("roteiro.fixture.origem: objeto")
+    try:
+        ContextoOrigem.model_validate(origem)
+    except ValidationError as exc:
+        campos = ", ".join(sorted({".".join(str(p) for p in e["loc"]) or "origem" for e in exc.errors()}))
+        raise RoteiroInvalido(f"roteiro.fixture.origem: inválido ({campos}); chaves aceitas: canal_origem, codigo_imovel_campanha") from exc
 
 
 _CHAVES_MUNDO_JUIZ = frozenset({"estado_inicial", "catalogo", "fixture"})

@@ -962,24 +962,30 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         return {"interacao_id": str(iid)} if iid is not None else {}
 
     async def _oferecer(a: OferecerImoveisArgs) -> _Resultado:
-        estado = await asyncio.to_thread(t.qual.avaliar, t.org_id, t.lead_ref_id, _versao_id(), t.escopo, t.sinais)
-        if not estado.pode_ofertar:
-            return _recusa(t, "nao_pode_ofertar")
-        ja = await asyncio.to_thread(t.qual.codigos_oferecidos, t.org_id, t.lead_ref_id)
-        restante_cap = t.limites.max_imoveis_distintos - len(ja)
-        if restante_cap <= 0:
-            return _recusa(t, "limite_ofertas")
-        lote_padrao = max(1, int(t.padrao.parametros.lote_ofertas))
-        limite = min(a.limite or lote_padrao, lote_padrao, restante_cap)
-        origem = "campanha" if a.modo == "campanha" else "similar"
         campanha = getattr(getattr(t.estado_sw, "origem", None), "codigo_imovel_campanha", None)
+        ja = await asyncio.to_thread(t.qual.codigos_oferecidos, t.org_id, t.lead_ref_id)
+        reenvio = False
         if a.modo == "campanha":
+            # The ad's own property is the ONE exception to ``pode_ofertar``: it opens the conversation, before any
+            # qualification, and it is the lead's own interest, not a search result. The caps still bind.
             if not campanha:
                 return _recusa(t, "sem_codigo_campanha")
-            if campanha in ja:
-                return _ok(esgotado=True, **_msg_esgotado(t))
+            # Already offered => the lead asks for it again (the link, "qual era o imóvel?"): resend the card and its
+            # link, never ``esgotado`` -- an ad listing is not a batch to exhaust. No new offer event, no cap use.
+            reenvio = campanha in ja
+            if not reenvio and t.limites.max_imoveis_distintos - len(ja) <= 0:
+                return _recusa(t, "limite_ofertas")
+            limite, origem = 1, "campanha"
             body = await _sw("imovel_campanha", {"codigo": campanha})
         else:
+            estado = await asyncio.to_thread(t.qual.avaliar, t.org_id, t.lead_ref_id, _versao_id(), t.escopo, t.sinais)
+            if not estado.pode_ofertar:
+                return _recusa(t, "nao_pode_ofertar")
+            restante_cap = t.limites.max_imoveis_distintos - len(ja)
+            if restante_cap <= 0:
+                return _recusa(t, "limite_ofertas")
+            lote_padrao = max(1, int(t.padrao.parametros.lote_ofertas))
+            limite, origem = min(a.limite or lote_padrao, lote_padrao, restante_cap), "similar"
             args = _consulta_sw(estado.valores)
             if campanha:
                 args["similar_a"] = campanha
@@ -989,9 +995,16 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         if body is None:
             return _falha_sw(t)
         itens = [i for i in (body.get("data") or []) if isinstance(i, dict) and str(i.get("codigo") or "").strip()]
-        itens = [i for i in itens if str(i["codigo"]) not in ja][:limite]
+        itens = [i for i in itens if reenvio or str(i["codigo"]) not in ja][:limite]
         if not itens:
             return _ok(esgotado=True, **_msg_esgotado(t))
+        if reenvio:  # the offer event already exists: only the card + link are handed to the model again
+            for i in itens:
+                t.codigos_vistos.add(str(i["codigo"]).casefold())
+                if (lk := _pedaco_link(i)) is not None:
+                    t.links_vistos.add(lk)
+                    t.links_por_codigo[str(i["codigo"])] = lk
+            return _ok(reenvio=True, dados_catalogo={"imoveis": [_catalogo(body, i, texto_seguro.ALLOW_OFERTA).dados for i in itens]})
         lote = await asyncio.to_thread(t.qual.proximo_lote, t.org_id, t.lead_ref_id)
         for i in itens:
             # the listing link rides on the offer event (``motivo``): the hand-off report reads it back on a later turn
