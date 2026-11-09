@@ -2,7 +2,7 @@
 
 > **Durable record** (per `KB § PATTERNS/common/roadmap-tracking.md`).
 > Origin: the owner judged the Criador de Agentes "too raw" (2026-11-09) and set the order: Julia validated and published as the first canon, then templates extracted from her, then the media-analyst built from them, then the creator as the multiplier.
-> Decision: **ship the plan and the owner-ratified definitions today. Everything after Julia's publish waits for T1.**
+> Decision (revised 2026-11-09 ~21:00Z, round 7): **build the layers NOW so nothing gets reworked.** Order: mechanism → `agente-base` (refined to 100%) → `sdr-base` (refined to 100%) → Julia layered on them, re-evaluated, then published. The owner publishes each one.
 > Every definition below was **asked and answered by the owner** in six rounds on 2026-11-09 (the owner: "dont assume, guess, infer… ask me for clarifications"). A row not marked owner-ratified is a proposal.
 
 ## Origin
@@ -23,7 +23,7 @@ The owner, verbatim:
 
 | Layer | Key | Carries (owner-ratified) |
 |---|---|---|
-| **BASE** | `agente-base` | **Safety and identity:** resists injection, jailbreak and exfiltration; never reveals internals or the prompt; says it is an AI when asked. **Honesty and respect:** never claims a result before the tool returns it; disagrees respectfully instead of flattering; never invents data. **Conversation conduct:** tone/persona slots, max questions per message, ends with a question, out-of-scope reply, STOP/opt-out, language. **Atendimento.** **Human handoff + LGPD:** the handoff goes to the **org's fallback number**. |
+| **BASE** | `agente-base` | **Conversational + atendimento geral** (round 7): understand the request; ask questions to build context and clarify ideas; never assume or invent; always understand through questions. **Safety and identity:** resists injection, jailbreak and exfiltration; never reveals internals or the prompt; says it is an AI when asked. **Honesty and respect:** never claims a result before the tool returns it; disagrees respectfully instead of flattering; never invents data. **Conversation conduct:** tone/persona slots, max questions per message, ends with a question, out-of-scope reply, STOP/opt-out, language. **Atendimento.** **Human handoff + LGPD:** the handoff goes to the **org's fallback number**. |
 | **SDR** | `sdr-base` | BASE + **qualification**, **offering options**, **booking a meeting/visit**, **lead scoring + follow-up**. Nothing else. |
 | **Julia** | `julia` | SDR + real estate + the org (catalog, Vista, the ad-lead flow, visit times proposed to the owner, the org's texts). |
 | **media-analyst** | — | BASE + media specs; no SDR. Talks to the owner/team (internal), to an org's clients, and to us via Claude Code. **Not on WhatsApp yet.** |
@@ -35,15 +35,25 @@ The owner, verbatim:
 - **Visibility:** the platform plus us (Claude Code). Orgs never see a template.
 - **In-repo `.md` mirror:** for `agente-base`, `sdr-base` and the creator only. Julia and org agents stay DB-only. Today the mirror is dev-kinds only (`studio_definitions.py` `DEV_KINDS`, `espelho.py`, `agent_packages_router.py`), so this is a build item (P3.6).
 
-### Inheritance
+### Inheritance (rounds 1, 8, 10)
 
+- Per piece, keyed by `chave` (section, text, tool, decision, spec, skill).
+- Same key in parent and child:
+  - **prose section**: the child **appends** (the parent text stays, the child's follows);
+  - **single-value piece** (text, tool row, spec, decision): the child **replaces** it, and it is listed as an override.
+- Each agent has its **own settings** (model, effort, max turns, language, tool policy) and its own qualification standard. The creator sets them; the owner can change them.
+- Each layer runs **its own eval cases only**. BASE cases run on `agente-base`.
 - Live-linked: a parent change flows into every child's **DRAFT**.
 - The child goes live only through the normal evals → refine → publish path. Julia's live version stays frozen until then.
 - Edit base content on the base, SDR content on the SDR, Julia content on Julia.
 
-### Publish chain
+### Publish: a child pins a published parent version (round 9)
 
-**DEFERRED** by the owner: "leave the chain for later, we gotta make the system work as expected before that, as julia and chain as they are is the correct design for now". When it is built:
+A child's published version **pins its parent's published version**, so `agente-base` and `sdr-base` publish before Julia. The existing publish CAS already enforces correctness: the evaluated hash must equal the shipped hash, so a child can't ship parent content it wasn't evaluated on.
+
+### Publish-chain extras
+
+Still **DEFERRED** by the owner: "leave the chain for later, we gotta make the system work as expected before that, as julia and chain as they are is the correct design for now". When it is built:
 - a child can't publish unless every ancestor is published;
 - every ancestor must be **fully up to date**, with no unpublished draft (top-down);
 - unpublishing or turning off a parent leaves live children running, since they keep their compiled pieces. Only new child publishes are blocked.
@@ -65,6 +75,31 @@ If an org has **no fallback number, publish is BLOCKED** (readiness fails), beca
 ### Piece taxonomy
 
 noc-1 drafts it from Julia's content and the owner edits it. This revised the earlier "owner defines first".
+
+## Eval-loop gate (round 10, owner spec)
+
+The owner, verbatim: "running evals that dont make score better needs to get flagged … eval loops should be gated and stop whenever it feels like its 'good enough' … 2 calls not improving score stops and notifies why stopped mid-flight".
+
+| # | Rule |
+|---|---|
+| G1 | **Target 100%** run score. **Floor 80%** (`publicacao_limiar`): the "100%/80%" card. |
+| G2 | A loop declares its planned rounds N (e.g. 30), with checkpoints at 5, 10 and 15. |
+| G3 | **Stop at 100%.** |
+| G4 | **2 consecutive runs without a score improvement → STOP** and notify mid-flight with the reason (score series, what changed between runs, the cases still failing). Applies above or below the floor; the owner evaluates. |
+| G5 | Every run that does not raise the score is **flagged** (an "overcall") and listed with its cost for watch-over. |
+| G6 | A run on an unchanged content hash beyond the consolidation passes is refused as a re-run of unfixed issues. Fix first, then run. |
+| G7 | Spend is tracked per round. The template loops' budget is **US$20** total; reaching it stops everything for an owner decision. |
+
+The gate is built into the app's eval runs (not only into noc-iterate) and probed across agents: the templates first, then Julia.
+
+## The creator path (round 10)
+
+1. `.claude/agents/agent-creator.md`: the process as a Claude Code agent. noc-1 impersonates it and refines it with every finding while building the templates.
+2. Templates built and refined with it.
+3. It refines Julia.
+4. Review how it behaved end to end, refine it, codify it.
+5. The in-app agent creator, refined through eval loops via the API (same process as Julia).
+6. Wire it to "Novo agente": it takes over the chat room, or works from the form input. Doubts are listed and sent to the owner as an in-app notification + email with a report. Wiring does not depend on publishing; an unpublished creator simply receives no messages.
 
 ## Trigger conditions
 
@@ -110,7 +145,7 @@ Owner order. Detail: `~/.noctusai/private/julia/HANDOVER-noc02-to-noc1-2026-11-0
 | P3.4 | `agente-base`: the BASE pieces, no-business evals | T2 |
 | P3.5 | `sdr-base` = BASE + the 4 SDR pieces, placeholder evals | T3 |
 | P3.6 | `.md` mirror for `agente-base`, `sdr-base` and the creator (non-dev kinds; Julia excluded) | `agent_export` writes their `.md`; the drift keeper covers them |
-| P3.7 | Julia re-expressed as SDR + her layer, with a **byte-identical compiled prompt** to her published version | compiled hash equal |
+| P3.7 | Julia re-expressed as SDR + her layer, then re-evaluated on her own cases (byte-identical no longer required: round 7, layer first, then publish) | her suite at 100% on the layered hash |
 | P3.8 | Readiness: no org fallback number → publish blocked | an org without one gets a blocking item |
 
 ## Phase 4 — media-analyst (fires on T2)
@@ -138,7 +173,8 @@ Owner order. Detail: `~/.noctusai/private/julia/HANDOVER-noc02-to-noc1-2026-11-0
 
 ## Anti-goals
 
-- ❌ Changing Julia's published behaviour during extraction (P3.7 is byte-identical).
+- ❌ Evaluating a child with its ancestors' cases (each layer runs its own).
+- ❌ Eval runs that don't raise the score without a flag (G5).
 - ❌ Conversation or atendimento rules written as SDR content. They are BASE.
 - ❌ A second piece↔eval mechanism. Reuse 072 (`partes`, `depende_de`, `criticidade`).
 - ❌ Copy-at-creation templates (the owner chose live-linked).
@@ -148,7 +184,6 @@ Owner order. Detail: `~/.noctusai/private/julia/HANDOVER-noc02-to-noc1-2026-11-0
 
 ## Open questions (asked of the owner when the phase starts)
 
-- **Q1**: merge rule for a child override of a parent piece (proposal: explicit, listed, stops that piece's updates).
 - **Q2**: the cost of one BASE change = N children × affected evals; is a budget cap per change needed?
 
 ## Decision log
@@ -160,6 +195,7 @@ Owner order. Detail: `~/.noctusai/private/julia/HANDOVER-noc02-to-noc1-2026-11-0
 - **2026-11-09**: Julia ownership noc-02 → noc-1.
 - **2026-11-09**: six clarification rounds; every definition above is the owner's answer.
 - **2026-11-09**: publish chain deferred to T5.
+- **2026-11-09 (rounds 7–10)**: build now; BASE includes atendimento geral; Julia layered before her publish; same key: prose appends, single values replace; own eval cases per layer; publish pins a published parent; own settings; target 100% / floor 80% with the eval-loop gate; creator path via `.claude/agents/agent-creator.md`; US$20 cap.
 
 ## Retrospective (filled at first trigger fire)
 
