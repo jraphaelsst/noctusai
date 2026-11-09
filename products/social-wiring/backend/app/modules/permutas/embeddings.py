@@ -19,6 +19,7 @@ read as moderate compatibility with the entire catalog. Those rows keep
 scoring on rules alone, which is the honest answer for someone who has not
 said what they want.
 """
+# NOC-REMEDIATE[retrieval-organ]: local pgvector embedding copy (vectors stored ON permuta_ativos, bilateral profile/interest scoring, not a chunk corpus) — fold onto noctusai_lib.integrations.retrieval once the organ grows a row-attached scoring mode (KB § PATTERNS/backend/retrieval-organ.md) — 2026-11-09
 from __future__ import annotations
 
 import logging

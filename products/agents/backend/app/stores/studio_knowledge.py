@@ -1099,6 +1099,7 @@ class SupabaseStudioKnowledgeStore:
             "p_org_id": str(org_id), "p_agent_id": str(agent_id), "p_query": query,
             "p_colecao": colecao, "p_limite": max(min(limite, 20), 1),
         }
+        # NOC-REMEDIATE[retrieval-organ]: lexical full-text search (agents.search_knowledge) is deliberately not vector; if semantic retrieval is ever measured as needed, use noctusai_lib.integrations.retrieval instead of a new local copy (KB § PATTERNS/backend/retrieval-organ.md) — 2026-11-09
         resp = exec_rpc(self._client, _SCHEMA, "search_knowledge", params)
         rows = resp.data or []
         return [
