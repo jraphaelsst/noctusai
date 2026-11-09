@@ -19,6 +19,13 @@ Translation (first match wins):
 * ``23514`` CHECK violation → :class:`ValueError` (the size caps / allowlists
   — a 422 at the router, never a 500).
 * Anything else propagates unchanged (a real failure is never masked).
+
+The text a PERSON reads is never the exception's own message: a DB-mapped
+conflict would carry the raw Postgres text (constraint and index names, e.g.
+``duplicate key value violates unique constraint "uq_eval_mecanismo_runs_um_em_execucao"``)
+and a store-raised one carries English internal prose. Routers render
+:func:`mensagem_conflito` — the pt-BR text per ``code`` from
+:data:`MENSAGENS_CONFLITO`, with a generic pt-BR fallback — so neither leaks.
 """
 from __future__ import annotations
 
@@ -29,7 +36,10 @@ from app.stores.errors import Conflict, NotFound
 __all__ = [
     "StudioConflict",
     "VersionImmutable",
+    "MENSAGENS_CONFLITO",
     "map_db_error",
+    "erro_de_item",
+    "mensagem_conflito",
     "exec_query",
     "exec_rpc",
 ]
@@ -54,6 +64,77 @@ class VersionImmutable(StudioConflict):
 
     def __init__(self, message: str = "") -> None:
         super().__init__("version_immutable", message or "version_immutable")
+
+
+#: The pt-BR text a person reads for each 409 ``code``. Keyed by the CODE (the contract), never by the exception's
+#: message (internal: DB text or English prose). A code missing here falls back to
+#: :data:`MENSAGEM_CONFLITO_GENERICA` — still pt-BR, still free of internals.
+MENSAGENS_CONFLITO: dict[str, str] = {
+    "version_immutable": "A versão publicada é imutável.",
+    "compiled_prompt_immutable": "O prompt compilado já gravado não pode ser alterado.",
+    "audit_log_append_only": "O histórico de auditoria não pode ser alterado.",
+    "draft_exists": "Este agente já tem um rascunho em edição.",
+    "draft_changed": "O rascunho mudou desde que foi aberto. Recarregue a página e tente de novo.",
+    "conflito_de_versao": "O rascunho mudou desde que foi aberto. Recarregue a página e tente de novo.",
+    "draft_referenced": "Este rascunho já é usado por um prompt compilado e não pode ser removido.",
+    "eval_required": "A avaliação do prompt atual ainda não passou; só uma pessoa pode publicar com justificativa.",
+    "mecanismo_required": "A suíte de mecanismo ainda não foi aprovada para o prompt atual.",
+    "chave_conflict": "Há chaves repetidas no que foi enviado.",
+    "chave_taken": "Já existe um item com essa chave.",
+    "caminho_conflict": "Há arquivos com o mesmo caminho na skill.",
+    "skill_exists": "Já existe uma skill com esse nome.",
+    "client_exists": "Já existe um cliente com esse identificador.",
+    "client_entries_cap": "O cliente atingiu o limite de registros.",
+    "key_taken": "Já existe um agente com essa chave.",
+    "slug_taken": "Já existe um item com esse identificador.",
+    "kind_immutable": "O tipo do agente não pode ser alterado depois de criado.",
+    "definition_not_platform": "A definição precisa ser da plataforma.",
+    "definition_invalid": "A definição não corresponde ao agente da plataforma com essa chave.",
+    "definition_not_granted": "Esta organização não tem acesso a essa definição de agente.",
+    "scope_immutable": "O escopo da definição não pode ser alterado.",
+    "learning_content_immutable": "O conteúdo de um aprendizado já registrado não pode ser alterado.",
+    "gerador_ja_existe": "Já existe outra definição marcada como gerador de agentes.",
+    "geracao_em_andamento": "Já há uma geração com IA em andamento para este agente. Aguarde ela terminar.",
+    "run_in_progress": "Já há uma execução em andamento para esta versão. Aguarde ela terminar.",
+    "run_not_cancellable": "Esta execução não pode mais ser cancelada.",
+    "case_in_use": "Este caso já tem resultados; desative-o em vez de excluir.",
+    "grant_exists": "Esse acesso já foi concedido.",
+    "channel_exists": "Esse canal já está cadastrado.",
+    "inbound_exists": "Essa entrada já está cadastrada.",
+    "lead_ref_exists": "Essa referência de lead já está cadastrada.",
+    "participante_exists": "Essa pessoa já participa da conversa.",
+    "participante_estado_mudou": "A participação mudou enquanto você editava. Recarregue e tente de novo.",
+    "outro_agente_ativo": "Outro agente já está ativo neste canal.",
+    "editorial_unlinked": "O documento está fora do fluxo editorial desta coleção; coloque a coleção sob revisão de novo.",
+    "editorial_archived": "O documento está arquivado e não aceita nova versão.",
+    "editorial_actor_required": "Colocar uma coleção sob revisão exige um usuário autenticado.",
+    "cannot_ungovern": "Uma coleção sob revisão editorial não volta a ser livre.",
+    "editorial_governed": "O documento está sob revisão editorial: altere-o pelo fluxo editorial (nova versão, revisão, publicação).",
+    "editorial_in_review": "O documento está em revisão: devolva-o a rascunho ou aguarde a revisão antes de enviar nova versão.",
+    "slug_in_other_collection": "Já existe um documento com esse identificador em outra coleção.",
+    "publicado": "O agente tem versão publicada e não pode ser excluído.",
+    "tem_instancias": "O agente tem instâncias em organizações e não pode ser excluído.",
+    "tem_conversas": "O agente tem conversas e não pode ser excluído.",
+    "tem_canal": "O agente está ligado a um canal e não pode ser excluído.",
+    "ativo": "Desligue o agente antes de excluí-lo.",
+    "origem_invalida": "A origem não é um agente de código desta organização.",
+    "destino_invalido": "O destino não é um agente do Studio desta organização.",
+    "mesmo_agente": "Origem e destino são o mesmo agente.",
+    "historico_pendente": "O agente ainda tem conversas — transfira o histórico antes de arquivar.",
+}
+
+MENSAGEM_CONFLITO_GENERICA = "A operação conflita com o estado atual. Recarregue a página e tente de novo."
+
+
+def mensagem_conflito(exc: StudioConflict) -> str:
+    """The pt-BR text for a 409 — by ``exc.code``; never ``str(exc)`` (DB text / internal prose)."""
+    return MENSAGENS_CONFLITO.get(exc.code, MENSAGEM_CONFLITO_GENERICA)
+
+
+def erro_de_item(exc: Exception) -> str:
+    """The per-item error text of a batch reply: a conflict reads its pt-BR catalog text; a ``ValueError`` (a size
+    cap / allowlist / field rule, already written for the caller) keeps its own message."""
+    return mensagem_conflito(exc) if isinstance(exc, StudioConflict) else str(exc)
 
 
 def _conflict(code: str) -> Callable[[str], Exception]:
@@ -124,10 +205,11 @@ def map_db_error(
                 break
     if factory is not None:
         return factory(text)
+    # The DB text (constraint/index names) stays on the chained cause for the logs; the conflict carries the code.
     if code == "23505" and unique_code is not None:
-        return StudioConflict(unique_code, msg)
+        return StudioConflict(unique_code)
     if code == "23503" and fk_code is not None:
-        return StudioConflict(fk_code, msg)
+        return StudioConflict(fk_code)
     if code == "23514":
         return ValueError(msg)
     return exc

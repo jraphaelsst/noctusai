@@ -30,7 +30,7 @@ from app.config import settings
 from app.dependencies import get_agent_store_dep, get_credential_service_dep, require_member
 from app.routers.agente_painel_router import tier_do_chamador
 from app.routers.studio_agents_router import actor_id, get_studio_definition_store_dep
-from app.stores._db_errors import StudioConflict
+from app.stores._db_errors import StudioConflict, mensagem_conflito
 from app.stores.errors import NotFound
 from app.studio.plataforma import ensure_instancia
 from noctusai_lib.api import StrictHttpModel
@@ -103,13 +103,7 @@ def _so_superadmin(ctx: AuthContext, request: Request) -> None:
 
 
 def _conflito(exc: StudioConflict) -> HTTPException:
-    textos = {
-        "origem_invalida": "A origem não é um agente de código desta organização.",
-        "destino_invalido": "O destino não é um agente do Studio desta organização.",
-        "mesmo_agente": "Origem e destino são o mesmo agente.",
-        "historico_pendente": "O agente ainda tem conversas — transfira o histórico antes de arquivar.",
-    }
-    return HTTPException(status_code=409, detail={"detail": textos.get(exc.code, str(exc)), "code": exc.code})
+    return HTTPException(status_code=409, detail={"detail": mensagem_conflito(exc), "code": exc.code})
 
 
 def _academia_agent_id(credenciais: Any) -> str | None:
