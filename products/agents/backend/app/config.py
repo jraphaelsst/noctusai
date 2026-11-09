@@ -197,6 +197,10 @@ class SeedSettings(ProductSettings):
     # Memory per turn: the last N stored messages of the conversation. 40 (was 20): measured on the Julia mechanism suite at
     # k=3 (61/65 cases vs 57/65, DECISAO-SKILL-AUTOLOAD.md); the SW "One Chat" reference also reads 40.
     llm_history_messages: int = 40
+    # Token budget of that history (estimated): over it, the SERVER drops the oldest turns
+    # (`noctusai_lib.integrations.llm.context_window`, pure trimming, tool pairs never split); a history that fits
+    # is sent byte-identical. 40 messages of chat stay far below it - this is the guard for pathological ones.
+    llm_history_max_tokens: int = 40_000
     # Cap on tool-call rounds per turn (also bounded by the version's
     # `max_turns`).
     llm_max_tool_iterations: int = 6

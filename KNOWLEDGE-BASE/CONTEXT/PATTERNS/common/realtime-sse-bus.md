@@ -145,6 +145,7 @@ the ASGI call fully completes) nor `httpx.AsyncClient(transport=ASGITransport(..
 (`await self.app(...)` inline) can read a genuinely-never-ending stream
 incrementally then bail — both fully drive the response to completion before
 returning anything. Test disconnect/heartbeat behavior directly against
+`sse_event(payload)` (one `data:` JSON frame; shared by help-chat and product chat streams) and
 `sse_event_stream(...)` (the framework-agnostic core, takes a plain
 `is_disconnected: Callable[[], Awaitable[bool]]`) with a bus double whose
 `subscribe()` is finite or `is_disconnected`-controlled; reserve

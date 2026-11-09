@@ -70,6 +70,9 @@ from noctusai_lib.integrations.llm import (
     chat_completion_stream,
 )
 
+from noctusai_lib.integrations.llm.context_window import fit_history
+from noctusai_lib.realtime.sse import sse_event
+
 from .schemas import HelpChatAvaliacaoRequest, HelpChatRequest
 from .service import (
     ERROR_IA_INDISPONIVEL,
@@ -82,11 +85,13 @@ from .service import (
     build_system_prompt,
     load_knowledge,
     rate_limit_error_body,
-    sse_event,
 )
 from .store import HelpChatStore
 
 logger = logging.getLogger(__name__)
+
+#: Default budget (estimated tokens) for the prior turns of one help-chat request.
+DEFAULT_MAX_HISTORY_TOKENS = 24_000
 
 #: `(messages, *, model, provider, org_id, outcome) -> AsyncIterator[str]` —
 #: what the router calls to get streamed text deltas; it must fill `outcome`
@@ -146,7 +151,8 @@ def create_help_chat_router(
     user_id_from_auth: Optional[Callable[[Any], str]] = None,
     model: str = "claude-haiku-4-5",
     provider: str = "anthropic",
-    max_turns: int = 20,
+    max_turns: int = 200,
+    max_history_tokens: int = DEFAULT_MAX_HISTORY_TOKENS,
     max_chars_per_message: int = 4000,
     max_continuations: int = 2,
     rate_limit: int = 20,
@@ -192,9 +198,14 @@ def create_help_chat_router(
         model / provider: Passed to `stream_fn`. Default model is Haiku —
             cheap/fast, conversation-optimized; a product with a more
             demanding assistant can override.
-        max_turns: Maximum number of messages accepted in one request body
-            (422 above this — the client is expected to trim its own
-            history before sending).
+        max_turns: ABUSE bound on the number of messages in one request body
+            (422 `limite_de_turnos` above it). It is not the context window:
+            a long history below it is fitted by the SERVER (below).
+        max_history_tokens: Estimated-token budget for the prior turns. When
+            the history is over it the server drops the OLDEST turns
+            (`integrations.llm.context_window.fit_history`; the latest user
+            message is always kept) instead of rejecting the request. A
+            history that fits is sent unchanged.
         max_chars_per_message: Per-message content length cap (422 above
             this).
         max_continuations: When the provider reports the reply was cut off
@@ -285,6 +296,7 @@ def create_help_chat_router(
         )
 
         history = [{"role": m.role, "content": m.content} for m in payload.messages]
+        history = fit_history(history, max_tokens=max_history_tokens).messages
         messages = build_conversation_messages(
             system_prompt=system_prompt, history=history, provider=provider
         )
