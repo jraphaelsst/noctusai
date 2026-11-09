@@ -137,6 +137,8 @@ _AGENT_FIELDS = ("nome", "descricao", "ativo", "publicacao_limiar")
 _DEFINICAO_FIELDS = (
     "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao",
     "rascunho_padrao", "instanciavel", "papel", "exemplar",
+    # 070 (Agent Packages §M1): the Claude Code surface of a DB-source agent.
+    "superficie_claude",
 )
 #: 049/058: the one platform ROLE (the generator). "Exemplar" is its own flag (:attr:`StudioAgentRecord.exemplar`).
 PAPEIS = ("gerador",)
@@ -150,8 +152,17 @@ _DRAFT_FIELDS = (
     # 032/040: the pinned qualification-standard version (a platform admin moves it; publish stamps it).
     "qualificacao_versao_id",
 )
-#: 017 `agents.kind` CHECK — immutable once the row exists.
-AGENT_KINDS = ("runtime", "dev-advisor")
+#: 017/070 `agents.kind` CHECK — immutable once the row exists.
+AGENT_KINDS = ("runtime", "dev-advisor", "dev-executor")
+#: 070 (Agent Packages A12): the dev kinds — a package / mirror exists only for these.
+DEV_KINDS = ("dev-advisor", "dev-executor")
+#: 070 (Agent Packages A11): ``git`` = built from ``products/agents/packages/<key>/`` · ``db`` = the Studio rows are the
+#: source and git holds a generated mirror. Immutable once the row exists.
+AGENT_FONTES = ("git", "db")
+#: A10: the only tools a ``dev-advisor`` may carry on the Claude Code surface.
+ADVISOR_CLAUDE_TOOLS = ("Read", "Grep", "Glob")
+_SUPERFICIE_FIELDS = ("tools", "model", "owns_kb")
+_CLAUDE_MODELS = ("opus", "sonnet", "haiku", "inherit")
 #: `agents.runtime` values a studio agent may be created with (024 CHECK minus
 #: `external`, which means "another product runs it" and is never a studio agent).
 STUDIO_RUNTIMES = ("claude_sdk", "llm")
@@ -227,6 +238,15 @@ class StudioAgentRecord:
     papel: str | None = None
     #: 058: the AI generator may imitate this platform definition (its structure; its text only inside the platform org).
     exemplar: bool = False
+    #: 070 (Agent Packages A11): ``git`` | ``db`` -- where the agent's content is authored.
+    fonte: str = "git"
+    #: 070 (§M1): ``{tools, model, owns_kb}`` of the Claude Code mirror (DB-source dev agents).
+    superficie_claude: dict[str, Any] | None = None
+
+    @property
+    def espelhado(self) -> bool:
+        """A DB-source DEV agent: its publish renders the git mirror (§M2)."""
+        return self.fonte == "db" and self.kind in DEV_KINDS
 
     @property
     def usa_canais(self) -> bool:
@@ -437,6 +457,37 @@ def _validate_definicao_fields(fields: dict[str, Any]) -> None:
         raise ValueError("instanciavel must be a boolean")
     if "exemplar" in fields and not isinstance(fields["exemplar"], bool):
         raise ValueError("exemplar must be a boolean")
+    if fields.get("superficie_claude") is not None:
+        validar_superficie_claude(fields["superficie_claude"])
+
+
+def validar_superficie_claude(sup: Any, kind: str | None = None) -> None:
+    """§M1: ``{tools: [str], model?: opus|sonnet|haiku|inherit, owns_kb?: [path]}``. With ``kind='dev-advisor'`` the
+    tools are A10's read-only set only (the kind is checked by the caller that knows it)."""
+    if not isinstance(sup, dict):
+        raise ValueError("superficie_claude must be an object")
+    _check_fields(sup, _SUPERFICIE_FIELDS, "superficie_claude")
+    tools = sup.get("tools")
+    if not isinstance(tools, list) or not tools or not all(isinstance(t, str) and t.strip() for t in tools):
+        raise ValueError("superficie_claude.tools must be a non-empty list of tool names")
+    if sup.get("model") is not None and sup["model"] not in _CLAUDE_MODELS:
+        raise ValueError(f"superficie_claude.model must be one of {_CLAUDE_MODELS}")
+    owns = sup.get("owns_kb")
+    if owns is not None and (not isinstance(owns, list) or not all(isinstance(o, str) and o.strip() for o in owns)):
+        raise ValueError("superficie_claude.owns_kb must be a list of KB paths")
+    if kind == "dev-advisor":
+        extra = sorted(set(tools) - set(ADVISOR_CLAUDE_TOOLS))
+        if extra:
+            raise ValueError(f"a dev-advisor carries read-only tools only (A10); refused: {', '.join(extra)}")
+
+
+def _check_superficie_do_agente(agent: "StudioAgentRecord", fields: dict[str, Any]) -> None:
+    """070 §M1: the Claude Code surface exists only on a dev agent, and a dev-advisor's is read-only (A10)."""
+    if fields.get("superficie_claude") is None:
+        return
+    if agent.kind not in DEV_KINDS:
+        raise ValueError("superficie_claude applies to dev agents only (dev-advisor | dev-executor)")
+    validar_superficie_claude(fields["superficie_claude"], agent.kind)
 
 
 def _check_not_owned_and_open(owner_product: str | None, instanciavel: bool) -> None:
@@ -590,7 +641,7 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
         rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
-        exemplar: bool = False,
+        exemplar: bool = False, fonte: str = "git",
     ) -> StudioAgentRecord:
         """``definition_mode='studio'``, ``ativo=false``, ``runtime`` (default
         ``claude_sdk`` — the studio UI's only choice; ``llm`` is created by the
@@ -898,10 +949,14 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
         rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
-        exemplar: bool = False,
+        exemplar: bool = False, fonte: str = "git",
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
+        if fonte not in AGENT_FONTES:
+            raise ValueError(f"fonte must be one of {AGENT_FONTES}; got {fonte!r}")
+        if fonte == "db" and kind not in DEV_KINDS:
+            raise ValueError("fonte='db' (a git mirror) applies to dev agents only (dev-advisor | dev-executor)")
         if runtime not in STUDIO_RUNTIMES:
             raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
         modo = _validate_scope(definition_scope, definition_agent_id)
@@ -938,7 +993,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             definition_agent_id=definition_agent_id, conteudo_modo=modo,
             escopo_qualificacao=escopo_qualificacao, padrao_qualificacao=padrao_qualificacao,
             rascunho_padrao=dict(rascunho_padrao) if rascunho_padrao is not None else None,
-            instanciavel=instanciavel, papel=papel, exemplar=exemplar,
+            instanciavel=instanciavel, papel=papel, exemplar=exemplar, fonte=fonte,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -948,6 +1003,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         before = self.get_agent(org_id, key)
         if before.definition_scope != "plataforma":
             raise ValueError("only a platform definition carries these fields")
+        _check_superficie_do_agente(before, fields)
         _check_not_owned_and_open(
             fields.get("owner_product", before.owner_product), bool(fields.get("instanciavel", before.instanciavel)),
         )
@@ -1585,6 +1641,8 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             rascunho_padrao=dict(row["rascunho_padrao"]) if row.get("rascunho_padrao") is not None else None,
             instanciavel=bool(row.get("instanciavel", False)), papel=row.get("papel"),
             exemplar=bool(row.get("exemplar", False)),
+            fonte=row.get("fonte") or "git",
+            superficie_claude=dict(row["superficie_claude"]) if row.get("superficie_claude") is not None else None,
         )
 
     @staticmethod
@@ -1680,10 +1738,14 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         definition_scope: str = "org", definition_agent_id: UUID | None = None,
         escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
         rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
-        exemplar: bool = False,
+        exemplar: bool = False, fonte: str = "git",
     ) -> StudioAgentRecord:
         if kind not in AGENT_KINDS:
             raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
+        if fonte not in AGENT_FONTES:
+            raise ValueError(f"fonte must be one of {AGENT_FONTES}; got {fonte!r}")
+        if fonte == "db" and kind not in DEV_KINDS:
+            raise ValueError("fonte='db' (a git mirror) applies to dev agents only (dev-advisor | dev-executor)")
         if runtime not in STUDIO_RUNTIMES:
             raise ValueError(f"runtime must be one of {STUDIO_RUNTIMES}; got {runtime!r}")
         modo = _validate_scope(definition_scope, definition_agent_id)
@@ -1703,7 +1765,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             "definition_agent_id": str(definition_agent_id) if definition_agent_id else None,
             "conteudo_modo": modo, "escopo_qualificacao": escopo_qualificacao,
             "padrao_qualificacao": padrao_qualificacao, "rascunho_padrao": rascunho_padrao,
-            "instanciavel": instanciavel, "papel": papel, "exemplar": exemplar,
+            "instanciavel": instanciavel, "papel": papel, "exemplar": exemplar, "fonte": fonte,
         }
         resp = self._exec(self._t("agents").insert(payload), unique_code="key_taken")
         return self._agent(self._one(resp, f"agent {key!r}"))
@@ -1718,6 +1780,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         before = self.get_agent(org_id, key)
         if before.definition_scope != "plataforma":
             raise ValueError("only a platform definition carries these fields")
+        _check_superficie_do_agente(before, fields)
         _check_not_owned_and_open(
             fields.get("owner_product", before.owner_product), bool(fields.get("instanciavel", before.instanciavel)),
         )
