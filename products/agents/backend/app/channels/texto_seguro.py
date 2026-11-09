@@ -25,6 +25,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from noctusai_lib.integrations.llm.guardrails import CNPJ_PATTERN, CPF_PATTERN, LINK_PATTERN, PIX_PATTERN
+
 from app.channels import conformidade as conf
 
 __all__ = [
@@ -64,7 +66,7 @@ def sem_contatos(texto: str, *, manter: Iterable[str] = ()) -> str:
 
     t = unicodedata.normalize("NFKC", _CONTROL.sub(" ", texto))
     t = _EMAIL.sub("", t)  # first: the host of an address is not a link of its own
-    t = conf._LINK.sub(_url, t)
+    t = LINK_PATTERN.sub(_url, t)
     t = _MENCAO.sub("", t)
     t = _FONE.sub("", t)
     return _BLANK.sub(" ", t).strip()
@@ -76,7 +78,7 @@ def para_equipe(texto: str, *, manter_links: Iterable[str] = (), maximo: int | N
     keys (the ``chave pix`` / ``pix copia e cola`` phrases, random-UUID keys, CPF / CNPJ and bare 11-14 digit runs).
     Silent removal; ``maximo`` caps the result."""
     t = unicodedata.normalize("NFKC", texto)
-    for rx in (conf._PIX, conf._CNPJ, conf._CPF, _CHAVE_NUMERICA):  # before the phone step could eat part of one
+    for rx in (PIX_PATTERN, CNPJ_PATTERN, CPF_PATTERN, _CHAVE_NUMERICA):  # before the phone step could eat part of one
         t = rx.sub(" ", t)
     t = sem_contatos(t, manter=manter_links)
     return _cortar(t, maximo) if maximo is not None else t

@@ -408,6 +408,10 @@ stores the lead's message verbatim.
 
 ## 9 · Failure modes and mitigations
 
+> Output-side guardrails (prompt-leak canary + shingle fingerprint, link/contact/PII/format/pattern filters, tool-result
+> redaction, answer bounds) are the seed organ `noctusai_lib.integrations.llm.guardrails` — consume it, never copy it
+> (`KB § PATTERNS/security/llm-bot-security.md` § 2a). Per-product policy is data passed in.
+
 | Failure | What it looks like | Mitigation (house mechanism first) |
 |---|---|---|
 | Hallucinated fact | invented property, price, document field | answer only from tools / knowledge (§ 7); a mechanism assert on what was offered (`ofertas_por_lote`); for documents, an independent second read + disagreement reported (`DOC:providers.py:139-147`); a real-document benchmark (§ 13 WE-3) |
