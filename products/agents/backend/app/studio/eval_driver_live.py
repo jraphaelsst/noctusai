@@ -41,6 +41,7 @@ from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
 from app.qualificacao.lead_store import FakeLeadQualificacaoStore
 from app.qualificacao.models import EventoImovel, Registro
 from app.qualificacao.service import QualificacaoService
+from app.schemas.channels import ChannelContexto
 from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, LlmToolset, make_budget_guard
 from app.stores.agent_controles import FakeAgentControleStore
 from app.stores.conformidade import FakeConformidadeStore
@@ -119,7 +120,12 @@ class FixtureSwClient:
             limite = max(1, int(args.get("limite") or 3))
             todos = [i for i in self._catalogo if str(i.get("codigo")) not in excluir and _casa(i, args)]
             return {"data": todos[:limite], "restantes_estimados": max(0, len(todos) - limite)}
-        if nome in ("imovel_campanha", "detalhes_imovel"):
+        if nome == "imovel_campanha":
+            # Real shape (social-wiring ``imovel_campanha``): a 0-or-1 item LIST, ``[]`` for an unknown / unpublished code.
+            # (This used to answer a bare object, which the offer tool read as "nothing to offer": ``esgotado``.)
+            achado = next((i for i in self._catalogo if str(i.get("codigo")) == str(args.get("codigo"))), None)
+            return {"data": [achado] if achado is not None else []}
+        if nome == "detalhes_imovel":
             achado = next((i for i in self._catalogo if str(i.get("codigo")) == str(args.get("codigo"))), None)
             return {"data": achado} if achado is not None else {"erro": "nao_encontrado"}
         if nome == "consultar_empreendimento":
@@ -129,6 +135,21 @@ class FixtureSwClient:
 
 
 # ── the call journal ────────────────────────────────────────────────────────
+
+
+def contexto_de_avaliacao(fixture: Mapping[str, Any]) -> ChannelContexto | None:
+    """The SW-rendered turn context of the eval world: ``fixture.origem`` (``codigo_imovel_campanha`` / ``canal_origem``)
+    is what an ad lead carries on ``estado.origem``, so the state block shows the campaign code and
+    ``oferecer_imoveis modo=campanha`` resolves it against the case's catalogue. No ``origem`` -> ``None`` (the world
+    stays exactly what it was: no SW context). The keys are validated by the roteiro validator AND here (fail closed:
+    ``ContextoOrigem`` forbids unknown keys, an invalid fixture is an ``erro`` run, never a silently origin-less lead)."""
+    origem = fixture.get("origem")
+    if origem is None:
+        return None
+    return ChannelContexto.model_validate({
+        "hash": "0" * 64, "agora": datetime.now(timezone.utc).isoformat(), "fuso": "America/Sao_Paulo",
+        "estado": {"interacao_id": str(uuid4()), "encerrado": False, "origem": origem},
+    })
 
 
 class _Diario:
@@ -193,6 +214,8 @@ class _Mundo:
     lead_ref_id: UUID | None = None
     concluido: bool = False
     turnos: int = 0
+    #: What social-wiring would send with each turn (``estado.origem`` -> the campaign property); ``None`` = no origin.
+    contexto: ChannelContexto | None = None
 
 
 class LiveEvalTurnDriver:
@@ -305,6 +328,7 @@ class LiveEvalTurnDriver:
             controles.set_fase_testes(org_id, definicao.id, bool(thread.fixture["fase_testes"]))
         externo = f"eval-{uuid4()}"
         return _Mundo(
+            contexto=contexto_de_avaliacao(thread.fixture),
             org_id=org_id, agent=definicao, version_id=draft.id, specs=specs, svc=svc, runtime=runtime,
             bus=FakeRealtimeBus(), sw=sw, diario=diario, messages=messages, conversations=conversations,
             threads=threads, controles=controles, leads=leads, lead_externo=externo,
@@ -389,7 +413,7 @@ class LiveEvalTurnDriver:
         try:
             res = await turno_mod.executar(
                 svc=m.svc, prep=prep, agent=m.agent, org_id=m.org_id, thread=th, runtime=m.runtime, slot=slot,
-                bus=m.bus, contexto=None, gatilho="mensagem", lote_lead=[mensagem_lead], ultima_resposta_em=agora,
+                bus=m.bus, contexto=m.contexto, gatilho="mensagem", lote_lead=[mensagem_lead], ultima_resposta_em=agora,
                 agora=agora, nota_caso=thread.contexto_caso, origem="eval")
         finally:
             await slot.release()

@@ -367,7 +367,7 @@ class TestRecusaCorrigivelNaoGastaOOrcamento:
             say("Oi! Em que posso ajudar?")]))
         body = chan.turn(turn_body("Oi, vi o anúncio")).json()
         codigos = [r["codigo"] for r in tool_results(chan.provider) if r.get("codigo")]
-        assert codigos[:2] == ["sem_codigo_campanha", "sem_codigo_campanha"] or "nao_pode_ofertar" in codigos
+        assert codigos[:2] == ["sem_codigo_campanha", "sem_codigo_campanha"]
         assert body["status"] == "respondido"
         assert "limite_recusas" not in json.dumps(body)
 
