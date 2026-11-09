@@ -118,8 +118,10 @@ def registrar_corretores_do_imovel(
     client: Any, org_id: UUID, codigo: str, corretores: list[dict], *, corretor_map: dict[str, str], corretores_sw: list[dict],
 ) -> list[dict]:
     """Record the property's Vista corretores as `imovel_corretores` rows (key = Vista Codigo). Read-then-write; a corretor no
-    longer on the property flips `ativo=false` (never deleted). Stamps `lead_corretores.vista_codigo` when a corretor resolved
-    BY NAME has none and no other SW corretor claims that Codigo. Returns the active rows with `corretor_id` resolved."""
+    longer on the property flips `ativo=false` (never deleted). `principal` = the FIRST corretor Vista lists. Stamps
+    `lead_corretores.vista_codigo` when a corretor resolved BY NAME has none and no other SW corretor claims that Codigo.
+    Returns `(active rows with corretor_id resolved, stamps)`; every stamp is `{corretor_id, nome, vista_codigo, codigo_canonical}`
+    so the intake `resultado` makes the self-learning auditable."""
     canonico = busca_service.canonical(codigo)
     por_vista = {str(r["vista_codigo"]): r for r in corretores_sw if r.get("vista_codigo")}
     existentes = {
@@ -130,6 +132,7 @@ def registrar_corretores_do_imovel(
     }
     agora = _agora()
     ativos: list[dict] = []
+    stamps: list[dict] = []
     vistos: set[str] = set()
     for ordem, c in enumerate(corretores):
         chave = _chave_corretor(c)
@@ -142,9 +145,11 @@ def registrar_corretores_do_imovel(
                 _t(client, "lead_corretores").update({"vista_codigo": codigo_vista}).eq("org_id", str(org_id)).eq("id", corretor_id).execute()
                 alvo["vista_codigo"] = codigo_vista
                 por_vista[codigo_vista] = alvo
+                stamps.append({"corretor_id": corretor_id, "nome": alvo.get("nome"), "vista_codigo": codigo_vista, "codigo_canonical": canonico})
+                logger.info("ad-lead intake: lead_corretores %s stamped vista_codigo=%s (name match, código %s)", corretor_id, codigo_vista, canonico)
         dados = {
             "vista_corretor_codigo": codigo_vista, "nome": c.get("nome"), "email": c.get("email"), "fone": c.get("fone"),
-            "ordem": ordem, "corretor_id": corretor_id, "ativo": True, "visto_em": agora,
+            "ordem": ordem, "principal": ordem == 0, "corretor_id": corretor_id, "ativo": True, "visto_em": agora,
         }
         if chave in existentes:
             _t(client, T_CORRETORES).update(dados).eq("org_id", str(org_id)).eq("id", str(existentes[chave]["id"])).execute()
@@ -156,7 +161,7 @@ def registrar_corretores_do_imovel(
     for chave, linha in existentes.items():
         if chave not in vistos and linha.get("ativo") is not False:
             _t(client, T_CORRETORES).update({"ativo": False}).eq("org_id", str(org_id)).eq("id", str(linha["id"])).execute()
-    return ativos
+    return ativos, stamps
 
 
 def _corretores_do_espelho(client: Any, org_id: UUID, codigo: str) -> list[dict]:
@@ -165,47 +170,80 @@ def _corretores_do_espelho(client: Any, org_id: UUID, codigo: str) -> list[dict]
     return [c for c in ((linha or {}).get("corretores") or []) if isinstance(c, dict)]
 
 
+TIPO_FORA = "fora_dos_corretores"
+TIPO_NAO_PRINCIPAL = "nao_e_principal"
+TIPO_SEM_CORRETOR = "lead_sem_corretor"
+TIPOS_DIVERGENCIA = (TIPO_FORA, TIPO_NAO_PRINCIPAL, TIPO_SEM_CORRETOR)
+_MOTIVO_FECHAMENTO = {
+    TIPO_FORA: "auto: o corretor do lead passou a ser um dos corretores do imóvel",
+    TIPO_NAO_PRINCIPAL: "auto: o corretor do lead passou a ser o corretor principal do imóvel",
+    TIPO_SEM_CORRETOR: "auto: o lead passou a ter corretor",
+}
+
+
+def _tipos_ativos(lead_corretor: Any, ativos: list[dict]) -> list[str]:
+    """Which of the three warnings hold NOW. `nao_e_principal` is deliberately NOT raised when `fora_dos_corretores` holds for the
+    same pair: "not among the property's corretores" already implies "not the main one", so a second warning would say nothing new."""
+    if not lead_corretor:
+        return [TIPO_SEM_CORRETOR]
+    if not ativos:
+        return []  # the property has no corretor to compare against
+    ids = {str(a["corretor_id"]) for a in ativos if a.get("corretor_id")}
+    if str(lead_corretor) not in ids:
+        return [TIPO_FORA]
+    principal = next((a for a in ativos if a.get("principal")), ativos[0])
+    if str(principal.get("corretor_id") or "") != str(lead_corretor):
+        return [TIPO_NAO_PRINCIPAL]
+    return []
+
+
 def _checar_divergencia_corretor(
     client: Any, org_id: UUID, lead: dict, codigo: str, ativos: list[dict]
 ) -> dict[str, Any]:
-    """Compare the lead's corretor with the property's. Opens ONE pending row (+ ONE in-app warning) per (lead, código);
-    a later run that finds them aligned auto-resolves a still-pending row. No lead corretor or no property corretor =>
-    nothing to compare (not a divergence)."""
+    """Re-evaluate the three corretor warnings of (lead, código) and reconcile the stored rows: one OPEN row (+ ONE in-app warning)
+    per tipo; a still-pending row whose condition no longer holds is auto-closed with its reason (e.g. a corretor assigned later
+    closes `lead_sem_corretor`). A human-closed row (`resolvida`/`ignorada`) is never reopened or re-notified."""
     canonico = busca_service.canonical(codigo)
     lead_corretor = lead.get("corretor_id")
-    existente = _um(client, T_DIVERGENCIAS, org_id, "lead_id", lead["id"])
-    existente = existente if existente and existente.get("codigo_canonical") == canonico else None
-    ids_imovel = {str(a["corretor_id"]) for a in ativos if a.get("corretor_id")}
-    diverge = bool(lead_corretor and ativos and str(lead_corretor) not in ids_imovel)
-    if not diverge:
-        if existente and existente.get("status") == "pendente" and lead_corretor and str(lead_corretor) in ids_imovel:
+    ativos_tipos = _tipos_ativos(lead_corretor, ativos)
+    existentes = {
+        r["tipo"]: r
+        for r in (_t(client, T_DIVERGENCIAS).select("*").eq("org_id", str(org_id)).eq("lead_id", str(lead["id"])).eq("codigo_canonical", canonico).execute().data or [])
+    }
+    fechadas: list[str] = []
+    for tipo, linha in existentes.items():
+        if tipo not in ativos_tipos and linha.get("status") == "pendente":
             _t(client, T_DIVERGENCIAS).update(
-                {"status": "resolvida", "resolvido_em": _agora(), "nota": "auto: o corretor do lead passou a ser o do imóvel"}
-            ).eq("org_id", str(org_id)).eq("id", str(existente["id"])).execute()
-        return {"divergencia": False}
-    if existente:
-        return {"divergencia": True, "nova": False, "id": str(existente["id"])}
+                {"status": "resolvida", "resolvido_em": _agora(), "nota": _MOTIVO_FECHAMENTO.get(tipo, "auto: sem divergência")}
+            ).eq("org_id", str(org_id)).eq("id", str(linha["id"])).execute()
+            fechadas.append(tipo)
+    novas: list[str] = []
     nome_lead = lead.get("corretor_raw")
     if lead_corretor:
         sw = _um(client, "lead_corretores", org_id, "id", lead_corretor)
         nome_lead = (sw or {}).get("nome") or nome_lead
     snapshot = [
-        {k: a.get(k) for k in ("vista_corretor_codigo", "nome", "email", "fone", "corretor_id")} | {"resolvido": bool(a.get("corretor_id"))}
+        {k: a.get(k) for k in ("vista_corretor_codigo", "nome", "email", "fone", "corretor_id", "principal")} | {"resolvido": bool(a.get("corretor_id"))}
         for a in ativos
     ]
-    linha = {
-        "id": str(uuid4()), "org_id": str(org_id), "lead_id": str(lead["id"]), "codigo_canonical": canonico,
-        "lead_corretor_id": str(lead_corretor), "lead_corretor_nome": nome_lead, "imovel_corretores": snapshot,
-        "status": "pendente", "created_at": _agora(),
-    }
-    _t(client, T_DIVERGENCIAS).insert(linha).execute()
-    avisados = lead_notice.avisar_corretor_divergente(
-        org_id, lead_id=lead["id"], codigo=canonico, lead_corretor=nome_lead,
-        imovel_corretores=[a.get("nome") for a in ativos if a.get("nome")],
-    )
-    if avisados:
-        _t(client, T_DIVERGENCIAS).update({"notificado_em": _agora()}).eq("org_id", str(org_id)).eq("id", linha["id"]).execute()
-    return {"divergencia": True, "nova": True, "id": linha["id"], "avisados": avisados}
+    for tipo in ativos_tipos:
+        if tipo in existentes:
+            continue
+        linha = {
+            "id": str(uuid4()), "org_id": str(org_id), "lead_id": str(lead["id"]), "codigo_canonical": canonico, "tipo": tipo,
+            "lead_corretor_id": str(lead_corretor) if lead_corretor else None, "lead_corretor_nome": nome_lead, "imovel_corretores": snapshot,
+            "status": "pendente", "created_at": _agora(),
+        }
+        _t(client, T_DIVERGENCIAS).insert(linha).execute()
+        avisados = lead_notice.avisar_corretor_divergente(
+            org_id, lead_id=lead["id"], codigo=canonico, tipo=tipo, lead_corretor=nome_lead,
+            imovel_corretores=[a.get("nome") for a in ativos if a.get("nome")],
+            principal=next((a.get("nome") for a in ativos if a.get("principal")), None),
+        )
+        if avisados:
+            _t(client, T_DIVERGENCIAS).update({"notificado_em": _agora()}).eq("org_id", str(org_id)).eq("id", linha["id"]).execute()
+        novas.append(tipo)
+    return {"divergencia": bool(ativos_tipos), "tipos": ativos_tipos, "novas": novas, "fechadas": fechadas}
 
 
 # ─── the intake ledger ──────────────────────────────────────────────────
@@ -342,10 +380,11 @@ async def intake_imovel_do_lead_async(
         if corretores_vista is None:
             corretores_vista, fonte = _corretores_do_espelho(client, org_id, canonico), "espelho"
         _, corretor_map = dimensions_service.build_resolution_maps(client, org_id)
-        ativos = registrar_corretores_do_imovel(
+        ativos, stamps = registrar_corretores_do_imovel(
             client, org_id, canonico, corretores_vista, corretor_map=corretor_map, corretores_sw=dimensions_service.list_corretores(client, org_id)
         )
         resultado["corretores"] = {"fonte": fonte, "total": len(ativos), "codigos": [a["vista_corretor_codigo"] for a in ativos]}
+        resultado["vista_codigo_stamps"] = stamps or None
         resultado["divergencia_corretor"] = _checar_divergencia_corretor(client, org_id, lead, canonico, ativos)
     except Exception as exc:
         status = ST_RETRY if status == ST_OK else status
@@ -377,6 +416,6 @@ def tentar_intake(client: Any, org_id: UUID, lead_id: Any, **kw: Any) -> dict[st
 
 
 __all__ = [
-    "intake_imovel_do_lead", "intake_imovel_do_lead_async", "tentar_intake", "registrar_corretores_do_imovel", "rodar_coro_sync",
+    "intake_imovel_do_lead", "intake_imovel_do_lead_async", "tentar_intake", "registrar_corretores_do_imovel", "rodar_coro_sync", "TIPOS_DIVERGENCIA", "TIPO_FORA", "TIPO_NAO_PRINCIPAL", "TIPO_SEM_CORRETOR",
     "ST_OK", "ST_NAO_ENCONTRADO", "ST_SEM_CODIGO", "ST_RETRY", "ST_FALHOU", "ST_REPETIVEIS", "T_INTAKES", "T_CORRETORES", "T_DIVERGENCIAS",
 ]

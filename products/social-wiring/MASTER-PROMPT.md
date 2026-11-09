@@ -137,3 +137,4 @@ cd products/social-wiring/frontend && npx vite build   # must build clean
 ## Ad-lead intake (2026-11-09)
 
 A Meta form lead is followed by `ad_lead_intake_service.tentar_intake` (never raises): Vista refresh of the lead's property code, `imoveis`/registry upsert, `leads.imovel_ref_id`, interesse with `lead_id` + `meta_ads_lead_id`, property corretores (`imovel_corretores`) + `lead_corretor_divergencias`, `leads.qualificacao_form`. Outcome per lead in `lead_imovel_intakes` (retryable). See `projects/ad-lead-intake-CONTRACT.md`.
+Corretor warnings are three `tipo`s (`fora_dos_corretores`, `nao_e_principal`, `lead_sem_corretor`; migration 332), one open row + one in-app warning per (lead, imóvel, tipo); `ad_lead_intake_retry_job` drains `pendente_retry` intakes with backoff under a per-org sync lease.

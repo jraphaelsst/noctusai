@@ -91,20 +91,25 @@ def avisar_importacao(org_id: Any, inseridos: int) -> int:
 
 
 def avisar_corretor_divergente(
-    org_id: Any, *, lead_id: Any, codigo: str, lead_corretor: str | None, imovel_corretores: list[str],
+    org_id: Any, *, lead_id: Any, codigo: str, tipo: str, lead_corretor: str | None, imovel_corretores: list[str],
+    principal: str | None = None,
 ) -> int:
-    """ONE in-app warning to the org's owners + admins: the lead's corretor differs from the property's Vista corretor(s)
-    (ad-lead intake, CONTRACT ad-lead-intake §4). The durable record is `lead_corretor_divergencias`; this is only the
-    "check it" nudge. Never raises; returns rows written (0 on any problem)."""
+    """ONE in-app warning to the org's owners + admins per corretor-divergence TIPO (ad-lead intake, CONTRACT ad-lead-intake § 2.3):
+    `fora_dos_corretores` | `nao_e_principal` | `lead_sem_corretor`, each its own `kind` (`lead_corretor_<tipo>`). The durable record is
+    `lead_corretor_divergencias`; this is only the "check it" nudge. Never raises; returns rows written (0 on any problem)."""
     try:
         quem = lead_corretor or "sem nome"
         no_imovel = ", ".join(imovel_corretores) or "sem corretor"
+        if tipo == "lead_sem_corretor":
+            titulo, msg = f"Lead sem corretor ({codigo})", f"O lead do imóvel {codigo} não tem corretor. O imóvel está com {no_imovel}. Confira."
+        elif tipo == "nao_e_principal":
+            titulo, msg = f"Corretor não é o principal ({codigo})", f"Lead com {quem}; o corretor principal do imóvel é {principal or 'não informado'}. Confira."
+        else:
+            titulo, msg = f"Corretor diverge no imóvel {codigo}", f"Lead com {quem}; o imóvel está com {no_imovel}. Confira."
         return notify_org_admins(
-            _core(), org_id=org_id, kind="lead_corretor_divergente",
-            title=f"Corretor diverge no imóvel {codigo}",
-            message=f"Lead com {quem}; o imóvel está com {no_imovel}. Confira.",
+            _core(), org_id=org_id, kind=f"lead_corretor_{tipo}", title=titulo, message=msg,
             produto=PRODUTO, link=LINK_LEADS, entidade={"tipo": "lead", "id": str(lead_id)},
         )
     except Exception:  # noqa: BLE001
-        logger.exception("lead_notice: lead_corretor_divergente failed for lead %s", lead_id)
+        logger.exception("lead_notice: lead_corretor_%s failed for lead %s", tipo, lead_id)
         return 0

@@ -229,14 +229,16 @@ _ALIASES = [{"org_id": str(ORG), "alias": "Joao Silva", "alias_norm": "JOAO SILV
 def test_lead_corretor_differing_from_the_property_corretor_warns_once_and_is_queryable(core):
     db = _db(lead=_lead(corretor_id=CORRETOR_A, corretor_raw="Maria Souza"), corretores_sw=_SW_CORRETORES, aliases=_ALIASES)
     res = _rodar(db, _vista(_imovel()))
-    assert res["divergencia_corretor"]["divergencia"] is True and res["divergencia_corretor"]["nova"] is True
+    assert res["divergencia_corretor"]["tipos"] == ["fora_dos_corretores"] and res["divergencia_corretor"]["novas"] == ["fora_dos_corretores"]
     [d] = _rows(db, "lead_corretor_divergencias")
-    assert d["status"] == "pendente" and d["lead_id"] == LEAD and d["lead_corretor_nome"] == "Maria Souza" and d["notificado_em"]
+    assert d["tipo"] == "fora_dos_corretores" and d["status"] == "pendente" and d["lead_id"] == LEAD and d["lead_corretor_nome"] == "Maria Souza" and d["notificado_em"]
     assert d["imovel_corretores"][0]["vista_corretor_codigo"] == "12" and d["imovel_corretores"][0]["resolvido"] is True
     [n] = core.table("notifications").select("*").execute().data
-    assert n["metadata"]["tipo"] == "lead_corretor_divergente" and "ONE5" in n["title"] and "Joao Silva" in n["message"]
+    assert n["metadata"]["tipo"] == "lead_corretor_fora_dos_corretores" and "ONE5" in n["title"] and "Joao Silva" in n["message"]
     # the Vista corretor resolved BY NAME is stamped with its Vista Codigo (the deterministic key from now on)
     assert _rows(db, "lead_corretores", id=CORRETOR_B)[0]["vista_codigo"] == "12"
+    # …and the stamp is auditable in the intake result
+    assert res["vista_codigo_stamps"] == [{"corretor_id": CORRETOR_B, "nome": "Joao Silva", "vista_codigo": "12", "codigo_canonical": "ONE5"}]
 
     _rodar(db, _vista(_imovel()))  # re-run: no second row, no second warning
     assert len(_rows(db, "lead_corretor_divergencias")) == 1 and len(core.table("notifications").select("*").execute().data) == 1
@@ -245,7 +247,7 @@ def test_lead_corretor_differing_from_the_property_corretor_warns_once_and_is_qu
 def test_lead_corretor_matching_the_property_corretor_is_not_a_divergence(core):
     db = _db(lead=_lead(corretor_id=CORRETOR_B), corretores_sw=_SW_CORRETORES, aliases=_ALIASES)
     res = _rodar(db, _vista(_imovel()))
-    assert res["divergencia_corretor"] == {"divergencia": False}
+    assert res["divergencia_corretor"]["tipos"] == [] and res["divergencia_corretor"]["divergencia"] is False
     assert _rows(db, "lead_corretor_divergencias") == [] and core.table("notifications").select("*").execute().data == []
 
 
@@ -254,13 +256,62 @@ def test_a_pending_divergence_auto_resolves_when_the_lead_corretor_aligns(core):
     _rodar(db, _vista(_imovel()))
     db.table("leads").update({"corretor_id": CORRETOR_B}).eq("id", LEAD).execute()
     _rodar(db, _vista(_imovel()))
-    assert _rows(db, "lead_corretor_divergencias")[0]["status"] == "resolvida"
+    [d] = _rows(db, "lead_corretor_divergencias")
+    assert d["status"] == "resolvida" and "passou a ser" in d["nota"]
 
 
-def test_lead_without_a_corretor_has_nothing_to_compare(core):
-    db = _db()
+def test_lead_without_a_corretor_warns_lead_sem_corretor_once_and_is_never_assigned(core):
+    db = _db(corretores_sw=_SW_CORRETORES, aliases=_ALIASES)
     res = _rodar(db, _vista(_imovel()))
-    assert res["divergencia_corretor"] == {"divergencia": False} and len(_rows(db, "imovel_corretores")) == 1
+    assert res["divergencia_corretor"]["tipos"] == ["lead_sem_corretor"] and len(_rows(db, "imovel_corretores")) == 1
+    [d] = _rows(db, "lead_corretor_divergencias")
+    assert d["tipo"] == "lead_sem_corretor" and d["lead_corretor_id"] is None and d["notificado_em"]
+    assert _rows(db, "leads")[0]["corretor_id"] is None                                 # recorded + warned, NOT assigned
+    [n] = core.table("notifications").select("*").execute().data
+    assert n["metadata"]["tipo"] == "lead_corretor_lead_sem_corretor"
+    _rodar(db, _vista(_imovel()))                                                       # no spam
+    assert len(_rows(db, "lead_corretor_divergencias")) == 1 and len(core.table("notifications").select("*").execute().data) == 1
+
+
+def test_assigning_a_corretor_later_auto_closes_lead_sem_corretor_with_a_reason(core):
+    db = _db(corretores_sw=_SW_CORRETORES, aliases=_ALIASES)
+    _rodar(db, _vista(_imovel()))
+    db.table("leads").update({"corretor_id": CORRETOR_B}).eq("id", LEAD).execute()
+    res = _rodar(db, _vista(_imovel()))
+    assert res["divergencia_corretor"]["fechadas"] == ["lead_sem_corretor"] and res["divergencia_corretor"]["tipos"] == []
+    [d] = _rows(db, "lead_corretor_divergencias")
+    assert d["status"] == "resolvida" and d["nota"] == "auto: o lead passou a ter corretor" and d["resolvido_em"]
+
+
+CORRETOR_K = str(uuid4())
+_KAREN = Corretor(codigo="13", nome="Karen Lima")
+_SW_TRES = _SW_CORRETORES + [{"id": CORRETOR_K, "org_id": str(ORG), "nome": "Karen Lima", "nome_norm": "KAREN LIMA", "vista_codigo": None, "ativo": True}]
+_ALIASES_K = _ALIASES + [{"org_id": str(ORG), "alias": "Karen Lima", "alias_norm": "KAREN LIMA", "corretor_id": CORRETOR_K}]
+
+
+def test_lead_corretor_that_is_not_the_principal_warns_nao_e_principal_and_not_fora(core):
+    db = _db(lead=_lead(corretor_id=CORRETOR_K), corretores_sw=_SW_TRES, aliases=_ALIASES_K)
+    res = _rodar(db, _vista(_imovel(corretores=[VISTA_J, _KAREN])))                    # Vista lists Joao first => he is the principal
+    assert res["divergencia_corretor"]["tipos"] == ["nao_e_principal"]
+    assert {r["vista_corretor_codigo"]: r["principal"] for r in _rows(db, "imovel_corretores")} == {"12": True, "13": False}
+    [d] = _rows(db, "lead_corretor_divergencias")
+    assert d["tipo"] == "nao_e_principal"
+    [n] = core.table("notifications").select("*").execute().data
+    assert n["metadata"]["tipo"] == "lead_corretor_nao_e_principal" and "Joao Silva" in n["message"]
+
+
+def test_the_principal_corretor_as_the_leads_corretor_raises_nothing(core):
+    db = _db(lead=_lead(corretor_id=CORRETOR_B), corretores_sw=_SW_TRES, aliases=_ALIASES_K)
+    assert _rodar(db, _vista(_imovel(corretores=[VISTA_J, _KAREN])))["divergencia_corretor"]["tipos"] == []
+
+
+def test_every_tipo_resolves_through_the_same_endpoint_shape_and_a_human_closed_row_is_not_reopened(core):
+    db = _db(corretores_sw=_SW_CORRETORES, aliases=_ALIASES)
+    _rodar(db, _vista(_imovel()))
+    db.table("lead_corretor_divergencias").update({"status": "ignorada"}).eq("lead_id", LEAD).execute()
+    _rodar(db, _vista(_imovel()))
+    [d] = _rows(db, "lead_corretor_divergencias")
+    assert d["status"] == "ignorada" and len(core.table("notifications").select("*").execute().data) == 1
 
 
 def test_a_corretor_that_left_the_property_is_deactivated_never_deleted(core):
@@ -423,4 +474,109 @@ def test_mapear_qualificacao_ignores_contact_and_ref_and_empty_answers():
 
 def test_lead_notice_corretor_warning_never_raises(monkeypatch):
     monkeypatch.setattr("app.database.get_core_client", lambda: (_ for _ in ()).throw(RuntimeError("core down")))
-    assert lead_notice.avisar_corretor_divergente(ORG, lead_id=LEAD, codigo="ONE5", lead_corretor="A", imovel_corretores=["B"]) == 0
+    assert lead_notice.avisar_corretor_divergente(ORG, lead_id=LEAD, codigo="ONE5", tipo="fora_dos_corretores", lead_corretor="A", imovel_corretores=["B"]) == 0
+
+
+# ─── retry job ───────────────────────────────────────────────────────────
+
+
+def _intake_row(tentativas, updated_at, status="pendente_retry", lead_id=LEAD):
+    return {"id": str(uuid4()), "org_id": str(ORG), "lead_id": lead_id, "status": status, "tentativas": tentativas, "updated_at": updated_at}
+
+
+def test_backoff_doubles_and_is_capped():
+    from datetime import timedelta
+
+    from app.modules.leads.services import ad_lead_intake_retry_job as job
+
+    assert [job.backoff(n) for n in (1, 2, 3)] == [timedelta(minutes=5), timedelta(minutes=10), timedelta(minutes=20)]
+    assert job.backoff(30) == timedelta(hours=6)
+
+
+def test_retry_job_drains_only_due_pendente_rows_under_the_lease():
+    import asyncio
+    from contextlib import contextmanager
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.leads.services import ad_lead_intake_retry_job as job
+
+    agora = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    iso = lambda m: (agora - timedelta(minutes=m)).isoformat()  # noqa: E731
+    due, cedo, falhou = str(uuid4()), str(uuid4()), str(uuid4())
+    db = _Db()
+    db.set_table_data("lead_imovel_intakes", [
+        _intake_row(1, iso(6), lead_id=due),            # 5 min backoff passed
+        _intake_row(2, iso(6), lead_id=cedo),           # 10 min backoff NOT passed
+        _intake_row(5, iso(999), "falhou", lead_id=falhou),  # never auto-retried
+    ])
+    chamados, leases = [], []
+
+    @contextmanager
+    def lease(nome):
+        leases.append(nome)
+        yield True
+
+    def fake_intake(_c, org, lead_id):
+        chamados.append((str(org), lead_id))
+        return {"status": "ok"}
+
+    rel = asyncio.run(job.ad_lead_intake_retry_job(admin_factory=lambda: db, intake_fn=fake_intake, lease_fn=lease, now=agora))
+    assert chamados == [(str(ORG), due)] and leases == [f"ad_lead_intake_retry:{ORG}"]
+    assert rel[str(ORG)] == {"tentados": 1, "ok": 1, "ainda_pendentes": 0, "erros": 0}
+
+
+def test_retry_job_skips_an_org_whose_lease_is_held_and_survives_a_failing_lead():
+    import asyncio
+    from contextlib import contextmanager
+    from datetime import datetime, timezone
+
+    from app.modules.leads.services import ad_lead_intake_retry_job as job
+
+    db = _Db()
+    db.set_table_data("lead_imovel_intakes", [_intake_row(1, "2026-11-09T00:00:00+00:00")])
+    agora = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+
+    @contextmanager
+    def ocupada(_n):
+        yield False
+
+    chamou = []
+    rel = asyncio.run(job.ad_lead_intake_retry_job(admin_factory=lambda: db, intake_fn=lambda *a: chamou.append(a), lease_fn=ocupada, now=agora))
+    assert chamou == [] and rel[str(ORG)] == {"pulado": "lease_ocupada"}
+
+    @contextmanager
+    def livre(_n):
+        yield True
+
+    def boom(*_a):
+        raise RuntimeError("vista")
+
+    rel = asyncio.run(job.ad_lead_intake_retry_job(admin_factory=lambda: db, intake_fn=boom, lease_fn=livre, now=agora))
+    assert rel[str(ORG)]["erros"] == 1
+
+
+def test_retry_job_really_re_drives_a_pending_intake_to_ok(core):
+    import asyncio
+    from contextlib import contextmanager
+    from datetime import datetime, timezone
+
+    from app.modules.leads.services import ad_lead_intake_retry_job as job
+
+    db = _db()
+
+    def sem_credencial(_org):
+        raise VistaConfigError("sem credencial")
+
+    intake.intake_imovel_do_lead(db, ORG, LEAD, adapter_factory=sem_credencial)
+    assert _rows(db, "lead_imovel_intakes")[0]["status"] == "pendente_retry"
+
+    @contextmanager
+    def livre(_n):
+        yield True
+
+    adapter = _vista(_imovel())
+    asyncio.run(job.ad_lead_intake_retry_job(
+        admin_factory=lambda: db, lease_fn=livre, now=datetime.now(timezone.utc).replace(year=2099),
+        intake_fn=lambda c, o, lid: intake.intake_imovel_do_lead(c, o, lid, adapter=adapter),
+    ))
+    assert _rows(db, "lead_imovel_intakes")[0]["status"] == "ok"

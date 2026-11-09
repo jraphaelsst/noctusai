@@ -16121,6 +16121,21 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "there is no live index to probe; the only writer stamps it NULL-only after checking no other corretor claims the Codigo. "
         "Replace with a real GuardProbe in the SAME change that applies it.",
     ),
+    # SW 332 (ad-lead intake, corretor divergence tipos) is NOT APPLIED (file-only until the tech-lead runs migrate_product): a
+    # vocabulary CHECK on `tipo` (three values, written only from the TIPO_* literals of ad_lead_intake_service) and the widened
+    # UNIQUE (org, lead, código, tipo) that keeps one open warning per tipo. Neither exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/332_ad_lead_intake_divergencia_tipos.sql",
+        "lead_corretor_divergencias_tipo_check",
+        "Vocabulary-only CHECK on a new column, written from fixed literals; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/332_ad_lead_intake_divergencia_tipos.sql",
+        "uq_sw_lead_corretor_divergencias_tipo",
+        "UNIQUE (org_id, lead_id, codigo_canonical, tipo); migration unapplied (file-only), so no live constraint to probe. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
     # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
     # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
     (
