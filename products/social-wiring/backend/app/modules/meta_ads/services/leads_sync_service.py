@@ -31,6 +31,8 @@ from uuid import UUID
 from noctusai_lib.integrations.meta import MetaAdapter, MetaGraphError
 from noctusai_lib.primitives.phone import normalize_phone
 
+from app.modules.leads.services import meta_form_aliases
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA = "social_wiring"
@@ -218,6 +220,12 @@ class LeadsSyncService:
             col = _PROMOTE_BY_TYPE.get(key_types.get(fd.name, ""))
             if col and fd.values:
                 promoted[col] = fd.values[0]
+        # Form drift (`phone_number` where the form schema says `Telefone`): an alias only FILLS what the typed
+        # promotion missed -- it never overrides it.
+        alias = meta_form_aliases.contato_das_respostas(answers)
+        for col in ("full_name", "email", "phone"):
+            if not promoted.get(col) and alias[col]:
+                promoted[col] = alias[col]
         row = {
             "id": lead.id,
             "org_id": str(org_id),

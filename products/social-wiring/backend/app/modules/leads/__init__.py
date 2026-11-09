@@ -28,6 +28,7 @@ from typing import Any
 def register() -> Any:
     """Return this module's :class:`~app.main.ModuleRegistration`."""
     from app.modules.leads.routers import (
+        ad_lead_intake,
         analytics,
         corretores,
         imports,
@@ -48,6 +49,7 @@ def register() -> Any:
         # a UUID (found exactly this way while building this module's test
         # suite).
         routers=[
+            ad_lead_intake.router,
             analytics.router,
             sources.router,
             corretores.router,

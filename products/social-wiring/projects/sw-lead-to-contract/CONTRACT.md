@@ -35,6 +35,8 @@ Conventions, for every route below:
 - `Campanha = {id, nome, imoveis: [{codigo, titulo}], veiculacoes: [{id, canal, nivel, ref_codigo}], created_at}`.
 - FE: a "Campanhas" page under Leads (new route `/campanhas`) with CRUD; the imóvel picker reuses the existing imóvel search.
 
+> Addendum 2026-11-09 (ad-lead intake, `../ad-lead-intake-CONTRACT.md`): after §1.2/§1.3 `ingest_meta_lead` also runs `ad_lead_intake_service.tentar_intake`; an interesse now carries BOTH `lead_id` and `meta_ads_lead_id` (`interesses_service.preencher_ids_do_lead` fills a NULL `lead_id` on an existing row; migration 331 drops the `lead_unico` CHECK).
+
 ### 1.2 Resolution at intake (`meta_ingest_service`)
 Resolution order for a Meta lead, using the first hit:
 1. `ad_id` → `campanha_veiculacoes(nivel='ad')`

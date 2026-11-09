@@ -16111,6 +16111,16 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Vocabulary-only CHECK re-created with 'sem_credencial'/'sem_orcamento'; migration unapplied (file-only), "
         "so there is no live constraint to probe; values are written from fixed literals in biblioteca_ingestao.py.",
     ),
+    # SW 331 (ad-lead intake) is NOT APPLIED (file-only until the tech-lead runs migrate_product): the partial unique index
+    # keeps one SW corretor per Vista corretor Codigo. It is written only by `ad_lead_intake_service` (read-then-write, NULL-only
+    # stamp) on a nullable column; the index does not exist in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/331_ad_lead_intake.sql",
+        "uq_sw_lead_corretores_vista_codigo",
+        "Partial UNIQUE on lead_corretores(org_id, vista_codigo) WHERE vista_codigo IS NOT NULL; migration unapplied (file-only) so "
+        "there is no live index to probe; the only writer stamps it NULL-only after checking no other corretor claims the Codigo. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
     # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
     # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
     (

@@ -9,7 +9,7 @@ Sub-umbrellas:
   - ``noctus.photo_editing.*`` — Edição de Fotos read tools (list_rejections:
     per-rejected-photo comment/guide-version/model/signed-URLs for an org).
   - ``noctus.seed.*`` — seed-system absorption + capability tools.
-  - ``noctus.sw.*`` — social-wiring product tools (``imoveis_sync``: status/run of the Vista imóveis refresh).
+  - ``noctus.sw.*`` — social-wiring product tools (``imoveis_sync``: status/run of the Vista imóveis refresh; ``ad_lead_intake``: status/backfill of the ad-lead intake).
   - ``noctus.team.*`` — agno multi-agent dev team tools.
   - ``noctus.transcription.*`` — platform async transcription API client (submit/get/transcribe).
   - ``noctus.youtube.*`` — YouTube channel analytics + action tools (read snapshots,

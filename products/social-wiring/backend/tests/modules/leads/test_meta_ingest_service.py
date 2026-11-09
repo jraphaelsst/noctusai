@@ -31,6 +31,10 @@ def _scoped_mock():
     return db.schema("social_wiring")
 
 
+#: The form answers with NO contact aliases: what "the typed promotion found nothing" looks like end to end.
+_SEM_ALIASES = {"Faixa": "Até R$700 Mil"}
+
+
 def _meta_lead(**overrides) -> dict:
     row = {
         "id": "ml-1",
@@ -71,7 +75,7 @@ class TestMapMetaLeadToLeadPayload:
 
     def test_missing_full_name_leaves_cliente_nome_none(self):
         payload = map_meta_lead_to_lead_payload(
-            _meta_lead(full_name=None), origem_source_id="SRC1"
+            _meta_lead(full_name=None, answers=_SEM_ALIASES), origem_source_id="SRC1"
         )
         assert payload["cliente_nome"] is None
         # phone is untouched by the missing name
@@ -79,14 +83,23 @@ class TestMapMetaLeadToLeadPayload:
 
     def test_missing_phone_falls_back_to_email(self):
         payload = map_meta_lead_to_lead_payload(
-            _meta_lead(phone=None), origem_source_id="SRC1"
+            _meta_lead(phone=None, answers=_SEM_ALIASES), origem_source_id="SRC1"
         )
         assert payload["contato"] == "ana@example.com"
         assert payload["cliente_nome"] == "Ana Souza"
 
+    def test_phone_number_alias_fills_the_missing_phone(self):
+        """Form drift: the number sits under `phone_number` while the typed promotion left `phone` NULL."""
+        payload = map_meta_lead_to_lead_payload(
+            _meta_lead(phone=None, full_name=None, answers={"phone_number": "+5511988887777", "Nome completo": "Bia Alias"}),
+            origem_source_id="SRC1",
+        )
+        assert payload["contato"] == "+5511988887777"
+        assert payload["cliente_nome"] == "Bia Alias"
+
     def test_no_phone_and_no_email_leaves_contato_none(self):
         payload = map_meta_lead_to_lead_payload(
-            _meta_lead(phone=None, email=None), origem_source_id="SRC1"
+            _meta_lead(phone=None, email=None, answers=_SEM_ALIASES), origem_source_id="SRC1"
         )
         assert payload["contato"] is None
 

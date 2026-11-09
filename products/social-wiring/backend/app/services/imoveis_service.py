@@ -43,7 +43,12 @@ __all__ = [
     "ImoveisService",
     "ImovelSyncService",
     "ImoveisLookupError",
+    "RefreshCodigo",
     "SyncReport",
+    "DETALHE_OK",
+    "DETALHE_SUMIU",
+    "DETALHE_OCULTO",
+    "DETALHE_FALHOU",
     "build_imoveis_service",
     "build_sync_service",
 ]
@@ -188,6 +193,40 @@ def _augment_row_derived(row: dict) -> dict:
     row["orientacao_solar"] = orientacao
     row["dias_desde_atualizacao"] = _dias_desde_atualizacao(row.get("vista_raw"))
     return row
+
+
+#: Outcomes of one `/imoveis/detalhes` read (`ImovelSyncService.buscar_detalhe`).
+DETALHE_OK = "ok"
+DETALHE_SUMIU = "sumiu"  # Vista answered: the code does not exist
+DETALHE_OCULTO = "oculto"  # Vista answered: the record exists but is unpublished
+DETALHE_FALHOU = "falhou"  # transport / auth / 5xx: NOT evidence about the code
+
+
+def _difere(a: Any, b: Any) -> bool:
+    """Whether two mirror-column values differ, ignoring numeric representation (1250000 == 1250000.0 == '1250000.00')."""
+    if a == b:
+        return False
+    try:
+        return float(a) != float(b)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(a) != str(b)
+
+
+@dataclass
+class RefreshCodigo:
+    """What `ImovelSyncService.refresh_codigo` did for one code."""
+
+    codigo: str
+    desfecho: str
+    report: "SyncReport"
+    imovel: Optional[Imovel] = None
+    existia: bool = False
+    #: mirror columns Vista changed vs what we had: `{campo: {antes, depois}}` (empty for a new row).
+    mudancas: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def divergencias(self) -> list[dict]:
+        return list(self.report.divergencias_linhas)
 
 
 @dataclass
@@ -850,17 +889,13 @@ class ImovelSyncService:
 
         async def um(codigo: str) -> None:
             async with sem:
-                await rate_limit.acquire_async(VISTA_RATE_BUCKET)
-                report.chamadas["detalhes"] = report.chamadas.get("detalhes", 0) + 1
-                try:
-                    obtidos[codigo] = await self._adapter.refresh_imovel(codigo)
-                except VistaNotFound:
+                imovel, desfecho = await self.buscar_detalhe(codigo, report)
+                if desfecho == DETALHE_OK and imovel is not None:
+                    obtidos[codigo] = imovel
+                elif desfecho == DETALHE_SUMIU:
                     sumiram.append(codigo)
-                except VistaRecordUnpublished:
+                elif desfecho == DETALHE_OCULTO:
                     ocultos.append(codigo)
-                except Exception as exc:
-                    report.detalhes_failed.append(codigo)
-                    logger.warning("imoveis refresh: detalhes failed for %s (%s)", codigo, type(exc).__name__)
 
         await asyncio.gather(*(um(c) for c, i in buscados.items() if i is None))
         report.total_reported = len(buscados)
@@ -874,9 +909,7 @@ class ImovelSyncService:
                 report.novos += 1
                 mudaram.append(imovel)
                 continue
-            for campo in _CAMPOS_SO_LISTAR:  # a detalhes-only read has none of these: keep what the mirror has
-                if getattr(imovel, campo) is None and atual.get(campo) is not None:
-                    imovel = imovel.model_copy(update={campo: atual[campo]})
+            imovel = self._mesclar_com_espelho(imovel, atual)
             if (
                 not forcar and imovel.data_atualizacao is not None and atual.get("sincronizado_em")
                 and str(atual.get("data_atualizacao") or "")[:10] == imovel.data_atualizacao.isoformat()
@@ -889,13 +922,7 @@ class ImovelSyncService:
 
         for imovel in mudaram:
             _record_place_name_variants(imovel, place_name_variants)
-        for i in range(0, len(mudaram), _LOTE):
-            lote = mudaram[i:i + _LOTE]
-            rows = [_imovel_to_row(im, org_id, synced_at) for im in lote]
-            _assert_so_vista(rows)
-            self._table().upsert(rows, on_conflict="org_id,codigo").execute()
-            report.upserted += len(rows)
-            self._upsert_registry(lote, org_id, synced_at, report)
+        self.gravar_imoveis(org_id, mudaram, synced_at, report)
         for i in range(0, len(iguais), _LOTE):
             self._table().update({"sincronizado_em": synced_at}).eq("org_id", str(org_id)).in_("codigo", iguais[i:i + _LOTE]).execute()
         self._reativar_registro(org_id, [im.codigo for im in obtidos.values()], synced_at, report)
@@ -917,6 +944,86 @@ class ImovelSyncService:
             len(report.detalhes_failed), report.chamadas,
         )
         return report
+
+    async def buscar_detalhe(self, codigo: str, report: Optional[SyncReport] = None) -> tuple[Optional[Imovel], str]:
+        """THE per-code Vista read (`/imoveis/detalhes`), paced by the shared `vista` bucket. Returns `(imovel, desfecho)`,
+        `desfecho` one of `DETALHE_OK | DETALHE_SUMIU | DETALHE_OCULTO | DETALHE_FALHOU`. A transport/auth failure is
+        `DETALHE_FALHOU` (recorded on `report.detalhes_failed` when given) -- NEVER read as the code being gone. Shared by
+        `sync_detalhes` and `refresh_codigo`."""
+        await rate_limit.acquire_async(VISTA_RATE_BUCKET)
+        if report is not None:
+            report.chamadas["detalhes"] = report.chamadas.get("detalhes", 0) + 1
+        try:
+            return await self._adapter.refresh_imovel(codigo), DETALHE_OK
+        except VistaNotFound:
+            return None, DETALHE_SUMIU
+        except VistaRecordUnpublished:
+            return None, DETALHE_OCULTO
+        except Exception as exc:
+            if report is not None:
+                report.detalhes_failed.append(codigo)
+            logger.warning("imoveis refresh: detalhes failed for %s (%s)", codigo, type(exc).__name__)
+            return None, DETALHE_FALHOU
+
+    @staticmethod
+    def _mesclar_com_espelho(imovel: Imovel, atual: Optional[dict]) -> Imovel:
+        """A detalhes-only read has none of `_CAMPOS_SO_LISTAR`: keep what the mirror already has."""
+        for campo in _CAMPOS_SO_LISTAR:
+            if atual and getattr(imovel, campo) is None and atual.get(campo) is not None:
+                imovel = imovel.model_copy(update={campo: atual[campo]})
+        return imovel
+
+    def gravar_imoveis(self, org_id: UUID, imoveis: list[Imovel], synced_at: str, report: SyncReport) -> None:
+        """Upsert the Vista columns of `imoveis` + the registry identity, in batches (the one write path of the per-code
+        refresh). Writes Vista columns ONLY (`_assert_so_vista`); the registry insert is `DO NOTHING` on conflict."""
+        for i in range(0, len(imoveis), _LOTE):
+            lote = imoveis[i:i + _LOTE]
+            rows = [_imovel_to_row(im, org_id, synced_at) for im in lote]
+            _assert_so_vista(rows)
+            self._table().upsert(rows, on_conflict="org_id,codigo").execute()
+            report.upserted += len(rows)
+            self._upsert_registry(lote, org_id, synced_at, report)
+
+    def _linha_espelho(self, org_id: UUID, codigo: str) -> Optional[dict]:
+        """The mirror row of ONE code (the columns the refresh compares), by the normalised code -- never the whole mirror."""
+        norm = codigo.strip().upper()
+        rows = (
+            self._table().select("*").eq("org_id", str(org_id)).eq("codigo_norm", norm).limit(1).execute().data or []
+        )
+        return rows[0] if rows else None
+
+    async def refresh_codigo(self, org_id: UUID, codigo: str) -> "RefreshCodigo":
+        """Refresh ONE code from Vista, ALWAYS (no `data_atualizacao` short-circuit -- the caller wants it compared NOW):
+        fetch detalhes -> upsert the Vista columns of `imoveis` + the registry identity -> record the Vista-vs-ours
+        divergences through `vista_divergencias` -> report which mirror columns changed. The public per-code seam the
+        ad-lead intake uses; `sync_detalhes` shares `buscar_detalhe` / `gravar_imoveis` / `_divergencias` with it.
+
+        Never raises for a Vista outcome: `desfecho` carries it (`DETALHE_FALHOU` => the caller records a retryable failure)."""
+        report = SyncReport(caminho="detalhes", escopo=None)
+        agora = datetime.now(timezone.utc)
+        report.started_at = synced_at = agora.isoformat()
+        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
+        imovel, desfecho = await self.buscar_detalhe(codigo, report)
+        saida = RefreshCodigo(codigo=codigo, desfecho=desfecho, report=report)
+        if imovel is None:
+            report.finished_at = datetime.now(timezone.utc).isoformat()
+            return saida
+        atual = self._linha_espelho(org_id, imovel.codigo)
+        imovel = self._mesclar_com_espelho(imovel, atual)
+        novo_row = _imovel_to_row(imovel, org_id, synced_at)
+        saida.imovel = imovel
+        saida.existia = atual is not None
+        saida.mudancas = {
+            c: {"antes": atual.get(c), "depois": novo_row.get(c)}
+            for c in sorted(COLUNAS_VISTA - _ROW_ONLY_COLUMNS)  # bookkeeping (`sincronizado_em`) is not a Vista change
+            if atual is not None and c in novo_row and _difere(atual.get(c), novo_row.get(c))
+        }
+        self.gravar_imoveis(org_id, [imovel], synced_at, report)
+        self._reativar_registro(org_id, [imovel.codigo], synced_at, report)
+        self._divergencias([imovel])
+        self._fechar_divergencias(report)
+        report.finished_at = datetime.now(timezone.utc).isoformat()
+        return saida
 
     def _divergencias(self, imoveis: list[Imovel]) -> None:
         """THE call site of the transitional Vista-vs-ours divergence check (no-op when the org's flag is off)."""

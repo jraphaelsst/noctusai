@@ -88,3 +88,23 @@ def avisar_importacao(org_id: Any, inseridos: int) -> int:
     except Exception:  # noqa: BLE001
         logger.exception("lead_notice: leads_importados failed for org %s", org_id)
         return 0
+
+
+def avisar_corretor_divergente(
+    org_id: Any, *, lead_id: Any, codigo: str, lead_corretor: str | None, imovel_corretores: list[str],
+) -> int:
+    """ONE in-app warning to the org's owners + admins: the lead's corretor differs from the property's Vista corretor(s)
+    (ad-lead intake, CONTRACT ad-lead-intake §4). The durable record is `lead_corretor_divergencias`; this is only the
+    "check it" nudge. Never raises; returns rows written (0 on any problem)."""
+    try:
+        quem = lead_corretor or "sem nome"
+        no_imovel = ", ".join(imovel_corretores) or "sem corretor"
+        return notify_org_admins(
+            _core(), org_id=org_id, kind="lead_corretor_divergente",
+            title=f"Corretor diverge no imóvel {codigo}",
+            message=f"Lead com {quem}; o imóvel está com {no_imovel}. Confira.",
+            produto=PRODUTO, link=LINK_LEADS, entidade={"tipo": "lead", "id": str(lead_id)},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("lead_notice: lead_corretor_divergente failed for lead %s", lead_id)
+        return 0
