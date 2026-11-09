@@ -30,6 +30,7 @@ Error codes: 409 ``slug_taken`` (duplicate case slug), 409 ``case_in_use``
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 import anyio.to_thread
@@ -45,6 +46,7 @@ from app.dependencies import (
     require_platform_content_admin,
 )
 from app.routers.studio_agents_router import (
+    audit_definition_read,
     actor_id,
     get_eval_store_dep,  # defined in studio_agents_router (publish/readiness read the cases too); re-exported here
     require_user_or_dev_advisor,
@@ -227,6 +229,25 @@ def delete_case(
 # ── Runs ───────────────────────────────────────────────────────────────
 
 
+def _guard_token_run(ctx: AuthContext, store, defs, agent, version, payload) -> None:
+    """Denial-of-wallet guards for a PRODUCT-token run start (the platform-admin UI keeps its latitude): the run
+    stays at the settings default cost cap and model, targets only the agent's current draft, and the org's rolling
+    24h token-run spend ceiling is fail-closed (a store error propagates -> 5xx, never an allowed run)."""
+    default_cap = settings.studio_eval_run_budget_usd
+    if payload.limite_usd is not None and payload.limite_usd > default_cap:
+        raise http_error(422, "limite_usd_above_default", f"limite_usd acima do padrão ({default_cap}).")
+    if payload.modelo_geracao is not None:
+        raise http_error(422, "modelo_geracao_not_allowed", "Este token não pode escolher o modelo de geração.")
+    draft = defs.get_draft(ctx.org_id, agent.id)
+    if draft is None or draft.id != version.id:
+        raise http_error(422, "version_not_draft", "Este token só executa avaliações sobre o rascunho atual.")
+    requested = payload.limite_usd if payload.limite_usd is not None else default_cap
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    spent = store.org_spend_since(ctx.org_id, since)
+    if spent + requested > settings.studio_eval_token_daily_budget_usd:
+        raise http_error(429, "eval_daily_budget_exceeded", "Limite diário de custo de avaliações atingido.")
+
+
 @router.post("/{key}/evals/runs", response_model=EvalRunOut, status_code=status.HTTP_202_ACCEPTED)
 # Stays `async def`: scheduler(run.id) -> asyncio.create_task needs the running loop,
 # which a threadpool worker does not have.
@@ -244,8 +265,10 @@ async def create_run(
     # 404, StudioConflict -> 409, ...) propagate through the thread unchanged.
     def _prepare():
         agent = resolve_studio_agent(defs, ctx.org_id, key)
-        require_user_or_dev_advisor(ctx, agent)
+        require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
         version = resolve_version(defs, ctx.org_id, agent, payload.version_id)
+        if ctx.caller_kind == "product":
+            _guard_token_run(ctx, store, defs, agent, version, payload)
         compiled_hash = current_hash(ctx.org_id, agent, version)
 
         case_ids = payload.case_ids
@@ -304,7 +327,7 @@ def list_runs(
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunListOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
-    require_user_or_dev_advisor(ctx, agent)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
     runs = store.list_runs(ctx.org_id, agent.id, version_id)
     return EvalRunListOut(items=[_run_out(r) for r in runs])
 
@@ -318,11 +341,13 @@ def get_run(
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunDetailOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
-    require_user_or_dev_advisor(ctx, agent)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
     try:
         run = store.get_run(ctx.org_id, agent.id, run_id)
     except NotFound as exc:
         raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
+    if ctx.caller_kind == "product":
+        audit_definition_read(defs, ctx, agent, "eval_run", run.version_id)  # a failed audit write fails the read
     results = store.list_results_with_cases(ctx.org_id, agent.id, run_id)
     return EvalRunDetailOut(
         **_run_out(run).model_dump(),

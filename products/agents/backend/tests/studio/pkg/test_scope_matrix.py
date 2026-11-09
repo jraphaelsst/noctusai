@@ -17,7 +17,9 @@ import pytest
 from app.dependencies import PACKAGE_TOKEN_SCOPES
 from tests.studio.pkg.conftest import make_bundle
 
-ALL = tuple(sorted(PACKAGE_TOKEN_SCOPES))
+#: the fully-scoped token: every package scope PLUS the platform-issued eval-loop scope (2026-11-08, F8)
+ALL_PACKAGE = tuple(sorted(PACKAGE_TOKEN_SCOPES))
+ALL = tuple(sorted(PACKAGE_TOKEN_SCOPES | {"studio:evals-run"}))
 
 #: (METHOD, path template) — the ONLY business routes a scoped token reaches.
 TOKEN_ROUTES = {
@@ -45,6 +47,8 @@ EVALS_RUN_ROUTES = {
     ("POST", "/api/studio/agents/{key}/draft/mecanismo-runs"),
     ("GET", "/api/studio/agents/{key}/mecanismo-runs/{run_id}"),
 }
+#: The mechanism routes also accept the dev-advisor `studio:publish` token, but ONLY on a dev-advisor agent (F5).
+MECANISMO_ROUTES = sorted(r for r in EVALS_RUN_ROUTES if "mecanismo" in r[1])
 
 #: Julia v2 content API (2026-10-19): token-reachable ONLY with the dedicated `studio:content-write`
 #: scope (the `noctus.agents.content` MCP path) — never with a package/publish scope. Pinned in
@@ -155,6 +159,24 @@ def test_every_other_route_refuses_a_fully_scoped_token_with_user_required(pkg, 
     detail = resp.json()
     code = detail.get("code") or (detail.get("detail") or {}).get("code") if isinstance(detail, dict) else None
     assert code in ("user_required", "platform_admin_required"), f"{method} {path}: {detail}"
+
+
+@pytest.mark.parametrize("method,path", MECANISMO_ROUTES)
+def test_mecanismo_routes_refuse_a_publish_only_token_on_a_runtime_agent(pkg, method, path):
+    """F5: a `studio:publish` token is dev-advisor-only here too -- a runtime agent stays human-only."""
+    pkg.rt.make_agent("x", publish=True)  # `_fill` addresses the agent as `x`: a runtime agent
+    with pkg.as_token(*ALL_PACKAGE):
+        resp = pkg.rt.client.raw().request(method, _fill(path), json={})
+    assert resp.status_code == 403, f"{method} {path} -> {resp.status_code} {resp.text[:200]}"
+    assert resp.json().get("code") == "user_required", resp.text[:200]
+
+
+@pytest.mark.parametrize("method,path", MECANISMO_ROUTES)
+def test_mecanismo_routes_refuse_the_evals_scope_without_the_platform_issuer(pkg, method, path):
+    with pkg.as_token(*ALL):  # the evals scope present, issuer unset
+        resp = pkg.rt.client.raw().request(method, _fill(path), json={})
+    assert resp.status_code == 403, f"{method} {path} -> {resp.status_code} {resp.text[:200]}"
+    assert resp.json().get("code") == "issuer_not_allowed", resp.text[:200]
 
 
 def test_a_fully_scoped_package_token_cannot_delete_an_agent(pkg):

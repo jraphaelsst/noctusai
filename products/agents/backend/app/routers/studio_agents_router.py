@@ -44,7 +44,9 @@ from app.config import settings
 from app.channels.conformidade import garantir_impressao
 from app.routers.qualificacao_router import get_padrao_store_dep
 from app.dependencies import (
+    CONTENT_TOKEN_ISSUER,
     SCOPE_STUDIO_EVALS_RUN,
+    SCOPE_STUDIO_PUBLISH,
     require_evals_run_access,
     get_conformidade_store_dep,
     get_geracao_store_dep,
@@ -231,11 +233,18 @@ def actor_id(ctx: AuthContext) -> UUID:
     return actor
 
 
-def require_user_or_dev_advisor(ctx: AuthContext, agent: Any) -> None:
+def require_user_or_dev_advisor(ctx: AuthContext, agent: Any, *, evals_token_ok: bool = False) -> None:
     """A ``studio:publish`` token acts ONLY on a dev-advisor agent; a runtime
     agent (Bia, IsaIA) stays human-only → 403 ``user_required``, exactly
-    as before the scope existed."""
-    if ctx.caller_kind == "product" and SCOPE_STUDIO_EVALS_RUN in ctx.scopes:
+    as before the scope existed.
+
+    ``evals_token_ok`` is passed ONLY by the eval-run routes, whose ``_evals_gate`` has already validated the
+    ``studio:evals-run`` scope AND the platform issuer. It is honoured only for a token that is evals-only: a token that
+    also carries ``studio:publish`` falls through to the dev-advisor rule (the scope string alone is never trusted)."""
+    if (
+        evals_token_ok and ctx.caller_kind == "product" and SCOPE_STUDIO_EVALS_RUN in ctx.scopes
+        and ctx.issuer == CONTENT_TOKEN_ISSUER and SCOPE_STUDIO_PUBLISH not in ctx.scopes
+    ):
         return  # the platform-issued eval-loop token acts on any agent's eval runs
     if ctx.caller_kind == "product" and getattr(agent, "kind", "runtime") != "dev-advisor":
         raise http_error(403, "user_required", "Restricted to human users")
@@ -1181,6 +1190,7 @@ async def run_mecanismo_suite(
     version while one executes is 409 ``run_in_progress``. The driver comes from ``get_eval_turn_driver`` (409
     ``driver_indisponivel`` when none is configured); the cost cap comes from settings. Replies carry codes only."""
     agent = resolve_agent(store, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
     draft = resolve_draft(store, ctx.org_id, agent)
     draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id, strict=True)
     if compiled.bloqueado:
@@ -1222,6 +1232,7 @@ def get_mecanismo_run(
     mecanismo=Depends(get_mecanismo_store_dep),
 ) -> MecanismoRunOut:
     agent = resolve_agent(store, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
     run = mecanismo.get_run(ctx.org_id, run_id)
     if run is None or str(run["agent_id"]) != str(agent.id):
         raise http_error(404, "run_not_found", "Execução não encontrada.")
