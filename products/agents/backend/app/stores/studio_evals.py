@@ -17,7 +17,7 @@ pending results are created by ONE ``agents.create_eval_run`` call (L6 —
 no orphan ``pendente`` run can block the slot); an explicit case list is
 deduped and capped at :data:`~app.studio.models.RUN_CASE_IDS_MAX`; every
 write goes through ``app.stores._db_errors`` — a duplicate slug is 409
-``slug_taken``, a concurrent run 409 ``run_in_progress``, deleting a case
+``slug_taken``, deleting a case
 that has results 409 ``case_in_use`` (supabase-py RAISES on constraint
 violations; it never returns empty rows). The Fake raises the same typed
 errors from the same conditions.
@@ -307,8 +307,8 @@ class EvalStore(Protocol):
         ``completa=True``), inserts the run and its pending results. Raises
         :class:`NotFound` for a foreign case id, :class:`ValueError` for an
         empty set / too many ids / an invalid ``modelo_geracao``/
-        ``limite_usd``, ``StudioConflict('run_in_progress')`` when a
-        pendente/executando run already exists for ``version_id``."""
+        ``limite_usd``. Several runs of one version may be in flight at
+        once (071)."""
         ...
 
     def list_runs(self, org_id: UUID, agent_id: UUID, version_id: UUID | None = None) -> list[EvalRunRecord]: ...
@@ -454,10 +454,7 @@ class FakeEvalStore:
                 resolved.append(cid)
         if not resolved:
             raise ValueError("no eval cases to run")
-        for row in self._runs.values():
-            if row["version_id"] == version_id and row["status"] in ACTIVE_RUN_STATUSES:
-                # 013 eval_runs_one_active_per_version_idx
-                raise StudioConflict("run_in_progress", f"a run is already in progress for version {version_id}")
+        # Several runs of one version may execute at once (071 dropped the one-active-run index).
 
         now = utcnow()
         row = {
@@ -671,7 +668,7 @@ class SupabaseEvalStore:
             "p_case_ids": [str(c) for c in explicit] if explicit is not None else None,
             "p_started_by": str(started_by),
             "p_modelo_geracao": modelo_geracao, "p_limite_usd": limite_usd,
-        }, unique_code="run_in_progress")
+        })
         run_id = resp.data
         if isinstance(run_id, list):
             run_id = run_id[0] if run_id else None

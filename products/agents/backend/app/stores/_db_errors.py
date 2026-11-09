@@ -22,7 +22,7 @@ Translation (first match wins):
 
 The text a PERSON reads is never the exception's own message: a DB-mapped
 conflict would carry the raw Postgres text (constraint and index names, e.g.
-``duplicate key value violates unique constraint "uq_eval_mecanismo_runs_um_em_execucao"``)
+``duplicate key value violates unique constraint "skill_files_caminho_key"``)
 and a store-raised one carries English internal prose. Routers render
 :func:`mensagem_conflito` — the pt-BR text per ``code`` from
 :data:`MENSAGENS_CONFLITO`, with a generic pt-BR fallback — so neither leaks.
@@ -51,7 +51,7 @@ class StudioConflict(Conflict):
     ``skill_exists`` / ``client_exists`` / ``chave_conflict`` /
     ``caminho_conflict`` / ``draft_referenced`` / ``draft_changed`` /
     ``eval_required`` / ``client_entries_cap`` / ``slug_taken`` /
-    ``slug_in_other_collection`` / ``run_in_progress`` / ``case_in_use`` /
+    ``slug_in_other_collection`` / ``case_in_use`` /
     ``run_not_cancellable``)."""
 
     def __init__(self, code: str, message: str = "") -> None:
@@ -95,7 +95,6 @@ MENSAGENS_CONFLITO: dict[str, str] = {
     "learning_content_immutable": "O conteúdo de um aprendizado já registrado não pode ser alterado.",
     "gerador_ja_existe": "Já existe outra definição marcada como gerador de agentes.",
     "geracao_em_andamento": "Já há uma geração com IA em andamento para este agente. Aguarde ela terminar.",
-    "run_in_progress": "Já há uma execução em andamento para esta versão. Aguarde ela terminar.",
     "run_not_cancellable": "Esta execução não pode mais ser cancelada.",
     "case_in_use": "Este caso já tem resultados; desative-o em vez de excluir.",
     "grant_exists": "Esse acesso já foi concedido.",
