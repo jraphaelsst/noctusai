@@ -213,6 +213,46 @@ unpublished stub) `corretores_enriquecimento.enriquecer` fills the EMPTY `lead_c
 `vista_codigo` — never overwriting a non-null value, never writing a null, never creating a broker — and stamps `campos_origem='imovel_relacao'` (migration 335). CRECI does not come from either source.
 Same-org staff reading colleagues' email/phone/CRECI is accepted (owner): `lead_corretores` keeps its own-org SELECT policy.
 
+## 8. Vista clientes -> our lead people, fill-empty-only (`vista_clientes_sync`, migration 337; owner 2026-11-09)
+
+Owner: "sync our lead data with theirs. they only add to leads, divergencies get warned but never overwritten. we bring what we have from leads there and enrich our own data" · "do it paced and respecting
+rate limits" · "only test. i'll say when to bring the 2k+ ... i'll decide when to run it batch".
+Interpretation (orchestrator's; flagged to the owner): the data flows ONE WAY, Vista -> us. NOTHING is written to Vista (the seed `VistaCRMAdapter.list_clientes` is read-only; there is no client write on the Protocol).
+
+**Canonical home.** A lead's PERSON is `social_wiring.clientes` (`chave_canonica` = `leads.contato_norm`, phone E.164 or e-mail). `leads` itself has no email/CPF/birth-date columns; `clientes` is where
+`nome_completo`, `celular`, `email`, `data_nascimento`, `estado_civil`, `profissao`, `endereco_*`, `cpf`, `rg`, `rg_orgao_expedidor` live, with their `*_origem` / `*_em` provenance columns (stamped `vista`).
+
+**The rule.** A Vista value fills an EMPTY column. A different non-empty value is NEVER overwritten: it becomes one pending `vista_cliente_avisos` row (`campo_divergente`, with both values; CPF/RG stored MASKED to the last 3) and ONE in-app
+warning per run to the org admins (same warn-never-overwrite organ as `lead_corretor_divergencias` / `imovel_ref_avisos`; resolve `resolvida|ignorada`). The address is a BLOCK (filled only when ours is entirely empty; else per-field divergences).
+Our phone/e-mail equal to ANY phone/e-mail Vista holds for that person is not a divergence. `nome_completo` is filled from Vista `Nome`; the lead's channel `nome` is untouched.
+
+**Matching.** Normalised phone (`noctusai_lib.primitives.phone.normalize_phone` over `Celular`/`FonePrincipal`/`FoneResidencial`/`FoneComercial`) or e-mail (`EmailResidencial`/`EmailComercial`) against `clientes.chave_canonica` /
+`celular` / `email`; CPF only while the LGPD flag is on. Several of our people for one Vista cliente => a `match_ambiguo` notice, NO write. Archived people are not matched. The link `vista_cliente_links` (`vista_codigo` unique per org, `casado_por`
+cpf|telefone|email, `flags`, `campos_preenchidos`) makes later runs incremental: `modo=novos` skips linked clientes, `modo=refazer` re-compares them (Vista has no `DataAtualizacao` on clientes, so there is no delta read).
+**A Vista cliente with no matching person is NOT created** (owner decision, open question): it is counted by the Vista flags `Cliente` / `Proprietario` / `Fiador` (`sem_match_por_flag`).
+
+**Allowlist (one place: `vista_clientes_sync.CAMPOS_IMPORTAVEIS` / `CAMPOS_IDENTIDADE`).** Vista `Nome`, `Celular`, `EmailResidencial`|`EmailComercial`, `DataNascimento`, `EstadoCivil` (-> our token), `Profissao`, the address set
+(`EnderecoResidencial` + `Numero/Complemento/Bairro/Cidade/UF/CEP Residencial` — only `EnderecoResidencial`/`CEPResidencial` are live-verified names; the Real adapter drops a field the key rejects and re-asks), plus the phone fields
+as match keys only. Behind `importar_identidade` (default OFF): `CPFCNPJ` (an 11-digit CPF only), `RG`, `RGEmissor`. NEVER requested, read or stored (`VISTA_PROIBIDOS`, asserted at import; the item is projected to the allowlist on arrival):
+`SenhaWeb`, `UsuarioWeb`, `Banco`, `Agencia`, `Conta`, `CreditoSituacao`, `CreditoMensagem`, `CODIGO_CREDPAGO`. Spouse data (`NomeConjuge`/`CPFConjuge`...) is not imported at all (no home column; it would mean creating a person).
+
+**Endpoints** (`/api/leads/vista-clientes`, registered before `/api/leads/{lead_id}`; tier **org**, admin where it calls Vista or writes):
+`POST /sync` (admin; `dry_run=true` default, `limite` 1..500 default 50, `cursor` = the offset into Vista's list (a number), `modo` novos|refazer, `pausa_s`; one bounded batch, plain `def`) · `GET /resumo` (member) · `GET /avisos?status=&tipo=` (member) ·
+`POST /avisos/{id}/resolver` (admin) · `GET|PUT /config` (member / admin: `vista_rps` 0.2..10 or null, `importar_identidade`). MCP: `noctus.sw.vista_clientes_sync` (action status|sync; dry-run unless `dry_run=False` AND `confirm=True`; never loops past `max_lotes`, default 1, max 20).
+**Dry-run** (default) reads Vista (paced), writes NOTHING (no clientes, link, notice, estado, notification) and reports counts plus a sample of matches / fills / divergences / ambiguities by field NAME only — never a value.
+Usage: `POST /api/leads/vista-clientes/sync?limite=50` -> inspect -> `...&dry_run=false&limite=50` -> follow `proximo_cursor` until null (44k clientes ~ 890 pages at 50).
+**A full pass is manual and owner-triggered: no scheduler runs it** (the daily job syncs only the corretor roster; the retry job only re-drives `pendente_retry` intakes).
+
+**Pacing (Vista client, all callers).** `VistaClient._request` takes a token from the org's rate-limit bucket before EVERY attempt (`rate_limit.acquire_async`); each org has its OWN bucket `vista:<org_id>` (one org's batch never starves another's).
+Default budget: the platform `vista` bucket, **5 requests/s, burst 10** (process env `NOC_RL_VISTA_RPS` / `NOC_RL_VISTA_BURST`); per-org override `vista_clientes_sync_estado.vista_rps` (0.2..10, `PUT /config`, handed to `adapter_da_org(rate_per_sec=)`). Backoff:
+HTTP 429 and (READS only) 5xx are retried up to the bucket's `max_retries` (default 5) with jittered exponential backoff honouring `Retry-After`; a `Retry-After` past 300 s raises `rate_limit.RetryLater` (the job layer reschedules); a write (`cadastro`) is never
+retried on a 5xx (unknown outcome). Every log line / exception body is redacted (`redact_api_key`; a Vista 401 body echoes the key). `NOC-REMEDIATE[rate-limit]` is closed.
+
+**LGPD (purpose + lawful basis).** Purpose: enrich the SW lead/client record the org already holds for the same person (one natural person, already our data subject through the ad lead / WhatsApp contact), so the corretor does not re-ask for data
+the agency already has in Vista and the contract/qualification checklist is complete. Basis proposed: legitimate interest (LGPD art. 7, IX) of the same controller (the imobiliária; Vista is its own CRM, not a third party) for contact, birth date, civil status,
+profession and address; minimisation = allowlist + fill-empty-only + masked identity values in notices + no values in dry-run output. CPF / RG are a heavier category (identity documents): they stay behind `importar_identidade`, **default OFF**,
+until the owner records a legal read (see open questions). Retention follows the `clientes` row (anonymised/deleted with it; links and notices cascade). The notice rows hold the two differing values so a human can decide: tier org, service-role only.
+
 ## 7. For the next slices
 
 * FE "Leads interessados" reads `GET /api/leads/ad-intake/imovel/{codigo}/leads`; pending corretor warnings from `GET /corretor-divergencias`.

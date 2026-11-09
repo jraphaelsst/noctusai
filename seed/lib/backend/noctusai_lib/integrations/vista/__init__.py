@@ -73,6 +73,7 @@ from .client import (
     VistaMissingParameter,
     VistaNotFound,
     VistaPermissionDenied,
+    VistaRateLimited,
     VistaRecordUnpublished,
     VistaTimeout,
     VistaUpstreamError,
@@ -189,6 +190,7 @@ __all__ = [
     "VistaFieldNotAvailable",
     "VistaRecordUnpublished",
     "VistaTimeout",
+    "VistaRateLimited",
     # Normalizers
     "vista_imovel_to_showcase",
     "vista_cliente_to_showcase",
