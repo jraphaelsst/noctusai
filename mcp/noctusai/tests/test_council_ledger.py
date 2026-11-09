@@ -1,7 +1,6 @@
-"""``noctus.dev.council_ledger`` + the two keepers ``check_council_ledger_schema`` / ``check_council_ledger_sync``.
+"""``noctus.dev.council_ledger`` + the keeper ``check_council_ledger_schema``.
 
-Contract: project-history/assistant-chatbot/contracts/council-ledger.md. Hermetic: ``tmp_path`` trees, a fake DB client
-through the ``client=`` seam (no network, no patching of our own guards), real ``git`` in a tmp repo for append-only.
+Contract: project-history/assistant-chatbot/contracts/council-ledger.md. Hermetic: ``tmp_path`` trees (no network, no patching of our own guards), real ``git`` in a tmp repo for append-only.
 """
 from __future__ import annotations
 
@@ -18,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"))
 
 from tools.noctus.dev import council_ledger as cl  # noqa: E402
-from tools.noctus.dev.compliance import check_council_ledger_schema, check_council_ledger_sync  # noqa: E402
+from tools.noctus.dev.compliance import check_council_ledger_schema  # noqa: E402
 
 SHA = "a" * 64
 T0 = "2026-11-09T10:00:00Z"
@@ -28,60 +27,24 @@ def u() -> str:
     return str(uuid.uuid4())
 
 
-class FakeDb:
-    """Records upserts; ``fail`` makes every call raise (missing table / unreachable)."""
-
-    def __init__(self, fail: Exception | None = None, existing: dict[str, list[str]] | None = None):
-        self.fail, self.calls, self.existing = fail, [], existing or {}
-        self._schema = self._table = None
-
-    def schema(self, name):
-        self._schema = name
-        return self
-
-    def table(self, name):
-        self._table = name
-        return self
-
-    def upsert(self, rows, on_conflict=None):
-        if self.fail:
-            raise self.fail
-        self.calls.append((self._schema, self._table, list(rows), on_conflict))
-        return self
-
-    def select(self, col):
-        if self.fail:
-            raise self.fail
-        self._col = col
-        return self
-
-    def execute(self):
-        class R:
-            pass
-        r = R()
-        kind = next(k for k, t in cl.DB_TABLES.items() if t == self._table)
-        r.data = [{self._col: i} for i in self.existing.get(kind, [])]
-        return r
-
-
 def open_s(root, *, stage="build", project="p1", seats=("lens:a", "lens:b"), at=T0, **kw):
     out = cl.open_session(root, stage=stage, subject_kind="plan", subject_ref="ref", trigger="stage_map", mode="subagents",
                           seats=list(seats), brief_sha256=SHA, project=project, recorded_by="t", recorded_at=at,
-                          auto_sync=False, **kw)
+                          **kw)
     assert out["ok"], out
     return out["session_id"]
 
 
 def obj(root, sid, seat, label, tokens=None, claim="It breaks.", severity="major", at=T0):
-    out = cl.record_objection(root, session_id=sid, seat=seat, anon_label=label, severity=severity, claim=claim,
-                              model="sonnet", tokens=tokens, recorded_by="t", recorded_at=at, auto_sync=False)
+    out = cl.record_objection(root, session_id=sid, seat=seat, severity=severity, claim=claim,
+                              model="sonnet", tokens=tokens, recorded_by="t", recorded_at=at)
     assert out["ok"], out
     return out["objection_id"]
 
 
 def outcome(root, sid, oid, o, at=T0):
     out = cl.record_event(root, session_id=sid, event_kind="outcome", objection_id=oid, outcome=o,
-                          evidence_kind="test", recorded_by="t", recorded_at=at, auto_sync=False)
+                          evidence_kind="test", recorded_by="t", recorded_at=at)
     assert out["ok"], out
 
 
@@ -89,14 +52,14 @@ def verdict(root, sid, disp, at=T0):
     out = cl.record_verdict(root, session_id=sid, chair_kind="chair_agent", decision="d", biggest_risk="r",
                             first_step="f", dispositions=[{"objection_id": o, "disposition": d, "reason": why}
                                                           for o, d, why in disp],
-                            recorded_by="t", recorded_at=at, auto_sync=False)
+                            recorded_by="t", recorded_at=at)
     assert out["ok"], out
 
 
 class TestValidation:
     def test_every_enum_is_enforced_with_a_precise_message(self, tmp_path):
         out = cl.open_session(tmp_path, stage="nope", subject_kind="plan", subject_ref="r", trigger="stage_map",
-                              mode="subagents", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", auto_sync=False)
+                              mode="subagents", seats=["lens:a"], brief_sha256=SHA, recorded_by="t")
         assert not out["ok"] and out["refused"] and "session.stage must be one of" in out["error"]
         assert not list((tmp_path / "project-history").rglob("*.ndjson")) if (tmp_path / "project-history").exists() else True
 
@@ -108,15 +71,15 @@ class TestValidation:
 
     def test_bad_seat_label_uuid_sha_tokens_and_timestamp(self, tmp_path):
         sid = open_s(tmp_path)
-        for kw, frag in (({"seat": "alice"}, "objection.seat"), ({"anon_label": "a1"}, "anon_label"),
+        for kw, frag in (({"seat": "alice"}, "objection.seat"),
                          ({"tokens": -1}, "tokens"), ({"claim": "One. Two. Three. Four."}, "at most 3 sentences"),
                          ({"severity": "huge"}, "severity")):
-            args = {"session_id": sid, "seat": "lens:a", "anon_label": "A", "severity": "major", "claim": "x",
+            args = {"session_id": sid, "seat": "lens:a", "severity": "major", "claim": "x",
                     "model": "m", **kw}
-            out = cl.record_objection(tmp_path, recorded_by="t", auto_sync=False, **args)
+            out = cl.record_objection(tmp_path, recorded_by="t", **args)
             assert not out["ok"] and frag in out["error"], (kw, out)
-        out = cl.record_objection(tmp_path, session_id="not-a-uuid", seat="lens:a", anon_label="A", severity="major",
-                                  claim="x", model="m", recorded_by="t", auto_sync=False)
+        out = cl.record_objection(tmp_path, session_id="not-a-uuid", seat="lens:a", severity="major",
+                                  claim="x", model="m", recorded_by="t")
         assert "UUIDv4" in out["error"]
         assert any("recorded_at" in e for e in cl.validate_row(
             {"record": "event", "recorded_by": "t", "recorded_at": "yesterday", "event_id": u(), "session_id": u(),
@@ -124,55 +87,52 @@ class TestValidation:
 
     def test_outcome_event_requires_its_fields_and_others_forbid_them(self, tmp_path):
         sid = open_s(tmp_path)
-        out = cl.record_event(tmp_path, session_id=sid, event_kind="outcome", recorded_by="t", auto_sync=False)
+        out = cl.record_event(tmp_path, session_id=sid, event_kind="outcome", recorded_by="t")
         assert "required when event_kind=outcome" in out["error"]
         out = cl.record_event(tmp_path, session_id=sid, event_kind="ratified", outcome="vindicated", recorded_by="t",
-                              auto_sync=False)
+                              )
         assert "only allowed when event_kind=outcome" in out["error"]
 
     def test_references_must_resolve(self, tmp_path):
         sid = open_s(tmp_path)
         assert "unknown session" in cl.record_objection(
-            tmp_path, session_id=u(), seat="lens:a", anon_label="A", severity="note", claim="x", model="m",
-            recorded_by="t", auto_sync=False)["error"]
+            tmp_path, session_id=u(), seat="lens:a", severity="note", claim="x", model="m",
+            recorded_by="t")["error"]
         assert "not one of the session's seats" in cl.record_objection(
-            tmp_path, session_id=sid, seat="lens:zzz", anon_label="A", severity="note", claim="x", model="m",
-            recorded_by="t", auto_sync=False)["error"]
+            tmp_path, session_id=sid, seat="lens:zzz", severity="note", claim="x", model="m",
+            recorded_by="t")["error"]
         obj(tmp_path, sid, "lens:a", "A")
-        assert "used twice" in cl.record_objection(
-            tmp_path, session_id=sid, seat="lens:b", anon_label="A", severity="note", claim="x", model="m",
-            recorded_by="t", auto_sync=False)["error"]
         assert "unknown objection" in cl.record_event(
             tmp_path, session_id=sid, event_kind="outcome", objection_id=u(), outcome="refuted", evidence_kind="test",
-            recorded_by="t", auto_sync=False)["error"]
+            recorded_by="t")["error"]
         assert "needs a verdict first" in cl.record_event(
-            tmp_path, session_id=sid, event_kind="ratified", recorded_by="t", auto_sync=False)["error"]
+            tmp_path, session_id=sid, event_kind="ratified", recorded_by="t")["error"]
 
     def test_verdict_needs_every_objection_disposed_and_only_one_verdict(self, tmp_path):
         sid = open_s(tmp_path)
         o1, o2 = obj(tmp_path, sid, "lens:a", "A"), obj(tmp_path, sid, "lens:b", "B")
         bad = cl.record_verdict(tmp_path, session_id=sid, chair_kind="tech_lead", decision="d", biggest_risk="r",
                                 first_step="f", dispositions=[{"objection_id": o1, "disposition": "accepted", "reason": "x"}],
-                                recorded_by="t", auto_sync=False)
+                                recorded_by="t")
         assert f"no disposition to objection {o2}" in bad["error"]
         verdict(tmp_path, sid, [(o1, "accepted", "x"), (o2, "rejected", "y")])
         again = cl.record_verdict(tmp_path, session_id=sid, chair_kind="tech_lead", decision="d", biggest_risk="r",
                                   first_step="f", dispositions=[{"objection_id": o1, "disposition": "accepted", "reason": "x"},
                                                                 {"objection_id": o2, "disposition": "accepted", "reason": "x"}],
-                                  recorded_by="t", auto_sync=False)
+                                  recorded_by="t")
         assert "one verdict" in again["error"]
-        late = cl.record_objection(tmp_path, session_id=sid, seat="lens:a", anon_label="C", severity="note", claim="x",
-                                   model="m", recorded_by="t", auto_sync=False)
+        late = cl.record_objection(tmp_path, session_id=sid, seat="lens:a", severity="note", claim="x",
+                                   model="m", recorded_by="t")
         assert "after the verdict" in late["error"]
 
     def test_recorded_by_falls_back_to_env_or_is_required(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
         out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
-                              mode="api", seats=["lens:a"], brief_sha256=SHA, auto_sync=False)
+                              mode="api", seats=["lens:a"], brief_sha256=SHA)
         assert not out["ok"] and "recorded_by is required" in out["error"]
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
         out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
-                              mode="api", seats=["lens:a"], brief_sha256=SHA, auto_sync=False)
+                              mode="api", seats=["lens:a"], brief_sha256=SHA)
         assert out["ok"]
 
 
@@ -186,7 +146,7 @@ class TestStorage:
         assert [r["record"] for r in cl.read_rows(f1)] == ["session", "objection"]
         assert cl.open_session(tmp_path, session_id=s1, stage="build", subject_kind="plan", subject_ref="r",
                                trigger="stage_map", mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t",
-                               auto_sync=False)["error"].startswith(f"session {s1} already exists")
+                               )["error"].startswith(f"session {s1} already exists")
 
 
 class TestMetrics:
@@ -228,9 +188,11 @@ class TestMetrics:
 
     def test_rates_are_none_when_the_denominator_is_zero(self, tmp_path):
         sid = open_s(tmp_path)
-        obj(tmp_path, sid, "lens:a", "A", tokens=5)
+        o = obj(tmp_path, sid, "lens:a", "A", tokens=5)
+        verdict(tmp_path, sid, [(o, "deferred", "later")])
         a = cl.report(tmp_path)["seats"]["lens:a"]
-        assert (a["hit_rate"], a["unique_hit_rate"], a["false_alarm_rate"], a["acceptance_rate"], a["cost_per_hit"]) == (None,) * 5
+        assert (a["hit_rate"], a["unique_hit_rate"], a["false_alarm_rate"], a["cost_per_hit"]) == (None,) * 4
+        assert a["acceptance_rate"] == 0.0  # 0 accepted / 1 disposition
 
     def test_filters_stage_project_since(self, tmp_path):
         self.fixture(tmp_path)  # build / p1 / 2026-11-09
@@ -247,9 +209,12 @@ class TestMetrics:
 
     def bulk(self, tmp_path, seat, stage, vind, ref):
         sid = open_s(tmp_path, stage=stage, seats=(seat,))
+        ids = []
         for n in range(vind + ref):
             o = obj(tmp_path, sid, seat, chr(65 + n % 26) + (chr(65 + n // 26) if n >= 26 else ""))
             outcome(tmp_path, sid, o, "vindicated" if n < vind else "refuted")
+            ids.append(o)
+        verdict(tmp_path, sid, [(o, "accepted", "x") for o in ids])
 
     def test_retune_signals(self, tmp_path):
         self.bulk(tmp_path, "lens:low", "build", 1, 9)       # 10 resolved, hit 0.1  -> demote
@@ -269,48 +234,7 @@ class TestMetrics:
         assert all(p["applies_if"] is None for p in rep["retune_proposals"])
 
 
-class TestSyncAndPending:
-    def test_missing_table_is_inconclusive_with_a_pending_marker_never_red(self, tmp_path):
-        db = FakeDb(fail=Exception("Could not find the table 'agents.council_sessions' in the schema cache"))
-        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
-                              mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
-        assert out["ok"] and out["sync"]["status"] == "inconclusive" and out["sync"]["reason"] == "table not applied"
-        assert (tmp_path / cl.PENDING_REL).read_text().startswith(out["session_id"])
-        assert cl.status(tmp_path)["pending_sync"] == 1
-
-    def test_unreachable_db_is_inconclusive_too(self, tmp_path):
-        db = FakeDb(fail=ConnectionError("boom"))
-        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
-                              mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
-        assert out["sync"]["status"] == "inconclusive" and out["sync"]["reason"] == "db unreachable: ConnectionError"
-
-    def test_successful_write_upserts_by_id_without_the_record_key(self, tmp_path):
-        db = FakeDb()
-        out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
-                              mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
-        assert out["sync"] == {"status": "synced"} and not (tmp_path / cl.PENDING_REL).exists()
-        schema, table, rows, conflict = db.calls[0]
-        assert (schema, table, conflict) == ("agents", "council_sessions", "session_id")
-        assert "record" not in rows[0] and rows[0]["seats"] == ["lens:a"]
-
-    def test_sync_is_dry_run_by_default_then_pushes_all_and_clears_the_marker(self, tmp_path):
-        s = open_s(tmp_path)
-        o = obj(tmp_path, s, "lens:a", "A")
-        verdict(tmp_path, s, [(o, "accepted", "x")])
-        assert (tmp_path / cl.PENDING_REL).exists()  # auto_sync off leaves a marker
-        dry = cl.sync(tmp_path)
-        assert dry["status"] == "dry_run" and dry["would_upsert"] == {"session": 1, "objection": 1, "verdict": 1, "event": 0}
-        db = FakeDb()
-        done = cl.sync(tmp_path, confirm=True, client=db)
-        assert done["status"] == "synced" and [c[1] for c in db.calls] == [
-            "council_sessions", "council_objections", "council_verdicts"]
-        assert not (tmp_path / cl.PENDING_REL).exists()
-
-    def test_sync_with_missing_table_is_inconclusive(self, tmp_path):
-        open_s(tmp_path)
-        out = cl.sync(tmp_path, confirm=True, client=FakeDb(fail=Exception("relation does not exist")))
-        assert out["status"] == "inconclusive" and out["reason"] == "table not applied"
-
+class TestStatusAndDispatch:
     def test_status_reports_sessions_without_verdict_and_stale_objections(self, tmp_path):
         s = open_s(tmp_path)
         old = obj(tmp_path, s, "lens:a", "A", at="2026-10-01T00:00:00Z")
@@ -319,6 +243,7 @@ class TestSyncAndPending:
         outcome(tmp_path, s, decided, "vindicated")
         st = cl.status(tmp_path, now=datetime(2026, 11, 9, tzinfo=timezone.utc))
         assert st["sessions_without_verdict"] == [s]
+        assert all("seat" not in x for x in st["objections_without_outcome"])  # hidden pre-verdict
         assert [x["objection_id"] for x in st["objections_without_outcome"]] == [old]
         assert fresh not in [x["objection_id"] for x in st["objections_without_outcome"]]
 
@@ -326,7 +251,7 @@ class TestSyncAndPending:
         assert "missing required" in cl.run("open_session", root=tmp_path, stage="build")["error"]
         assert "action must be one of" in cl.run("nope", root=tmp_path)["error"]
         out = cl.run("open_session", root=tmp_path, stage="build", subject_kind="plan", subject_ref="r",
-                     trigger="stage_map", mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", auto_sync=False)
+                     trigger="stage_map", mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t")
         assert out["ok"] and cl.run("status", root=tmp_path)["sessions"] == 1
 
 
@@ -402,42 +327,69 @@ class TestCouncilLedgerSchema:
         assert any("staged status D" in i["issue"] for i in check_council_ledger_schema(tmp_path, [rel], staged=True))
 
 
-class TestCouncilLedgerSync:
-    """Keeper ``check_council_ledger_sync``: ids in ndjson but not in the DB fail; unmeasurable is inconclusive."""
-
-    def test_in_sync_and_db_only_ids_do_not_fail(self, tmp_path):
-        s = open_s(tmp_path)
-        db = FakeDb(existing={"session": [s, u()]})  # an extra DB id = a parallel branch's session
-        v: dict = {}
-        assert check_council_ledger_sync(tmp_path, client=db, verdict_out=v) == []
-        assert v["status"] == "in_sync" and v["db_only"] == {"session": 1}
-
-    def test_missing_ids_fail_with_the_list(self, tmp_path):
-        s = open_s(tmp_path)
-        o = obj(tmp_path, s, "lens:a", "A")
-        issues = check_council_ledger_sync(tmp_path, client=FakeDb(existing={"session": [s]}))
-        assert len(issues) == 1 and o in issues[0]["issue"] and "objection id(s)" in issues[0]["issue"]
-
-    def test_table_not_applied_is_inconclusive_never_red(self, tmp_path):
-        open_s(tmp_path)
-        v: dict = {}
-        issues = check_council_ledger_sync(tmp_path, client=FakeDb(fail=Exception("PGRST205 no table")), verdict_out=v)
-        assert issues == [] and v["status"] == "inconclusive" and v["reason"] == "table not applied"
-
-    def test_no_credentials_is_inconclusive(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("SUPABASE_URL", raising=False)
-        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
-        open_s(tmp_path)
-        v: dict = {}
-        assert check_council_ledger_sync(tmp_path, verdict_out=v) == [] and v["status"] == "inconclusive"
-
-    def test_empty_ledger_is_trivially_in_sync(self, tmp_path):
-        v: dict = {}
-        assert check_council_ledger_sync(tmp_path, client=FakeDb(), verdict_out=v) == [] and v["status"] == "in_sync"
-
-
 @pytest.mark.parametrize("name,expect", [("stage", 14), ("subject_kind", 9), ("trigger", 9), ("mode", 3), ("severity", 4),
                                          ("chair_kind", 3), ("disposition", 3), ("event_kind", 3), ("outcome", 3),
                                          ("evidence_kind", 7)])
 def test_enums_match_contract_section_2(name, expect):
     assert len(cl.ENUMS[name]) == expect
+
+
+class TestNeutralRecorder:
+    """Owner decision 2026-11-09: the tool is the neutral recorder; blindness is construction, not discipline."""
+
+    def test_label_assigned_by_tool_unique_and_not_in_the_result(self, tmp_path):
+        sid = open_s(tmp_path, seats=("lens:a", "lens:b"))
+        outs = [cl.record_objection(tmp_path, session_id=sid, seat=st, severity="major", claim="x", model="m",
+                                    recorded_by="t") for st in ("lens:a", "lens:b") * 15]
+        assert all(set(o) == {"ok", "objection_id", "status"} and o["status"] == "submitted" for o in outs)
+        labels = [r["anon_label"] for r in cl.read_rows(cl.session_file(tmp_path, sid)) if r["record"] == "objection"]
+        assert len(labels) == 30 and len(set(labels)) == 30
+        assert all(cl._LABEL_RE.match(x) for x in labels)
+
+    def test_caller_label_is_refused(self, tmp_path):
+        sid = open_s(tmp_path)
+        out = cl.run("record_objection", root=tmp_path, session_id=sid, seat="lens:a", anon_label="A",
+                     severity="major", claim="x", model="m", recorded_by="t")
+        assert not out["ok"] and "assigned by the tool" in out["error"]
+        with pytest.raises(TypeError):
+            cl.record_objection(tmp_path, session_id=sid, seat="lens:a", anon_label="A", severity="major", claim="x",
+                                model="m", recorded_by="t")
+
+    def test_blind_view_has_no_seat_or_model(self, tmp_path):
+        sid = open_s(tmp_path)
+        obj(tmp_path, sid, "lens:a", None, claim="One.")
+        obj(tmp_path, sid, "lens:b", None, claim="Two.")
+        view = cl.run("blind_view", root=tmp_path, session_id=sid)
+        assert view["ok"] and len(view["objections"]) == 2
+        for o in view["objections"]:
+            assert set(o) == {"anon_label", "severity", "claim"}
+        text = json.dumps(view)
+        assert "lens:" not in text and "sonnet" not in text
+
+    def test_seat_hidden_pre_verdict_visible_post_verdict(self, tmp_path):
+        sid = open_s(tmp_path)
+        o = obj(tmp_path, sid, "lens:a", None, at="2026-10-01T00:00:00Z")
+        pre = cl.status(tmp_path, now=datetime(2026, 11, 9, tzinfo=timezone.utc))
+        assert "lens:a" not in json.dumps(pre)
+        assert "hidden until the verdict" in cl.run("full_view", root=tmp_path, session_id=sid)["error"]
+        assert cl.report(tmp_path)["seats"] == {} and cl.report(tmp_path)["sessions"] == 0
+        verdict(tmp_path, sid, [(o, "accepted", "x")])
+        post = cl.status(tmp_path, now=datetime(2026, 11, 9, tzinfo=timezone.utc))
+        assert post["objections_without_outcome"][0]["seat"] == "lens:a"
+        assert any(r.get("seat") == "lens:a" for r in cl.run("full_view", root=tmp_path, session_id=sid)["rows"])
+        assert "lens:a" in cl.report(tmp_path)["seats"]
+
+    def test_dispositions_by_label_are_translated(self, tmp_path):
+        sid = open_s(tmp_path)
+        o1, o2 = obj(tmp_path, sid, "lens:a", None), obj(tmp_path, sid, "lens:b", None)
+        view = cl.blind_view(tmp_path, sid)["objections"]
+        disp = [{"anon_label": v["anon_label"], "disposition": "accepted", "reason": "ok"} for v in view]
+        out = cl.record_verdict(tmp_path, session_id=sid, chair_kind="chair_agent", decision="d", biggest_risk="r",
+                                first_step="f", dispositions=disp, recorded_by="t")
+        assert out["ok"], out
+        v = next(r for r in cl.read_rows(cl.session_file(tmp_path, sid)) if r["record"] == "verdict")
+        assert {d["objection_id"] for d in v["dispositions"]} == {o1, o2}
+        bad = cl.record_verdict(tmp_path, session_id=open_s(tmp_path), chair_kind="chair_agent", decision="d",
+                                biggest_risk="r", first_step="f", recorded_by="t",
+                                dispositions=[{"anon_label": "Z", "disposition": "accepted", "reason": "x"}])
+        assert "unknown anon_label" in bad["error"]

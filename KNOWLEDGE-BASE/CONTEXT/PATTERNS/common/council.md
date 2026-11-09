@@ -27,10 +27,23 @@ Open session, compose a brief WITHOUT the author's recommendation, dispatch ever
 parallel as a background subagent (`councillor` per lens, advisors by name), anonymise objections
 as A/B/C, dispatch `council-chair` (Opus), record the verdict, surface to the tech-lead, record
 outcomes later. Every row goes through `noctus.dev.council_ledger` (`open_session`,
-`record_objection`, `record_verdict`, `record_event`, `report`). Steps in the skill.
+`record_objection`, `blind_view`, `record_verdict`, `record_event`, `full_view`, `report`, `status`). The ndjson ledger in git is the source of truth; a DB mirror and any UI are deferred (owner decision pending, parked design on branch `feat/council-db-parked`). Steps in the skill.
 
 Hybrid by owner decision (2026-11-09): NOW every seat is a Claude Code background subagent
 (no direct API calls). Seat models: lenses Sonnet, advisors their configured model, chair Opus.
+
+### 2a · Neutral recorder (owner decision 2026-11-09)
+
+Blindness is enforced by the tool, not by discipline ("so we don't give space for the tech lead to
+make mistakes"). Flow: the tech-lead opens the session and dispatches seats; each councillor calls
+`record_objection` itself (the tool assigns a random `anon_label`, unique per session, callers cannot
+pass one) and returns only `submitted <objection_id>`; the tech-lead dispatches `council-chair` with
+the `session_id`; the chair reads `blind_view` ({anon_label, severity, claim}, no seat/model) and
+returns its verdict; the tech-lead records it (`chair_kind=chair_agent`, dispositions keyed by label,
+translated by the tool) and only then may read `full_view`. Until a verdict row exists, `report`
+aggregates only sessions that have verdicts and `status` omits seats. Limit: the ndjson files are
+plain text; the tool cannot stop a direct file read, so the skill forbids reading
+`project-history/council/**` before the verdict.
 
 ## 3 · Stage map
 

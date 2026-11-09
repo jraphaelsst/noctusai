@@ -4,19 +4,22 @@ One council = one ``session``; every councillor point is an ``objection``; the c
 later state changes (ratified / overruled / outcome) are append-only ``event`` rows. Closed sets are enums, every
 metric has exactly ONE derivation (``compute_metrics``) — KB § PATTERNS/architect/measurement-by-design.md.
 
-Storage (contract §4): ndjson first — ``project-history/council/<YYYY-MM>/<session_id>.ndjson``, one file per
-session so parallel branches never conflict, append-only (a correction is a new ``event``). The DB leg upserts by id
-into the agents-product tables (names in ``DB_TABLES``). An unreachable DB / unapplied table never fails a write and
-is never silent: the verdict is ``inconclusive`` (never red) and ``project-history/council/.pending-sync`` records
-what is still owed.
+Storage (contract §4): ndjson in git is the SOURCE OF TRUTH — ``project-history/council/<YYYY-MM>/<session_id>.ndjson``,
+one file per session so parallel branches never conflict, append-only (a correction is a new ``event``). A DB mirror
+and any UI are deferred (owner decision pending; the parked design lives on branch ``feat/council-db-parked``).
 
-Everything takes ``root`` (the tree) and an injectable ``client`` (DB seam) so tests need neither network nor patching.
+Neutral recorder (owner decision 2026-11-09): the TOOL assigns every ``anon_label`` and withholds seats until a verdict
+exists, so the tech-lead never holds the label-to-seat mapping before it has decided.
+
+Everything takes ``root`` (the tree), so tests need neither network nor patching.
 """
 from __future__ import annotations
 
 import json
 import os
+import random
 import re
+import string
 import subprocess
 import uuid
 from collections import defaultdict
@@ -43,18 +46,7 @@ ENUMS: dict[str, frozenset[str]] = {
 RECORDS = ("session", "objection", "verdict", "event")
 PK = {"session": "session_id", "objection": "objection_id", "verdict": "session_id", "event": "event_id"}
 
-# NOC-REMEDIATE[council-db-names]: the agents-product slice owns the final table names (another slice, in parallel);
-# this is the ONE place they are written — change them here and nowhere else. — 2026-11-09
-DB_SCHEMA = "agents"
-DB_TABLES: dict[str, str] = {
-    "session": "council_sessions",
-    "objection": "council_objections",
-    "verdict": "council_verdicts",
-    "event": "council_events",
-}
-
 COUNCIL_REL = Path("project-history/council")
-PENDING_REL = COUNCIL_REL / ".pending-sync"
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -331,88 +323,6 @@ def _append(path: Path, row: dict) -> None:
         fh.write(json.dumps(row, ensure_ascii=False, sort_keys=False) + "\n")
 
 
-def _pending(root: Path) -> dict[str, str]:
-    """{session_id: reason} still owed to the DB."""
-    p = root / PENDING_REL
-    if not p.exists():
-        return {}
-    out: dict[str, str] = {}
-    for line in p.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            sid, _, reason = line.partition("\t")
-            out[sid] = reason
-    return out
-
-
-def _write_pending(root: Path, pend: dict[str, str]) -> None:
-    p = root / PENDING_REL
-    if not pend:
-        p.unlink(missing_ok=True)
-        return
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("".join(f"{sid}\t{reason}\n" for sid, reason in sorted(pend.items())), encoding="utf-8")
-
-
-# ── DB leg ───────────────────────────────────────────────────────────────────
-
-def _default_client():
-    url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        return None
-    from supabase import create_client
-    return create_client(url, key)
-
-
-_MISSING_TABLE_MARKERS = ("pgrst205", "pgrst106", "42p01", "does not exist", "could not find the table",
-                          "schema cache", "not found")
-
-
-def _table_missing(exc: Exception) -> bool:
-    text = f"{getattr(exc, 'code', '')} {exc}".lower()
-    return any(m in text for m in _MISSING_TABLE_MARKERS)
-
-
-def _db_row(row: dict) -> dict:
-    return {k: v for k, v in row.items() if k != "record"}
-
-
-def _classify(exc: Exception) -> str:
-    return "table not applied" if _table_missing(exc) else f"db unreachable: {type(exc).__name__}"
-
-
-def _upsert(client, rows: list[dict]) -> dict | None:
-    """Upsert rows by id; return None on success or an ``inconclusive`` verdict dict (never raises)."""
-    by_kind: dict[str, list[dict]] = defaultdict(list)
-    for r in rows:
-        by_kind[r["record"]].append(_db_row(r))
-    for kind in RECORDS:  # FK order: session -> objection -> verdict -> event
-        if not by_kind.get(kind):
-            continue
-        try:
-            client.schema(DB_SCHEMA).table(DB_TABLES[kind]).upsert(by_kind[kind], on_conflict=PK[kind]).execute()
-        except Exception as exc:  # noqa: BLE001 -- classified into an enumerated verdict, never swallowed
-            return {"status": "inconclusive", "reason": _classify(exc), "table": f"{DB_SCHEMA}.{DB_TABLES[kind]}"}
-    return None
-
-
-def _after_write(root: Path, session_id: str, row: dict, client, auto_sync: bool) -> dict:
-    """Contract §4: ndjson is written; now try the DB, else leave a marker (never silent)."""
-    if not auto_sync:
-        pend = _pending(root)
-        pend[session_id] = "auto_sync off"
-        _write_pending(root, pend)
-        return {"status": "pending", "reason": "auto_sync off"}
-    client = client or _default_client()
-    verdict = ({"status": "inconclusive", "reason": "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set"}
-               if client is None else _upsert(client, [row]))
-    if verdict is None:
-        return {"status": "synced"}
-    pend = _pending(root)
-    pend[session_id] = verdict["reason"]
-    _write_pending(root, pend)
-    return {**verdict, "pending_marker": str(PENDING_REL)}
-
-
 def _stamp(row: dict, recorded_by: str | None, recorded_at: str | None) -> dict:
     by = recorded_by or os.environ.get("CLAUDE_CODE_SESSION_ID")
     if not by:
@@ -420,7 +330,7 @@ def _stamp(row: dict, recorded_by: str | None, recorded_at: str | None) -> dict:
     return {**row, "recorded_by": by, "recorded_at": recorded_at or now_iso()}
 
 
-def _write(root: Path, row: dict, *, client, auto_sync: bool, create_month: str | None = None) -> dict:
+def _write(root: Path, row: dict, *, create_month: str | None = None) -> dict:
     sid = row["session_id"]
     path = session_file(root, sid, month=create_month)
     if path is None:
@@ -430,13 +340,13 @@ def _write(root: Path, row: dict, *, client, auto_sync: bool, create_month: str 
     if errs:
         return _err("; ".join(errs[:6]) + (f" (+{len(errs) - 6} more)" if len(errs) > 6 else ""), refused=True)
     _append(path, row)
-    return {"ok": True, "file": str(path.relative_to(root)), "sync": _after_write(root, sid, row, client, auto_sync)}
+    return {"ok": True, "file": str(path.relative_to(root))}
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
 
 def open_session(root: Path, *, stage, subject_kind, subject_ref, trigger, mode, seats, brief_sha256,
-                 project=None, session_id=None, recorded_by=None, recorded_at=None, client=None, auto_sync=True) -> dict:
+                 project=None, session_id=None, recorded_by=None, recorded_at=None) -> dict:
     row = _stamp({"record": "session", "session_id": session_id or str(uuid.uuid4()), "stage": stage,
                   "subject_kind": subject_kind, "subject_ref": subject_ref, "trigger": trigger, "mode": mode,
                   "seats": seats, "brief_sha256": brief_sha256, "project": project}, recorded_by, recorded_at)
@@ -447,26 +357,99 @@ def open_session(root: Path, *, stage, subject_kind, subject_ref, trigger, mode,
         return _err("; ".join(errs), refused=True)
     if session_file(root, row["session_id"]) is not None:
         return _err(f"session {row['session_id']} already exists (append-only: record objections/events instead)")
-    out = _write(root, row, client=client, auto_sync=auto_sync, create_month=row["recorded_at"][:7])
+    out = _write(root, row, create_month=row["recorded_at"][:7])
     return {**out, "session_id": row["session_id"]} if out.get("ok") else out
 
 
-def record_objection(root: Path, *, session_id, seat, anon_label, severity, claim, model, tokens=None,
-                     objection_id=None, recorded_by=None, recorded_at=None, client=None, auto_sync=True) -> dict:
+def _free_label(used: set[str]) -> str:
+    """Random label unused in this session: single letters first, then two-letter ones (the tool assigns, never the caller)."""
+    rng = random.SystemRandom()
+    singles = [c for c in string.ascii_uppercase if c not in used]
+    if singles:
+        return rng.choice(singles)
+    pairs = [a + b for a in string.ascii_uppercase for b in string.ascii_uppercase if a + b not in used]
+    if not pairs:
+        raise ValueError("no free anon_label left in this session")
+    return rng.choice(pairs)
+
+
+def record_objection(root: Path, *, session_id, seat, severity, claim, model, tokens=None,
+                     objection_id=None, recorded_by=None, recorded_at=None) -> dict:
+    """Neutral recorder: the TOOL assigns ``anon_label``; the result never carries the label or the seat mapping."""
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    used = {r["anon_label"] for r in read_rows(path) if r["record"] == "objection"} if path and path.exists() else set()
+    try:
+        label = _free_label(used)
+    except ValueError as exc:
+        return _err(str(exc))
     row = _stamp({"record": "objection", "objection_id": objection_id or str(uuid.uuid4()), "session_id": session_id,
-                  "seat": seat, "anon_label": anon_label, "severity": severity, "claim": claim, "model": model,
+                  "seat": seat, "anon_label": label, "severity": severity, "claim": claim, "model": model,
                   "tokens": tokens}, recorded_by, recorded_at)
     if row.get("ok") is False:
         return row
     errs = validate_row(row)
     if errs:
         return _err("; ".join(errs), refused=True)
-    out = _write(root, row, client=client, auto_sync=auto_sync)
-    return {**out, "objection_id": row["objection_id"]} if out.get("ok") else out
+    out = _write(root, row)
+    return {"ok": True, "objection_id": row["objection_id"], "status": "submitted"} if out.get("ok") else out
+
+
+def _translate_dispositions(root: Path, session_id: Any, dispositions: Any) -> Any:
+    """Accept dispositions keyed by ``anon_label`` (the chair's blind view) and translate them to objection ids."""
+    if not isinstance(dispositions, list) or not any(isinstance(d, dict) and "anon_label" in d for d in dispositions):
+        return dispositions
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    by_label = ({r["anon_label"]: r["objection_id"] for r in read_rows(path) if r["record"] == "objection"}
+                if path and path.exists() else {})
+    out = []
+    for d in dispositions:
+        if isinstance(d, dict) and "anon_label" in d:
+            if "objection_id" in d:
+                return _err("a disposition carries objection_id OR anon_label, not both")
+            if d["anon_label"] not in by_label:
+                return _err(f"disposition refers to unknown anon_label {d['anon_label']!r}")
+            d = {"objection_id": by_label[d["anon_label"]], **{k: v for k, v in d.items() if k != "anon_label"}}
+        out.append(d)
+    return out
+
+
+def blind_view(root: Path, session_id: Any) -> dict:
+    """The chair's view: {anon_label, severity, claim} per objection — no seat, no model, no ids."""
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    if path is None or not path.exists():
+        return _err(f"unknown session {session_id}")
+    try:
+        rows = read_rows(path)
+    except ValueError as exc:
+        return _err(str(exc))
+    objs = sorted((r for r in rows if r["record"] == "objection"), key=lambda r: r["anon_label"])
+    return {"ok": True, "action": "blind_view", "session_id": session_id,
+            "objections": [{"anon_label": o["anon_label"], "severity": o["severity"], "claim": o["claim"]} for o in objs]}
+
+
+def full_view(root: Path, session_id: Any) -> dict:
+    """Seats revealed — refused until a verdict row exists for the session."""
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    if path is None or not path.exists():
+        return _err(f"unknown session {session_id}")
+    try:
+        rows = read_rows(path)
+    except ValueError as exc:
+        return _err(str(exc))
+    if not _has_verdict(rows):
+        return _err("blind recorder: seats are hidden until the verdict is recorded (use blind_view)", refused=True)
+    return {"ok": True, "action": "full_view", "session_id": session_id, "rows": rows}
+
+
+def _has_verdict(rows: list[dict]) -> bool:
+    return any(r["record"] == "verdict" for r in rows)
 
 
 def record_verdict(root: Path, *, session_id, chair_kind, decision, biggest_risk, first_step, dispositions,
-                   tokens=None, recorded_by=None, recorded_at=None, client=None, auto_sync=True) -> dict:
+                   tokens=None, recorded_by=None, recorded_at=None) -> dict:
+    dispositions = _translate_dispositions(root, session_id, dispositions)
+    if isinstance(dispositions, dict) and dispositions.get("ok") is False:
+        return dispositions
     row = _stamp({"record": "verdict", "session_id": session_id, "chair_kind": chair_kind, "decision": decision,
                   "biggest_risk": biggest_risk, "first_step": first_step, "dispositions": dispositions,
                   "tokens": tokens}, recorded_by, recorded_at)
@@ -475,12 +458,11 @@ def record_verdict(root: Path, *, session_id, chair_kind, decision, biggest_risk
     errs = validate_row(row)
     if errs:
         return _err("; ".join(errs), refused=True)
-    return _write(root, row, client=client, auto_sync=auto_sync)
+    return _write(root, row)
 
 
 def record_event(root: Path, *, session_id, event_kind, objection_id=None, outcome=None, evidence_kind=None,
-                 evidence_ref=None, note=None, event_id=None, recorded_by=None, recorded_at=None, client=None,
-                 auto_sync=True) -> dict:
+                 evidence_ref=None, note=None, event_id=None, recorded_by=None, recorded_at=None) -> dict:
     row = _stamp({"record": "event", "event_id": event_id or str(uuid.uuid4()), "event_kind": event_kind,
                   "session_id": session_id, "objection_id": objection_id, "outcome": outcome,
                   "evidence_kind": evidence_kind, "evidence_ref": evidence_ref, "note": note},
@@ -490,7 +472,7 @@ def record_event(root: Path, *, session_id, event_kind, objection_id=None, outco
     errs = validate_row(row)
     if errs:
         return _err("; ".join(errs), refused=True)
-    out = _write(root, row, client=client, auto_sync=auto_sync)
+    out = _write(root, row)
     return {**out, "event_id": row["event_id"]} if out.get("ok") else out
 
 
@@ -506,7 +488,7 @@ def _is_unique_mark(reason: str) -> bool:
 
 def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, project: str | None = None,
                     since: str | None = None, stage_map: dict[str, dict[str, str]] | None = None) -> dict:
-    """Per-seat metrics over the given sessions (each a list of rows, file order) + retune proposals.
+    """Per-seat metrics over the given sessions WITH a verdict (each a list of rows, file order) + retune proposals.
 
     ``since`` filters by the session's ``recorded_at``. ``stage_map`` ({stage: {seat: 'M'|'O'}}) is optional:
     with it the retune proposals apply the contract's M->O / O->M condition exactly; without it each proposal
@@ -519,7 +501,7 @@ def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, pro
     kept = 0
     for rows in sessions:
         s = next((r for r in rows if r["record"] == "session"), None)
-        if s is None:
+        if s is None or not _has_verdict(rows):  # blind recorder: only sessions with a verdict are aggregated
             continue
         if stage and s["stage"] != stage:
             continue
@@ -595,70 +577,11 @@ def report(root: Path, **filters: Any) -> dict:
     return {"ok": True, "action": "report", **compute_metrics(sessions, **filters)}
 
 
-# ── sync / status ────────────────────────────────────────────────────────────
-
-def _all_rows(root: Path) -> list[dict]:
-    return [r for rows in load_sessions(root) for r in rows]
-
-
-def sync(root: Path, *, confirm: bool = False, client=None) -> dict:
-    """Push every ndjson row to the DB by id (idempotent upsert). Dry-run unless ``confirm``."""
-    try:
-        rows = _all_rows(root)
-    except ValueError as exc:
-        return _err(str(exc))
-    counts = {k: sum(1 for r in rows if r["record"] == k) for k in RECORDS}
-    if not confirm:
-        return {"ok": True, "action": "sync", "status": "dry_run", "would_upsert": counts,
-                "pending_sessions": sorted(_pending(root)), "hint": "pass confirm=True to upsert"}
-    client = client or _default_client()
-    if client is None:
-        return {"ok": True, "action": "sync", "status": "inconclusive",
-                "reason": "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set", "upserted": {}}
-    verdict = _upsert(client, rows) if rows else None
-    if verdict is not None:
-        pend = _pending(root)
-        for rs in load_sessions(root):
-            pend[rs[0]["session_id"]] = verdict["reason"]
-        _write_pending(root, pend)
-        return {"ok": True, "action": "sync", **verdict, "upserted": {}, "pending_marker": str(PENDING_REL)}
-    _write_pending(root, {})
-    return {"ok": True, "action": "sync", "status": "synced", "upserted": counts}
-
-
-def ledger_sync_diff(root: Path, client=None) -> dict:
-    """Pre-push online check: ndjson ids vs DB ids. ``missing_in_db`` fails; DB-only ids are informational (a
-    parallel branch's sessions are legitimately absent from this tree). Missing table / no DB => inconclusive."""
-    try:
-        rows = _all_rows(root)
-    except ValueError as exc:
-        return {"status": "error", "reason": str(exc), "missing_in_db": {}}
-    if not rows:
-        return {"status": "in_sync", "missing_in_db": {}, "db_only": {}, "checked": 0}
-    client = client or _default_client()
-    if client is None:
-        return {"status": "inconclusive", "reason": "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set",
-                "missing_in_db": {}}
-    missing: dict[str, list[str]] = {}
-    db_only: dict[str, int] = {}
-    for kind in RECORDS:
-        local = {r[PK[kind]] for r in rows if r["record"] == kind}
-        try:
-            data = client.schema(DB_SCHEMA).table(DB_TABLES[kind]).select(PK[kind]).execute().data or []
-        except Exception as exc:  # noqa: BLE001 -- enumerated verdict, never swallowed
-            return {"status": "inconclusive", "reason": _classify(exc), "table": f"{DB_SCHEMA}.{DB_TABLES[kind]}",
-                    "missing_in_db": {}}
-        remote = {d[PK[kind]] for d in data}
-        if local - remote:
-            missing[kind] = sorted(local - remote)
-        if remote - local:
-            db_only[kind] = len(remote - local)
-    return {"status": "diff" if missing else "in_sync", "missing_in_db": missing, "db_only": db_only,
-            "checked": len(rows)}
+# ── status ───────────────────────────────────────────────────────────────────
 
 
 def status(root: Path, *, outcome_after_days: int = 14, now: datetime | None = None) -> dict:
-    """Pending-sync count, sessions with no verdict, objections with no outcome older than N days."""
+    """Sessions with no verdict, objections with no outcome older than N days (seats only for verdicted sessions)."""
     now = now or datetime.now(timezone.utc)
     try:
         sessions = load_sessions(root)
@@ -669,18 +592,19 @@ def status(root: Path, *, outcome_after_days: int = 14, now: datetime | None = N
     for rows in sessions:
         s = rows[0]
         sid = s["session_id"]
-        if not any(r["record"] == "verdict" for r in rows):
+        revealed = _has_verdict(rows)
+        if not revealed:
             no_verdict.append(sid)
         decided = {r["objection_id"] for r in rows if r["record"] == "event" and r["event_kind"] == "outcome"
                    and r["outcome"] != "untested"}
         for o in (r for r in rows if r["record"] == "objection"):
             ts = _parse_ts(o["recorded_at"])
             if o["objection_id"] not in decided and ts and now - ts > timedelta(days=outcome_after_days):
-                stale.append({"objection_id": o["objection_id"], "session_id": sid, "seat": o["seat"],
-                              "age_days": (now - ts).days})
-    pend = _pending(root)
-    return {"ok": True, "action": "status", "sessions": len(sessions), "pending_sync": len(pend),
-            "pending_sessions": sorted(pend), "sessions_without_verdict": no_verdict,
+                item = {"objection_id": o["objection_id"], "session_id": sid, "age_days": (now - ts).days}
+                if revealed:  # seats stay hidden until the verdict exists
+                    item["seat"] = o["seat"]
+                stale.append(item)
+    return {"ok": True, "action": "status", "sessions": len(sessions), "sessions_without_verdict": no_verdict,
             "objections_without_outcome": stale, "outcome_after_days": outcome_after_days}
 
 
@@ -768,7 +692,7 @@ def _req(kw: dict, *names: str) -> str | None:
     return f"missing required argument(s): {', '.join(miss)}" if miss else None
 
 
-def run(action: str, *, root: Path | None = None, client=None, **kw: Any) -> dict:
+def run(action: str, *, root: Path | None = None, **kw: Any) -> dict:
     if root is None:
         wt = kw.pop("worktree_path", None)
         if wt:
@@ -778,9 +702,7 @@ def run(action: str, *, root: Path | None = None, client=None, **kw: Any) -> dic
             root = Path(REPO_ROOT)
     else:
         kw.pop("worktree_path", None)
-    auto_sync = kw.pop("auto_sync", True)
-    common = {"recorded_by": kw.get("recorded_by"), "recorded_at": kw.get("recorded_at"),
-              "client": client, "auto_sync": auto_sync}
+    common = {"recorded_by": kw.get("recorded_by"), "recorded_at": kw.get("recorded_at")}
     if action == "open_session":
         e = _req(kw, "stage", "subject_kind", "subject_ref", "trigger", "mode", "seats", "brief_sha256")
         return _err(e) if e else open_session(
@@ -788,9 +710,11 @@ def run(action: str, *, root: Path | None = None, client=None, **kw: Any) -> dic
             trigger=kw["trigger"], mode=kw["mode"], seats=kw["seats"], brief_sha256=kw["brief_sha256"],
             project=kw.get("project"), session_id=kw.get("session_id"), **common)
     if action == "record_objection":
-        e = _req(kw, "session_id", "seat", "anon_label", "severity", "claim", "model")
+        if kw.get("anon_label") is not None:
+            return _err("anon_label is assigned by the tool (neutral recorder); the caller cannot pass one", refused=True)
+        e = _req(kw, "session_id", "seat", "severity", "claim", "model")
         return _err(e) if e else record_objection(
-            root, session_id=kw["session_id"], seat=kw["seat"], anon_label=kw["anon_label"],
+            root, session_id=kw["session_id"], seat=kw["seat"],
             severity=kw["severity"], claim=kw["claim"], model=kw["model"], tokens=kw.get("tokens"),
             objection_id=kw.get("objection_id"), **common)
     if action == "record_verdict":
@@ -805,14 +729,15 @@ def run(action: str, *, root: Path | None = None, client=None, **kw: Any) -> dic
             root, session_id=kw["session_id"], event_kind=kw["event_kind"], objection_id=kw.get("objection_id"),
             outcome=kw.get("outcome"), evidence_kind=kw.get("evidence_kind"), evidence_ref=kw.get("evidence_ref"),
             note=kw.get("note"), event_id=kw.get("event_id"), **common)
+    if action in ("blind_view", "full_view"):
+        e = _req(kw, "session_id")
+        return _err(e) if e else (blind_view if action == "blind_view" else full_view)(root, kw["session_id"])
     if action == "report":
         return report(root, stage=kw.get("stage"), project=kw.get("project"), since=kw.get("since"),
                       stage_map=kw.get("stage_map"))
-    if action == "sync":
-        return sync(root, confirm=bool(kw.get("confirm")), client=client)
     if action == "status":
         return status(root, outcome_after_days=int(kw.get("outcome_after_days") or 14))
-    return _err("action must be one of open_session|record_objection|record_verdict|record_event|report|sync|status; "
+    return _err("action must be one of open_session|record_objection|record_verdict|record_event|blind_view|full_view|report|status; "
                 f"got {action!r}")
 
 
@@ -822,20 +747,21 @@ def register(server) -> None:  # noqa: ANN001
         description=(
             "The council ledger (contract: project-history/assistant-chatbot/contracts/council-ledger.md). ndjson per "
             "session under project-history/council/<YYYY-MM>/, append-only, every enum validated (invalid row = "
-            "refused with the exact clause), DB leg by id (table missing/unreachable => status inconclusive + a "
-            ".pending-sync marker, never red).\n\n"
+            "refused with the exact clause). The ndjson in git is the source of truth (DB mirror deferred).\n\n"
             "ACTIONS\n"
             "  open_session     — stage, subject_kind, subject_ref, trigger, mode, seats[], brief_sha256; optional project.\n"
-            "  record_objection — session_id, seat, anon_label, severity, claim (<=3 sentences), model; optional tokens.\n"
+            "  record_objection — session_id, seat, severity, claim (<=3 sentences), model; optional tokens. The TOOL assigns "
+            "anon_label (callers cannot pass one); returns only {objection_id, status:'submitted'} (neutral recorder).\n"
+            "  blind_view       — session_id: the chair's view, {anon_label, severity, claim} only (no seat/model/id).\n"
+            "  full_view        — session_id: every row incl. seats; refused until a verdict exists.\n"
             "  record_verdict   — session_id, chair_kind, decision, biggest_risk, first_step, dispositions"
-            "[{objection_id, disposition, reason}] (one per objection; reason 'unique' marks a unique hit); optional tokens.\n"
+            "[{objection_id|anon_label, disposition, reason}] (one per objection; labels are translated; reason 'unique' marks a unique hit); optional tokens.\n"
             "  record_event     — session_id, event_kind in {ratified,overruled,outcome}; outcome needs objection_id, "
             "outcome {vindicated,refuted,untested}, evidence_kind; optional evidence_ref, note.\n"
-            "  report           — per-seat hit/unique-hit/false-alarm/acceptance/cost_per_hit + retune proposals; "
+            "  report           — (sessions with a verdict only) per-seat hit/unique-hit/false-alarm/acceptance/cost_per_hit + retune proposals; "
             "filters stage, project, since; optional stage_map {stage:{seat:M|O}}.\n"
-            "  sync             — push ndjson rows to the DB by id; dry-run unless confirm=True.\n"
-            "  status           — pending-sync count, sessions without a verdict, objections without an outcome "
-            "older than outcome_after_days (default 14).\n"
+            "  status           — sessions without a verdict, objections without an outcome "
+            "older than outcome_after_days (default 14); seats shown only for sessions with a verdict.\n"
             "recorded_by defaults to CLAUDE_CODE_SESSION_ID; ids are generated when omitted; worktree_path pins the tree."
         ),
     )
@@ -851,7 +777,6 @@ def register(server) -> None:  # noqa: ANN001
         brief_sha256: str | None = None,
         project: str | None = None,
         seat: str | None = None,
-        anon_label: str | None = None,
         severity: str | None = None,
         claim: str | None = None,
         model: str | None = None,
@@ -869,21 +794,18 @@ def register(server) -> None:  # noqa: ANN001
         note: str | None = None,
         since: str | None = None,
         stage_map: dict | None = None,
-        confirm: bool = False,
         outcome_after_days: int = 14,
         recorded_by: str | None = None,
-        auto_sync: bool = True,
         worktree_path: str | None = None,
     ) -> dict:
         return run(action, worktree_path=worktree_path, session_id=session_id, stage=stage,
                    subject_kind=subject_kind, subject_ref=subject_ref, trigger=trigger, mode=mode, seats=seats,
-                   brief_sha256=brief_sha256, project=project, seat=seat, anon_label=anon_label, severity=severity,
+                   brief_sha256=brief_sha256, project=project, seat=seat, severity=severity,
                    claim=claim, model=model, tokens=tokens, objection_id=objection_id, chair_kind=chair_kind,
                    decision=decision, biggest_risk=biggest_risk, first_step=first_step, dispositions=dispositions,
                    event_kind=event_kind, outcome=outcome, evidence_kind=evidence_kind, evidence_ref=evidence_ref,
-                   note=note, since=since, stage_map=stage_map, confirm=confirm,
-                   outcome_after_days=outcome_after_days, recorded_by=recorded_by, auto_sync=auto_sync)
+                   note=note, since=since, stage_map=stage_map,
+                   outcome_after_days=outcome_after_days, recorded_by=recorded_by)
 
 
-__all__ = ["run", "validate_row", "validate_file_rows", "compute_metrics", "check_schema", "ledger_sync_diff",
-           "append_only_violations", "register", "ENUMS", "DB_TABLES"]
+__all__ = ["run", "validate_row", "validate_file_rows", "compute_metrics", "check_schema", "append_only_violations", "register", "blind_view", "full_view", "ENUMS"]

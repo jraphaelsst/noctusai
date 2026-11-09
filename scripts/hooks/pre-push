@@ -558,28 +558,6 @@ if [[ "$blocked" -ne 0 ]]; then
     exit 1
 fi
 
-# ─── council ledger (online leg, contract council-ledger.md §4b) ──────────────────────────────────────────────
-# When the pushed range touches project-history/council/**, compare the ndjson ids with the DB ids. A missing id
-# FAILS the push (with the list); "table not applied / no credentials / DB unreachable" is INCONCLUSIVE: printed
-# loudly, never blocks (verdict-channel integrity: unmeasurable is never red).
-_council_touched=0
-while read -r l_ref l_oid r_ref r_oid; do
-    [[ "${l_oid:-0}" =~ ^0+$ ]] && continue
-    if [[ "${r_oid:-0}" =~ ^0+$ ]]; then
-        _cb="$(git -C "$REPO_ROOT_PP" merge-base "$l_oid" origin/dev 2>/dev/null || true)"
-        [[ -n "$_cb" ]] || continue
-        _cn="$(git -C "$REPO_ROOT_PP" diff --name-only "$_cb" "$l_oid" -- project-history/council 2>/dev/null || true)"
-    else
-        _cn="$(git -C "$REPO_ROOT_PP" diff --name-only "$r_oid" "$l_oid" -- project-history/council 2>/dev/null || true)"
-    fi
-    [[ -n "$_cn" ]] && _council_touched=1
-done <<< "$PUSH_LINES"
-if [[ "$_council_touched" -eq 1 ]]; then
-    if ! "$_ld_py" "$REPO_ROOT_PP/mcp/noctusai/cli.py" --check-council-ledger-sync --worktree-path "$REPO_ROOT_PP"; then
-        echo "pre-push BLOCKED: council ledger rows missing from the DB. Run noctus.dev.council_ledger action=sync confirm=True, then push again." >&2
-        exit 1
-    fi
-fi
 # ─── agent packages (agent-packages CONTRACT §F / A5) ───────────────────────
 # A push to `dev` that changed products/agents/packages/<key>/** publishes that package to Agent Studio
 # (build -> import -> evals -> publish ONLY if the gate passes). Instant no-op when nothing under packages
