@@ -41,10 +41,13 @@ kind                  payload                                                   
 ``evals_mecanismo``   ``{"itens": [{slug, titulo, entrada, k, roteiro, asserts,   /api/studio/agents/{agent}/
                       tags, ativo}]}`` (mechanism cases; ``merge=False``          evals/cases
                       deactivates the ones left out)
+``evals_comportamento`` ``{"itens": [{slug, titulo, entrada, contexto, criterios:   idem (suite comportamento:
+                      {deve, nao_deve}, rubrica, roteiro (world only), tags,      the LLM-judged cases)
+                      ativo}]}`` (same merge rule, this suite only)
 ``conformidade_regras`` (READ-ONLY: list/get; set is refused) ``{"itens": [...]}``     .../conformidade/regras/{regra}
 ====================  ==========================================================  =============================
 
-``evals_mecanismo`` and ``conformidade_regras`` are not draft rows: a case is judged by the next mechanism run (nothing
+``evals_mecanismo``/``evals_comportamento`` and ``conformidade_regras`` are not draft rows: a case is judged by the next run of its suite (nothing
 is run here), and a rule applies from the next turn -- the dry-run diff is the review step. Both use the same platform
 ``studio:content-write`` token, are audited ``conteudo_editado_mcp`` and only ever touch the definition's own rows.
 
@@ -569,25 +572,29 @@ class _Padrao:
         return {k: v for k, v in self._rows(self._version(api, padrao)[1]).items() if chave in (None, k)}
 
 
-# ── mechanism eval cases (the publish gate's scripted suite) ────────────────
-
-_CASO_FIELDS = ("titulo", "entrada", "k", "roteiro", "asserts", "tags", "ativo")
-_CASO_NOVO = ("titulo", "entrada", "roteiro", "asserts")
+# ── eval cases (one class per suite: the mechanism suite and the judged behaviour suite) ──
 
 
-class _EvalsMecanismo:
-    """The ``mecanismo`` eval cases of an agent (``/api/studio/agents/{agent}/evals/cases``), keyed by ``slug``.
-    Not versioned: a case is judged by the NEXT mechanism run; nothing here starts a run or publishes. Fixtures are
+class _EvalCases:
+    """The eval cases of ONE suite of an agent (``/api/studio/agents/{agent}/evals/cases``), keyed by ``slug``.
+    Not versioned: a case is judged by the NEXT run of its suite; nothing here starts a run or publishes. Fixtures are
     synthetic (the server refuses personal data; ``[[cpf_sintetico_valido]]`` / ``[[email_sintetico]]`` tokens are
-    the way to script identity). ``merge=False`` DEACTIVATES the cases left out (a case with results cannot be
-    deleted, and deleting stays a human act)."""
+    the way to script identity). ``merge=False`` DEACTIVATES the suite's cases left out (a case with results cannot be
+    deleted, and deleting stays a human act). The other suite's cases are never read nor touched.
+
+    * ``mecanismo``: scripted turns (``roteiro``) + deterministic ``asserts``;
+    * ``comportamento``: an LLM judge scores the reply against ``criterios`` ``{deve, nao_deve}`` (+ ``rubrica``);
+      its ``roteiro`` is the simulated WORLD only (``estado_inicial`` / ``catalogo`` / ``fixture``, no ``turnos``)."""
+
+    def __init__(self, suite: str, fields: tuple[str, ...], novo: tuple[str, ...]) -> None:
+        self.suite, self.fields, self.novo = suite, fields, novo
 
     def _rows(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
         got = api.call("GET", f"/api/studio/agents/{_q(agent)}/evals/cases")["items"]
-        return {c["slug"]: c for c in got if c.get("suite") == "mecanismo"}
+        return {c["slug"]: c for c in got if c.get("suite") == self.suite}
 
     def current(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
-        return {k: {f: v.get(f) for f in _CASO_FIELDS} for k, v in self._rows(api, agent).items()}
+        return {k: {f: v.get(f) for f in self.fields} for k, v in self._rows(api, agent).items()}
 
     def plan(self, api: _Api, agent: str, payload: Any, merge: bool):
         items = _items(payload)
@@ -600,18 +607,18 @@ class _EvalsMecanismo:
             slug = it.get("slug")
             if not isinstance(slug, str) or not slug:
                 raise ContentError("payload_invalido", "Cada caso precisa de 'slug'.")
-            unknown = set(it) - set(_CASO_FIELDS) - {"slug"}
+            unknown = set(it) - set(self.fields) - {"slug"}
             if unknown:
                 raise ContentError("payload_invalido", f"Campos desconhecidos: {', '.join(sorted(unknown))}.")
             vistos.add(slug)
             touched = {k: v for k, v in it.items() if k != "slug"}
             old = rows.get(slug)
             if old is None:
-                faltam = [f for f in _CASO_NOVO if f not in touched]
+                faltam = [f for f in self.novo if f not in touched]
                 if faltam:
                     raise ContentError("caso_incompleto", f"O caso novo '{slug}' precisa de: {', '.join(faltam)}.")
                 ch = _change(slug, None, touched)
-                steps.append(("POST", base, {"slug": slug, "suite": "mecanismo", **touched}))
+                steps.append(("POST", base, {"slug": slug, "suite": self.suite, **touched}))
             else:
                 ch = _change(slug, {k: old.get(k) for k in touched}, touched)
                 if ch["op"] != "unchanged":
@@ -692,9 +699,20 @@ _REPLACE_SETS: dict[str, _ReplaceSet] = {
 _SKILL, _SKILL_REF = _Skill(), _SkillRef()
 _PADRAO = {"padrao_criterio": _Padrao("criterios"), "padrao_estagio": _Padrao("estagios"), "padrao_parametros": _Padrao("parametros")}
 #: Agent-scoped kinds that are NOT draft rows: what a confirmed write does, said in the result.
-_AGENTE = {"evals_mecanismo": _EvalsMecanismo(), "conformidade_regras": _ConformidadeRegras()}
+_AGENTE = {
+    "evals_mecanismo": _EvalCases(
+        "mecanismo", ("titulo", "entrada", "k", "roteiro", "asserts", "tags", "ativo"),
+        ("titulo", "entrada", "roteiro", "asserts"),
+    ),
+    "evals_comportamento": _EvalCases(
+        "comportamento", ("titulo", "entrada", "contexto", "criterios", "rubrica", "roteiro", "tags", "ativo"),
+        ("titulo", "entrada", "criterios"),
+    ),
+    "conformidade_regras": _ConformidadeRegras(),
+}
 _EFEITO = {
     "evals_mecanismo": "Casos gravados: valem na PRÓXIMA execução da suíte mecanismo. Nada foi executado nem publicado.",
+    "evals_comportamento": "Casos gravados: valem na PRÓXIMA execução da suíte comportamento (juiz LLM). Nada foi executado nem publicado.",
     "conformidade_regras": "Regras não são versionadas: valem a partir do próximo turno. Nada foi publicado.",
 }
 KINDS = (*_REPLACE_SETS, "skill", "skill_ref", *_PADRAO, *_AGENTE)
@@ -890,7 +908,7 @@ def register(server) -> None:
             "Write an agent's CONTENT rows (the 'Claude, change Julia's X' path) into a target environment through the "
             "agents Studio API, DRAFTS ONLY (never publishes). action=list|get|set; kind=secao|texto|ferramenta|decisao|"
             "spec (need agent=<key>), skill|skill_ref (library skills / pins on the agent draft), padrao_criterio|"
-            "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo (mechanism eval cases) | "
+            "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo|evals_comportamento (mechanism / LLM-judged behaviour eval cases) | "
             "conformidade_regras (rule switches; NOT versioned - live from the next turn) (need agent=<key>). Lifecycle: "
             "action=criar_agente (agent=<any valid key>: creates the EMPTY platform definition; optional payload_path with nome, "
             "runtime, owner_product, escopo/padrao_qualificacao, rascunho_padrao, instanciavel, papel and a briefing that "
