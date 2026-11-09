@@ -99,6 +99,17 @@ logged and never fails the turn. Contract: `products/agents/projects/julia-v2/CO
 
 ---
 
+### 0.3 One rolling-24h spend ceiling per org, shared by every mechanism (2026-11-09)
+
+`budget.py` is the MONTHLY per-org guard over `ai_usage`; the DAILY run ceiling is a separate seed seam,
+`integrations/llm/spend_ceiling.py` (Protocol `SpendCeiling` + Fake `InMemorySpendCeiling` + Real
+`SupabaseSpendCeiling` + `make_spend_ceiling`). A caller names a ceiling key (`automacao-avaliacoes`) and its kind
+(`eval_run`, `mecanismo_run`, later the improver loop) and `reserve`s the run's cost cap; the total counts ALL kinds under the
+key for the org over the window (actual cost once `settle`d, the cap while unfinished). Over it = `SpendCeilingExceeded` (429);
+lookup failure = `SpendCeilingUnverifiable` (503, fail-CLOSED, like `LLMCreditsUnverifiable`). Setting `daily_spend_ceiling_usd`
+(`DAILY_SPEND_CEILING_USD`, default 10.0). Storage: `public.spend_reservations` + atomic RPC `spend_reserve` (core migration 114) --
+a reservation table, not `ai_usage`, because ai_usage is append-only per finished call and cannot hold "this run may still spend $X".
+
 ## 1. Architecture
 
 ```

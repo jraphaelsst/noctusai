@@ -49,6 +49,7 @@ from app.routers.studio_evals_router import (
 from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
 from app.studio.bundles import configure_skill_refs_provider
 from app.studio.catalog import StoreKnowledgeCatalog
+from app.studio.spend import SpendSettlingRunWriter, get_spend_ceiling_dep
 from noctusai_lib.api.auth.session import AuthContext
 
 __all__ = [
@@ -97,6 +98,7 @@ def studio_eval_scheduler(
     ctx: AuthContext = Depends(require_publish_write),
     evals=Depends(get_eval_store_dep),
     runs=Depends(get_eval_run_writer_dep),
+    ceiling=Depends(get_spend_ceiling_dep),
     definitions=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
     runtime=Depends(get_agent_runtime_dep),
@@ -115,7 +117,7 @@ def studio_eval_scheduler(
 
     runner = EvalRunner(
         evals=evals,
-        runs=runs,
+        runs=SpendSettlingRunWriter(runs, ceiling),  # settles the shared daily-ceiling reservation at run end
         definitions=definitions,
         catalog=catalog,
         runtime=runtime,

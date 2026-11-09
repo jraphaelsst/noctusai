@@ -83,6 +83,12 @@ from .budget import (
     fetch_budget_brl,
     is_configured as is_budget_configured,
 )
+from .spend_ceiling import (
+    InMemorySpendCeiling,
+    SpendCeiling,
+    SupabaseSpendCeiling,
+    make_spend_ceiling,
+)
 from .exceptions import (
     LLMAPIError,
     ProviderQuotaExhausted,
@@ -90,6 +96,8 @@ from .exceptions import (
     LLMBudgetNotConfigured,
     LLMCreditsExhausted,
     LLMCreditsUnverifiable,
+    SpendCeilingExceeded,
+    SpendCeilingUnverifiable,
     LLMNotConfigured,
     ProviderNotImplemented,
 )
@@ -180,6 +188,12 @@ __all__ = [
     "LLMBudgetNotConfigured",
     "LLMCreditsExhausted",
     "LLMCreditsUnverifiable",
+    "SpendCeilingExceeded",
+    "InMemorySpendCeiling",
+    "SpendCeiling",
+    "SupabaseSpendCeiling",
+    "make_spend_ceiling",
+    "SpendCeilingUnverifiable",
     "LLMNotConfigured",
     "ProviderNotImplemented",
     # Budget guardrails (Phase 18 X4)

@@ -145,6 +145,38 @@ class LLMCreditsUnverifiable(AppException):
         )
 
 
+class SpendCeilingExceeded(AppException):
+    """Reserving this spend would cross the org's shared rolling-window ceiling
+    (`integrations.llm.spend_ceiling`). HTTP 429; ``details`` carries amounts only."""
+
+    def __init__(self, ceiling_key: str, org_id: Optional[str], spent_usd: float, requested_usd: float, ceiling_usd: float):
+        super().__init__(
+            code="SPEND_CEILING_EXCEEDED",
+            message="Limite diário de custo atingido para esta organização. Tente novamente mais tarde.",
+            status_code=429,
+            details={
+                "ceiling_key": ceiling_key,
+                "org_id": org_id,
+                "spent_usd": round(spent_usd, 6),
+                "requested_usd": round(requested_usd, 6),
+                "ceiling_usd": round(ceiling_usd, 6),
+            },
+        )
+
+
+class SpendCeilingUnverifiable(AppException):
+    """The spend ceiling could not be checked. Fail CLOSED: no reservation is granted on an unknown total.
+    HTTP 503 — the guard is temporarily unable to verify, not "limit reached"."""
+
+    def __init__(self, ceiling_key: str, org_id: Optional[str], detail: str):
+        super().__init__(
+            code="SPEND_CEILING_UNVERIFIABLE",
+            message="Não foi possível verificar o limite diário de custo agora. Tente novamente em instantes.",
+            status_code=503,
+            details={"ceiling_key": ceiling_key, "org_id": org_id, "detail": detail[:300]},
+        )
+
+
 class LLMBudgetNotConfigured(AppException, IntegrationNotConfigured):
     """The budget guard cannot read its own storage (`public.org_settings`).
 

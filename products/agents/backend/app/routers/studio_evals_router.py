@@ -30,7 +30,6 @@ Error codes: 409 ``slug_taken`` (duplicate case slug), 409 ``case_in_use``
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 import anyio.to_thread
@@ -69,6 +68,7 @@ from app.schemas.studio_ke import (
     EvalRunOut,
 )
 from app.stores._db_errors import StudioConflict
+from app.studio.spend import KIND_EVAL_RUN, get_spend_ceiling_dep, reserve_run
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
 from app.stores.studio_evals import EvalCaseInput, _UNSET
@@ -231,8 +231,8 @@ def delete_case(
 
 def _guard_token_run(ctx: AuthContext, store, defs, agent, version, payload) -> None:
     """Denial-of-wallet guards for a PRODUCT-token run start (the platform-admin UI keeps its latitude): the run
-    stays at the settings default cost cap and model, targets only the agent's current draft, and the org's rolling
-    24h token-run spend ceiling is fail-closed (a store error propagates -> 5xx, never an allowed run)."""
+    stays at the settings default cost cap and model and targets only the agent's current draft. The org's shared
+    rolling-24h spend ceiling is reserved right after the run is booked (``reserve_run``, fail-closed)."""
     default_cap = settings.studio_eval_run_budget_usd
     if payload.limite_usd is not None and payload.limite_usd > default_cap:
         raise http_error(422, "limite_usd_above_default", f"limite_usd acima do padrão ({default_cap}).")
@@ -241,11 +241,6 @@ def _guard_token_run(ctx: AuthContext, store, defs, agent, version, payload) -> 
     draft = defs.get_draft(ctx.org_id, agent.id)
     if draft is None or draft.id != version.id:
         raise http_error(422, "version_not_draft", "Este token só executa avaliações sobre o rascunho atual.")
-    requested = payload.limite_usd if payload.limite_usd is not None else default_cap
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
-    spent = store.org_spend_since(ctx.org_id, since)
-    if spent + requested > settings.studio_eval_token_daily_budget_usd:
-        raise http_error(429, "eval_daily_budget_exceeded", "Limite diário de custo de avaliações atingido.")
 
 
 @router.post("/{key}/evals/runs", response_model=EvalRunOut, status_code=status.HTTP_202_ACCEPTED)
@@ -259,6 +254,7 @@ async def create_run(
     defs=Depends(get_studio_definition_store_dep),
     scheduler=Depends(get_eval_scheduler_dep),
     current_hash: CurrentHash = Depends(get_current_hash_dep),
+    ceiling=Depends(get_spend_ceiling_dep),
 ) -> EvalRunOut:
     # The store/definition calls are sync PostgREST: run them in a worker thread so the loop keeps
     # serving. Only the scheduler (asyncio.create_task) stays on the loop. Exceptions (NotFound ->
@@ -299,6 +295,14 @@ async def create_run(
             raise http_error(409, exc.code, str(exc)) from exc
         except ValueError as exc:
             raise http_error(422, "no_eval_cases", str(exc)) from exc
+
+        if ctx.caller_kind == "product":
+            # The shared daily ceiling (seed): over it / unverifiable -> the booked run is failed, never scheduled.
+            try:
+                reserve_run(ceiling, org_id=ctx.org_id, kind=KIND_EVAL_RUN, run_id=run.id, amount_usd=limite_usd)
+            except Exception:
+                store.mark_run_failed(ctx.org_id, run.id, erro="daily_spend_ceiling")
+                raise
 
         return run
 

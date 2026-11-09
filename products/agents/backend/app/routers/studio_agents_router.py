@@ -37,6 +37,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 from uuid import UUID
 
+import anyio.to_thread
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
@@ -109,6 +110,7 @@ from app.studio.eval_mecanismo_service import (
     iniciar_suite_mecanismo,
 )
 from app.studio.plataforma import ensure_instancias
+from app.studio.spend import KIND_MECANISMO_RUN, get_spend_ceiling_dep, reserve_run, settle_run
 from app.studio.models import (
     CompiledPrompt,
     EvalGate,
@@ -1183,6 +1185,7 @@ async def run_mecanismo_suite(
     mecanismo=Depends(get_mecanismo_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
     driver=Depends(get_eval_turn_driver),
+    ceiling=Depends(get_spend_ceiling_dep),
 ) -> MecanismoRunIniciadaOut:
     """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
     minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
@@ -1210,10 +1213,21 @@ async def run_mecanismo_suite(
     except DriverSemTipo as exc:
         raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.") from exc
 
+    if ctx.caller_kind == "product":
+        # The shared daily ceiling (seed, same key as the eval runs): over it / unverifiable -> the booked run fails.
+        try:
+            await anyio.to_thread.run_sync(lambda: reserve_run(
+                ceiling, org_id=ctx.org_id, kind=KIND_MECANISMO_RUN, run_id=run_id, amount_usd=limite))
+        except Exception:
+            mecanismo.fail_run(ctx.org_id, run_id, erro="Limite diário de custo atingido.")
+            raise
+
     async def _executar() -> None:
         try:
-            await concluir_suite_mecanismo(
+            resultado = await concluir_suite_mecanismo(
                 mecanismo, driver, casos, org_id=ctx.org_id, run_id=run_id, limite_usd=limite)
+            if resultado.erro_de_harness is None:  # a crashed/harness-failed run keeps its cap counting
+                settle_run(ceiling, kind=KIND_MECANISMO_RUN, run_id=run_id, actual_usd=float(resultado.custo_usd or 0.0))
         except Exception:  # noqa: BLE001 -- the run is already marked `falhou` (fixed text); nothing else to do
             logger.exception("agents.studio.mecanismo_run_falhou run_id=%s", run_id)
 

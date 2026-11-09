@@ -254,3 +254,68 @@ class TestOrphanSweep:
 
         src = inspect.getsource(main.on_startup)
         assert "fail_orphan_mecanismo_runs" in src and "varrer_runs_orfas" in src
+
+
+class TestSharedDailyCeiling:
+    """Owner 2026-11-09: ONE $10/24h ceiling per org for every token-started mechanism (eval + mecanismo runs)."""
+
+    @staticmethod
+    def _token(studio):
+        from app.dependencies import get_auth_context
+        from noctusai_lib.api.auth.session import AuthContext
+
+        studio.raw.app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+            org_id=studio.org_id, caller_kind="product", user_id=None, scopes=["studio:evals-run"],
+            raw_token="tok", api_token_id=UUID(int=11), issuer="noctus-platform",
+        )
+
+    @staticmethod
+    def _ceiling(studio):
+        from app.studio.spend import get_spend_ceiling_dep
+        from noctusai_lib.integrations.llm import InMemorySpendCeiling
+
+        c = InMemorySpendCeiling()
+        studio.raw.app.dependency_overrides[get_spend_ceiling_dep] = lambda: c
+        return c
+
+    @staticmethod
+    def _eval_spend(c, org_id, usd):
+        from app.studio.spend import CEILING_KEY, KIND_EVAL_RUN
+
+        c.reserve(ceiling_key=CEILING_KEY, kind=KIND_EVAL_RUN, org_id=org_id, ref=str(uuid4()),
+                  amount_usd=usd, ceiling_usd=100.0)
+
+    def test_an_eval_spend_plus_a_token_mecanismo_run_crossing_10_is_429(self, studio):
+        store = _setup(studio, driver=_Live(_ok()))
+        c = self._ceiling(studio)
+        self._eval_spend(c, studio.org_id, 6.0)  # + the mecanismo cap (5.0) = 11.0 > 10.0
+        self._token(studio)
+        resp = studio.raw.post(URL)
+        assert resp.status_code == 429 and resp.json()["code"] == "daily_spend_ceiling_exceeded"
+        assert [r["status"] for r in store.runs.values()] == ["falhou"]
+
+    def test_under_the_ceiling_a_token_mecanismo_run_reserves_and_settles_to_its_cost(self, studio):
+        _setup(studio, driver=_Live(_ok()))
+        c = self._ceiling(studio)
+        self._eval_spend(c, studio.org_id, 4.0)  # 4.0 + 5.0 = 9.0 <= 10.0
+        self._token(studio)
+        resp = studio.raw.post(URL)
+        assert resp.status_code == 202, resp.text
+        _poll(studio, resp.json()["run_id"])
+        # settled to the actual (fake driver, ~0 cost): the 5.0 cap no longer counts, so another 5.0 fits
+        self._eval_spend(c, studio.org_id, 5.0)
+
+    def test_a_failed_lookup_refuses_the_token_run_with_a_503(self, studio):
+        _setup(studio, driver=_Live(_ok()))
+        c = self._ceiling(studio)
+        c.fail_with = RuntimeError("down")
+        self._token(studio)
+        resp = studio.raw.post(URL)
+        assert resp.status_code == 503 and resp.json()["code"] == "daily_spend_ceiling_unverifiable"
+
+    def test_the_platform_admin_is_outside_the_ceiling(self, studio):
+        _setup(studio, driver=_Live(_ok()))
+        c = self._ceiling(studio)
+        self._eval_spend(c, studio.org_id, 10.0)
+        resp = studio.post(URL)
+        assert resp.status_code == 202, resp.text
