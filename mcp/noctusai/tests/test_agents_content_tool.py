@@ -28,6 +28,8 @@ class FakeAgents:
     def __init__(self) -> None:
         self.log: list[tuple[str, str, dict | None, str | None]] = []
         self.draft_id = str(uuid.uuid4())
+        self.config = {"provider": "anthropic", "model": "sonnet", "effort": "medium", "max_turns": 8, "idioma": "pt-BR",
+                       "tool_policy": {"web_search": True, "knowledge": True}, "notas": None}
         self.secoes: list[dict] = [{"chave": "persona", "titulo": "Quem", "ordem": 1, "conteudo": "velho", "ativo": True}]
         self.textos: list[dict] = [{"chave": "a.b", "conteudo": "um"}, {"chave": "a.c", "conteudo": "dois"}]
         self.ferramentas: list[dict] = []
@@ -119,7 +121,10 @@ def _handler(state: FakeAgents):
                     return self._send(403, {"code": "scope_missing", "detail": "Missing scope(s): studio:agent-delete"})
                 return self._send(204)
             if m == "GET" and path == f"{A}/draft":
-                return self._send(200, {"id": state.draft_id, "secoes": state.secoes})
+                return self._send(200, {"id": state.draft_id, "secoes": state.secoes, **state.config})
+            if m == "PATCH" and path == f"{A}/draft":
+                state.config.update(b)
+                return self._send(200, {"id": state.draft_id, **state.config})
             sets = {"sections": "secoes", "textos": "textos", "ferramentas": "ferramentas", "decisoes": "decisoes", "specs": "specs"}
             mo = re.fullmatch(rf"{A}/versions/{state.draft_id}/(textos|ferramentas|decisoes|specs)", path)
             if m == "GET" and mo:
@@ -708,3 +713,22 @@ class TestProntidaoEAtualizarSkills:
 
         mod.register(_Srv())
         assert "prontidao" in captured["d"] and "atualizar_skills" in captured["d"]
+
+
+class TestRascunhoKind:
+    def test_only_the_fields_sent_are_patched_after_a_dry_run(self, srv, private):
+        body = {"configuracoes": {"tool_policy": {"web_search": False, "knowledge": False}, "effort": "medium"}}
+        plan = run(srv, private, body, action="set", kind="rascunho", agent="julia")
+        assert plan["status"] == "planned" and srv.writes() == []
+        assert {c["chave"]: c["op"] for c in plan["mudancas"]} == {"effort": "unchanged", "tool_policy": "update"}
+        out = run(srv, private, body, action="set", kind="rascunho", agent="julia", confirm=True)
+        assert out["status"] == "written" and srv.writes() == [("PATCH", "/api/studio/agents/julia/draft")]
+        assert srv.config["tool_policy"] == {"web_search": False, "knowledge": False} and srv.config["effort"] == "medium"
+
+    def test_an_unknown_setting_is_refused_before_any_write(self, srv, private):
+        out = run(srv, private, {"configuracoes": {"temperature": 0}}, action="set", kind="rascunho", agent="julia", confirm=True)
+        assert out["status"] == "error" and out["codigo"] == "payload_invalido" and srv.writes() == []
+
+    def test_get_reads_the_settings(self, srv, private):
+        out = run(srv, private, action="get", kind="rascunho", agent="julia", chave="model")
+        assert out["itens"] == {"model": "sonnet"}
