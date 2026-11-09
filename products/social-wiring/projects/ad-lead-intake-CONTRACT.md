@@ -95,6 +95,19 @@ We do NOT assign `leads.corretor_id` from the property (owner decision: warn via
 
 "Leads linked to a property" = `leads.imovel_ref_id = registry.id` ∪ `cliente_imovel_interesses.lead_id` (live rows) — both populated by the intake.
 
+## 3b. Ref-divergence notices — the sync never erases our data, it warns (migration 333, owner 2026-11-09)
+
+`imovel_ref_avisos(org_id, codigo_canonical, tipo, status, exibir_antes, notas jsonb, notificado_em, …)` — a SIBLING of `lead_corretor_divergencias`, not one generalised
+table: its subject is an imóvel (no lead), its resolutions differ (`restaurar` / `confirmar_sumiu` / `ciente`), and its open-uniqueness key is `(org, código, tipo)`.
+
+| `tipo` | When | What happens |
+|---|---|---|
+| `ref_sumiu_no_vista` | a ref WE HAVE (a mirror row exists) that Vista no longer has: per-code `DETALHE_SUMIU` (sync_detalhes or the intake refresh) or a listar registry sweep that delisted it | every datum kept (no delete); the imóvel is PAUSED: `imoveis.exibir_no_site=false` — the flag the site, Julia's catalog/offers (`julia_catalogo_service.publicado`) and the campaign card (`campanha_resolucao._codigos_da_campanha` now drops paused codes) already honour; notice `pendente` + ONE in-app warning per sync run to owners/admins. A transport failure is never a disappearance. A mass removal is still refused by the 20%/50 circuit breaker (`removidos_excessivos`): no pause, no notice. A code we never had (a typo'd REF) gets none. |
+| `ref_nova_no_vista` | a ref Vista has that we did not (discovery, listar, intake) | created on our side as before; informational notice; ONE batched in-app warning per run; not recorded on an org's very first import (empty mirror). |
+
+The pause is STICKY: while a `ref_sumiu_no_vista` notice is `pendente` or `confirmada_sumiu`, the sync's upserts force `exibir_no_site=false` (Vista's value is not applied). If the code reappears in Vista the notice gets a note (`tipo: reapareceu`) and stays paused; a confirmed-gone one REOPENS to `pendente` (a new fact needs a human). Nothing ever unpauses automatically.
+Resolutions: `POST /ref-avisos/{id}/restaurar` (sets `exibir_no_site` back to `exibir_antes`, status `restaurada` — if Vista still lacks it, the next sync opens a new notice) · `POST /ref-avisos/{id}/resolver {acao: confirmar_sumiu}` (stays paused, `confirmada_sumiu`) · `{acao: ciente}` (a `ref_nova`). Mirror field updates stay automatic; owned-layer divergences (`vista_divergencias`) are unchanged.
+
 ## 4. Endpoints (`/api/leads/ad-intake`, org-tier; admin where it writes/calls Vista; registered before `/api/leads/{lead_id}`)
 
 | Method | Path | Who | Result |
@@ -106,6 +119,9 @@ We do NOT assign `leads.corretor_id` from the property (owner decision: warn via
 | GET | `/imovel/{codigo}/leads?limite&offset` | member | **"Leads interessados"**: `{items:[{id, cliente_nome, contato, data_entrada, origem_raw, corretor_id, created_at, meta_lead_id}], total, codigo}` |
 | GET | `/corretor-divergencias?status=pendente` | member | `{items, total}` |
 | POST | `/corretor-divergencias/{id}/resolver` `{status: resolvida\|ignorada, nota?}` | org admin | the updated row |
+| GET | `/ref-avisos?tipo=&status=pendente` | member | `{items, total}` of ref-divergence notices (§ 3b) |
+| POST | `/ref-avisos/{id}/restaurar` `{nota?}` | org admin | unpause + clear |
+| POST | `/ref-avisos/{id}/resolver` `{acao: confirmar_sumiu\|ciente, nota?}` | org admin | the updated row |
 
 `intake.resultado` shape: `{codigo, vista: ok|sumiu|oculto|falhou|null, imovel: novo|atualizado|inalterado, mudancas:{col:{antes,depois}}, divergencias_vista:[{campo,vista,nosso}], imovel_ref_id, interesse:{cliente, atendimentos}, corretores:{fonte: vista|espelho, total, codigos[]}, divergencia_corretor:{divergencia, nova?, id?}, qualificacao, erros[]}`.
 

@@ -7,6 +7,9 @@
   GET  /imovel/{codigo}/leads          org member · "Leads interessados": leads linked to the property
   GET  /corretor-divergencias          org member · lead corretor x property corretor warnings (?status=pendente&tipo=…)
   POST /corretor-divergencias/{id}/resolver   org admin · a human checked it: resolvida | ignorada
+  GET  /ref-avisos                     org member · ref-divergence notices (?tipo=ref_sumiu_no_vista|ref_nova_no_vista&status=)
+  POST /ref-avisos/{id}/restaurar      org admin  · a ref that vanished from Vista: unpause + clear (one click)
+  POST /ref-avisos/{id}/resolver       org admin  · {acao: confirmar_sumiu (stays paused) | ciente (a new ref)}
 
 Mounted under `/api/leads` BEFORE `leads.router`'s catch-all `/{lead_id}` (see `app/modules/leads/__init__.py`).
 """
@@ -19,16 +22,25 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_for
-from noctusai_lib.primitives.exceptions import NotFoundError
+from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org_unified
 from app.modules.imovel_hub import busca_service
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.services import ad_lead_intake_backfill, ad_lead_intake_service as intake
-from app.services import table_reads
+from app.services import imovel_ref_avisos, table_reads
 
 router = APIRouter(prefix="/api/leads/ad-intake", tags=["leads-ad-intake"])
+
+
+class ResolverAvisoIn(StrictHttpModel):
+    acao: Literal["confirmar_sumiu", "ciente"]
+    nota: Optional[str] = None
+
+
+class RestaurarAvisoIn(StrictHttpModel):
+    nota: Optional[str] = None
 
 
 class ResolverDivergenciaIn(StrictHttpModel):
@@ -161,6 +173,45 @@ def resolver_divergencia(
     patch = {"status": body.status, "nota": body.nota, "resolvido_em": intake._agora(), "resolvido_por": str(getattr(auth[0], "id", "") or "") or None}
     client.table(intake.T_DIVERGENCIAS).update(patch).eq("org_id", str(org_id)).eq("id", str(divergencia_id)).execute()
     return success_response({**linhas[0], **patch})
+
+
+@router.get("/ref-avisos")
+def listar_ref_avisos(
+    tipo: Optional[Literal["ref_sumiu_no_vista", "ref_nova_no_vista"]] = Query(default=None),
+    status: Optional[Literal["pendente", "restaurada", "confirmada_sumiu", "ciente"]] = Query(default="pendente"),
+    auth: tuple = Depends(get_current_user_org_unified),
+    client: Any = Depends(get_leads_client),
+) -> dict:
+    rows = imovel_ref_avisos.listar(client, coerce_org_uuid(auth[2]), tipo=tipo, status=status)
+    return success_response({"items": rows, "total": len(rows)})
+
+
+def _resolver_aviso(aviso_id: UUID, acao: str, nota: Optional[str], auth: tuple, client: Any) -> dict:
+    try:
+        row = imovel_ref_avisos.resolver(client, coerce_org_uuid(auth[2]), aviso_id, acao, getattr(auth[0], "id", None), nota)
+    except LookupError as exc:
+        raise NotFoundError("imovel_ref_aviso", str(aviso_id)) from exc
+    except imovel_ref_avisos.AcaoInvalida as exc:
+        raise AppException("acao_invalida", str(exc), status_code=422) from exc
+    return success_response(row)
+
+
+@router.post("/ref-avisos/{aviso_id}/restaurar")
+def restaurar_ref_aviso(
+    aviso_id: UUID, request: Request, body: Optional[RestaurarAvisoIn] = None,
+    auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
+) -> dict:
+    _admin(auth, request, "Restaurar um imóvel que sumiu do Vista")
+    return _resolver_aviso(aviso_id, "restaurar", body.nota if body else None, auth, client)
+
+
+@router.post("/ref-avisos/{aviso_id}/resolver")
+def resolver_ref_aviso(
+    aviso_id: UUID, body: ResolverAvisoIn, request: Request,
+    auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
+) -> dict:
+    _admin(auth, request, "A divergência de ref com o Vista")
+    return _resolver_aviso(aviso_id, body.acao, body.nota, auth, client)
 
 
 __all__ = ["router"]

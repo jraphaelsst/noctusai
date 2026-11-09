@@ -35,7 +35,7 @@ from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_prop
 from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
 
-from app.services import imoveis_descoberta, vista_divergencias
+from app.services import imoveis_descoberta, imovel_ref_avisos, vista_divergencias
 
 logger = logging.getLogger(__name__)
 
@@ -672,6 +672,9 @@ class ImovelSyncService:
         self._duplicate_detector = duplicate_detector
         self._sonda_max_falhas = max(1, sonda_max_falhas)
         self._div: Optional[vista_divergencias.Execucao] = None
+        # Ref-divergence notices (migration 333): codes Vista has and we did not, collected over a run, flushed once at its end.
+        self._novas_run: list[str] = []
+        self._tinha_espelho = False
 
     def _table(self):
         return self._client.schema(_SCHEMA).table(_TABLE)
@@ -693,6 +696,7 @@ class ImovelSyncService:
         started = datetime.now(timezone.utc)
         report.started_at = started.isoformat()
         self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
+        self._novas_run, self._tinha_espelho = [], None  # `None` = decided lazily, BEFORE the first upsert of the run
         # {"cidade": {canonical: {raw spellings seen}}, "empreendimento": {...}}
         place_name_variants: dict[str, dict[str, set[str]]] = {
             field_name: {} for field_name in _PLACE_NAME_WIRE_KEYS
@@ -759,7 +763,13 @@ class ImovelSyncService:
                 "the registry. status=listar_vazio", org_id,
             )
         elif report.complete:
+            ativos_antes = self._avisos(report, "ativos_antes", self._ativos_do_registro, org_id)
             self._sweep_registry(org_id, synced_at, report)
+            if ativos_antes is not None:
+                ativos_depois = self._avisos(report, "ativos_depois", self._ativos_do_registro, org_id)
+                sumiram = sorted(ativos_antes - ativos_depois) if ativos_depois is not None else []
+                if sumiram:
+                    self._avisos(report, "sumiram", imovel_ref_avisos.registrar_sumiram, org_id, sumiram, origem="listar (sweep)")
             self._detect_duplicates(org_id)
         else:
             logger.warning(
@@ -768,6 +778,7 @@ class ImovelSyncService:
                 org_id,
             )
 
+        self._fim_de_run_avisos(org_id, report, [])
         if not report.complete:
             # Loud, not silent. A partially-complete sync that reports success
             # is how an amenity filter quietly stops matching.
@@ -903,10 +914,12 @@ class ImovelSyncService:
 
         mudaram: list[Imovel] = []
         iguais: list[str] = []
+        self._novas_run, self._tinha_espelho = [], bool(espelho)
         for codigo, imovel in obtidos.items():
             atual = espelho.get(codigo.strip().upper())
             if atual is None:
                 report.novos += 1
+                self._novas_run.append(imovel.codigo)
                 mudaram.append(imovel)
                 continue
             imovel = self._mesclar_com_espelho(imovel, atual)
@@ -930,6 +943,7 @@ class ImovelSyncService:
         self._fechar_divergencias(report)
 
         self._marcar_removidos(org_id, sumiram, ocultos, espelho, synced_at, report, caminhados=len(buscados))
+        self._fim_de_run_avisos(org_id, report, [im.codigo for im in obtidos.values()])
 
         finished = datetime.now(timezone.utc)
         report.finished_at = finished.isoformat()
@@ -979,6 +993,7 @@ class ImovelSyncService:
         for i in range(0, len(imoveis), _LOTE):
             lote = imoveis[i:i + _LOTE]
             rows = [_imovel_to_row(im, org_id, synced_at) for im in lote]
+            self._aplicar_pausa(org_id, rows, report)
             _assert_so_vista(rows)
             self._table().upsert(rows, on_conflict="org_id,codigo").execute()
             report.upserted += len(rows)
@@ -1005,10 +1020,17 @@ class ImovelSyncService:
         self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
         imovel, desfecho = await self.buscar_detalhe(codigo, report)
         saida = RefreshCodigo(codigo=codigo, desfecho=desfecho, report=report)
+        self._novas_run, self._tinha_espelho = [], self._mirror_tem_linhas(org_id)
         if imovel is None:
+            if desfecho == DETALHE_SUMIU:
+                # We may hold it, Vista does not: keep every datum, pause it, open the notice (a code we never had gets none).
+                self._marcar_removidos(org_id, [codigo], [], {}, synced_at, report, caminhados=1)
+                self._fim_de_run_avisos(org_id, report, [])
             report.finished_at = datetime.now(timezone.utc).isoformat()
             return saida
         atual = self._linha_espelho(org_id, imovel.codigo)
+        if atual is None:
+            self._novas_run.append(imovel.codigo)
         imovel = self._mesclar_com_espelho(imovel, atual)
         novo_row = _imovel_to_row(imovel, org_id, synced_at)
         saida.imovel = imovel
@@ -1022,8 +1044,70 @@ class ImovelSyncService:
         self._reativar_registro(org_id, [imovel.codigo], synced_at, report)
         self._divergencias([imovel])
         self._fechar_divergencias(report)
+        self._fim_de_run_avisos(org_id, report, [imovel.codigo])
         report.finished_at = datetime.now(timezone.utc).isoformat()
         return saida
+
+    # ─── Ref-divergence notices: the sync never erases our data, it WARNS (imovel_ref_avisos, migration 333) ────────────
+    def _avisos_db(self):
+        return self._client.schema(_SCHEMA)
+
+    def _avisos(self, report: SyncReport, o_que: str, fn: Callable[..., Any], *args: Any, **kw: Any) -> Any:
+        """Run one notice operation; a failure is LOUD (ERROR + `report.registry_failures`) and never fails the sync -- the catalog
+        pull must not die because the notices table is unreadable (e.g. migration 333 not applied yet)."""
+        try:
+            return fn(self._avisos_db(), *args, **kw)
+        except Exception as exc:
+            report.registry_failures.append(f"avisos {o_que}: {type(exc).__name__}: {exc}")
+            logger.error("imoveis sync: ref notice step %r failed (%s)", o_que, exc, exc_info=True)
+            return None
+
+    def _aplicar_pausa(self, org_id: UUID, rows: list[dict], report: SyncReport) -> None:
+        """A code with an open (or confirmed-gone) `ref_sumiu_no_vista` notice stays PAUSED: the upsert must not flip `exibir_no_site`
+        back from Vista. Vista's value is not applied; a human restores or confirms (`imovel_ref_avisos.resolver`)."""
+        pausados = self._avisos(report, "pausados", imovel_ref_avisos.codigos_pausados, org_id)
+        if not pausados:
+            return
+        for row in rows:
+            if str(row.get("codigo") or "").strip().upper() in pausados:
+                row["exibir_no_site"] = False
+
+    def _ativos_do_registro(self, _db: Any, org_id: UUID) -> set[str]:
+        """Canonical codes the registry currently has as active in Vista (paged: PostgREST caps a select at 1000 rows)."""
+        rows = self._paginado(self._registry_table, "codigo_canonical", org_id, "codigo_canonical", filtro=lambda q: q.eq("ativo_no_vista", True))
+        return {str(r["codigo_canonical"]) for r in rows}
+
+    def _detectar_novas(self, org_id: UUID, rows: list[dict], report: SyncReport) -> list[str]:
+        """Codes of this page the mirror does not have yet (called BEFORE the upsert). Never fails the sync: on a read error it logs, records
+        it and reports none. An org's very first import (empty mirror) never produces `ref_nova` notices."""
+        try:
+            if self._tinha_espelho is None:
+                self._tinha_espelho = self._mirror_tem_linhas(org_id)
+            if not self._tinha_espelho:
+                return []
+            codigos = [str(r["codigo"]).strip().upper() for r in rows]
+            existentes = {
+                str(r["codigo_norm"]) for r in (
+                    self._table().select("codigo_norm").eq("org_id", str(org_id)).in_("codigo_norm", codigos).execute().data or []
+                )
+            }
+            return [str(r["codigo"]) for r in rows if str(r["codigo"]).strip().upper() not in existentes]
+        except Exception as exc:
+            report.registry_failures.append(f"avisos novas: {type(exc).__name__}: {exc}")
+            logger.error("imoveis sync: could not detect new refs (%s)", exc, exc_info=True)
+            return []
+
+    def _fim_de_run_avisos_parcial(self, org_id: UUID, report: SyncReport, vistos: list[str]) -> None:
+        if vistos:
+            self._avisos(report, "reaparecimentos", imovel_ref_avisos.anotar_reaparecimentos, org_id, vistos)
+
+    def _fim_de_run_avisos(self, org_id: UUID, report: SyncReport, vistos: list[str]) -> None:
+        """Codes Vista answered for: a paused ref that reappeared gets a NOTE (never restored). New refs: ONE batch notice per run."""
+        if vistos:
+            self._avisos(report, "reaparecimentos", imovel_ref_avisos.anotar_reaparecimentos, org_id, vistos)
+        if self._novas_run:
+            self._avisos(report, "novas", imovel_ref_avisos.registrar_novas, org_id, self._novas_run)
+        self._novas_run = []
 
     def _divergencias(self, imoveis: list[Imovel]) -> None:
         """THE call site of the transitional Vista-vs-ours divergence check (no-op when the org's flag is off)."""
@@ -1078,12 +1162,16 @@ class ImovelSyncService:
                 "a Vista fault until proven otherwise", len(todos), caminhados, org_id, REMOVIDOS_MAX_PCT, REMOVIDOS_MIN_ABS,
             )
             return
+        em_espelho_sumiram: list[str] = []
         for codigo in todos:
             canon = codigo.strip().upper()
-            linha = (
+            linhas_espelho = (
                 self._table().select("titulo, categoria, status, bairro, cidade, uf, valor_venda, valor_locacao, dormitorios, area_total, foto_destaque")
-                .eq("org_id", str(org_id)).eq("codigo", codigo).limit(1).execute().data or [{}]
-            )[0]
+                .eq("org_id", str(org_id)).eq("codigo", codigo).limit(1).execute().data or []
+            )
+            linha = linhas_espelho[0] if linhas_espelho else {}
+            if linhas_espelho and codigo in sumiram:
+                em_espelho_sumiram.append(canon)
             snap = {f"snap_{k}": v for k, v in linha.items()}
             try:
                 (
@@ -1096,6 +1184,9 @@ class ImovelSyncService:
                 continue
             report.removidos += 1
             report.removidos_codigos.append(codigo)
+        if em_espelho_sumiram:
+            # We have it, Vista does not: KEEP every datum, PAUSE it, open the notice (never a delete, never silent).
+            self._avisos(report, "sumiram", imovel_ref_avisos.registrar_sumiram, org_id, em_espelho_sumiram, origem="detalhes")
         if ocultos:
             # Vista says ExibirNoSite=Nao: the one Vista-sourced column that tells every reader of the mirror to hide it.
             for i in range(0, len(ocultos), _LOTE):
@@ -1148,9 +1239,13 @@ class ImovelSyncService:
         rows = [_imovel_to_row(i, org_id, synced_at) for i in imoveis]
         if not rows:
             return
+        self._aplicar_pausa(org_id, rows, report)
+        novas = self._detectar_novas(org_id, rows, report)
         _assert_so_vista(rows)
         self._table().upsert(rows, on_conflict="org_id,codigo").execute()
         report.upserted += len(rows)
+        self._novas_run.extend(novas)
+        self._fim_de_run_avisos_parcial(org_id, report, [i.codigo for i in imoveis])
 
         # Registry rows for anything we have not seen before. `DO NOTHING` on
         # conflict, so an imóvel that already has an identity keeps its

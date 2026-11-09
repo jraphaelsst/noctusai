@@ -16136,6 +16136,26 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "UNIQUE (org_id, lead_id, codigo_canonical, tipo); migration unapplied (file-only), so no live constraint to probe. "
         "Replace with a real GuardProbe in the SAME change that applies it.",
     ),
+    # SW 333 (ref-divergence notices) is NOT APPLIED (file-only until the tech-lead runs migrate_product): the partial UNIQUE keeps one
+    # OPEN notice per (imóvel, tipo); the tipo/status vocabulary CHECKs are inline column checks. Nothing exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/333_imovel_ref_avisos.sql",
+        "uq_sw_imovel_ref_avisos_aberto",
+        "Partial UNIQUE (org_id, codigo_canonical, tipo) WHERE status='pendente'; migration unapplied (file-only), no live index to probe. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/333_imovel_ref_avisos.sql",
+        "imovel_ref_avisos_tipo_check",
+        "Vocabulary-only inline CHECK written from fixed literals in imovel_ref_avisos.py; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/333_imovel_ref_avisos.sql",
+        "imovel_ref_avisos_status_check",
+        "Vocabulary-only inline CHECK written from fixed literals in imovel_ref_avisos.py; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
     # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
     # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
     (
