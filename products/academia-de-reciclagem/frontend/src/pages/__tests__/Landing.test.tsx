@@ -60,12 +60,17 @@ describe("Landing", () => {
     expect(screen.getByTestId("link-participar")).toHaveAttribute("href", "#participar");
   });
 
-  it("'Entrar' takes the visitor to the seed login", () => {
+  // Owner's decision 2026-09-29: the public site carries NO sign-in
+  // affordance — see `components/site/SiteHeader.tsx`. Asserted as an
+  // absence rather than deleted, so re-adding the link fails a test
+  // instead of silently undoing the decision.
+  it("offers no way into the login page", () => {
     renderAt("/");
-    const entrar = screen.getByTestId("link-entrar");
-    expect(entrar).toHaveAttribute("href", "/login");
-    fireEvent.click(entrar);
-    expect(screen.getByText("login page")).toBeInTheDocument();
+    expect(screen.queryByTestId("link-entrar")).not.toBeInTheDocument();
+    const toLogin = screen
+      .queryAllByRole("link")
+      .filter((a) => a.getAttribute("href")?.startsWith("/login"));
+    expect(toLogin).toHaveLength(0);
   });
 
   it("links the sponsor out in a new tab, without leaking the opener", () => {

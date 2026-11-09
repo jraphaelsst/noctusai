@@ -5,8 +5,8 @@
  * Ported from the designer repo (github.com/jraphaelsst/academia-de-reciclagem @ f1247bf,
  * `artifacts/academia-da-reciclagem/src/App.tsx` → `Home`; re-port = apply the designer's
  * App.tsx diff since that sha here, and regenerate landing.css from their index.css). Content and markup are
- * kept as designed; the only additions are the `.academia-landing` style scope and the
- * "Entrar" link into the seed `/login`. Its providers (QueryClient, Tooltip, Toaster,
+ * kept as designed; the only addition is the `.academia-landing` style scope (the public
+ * site carries no "Entrar" link — see `SiteHeader`). Its providers (QueryClient, Tooltip, Toaster,
  * wouter, NotFound) are dropped — the seed app shell already supplies all of them.
  *
  * Header + footer live in `components/site/` (`SiteHeader`/`SiteFooter`) —

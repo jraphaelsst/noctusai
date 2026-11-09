@@ -74,7 +74,8 @@ describe("OProjeto", () => {
   it("shares the public-site nav (SiteHeader)", () => {
     renderAt("/o-projeto");
     expect(screen.getByTestId("link-a-carta")).toHaveAttribute("href", "/a-carta");
-    expect(screen.getByTestId("link-entrar")).toHaveAttribute("href", "/login");
+    // No sign-in affordance anywhere on the public site (owner, 2026-09-29).
+    expect(screen.queryByTestId("link-entrar")).not.toBeInTheDocument();
   });
 
   it("carries no images in the article body — the reading page is text only", () => {
