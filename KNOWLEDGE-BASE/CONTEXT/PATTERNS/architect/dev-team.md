@@ -106,11 +106,15 @@ envelope = run_team(task="…", dry_run=True)  # MCP-shaped envelope (the canoni
 | `noctus.team.status` | `project?` | `{snapshot}` |
 | `noctus.team.route` | `task` | `{recommended, rationale}` |
 | `noctus.team.metrics` | `scope?` | `{rollup}` |
-| `noctus.team.agent_metrics` | `name, scope?` | `{rollup}` |
+| `noctus.team.agent_metrics` | `name, scope?, by_week?` | `{groups, total_rows, cost_note}` — slice-score trend from `slice-scores.ndjson` |
 | `noctus.team.configure` | `name, model?, provider?, config?` | new cfg |
 
-All wrap `dev_team.mcp_facade` via lazy imports inside the FastMCP
-handler (cold-start stays light; agno only loads when invoked).
+All except `agent_metrics` wrap `dev_team.mcp_facade` via lazy imports inside the
+FastMCP handler (cold-start stays light; agno only loads when invoked).
+`agent_metrics` reads the slice-scores ledger (`tools/noctus/team/agent_metrics.py`,
+KB § PATTERNS/common/dispatch-token-log.md) — it is the ONE source for both the
+`agents` and `slice_scores` slices of `noctus.team.dashboard`, so they cannot disagree.
+The agno events rollup is `get_agent_metrics` below (telemetry, not the dashboard).
 
 ### Product backend (FastAPI)
 
