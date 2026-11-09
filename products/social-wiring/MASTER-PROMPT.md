@@ -133,3 +133,7 @@ cd products/social-wiring/frontend && npx vite build   # must build clean
 
 - Backend: `noctusai_lib` + `noctusai_seed`; Frontend: `@noctusai/lib` + `@noctusai/seed`
 - Runtime peer: `agents` (`/api/channels/*`)
+
+## Ad-lead intake (2026-11-09)
+
+A Meta form lead is followed by `ad_lead_intake_service.tentar_intake` (never raises): Vista refresh of the lead's property code, `imoveis`/registry upsert, `leads.imovel_ref_id`, interesse with `lead_id` + `meta_ads_lead_id`, property corretores (`imovel_corretores`) + `lead_corretor_divergencias`, `leads.qualificacao_form`. Outcome per lead in `lead_imovel_intakes` (retryable). See `projects/ad-lead-intake-CONTRACT.md`.
