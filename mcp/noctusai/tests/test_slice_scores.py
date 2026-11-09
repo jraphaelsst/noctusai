@@ -195,3 +195,31 @@ class TestSupersede:
         append_rows(path.name, path, [old, new], message="t")
         rows = am.load_rows()
         assert len(rows) == 1 and rows[0]["q_weighted"] == 3.7
+
+
+class TestInputFrictions:
+    """2026-11-07 frictions: constant-name rubric version, string drift items."""
+
+    @pytest.mark.parametrize("spelling", ["v1", "V1", "RUBRIC_V1", " rubric_v1 "])
+    def test_rubric_version_constant_spellings_accepted(self, spelling):
+        r = dtl.build_score_row("s", "backend-engineer", _score(rubric_version=spelling))
+        assert r["ok"] is True
+        assert r["row"]["rubric_version"] == "v1"
+
+    def test_unknown_rubric_version_still_refused(self):
+        r = dtl.build_score_row("s", "backend-engineer", _score(rubric_version="v9"))
+        assert r["ok"] is False
+        assert "unknown rubric_version 'v9'" in r["error"]
+
+    def test_string_drift_items_become_text_dicts(self):
+        r = dtl.build_score_row("s", "backend-engineer",
+                                _score(drifts=["none"], improvements=["add a row type"]))
+        assert r["ok"] is True
+        assert [(d["text"], d["target"]) for d in r["row"]["drifts"]] == [("none", None)]
+        assert [(d["text"], d["target"]) for d in r["row"]["improvements"]] == [("add a row type", None)]
+
+    @pytest.mark.parametrize("bad", ["none", {"text": "x"}, [3]])
+    def test_malformed_drift_items_are_named_errors(self, bad):
+        r = dtl.build_score_row("s", "backend-engineer", _score(drifts=bad))
+        assert r["ok"] is False
+        assert r["error"].startswith("score.drifts")

@@ -308,6 +308,19 @@ class TestAppend:
         assert result["ok"] is False
         assert "role must be one of" in result["error"]
 
+    @pytest.mark.parametrize("alias", ["tech-lead", "Tech-Lead", "tech_lead"])
+    def test_append_tech_lead_alias_stored_as_orchestrator(self, tmp_path, monkeypatch, alias):
+        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
+        ledger.parent.mkdir(parents=True)
+        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
+        result = BP.append(
+            branch="feat/x", base="dev", commit="abc", role=alias,
+            agent="x", parent="tl", paths=[], status="on_going",
+            brief="x", push_dev=False, session="s1",
+        )
+        assert result["ok"] is True, result
+        assert result["row"]["role"] == "orchestrator"
+
 
 # ── update ────────────────────────────────────────────────────────────────────
 class TestUpdate:

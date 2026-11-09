@@ -60,6 +60,44 @@ RUBRIC_V1: dict[str, Any] = {
     },
 }
 RUBRICS: dict[str, dict[str, Any]] = {"v1": RUBRIC_V1}
+
+
+def _normalize_rubric_version(ver: Any) -> Any:
+    """Map the constant's spelling (`RUBRIC_V1`, `V1`) to its key (`v1`).
+
+    Callers read the module and pass the constant NAME; refusing it was a
+    pure input friction (2026-11-07). Unknown values pass through unchanged
+    so the validator still names them.
+    """
+    if not isinstance(ver, str):
+        return ver
+    v = ver.strip().lower()
+    if v.startswith("rubric_"):
+        v = v[len("rubric_"):]
+    return v if v in RUBRICS else ver
+
+
+def _normalize_footer_items(items: Any, field: str) -> tuple[list[dict[str, Any]], str | None]:
+    """score.drifts / score.improvements: accept dicts or plain strings.
+
+    A plain string becomes {text, target: None}; anything else is a named
+    error instead of the bare `dict()` crash it used to be (2026-11-07).
+    """
+    if items is None:
+        return [], None
+    if isinstance(items, (str, dict)) or not isinstance(items, (list, tuple)):
+        return [], f"score.{field} must be a list of strings or {{text, target}} dicts"
+    out: list[dict[str, Any]] = []
+    for i, d in enumerate(items):
+        if isinstance(d, str):
+            out.append({"text": d, "target": None})
+        elif isinstance(d, dict):
+            out.append(dict(d))
+        else:
+            return [], f"score.{field}[{i}] must be a string or a dict; got {type(d).__name__}"
+    return out, None
+
+
 SLICE_SCORES_LEDGER = "slice-scores.ndjson"
 REWORK_SEVERITIES = ("blocker", "major", "minor")
 
@@ -213,7 +251,7 @@ def _validate_score(slug: str, agent: str, sc: dict[str, Any]) -> str | None:
     for f in ("model",):
         if not sc.get(f) or not str(sc[f]).strip():
             return f"score.{f} is required"
-    ver = sc.get("rubric_version", "v1")
+    ver = _normalize_rubric_version(sc.get("rubric_version", "v1"))
     if ver not in RUBRICS:
         return f"unknown rubric_version {ver!r}; known: {sorted(RUBRICS)}"
     q = sc.get("q")
@@ -252,11 +290,13 @@ def build_score_row(
     err = _validate_score(slug, agent, sc)
     if err:
         return {"ok": False, "error": err}
-    ver = sc.get("rubric_version", "v1")
+    ver = _normalize_rubric_version(sc.get("rubric_version", "v1"))
     weights = RUBRICS[ver]["weights"]
     q = {k: (None if sc["q"].get(k) is None else float(sc["q"][k])) for k in weights}
-    drifts = [dict(d) for d in sc.get("drifts") or []]
-    improvements = [dict(d) for d in sc.get("improvements") or []]
+    drifts, derr = _normalize_footer_items(sc.get("drifts"), "drifts")
+    improvements, ierr = _normalize_footer_items(sc.get("improvements"), "improvements")
+    if derr or ierr:
+        return {"ok": False, "error": derr or ierr}
     if engineer_return is not None:
         from .engineer_output_linter import lint_return  # noqa: PLC0415
         lint = lint_return(engineer_return)

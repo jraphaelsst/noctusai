@@ -109,6 +109,14 @@ Row format for new entries: `noc-x | github.com/org/repo/tree/<sha>/skills/x | M
 
 Seen in the harness skill roster on 2026-11-05: `anthropic-skills:pdf`, `anthropic-skills:docx`, `anthropic-skills:pptx`, `anthropic-skills:xlsx`, `anthropic-skills:skill-creator`, `anthropic-skills:deep-research` (plus harness built-ins such as `code-review`, `simplify`, `security-review`). Re-list from the live roster before relying on this; the set is per account.
 
+### 6b′ · Hosted doc-index services — neither vendored nor runtime-provided
+
+A scouted find is sometimes a *remote service* (a hosted documentation index reached over an API or an MCP server), not a skill folder. Nothing can be copied in-home, so §1 "never depend" is decided as a usage scope instead: **on-demand call from a named procedure, output treated as untrusted reference (§3 applies to every response), no MCP wiring into the always-on keep-list** unless the owner reopens it. Record the verdict here so the next scout does not re-vet it.
+
+| Service | Reached via | Data terms verified? | Verdict | Vetted by · date | Re-check trigger |
+|---|---|---|---|---|---|
+| Context7 (Upstash) | hosted API | no — privacy page empty at vet time | NOT as MCP; optional on-demand step in skill `noc-dep-update` for major bumps only; owner verdict 2026-11-07: skip | skill-scout · 2026-11-07 | owner reopens ∨ retention/training terms published ∨ 12 months |
+
 ### 6c · Re-check triggers
 
 - The origin's default branch moved past the recorded SHA and the diff touches the vendored files ⇒ re-run §3–§5 on the diff; never "pull upstream" blindly.

@@ -125,6 +125,11 @@ STATUSES: frozenset[str] = frozenset({
     "integrated-worktree-live",
 })
 ROLES: frozenset[str] = frozenset({"orchestrator", "engineer"})
+# CLAUDE.md §2: "Tech-lead = the orchestrator". Callers naming the role the
+# way the router does were refused (2026-11-07); canonicalise, never store
+# the alias (the ledger keeps one spelling).
+ROLE_ALIASES: dict[str, str] = {"tech-lead": "orchestrator", "tech_lead": "orchestrator",
+                                "techlead": "orchestrator"}
 # Statuses that represent "done" — excluded from the default list view.
 TERMINAL_STATUSES: frozenset[str] = frozenset({"shipped", "canceled", "stale"})
 
@@ -344,6 +349,8 @@ def append(
     """
     if status not in STATUSES:
         return {"ok": False, "error": f"status must be one of {sorted(STATUSES)}; got {status!r}"}
+    if isinstance(role, str):
+        role = ROLE_ALIASES.get(role.strip().lower(), role)
     if role not in ROLES:
         return {"ok": False, "error": f"role must be one of {sorted(ROLES)}; got {role!r}"}
 
