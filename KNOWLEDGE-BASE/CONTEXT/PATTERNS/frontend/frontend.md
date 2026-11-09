@@ -108,6 +108,18 @@ const res = await api.get('/api/contacts');
 
 Never `fetch()` or `axios` directly. The seed api-client handles auth, correlation IDs, error shapes.
 
+## Styling — Tailwind 4 with the v3 look pinned (2026-11-09)
+
+One entry stylesheet styles the fleet: `seed/framework/frontend/src/index.css` (`@import "tailwindcss"`, the pinned v3 palette `tailwind-v3-palette.css`, then `tokens.css`, then a small v3-compat block). Each product's `src/index.css` imports it and adds `@config "../tailwind.config.ts"` — the seed factory (`createTailwindConfig`) stays the single theme/content/plugin source. PostCSS is `@tailwindcss/postcss` (no autoprefixer).
+
+- **Two names changed what they draw:** write `shadow-xs` (v3's `shadow-sm`) and `outline-hidden` (v3's `outline-none`). v4's `shadow-sm`/`outline-none` compile but look different.
+- **Brand glyphs** (`Facebook`, `Instagram`, `Youtube`) left lucide-react 1.x — import them from `@noctusai/lib/brand-icons` (same `LucideIcon` type).
+- **Colours:** the default palette is v3's (pinned); deleting `tailwind-v3-palette.css` adopts v4's OKLCH palette — a visual decision, not a technical one.
+- **Browser floor:** Safari 16.4+, Chrome 111+, Firefox 128+.
+- **Use `tailwind-merge` ^3** (v2 does not know the v4 names).
+
+Gate: keeper `check_tailwind_v4_class_names` (warn-first; escape `noc-allow: tailwind-v3-class — why`).
+
 ---
 
 See also:

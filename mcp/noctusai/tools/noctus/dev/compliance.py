@@ -26373,6 +26373,81 @@ def check_tax_canon_no_inline_params(repo_root: Path | None = None) -> list[dict
     return [{k: v for k, v in f.items() if k != "sig"} for f in findings if f["sig"] not in base]
 
 
+# ---------------------------------------------------------------------------
+# `check_tailwind_v4_class_names` — v3-only names after the Tailwind 4 move
+# (2026-11-09, cloud steward, cloud-work-2).
+#
+# The fleet moved to Tailwind 4.3 with the v3 LOOK pinned (seed/framework/
+# frontend/src/index.css). Two v3 utilities kept their NAME in v4 but changed
+# what they render, so a v3-era snippet compiles fine and silently looks
+# different: `shadow-sm` (v3's is v4's `shadow-xs`) and `outline-none` (v3's
+# transparent-outline is v4's `outline-hidden`; v4's `outline-none` removes
+# the outline). And lucide-react 1.x removed the brand glyphs, so importing
+# `Facebook` / `Instagram` / `Youtube` from 'lucide-react' breaks the build —
+# they live in `@noctusai/lib/brand-icons`. Found 4 queue entries carrying the
+# old names on the day of the migration (N=4 ⇒ formalize).
+#
+# Construction leg: seed entry stylesheet + `@noctusai/lib/brand-icons`; the
+# migration commit records the AST codemod. Scope: seed/lib + seed/framework +
+# ACTIVE products' frontend/src (`_active_product_dirs`). Comment lines are
+# skipped. Escape: `noc-allow: tailwind-v3-class — <reason>` on the line.
+# `paths=[...]` (staged) judges only those files. WARN-first shadow.
+# KB § PATTERNS/frontend/frontend.md.
+# ---------------------------------------------------------------------------
+
+_TW4_V3_NAME_RE = re.compile(r"""(?:(?<=^)|(?<=[\s"'`:!{]))(shadow-sm|outline-none)(?=$|[\s"'`!}])""")
+_TW4_BRAND_RE = re.compile(r"""import[^;]*?\b(Facebook|Instagram|Youtube)\b[^;]*?from\s*['"]lucide-react['"]""", re.S)
+_TW4_ALLOW_RE = re.compile(r"noc-allow:\s*tailwind-v3-class\s*(?:—|–|-|:)\s*\S")
+_TW4_FIX = {"shadow-sm": "shadow-xs", "outline-none": "outline-hidden"}
+
+
+def _tailwind_v4_scope(root: Path) -> list[Path]:
+    dirs = [root / "seed/lib/frontend/src", root / "seed/framework/frontend/src"]
+    dirs += [d / "frontend" / "src" for d in _active_product_dirs(root / "products")]
+    return [d for d in dirs if d.is_dir()]
+
+
+def tailwind_v4_class_name_hits(src: str) -> list[tuple[int, str]]:
+    """(line, message) for every v3-only class name or lucide brand import in `src`."""
+    hits: list[tuple[int, str]] = []
+    for n, line in enumerate(src.splitlines(), 1):
+        t = line.lstrip()
+        if t.startswith(("//", "*", "/*")) or _TW4_ALLOW_RE.search(line):
+            continue
+        for m in _TW4_V3_NAME_RE.finditer(line):
+            hits.append((n, f"`{m.group(1)}` renders differently in Tailwind 4 — use `{_TW4_FIX[m.group(1)]}`"))
+    for m in _TW4_BRAND_RE.finditer(src):
+        n = src.count("\n", 0, m.start()) + 1
+        if not _TW4_ALLOW_RE.search(src.splitlines()[n - 1] if src else ""):
+            hits.append((n, f"`{m.group(1)}` is gone from lucide-react 1.x — import it from '@noctusai/lib/brand-icons'"))
+    return hits
+
+
+def check_tailwind_v4_class_names(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper: no v3-only Tailwind names (`shadow-sm`, `outline-none`) and no lucide brand-glyph
+    imports in seed + active frontends. Return shape: [{"file", "issue", "severity"}]."""
+    root = repo_root or REPO_ROOT
+    scope = _tailwind_v4_scope(root)
+    if paths is None:
+        files = [f for d in scope for f in sorted(d.rglob("*")) if f.suffix in (".ts", ".tsx") and "node_modules" not in f.parts]
+    else:
+        files = []
+        for p in paths:
+            f = p if p.is_absolute() else root / p
+            if f.suffix in (".ts", ".tsx") and f.is_file() and any(d in f.parents for d in scope):
+                files.append(f)
+    issues: list[dict] = []
+    for f in files:
+        try:
+            src = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for n, msg in tailwind_v4_class_name_hits(src):
+            issues.append({"file": f"{f.relative_to(root).as_posix()}:{n}", "severity": "high",
+                           "issue": msg + " (KB § PATTERNS/frontend/frontend.md)"})
+    return issues
+
+
 def register(server) -> None:
     desc_validate = "Check seed compliance for all products. Returns score 0-100."
 

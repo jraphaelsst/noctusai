@@ -2758,6 +2758,20 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-tailwind-v4-class-names": {
+   "mechanism": "tool: seed/framework/frontend/src/index.css (v4 entry) + @noctusai/lib/brand-icons + the AST codemod recorded in the Tailwind v4 commit",
+   "owner": "frontend-engineer",
+   "placement": "warn",
+   "standard": "Keeper: after Tailwind 4 (v3 look pinned) no v3-only names that render differently (shadow-sm -> shadow-xs, outline-none -> outline-hidden) and no lucide brand-glyph import (use @noctusai/lib/brand-icons) in seed + active frontends.",
+   "new": true,
+   "declared": "2026-11-09",
+   "source": "tailwindcss.com/docs/upgrade-guide (v3 -> v4 renamed utilities) + lucide 1.0 release notes (brand icons removed) + the computed-style diff recorded in the Tailwind 4 commit + KB § PATTERNS/frontend/frontend.md",
+   "shadow": {
+    "since": "2026-11-09",
+    "fires": 0,
+    "fix_rate": null
+   }
+  },
   "keeper:check-tax-canon-no-inline-params": {
    "mechanism": "write-path: .claude/skills/noc-tax-params/SKILL.md (guided re-verification) + KB § PATTERNS/finance/br-tax-advisor-canon.md",
    "owner": "tooling-engineer",
@@ -3214,6 +3228,18 @@
    "branch": "feat/keeper-llm-prompt-from-registry",
    "gates": [
     "keeper:check-llm-prompt-from-registry"
+   ]
+  },
+  {
+   "id": "D25",
+   "decision": "Fleet styling runs on Tailwind 4 with the v3 look pinned; source uses v4 names (shadow-xs, outline-hidden) and lucide brand glyphs come from @noctusai/lib/brand-icons",
+   "home": "KB § PATTERNS/frontend/frontend.md",
+   "construction": "seed/framework/frontend/src/index.css (+ tailwind-v3-palette.css) and products' src/index.css @config; seed/lib/frontend/src/brand-icons.ts; AST codemod recorded in the Tailwind 4 commit",
+   "gate": "keeper:check-tailwind-v4-class-names",
+   "telemetry": "gate events (cli wrapper, guard-events) via --check-tailwind-v4-class-names",
+   "branch": "cloud-work-2",
+   "gates": [
+    "keeper:check-tailwind-v4-class-names"
    ]
   }
  ]
