@@ -226,7 +226,6 @@ def test_the_endpoints_list_restore_and_resolve(core, monkeypatch):
     from app.modules.leads.routers import ad_lead_intake as r
 
     db, a = _um_sumido(core)
-    monkeypatch.setattr(r, "require_org_admin_for", lambda *x, **k: None)
     from fastapi.responses import JSONResponse
     from noctusai_lib.primitives.exceptions import AppException
 
@@ -235,6 +234,8 @@ def test_the_endpoints_list_restore_and_resolve(core, monkeypatch):
     app.include_router(r.router)
     app.dependency_overrides[get_current_user_org_unified] = lambda: (type("U", (), {"id": ADMIN})(), "tok", str(ORG))
     app.dependency_overrides[get_leads_client] = lambda: db
+    # The REAL admin guard runs: only the identity source (core client with the owner row) is overridden.
+    app.dependency_overrides[r.get_ad_intake_core] = lambda: core
     c = TestClient(app)
     lista = c.get("/api/leads/ad-intake/ref-avisos", params={"tipo": "ref_sumiu_no_vista"}).json()["data"]
     assert lista["total"] == 1 and lista["items"][0]["codigo_canonical"] == "AP0002"

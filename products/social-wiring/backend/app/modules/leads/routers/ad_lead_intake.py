@@ -52,8 +52,13 @@ class ResolverDivergenciaIn(StrictHttpModel):
     nota: Optional[str] = None
 
 
-def _admin(auth: tuple, request: Request, contexto: str) -> None:
-    require_org_admin_for(get_core_client(), auth, request, contexto)
+def get_ad_intake_core() -> Any:
+    """Core client as a FastAPI dependency, so tests override the IDENTITY source and the real admin guard runs."""
+    return get_core_client()
+
+
+def _admin(core: Any, auth: tuple, request: Request, contexto: str) -> None:
+    require_org_admin_for(core, auth, request, contexto)
 
 
 @router.post("/backfill", status_code=200)
@@ -66,8 +71,8 @@ def backfill(
     pausa_s: float = Query(default=0.0, ge=0, le=10),
     auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
-) -> dict:
-    _admin(auth, request, "O backfill do intake de leads de anúncio")
+core: Any = Depends(get_ad_intake_core)) -> dict:
+    _admin(core, auth, request, "O backfill do intake de leads de anúncio")
     org_id = coerce_org_uuid(auth[2])
     return success_response(
         ad_lead_intake_backfill.backfill_intake(client, org_id, dry_run=dry_run, limite=limite, cursor=cursor, modo=modo, pausa_s=pausa_s)
@@ -109,9 +114,9 @@ def get_intake_do_lead(lead_id: UUID, auth: tuple = Depends(get_current_user_org
 
 @router.post("/lead/{lead_id}/retry")
 def retry_intake(
-    lead_id: UUID, request: Request, auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client)
-) -> dict:
-    _admin(auth, request, "O intake de leads de anúncio")
+    lead_id: UUID, request: Request, auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client), 
+core: Any = Depends(get_ad_intake_core)) -> dict:
+    _admin(core, auth, request, "O intake de leads de anúncio")
     org_id = coerce_org_uuid(auth[2])
     try:
         res = intake.intake_imovel_do_lead(client, org_id, lead_id)  # plain `def`: runs in the threadpool, no loop to block
@@ -168,8 +173,8 @@ def resolver_divergencia(
     request: Request,
     auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
-) -> dict:
-    _admin(auth, request, "A divergência de corretor")
+core: Any = Depends(get_ad_intake_core)) -> dict:
+    _admin(core, auth, request, "A divergência de corretor")
     org_id = coerce_org_uuid(auth[2])
     linhas = _um(client, intake.T_DIVERGENCIAS, org_id, id=divergencia_id)
     if not linhas:
@@ -204,8 +209,8 @@ def _resolver_aviso(aviso_id: UUID, acao: str, nota: Optional[str], auth: tuple,
 def restaurar_ref_aviso(
     aviso_id: UUID, request: Request, body: Optional[RestaurarAvisoIn] = None,
     auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
-) -> dict:
-    _admin(auth, request, "Restaurar um imóvel que sumiu do Vista")
+core: Any = Depends(get_ad_intake_core)) -> dict:
+    _admin(core, auth, request, "Restaurar um imóvel que sumiu do Vista")
     return _resolver_aviso(aviso_id, "restaurar", body.nota if body else None, auth, client)
 
 
@@ -213,8 +218,8 @@ def restaurar_ref_aviso(
 def resolver_ref_aviso(
     aviso_id: UUID, body: ResolverAvisoIn, request: Request,
     auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
-) -> dict:
-    _admin(auth, request, "A divergência de ref com o Vista")
+core: Any = Depends(get_ad_intake_core)) -> dict:
+    _admin(core, auth, request, "A divergência de ref com o Vista")
     return _resolver_aviso(aviso_id, body.acao, body.nota, auth, client)
 
 
@@ -231,11 +236,11 @@ class ResolverCorretorAvisoIn(StrictHttpModel):
 def sincronizar_corretores(
     request: Request, dry_run: bool = Query(default=True),
     auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
-) -> dict:
+core: Any = Depends(get_ad_intake_core)) -> dict:
     """Runs now (not queued): one roster read is a handful of calls. DRY-RUN by default: classifies, writes nothing."""
     from app.services import vista_credenciais
 
-    _admin(auth, request, "A sincronização dos corretores com o Vista")
+    _admin(core, auth, request, "A sincronização dos corretores com o Vista")
     org_id = coerce_org_uuid(auth[2])
     adapter = vista_credenciais.adapter_ou_503(org_id)
     return success_response(corretores_vista_sync.sincronizar_sync(client, adapter, org_id, dry_run=dry_run))
@@ -254,8 +259,8 @@ def listar_corretor_avisos(
 def resolver_corretor_aviso(
     aviso_id: UUID, body: ResolverCorretorAvisoIn, request: Request,
     auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
-) -> dict:
-    _admin(auth, request, "O aviso de corretor do Vista")
+core: Any = Depends(get_ad_intake_core)) -> dict:
+    _admin(core, auth, request, "O aviso de corretor do Vista")
     try:
         return success_response(corretores_vista_sync.resolver_aviso(client, coerce_org_uuid(auth[2]), aviso_id, body.acao, getattr(auth[0], "id", None), body.nota))
     except LookupError as exc:
@@ -270,8 +275,8 @@ def get_config(auth: tuple = Depends(get_current_user_org_unified), client: Any 
 @router.put("/config")
 def put_config(
     body: ConfigIn, request: Request, auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
-) -> dict:
-    _admin(auth, request, "A configuração do intake de leads de anúncio")
+core: Any = Depends(get_ad_intake_core)) -> dict:
+    _admin(core, auth, request, "A configuração do intake de leads de anúncio")
     org_id = coerce_org_uuid(auth[2])
     codigo = (body.corretor_principal_fallback_vista_codigo or "").strip() or None
     patch = {"corretor_principal_fallback_vista_codigo": codigo, "updated_at": intake._agora(), "updated_by": str(getattr(auth[0], "id", "") or "") or None}
