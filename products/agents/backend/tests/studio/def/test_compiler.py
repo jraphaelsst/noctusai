@@ -9,7 +9,7 @@ from uuid import UUID
 
 import pytest
 
-from app.studio.compiler import compile_prompt
+from app.studio.compiler import TOKEN_WARNING_THRESHOLD, compile_prompt
 from app.studio.models import (
     ClientBundle,
     ClientEntryData,
@@ -260,11 +260,18 @@ class TestWarnings:
         assert ("skill_duplicada", True) in codes
 
     def test_long_prompt_is_a_non_blocking_warning(self):
-        v = _version(secoes=(SectionData(id=None, chave="a", titulo="A", ordem=1, conteudo="x" * 50000),))
+        v = _version(secoes=(SectionData(id=None, chave="a", titulo="A", ordem=1, conteudo="x" * 70000),))
         out = compile_prompt(_input(version=v))
-        assert out.tokens_estimados > 12000
+        assert out.tokens_estimados > 15000
         assert ("prompt_extenso", False) in self._codes(out)
         assert not out.bloqueado
+
+    def test_warning_threshold_is_15000_tokens(self):
+        assert TOKEN_WARNING_THRESHOLD == 15000
+        v = _version(secoes=(SectionData(id=None, chave="a", titulo="A", ordem=1, conteudo="x" * 52000),))
+        out = compile_prompt(_input(version=v))
+        assert 12000 < out.tokens_estimados <= 15000
+        assert "prompt_extenso" not in {c for c, _ in self._codes(out)}
 
     @pytest.mark.parametrize("titulo", ["Skills", "ferramentas", "Base de Conhecimento", "Cliente em foco: X"])
     def test_section_title_duplicating_an_auto_title_warns(self, titulo):

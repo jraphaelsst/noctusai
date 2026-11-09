@@ -335,7 +335,7 @@ UTF-16 code units; a JS consumer must index with `Array.from(texto)` / code-poin
 
 Compile **warnings** (returned by the compile endpoint, block publish when `bloqueante`):
 empty active section (bloqueante), zero active sections (bloqueante), skill with empty `corpo`
-(bloqueante), duplicate `chave`/`nome` (impossible by DB, still checked), `tokens_estimados > 12000`
+(bloqueante), duplicate `chave`/`nome` (impossible by DB, still checked), `tokens_estimados > 15000`
 (aviso), a section title that duplicates an auto title (aviso).
 
 Hash stability: the compiler must not embed timestamps, UUIDs of drafts, or dict-order-dependent text.
