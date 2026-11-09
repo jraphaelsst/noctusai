@@ -1208,8 +1208,8 @@ async def run_mecanismo_suite(
 ) -> MecanismoRunIniciadaOut:
     """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
     minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
-    ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. A second run for the same
-    version while one executes is 409 ``run_in_progress`` carrying that run's ``run_id`` (the screen follows it). The driver comes from ``get_eval_turn_driver`` (409
+    ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. Several runs of the same
+    version may execute at once (071): each has its own id, results and cost cap. The driver comes from ``get_eval_turn_driver`` (409
     ``driver_indisponivel`` when none is configured); the cost cap comes from settings. Replies carry codes only."""
     agent = resolve_agent(store, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
@@ -1224,20 +1224,9 @@ async def run_mecanismo_suite(
     limite = settings.studio_mecanismo_run_budget_usd
     try:
         with store_errors():
-            try:
-                run_id, casos = iniciar_suite_mecanismo(
-                    mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
-                    compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite)
-            except StudioConflict as exc:
-                if exc.code != "run_in_progress":
-                    raise
-                # Name the run in flight so the screen follows it (progress, then result) instead of a refusal.
-                em_execucao = mecanismo.run_em_execucao(ctx.org_id, draft.id)
-                raise http_error(
-                    409, "run_in_progress",
-                    "Já há uma suíte de mecanismo rodando para esta versão. Acompanhe o resultado dela aqui.",
-                    run_id=str(em_execucao) if em_execucao else None,
-                ) from exc
+            run_id, casos = iniciar_suite_mecanismo(
+                mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
+                compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite)
     except SuiteVazia as exc:
         raise http_error(409, "sem_casos_mecanismo", "O agente não tem casos de mecanismo ativos.") from exc
     except DriverSemTipo as exc:

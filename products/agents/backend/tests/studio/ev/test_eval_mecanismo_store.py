@@ -5,7 +5,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.stores._db_errors import StudioConflict
 from app.stores.studio_eval_mecanismo import AgenteFlags, FakeMecanismoStore
 from app.stores.studio_evals import EvalCaseInput, FakeEvalStore
 from app.studio.eval_driver import Estado, FakeEvalTurnDriver, ToolCall, TurnOutcome
@@ -214,11 +213,12 @@ async def test_service_refuses_a_driver_without_tipo_and_an_empty_suite():
         await rodar_suite_mecanismo(FakeMecanismoStore(FakeEvalStore()), FakeEvalTurnDriver([_ok_turn()]), **kw)
 
 
-def test_one_executing_run_per_version():
+def test_several_runs_of_one_version_may_execute_at_once():
+    # 071: no one-in-flight slot per version; each run is its own row.
     store = _store_with_case()
-    store.start_run(ORG, AGENT, VERSION, compiled_hash="h", driver="live", limite_usd=None, started_by=uuid4(), total_casos=1)
-    with pytest.raises(StudioConflict):
-        store.start_run(ORG, AGENT, VERSION, compiled_hash="h", driver="live", limite_usd=None, started_by=uuid4(), total_casos=1)
+    a = store.start_run(ORG, AGENT, VERSION, compiled_hash="h", driver="live", limite_usd=None, started_by=uuid4(), total_casos=1)
+    b = store.start_run(ORG, AGENT, VERSION, compiled_hash="h", driver="live", limite_usd=None, started_by=uuid4(), total_casos=1)
+    assert a != b and store.get_run(ORG, a)["status"] == store.get_run(ORG, b)["status"] == "executando"
 
 
 def test_agent_flag_makes_an_empty_suite_required():
