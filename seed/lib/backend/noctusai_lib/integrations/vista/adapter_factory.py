@@ -52,11 +52,19 @@ def get_vista_adapter(
     return VistaRESTAdapter(base_url=base_url or "", api_key=api_key or "")
 
 
-def get_vista_adapter_for_org(resolver: "VistaOrgCredentials", org_id: str) -> VistaCRMAdapter:
+def get_vista_adapter_for_org(
+    resolver: "VistaOrgCredentials", org_id: str, *, rate_per_sec: float | None = None, rate_burst: float | None = None
+) -> VistaCRMAdapter:
     """The Real adapter for ONE org, built from its stored credential (`VistaCredentialResolver`).
 
     The only sanctioned construction path for a multi-tenant product: credentials are per org and live in the
     encrypted `CredentialStore`, never in the process environment. Raises `VistaConfigError` (via the resolver) when
-    the org has no record -- there is no fallback."""
+    the org has no record -- there is no fallback.
+
+    PACING: each org gets its OWN rate-limit bucket (`vista:<org_id>`), so one org's batch never starves another's.
+    `rate_per_sec` / `rate_burst` set that org's budget; unset = the `vista` bucket defaults (5 rps / burst 10, or the
+    process env `NOC_RL_VISTA_RPS|BURST`)."""
     base_url, api_key = resolver.get(org_id)
-    return VistaRESTAdapter(base_url=base_url, api_key=api_key)
+    return VistaRESTAdapter(
+        base_url=base_url, api_key=api_key, rate_bucket=f"vista:{org_id}", rate_per_sec=rate_per_sec, rate_burst=rate_burst
+    )

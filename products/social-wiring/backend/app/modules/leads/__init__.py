@@ -35,6 +35,7 @@ def register() -> Any:
         leads,
         meta_ingest,
         sources,
+        vista_clientes,
     )
     from app.main import ModuleRegistration
 
@@ -50,6 +51,7 @@ def register() -> Any:
         # suite).
         routers=[
             ad_lead_intake.router,
+            vista_clientes.router,
             analytics.router,
             sources.router,
             corretores.router,

@@ -60,6 +60,13 @@ _ROUTES = [
     # call has no org to scope to and must be refused at the boundary — not
     # inside the service, where a missing org could be misread as "all orgs".
     ("post", "/api/leads/meta-ingest/backfill", {}),
+    # Vista clientes -> lead people (fill-empty-only): a bulk read of Vista + writes into `clientes`, org admin.
+    ("post", "/api/leads/vista-clientes/sync", {}),
+    ("get", "/api/leads/vista-clientes/resumo", {}),
+    ("get", "/api/leads/vista-clientes/avisos", {}),
+    ("post", f"/api/leads/vista-clientes/avisos/{_ALIAS_ID}/resolver", {"json": {"acao": "ignorada"}}),
+    ("get", "/api/leads/vista-clientes/config", {}),
+    ("put", "/api/leads/vista-clientes/config", {"json": {"importar_identidade": False}}),
 ]
 
 

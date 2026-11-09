@@ -23,8 +23,6 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from noctusai_lib.integrations import rate_limit
-
 from app.modules.leads.seed_data import normalize_alias
 from app.modules.leads.services import dimensions_service
 from noctusai_lib.primitives.accents import fold_accents
@@ -41,7 +39,6 @@ CAMPOS = [
 PAGE_SIZE = 50
 MAX_PAGINAS = 100
 MAX_AUSENTES_PCT = 50.0
-VISTA_RATE_BUCKET = "vista"
 ST_PENDENTE = "pendente"
 ACOES = ("resolvida", "ignorada")
 
@@ -125,7 +122,7 @@ async def _ler_roster(adapter: Any, relatorio: dict) -> Optional[list[dict]]:
     itens: list[dict] = []
     pagina = 1
     while pagina <= MAX_PAGINAS:
-        await rate_limit.acquire_async(VISTA_RATE_BUCKET)
+        # pacing lives in the Vista client itself (`VistaClient._request`, per-org bucket) -- no second acquire here
         relatorio["chamadas"] += 1
         try:
             rows, pag = await adapter.list_corretores(page=pagina, page_size=PAGE_SIZE)

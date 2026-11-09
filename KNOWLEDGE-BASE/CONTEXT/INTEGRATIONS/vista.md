@@ -2214,3 +2214,7 @@ technical detail.
   before the intake, rather than requiring the intake to answer it.
   Bulk ingestion stays blocked on the data-category intake
   (`KB § PATTERNS/security/lgpd.md`) and the user's go-ahead.
+
+## Pacing + clientes read seam (2026-11-09)
+
+`VistaClient._request` is paced and bounded: a token from the org's bucket (`vista:<org_id>`, default 5 rps / burst 10, per-org override through `get_vista_adapter_for_org(rate_per_sec=)`) before every attempt; HTTP 429 (and 5xx on READS only) is retried with jittered backoff honouring `Retry-After` (`VistaRateLimited`; > 300 s raises `RetryLater`); bodies stay redacted. The Protocol gained `list_clientes` (Fake + Real, read-only, same shape as `list_corretores`; the Real drops a field the key rejects and re-asks). SW consumes it in `vista_clientes_sync` (fill-empty-only, `products/social-wiring/projects/ad-lead-intake-CONTRACT.md` § 8).
