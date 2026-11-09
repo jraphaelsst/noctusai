@@ -4,9 +4,10 @@
  * card's Roteiros tab (via `RoteirosSection`).
  *
  * Flow: tick the rows to visit that day → "Gerar roteiro" (disabled with none
- * ticked) → ordering dialog (drag-and-drop + required `data_visita`) →
- * "Confirmar ordem do roteiro" → `POST …/roteiros` with the códigos in the
- * dialog's final order → the PDF is fetched right away.
+ * ticked) → the roteiro EDITOR opens with those imóveis as a new DRAFT (it is
+ * created and autosaved at once; ↑/↓ order, date, then "Gerar roteiro" there).
+ * Nothing is downloaded here: the PDF exists only for a gerado roteiro
+ * ("Baixar PDF" on the Roteiros tab).
  *
  * Rows: first photo, código, endereço + complemento, valor R$, origem; a
  * checkbox on every row; remove-interesse action. "Adicionar interesse" opens
@@ -20,15 +21,12 @@ import { useMemo, useState } from "react";
 import { Loader2, Plus, Route, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
+import { RoteiroEditorDialog } from "@/components/card/RoteiroEditorDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { baixarRoteiroPdf, useCriarRoteiro } from "@/hooks/useRoteiros";
 import { useInteresseMutations, useInteresses } from "@/hooks/useInteresses";
 import { usePessoaResumo } from "@/hooks/usePessoa";
-import { avisarFunilRecusado } from "@/lib/funilAviso";
-import type { Roteiro, RoteiroCreateBody } from "@/types/cardHub";
 import type { InteresseItem, ImovelResumo } from "@/types/interesses";
 
 import { AdicionarInteresseDialog } from "./AdicionarInteresseDialog";
@@ -54,7 +52,6 @@ export interface ImovelInteressesListProps {
 export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteressesListProps) {
   const interesses = useInteresses(clienteId);
   const { add, remove } = useInteresseMutations(clienteId);
-  const { criar, isPending: criando } = useCriarRoteiro(clienteId);
   // Only needed to offer an atendimento choice when none was passed and the
   // person has several open ones (otherwise the server answers 409).
   const pessoa = usePessoaResumo(atendimentoId ? undefined : clienteId);
@@ -62,7 +59,6 @@ export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteres
   const [marcados, setMarcados] = useState<Set<string>>(new Set());
   const [adicionando, setAdicionando] = useState(false);
   const [ordenando, setOrdenando] = useState(false);
-  const [gerandoPdf, setGerandoPdf] = useState(false);
 
   const items = useMemo(() => interesses.data?.items ?? [], [interesses.data]);
   const showSkeleton = interesses.isPending && !interesses.data;
@@ -112,34 +108,6 @@ export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteres
     });
   }
 
-  async function confirmarRoteiro(body: RoteiroCreateBody) {
-    const comAtendimento: RoteiroCreateBody =
-      atendimentoId && !body.atendimento_id ? { ...body, atendimento_id: atendimentoId } : body;
-    let roteiroId: string;
-    let funil: Roteiro["funil"];
-    try {
-      const criado = await criar(comAtendimento);
-      roteiroId = criado.id;
-      funil = criado.funil;
-    } catch (err) {
-      toast.error(mensagemDe(err, "Não foi possível criar o roteiro."));
-      return;
-    }
-    setOrdenando(false);
-    setMarcados(new Set());
-    toast.success("Roteiro criado.");
-    avisarFunilRecusado(funil);
-    setGerandoPdf(true);
-    try {
-      await baixarRoteiroPdf(clienteId, roteiroId);
-    } catch (err) {
-      // The roteiro EXISTS — say so; it can be printed from the Roteiros tab.
-      toast.error(mensagemDe(err, "O roteiro foi criado, mas o PDF não pôde ser gerado."));
-    } finally {
-      setGerandoPdf(false);
-    }
-  }
-
   return (
     <section data-testid="interesses-section" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -165,14 +133,10 @@ export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteres
           <Button
             size="sm"
             onClick={() => setOrdenando(true)}
-            disabled={selecionados.length < 1 || criando || gerandoPdf}
+            disabled={selecionados.length < 1}
             data-testid="roteiro-gerar"
           >
-            {criando || gerandoPdf ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <Route className="mr-1.5 h-4 w-4" />
-            )}
+            <Route className="mr-1.5 h-4 w-4" />
             Gerar roteiro{selecionados.length > 0 ? ` (${selecionados.length})` : ""}
           </Button>
         </div>
@@ -237,15 +201,16 @@ export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteres
       />
 
       {ordenando && (
-        <CriarRoteiroDialog
+        <RoteiroEditorDialog
           open
           onOpenChange={setOrdenando}
+          clienteId={clienteId}
+          atendimentoId={atendimentoId}
           // Fresh mount per open ⇒ `inicial` is read once, in the order the
-          // rows appear in the list.
+          // rows appear in the list; the draft is created at once.
           inicial={selecionados.map((s) => s.imovel)}
           atendimentoOpcoes={atendimentoOpcoes}
-          saving={criando}
-          onCriar={(body) => void confirmarRoteiro(body)}
+          onGerado={() => setMarcados(new Set())}
         />
       )}
     </section>

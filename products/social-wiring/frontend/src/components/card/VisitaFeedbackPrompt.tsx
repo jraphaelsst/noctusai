@@ -25,15 +25,29 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
-  MOTIVOS_NAO_REALIZADA,
-  type MotivoNaoRealizada,
+  CANCELADA_MOTIVO,
+  CANCELADA_POR,
+  type CanceladaMotivo,
+  type CanceladaPor,
+  type ResultadoVisita,
   type Roteiro,
   type RoteiroFeedbackBody,
+  type VisitaFeedbackItem,
 } from "@/types/cardHub";
 
+/** What an answer can record for a visita (R14). Pendente is not an answer. */
+const RESULTADOS: { value: ResultadoVisita; label: string }[] = [
+  { value: "realizada", label: "Realizada" },
+  { value: "cancelada", label: "Cancelada" },
+  { value: "nao_compareceu", label: "Não compareceu" },
+  { value: "reagendada", label: "Reagendada (não conta)" },
+];
+
 /** Is this roteiro due for an answer at `agora`? `data_visita` is a DATE, so the
- *  comparison is on local `YYYY-MM-DD` strings (no timezone round-trip). */
+ *  comparison is on local `YYYY-MM-DD` strings (no timezone round-trip).
+ *  A DRAFT is never due: only a gerado roteiro enters the feedback flow (R14 → 409). */
 export function roteiroVencido(roteiro: Roteiro, agora: Date = new Date()): boolean {
+  if (roteiro.status !== "gerado") return false;
   if (roteiro.feedback_status !== "pendente" || !roteiro.data_visita) return false;
   const hoje = [
     agora.getFullYear(),
@@ -90,9 +104,33 @@ export function VisitaFeedbackPrompt({ roteiro, onSubmit, pending }: VisitaFeedb
 }
 
 interface LinhaState {
-  realizada: boolean;
-  motivo: MotivoNaoRealizada | "";
+  resultado: ResultadoVisita;
+  motivo: CanceladaMotivo | "";
+  por: CanceladaPor | "";
   observacao: string;
+}
+
+const linhaInicial = (): LinhaState => ({
+  resultado: "realizada",
+  motivo: "",
+  por: "",
+  observacao: "",
+});
+
+/** A cancelada needs BOTH a motivo and who cancelled (R11/R14 → 422 `cancelada_incompleta`). */
+const faltaCancelamento = (l: LinhaState) =>
+  l.resultado === "cancelada" && (l.motivo === "" || l.por === "");
+
+function itemDe(visitaId: string, l: LinhaState): VisitaFeedbackItem {
+  return {
+    visita_id: visitaId,
+    realizada: l.resultado === "realizada",
+    resultado: l.resultado,
+    ...(l.resultado === "cancelada"
+      ? { cancelada_por: l.por || null, cancelada_motivo: l.motivo || null }
+      : {}),
+    observacao: l.observacao.trim() || null,
+  };
 }
 
 function FeedbackDialog({
@@ -107,20 +145,20 @@ function FeedbackDialog({
   onSubmit: (body: RoteiroFeedbackBody) => void;
 }) {
   const [aconteceu, setAconteceu] = useState<boolean | null>(null);
-  const [motivoGeral, setMotivoGeral] = useState<MotivoNaoRealizada>("outro");
+  // "Não aconteceu": one outcome for every visita (default `cancelada`, the common one).
+  const [geral, setGeral] = useState<LinhaState>({ ...linhaInicial(), resultado: "cancelada" });
   const [linhas, setLinhas] = useState<Record<string, LinhaState>>(() =>
-    Object.fromEntries(
-      roteiro.visitas.map((v) => [v.id, { realizada: true, motivo: "" as const, observacao: "" }]),
-    ),
+    Object.fromEntries(roteiro.visitas.map((v) => [v.id, linhaInicial()])),
   );
 
   const setLinha = (id: string, patch: Partial<LinhaState>) =>
     setLinhas((atual) => ({ ...atual, [id]: { ...atual[id], ...patch } }));
 
-  // "Sim": a visita that did not happen needs its motivo — block the submit
-  // here rather than meeting the server's 400.
+  // Block the submit here rather than meeting the server's 422.
   const faltaMotivo =
-    aconteceu === true && roteiro.visitas.some((v) => !linhas[v.id].realizada && !linhas[v.id].motivo);
+    aconteceu === true
+      ? roteiro.visitas.some((v) => faltaCancelamento(linhas[v.id]))
+      : aconteceu === false && faltaCancelamento(geral);
   const podeEnviar = aconteceu !== null && !faltaMotivo && !pending;
 
   function enviar() {
@@ -128,25 +166,13 @@ function FeedbackDialog({
     if (!aconteceu) {
       onSubmit({
         aconteceu: false,
-        visitas: roteiro.visitas.map((v) => ({
-          visita_id: v.id,
-          realizada: false,
-          motivo: motivoGeral,
-        })),
+        visitas: roteiro.visitas.map((v) => itemDe(v.id, { ...geral, observacao: "" })),
       });
       return;
     }
     onSubmit({
       aconteceu: true,
-      visitas: roteiro.visitas.map((v) => {
-        const l = linhas[v.id];
-        return {
-          visita_id: v.id,
-          realizada: l.realizada,
-          motivo: l.realizada ? null : (l.motivo as MotivoNaoRealizada),
-          observacao: l.observacao.trim() || null,
-        };
-      }),
+      visitas: roteiro.visitas.map((v) => itemDe(v.id, linhas[v.id])),
     });
   }
 
@@ -187,14 +213,12 @@ function FeedbackDialog({
         </div>
 
         {aconteceu === false && (
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium">Motivo</span>
-            <MotivoSelect
-              value={motivoGeral}
-              onChange={(m) => m && setMotivoGeral(m)}
-              testid="visita-feedback-motivo-geral"
-            />
-          </label>
+          <ResultadoCampos
+            linha={geral}
+            onChange={(p) => setGeral((l) => ({ ...l, ...p }))}
+            testid="visita-feedback-geral"
+            legenda="O que aconteceu?"
+          />
         )}
 
         {aconteceu === true && (
@@ -203,33 +227,21 @@ function FeedbackDialog({
               const l = linhas[v.id];
               return (
                 <li key={v.id} className="space-y-2 rounded-md border p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium">
-                      {v.imovel?.titulo || v.codigo}
-                    </span>
-                    <label className="flex shrink-0 items-center gap-1.5 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={l.realizada}
-                        onChange={(e) => setLinha(v.id, { realizada: e.target.checked })}
-                        data-testid={`visita-feedback-realizada-${v.id}`}
-                      />
-                      Realizada
-                    </label>
-                  </div>
-                  {!l.realizada && (
-                    <MotivoSelect
-                      value={l.motivo}
-                      onChange={(m) => setLinha(v.id, { motivo: m })}
-                      allowEmpty
-                      testid={`visita-feedback-motivo-${v.id}`}
-                    />
-                  )}
+                  <span className="block truncate text-sm font-medium">
+                    {v.imovel?.titulo || v.codigo}
+                  </span>
+                  <ResultadoCampos
+                    linha={l}
+                    onChange={(p) => setLinha(v.id, p)}
+                    testid={`visita-feedback-${v.id}`}
+                    legenda="Resultado"
+                  />
                   <Textarea
                     rows={2}
                     value={l.observacao}
                     onChange={(e) => setLinha(v.id, { observacao: e.target.value })}
                     placeholder="Observação (opcional)"
+                    aria-label={`Observação da visita a ${v.codigo}`}
                   />
                 </li>
               );
@@ -239,7 +251,7 @@ function FeedbackDialog({
 
         {faltaMotivo && (
           <p className="text-xs text-destructive" data-testid="visita-feedback-falta-motivo">
-            Informe o motivo de cada visita não realizada.
+            Informe o motivo e quem cancelou cada visita cancelada.
           </p>
         )}
 
@@ -257,30 +269,70 @@ function FeedbackDialog({
   );
 }
 
-function MotivoSelect({
-  value,
+function ResultadoCampos({
+  linha,
   onChange,
-  allowEmpty,
   testid,
+  legenda,
 }: {
-  value: MotivoNaoRealizada | "";
-  onChange: (m: MotivoNaoRealizada | "") => void;
-  allowEmpty?: boolean;
+  linha: LinhaState;
+  onChange: (patch: Partial<LinhaState>) => void;
   testid: string;
+  legenda: string;
 }) {
   return (
-    <select
-      className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-      value={value}
-      onChange={(e) => onChange(e.target.value as MotivoNaoRealizada | "")}
-      data-testid={testid}
-    >
-      {allowEmpty && <option value="">Selecione o motivo…</option>}
-      {MOTIVOS_NAO_REALIZADA.map((m) => (
-        <option key={m.value} value={m.value}>
-          {m.label}
-        </option>
-      ))}
-    </select>
+    <div className="space-y-2">
+      <label className="block text-xs font-medium text-muted-foreground">
+        {legenda}
+        <select
+          className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm text-foreground"
+          value={linha.resultado}
+          onChange={(e) => onChange({ resultado: e.target.value as ResultadoVisita })}
+          data-testid={`${testid}-resultado`}
+        >
+          {RESULTADOS.map((r) => (
+            <option key={r.value} value={r.value}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {linha.resultado === "cancelada" && (
+        <div className="flex flex-wrap gap-2">
+          <label className="block flex-1 text-xs font-medium text-muted-foreground">
+            Motivo *
+            <select
+              className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm text-foreground"
+              value={linha.motivo}
+              onChange={(e) => onChange({ motivo: e.target.value as CanceladaMotivo | "" })}
+              data-testid={`${testid}-motivo`}
+            >
+              <option value="">Selecione…</option>
+              {CANCELADA_MOTIVO.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block flex-1 text-xs font-medium text-muted-foreground">
+            Quem cancelou *
+            <select
+              className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm text-foreground"
+              value={linha.por}
+              onChange={(e) => onChange({ por: e.target.value as CanceladaPor | "" })}
+              data-testid={`${testid}-por`}
+            >
+              <option value="">Selecione…</option>
+              {CANCELADA_POR.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+    </div>
   );
 }
