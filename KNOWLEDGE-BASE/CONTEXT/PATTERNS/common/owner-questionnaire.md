@@ -42,8 +42,8 @@ counter-arguments but is not independent review, and the agent says so rather th
 The same council is step 4 of `noc-iterate` (before a refine), so owner decisions and loop
 refinements are argued the same way.
 
-Forthcoming: an independent `noc-council` skill will run first for high-stakes questions; the
-link is added here when it exists.
+For high-stakes questions the independent council runs first: skill `noc-council`
+(`KB § PATTERNS/common/council.md`, stage `owner_question`).
 
 ## 4 · Channels and durability
 

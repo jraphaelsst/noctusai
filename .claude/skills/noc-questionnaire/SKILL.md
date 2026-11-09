@@ -23,9 +23,8 @@ unknown becomes a question; the owner's time is spent deliberately to buy a comp
    - Options self-contained, recommended first labelled `(Recommended)`; each names its
      consequence AND its strongest argument against.
    - **Council** (five lenses per option: contrarian, first principles, expansionist,
-     outsider, executor). Single-chat version, say so once; the independent `noc-council`
-     skill is forthcoming (link to be added in `owner-questionnaire.md`) and will run first
-     for high-stakes questions.
+     outsider, executor). Single-chat version, say so once; for high-stakes questions run
+     the independent `noc-council` skill first (stage `owner_question`).
 4. **Ambiguous / compound / contradicting answer** → restate the interpretation and confirm
    it next round; never resolve silently. A new answer overriding an earlier one: say which
    decision it replaced (and update the Decisions table).
@@ -58,4 +57,4 @@ Responda ex.: "1A 2Sim".
 - A destructive or prod action approved on WhatsApp: quote the literal chosen option in the log.
 
 ## Depth
-`KB § PATTERNS/common/owner-questionnaire.md` · `noc-triage` · `KB § PATTERNS/devops/prod-exposure-consent.md`.
+`KB § PATTERNS/common/owner-questionnaire.md` · `noc-council` · `noc-triage` · `KB § PATTERNS/devops/prod-exposure-consent.md`.
