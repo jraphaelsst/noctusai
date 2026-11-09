@@ -17,7 +17,7 @@ import { errorMessage } from "@/lib/errors";
 import { SKILLS_BIBLIOTECA_HREF, skillHref } from "./skillsRoutes";
 
 const INPUT_CLASS =
-  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 function NovaSkillForm({ onDone }: { onDone: (chave: string) => void }) {
   const criar = useCriarSkill();

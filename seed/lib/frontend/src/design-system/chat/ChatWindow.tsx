@@ -546,7 +546,7 @@ function ThreadListItem({
           onClick={startEditing}
           aria-label="Renomear conversa"
           data-testid={`chat-thread-rename-${thread.id}`}
-          className="mr-2 flex-shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+          className="mr-2 flex-shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
         >
           <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
         </button>

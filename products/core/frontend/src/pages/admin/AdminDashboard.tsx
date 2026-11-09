@@ -125,7 +125,7 @@ export function AdminDashboard() {
             key={key}
             type="button"
             onClick={() => navigate(href)}
-            className="bg-card rounded-lg border border-border shadow-sm p-6 text-left cursor-pointer hover:bg-muted/50 hover:border-primary/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary"
+            className="bg-card rounded-lg border border-border shadow-xs p-6 text-left cursor-pointer hover:bg-muted/50 hover:border-primary/50 transition-colors focus:outline-hidden focus:ring-2 focus:ring-primary"
           >
             <div className="text-2xl mb-2">{icon}</div>
             <div className="text-3xl font-bold text-foreground">{stats[key]}</div>
@@ -149,7 +149,7 @@ export function AdminDashboard() {
           </button>
         </div>
 
-        <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">

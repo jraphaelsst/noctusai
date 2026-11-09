@@ -1,1 +1,3 @@
 @import "@noctusai/seed/index.css";
+/* Tailwind v4: this product's JS config (the seed factory) stays the theme + content source. */
+@config "../tailwind.config.ts";

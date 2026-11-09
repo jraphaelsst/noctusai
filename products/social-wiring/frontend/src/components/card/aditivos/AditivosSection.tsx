@@ -252,7 +252,7 @@ function AditivoItem({
     <div
       id={aditivoDomId(aditivo.id)}
       tabIndex={-1}
-      className="space-y-3 rounded-md border p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="space-y-3 rounded-md border p-3 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       data-testid={`aditivo-${aditivo.id}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">

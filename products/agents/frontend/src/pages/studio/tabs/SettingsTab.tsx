@@ -28,7 +28,7 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
 
 const INPUT_CLASS =
-  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-70";
+  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50 disabled:opacity-70";
 
 const EFFORT_LABELS: Record<StudioEffort, string> = {
   low: "Baixo",

@@ -91,7 +91,7 @@ function Tile({
   return (
     <Link
       to={para}
-      className="block rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      className="block rounded-lg transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       data-testid={testid}
     >
       <Card className={destaque ? "border-primary/40 bg-primary/5 h-full" : "h-full"}>

@@ -2,11 +2,9 @@
  * NoctusAI Global Design System — Design Tokens
  * Single source of truth for all products.
  *
- * Usage in product index.css:
- *   @import "@noctusai/lib/design-system/tokens.css";
- *   @tailwind base;
- *   @tailwind components;
- *   @tailwind utilities;
+ * Usage: imported by the seed entry stylesheet (seed/framework/frontend/src/
+ * index.css, Tailwind v4: `@import "tailwindcss"` then this file); each product's
+ * src/index.css imports that entry and points `@config` at its tailwind.config.ts.
  *
  * Palette: neutral achromatic with lead-grey primary.
  * Dark sidebar against light content area.

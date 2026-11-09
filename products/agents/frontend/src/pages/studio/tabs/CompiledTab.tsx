@@ -28,7 +28,7 @@ import { useAgentVersionRefs, useVersionDiff } from "@/hooks/studio/useVersions"
 import { studioTabHref } from "../studioTabs";
 
 const SELECT_CLASS =
-  "h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 const TIPO_LABEL: Record<OnDemandItem["tipo"], string> = {
   skill: "Skill",

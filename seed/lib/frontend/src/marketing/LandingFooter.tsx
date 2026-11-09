@@ -20,7 +20,7 @@ export interface LandingFooterProps {
 }
 
 const linkClass =
-  "rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring";
 
 export function LandingFooter({ brand, tagline, columns, copyright, id = "sobre" }: LandingFooterProps) {
   return (

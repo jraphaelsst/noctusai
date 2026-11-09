@@ -134,7 +134,7 @@ export function AdminAnalytics() {
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {kpiCards.map(({ icon, value, label }) => (
-          <div key={label} className="bg-card rounded-lg border border-border shadow-sm p-6">
+          <div key={label} className="bg-card rounded-lg border border-border shadow-xs p-6">
             <div className="text-2xl mb-2">{icon}</div>
             <div className="text-2xl font-bold text-foreground">{value}</div>
             <div className="text-sm text-muted-foreground mt-1">{label}</div>
@@ -168,7 +168,7 @@ export function AdminAnalytics() {
 
       {/* Revenue Table */}
       {activeTab === 'revenue' && (
-        <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">
@@ -214,7 +214,7 @@ export function AdminAnalytics() {
 
       {/* Tenants Table */}
       {activeTab === 'tenants' && (
-        <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">

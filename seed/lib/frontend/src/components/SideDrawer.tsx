@@ -175,7 +175,7 @@ export function SideDrawer({
         data-testid={testId}
         onKeyDown={trapTab}
         className={cn(
-          'flex h-full w-full flex-col bg-background shadow-xl outline-none',
+          'flex h-full w-full flex-col bg-background shadow-xl outline-hidden',
           WIDTH_CLASS[width],
           className,
         )}

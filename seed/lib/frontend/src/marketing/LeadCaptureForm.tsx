@@ -299,7 +299,7 @@ export function LeadCaptureForm({
                 <div className="flex flex-col gap-1.5">
                   <label className="flex items-start gap-2 text-sm text-foreground">
                     <input type="checkbox" name="consent" data-field="consent" required disabled={sending}
-                      className="mt-1 h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="mt-1 h-4 w-4 accent-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       aria-invalid={errors.consent ? true : undefined} aria-describedby={describedBy("consent")} />
                     <span>
                       {`Concordo em ser contatado pela NoctusAI sobre ${consentSubject}, conforme a`}{" "}

@@ -245,7 +245,7 @@ export function MediaInsightsModal({
                       type="button"
                       aria-expanded={captionOpen}
                       onClick={() => setCaptionOpen((v) => !v)}
-                      className="mt-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="mt-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {captionOpen ? "Ver menos" : "Ver mais"}
                     </button>
@@ -257,7 +257,7 @@ export function MediaInsightsModal({
                   href={media.permalink}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <ExternalLink className="h-3.5 w-3.5" aria-hidden />
                   {media.permalinkLabel ?? "Abrir publicação"}
@@ -309,7 +309,7 @@ export function MediaInsightsModal({
                         aria-pressed={active}
                         onClick={() => toggle(m.key)}
                         className={cn(
-                          "rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                           active
                             ? "border-primary bg-primary text-primary-foreground"
                             : "border-input bg-background text-muted-foreground hover:bg-accent",
@@ -336,7 +336,7 @@ export function MediaInsightsModal({
               <button
                 type="button"
                 onClick={onRetry}
-                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Tentar novamente
               </button>

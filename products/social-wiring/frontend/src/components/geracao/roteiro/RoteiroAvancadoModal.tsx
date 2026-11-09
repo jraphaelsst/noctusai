@@ -310,7 +310,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
                   id="ra-brain"
                   value={brainId}
                   onChange={(e) => setBrainId(e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs"
                 >
                   <option value="">Nenhum</option>
                   {brains.map((b) => (

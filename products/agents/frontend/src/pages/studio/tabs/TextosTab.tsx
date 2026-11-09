@@ -21,7 +21,7 @@ import { useItensGerados } from "@/hooks/studio/useGeracoes";
 const CHAVE_RE = /^[a-z0-9]+(\.[a-z0-9_]+)+$/;
 const TEXTO_MAX = 8000;
 const INPUT_CLASS =
-  "h-9 w-full rounded-md border border-input bg-background px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "h-9 w-full rounded-md border border-input bg-background px-3 font-mono text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 function categoria(chave: string): string {
   return chave.split(".")[0] || "outros";

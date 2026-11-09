@@ -104,7 +104,7 @@ export function AdminTemplates() {
 
         {/* Placeholders */}
         {selected.placeholders.length > 0 && (
-          <div className="mb-6 rounded-lg border border-border bg-card p-4 shadow-sm">
+          <div className="mb-6 rounded-lg border border-border bg-card p-4 shadow-xs">
             <div className="flex items-center gap-2 mb-3">
               <Variable className="h-4 w-4 text-primary" />
               <h3 className="text-sm font-semibold text-foreground">Placeholders</h3>
@@ -121,7 +121,7 @@ export function AdminTemplates() {
 
         {/* README */}
         {selected.readme && (
-          <div className="mb-6 rounded-lg border border-border bg-card p-5 shadow-sm">
+          <div className="mb-6 rounded-lg border border-border bg-card p-5 shadow-xs">
             <h3 className="text-sm font-semibold text-foreground mb-3">README</h3>
             <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed max-h-64 overflow-y-auto">
               {selected.readme}
@@ -141,7 +141,7 @@ export function AdminTemplates() {
               <h3 className="text-sm font-semibold text-foreground">{section.label}</h3>
               <span className="text-xs text-muted-foreground">({section.files.length})</span>
             </div>
-            <div className="rounded-lg border border-border bg-card shadow-sm divide-y divide-border">
+            <div className="rounded-lg border border-border bg-card shadow-xs divide-y divide-border">
               {section.files.map(file => {
                 const isExpanded = expandedFile === file.path;
                 const isCopied = copiedFile === file.path;
@@ -204,7 +204,7 @@ export function AdminTemplates() {
               key={t.name}
               onClick={() => fetchDetail(t.name)}
               disabled={loadingDetail}
-              className="w-full text-left rounded-lg border border-border bg-card p-5 shadow-sm hover:border-primary/30 hover:shadow-md transition-all disabled:opacity-50"
+              className="w-full text-left rounded-lg border border-border bg-card p-5 shadow-xs hover:border-primary/30 hover:shadow-md transition-all disabled:opacity-50"
             >
               <div className="flex items-center gap-4">
                 <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">

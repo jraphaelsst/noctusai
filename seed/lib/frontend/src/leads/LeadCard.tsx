@@ -21,7 +21,7 @@ export interface LeadCardProps {
 export function LeadCard({ lead, originLabel, stage, now }: LeadCardProps) {
   const phone = displayPhone(lead.phone);
   return (
-    <div className="space-y-1.5 rounded-md border bg-card p-3 text-sm shadow-sm" data-testid={`lead-card-${lead.id}`}>
+    <div className="space-y-1.5 rounded-md border bg-card p-3 text-sm shadow-xs" data-testid={`lead-card-${lead.id}`}>
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 break-words font-medium leading-tight">{lead.name}</p>
         <Badge variant="outline" className="shrink-0">

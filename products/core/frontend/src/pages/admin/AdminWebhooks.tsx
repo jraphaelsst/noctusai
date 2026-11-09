@@ -226,7 +226,7 @@ export function AdminWebhooks() {
       )}
 
       {/* Endpoints table */}
-      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/50">
@@ -305,7 +305,7 @@ export function AdminWebhooks() {
 
       {/* Deliveries view */}
       {viewDeliveriesId && (
-        <div className="mt-6 bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <div className="mt-6 bg-card rounded-lg border border-border shadow-xs overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/50">
             <h2 className="text-lg font-semibold text-foreground">Log de Entregas</h2>
             <button
@@ -385,7 +385,7 @@ export function AdminWebhooks() {
                   onChange={e => setFormUrl(e.target.value)}
                   placeholder="https://example.com/webhooks"
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
 

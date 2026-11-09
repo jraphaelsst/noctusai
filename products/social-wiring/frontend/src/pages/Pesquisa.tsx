@@ -279,7 +279,7 @@ export default function Pesquisa() {
                   aria-label="Ordenar"
                   value={sort}
                   onChange={(e) => setSort(e.target.value as PesquisaSort)}
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm"
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs"
                 >
                   <option value="recent">Mais recentes</option>
                   <option value="plays">Mais views</option>

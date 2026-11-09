@@ -133,7 +133,7 @@ export function APIKeys() {
                       setValues((prev) => ({ ...prev, [id]: e.target.value }))
                     }
                     placeholder={configured ? 'Substituir chave…' : 'Informe a chave…'}
-                    className="flex-1 rounded border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    className="flex-1 rounded border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-ring"
                   />
                   <button
                     type="button"

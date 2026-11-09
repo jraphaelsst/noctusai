@@ -97,7 +97,7 @@ export function FeatureGrid({
             style={it.link.brand ? productBrandVars(it.link.brand) : undefined}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-sm text-sm font-semibold underline-offset-4 hover:underline",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background",
+              "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background",
               "after:absolute after:inset-0 after:rounded-lg after:content-['']",
               accentTextClass,
             )}

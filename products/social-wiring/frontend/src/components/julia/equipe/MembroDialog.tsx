@@ -22,7 +22,7 @@ interface Props {
 }
 
 const SELECT_CLASS =
-  "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+  "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring";
 
 export function MembroDialog({ aberto, membro, papeis, usuarios, pendente, erro, onSalvar, onFechar }: Props) {
   const [nome, setNome] = useState(membro?.nome ?? "");

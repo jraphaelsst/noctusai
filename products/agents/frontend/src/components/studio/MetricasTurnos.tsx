@@ -79,7 +79,7 @@ export function TurnosTabela({
                 {t.thread_id && onAbrirThread ? (
                   <button
                     type="button"
-                    className="font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label={`Abrir conversa ${idCurto(t.thread_id)}`}
                     onClick={() => onAbrirThread(t.thread_id as string)}
                   >

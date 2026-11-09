@@ -180,7 +180,7 @@ describe("LandingNav v2", () => {
     rerender(<LandingNav {...props} loginAlwaysVisible primaryActionDesktopOnly />);
     const entrar = screen.getAllByRole("link", { name: "Entrar", hidden: true });
     expect(entrar).toHaveLength(1);
-    expect(entrar[0].className).not.toContain("hidden");
+    expect(entrar[0]).not.toHaveClass("hidden");
     expect(screen.getByRole("link", { name: "Falar com a gente" })).toHaveClass("hidden", "lg:inline-flex");
   });
 

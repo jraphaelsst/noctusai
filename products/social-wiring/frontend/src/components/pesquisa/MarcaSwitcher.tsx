@@ -13,7 +13,7 @@ export function MarcaSwitcher({ marcas, marcaId, onChange }: MarcaSwitcherProps)
       aria-label="Marca"
       value={marcaId ?? ""}
       onChange={(e) => onChange(e.target.value)}
-      className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm"
+      className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs"
     >
       {marcas.map((m) => (
         <option key={m.id} value={m.id}>

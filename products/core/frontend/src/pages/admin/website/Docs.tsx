@@ -143,7 +143,7 @@ export function Docs({ docsSource }: DocsProps = {}) {
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Filtrar por título..."
             aria-label="Filtrar por título"
-            className="w-full rounded-md border border-input bg-background py-2 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full rounded-md border border-input bg-background py-2 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         {filteredGroups.length === 0 ? (

@@ -405,7 +405,7 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
         <section
           id={ALVO_POSSE}
           tabIndex={-1}
-          className="space-y-3 outline-none"
+          className="space-y-3 outline-hidden"
           data-testid="termos-posse"
         >
           <h4 className="text-sm font-medium">Posse</h4>
@@ -525,7 +525,7 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
           <section
             id={ALVO_PERMUTA_POSSE}
             tabIndex={-1}
-            className="space-y-3 outline-none"
+            className="space-y-3 outline-hidden"
             data-testid="termos-permuta"
           >
             <h4 className="text-sm font-medium">Permuta — entrega do imóvel</h4>

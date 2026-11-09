@@ -23,7 +23,7 @@ import { useMarcas } from "@/hooks/useMarcas";
 import { lerMarcaSalva, salvarMarca } from "@/hooks/useMarcaPesquisa";
 
 const TODAS = "todas";
-const SELECT = "h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm";
+const SELECT = "h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs";
 
 export interface EsteiraPageProps {
   /** Override (FE-2 / FE-Z): open the post dialog. Default sets `?post=<id>`. */

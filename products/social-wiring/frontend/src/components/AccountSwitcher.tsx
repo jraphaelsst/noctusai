@@ -121,7 +121,7 @@ export function AccountSwitcher({
               id="sw-client-select"
               value={activeMarcaId ?? ""}
               onChange={(e) => setActiveMarca(e.target.value || null)}
-              className="h-7 appearance-none rounded-md border border-input bg-background pr-7 pl-2.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="h-7 appearance-none rounded-md border border-input bg-background pr-7 pl-2.5 text-xs ring-offset-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               aria-label="Selecionar marca"
             >
               <option value="">Todos os marcas</option>
@@ -153,7 +153,7 @@ export function AccountSwitcher({
             id="sw-account-select"
             value={selectValue}
             onChange={(e) => setActiveAccount(provider, e.target.value || null)}
-            className="h-7 appearance-none rounded-md border border-input bg-background pr-7 pl-2.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="h-7 appearance-none rounded-md border border-input bg-background pr-7 pl-2.5 text-xs ring-offset-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             aria-label={`Selecionar conta ${providerLabel}`}
             disabled={filteredAccounts.length === 0}
           >

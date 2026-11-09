@@ -134,7 +134,7 @@ export function AcceptInvite() {
   if (status === 'accepted') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
+        <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-xs">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-success-light text-2xl font-bold text-success">
             &#10003;
           </div>
@@ -157,7 +157,7 @@ export function AcceptInvite() {
   if (status === 'error') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
+        <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-xs">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-danger-light text-2xl font-bold text-destructive">
             !
           </div>
@@ -177,7 +177,7 @@ export function AcceptInvite() {
   // Needs login / signup
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 shadow-sm">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 shadow-xs">
         <div className="mb-6 text-center">
           <div className="flex items-center justify-center gap-2">
             <span className="text-2xl">⚡</span>
@@ -205,7 +205,7 @@ export function AcceptInvite() {
                 value={nome}
                 onChange={e => setNome(e.target.value)}
                 required
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
               />
             </div>
             <div>
@@ -216,7 +216,7 @@ export function AcceptInvite() {
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 required
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
               />
             </div>
             <div>
@@ -228,7 +228,7 @@ export function AcceptInvite() {
                 onChange={e => setPassword(e.target.value)}
                 required
                 minLength={6}
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
               />
             </div>
             <button
@@ -259,7 +259,7 @@ export function AcceptInvite() {
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 required
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
               />
             </div>
             <div>
@@ -270,7 +270,7 @@ export function AcceptInvite() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 required
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
               />
             </div>
             <button

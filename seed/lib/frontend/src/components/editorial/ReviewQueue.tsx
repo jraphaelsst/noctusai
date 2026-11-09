@@ -120,7 +120,7 @@ export function ReviewQueue(props: ReviewQueueProps): React.ReactElement {
                 <button
                   type="button"
                   onClick={() => onSelect?.(item)}
-                  className="flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:flex-row sm:items-center sm:justify-between"
+                  className="flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-muted/50 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary/50 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{item.title || item.ref}</span>
@@ -170,7 +170,7 @@ export function ReviewQueue(props: ReviewQueueProps): React.ReactElement {
   return (
     <section
       aria-label={title}
-      className="rounded-lg border border-border bg-card text-card-foreground shadow-sm"
+      className="rounded-lg border border-border bg-card text-card-foreground shadow-xs"
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
         <h3 className="flex items-center gap-2 text-base font-semibold leading-none tracking-tight">

@@ -157,7 +157,7 @@ export interface PipelineBoardProps<TCard> {
 }
 
 const DEFAULT_COLUMN_CLASS =
-  'flex-shrink-0 w-80 rounded-lg border bg-card text-card-foreground shadow-sm h-full flex flex-col overflow-hidden ' +
+  'flex-shrink-0 w-80 rounded-lg border bg-card text-card-foreground shadow-xs h-full flex flex-col overflow-hidden ' +
   '[&>[data-kanban-column-id]]:flex-1 [&>[data-kanban-column-id]]:p-3 [&>[data-kanban-column-id]]:overflow-y-auto';
 
 export function PipelineBoard<TCard>({

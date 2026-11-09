@@ -216,7 +216,7 @@ function RatingCard({ onSubmit, onDismiss }: RatingCardProps) {
             aria-pressed={nota === n}
             aria-label={`Nota ${n} de 5`}
             onClick={() => setNota(n)}
-            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Star className={cn("h-6 w-6", n <= nota && "fill-primary text-primary")} aria-hidden="true" />
           </button>
@@ -229,7 +229,7 @@ function RatingCard({ onSubmit, onDismiss }: RatingCardProps) {
         rows={2}
         aria-label="Comentário (opcional)"
         placeholder="Quer deixar um comentário? (opcional)"
-        className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       />
       {sendError && (
         <div
@@ -664,7 +664,7 @@ export function HelpChatBubble({
               disabled={!configured}
               placeholder={configured ? "Digite sua pergunta..." : "Assistente indisponível no momento"}
               rows={1}
-              className="min-h-[40px] max-h-32 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-[40px] max-h-32 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             />
             <button
               type="submit"

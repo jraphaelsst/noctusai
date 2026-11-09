@@ -52,7 +52,7 @@ export function AdminTokens({ http = api as unknown as Http }: { http?: Http }) 
         </p>
       </div>
 
-      <section aria-labelledby="auth-tokens-title" className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <section aria-labelledby="auth-tokens-title" className="rounded-lg border border-border bg-card p-4 shadow-xs">
         <h2 id="auth-tokens-title" className="text-sm font-semibold text-foreground">
           Autenticação de tokens
         </h2>

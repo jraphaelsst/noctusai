@@ -229,7 +229,7 @@ function VideoDetailContent({
                 onChange={(e) => setEditTitle(e.target.value)}
                 maxLength={100}
                 disabled={isUpdating}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 placeholder="Título do video"
               />
             </div>
@@ -244,7 +244,7 @@ function VideoDetailContent({
                 maxLength={5000}
                 rows={4}
                 disabled={isUpdating}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 resize-y"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 resize-y"
                 placeholder="Descrição do video"
               />
             </div>
@@ -257,7 +257,7 @@ function VideoDetailContent({
                 value={editPrivacy}
                 onChange={(e) => setEditPrivacy(e.target.value as PrivacyStatus)}
                 disabled={isUpdating}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               >
                 <option value="public">Público</option>
                 <option value="unlisted">Não listado</option>
@@ -393,7 +393,7 @@ function VideoDetailContent({
                 disabled={isDeleting}
                 autoComplete="off"
                 spellCheck={false}
-                className="w-full rounded-md border border-destructive/60 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive disabled:opacity-50"
+                className="w-full rounded-md border border-destructive/60 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-destructive disabled:opacity-50"
                 placeholder={PURGE_CONFIRM_PHRASE}
                 data-testid="purge-confirm-input"
               />

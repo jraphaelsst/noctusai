@@ -405,7 +405,7 @@ export function AdminProducts() {
                 onChange={e => setProductForm({ ...productForm, nome: e.target.value })}
                 placeholder="Ex: ERP Imobiliario"
                 required
-                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
               />
             </div>
             {!editingProductId && (
@@ -417,7 +417,7 @@ export function AdminProducts() {
                   onChange={e => setProductForm({ ...productForm, slug: e.target.value })}
                   placeholder="Ex: erp-imobiliario"
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
             )}
@@ -429,7 +429,7 @@ export function AdminProducts() {
                 value={productForm.descricao}
                 onChange={e => setProductForm({ ...productForm, descricao: e.target.value })}
                 placeholder="Descricao do produto"
-                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
               />
             </div>
             {editingProductId && (
@@ -444,7 +444,7 @@ export function AdminProducts() {
                   onChange={e => setProductForm({ ...productForm, descricao_publica: e.target.value })}
                   aria-describedby="prod-descricao-publica-hint"
                   placeholder="Uma ou duas frases para quem visita noctusai.com"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
                 <p id="prod-descricao-publica-hint" className="text-xs text-muted-foreground mt-1">
                   Obrigatória para ligar “No site”. A descrição interna acima nunca vai para o site.
@@ -466,7 +466,7 @@ export function AdminProducts() {
                     value={productForm.icone}
                     onChange={e => setProductForm({ ...productForm, icone: e.target.value })}
                     placeholder="Ex: Box"
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
                 <div>
@@ -477,7 +477,7 @@ export function AdminProducts() {
                     onChange={e => setProductForm({ ...productForm, url_base: e.target.value })}
                     placeholder="Ex: http://localhost:8080"
                     required
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
               </>
@@ -494,7 +494,7 @@ export function AdminProducts() {
                   value={productForm.cor}
                   onChange={e => setProductForm({ ...productForm, cor: e.target.value })}
                   placeholder="#6366f1"
-                  className="flex-1 h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="flex-1 h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
             </div>
@@ -574,7 +574,7 @@ export function AdminProducts() {
         </div>
 
         {/* Product Info */}
-        <div className="bg-card rounded-lg border border-border shadow-sm p-6 mb-6">
+        <div className="bg-card rounded-lg border border-border shadow-xs p-6 mb-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div><strong className="text-foreground">Descricao:</strong> <span className="text-muted-foreground">{selectedProduct.descricao || 'Sem descricao'}</span></div>
             <div><strong className="text-foreground">URL Base:</strong> <span className="text-muted-foreground">{selectedProduct.url_base}</span></div>
@@ -655,7 +655,7 @@ export function AdminProducts() {
             <p className="ml-3 text-muted-foreground">Carregando...</p>
           </div>
         ) : (
-          <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+          <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/50">
@@ -732,7 +732,7 @@ export function AdminProducts() {
                     value={licenseForm.org_id}
                     onChange={e => setLicenseForm(prev => ({ ...prev, org_id: e.target.value }))}
                     required
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   >
                     <option value="">Selecione...</option>
                     {availableOrgs.map(o => (
@@ -779,7 +779,7 @@ export function AdminProducts() {
                     value={licenseForm.fim}
                     onChange={e => setLicenseForm(prev => ({ ...prev, fim: e.target.value }))}
                     min={new Date().toISOString().split('T')[0]}
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
                     {licenseForm.fim
@@ -850,7 +850,7 @@ export function AdminProducts() {
           `table-fixed` + a shared <ProductCols/> means every section resolves
           identical column widths — separate tables would otherwise size their
           columns independently and the sections would visibly misalign. */}
-      <section className="bg-card rounded-lg border border-border shadow-sm p-4 mb-6" aria-labelledby="destaques-h">
+      <section className="bg-card rounded-lg border border-border shadow-xs p-4 mb-6" aria-labelledby="destaques-h">
         <h2 id="destaques-h" className="text-base font-semibold text-foreground">
           Destaques no site ({featured.length}/{MAX_DESTAQUES})
         </h2>
@@ -916,7 +916,7 @@ export function AdminProducts() {
           return (
             <section
               key={bucket.key}
-              className={`bg-card rounded-lg border-2 ${bucket.tone} shadow-sm overflow-hidden`}
+              className={`bg-card rounded-lg border-2 ${bucket.tone} shadow-xs overflow-hidden`}
             >
               <header className="px-4 py-3 border-b border-border bg-muted/40">
                 <div className="flex items-baseline gap-2">
@@ -1083,7 +1083,7 @@ export function AdminProducts() {
           );
         })}
         {products.length === 0 && (
-          <div className="bg-card rounded-lg border border-border shadow-sm px-4 py-8 text-center text-muted-foreground">
+          <div className="bg-card rounded-lg border border-border shadow-xs px-4 py-8 text-center text-muted-foreground">
             Nenhum produto cadastrado. Crie o primeiro!
           </div>
         )}

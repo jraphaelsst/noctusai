@@ -270,7 +270,7 @@ export function Onboarding() {
         </div>
 
         {/* Step content */}
-        <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
+        <div className="rounded-lg border border-border bg-card p-6 shadow-xs">
           <h2 className="text-xl font-semibold text-foreground">
             {STEP_LABELS[STEP_KEYS[currentStep]].title}
           </h2>
@@ -342,7 +342,7 @@ export function Onboarding() {
                   min={1}
                   onChange={e => setNumberOfUsers(Math.max(1, parseInt(e.target.value, 10) || 1))}
                   required={orgType === 'company'}
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
 
@@ -355,7 +355,7 @@ export function Onboarding() {
                   value={companyNome}
                   onChange={e => setCompanyNome(e.target.value)}
                   placeholder="Minha Empresa Ltda"
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
               <div>
@@ -365,7 +365,7 @@ export function Onboarding() {
                   value={companyCnpj}
                   onChange={e => setCompanyCnpj(e.target.value)}
                   placeholder="00.000.000/0001-00"
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
               <div>
@@ -375,7 +375,7 @@ export function Onboarding() {
                   value={companyTelefone}
                   onChange={e => setCompanyTelefone(e.target.value)}
                   placeholder="(11) 99999-0000"
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
               <div>
@@ -385,7 +385,7 @@ export function Onboarding() {
                   value={companyEndereco}
                   onChange={e => setCompanyEndereco(e.target.value)}
                   placeholder="Rua Exemplo, 123 - Sao Paulo, SP"
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
             </div>
@@ -446,7 +446,7 @@ export function Onboarding() {
                     value={email}
                     onChange={e => updateEmail(idx, e.target.value)}
                     placeholder="colega@empresa.com"
-                    className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
                   />
                   {inviteEmails.length > 1 && (
                     <button

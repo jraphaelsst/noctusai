@@ -29,7 +29,7 @@ export function ProcessoCard({ processo, isDragging }: ProcessoCardProps) {
 
   return (
     <div
-      className={`cursor-pointer rounded-lg border bg-card p-3 shadow-sm transition-colors hover:border-primary/40 ${
+      className={`cursor-pointer rounded-lg border bg-card p-3 shadow-xs transition-colors hover:border-primary/40 ${
         isDragging ? "opacity-60" : ""
       }`}
       data-testid="processo-card"

@@ -187,7 +187,7 @@ export function Dialog({ open, onClose, title, className, children }: DialogProp
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          "relative w-full max-w-md focus:outline-none rounded-lg border border-border bg-background shadow-lg",
+          "relative w-full max-w-md focus:outline-hidden rounded-lg border border-border bg-background shadow-lg",
           className,
         )}
         onClick={(e) => e.stopPropagation()}

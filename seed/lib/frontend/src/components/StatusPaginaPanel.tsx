@@ -113,7 +113,7 @@ const STATUS_META: Record<
 
 const SELECT_CLASS =
   'h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground ' +
-  'focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60';
+  'focus:outline-hidden focus:ring-2 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60';
 
 // ── Card shell (the lib design-system has no generic Card; build a token-aligned
 // shell so the organ renders consistently inside every product's tailwind context).
@@ -129,7 +129,7 @@ function PanelShell({
   children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <section className="rounded-lg border border-border bg-card text-card-foreground shadow-sm">
+    <section className="rounded-lg border border-border bg-card text-card-foreground shadow-xs">
       <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
         <div>
           <h3 className="text-base font-semibold leading-none tracking-tight">

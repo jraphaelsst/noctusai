@@ -22,7 +22,7 @@ export function VariavelSelect({ id, value, onChange, variaveis, vazioRotulo, ar
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
-        "h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
         className,
       )}
     >

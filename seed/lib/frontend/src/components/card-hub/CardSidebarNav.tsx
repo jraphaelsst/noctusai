@@ -143,7 +143,7 @@ export function CardSidebarNav<K extends string>({
                 "max-sm:min-h-10 max-sm:shrink-0 max-sm:snap-start max-sm:whitespace-nowrap",
                 "md:w-full md:justify-start md:overflow-hidden md:px-2",
                 isActive
-                  ? "bg-background font-medium text-foreground shadow-sm"
+                  ? "bg-background font-medium text-foreground shadow-xs"
                   : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
                 isEmpty && "cursor-not-allowed opacity-40 hover:bg-transparent",
               )}

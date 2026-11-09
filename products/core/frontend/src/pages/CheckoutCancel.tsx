@@ -6,7 +6,7 @@ export function CheckoutCancel() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-xs">
         <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-danger-light text-2xl font-bold text-destructive">
           ✕
         </div>

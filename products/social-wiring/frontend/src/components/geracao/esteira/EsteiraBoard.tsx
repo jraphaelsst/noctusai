@@ -49,7 +49,7 @@ export interface EsteiraBoardProps {
 
 /** Seed default column, sized for a phone first (the board scrolls inside its own container). */
 const COLUNA =
-  "flex-shrink-0 w-[82vw] max-w-80 sm:w-80 rounded-lg border bg-card text-card-foreground shadow-sm " +
+  "flex-shrink-0 w-[82vw] max-w-80 sm:w-80 rounded-lg border bg-card text-card-foreground shadow-xs " +
   "flex flex-col overflow-hidden max-h-[calc(100dvh-14rem)] " +
   "[&>[data-kanban-column-id]]:flex-1 [&>[data-kanban-column-id]]:p-3 [&>[data-kanban-column-id]]:overflow-y-auto";
 

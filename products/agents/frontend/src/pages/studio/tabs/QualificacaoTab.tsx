@@ -48,7 +48,7 @@ const GRUPOS = ["prontidao", "bloqueios", "interesse", "perfil_imovel", "perfil_
 const TIPOS = ["enum", "multi", "bool", "numero", "faixa", "texto", "imovel_ref", "derivado", "identificacao"] as const;
 const CHAVE_RE = /^[a-z][a-z0-9_]{1,63}$/;
 const INPUT_CLASS =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 function Conflito({ onReload }: { onReload: () => void }) {
   return (

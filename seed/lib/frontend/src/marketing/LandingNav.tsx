@@ -58,7 +58,7 @@ export function ThemeSwitch({ value, onChange }: NonNullable<LandingNavProps["th
           aria-pressed={value === v}
           onClick={() => onChange(v)}
           className={cn(
-            "inline-flex h-7 w-7 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "inline-flex h-7 w-7 items-center justify-center rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
             value === v ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent",
           )}
         >
@@ -118,7 +118,7 @@ export function LandingNav({
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-card">
       <div className={`${wrapClass} flex h-14 items-center gap-4`}>
-        <a href={brand.href} aria-label={brand.ariaLabel ?? brand.label} className="inline-flex items-center gap-2 rounded-md font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <a href={brand.href} aria-label={brand.ariaLabel ?? brand.label} className="inline-flex items-center gap-2 rounded-md font-semibold text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
           {brand.mark}
           {brand.label}
         </a>
@@ -145,7 +145,7 @@ export function LandingNav({
               )}
             >
               {products.map((p) => (
-                <a key={p.nome} href={p.href} onClick={() => setMenuOpen(false)} className="flex items-start gap-3 rounded-md p-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <a key={p.nome} href={p.href} onClick={() => setMenuOpen(false)} className="flex items-start gap-3 rounded-md p-2 hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
                   <LandingIcon name={p.icone} className="mt-0.5 h-5 w-5 shrink-0" />
                   <span className="flex flex-col">
                     <strong className="text-sm text-foreground">{p.nome}</strong>
@@ -153,7 +153,7 @@ export function LandingNav({
                   </span>
                 </a>
               ))}
-              <a href={productsHref} onClick={() => setMenuOpen(false)} className="flex flex-col rounded-md p-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <a href={productsHref} onClick={() => setMenuOpen(false)} className="flex flex-col rounded-md p-2 hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
                 <strong className="text-sm text-foreground">Ver todos os produtos</strong>
                 <small className="text-xs text-muted-foreground">Inclui os que estão em construção ou em pausa</small>
               </a>
@@ -195,7 +195,7 @@ export function LandingNav({
         <div className={`${wrapClass} flex flex-col gap-3 py-3`}>
           <nav aria-label="Principal (celular)" className="flex flex-col">
             {[...(productsHref ? [{ label: productsLabel, href: productsHref }] : []), ...links].map((l) => (
-              <a key={l.href + l.label} href={l.href} onClick={() => setDrawerOpen(false)} className="rounded-md px-2 py-2.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <a key={l.href + l.label} href={l.href} onClick={() => setDrawerOpen(false)} className="rounded-md px-2 py-2.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
                 {l.label}
               </a>
             ))}

@@ -375,7 +375,7 @@ export function IntegrationCard({
     return (
       <div
         className={cn(
-          "rounded-lg border border-border bg-card p-4 shadow-sm",
+          "rounded-lg border border-border bg-card p-4 shadow-xs",
           className,
         )}
         aria-busy="true"
@@ -428,7 +428,7 @@ export function IntegrationCard({
         if (!editMode && !busy && onOpenModal) onOpenModal(account);
       }}
       className={cn(
-        "relative rounded-lg border border-border bg-card p-4 shadow-sm transition-colors",
+        "relative rounded-lg border border-border bg-card p-4 shadow-xs transition-colors",
         !editMode && onOpenModal && !busy
           ? "cursor-pointer hover:border-primary/50 hover:bg-accent/30"
           : "",
@@ -466,7 +466,7 @@ export function IntegrationCard({
               {!editMode && !busy && onOpenModal ? (
                 <button
                   type="button"
-                  className="truncate text-left text-sm font-semibold text-foreground after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring"
+                  className="truncate text-left text-sm font-semibold text-foreground after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:outline-hidden focus-visible:after:ring-2 focus-visible:after:ring-ring"
                 >
                   {primaryLabel}
                 </button>

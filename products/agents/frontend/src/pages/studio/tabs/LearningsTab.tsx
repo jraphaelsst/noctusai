@@ -17,7 +17,7 @@ import { errorMessage } from "@/lib/errors";
 import { formatDate } from "@/lib/utils";
 
 const SELECT_CLASS =
-  "h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 const STATUS_OPTIONS: { value: "" | LearningStatus; label: string }[] = [
   { value: "", label: "Todos os status" },
