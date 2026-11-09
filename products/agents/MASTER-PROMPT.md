@@ -324,6 +324,10 @@ At publish, a DB-source dev agent's mirror is rendered from the draft by `app/st
 Claude Code renderer `app/studio/claude_surface.py`, shared with the git package build) and stored on the version
 before the flip; no mirror means no publish (409 `espelho_falhou`). `versao_semver` = `<versao>.0.0`.
 
+### Agent layers (BASE → SDR → agent; roadmap `agent-templates-2026-11`, in build)
+
+`app/studio/camadas.py`: a child agent's version holds only its OWN rows; the compiler, the runtime turn, the eval driver and readiness read the EFFECTIVE rows (`EfetivoStore`), the parent chain merged in per piece by key. Prose section with the same key: the child APPENDS (parent title, order and active flag kept). Single values (text, tool row, decision, org-spec declaration, own skill): the child REPLACES, reported as an override. Files follow their skill. Editors keep reading own rows. A cycle or a chain deeper than 4 is refused. Wiring (parent pin, call sites, publish pin) lands in the same branch before it ships.
+
 ### Creating a complete agent (Julia as the reference — `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md`, skill `noc-new-agent`)
 - The recipe, the artifact map (what Julia has, where it lives), the publish-gate table and "what never comes from AI" live in that guide; read it before building or generating an agent.
 - `app/studio/prontidao.py` + `GET /api/studio/agents/{key}/prontidao`: the draft's readiness. `compor` is pure (`Entrada` -> items `{codigo, grupo, severidade, mensagem, acao_sugerida, recusa_publicacao, detalhe}`), `coletar` reads. A BLOCKING item names the publish 409 code it stands for (`RECUSAS_PUBLICACAO`); the publish route and the view share the predicates (`recusa_de_compilacao`, `juiz_aprovado`, `decidir_portao`) and `tests/studio/def/test_prontidao.py` publishes a draft in every refusal state to keep them in lock-step. Every publish 409 carries the same `prontidao` list. Advisory (never blocking): stale skill pins, tools the configuration expects without a description row, tool parameters without a label (`rotulo_parametro_ausente`), unfilled org specs, generator gaps, controls off.
