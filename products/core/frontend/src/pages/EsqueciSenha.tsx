@@ -93,7 +93,7 @@ export function EsqueciSenha() {
                 onChange={(e) => setEmail(e.target.value)}
                 aria-invalid={!!fieldError}
                 aria-describedby={fieldError ? 'esqueci-email-erro' : undefined}
-                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary"
               />
               {fieldError && (
                 <p id="esqueci-email-erro" className="text-sm text-danger-foreground">{fieldError}</p>

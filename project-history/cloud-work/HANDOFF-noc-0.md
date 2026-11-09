@@ -24,7 +24,7 @@ and the commit bodies on `cloud-work-2`.
 academia "Entrar" removal · actions/cache v6.1.0 · @hookform/resolvers 7 ·
 google-genai <2.34 · lucide-react 1.70 (+ `@noctusai/lib/brand-icons`) ·
 Tailwind 4.3 with the v3 look pinned · keeper `check_tailwind_v4_class_names`
-(warn-first, D24).
+(warn-first, D25).
 
 ## Deploy notes for when it ships
 
