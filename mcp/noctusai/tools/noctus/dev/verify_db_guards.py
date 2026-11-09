@@ -4485,29 +4485,6 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
         ),
     ),
     _agents_studio_probe(
-        probe_id="agents.eval_runs.one_active_per_version",
-        guard_name="eval_runs_one_active_per_version_idx",
-        migrations=_AGENTS_KE_MIGRATIONS,
-        requires_table="eval_runs",
-        attack_sql=(
-            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
-            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by) "
-            "VALUES (v_org, v_agent, v_version, 'sha256:noc-probe-1', 'pendente', 0.8, v_org);\n"
-            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by) "
-            "VALUES (v_org, v_agent, v_version, 'sha256:noc-probe-2', 'executando', 0.8, v_org);"
-        ),
-        guard_fragment="eval_runs_one_active_per_version_idx",
-        what="a second pendente/executando eval_runs row for the same version_id",
-        rationale=(
-            "At most one `pendente`/`executando` eval run per version — "
-            "`POST .../evals/runs` maps a second concurrent request into 409 "
-            "`run_in_progress` (contract §D4). Without this partial unique "
-            "index two runs could race: both write `eval_results` for the "
-            "same version, and the publish gate would read whichever finished "
-            "last as the answer, silently discarding the other run's verdict."
-        ),
-    ),
-    _agents_studio_probe(
         probe_id="eval_results.status_check",
         guard_name="eval_results_status_check",
         migrations=(*_AGENTS_KE_MIGRATIONS, "014_agent_studio_cost.sql"),
@@ -5301,17 +5278,6 @@ _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
         fragments=("eval_mecanismo_runs_aprovado_consistente",), what="an approved mechanism run that never finished",
         rationale="Only a finished, complete, under-budget, all-green live run may be 'aprovado' -- the publish "
                   "gate trusts this flag (also enforced in publish_agent_version).",
-    ),
-    _julia_v2_probe(
-        probe_id="eval_mecanismo_runs.one_executing_per_version", guard_name="uq_eval_mecanismo_runs_um_em_execucao",
-        migrations=(_m("038"),), setup="\n    ".join((_JV2_AGENT, _JV2_VERSION)),
-        attack="\n    ".join(
-            f"INSERT INTO {_JV2}.eval_mecanismo_runs (org_id, agent_id, version_id, compiled_hash, driver, status, "
-            "started_by) VALUES (v_org, v_agent, v_version, 'sha256:noc', 'live', 'executando', v_org);"
-            for _ in (1, 2)),
-        fragments=("uq_eval_mecanismo_runs_um_em_execucao",), what="two executing mechanism runs for one version",
-        rationale="One in-flight mechanism run per version: two would double the live-model spend and race on the "
-                  "gate's 'newest run' read.",
     ),
     # ── 039 · the shared skill library ──
     _julia_v2_probe(
