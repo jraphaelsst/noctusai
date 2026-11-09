@@ -3,7 +3,7 @@
 Syncs the Vista roster into SW's broker dimension (`lead_corretores`): matched by `vista_codigo`, else by the org's name-alias map, else
 by the normalised name; an unmatched Vista broker is CREATED (never a guess at a merge). Fields kept from Vista: Codigo, Nome
 (`vista_nome`; OUR `nome` -- the alias/analytics key -- is never overwritten), Nomecompleto, Email, Celular, CRECI, Equipe/CodigoEquipe,
-Gerente, Agenciador, Corretor, Inativo/Datasaida, AtuacaoVenda/AtuacaoLocacao.
+Gerente, Agenciador, Corretor, Inativo/Datasaida, AtuacaoVenda/AtuacaoLocacao (only when Vista sends them).
 
 NEVER DELETE (same rule as the imóveis): a broker that is missing from Vista's roster or marked Inativo is MARKED (`vista_status`
 `ausente|inativo`, `vista_ausente_em`) and noticed (`corretor_avisos`, tipo `corretor_sumiu_no_vista`, ONE in-app warning per run); `ativo`
@@ -11,9 +11,9 @@ NEVER DELETE (same rule as the imóveis): a broker that is missing from Vista's 
 concluded from a COMPLETE roster (every page read) and behind a circuit breaker (`MAX_AUSENTES_PCT`): a partial or empty answer is a Vista
 fault, not a hundred resignations.
 
-KEY CAVEAT (CONTRACT ad-lead-intake § 6b): the 2026-10-26 live finding was that `/corretores/listar` answers only `Codigo` + `Nome` and ignores
-`fields`; the key was re-granted 2026-11-09 but the richer fields are UNVERIFIED here (no live read). The sync requests them, falls back to the plain
-roster when Vista rejects the field list (recorded in `campos`), and stores whatever it gets. There is no `/corretores/listarcampos` on this tenant.
+LIVE FACT (CONTRACT ad-lead-intake § 6b, verified 2026-11-09): `/corretores/listar` answers only `Codigo` + `Nome` and IGNORES `pesquisa.fields` (no 400);
+`/corretores/detalhes` 404s. The roster is therefore always read in its basic shape (`campos: "basico"` is normal, not an error); the richer fields come from the
+property's `Corretor` relation (`app/services/corretores_enriquecimento.py`). `Inativo`/`Datasaida` do not arrive on this tenant; the handling stays for a tenant that sends them.
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations import rate_limit
-from noctusai_lib.integrations.vista.client import VistaFieldNotAvailable
 
 from app.modules.leads.seed_data import normalize_alias
 from app.modules.leads.services import dimensions_service
@@ -34,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 T_AVISOS = "corretor_avisos"
 TIPO_SUMIU = "corretor_sumiu_no_vista"
+#: The columns the roster item MAY carry on a richer tenant (not requested: this tenant ignores `fields`).
 CAMPOS = [
     "Codigo", "Nome", "Nomecompleto", "Email", "Celular", "CRECI", "Equipe", "CodigoEquipe", "Gerente", "Agenciador", "Corretor",
     "Inativo", "Datasaida", "AtuacaoVenda", "AtuacaoLocacao",
@@ -115,23 +115,20 @@ def mapear_item(item: dict) -> dict[str, Any]:
 
 
 async def _ler_roster(adapter: Any, relatorio: dict) -> Optional[list[dict]]:
-    """Every page of the roster, or None when it could not be read COMPLETELY (the caller then marks nobody missing)."""
-    campos: Optional[list[str]] = CAMPOS
+    """Every page of the roster, or None when it could not be read COMPLETELY (the caller then marks nobody missing).
+
+    The roster is read in its BASIC shape (Codigo + Nome): `/corretores/listar` ignores `pesquisa.fields` on this tenant (no 400, same
+    two keys -- verified live 2026-11-09) and `/corretores/detalhes` 404s, so asking for more only wastes a call. Richer fields arrive
+    through the property's `Corretor` relation (`corretores_enriquecimento`). Inativo/Datasaida therefore do NOT arrive here: `vista_status`
+    stays `ativo` for a listed broker and only `ausente` (not in the roster) is ever concluded."""
+    relatorio["campos"] = "basico"
     itens: list[dict] = []
     pagina = 1
     while pagina <= MAX_PAGINAS:
         await rate_limit.acquire_async(VISTA_RATE_BUCKET)
         relatorio["chamadas"] += 1
         try:
-            rows, pag = await adapter.list_corretores(page=pagina, page_size=PAGE_SIZE, fields=campos)
-        except VistaFieldNotAvailable as exc:
-            if campos is None:
-                relatorio["erros"].append(f"pagina {pagina}: {type(exc).__name__}")
-                return None
-            relatorio["campos"] = "basico"
-            relatorio["erros"].append(f"campos rejeitados pelo Vista ({exc}); roster lido só com Codigo+Nome")
-            campos = None
-            continue
+            rows, pag = await adapter.list_corretores(page=pagina, page_size=PAGE_SIZE)
         except Exception as exc:
             relatorio["erros"].append(f"pagina {pagina}: {type(exc).__name__}: {exc}"[:200])
             logger.error("corretores vista sync: page %d failed", pagina, exc_info=True)
@@ -144,7 +141,6 @@ async def _ler_roster(adapter: Any, relatorio: dict) -> Optional[list[dict]]:
     else:
         relatorio["erros"].append("limite de páginas atingido")
         return None
-    relatorio.setdefault("campos", "completo" if campos else "basico")
     return itens
 
 

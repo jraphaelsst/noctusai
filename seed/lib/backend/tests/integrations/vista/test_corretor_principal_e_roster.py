@@ -75,3 +75,17 @@ def test_the_real_client_sends_fields_as_pesquisa_only_when_given():
         assert visto["pesquisa"] == {"fields": ["Codigo", "Nome", "CRECI"]} and visto["extra_params"] == {"page": 1, "limit": 50}
     finally:
         VistaClient._request = original
+
+
+def test_the_corretor_relation_sub_fields_are_parsed():
+    from noctusai_lib.domain.real_estate import parse_corretores
+
+    [c] = parse_corretores({"16": {"Codigo": "16", "Nome": "Gilson", "Agenciador": "Sim", "Gerente": "Nao", "Corretor": "Sim", "Equipe": "DRAGÃO", "Email": "g@x.com", "Fone": "11999"}})
+    assert (c.equipe, c.gerente, c.agenciador, c.eh_corretor, c.email, c.fone) == ("DRAGÃO", False, True, True, "g@x.com", "11999")
+    [d] = parse_corretores({"1": {"Codigo": "1", "Nome": "Sem flags"}})
+    assert d.gerente is None and d.agenciador is None and d.eh_corretor is None and d.equipe is None
+
+
+def test_detail_fields_request_the_corretor_relation_sub_fields():
+    rel = next(f for f in CANDIDATE_IMOVEL_DETAIL_FIELDS if isinstance(f, dict) and "Corretor" in f)["Corretor"]
+    assert {"Codigo", "Agenciador", "Gerente", "Corretor", "Equipe", "Email", "Fone", "Nome"} <= set(rel)

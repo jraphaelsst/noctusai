@@ -205,9 +205,13 @@ never overwritten), `Nomecompleto`→`nome_completo`, `Email`, `Celular`, `CRECI
 `AtuacaoVenda`/`AtuacaoLocacao`. NEVER DELETE: a broker missing from a COMPLETE roster, or `Inativo`, is marked (`vista_status` `ausente|inativo`, `vista_ausente_em`; `ativo` — the owner's flag — untouched) and
 noticed (`corretor_avisos`, tipo `corretor_sumiu_no_vista`, one open per broker, ONE in-app warning per run; `GET /corretor-avisos`, `POST /corretor-avisos/{id}/resolver {acao: resolvida|ignorada}`).
 A returning broker keeps the notice open with a note. Guards: a partial/failed/empty roster marks nobody missing; > 50% of the linked brokers missing is refused (Vista fault until proven otherwise).
-**UNVERIFIED LIVE:** the 2026-10-26 finding was that `/corretores/listar` answers only `Codigo`+`Nome` and ignores `fields`; the key now has the permission but the richer fields could not be read here (no live call). The sync
-requests them (`pesquisa.fields`), falls back to the plain roster when Vista answers 400 (`campos: "basico"` in the report) and stores what it gets. There is NO `/corretores/listarcampos` on `oneconsu-rest` (404), so the
-field list cannot be checked against a catalog — a 400 is the only oracle. Exposure note: `lead_corretores` keeps its existing own-org SELECT policy for `authenticated`, so the new `email`/`celular`/`creci` columns are readable by same-org browser sessions.
+**LIVE FACT (verified read-only 2026-11-09):** `/corretores/listar` IGNORES `pesquisa.fields` entirely (no 400; only `Codigo`+`Nome` for every broker) and `/corretores/detalhes` 404s on this
+tenant; there is no `/corretores/listarcampos`. So the roster is always read in its BASIC shape, in one call per page, with no field list (`campos: "basico"` is normal, not an error), and `Inativo` / `Datasaida` /
+`Email` / `CRECI` / `AtuacaoVenda`... do NOT arrive from the roster on this tenant (the mapping and the inativo handling stay for a tenant that sends them; today a listed broker is `ativo`, and only `ausente` is ever
+concluded). The richer data comes through the property detail's `Corretor` relation (Nome, Codigo, Agenciador, Gerente, Corretor, Equipe, Email, Fone): whenever a property is read (Vista sync, listar page, intake incl. the
+unpublished stub) `corretores_enriquecimento.enriquecer` fills the EMPTY `lead_corretores` columns `equipe`, `gerente`, `agenciador`, `eh_corretor`, `email`, `celular` (<- Fone) of the broker matched by
+`vista_codigo` — never overwriting a non-null value, never writing a null, never creating a broker — and stamps `campos_origem='imovel_relacao'` (migration 335). CRECI does not come from either source.
+Same-org staff reading colleagues' email/phone/CRECI is accepted (owner): `lead_corretores` keeps its own-org SELECT policy.
 
 ## 7. For the next slices
 
