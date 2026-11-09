@@ -40,7 +40,7 @@ owns_kb: []
 - **2 consecutive runs without a score improvement → STOP** and notify why (score series, what changed, the cases still failing).
 - Every run that doesn't raise the score is an **overcall**: list it with its cost.
 - Never re-run an unchanged hash beyond the consolidation passes. Fix first.
-- Before each refine: run the council (five lenses + chairman line).
+- Before each refine: run the council through the council ledger (contract v1.1, `project-history/assistant-chatbot/contracts/council-ledger.md`, tool `noctus.dev.council_ledger`, still on `feat/assistant-chatbot` until the owner merges it). One session per refine round: `open_session` with `subject_kind=eval_run` and `subject_ref=<run id>` → each seat records its own objection (the tool assigns the anonymous label) → the chair reads `blind_view` only → `record_verdict` keyed by `anon_label` → `full_view` → later `record_event` with the round's score change. `mode=subagents` when seats run as independent subagents; `mode=single_chat` when one session plays every seat (labelled not independent).
 - One variable per round. Split each failure into harness/world vs target before touching the target.
 - Track spend per round against the loop's budget, and stop at the cap.
 
@@ -61,3 +61,4 @@ owns_kb: []
 | 2026-11-09 | 3 | A template can't offer real options without a business | Owner: SDR offering is behaviour-only; template evals use a fixture tool; every child brings its own offer tool. Step 1 must ask the child "what do you offer, and from which source?" |
 | 2026-11-09 | 6 | The handoff "fallback number" didn't exist anywhere | Owner: one number per ORGANIZATION, shared by its agents; readiness blocks publish without it. Step 6 checks it first |
 | 2026-11-09 | 3 | A BASE text can't use a market word in its spec keys (`nome_imobiliaria`) | BASE uses neutral keys (`nome_organizacao`); a child keeps its own keys and its orgs fill both. Never rename a live child's keys during layering |
+| 2026-11-09 | 5 | The council needs a durable, blind record per refine round, tied to the eval run it judged | Wired §3 to the council ledger v1.1 (one session per round, subject = the eval run). In an inline-only session the seats are not independent, so the session records `mode=single_chat`; never claim `subagents` |
