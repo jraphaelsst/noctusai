@@ -317,6 +317,10 @@ request/response models, route forwarding, MCP keys) is declared in `app/stores/
 keeper `check_structure_constructor_parity` (`KB § PATTERNS/backend/structure-constructor-parity.md`): a new
 field on `StudioAgentRecord` must reach each of them or be exempted with a reason.
 
+At publish, a DB-source dev agent's mirror is rendered from the draft by `app/studio/espelho.py` (via the ONE
+Claude Code renderer `app/studio/claude_surface.py`, shared with the git package build) and stored on the version
+before the flip; no mirror means no publish (409 `espelho_falhou`). `versao_semver` = `<versao>.0.0`.
+
 ### Creating a complete agent (Julia as the reference — `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md`, skill `noc-new-agent`)
 - The recipe, the artifact map (what Julia has, where it lives), the publish-gate table and "what never comes from AI" live in that guide; read it before building or generating an agent.
 - `app/studio/prontidao.py` + `GET /api/studio/agents/{key}/prontidao`: the draft's readiness. `compor` is pure (`Entrada` -> items `{codigo, grupo, severidade, mensagem, acao_sugerida, recusa_publicacao, detalhe}`), `coletar` reads. A BLOCKING item names the publish 409 code it stands for (`RECUSAS_PUBLICACAO`); the publish route and the view share the predicates (`recusa_de_compilacao`, `juiz_aprovado`, `decidir_portao`) and `tests/studio/def/test_prontidao.py` publishes a draft in every refusal state to keep them in lock-step. Every publish 409 carries the same `prontidao` list. Advisory (never blocking): stale skill pins, tools the configuration expects without a description row, tool parameters without a label (`rotulo_parametro_ausente`), unfilled org specs, generator gaps, controls off.

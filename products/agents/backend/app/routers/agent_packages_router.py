@@ -5,7 +5,8 @@ Scope ``packages:read`` for a ``pk_*`` token, any org member for a user. The
 tree served is the one the build produced (``dist/claude/``), stored on the
 version at import time (017 ``agent_package_trees``) — it carries the
 package's ``LEARNINGS.md`` / ``PACKAGE.json``, which cannot be re-derived from
-the Studio rows. Only ``dev-advisor`` agents are packages: a runtime agent
+the Studio rows. Only dev agents (``dev-advisor`` | ``dev-executor``) are packages; a DB-source one (Agent Packages §M2)
+serves the tree rendered at its publish. A runtime agent
 (IsaIA, Bia) is a 404 here, so a ``packages:read`` token can never read a
 runtime agent's prompt. Unknown agent, runtime agent, unknown semver and a
 version without a tree are all 404 with distinct codes only where that does
@@ -25,6 +26,7 @@ from app.dependencies import require_packages_read
 from app.routers.studio_agents_router import get_studio_definition_store_dep, http_error
 from app.schemas.packages import SEMVER_PATTERN, PackageFileOut, PackageOut, PackageVersionOut, PackageVersionsOut
 from app.stores.errors import NotFound
+from app.stores.studio_definitions import DEV_KINDS
 from noctusai_lib.api.auth.session import AuthContext
 
 router = APIRouter(prefix="/api/agent-packages", tags=["agent-packages"])
@@ -39,7 +41,7 @@ def resolve_dev_advisor(store, org_id, key: str):
         agent = store.get_agent(org_id, key)
     except NotFound as exc:
         raise http_error(404, "agent_not_found", "Agente não encontrado.") from exc
-    if agent.definition_mode != "studio" or agent.kind != "dev-advisor":
+    if agent.definition_mode != "studio" or agent.kind not in DEV_KINDS:
         raise http_error(404, "agent_not_found", "Agente não encontrado.")
     return agent
 

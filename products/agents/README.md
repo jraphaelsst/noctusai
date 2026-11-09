@@ -150,6 +150,10 @@ request/response models, route forwarding, MCP keys) is declared in `app/stores/
 keeper `check_structure_constructor_parity` (`KB § PATTERNS/backend/structure-constructor-parity.md`): a new
 field on `StudioAgentRecord` must reach each of them or be exempted with a reason.
 
+At publish, a DB-source dev agent's mirror is rendered from the draft by `app/studio/espelho.py` (via the ONE
+Claude Code renderer `app/studio/claude_surface.py`, shared with the git package build) and stored on the version
+before the flip; no mirror means no publish (409 `espelho_falhou`). `versao_semver` = `<versao>.0.0`.
+
 ## Creating a complete agent (Julia as the reference)
 
 `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md` (skill `noc-new-agent`) is the recipe: the artifacts a production agent has and

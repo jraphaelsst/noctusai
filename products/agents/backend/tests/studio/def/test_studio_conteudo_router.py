@@ -79,15 +79,15 @@ def plat(studio):
     return studio
 
 
-def _fill(studio, *, secoes=True, textos=True, ferramentas=True, specs=True):
+def _fill(studio, *, secoes=True, textos=True, ferramentas=True, specs=True, key="julia"):
     if secoes:
-        assert studio.put(f"{BASE}/julia/draft/sections", json=SECOES).status_code == 200
+        assert studio.put(f"{BASE}/{key}/draft/sections", json=SECOES).status_code == 200
     if textos:
-        assert studio.put(f"{BASE}/julia/draft/textos", json={"itens": TEXTOS}).status_code == 200
+        assert studio.put(f"{BASE}/{key}/draft/textos", json={"itens": TEXTOS}).status_code == 200
     if ferramentas:
-        assert studio.put(f"{BASE}/julia/draft/ferramentas", json={"itens": FERRAMENTAS}).status_code == 200
+        assert studio.put(f"{BASE}/{key}/draft/ferramentas", json={"itens": FERRAMENTAS}).status_code == 200
     if specs:
-        assert studio.put(f"{BASE}/julia/draft/specs", json={"itens": SPECS}).status_code == 200
+        assert studio.put(f"{BASE}/{key}/draft/specs", json={"itens": SPECS}).status_code == 200
 
 
 def _draft_id(studio) -> UUID:
@@ -137,6 +137,42 @@ class TestPlatformDefinition:
         assert advisor_bash.status_code == 422 and "A10" in advisor_bash.json()["detail"]
         runtime_sup = studio.post(f"{PLAT}/agents", json={"key": "a3", "nome": "A", "superficie_claude": {"tools": ["Read"]}})
         assert runtime_sup.status_code == 422
+
+    def test_publishing_a_db_source_agent_stores_its_git_mirror(self, studio):
+        """Agent Packages §M2/§M3: the publish renders the mirror from the published draft; the package route serves
+        it; the .md carries studio: {versao, version_id, compiled_hash} and hashes to it."""
+        from app.studio.claude_surface import body_hash, split_db_mirror
+
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        sup = {"tools": ["Bash", "Read"], "model": "opus", "owns_kb": ["CONTEXT/PATTERNS/x.md"]}
+        assert studio.post(f"{PLAT}/agents", json={
+            "key": "media-analyst", "nome": "Media analyst", "descricao": "Analisa vídeos.",
+            "kind": "dev-executor", "fonte": "db", "superficie_claude": sup,
+            "rascunho_padrao": JULIA_BODY["rascunho_padrao"]}).status_code == 201
+        _fill(studio, key="media-analyst")
+        pub = studio.post(f"{BASE}/media-analyst/draft/publish", json={"override_reason": "primeira publicação do espelho em teste"})
+        assert pub.status_code == 200, pub.text
+        pkg = studio.get("/api/agent-packages/media-analyst/latest")
+        assert pkg.status_code == 200, pkg.text
+        files = {f["path"]: f["conteudo"] for f in pkg.json()["files"]}
+        md = files[".claude/agents/media-analyst.md"]
+        meta, body = split_db_mirror(md)
+        assert meta["versao"] == "1.0.0" and meta["version_id"] == pub.json()["id"]
+        assert meta["compiled_hash"] == body_hash(body)
+        assert "tools: Bash, Read" in md and "model: opus" in md and "  - CONTEXT/PATTERNS/x.md" in md
+        assert json.loads(files["agents/media-analyst/PACKAGE.json"])["fonte"] == "db"
+        assert pkg.json()["package"]["versao"] == "1.0.0"
+
+    def test_a_db_source_agent_without_tools_is_not_published(self, studio):
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        assert studio.post(f"{PLAT}/agents", json={"key": "sem-sup", "nome": "S", "kind": "dev-executor", "fonte": "db",
+                                                   "rascunho_padrao": JULIA_BODY["rascunho_padrao"]}).status_code == 201
+        _fill(studio, key="sem-sup")
+        pub = studio.post(f"{BASE}/sem-sup/draft/publish", json={"override_reason": "primeira publicação do espelho em teste"})
+        assert pub.status_code == 409 and pub.json()["code"] == "espelho_falhou"
+        assert studio.get("/api/agent-packages/sem-sup/latest").status_code == 404
 
     def test_an_org_owner_is_not_a_platform_admin(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)

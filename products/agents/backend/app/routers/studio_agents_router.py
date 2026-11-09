@@ -230,10 +230,12 @@ def actor_id(ctx: AuthContext) -> UUID:
 
 
 def require_user_or_dev_advisor(ctx: AuthContext, agent: Any) -> None:
-    """A ``studio:publish`` token acts ONLY on a dev-advisor agent; a runtime
-    agent (Bia, IsaIA) stays human-only → 403 ``user_required``, exactly
-    as before the scope existed."""
-    if ctx.caller_kind == "product" and getattr(agent, "kind", "runtime") != "dev-advisor":
+    """A ``studio:publish`` token acts ONLY on a dev agent (``dev-advisor`` | ``dev-executor``, Agent Packages
+    A12); a runtime agent (Bia, IsaIA, Julia) stays human-only → 403 ``user_required``, exactly as before the
+    scope existed."""
+    from app.stores.studio_definitions import DEV_KINDS
+
+    if ctx.caller_kind == "product" and getattr(agent, "kind", "runtime") not in DEV_KINDS:
         raise http_error(403, "user_required", "Restricted to human users")
 
 
@@ -1076,6 +1078,22 @@ def publish_draft(
             prontidao=prontidao(compiled),
         )
 
+    if agent.espelhado:
+        # Agent Packages §M2: a DB-source dev agent's git mirror is rendered from THIS draft and stored on it before
+        # the flip (the 017 tree guard only lets a draft's tree be written). No mirror => no publish.
+        from app.studio.espelho import EspelhoErro, renderizar_espelho
+
+        try:
+            espelho = renderizar_espelho(
+                store=store, skills=skills, catalog=catalog, org_id=ctx.org_id, agent=agent, draft=draft,
+                compiled_text=compiled.texto,
+            )
+            with store_errors():
+                store.update_draft(ctx.org_id, draft.id, {"versao_semver": espelho.versao_semver})
+                store.set_package_tree(ctx.org_id, agent.id, draft.id, espelho.files)
+        except EspelhoErro as exc:
+            raise http_error(409, "espelho_falhou", f"O espelho Claude Code não pôde ser gerado: {exc}",
+                             prontidao=prontidao(compiled)) from exc
     with store_errors():
         # Proof of use (§A7) is stored INSIDE the publish transaction.
         published = store.publish_version(
