@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import pytest
 from noctusai_lib.integrations.vista import FakeVistaAdapter
-from noctusai_lib.integrations.vista.client import VistaFieldNotAvailable
 from noctusai_lib.testing import MockSupabaseClient
 
 from app.modules.leads.services import corretores_vista_job as job
@@ -141,19 +140,21 @@ def test_an_empty_or_failed_roster_marks_nobody_missing(core):
     assert rel["status"] == "incompleto" and rel["ausentes"] == [] and _rows(db, "corretor_avisos") == [] and _rows(db)[0].get("vista_status") is None
 
 
-def test_rejected_fields_fall_back_to_the_plain_roster_and_say_so(core):
+def test_the_roster_is_read_in_its_basic_shape_with_one_call_and_no_field_list(core):
+    """`/corretores/listar` ignores `fields` on this tenant: asking wastes a call. `campos: basico` is normal, not an error."""
     adapter = _vista({"Codigo": "16", "Nome": "Gilson"})
+    pedidos = []
     original = adapter.list_corretores
 
-    async def so_basico(*, page=1, page_size=50, fields=None):
-        if fields:
-            raise VistaFieldNotAvailable(["Creci"], "Campo Creci não está disponível", "/corretores/listar")
-        return await original(page=page, page_size=page_size, fields=None)
+    async def espia(*, page=1, page_size=50, fields=None):
+        pedidos.append(fields)
+        return await original(page=page, page_size=page_size, fields=fields)
 
-    adapter.list_corretores = so_basico
+    adapter.list_corretores = espia
     db = _db()
     rel = _rodar(db, adapter)
-    assert rel["campos"] == "basico" and rel["criados"] == ["Gilson"] and any("rejeitados" in e for e in rel["erros"])
+    assert pedidos == [None] and rel["chamadas"] == 1 and rel["campos"] == "basico" and rel["criados"] == ["Gilson"] and rel["erros"] == []
+    assert _rows(db)[0]["vista_status"] == "ativo" and _rows(db)[0].get("email") is None        # Inativo/Datasaida/Email simply do not arrive
 
 
 def test_dry_run_classifies_and_writes_nothing(core):
@@ -217,3 +218,52 @@ def test_the_job_isolates_a_failing_org():
     o = str(uuid4())
     rel = asyncio.run(job.corretores_vista_job(admin_factory=lambda: db, discover_fn=lambda _a: [o], adapter_factory=lambda _o: object(), lease_fn=livre, sync_fn=boom))
     assert rel[o] == {"erro": True}
+
+
+# ─── enrichment from the property's Corretor relation ────────────────────
+
+from app.services import corretores_enriquecimento as enr  # noqa: E402
+
+_REL = {"codigo": "16", "nome": "Gilson", "email": "g@x.com", "fone": "11999990000", "equipe": "DRAGÃO", "gerente": True, "agenciador": False, "eh_corretor": True}
+
+
+def test_the_relation_fills_only_empty_fields_matched_by_vista_codigo_and_records_the_origin():
+    gilson = _sw("Gilson", "16", email="antigo@x.com")
+    outro = _sw("Outro", "17")
+    db = _db(gilson, outro)
+    assert enr.enriquecer(db, ORG, [_REL]) == [gilson["id"]]
+    g = _rows(db, id=gilson["id"])[0]
+    assert g["equipe"] == "DRAGÃO" and g["gerente"] is True and g["agenciador"] is False and g["eh_corretor"] is True and g["celular"] == "11999990000"
+    assert g["email"] == "antigo@x.com"                                                    # a non-null value is NEVER overwritten
+    assert g["campos_origem"] == "imovel_relacao" and _rows(db, id=outro["id"])[0].get("equipe") is None
+
+
+def test_a_null_in_the_relation_never_erases_and_no_change_means_no_origin_stamp():
+    gilson = _sw("Gilson", "16", equipe="ALFA", gerente=True)
+    db = _db(gilson)
+    assert enr.enriquecer(db, ORG, [{"codigo": "16", "equipe": None, "gerente": None}]) == []
+    g = _rows(db)[0]
+    assert g["equipe"] == "ALFA" and g["gerente"] is True and g.get("campos_origem") is None
+    assert enr.enriquecer(db, ORG, [{"codigo": "999", "equipe": "X"}]) == []               # an unknown Codigo creates nothing
+
+
+def test_a_property_refresh_enriches_the_brokers_through_the_real_sync(core):
+    import asyncio as _a
+    from datetime import date
+
+    from noctusai_lib.domain.real_estate import Imovel
+    from noctusai_lib.domain.real_estate.imovel import Corretor
+
+    from app.services.imoveis_service import ImovelSyncService
+    from tests.services.test_imoveis_sync_detalhes import _Db as _SyncDb
+
+    db = _SyncDb()
+    db.set_table_data("lead_corretores", [_sw("Gilson", "16")])
+    for t in ("imoveis", "imovel_registry", "vista_divergencias_config", "imovel_campo_conflitos", "imovel_captacao", "imovel_dados", "julia_proprietarios_contatos", "imovel_ref_avisos"):
+        db.set_table_data(t, [])
+    a = FakeVistaAdapter()
+    a.add_imovel(Imovel(codigo="ONE1", status="Venda", data_atualizacao=date(2026, 11, 2), exibir_no_site=True,
+                        corretores=[Corretor(codigo="16", nome="Gilson", equipe="DRAGÃO", gerente=True, email="g@x.com", fone="11999")]))
+    _a.run(ImovelSyncService(db, a, duplicate_detector=lambda *x, **k: None).refresh_codigo(ORG, "ONE1"))
+    g = db.table("lead_corretores").select("*").execute().data[0]
+    assert g["equipe"] == "DRAGÃO" and g["gerente"] is True and g["celular"] == "11999" and g["campos_origem"] == "imovel_relacao"

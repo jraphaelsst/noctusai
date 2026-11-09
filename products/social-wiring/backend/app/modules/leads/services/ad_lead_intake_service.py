@@ -442,6 +442,11 @@ async def intake_imovel_do_lead_async(
                 corretores_vista, codigo_corretor=getattr(imovel_vista, "codigo_corretor", None), corretor_nome=getattr(imovel_vista, "corretor_nome", None),
                 fallback_codigo=config_do_org(client, org_id)["corretor_principal_fallback_vista_codigo"], corretores_sw=corretores_sw,
             )
+        if fonte != "espelho":
+            # Also covers an UNPUBLISHED record (not written through the property sync): relation sub-fields fill the empty broker columns.
+            from app.services import corretores_enriquecimento
+
+            corretores_enriquecimento.enriquecer(client, org_id, lista)
         ativos, stamps = registrar_corretores_do_imovel(
             client, org_id, canonico, lista, corretor_map=corretor_map, corretores_sw=corretores_sw,
             principal_chave=p_chave, principal_origem=p_origem, principal_nota=p_nota,

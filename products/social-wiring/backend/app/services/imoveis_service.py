@@ -35,7 +35,7 @@ from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_prop
 from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
 
-from app.services import imoveis_descoberta, imovel_ref_avisos, vista_divergencias
+from app.services import corretores_enriquecimento, imoveis_descoberta, imovel_ref_avisos, vista_divergencias
 
 logger = logging.getLogger(__name__)
 
@@ -1004,6 +1004,7 @@ class ImovelSyncService:
             self._table().upsert(rows, on_conflict="org_id,codigo").execute()
             report.upserted += len(rows)
             self._upsert_registry(lote, org_id, synced_at, report)
+            self._enriquecer_corretores(org_id, lote, report)
 
     def _linha_espelho(self, org_id: UUID, codigo: str) -> Optional[dict]:
         """The mirror row of ONE code (the columns the refresh compares), by the normalised code -- never the whole mirror."""
@@ -1102,6 +1103,13 @@ class ImovelSyncService:
             report.registry_failures.append(f"avisos novas: {type(exc).__name__}: {exc}")
             logger.error("imoveis sync: could not detect new refs (%s)", exc, exc_info=True)
             return []
+
+    def _enriquecer_corretores(self, org_id: UUID, imoveis: list[Imovel], report: SyncReport) -> None:
+        """The `Corretor` relation of every property read fills the EMPTY fields of the matching `lead_corretores` (never overwrites).
+        Best effort: a failure is recorded and logged, never fails the catalog pull."""
+        entradas = [c for i in imoveis for c in i.corretores]
+        if entradas:
+            self._avisos(report, "corretores", corretores_enriquecimento.enriquecer, org_id, entradas)
 
     def _fim_de_run_avisos_parcial(self, org_id: UUID, report: SyncReport, vistos: list[str]) -> None:
         if vistos:
@@ -1251,6 +1259,7 @@ class ImovelSyncService:
         self._table().upsert(rows, on_conflict="org_id,codigo").execute()
         report.upserted += len(rows)
         self._novas_run.extend(novas)
+        self._enriquecer_corretores(org_id, imoveis, report)
         self._fim_de_run_avisos_parcial(org_id, report, [i.codigo for i in imoveis])
 
         # Registry rows for anything we have not seen before. `DO NOTHING` on
