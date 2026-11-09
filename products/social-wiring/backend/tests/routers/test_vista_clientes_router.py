@@ -24,7 +24,7 @@ class Scene:
         return getattr(self.tc, m)(url, headers=H, **({"json": json} if json is not None else {}))
 
 
-def _scene(org_role, monkeypatch):
+def _scene(org_role):
     core = MockSupabaseClient()
     core.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(id=TEST_USER_ID, org_id=ORG, org_role=org_role)))
     core.set_table_data("noctus_users", [{"id": TEST_USER_ID, "org_id": ORG, "org_role": org_role}])
@@ -40,9 +40,6 @@ def _scene(org_role, monkeypatch):
         rates.append(rate_per_sec)
         return FakeVistaAdapter(clientes=[{"Codigo": "100", "Nome": "Ana Maria", "Celular": "11 99999-0001", "Cliente": "Sim"}])
 
-    from app.services import vista_credenciais
-
-    monkeypatch.setattr(vista_credenciais, "adapter_ou_503", fabrica)  # Vista (a network edge) is faked; the auth guard is the real one
     with (
         patch("noctusai_seed.database.DatabaseModule.get_client", return_value=core),
         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=core),
@@ -51,7 +48,7 @@ def _scene(org_role, monkeypatch):
         from app.dependencies import get_current_user_org_unified
         from app.main import app
         from app.modules.leads.deps import get_leads_client
-        from app.modules.leads.routers.vista_clientes import get_vista_clientes_core
+        from app.modules.leads.routers.vista_clientes import get_vista_adapter_factory, get_vista_clientes_core
 
         bind_consent_module_to_mock(core)
         # Session resolution is faked (the first test's mock is what the app singleton's auth gate captured); the ROLE guard under test
@@ -59,18 +56,20 @@ def _scene(org_role, monkeypatch):
         app.dependency_overrides[get_current_user_org_unified] = lambda: (MockUser(id=TEST_USER_ID, org_id=ORG), "test-token", ORG)
         app.dependency_overrides[get_vista_clientes_core] = lambda: core
         app.dependency_overrides[get_leads_client] = lambda: db
+        # Vista (a network edge) is faked through its DI seam; the auth guard is the real one.
+        app.dependency_overrides[get_vista_adapter_factory] = lambda: fabrica
         yield Scene(TestClient(app), db, rates)
         app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def cena(monkeypatch):
-    yield from _scene("owner", monkeypatch)
+def cena():
+    yield from _scene("owner")
 
 
 @pytest.fixture
-def cena_membro(monkeypatch):
-    yield from _scene(None, monkeypatch)
+def cena_membro():
+    yield from _scene(None)
 
 
 # strict 401 without a session: `tests/modules/leads/test_auth_boundary.py` (every vista-clientes route is listed there).
