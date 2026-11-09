@@ -16094,6 +16094,22 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # Agents 073 (council ledger) is NOT APPLIED (file-only until the tech-lead runs migrate_product): the outcome-fields CHECK on
+    # council_events and the append-only trigger function guard tables that are empty in prod (no fixture row to attempt the
+    # forbidden UPDATE/DELETE against) and are written only by the council_ledger tool, which validates the same shape first.
+    (
+        "products/agents/backend/migrations/073_council_ledger.sql",
+        "council_events_outcome_fields",
+        "CHECK tying objection_id/outcome/evidence_kind to event_kind='outcome' on a new empty table; migration unapplied (file-only), "
+        "nothing to probe yet; the ledger tool validates the same shape before insert. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/agents/backend/migrations/073_council_ledger.sql",
+        "council_append_only",
+        "Defence-in-depth refusal trigger over tables that also have no UPDATE/DELETE grant; empty in prod (no fixture row) and "
+        "migration unapplied (file-only). Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
     # erp 050: plain UNIQUE index on the SHA-256 of a 384-bit random token (lookup key, not a business invariant).
     # erp.portal_tokens has 0 rows in prod (verified 2026-11-08) so a probe has no fixture row, and the product is asleep.
     (
