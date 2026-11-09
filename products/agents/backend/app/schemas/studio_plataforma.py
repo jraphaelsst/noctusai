@@ -34,6 +34,12 @@ class PlataformaAgentCreateRequest(StrictHttpModel):
     #: draft generator must not appear in every org).
     instanciavel: bool = Field(default=False, title="Disponível para as organizações")
     papel: Literal["gerador"] | None = Field(default=None, title="Papel interno")
+    #: 017/070: immutable once created. ``dev-advisor`` / ``dev-executor`` = a dev agent (Agent Packages A9, A12).
+    kind: Literal["runtime", "dev-advisor", "dev-executor"] = Field(default="runtime", title="Tipo")
+    #: 070 (A11): ``db`` = the Studio is the source and git holds a generated mirror (dev agents only). Immutable.
+    fonte: Literal["git", "db"] = Field(default="git", title="Fonte do conteúdo")
+    #: 070 (§M1): ``{tools, model, owns_kb}`` of the Claude Code mirror (dev agents only).
+    superficie_claude: dict[str, Any] | None = Field(default=None, title="Superfície Claude Code")
     #: When sent, an AI generation of the new draft starts right away (all areas, ``forcar=false``).
     briefing: Briefing | None = Field(default=None, title="Briefing")
     limite_usd: float = Field(default=5.0, gt=0, le=5.0, title="Limite de custo da geração (US$)")
@@ -53,6 +59,7 @@ class PlataformaAgentUpdateRequest(StrictHttpModel):
     rascunho_padrao: dict[str, Any] | None = None
     instanciavel: bool | None = None
     papel: Literal["gerador"] | None = None
+    superficie_claude: dict[str, Any] | None = None
 
 
 class PlataformaAgentOut(BaseModel):
@@ -74,6 +81,9 @@ class PlataformaAgentOut(BaseModel):
     #: The AI generator may imitate this definition. NOT settable through create/PATCH: only a platform ADMIN
     #: session toggles it (``PUT /plataforma/agentes/{key}/exemplar``).
     exemplar: bool = False
+    kind: str = "runtime"
+    fonte: str = "git"
+    superficie_claude: dict[str, Any] | None = None
     #: The generation started by ``briefing`` (``null`` when none was sent).
     geracao: GeracaoOut | None = None
 

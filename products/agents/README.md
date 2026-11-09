@@ -140,6 +140,18 @@ non platform admin (403) sees only the hint. Status badges: `GRANT_STATUS_BADGE`
 
 Platform AI calls UI: `/agentes-plataforma` ("Agentes da plataforma", group Plataforma, platform admin only, `status_pagina` row `agentes-plataforma`, migration 069; `pages/AgentesPlataforma.tsx`, `hooks/usePlataformaAgentes.ts`): pick a call, choose Fornecedor + Modelo (filtered by vendor/capacidade) and edit ONE whole-prompt field; unsaved-draft guard, Descartar alterações, 422 `modelo_invalido` inline.
 
+## DB-source dev agents (Agent Packages A11/A12, migration 070)
+
+A dev agent can be authored in the Studio instead of git: `agents.fonte = 'db'` (immutable) makes the DB the source of
+truth, and git holds only a GENERATED mirror (`.claude/agents/<key>.md` + `agents/<key>/`) exported from the published
+version (`products/agents/projects/agent-packages/CONTRACT.md` §M). `agents.kind` adds `dev-executor` (may carry
+write tools; `dev-advisor` stays read-only, A10). `agents.superficie_claude = {tools, model, owns_kb}` is the
+Claude Code surface, set at `POST /plataforma/agents` (or MCP `criar_agente`) and changed through the definition
+PATCH (`configurar_agente`). Every agent creation surface (store create, insert payload, row mapping,
+request/response models, route forwarding, MCP keys) is declared in `app/stores/structure_parity.py` and held by
+keeper `check_structure_constructor_parity` (`KB § PATTERNS/backend/structure-constructor-parity.md`): a new
+field on `StudioAgentRecord` must reach each of them or be exempted with a reason.
+
 ## Creating a complete agent (Julia as the reference)
 
 `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md` (skill `noc-new-agent`) is the recipe: the artifacts a production agent has and
