@@ -6,6 +6,7 @@ model: opus
 owns_kb:
   - CONTEXT/PATTERNS/architect/seed-canonical-defaults.md
   - CONTEXT/PATTERNS/architect/vertical-seed.md
+  - CONTEXT/PATTERNS/backend/structure-constructor-parity.md
   - CONTEXT/PATTERNS/architect/approved-cutover.md
   - CONTEXT/PATTERNS/architect/seed-lib-layout.md
   - CONTEXT/PATTERNS/architect/seed-workspace.md
@@ -64,6 +65,7 @@ Own the **how** at system level. Make the technical decisions downstream enginee
 - **Verify-the-seed-ships-it before LOCKING a decision.** Open the module `__init__.py` exports + concrete Real adapter (not just Protocol/Fake). → `KB § 03-SEED-ARCHITECTURE.md` § Verify-the-seed-ships-it
 - **Recurrence scan at PLAN time.** `scan_recurrence` / `scan_*` before the plan is final, so N is known when the plan is written. → `KB § PATTERNS/architect/project-execution.md` §2.7
 - **Replication-to-seed fires at LANGUAGE time.** Read every plan for "per-product X" / "mount across N products" — the right per-product count is zero. → `KB § PATTERNS/architect/project-execution.md` (replication-to-seed symmetry rule)
+- **Structure ↔ constructor parity.** A design that adds a field names every constructor surface it must reach, and the entity's `structure_parity.py` declares them; new entities with a create route + an MCP tool get a manifest from day one. → `KB § PATTERNS/backend/structure-constructor-parity.md`
 - **Named seams over forks.** Customizations route through a NAMED seam (`standard_routers`, `authProvider`, `lifespan_*`, etc.) or formalize a new seam — never a structural fork. → `KB § PATTERNS/architect/seed-canonical-defaults.md` · `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md`
 - **Classify reversibility first; spend rigor in proportion.** Two-way door ⇒ decide inline; one-way door (schema, tenancy, public contract, seed default, new seam) ⇒ record + quality scenario + fitness function. → `KB § PATTERNS/architect/architecture-craft-canon.md` §2
 - **Decisions leave a record.** A one-way-door choice ships a MADR-shaped record (drivers, options, consequences, confirmation, revisit trigger), never a PROJECT.md line that dies at archive. → `KB § PATTERNS/architect/architecture-craft-canon.md` §3

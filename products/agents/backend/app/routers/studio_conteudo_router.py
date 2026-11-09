@@ -662,7 +662,8 @@ def _definicao_out(agent, geracao=None) -> PlataformaAgentOut:
         definition_scope=agent.definition_scope, conteudo_modo=agent.conteudo_modo, runtime=agent.runtime,
         owner_product=agent.owner_product, usa_canais=agent.usa_canais,
         escopo_qualificacao=agent.escopo_qualificacao, padrao_qualificacao=agent.padrao_qualificacao,
-        rascunho_padrao=agent.rascunho_padrao, instanciavel=agent.instanciavel, papel=agent.papel, exemplar=agent.exemplar, geracao=geracao,
+        rascunho_padrao=agent.rascunho_padrao, instanciavel=agent.instanciavel, papel=agent.papel, exemplar=agent.exemplar,
+        kind=agent.kind, fonte=agent.fonte, superficie_claude=agent.superficie_claude, geracao=geracao,
     )
 
 
@@ -708,6 +709,7 @@ async def create_platform_definition(
                 descricao=payload.descricao, runtime=payload.runtime, owner_product=payload.owner_product,
                 escopo_qualificacao=payload.escopo_qualificacao, padrao_qualificacao=payload.padrao_qualificacao,
                 rascunho_padrao=payload.rascunho_padrao, instanciavel=payload.instanciavel, papel=payload.papel,
+                kind=payload.kind, fonte=payload.fonte, superficie_claude=payload.superficie_claude,
             )
         except StudioConflict as exc:
             raise _conflict_flat(exc) from exc

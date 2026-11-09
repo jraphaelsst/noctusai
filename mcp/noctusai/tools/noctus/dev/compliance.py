@@ -30,6 +30,7 @@ ADDING A NEW DETECTOR — read this first.
 # surfaces outline_python deliberately omits. Migration evaluated
 # 2026-05-02 by ast-callers-consolidation Phase 0 → accept.
 import ast
+import os
 import hashlib
 import json
 import logging
@@ -26320,6 +26321,221 @@ def check_tax_canon_no_inline_params(repo_root: Path | None = None) -> list[dict
     bp = root / _TAX_CANON_BASELINE_REL
     base = set(json.loads(bp.read_text())["signatures"]) if bp.exists() else set()
     return [{k: v for k, v in f.items() if k != "sig"} for f in findings if f["sig"] not in base]
+
+
+# ── structure ↔ constructor parity (owner 2026-11-08) ───────────────────────────────────────────────────────────────
+#: Manifests are discovered under these roots; the walk prunes heavy / generated directories.
+_PARITY_ROOTS = ("products", "seed")
+_PARITY_MANIFEST = "structure_parity.py"
+_PARITY_PRUNE = frozenset({"node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".git", "worktrees"})
+
+
+def _parity_manifests(root: Path) -> list[Path]:
+    found: list[Path] = []
+    for top in _PARITY_ROOTS:
+        base = root / top
+        if not base.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d not in _PARITY_PRUNE and not d.startswith(".")]
+            if _PARITY_MANIFEST in filenames:
+                found.append(Path(dirpath) / _PARITY_MANIFEST)
+    return sorted(found)
+
+
+def _parity_literal(tree: ast.Module, name: str, consts: dict[str, Any]) -> Any:
+    """``name``'s module-level value, evaluated as a literal with the module's plain string constants and
+    f-strings over them resolved (the manifest is DATA: never imported)."""
+
+    def ev(node: ast.AST) -> Any:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name) and node.id in consts:
+            return consts[node.id]
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for v in node.values:
+                if isinstance(v, ast.Constant):
+                    parts.append(str(v.value))
+                elif isinstance(v, ast.FormattedValue):
+                    parts.append(str(ev(v.value)))
+            return "".join(parts)
+        if isinstance(node, ast.Dict):
+            return {ev(k): ev(v) for k, v in zip(node.keys, node.values)}
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return [ev(e) for e in node.elts]
+        raise ValueError(f"unsupported manifest expression at line {getattr(node, 'lineno', '?')}")
+
+    for stmt in tree.body:
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target] if isinstance(stmt, ast.AnnAssign) else []
+        for t in targets:
+            if isinstance(t, ast.Name) and t.id == name and stmt.value is not None:
+                return ev(stmt.value)
+    return None
+
+
+def _parity_consts(tree: ast.Module) -> dict[str, Any]:
+    consts: dict[str, Any] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            v = stmt.value
+            if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                consts[stmt.targets[0].id] = v.value
+            elif isinstance(v, ast.JoinedStr):
+                try:
+                    consts[stmt.targets[0].id] = _parity_literal(
+                        ast.Module(body=[stmt], type_ignores=[]), stmt.targets[0].id, consts)
+                except ValueError:
+                    pass
+    return consts
+
+
+def _parity_find(tree: ast.Module, qualname: str) -> ast.AST | None:
+    node: ast.AST = tree
+    for part in qualname.split("."):
+        body = getattr(node, "body", [])
+        nxt = None
+        for child in body:
+            if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == part:
+                nxt = child
+            elif isinstance(child, (ast.Assign, ast.AnnAssign)) and node is tree:
+                targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+                if any(isinstance(t, ast.Name) and t.id == part for t in targets):
+                    nxt = child
+        if nxt is None:
+            return None
+        node = nxt
+    return node
+
+
+def _callee_name(func: ast.AST) -> str | None:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _parity_extract(tree: ast.Module, node: ast.AST, kind: str) -> set[str] | str:
+    """The field names a surface carries, or an error string."""
+    if kind == "fields":
+        if not isinstance(node, ast.ClassDef):
+            return "is not a class"
+        return {s.target.id for s in node.body if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)}
+    if kind == "params":
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return "is not a function"
+        a = node.args
+        return {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs)} - {"self", "cls"}
+    if kind.startswith("call_kwargs:"):
+        callee = kind.split(":", 1)[1]
+        calls = [n for n in ast.walk(node) if isinstance(n, ast.Call) and _callee_name(n.func) == callee]
+        if not calls:
+            return f"has no call to {callee}(...)"
+        return {kw.arg for c in calls for kw in c.keywords if kw.arg is not None}
+    if kind.startswith("dict_keys:"):
+        var = kind.split(":", 1)[1]
+        for n in ast.walk(node):
+            if (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == var for t in n.targets)
+                    and isinstance(n.value, ast.Dict)):
+                return {k.value for k in n.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        return f"assigns no dict literal to {var!r}"
+    if kind == "tuple":
+        def strings(v: ast.AST, depth: int = 0) -> set[str]:
+            out: set[str] = set()
+            for e in getattr(v, "elts", []):
+                if isinstance(e, ast.Constant) and isinstance(e.value, str):
+                    out.add(e.value)
+                elif isinstance(e, ast.Starred) and isinstance(e.value, ast.Name) and depth < 5:
+                    ref = _parity_find(tree, e.value.id)
+                    if ref is not None and getattr(ref, "value", None) is not None:
+                        out |= strings(ref.value, depth + 1)
+            return out
+        value = getattr(node, "value", None)
+        if not isinstance(value, (ast.Tuple, ast.List)):
+            return "is not a module-level tuple"
+        return strings(value)
+    return f"unknown surface kind {kind!r}"
+
+
+def check_structure_constructor_parity(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper (owner 2026-11-08): every field of an entity's record reaches every constructor surface its
+    ``structure_parity.py`` manifest names, or is exempted there with a reason. Catches the green-tests/broken-path
+    class: a field added to the record (or the DB row) while a creation function, request model, response model or
+    MCP payload list was not updated — each surface defaults the field, so unit tests still pass.
+
+    Discovery: every ``structure_parity.py`` under ``products/`` and ``seed/`` (read by AST, never imported).
+    Also flags an exemption for a field the record no longer has (a stale reason hides the next drift), an
+    exemption with an empty reason, and a target that no longer resolves. Severity ``high``.
+    KB § PATTERNS/backend/structure-constructor-parity.md."""
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    parsed: dict[Path, ast.Module | None] = {}
+
+    def tree_of(p: Path) -> ast.Module | None:
+        if p not in parsed:
+            try:
+                parsed[p] = ast.parse(p.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError):
+                parsed[p] = None
+        return parsed[p]
+
+    def resolve(target: str) -> tuple[ast.Module | None, ast.AST | None, str]:
+        rel, _, qual = target.partition("::")
+        t = tree_of(root / rel)
+        if t is None:
+            return None, None, f"{rel} is missing or does not parse"
+        n = _parity_find(t, qual)
+        return t, n, "" if n is not None else f"{qual} not found in {rel}"
+
+    for manifest in _parity_manifests(root):
+        mrel = str(manifest.relative_to(root))
+        mtree = tree_of(manifest)
+        if mtree is None:
+            issues.append({"file": mrel, "issue": "manifest does not parse", "severity": "high"})
+            continue
+        try:
+            spec = _parity_literal(mtree, "STRUCTURE_PARITY", _parity_consts(mtree))
+        except ValueError as exc:
+            issues.append({"file": mrel, "issue": f"STRUCTURE_PARITY is not a plain literal: {exc}", "severity": "high"})
+            continue
+        if not isinstance(spec, dict):
+            issues.append({"file": mrel, "issue": "no STRUCTURE_PARITY dict", "severity": "high"})
+            continue
+        for entity, ent in spec.items():
+            rtree, rnode, err = resolve(ent.get("record", ""))
+            if err:
+                issues.append({"file": mrel, "issue": f"[{entity}] record {err}", "severity": "high"})
+                continue
+            record = _parity_extract(rtree, rnode, "fields")
+            if isinstance(record, str):
+                issues.append({"file": mrel, "issue": f"[{entity}] record {record}", "severity": "high"})
+                continue
+            for surf in ent.get("surfaces", []):
+                name, exempt = surf.get("name", surf.get("target")), surf.get("exempt") or {}
+                stree, snode, err = resolve(surf.get("target", ""))
+                if err:
+                    issues.append({"file": mrel, "issue": f"[{entity}] surface {name!r}: {err}", "severity": "high"})
+                    continue
+                carried = _parity_extract(stree, snode, surf.get("kind", ""))
+                if isinstance(carried, str):
+                    issues.append({"file": mrel, "issue": f"[{entity}] surface {name!r}: target {carried}", "severity": "high"})
+                    continue
+                missing = sorted(record - carried - set(exempt))
+                if missing:
+                    issues.append({"file": surf["target"].partition("::")[0], "issue": (
+                        f"[{entity}] {name}: record field(s) {', '.join(missing)} not carried. Add them to "
+                        f"{surf['target']} or exempt them WITH a reason in {mrel}."), "severity": "high"})
+                stale = sorted(set(exempt) - record)
+                if stale:
+                    issues.append({"file": mrel, "issue": (
+                        f"[{entity}] {name}: exemption for field(s) the record no longer has: {', '.join(stale)}"),
+                        "severity": "high"})
+                empty = sorted(k for k, v in exempt.items() if not str(v or "").strip())
+                if empty:
+                    issues.append({"file": mrel, "issue": f"[{entity}] {name}: exemption without a reason: {', '.join(empty)}",
+                                   "severity": "high"})
+    return issues
 
 
 def register(server) -> None:

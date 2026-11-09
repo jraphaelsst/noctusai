@@ -305,6 +305,18 @@ path; the Controles dialog states what happens to the open conversations before 
 Open gaps are marked `NOC-REMEDIATE[...]` in `types-julia.ts` and the `use*` hooks (conformidade
 routes, studio thread state/results).
 
+### DB-source dev agents (Agent Packages A11/A12, migration 070)
+
+A dev agent can be authored in the Studio instead of git: `agents.fonte = 'db'` (immutable) makes the DB the source of
+truth, and git holds only a GENERATED mirror (`.claude/agents/<key>.md` + `agents/<key>/`) exported from the published
+version (`products/agents/projects/agent-packages/CONTRACT.md` §M). `agents.kind` adds `dev-executor` (may carry
+write tools; `dev-advisor` stays read-only, A10). `agents.superficie_claude = {tools, model, owns_kb}` is the
+Claude Code surface, set at `POST /plataforma/agents` (or MCP `criar_agente`) and changed through the definition
+PATCH (`configurar_agente`). Every agent creation surface (store create, insert payload, row mapping,
+request/response models, route forwarding, MCP keys) is declared in `app/stores/structure_parity.py` and held by
+keeper `check_structure_constructor_parity` (`KB § PATTERNS/backend/structure-constructor-parity.md`): a new
+field on `StudioAgentRecord` must reach each of them or be exempted with a reason.
+
 ### Creating a complete agent (Julia as the reference — `KNOWLEDGE-BASE/CONTEXT/GUIDES/agent-creation.md`, skill `noc-new-agent`)
 - The recipe, the artifact map (what Julia has, where it lives), the publish-gate table and "what never comes from AI" live in that guide; read it before building or generating an agent.
 - `app/studio/prontidao.py` + `GET /api/studio/agents/{key}/prontidao`: the draft's readiness. `compor` is pure (`Entrada` -> items `{codigo, grupo, severidade, mensagem, acao_sugerida, recusa_publicacao, detalhe}`), `coletar` reads. A BLOCKING item names the publish 409 code it stands for (`RECUSAS_PUBLICACAO`); the publish route and the view share the predicates (`recusa_de_compilacao`, `juiz_aprovado`, `decidir_portao`) and `tests/studio/def/test_prontidao.py` publishes a draft in every refusal state to keep them in lock-step. Every publish 409 carries the same `prontidao` list. Advisory (never blocking): stale skill pins, tools the configuration expects without a description row, tool parameters without a label (`rotulo_parametro_ausente`), unfilled org specs, generator gaps, controls off.

@@ -114,9 +114,10 @@ LIFECYCLE_ACTIONS = (
 )
 _DEFINICAO_CAMPOS = (
     "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao", "rascunho_padrao",
-    "instanciavel", "papel",
+    "instanciavel", "papel", "superficie_claude",
 )
-_CRIAR_CAMPOS = (*_DEFINICAO_CAMPOS, "briefing", "limite_usd")
+#: ``kind`` / ``fonte`` are fixed at creation (immutable afterwards): create-only keys.
+_CRIAR_CAMPOS = (*_DEFINICAO_CAMPOS, "kind", "fonte", "briefing", "limite_usd")
 _GERAR_CAMPOS = ("briefing", "areas", "forcar", "limite_usd", "referencia")
 _AGENT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})

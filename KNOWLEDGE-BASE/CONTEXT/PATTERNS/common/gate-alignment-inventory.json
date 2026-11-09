@@ -2726,6 +2726,20 @@
    "source": "KB § PATTERNS/security/access-tiers.md (service-only tier: no browser grant) + Supabase Storage access control (storage.objects RLS policies grant authenticated/anon API access) -- finance-attachments incident 2026-11-07",
    "telemetry": "cli exit wrapper -> guard-events.ndjson (same --check-storage-bucket-public invocation)"
   },
+  "keeper:check-structure-constructor-parity": {
+   "mechanism": "template: products/agents/backend/app/stores/structure_parity.py (STRUCTURE_PARITY manifest beside the entity; a new field is carried or exempted with a reason in the same change)",
+   "owner": "architect",
+   "placement": "warn",
+   "standard": "KB § PATTERNS/backend/structure-constructor-parity.md",
+   "new": true,
+   "declared": "2026-11-08",
+   "shadow": {
+    "since": "2026-11-08",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "owner rule 2026-11-08 ('whenever we change the agent structure, we must update the function to match it. tests will probably pass, but it will break'); measured on origin/dev: 6 agent creation surfaces missing kind/fonte/superficie_claude, kind never creatable through POST /plataforma/agents; KB § PATTERNS/devops/product-lockfile-and-slug-drift.md (same hand-maintained-drift class)"
+  },
   "keeper:check-table-has-rls": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3187,6 +3201,18 @@
    "branch": "feat/finance-storage-service-only",
    "gates": [
     "keeper:check-storage-service-only-policy"
+   ]
+  },
+  {
+   "id": "D24",
+   "decision": "A field added to an entity's record reaches every constructor surface (store create, insert payload, row mapping, create request/response, route forwarding, MCP payload lists) in the same commit, or is exempted with a reason in the entity's structure_parity.py",
+   "home": "KB § PATTERNS/backend/structure-constructor-parity.md",
+   "construction": "products/agents/backend/app/stores/structure_parity.py (STRUCTURE_PARITY manifest beside the entity; fan-out = one manifest entry per entity)",
+   "gate": "keeper:check-structure-constructor-parity",
+   "telemetry": "gate events (cli wrapper, guard-events) via --check-structure-constructor-parity",
+   "branch": "feat/agent-db-source",
+   "gates": [
+    "keeper:check-structure-constructor-parity"
    ]
   }
  ]

@@ -4859,6 +4859,50 @@ def _jv2_agent_insert(cols: str, vals: str) -> str:
             f"VALUES (v_org, 'noc-probe-' || v_sufixo, 'NOC probe', 'claude_sdk', 'studio', {vals});")
 
 
+# Migration 070 (Agent Packages A11/A12): DB-source dev agents. Self-provisioning like every agents probe.
+_AGENTS_DB_SOURCE_MIGRATIONS = ("070_agent_db_source.sql",)
+_AGENTS_DB_SOURCE_PROBES: tuple[GuardProbe, ...] = (
+    _agents_studio_probe(
+        probe_id="agents.fonte_check",
+        guard_name="agents_fonte_check",
+        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET fonte = 'svn' WHERE id = v_agent;",
+        guard_fragment="agents_fonte_check",
+        what="an agent source other than git|db",
+        rationale="A11: the mirror rules key on fonte; an unknown source would match neither the git build nor the DB export.",
+        migrations=_AGENTS_DB_SOURCE_MIGRATIONS,
+    ),
+    _agents_studio_probe(
+        probe_id="agents.fonte_immutable",
+        guard_name="guard_agent_fonte_immutable",
+        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET fonte = 'db' WHERE id = v_agent;",
+        guard_fragment="fonte_immutable",
+        what="flipping an existing agent's source (git -> db)",
+        rationale="A11: flipping the source orphans one of the two authoring copies (the git package or the DB rows).",
+        migrations=_AGENTS_DB_SOURCE_MIGRATIONS,
+    ),
+    _agents_studio_probe(
+        probe_id="agents.kind_check_070",
+        guard_name="agents_kind_check",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode, kind) "
+            "VALUES (v_org, 'noc-probe-kind', 'NOC probe', 'claude_sdk', 'studio', 'dev-editor');"
+        ),
+        guard_fragment="agents_kind_check",
+        what="an agent kind outside runtime|dev-advisor|dev-executor",
+        rationale="A9/A12: the token and tool rules (A10 read-only advisors) key on kind; an unknown kind escapes both.",
+        migrations=_AGENTS_DB_SOURCE_MIGRATIONS,
+    ),
+    _agents_studio_probe(
+        probe_id="agents.superficie_claude_object",
+        guard_name="agents_superficie_claude_check",
+        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET superficie_claude = '[1]'::jsonb WHERE id = v_agent;",
+        guard_fragment="agents_superficie_claude_check",
+        what="a Claude Code surface that is not a JSON object",
+        rationale="§M1: the mirror renderer reads tools/model/owns_kb keys; a non-object would crash the render at publish.",
+        migrations=_AGENTS_DB_SOURCE_MIGRATIONS,
+    ),
+)
+
 # S3a (migration 049): AI draft generation + data-driven platform definitions. Proven on the real chain in
 # test_agents_geracao_probes_on_replay.py.
 _AGENTS_GERACAO_PROBES: tuple[GuardProbe, ...] = (
@@ -11741,6 +11785,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_STUDIO_PROBES,
     *_AGENTS_JULIA_V2_PROBES,
     *_AGENTS_GERACAO_PROBES,
+    *_AGENTS_DB_SOURCE_PROBES,
     *_AGENTS_ISOLATION_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
