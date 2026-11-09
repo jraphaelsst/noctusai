@@ -17068,6 +17068,34 @@ def check_measurable_by_design(
     return findings
 
 
+def check_council_ledger_schema(repo_root: Path | None = None, paths: list[str] | None = None, *, staged: bool = False) -> list[dict]:
+    """Offline pre-commit gate for the council ledger (contract: project-history/assistant-chatbot/contracts/
+    council-ledger.md): every ``project-history/council/<YYYY-MM>/<session_id>.ndjson`` row validates against the
+    schema (enums, required fields, references inside the session file) and, when ``staged``, the staged diff only
+    APPENDS lines at EOF (a modified/deleted/renamed ledger line fails: a correction is a new ``event`` row).
+    ``paths`` scopes to staged files; ``None`` = every ledger file. Logic lives in ``council_ledger``."""
+    from .council_ledger import check_schema
+
+    return check_schema(repo_root or REPO_ROOT, paths, staged=staged)
+
+
+def check_council_ledger_sync(repo_root: Path | None = None, *, client=None, verdict_out: dict | None = None) -> list[dict]:
+    """Online pre-push check: every ndjson id of the council ledger must exist in the agents-product DB. A table that
+    is not applied yet / no credentials / DB unreachable is ``inconclusive`` (returned in ``verdict_out``, no issue:
+    unmeasurable is never red). DB-only ids are informational (a parallel branch's sessions are absent here)."""
+    from .council_ledger import ledger_sync_diff
+
+    d = ledger_sync_diff(repo_root or REPO_ROOT, client=client)
+    if verdict_out is not None:
+        verdict_out.update(d)
+    if d["status"] == "error":
+        return [{"file": "project-history/council", "issue": d["reason"], "severity": "high", "line": 0}]
+    return [{"file": "project-history/council", "severity": "high", "line": 0,
+             "issue": f"{len(ids)} {kind} id(s) in the ndjson ledger are missing from the DB: {', '.join(ids[:8])}"
+                      f"{' ...' if len(ids) > 8 else ''}. Run noctus.dev.council_ledger action=sync confirm=True."}
+            for kind, ids in sorted(d.get("missing_in_db", {}).items())]
+
+
 def _definition_files(root: Path) -> list[Path]:
     files: list[Path] = []
     for base in sorted((root / "products").glob("*/ops/agents")):  # product-scope: all — declared agent definitions are config regardless of ativo

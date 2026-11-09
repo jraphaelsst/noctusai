@@ -282,6 +282,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--access-tier-reconcile", action="store_true", help="Scanners write the findings ledger: add new findings, close fixed ones, reopen regressions (never hand-edit the ledger). With --access-tier-exposure FILE it reconciles the EFFECTIVE prod findings instead.")
     parser.add_argument("--found-by", default="keeper", help="With --access-tier-reconcile: who found it (keeper | audit | exposure-tool | <agent>).")
     parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
+    parser.add_argument("--check-council-ledger-schema", action="store_true", help="Offline pre-commit gate: every project-history/council/**/*.ndjson row validates against the council-ledger contract and a staged diff only appends at EOF (append-only). --paths scopes to staged files; --staged enforces append-only against the index. KB-free contract: project-history/assistant-chatbot/contracts/council-ledger.md.")
+    parser.add_argument("--staged", action="store_true", help="With --check-council-ledger-schema: also enforce append-only against the git index.")
+    parser.add_argument("--check-council-ledger-sync", action="store_true", help="Online pre-push check: council ledger ndjson ids vs the DB ids. A missing table / no credentials is inconclusive (exit 0, printed loudly), never red.")
+    parser.add_argument("--council-ledger", dest="council_ledger", metavar="ACTION", help="Council ledger (open_session|record_objection|record_verdict|record_event|report|sync|status); args as JSON via --cl-args. MCP: noctus.dev.council_ledger.")
+    parser.add_argument("--cl-args", dest="cl_args", metavar="JSON", default=None, help="With --council-ledger: JSON object of the action's arguments.")
     parser.add_argument("--check-measurable-by-design", action="store_true", help="BLOCKING DELTA gate (owner rule 2026-11-09, measurement-by-design): a NEW migration's domain table needs a creation timestamp, and a lifecycle/status column needs an append-only transition capture (*_eventos table / audit trigger / transition-log organ). Warns on free-text outcomes, missing updated_at, event tables with no actor. Escape: `-- measurable: <reason>` (recorded to gate telemetry). --paths scopes to staged ADDED migrations; omitted = migrations added vs origin/dev. KB § PATTERNS/architect/measurement-by-design.md.")
     parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
@@ -1217,6 +1222,33 @@ def main():
             print(f"  {GREEN}✓ compose.waha.yml is the render of waha-instances.yml.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} waha-instances drift issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_council_ledger_schema:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_council_ledger_schema
+        _cl_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_council_ledger_schema(repo_root=REPO_ROOT, paths=_cl_paths, staged=bool(getattr(args, "staged", False)))
+        if not issues:
+            print(f"  {GREEN}✓ council-ledger-schema: every ledger row validates and the ledger is append-only.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} council-ledger-schema finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_council_ledger_sync:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_council_ledger_sync
+        _cl_v: dict = {}
+        issues = check_council_ledger_sync(repo_root=REPO_ROOT, verdict_out=_cl_v)
+        if _cl_v.get("status") == "inconclusive":
+            print(f"  {YELLOW}? council-ledger-sync inconclusive: {_cl_v.get('reason')} (not a failure; nothing was verified).{RESET}")
+            sys.exit(0)
+        if not issues:
+            print(f"  {GREEN}✓ council-ledger-sync: every ndjson id is in the DB.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} council-ledger-sync finding(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
@@ -4693,6 +4725,20 @@ def main():
             print(f"  {GREEN}✓ Live branch map ({len(rows)} pointer(s)):{RESET}")
             print(json.dumps(rows, indent=2, default=str))
         sys.exit(0)
+
+    elif getattr(args, "council_ledger", None):
+        from tools.noctus.dev.council_ledger import run as _cl_run
+        try:
+            _cl_kw = json.loads(args.cl_args) if args.cl_args else {}
+            if not isinstance(_cl_kw, dict):
+                raise ValueError("--cl-args must be a JSON object")
+        except ValueError as e:
+            print(f"  {RED}Error:{RESET} bad --cl-args: {e}")
+            sys.exit(2)
+        _cl_kw.setdefault("worktree_path", getattr(args, "worktree_path", None))
+        result = _cl_run(args.council_ledger, **_cl_kw)
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        sys.exit(0 if result.get("ok") else 1)
 
     elif getattr(args, "method_trial", None):
         from tools.noctus.dev.method_trial import run as _mt_run

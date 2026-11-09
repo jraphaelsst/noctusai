@@ -776,6 +776,25 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-council-ledger-schema": {
+   "mechanism": "tool: noctus.dev.council_ledger (the only write path; validates every row against the contract before append)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "shadow": null,
+   "source": "Council ledger contract v1 section 4 (project-history/assistant-chatbot/contracts/council-ledger.md); append-only ledger rule (EOA / KB § PATTERNS/architect/event-oriented-architecture.md); verdict-channel integrity (KB § PATTERNS/common/methodology-execution-discipline.md)"
+  },
+  "keeper:check-council-ledger-sync": {
+   "mechanism": "tool: noctus.dev.council_ledger (the only write path; validates every row against the contract before append)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "source": "Council ledger contract v1 section 4 (project-history/assistant-chatbot/contracts/council-ledger.md); append-only ledger rule (EOA / KB § PATTERNS/architect/event-oriented-architecture.md); verdict-channel integrity (KB § PATTERNS/common/methodology-execution-discipline.md)"
+  },
   "keeper:check-db-agent-mirror-integrity": {
    "mechanism": "tool: noctus.dev.agent_export (writes the mirror the Studio publish rendered, verified by its compiled_hash; a mirror is never hand-edited)",
    "owner": "architect",
@@ -3314,6 +3333,19 @@
    "branch": "feat/measurement-mindset-rule-gate",
    "gates": [
     "keeper:check-measurable-by-design"
+   ]
+  },
+  {
+   "id": "D29",
+   "decision": "Council deliberation is measurable: every council session/objection/verdict/event is a validated, append-only ledger row (one file per session) synced to the agents DB by id, so per-seat hit/false-alarm/cost metrics have exactly one derivation. Schema gate is warn-first shadow then blocking; the online sync check is inconclusive (never red) when the table is not applied",
+   "home": "project-history/assistant-chatbot/contracts/council-ledger.md",
+   "construction": "noctus.dev.council_ledger (the only write path; validates before append)",
+   "gate": "keeper:check-council-ledger-schema",
+   "telemetry": "gate events (cli wrapper) via --check-council-ledger-schema / --check-council-ledger-sync; per-seat metrics via council_ledger action=report",
+   "branch": "feat/assistant-council-ledger-tool",
+   "gates": [
+    "keeper:check-council-ledger-schema",
+    "keeper:check-council-ledger-sync"
    ]
   }
  ]

@@ -176,6 +176,8 @@ scripts/archive-clean-last-sweep.log
 # project-history/vector-costs.ndjson ledger inside a real commit.
 # KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
 project-history/.vector-costs-spool.ndjson
+# council ledger: local DB-sync owed marker (never committed)
+project-history/council/.pending-sync
 
 # Recorded REAL OLX lead bodies contain consumer PII (name, email, phone)
 # — LGPD personal data. The corpus is a LOCAL diagnostic aid for
