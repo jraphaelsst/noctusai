@@ -101,7 +101,7 @@ class UsageEvent:
     #: "override:v<N>" (an operator `llm_model_overrides` version) or
     #: "unpriced" (no catalog row — cost 0, flagged, never silently billed).
     price_version: Optional[str] = None
-    # ── tracing (core 115; `tracing.py`): this event IS the LLM-call span ──
+    # ── tracing (core 116; `tracing.py`): this event IS the LLM-call span ──
     trace_id: Optional[str] = None
     span_id: Optional[str] = None
     parent_span_id: Optional[str] = None

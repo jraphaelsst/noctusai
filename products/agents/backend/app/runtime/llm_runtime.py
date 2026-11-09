@@ -306,7 +306,7 @@ class LlmToolRuntime:
                     "resumo": toolset.resumo(call.name, call.arguments) if toolset.resumo else call.name,
                 },
             }))
-            # One trace span per tool call (a child of the turn span; `public.ai_trace_spans`, core 115).
+            # One trace span per tool call (a child of the turn span; `public.ai_trace_spans`, core 116).
             async with span(call.name, kind="tool") as tool_span:
                 try:
                     result = toolset.handler(call)

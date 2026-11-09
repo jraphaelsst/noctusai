@@ -402,7 +402,7 @@ such as `gen_ai.client.operation.duration`.
 | error / finish | `status ∈ {ok, error, partial}`; streams cut short are `partial` with estimated tokens |
 | request correlation | `request_id` = the correlation id |
 | tool span | `tool_call_audits` row (status, tool, args redacted per LGPD) |
-| trace / span / parent span | `ai_usage.trace_id / span_id / parent_span_id` (core 115; an LLM-call row IS its span); tool / guardrail / internal spans in `public.ai_trace_spans`; both in view `public.ai_trace_timeline` |
+| trace / span / parent span | `ai_usage.trace_id / span_id / parent_span_id` (core 116; an LLM-call row IS its span); tool / guardrail / internal spans in `public.ai_trace_spans`; both in view `public.ai_trace_timeline` |
 | span latency / prompt version | `ai_usage.latency_ms` (non-stream calls) / `prompt_version` (`llm_usage_context(prompt_version=)`) |
 
 Sources: `KB § PATTERNS/backend/llm-usage.md` §0 (central ledger, attribution, pricing, append-only

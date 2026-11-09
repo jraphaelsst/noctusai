@@ -4,7 +4,7 @@ per tool call, plus a guardrail-verdict hook point.
 WHY NOT OpenTelemetry / Langfuse. The house runs no trace backend (Sentry is wired for ERRORS only, no performance
 tracing, and it carries no token/cost/prompt-version dimensions). The central ledger `public.ai_usage` (core 091)
 already holds, per LLM call, everything a span needs — model, tokens, cache-read tokens, cost, org / product /
-agent / conversation. So the minimal REAL option is to extend it: core migration 115 adds
+agent / conversation. So the minimal REAL option is to extend it: core migration 116 adds
 ``trace_id / span_id / parent_span_id / latency_ms / prompt_version`` to ``ai_usage`` (an LLM call row IS its span)
 and a ``public.ai_trace_spans`` table for the NON-LLM spans (tool calls, guardrail verdicts, internal steps). The
 view ``public.ai_trace_timeline`` unions both: ``select * from ai_trace_timeline where trace_id = :t order by

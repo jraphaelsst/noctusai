@@ -131,7 +131,7 @@ def test_ledger_row_carries_the_trace_columns():
         "t1", "s1", "p1", 42, "v3")
 
 
-def test_ledger_insert_degrades_loudly_when_migration_115_is_not_applied(caplog):
+def test_ledger_insert_degrades_loudly_when_migration_116_is_not_applied(caplog):
     from noctusai_lib.integrations.llm.ledger import CentralUsageSink
     from noctusai_lib.integrations.llm.usage import UsageEvent
 
@@ -171,7 +171,7 @@ def test_ledger_insert_degrades_loudly_when_migration_115_is_not_applied(caplog)
     sink._insert(ev)
     assert len(inserts) == 2 and "trace_id" not in inserts[1]
     assert inserts[1]["extra"]["trace"]["trace_id"] == "t1"
-    assert any("core migration 115" in r.getMessage() for r in caplog.records)
+    assert any("core migration 116" in r.getMessage() for r in caplog.records)
 
 
 def test_read_trace_queries_the_timeline_view():

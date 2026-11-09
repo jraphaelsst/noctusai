@@ -3,7 +3,7 @@
 Sibling of `spend_ceiling.py` (which RESERVES a run's cost cap before a long mechanism starts — Studio eval /
 mecanismo runs) and of `budget.py` (the org's MONTHLY BRL budget). This one is the per-call seatbelt: before a call
 leaves the process, the org's ACTUAL spend of the last `window_hours` on the call's *surface* (read from the
-central ledger `public.ai_usage` through the SQL function `ai_spend_window`, core migration 115) is compared with
+central ledger `public.ai_usage` through the SQL function `ai_spend_window`, core migration 116) is compared with
 the surface's limit.
 
 SURFACE = the call's attributed ``product`` (`attribution.current_attribution()`), optionally narrowed to
@@ -96,7 +96,7 @@ class InMemorySpendWindowReader:
 
 
 class SupabaseSpendWindowReader:
-    """Real — the SQL function ``ai_spend_window`` (core 115) through a SERVICE-ROLE ``public`` client."""
+    """Real — the SQL function ``ai_spend_window`` (core 116) through a SERVICE-ROLE ``public`` client."""
 
     def __init__(self, core_client_factory: Callable[[], Any]) -> None:
         self._client_factory = core_client_factory
