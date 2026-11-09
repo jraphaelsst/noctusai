@@ -407,3 +407,26 @@ def test_dashboard_composes_slice_scores_and_soft_fails():
     bad = dashboard(slice_scores_fn=boom)
     assert bad["slice_scores"] == {}
     assert any(e.startswith("slice_scores:") for e in bad["errors"])
+
+
+def test_dashboard_agents_and_slice_scores_share_one_source():
+    from tools.noctus.team import agent_metrics as am
+    from tools.noctus.team.dashboard import dashboard
+
+    rows = [
+        {"agent": "backend-engineer", "model": "sonnet", "ts": "2026-11-02T10:00:00",
+         "slug": "s1", "sha": "a", "q_weighted": 4.0, "tokens": 1000},
+        {"agent": "backend-engineer", "model": "sonnet", "ts": "2026-11-03T10:00:00",
+         "slug": "s2", "sha": "b", "q_weighted": 2.0, "tokens": 2000},
+        {"agent": "frontend-engineer", "model": "opus", "ts": "2026-11-03T11:00:00",
+         "slug": "s3", "sha": "c", "q_weighted": 5.0, "tokens": 500},
+    ]
+
+    def fn(name, scope, by_week):
+        return am.rollup(rows, agent=None if name in ("", "*") else name, by_week=by_week)
+
+    out = dashboard(agents=["backend-engineer", "frontend-engineer"], slice_scores_fn=fn)
+    assert not [e for e in out["errors"] if e.startswith(("agent_metrics", "slice_scores"))]
+    for role, per in out["agents"].items():
+        want = [g for g in out["slice_scores"]["groups"] if g["agent"] == role]
+        assert per["groups"] == want and want
