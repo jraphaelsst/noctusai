@@ -1,5 +1,5 @@
 /**
- * Central-login entry helpers (contract: products/core/CONTRACTS/sso-entry.md).
+ * Central-login entry helpers (contract: products/core/docs/sso-entry-contract.md).
  *
  * `produto` is a catalog SLUG, never a URL; `next` is a PATH inside the product. The product
  * URL only ever comes from the server (`GET /api/sso/produto/{slug}` / `POST /api/sso/token`),

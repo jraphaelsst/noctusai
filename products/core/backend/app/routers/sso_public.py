@@ -3,7 +3,7 @@ Public SSO entry router -- the product identity behind core's central login.
 
 GET /api/sso/produto/{slug} -- {slug, nome, icone, landing_url} of an ACTIVE catalog product.
 
-Contract: products/core/CONTRACTS/sso-entry.md (slice S3 of
+Contract: products/core/docs/sso-entry-contract.md (slice S3 of
 project-history/plans/sso-session-lifecycle-2026-11.md). Lives in its own file so it never
 collides with ``routers/sso.py`` (the token/redeem surface).
 

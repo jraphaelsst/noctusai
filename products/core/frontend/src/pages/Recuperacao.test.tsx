@@ -1,6 +1,6 @@
 /**
  * Central-login password recovery: /esqueci-senha and /redefinir-senha
- * (contract: products/core/CONTRACTS/sso-entry.md).
+ * (contract: products/core/docs/sso-entry-contract.md).
  */
 import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';

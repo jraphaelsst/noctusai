@@ -1,5 +1,5 @@
 /**
- * Core "forgot password" (contract: products/core/CONTRACTS/sso-entry.md). The only place that
+ * Core "forgot password" (contract: products/core/docs/sso-entry-contract.md). The only place that
  * asks for credentials-recovery; products link here (`?produto=&next=`) so the reset can end
  * inside the product the user came from.
  */

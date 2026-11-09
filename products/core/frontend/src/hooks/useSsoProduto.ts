@@ -1,6 +1,6 @@
 /**
  * Public identity of the product being entered (`GET /api/sso/produto/{slug}`).
- * Contract: products/core/CONTRACTS/sso-entry.md. Unknown/inactive (404) and a refused
+ * Contract: products/core/docs/sso-entry-contract.md. Unknown/inactive (404) and a refused
  * URL (409) are NOT retried: they are answers, not outages.
  */
 import { useQuery } from '@tanstack/react-query';

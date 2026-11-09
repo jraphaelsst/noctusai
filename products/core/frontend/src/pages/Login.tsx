@@ -25,7 +25,7 @@ interface OAuthProvider {
 }
 
 /**
- * Central login (contract: products/core/CONTRACTS/sso-entry.md). Without `produto` this is the
+ * Central login (contract: products/core/docs/sso-entry-contract.md). Without `produto` this is the
  * plain core login. With `produto` (or one stashed across an OAuth round trip) it is the entry
  * gate of that product: instant launch when core already has a session, a `prompt=none` bounce
  * when it does not, otherwise the form titled with the product's identity.
@@ -33,7 +33,7 @@ interface OAuthProvider {
 export function Login() {
   const [params] = useSearchParams();
   const [entry] = useState<SsoEntry | null>(() => readSsoEntry(params) ?? peekStashedSsoEntry());
-  return entry ? <EntryGate entry={entry} /> : <LoginForm entry={null} />;
+  return entry ? <EntryGate entry={entry} /> : <CoreCredentialsForm entry={null} />;
 }
 
 function StatusCard({ children, tone = 'status' }: { children: React.ReactNode; tone?: 'status' | 'alert' }) {
@@ -108,7 +108,7 @@ function EntryGate({ entry }: { entry: SsoEntry }) {
     return <StatusCard>Voltando para {produto.nome}…</StatusCard>;
   }
   return (
-    <LoginForm
+    <CoreCredentialsForm
       key={launchError}
       entry={entry}
       produto={produto}
@@ -118,7 +118,7 @@ function EntryGate({ entry }: { entry: SsoEntry }) {
   );
 }
 
-interface LoginFormProps {
+interface CoreCredentialsFormProps {
   entry: SsoEntry | null;
   produto?: SsoProduto;
   initialError?: string;
@@ -126,7 +126,7 @@ interface LoginFormProps {
   onSignedIn?: () => Promise<void>;
 }
 
-function LoginForm({ entry, produto, initialError = '', onSignedIn }: LoginFormProps) {
+function CoreCredentialsForm({ entry, produto, initialError = '', onSignedIn }: CoreCredentialsFormProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(initialError);

@@ -42,7 +42,7 @@ class SSOSessionResponse(StrictHttpModel):
 
 class SSOProdutoPublic(StrictHttpModel):
     """`GET /api/sso/produto/{slug}` -- public identity of an ACTIVE catalog product
-    (contract: products/core/CONTRACTS/sso-entry.md). Four fields, nothing else leaves."""
+    (contract: products/core/docs/sso-entry-contract.md). Four fields, nothing else leaves."""
     slug: str
     nome: str
     icone: str | None = None

@@ -1,5 +1,5 @@
 """
-Tests for the public SSO entry router (slice S3, contract products/core/CONTRACTS/sso-entry.md).
+Tests for the public SSO entry router (slice S3, contract products/core/docs/sso-entry-contract.md).
 
 GET /api/sso/produto/{slug} -- {slug, nome, icone, landing_url}; ACTIVE catalog rows only.
 """

@@ -1,5 +1,5 @@
 /**
- * Central login entry (contract: products/core/CONTRACTS/sso-entry.md): /login?produto=&next=&prompt=
+ * Central login entry (contract: products/core/docs/sso-entry-contract.md): /login?produto=&next=&prompt=
  */
 import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
