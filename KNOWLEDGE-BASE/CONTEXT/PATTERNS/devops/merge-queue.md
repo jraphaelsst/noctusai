@@ -217,6 +217,39 @@ fast-forwards, and cancelling mid-FF is the one unsafe cut, so the budget is
 ~150x the observed runtime. Re-measure when a job's p95 drifts toward half its
 timeout.
 
+## 6b · Watchdog — the queue tells the owner, with or without a steward
+
+**Rule.** The queue reports itself off-host. A watcher that lives in a session
+dies with it, so it cannot be the only alarm.
+
+**Why.** Four failures reached nobody:
+- **2026-11-05:** the drain crashed on every run for about 1.5 h. The verdicts never changed, so the in-session watcher printed nothing.
+- **2026-11-06:** a second crash loop.
+- **2026-11-07:** 9 entries were EJECTED while a dev-text watcher waited for hours.
+- **2026-11-08:** one entry with a stale keeper baseline failed three candidate batches of about 50 min each. The steward session had ended, so nothing landed for 3.5 h and no one knew.
+
+**How.** `.github/workflows/merge-queue-watchdog.yml` runs every 10 min.
+- **Command:** `python -m tools.noctus.dev.mq_watchdog --state … --send`. It uses only the standard library and keeps its state in the actions cache, the same shape as `prod-watchdog.yml`.
+- **Channels:** the same as prod-watchdog (WAHA WhatsApp, Resend email).
+- **Per run:** at most one message.
+
+The message reports:
+
+| Line | When |
+|---|---|
+| `✅ LANDED` / `❌ EJECTED` | an entry left the queue, with its verdict (dev sha / reason + url) |
+| `🟠 BATCH-RED` | a `mq-candidate/*` CI run failed. The bisect has begun, so act now, not after it ends |
+| `🔴 DRAIN-FAIL` | a drain run ended failure / timed_out / startup_failure (cancelled is normal) |
+| `⏸️ STALL` | the queue is non-empty and nothing has left it for `MQW_STALL_MIN` (90), or a drain is in progress over `MQW_DRAIN_LONG_MIN` (150). It reminds every `MQW_REMIND_MIN` (120), then `🟢 RECOVERED` |
+| `👁️ BLIND` | the queue was unreadable `MQW_BLIND_RUNS` (3) runs in a row |
+
+**Delivery.**
+- **Routing:** failures go to every channel; a success-only digest goes to WhatsApp (else email).
+- **The first run** only records a baseline.
+- **An undelivered failure** exits 1, which turns the workflow red, so GitHub's failure email is the backstop. State is not advanced, and the next run retries.
+
+**Local use:** run `noctus.dev.mq_watchdog` (dry by default), or `cli.py --mq-watchdog`. The in-session `cli.py --merge-queue watch` stays the steward's live feed; the watchdog does not replace it.
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned

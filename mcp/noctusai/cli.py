@@ -653,6 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pp-size", type=int, default=1000, help="With --perf-probe snippet --pp-kind read: slice size.")
     parser.add_argument("--spa-smoke", action="store_true", help="Post-deploy gate for the FRONTEND: per live product, assert the shell serves a mount point + bundle tag, the bundle is real JS (not the SPA HTML fallback, which 200s), and a deep link 200s. Closes the gap where container-health, /api/health and an edge 200 are all green while every user sees a blank page. MCP: noctus.dev.spa_smoke. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--prod-watchdog", action="store_true", help="OFF-HOST prod liveness check: /api/health for core + every build-scope slug (browser UA), core `/`, and ONE restricted-key SSH call reading host metrics (journald/heartbeat age, MemAvailable, swap, load). Classifies up|degraded|down (2 consecutive failed runs before down). DRY by default — prints the report, sends nothing, writes state only with --watchdog-state. MCP: noctus.dev.prod_watchdog. KB § PATTERNS/devops/prod-watchdog.md.")
+    parser.add_argument("--mq-watchdog", action="store_true", help="OFF-HOST merge-queue watchdog (CI runs it every 10 min): LANDED / EJECTED / BATCH-RED / DRAIN-FAIL / STALL / BLIND, one message per run via WhatsApp/email. Dry by default; --send sends; --watchdog-state PATH keeps dedupe state. MCP: noctus.dev.mq_watchdog. KB § PATTERNS/devops/merge-queue.md.")
     parser.add_argument("--watchdog-state", metavar="PATH", help="With --prod-watchdog: the JSON state file (counters, dedupe, SSH backoff).")
     parser.add_argument("--send", action="store_true", help="With --prod-watchdog: send REAL alerts (Resend email / WAHA WhatsApp). Default is a dry run.")
     parser.add_argument("--watchdog-test-alert", action="store_true", help="With --prod-watchdog: also push a TEST message through every configured alert channel.")
@@ -4167,6 +4168,14 @@ def main():
             print(f"  {BOLD}Auto-improvement context:{RESET} {len(result['auto_improvement_context'])} entry(ies)\n")
             print(result["brief"])
         sys.exit(0)
+    elif args.mq_watchdog:
+        from tools.noctus.dev.mq_watchdog import main as _mq_watchdog_main
+        _mqw_argv = []
+        if args.watchdog_state:
+            _mqw_argv += ["--state", args.watchdog_state]
+        if args.send:
+            _mqw_argv.append("--send")
+        sys.exit(_mq_watchdog_main(_mqw_argv))
     elif args.prod_watchdog:
         from tools.noctus.dev.prod_watchdog import main as _prod_watchdog_main
         _pw_argv = []

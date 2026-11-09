@@ -88,6 +88,7 @@ def register_all(server) -> None:
     from . import latency_report
     from . import perf_probe
     from . import prod_watchdog
+    from . import mq_watchdog
     from . import ensure_product_url_roster
     from . import ensure_schema_exposure
     from . import check_storage_no_public_buckets
@@ -256,6 +257,7 @@ def register_all(server) -> None:
     latency_report.register(server)
     perf_probe.register(server)
     prod_watchdog.register(server)
+    mq_watchdog.register(server)
     ensure_product_url_roster.register(server)
     ensure_schema_exposure.register(server)
     check_storage_no_public_buckets.register(server)

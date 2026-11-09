@@ -1,0 +1,69 @@
+# Merge Queue Watchdog (off-host) — tells the owner when the queue lands, ejects,
+# goes red, crashes or stalls, whether or not any steward session is alive.
+# Born from four silent failures (2026-11-05/06 drain crash loops, 11-07 unseen
+# ejections, 11-08 a 3.5 h bisect with no steward). Same alert channels and
+# state-in-cache shape as prod-watchdog.yml. KB § PATTERNS/devops/merge-queue.md
+name: Merge Queue Watchdog (off-host)
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: merge-queue-watchdog
+  cancel-in-progress: false
+permissions:
+  contents: read
+  statuses: read
+  actions: write # read run lists + prune this workflow's own superseded state caches
+jobs:
+  watchdog:
+    name: Read the queue + alert on change
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      WAHA_BASE_URL: ${{ secrets.WAHA_BASE_URL }}
+      WAHA_API_KEY: ${{ secrets.WAHA_API_KEY }}
+      WAHA_SESSION: ${{ secrets.WAHA_SESSION }}
+      WATCHDOG_ALERT_WHATSAPP: ${{ secrets.WATCHDOG_ALERT_WHATSAPP }}
+      WATCHDOG_ALERT_EMAIL: ${{ vars.WATCHDOG_ALERT_EMAIL || 'joaoraphaelsst@gmail.com' }}
+      STATE_FILE: .mq-watchdog/state.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: dev
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.11"
+      - name: Restore watchdog state
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .mq-watchdog/state.json
+          key: mq-watchdog-state-${{ github.run_id }}
+          restore-keys: |
+            mq-watchdog-state-
+      - name: Run the watchdog
+        working-directory: mcp/noctusai
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m tools.noctus.dev.mq_watchdog --state "$GITHUB_WORKSPACE/$STATE_FILE" --send
+      - name: Save watchdog state
+        id: save
+        if: ${{ always() && hashFiles('.mq-watchdog/state.json') != '' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .mq-watchdog/state.json
+          key: mq-watchdog-state-${{ github.run_id }}
+      - name: Prune superseded state caches
+        if: ${{ always() && steps.save.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: mq-watchdog-state-${{ github.run_id }}
+        run: |
+          if ! ids=$(gh cache list --repo "$GITHUB_REPOSITORY" --key mq-watchdog-state- --limit 100 --json id,key --jq ".[] | select(.key != \"$KEEP\") | .id"); then
+            echo "::warning::could not list mq-watchdog state caches — pruning skipped this run"
+            exit 0
+          fi
+          for id in $ids; do
+            gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || echo "::warning::could not delete cache $id"
+          done
