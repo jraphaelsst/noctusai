@@ -7,7 +7,7 @@ catalog (`KB § PATTERNS/backend/owner-notification-catalog.md`).
 
 | Ask | State after this branch |
 |---|---|
-| Vista sync delists properties ("pause + warn, never delete") | New WhatsApp kinds: `imoveis_delistados`, `imoveis_sync_falhou`, `imoveis_vista_listar_vazio` |
+| Vista sync delists properties ("pause + warn, never delete") | New WhatsApp kinds: `imoveis_delistados` (also names the codes paused by the ref notices), `imoveis_novos_vista`, `imoveis_sync_falhou`, `imoveis_vista_listar_vazio` |
 | Julia: an unhappy lead, her own mistake, other drift ("should notify me via whatsapp") | Already sent by WhatsApp to Julia's report destination. Now declared and switchable as `julia_alerta`, `julia_opt_out`, `julia_handoff` and `julia_conclusao` |
 
 **Not asked for by name; these reach only the in-app bell (`write_in_app`).** The owner decides which of them should

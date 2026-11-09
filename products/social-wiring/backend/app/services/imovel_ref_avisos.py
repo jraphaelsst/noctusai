@@ -9,7 +9,9 @@
   ref_nova_no_vista   a ref Vista has that we did not: created on our side as before, recorded here (informational, `ciente` closes it).
 
 One OPEN (`pendente`) notice per (imóvel, tipo) -- a partial unique index backs it. ONE in-app warning per sync run per tipo
-(owners + admins, `notify_org_admins`), never per code. The sync's `_marcar_removidos` circuit breaker still refuses a mass
+(owners + admins, `notify_org_admins`), never per code. The owner's WhatsApp leg ("warn me" = WhatsApp, owner 2026-11-09) is
+NOT sent here: the codes these functions return land on the run's `SyncReport` and `imoveis_atualizacao_service._avisar_dono`
+sends ONE catalog-gated message per run (`imoveis_delistados` names the paused codes, `imoveis_novos_vista` the new ones). The sync's `_marcar_removidos` circuit breaker still refuses a mass
 removal BEFORE any of this runs (a Vista fault is not a hundred disappearances).
 """
 from __future__ import annotations

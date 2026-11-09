@@ -33,7 +33,7 @@ def test_every_sw_kind_is_declared_for_the_catalog():
     assert {k.kind for k in KINDS} <= declared
     for k in ("upload", "lead", "conflito", "conflito_imovel", "conflito_empresa", "visita_feedback",
               "imoveis_delistados", "imoveis_sync_falhou", "imoveis_vista_listar_vazio", "vista_divergencias",
-              "julia_alerta", "julia_opt_out", "julia_handoff", "julia_conclusao"):
+              "imoveis_novos_vista", "julia_alerta", "julia_opt_out", "julia_handoff", "julia_conclusao"):
         assert k in declared, k
 
 
@@ -143,6 +143,40 @@ async def test_owner_warning_failure_never_breaks_the_run(caplog):
         await atualizacao._avisar_dono(_Tabela(["ok"]), uuid4(), "ok",
                                        SimpleNamespace(removidos_codigos=["X1"]), {}, notificador)
     assert any("owner WhatsApp warning failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_paused_and_new_refs_ride_one_message_per_run():
+    notificador = MagicMock()
+    notificador.notify_imoveis_delistados = AsyncMock()
+    notificador.notify_imoveis_novos_vista = AsyncMock()
+    notificador.notify_imoveis_sync_falhou = AsyncMock()
+    # "ca1" delisted by the detail pass AND paused; "CA2" paused by the listar sweep only; "CA9" new in Vista.
+    report = SimpleNamespace(removidos_codigos=["ca1"], removidos_exclusivos=[], pausados_codigos=["CA1", "CA2"],
+                             novos_vista_codigos=["CA9"])
+    await atualizacao._avisar_dono(_Tabela(["ok"]), uuid4(), "ok", report, {}, notificador)
+    kw = notificador.notify_imoveis_delistados.await_args.kwargs
+    assert kw["codigos"] == ["CA1", "CA2"] and kw["pausados"] == ["CA1", "CA2"]
+    notificador.notify_imoveis_novos_vista.assert_awaited_once()
+    assert notificador.notify_imoveis_novos_vista.await_args.kwargs["codigos"] == ["CA9"]
+
+
+def test_delisting_message_names_paused_codes_and_the_decision():
+    msg = NotificationService._build_delistados_message(["CA1", "CA2"], [], ["CA2"])
+    assert "Pausados no site" in msg["text"] and "CA2" in msg["text"] and "restaurar" in msg["text"]
+    assert "voltam sozinhos" not in msg["text"]  # a paused ref never comes back on its own
+
+
+@pytest.mark.asyncio
+async def test_new_refs_reach_whatsapp(gate):
+    admin = _MockSupabase()
+    _roster(admin)
+    wa = MagicMock()
+    wa.send_text = AsyncMock()
+    out = await _service(admin, whatsapp_client_factory=lambda *a, **k: wa).notify_imoveis_novos_vista(
+        org_id=uuid4(), codigos=["CA9"])
+    assert out.succeeded == 1 and "CA9" in wa.send_text.await_args.args[1]
+    assert gate.sends[-1]["kind"] == "imoveis_novos_vista"
 
 
 def test_julia_report_kinds_map_to_catalog():
