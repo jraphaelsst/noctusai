@@ -15,6 +15,7 @@ from uuid import UUID
 
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
+from app.studio.camadas import EfetivoStore, efetivo, substituir_por_chave
 from app.studio.compiler import compile_prompt
 from app.studio.especificacoes_service import config_atual
 from app.studio.models import (
@@ -166,8 +167,18 @@ def version_bundle(store, org_id: UUID, version: VersionRecord, *, conteudo: boo
         provider=version.provider,
         # Pins exist only on content-mode (platform-defined) versions; a legacy agent keeps the
         # pre-v2 compiler and its hash byte for byte.
-        skill_refs=skill_refs_of(version.id) if conteudo else (),
+        skill_refs=_skill_refs_efetivas(store, org_id, version.id) if conteudo else (),
     )
+
+
+def _skill_refs_efetivas(store, org_id: UUID, version_id: UUID) -> tuple[SkillRef, ...]:
+    """Library pins along the layer chain (073): same skill key -> the child's pin replaces the parent's."""
+    if not isinstance(store, EfetivoStore):
+        return skill_refs_of(version_id)
+    refs: list[SkillRef] = []
+    for _, vid in store.cadeia(org_id, version_id):
+        refs = substituir_por_chave(refs, list(skill_refs_of(vid)), lambda r: r.skill_key)
+    return tuple(refs)
 
 
 def client_bundle(store, org_id: UUID, client) -> ClientBundle:
@@ -193,7 +204,8 @@ def compile_version(
     definition's org for a platform-defined agent). ``agent.conteudo_modo == 'linhas'`` selects
     content mode (every string a row, hash over every content table); ``org_specs`` compiles the
     definition FOR an org (see ``app.studio.resolucao.compile_for_org``)."""
-    bundle = version_bundle(store, org_id, version, conteudo=agent.conteudo_modo == "linhas")
+    # 073 layers: what compiles is the EFFECTIVE content (the parent chain merged in), never own rows only.
+    bundle = version_bundle(efetivo(store), org_id, version, conteudo=agent.conteudo_modo == "linhas")
     if qualificacao is None:
         qualificacao = qualificacao_da_versao(agent, version)
     knowledge = tuple(catalog.collection_summaries(org_id, agent.id))

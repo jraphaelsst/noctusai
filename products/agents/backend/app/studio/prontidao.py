@@ -33,6 +33,7 @@ from app.studio.compiler import CONTEUDO_CODIGOS
 from app.studio.eval_mecanismo import MecanismoRequisito, PortaoMecanismo, decidir_portao
 from app.studio.especificacoes_service import config_atual, violacoes_armazenadas
 from app.studio.models import CompiledPrompt, ConfigValidacao, GateRun
+from app.studio.camadas import efetivo
 
 logger = logging.getLogger(__name__)
 
@@ -574,9 +575,11 @@ def coletar(
     casos = evals.list_cases(org_id, agent.id)
     ativos = [c for c in casos if c.ativo]
     refs = skills.listar_refs(draft.id)
-    rows = store.list_ferramentas(org_id, draft.id)
+    ef = efetivo(store)  # 073: readiness judges what compiles -- the parent chain merged in
+    rows = ef.list_ferramentas(org_id, draft.id)
     linhas = tuple(FerramentaLinha(f.ferramenta, f.ativo, f.descricao, dict(f.parametros)) for f in rows)
-    tem_skills = bool(refs) or any(s.ativo for s in store.list_skills(org_id, draft.id))
+    tem_skills = (bool(refs) or any(skills.listar_refs(vid) for _, vid in ef.cadeia(org_id, draft.id))
+                  or any(s.ativo for s in ef.list_skills(org_id, draft.id)))
 
     cfg = spec_validacao or config_atual()
     invalidas: tuple[tuple[str, str, str, str], ...] = ()
@@ -630,7 +633,7 @@ def coletar(
         geracao_areas=areas,
         controle_modo=modo,
         canonico_exigido=getattr(agent, "papel", None) != "gerador",
-        secoes_ativas=tuple(sorted({s.chave for s in store.list_sections(org_id, draft.id) if s.ativo})),
+        secoes_ativas=tuple(sorted({s.chave for s in ef.list_sections(org_id, draft.id) if s.ativo})),
         tags_comportamento=tuple(sorted({t for c in ativos if c.suite == "comportamento" for t in c.tags})),
     )
 

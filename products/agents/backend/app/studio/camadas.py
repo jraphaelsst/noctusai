@@ -25,6 +25,8 @@ from uuid import UUID
 __all__ = [
     "CadeiaInvalida",
     "EfetivoStore",
+    "efetivo",
+    "resolver_pai_de",
     "Sobreposicao",
     "SEPARADOR_APENSO",
     "apensar_secoes",
@@ -99,12 +101,31 @@ class EfetivoStore:
     def __init__(self, store: Any, resolver_pai: Callable[[UUID, UUID], "tuple[UUID, UUID] | None"]) -> None:
         self._store = store
         self._resolver_pai = resolver_pai
+        self._pais: dict[UUID, "tuple[UUID, UUID] | None"] = {}  # one request's lookups; versions don't re-parent
+
+    @property
+    def proprio(self) -> Any:
+        """The wrapped store: OWN rows (what an editor reads and writes)."""
+        return self._store
+
+    def cadeia(self, org_id: UUID, version_id: UUID) -> list["tuple[UUID, UUID]"]:
+        """``[(org, version)]`` from the ROOT template down to ``version_id`` itself."""
+        out = [(org_id, version_id)]
+        vistos: frozenset[UUID] = frozenset()
+        atual = (org_id, version_id)
+        while (pai := self._pai(atual[0], atual[1], vistos)) is not None:
+            vistos = vistos | {atual[1]}
+            out.append(pai)
+            atual = pai
+        return list(reversed(out))
 
     def __getattr__(self, nome: str) -> Any:  # everything that is not a row listing is the store's own
         return getattr(self._store, nome)
 
     def _pai(self, org_id: UUID, version_id: UUID, vistos: frozenset[UUID]) -> "tuple[UUID, UUID] | None":
-        pai = self._resolver_pai(org_id, version_id)
+        if version_id not in self._pais:
+            self._pais[version_id] = self._resolver_pai(org_id, version_id)
+        pai = self._pais[version_id]
         if pai is None:
             return None
         if pai[1] in vistos or pai[1] == version_id:
@@ -151,3 +172,31 @@ class EfetivoStore:
         ids_pai_mantidos = {s.id for s in self.list_skills(pai[0], pai[1]) if s.nome not in substituidas}
         do_pai = self.list_version_skill_files(pai[0], pai[1], vistos | {version_id})
         return [f for f in do_pai if f.skill_id in ids_pai_mantidos] + proprios
+
+
+def resolver_pai_de(store: Any) -> Callable[[UUID, UUID], "tuple[UUID, UUID] | None"]:
+    """The version a version inherits from, read from the store:
+
+    * a version that PINS a parent (a published child) -> the pinned parent version;
+    * a DRAFT of an agent with a parent -> the parent's draft, else the parent's published version (live link:
+      a parent edit reaches the child's draft at once; the child goes live only through its own evals + publish);
+    * anything else -> ``None``. A version published before its agent had a parent stays exactly what it was."""
+
+    def resolver(org_id: UUID, version_id: UUID) -> "tuple[UUID, UUID] | None":
+        v = store.get_version(org_id, version_id)
+        if v.pai_versao_id is not None:
+            return (v.org_id, v.pai_versao_id)
+        if v.status != "rascunho":
+            return None
+        agente = store.get_agent_by_id(v.agent_id)
+        if agente.pai_agent_id is None:
+            return None
+        pv = store.get_draft(org_id, agente.pai_agent_id) or store.get_active_version(org_id, agente.pai_agent_id)
+        return (pv.org_id, pv.id) if pv is not None else None
+
+    return resolver
+
+
+def efetivo(store: Any) -> Any:
+    """``store`` as the compiler / runtime read it (idempotent: an already-effective store is returned as is)."""
+    return store if isinstance(store, EfetivoStore) else EfetivoStore(store, resolver_pai_de(store))

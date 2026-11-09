@@ -25,6 +25,7 @@ from app.stores.catalogo import CatalogoEntrada, CatalogoStore, get_catalogo_sto
 from app.stores.errors import NotFound
 from app.studio.resolucao import resolve_agent_for_org
 from app.studio.vazamento import chamador_e_admin_da_plataforma
+from app.studio.camadas import efetivo
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import AuthContext
 
@@ -86,7 +87,7 @@ def _admin_extra(studio_store: Any, ctx: AuthContext, key: str) -> dict[str, Any
     ativa = r.versao
     ferramentas: list[str] = []
     if ativa is not None:
-        ferramentas = sorted(f.ferramenta for f in studio_store.list_ferramentas(r.definicao.org_id, ativa.id) if f.ativo)
+        ferramentas = sorted(f.ferramenta for f in efetivo(studio_store).list_ferramentas(r.definicao.org_id, ativa.id) if f.ativo)
         audit_definition_read(studio_store, ctx, r.definicao, "catalogo", ativa.id)
     return {
         "ferramentas": ferramentas,

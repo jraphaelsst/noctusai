@@ -5028,6 +5028,34 @@ _AGENTS_ISOLATION_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# 073: agent layers (BASE -> SDR -> agent). Self-provisioning, side-effect-free like every agents probe.
+_CAMADAS_MIGS = (_m("031"), "073_agent_camadas.sql")
+_AGENTS_CAMADAS_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="agents.template_is_a_platform_definition", guard_name="agents_camada_check",
+        migrations=_CAMADAS_MIGS, setup="", attack=_jv2_agent_insert("modelo", "true"),
+        fragments=("agents_camada_check",), what="an org-scoped agent flagged as a template (modelo)",
+        rationale="A template is platform IP inherited by platform definitions: a tenant-org template would make "
+                  "a tenant's prompt the base of other agents.",
+    ),
+    _julia_v2_probe(
+        probe_id="agents.parent_must_be_a_template", guard_name="guard_agent_camada",
+        migrations=_CAMADAS_MIGS, setup=_JV2_AGENT, attack=_jv2_agent_insert("pai_agent_id", "v_agent"),
+        fragments=("pai_invalido",), what="an agent inheriting from an agent that is not a template",
+        rationale="Only a template (modelo) is inherited: inheriting from a live agent would push its every edit "
+                  "into another agent's draft and make the chain unauditable.",
+    ),
+    _julia_v2_probe(
+        probe_id="agent_versions.parent_pin_only_at_publish", guard_name="guard_version_pai_pin",
+        migrations=_CAMADAS_MIGS, setup="\n    ".join((_JV2_AGENT, _JV2_VERSION)),
+        attack=f"UPDATE {_JV2}.agent_versions SET pai_versao_id = v_version WHERE id = v_version;",
+        fragments=("pai_invalido",), what="writing a version's parent pin outside the publish transition",
+        rationale="The pin is the published parent a child was proven against at publish; any other write could "
+                  "point a live child at content it was never evaluated on.",
+    ),
+)
+
+
 _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
     # ── 031 · platform definition / instance / content mode ──
     _julia_v2_probe(
@@ -11787,6 +11815,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_GERACAO_PROBES,
     *_AGENTS_DB_SOURCE_PROBES,
     *_AGENTS_ISOLATION_PROBES,
+    *_AGENTS_CAMADAS_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,
