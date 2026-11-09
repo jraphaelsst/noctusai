@@ -90,6 +90,11 @@ def core(monkeypatch):
     return c
 
 
+def _notifs(core):
+    """The corretor-divergence warnings only (the intake's refresh may also raise an unrelated ref notice)."""
+    return [n for n in core.table("notifications").select("*").execute().data if n["metadata"]["tipo"].startswith("lead_corretor_")]
+
+
 def _rodar(db, adapter=None, **kw):
     return intake.intake_imovel_do_lead(db, ORG, LEAD, adapter=adapter, **kw)
 
@@ -233,7 +238,7 @@ def test_lead_corretor_differing_from_the_property_corretor_warns_once_and_is_qu
     [d] = _rows(db, "lead_corretor_divergencias")
     assert d["tipo"] == "fora_dos_corretores" and d["status"] == "pendente" and d["lead_id"] == LEAD and d["lead_corretor_nome"] == "Maria Souza" and d["notificado_em"]
     assert d["imovel_corretores"][0]["vista_corretor_codigo"] == "12" and d["imovel_corretores"][0]["resolvido"] is True
-    [n] = core.table("notifications").select("*").execute().data
+    [n] = _notifs(core)
     assert n["metadata"]["tipo"] == "lead_corretor_fora_dos_corretores" and "ONE5" in n["title"] and "Joao Silva" in n["message"]
     # the Vista corretor resolved BY NAME is stamped with its Vista Codigo (the deterministic key from now on)
     assert _rows(db, "lead_corretores", id=CORRETOR_B)[0]["vista_codigo"] == "12"
@@ -241,14 +246,14 @@ def test_lead_corretor_differing_from_the_property_corretor_warns_once_and_is_qu
     assert res["vista_codigo_stamps"] == [{"corretor_id": CORRETOR_B, "nome": "Joao Silva", "vista_codigo": "12", "codigo_canonical": "ONE5"}]
 
     _rodar(db, _vista(_imovel()))  # re-run: no second row, no second warning
-    assert len(_rows(db, "lead_corretor_divergencias")) == 1 and len(core.table("notifications").select("*").execute().data) == 1
+    assert len(_rows(db, "lead_corretor_divergencias")) == 1 and len(_notifs(core)) == 1
 
 
 def test_lead_corretor_matching_the_property_corretor_is_not_a_divergence(core):
     db = _db(lead=_lead(corretor_id=CORRETOR_B), corretores_sw=_SW_CORRETORES, aliases=_ALIASES)
     res = _rodar(db, _vista(_imovel()))
     assert res["divergencia_corretor"]["tipos"] == [] and res["divergencia_corretor"]["divergencia"] is False
-    assert _rows(db, "lead_corretor_divergencias") == [] and core.table("notifications").select("*").execute().data == []
+    assert _rows(db, "lead_corretor_divergencias") == [] and _notifs(core) == []
 
 
 def test_a_pending_divergence_auto_resolves_when_the_lead_corretor_aligns(core):
@@ -267,10 +272,10 @@ def test_lead_without_a_corretor_warns_lead_sem_corretor_once_and_is_never_assig
     [d] = _rows(db, "lead_corretor_divergencias")
     assert d["tipo"] == "lead_sem_corretor" and d["lead_corretor_id"] is None and d["notificado_em"]
     assert _rows(db, "leads")[0]["corretor_id"] is None                                 # recorded + warned, NOT assigned
-    [n] = core.table("notifications").select("*").execute().data
+    [n] = _notifs(core)
     assert n["metadata"]["tipo"] == "lead_corretor_lead_sem_corretor"
     _rodar(db, _vista(_imovel()))                                                       # no spam
-    assert len(_rows(db, "lead_corretor_divergencias")) == 1 and len(core.table("notifications").select("*").execute().data) == 1
+    assert len(_rows(db, "lead_corretor_divergencias")) == 1 and len(_notifs(core)) == 1
 
 
 def test_assigning_a_corretor_later_auto_closes_lead_sem_corretor_with_a_reason(core):
@@ -296,7 +301,7 @@ def test_lead_corretor_that_is_not_the_principal_warns_nao_e_principal_and_not_f
     assert {r["vista_corretor_codigo"]: r["principal"] for r in _rows(db, "imovel_corretores")} == {"12": True, "13": False}
     [d] = _rows(db, "lead_corretor_divergencias")
     assert d["tipo"] == "nao_e_principal"
-    [n] = core.table("notifications").select("*").execute().data
+    [n] = _notifs(core)
     assert n["metadata"]["tipo"] == "lead_corretor_nao_e_principal" and "Joao Silva" in n["message"]
 
 
@@ -311,7 +316,7 @@ def test_every_tipo_resolves_through_the_same_endpoint_shape_and_a_human_closed_
     db.table("lead_corretor_divergencias").update({"status": "ignorada"}).eq("lead_id", LEAD).execute()
     _rodar(db, _vista(_imovel()))
     [d] = _rows(db, "lead_corretor_divergencias")
-    assert d["status"] == "ignorada" and len(core.table("notifications").select("*").execute().data) == 1
+    assert d["status"] == "ignorada" and len(_notifs(core)) == 1
 
 
 def test_a_corretor_that_left_the_property_is_deactivated_never_deleted(core):
