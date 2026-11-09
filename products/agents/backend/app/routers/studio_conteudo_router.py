@@ -91,7 +91,7 @@ from app.schemas.studio_plataforma import (
     PlataformaGrantRequest,
     PlataformaGrantsOut,
 )
-from app.stores._db_errors import StudioConflict
+from app.stores._db_errors import StudioConflict, mensagem_conflito
 from app.stores.errors import NotFound
 from app.stores.studio_definitions_conteudo import (
     DecisaoInput,
@@ -684,7 +684,7 @@ def _definicao_ou_404(store, key: str):
 
 
 def _conflict_flat(exc: StudioConflict) -> HTTPException:
-    return _flat(409, exc.code, str(exc))
+    return _flat(409, exc.code, mensagem_conflito(exc))
 
 
 @router.post("/plataforma/agents", status_code=status.HTTP_201_CREATED, response_model=PlataformaAgentOut, include_in_schema=False)

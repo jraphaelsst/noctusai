@@ -55,7 +55,7 @@ from app.schemas.studio_ke import (
     SearchItemOut,
     SearchOut,
 )
-from app.stores._db_errors import StudioConflict
+from app.stores._db_errors import StudioConflict, erro_de_item
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord
 from app.stores.studio_knowledge import (
@@ -283,7 +283,7 @@ def create_documents_batch(
             )
         except (ValueError, StudioConflict) as exc:
             counts["erro"] += 1
-            resultados.append(DocumentBatchItemResultOut(slug=item.slug, status="erro", erro=str(exc)))
+            resultados.append(DocumentBatchItemResultOut(slug=item.slug, status="erro", erro=erro_de_item(exc)))
             continue
         status_pt = _BATCH_STATUS_PT[op]
         counts[status_pt] += 1
