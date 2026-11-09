@@ -287,6 +287,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-prod-exposure-consent", action="store_true", help="Prod-promotion consent gate: a product's FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the production-promotion decision (:latest ships it with no later gate) — requires a user-authored deploy/consent/<slug>.prod.yml in an isolated prior commit. Severity high. KB § PATTERNS/devops/prod-exposure-consent.md.")
     parser.add_argument("--check-prod-compose-hardening-parity", action="store_true", help="deploy/fleet/docker-compose.prod.yml's agents + academia-de-reciclagem security blocks (cap_drop/cap_add/security_opt/read_only/tmpfs/mem_limit) must stay byte-identical to noctus.dev.propagate's _C_HARDENING_AGENTS/_C_HARDENING_ACADEMIA — the one propagate source the dev-shape composes already reuse. A hand-copy into the separate prod compose can silently drift a security control. Severity high. KB § PATTERNS/devops/containerization.md.")
     parser.add_argument("--check-prod-compose-env-manifest-sync", action="store_true", help="deploy/fleet/env.fleet.keys must document every ${VAR} docker-compose.prod.yml + compose.infra.prod.yml interpolate from deploy/fleet/.env.fleet (compose-parse-time, NOT the root .env env_file: loads) — and a secret-shaped var (*_KEY/*_TOKEN/*_SECRET/*_PASSWORD) must never rely on a silently-empty default. 2026-09-16: JULIA_ANTHROPIC_API_KEY resolved to '' this way while /api/health stayed 200. Severity high. KB § GUIDES/production-deploy.md § 6.")
+    parser.add_argument("--check-db-agent-mirror-integrity", action="store_true", help="Every committed DB-source agent mirror (.claude/agents/<key>.md carrying the 'GENERATED from Agents Studio' marker) must equal its last export: the body hashes to its studio.compiled_hash (never edited by hand), studio.key matches the file, agents/<key>/PACKAGE.json exists and carries the same version_id (no partial or mixed exports). Offline leg of Agent Packages §M5 (the online leg is the pre-push mirror check). Severity high. KB § PATTERNS/backend/db-source-agent-mirror.md.")
+    parser.add_argument("--agent-mirror-check", action="store_true", help="Agent Packages §M5 online leg: for each committed DB-source mirror compare its studio.version_id with the newest published Studio version; stale/unverified mirrors are printed loudly and written to .agents-mirror-pending. NEVER fails (exit 0); called by the pre-push hook.")
     parser.add_argument("--check-structure-constructor-parity", action="store_true", help="Every field of an entity's record (e.g. agents' StudioAgentRecord) must reach every constructor surface named in its structure_parity.py manifest (store create signature, insert payload, row mapping, create request/response models, route forwarding, MCP payload keys) or be exempted there WITH a reason. Catches the green-tests/broken-creation class (owner 2026-11-08). Severity high. KB § PATTERNS/backend/structure-constructor-parity.md.")
     parser.add_argument("--check-contract-field-provenance-map", action="store_true", help="social-wiring's F5 contract generator (card_hub/contrato_gerador) emits ~140 distinct dotted placeholder tokens (AST-derived: modelo_texto.py's TEMPLATE string + contexto.montar_contexto's + derivacao.derivar_switches's return-dict keys — no hand-maintained list on the code side); every token must have a provenance row (clause, source document type, extractor code path, confirmed storage, confirm/promote step, status) in the literal § 3 token-inventory table of KNOWLEDGE-BASE/CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md. Severity high. KB § CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md § 3.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced, (d) §4 roster lists every on-disk skill/command/agent and no phantom ones, (e) count claims equal the derived roster; no hand-written MCP tool count. Severity high.")
@@ -1334,6 +1336,29 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
+    elif args.check_db_agent_mirror_integrity:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_db_agent_mirror_integrity
+        issues = check_db_agent_mirror_integrity(repo_root=REPO_ROOT)
+        if not issues:
+            print(f"  {GREEN}✓ db-agent-mirror-integrity: every DB-source mirror equals its last export.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} db-agent-mirror-integrity issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.agent_mirror_check:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.agent_export import mirror_check
+        out = mirror_check(repo_root=str(REPO_ROOT))
+        for key, r in out["results"].items():
+            if r["status"] == "current":
+                print(f"  {GREEN}✓ agent mirror {key} is current ({r.get('versao')}).{RESET}")
+            elif r["status"] == "stale":
+                print(f"  {RED}⚠ agent mirror {key} is STALE: local {r.get('local')} < published {r.get('publicada')} — {r['fix']}.{RESET}", file=sys.stderr)
+            else:
+                print(f"  {RED}⚠ agent mirror {key} UNVERIFIED (not proven current): {r.get('motivo')}.{RESET}", file=sys.stderr)
+        sys.exit(0)
     elif args.check_structure_constructor_parity:
         from settings import REPO_ROOT
         from tools.noctus.dev.compliance import check_structure_constructor_parity

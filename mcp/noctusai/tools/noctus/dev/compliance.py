@@ -26458,6 +26458,75 @@ def _parity_extract(tree: ast.Module, node: ast.AST, kind: str) -> set[str] | st
     return f"unknown surface kind {kind!r}"
 
 
+def check_db_agent_mirror_integrity(repo_root: Path | None = None) -> list[dict]:
+    """Keeper (Agent Packages §M4): a DB-source agent's git mirror is GENERATED, never edited. Every
+    `.claude/agents/*.md` that carries the generated DB-mirror marker must (a) parse (frontmatter `studio:` block),
+    (b) hash to its recorded `studio.compiled_hash`, and (c) agree with `agents/<key>/PACKAGE.json` on `version_id`.
+    A hand edit — even a typo fix — fails (a), (b) or (c) and names the file. Together with
+    `check_agent_context_cache_freshness` (cache == .md) this holds cache == .md == last export.
+
+    The parser/hash are the agents backend's own (`app.studio.claude_surface`, loaded by path through
+    `agent_package_build`), so the keeper and the renderer can never disagree. No network: the online leg (newer
+    published version than the mirror) is the pre-push check. Severity `high`.
+    KB § PATTERNS/backend/structure-constructor-parity.md (sibling) · products/agents/projects/agent-packages/CONTRACT.md §M4.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    agents_dir = root / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        return issues
+    candidates = []
+    for md in sorted(agents_dir.glob("*.md")):
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "<!-- GENERATED from Agents Studio" in text:
+            candidates.append((md, text))
+    if not candidates:
+        return issues
+    try:
+        from tools.noctus.dev.agent_package_build import _load_studio
+    except ImportError:
+        from .agent_package_build import _load_studio  # type: ignore[no-redef]
+    backend = root / "products" / "agents" / "backend"
+    try:
+        surface = _load_studio(backend)["claude_surface"]
+    except Exception as exc:  # noqa: BLE001 -- reported, never a silent pass
+        return [{"file": "products/agents/backend/app/studio/claude_surface.py",
+                 "issue": f"cannot load the mirror parser ({type(exc).__name__}: {exc}); the mirrors are UNVERIFIED",
+                 "severity": "high"}]
+    for md, text in candidates:
+        rel = str(md.relative_to(root))
+        parsed = surface.split_db_mirror(text)
+        if parsed is None:
+            issues.append({"file": rel, "issue": "carries the DB-mirror marker but its studio: frontmatter does not parse "
+                           "(hand-edited?). Re-export: noctus.dev.agent_export key=<key> confirm=True", "severity": "high"})
+            continue
+        meta, body = parsed
+        key = md.stem
+        if meta.get("compiled_hash") != surface.body_hash(body):
+            issues.append({"file": rel, "issue": (
+                "body does not hash to studio.compiled_hash: the generated mirror was edited by hand. Edit the agent in "
+                f"the Studio, publish, then noctus.dev.agent_export key={key} confirm=True"), "severity": "high"})
+        if meta.get("key") != key:
+            issues.append({"file": rel, "issue": f"studio.key={meta.get('key')!r} does not match the file name",
+                           "severity": "high"})
+        pkg = root / "agents" / key / "PACKAGE.json"
+        try:
+            pkg_meta = json.loads(pkg.read_text(encoding="utf-8")) if pkg.is_file() else None
+        except (OSError, json.JSONDecodeError):
+            pkg_meta = None
+        if pkg_meta is None:
+            issues.append({"file": rel, "issue": f"agents/{key}/PACKAGE.json is missing or unreadable (partial export?)",
+                           "severity": "high"})
+        elif str(pkg_meta.get("version_id")) != str(meta.get("version_id")):
+            issues.append({"file": rel, "issue": (
+                f"version_id {meta.get('version_id')} != agents/{key}/PACKAGE.json version_id "
+                f"{pkg_meta.get('version_id')} (mixed exports). Re-export the agent."), "severity": "high"})
+    return issues
+
+
 def check_structure_constructor_parity(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
     """Keeper (owner 2026-11-08): every field of an entity's record reaches every constructor surface its
     ``structure_parity.py`` manifest names, or is exempted there with a reason. Catches the green-tests/broken-path

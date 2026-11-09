@@ -2740,6 +2740,20 @@
    },
    "source": "owner rule 2026-11-08 ('whenever we change the agent structure, we must update the function to match it. tests will probably pass, but it will break'); measured on origin/dev: 6 agent creation surfaces missing kind/fonte/superficie_claude, kind never creatable through POST /plataforma/agents; KB § PATTERNS/devops/product-lockfile-and-slug-drift.md (same hand-maintained-drift class)"
   },
+  "keeper:check-db-agent-mirror-integrity": {
+   "mechanism": "tool: noctus.dev.agent_export (writes the mirror the Studio publish rendered, verified by its compiled_hash; a mirror is never hand-edited)",
+   "owner": "architect",
+   "placement": "warn",
+   "standard": "KB § PATTERNS/backend/db-source-agent-mirror.md",
+   "new": true,
+   "declared": "2026-11-09",
+   "shadow": {
+    "since": "2026-11-09",
+    "fires": 0,
+    "fix_rate": null
+   },
+   "source": "owner rule 2026-11-08 (the Studio DB is the source of truth for media-analyst; .claude/agents/<key>.md mirrors it with a gated sync, caches refreshed on update, and drift detection); products/agents/projects/agent-packages/CONTRACT.md §M5"
+  },
   "keeper:check-table-has-rls": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3213,6 +3227,18 @@
    "branch": "feat/agent-db-source",
    "gates": [
     "keeper:check-structure-constructor-parity"
+   ]
+  },
+  {
+   "id": "D25",
+   "decision": "A DB-source agent's git mirror equals its last export: written only by noctus.dev.agent_export (agent-context cache refreshed in the same call), never edited by hand; a newer Studio publish makes it stale, flagged loudly at pre-push (never blocks)",
+   "home": "KB § PATTERNS/backend/db-source-agent-mirror.md",
+   "construction": "noctus.dev.agent_export + the publish-time render (products/agents/backend/app/studio/espelho.py)",
+   "gate": "keeper:check-db-agent-mirror-integrity",
+   "telemetry": "gate events (cli wrapper, guard-events) via --check-db-agent-mirror-integrity; .agents-mirror-pending from the pre-push --agent-mirror-check",
+   "branch": "feat/agent-db-source",
+   "gates": [
+    "keeper:check-db-agent-mirror-integrity"
    ]
   }
  ]
