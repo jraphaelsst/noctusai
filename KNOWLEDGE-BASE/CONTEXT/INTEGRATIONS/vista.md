@@ -457,6 +457,11 @@ Corretor          object   nested dict keyed-by-corretor-id: {"103": {"Codigo": 
 - `CodigoImobiliaria`: returned as `null` on `oneconsu-rest`, even though
   requesting it explicitly returns 400. Don't filter, don't try to
   request — just accept it in the response payload.
+- **MAIN broker vs partners (2026-11-09, live read-only):** `CodigoCorretor` (with `CorretorNome` = `"<cod>:<nome>"`) and `Agenciador` are equal on every sample — that code is the MAIN
+  broker; every other entry of the `Corretor` relation is a PARTNER. Requested via `CANDIDATE_IMOVEL_DETAIL_FIELDS`, parsed onto `Imovel.codigo_corretor` / `corretor_nome` / `agenciador`.
+  An unpublished record's stub (`VistaRecordUnpublished`) keeps the `Corretor` relation on `.payload` (no `CodigoCorretor` there). `listar_corretores(fields=...)` sends
+  `pesquisa.fields`; the 2026-10-26 finding (only `Codigo`+`Nome`, `fields` ignored) is UNVERIFIED for the re-granted key; no `/corretores/listarcampos` on `oneconsu-rest`.
+  SW usage: `products/social-wiring/projects/ad-lead-intake-CONTRACT.md` § 2.3b / § 6b.
 - `Corretor_Codigo`: a flat string copy of the first corretor's id,
   returned alongside the nested `Corretor` dict. Useful as a faster
   ID-only check than walking the nested dict; the `_first_corretor_nome`

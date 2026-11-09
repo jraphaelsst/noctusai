@@ -114,11 +114,54 @@ def _resolver_corretor_sw(c: dict, por_vista: dict[str, dict], corretor_map: dic
     return resolve_corretor(c.get("nome"), corretor_map)
 
 
+T_CONFIG = "ad_lead_intake_config"
+ORIGEM_VISTA = "vista"
+ORIGEM_FALLBACK = "fallback"
+
+
+def config_do_org(client: Any, org_id: UUID) -> dict[str, Optional[str]]:
+    """Per-org intake settings: `{corretor_principal_fallback_vista_codigo}`. An unreadable table is LOUD and means "no fallback"."""
+    try:
+        linha = _um(client, T_CONFIG, org_id, "org_id", org_id) or {}
+    except Exception:
+        logger.error("ad-lead intake: %s unreadable for org=%s -- no fallback main corretor", T_CONFIG, org_id, exc_info=True)
+        return {"corretor_principal_fallback_vista_codigo": None}
+    bruto = linha.get("corretor_principal_fallback_vista_codigo")
+    return {"corretor_principal_fallback_vista_codigo": (str(bruto).strip() or None) if bruto else None}
+
+
+def determinar_principal(
+    corretores: list[dict], *, codigo_corretor: Optional[str], corretor_nome: Optional[str], fallback_codigo: Optional[str],
+    corretores_sw: list[dict],
+) -> tuple[list[dict], Optional[str], Optional[str], Optional[str]]:
+    """The MAIN broker of a property: Vista's `CodigoCorretor` (origem `vista`), else the org's fallback (origem `fallback`, with the
+    owner's note), else none. Every other broker is a partner. Returns `(corretores incl. the main, principal chave, origem, nota)`;
+    the main is appended when Vista names it but the `Corretor` relation does not list it."""
+    lista = [dict(c) for c in corretores]
+
+    def _garantir(codigo: str, nome: Optional[str]) -> None:
+        if not any(str(c.get("codigo") or "").strip() == codigo for c in lista):
+            lista.append({"codigo": codigo, "nome": nome, "email": None, "fone": None})
+
+    cod = (codigo_corretor or "").strip()
+    if cod:
+        _garantir(cod, corretor_nome)
+        return lista, cod, ORIGEM_VISTA, None
+    fb = (fallback_codigo or "").strip()
+    if fb:
+        nome = next((r.get("nome") for r in corretores_sw if str(r.get("vista_codigo") or "") == fb), None)
+        _garantir(fb, nome)
+        return lista, fb, ORIGEM_FALLBACK, f"Vista não informou o corretor principal; {nome or 'o corretor ' + fb} usado como padrão — reavaliar"
+    return lista, None, None, None
+
+
 def registrar_corretores_do_imovel(
     client: Any, org_id: UUID, codigo: str, corretores: list[dict], *, corretor_map: dict[str, str], corretores_sw: list[dict],
-) -> list[dict]:
+    principal_chave: Optional[str] = None, principal_origem: Optional[str] = None, principal_nota: Optional[str] = None,
+) -> tuple[list[dict], list[dict]]:
     """Record the property's Vista corretores as `imovel_corretores` rows (key = Vista Codigo). Read-then-write; a corretor no
-    longer on the property flips `ativo=false` (never deleted). `principal` = the FIRST corretor Vista lists. Stamps
+    longer on the property flips `ativo=false` (never deleted). `papel` = `principal` for the broker named by `principal_chave` (Vista `CodigoCorretor`, else the org fallback -- see `determinar_principal`),
+    `parceiro` for every other. Stamps
     `lead_corretores.vista_codigo` when a corretor resolved BY NAME has none and no other SW corretor claims that Codigo.
     Returns `(active rows with corretor_id resolved, stamps)`; every stamp is `{corretor_id, nome, vista_codigo, codigo_canonical}`
     so the intake `resultado` makes the self-learning auditable."""
@@ -136,6 +179,7 @@ def registrar_corretores_do_imovel(
     vistos: set[str] = set()
     for ordem, c in enumerate(corretores):
         chave = _chave_corretor(c)
+        eh_principal = principal_chave is not None and chave == principal_chave
         vistos.add(chave)
         corretor_id = _resolver_corretor_sw(c, por_vista, corretor_map)
         codigo_vista = (c.get("codigo") or "").strip() or None
@@ -149,7 +193,9 @@ def registrar_corretores_do_imovel(
                 logger.info("ad-lead intake: lead_corretores %s stamped vista_codigo=%s (name match, código %s)", corretor_id, codigo_vista, canonico)
         dados = {
             "vista_corretor_codigo": codigo_vista, "nome": c.get("nome"), "email": c.get("email"), "fone": c.get("fone"),
-            "ordem": ordem, "principal": ordem == 0, "corretor_id": corretor_id, "ativo": True, "visto_em": agora,
+            "ordem": ordem, "corretor_id": corretor_id, "ativo": True, "visto_em": agora,
+            "papel": "principal" if eh_principal else "parceiro", "principal": eh_principal,
+            "principal_origem": principal_origem if eh_principal else None, "nota": principal_nota if eh_principal else None,
         }
         if chave in existentes:
             _t(client, T_CORRETORES).update(dados).eq("org_id", str(org_id)).eq("id", str(existentes[chave]["id"])).execute()
@@ -191,7 +237,9 @@ def _tipos_ativos(lead_corretor: Any, ativos: list[dict]) -> list[str]:
     ids = {str(a["corretor_id"]) for a in ativos if a.get("corretor_id")}
     if str(lead_corretor) not in ids:
         return [TIPO_FORA]
-    principal = next((a for a in ativos if a.get("principal")), ativos[0])
+    principal = next((a for a in ativos if a.get("papel") == "principal"), None)
+    if principal is None:
+        return []  # no main broker determinable (no CodigoCorretor, no org fallback): nothing to compare against
     if str(principal.get("corretor_id") or "") != str(lead_corretor):
         return [TIPO_NAO_PRINCIPAL]
     return []
@@ -223,7 +271,7 @@ def _checar_divergencia_corretor(
         sw = _um(client, "lead_corretores", org_id, "id", lead_corretor)
         nome_lead = (sw or {}).get("nome") or nome_lead
     snapshot = [
-        {k: a.get(k) for k in ("vista_corretor_codigo", "nome", "email", "fone", "corretor_id", "principal")} | {"resolvido": bool(a.get("corretor_id"))}
+        {k: a.get(k) for k in ("vista_corretor_codigo", "nome", "email", "fone", "corretor_id", "papel", "principal_origem")} | {"resolvido": bool(a.get("corretor_id"))}
         for a in ativos
     ]
     for tipo in ativos_tipos:
@@ -238,7 +286,7 @@ def _checar_divergencia_corretor(
         avisados = lead_notice.avisar_corretor_divergente(
             org_id, lead_id=lead["id"], codigo=canonico, tipo=tipo, lead_corretor=nome_lead,
             imovel_corretores=[a.get("nome") for a in ativos if a.get("nome")],
-            principal=next((a.get("nome") for a in ativos if a.get("principal")), None),
+            principal=next((a.get("nome") for a in ativos if a.get("papel") == "principal"), None),
         )
         if avisados:
             _t(client, T_DIVERGENCIAS).update({"notificado_em": _agora()}).eq("org_id", str(org_id)).eq("id", linha["id"]).execute()
@@ -374,16 +422,35 @@ async def intake_imovel_do_lead_async(
         erros.append(f"vinculo: {type(exc).__name__}: {exc}"[:300])
         logger.error("ad-lead intake: linking lead=%s código=%s failed", lead["id"], canonico, exc_info=True)
 
-    # 5. corretores of the property + the lead's divergence.
+    # 5. corretores of the property (main vs partners) + the lead's divergence.
     try:
+        _, corretor_map = dimensions_service.build_resolution_maps(client, org_id)
+        corretores_sw = dimensions_service.list_corretores(client, org_id)
         fonte = "vista"
+        if corretores_vista is None and refresh is not None and getattr(refresh, "corretores_oculto", None):
+            corretores_vista, fonte = [c.model_dump(mode="json") for c in refresh.corretores_oculto], "vista_oculto"
         if corretores_vista is None:
             corretores_vista, fonte = _corretores_do_espelho(client, org_id, canonico), "espelho"
-        _, corretor_map = dimensions_service.build_resolution_maps(client, org_id)
+        if fonte == "espelho":
+            # Vista was not read now: keep the main broker already recorded, never invent one from a stale mirror.
+            atual = [r for r in (_t(client, T_CORRETORES).select("*").eq("org_id", str(org_id)).eq("codigo_canonical", canonico).execute().data or []) if r.get("ativo") is not False]
+            fixo = next((r for r in atual if r.get("papel") == "principal"), None)
+            lista, p_chave, p_origem, p_nota = [dict(c) for c in corretores_vista], (fixo or {}).get("chave"), (fixo or {}).get("principal_origem"), (fixo or {}).get("nota")
+        else:
+            imovel_vista = refresh.imovel if refresh is not None else None
+            lista, p_chave, p_origem, p_nota = determinar_principal(
+                corretores_vista, codigo_corretor=getattr(imovel_vista, "codigo_corretor", None), corretor_nome=getattr(imovel_vista, "corretor_nome", None),
+                fallback_codigo=config_do_org(client, org_id)["corretor_principal_fallback_vista_codigo"], corretores_sw=corretores_sw,
+            )
         ativos, stamps = registrar_corretores_do_imovel(
-            client, org_id, canonico, corretores_vista, corretor_map=corretor_map, corretores_sw=dimensions_service.list_corretores(client, org_id)
+            client, org_id, canonico, lista, corretor_map=corretor_map, corretores_sw=corretores_sw,
+            principal_chave=p_chave, principal_origem=p_origem, principal_nota=p_nota,
         )
-        resultado["corretores"] = {"fonte": fonte, "total": len(ativos), "codigos": [a["vista_corretor_codigo"] for a in ativos]}
+        principal = next((a for a in ativos if a.get("papel") == "principal"), None)
+        resultado["corretores"] = {
+            "fonte": fonte, "total": len(ativos), "codigos": [a["vista_corretor_codigo"] for a in ativos],
+            "principal": {"codigo": principal["vista_corretor_codigo"], "origem": principal["principal_origem"]} if principal else None,
+        }
         resultado["vista_codigo_stamps"] = stamps or None
         resultado["divergencia_corretor"] = _checar_divergencia_corretor(client, org_id, lead, canonico, ativos)
     except Exception as exc:

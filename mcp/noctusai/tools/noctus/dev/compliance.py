@@ -16156,6 +16156,44 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Vocabulary-only inline CHECK written from fixed literals in imovel_ref_avisos.py; migration unapplied (file-only), nothing to probe yet. "
         "Replace with a real GuardProbe in the SAME change that applies it.",
     ),
+    # SW 334 (main broker / in-house brokers from Vista) is NOT APPLIED (file-only until the tech-lead runs migrate_product): vocabulary CHECKs
+    # written from fixed literals and the partial UNIQUE (one open notice per corretor). Nothing exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "imovel_corretores_papel_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "imovel_corretores_principal_origem_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "lead_corretores_vista_status_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "corretor_avisos_tipo_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "corretor_avisos_status_check",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/334_corretores_vista.sql",
+        "uq_sw_corretor_avisos_aberto",
+        "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
     # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
     # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
     (

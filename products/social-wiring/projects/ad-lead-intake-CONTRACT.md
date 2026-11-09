@@ -73,9 +73,21 @@ else by the same alias map the lead's corretor uses; a name match with no `vista
 on). Unmatched => `corretor_id NULL` (never a guess). A corretor that left the property flips `ativo=false`, never deleted. Multi-corretor
 properties (13%) keep every row (`ordem`).
 
+### 2.3b Main broker vs partners (owner 2026-11-09, verified live read-only against Vista)
+
+The property fields `CodigoCorretor` (with `CorretorNome` = "<cod>:<nome>") and `Agenciador` are equal on every sample: that code is the MAIN broker; every other entry of the
+`Corretor` relation is a PARTNER (ONE10972: 112 main, 56 partner; ONE10866: 57 main, 63 partner). `CodigoCorretor`/`CorretorNome`/`Agenciador` are in
+`CANDIDATE_IMOVEL_DETAIL_FIELDS` (the calibrator drops what a tenant rejects) and on the seed `Imovel` (`codigo_corretor`, `corretor_nome`, `agenciador`).
+`imovel_corretores.papel` = `principal|parceiro`, `principal_origem` = `vista|fallback`, `nota`. A main that Vista names but the relation does not list is added.
+FALLBACK: when no main is determinable (no `CodigoCorretor`; also the unpublished-record stub, ONE10959-like, whose `Corretor` relation is now read from
+`VistaRecordUnpublished.payload`), the org's configured fallback broker is the main (`ad_lead_intake_config.corretor_principal_fallback_vista_codigo`, per org; One = `16`,
+Gilson Tangerino, seeded by migration 334; `GET/PUT /api/leads/ad-intake/config`), `principal_origem='fallback'`, `nota` = "Vista não informou o corretor principal; <nome> usado
+como padrão — reavaliar". No fallback configured => no main recorded and `nao_e_principal` cannot fire. When Vista could not be read now (mirror source) the main already recorded is kept — never
+invented from a stale mirror. Meta leads carry no broker name, so the warnings are low-volume by nature.
+
 Divergence (`lead_corretor_divergencias`, migrations 331+332): three distinct `tipo`s, each its own row, its own in-app warning (`kind = lead_corretor_<tipo>`) and one OPEN row per `(lead, código, tipo)` (unique key):
 * `fora_dos_corretores` — the lead has a corretor and it is none of the property's Vista corretores.
-* `nao_e_principal` — the lead's corretor is one of them but not the MAIN one (`imovel_corretores.principal` = the FIRST corretor Vista lists, `ordem` 0). Not raised when `fora_dos_corretores` holds for the same pair: "not among them" already implies "not the main one", so a second warning adds nothing (decision; the two are therefore mutually exclusive in practice).
+* `nao_e_principal` — the lead's corretor is one of them but not the MAIN one (§ 2.3b: Vista's `CodigoCorretor`, NOT list order). Not raised when `fora_dos_corretores` holds for the same pair: "not among them" already implies "not the main one", so a second warning adds nothing (decision; the two are therefore mutually exclusive in practice).
 * `lead_sem_corretor` — the lead has no corretor at all (recorded + warned, NOT assigned).
 Each run re-evaluates all three: a still-`pendente` row whose condition stopped holding is auto-closed (`resolvida`, `nota` = the reason, e.g. "auto: o lead passou a ter corretor"); a human-closed row (`resolvida`/`ignorada`) is never reopened or re-notified. No property corretor => `fora`/`nao_e_principal` cannot be evaluated. The result carries `divergencia_corretor: {divergencia, tipos[], novas[], fechadas[]}`. Humans close any tipo through the same `POST /corretor-divergencias/{id}/resolver`; `GET /corretor-divergencias?status=&tipo=`.
 Name-stamping of `lead_corretores.vista_codigo` is audited: every stamp is listed in `resultado.vista_codigo_stamps` (`{corretor_id, nome, vista_codigo, codigo_canonical}`) and logged.
@@ -183,6 +195,19 @@ where l.org_id = 'fd169d29-4d0a-4b04-9a5e-25e69407614d' and l.meta_lead_id is no
   and l.imovel_ref_id is null;   -- leads not linked yet (pre-backfill backlog; must stay ~0 for NEW leads)
 ```
 Same facts through HTTP: `GET /api/leads/ad-intake/lead/{lead_id}` and `GET /api/leads/ad-intake/resumo`.
+
+## 6b. In-house brokers refined from Vista (`corretores_vista_sync`, migration 334)
+
+Daily job `corretores_vista_sync` (seed scheduler, per-org `sync_lease` `corretores_vista_sync:<org>`, orgs with a Vista credential) + `POST /api/leads/ad-intake/corretores/sync`
+(admin, `dry_run=true` default) sync `/corretores/listar` into `lead_corretores`: matched by `vista_codigo`, else the org's alias map, else the normalised name (a name match STAMPS
+`vista_codigo`; a conflicting existing code is not reassigned); an unmatched Vista broker is CREATED. Vista fields kept: `Nome`→`vista_nome` (OUR `nome` — the alias/analytics key — is
+never overwritten), `Nomecompleto`→`nome_completo`, `Email`, `Celular`, `CRECI`→`creci`, `Equipe`/`CodigoEquipe`, `Gerente`, `Agenciador`, `Corretor`→`eh_corretor`, `Inativo`+`Datasaida`→`vista_status`/`data_saida`,
+`AtuacaoVenda`/`AtuacaoLocacao`. NEVER DELETE: a broker missing from a COMPLETE roster, or `Inativo`, is marked (`vista_status` `ausente|inativo`, `vista_ausente_em`; `ativo` — the owner's flag — untouched) and
+noticed (`corretor_avisos`, tipo `corretor_sumiu_no_vista`, one open per broker, ONE in-app warning per run; `GET /corretor-avisos`, `POST /corretor-avisos/{id}/resolver {acao: resolvida|ignorada}`).
+A returning broker keeps the notice open with a note. Guards: a partial/failed/empty roster marks nobody missing; > 50% of the linked brokers missing is refused (Vista fault until proven otherwise).
+**UNVERIFIED LIVE:** the 2026-10-26 finding was that `/corretores/listar` answers only `Codigo`+`Nome` and ignores `fields`; the key now has the permission but the richer fields could not be read here (no live call). The sync
+requests them (`pesquisa.fields`), falls back to the plain roster when Vista answers 400 (`campos: "basico"` in the report) and stores what it gets. There is NO `/corretores/listarcampos` on `oneconsu-rest` (404), so the
+field list cannot be checked against a catalog — a 400 is the only oracle. Exposure note: `lead_corretores` keeps its existing own-org SELECT policy for `authenticated`, so the new `email`/`celular`/`creci` columns are readable by same-org browser sessions.
 
 ## 7. For the next slices
 

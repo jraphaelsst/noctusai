@@ -30,9 +30,10 @@ CORRETOR_B = str(uuid4())  # SW corretor that matches the property's Vista corre
 VISTA_J = Corretor(codigo="12", nome="Joao Silva", email="j@x.com", fone="11999990000")
 
 
-def _imovel(codigo="ONE5", valor=1_250_000.0, corretores=(VISTA_J,)):
+def _imovel(codigo="ONE5", valor=1_250_000.0, corretores=(VISTA_J,), codigo_corretor="12"):
+    """`codigo_corretor` = Vista `CodigoCorretor`, the MAIN broker; every other entry of `corretores` is a partner."""
     return Imovel(codigo=codigo, status="Venda", valor_venda=valor, data_atualizacao=date(2026, 11, 2), exibir_no_site=True,
-                  corretores=list(corretores))
+                  corretores=list(corretores), codigo_corretor=codigo_corretor)
 
 
 def _vista(*imoveis):
@@ -58,7 +59,7 @@ def _meta(**kw):
     return base
 
 
-def _db(*, lead=None, meta=None, registry=True, mirror=(), corretores_sw=(), aliases=(), captacao=(), divergencia_ativa=False, admins=True):
+def _db(*, lead=None, meta=None, registry=True, mirror=(), corretores_sw=(), aliases=(), captacao=(), divergencia_ativa=False, admins=True, fallback=None):
     db = _Db()
     seed = {
         "leads": [lead or _lead()], "meta_ads_leads": [meta or _meta()],
@@ -72,6 +73,7 @@ def _db(*, lead=None, meta=None, registry=True, mirror=(), corretores_sw=(), ali
         "vista_divergencias_config": [{"org_id": str(ORG), "ativa": True, "destino_user_id": None}] if divergencia_ativa else [],
         "imovel_captacao": [dict(r) for r in captacao], "imovel_dados": [], "julia_proprietarios_contatos": [], "imovel_campo_conflitos": [],
         "conversation_messages": [], "lead_sources": [],
+        "ad_lead_intake_config": [{"org_id": str(ORG), "corretor_principal_fallback_vista_codigo": fallback}] if fallback else [],
     }
     for nome, rows in seed.items():
         db.set_table_data(nome, rows)
@@ -296,9 +298,9 @@ _ALIASES_K = _ALIASES + [{"org_id": str(ORG), "alias": "Karen Lima", "alias_norm
 
 def test_lead_corretor_that_is_not_the_principal_warns_nao_e_principal_and_not_fora(core):
     db = _db(lead=_lead(corretor_id=CORRETOR_K), corretores_sw=_SW_TRES, aliases=_ALIASES_K)
-    res = _rodar(db, _vista(_imovel(corretores=[VISTA_J, _KAREN])))                    # Vista lists Joao first => he is the principal
+    res = _rodar(db, _vista(_imovel(corretores=[_KAREN, VISTA_J], codigo_corretor="12")))   # Vista's CodigoCorretor = Joao => he is the MAIN, Karen a partner (NOT list order)
     assert res["divergencia_corretor"]["tipos"] == ["nao_e_principal"]
-    assert {r["vista_corretor_codigo"]: r["principal"] for r in _rows(db, "imovel_corretores")} == {"12": True, "13": False}
+    assert {r["vista_corretor_codigo"]: (r["papel"], r["principal_origem"]) for r in _rows(db, "imovel_corretores")} == {"12": ("principal", "vista"), "13": ("parceiro", None)}
     [d] = _rows(db, "lead_corretor_divergencias")
     assert d["tipo"] == "nao_e_principal"
     [n] = _notifs(core)
@@ -307,7 +309,49 @@ def test_lead_corretor_that_is_not_the_principal_warns_nao_e_principal_and_not_f
 
 def test_the_principal_corretor_as_the_leads_corretor_raises_nothing(core):
     db = _db(lead=_lead(corretor_id=CORRETOR_B), corretores_sw=_SW_TRES, aliases=_ALIASES_K)
-    assert _rodar(db, _vista(_imovel(corretores=[VISTA_J, _KAREN])))["divergencia_corretor"]["tipos"] == []
+    assert _rodar(db, _vista(_imovel(corretores=[_KAREN, VISTA_J], codigo_corretor="12")))["divergencia_corretor"]["tipos"] == []
+
+
+def test_the_main_broker_named_by_vista_but_absent_from_the_corretor_relation_is_still_recorded(core):
+    db = _db(corretores_sw=_SW_TRES, aliases=_ALIASES_K)
+    res = _rodar(db, _vista(_imovel(corretores=[_KAREN], codigo_corretor="12")))
+    assert {r["vista_corretor_codigo"]: r["papel"] for r in _rows(db, "imovel_corretores")} == {"13": "parceiro", "12": "principal"}
+    assert res["corretores"]["principal"] == {"codigo": "12", "origem": "vista"}
+
+
+def test_no_codigo_corretor_uses_the_org_fallback_main_with_the_owners_note(core):
+    sw = _SW_TRES + [{"id": str(uuid4()), "org_id": str(ORG), "nome": "Gilson Tangerino", "nome_norm": "GILSON TANGERINO", "vista_codigo": "16", "ativo": True}]
+    db = _db(corretores_sw=sw, aliases=_ALIASES_K, fallback="16")
+    res = _rodar(db, _vista(_imovel(corretores=[_KAREN], codigo_corretor=None)))
+    [g] = _rows(db, "imovel_corretores", vista_corretor_codigo="16")
+    assert g["papel"] == "principal" and g["principal_origem"] == "fallback" and g["corretor_id"] == sw[-1]["id"]
+    assert g["nota"] == "Vista não informou o corretor principal; Gilson Tangerino usado como padrão — reavaliar"
+    assert _rows(db, "imovel_corretores", vista_corretor_codigo="13")[0]["papel"] == "parceiro"
+    assert res["corretores"]["principal"] == {"codigo": "16", "origem": "fallback"}
+
+
+def test_the_fallback_is_a_per_org_config_value_not_a_constant(core):
+    sw = _SW_TRES + [{"id": str(uuid4()), "org_id": str(ORG), "nome": "Outro Gerente", "nome_norm": "OUTRO GERENTE", "vista_codigo": "77", "ativo": True}]
+    db = _db(corretores_sw=sw, aliases=_ALIASES_K, fallback="77")
+    _rodar(db, _vista(_imovel(codigo_corretor=None)))
+    assert [r["vista_corretor_codigo"] for r in _rows(db, "imovel_corretores", papel="principal")] == ["77"]
+
+
+def test_without_a_main_and_without_a_fallback_nao_e_principal_cannot_fire(core):
+    db = _db(lead=_lead(corretor_id=CORRETOR_K), corretores_sw=_SW_TRES, aliases=_ALIASES_K)
+    res = _rodar(db, _vista(_imovel(corretores=[VISTA_J, _KAREN], codigo_corretor=None)))
+    assert _rows(db, "imovel_corretores", papel="principal") == [] and res["divergencia_corretor"]["tipos"] == []
+
+
+def test_an_unpublished_record_still_records_its_brokers_with_the_fallback_main(core):
+    """ONE10959-like: Vista returns only the `Corretor` relation (no CodigoCorretor) -> the stub body's brokers are kept, main = fallback."""
+    sw = _SW_TRES + [{"id": str(uuid4()), "org_id": str(ORG), "nome": "Gilson Tangerino", "nome_norm": "GILSON TANGERINO", "vista_codigo": "16", "ativo": True}]
+    db = _db(corretores_sw=sw, aliases=_ALIASES_K, fallback="16")
+    oculto = _imovel(corretores=[VISTA_J, _KAREN], codigo_corretor=None).model_copy(update={"exibir_no_site": False})
+    res = _rodar(db, _vista(oculto))
+    assert res["status"] == intake.ST_NAO_ENCONTRADO and res["corretores"]["fonte"] == "vista_oculto"
+    assert {r["vista_corretor_codigo"]: (r["papel"], r["principal_origem"]) for r in _rows(db, "imovel_corretores")} == {
+        "12": ("parceiro", None), "13": ("parceiro", None), "16": ("principal", "fallback")}
 
 
 def test_every_tipo_resolves_through_the_same_endpoint_shape_and_a_human_closed_row_is_not_reopened(core):
@@ -322,7 +366,7 @@ def test_every_tipo_resolves_through_the_same_endpoint_shape_and_a_human_closed_
 def test_a_corretor_that_left_the_property_is_deactivated_never_deleted(core):
     db = _db()
     _rodar(db, _vista(_imovel()))
-    _rodar(db, _vista(_imovel(corretores=[Corretor(codigo="99", nome="Outro Corretor")])), refresh_cache=None)
+    _rodar(db, _vista(_imovel(corretores=[Corretor(codigo="99", nome="Outro Corretor")], codigo_corretor="99")), refresh_cache=None)
     por_chave = {r["chave"]: r["ativo"] for r in _rows(db, "imovel_corretores")}
     assert por_chave == {"12": False, "99": True}
 
