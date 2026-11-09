@@ -190,6 +190,8 @@ TEXTOS.update({
     "ferramenta.resultado.encerrado_opt_out": _canal("ferramenta"),
     "ferramenta.resultado.concluido": _canal("ferramenta"),
     "ferramenta.resultado.solicitacao_registrada": _canal("ferramenta"),
+    # optional (a missing row = the bare ``esgotado`` flag): tells the model what to do when the catalogue has no more listings
+    "ferramenta.resultado.esgotado": _canal("ferramenta", obrigatoria=False),
     "ferramenta.handoff.resumo_titular": _canal("ferramenta", "tipo"),
     "ferramenta.handoff.motivo_padrao": _canal("ferramenta"),
     #: replaces a lead-influenced tool argument that reproduced the prompt (spec B3.6)

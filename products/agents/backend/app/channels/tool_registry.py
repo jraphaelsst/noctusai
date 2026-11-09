@@ -654,6 +654,14 @@ def _ok(**payload: Any) -> _Resultado:
     return _Resultado({"ok": True, **payload})
 
 
+def _msg_esgotado(t: Any) -> dict[str, str]:
+    """The optional instruction row for an exhausted catalogue; a version without it keeps the bare ``esgotado`` flag."""
+    try:
+        return {"mensagem": t.texto("ferramenta.resultado.esgotado")}
+    except TextoAusente:  # optional row the version has not written
+        return {}
+
+
 #: Refusal classes. CORRECTABLE = a procedural precondition the model can satisfy by a DIFFERENT call in the same turn
 #: (open the skill, use the search mode when there is no campaign code, offer before reacting): guidance, not abuse, so it
 #: does not spend ``max_recusas_por_turno`` -- the per-tool / per-turn call caps still bound a loop of them.
@@ -969,7 +977,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             if not campanha:
                 return _recusa(t, "sem_codigo_campanha")
             if campanha in ja:
-                return _ok(esgotado=True)
+                return _ok(esgotado=True, **_msg_esgotado(t))
             body = await _sw("imovel_campanha", {"codigo": campanha})
         else:
             args = _consulta_sw(estado.valores)
@@ -983,7 +991,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         itens = [i for i in (body.get("data") or []) if isinstance(i, dict) and str(i.get("codigo") or "").strip()]
         itens = [i for i in itens if str(i["codigo"]) not in ja][:limite]
         if not itens:
-            return _ok(esgotado=True)
+            return _ok(esgotado=True, **_msg_esgotado(t))
         lote = await asyncio.to_thread(t.qual.proximo_lote, t.org_id, t.lead_ref_id)
         for i in itens:
             # the listing link rides on the offer event (``motivo``): the hand-off report reads it back on a later turn
