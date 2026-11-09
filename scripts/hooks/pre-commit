@@ -1175,6 +1175,19 @@ if [[ -n "$STAGED_MOTION" ]] && have_py; then
         echo "[pre-commit] WARNING (shadow): MOTION-IMPORT-BOUNDARY — import the organ/primitive from @noctusai/lib/marketing instead of motion/framer-motion directly (the provider carries reduced-motion). See KB § PATTERNS/frontend/marketing-organs-and-motion.md." >&2
     fi
 fi
+# ─── 6e-quinquies-quater-ter-quater. Tailwind-4 class-name gate (warn-first shadow) ──────
+# Keeper `check_tailwind_v4_class_names` (2026-11-09): after the Tailwind 4 move (v3 look pinned in
+# seed/framework/frontend/src/index.css) `shadow-sm` / `outline-none` still compile but render differently
+# (use `shadow-xs` / `outline-hidden`), and lucide 1.x dropped the brand glyphs (use
+# @noctusai/lib/brand-icons). Escape per line: `noc-allow: tailwind-v3-class — why`.
+STAGED_TW4=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/frontend/src/.*\.tsx?|seed/(lib|framework)/frontend/src/.*\.tsx?)$' || true)
+if [[ -n "$STAGED_TW4" ]] && have_py; then
+    echo "[pre-commit] frontend source staged — checking Tailwind-4 class names + lucide brand imports..."
+    # WARN-first SHADOW (promote to blocking after >=7 shadow days with effective-FP <=10%).
+    if ! "$PY" "$CLI" --check-tailwind-v4-class-names --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow): TAILWIND-V4-CLASS-NAMES — shadow-sm -> shadow-xs, outline-none -> outline-hidden, brand icons from @noctusai/lib/brand-icons. See KB § PATTERNS/frontend/frontend.md." >&2
+    fi
+fi
 # ─── 6e-quinquies-quater-ter-ter. Tax-parameter registry gates (warn-first shadow, diff-scoped; promote to blocking after >=7 days) ──────────────
 # Keepers `check_finance_params_schema` + `check_tax_canon_no_inline_params` (2026-11-07). Both judge the DIFF only
 # (staleness by the calendar is NEVER a gate: it is the report tool `finance_params_staleness`, rolled into
