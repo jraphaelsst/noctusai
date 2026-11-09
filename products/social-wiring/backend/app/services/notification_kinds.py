@@ -63,9 +63,16 @@ KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         kind="imoveis_delistados",
         titulo="Imóveis saíram do Vista",
-        descricao="Lista os códigos que a sincronização marcou como fora do Vista hoje, destacando os exclusivos. "
-                  "Nada é apagado: os imóveis ficam marcados e saem da vitrine.",
-        gatilho="Uma sincronização de imóveis termina e marca 1 ou mais imóveis como delistados nesta execução.",
+        descricao="Lista os códigos que a sincronização marcou como fora do Vista, destacando os exclusivos e os "
+                  "imóveis PAUSADOS no site à espera da sua decisão (restaurar ou confirmar que saíram). Nada é apagado.",
+        gatilho="Uma sincronização de imóveis termina tendo delistado ou pausado 1 ou mais imóveis nesta execução — "
+                "uma mensagem por execução, só com códigos novos.",
+    ),
+    NotificationKind(
+        kind="imoveis_novos_vista",
+        titulo="Imóveis novos no Vista",
+        descricao="Códigos que apareceram no Vista e foram criados do nosso lado (aviso informativo).",
+        gatilho="Uma sincronização de imóveis encontra 1 ou mais códigos que não tínhamos — uma mensagem por execução.",
     ),
     NotificationKind(
         kind="imoveis_sync_falhou",

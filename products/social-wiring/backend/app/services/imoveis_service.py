@@ -267,6 +267,10 @@ class SyncReport:
     removidos: int = 0
     removidos_codigos: list[str] = field(default_factory=list)
     removidos_exclusivos: list[str] = field(default_factory=list)
+    # Codes this run PAUSED with a new `ref_sumiu_no_vista` notice / recorded as new in Vista (`imovel_ref_avisos`): the owner's
+    # WhatsApp warning reads these (`imoveis_atualizacao_service._avisar_dono`).
+    pausados_codigos: list[str] = field(default_factory=list)
+    novos_vista_codigos: list[str] = field(default_factory=list)
     descobertos: list[str] = field(default_factory=list)
     sonda_falhas: list[str] = field(default_factory=list)
     chamadas: dict[str, int] = field(default_factory=dict)
@@ -303,6 +307,8 @@ class SyncReport:
             "removidos": self.removidos,
             "removidos_codigos": self.removidos_codigos[:100],
             "removidos_exclusivos": self.removidos_exclusivos[:100],
+            "pausados_codigos": self.pausados_codigos[:100],
+            "novos_vista_codigos": self.novos_vista_codigos[:100],
             "falhas": len(self.detalhes_failed) + len(self.page_failures),
             "descobertos": self.descobertos,
             "sonda_falhas": self.sonda_falhas,
@@ -775,7 +781,8 @@ class ImovelSyncService:
                 ativos_depois = self._avisos(report, "ativos_depois", self._ativos_do_registro, org_id)
                 sumiram = sorted(ativos_antes - ativos_depois) if ativos_depois is not None else []
                 if sumiram:
-                    self._avisos(report, "sumiram", imovel_ref_avisos.registrar_sumiram, org_id, sumiram, origem="listar (sweep)")
+                    abertos = self._avisos(report, "sumiram", imovel_ref_avisos.registrar_sumiram, org_id, sumiram, origem="listar (sweep)")
+                    report.pausados_codigos.extend(abertos or [])
             self._detect_duplicates(org_id)
         else:
             logger.warning(
@@ -1122,7 +1129,8 @@ class ImovelSyncService:
         if vistos:
             self._avisos(report, "reaparecimentos", imovel_ref_avisos.anotar_reaparecimentos, org_id, vistos)
         if self._novas_run:
-            self._avisos(report, "novas", imovel_ref_avisos.registrar_novas, org_id, self._novas_run)
+            novas = self._avisos(report, "novas", imovel_ref_avisos.registrar_novas, org_id, self._novas_run)
+            report.novos_vista_codigos.extend(novas or [])
         self._novas_run = []
 
     def _divergencias(self, imoveis: list[Imovel]) -> None:
@@ -1209,7 +1217,8 @@ class ImovelSyncService:
                 report.removidos_exclusivos.append(codigo)
         if em_espelho_sumiram:
             # We have it, Vista does not: KEEP every datum, PAUSE it, open the notice (never a delete, never silent).
-            self._avisos(report, "sumiram", imovel_ref_avisos.registrar_sumiram, org_id, em_espelho_sumiram, origem="detalhes")
+            abertos = self._avisos(report, "sumiram", imovel_ref_avisos.registrar_sumiram, org_id, em_espelho_sumiram, origem="detalhes")
+            report.pausados_codigos.extend(abertos or [])
         if ocultos:
             # Vista says ExibirNoSite=Nao: the one Vista-sourced column that tells every reader of the mirror to hide it.
             for i in range(0, len(ocultos), _LOTE):

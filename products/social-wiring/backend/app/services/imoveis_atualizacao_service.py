@@ -173,11 +173,17 @@ async def _avisar_dono(
             notificador = build_notification_service(client)
         if aviso_listar_vazio:
             await notificador.notify_imoveis_listar_vazio(org_id=org, texto=AVISO_MENSAGEM)
-        codigos = list(getattr(report, "removidos_codigos", None) or [])
+        pausados = list(getattr(report, "pausados_codigos", None) or [])
+        codigos = list(dict.fromkeys(
+            [c.strip().upper() for c in (getattr(report, "removidos_codigos", None) or [])] + pausados))
         if codigos:
             await notificador.notify_imoveis_delistados(
                 org_id=org, codigos=codigos, exclusivos=list(getattr(report, "removidos_exclusivos", None) or []),
+                pausados=pausados,
             )
+        novos_vista = list(getattr(report, "novos_vista_codigos", None) or [])
+        if novos_vista:
+            await notificador.notify_imoveis_novos_vista(org_id=org, codigos=novos_vista)
         if status not in _STATUS_SEM_AVISO and _status_anterior(client, org) != status:
             motivo = relatorio.get("erro") or relatorio.get("motivo")
             await notificador.notify_imoveis_sync_falhou(org_id=org, status=status, motivo=motivo)

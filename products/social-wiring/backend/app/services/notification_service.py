@@ -528,10 +528,13 @@ class NotificationService:
 
     # ─── Reusable fan-out core ──────────────────────────────────────────
     async def notify_imoveis_delistados(
-        self, *, org_id: UUID, codigos: list[str], exclusivos: list[str], execucao_id: Any = None,
+        self, *, org_id: UUID, codigos: list[str], exclusivos: list[str], pausados: list[str] | None = None,
+        execucao_id: Any = None,
     ) -> DispatchOutcome:
         """Owner warning: this sync run marked properties as gone from Vista (owner, 2026-11-09: "warn me" means
-        WhatsApp). Nothing was deleted — the text says so. Org-wide roster (the owner's line lives there)."""
+        WhatsApp). ONE message per run covers both the registry delisting and the "pause + warn" notices
+        (`imovel_ref_avisos.registrar_sumiram`): paused codes are named with the action they wait for. Nothing was
+        deleted — the text says so. Org-wide roster (the owner's line lives there)."""
         if not codigos:
             return DispatchOutcome()
         recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
@@ -541,23 +544,53 @@ class NotificationService:
             return await self._no_recipient(kind="imoveis_delistados", org_id=org_id)
         return await self._dispatch(
             kind="imoveis_delistados", org_id=org_id, recipients=recipients,
-            message=self._build_delistados_message(codigos, exclusivos),
+            message=self._build_delistados_message(codigos, exclusivos, pausados or []),
         )
 
     @staticmethod
-    def _build_delistados_message(codigos: list[str], exclusivos: list[str]) -> dict[str, str]:
+    def _lista_codigos(codigos: list[str], limite: int = 30) -> str:
+        mostrar = codigos[:limite]
+        resto = len(codigos) - len(mostrar)
+        return ", ".join(mostrar) + (f" … e mais {resto}." if resto else ".")
+
+    @staticmethod
+    def _html_linhas(linhas: list[str]) -> str:
+        return "<div style='font-family:sans-serif;max-width:560px'>" + "".join(
+            f"<p style='margin:0 0 8px'>{_html.escape(l)}</p>" for l in linhas) + "</div>"
+
+    @classmethod
+    def _build_delistados_message(cls, codigos: list[str], exclusivos: list[str], pausados: list[str] | None = None,
+                                  ) -> dict[str, str]:
         n = len(codigos)
-        mostrar = codigos[:30]
-        resto = n - len(mostrar)
+        pausados = pausados or []
         linhas = [f"🏠 {n} imóve{'l saiu' if n == 1 else 'is saíram'} do Vista nesta sincronização."]
         if exclusivos:
             linhas.append(f"⭐ Exclusivos: {', '.join(exclusivos)} — saem da vitrine de exclusividades.")
-        linhas.append("Códigos: " + ", ".join(mostrar) + (f" … e mais {resto}." if resto else "."))
-        linhas.append("Nada foi apagado: os imóveis ficam marcados como fora do Vista e voltam sozinhos se reaparecerem.")
-        texto = "\n".join(linhas)
-        html = "<div style='font-family:sans-serif;max-width:560px'>" + "".join(
-            f"<p style='margin:0 0 8px'>{_html.escape(l)}</p>" for l in linhas) + "</div>"
-        return {"subject": f"{n} imóve{'l saiu' if n == 1 else 'is saíram'} do Vista", "html": html, "text": texto}
+        linhas.append("Códigos: " + cls._lista_codigos(codigos))
+        if pausados:
+            linhas.append(f"⏸️ Pausados no site até você decidir ({len(pausados)}): " + cls._lista_codigos(pausados)
+                          + " Em Imóveis › Avisos: restaurar ou confirmar que saíram.")
+        linhas.append("Nada foi apagado: todos os dados ficam guardados.")
+        return {"subject": f"{n} imóve{'l saiu' if n == 1 else 'is saíram'} do Vista", "html": cls._html_linhas(linhas),
+                "text": "\n".join(linhas)}
+
+    async def notify_imoveis_novos_vista(self, *, org_id: UUID, codigos: list[str]) -> DispatchOutcome:
+        """Owner notice: refs Vista has that we did not — created on our side and recorded (`ref_nova_no_vista`)."""
+        if not codigos:
+            return DispatchOutcome()
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning("notify_imoveis_novos_vista: %d new ref(s) in Vista (org=%s) but NO active notification "
+                           "recipient is configured — nobody was warned.", len(codigos), org_id)
+            return await self._no_recipient(kind="imoveis_novos_vista", org_id=org_id)
+        n = len(codigos)
+        linhas = [f"🆕 {n} imóve{'l novo' if n == 1 else 'is novos'} no Vista, já criado{'s' if n != 1 else ''} do nosso lado.",
+                  "Códigos: " + self._lista_codigos(codigos)]
+        return await self._dispatch(
+            kind="imoveis_novos_vista", org_id=org_id, recipients=recipients,
+            message={"subject": f"{n} imóve{'l novo' if n == 1 else 'is novos'} no Vista",
+                     "html": self._html_linhas(linhas), "text": "\n".join(linhas)},
+        )
 
     async def notify_imoveis_listar_vazio(self, *, org_id: UUID, texto: str) -> DispatchOutcome:
         """Owner warning (WhatsApp leg of the daily 'Vista não está listando' notice; the caller dedupes to 1/24h)."""
