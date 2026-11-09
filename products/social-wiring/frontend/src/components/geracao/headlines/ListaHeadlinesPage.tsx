@@ -246,7 +246,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
               aria-label="Modo"
               value={modo}
               onChange={(e) => setModo(e.target.value as typeof modo)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm"
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs"
             >
               <option value="">Todos os modos</option>
               <option value="automatico">Automático</option>

@@ -158,7 +158,7 @@ export default function MetricasTab({ agentKey }: { agentKey: string }) {
                   {(threads.data?.itens ?? []).slice().sort((a, b) => b.custo_usd - a.custo_usd).map((t) => (
                     <tr key={t.thread_id} className="border-b border-border last:border-0">
                       <TD>
-                        <button type="button" className="font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Abrir conversa ${idCurto(t.thread_id)}`} onClick={() => setThread(t.thread_id)}>
+                        <button type="button" className="font-mono text-xs text-primary underline-offset-2 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Abrir conversa ${idCurto(t.thread_id)}`} onClick={() => setThread(t.thread_id)}>
                           {idCurto(t.thread_id)}
                         </button>
                       </TD>

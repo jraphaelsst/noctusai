@@ -160,7 +160,7 @@ export function AdminUsers() {
             placeholder="Buscar por nome ou email..."
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            className="w-full h-10 md:h-9 rounded-md border border-border bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            className="w-full h-10 md:h-9 rounded-md border border-border bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
           />
         </div>
         <select
@@ -183,7 +183,7 @@ export function AdminUsers() {
       ) : users.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">Nenhum usuario encontrado</div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-sm">
+        <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border bg-muted/50">
               <tr>
@@ -295,7 +295,7 @@ export function AdminUsers() {
                   value={inviteForm.email}
                   onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
                   placeholder="pessoa@empresa.com"
-                  className="w-full h-10 md:h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 md:h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               <div>
@@ -346,7 +346,7 @@ export function AdminUsers() {
                 <input
                   value={editForm.nome}
                   onChange={(e) => setEditForm({ ...editForm, nome: e.target.value })}
-                  className="w-full h-10 md:h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 md:h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               <div>

@@ -135,7 +135,7 @@ export function PhotoReviewGrid({
                 <button
                   type="button"
                   onClick={() => setExpandedId(isExpanded ? null : foto.id)}
-                  className="relative overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="relative overflow-hidden rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   aria-expanded={isExpanded}
                   aria-label={isExpanded ? 'Recolher foto' : 'Expandir foto'}
                 >
@@ -197,7 +197,7 @@ export function PhotoReviewGrid({
                       onChange={(e) => setDraftComentario(e.target.value)}
                       placeholder="Explique o motivo da rejeição"
                       rows={2}
-                      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     />
                     <div className="flex justify-end gap-2">
                       <Button variant="ghost" size="sm" onClick={cancelRejecting} disabled={isPending}>

@@ -130,7 +130,7 @@ export function AdminPlans() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {plans.map(plan => (
-          <div key={plan.id} className={`bg-card rounded-lg border shadow-sm p-6 ${plan.is_custom ? 'border-warning' : 'border-border'}`}>
+          <div key={plan.id} className={`bg-card rounded-lg border shadow-xs p-6 ${plan.is_custom ? 'border-warning' : 'border-border'}`}>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-lg font-semibold text-foreground">{plan.nome}</h3>
               {plan.is_custom && (
@@ -185,7 +185,7 @@ export function AdminPlans() {
                   onChange={e => setFormData({ ...formData, nome: e.target.value })}
                   placeholder="Ex: Pro"
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               {!editingId && (
@@ -197,7 +197,7 @@ export function AdminPlans() {
                     onChange={e => setFormData({ ...formData, slug: e.target.value })}
                     placeholder="Ex: pro"
                     required
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
               )}
@@ -208,7 +208,7 @@ export function AdminPlans() {
                   value={formData.descricao}
                   onChange={e => setFormData({ ...formData, descricao: e.target.value })}
                   placeholder="Descricao do plano"
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -220,7 +220,7 @@ export function AdminPlans() {
                     step="0.01"
                     value={formData.price_monthly}
                     onChange={e => setFormData({ ...formData, price_monthly: parseFloat(e.target.value) || 0 })}
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
                 <div>
@@ -231,7 +231,7 @@ export function AdminPlans() {
                     step="0.01"
                     value={formData.price_yearly}
                     onChange={e => setFormData({ ...formData, price_yearly: parseFloat(e.target.value) || 0 })}
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
               </div>
@@ -243,7 +243,7 @@ export function AdminPlans() {
                     min="-1"
                     value={formData.max_users}
                     onChange={e => setFormData({ ...formData, max_users: parseInt(e.target.value) || -1 })}
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
                 <div>
@@ -253,7 +253,7 @@ export function AdminPlans() {
                     min="-1"
                     value={formData.max_products}
                     onChange={e => setFormData({ ...formData, max_products: parseInt(e.target.value) || -1 })}
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
               </div>

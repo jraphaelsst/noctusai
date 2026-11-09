@@ -74,7 +74,7 @@ export default function Landing() {
           </div>
           <Link
             to="/login"
-            className="text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm transition-colors px-1"
+            className="text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring rounded-sm transition-colors px-1"
           >
             Entrar
           </Link>

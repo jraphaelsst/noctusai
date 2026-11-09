@@ -176,7 +176,7 @@ export function OrgSettings() {
               onChange={e => setEditKey(e.target.value)}
               placeholder="ex: openai_api_key"
               required
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
             />
           </div>
           <div>
@@ -187,7 +187,7 @@ export function OrgSettings() {
               onChange={e => setEditValue(e.target.value)}
               placeholder="Valor da configuração"
               required
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
             />
           </div>
           <div>

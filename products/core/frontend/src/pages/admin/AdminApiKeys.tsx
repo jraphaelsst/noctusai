@@ -104,7 +104,7 @@ export function AdminApiKeys() {
         </div>
       )}
 
-      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/50">
@@ -179,7 +179,7 @@ export function AdminApiKeys() {
                   onChange={e => setNewKeyName(e.target.value)}
                   placeholder="Ex: Integracao Zapier"
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               <div>

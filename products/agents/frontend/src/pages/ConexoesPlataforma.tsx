@@ -27,7 +27,7 @@ import {
 import { ApiError, errorMessage } from "@/lib/errors";
 
 const INPUT_CLASS =
-  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 const STATUS_BADGE = GRANT_STATUS_BADGE;
 

@@ -43,7 +43,7 @@ export function InstagramPostCard({
       onClick={() => onOpen(item)}
       data-testid="ig-post-card"
       aria-label={`Ver métricas do post de ${formatPostDate(item.timestamp)}`}
-      className="group flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-shadow hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="aspect-square w-full overflow-hidden bg-muted">
         {image ? (

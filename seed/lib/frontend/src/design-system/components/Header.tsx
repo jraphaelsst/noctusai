@@ -221,7 +221,7 @@ export function Header({
                     <input
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-1"
                     />
                   </div>
                   <div>
@@ -231,7 +231,7 @@ export function Header({
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       disabled={!canEditEmail}
-                      className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+                      className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-1"
                     />
                     {!canEditEmail && (
                       <p className="text-xs text-muted-foreground mt-1">
@@ -244,7 +244,7 @@ export function Header({
                     <input
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-1"
                     />
                   </div>
                   <div className="flex gap-2">
@@ -274,7 +274,7 @@ export function Header({
                       type="password"
                       value={passwordData.newPassword}
                       onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
-                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-1"
                     />
                   </div>
                   <div>
@@ -283,7 +283,7 @@ export function Header({
                       type="password"
                       value={passwordData.confirmPassword}
                       onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
-                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+                      className="mt-1 w-full h-10 md:h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-1"
                     />
                   </div>
                   <div className="flex gap-2">

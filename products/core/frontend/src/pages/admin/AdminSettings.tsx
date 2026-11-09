@@ -143,7 +143,7 @@ export function AdminSettings() {
 
       {/* Supabase Management PAT — dedicated labeled field. Same store as every
           other key (platform_settings + is_secret via the generic endpoint). */}
-      <form onSubmit={savePat} className="bg-card rounded-lg border border-border shadow-sm p-4 mb-6">
+      <form onSubmit={savePat} className="bg-card rounded-lg border border-border shadow-xs p-4 mb-6">
         <div className="flex items-center justify-between gap-2 mb-1">
           <h2 className="text-sm font-semibold text-foreground">Supabase Management PAT</h2>
           {patConfigured && (
@@ -165,7 +165,7 @@ export function AdminSettings() {
               value={patValue}
               onChange={(e) => setPatValue(e.target.value)}
               placeholder={patConfigured ? 'Substituir token…' : 'sbp_…'}
-              className="w-full h-10 rounded-md border border-border bg-background px-3 pr-16 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              className="w-full h-10 rounded-md border border-border bg-background px-3 pr-16 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
             />
             <button
               type="button"
@@ -185,7 +185,7 @@ export function AdminSettings() {
         </div>
       </form>
 
-      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/50">
@@ -264,7 +264,7 @@ export function AdminSettings() {
                       placeholder="ex: openai_api_key"
                       required
                       list="suggested-keys"
-                      className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                     />
                     <datalist id="suggested-keys">
                       {SUGGESTED_KEYS.filter(k => !settings.some(s => s.key === k)).map(k => (
@@ -282,7 +282,7 @@ export function AdminSettings() {
                   onChange={e => setEditValue(e.target.value)}
                   placeholder={editIsSecret ? 'Digite o novo valor...' : 'Valor da configuracao'}
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               <div>
@@ -292,7 +292,7 @@ export function AdminSettings() {
                   value={editDescription}
                   onChange={e => setEditDescription(e.target.value)}
                   placeholder="Descricao da configuracao"
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               <div>

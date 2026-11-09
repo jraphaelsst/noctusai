@@ -176,7 +176,7 @@ export function ProductCatalogGrid({
                     aria-pressed={activeFilter === k}
                     onClick={() => setFilter(k)}
                     className={cn(
-                      "h-7 rounded-sm px-3 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "h-7 rounded-sm px-3 text-xs font-medium focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                       activeFilter === k ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent",
                     )}
                   >

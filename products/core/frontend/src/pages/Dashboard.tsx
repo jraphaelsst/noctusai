@@ -249,7 +249,7 @@ export function Dashboard() {
             return (
             <div
               key={product.id}
-              className={`relative bg-card rounded-lg border shadow-sm p-6 transition-all ${
+              className={`relative bg-card rounded-lg border shadow-xs p-6 transition-all ${
                 inactive
                   ? 'border-dashed border-border opacity-50 cursor-not-allowed'
                   : product.has_access
@@ -304,7 +304,7 @@ export function Dashboard() {
                 <button
                   type="button"
                   disabled={inactive}
-                  className="text-left after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring disabled:cursor-not-allowed"
+                  className="text-left after:absolute after:inset-0 after:rounded-lg after:content-[''] focus-visible:outline-hidden focus-visible:after:ring-2 focus-visible:after:ring-ring disabled:cursor-not-allowed"
                 >
                   {product.nome}
                 </button>

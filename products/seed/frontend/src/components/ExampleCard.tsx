@@ -9,7 +9,7 @@
  *     Tailwind colors.
  *   - `rounded-lg` + `p-4` matches the `pages/Example.tsx` empty-state
  *     card shape so the visual language is consistent.
- *   - `shadow-sm` for subtle elevation; reserve `shadow-md`+ for modals
+ *   - `shadow-xs` for subtle elevation; reserve `shadow-md`+ for modals
  *     and floating panels.
  *
  * TODO(new-product): rename `ExampleCard` → your domain card
@@ -38,7 +38,7 @@ export function ExampleCard({
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-card p-4 shadow-sm",
+        "rounded-lg border border-border bg-card p-4 shadow-xs",
         "transition-colors hover:border-primary/50",
         onClick && "cursor-pointer",
         className,

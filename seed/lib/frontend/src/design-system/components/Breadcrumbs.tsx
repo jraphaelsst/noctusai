@@ -166,7 +166,7 @@ function CrumbMenu({ label, entries, currentHref }: MenuButtonProps) {
         aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={onButtonKey}
-        className="rounded px-1 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="rounded px-1 hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
         {label}
       </button>
@@ -192,7 +192,7 @@ function CrumbMenu({ label, entries, currentHref }: MenuButtonProps) {
                   tabIndex={-1}
                   aria-current={e.href === currentHref ? "page" : undefined}
                   onClick={() => close(false)}
-                  className="block rounded px-2 py-1.5 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none aria-[current=page]:font-semibold"
+                  className="block rounded px-2 py-1.5 hover:bg-accent focus-visible:bg-accent focus-visible:outline-hidden aria-[current=page]:font-semibold"
                 >
                   {e.label}
                 </Link>
@@ -260,7 +260,7 @@ function RoutedBreadcrumbs({ className }: { className?: string }) {
     if (c.href) {
       return (
         <li key={c.key} className="min-w-0 truncate">
-          <Link to={c.href} className="rounded px-1 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Link to={c.href} className="rounded px-1 hover:text-foreground hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
             {c.label}
           </Link>
         </li>

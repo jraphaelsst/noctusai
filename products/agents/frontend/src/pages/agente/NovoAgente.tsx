@@ -82,7 +82,7 @@ function SeletorModo({ modo, onChange, limite }: { modo: ModoInicio; onChange: (
               data-testid={`novo-agente-modo-${m.id}`}
               className={cn(
                 "flex items-start gap-3 rounded-lg border p-4 text-left transition-all duration-200",
-                on ? "border-primary bg-primary/5 shadow-sm" : "border-border bg-card hover:border-primary/40",
+                on ? "border-primary bg-primary/5 shadow-xs" : "border-border bg-card hover:border-primary/40",
               )}
             >
               <span

@@ -367,7 +367,7 @@ export function Sidebar({
       aria-current={current.item === item ? "page" : undefined}
       title={collapsed ? withBadge(item) : undefined}
       className={cn(
-        "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
         collapsed && "md:justify-center md:gap-0 md:px-0",
         current.item === item
           ? "bg-primary text-primary-foreground"
@@ -410,7 +410,7 @@ export function Sidebar({
           data-active={onPath ? "true" : undefined}
           title={collapsed ? group.label : undefined}
           className={cn(
-            "flex items-center justify-between w-full px-3 py-2 text-xs font-semibold tracking-wider transition-colors rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "flex items-center justify-between w-full px-3 py-2 text-xs font-semibold tracking-wider transition-colors rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
             depth === 0 ? "uppercase" : "normal-case tracking-normal",
             collapsed && "md:justify-center md:px-0",
             onPath && depth === 0

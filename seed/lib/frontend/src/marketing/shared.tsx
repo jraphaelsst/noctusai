@@ -24,7 +24,7 @@ export interface LandingAction {
 
 const base =
   "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background";
+  "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background";
 const variants = {
   primary: "bg-primary text-primary-foreground hover:bg-primary/90",
   outline: "border border-input bg-background hover:bg-accent",

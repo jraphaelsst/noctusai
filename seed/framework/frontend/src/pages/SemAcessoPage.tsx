@@ -19,7 +19,7 @@ export function SemAcessoPage({ coreUrl, onSignOut }: SemAcessoPageProps) {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-8 text-center shadow-sm">
+      <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-8 text-center shadow-xs">
         <h1 className="text-xl font-semibold text-foreground">Sem acesso</h1>
         <p className="text-muted-foreground">
           Sua organização não tem acesso a este produto.

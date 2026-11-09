@@ -22,7 +22,7 @@ import {
 import { errorMessage } from "@/lib/errors";
 
 const INPUT_CLASS =
-  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 export const CONTENT_TOKEN_DEFAULT_DAYS = 30;
 export const CONTENT_TOKEN_MAX_DAYS = 365;

@@ -331,7 +331,7 @@ export function createProductApp(config: ProductAppConfig) {
     });
     if (hasBell || !settled || orgEntryPending) return null;
     return (
-      <div className="fixed right-3 top-3 z-40 rounded-full border border-border bg-card shadow-sm" data-testid="notification-bell-fallback">
+      <div className="fixed right-3 top-3 z-40 rounded-full border border-border bg-card shadow-xs" data-testid="notification-bell-fallback">
         <NotificationBell
           hooks={hooks}
           onNavigate={(link) => navigate(link)}

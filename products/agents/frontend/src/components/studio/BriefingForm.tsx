@@ -8,7 +8,7 @@ import { BRIEFING_CANAIS } from "@/api/studio/types-geracao";
 import { BRIEFING_LIMITES, type BriefingDraft, type BriefingErrors } from "@/lib/briefing";
 
 const INPUT_CLASS =
-  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 export interface BriefingFormProps {
   value: BriefingDraft;

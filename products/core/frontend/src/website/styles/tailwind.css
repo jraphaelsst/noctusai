@@ -1,0 +1,6 @@
+/* Website entry's Tailwind layer: the seed stylesheet + this product's JS config
+   (Tailwind v4 reads the theme/content from `@config`; without it the seed's
+   tokens.css `@apply border-border` has no theme to resolve against). Kept apart
+   from the app's src/index.css so the two builds stay isolated (site.css §4). */
+@import "@noctusai/seed/index.css";
+@config "../../../tailwind.config.ts";

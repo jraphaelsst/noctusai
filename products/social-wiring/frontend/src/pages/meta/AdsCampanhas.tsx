@@ -154,7 +154,7 @@ function AdsetRow({
                   via keyboard, never mouse-only. */}
               <button
                 type="button"
-                className="flex items-center gap-2 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex items-center gap-2 rounded text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setSelectedAd(ad)}
               >
                 {ad.creative_thumbnail_url && (

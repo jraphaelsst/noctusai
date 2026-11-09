@@ -340,7 +340,7 @@ function ClientFormFields({
             value={form.name}
             disabled={busy}
             onChange={(e) => onChange({ ...form, name: e.target.value })}
-            className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             placeholder="Ex: Acme Corp"
           />
         </div>
@@ -354,7 +354,7 @@ function ClientFormFields({
             value={form.slug}
             disabled={busy}
             onChange={(e) => onChange({ ...form, slug: e.target.value })}
-            className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             placeholder="acme-corp (auto)"
           />
         </div>
@@ -369,7 +369,7 @@ function ClientFormFields({
           value={form.kind}
           disabled={busy}
           onChange={(e) => onChange({ ...form, kind: e.target.value })}
-          className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           placeholder="Ex: parceiro, agência"
         />
       </div>
@@ -383,7 +383,7 @@ function ClientFormFields({
           value={form.notes}
           disabled={busy}
           onChange={(e) => onChange({ ...form, notes: e.target.value })}
-          className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           placeholder="Notas opcionais"
         />
       </div>

@@ -19,7 +19,7 @@ import { useItensGerados } from "@/hooks/studio/useGeracoes";
 const NOME_RE = /^[a-z][a-z0-9_]{1,63}$/;
 const DESC_MAX = 2000;
 const INPUT_CLASS =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50";
+  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 export default function FerramentasTab({ agentKey }: { agentKey: string }) {
   const gerados = useItensGerados(agentKey);

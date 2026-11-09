@@ -104,7 +104,7 @@ export function AccountSettings() {
             type="text"
             value={nome}
             onChange={e => setNome(e.target.value)}
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
           />
         </div>
 
@@ -117,7 +117,7 @@ export function AccountSettings() {
             value={avatarUrl}
             onChange={e => setAvatarUrl(e.target.value)}
             placeholder="https://..."
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
           />
         </div>
 
@@ -133,7 +133,7 @@ export function AccountSettings() {
             value={telefone}
             onChange={e => setTelefone(e.target.value)}
             placeholder="+55 11 99999-9999"
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden focus:ring-1 focus:ring-primary"
           />
           <p className="mt-1 text-xs text-muted-foreground">
             Usado para receber relatórios e alertas dos agentes (ex.: Julia).

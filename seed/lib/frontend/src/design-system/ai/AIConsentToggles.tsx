@@ -177,7 +177,7 @@ function ToggleRow({ item, onToggle, disabled }: ToggleRowProps) {
         aria-label={`${checked ? 'Desativar' : 'Ativar'} ${item.title}`}
         disabled={switchDisabled}
         onClick={() => onToggle(!checked)}
-        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
+        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-hidden focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
           checked ? 'bg-primary' : 'bg-muted'
         }`}
       >

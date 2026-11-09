@@ -151,7 +151,7 @@ export function VersionDiff(props: VersionDiffProps): React.ReactElement {
   return (
     <section
       aria-label={title}
-      className="rounded-lg border border-border bg-card text-card-foreground shadow-sm"
+      className="rounded-lg border border-border bg-card text-card-foreground shadow-xs"
     >
       <header className="border-b border-border px-5 py-4">
         <h3 className="flex items-center gap-2 text-base font-semibold leading-none tracking-tight">

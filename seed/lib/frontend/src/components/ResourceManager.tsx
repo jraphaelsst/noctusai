@@ -142,7 +142,7 @@ function emptyValueFor(field: ResourceField): string | number | boolean {
 }
 
 const INPUT_CLASS =
-  'w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50';
+  'w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50';
 
 export function ResourceManager<T extends Record<string, any>>(
   props: ResourceManagerProps<T>,
@@ -329,7 +329,7 @@ export function ResourceManager<T extends Record<string, any>>(
           {emptyMessage ?? `Nenhum(a) ${singularName.toLowerCase()} cadastrado(a). Crie o primeiro!`}
         </div>
       ) : (
-        <div className="bg-card rounded-lg border border-border shadow-sm overflow-x-auto">
+        <div className="bg-card rounded-lg border border-border shadow-xs overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-muted-foreground">

@@ -182,11 +182,11 @@ export function LoginForm({
     }
   }
 
-  const inputCls = "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
+  const inputCls = "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
-      <div className="w-full max-w-md bg-card rounded-lg border border-border shadow-sm">
+      <div className="w-full max-w-md bg-card rounded-lg border border-border shadow-xs">
         {/* Header */}
         <div className="flex flex-col items-center p-6 pb-2">
           <BrandIcon className="h-10 w-10 text-primary mb-2" />

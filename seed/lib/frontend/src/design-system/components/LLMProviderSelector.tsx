@@ -86,7 +86,7 @@ export function LLMProviderSelector(props: LLMProviderSelectorProps) {
             value={provider ?? ''}
             onChange={(e) => onProviderChange(e.target.value)}
             disabled={disabled || visibleProviders.length === 0}
-            className="w-full rounded border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-full rounded border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-ring"
           >
             <option value="" disabled>
               Selecione um provedor…
@@ -111,7 +111,7 @@ export function LLMProviderSelector(props: LLMProviderSelectorProps) {
             value={chatModel ?? ''}
             onChange={(e) => onChatModelChange(e.target.value)}
             disabled={disabled || !provider || models.length === 0}
-            className="w-full rounded border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-full rounded border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-ring"
           >
             <option value="" disabled>
               {provider ? 'Selecione um modelo…' : 'Escolha um provedor primeiro'}

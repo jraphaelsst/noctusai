@@ -186,7 +186,7 @@ export function BillingSettings() {
         </div>
 
         {/* Current Plan Card */}
-        <div className="mb-8 rounded-lg border border-border bg-card p-6 shadow-sm">
+        <div className="mb-8 rounded-lg border border-border bg-card p-6 shadow-xs">
           <div className="mb-4 flex items-start justify-between">
             <div>
               <div className="flex items-center gap-3">

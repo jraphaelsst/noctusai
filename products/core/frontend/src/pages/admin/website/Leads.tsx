@@ -175,7 +175,7 @@ export function Leads() {
                     <Link
                       to={`/admin/website/leads/${lead.id}`}
                       onClick={(e) => e.stopPropagation()}
-                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="rounded-sm hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {lead.name}
                     </Link>

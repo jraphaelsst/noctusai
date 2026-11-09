@@ -108,7 +108,7 @@ export function ContratoModalidadeSection({
                   "min-h-10 rounded px-4 text-sm font-medium transition-colors",
                   "disabled:cursor-not-allowed disabled:opacity-50",
                   ativo
-                    ? "bg-background text-foreground shadow-sm"
+                    ? "bg-background text-foreground shadow-xs"
                     : "text-muted-foreground hover:text-foreground",
                 ].join(" ")}
                 data-testid={`contrato-modalidade-${m}-${id}`}

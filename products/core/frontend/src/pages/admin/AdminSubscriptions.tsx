@@ -151,7 +151,7 @@ export function AdminSubscriptions() {
         </button>
       </div>
 
-      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/50">
@@ -218,7 +218,7 @@ export function AdminSubscriptions() {
                   value={formData.org_id}
                   onChange={e => setFormData({ ...formData, org_id: e.target.value })}
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 >
                   <option value="">Selecione...</option>
                   {orgs.map(o => <option key={o.id} value={o.id}>{o.nome}</option>)}
@@ -230,7 +230,7 @@ export function AdminSubscriptions() {
                   value={formData.plan_id}
                   onChange={e => setFormData({ ...formData, plan_id: e.target.value })}
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 >
                   <option value="">Selecione...</option>
                   {plans.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
@@ -241,7 +241,7 @@ export function AdminSubscriptions() {
                 <select
                   value={formData.status}
                   onChange={e => setFormData({ ...formData, status: e.target.value })}
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 >
                   <option value="active">Ativo</option>
                   <option value="trial">Trial</option>
@@ -279,7 +279,7 @@ export function AdminSubscriptions() {
                   value={edit.plan_id}
                   onChange={e => setEdit({ ...edit, plan_id: e.target.value })}
                   required
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 >
                   <option value="">Selecione...</option>
                   {plans.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
@@ -290,7 +290,7 @@ export function AdminSubscriptions() {
                 <select
                   value={edit.status}
                   onChange={e => setEdit({ ...edit, status: e.target.value })}
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 >
                   {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
@@ -301,7 +301,7 @@ export function AdminSubscriptions() {
                   type="date"
                   value={edit.expires_at}
                   onChange={e => setEdit({ ...edit, expires_at: e.target.value })}
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">Deixe vazio para sem limite.</p>
               </div>

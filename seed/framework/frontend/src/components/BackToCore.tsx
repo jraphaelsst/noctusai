@@ -13,7 +13,7 @@ export function BackToCore({ href }: { href: string }) {
       href={href}
       aria-label={BACK_TO_CORE_LABEL}
       title={BACK_TO_CORE_LABEL}
-      className="flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
     >
       <ChevronLeft className="h-4 w-4 shrink-0" aria-hidden="true" />
     </a>

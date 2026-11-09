@@ -1,4 +1,29 @@
+@import "tailwindcss";
+@import "./tailwind-v3-palette.css";
 @import "@noctusai/lib/design-system/tokens.css";
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+
+/*
+ * Tailwind v3 -> v4 compatibility (2026-11-09). Each product's index.css adds
+ * `@config "../tailwind.config.ts"` (the seed factory: theme, content, plugins).
+ * Renamed utilities were codemodded in source (shadow-sm -> shadow-xs,
+ * outline-none -> outline-hidden). What v4 changed by DEFAULT, and the fleet's
+ * screens were designed against, is pinned back to the v3 look here:
+ */
+@theme {
+  /* v3: a bare `ring-*` without a colour was blue-500 at 50%; v4 uses currentColor. */
+  --default-ring-color: rgb(59 130 246 / 0.5);
+}
+
+@layer base {
+  /* v3 preflight: placeholders were gray-400; v4 uses currentColor at 50%. */
+  input::placeholder,
+  textarea::placeholder {
+    color: #9ca3af;
+  }
+
+  /* v3 preflight: buttons showed a pointer; v4 falls back to the default cursor. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}

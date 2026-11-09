@@ -284,7 +284,7 @@ function CoreCredentialsForm({ entry, produto, initialError = '', onSignedIn }: 
                   onChange={e => setNome(e.target.value)}
                   placeholder="João Silva"
                   required
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
                 />
               </div>
               <div className="space-y-1.5">
@@ -296,7 +296,7 @@ function CoreCredentialsForm({ entry, produto, initialError = '', onSignedIn }: 
                   onChange={e => setEmpresa(e.target.value)}
                   placeholder="Imobiliária Silva"
                   required
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
                 />
               </div>
             </>
@@ -311,7 +311,7 @@ function CoreCredentialsForm({ entry, produto, initialError = '', onSignedIn }: 
               onChange={e => setEmail(e.target.value)}
               placeholder="voce@empresa.com"
               required
-              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
             />
           </div>
 
@@ -325,7 +325,7 @@ function CoreCredentialsForm({ entry, produto, initialError = '', onSignedIn }: 
               placeholder="••••••••"
               required
               minLength={6}
-              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
             />
           </div>
 

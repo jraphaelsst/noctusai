@@ -25,7 +25,7 @@ export function duracaoMmSs(s: number | null | undefined): string {
 export function ViralCard({ viral, selecionado = false, onSelecionar, onAbrir }: Props) {
   return (
     <article
-      className="flex flex-col overflow-hidden rounded-lg border bg-card shadow-sm"
+      className="flex flex-col overflow-hidden rounded-lg border bg-card shadow-xs"
       data-testid={`viral-card-${viral.id}`}
     >
       <div className="flex items-center gap-2 px-3 py-2">
