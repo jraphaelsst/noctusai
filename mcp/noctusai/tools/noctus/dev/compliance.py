@@ -17032,6 +17032,42 @@ def check_new_org_table_rls(repo_root: Path | None = None, paths: list[str] | No
     return findings
 
 
+def check_measurable_by_design(
+    repo_root: Path | None = None, paths: list[str] | None = None, *, escapes_out: list[dict] | None = None
+) -> list[dict]:
+    """BLOCKING DELTA gate (owner rule 2026-11-09, "everything inside our products must be measured"): a NEW
+    migration's domain table must be measurable by design -- (a) a creation timestamp, (b) a lifecycle/status column
+    needs an append-only transition capture (``*_eventos`` table / audit trigger / transition-log organ) in the
+    product's migrations. Advisory (severity ``warning``): free-text outcomes, no ``updated_at`` on a lifecycle table,
+    an event table with no actor. Pure join/lookup/cache/config/run/metric tables, seed-baseline (001) and
+    organ-generated migrations are exempt. DELTA, not retroactive: ``paths`` (the staged ADDED migrations) scopes the
+    scan; ``None`` = migrations this branch added vs ``origin/dev``. Escape (recorded, returned in ``escapes_out``):
+    ``-- measurable: <reason>=10 chars>`` or ``-- measurable[<table>]: <reason>``.
+    KB § PATTERNS/architect/measurement-by-design.md."""
+    from .measurable_by_design import product_corpus, scan_sql, seed_owned_tables
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+    seed_tables = seed_owned_tables(root)
+    rels = list(paths) if paths is not None else _added_migration_files(root)
+    for rel in rels:
+        f = root / rel
+        if f.suffix != ".sql" or "backend/migrations" not in f.as_posix() or not f.exists():
+            continue
+        try:
+            raw = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", f, exc)
+            continue
+        got, esc = scan_sql(raw, rel, product_corpus(root, rel), seed_tables)
+        findings.extend(got)
+        if escapes_out is not None:
+            escapes_out.extend(esc)
+    return findings
+
+
 def _definition_files(root: Path) -> list[Path]:
     files: list[Path] = []
     for base in sorted((root / "products").glob("*/ops/agents")):  # product-scope: all — declared agent definitions are config regardless of ativo
