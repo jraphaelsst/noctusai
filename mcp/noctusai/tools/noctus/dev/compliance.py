@@ -26446,6 +26446,8 @@ def check_tailwind_v4_class_names(paths: list[Path] | None = None, repo_root: Pa
         for n, msg in tailwind_v4_class_name_hits(src):
             issues.append({"file": f"{f.relative_to(root).as_posix()}:{n}", "severity": "high",
                            "issue": msg + " (KB § PATTERNS/frontend/frontend.md)"})
+    return issues
+
 
 # ── structure ↔ constructor parity (owner 2026-11-08) ───────────────────────────────────────────────────────────────
 #: Manifests are discovered under these roots; the walk prunes heavy / generated directories.
