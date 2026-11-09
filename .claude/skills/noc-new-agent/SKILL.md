@@ -10,6 +10,8 @@ An agent's definition is **data** (rows owned by the platform org); the generato
 
 ## Workflow
 
+**Every agent is conversational** (owner, 2026-11-09), the media-analyst included. It starts from the conversational base: safety + identity, honesty, conduct, atendimento, human handoff to the org's fallback number, LGPD. An SDR adds only qualification, offers, booking and scoring. The layered templates (`agente-base` → `sdr-base` → agent) are being built: `project-history/roadmaps/agent-templates-2026-11.md`. Until they exist, the reference is Julia.
+
 0. **Is it a new agent?** A new customer org of an existing agent = an instance + org specs, NOT this skill. A new product = `noc-new-product`.
 1. **Create the definition.** `noctus.agents.content action=criar_agente agent=<key>` (payload: `nome`, `runtime`, `owner_product`, `padrao_qualificacao`, `rascunho_padrao`…) — an empty shell, idempotent. `confirm=True` writes.
 2. **Make sure the reference is an exemplar.** A platform admin (never the token) flips it: `PUT /api/studio/plataforma/agentes/julia/exemplar {"exemplar": true}`.
