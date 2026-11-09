@@ -257,7 +257,7 @@ export default function AgentesPlataforma() {
                     type="button"
                     aria-current={a.chave === chave}
                     onClick={() => void escolher(a.chave)}
-                    className="block w-full px-3 py-2 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[current=true]:bg-accent"
+                    className="block w-full px-3 py-2 text-left hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring aria-[current=true]:bg-accent"
                     data-testid={`plat-item-${a.chave}`}
                   >
                     <span className="block text-sm font-semibold text-foreground">

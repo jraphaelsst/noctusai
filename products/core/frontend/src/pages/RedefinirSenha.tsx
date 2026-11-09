@@ -168,7 +168,7 @@ function Field({ id, label, value, onChange, error }: {
         onChange={(e) => onChange(e.target.value)}
         aria-invalid={!!error}
         aria-describedby={error ? `${id}-erro` : undefined}
-        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary"
       />
       {error && <p id={`${id}-erro`} className="text-sm text-danger-foreground">{error}</p>}
     </div>
