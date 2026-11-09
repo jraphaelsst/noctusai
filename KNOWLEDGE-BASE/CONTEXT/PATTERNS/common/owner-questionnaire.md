@@ -31,6 +31,16 @@ A question is well-formed when the owner can answer it in ≤ 3 s without openin
 binary > pick-one (2–4, recommended first) > free text; self-contained; each option names its
 consequence; a default-on-silence is stated so silence never blocks.
 
+**Council before a recommendation** (owner yes, 2026-11-09). The asking agent is a model that
+leans toward agreeing with the owner and with its own first idea, so a bare `(Recommended)`
+label hides the case against it. Before recommending, the agent runs five lenses on every
+option — contrarian, first principles, expansionist, outsider, executor — and each option
+then states its strongest argument against in one clause, the recommended one included.
+Inside one session this is a single-chat council (one model, one context): it surfaces
+counter-arguments but is not independent review, and the agent says so rather than hiding it.
+The same council is step 4 of `noc-iterate` (before a refine), so owner decisions and loop
+refinements are argued the same way.
+
 ## 4 · Channels and durability
 
 Local session → `AskUserQuestion`; away → WhatsApp via `noctus.dev.notify` (owner's own
