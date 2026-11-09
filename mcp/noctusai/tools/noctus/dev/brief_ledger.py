@@ -30,11 +30,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from ._pii_guard import assert_no_pii
+from ._pii_guard import PiiLedgerError, assert_no_pii
+
+logger = logging.getLogger(__name__)
 
 
 def _ledger_path() -> Path:
@@ -80,11 +83,16 @@ def append(
       full_brief: optional full brief text (for similarity matching).
       meta: optional structured metadata (e.g. {"top_k": 5}).
 
-    Returns: `{ok, entry, ledger_path}`.
-    Silent on disk failure (advisory layer; never block compose).
+    Returns: `{ok, entry, ledger_path}`; never raises on the two EXPECTED
+    refusals, which are explicit and distinguishable via `error_kind`:
+      * `"disk"` -- OSError creating/writing the ledger (`ledger_path` named,
+        warning logged). Advisory layer: the caller decides whether to block.
+      * `"pii"`  -- the PII guard refused the entry (kind + field only, never
+        the value); nothing is written.
+    Anything else (programming errors) propagates -- no blanket catch.
     """
+    path = _ledger_path()
     try:
-        path = _ledger_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "ts": _now_iso(),
@@ -102,26 +110,30 @@ def append(
         assert_no_pii(entry, field="brief_ledger")
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except PiiLedgerError as e:
+        return {"ok": False, "error_kind": "pii", "error": str(e)[:200]}
+    except OSError as e:
+        logger.warning("brief_ledger: disk failure writing %s: %s", path, e)
+        return {"ok": False, "error_kind": "disk", "ledger_path": str(path),
+                "error": f"{type(e).__name__}: {e}"[:200]}
+    try:
+        from settings import REPO_ROOT
+        rel = str(path.relative_to(REPO_ROOT))
+    except (ImportError, ValueError):
+        rel = str(path)
+    result: dict[str, Any] = {"ok": True, "entry": entry, "ledger_path": rel}
+    if outcome in MISS_OUTCOMES:
+        if ai_logger is None:
+            from .auto_improvement import log_entry as ai_logger  # noqa: PLC0415
         try:
-            from settings import REPO_ROOT
-            rel = str(path.relative_to(REPO_ROOT))
-        except (ImportError, ValueError):
-            rel = str(path)
-        result: dict[str, Any] = {"ok": True, "entry": entry, "ledger_path": rel}
-        if outcome in MISS_OUTCOMES:
-            if ai_logger is None:
-                from .auto_improvement import log_entry as ai_logger  # noqa: PLC0415
-            try:
-                result["ai"] = ai_logger(
-                    scope="scoped", kind="drift", target=f"brief:{slug}",
-                    description=f"brief outcome {outcome}: {description}"[:500],
-                    agent=agent, source_ref=f"brief:{slug}",
-                    resolve_when="manual:brief miss/rework triage")
-            except Exception as exc:  # noqa: BLE001 — surfaced, not swallowed
-                result["ai"] = {"ok": False, "error": f"ai_logger raised: {exc}"[:300]}
-        return result
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)[:200]}
+            result["ai"] = ai_logger(
+                scope="scoped", kind="drift", target=f"brief:{slug}",
+                description=f"brief outcome {outcome}: {description}"[:500],
+                agent=agent, source_ref=f"brief:{slug}",
+                resolve_when="manual:brief miss/rework triage")
+        except Exception as exc:  # noqa: BLE001 — surfaced, not swallowed
+            result["ai"] = {"ok": False, "error": f"ai_logger raised: {exc}"[:300]}
+    return result
 
 
 def query(

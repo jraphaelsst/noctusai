@@ -99,3 +99,26 @@ class TestMissOutcomeDrift:
             raise RuntimeError("x")
         r = bl.append("s4", "a", None, "d", outcome="rework", ai_logger=boom)
         assert r["ok"] and r["ai"]["ok"] is False and "x" in r["ai"]["error"]
+
+
+class TestAppendFailureModes:
+    def test_disk_failure_is_explicit_and_distinguishable(self, tmp_path, monkeypatch, caplog):
+        blocker = tmp_path / "file"
+        blocker.write_text("x")  # a file where a directory is needed -> OSError
+        target = blocker / "sub" / "ledger.ndjson"
+        monkeypatch.setattr(bl, "_ledger_path", lambda: target)
+        with caplog.at_level("WARNING"):
+            r = bl.append("x", "agent", None, "desc")
+        assert r["ok"] is False and r["error_kind"] == "disk"
+        assert str(target) in r["ledger_path"]
+        assert any("disk failure" in m for m in caplog.messages)
+
+    def test_pii_refusal_is_distinguishable_from_disk(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bl, "_ledger_path", lambda: tmp_path / "b.ndjson")
+        r = bl.append("s", "a", None, "reach me at joao.silva@gmail.com")
+        assert r["ok"] is False and r["error_kind"] == "pii"
+        assert "joao.silva" not in json.dumps(r)
+
+    def test_programming_errors_propagate(self, tmp_ledger):
+        with pytest.raises(TypeError):
+            bl.append("s", "a", None, "d", meta=object())  # not JSON-serialisable
