@@ -27,7 +27,7 @@ Open session, compose a brief WITHOUT the author's recommendation, dispatch ever
 parallel as a background subagent (`councillor` per lens, advisors by name), anonymise objections
 as A/B/C, dispatch `council-chair` (Opus), record the verdict, surface to the tech-lead, record
 outcomes later. Every row goes through `noctus.dev.council_ledger` (`open_session`,
-`record_objection`, `record_verdict`, `record_event`, `report`). Steps in the skill.
+`record_objection`, `blind_view`, `record_verdict`, `record_event`, `full_view`, `report`, `status`). The ndjson ledger in git is the source of truth; a DB mirror and any UI are deferred (owner decision pending, parked design on branch `feat/council-db-parked`). Steps in the skill.
 
 Hybrid by owner decision (2026-11-09): NOW every seat is a Claude Code background subagent
 (no direct API calls). Seat models: lenses Sonnet, advisors their configured model, chair Opus.

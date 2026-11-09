@@ -284,8 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-council-ledger-schema", action="store_true", help="Offline pre-commit gate: every project-history/council/**/*.ndjson row validates against the council-ledger contract and a staged diff only appends at EOF (append-only). --paths scopes to staged files; --staged enforces append-only against the index. KB-free contract: project-history/assistant-chatbot/contracts/council-ledger.md.")
     parser.add_argument("--staged", action="store_true", help="With --check-council-ledger-schema: also enforce append-only against the git index.")
-    parser.add_argument("--check-council-ledger-sync", action="store_true", help="Online pre-push check: council ledger ndjson ids vs the DB ids. A missing table / no credentials is inconclusive (exit 0, printed loudly), never red.")
-    parser.add_argument("--council-ledger", dest="council_ledger", metavar="ACTION", help="Council ledger (open_session|record_objection|record_verdict|record_event|report|sync|status); args as JSON via --cl-args. MCP: noctus.dev.council_ledger.")
+    parser.add_argument("--council-ledger", dest="council_ledger", metavar="ACTION", help="Council ledger (open_session|record_objection|record_verdict|record_event|blind_view|full_view|report|status); args as JSON via --cl-args. MCP: noctus.dev.council_ledger.")
     parser.add_argument("--cl-args", dest="cl_args", metavar="JSON", default=None, help="With --council-ledger: JSON object of the action's arguments.")
     parser.add_argument("--check-measurable-by-design", action="store_true", help="BLOCKING DELTA gate (owner rule 2026-11-09, measurement-by-design): a NEW migration's domain table needs a creation timestamp, and a lifecycle/status column needs an append-only transition capture (*_eventos table / audit trigger / transition-log organ). Warns on free-text outcomes, missing updated_at, event tables with no actor. Escape: `-- measurable: <reason>` (recorded to gate telemetry). --paths scopes to staged ADDED migrations; omitted = migrations added vs origin/dev. KB § PATTERNS/architect/measurement-by-design.md.")
     parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
@@ -1234,21 +1233,6 @@ def main():
             print(f"  {GREEN}✓ council-ledger-schema: every ledger row validates and the ledger is append-only.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} council-ledger-schema finding(s):{RESET}")
-        for i in issues:
-            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
-        sys.exit(1)
-    elif args.check_council_ledger_sync:
-        from settings import REPO_ROOT
-        from tools.noctus.dev.compliance import check_council_ledger_sync
-        _cl_v: dict = {}
-        issues = check_council_ledger_sync(repo_root=REPO_ROOT, verdict_out=_cl_v)
-        if _cl_v.get("status") == "inconclusive":
-            print(f"  {YELLOW}? council-ledger-sync inconclusive: {_cl_v.get('reason')} (not a failure; nothing was verified).{RESET}")
-            sys.exit(0)
-        if not issues:
-            print(f"  {GREEN}✓ council-ledger-sync: every ndjson id is in the DB.{RESET}")
-            sys.exit(0)
-        print(f"  {RED}✗ {len(issues)} council-ledger-sync finding(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
