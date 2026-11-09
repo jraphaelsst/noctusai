@@ -19,7 +19,7 @@ describe("ProntidaoPanel", () => {
         data: {
           pronto_para_publicar: false,
           itens: [
-            { codigo: "sem_avaliacao", grupo: "avaliacoes", severidade: "bloqueante", mensagem: "Sem avaliação", acao_sugerida: "Rode uma avaliação" },
+            { codigo: "sem_avaliacao", grupo: "avaliacao", severidade: "bloqueante", mensagem: "Sem avaliação", acao_sugerida: "Rode uma avaliação" },
             { codigo: "ok1", grupo: "conteudo", severidade: "ok", mensagem: "Textos completos", acao_sugerida: null },
           ],
         },
@@ -55,7 +55,7 @@ describe("ProntidaoPanel", () => {
 
   it("renders a button instead of the API-path text for fixable items", () => {
     mockUse.mockReturnValue(view({ data: { pronto_para_publicar: false, itens: [
-      { codigo: "mecanismo_hash_diferente", grupo: "avaliacoes", severidade: "bloqueante", mensagem: "Suíte velha", acao_sugerida: "Clique em Rodar suíte de mecanismo" },
+      { codigo: "mecanismo_hash_diferente", grupo: "avaliacao", severidade: "bloqueante", mensagem: "Suíte velha", acao_sugerida: "Clique em Rodar suíte de mecanismo" },
     ] } }));
     render(<ProntidaoPanel agentKey="a" />);
     expect(screen.getByRole("button", { name: "acao-mecanismo_hash_diferente" })).toBeTruthy();

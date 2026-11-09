@@ -1,13 +1,17 @@
 /** Agent readiness checklist (`GET /api/studio/agents/{key}/prontidao`) and the skills-refresh result. */
+/** The backend's closed group set (`app/studio/prontidao.py` GRUPOS; a backend test keeps the two equal). */
 export type ProntidaoGrupo =
+  | "compilador"
   | "conteudo"
-  | "avaliacoes"
   | "padrao"
+  | "avaliacao"
   | "skills"
   | "ferramentas"
-  | "specs"
+  | "especificacoes"
+  | "seguranca"
   | "geracao"
-  | "controles";
+  | "operacao"
+  | "modelo";
 export type ProntidaoSeveridade = "bloqueante" | "aviso" | "ok";
 
 export interface ProntidaoItem {
@@ -24,14 +28,17 @@ export interface Prontidao {
 }
 
 export const PRONTIDAO_GRUPO_LABEL: Record<ProntidaoGrupo, string> = {
+  compilador: "Prompt compilado",
   conteudo: "Conteúdo",
-  avaliacoes: "Avaliações",
   padrao: "Padrão de qualificação",
+  avaliacao: "Avaliações",
   skills: "Skills",
   ferramentas: "Ferramentas",
-  specs: "Especificações",
+  especificacoes: "Especificações",
+  seguranca: "Segurança",
   geracao: "Geração com IA",
-  controles: "Controles",
+  operacao: "Operação",
+  modelo: "Modelo canônico",
 };
 
 export interface SkillsAtualizadas {

@@ -420,3 +420,57 @@ def test_no_suggested_action_shows_an_api_path():
 
     src = inspect.getsource(pr).split("from __future__", 1)[1]  # the module docstring is for developers
     assert not re.findall(r"\b(?:POST|PUT|PATCH|DELETE)\s+(?:\.\.\.|/api)", src)
+
+
+# ── the canonical template's must-haves (owner 2026-11-08) ──────────────────
+
+
+class TestModeloCanonico:
+    def test_missing_must_haves_are_advisory_and_never_block_publish(self):
+        p = pr.compor(_entrada(canonico_exigido=True, casos_comportamento=3, juiz=_juiz()))
+        assert {"sem_secao_discordar", "sem_evals_bajulacao"} <= set(_codigos(p, "aviso"))
+        assert p.pronto_para_publicar
+
+    def test_both_present_is_ok(self):
+        p = pr.compor(_entrada(canonico_exigido=True, secoes_ativas=(pr.CHAVE_SECAO_DISCORDAR, "persona"),
+                               tags_comportamento=(pr.TAG_BAJULACAO,), casos_comportamento=3, juiz=_juiz()))
+        assert "modelo_canonico" in _codigos(p, "ok") and not {"sem_secao_discordar", "sem_evals_bajulacao"} & set(_codigos(p))
+
+    def test_not_required_says_nothing(self):
+        p = pr.compor(_entrada(casos_comportamento=3, juiz=_juiz()))
+        assert not [i for i in p.itens if i.grupo == "modelo"]
+
+    def test_the_route_reads_sections_and_case_tags(self, plat):
+        assert {"sem_secao_discordar", "sem_evals_bajulacao"} <= {i["codigo"] for i in _get(plat).json()["itens"]}
+        secao = {"chave": pr.CHAVE_SECAO_DISCORDAR, "titulo": "Discordar com respeito", "ordem": 10,
+                 "conteudo": "Você discorda com respeito.", "ativo": True}
+        assert plat.put(f"{BASE}/novo/draft/sections", json={"secoes": [secao]}).status_code == 200
+        _caso(plat, slug="b1", tags=["bajulacao"])
+        codigos = {i["codigo"] for i in _get(plat).json()["itens"]}
+        assert "modelo_canonico" in codigos and "sem_secao_discordar" not in codigos
+
+
+class TestGrupos:
+    def test_an_item_outside_the_closed_group_set_is_refused(self, monkeypatch):
+        monkeypatch.setattr(pr, "_canonico", lambda e: [pr.Item("x", "inventado", "aviso", "m")])
+        with pytest.raises(ValueError, match="outside GRUPOS"):
+            pr.compor(_entrada())
+
+    def test_every_group_the_composer_emits_is_declared(self):
+        import ast
+        from pathlib import Path
+
+        tree = ast.parse(Path(pr.__file__).read_text(encoding="utf-8"))
+        emitidos = {n.args[1].value for n in ast.walk(tree)
+                    if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "Item" and len(n.args) >= 2}
+        assert emitidos <= set(pr.GRUPOS)
+
+    def test_the_frontend_labels_exactly_the_backend_groups(self):
+        import re
+        from pathlib import Path
+
+        ts = (Path(__file__).resolve().parents[4] / "frontend/src/api/studio/types-prontidao.ts").read_text(encoding="utf-8")
+        union = ts.split("export type ProntidaoGrupo =", 1)[1].split(";", 1)[0]
+        labels = ts.split("PRONTIDAO_GRUPO_LABEL", 1)[1].split("};", 1)[0]
+        assert set(re.findall(r'"([a-z_]+)"', union)) == set(pr.GRUPOS)
+        assert set(re.findall(r"^\s*([a-z_]+):", labels, re.M)) == set(pr.GRUPOS)

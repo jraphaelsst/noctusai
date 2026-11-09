@@ -215,6 +215,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── request-path-latency.md
 │   │   │   ├── data-in-the-wrong-field.md
 │   │   │   ├── postgrest-schema-targeting.md
+│   │   │   ├── canonical-agent-template.md
 │   │   │   ├── predeploy-leg-verify-or-block.md
 │   │   │   ├── prod-cache-container.md
 │   │   │   ├── prod-deploy-safety-gates.md
@@ -674,6 +675,7 @@ KNOWLEDGE-BASE/
 | Working on tests | `CONTEXT/PATTERNS/compliance/testing.md` |
 | Writing or fixing tests / the test harness (how-to, strategy) | `CONTEXT/PATTERNS/compliance/test-harness-playbook.md` + `CONTEXT/PATTERNS/compliance/test-engineering-canon.md` |
 | Adding a `try/except` (production code) | `CONTEXT/PATTERNS/backend/logging.md` (level guide, the no-`# silent-ok` rule) |
+| Canonical agent template — the must-haves every conversational Studio agent carries: the `discordar-com-respeito` section (disagree respectfully, never agree to please) and behaviour evals tagged `bajulacao`; the generator `criador-de-agentes` writes both; prontidão group `modelo` reports a gap as an aviso (shadow), promotion to blocking named; the closed prontidão group set `GRUPOS` mirrored by the frontend label map; born from the v03 LLM Council report (owner 2026-11-08) | `CONTEXT/PATTERNS/backend/canonical-agent-template.md` |
 | Adding a new keeper detector | `CONTEXT/PATTERNS/compliance/testing.md § Regression-test-the-detector` + `CONTEXT/06-AGENTS.md § Detectors` |
 | Building or changing the toolkit itself (an MCP tool, `cli.py` flag, keeper, cache, hook or guard) | `CONTEXT/PATTERNS/tooling/tooling-craft-canon.md` (§12 checklists) — agent `tooling-engineer` |
 | Adding a helper to seed lib (deciding which layer it lives in) | `CONTEXT/PATTERNS/architect/seed-lib-layout.md § Where to put a new helper` |
