@@ -940,12 +940,14 @@ class TestEvalsRunToken:
         self._as(plat, ["studio:evals-run"])
         resp = plat.raw.get(self.RUNS)
         assert resp.status_code == 200, resp.text
-        assert plat.raw.get(f"{self.RUNS}/{UUID(int=1)}").status_code == 404  # reached the handler: run unknown
+        resp = plat.raw.get(f"{self.RUNS}/{UUID(int=1)}")  # reached the handler: run unknown
+        assert resp.status_code == 404 and resp.json()["code"] == "eval_run_not_found"
 
     def test_the_scope_cancels_through_the_handler(self, evals):
         plat, _, _ = evals
         self._as(plat, ["studio:evals-run"])
-        assert plat.raw.post(f"{self.RUNS}/{UUID(int=1)}/cancel").status_code == 404  # past the gate, run unknown
+        resp = plat.raw.post(f"{self.RUNS}/{UUID(int=1)}/cancel")  # past the gate, run unknown
+        assert resp.status_code == 404 and resp.json()["code"] == "eval_run_not_found"
 
     def test_the_scope_reaches_the_mecanismo_read(self, evals):
         plat, _, _ = evals
@@ -956,21 +958,151 @@ class TestEvalsRunToken:
     def test_the_scope_cannot_publish_or_write_definitions(self, evals):
         plat, _, _ = evals
         self._as(plat, ["studio:evals-run"])
-        for resp in (
-            plat.raw.put(f"{BASE}/julia/draft/textos", json={"itens": []}),
-            plat.raw.put(f"{BASE}/julia/draft/sections", json=SECOES),
-            plat.raw.post(f"{BASE}/julia/draft/publish", json={}),
-            plat.raw.post(f"{BASE}/julia/evals/cases", json={}),
-            plat.raw.delete(f"{BASE}/julia"),
+        for resp, code in (
+            (plat.raw.put(f"{BASE}/julia/draft/textos", json={"itens": []}), "scope_missing"),
+            (plat.raw.put(f"{BASE}/julia/draft/sections", json=SECOES), "scope_missing"),
+            (plat.raw.post(f"{BASE}/julia/draft/publish", json={}), "scope_missing"),
+            (plat.raw.post(f"{BASE}/julia/evals/cases", json={}), "scope_missing"),
+            (plat.raw.delete(f"{BASE}/julia"), "scope_missing"),
         ):
             assert resp.status_code == 403, resp.request.url
-            assert resp.json()["code"] in {"scope_missing", "user_required"}
+            assert resp.json()["code"] == code, (resp.request.url, resp.text)
 
     def test_a_tenant_org_admin_is_still_403_on_runs(self, plat):
         plat.mock_supabase.set_table_data(
             "noctus_users", [{"id": str(DEFAULT_USER_ID), "org_id": str(DEFAULT_ORG_ID), "role": "user", "org_role": "owner"}])
         resp = plat.get(self.RUNS)
         assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
+
+
+    # -- F1: the scope string alone never opens a runtime agent ------------------------------------------------
+
+    def test_publish_plus_evals_scope_without_issuer_cannot_publish_a_runtime_agent(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:publish", "studio:evals-run"], issuer=None)
+        resp = plat.raw.post(f"{BASE}/julia/draft/publish", json={})
+        assert resp.status_code == 403 and resp.json()["code"] == "user_required"
+
+    def test_publish_plus_evals_scope_with_the_platform_issuer_still_cannot_publish_a_runtime_agent(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:publish", "studio:evals-run"])
+        resp = plat.raw.post(f"{BASE}/julia/draft/publish", json={})
+        assert resp.status_code == 403 and resp.json()["code"] == "user_required"
+
+    def test_publish_plus_evals_scope_without_issuer_is_refused_on_the_runs_route(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:publish", "studio:evals-run"], issuer=None)
+        resp = plat.raw.get(self.RUNS)
+        assert resp.status_code == 403 and resp.json()["code"] == "issuer_not_allowed"
+
+    # -- F5: the mechanism routes keep the dev-advisor rule for a studio:publish token --------------------------
+
+    def test_a_publish_only_token_cannot_start_or_read_a_mecanismo_run_on_a_runtime_agent(self, evals):
+        plat, _, _ = evals
+        self._as(plat, ["studio:publish"], issuer=None)
+        for resp in (
+            plat.raw.post(f"{BASE}/julia/draft/mecanismo-runs"),
+            plat.raw.get(f"{BASE}/julia/mecanismo-runs/{UUID(int=1)}"),
+        ):
+            assert resp.status_code == 403 and resp.json()["code"] == "user_required", resp.request.url
+
+    # -- F3: denial of wallet -----------------------------------------------------------------------------------
+
+    @staticmethod
+    def _seed_case(plat, store):
+        from app.stores.studio_evals import EvalCaseInput
+
+        agent = plat.store.get_agent(DEFAULT_ORG_ID, "julia")
+        store.create_case(DEFAULT_ORG_ID, agent.id, EvalCaseInput(
+            slug="c1", titulo="C1", entrada="oi", criterios={"deve": ["responde"], "nao_deve": []}))
+        return agent, _draft_id(plat)
+
+    def test_a_token_starts_a_run_on_the_current_draft_with_the_default_cap(self, evals):
+        plat, store, scheduled = evals
+        agent, draft_id = self._seed_case(plat, store)
+        self._as(plat, ["studio:evals-run"])
+        resp = plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["status"] == "pendente" and body["version_id"] == str(draft_id)
+        assert len(scheduled) == 1
+        assert store.get_run(DEFAULT_ORG_ID, agent.id, UUID(body["id"])).limite_usd == 2.0
+
+    def test_a_token_cannot_raise_the_run_cost_cap(self, evals):
+        plat, store, scheduled = evals
+        _, draft_id = self._seed_case(plat, store)
+        self._as(plat, ["studio:evals-run"])
+        resp = plat.raw.post(self.RUNS, json={"version_id": str(draft_id), "limite_usd": 50})
+        assert resp.status_code == 422 and resp.json()["code"] == "limite_usd_above_default"
+        assert scheduled == []
+
+    def test_a_token_cannot_pick_the_generation_model(self, evals):
+        from app.studio.models import EVAL_RUN_MODEL_ALLOWLIST
+
+        plat, store, scheduled = evals
+        _, draft_id = self._seed_case(plat, store)
+        self._as(plat, ["studio:evals-run"])
+        resp = plat.raw.post(
+            self.RUNS, json={"version_id": str(draft_id), "modelo_geracao": EVAL_RUN_MODEL_ALLOWLIST[0]})
+        assert resp.status_code == 422 and resp.json()["code"] == "modelo_geracao_not_allowed"
+        assert scheduled == []
+
+    def test_a_token_cannot_run_a_published_version(self, evals):
+        plat, store, scheduled = evals
+        self._seed_case(plat, store)
+        _fill(plat)
+        published = _publish(plat)
+        self._as(plat, ["studio:evals-run"])
+        resp = plat.raw.post(self.RUNS, json={"version_id": str(published["id"])})
+        assert resp.status_code == 422 and resp.json()["code"] == "version_not_draft"
+        assert scheduled == []
+
+    def test_the_org_daily_ceiling_is_fail_closed(self, evals, monkeypatch):
+        from app.config import settings
+
+        plat, store, scheduled = evals
+        _, draft_id = self._seed_case(plat, store)
+        monkeypatch.setattr(settings, "studio_eval_token_daily_budget_usd", 3.0)
+        self._as(plat, ["studio:evals-run"])
+        first = plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
+        assert first.status_code == 202, first.text
+        second = plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
+        assert second.status_code == 429 and second.json()["code"] == "eval_daily_budget_exceeded"
+        assert len(scheduled) == 1
+
+    def test_a_store_failure_computing_the_ceiling_does_not_start_a_run(self, evals, monkeypatch):
+        plat, store, scheduled = evals
+        _, draft_id = self._seed_case(plat, store)
+
+        def boom(*a, **k):
+            raise RuntimeError("store down")
+
+        monkeypatch.setattr(store, "org_spend_since", boom)
+        self._as(plat, ["studio:evals-run"])
+        with pytest.raises(RuntimeError, match="store down"):
+            plat.raw.post(self.RUNS, json={"version_id": str(draft_id)})
+        assert scheduled == []
+
+    def test_the_platform_admin_ui_keeps_its_latitude(self, evals):
+        plat, store, scheduled = evals
+        _, draft_id = self._seed_case(plat, store)
+        resp = plat.post(self.RUNS, json={"version_id": str(draft_id), "limite_usd": 10})
+        assert resp.status_code == 202, resp.text
+        assert len(scheduled) == 1
+
+    # -- F6: a token's read of a run is audited -----------------------------------------------------------------
+
+    def test_a_token_read_of_run_detail_is_audited(self, evals):
+        plat, store, _ = evals
+        agent, draft_id = self._seed_case(plat, store)
+        self._as(plat, ["studio:evals-run"])
+        run_id = plat.raw.post(self.RUNS, json={"version_id": str(draft_id)}).json()["id"]
+        before = [a for a in plat.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "definicao_lida"]
+        resp = plat.raw.get(f"{self.RUNS}/{run_id}")
+        assert resp.status_code == 200, resp.text
+        after = [a for a in plat.store.list_audit_log(DEFAULT_ORG_ID, agent.id) if a.acao == "definicao_lida"]
+        assert len(after) == len(before) + 1
+        assert after[-1].depois["o_que"] == "eval_run" and after[-1].actor == UUID(int=11)
 
 
 class TestEvalsTokenMint:
@@ -984,17 +1116,23 @@ class TestEvalsTokenMint:
                 return N(secret="noc_x", info=N(id=UUID(int=3), prefix="noc_x"))
 
         class _Audit:
+            def __init__(self):
+                self.rows = []
+
             def record(self, **kw):
-                pass
+                self.rows.append(kw)
 
         admin = _Admin()
+        audit = _Audit()
         plat.raw.app.dependency_overrides[get_product_token_admin_dep] = lambda: admin
-        plat.raw.app.dependency_overrides[get_token_audit_dep] = lambda: _Audit()
+        plat.raw.app.dependency_overrides[get_token_audit_dep] = lambda: audit
         plat.as_role("admin")
         _platform_admin(plat)
         resp = plat.post(f"{PLAT}/content-token", json={"label": "loop", "tipo": "avaliacoes"})
         assert resp.status_code == 201, resp.text
         assert resp.json()["scopes"] == ["studio:evals-run"]
         assert admin.kw["issuer"] == "noctus-platform"
+        assert admin.kw["label"] == "avaliacoes: loop"
+        assert audit.rows[-1]["agent_key"] == "studio-evals"
         bad = plat.post(f"{PLAT}/content-token", json={"label": "x", "tipo": "avaliacoes", "permitir_exclusao": True})
         assert bad.status_code == 422

@@ -200,4 +200,4 @@ Leak fingerprint: skill bodies/files handed to the model in a turn are added to 
 
 **Personal tokens.** A grant is one (agent, product, org) with its own channel token; every `/api/channels/*` request also checks the token's grant is live and names this (org, agent) (403 `grant_inativo` / `agent_not_allowed`), so a revoked grant stops turns and edits at once and a token never reaches another agent.
 
-> Eval loop (2026-11-08): the platform-issued `studio:evals-run` token (mint via `POST /api/studio/plataforma/content-token` with `tipo: "avaliacoes"`) starts, lists, reads and cancels eval runs of both suites; see MASTER-PROMPT.
+> Eval loop (2026-11-08): the platform-issued `studio:evals-run` token (mint via `POST /api/studio/plataforma/content-token` with `tipo: "avaliacoes"`) starts, lists, reads and cancels eval runs of both suites (a token-started run is capped at the default cost, the default model, the current draft, and a fail-closed per-org 24h spend ceiling; `studio:evals-run` is never mintable through the generic token route); see MASTER-PROMPT.

@@ -234,6 +234,17 @@ class TestScopeIsMintable:
         assert resp.json()["scopes"] == [SCOPE]
 
 
+class TestPlatformIssuedScopesAreNotMintable:
+    def test_a_generic_mint_cannot_carry_the_evals_run_scope(self, pkg):
+        from datetime import datetime, timedelta, timezone
+
+        resp = pkg.post("/api/settings/api-tokens", json={
+            "label": "not-allowed", "scopes": ["studio:evals-run"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+        })
+        assert resp.status_code == 422, resp.text
+
+
 class TestEvalRunThroughProductionWiring:
     """Regression (2026-10-04): the PRODUCTION scheduler binding
     (``app.studio.wiring.studio_eval_scheduler``) carried its own user-only

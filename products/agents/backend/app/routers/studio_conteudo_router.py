@@ -548,12 +548,14 @@ def mint_content_token(
         if payload.permitir_exclusao:
             raise http_error(422, "exclusao_nao_aplicavel", "Um token de avaliações não pode excluir agentes.")
         scopes = [SCOPE_STUDIO_EVALS_RUN]
+        label_prefix, audit_key = "avaliacoes: ", "studio-evals"
     else:
+        label_prefix, audit_key = "conteudo: ", "studio-content"
         scopes = [SCOPE_STUDIO_CONTENT_WRITE] + ([SCOPE_STUDIO_AGENT_DELETE] if payload.permitir_exclusao else [])
     expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expira_em_dias)
     try:
         minted = token_admin.mint(
-            "agents", org_id=ctx.org_id, label=f"conteudo: {payload.label}",
+            "agents", org_id=ctx.org_id, label=f"{label_prefix}{payload.label}",
             scopes=scopes, expires_at=expires_at, issuer=CONTENT_TOKEN_ISSUER,
             minted_by=ctx.user_id,
         )
@@ -562,7 +564,7 @@ def mint_content_token(
         raise http_error(502, "mint_failed", "Falha ao emitir o token.") from exc
     try:
         audit.record(
-            api_token_id=minted.info.id, org_id=ctx.org_id, action="MINT", agent_key="studio-content",
+            api_token_id=minted.info.id, org_id=ctx.org_id, action="MINT", agent_key=audit_key,
             actor_user_id=ctx.user_id, status=201,
         )
     except Exception as exc:
@@ -601,7 +603,7 @@ def list_content_tokens(
     response: Response, ctx: AuthContext = Depends(require_platform_admin),
     token_admin: ProductTokenAdmin = Depends(get_product_token_admin_dep),
 ) -> ContentTokensOut:
-    """The platform org's ``studio:content-write`` tokens (revoked + expired included), newest first. Never the secret."""
+    """The platform org's ``studio:content-write`` and ``studio:evals-run`` tokens (revoked + expired included), newest first. Never the secret."""
     try:
         infos = _content_tokens(token_admin, ctx.org_id)
     except Exception as exc:

@@ -38,6 +38,7 @@ import logging
 
 from noctusai_seed import HealthEndpointConfig, create_product_app
 from noctusai_seed.auth_router import create_auth_router
+from noctusai_lib.api.auth.session import TokenScopeAllowList
 from noctusai_seed.organs import mount_finance
 
 from app.clients.social_wiring import SocialWiringNotConfigured
@@ -48,6 +49,7 @@ from app.dependencies import (
     auth_router_deps,
     get_admin_client,
     get_core_client,
+    MINTABLE_TOKEN_SCOPES,
     get_current_user_org,
 )
 from app.rate_limit import limiter
@@ -119,6 +121,9 @@ _auth_router = create_auth_router(
     settings,
     api_token_resolver=_LazyApiTokenResolver(),
     legacy_jwt_resolver=_legacy_jwt_resolver,
+    # STRICT: a generic mint may only carry a documented, org-mintable scope. Platform-issued scopes
+    # (studio:evals-run, studio:content-write, ...) are minted only by their dedicated platform routes.
+    scope_allow_list=TokenScopeAllowList(MINTABLE_TOKEN_SCOPES, strict=True),
 )
 
 

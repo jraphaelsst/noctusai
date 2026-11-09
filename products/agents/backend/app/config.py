@@ -260,6 +260,10 @@ class SeedSettings(ProductSettings):
     # `STUDIO_MECANISMO_RUN_BUDGET_USD` env override. A run that reaches it is cut short and never
     # opens the publish gate.
     studio_mecanismo_run_budget_usd: float = 5.00
+    # Fail-closed rolling-24h ceiling (USD, per org) on eval runs STARTED BY A PRODUCT TOKEN (`studio:evals-run`):
+    # the sum of the org's runs' cost (reserved `limite_usd` while a run has no cost yet) + the new run's cap must stay
+    # under it, else 429 `eval_daily_budget_exceeded`. `STUDIO_EVAL_TOKEN_DAILY_BUDGET_USD` env override.
+    studio_eval_token_daily_budget_usd: float = 20.00
 
     # ── Org-spec safety (Julia-line CONTRACT §E; app.studio.especificacoes_service) ─────────────
     # `SPEC_VALIDATION_MODE`: `report` (S4 rollout default) accepts every write and lists each invalid stored value in
