@@ -68,7 +68,7 @@ from app.schemas.studio_ke import (
     EvalRunListOut,
     EvalRunOut,
 )
-from app.stores._db_errors import StudioConflict
+from app.stores._db_errors import StudioConflict, mensagem_conflito
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
 from app.stores.studio_evals import EvalCaseInput, _UNSET
@@ -296,7 +296,7 @@ async def create_run(
         except NotFound as exc:
             raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
         except StudioConflict as exc:  # run_in_progress
-            raise http_error(409, exc.code, str(exc)) from exc
+            raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
         except ValueError as exc:
             raise http_error(422, "no_eval_cases", str(exc)) from exc
 

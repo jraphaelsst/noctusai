@@ -89,6 +89,7 @@ from app.schemas.studio import (
     VersionSummaryOut,
 )
 from app.stores.agents import DEFAULT_AGENT_KEYS
+from app.stores._db_errors import erro_de_item, mensagem_conflito
 from app.stores.errors import NotFound
 from app.stores.marcadores import get_marcador_store
 from app.stores.studio_definitions import (
@@ -268,7 +269,7 @@ def store_errors() -> Iterator[None]:
     except VersionImmutable as exc:
         raise http_error(409, "version_immutable", "A versão publicada é imutável.") from exc
     except StudioConflict as exc:
-        raise http_error(409, exc.code, str(exc)) from exc
+        raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
     except ValueError as exc:
         raise http_error(422, "invalid_field", str(exc)) from exc
 
@@ -832,7 +833,7 @@ def upsert_draft_skill_files_batch(
             )
         except (ValueError, StudioConflict) as exc:
             erros += 1
-            resultados.append(SkillFileBatchItemResultOut(caminho=item.caminho, status="erro", erro=str(exc)))
+            resultados.append(SkillFileBatchItemResultOut(caminho=item.caminho, status="erro", erro=erro_de_item(exc)))
             continue
         existing_caminhos.add(item.caminho)
         if was_existing:
@@ -1187,7 +1188,7 @@ async def run_mecanismo_suite(
     """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
     minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
     ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. A second run for the same
-    version while one executes is 409 ``run_in_progress``. The driver comes from ``get_eval_turn_driver`` (409
+    version while one executes is 409 ``run_in_progress`` carrying that run's ``run_id`` (the screen follows it). The driver comes from ``get_eval_turn_driver`` (409
     ``driver_indisponivel`` when none is configured); the cost cap comes from settings. Replies carry codes only."""
     agent = resolve_agent(store, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
@@ -1202,9 +1203,20 @@ async def run_mecanismo_suite(
     limite = settings.studio_mecanismo_run_budget_usd
     try:
         with store_errors():
-            run_id, casos = iniciar_suite_mecanismo(
-                mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
-                compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite)
+            try:
+                run_id, casos = iniciar_suite_mecanismo(
+                    mecanismo, driver, org_id=ctx.org_id, agent_id=agent.id, version_id=draft.id,
+                    compiled_hash=compiled.hash, started_by=actor_id(ctx), limite_usd=limite)
+            except StudioConflict as exc:
+                if exc.code != "run_in_progress":
+                    raise
+                # Name the run in flight so the screen follows it (progress, then result) instead of a refusal.
+                em_execucao = mecanismo.run_em_execucao(ctx.org_id, draft.id)
+                raise http_error(
+                    409, "run_in_progress",
+                    "Já há uma suíte de mecanismo rodando para esta versão. Acompanhe o resultado dela aqui.",
+                    run_id=str(em_execucao) if em_execucao else None,
+                ) from exc
     except SuiteVazia as exc:
         raise http_error(409, "sem_casos_mecanismo", "O agente não tem casos de mecanismo ativos.") from exc
     except DriverSemTipo as exc:

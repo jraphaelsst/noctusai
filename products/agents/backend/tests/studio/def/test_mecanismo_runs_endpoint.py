@@ -169,7 +169,12 @@ class TestPoll:
         _setup(studio, driver=_Lento(_ok()))
         rid = studio.post(URL).json()["run_id"]
         again = studio.post(URL)
-        assert again.status_code == 409 and again.json()["code"] == "run_in_progress"
+        corpo = again.json()
+        assert again.status_code == 409 and corpo["code"] == "run_in_progress"
+        # The refusal names the run in flight (the screen follows it) and reads pt-BR, never DB/internal text.
+        assert corpo["run_id"] == rid
+        assert corpo["detail"].startswith("Já há uma suíte de mecanismo rodando")
+        assert "duplicate" not in corpo["detail"] and "uq_" not in corpo["detail"]
         assert _poll(studio, rid)["status"] == "concluida"
 
     def test_a_crashing_driver_marks_the_run_falhou_with_a_fixed_text(self, studio):
