@@ -19,9 +19,7 @@ vi.mock("@/hooks/studio/useControle", () => ({ useSetControle: () => ligar() }))
 vi.mock("@/hooks/studio/useBiblioteca", () => ({ useAtualizarSkillsBiblioteca: () => ({ mutate: vi.fn(), isPending: false, isError: false, isSuccess: false }) }));
 vi.mock("@/hooks/studio/useStudioAgents", () => ({ useStudioAgent: () => agentHook() }));
 
-import { act } from "@testing-library/react";
-import { ApiError } from "@noctusai/lib";
-import { ProntidaoAcao, acaoDoItem, descreverFalha, runEmExecucao } from "@/components/studio/ProntidaoAcao";
+import { ProntidaoAcao, acaoDoItem, descreverFalha } from "@/components/studio/ProntidaoAcao";
 
 const mut = (over: object = {}) => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false, isSuccess: false, error: null, ...over });
 const runView = (data?: object, over: object = {}) => ({ data, showSkeleton: false, isRefreshing: false, isError: false, error: null, refetch: vi.fn(), ...over });
@@ -57,29 +55,17 @@ describe("acaoDoItem", () => {
 });
 
 describe("mecanismo action", () => {
-  const emCurso = () => new ApiError(409, "Já há uma suíte de mecanismo rodando para esta versão.", { detail: "x", code: "run_in_progress", run_id: "r9" });
-
-  it("reads the in-flight run id only from a 409 run_in_progress", () => {
-    expect(runEmExecucao(emCurso())).toBe("r9");
-    expect(runEmExecucao(new ApiError(409, "x", { code: "sem_casos_mecanismo" }))).toBeNull();
-    expect(runEmExecucao(new Error("x"))).toBeNull();
-  });
-
-  it("follows the run already in flight instead of showing a refusal", () => {
-    const m = mut();
+  it("lets a second run start while one executes (parallel runs, 071) and follows the newest", () => {
+    let n = 0;
+    const m = mut({ mutate: (_v: unknown, o: { onSuccess: (r: { run_id: string }) => void }) => o.onSuccess({ run_id: `r${++n}` }) });
     iniciar.mockReturnValue(m);
+    mecRun.mockReturnValue(runView({ ...MEC, status: "executando" }));
     render(<ProntidaoAcao codigo="mecanismo_hash_diferente" agentKey="julia" />);
-    fireEvent.click(screen.getByRole("button", { name: /Rodar suíte de mecanismo/ }));
-    const opts = m.mutate.mock.calls[0][1] as { onError: (e: unknown) => void };
-    act(() => opts.onError(emCurso()));
-    expect(mecRun).toHaveBeenLastCalledWith("julia", "r9");
-  });
-
-  it("never shows the raw conflict as an error when a run is in flight", () => {
-    iniciar.mockReturnValue(mut({ isError: true, error: emCurso() }));
-    render(<ProntidaoAcao codigo="mecanismo_hash_diferente" agentKey="julia" />);
-    expect(screen.queryByTestId("acao-mecanismo-erro")).toBeNull();
-    expect(screen.getByTestId("acao-mecanismo-seguindo").textContent).toContain("acompanhando");
+    const botao = screen.getByRole("button", { name: /Rodar suíte de mecanismo/ }) as HTMLButtonElement;
+    fireEvent.click(botao);
+    expect(botao.disabled).toBe(false);
+    fireEvent.click(botao);
+    expect(mecRun).toHaveBeenLastCalledWith("julia", "r2");
   });
 
   it("starts the suite on click", () => {

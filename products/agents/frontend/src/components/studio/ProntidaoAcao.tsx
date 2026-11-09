@@ -18,7 +18,6 @@ import { useIniciarMecanismo, useMecanismoRun } from "@/hooks/studio/useMecanism
 import { useCreateEvalRun, useEvalRun } from "@/hooks/studio/useEvals";
 import { useSetControle } from "@/hooks/studio/useControle";
 import { useAtualizarSkillsBiblioteca } from "@/hooks/studio/useBiblioteca";
-import { ApiError } from "@noctusai/lib";
 import { errorMessage } from "@/lib/errors";
 import type { MecanismoCaso } from "@/api/studio/types-prontidao";
 
@@ -85,13 +84,6 @@ function Rodando({ texto, testId }: { texto: string; testId: string }) {
   );
 }
 
-/** The run id a 409 `run_in_progress` names (the suite already executing for this version), else `null`. */
-export function runEmExecucao(err: unknown): string | null {
-  if (!(err instanceof ApiError) || err.code !== "run_in_progress") return null;
-  const id = (err.body as { run_id?: unknown } | undefined)?.run_id;
-  return typeof id === "string" && id ? id : null;
-}
-
 function AcaoMecanismo({ agentKey }: { agentKey: string }) {
   const admin = useIsPlatformAdmin();
   const iniciar = useIniciarMecanismo(agentKey);
@@ -108,21 +100,18 @@ function AcaoMecanismo({ agentKey }: { agentKey: string }) {
       <Button
         size="sm"
         variant="outline"
-        disabled={rodando}
+        // Several runs of one version may execute at once (migration 071): only the POST itself blocks a click.
+        // The panel follows the newest run it started.
+        disabled={iniciar.isPending}
         onClick={() => {
           setRunId(null);
-          iniciar.mutate(undefined, {
-            onSuccess: (res) => setRunId(res.run_id),
-            // A run already in flight for this version: follow it (progress, then its result), never a refusal.
-            onError: (err) => { const emCurso = runEmExecucao(err); if (emCurso) setRunId(emCurso); },
-          });
+          iniciar.mutate(undefined, { onSuccess: (res) => setRunId(res.run_id) });
         }}
         data-testid="acao-mecanismo-botao"
       >
         <Play className="mr-1 h-3 w-3" aria-hidden /> Rodar suíte de mecanismo
       </Button>
-      {iniciar.isError && !runEmExecucao(iniciar.error) && <Erro testId="acao-mecanismo-erro">{errorMessage(iniciar.error)}</Erro>}
-      {iniciar.isError && runEmExecucao(iniciar.error) && <Nota testId="acao-mecanismo-seguindo">Já havia uma suíte rodando para esta versão; acompanhando o resultado dela.</Nota>}
+      {iniciar.isError && <Erro testId="acao-mecanismo-erro">{errorMessage(iniciar.error)}</Erro>}
       {rodando && <Rodando testId="acao-mecanismo-andamento" texto="Rodando a suíte com o modelo real. Isso pode levar alguns minutos; você pode continuar aqui." />}
       {runId && run.isError && !r && <Erro testId="acao-mecanismo-erro-leitura">Não foi possível acompanhar a execução. <button type="button" className="underline" onClick={run.refetch}>Tentar de novo</button></Erro>}
       {r?.status === "falhou" && <Erro testId="acao-mecanismo-falhou">A execução falhou{r.erro ? `: ${r.erro}` : "."} Tente rodar de novo.</Erro>}
