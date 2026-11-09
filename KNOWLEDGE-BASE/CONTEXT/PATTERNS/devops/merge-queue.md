@@ -250,6 +250,8 @@ The message reports:
 
 **Local use:** run `noctus.dev.mq_watchdog` (dry by default), or `cli.py --mq-watchdog`. The in-session `cli.py --merge-queue watch` stays the steward's live feed; the watchdog does not replace it.
 
+**In-session feed reports batches too (2026-11-09).** `cli.py --merge-queue watch` also prints `MQ-BATCH <candidate> -> success|failure|cancelled <url>` once per finished candidate batch (the first poll is a silent baseline; a failed read prints `MQ-WATCH-ERROR batches …`). Before this an entry-only watch stayed silent through a whole bisect, because nothing leaves the list while suspects are retried. One Monitor on `^MQ-LEFT|^MQ-BATCH|^MQ-WATCH-ERROR` is the whole live loop; the procedure is skill `noc-steward`.
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned

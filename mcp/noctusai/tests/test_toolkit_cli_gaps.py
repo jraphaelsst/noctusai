@@ -98,6 +98,52 @@ def test_watch_retries_transient_within_a_poll():
     assert out == ["MQ a aaaaaaaaa -> queued:"] and slept == [1]
 
 
+def _run_batches(batch_seq, polls):
+    out, it = [], iter(batch_seq)
+
+    def batches_fn():
+        item = next(it)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    mq.watch(lambda: _snap(), lambda s: {}, interval=1, sleep=lambda s: None, emit=out.append,
+             max_polls=polls, attempts=1, batches_fn=batches_fn)
+    return out
+
+
+def _b(i, concl, branch="mq-candidate/9-1"):
+    return {"id": i, "branch": branch, "conclusion": concl, "url": f"u{i}"}
+
+
+def test_watch_reports_each_finished_batch_once_red_included_after_silent_baseline():
+    out = _run_batches([[_b(1, "success")],
+                        [_b(1, "success"), _b(2, "failure", "mq-candidate/9-2")],
+                        [_b(1, "success"), _b(2, "failure", "mq-candidate/9-2"), _b(3, "cancelled", "mq-candidate/9-3")]],
+                       polls=3)
+    assert out == ["MQ-BATCH mq-candidate/9-2 -> failure u2", "MQ-BATCH mq-candidate/9-3 -> cancelled u3"]
+
+
+def test_watch_batch_read_failure_is_reported_not_silent_and_keeps_the_baseline():
+    out = _run_batches([[_b(1, "success")], RuntimeError("gh down"), [_b(1, "success"), _b(2, "failure")]], polls=3)
+    assert out[0].startswith("MQ-WATCH-ERROR batches RuntimeError: gh down")
+    assert out[1] == "MQ-BATCH mq-candidate/9-1 -> failure u2"
+
+
+def test_completed_candidate_runs_filters_and_raises_on_failed_read():
+    rows = [{"databaseId": 1, "headBranch": "mq-candidate/9-1", "status": "completed", "conclusion": "failure", "url": "u"},
+            {"databaseId": 2, "headBranch": "mq-candidate/9-2", "status": "in_progress", "conclusion": "", "url": "v"},
+            {"databaseId": 3, "headBranch": "dev", "status": "completed", "conclusion": "success", "url": "w"}]
+    got = mq.completed_candidate_runs(run=lambda cmd, cwd=None: (0, json.dumps(rows), ""))
+    assert got == [{"id": 1, "branch": "mq-candidate/9-1", "conclusion": "failure", "url": "u"}]
+    try:
+        mq.completed_candidate_runs(run=lambda cmd, cwd=None: (1, "", "HTTP 502"))
+    except RuntimeError as exc:
+        assert "HTTP 502" in str(exc)
+    else:
+        raise AssertionError("a failed gh read must raise, never read as an empty queue")
+
+
 def test_queue_report_failure_is_a_json_error_object():
     def run(cmd, cwd=None, check=False):
         return 1, "", "fatal: could not read from remote"

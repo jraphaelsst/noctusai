@@ -1,0 +1,61 @@
+---
+name: noc-steward
+description: Use when this session is (or is asked to become) the release steward that guards the CI merge queue — triggers "you are the steward", "be the steward", "finish the shipment", "plan the merge queue", "ship everything", "watch the queue", "guard the queue", "drain the inbox", "is the queue moving?", "how's the queue going?", "batch red", "entry ejected", or any peer request (`release_steward action=request`) arriving in your inbox. The live loop: claim, enqueue, watch with ONE feed, act on every red within minutes, land and reply, then ship.
+version: 1.0.0
+---
+
+# noc-steward — guard the merge queue, then ship
+
+The steward is the ONE session that enqueues, runs `landed`, withdraws, blesses, promotes, deploys and applies prod migrations (`KB § PATTERNS/devops/release-steward.md`). Every other session files `release_steward action=request` and keeps building. The queue is the only path into `dev` (`KB § PATTERNS/devops/merge-queue.md`).
+
+**Why this skill exists.** Twice the queue stalled with nobody knowing: 2026-11-08, a bad keeper baseline failed three ~50-min bisect batches (3.5 h silent); 2026-11-09, the owner saw batch 9 red before the steward did. An entry-only watch is silent through a bisect, because nothing leaves the list. Silence is not a pass.
+
+## 1 · Take the role
+
+1. `ListAgents` + `noctus.dev.release_steward action=status`. Stale or no holder ⇒ `claim`, announce to every peer (`SendMessage`).
+2. `release_steward action=inbox`: drain it in ONE batched enqueue pass (`task_branch action=enqueue slug=… confirm=True`), `ack` each.
+3. Write the shift into a memory file `project_ci_steward_<date>_<name>.md`: the plan, the holds, the consents (verbatim, with where they were typed), and a log line per event. It is what survives a compaction.
+
+## 2 · Watch — one feed, every terminal state
+
+Arm ONE Monitor (30-min max; **re-arm on every expiry**, never let it lapse):
+
+```
+cd mcp/noctusai && .venv/bin/python cli.py --merge-queue watch --merge-queue-interval 60 2>&1 \
+  | grep -E --line-buffered "^MQ-LEFT|^MQ-BATCH|^MQ-WATCH-ERROR|Traceback"
+```
+
+- `MQ-BATCH <candidate> -> success|failure|cancelled <url>`: one line per finished candidate batch (since 2026-11-09). `cancelled` usually means a job hit its timeout: a hang, not a green.
+- `MQ-LEFT <slug> <sha> -> landed <dev> | ejected <why> | unknown`: `unknown` after a withdrawal is expected.
+- Off-host backstop: `.github/workflows/merge-queue-watchdog.yml` (every 10 min) alerts the owner on WhatsApp/email with or without a session (`noctus.dev.mq_watchdog`).
+- **Owner rule (2026-11-09):** if a drift goes unnoticed again, add a 20-minute timer (`ScheduleWakeup`/`CronCreate`) that checks the queue even when no event arrives.
+
+## 3 · A red or cancelled batch — act within minutes
+
+1. Read the failure: `gh run view <id> --log-failed` (or `gh api …/actions/jobs/<job>/logs`; a re-run hides attempt 1, so read `runs/<id>/attempts/1/jobs`). Name the test, the file:line, the error.
+2. List the batch: `git fetch origin <candidate>` + `git log --oneline origin/dev..FETCH_HEAD`. Match the failure to the entry whose diff touches it.
+3. **Withdraw the culprit** to save the ~50-min bisect: `git push origin --delete mq/<slug>--<sha7>` (owner standing permission: `mq/*` refs only; never `feat/*`, `dev`, `main`). The drain keeps bisecting the suspects it already holds; a withdrawal only takes effect in the NEXT drain run.
+4. Fix it or hand it back: a one-line steward rescue on its own branch (re-run the failing test through `hw_admission.py run`), or send the owner session the run URL, file:line and cause. Re-enqueue the fix as a new entry.
+5. Cannot reproduce locally (e.g. real-Postgres proofs with no `pg_ctl`)? Park it with a named destination in the memory file; never re-queue blind.
+
+## 4 · On every landing
+
+`task_branch action=landed slug=… confirm=True`, then reply `LANDED <dev sha>` / `EJECTED <reason>` to the requester. `no_pointer` on a subagent worktree is benign. `missing_commits` on derived `chore(kb-counts) … [auto]` commits is the tool, not lost work: confirm with `git log --oneline` that the content is on dev.
+
+## 5 · Consent — what the steward may decide
+
+- The owner's ask to ship IS the permission for bless/promote/deploy (`noc-ship` 1b). Do not invent approval phrases.
+- **Prod migrations need the owner's go typed in YOUR transcript**, per migration. An owner answer relayed by a peer is recorded as RELAYED and confirmed directly before acting.
+- Deleting remote branches and closing PRs needs the owner, always.
+- A deploy hold (missing secret, migration-before-image) is written into the memory file the moment it is known, with the dev SHA to cut at.
+
+## 6 · Ship
+
+After the queue drains: follow `noc-ship` (status → manifest → `predeploy_check` per active product, pinned tree → bless → promote). Apply each authorized migration BEFORE the image that needs it, then `deploy_image`, then reply `DEPLOYED`. A fleet-wide FE change needs one page per product opened by eye.
+
+## Lessons that recur (append; each cost an hour once)
+
+- argparse %-formats help text: a literal `%` in a new `--help` string crashes `cli.py --help` (write `%%`).
+- A hanging test burns its whole job timeout and reports `cancelled` with no test name.
+- `landed` reads the PRIMARY checkout's toolkit; a dirty primary skips its fast-forward, so a landed tool fix is not live until the primary can FF.
+- The auto-mode classifier blocks `gh run cancel` on drains and force-pushes; ask the owner, never work around it.

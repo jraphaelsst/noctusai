@@ -710,7 +710,8 @@ def _fmt_entry_line(slug: str, sha: str, v: dict[str, Any]) -> str:
 def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict[str, Any]],
           interval: float = 60, sleep: Callable[[float], None] = time.sleep,
           emit: Callable[[str], None] = lambda line: print(line, flush=True),
-          max_polls: int | None = None, attempts: int = 3, left_retries: int = 10) -> None:
+          max_polls: int | None = None, attempts: int = 3, left_retries: int = 10,
+          batches_fn: Callable[[], list[dict[str, Any]]] | None = None) -> None:
     """Long-running transition printer: ONE line per change, so a steward never diffs by hand.
 
     `MQ <slug> <sha9> -> <state>: <desc> <url>` when a listed entry's verdict changes (and once
@@ -719,12 +720,35 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
     is retried on later polls, never dropped). A failing read is retried with backoff, then
     reported as `MQ-WATCH-ERROR <type>: <msg>` while the last good snapshot is KEPT, so the next
     successful poll still reports every transition that happened in between. Never exits on a
-    transient error (only KeyboardInterrupt / `max_polls`, for tests)."""
+    transient error (only KeyboardInterrupt / `max_polls`, for tests).
+
+    With `batches_fn` (completed candidate runs: [{id, branch, conclusion, url}]) it also
+    prints `MQ-BATCH <branch> -> <conclusion> <url>` once per candidate batch that finishes
+    after the first poll (the first poll is a silent baseline). A red or cancelled batch is
+    the one event an entry-only watch never shows: a bisect replays the same entries for
+    hours with nothing leaving the list (2026-11-08: 3.5 h silent; 2026-11-09: the owner
+    caught batch 9's red before the steward did)."""
     known: dict[str, dict[str, Any]] = {}   # sha -> {slug, state, line}
     leaving: dict[str, dict[str, Any]] = {}  # sha -> {slug, tries}
+    seen_batches: set[str] | None = None     # None until the silent baseline poll
     polls = 0
     while max_polls is None or polls < max_polls:
         polls += 1
+        if batches_fn is not None:
+            try:
+                done = batches_fn()
+            except Exception as exc:  # noqa: BLE001 - a failed batch read is reported, never fatal
+                emit(f"MQ-WATCH-ERROR batches {type(exc).__name__}: {str(exc)[:300]}")
+            else:
+                ids = {str(b.get("id")) for b in done}
+                if seen_batches is None:
+                    seen_batches = ids
+                else:
+                    for b in done:
+                        if str(b.get("id")) not in seen_batches:
+                            emit(f"MQ-BATCH {b.get('branch', '?')} -> {b.get('conclusion') or 'unknown'} "
+                                 f"{b.get('url', '')}".rstrip())
+                    seen_batches |= ids
         report: dict[str, Any] | None = None
         err: BaseException | None = None
         for i in range(attempts):
@@ -783,7 +807,23 @@ def watch_live(interval: float = 60, run: Runner = _default_run, workdir: str | 
     wd = workdir or os.getcwd()
     repo = _repo_from_remote(run, wd)
     watch(lambda: queue_snapshot(repo, run=run, workdir=wd),
-          lambda sha: read_status(repo, sha, run=run), interval=interval)
+          lambda sha: read_status(repo, sha, run=run), interval=interval,
+          batches_fn=lambda: completed_candidate_runs(run=run, workdir=wd))
+
+
+def completed_candidate_runs(run: Runner = _default_run, workdir: str | None = None,
+                             limit: int = 40) -> list[dict[str, Any]]:
+    """The completed `mq-candidate/*` test runs among the newest `limit` runs. Raises on a
+    failed read, so `watch` reports it instead of mistaking silence for a green queue."""
+    rc, out, err = run(["gh", "run", "list", "-L", str(limit), "--json",
+                        "databaseId,headBranch,status,conclusion,url"], cwd=workdir)
+    if rc != 0:
+        raise RuntimeError(f"gh run list failed: {(err or out or '').strip()[:200]}")
+    rows = json.loads(out or "[]")
+    return [{"id": r.get("databaseId"), "branch": r.get("headBranch", ""),
+             "conclusion": r.get("conclusion", ""), "url": r.get("url", "")}
+            for r in rows
+            if str(r.get("headBranch", "")).startswith(CANDIDATE_PREFIX) and r.get("status") == "completed"]
 
 
 def _repo_from_remote(run: Runner, cwd: str) -> str:
