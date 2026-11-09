@@ -73,16 +73,18 @@ else by the same alias map the lead's corretor uses; a name match with no `vista
 on). Unmatched => `corretor_id NULL` (never a guess). A corretor that left the property flips `ativo=false`, never deleted. Multi-corretor
 properties (13%) keep every row (`ordem`).
 
-Divergence (`lead_corretor_divergencias`, unique `(org, lead, código)`): opened when the lead HAS a corretor (`leads.corretor_id`, set only when a
-form answer resolved through the alias map, or later by a human) and the property HAS corretores and none resolves to the lead's. Nothing to compare
-=> not a divergence. One pending row, ONE warning ever (`notificado_em`), snapshot of the property's corretores in `imovel_corretores` jsonb (each
-with `resolvido`). A later run that finds them aligned auto-resolves a still-pending row. Humans close it: `status resolvida|ignorada`.
+Divergence (`lead_corretor_divergencias`, migrations 331+332): three distinct `tipo`s, each its own row, its own in-app warning (`kind = lead_corretor_<tipo>`) and one OPEN row per `(lead, código, tipo)` (unique key):
+* `fora_dos_corretores` — the lead has a corretor and it is none of the property's Vista corretores.
+* `nao_e_principal` — the lead's corretor is one of them but not the MAIN one (`imovel_corretores.principal` = the FIRST corretor Vista lists, `ordem` 0). Not raised when `fora_dos_corretores` holds for the same pair: "not among them" already implies "not the main one", so a second warning adds nothing (decision; the two are therefore mutually exclusive in practice).
+* `lead_sem_corretor` — the lead has no corretor at all (recorded + warned, NOT assigned).
+Each run re-evaluates all three: a still-`pendente` row whose condition stopped holding is auto-closed (`resolvida`, `nota` = the reason, e.g. "auto: o lead passou a ter corretor"); a human-closed row (`resolvida`/`ignorada`) is never reopened or re-notified. No property corretor => `fora`/`nao_e_principal` cannot be evaluated. The result carries `divergencia_corretor: {divergencia, tipos[], novas[], fechadas[]}`. Humans close any tipo through the same `POST /corretor-divergencias/{id}/resolver`; `GET /corretor-divergencias?status=&tipo=`.
+Name-stamping of `lead_corretores.vista_codigo` is audited: every stamp is listed in `resultado.vista_codigo_stamps` (`{corretor_id, nome, vista_codigo, codigo_canonical}`) and logged.
 The warning reuses core in-app notifications to org owners+admins (`notify_org_admins`, same recipients as `lead_novo`); the WhatsApp digest of the
 Vista-divergence mechanism is NOT reused (it is per Vista-sync run and transitional, `NOC-REMEDIATE[transicao-vista-divergencias]`).
 
-We do NOT assign `leads.corretor_id` from the property (owner: record and warn). OPEN: should an unassigned ad lead inherit the property's corretor?
+We do NOT assign `leads.corretor_id` from the property (owner decision: warn via `lead_sem_corretor`, never assign).
 
-## 3. Data model (migration 331 — forward-only, idempotent, backward-compatible)
+## 3. Data model (migrations 331 + 332 — forward-only, idempotent, backward-compatible)
 
 * `lead_imovel_intakes` (tier:org) — one row per lead (`unique (org_id, lead_id)`): `status`, `tentativas`, `ultimo_erro`, `resultado` jsonb (see § 4), `concluido_em`.
 * `imovel_corretores` (tier:org), `lead_corretor_divergencias` (tier:org) — above.
@@ -171,4 +173,4 @@ Same facts through HTTP: `GET /api/leads/ad-intake/lead/{lead_id}` and `GET /api
 * FE "Leads interessados" reads `GET /api/leads/ad-intake/imovel/{codigo}/leads`; pending corretor warnings from `GET /corretor-divergencias`.
 * Corretor performance: `imovel_corretores` (property -> corretor, by Vista Codigo) x `leads.imovel_ref_id` (lead -> property) x `lead_corretores.vista_codigo`.
 * Roteiros: not built here.
-* Retry job: `lead_imovel_intakes` rows `pendente_retry|falhou` are the queue; no scheduler is wired yet (backfill `modo=pendentes` drains it).
+* Retry job (`ad_lead_intake_retry_job`, interval 10 min on the seed scheduler, per-org `sync_lease` `ad_lead_intake_retry:<org>`): drains `pendente_retry` rows whose backoff has passed (`updated_at + min(5min * 2^(tentativas-1), 6h)`), 25 per org per pass; `falhou` rows (after 5 attempts) are never auto-retried — backfill `modo=pendentes` or `POST /lead/{id}/retry`.

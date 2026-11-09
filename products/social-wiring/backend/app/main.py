@@ -192,6 +192,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.custos_router import (
         router as custos_router,
     )
+    from app.modules.leads.services import ad_lead_intake_retry_job
     from app.services.meta import scheduler as meta_insights_scheduler
     from app.services import (
         clientes_backfill_job,
@@ -223,6 +224,8 @@ def _register_media_wiring() -> ModuleRegistration:
     # landed the mirror only moved when a human pressed the sync button —
     # it had gone 17 days stale.
     imoveis_sync_scheduler.configure()
+    # Ad-lead intake: drains `pendente_retry` rows (Vista was down / not configured) with backoff.
+    ad_lead_intake_retry_job.configure()
     # Recovers identity extractions stranded in `pendente`/`processando` by a
     # process that died mid-read (a deploy, an OOM kill). Same import-time
     # registration rule as the five jobs above — see the module docstring for

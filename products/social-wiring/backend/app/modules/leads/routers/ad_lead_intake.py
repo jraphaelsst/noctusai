@@ -5,7 +5,7 @@
   GET  /lead/{lead_id}                 org member · one lead's intake + its links (the post-deploy check reads this)
   POST /lead/{lead_id}/retry           org admin  · re-run the intake of ONE lead (Vista is called)
   GET  /imovel/{codigo}/leads          org member · "Leads interessados": leads linked to the property
-  GET  /corretor-divergencias          org member · lead corretor x property corretor warnings (?status=pendente)
+  GET  /corretor-divergencias          org member · lead corretor x property corretor warnings (?status=pendente&tipo=…)
   POST /corretor-divergencias/{id}/resolver   org admin · a human checked it: resolvida | ignorada
 
 Mounted under `/api/leads` BEFORE `leads.router`'s catch-all `/{lead_id}` (see `app/modules/leads/__init__.py`).
@@ -135,11 +135,12 @@ def leads_do_imovel(
 @router.get("/corretor-divergencias")
 def listar_divergencias(
     status: Optional[Literal["pendente", "resolvida", "ignorada"]] = Query(default="pendente"),
+    tipo: Optional[Literal["fora_dos_corretores", "nao_e_principal", "lead_sem_corretor"]] = Query(default=None),
     auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     org_id = coerce_org_uuid(auth[2])
-    rows = table_reads.paged_rows(client, intake.T_DIVERGENCIAS, org_id, eq_filters={"status": status} if status else None)
+    rows = table_reads.paged_rows(client, intake.T_DIVERGENCIAS, org_id, eq_filters={k: v for k, v in (("status", status), ("tipo", tipo)) if v} or None)
     rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
     return success_response({"items": rows, "total": len(rows)})
 
