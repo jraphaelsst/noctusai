@@ -177,6 +177,23 @@ class SpendCeilingUnverifiable(AppException):
         )
 
 
+class LLMBudgetUnverifiable(AppException):
+    """The org's monthly budget / month-to-date spend could not be read and this process holds no usable
+    last-known value (`budget._degraded_status`). Fail CLOSED and LOUD -- an unknown budget is never served as
+    "no budget". HTTP 503: the guard is temporarily unable to verify, not "budget exhausted"."""
+
+    def __init__(self, org_id: Optional[str], detail: str):
+        super().__init__(
+            code="LLM_BUDGET_UNVERIFIABLE",
+            message=(
+                "Não foi possível verificar o orçamento de IA agora. "
+                "Tente novamente em instantes."
+            ),
+            status_code=503,
+            details={"org_id": org_id, "detail": detail[:300]},
+        )
+
+
 class LLMBudgetNotConfigured(AppException, IntegrationNotConfigured):
     """The budget guard cannot read its own storage (`public.org_settings`).
 

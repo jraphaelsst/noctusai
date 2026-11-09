@@ -241,6 +241,7 @@ async def chat_with_tools(
     max_tokens: Optional[int] = None,
     tool_choice: ToolChoice = "auto",
     provider_impl: Optional[Any] = None,
+    purpose: Optional[str] = None,
 ) -> ChatToolsResponse:
     """One tool-calling model turn through the configured provider.
 
@@ -253,6 +254,9 @@ async def chat_with_tools(
             `LLMConfig.key_provider` / env / platform settings are never
             consulted. Fails closed with `LLMNotConfigured`.
         tool_choice: "auto" | "none" | "required" | a tool name.
+        purpose: ``"classify" | "extract" | "summarize" | "reason" | "chat"`` — when ``model`` is not pinned the
+            seed policy (`model_policy`) picks the tier's model of the SAME provider; omitted = today's default.
+            Recorded on the usage row. (Ignored on the ``provider_impl`` path, which owns its model.)
         provider_impl: a ready provider-like object exposing
             `chat_with_tools` (used by `OpenAIClientAdapter` for callers that
             own an SDK client). Bypasses config, key resolution and budget —
@@ -271,12 +275,15 @@ async def chat_with_tools(
             max_tokens=max_tokens, tool_choice=tool_choice, org_id=org_id,
         )
 
+    from .attribution import llm_usage_context
     from .budget import enforce_budget
     from .client import get_llm_config, get_provider, resolve_api_key
+    from .model_policy import resolve_model
+    from .spend_guard import enforce_spend_guard
 
     config = get_llm_config()
     effective_provider = provider or config.default_provider
-    effective_model = model or config.default_chat_model
+    effective_model = model or resolve_model(effective_provider, purpose) or config.default_chat_model
     if require_explicit_key:
         if not api_key:
             raise LLMNotConfigured(effective_provider)
@@ -285,6 +292,7 @@ async def chat_with_tools(
         key = api_key or resolve_api_key(effective_provider, org_id)
 
     await enforce_budget(org_id)
+    await enforce_spend_guard(org_id)
 
     prov = get_provider(effective_provider)
     impl = getattr(prov, "chat_with_tools", None)
@@ -292,13 +300,14 @@ async def chat_with_tools(
         raise ToolCallingNotImplemented(effective_provider)
     from .usage import metered_call
 
-    return await metered_call(
-        lambda: impl(
-            msgs, specs, model=effective_model, api_key=key, temperature=temperature,
-            max_tokens=max_tokens, tool_choice=tool_choice, org_id=org_id,
-        ),
-        provider=effective_provider, model=effective_model, operation="chat", org_id=org_id,
-    )
+    with llm_usage_context(purpose=purpose):
+        return await metered_call(
+            lambda: impl(
+                msgs, specs, model=effective_model, api_key=key, temperature=temperature,
+                max_tokens=max_tokens, tool_choice=tool_choice, org_id=org_id,
+            ),
+            provider=effective_provider, model=effective_model, operation="chat", org_id=org_id,
+        )
 
 
 def build_usage(

@@ -50,6 +50,8 @@ class UsageAttribution:
     conversation_id: Optional[str] = None
     agent_key: Optional[str] = None
     request_id: Optional[str] = None
+    #: The prompt version the call ran under (`ai_usage.prompt_version`, span rows) — a product names it.
+    prompt_version: Optional[str] = None
 
     def merged_over(self, base: "UsageAttribution") -> "UsageAttribution":
         """``self``'s non-None fields over ``base``."""
@@ -89,12 +91,13 @@ def llm_usage_context(
     user_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
     agent_key: Optional[str] = None,
+    prompt_version: Optional[str] = None,
 ) -> Iterator[UsageAttribution]:
     """Attribute every LLM call made inside this block (this task and the
     tasks / threads it spawns — contextvars are copied into both)."""
     scoped = UsageAttribution(
         product=product, feature=feature, purpose=purpose, org_id=org_id,
-        user_id=user_id, conversation_id=conversation_id, agent_key=agent_key,
+        user_id=user_id, conversation_id=conversation_id, agent_key=agent_key, prompt_version=prompt_version,
     ).merged_over(_EXPLICIT.get())
     token = _EXPLICIT.set(scoped)
     try:

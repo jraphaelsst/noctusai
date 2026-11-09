@@ -101,6 +101,12 @@ class UsageEvent:
     #: "override:v<N>" (an operator `llm_model_overrides` version) or
     #: "unpriced" (no catalog row — cost 0, flagged, never silently billed).
     price_version: Optional[str] = None
+    # ── tracing (core 115; `tracing.py`): this event IS the LLM-call span ──
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
+    parent_span_id: Optional[str] = None
+    latency_ms: Optional[int] = None
+    prompt_version: Optional[str] = None
 
 
 class UsageSink(Protocol):
@@ -399,6 +405,13 @@ async def record_usage(
         from .attribution import UsageAttribution
 
         attr = UsageAttribution()
+    from .tracing import usage_stamp
+
+    try:
+        stamp = usage_stamp()
+    except Exception as exc:  # tracing must never cost a billable row
+        logger.warning("llm.usage: trace stamp unavailable (%s); recording without trace ids", exc)
+        stamp = None
     event = UsageEvent(
         provider=provider,
         model=model,
@@ -424,6 +437,11 @@ async def record_usage(
         request_id=attr.request_id,
         status=status,
         price_version=price_version,
+        trace_id=stamp.trace_id if stamp else None,
+        span_id=stamp.span_id if stamp else None,
+        parent_span_id=stamp.parent_span_id if stamp else None,
+        latency_ms=stamp.latency_ms if stamp else None,
+        prompt_version=attr.prompt_version,
     )
     # Every active `coletar_uso()` scope sees the event too — independent of
     # whether a sink is configured (a harness or an extractor attributing
@@ -477,7 +495,9 @@ async def metered_call(
     """Await ``call()`` (a zero-arg coroutine factory) so that a provider call
     that raises WITHOUT having recorded usage still leaves a ``status="error"``
     row. A provider that recorded before raising is not double-counted."""
-    with coletar_uso() as eventos:
+    from .tracing import llm_call_scope
+
+    with coletar_uso() as eventos, llm_call_scope():
         try:
             return await call()
         except BaseException as exc:

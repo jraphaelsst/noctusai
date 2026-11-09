@@ -316,8 +316,24 @@ the system message `cache_control: ephemeral` for Anthropic (`LLM:chat.py:215-27
 **Cost controls that exist (use them).** Per-org monthly BRL budget + daily USD cap before every turn
 (`A:runtime/llm_runtime.py:162-194`); concurrency limiter (`:138-159`); per-run eval cap (default
 US$ 2, max 50; `A:config.py:256`, `A:studio/models.py:138-145`); generator run cap ≤ US$ 5 with a
-worst-case pre-call estimate (`KB § GUIDES/agent-creation.md` §5). Monthly budget is fail-open by seed
-design when the read fails; the Redis-down spend case is `agents-security`'s (§11; PROJECT §6 item 8).
+worst-case pre-call estimate (`KB § GUIDES/agent-creation.md` §5). The monthly budget is LOUD on a
+failed read (2026-11-09, was fail-open): one bounded retry, then the fresh last-known verdict of the org
+(ERROR log + admin bell; a last-known hard stop still refuses), else `LLMBudgetUnverifiable` (503);
+`LLM_BUDGET_UNKNOWN_POLICY=allow` is the explicit, still-loud opt-out (`llm/budget.py`). The Redis-down
+spend case is `agents-security`'s (§11; PROJECT §6 item 8).
+
+**Seed-level call pipeline (every `chat_completion` / `chat_with_tools` caller gets it, no product code).**
+- **Purpose routing** (`llm/model_policy.py`): pass `purpose="classify" | "extract" | "summarize" | "reason" |
+  "chat"`; the seed maps purpose → tier (light / standard / heavy) → a model of the SAME provider from the
+  effective catalog (no failover, ever). Omitted purpose or an explicit `model=` = today's behaviour. The Anthropic
+  standard/heavy rows are pinned equal to the measured document routing (`roteamento_modelos.py`) by a test; the
+  light tier and OpenAI/Gemini rows are conservative until measured. Julia's main turn never passes a purpose;
+  the channel summary / report / choice calls do (`summarize` -> light, `extract` -> standard).
+- **Spend guard on every path** (`llm/spend_guard.py`, chat + tools + vision + embeddings + audio): per-surface
+  rolling-window ceiling (`LLM_SPEND_LIMITS`, surface = product or `product:feature` or `*`). DEFAULT = no limit
+  = nothing read, nothing blocked; a configured limit is `observe` (WARNING `would_block`) until it says
+  `enforce`. Read the data first: view `public.ai_spend_24h_by_surface`. Studio's reservation ceiling
+  (`spend_ceiling.py`, $10/org/24h) is unchanged and enforced.
 
 **Checklist.** Measured on the real distribution (not only synthetic)? Run-to-run variance measured
 (≥3 runs)? Cost per unit reported in US$? Cheapest model that meets the bar? Stable prefix ≥ the
@@ -385,10 +401,21 @@ such as `gen_ai.client.operation.duration`.
 | error / finish | `status ∈ {ok, error, partial}`; streams cut short are `partial` with estimated tokens |
 | request correlation | `request_id` = the correlation id |
 | tool span | `tool_call_audits` row (status, tool, args redacted per LGPD) |
+| trace / span / parent span | `ai_usage.trace_id / span_id / parent_span_id` (core 115; an LLM-call row IS its span); tool / guardrail / internal spans in `public.ai_trace_spans`; both in view `public.ai_trace_timeline` |
+| span latency / prompt version | `ai_usage.latency_ms` (non-stream calls) / `prompt_version` (`llm_usage_context(prompt_version=)`) |
 
 Sources: `KB § PATTERNS/backend/llm-usage.md` §0 (central ledger, attribution, pricing, append-only
 proven by `verify_db_guards`), `KB § PATTERNS/backend/llm-tool-audit.md`. Eval runs record cost and
 tokens per case and per run (`A:studio/evals.py:29-44`).
+
+**Tracing (wired 2026-11-09, `llm/tracing.py`).** One trace per conversation turn / request, one span per LLM
+call and per tool call. `async with span("agents.turn")` opens the turn; every `ai_usage` row written inside it
+carries `trace_id` / `span_id` / `parent_span_id` / `latency_ms`; `async with span(tool_name, kind="tool")` writes
+a tool span; `record_guardrail_verdict(name, verdict, blocked=)` is the hook point for guardrails. Outside a trace
+the request correlation id is the trace id. Query: `select * from ai_trace_timeline where trace_id = :t order by
+started_at` (service role) or `tracing.read_trace`. Spans are persisted by the `SpanSink` that `create_product_app`
+installs (Fake/Real/factory, `None` under pytest). No OTel/Langfuse: the house runs no trace backend (Sentry is
+errors-only); if one is ever added, export from this one write path. Streams carry ids but no latency yet.
 
 **Rules.** Every LLM call goes through the seed entry points (the sink is installed by
 `create_product_app`), so attribution is by construction. Wrap agent work in

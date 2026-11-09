@@ -47,6 +47,7 @@ __all__ = [
 ]
 
 AI_USAGE_TABLE = "ai_usage"
+_TRACE_COLUMNS = ("trace_id", "span_id", "parent_span_id", "latency_ms", "prompt_version")
 FX_TABLE = "fx_rates"
 FX_PAIR = "USD/BRL"
 UNATTRIBUTED_PRODUCT = "unattributed"
@@ -127,7 +128,21 @@ def build_ai_usage_row(event: UsageEvent, fx: FxQuote) -> dict[str, Any]:
         "status": event.status if event.status in ("ok", "partial", "error") else "error",
         "request_id": _cap(event.request_id),
         "extra": extra,
+        # core 115 (tracing): this row is the LLM-call span.
+        "trace_id": _cap(event.trace_id),
+        "span_id": _cap(event.span_id),
+        "parent_span_id": _cap(event.parent_span_id),
+        "latency_ms": event.latency_ms,
+        "prompt_version": _cap(event.prompt_version),
     }
+
+
+def _is_missing_trace_column(exc: Exception) -> bool:
+    """PostgREST PGRST204 / PG 42703 naming one of the trace columns."""
+    text = str(exc)
+    return any(c in text for c in _TRACE_COLUMNS) and (
+        "PGRST204" in text or "42703" in text or "does not exist" in text or "Could not find" in text
+    )
 
 
 def _env_usd_to_brl() -> float:
@@ -197,7 +212,19 @@ class CentralUsageSink:
     def _insert(self, event: UsageEvent) -> None:
         db = self._client_factory()
         row = build_ai_usage_row(event, self._fx_quote(db))
-        db.table(AI_USAGE_TABLE).insert(row).execute()
+        try:
+            db.table(AI_USAGE_TABLE).insert(row).execute()
+        except Exception as exc:
+            if not _is_missing_trace_column(exc):
+                raise
+            # Core migration 115 is not applied yet (new image before the migration): the billing row must still
+            # land. The trace fields ride in `extra` — LOUD, so the ordering slip is seen, not silent.
+            logger.error("llm.ledger: ai_usage has no trace columns (core migration 115 not applied) — "
+                         "inserting without them: %s", exc)
+            row = dict(row)
+            trace = {k: row.pop(k) for k in _TRACE_COLUMNS}
+            row["extra"] = {**row["extra"], "trace": trace}
+            db.table(AI_USAGE_TABLE).insert(row).execute()
 
     async def record(self, event: UsageEvent) -> None:
         try:
