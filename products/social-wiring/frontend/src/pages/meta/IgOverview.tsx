@@ -8,8 +8,8 @@
  * stays reachable instead of being silently removed.
  */
 import { lazy, Suspense } from "react";
-import { Instagram, Loader2 } from "lucide-react";
-
+import { Loader2 } from "lucide-react";
+import { Instagram } from "@noctusai/lib/brand-icons";
 import { Card, CardContent } from "@/components/ui/card";
 import { InstagramPostGrid } from "@/components/instagram/InstagramPostGrid";
 import { InstagramProfileView } from "@/components/instagram/InstagramProfileView";

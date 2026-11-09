@@ -17,12 +17,12 @@ import {
   CircleAlert,
   Eye,
   Grid3x3,
-  Instagram,
   Loader2,
   RefreshCw,
   Users,
   UserPlus,
 } from "lucide-react";
+import { Instagram } from "@noctusai/lib/brand-icons";
 import {
   CartesianGrid,
   Line,

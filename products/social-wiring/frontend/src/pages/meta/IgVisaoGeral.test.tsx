@@ -58,11 +58,15 @@ vi.mock("lucide-react", () => ({
   CircleAlert: () => <span data-testid="icon-alert" />,
   Eye: () => null,
   Grid3x3: () => null,
-  Instagram: () => null,
   Loader2: () => <span data-testid="icon-loader" />,
   RefreshCw: () => null,
   Users: () => null,
   UserPlus: () => null,
+}));
+// Brand glyphs left lucide in 1.x; they come from the seed module, which builds
+// them with lucide's createLucideIcon (absent from the stub above), so stub it too.
+vi.mock("@noctusai/lib/brand-icons", () => ({
+  Instagram: () => null,
 }));
 
 function makeAccount(overrides: Partial<any> = {}) {

@@ -21,10 +21,8 @@ import { lazy, Suspense, useState, type LazyExoticComponent } from "react";
 import {
   BarChart3,
   DollarSign,
-  Facebook,
   Grid3x3,
   History,
-  Instagram,
   Loader2,
   Megaphone,
   MessageCircle,
@@ -33,7 +31,7 @@ import {
   Table2,
   UserPlus,
 } from "lucide-react";
-
+import { Facebook, Instagram } from "@noctusai/lib/brand-icons";
 import {
   SocialDashboardShell,
   type SocialDashboardSubtab,

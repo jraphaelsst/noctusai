@@ -17,12 +17,12 @@
  */
 import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import { Instagram, Youtube } from "@noctusai/lib/brand-icons";
 import {
   AlertCircle,
   CheckCircle2,
   Clock,
   HardDrive,
-  Instagram,
   Loader2,
   Mail,
   Network,
@@ -31,8 +31,7 @@ import {
   Share2,
   Smartphone,
   Trash2,
-  Wifi,
-  Youtube,
+  Wifi
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";

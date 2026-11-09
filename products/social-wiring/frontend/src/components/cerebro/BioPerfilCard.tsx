@@ -5,7 +5,6 @@
  * the textarea and the user still has to Salvar.
  */
 import { useEffect, useState } from "react";
-import { Instagram } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useBioInstagram, useCerebroPerfil, useSalvarPerfil } from "@/hooks/useCerebro";
 import { MAX_BIO, mensagemErro } from "./labels";
+import { Instagram } from "@noctusai/lib/brand-icons";
 
 export function BioPerfilCard({ marcaId }: { marcaId: string }) {
   const perfilQ = useCerebroPerfil(marcaId);
