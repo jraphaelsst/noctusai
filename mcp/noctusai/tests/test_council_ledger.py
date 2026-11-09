@@ -73,7 +73,7 @@ def open_s(root, *, stage="build", project="p1", seats=("lens:a", "lens:b"), at=
 
 
 def obj(root, sid, seat, label, tokens=None, claim="It breaks.", severity="major", at=T0):
-    out = cl.record_objection(root, session_id=sid, seat=seat, anon_label=label, severity=severity, claim=claim,
+    out = cl.record_objection(root, session_id=sid, seat=seat, severity=severity, claim=claim,
                               model="sonnet", tokens=tokens, recorded_by="t", recorded_at=at, auto_sync=False)
     assert out["ok"], out
     return out["objection_id"]
@@ -108,14 +108,14 @@ class TestValidation:
 
     def test_bad_seat_label_uuid_sha_tokens_and_timestamp(self, tmp_path):
         sid = open_s(tmp_path)
-        for kw, frag in (({"seat": "alice"}, "objection.seat"), ({"anon_label": "a1"}, "anon_label"),
+        for kw, frag in (({"seat": "alice"}, "objection.seat"),
                          ({"tokens": -1}, "tokens"), ({"claim": "One. Two. Three. Four."}, "at most 3 sentences"),
                          ({"severity": "huge"}, "severity")):
-            args = {"session_id": sid, "seat": "lens:a", "anon_label": "A", "severity": "major", "claim": "x",
+            args = {"session_id": sid, "seat": "lens:a", "severity": "major", "claim": "x",
                     "model": "m", **kw}
             out = cl.record_objection(tmp_path, recorded_by="t", auto_sync=False, **args)
             assert not out["ok"] and frag in out["error"], (kw, out)
-        out = cl.record_objection(tmp_path, session_id="not-a-uuid", seat="lens:a", anon_label="A", severity="major",
+        out = cl.record_objection(tmp_path, session_id="not-a-uuid", seat="lens:a", severity="major",
                                   claim="x", model="m", recorded_by="t", auto_sync=False)
         assert "UUIDv4" in out["error"]
         assert any("recorded_at" in e for e in cl.validate_row(
@@ -133,15 +133,12 @@ class TestValidation:
     def test_references_must_resolve(self, tmp_path):
         sid = open_s(tmp_path)
         assert "unknown session" in cl.record_objection(
-            tmp_path, session_id=u(), seat="lens:a", anon_label="A", severity="note", claim="x", model="m",
+            tmp_path, session_id=u(), seat="lens:a", severity="note", claim="x", model="m",
             recorded_by="t", auto_sync=False)["error"]
         assert "not one of the session's seats" in cl.record_objection(
-            tmp_path, session_id=sid, seat="lens:zzz", anon_label="A", severity="note", claim="x", model="m",
+            tmp_path, session_id=sid, seat="lens:zzz", severity="note", claim="x", model="m",
             recorded_by="t", auto_sync=False)["error"]
         obj(tmp_path, sid, "lens:a", "A")
-        assert "used twice" in cl.record_objection(
-            tmp_path, session_id=sid, seat="lens:b", anon_label="A", severity="note", claim="x", model="m",
-            recorded_by="t", auto_sync=False)["error"]
         assert "unknown objection" in cl.record_event(
             tmp_path, session_id=sid, event_kind="outcome", objection_id=u(), outcome="refuted", evidence_kind="test",
             recorded_by="t", auto_sync=False)["error"]
@@ -161,7 +158,7 @@ class TestValidation:
                                                                 {"objection_id": o2, "disposition": "accepted", "reason": "x"}],
                                   recorded_by="t", auto_sync=False)
         assert "one verdict" in again["error"]
-        late = cl.record_objection(tmp_path, session_id=sid, seat="lens:a", anon_label="C", severity="note", claim="x",
+        late = cl.record_objection(tmp_path, session_id=sid, seat="lens:a", severity="note", claim="x",
                                    model="m", recorded_by="t", auto_sync=False)
         assert "after the verdict" in late["error"]
 
@@ -228,9 +225,11 @@ class TestMetrics:
 
     def test_rates_are_none_when_the_denominator_is_zero(self, tmp_path):
         sid = open_s(tmp_path)
-        obj(tmp_path, sid, "lens:a", "A", tokens=5)
+        o = obj(tmp_path, sid, "lens:a", "A", tokens=5)
+        verdict(tmp_path, sid, [(o, "deferred", "later")])
         a = cl.report(tmp_path)["seats"]["lens:a"]
-        assert (a["hit_rate"], a["unique_hit_rate"], a["false_alarm_rate"], a["acceptance_rate"], a["cost_per_hit"]) == (None,) * 5
+        assert (a["hit_rate"], a["unique_hit_rate"], a["false_alarm_rate"], a["cost_per_hit"]) == (None,) * 4
+        assert a["acceptance_rate"] == 0.0  # 0 accepted / 1 disposition
 
     def test_filters_stage_project_since(self, tmp_path):
         self.fixture(tmp_path)  # build / p1 / 2026-11-09
@@ -247,9 +246,12 @@ class TestMetrics:
 
     def bulk(self, tmp_path, seat, stage, vind, ref):
         sid = open_s(tmp_path, stage=stage, seats=(seat,))
+        ids = []
         for n in range(vind + ref):
             o = obj(tmp_path, sid, seat, chr(65 + n % 26) + (chr(65 + n // 26) if n >= 26 else ""))
             outcome(tmp_path, sid, o, "vindicated" if n < vind else "refuted")
+            ids.append(o)
+        verdict(tmp_path, sid, [(o, "accepted", "x") for o in ids])
 
     def test_retune_signals(self, tmp_path):
         self.bulk(tmp_path, "lens:low", "build", 1, 9)       # 10 resolved, hit 0.1  -> demote
@@ -284,7 +286,7 @@ class TestSyncAndPending:
                               mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
         assert out["sync"]["status"] == "inconclusive" and out["sync"]["reason"] == "db unreachable: ConnectionError"
 
-    def test_successful_write_upserts_by_id_without_the_record_key(self, tmp_path):
+    def test_successful_write_upserts_by_id_without_the_record_key_without_the_record_key(self, tmp_path):
         db = FakeDb()
         out = cl.open_session(tmp_path, stage="build", subject_kind="plan", subject_ref="r", trigger="stage_map",
                               mode="api", seats=["lens:a"], brief_sha256=SHA, recorded_by="t", client=db)
@@ -319,6 +321,7 @@ class TestSyncAndPending:
         outcome(tmp_path, s, decided, "vindicated")
         st = cl.status(tmp_path, now=datetime(2026, 11, 9, tzinfo=timezone.utc))
         assert st["sessions_without_verdict"] == [s]
+        assert all("seat" not in x for x in st["objections_without_outcome"])  # hidden pre-verdict
         assert [x["objection_id"] for x in st["objections_without_outcome"]] == [old]
         assert fresh not in [x["objection_id"] for x in st["objections_without_outcome"]]
 
@@ -441,3 +444,64 @@ class TestCouncilLedgerSync:
                                          ("evidence_kind", 7)])
 def test_enums_match_contract_section_2(name, expect):
     assert len(cl.ENUMS[name]) == expect
+
+
+class TestNeutralRecorder:
+    """Owner decision 2026-11-09: the tool is the neutral recorder; blindness is construction, not discipline."""
+
+    def test_label_assigned_by_tool_unique_and_not_in_the_result(self, tmp_path):
+        sid = open_s(tmp_path, seats=("lens:a", "lens:b"))
+        outs = [cl.record_objection(tmp_path, session_id=sid, seat=st, severity="major", claim="x", model="m",
+                                    recorded_by="t", auto_sync=False) for st in ("lens:a", "lens:b") * 15]
+        assert all(set(o) == {"ok", "objection_id", "status", "sync"} and o["status"] == "submitted" for o in outs)
+        labels = [r["anon_label"] for r in cl.read_rows(cl.session_file(tmp_path, sid)) if r["record"] == "objection"]
+        assert len(labels) == 30 and len(set(labels)) == 30
+        assert all(cl._LABEL_RE.match(x) for x in labels)
+
+    def test_caller_label_is_refused(self, tmp_path):
+        sid = open_s(tmp_path)
+        out = cl.run("record_objection", root=tmp_path, session_id=sid, seat="lens:a", anon_label="A",
+                     severity="major", claim="x", model="m", recorded_by="t", auto_sync=False)
+        assert not out["ok"] and "assigned by the tool" in out["error"]
+        with pytest.raises(TypeError):
+            cl.record_objection(tmp_path, session_id=sid, seat="lens:a", anon_label="A", severity="major", claim="x",
+                                model="m", recorded_by="t", auto_sync=False)
+
+    def test_blind_view_has_no_seat_or_model(self, tmp_path):
+        sid = open_s(tmp_path)
+        obj(tmp_path, sid, "lens:a", None, claim="One.")
+        obj(tmp_path, sid, "lens:b", None, claim="Two.")
+        view = cl.run("blind_view", root=tmp_path, session_id=sid)
+        assert view["ok"] and len(view["objections"]) == 2
+        for o in view["objections"]:
+            assert set(o) == {"anon_label", "severity", "claim"}
+        text = json.dumps(view)
+        assert "lens:" not in text and "sonnet" not in text
+
+    def test_seat_hidden_pre_verdict_visible_post_verdict(self, tmp_path):
+        sid = open_s(tmp_path)
+        o = obj(tmp_path, sid, "lens:a", None, at="2026-10-01T00:00:00Z")
+        pre = cl.status(tmp_path, now=datetime(2026, 11, 9, tzinfo=timezone.utc))
+        assert "lens:a" not in json.dumps(pre)
+        assert "hidden until the verdict" in cl.run("full_view", root=tmp_path, session_id=sid)["error"]
+        assert cl.report(tmp_path)["seats"] == {} and cl.report(tmp_path)["sessions"] == 0
+        verdict(tmp_path, sid, [(o, "accepted", "x")])
+        post = cl.status(tmp_path, now=datetime(2026, 11, 9, tzinfo=timezone.utc))
+        assert post["objections_without_outcome"][0]["seat"] == "lens:a"
+        assert any(r.get("seat") == "lens:a" for r in cl.run("full_view", root=tmp_path, session_id=sid)["rows"])
+        assert "lens:a" in cl.report(tmp_path)["seats"]
+
+    def test_dispositions_by_label_are_translated(self, tmp_path):
+        sid = open_s(tmp_path)
+        o1, o2 = obj(tmp_path, sid, "lens:a", None), obj(tmp_path, sid, "lens:b", None)
+        view = cl.blind_view(tmp_path, sid)["objections"]
+        disp = [{"anon_label": v["anon_label"], "disposition": "accepted", "reason": "ok"} for v in view]
+        out = cl.record_verdict(tmp_path, session_id=sid, chair_kind="chair_agent", decision="d", biggest_risk="r",
+                                first_step="f", dispositions=disp, recorded_by="t", auto_sync=False)
+        assert out["ok"], out
+        v = next(r for r in cl.read_rows(cl.session_file(tmp_path, sid)) if r["record"] == "verdict")
+        assert {d["objection_id"] for d in v["dispositions"]} == {o1, o2}
+        bad = cl.record_verdict(tmp_path, session_id=open_s(tmp_path), chair_kind="chair_agent", decision="d",
+                                biggest_risk="r", first_step="f", recorded_by="t", auto_sync=False,
+                                dispositions=[{"anon_label": "Z", "disposition": "accepted", "reason": "x"}])
+        assert "unknown anon_label" in bad["error"]

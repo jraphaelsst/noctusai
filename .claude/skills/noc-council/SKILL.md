@@ -1,7 +1,7 @@
 ---
 name: noc-council
 description: Use to challenge a plan, decision, contract, agent definition, refine or product before it is locked — triggers "council", "convene the council", "run the council", "conselho", "llm council", "five lenses", "challenge this plan", "anti-sycophancy review", "chairman". Independent, blind council as background subagents (five lenses plus the stage's advisors), an Opus chair that dispositions every objection, every row written through noctus.dev.council_ledger, outcomes recorded later so the stage map is retuned from evidence.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-council — independent, blind, measured review
@@ -19,13 +19,21 @@ answer every objection. Depth: `KB § PATTERNS/common/council.md`. Ledger contra
    NEVER the author's recommendation or preferred option. Hash it (`brief_sha256`).
 3. **Dispatch seats in parallel** (Agent tool, `run_in_background`): `subagent_type=councillor`
    once per lens (the lens name goes in the prompt, see Lenses) and each advisor by its own name
-   (`architect`, `security`, ...). Same brief to all. Seats never see each other.
-4. **Collect and anonymise.** Each seat returns objections (claim in 3 sentences max, severity
-   `blocker|major|minor|note`). Record each via `action=record_objection` with an `anon_label`
-   (A, B, C, ...); the chair sees labels, never seat names.
-5. **Dispatch `council-chair`** (Opus, background) with the anonymised objections. It returns
-   decision, biggest risk, first step, and a disposition (`accepted|rejected|deferred` + reason,
-   `unique` flag) for EVERY objection. Record via `action=record_verdict` (`chair_kind=chair_agent`).
+   (`architect`, `security`, ...). Same brief to all, plus the `session_id` and the seat string.
+   Seats never see each other.
+4. **Seats record themselves (neutral recorder).** Each seat calls `council_ledger
+   action=record_objection` (session_id, seat, severity, claim <=3 sentences, model) for each point;
+   the TOOL assigns the `anon_label` and returns only `{objection_id, status:"submitted"}`. The
+   seat returns to the tech-lead ONLY `submitted <objection_id>[, ...]`, never the claim text. The
+   tech-lead therefore never holds the label-to-seat mapping or the objection wording (owner
+   decision 2026-11-09, blindness enforced by the tool). Until the verdict exists, every tool read
+   that would expose a seat refuses or omits it (`report`, `status`, `full_view`).
+5. **Dispatch `council-chair`** (Opus, background) with the `session_id`. It calls `action=blind_view`
+   ({anon_label, severity, claim} only) and returns decision, biggest risk, first step, and a
+   disposition (`accepted|rejected|deferred` + reason, `unique` flag) for EVERY label. The
+   tech-lead records it via `action=record_verdict` (`chair_kind=chair_agent`), passing the
+   dispositions keyed by `anon_label` (the tool translates them to objection ids). Only after that
+   may it read the full view (`action=full_view`, seats revealed).
 6. **Surface.** The tech-lead receives the chair report and ratifies or overrules
    (`action=record_event` `ratified|overruled`); owner-gated decisions go to the owner with the
    chair report attached. The council informs; it never decides prod exposure.
@@ -85,7 +93,8 @@ Pass the lens in the dispatch prompt: "Lens: <name>". Each lens attacks the subj
 - Seats NEVER get the author's recommendation or each other's output; the chair gets the
   recommendation only if the brief says so.
 - Single-chat fallback is allowed only where the stage map or triggers allow it, and is labelled.
-- Every row goes through `noctus.dev.council_ledger`; never hand-edit ledger files.
+- Every row goes through `noctus.dev.council_ledger`; never hand-edit ledger files, and never read
+  `project-history/council/**` before the verdict (the tool enforces blindness only on its own reads).
 - Cost: independent seats cost roughly 4-15x a single chat; spend them on the stage map, not by habit.
 - Claude only for now; lens councillors Sonnet, advisors their own model, chair Opus.
 - A lens that finds nothing says so; never invent an objection to look useful.

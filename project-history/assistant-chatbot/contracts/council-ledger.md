@@ -1,4 +1,4 @@
-# Contract — council ledger (v1, 2026-11-09)
+# Contract — council ledger (v1.1, 2026-11-09)
 
 > The one row schema that the ledger tool (`noctus.dev.council_ledger`), the agents-schema DB tables and the
 > `noc-council` skill all build to. Owner decisions D6–D17 are in the live spec:
@@ -30,7 +30,7 @@ All ids are UUIDv4 strings. Every timestamp is ISO-8601 UTC. Every row carries
 | `objection_id` | uuid | |
 | `session_id` | uuid | FK session |
 | `seat` | text | as in `seats` |
-| `anon_label` | text | `A`, `B`, … this is what the chair sees |
+| `anon_label` | text | `A`..`Z`, then `AA`.. ; ASSIGNED BY THE TOOL (random, unique per session); the caller cannot pass one; this is what the chair sees |
 | `severity` | enum `severity` | §2 |
 | `claim` | text | the objection in ≤ 3 sentences |
 | `model` | text | e.g. `sonnet`, `opus` |
@@ -73,8 +73,8 @@ All ids are UUIDv4 strings. Every timestamp is ISO-8601 UTC. Every row carries
 
 ## 3 · Metrics (one derivation each, per seat; computed by `council_ledger action=report`)
 - **hit_rate** = vindicated ÷ (vindicated + refuted), counting only each objection's latest `outcome`.
-- **unique_hit_rate** = vindicated objections whose claim no other seat in the same session raised (the chair marks this in `dispositions.reason` as `unique`) ÷ vindicated.
-- **false_alarm_rate** = refuted ÷ objections with an outcome.
+- **unique_hit_rate** = vindicated objections whose claim no other seat in the same session raised (the chair marks this in `dispositions.reason`: the reason is `unique` alone or `unique` followed by one of `: ; , - —` and free text, case-insensitive; anything else, e.g. `shared with A`, is not unique) ÷ vindicated.
+- **false_alarm_rate** = refuted ÷ objections with an outcome (any outcome, including `untested`, counts in the denominator).
 - **acceptance_rate** = accepted ÷ dispositions.
 - **cost_per_hit** = Σ tokens ÷ vindicated.
 - **retune signal**: a seat with ≥ 10 resolved objections on a stage whose hit_rate is under 0.2 → propose demoting M→O on the stage map; one over 0.6 that is O → propose promoting. The owner ratifies; the skill never auto-edits the map.
@@ -82,6 +82,22 @@ All ids are UUIDv4 strings. Every timestamp is ISO-8601 UTC. Every row carries
 ## 4 · Storage + sync (D9, D12)
 - **ndjson**: `project-history/council/<YYYY-MM>/<session_id>.ndjson`. One file per session, so parallel branches never conflict. Each line is `{"record": "session|objection|verdict|event", ...fields}`. Append-only: a correction is a new `event`, never an edit.
 - **DB**: the agents product schema. One table per record kind, following the agents product's naming conventions. Service-role only, with the access tier declared (platform-admin). Append-only: no UPDATE/DELETE grants.
-- **Sync**: the tool writes ndjson first, then upserts by id to the DB. If the DB is unreachable or the table is not yet applied, it writes a pending marker (`project-history/council/.pending-sync`), never silently. Gates:
+- **Sync**: the tool writes ndjson first, then mirrors to the DB leg. **Owner decision 2026-11-09: the ndjson ledger in git is the SOURCE OF TRUTH; the DB mirror (and any UI) is deferred, decision pending.** The DB leg is not part of the normal flow; where present it is best-effort and `inconclusive` when unreachable or unapplied. If the DB is unreachable or the table is not yet applied, it writes a pending marker (`project-history/council/.pending-sync`), never silently. Gates:
   - (a) a pre-commit keeper validates every staged ledger file against this schema (offline);
   - (b) a pre-push online check compares ndjson ids against DB ids. A difference fails with the list. "Table not applied yet" yields `inconclusive`, never `red` (verdict-channel integrity).
+
+## 5 · Neutral recorder (v1.1, owner decision 2026-11-09)
+- `anon_label` is assigned by the tool on `record_objection`; a caller-supplied label is refused. The result is only `{objection_id, status:"submitted"}`: never the label, never the seat mapping.
+- `blind_view(session_id)` returns each objection as `{anon_label, severity, claim}` only (no seat, no model, no id) for the chair. `record_verdict` accepts dispositions keyed by `anon_label` and translates them to `objection_id`.
+- Seats are revealed only after a verdict row exists: `full_view` refuses before it; `status` omits seats before it; `report` aggregates only sessions that have a verdict.
+
+## 6 · Validation rules (as built)
+- `session_id` is a UUIDv4; `seats` has at least one entry and no repeats; one `seat` entry per objection must be one of the session's seats.
+- `dispositions` is a JSONB array of exactly `{objection_id, disposition, reason}` objects; the verdict disposes every objection exactly once and no unknown one; a session has one verdict.
+- No objection may be recorded after the verdict. `ratified` and `overruled` events require a verdict first and must NOT carry `objection_id`, `outcome` or `evidence_kind` (outcome fields are only for `event_kind=outcome`).
+- `recorded_at` is supplied by the writer (the tool stamps now when omitted).
+- The pre-push sync check fails only on ndjson ids missing from the DB; ids present only in the DB are informational (a parallel branch's sessions).
+
+## Changelog
+- v1.1 (2026-11-09): ledger-first (ndjson is the source of truth, DB mirror deferred), neutral recorder (tool-assigned `anon_label`, `blind_view`, seat reveal after verdict), false_alarm_rate denominator and `unique` grammar stated, as-built validation rules recorded.
+- v1 (2026-11-09): initial.

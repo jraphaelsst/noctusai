@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
+import string
 import subprocess
 import uuid
 from collections import defaultdict
@@ -451,10 +453,29 @@ def open_session(root: Path, *, stage, subject_kind, subject_ref, trigger, mode,
     return {**out, "session_id": row["session_id"]} if out.get("ok") else out
 
 
-def record_objection(root: Path, *, session_id, seat, anon_label, severity, claim, model, tokens=None,
+def _free_label(used: set[str]) -> str:
+    """Random label unused in this session: single letters first, then two-letter ones (the tool assigns, never the caller)."""
+    rng = random.SystemRandom()
+    singles = [c for c in string.ascii_uppercase if c not in used]
+    if singles:
+        return rng.choice(singles)
+    pairs = [a + b for a in string.ascii_uppercase for b in string.ascii_uppercase if a + b not in used]
+    if not pairs:
+        raise ValueError("no free anon_label left in this session")
+    return rng.choice(pairs)
+
+
+def record_objection(root: Path, *, session_id, seat, severity, claim, model, tokens=None,
                      objection_id=None, recorded_by=None, recorded_at=None, client=None, auto_sync=True) -> dict:
+    """Neutral recorder: the TOOL assigns ``anon_label``; the result never carries the label or the seat mapping."""
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    used = {r["anon_label"] for r in read_rows(path) if r["record"] == "objection"} if path and path.exists() else set()
+    try:
+        label = _free_label(used)
+    except ValueError as exc:
+        return _err(str(exc))
     row = _stamp({"record": "objection", "objection_id": objection_id or str(uuid.uuid4()), "session_id": session_id,
-                  "seat": seat, "anon_label": anon_label, "severity": severity, "claim": claim, "model": model,
+                  "seat": seat, "anon_label": label, "severity": severity, "claim": claim, "model": model,
                   "tokens": tokens}, recorded_by, recorded_at)
     if row.get("ok") is False:
         return row
@@ -462,11 +483,65 @@ def record_objection(root: Path, *, session_id, seat, anon_label, severity, clai
     if errs:
         return _err("; ".join(errs), refused=True)
     out = _write(root, row, client=client, auto_sync=auto_sync)
-    return {**out, "objection_id": row["objection_id"]} if out.get("ok") else out
+    return {"ok": True, "objection_id": row["objection_id"], "status": "submitted", "sync": out["sync"]} if out.get("ok") else out
+
+
+def _translate_dispositions(root: Path, session_id: Any, dispositions: Any) -> Any:
+    """Accept dispositions keyed by ``anon_label`` (the chair's blind view) and translate them to objection ids."""
+    if not isinstance(dispositions, list) or not any(isinstance(d, dict) and "anon_label" in d for d in dispositions):
+        return dispositions
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    by_label = ({r["anon_label"]: r["objection_id"] for r in read_rows(path) if r["record"] == "objection"}
+                if path and path.exists() else {})
+    out = []
+    for d in dispositions:
+        if isinstance(d, dict) and "anon_label" in d:
+            if "objection_id" in d:
+                return _err("a disposition carries objection_id OR anon_label, not both")
+            if d["anon_label"] not in by_label:
+                return _err(f"disposition refers to unknown anon_label {d['anon_label']!r}")
+            d = {"objection_id": by_label[d["anon_label"]], **{k: v for k, v in d.items() if k != "anon_label"}}
+        out.append(d)
+    return out
+
+
+def blind_view(root: Path, session_id: Any) -> dict:
+    """The chair's view: {anon_label, severity, claim} per objection — no seat, no model, no ids."""
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    if path is None or not path.exists():
+        return _err(f"unknown session {session_id}")
+    try:
+        rows = read_rows(path)
+    except ValueError as exc:
+        return _err(str(exc))
+    objs = sorted((r for r in rows if r["record"] == "objection"), key=lambda r: r["anon_label"])
+    return {"ok": True, "action": "blind_view", "session_id": session_id,
+            "objections": [{"anon_label": o["anon_label"], "severity": o["severity"], "claim": o["claim"]} for o in objs]}
+
+
+def full_view(root: Path, session_id: Any) -> dict:
+    """Seats revealed — refused until a verdict row exists for the session."""
+    path = session_file(root, session_id) if isinstance(session_id, str) else None
+    if path is None or not path.exists():
+        return _err(f"unknown session {session_id}")
+    try:
+        rows = read_rows(path)
+    except ValueError as exc:
+        return _err(str(exc))
+    if not _has_verdict(rows):
+        return _err("blind recorder: seats are hidden until the verdict is recorded (use blind_view)", refused=True)
+    return {"ok": True, "action": "full_view", "session_id": session_id, "rows": rows}
+
+
+def _has_verdict(rows: list[dict]) -> bool:
+    return any(r["record"] == "verdict" for r in rows)
 
 
 def record_verdict(root: Path, *, session_id, chair_kind, decision, biggest_risk, first_step, dispositions,
                    tokens=None, recorded_by=None, recorded_at=None, client=None, auto_sync=True) -> dict:
+    dispositions = _translate_dispositions(root, session_id, dispositions)
+    if isinstance(dispositions, dict) and dispositions.get("ok") is False:
+        return dispositions
     row = _stamp({"record": "verdict", "session_id": session_id, "chair_kind": chair_kind, "decision": decision,
                   "biggest_risk": biggest_risk, "first_step": first_step, "dispositions": dispositions,
                   "tokens": tokens}, recorded_by, recorded_at)
@@ -506,7 +581,7 @@ def _is_unique_mark(reason: str) -> bool:
 
 def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, project: str | None = None,
                     since: str | None = None, stage_map: dict[str, dict[str, str]] | None = None) -> dict:
-    """Per-seat metrics over the given sessions (each a list of rows, file order) + retune proposals.
+    """Per-seat metrics over the given sessions WITH a verdict (each a list of rows, file order) + retune proposals.
 
     ``since`` filters by the session's ``recorded_at``. ``stage_map`` ({stage: {seat: 'M'|'O'}}) is optional:
     with it the retune proposals apply the contract's M->O / O->M condition exactly; without it each proposal
@@ -519,7 +594,7 @@ def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, pro
     kept = 0
     for rows in sessions:
         s = next((r for r in rows if r["record"] == "session"), None)
-        if s is None:
+        if s is None or not _has_verdict(rows):  # blind recorder: only sessions with a verdict are aggregated
             continue
         if stage and s["stage"] != stage:
             continue
@@ -669,15 +744,18 @@ def status(root: Path, *, outcome_after_days: int = 14, now: datetime | None = N
     for rows in sessions:
         s = rows[0]
         sid = s["session_id"]
-        if not any(r["record"] == "verdict" for r in rows):
+        revealed = _has_verdict(rows)
+        if not revealed:
             no_verdict.append(sid)
         decided = {r["objection_id"] for r in rows if r["record"] == "event" and r["event_kind"] == "outcome"
                    and r["outcome"] != "untested"}
         for o in (r for r in rows if r["record"] == "objection"):
             ts = _parse_ts(o["recorded_at"])
             if o["objection_id"] not in decided and ts and now - ts > timedelta(days=outcome_after_days):
-                stale.append({"objection_id": o["objection_id"], "session_id": sid, "seat": o["seat"],
-                              "age_days": (now - ts).days})
+                item = {"objection_id": o["objection_id"], "session_id": sid, "age_days": (now - ts).days}
+                if revealed:  # seats stay hidden until the verdict exists
+                    item["seat"] = o["seat"]
+                stale.append(item)
     pend = _pending(root)
     return {"ok": True, "action": "status", "sessions": len(sessions), "pending_sync": len(pend),
             "pending_sessions": sorted(pend), "sessions_without_verdict": no_verdict,
@@ -788,9 +866,11 @@ def run(action: str, *, root: Path | None = None, client=None, **kw: Any) -> dic
             trigger=kw["trigger"], mode=kw["mode"], seats=kw["seats"], brief_sha256=kw["brief_sha256"],
             project=kw.get("project"), session_id=kw.get("session_id"), **common)
     if action == "record_objection":
-        e = _req(kw, "session_id", "seat", "anon_label", "severity", "claim", "model")
+        if kw.get("anon_label") is not None:
+            return _err("anon_label is assigned by the tool (neutral recorder); the caller cannot pass one", refused=True)
+        e = _req(kw, "session_id", "seat", "severity", "claim", "model")
         return _err(e) if e else record_objection(
-            root, session_id=kw["session_id"], seat=kw["seat"], anon_label=kw["anon_label"],
+            root, session_id=kw["session_id"], seat=kw["seat"],
             severity=kw["severity"], claim=kw["claim"], model=kw["model"], tokens=kw.get("tokens"),
             objection_id=kw.get("objection_id"), **common)
     if action == "record_verdict":
@@ -805,6 +885,9 @@ def run(action: str, *, root: Path | None = None, client=None, **kw: Any) -> dic
             root, session_id=kw["session_id"], event_kind=kw["event_kind"], objection_id=kw.get("objection_id"),
             outcome=kw.get("outcome"), evidence_kind=kw.get("evidence_kind"), evidence_ref=kw.get("evidence_ref"),
             note=kw.get("note"), event_id=kw.get("event_id"), **common)
+    if action in ("blind_view", "full_view"):
+        e = _req(kw, "session_id")
+        return _err(e) if e else (blind_view if action == "blind_view" else full_view)(root, kw["session_id"])
     if action == "report":
         return report(root, stage=kw.get("stage"), project=kw.get("project"), since=kw.get("since"),
                       stage_map=kw.get("stage_map"))
@@ -812,7 +895,7 @@ def run(action: str, *, root: Path | None = None, client=None, **kw: Any) -> dic
         return sync(root, confirm=bool(kw.get("confirm")), client=client)
     if action == "status":
         return status(root, outcome_after_days=int(kw.get("outcome_after_days") or 14))
-    return _err("action must be one of open_session|record_objection|record_verdict|record_event|report|sync|status; "
+    return _err("action must be one of open_session|record_objection|record_verdict|record_event|blind_view|full_view|report|sync|status; "
                 f"got {action!r}")
 
 
@@ -826,16 +909,19 @@ def register(server) -> None:  # noqa: ANN001
             ".pending-sync marker, never red).\n\n"
             "ACTIONS\n"
             "  open_session     — stage, subject_kind, subject_ref, trigger, mode, seats[], brief_sha256; optional project.\n"
-            "  record_objection — session_id, seat, anon_label, severity, claim (<=3 sentences), model; optional tokens.\n"
+            "  record_objection — session_id, seat, severity, claim (<=3 sentences), model; optional tokens. The TOOL assigns "
+            "anon_label (callers cannot pass one); returns only {objection_id, status:'submitted'} (neutral recorder).\n"
+            "  blind_view       — session_id: the chair's view, {anon_label, severity, claim} only (no seat/model/id).\n"
+            "  full_view        — session_id: every row incl. seats; refused until a verdict exists.\n"
             "  record_verdict   — session_id, chair_kind, decision, biggest_risk, first_step, dispositions"
-            "[{objection_id, disposition, reason}] (one per objection; reason 'unique' marks a unique hit); optional tokens.\n"
+            "[{objection_id|anon_label, disposition, reason}] (one per objection; labels are translated; reason 'unique' marks a unique hit); optional tokens.\n"
             "  record_event     — session_id, event_kind in {ratified,overruled,outcome}; outcome needs objection_id, "
             "outcome {vindicated,refuted,untested}, evidence_kind; optional evidence_ref, note.\n"
-            "  report           — per-seat hit/unique-hit/false-alarm/acceptance/cost_per_hit + retune proposals; "
+            "  report           — (sessions with a verdict only) per-seat hit/unique-hit/false-alarm/acceptance/cost_per_hit + retune proposals; "
             "filters stage, project, since; optional stage_map {stage:{seat:M|O}}.\n"
             "  sync             — push ndjson rows to the DB by id; dry-run unless confirm=True.\n"
             "  status           — pending-sync count, sessions without a verdict, objections without an outcome "
-            "older than outcome_after_days (default 14).\n"
+            "older than outcome_after_days (default 14); seats shown only for sessions with a verdict.\n"
             "recorded_by defaults to CLAUDE_CODE_SESSION_ID; ids are generated when omitted; worktree_path pins the tree."
         ),
     )
@@ -851,7 +937,6 @@ def register(server) -> None:  # noqa: ANN001
         brief_sha256: str | None = None,
         project: str | None = None,
         seat: str | None = None,
-        anon_label: str | None = None,
         severity: str | None = None,
         claim: str | None = None,
         model: str | None = None,
@@ -877,7 +962,7 @@ def register(server) -> None:  # noqa: ANN001
     ) -> dict:
         return run(action, worktree_path=worktree_path, session_id=session_id, stage=stage,
                    subject_kind=subject_kind, subject_ref=subject_ref, trigger=trigger, mode=mode, seats=seats,
-                   brief_sha256=brief_sha256, project=project, seat=seat, anon_label=anon_label, severity=severity,
+                   brief_sha256=brief_sha256, project=project, seat=seat, severity=severity,
                    claim=claim, model=model, tokens=tokens, objection_id=objection_id, chair_kind=chair_kind,
                    decision=decision, biggest_risk=biggest_risk, first_step=first_step, dispositions=dispositions,
                    event_kind=event_kind, outcome=outcome, evidence_kind=evidence_kind, evidence_ref=evidence_ref,
@@ -886,4 +971,4 @@ def register(server) -> None:  # noqa: ANN001
 
 
 __all__ = ["run", "validate_row", "validate_file_rows", "compute_metrics", "check_schema", "ledger_sync_diff",
-           "append_only_violations", "register", "ENUMS", "DB_TABLES"]
+           "append_only_violations", "register", "blind_view", "full_view", "ENUMS", "DB_TABLES"]

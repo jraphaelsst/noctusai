@@ -32,6 +32,19 @@ outcomes later. Every row goes through `noctus.dev.council_ledger` (`open_sessio
 Hybrid by owner decision (2026-11-09): NOW every seat is a Claude Code background subagent
 (no direct API calls). Seat models: lenses Sonnet, advisors their configured model, chair Opus.
 
+### 2a · Neutral recorder (owner decision 2026-11-09)
+
+Blindness is enforced by the tool, not by discipline ("so we don't give space for the tech lead to
+make mistakes"). Flow: the tech-lead opens the session and dispatches seats; each councillor calls
+`record_objection` itself (the tool assigns a random `anon_label`, unique per session, callers cannot
+pass one) and returns only `submitted <objection_id>`; the tech-lead dispatches `council-chair` with
+the `session_id`; the chair reads `blind_view` ({anon_label, severity, claim}, no seat/model) and
+returns its verdict; the tech-lead records it (`chair_kind=chair_agent`, dispositions keyed by label,
+translated by the tool) and only then may read `full_view`. Until a verdict row exists, `report`
+aggregates only sessions that have verdicts and `status` omits seats. Limit: the ndjson files are
+plain text; the tool cannot stop a direct file read, so the skill forbids reading
+`project-history/council/**` before the verdict.
+
 ## 3 · Stage map
 
 The owner-approved stage x seat matrix (M must, O optional) lives in the skill, the single
