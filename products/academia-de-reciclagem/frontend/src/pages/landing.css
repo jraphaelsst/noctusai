@@ -270,13 +270,6 @@
   .academia-landing .footer-brand-row { grid-template-columns:1fr; gap:24px; }
 }
 
-/* ── noc addition (not in the designer repo): the "Entrar" link into the seed /login ── */
-.academia-landing .nav-login { display:inline-flex; align-items:center; gap:8px; color:inherit; border:1px solid hsl(42 20% 70% / .45); border-radius:999px; padding:10px 16px; text-decoration:none; font-size:.77rem; font-weight:700; transition:transform .25s ease, background .25s ease; }
-.academia-landing .nav-login:hover { transform:translateY(-2px); background:hsl(42 38% 94% / .1); }
-@media (max-width: 800px) {
-  .academia-landing .nav-links.is-open .nav-login { justify-content:center; }
-}
-
 /* ── noc addition: landing `#trinta-toneladas` — the infographic section.
    Editorial stack, not a side-by-side grid: the "02 /" heading + lede read
    first (the argument), the image illustrates it directly underneath — big,
