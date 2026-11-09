@@ -41,3 +41,4 @@
 | JL-037 | CONTENT | in-progress feat/julia-loop-it1-fixes (precisa de PATCH dos casos + draft para valer) | visita-nao-agenda | - | Padrao imob-lead: descricao_modelo de cpf/rg manda 'liberar a entrada no condominio' e contradiz identificacao/missao (visita-nao-agenda pede CPF como agendamento) |
 | JL-038 | CONTENT | in-progress feat/julia-loop-it1-fixes (precisa de PATCH dos casos + draft para valer) | insatisfacao-fase-testes | - | insatisfacao-fase-testes: frase de fase de testes ainda omitida mesmo com a linha 'sim' no estado (recorrente 0.6-0.8) |
 | JL-039 | CONTENT | in-progress feat/julia-loop-it1-fixes (precisa de PATCH dos casos + draft para valer) | documento-foto | - | documento-foto: lead pergunta se pode mandar a foto do RG e Julia aceita sem pedir dados visiveis/boa luz |
+| JL-040 | AMBIGUOUS | in-progress feat/julia-it2-mirror | pedido-humano | - | pedido-humano: 'em breve'/'assim que possivel' reprovado como promessa de prazo (recorrente, 6/8) |
