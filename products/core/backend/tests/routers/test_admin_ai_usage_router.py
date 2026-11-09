@@ -10,7 +10,10 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from datetime import datetime, timezone
+
 from app.main import app
+from app.routers.admin_ai_usage import get_now
 from app.services.trusted_auth import get_session_user, get_trusted_db
 from tests.billing_fakes import ADMIN_USER, MEMBER_USER, make_ctx, seed_users
 
@@ -45,6 +48,9 @@ def _tel(bucket, **kw):
     return row
 
 
+FIXED_NOW = datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)  # 2h after the synthetic syncs
+
+
 @pytest.fixture
 def env():
     _ctx, fakes = make_ctx()
@@ -57,6 +63,7 @@ def env():
 
     app.dependency_overrides[get_trusted_db] = lambda: db
     app.dependency_overrides[get_session_user] = session_user
+    app.dependency_overrides[get_now] = lambda: FIXED_NOW
     state.client = TestClient(app)
     yield state
     app.dependency_overrides.clear()

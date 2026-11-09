@@ -29,7 +29,8 @@ _FROM = Query(None, alias="from", description="YYYY-MM-DD (UTC, inclusive)")
 _TO = Query(None, description="YYYY-MM-DD (UTC, inclusive)")
 
 
-def _now() -> datetime:
+def get_now() -> datetime:
+    """Clock dependency: tests pin it via app.dependency_overrides[get_now]."""
     return datetime.now(timezone.utc)
 
 
@@ -53,13 +54,13 @@ async def _serve(fn: Callable[[], dict]):
         return _error(500, "ai_usage_report_failed", "Falha ao consultar uso de IA")
 
 
-def _status(db: Any, source: str) -> dict:
-    return reports.source_status(db, source, key_configured=_key_configured(), now=_now())
+def _status(db: Any, source: str, now: datetime) -> dict:
+    return reports.source_status(db, source, key_configured=_key_configured(), now=now)
 
 
 @router.get("/sources")
-async def get_sources(_: AuthContext = Depends(require_platform_admin_dep), db=Depends(get_trusted_db)):
-    return await _serve(lambda: reports.sources(db, key_configured=_key_configured(), now=_now()))
+async def get_sources(_: AuthContext = Depends(require_platform_admin_dep), db=Depends(get_trusted_db), now: datetime = Depends(get_now)):
+    return await _serve(lambda: reports.sources(db, key_configured=_key_configured(), now=now))
 
 
 @router.get("/usage")
@@ -77,6 +78,7 @@ async def get_usage(
     agent: Optional[str] = Query(None),
     _: AuthContext = Depends(require_platform_admin_dep),
     db=Depends(get_trusted_db),
+    now: datetime = Depends(get_now),
 ):
     def run() -> dict:
         frm, end = reports.parse_window(from_, to)
@@ -84,7 +86,7 @@ async def get_usage(
                    "ambiente": ambiente, "origem": origem, "agent": agent}
         reports.check_filters(source, filters)
         reports.check_group_by(source, group_by, reports.USAGE_GROUPS)
-        return reports.usage_report(db, source=source, status=_status(db, source), frm=frm, to=end, bucket=bucket,
+        return reports.usage_report(db, source=source, status=_status(db, source, now), frm=frm, to=end, bucket=bucket,
                                     group_by=group_by, filters=filters)
 
     return await _serve(run)
@@ -105,12 +107,13 @@ async def get_cost(
     agent: Optional[str] = Query(None),
     _: AuthContext = Depends(require_platform_admin_dep),
     db=Depends(get_trusted_db),
+    now: datetime = Depends(get_now),
 ):
     def run() -> dict:
         frm, end = reports.parse_window(from_, to)
         filters = {"model": model, "workspace_id": workspace_id, "api_key_id": api_key_id,
                    "ambiente": ambiente, "origem": origem, "agent": agent}
-        return reports.cost_report(db, source=source, status=_status(db, source), frm=frm, to=end, bucket=bucket,
+        return reports.cost_report(db, source=source, status=_status(db, source, now), frm=frm, to=end, bucket=bucket,
                                    group_by=group_by, filters=filters)
 
     return await _serve(run)
@@ -122,9 +125,10 @@ async def get_spend(
     month: Optional[str] = Query(None, description="YYYY-MM"),
     _: AuthContext = Depends(require_platform_admin_dep),
     db=Depends(get_trusted_db),
+    now: datetime = Depends(get_now),
 ):
     return await _serve(lambda: reports.spend_report(
-        db, source=source, status=_status(db, source), month=month, today=_now().date()))
+        db, source=source, status=_status(db, source, now), month=month, today=now.date()))
 
 
 @router.get("/deliveries")
@@ -138,12 +142,13 @@ async def get_deliveries(
     ambiente: Optional[str] = Query(None),
     _: AuthContext = Depends(require_platform_admin_dep),
     db=Depends(get_trusted_db),
+    now: datetime = Depends(get_now),
 ):
     def run() -> dict:
         if source != "ledger":
             raise reports.ReportError("filter_not_supported_by_source", "deliveries exist only in the ledger source")
         frm, end = reports.parse_window(from_, to)
-        return reports.deliveries_report(db, status=_status(db, "ledger"), frm=frm, to=end, model=model,
+        return reports.deliveries_report(db, status=_status(db, "ledger", now), frm=frm, to=end, model=model,
                                          agent=agent, ambiente=ambiente)
 
     return await _serve(run)
@@ -154,10 +159,11 @@ async def get_rate_limits(
     source: Source = Query(...),
     _: AuthContext = Depends(require_platform_admin_dep),
     db=Depends(get_trusted_db),
+    now: datetime = Depends(get_now),
 ):
     def run() -> dict:
         if source != "anthropic":
             raise reports.ReportError("filter_not_supported_by_source", "rate limits exist only in the anthropic source")
-        return reports.rate_limits_report(db, status=_status(db, "anthropic"))
+        return reports.rate_limits_report(db, status=_status(db, "anthropic", now))
 
     return await _serve(run)
