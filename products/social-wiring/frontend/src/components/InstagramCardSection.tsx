@@ -26,7 +26,8 @@
  * `/accounts/{provider}/oauth/start` contract.
  */
 import { useState } from "react";
-import { Instagram, Key, Link2, Loader2, Plus } from "lucide-react";
+import { Key, Link2, Loader2, Plus } from "lucide-react";
+import { Instagram } from "@noctusai/lib/brand-icons";
 import { toast } from "sonner";
 
 import {

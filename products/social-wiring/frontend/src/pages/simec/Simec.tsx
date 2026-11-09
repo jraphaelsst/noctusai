@@ -14,7 +14,8 @@
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { BarChart3, Instagram, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import { BarChart3, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import { Instagram } from "@noctusai/lib/brand-icons";
 import { ErrorState, FormError, Select, Skeleton, useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { Button } from "@/components/ui/button";

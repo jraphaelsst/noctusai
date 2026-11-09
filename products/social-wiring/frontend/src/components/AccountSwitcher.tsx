@@ -39,7 +39,8 @@
  * "Selecione uma conta", never "padrão".
  */
 import { useEffect, useMemo } from "react";
-import { Users, Youtube, ChevronDown } from "lucide-react";
+import { Users, ChevronDown } from "lucide-react";
+import { Youtube } from "@noctusai/lib/brand-icons";
 import { resolveStatusBadge } from "@noctusai/lib";
 
 import type { IntegrationAccount } from "@/hooks/useIntegrationAccounts";

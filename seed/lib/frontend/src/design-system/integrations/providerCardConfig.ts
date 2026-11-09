@@ -11,9 +11,9 @@
  * The card component reads the registry; zero card-code changes needed.
  */
 import * as React from "react";
-import { Youtube, Facebook, Instagram } from "lucide-react";
 import { WhatsAppIcon } from "./WhatsAppIcon";
 import type { IntegrationAccount, SecondaryField, ModalSection } from "./types";
+import { Youtube, Facebook, Instagram } from "../../brand-icons";
 
 export interface EditableField {
   /** The key in `account` (or `channel_info` / `metadata`) to edit. */

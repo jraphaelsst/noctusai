@@ -16,8 +16,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { useState } from "react";
-import { BarChart3, Grid3x3, Instagram, Facebook } from "lucide-react";
-
+import { BarChart3, Grid3x3 } from "lucide-react";
+import { Instagram, Facebook } from "../../brand-icons";
 import { SocialDashboardShell } from "./SocialDashboardShell";
 import type { SocialDashboardSubtab } from "./SocialDashboardShell";
 

@@ -29,8 +29,6 @@ import {
   Activity,
   Share2,
   Wand2,
-  Youtube,
-  Instagram,
   UserRound,
   List,
   FileText,
@@ -75,7 +73,7 @@ import {
   Layers,
   Eye,
 } from "lucide-react";
-
+import { Youtube, Instagram } from "@noctusai/lib/brand-icons";
 import { JULIA_NAV_GROUP } from "@/nav/julia";
 
 export const NAV_GROUPS: NavGroupWithRoute[] = [

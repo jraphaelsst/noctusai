@@ -19,7 +19,6 @@ import {
   CircleAlert,
   Eye,
   Heart,
-  Instagram,
   Loader2,
   MessageCircle,
   RefreshCw,
@@ -27,7 +26,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-
+import { Instagram } from "@noctusai/lib/brand-icons";
 import {
   ChartCard,
   LineChart,
