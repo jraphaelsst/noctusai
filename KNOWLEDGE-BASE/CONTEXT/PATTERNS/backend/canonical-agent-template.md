@@ -6,6 +6,8 @@ Born 2026-11-08. Owner answer (a) to the v03 "LLM Council" report: anti-sycophan
 
 ---
 
+**Every agent is conversational** (owner, 2026-11-09), the media-analyst included, so every agent carries these must-haves. The full conversational base (safety + identity, honesty, conduct, atendimento, human handoff to the org's fallback number, LGPD) becomes the `agente-base` template. SDR content (qualification, offers, booking, scoring) is a layer on top of it, never part of it. Plan: `project-history/roadmaps/agent-templates-2026-11.md`.
+
 ## 1 · Why a must-have, not a suggestion
 
 Sycophancy is a model default, not a content bug: asked "this price is great, right?", a model tends to agree. One agent fixing it by hand does not fix the next one. The fix lives where every agent is made (the generator) and where every agent is checked (prontidão).
