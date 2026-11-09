@@ -1,4 +1,4 @@
-# Contract — council ledger (v1.1, 2026-11-09)
+# Contract — council ledger (v1.2, 2026-11-09)
 
 > The one row schema that the ledger tool (`noctus.dev.council_ledger`) and the
 > `noc-council` skill build to. Owner decisions D6–D17 are in the live spec:
@@ -77,7 +77,8 @@ All ids are UUIDv4 strings. Every timestamp is ISO-8601 UTC. Every row carries
 - **false_alarm_rate** = refuted ÷ objections with an outcome (any outcome, including `untested`, counts in the denominator).
 - **acceptance_rate** = accepted ÷ dispositions.
 - **cost_per_hit** = Σ tokens ÷ vindicated.
-- **retune signal**: a seat with ≥ 10 resolved objections on a stage whose hit_rate is under 0.2 → propose demoting M→O on the stage map; one over 0.6 that is O → propose promoting. The owner ratifies; the skill never auto-edits the map.
+- **per-mode split (v1.2)**: `report` always returns `by_mode` (`subagents` · `api` · `single_chat`) plus an `independent` aggregate; the top-level per-seat metrics are that aggregate. Only `subagents`/`api` count as independent evidence and only they drive the retune; `single_chat` (one model, one context) is reported apart with `independent: false`. Optional `mode` filter.
+- **retune signal** (independent modes only; `single_chat` never drives it): a seat with ≥ 10 resolved objections on a stage whose hit_rate is under 0.2 → propose demoting M→O on the stage map; one over 0.6 that is O → propose promoting. The owner ratifies; the skill never auto-edits the map.
 
 ## 4 · Storage (D9, D12; ledger-first, owner decision 2026-11-09)
 - **ndjson in git is the SOURCE OF TRUTH**: `project-history/council/<YYYY-MM>/<session_id>.ndjson`. One file per session, so parallel branches never conflict. Each line is `{"record": "session|objection|verdict|event", ...fields}`. Append-only: a correction is a new `event`, never an edit.
@@ -98,3 +99,4 @@ All ids are UUIDv4 strings. Every timestamp is ISO-8601 UTC. Every row carries
 ## Changelog
 - v1.1 (2026-11-09): ledger-first (ndjson is the source of truth; DB leg, sync action and pre-push check parked on `feat/council-db-parked`), neutral recorder (tool-assigned `anon_label`, `blind_view`, seat reveal after verdict), false_alarm_rate denominator and `unique` grammar stated, as-built validation rules recorded.
 - v1 (2026-11-09): initial.
+- v1.2 (2026-11-09): `report` splits metrics per `mode` (`by_mode`), aggregates `subagents`+`api` as the independent set (top-level seats), labels `single_chat` `independent: false`, optional `mode` filter; retune proposals computed from independent modes only.

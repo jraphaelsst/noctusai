@@ -486,8 +486,12 @@ def _is_unique_mark(reason: str) -> bool:
     return bool(_UNIQUE_RE.match(reason or ""))
 
 
-def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, project: str | None = None,
-                    since: str | None = None, stage_map: dict[str, dict[str, str]] | None = None) -> dict:
+INDEPENDENT_MODES = ("subagents", "api")  # single_chat = one model, one context: never independent evidence
+
+
+def _aggregate(sessions: list[list[dict]], *, stage: str | None = None, project: str | None = None,
+               since: str | None = None, stage_map: dict[str, dict[str, str]] | None = None,
+               modes: frozenset[str] | None = None, retune: bool = True) -> dict:
     """Per-seat metrics over the given sessions WITH a verdict (each a list of rows, file order) + retune proposals.
 
     ``since`` filters by the session's ``recorded_at``. ``stage_map`` ({stage: {seat: 'M'|'O'}}) is optional:
@@ -508,6 +512,8 @@ def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, pro
         if project and s.get("project") != project:
             continue
         if since_dt and _parse_ts(s["recorded_at"]) < since_dt:
+            continue
+        if modes is not None and s.get("mode") not in modes:
             continue
         kept += 1
         objs = {r["objection_id"]: r for r in rows if r["record"] == "objection"}
@@ -551,7 +557,7 @@ def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, pro
             "tokens": t["tokens"],
         }
     proposals = []
-    for (seat, stg), c in sorted(by_seat_stage.items()):
+    for (seat, stg), c in sorted(by_seat_stage.items() if retune else ()):
         resolved = c["vindicated"] + c["refuted"]
         if resolved < RETUNE_MIN_RESOLVED:
             continue
@@ -569,12 +575,41 @@ def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, pro
             "retune_proposals": proposals, "note": "the owner ratifies a retune; the skill never edits the stage map"}
 
 
+def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, project: str | None = None,
+                    since: str | None = None, stage_map: dict[str, dict[str, str]] | None = None,
+                    mode: str | None = None) -> dict:
+    """Metrics split per mode (``by_mode``) + the ``independent`` aggregate (subagents + api only).
+
+    Top-level ``seats``/``retune_proposals`` = the independent aggregate; a ``single_chat`` round never counts as
+    independent evidence and never drives a retune. ``mode`` filters to one mode (``single_chat`` -> labelled
+    ``independent: false`` and no retune).
+    """
+    if mode is not None and mode not in ENUMS["mode"]:
+        raise ValueError(f"mode must be one of {sorted(ENUMS['mode'])}; got {mode!r}")
+    kw = {"stage": stage, "project": project, "since": since}
+    by_mode = {m: {**_aggregate(sessions, modes=frozenset({m}), retune=False, **kw),
+                   "independent": m in INDEPENDENT_MODES} for m in sorted(ENUMS["mode"])}
+    if mode is not None and mode not in INDEPENDENT_MODES:
+        top = by_mode[mode]
+        retune_note = f"retune disabled: mode={mode} is not independent evidence (one model, one context)"
+        return {**{k: top[k] for k in ("sessions", "filters", "seats")}, "filters": {**kw, "mode": mode},
+                "independent": False, "by_mode": by_mode, "retune_proposals": [], "note": retune_note}
+    wanted = frozenset({mode}) if mode else frozenset(INDEPENDENT_MODES)
+    ind = _aggregate(sessions, stage_map=stage_map, modes=wanted, **kw)
+    ind["filters"]["mode"] = mode
+    ind.update(independent=True, by_mode=by_mode,
+               independent_modes=list(INDEPENDENT_MODES),
+               note=ind["note"] + "; only subagents/api count as independent and only they drive retune "
+                    "(single_chat is reported apart with independent: false, never feeds a retune)")
+    return ind
+
+
 def report(root: Path, **filters: Any) -> dict:
     try:
         sessions = load_sessions(root)
+        return {"ok": True, "action": "report", **compute_metrics(sessions, **filters)}
     except ValueError as exc:
         return _err(str(exc))
-    return {"ok": True, "action": "report", **compute_metrics(sessions, **filters)}
 
 
 # ── status ───────────────────────────────────────────────────────────────────
@@ -734,7 +769,7 @@ def run(action: str, *, root: Path | None = None, **kw: Any) -> dict:
         return _err(e) if e else (blind_view if action == "blind_view" else full_view)(root, kw["session_id"])
     if action == "report":
         return report(root, stage=kw.get("stage"), project=kw.get("project"), since=kw.get("since"),
-                      stage_map=kw.get("stage_map"))
+                      stage_map=kw.get("stage_map"), mode=kw.get("mode"))
     if action == "status":
         return status(root, outcome_after_days=int(kw.get("outcome_after_days") or 14))
     return _err("action must be one of open_session|record_objection|record_verdict|record_event|blind_view|full_view|report|status; "

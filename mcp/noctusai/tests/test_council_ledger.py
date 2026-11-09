@@ -234,6 +234,38 @@ class TestMetrics:
         assert all(p["applies_if"] is None for p in rep["retune_proposals"])
 
 
+class TestModeSplit:
+    def mode_session(self, root, mode, seat, vind, ref):
+        sid = cl.open_session(root, stage="build", subject_kind="plan", subject_ref="ref", trigger="stage_map",
+                              mode=mode, seats=[seat], brief_sha256=SHA, project="p1", recorded_by="t",
+                              recorded_at=T0)["session_id"]
+        oids = [obj(root, sid, seat, str(i)) for i in range(10)]
+        verdict(root, sid, [(o, "accepted", "x") for o in oids])
+        for i, o in enumerate(oids):
+            outcome(root, sid, o, "vindicated" if i < vind else "refuted")
+
+    def test_split_independent_aggregate_and_retune_ignore_single_chat(self, tmp_path):
+        self.mode_session(tmp_path, "subagents", "lens:a", 5, 0)
+        self.mode_session(tmp_path, "single_chat", "lens:sc", 0, 0)   # would demote if it counted
+        rep = cl.report(tmp_path)
+        assert set(rep["by_mode"]) == {"subagents", "api", "single_chat"}
+        assert rep["by_mode"]["single_chat"]["independent"] is False
+        assert rep["by_mode"]["subagents"]["independent"] is True
+        assert "lens:sc" in rep["by_mode"]["single_chat"]["seats"]
+        assert set(rep["seats"]) == {"lens:a"} and rep["independent"] is True and rep["sessions"] == 1
+        assert rep["retune_proposals"] == []  # single_chat's 0/10 never drives a demote
+        assert "only subagents/api" in rep["note"]
+
+    def test_mode_filter(self, tmp_path):
+        self.mode_session(tmp_path, "subagents", "lens:a", 5, 0)
+        self.mode_session(tmp_path, "single_chat", "lens:sc", 0, 0)
+        sc = cl.report(tmp_path, mode="single_chat")
+        assert sc["independent"] is False and set(sc["seats"]) == {"lens:sc"}
+        assert sc["retune_proposals"] == [] and "not independent" in sc["note"]
+        assert set(cl.report(tmp_path, mode="subagents")["seats"]) == {"lens:a"}
+        assert cl.report(tmp_path, mode="bogus")["ok"] is False
+
+
 class TestStatusAndDispatch:
     def test_status_reports_sessions_without_verdict_and_stale_objections(self, tmp_path):
         s = open_s(tmp_path)

@@ -39,7 +39,7 @@ answer every objection. Depth: `KB § PATTERNS/common/council.md`. Ledger contra
    chair report attached. The council informs; it never decides prod exposure.
 7. **Later: outcomes.** At wrap-up, post-deploy or on an incident/revert, record per objection
    `outcome` = `vindicated|refuted|untested` with `evidence_kind` + `evidence_ref`
-   (`action=record_event event_kind=outcome`). `action=report` computes the metrics.
+   (`action=record_event event_kind=outcome`). `action=report` computes the metrics (split per mode; only subagents/api are independent and drive retune, single_chat is not).
 8. **Retune.** The report's retune signal PROPOSES stage-map changes (M to O or O to M). The owner
    ratifies; this skill never edits the map by itself.
 
