@@ -44,6 +44,10 @@ kind                  payload                                                   
 ``evals_comportamento`` ``{"itens": [{slug, titulo, entrada, contexto, criterios:   idem (suite comportamento:
                       {deve, nao_deve}, rubrica, roteiro (world only), tags,      the LLM-judged cases)
                       ativo}]}`` (same merge rule, this suite only)
+``rascunho``           ``{"configuracoes": {provider?, model?, effort?,            PATCH agents/{agent}/draft
+                      max_turns?, idioma?, tool_policy?: {web_search,
+                      knowledge}, notas?}}`` (the DRAFT's settings; only the
+                      fields sent change)
 ``conformidade_regras`` (READ-ONLY: list/get; set is refused) ``{"itens": [...]}``     .../conformidade/regras/{regra}
 ====================  ==========================================================  =============================
 
@@ -647,6 +651,34 @@ class _EvalCases:
 _REGRA_FIELDS = ("ativo", "politica", "parametros")
 
 
+#: The draft settings ``PATCH /api/studio/agents/{agent}/draft`` accepts (``DraftUpdateRequest``).
+_RASCUNHO_CAMPOS = ("provider", "model", "effort", "max_turns", "idioma", "tool_policy", "notas")
+
+
+class _Rascunho:
+    """The DRAFT's settings (model, effort, turns, language, tool policy, notes), keyed by field name. Only the fields
+    in the payload change; the server validates them (an unknown model or a malformed ``tool_policy`` is a 422). A
+    settings change moves the compiled hash, so the next eval run judges it."""
+
+    def current(self, api: _Api, agent: str) -> dict[str, Any]:
+        draft = api.call("GET", f"/api/studio/agents/{_q(agent)}/draft")
+        return {f: draft.get(f) for f in _RASCUNHO_CAMPOS}
+
+    def plan(self, api: _Api, agent: str, payload: Any, merge: bool):
+        if not isinstance(payload, dict) or not isinstance(payload.get("configuracoes"), dict):
+            raise ContentError("payload_invalido", 'O payload deve ser {"configuracoes": {...}}.')
+        novos = _only(payload["configuracoes"], _RASCUNHO_CAMPOS, "configuracoes")
+        cur = self.current(api, agent)
+        changes = [_change(k, cur.get(k), v) for k, v in sorted(novos.items())]
+        corpo = {c["chave"]: novos[c["chave"]] for c in changes if c["op"] != "unchanged"}
+        if not corpo:
+            return changes, None
+        return changes, lambda: api.call("PATCH", f"/api/studio/agents/{_q(agent)}/draft", corpo)
+
+    def listing(self, api: _Api, agent: str) -> list[str]:
+        return list(_RASCUNHO_CAMPOS)
+
+
 class _ConformidadeRegras:
     """The conformance rules of an agent's DEFINITION row (``/api/studio/agents/{agent}/conformidade/regras``),
     keyed by ``regra``. The rule set is fixed by code (an unknown rule is refused) and the rows are NOT versioned: a
@@ -709,6 +741,7 @@ _AGENTE = {
         ("titulo", "entrada", "criterios"),
     ),
     "conformidade_regras": _ConformidadeRegras(),
+    "rascunho": _Rascunho(),
 }
 _EFEITO = {
     "evals_mecanismo": "Casos gravados: valem na PRÓXIMA execução da suíte mecanismo. Nada foi executado nem publicado.",
@@ -909,7 +942,7 @@ def register(server) -> None:
             "agents Studio API, DRAFTS ONLY (never publishes). action=list|get|set; kind=secao|texto|ferramenta|decisao|"
             "spec (need agent=<key>), skill|skill_ref (library skills / pins on the agent draft), padrao_criterio|"
             "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo|evals_comportamento (mechanism / LLM-judged behaviour eval cases) | "
-            "conformidade_regras (rule switches; NOT versioned - live from the next turn) (need agent=<key>). Lifecycle: "
+            "conformidade_regras (rule switches; NOT versioned - live from the next turn) | rascunho (the DRAFT settings: payload {configuracoes: {provider, model, effort, max_turns, idioma, tool_policy: {web_search, knowledge}, notas}}, only the fields sent change) (need agent=<key>). Lifecycle: "
             "action=criar_agente (agent=<any valid key>: creates the EMPTY platform definition; optional payload_path with nome, "
             "runtime, owner_product, escopo/padrao_qualificacao, rascunho_padrao, instanciavel, papel and a briefing that "
             "also starts an AI generation) | configurar_agente (payload_path: the same data fields, PATCH) | definicao "

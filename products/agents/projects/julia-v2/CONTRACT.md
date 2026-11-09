@@ -275,6 +275,9 @@ GET  /api/studio/agents/{key}/versions/{id}/payload?amostra=<contexto_exemplo>  
   - `kind ∈ {secao, texto, ferramenta, decisao, skill, padrao_criterio, padrao_estagio}`, plus (A-polish, 2026-10-20)
     `evals_mecanismo` (mechanism eval cases) and `conformidade_regras` (rule switches) -- not versioned, so the
     result states that a case counts from the next mechanism run and a rule from the next turn.
+  - (2026-11-08/09) `evals_comportamento` (the LLM-judged behaviour cases, same merge rule as the mechanism ones) and
+    `rascunho` (the draft's SETTINGS: provider, model, effort, max_turns, idioma, tool_policy, notas; PATCH
+    `/draft` with only the fields sent). An agent can now build a complete draft without the Studio UI.
   - DRY-RUN by default (prints a unified diff of the DB row). `confirm=True` writes the **draft**.
   - `publish` calls `POST /draft/publish` (the eval gate applies, nothing is bypassed).
 - **Credentials:** `NOCTUS_AGENTS_URL` / `NOCTUS_AGENTS_TOKEN` (as `agent_package_publish` uses).
