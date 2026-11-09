@@ -92,17 +92,18 @@ class TestCreateRun:
                 case_ids=None, started_by=USER,
             )
 
-    def test_second_run_for_same_version_conflicts_while_first_is_active(self, store):
+    def test_second_run_for_same_version_runs_in_parallel(self, store):
+        # 071: several runs of one version may be in flight at once.
         store.create_case(ORG, AGENT, _case_input())
-        store.create_run(
+        first = store.create_run(
             ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
             case_ids=None, started_by=USER,
         )
-        with pytest.raises(StudioConflict):
-            store.create_run(
-                ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
-                case_ids=None, started_by=USER,
-            )
+        second = store.create_run(
+            ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
+            case_ids=None, started_by=USER,
+        )
+        assert first.id != second.id
 
     def test_new_run_allowed_once_prior_run_is_cancelled(self, store):
         store.create_case(ORG, AGENT, _case_input())

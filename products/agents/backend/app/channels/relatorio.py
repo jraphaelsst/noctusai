@@ -69,7 +69,8 @@ def gerador_resumo_llm(
         tool = extracao.resumo_tool(conteudo)
         async with asyncio.timeout(RESUMO_TIMEOUT_SECONDS):
             raw, usage = await runtime.structured_extract(
-                provider=versao.provider, model=versao.model, org_id=org_id, system=system, user=user, tool=tool)
+                provider=versao.provider, model=versao.model, org_id=org_id, system=system, user=user, tool=tool,
+                purpose="summarize")
         shaped = extracao.shape_resumo(raw)
         if getattr(usage, "cost_usd", None):
             def _book() -> None:

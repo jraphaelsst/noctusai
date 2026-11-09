@@ -18,6 +18,7 @@ the per-cluster naming (which sees aggregated tags + empresa, not emails).
 The embedding step itself uses the LLM provider's embedding endpoint —
 texts are sent but not cached at the LLM-key level.
 """
+# NOC-REMEDIATE[retrieval-organ]: local greedy cosine clustering over generate_embedding — move the similarity/cluster primitive into noctusai_lib.integrations.retrieval (KB § PATTERNS/backend/retrieval-organ.md) — 2026-11-09
 from __future__ import annotations
 
 import logging

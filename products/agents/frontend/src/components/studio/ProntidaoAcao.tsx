@@ -100,8 +100,13 @@ function AcaoMecanismo({ agentKey }: { agentKey: string }) {
       <Button
         size="sm"
         variant="outline"
-        disabled={rodando}
-        onClick={() => { setRunId(null); iniciar.mutate(undefined, { onSuccess: (res) => setRunId(res.run_id) }); }}
+        // Several runs of one version may execute at once (migration 071): only the POST itself blocks a click.
+        // The panel follows the newest run it started.
+        disabled={iniciar.isPending}
+        onClick={() => {
+          setRunId(null);
+          iniciar.mutate(undefined, { onSuccess: (res) => setRunId(res.run_id) });
+        }}
         data-testid="acao-mecanismo-botao"
       >
         <Play className="mr-1 h-3 w-3" aria-hidden /> Rodar suíte de mecanismo

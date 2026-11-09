@@ -13,7 +13,7 @@ const agentHook = vi.fn();
 
 vi.mock("@/hooks/useIsPlatformAdmin", () => ({ useIsPlatformAdmin: () => platformAdmin() }));
 vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<object>()), useIsOrgAdmin: () => orgAdmin() }));
-vi.mock("@/hooks/studio/useMecanismo", () => ({ useIniciarMecanismo: () => iniciar(), useMecanismoRun: () => mecRun() }));
+vi.mock("@/hooks/studio/useMecanismo", () => ({ useIniciarMecanismo: () => iniciar(), useMecanismoRun: (...a: unknown[]) => mecRun(...a) }));
 vi.mock("@/hooks/studio/useEvals", () => ({ useCreateEvalRun: () => criarEval(), useEvalRun: () => evalRun() }));
 vi.mock("@/hooks/studio/useControle", () => ({ useSetControle: () => ligar() }));
 vi.mock("@/hooks/studio/useBiblioteca", () => ({ useAtualizarSkillsBiblioteca: () => ({ mutate: vi.fn(), isPending: false, isError: false, isSuccess: false }) }));
@@ -55,6 +55,19 @@ describe("acaoDoItem", () => {
 });
 
 describe("mecanismo action", () => {
+  it("lets a second run start while one executes (parallel runs, 071) and follows the newest", () => {
+    let n = 0;
+    const m = mut({ mutate: (_v: unknown, o: { onSuccess: (r: { run_id: string }) => void }) => o.onSuccess({ run_id: `r${++n}` }) });
+    iniciar.mockReturnValue(m);
+    mecRun.mockReturnValue(runView({ ...MEC, status: "executando" }));
+    render(<ProntidaoAcao codigo="mecanismo_hash_diferente" agentKey="julia" />);
+    const botao = screen.getByRole("button", { name: /Rodar suíte de mecanismo/ }) as HTMLButtonElement;
+    fireEvent.click(botao);
+    expect(botao.disabled).toBe(false);
+    fireEvent.click(botao);
+    expect(mecRun).toHaveBeenLastCalledWith("julia", "r2");
+  });
+
   it("starts the suite on click", () => {
     const m = mut();
     iniciar.mockReturnValue(m);

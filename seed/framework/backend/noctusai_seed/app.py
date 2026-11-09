@@ -54,6 +54,8 @@ from noctusai_lib.integrations.llm import LLMConfig
 from noctusai_lib.integrations.llm.attribution import set_default_product as set_llm_default_product
 from noctusai_lib.integrations.llm.budget import configure_budget_module
 from noctusai_lib.integrations.llm.ledger import make_central_usage_sink
+from noctusai_lib.integrations.llm.spend_guard import configure_spend_guard, make_spend_window_reader
+from noctusai_lib.integrations.llm.tracing import configure_span_sink, make_span_sink
 from noctusai_lib.integrations.prompt_registry import configure_prompt_registry, make_prompt_registry
 from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
 
@@ -389,6 +391,13 @@ def create_product_app(
     #    Late-binding lambda for the same reason the audit sink uses one (see 3a).
     set_llm_default_product(CORE_SLUG if schema == "public" else _product_slug)
     central_usage_sink = make_central_usage_sink(lambda: db.get_core_client())
+    # 4-pre. Per-call AI tracing (non-LLM spans: tool calls, guardrail verdicts, turns) and the per-surface spend
+    #        guard (limits from `LLM_SPEND_LIMITS`; default none = nothing is checked). Both ride the same
+    #        service-role core client as the ledger; both are `None` under pytest like the usage sink.
+    configure_span_sink(make_span_sink(lambda: db.get_core_client()))
+    configure_spend_guard(
+        reader=make_spend_window_reader(lambda: db.get_core_client()) if central_usage_sink is not None else None
+    )
     # 4a. The platform prompt registry (`public.plataforma_agentes`): EVERY product reads its AI prompts/models from the
     #     database through the service-role core client, configured by construction (late-binding lambda, see 3a).
     #     Tests inject a Fake with `configure_prompt_registry(...)` or pass `registry=`.

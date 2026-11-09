@@ -165,12 +165,16 @@ class TestPoll:
         fim = _poll(studio, rid)
         assert fim["status"] == "concluida" and fim["aprovado"] and fim["total_casos"] == 1 and fim["casos_aprovados"] == 1
 
-    def test_a_second_run_while_one_executes_is_409_run_in_progress(self, studio):
+    def test_a_second_run_while_one_executes_starts_in_parallel(self, studio):
+        # 071: several runs of one version may execute at once; each has its own id and finishes on its own.
         _setup(studio, driver=_Lento(_ok()))
         rid = studio.post(URL).json()["run_id"]
         again = studio.post(URL)
-        assert again.status_code == 409 and again.json()["code"] == "run_in_progress"
+        assert again.status_code == 202, again.text
+        outro = again.json()["run_id"]
+        assert outro != rid
         assert _poll(studio, rid)["status"] == "concluida"
+        assert _poll(studio, outro)["status"] == "concluida"
 
     def test_a_crashing_driver_marks_the_run_falhou_with_a_fixed_text(self, studio):
         class _Quebra(_Live):
@@ -211,7 +215,7 @@ class TestOrphanSweep:
             UUID(int=1), UUID(int=2), version, compiled_hash="h", driver="live", limite_usd=None,
             started_by=UUID(int=3), total_casos=1)
 
-    def test_an_executing_run_from_before_boot_is_failed_with_the_fixed_text_and_frees_the_slot(self):
+    def test_an_executing_run_from_before_boot_is_failed_with_the_fixed_text(self):
         from datetime import timedelta
 
         from app.stores._util import utcnow
@@ -219,12 +223,9 @@ class TestOrphanSweep:
 
         store, v = self._store(), UUID(int=10)
         rid = self._start(store, v)
-        with pytest.raises(Exception, match="already executing"):
-            self._start(store, v)  # the unique slot is held
         assert varrer_runs_orfas(store, started_before=utcnow() + timedelta(seconds=1)) == 1
         run = store.get_run(UUID(int=1), rid)
         assert run["status"] == "falhou" and run["erro"] == ORFA_ERRO == "interrompida" and run["finished_at"] is not None
-        assert self._start(store, v)  # freed
 
     def test_a_run_that_started_after_the_cutoff_and_a_finished_run_are_untouched(self):
         from datetime import timedelta

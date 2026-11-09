@@ -62,6 +62,20 @@ Pattern: a small `sanitize_llm_output(text: str, *, surface: Literal[...])`
 helper at the consumer side — the lib doesn't ship a generic one
 because the right shape depends on the destination.
 
+**Seed organ (the product-generic half, shipped 2026-11-09):**
+`noctusai_lib.integrations.llm.guardrails` — `OutputGuard` Protocol +
+`FakeOutputGuard` + `RealOutputGuard` + `get_output_guard`, over pure detectors:
+prompt-leak canary + hashed-shingle fingerprint (`canario`, `fingerprint_of`,
+`detectar_vazamento`), link / contact / PII / odd-format / forbidden-pattern
+filters, the de-obfuscating `esqueleto`, tool-result redaction (`redact_pii`,
+`redact_payload`) and structural answer bounds (`outside_word_band`,
+`unretrieved_sources`). Policy is DATA: a product passes `GuardContext` (allowed
+hosts/contacts, own company ids, canary, fingerprint, org data) and per-rule
+`GuardRule` params; a persona's canary text or an org's specs never enter the
+seed. Consumers: agents `channels/conformidade` (Julia), agents `public_ask`
+post-filter, social-wiring `scheduling/sanitization`. A product that needs one of
+these checks imports the organ — a second local copy is a fork.
+
 ### 2b. Tool-argument validation at the handler boundary
 
 Every tool handler validates its own arguments before doing anything.

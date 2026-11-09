@@ -90,6 +90,7 @@ from app.schemas.studio import (
     VersionSummaryOut,
 )
 from app.stores.agents import DEFAULT_AGENT_KEYS
+from app.stores._db_errors import erro_de_item, mensagem_conflito
 from app.stores.errors import NotFound
 from app.stores.marcadores import get_marcador_store
 from app.stores.studio_definitions import (
@@ -298,7 +299,7 @@ def store_errors() -> Iterator[None]:
     except VersionImmutable as exc:
         raise http_error(409, "version_immutable", "A versão publicada é imutável.") from exc
     except StudioConflict as exc:
-        raise http_error(409, exc.code, str(exc)) from exc
+        raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
     except ValueError as exc:
         raise http_error(422, "invalid_field", str(exc)) from exc
 
@@ -862,7 +863,7 @@ def upsert_draft_skill_files_batch(
             )
         except (ValueError, StudioConflict) as exc:
             erros += 1
-            resultados.append(SkillFileBatchItemResultOut(caminho=item.caminho, status="erro", erro=str(exc)))
+            resultados.append(SkillFileBatchItemResultOut(caminho=item.caminho, status="erro", erro=erro_de_item(exc)))
             continue
         existing_caminhos.add(item.caminho)
         if was_existing:
@@ -1235,8 +1236,8 @@ async def run_mecanismo_suite(
 ) -> MecanismoRunIniciadaOut:
     """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
     minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
-    ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. A second run for the same
-    version while one executes is 409 ``run_in_progress``. The driver comes from ``get_eval_turn_driver`` (409
+    ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. Several runs of the same
+    version may execute at once (071): each has its own id, results and cost cap. The driver comes from ``get_eval_turn_driver`` (409
     ``driver_indisponivel`` when none is configured); the cost cap comes from settings. Replies carry codes only."""
     agent = resolve_agent(store, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)

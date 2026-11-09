@@ -142,12 +142,13 @@ class TestMissingBudgetTable:
         assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 1
 
     @pytest.mark.asyncio
-    async def test_transient_error_stays_fail_open(self):
-        # The monthly-budget leg stays fail-open on a transient error...
+    async def test_transient_error_is_never_reported_as_unset(self):
+        # A failed read raises (it used to return None = "no budget = unlimited"); the loud policy
+        # (retry / last-known / refuse) lives in tests/integrations/llm/test_budget_loud_failure.py.
         configure_budget_module(admin_client_factory=self._admin_raising("connection reset"))
-        assert await fetch_budget_brl("org-1") is None
-        # ...but the same outage also hides the org's prepaid credit wallet, and an
-        # org never seen before may be prepaid: that leg refuses (fail-closed, core 093).
+        with pytest.raises(Exception, match="connection reset"):
+            await fetch_budget_brl("org-1")
+        # ...and the same outage also hides the org's prepaid credit wallet: that leg refuses first.
         from noctusai_lib.integrations.llm.exceptions import LLMCreditsUnverifiable
 
         with pytest.raises(LLMCreditsUnverifiable):

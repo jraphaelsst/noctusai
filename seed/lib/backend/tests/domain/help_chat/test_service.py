@@ -142,3 +142,76 @@ class TestHelpChatRateLimiter:
         assert limiter.allow("user-1") is True
         assert limiter.allow("user-2") is True
         assert limiter.allow("user-1") is False
+
+
+# --- Retrieval-backed knowledge selection ---------------------------------
+
+
+from noctusai_lib.domain.help_chat.service import (  # noqa: E402
+    FALLBACK_INDEX_FAILED,
+    FALLBACK_NO_RELEVANT_CHUNKS,
+    HelpChatKnowledgeSelector,
+    retrieval_query_from_history,
+)
+from noctusai_lib.integrations.retrieval import FakeEmbedder, InMemoryRetrievalStore, Retriever  # noqa: E402
+
+_KNOWLEDGE = (
+    "# Clientes\n\nPara cadastrar cliente novo abra o menu Clientes e toque em Novo cliente.\n\n"
+    "# Financeiro\n\nPara gerar a cobranca do mes abra Financeiro e toque em Gerar cobranca.\n"
+)
+
+
+def _selector(store=None, emb=None, **kw):
+    store, emb = store or InMemoryRetrievalStore(), emb or FakeEmbedder()
+    return HelpChatKnowledgeSelector(
+        retriever=Retriever(store, emb, max_chars=120, overlap=10),
+        namespace="help_chat:t", knowledge=_KNOWLEDGE, min_score=0.1, **kw,
+    ), store, emb
+
+
+class TestRetrievalQuery:
+    def test_uses_the_last_user_turns_so_a_bare_followup_keeps_its_topic(self):
+        h = [
+            {"role": "user", "content": "como cadastrar cliente"},
+            {"role": "assistant", "content": "Abra Clientes."},
+            {"role": "user", "content": "sim"},
+        ]
+        assert retrieval_query_from_history(h) == "como cadastrar cliente\nsim"
+
+
+@pytest.mark.asyncio
+class TestKnowledgeSelector:
+    async def test_sends_only_the_relevant_chunk_not_the_whole_file(self):
+        sel, _, _ = _selector(k=1)
+        out = await sel.select([{"role": "user", "content": "como cadastrar cliente novo"}])
+        assert out.source == "retrieval" and out.fallback_reason is None
+        assert "Novo cliente" in out.text and "Gerar cobranca" not in out.text
+        assert len(out.text) < len(_KNOWLEDGE)
+
+    async def test_nothing_relevant_falls_back_to_the_whole_file_and_logs(self, caplog):
+        sel, _, _ = _selector()
+        with caplog.at_level("INFO"):
+            out = await sel.select([{"role": "user", "content": "zzz qqq alheio total"}])
+        assert (out.source, out.fallback_reason, out.text) == ("full_file", FALLBACK_NO_RELEVANT_CHUNKS, _KNOWLEDGE)
+        assert "reason=no_relevant_chunks" in caplog.text
+
+    async def test_index_failure_falls_back_to_the_whole_file_and_warns(self, caplog):
+        store = InMemoryRetrievalStore()
+
+        def boom(**_):
+            raise RuntimeError("db down")
+
+        store.corpus_hash = boom  # failing dependency double
+        sel, _, _ = _selector(store=store)
+        with caplog.at_level("WARNING"):
+            out = await sel.select([{"role": "user", "content": "cadastrar cliente"}])
+        assert out.source == "full_file" and out.fallback_reason.startswith(FALLBACK_INDEX_FAILED)
+        assert out.text == _KNOWLEDGE
+        assert any(r.levelname == "WARNING" and "reason=index_failed" in r.getMessage() for r in caplog.records)
+
+    async def test_indexes_once_not_per_request(self):
+        sel, _, emb = _selector()
+        await sel.select([{"role": "user", "content": "cadastrar cliente"}])
+        batch_calls = emb.calls
+        await sel.select([{"role": "user", "content": "gerar cobranca"}])
+        assert emb.calls == batch_calls + 1  # one query embedding, no re-index

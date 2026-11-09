@@ -54,6 +54,7 @@ from noctusai_lib.integrations.llm import (
     ChatToolsResponse,
     LLMAPIError,
     LLMBudgetExceeded,
+    LLMBudgetUnverifiable,
     LLMNotConfigured,
     LLMUsage,
     ToolCall,
@@ -63,7 +64,11 @@ from noctusai_lib.integrations.llm import (
     chat_with_tools,
     enforce_budget,
     llm_usage_context,
+    resolve_model,
     run_tool_loop,
+    span,
+    SpendCeilingExceeded,
+    SpendCeilingUnverifiable,
 )
 
 from app.runtime.errors import (
@@ -175,14 +180,19 @@ def make_budget_guard(
     ``daily_cap_usd > 0`` — a per-org DAILY cap over the turn costs already
     stamped on ``agents.messages`` (``messages.sum_cost_usd_since``). Either
     exhausted ⇒ :class:`LlmCapacityError` (429 ``capacidade``). The monthly
-    layer is fail-open by the seed's design (a flaky budget read must not
-    take replies down); the daily one reads agents' own table."""
+    layer is LOUD on a failed read (seed `budget.py`: one retry, the fresh last-known verdict, else
+    ``LLMBudgetUnverifiable`` → 429 ``capacidade``, retried by the channel); the daily one reads agents' own table."""
 
     async def _guard(org_id: UUID) -> None:
         try:
             await monthly(str(org_id))
         except LLMBudgetExceeded as exc:
             raise LlmCapacityError("Orçamento de IA da organização esgotado.", retry_after_seconds=3600) from exc
+        except LLMBudgetUnverifiable as exc:
+            # The seed's budget guard could not read (loud, after a retry + last-known; core budget.py): a
+            # capacity answer the channel retries, never a raw 503 mid-conversation.
+            raise LlmCapacityError(
+                "Não foi possível verificar o orçamento de IA agora.", retry_after_seconds=60) from exc
         if daily_cap_usd > 0 and messages is not None:
             current = now()
             midnight = current.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -205,6 +215,10 @@ def _map_error(exc: BaseException, provider: str) -> BaseException:
         return LlmNotConfiguredError(provider)
     if isinstance(exc, LLMBudgetExceeded):
         return LlmCapacityError("Orçamento de IA da organização esgotado.", retry_after_seconds=3600)
+    if isinstance(exc, SpendCeilingExceeded):  # the seed per-surface spend guard (llm/spend_guard.py, enforce mode)
+        return LlmCapacityError("Limite de custo de IA atingido.", retry_after_seconds=3600)
+    if isinstance(exc, (LLMBudgetUnverifiable, SpendCeilingUnverifiable)):
+        return LlmCapacityError("Não foi possível verificar o limite de IA agora.", retry_after_seconds=60)
     if isinstance(exc, (LLMAPIError, ToolCallingNotImplemented)):
         return LlmUpstreamError(str(exc))
     return exc
@@ -292,16 +306,20 @@ class LlmToolRuntime:
                     "resumo": toolset.resumo(call.name, call.arguments) if toolset.resumo else call.name,
                 },
             }))
-            try:
-                result = toolset.handler(call)
-                if inspect.isawaitable(result):
-                    result = await result
-            except Exception:
-                logger.exception(
-                    "agents.llm.tool_failed org_id=%s conversation_id=%s tool=%s",
-                    ctx.org_id, ctx.conversation_id, call.name,
-                )
-                result = ToolResult(call.call_id, toolset.falha or _TOOL_FAILED_JSON, is_error=True)
+            # One trace span per tool call (a child of the turn span; `public.ai_trace_spans`, core 116).
+            async with span(call.name, kind="tool") as tool_span:
+                try:
+                    result = toolset.handler(call)
+                    if inspect.isawaitable(result):
+                        result = await result
+                except Exception:
+                    logger.exception(
+                        "agents.llm.tool_failed org_id=%s conversation_id=%s tool=%s",
+                        ctx.org_id, ctx.conversation_id, call.name,
+                    )
+                    result = ToolResult(call.call_id, toolset.falha or _TOOL_FAILED_JSON, is_error=True)
+                if result.is_error:
+                    tool_span.set(status="error")
             ms = int((time.perf_counter() - t0) * 1000)
             medida["tool_ms"] += ms
             medida["tools_ms"][call.name] = medida["tools_ms"].get(call.name, 0) + ms
@@ -370,15 +388,18 @@ class LlmToolRuntime:
                     agent_key=spec.key,
                     conversation_id=None if ctx.ephemeral else str(ctx.conversation_id),
                     org_id=str(ctx.org_id),
+                    prompt_version=str(spec.version_id) if spec.version_id else None,
                 ):
-                    result = await run_tool_loop(
-                        messages,
-                        list(toolset.tools) if toolset else [],
-                        _handler if toolset else None,
-                        chat=_chat,
-                        max_iterations=min(self._max_iterations, max(1, spec.max_turns)),
-                        fallback_reply=ctx.resposta_fallback,
-                    )
+                    # ONE trace per turn: every LLM call (ai_usage row) and tool call below is a span of it.
+                    async with span("agents.turn", kind="internal"):
+                        result = await run_tool_loop(
+                            messages,
+                            list(toolset.tools) if toolset else [],
+                            _handler if toolset else None,
+                            chat=_chat,
+                            max_iterations=min(self._max_iterations, max(1, spec.max_turns)),
+                            fallback_reply=ctx.resposta_fallback,
+                        )
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:  # noqa: BLE001 — handed to the generator, re-raised there
@@ -439,18 +460,27 @@ class LlmToolRuntime:
         tool: ToolSpec,
         agent_key: str | None = None,
         conversation_id: UUID | None = None,
+        purpose: str | None = None,
     ) -> tuple[dict[str, Any], Any]:
         """One structured-output call (Lais F-AG ``/resumo``): the model is
         FORCED to call ``tool`` (the provider-neutral structured-output path of
         the seed's tool calling), the call's arguments are returned with the
         turn's ``LLMUsage``. Same org-only key (B1) + budget guard as a turn;
-        provider failures map to the typed runtime errors. No persistence here."""
+        provider failures map to the typed runtime errors. No persistence here.
+
+        ``purpose`` (``"summarize"`` / ``"extract"`` / ``"classify"`` ...): the seed's purpose policy picks the tier's
+        model of the SAME provider (never another vendor — no silent failover) and it replaces ``model`` for this
+        call; no routable model for the provider ⇒ ``model`` (the version's) stands. Omitted = ``model`` as before.
+        Julia's main turn (``run_turn``) never passes a purpose: its per-version model is untouched."""
         await self.preflight(provider, org_id)
         api_key = self._resolve_key(provider, org_id)
+        if purpose is not None:
+            model = resolve_model(provider, purpose) or model
         try:
             with llm_usage_context(
                 product="agents", agent_key=agent_key,
                 conversation_id=str(conversation_id) if conversation_id else None, org_id=str(org_id),
+                purpose=purpose,
             ):
                 response = await chat_with_tools(
                     [ChatMessage.system(system), ChatMessage.user(user)],

@@ -25,10 +25,17 @@ Threshold tuning at runtime:
     LLM_BUDGET_SOFT_PCT = float env, default 0.8
     LLM_BUDGET_HARD_PCT = float env, default 1.0
 
-The monthly-budget part is fail-open: when the org has no budget set
-OR the budget lookup fails (DB error / missing settings), the guard
-returns silently and the LLM call proceeds. Document this in Sentry to
-distinguish "no budget configured" from "guard is broken".
+**The monthly budget is LOUD on a failed lookup, never silently open** (2026-11-09, was fail-open):
+
+  - "no budget row" (a successful read of nothing) = unlimited, as always;
+  - a FAILED read (budget row or month-to-date ledger) is retried once (bounded; `LLM_BUDGET_RETRY_DELAY_S`);
+  - still failing ⇒ the LAST-KNOWN status of that org is applied while it is fresh (`LLM_BUDGET_LKG_MAX_AGE_S`,
+    default 900 s) — live customer traffic (WhatsApp agents) rides out a short database blip on the last verdict, a
+    last-known `hard_stop` still refuses — and the degradation is announced: ERROR log on EVERY occurrence + (rate
+    limited per org) a bell notification for the platform admins;
+  - no fresh last-known value (never read by this process, or older than the max age) ⇒ the call is REFUSED with
+    `LLMBudgetUnverifiable` (503), unless `LLM_BUDGET_UNKNOWN_POLICY=allow` (an explicit, still ERROR-logged and
+    notified, operator opt-out; default `block`).
 
 **Prepaid credits (core migration 093) are fail-CLOSED** — `enforce_credits`
 runs first inside `enforce_budget`:
@@ -70,6 +77,7 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from .exceptions import (
     LLMBudgetExceeded,
     LLMBudgetNotConfigured,
+    LLMBudgetUnverifiable,
     LLMCreditsExhausted,
     LLMCreditsUnverifiable,
 )
@@ -84,6 +92,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SOFT_PCT = 0.80
 _DEFAULT_HARD_PCT = 1.00
 _DEFAULT_USD_TO_BRL = 5.0
+_DEFAULT_LKG_MAX_AGE_S = 900.0
+_DEFAULT_RETRY_DELAY_S = 0.15
+_DEGRADED_MARK_EVERY_S = 600.0
 _BUDGET_KEY = "monthly_llm_budget_brl"
 _BUDGET_SCHEMA = "public"
 #: Ensures the "storage is missing" ERROR is logged once per process.
@@ -103,6 +114,11 @@ _LEDGER_TABLE = "ai_usage"
 # threading the client through. None means "guard disabled".
 _admin_client_factory: Optional[Callable[[], Any]] = None
 
+#: org_id -> (monotonic time, status dict) of the last SUCCESSFUL `compute_status` (the last-known verdict).
+_status_lkg: dict[str, tuple[float, dict[str, Any]]] = {}
+#: org_id -> monotonic time of the last "budget degraded" admin notification.
+_degraded_marked_at: dict[str, float] = {}
+
 
 def configure_budget_module(
     *, admin_client_factory: Optional[Callable[[], Any]]
@@ -118,6 +134,8 @@ def configure_budget_module(
     with _credit_lock:
         _credit_cache.clear()
         _credit_last_mode.clear()
+        _status_lkg.clear()
+        _degraded_marked_at.clear()
 
 
 def is_configured() -> bool:
@@ -192,7 +210,10 @@ def _raise_not_configured(exc: Exception) -> None:
 
 
 async def fetch_budget_brl(org_id: str) -> Optional[float]:
-    """Return the org's monthly budget in BRL, or `None` when unset."""
+    """Return the org's monthly budget in BRL, or `None` when unset (a SUCCESSFUL read of no row / no value).
+
+    Raises on a failed read (`LLMBudgetNotConfigured` for a missing table, otherwise the original error) --
+    "unknown" is never reported as "unset"; `enforce_budget` owns the retry / last-known / refuse policy."""
     if not _admin_client_factory or not org_id:
         return None
     try:
@@ -214,12 +235,7 @@ async def fetch_budget_brl(org_id: str) -> Optional[float]:
     except Exception as exc:
         if _is_missing_table(exc):
             _raise_not_configured(exc)
-        logger.warning(
-            "llm.budget.fetch_budget_brl: org_settings read failed for org=%s: %s",
-            org_id,
-            exc,
-        )
-        return None
+        raise
     rows = result.data or []
     if not rows:
         return None
@@ -295,9 +311,9 @@ async def compute_spend_usd(
 async def compute_status(org_id: str) -> dict[str, Any]:
     """Return `{spent_brl, budget_brl, used_pct, status, soft_pct, hard_pct}`.
 
-    `status` is `'unset' | 'ok' | 'warn' | 'hard_stop'`. Always returns a
-    dict; raises only `LLMBudgetNotConfigured` (missing budget storage).
-    """
+    `status` is `'unset' | 'ok' | 'warn' | 'hard_stop'`. Raises on a FAILED read of the budget or the ledger
+    (`LLMBudgetNotConfigured` for missing storage, otherwise the original error) -- a failed read is never
+    reported as "unset" / "spent 0"."""
     soft = _soft_pct()
     hard = _hard_pct()
 
@@ -312,11 +328,7 @@ async def compute_status(org_id: str) -> dict[str, Any]:
             "hard_pct": hard,
         }
 
-    try:
-        _spent_usd, spent_brl = await _ledger_spend(org_id)
-    except Exception as exc:
-        logger.warning("llm.budget.compute_status: ai_usage read failed for org=%s: %s", org_id, exc)
-        spent_brl = 0.0
+    _spent_usd, spent_brl = await _ledger_spend(org_id)
     used_pct = (spent_brl / budget_brl) if budget_brl else 0.0
 
     if used_pct >= hard:
@@ -373,6 +385,8 @@ def _reset_credit_state_for_tests(clock: Optional[Callable[[], float]] = None) -
         _credit_cache.clear()
         _credit_last_mode.clear()
         _credit_marked_at.clear()
+        _status_lkg.clear()
+        _degraded_marked_at.clear()
     _credit_table_missing_logged = False
     _clock = clock or time.monotonic
 
@@ -411,16 +425,9 @@ async def _read_wallet(org_id: str) -> Optional[dict]:
     return rows[0] if rows else None
 
 
-def _mark_unverifiable(org_id: str, exc: Exception) -> None:
-    """ERROR log every time; at most every 10 min per org, a bell notification for the
-    platform admins (best effort — the database just failed us; a failed mark is logged)."""
-    logger.error("llm.credits.unverifiable: org=%s wallet read failed — AI call refused: %s", org_id, exc)
-    now = _clock()
-    with _credit_lock:
-        last = _credit_marked_at.get(org_id)
-        if last is not None and now - last < _CREDIT_MARK_EVERY_S:
-            return
-        _credit_marked_at[org_id] = now
+def _notify_platform_admins(org_id: str, *, tipo: str, title: str, message: str, exc: Exception) -> None:
+    """Bell notification for the platform admins (best effort -- the database just failed us; a failed mark is
+    logged at ERROR, never raised)."""
     try:
         db = _admin_client_factory() if _admin_client_factory else None
         if db is None:
@@ -431,17 +438,51 @@ def _mark_unverifiable(org_id: str, exc: Exception) -> None:
             {
                 "user_id": str(a["id"]),
                 "type": "system",
-                "title": "Créditos de IA: saldo não verificável",
-                "message": f"A leitura da carteira da org {org_id} falhou; chamadas de IA dela foram recusadas.",
-                "metadata": {"tipo": "creditos_guarda_indisponivel", "org_id": org_id, "erro": str(exc)[:300]},
+                "title": title,
+                "message": message,
+                "metadata": {"tipo": tipo, "org_id": org_id, "erro": str(exc)[:300]},
             }
             for a in admins
             if a.get("id")
         ]
         if rows:
             core.table("notifications").insert(rows).execute()
-    except Exception as mark_exc:  # noqa: BLE001 — the refusal already happened; the mark is best-effort, logged
-        logger.error("llm.credits: could not record the unverifiable mark for org=%s: %s", org_id, mark_exc)
+    except Exception as mark_exc:  # noqa: BLE001 — the guard already acted; the mark is best-effort, logged
+        logger.error("llm.guard: could not record the %s mark for org=%s: %s", tipo, org_id, mark_exc)
+
+
+def _due_for_mark(marks: dict[str, float], org_id: str, every_s: float) -> bool:
+    now = _clock()
+    with _credit_lock:
+        last = marks.get(org_id)
+        if last is not None and now - last < every_s:
+            return False
+        marks[org_id] = now
+    return True
+
+
+def _mark_unverifiable(org_id: str, exc: Exception) -> None:
+    """ERROR log every time; at most every 10 min per org, a bell notification for the
+    platform admins."""
+    logger.error("llm.credits.unverifiable: org=%s wallet read failed — AI call refused: %s", org_id, exc)
+    if not _due_for_mark(_credit_marked_at, org_id, _CREDIT_MARK_EVERY_S):
+        return
+    _notify_platform_admins(
+        org_id, tipo="creditos_guarda_indisponivel", title="Créditos de IA: saldo não verificável",
+        message=f"A leitura da carteira da org {org_id} falhou; chamadas de IA dela foram recusadas.", exc=exc,
+    )
+
+
+def _mark_budget_degraded(org_id: str, exc: Exception, *, served: str) -> None:
+    """The monthly-budget guard could not read: ERROR log on every occurrence + (rate limited) admin bell.
+    `served` says what happened to the call ("last_known" | "refused" | "allowed_by_policy")."""
+    logger.error("llm.budget.degraded: org=%s budget/ledger read failed (%s) — decision=%s", org_id, exc, served)
+    if not _due_for_mark(_degraded_marked_at, org_id, _DEGRADED_MARK_EVERY_S):
+        return
+    _notify_platform_admins(
+        org_id, tipo="orcamento_guarda_degradada", title="Orçamento de IA: leitura falhou",
+        message=f"A leitura do orçamento/gasto da org {org_id} falhou ({served}); verifique o banco.", exc=exc,
+    )
 
 
 async def enforce_credits(org_id: Optional[str]) -> None:
@@ -485,31 +526,71 @@ async def enforce_credits(org_id: Optional[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _lkg_max_age() -> float:
+    return _env_float("LLM_BUDGET_LKG_MAX_AGE_S", _DEFAULT_LKG_MAX_AGE_S)
+
+
+def _retry_delay() -> float:
+    return _env_float("LLM_BUDGET_RETRY_DELAY_S", _DEFAULT_RETRY_DELAY_S)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    try:
+        return float(raw) if raw else default
+    except ValueError:
+        logger.warning("llm.budget: %s=%r is not a float; using default %s", name, raw, default)
+        return default
+
+
+async def _status_with_retry(org_id: str) -> dict[str, Any]:
+    """`compute_status` with ONE bounded retry on a read failure (a DB blip is usually gone in a beat).
+    A missing table is a configuration error — never retried."""
+    try:
+        return await compute_status(org_id)
+    except LLMBudgetNotConfigured:
+        raise
+    except Exception as first:
+        logger.warning("llm.budget: status read failed for org=%s (%s) — retrying once", org_id, first)
+        await anyio.sleep(_retry_delay())
+        return await compute_status(org_id)
+
+
+def _degraded_status(org_id: str, exc: Exception) -> dict[str, Any]:
+    """The read failed twice: the fresh last-known status of the org, or `LLMBudgetUnverifiable`."""
+    with _credit_lock:
+        known = _status_lkg.get(org_id)
+    if known is not None and _clock() - known[0] <= _lkg_max_age():
+        _mark_budget_degraded(org_id, exc, served="last_known")
+        return known[1]
+    if os.environ.get("LLM_BUDGET_UNKNOWN_POLICY", "block").strip().lower() == "allow":
+        _mark_budget_degraded(org_id, exc, served="allowed_by_policy")
+        return {"status": "unset"}
+    _mark_budget_degraded(org_id, exc, served="refused")
+    raise LLMBudgetUnverifiable(org_id, f"{type(exc).__name__}: {exc}") from exc
+
+
 async def enforce_budget(org_id: Optional[str]) -> None:
     """Raise `LLMBudgetExceeded` if the org's hard threshold is crossed.
     Logs WARN at the soft threshold. Returns silently otherwise.
 
-    Fail-open posture: if `org_id` is None, the module isn't configured,
-    or a transient read fails, this returns silently (a MISSING budget table
-    is a configuration error and raises `LLMBudgetNotConfigured` instead) (LLM call proceeds). The
-    rationale is that a flaky budget check should not break user-facing
-    AI features — it's a guardrail, not a hard gate.
+    A no-op when `org_id` is None or the module is not configured (tests / CLI). A FAILED lookup follows the
+    loud policy in the module docstring: one retry, then the fresh last-known verdict (announced), else
+    `LLMBudgetUnverifiable`. A MISSING budget table raises `LLMBudgetNotConfigured`.
     """
     if not org_id or not _admin_client_factory:
         return
     # Prepaid credits first — fail-CLOSED (raises LLMCreditsExhausted / LLMCreditsUnverifiable).
     await enforce_credits(org_id)
     try:
-        status = await compute_status(org_id)
+        status = await _status_with_retry(org_id)
     except LLMBudgetNotConfigured:
         raise
     except Exception as exc:
-        logger.warning(
-            "llm.budget.enforce_budget: status read failed for org=%s: %s",
-            org_id,
-            exc,
-        )
-        return
+        status = _degraded_status(org_id, exc)
+    else:
+        with _credit_lock:
+            _status_lkg[org_id] = (_clock(), status)
 
     if status["status"] == "hard_stop":
         raise LLMBudgetExceeded(

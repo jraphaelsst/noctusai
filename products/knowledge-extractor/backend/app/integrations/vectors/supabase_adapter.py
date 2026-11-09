@@ -10,6 +10,7 @@ Schema assumed (see backend/migrations/001_knowledge_extractor.sql):
 Auth: Supabase service-role key passed as ``SUPABASE_SERVICE_ROLE_KEY``
 (settings). Uses ``httpx.AsyncClient`` — no additional SDKs.
 """
+# NOC-REMEDIATE[retrieval-organ]: product-local pgvector store (kb_chunk + match_kb RPC) — replace with noctusai_lib.integrations.retrieval store under a knowledge-extractor namespace (KB § PATTERNS/backend/retrieval-organ.md) — 2026-11-09
 from __future__ import annotations
 
 import json

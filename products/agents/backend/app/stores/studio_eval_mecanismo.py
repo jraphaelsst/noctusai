@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from app.stores._db_errors import StudioConflict, exec_query
+from app.stores._db_errors import exec_query
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
 from app.studio.eval_mecanismo import (
@@ -103,8 +103,6 @@ class FakeMecanismoStore:
     ) -> UUID:
         if driver not in ("live", "fake"):
             raise ValueError("driver must be 'live' or 'fake'")
-        if any(r["version_id"] == version_id and r["status"] == "executando" for r in self.runs.values()):
-            raise StudioConflict("run_in_progress", "a mechanism run is already executing for this version")
         rid = uuid4()
         self.runs[rid] = {
             "id": rid, "org_id": org_id, "agent_id": agent_id, "version_id": version_id,
@@ -227,7 +225,7 @@ class SupabaseMecanismoStore:
             "compiled_hash": compiled_hash, "driver": driver, "status": "executando",
             "total_casos": total_casos, "limite_usd": limite_usd, "started_by": str(started_by),
         }
-        resp = exec_query(self._t("eval_mecanismo_runs").insert(payload), unique_code="run_in_progress")
+        resp = exec_query(self._t("eval_mecanismo_runs").insert(payload))
         rows = resp.data or []
         if not rows:
             raise RuntimeError("insert of mechanism run returned no row")
