@@ -23,6 +23,7 @@ Usage::
     )
 """
 import importlib
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -382,6 +383,22 @@ def create_product_app(
         else make_run_ledger(_product_slug, lambda: db.get_core_client())
     )
 
+    # 3c. Owner-notification catalog (2026-11-09) — the gate every owner-facing WhatsApp notification passes:
+    #     the owner's per-kind on/off switch (core admin "Notificações") + one ledger row per send in core
+    #     `public.notification_sends`. Declared kinds register lazily on the first send (and the product may call
+    #     `register()` at startup). Fake under pytest, like the run ledger. → noctusai_lib.domain.notification_catalog
+    from noctusai_lib.domain.notification_catalog import (
+        FakeNotificationGate,
+        configure_notification_gate,
+        make_notification_gate,
+    )
+
+    configure_notification_gate(
+        FakeNotificationGate(_product_slug)
+        if _under_pytest()
+        else make_notification_gate(_product_slug, lambda: db.get_core_client())
+    )
+
     # 4. Auto-wire LLM access. Products inherit platform defaults unless they
     #    override via the llm_config parameter. `REDIS_URL` flips the
     #    response cache on. Usage: EVERY product writes the central D25 ledger
@@ -505,6 +522,15 @@ def create_product_app(
         # instead of a container that merely refuses to exist.
         # → KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md
         app.state.startup_hook_error = None
+        # Owner-notification catalog: publish this product's declared kinds to core at boot, so core's
+        # Notificações page lists every notification before its first send. Off the event loop; the gate's
+        # `register()` never raises (logs ERROR) — a catalog hiccup never blocks serving.
+        try:
+            from noctusai_lib.domain.notification_catalog import get_notification_gate as _gng
+
+            await asyncio.to_thread(_gng(_product_slug).register)
+        except Exception:  # noqa: BLE001 — loud, never fatal (startup-hook-must-not-be-fatal)
+            logger.error("notification catalog registration failed at startup for %s", _product_slug, exc_info=True)
         if lifespan_startup:
             try:
                 await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()

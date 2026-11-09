@@ -49,6 +49,9 @@ from dataclasses import dataclass, field
 
 from noctusai_lib.config.credentials import register_credential_override
 from noctusai_seed import TeamPolicy, create_product_app
+
+# Declares every SW owner notification (core Notificações catalog) before the app's lifespan registers them.
+import app.services.notification_kinds  # noqa: E402,F401
 from noctusai_lib.api.auth.session import ApiTokenAuditMiddleware
 
 from app.dependencies import LazyApiTokenAuditWriter, get_admin_client, get_core_client, get_current_user_org

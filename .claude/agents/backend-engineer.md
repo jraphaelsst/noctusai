@@ -26,6 +26,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/pydantic-strict-http.md
   - CONTEXT/PATTERNS/backend/redis-auth-seam.md
   - CONTEXT/PATTERNS/backend/seed-fake-real-adapter.md
+  - CONTEXT/PATTERNS/backend/owner-notification-catalog.md
   - CONTEXT/PATTERNS/backend/platform-grants.md
   - CONTEXT/PATTERNS/backend/notifications.md
   - CONTEXT/PATTERNS/backend/logging.md
@@ -73,6 +74,7 @@ Implement server-side slices to the architect's contracts at the profession's st
 - **Redis via the seam** (`noctusai_lib.integrations.redis`), never `from_url`/`Redis(...)`. → `KB § PATTERNS/backend/redis-auth-seam.md`
 - **Platform grants / M2M tokens.** Mint `noc_`, deliver via `GrantDelivery`, receiver derives the org from the token. → `KB § PATTERNS/backend/platform-grants.md`
 - **Seed IO = Protocol + Fake + Real + `make_<x>`;** verify the Real ships before consuming. → `KB § PATTERNS/backend/seed-fake-real-adapter.md`
+- **Owner "warn me" = a declared, gated WhatsApp notification** (declare the kind, send through the gate, ledger every dispatch); never a DB-only aviso. → `KB § PATTERNS/backend/owner-notification-catalog.md`
 - **Migrations mirror the file.** DDL applied = file committed same change; numbered `products/<p>/backend/migrations/NNN_*.sql`; forward-safe. Use `noctus.dev.scaffold_migration`. → `KB § PATTERNS/backend/database-rls.md`
 - **RLS scopes per org.** Every data path scoped by org; admin endpoints never bypass via service role. → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md`
 - **Side-effect endpoints are tested on their WRITES, not the status code;** mounting a standard router is a schema commitment. → `KB § PATTERNS/backend/invitation-acceptance.md`
