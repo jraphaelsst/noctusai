@@ -19,7 +19,7 @@ from app.stores._db_errors import (
 )
 
 _APP = Path(__file__).resolve().parents[2] / "app"
-_DB_TEXT = 'duplicate key value violates unique constraint "uq_eval_mecanismo_runs_um_em_execucao"'
+_DB_TEXT = 'duplicate key value violates unique constraint "uq_skill_files_caminho"'
 
 
 class _APIError(Exception):
@@ -30,8 +30,8 @@ class _APIError(Exception):
 
 
 def test_a_unique_violation_maps_to_the_code_without_the_db_text():
-    exc = map_db_error(_APIError("23505", _DB_TEXT), unique_code="run_in_progress")
-    assert isinstance(exc, StudioConflict) and exc.code == "run_in_progress"
+    exc = map_db_error(_APIError("23505", _DB_TEXT), unique_code="caminho_conflict")
+    assert isinstance(exc, StudioConflict) and exc.code == "caminho_conflict"
     assert "uq_" not in str(exc) and "duplicate" not in str(exc)
 
 
@@ -41,8 +41,8 @@ def test_a_fk_violation_maps_to_the_code_without_the_db_text():
 
 
 def test_the_person_reads_the_catalog_text_never_the_exception_message():
-    exc = StudioConflict("run_in_progress", "a mechanism run is already executing for this version")
-    assert mensagem_conflito(exc) == MENSAGENS_CONFLITO["run_in_progress"]
+    exc = StudioConflict("skill_exists", "skill 'x' already exists")
+    assert mensagem_conflito(exc) == MENSAGENS_CONFLITO["skill_exists"]
     assert mensagem_conflito(StudioConflict("codigo_sem_texto", _DB_TEXT)) == MENSAGEM_CONFLITO_GENERICA
 
 

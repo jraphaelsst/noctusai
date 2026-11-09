@@ -26,7 +26,8 @@ FAIL CLOSED):
 
 Error codes: 409 ``slug_taken`` (duplicate case slug), 409 ``case_in_use``
 (deleting a case that has results — deactivate it instead), 409
-``run_in_progress``, 409 ``run_not_cancellable``, 422 ``no_eval_cases``.
+``run_not_cancellable``, 422 ``no_eval_cases``. Several runs of one version
+may execute at once (071).
 """
 from __future__ import annotations
 
@@ -291,7 +292,7 @@ async def create_run(
             )
         except NotFound as exc:
             raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
-        except StudioConflict as exc:  # run_in_progress
+        except StudioConflict as exc:  # a DB conflict mapped by the store; parallel runs of a version are allowed (071)
             raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
         except ValueError as exc:
             raise http_error(422, "no_eval_cases", str(exc)) from exc

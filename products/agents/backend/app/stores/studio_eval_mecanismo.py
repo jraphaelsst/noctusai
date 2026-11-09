@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from app.stores._db_errors import StudioConflict, exec_query
+from app.stores._db_errors import exec_query
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
 from app.studio.eval_mecanismo import (
@@ -60,12 +60,6 @@ class MecanismoStore(Protocol):
 
     def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]: ...
 
-    def run_em_execucao(self, org_id: UUID, version_id: UUID) -> UUID | None:
-        """The run still ``executando`` for the version (at most one — the DB partial unique index), org-scoped.
-        A second start answers 409 ``run_in_progress`` WITH this id, so the screen follows the run instead of
-        showing a refusal."""
-        ...
-
     def latest_run(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> MecanismoGateRun | None:
         """The newest FINISHED run (any driver) of the version for exactly this compiled hash."""
         ...
@@ -109,8 +103,6 @@ class FakeMecanismoStore:
     ) -> UUID:
         if driver not in ("live", "fake"):
             raise ValueError("driver must be 'live' or 'fake'")
-        if any(r["version_id"] == version_id and r["status"] == "executando" for r in self.runs.values()):
-            raise StudioConflict("run_in_progress", "a mechanism run is already executing for this version")
         rid = uuid4()
         self.runs[rid] = {
             "id": rid, "org_id": org_id, "agent_id": agent_id, "version_id": version_id,
@@ -173,12 +165,6 @@ class FakeMecanismoStore:
     def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]:
         return [dict(e) for e in self.execucoes.get(run_id, [])] if self.get_run(org_id, run_id) else []
 
-    def run_em_execucao(self, org_id: UUID, version_id: UUID) -> UUID | None:
-        for r in self.runs.values():
-            if r["org_id"] == org_id and r["version_id"] == version_id and r["status"] == "executando":
-                return r["id"]
-        return None
-
     def latest_run(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> MecanismoGateRun | None:
         rows = [
             r for r in self.runs.values()
@@ -239,7 +225,7 @@ class SupabaseMecanismoStore:
             "compiled_hash": compiled_hash, "driver": driver, "status": "executando",
             "total_casos": total_casos, "limite_usd": limite_usd, "started_by": str(started_by),
         }
-        resp = exec_query(self._t("eval_mecanismo_runs").insert(payload), unique_code="run_in_progress")
+        resp = exec_query(self._t("eval_mecanismo_runs").insert(payload))
         rows = resp.data or []
         if not rows:
             raise RuntimeError("insert of mechanism run returned no row")
@@ -307,14 +293,6 @@ class SupabaseMecanismoStore:
             .order("indice").limit(1000).execute()
         )
         return [dict(r) for r in (resp.data or [])]
-
-    def run_em_execucao(self, org_id: UUID, version_id: UUID) -> UUID | None:
-        resp = (
-            self._t("eval_mecanismo_runs").select("id").eq("org_id", str(org_id)).eq("version_id", str(version_id))
-            .eq("status", "executando").limit(1).execute()
-        )
-        rows = resp.data or []
-        return UUID(str(rows[0]["id"])) if rows else None
 
     def latest_run(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> MecanismoGateRun | None:
         resp = (
